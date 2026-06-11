@@ -306,7 +306,7 @@ Extensible key-value map of task type to model identifier. Any string key maps t
 
 #### Operation Model Overrides (agents.*.operationModels)
 
-Override the model and timeout for specific internal operation types. Each entry is an `OperationModelEntry` with optional `model` (string `"provider:modelId"`) and `timeoutMs` (number) fields. Omit any type to use the agent's primary model.
+Override the model and timeout for specific internal operation types. Each entry is an `OperationModelEntry` with optional `model` (string `"provider:modelId"`) and `timeout` (number) fields. The key is `timeout` (milliseconds) — `timeoutMs` is rejected by the strict config parser. Omit any type to use the agent's primary model.
 
 | Operation type | When it fires | Recommended model |
 |---------------|---------------|-------------------|
@@ -325,7 +325,7 @@ agents:
     operationModels:
       verification:
         model: "anthropic:claude-haiku-4-5-20250929"
-        timeoutMs: 30000
+        timeout: 30000
       compaction:
         model: "anthropic:claude-haiku-4-5-20250929"
 ```
@@ -355,8 +355,9 @@ agents:
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `promptTimeoutMs` | `number` | `180000` | Wall-clock timeout for primary prompt calls (3 minutes). Covers the full SDK call lifecycle including internal retries and streaming. |
-| `retryPromptTimeoutMs` | `number` | `60000` | Wall-clock timeout for retry and fallback prompt calls (1 minute). Used during auth rotation and model fallback attempts. |
+| `promptTimeoutMs` | `number` | `180000` | Stall budget for primary prompt calls (3 minutes): the deadline resets on activity — stream text/thinking deltas (throttled ~1/s) and tool completions. A turn dies only when NO activity occurs for this long. Stall semantics apply to all providers. |
+| `retryPromptTimeoutMs` | `number` | `60000` | Wall-clock timeout for retry and fallback prompt calls (1 minute). Used during auth rotation and model fallback attempts. Whole-turn (not stall-based) — retry and fallback prompts do not reset on activity. |
+| `stallCeilingMultiplier` | `number` | `10` | Makespan ceiling: a turn is aborted at `promptTimeoutMs × stallCeilingMultiplier` even while still streaming — bounds runaway generations that would otherwise reset the stall budget forever. Runtime-tunable. |
 
 See [Resilience](/agents/resilience) for how prompt timeouts fit into the full resilience stack.
 
@@ -2037,7 +2038,7 @@ LLM provider configuration. API keys are referenced by SecretManager key name, n
 | `baseUrl` | `string` | `""` | API base URL override |
 | `apiKeyName` | `string` | `""` | SecretManager key name for API key |
 | `enabled` | `boolean` | `true` | Whether this provider is enabled |
-| `timeoutMs` | `number` | `120000` | Request timeout in ms |
+| `timeoutMs` | `number` | `120000` | Config-echo only — NOT enforced on completion calls. The completion deadline is `agents.<id>.promptTimeout.promptTimeoutMs` (stall budget). Setting a non-default value emits a one-time boot WARN naming the real knob. |
 | `maxRetries` | `number` | `2` | Max retries for transient errors |
 | `headers` | `Record<string, string>` | `{}` | Custom headers for API requests |
 | `capabilities` | `ProviderCapabilities` | _(auto-detected)_ | Provider-level behavioral overrides. Usually auto-detected from provider type; manual config overrides auto-detection. See sub-schema below. |
@@ -2282,14 +2283,16 @@ security:
 
 The operator override always takes precedence over the capability-class default.
 
-**Prompt timeout for local Ollama.** The default `promptTimeoutMs` (180,000 ms — 3 minutes) is sized for cloud APIs that typically respond in under 60 seconds. A local model with slow inference (e.g., qwen3.6 on a loaded GPU with multiple concurrent agents) can exceed this. For local deployments, set a longer timeout:
+**Prompt timeout for local Ollama.** `promptTimeoutMs` is a stall budget: the deadline resets on stream activity (text/thinking deltas, throttled ~1/s) and tool completions, so it only needs to cover the longest SILENT gap — in practice the prefill before the first token, which on a loaded local GPU (e.g., qwen3.6 with multiple concurrent agents) can exceed the 180,000 ms default. Once the model streams, activity keeps the turn alive; the makespan ceiling (`promptTimeoutMs × stallCeilingMultiplier`, default ×10) still bounds the total turn even while streaming. For local deployments, raise the stall budget to cover slow prefill:
 
 ```yaml
 agents:
   my-agent:
     promptTimeout:
-      promptTimeoutMs: 300000   # 5 minutes — recommended for local qwen3.6 under load
+      promptTimeoutMs: 300000   # 5 minutes — covers slow local prefill for qwen3.6 under load
 ```
+
+A served context window smaller than configured makes prefill behavior harder to predict — see [Local model context window](#local-model-context-window).
 
 **Fallback-model recommendation.** For deep multi-agent pipelines on local hardware, configure a `models.failoverModel` pointing to a lighter local model (e.g., a faster quantized variant) that can handle sub-agent calls when the primary model is loaded. This provides graceful degradation rather than timeout cascades.
 

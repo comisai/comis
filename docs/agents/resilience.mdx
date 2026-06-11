@@ -61,21 +61,29 @@ The sections below describe each subsystem in order from the innermost layer
 
 ## Prompt timeout
 
-Every LLM call has a wall-clock timeout that prevents hung prompts from
-blocking the agent indefinitely. If the provider does not respond within the
-timeout, the call is aborted and the agent automatically retries with a shorter
+Every LLM call has a prompt-level deadline that prevents hung prompts from
+blocking the agent indefinitely. For primary calls the deadline is a **stall
+budget**: it resets on activity (stream text/thinking deltas, throttled ~1/s,
+and tool completions), so the call is aborted only when NO activity occurs for
+the configured window. A separate **makespan ceiling**
+(`promptTimeoutMs × stallCeilingMultiplier`, default ×10) bounds the total turn
+even while it is still streaming, so a runaway generation cannot reset the
+stall budget forever. On abort, the agent automatically retries with a shorter
 timeout or falls back to an alternate model.
 
-- **Primary calls:** 180,000 ms (3 minutes) by default
-- **Retry and fallback calls:** 60,000 ms (1 minute) by default
-- **What the operator sees:** An `execution:prompt_timeout` event in logs,
-  followed by an automatic retry or model fallback
+- **Primary calls:** 180,000 ms (3 minutes) stall budget by default; makespan
+  ceiling at ×10
+- **Retry and fallback calls:** 60,000 ms (1 minute) by default — whole-turn,
+  not stall-based (no reset on activity)
+- **What the operator sees:** An `execution:prompt_timeout` event in logs
+  (carrying which limit fired, the binding knob, and elapsed time), followed
+  by an automatic retry or model fallback
 - **What the user sees:** A slightly delayed response (the retry is transparent
   to the user)
 
-The timeout covers the full call lifecycle including internal SDK retries and
-streaming. If your model legitimately needs more time for complex tasks,
-increase `promptTimeoutMs` in the agent's config. See the
+The stall budget only needs to cover the longest silent gap — for local models,
+typically the prefill before the first token. If your model legitimately needs
+more silent time, increase `promptTimeoutMs` in the agent's config. See the
 [Config YAML Reference](/reference/config-yaml) for details.
 
 ## Execution timeout
