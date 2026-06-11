@@ -46,6 +46,7 @@ import {
   deepMerge,
   AppConfigSchema,
   scanForSecrets,
+  substituteEnvVars,
   isEnvRefString,
   type AppContainer,
   type ConfigGitManager,
@@ -292,7 +293,20 @@ export async function persistToConfig(
       }
     }
 
-    const validation = AppConfigSchema.safeParse(fullMerged);
+    // A patch may INTRODUCE a `${VAR}` secret REFERENCE (e.g. tokens.create
+    // re-attaches the on-disk `${COMIS_GATEWAY_TOKEN}` ref so the admin token
+    // survives — live C10 finding 2026-06-12). `fullMerged` otherwise carries
+    // POST-substitution values (container.config resolved every ref at boot),
+    // so the raw ref the patch injects fails the schema's secret union
+    // ("Too small"/not-a-SecretRef). Resolve refs through the secret manager
+    // for the VALIDATION COPY only — the disk write (updatedLocal) keeps the
+    // ref verbatim. An unresolved ref stays raw and fails validation honestly.
+    const secretManager = deps.container.secretManager;
+    const treeToValidate = secretManager
+      ? (substituteEnvVars(fullMerged, (key) => secretManager.get(key)) as { ok: boolean; value?: unknown }).value ?? fullMerged
+      : fullMerged;
+
+    const validation = AppConfigSchema.safeParse(treeToValidate);
     if (!validation.success) {
       const issues = validation.error.issues
         .map((i) => `${i.path.join(".")}: ${i.message}`)

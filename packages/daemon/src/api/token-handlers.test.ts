@@ -599,6 +599,35 @@ describe("createTokenHandlers - token management", () => {
       return persistDeps;
     }
 
+    it("rejects co-issuing mcp-client with another scope (the sole-scope rule config-load enforces)", async () => {
+      // Live C10 finding (2026-06-12): the schema refine enforces mcp-client
+      // sole-scope at config-LOAD, but tokens.create bypassed it — a mixed
+      // ["mcp-client","rpc"] token went live in the registry. An mcp-client
+      // token is an external trust boundary; it must not also speak RPC/WS.
+      const deps = makeDeps();
+      const handlers = createTokenHandlers(deps);
+
+      await expect(
+        handlers["tokens.create"]!({
+          scopes: ["mcp-client", "rpc"],
+          _trustLevel: "admin",
+        }),
+      ).rejects.toThrow(/mcp-client/);
+      expect(deps.addToTokenStore).not.toHaveBeenCalled();
+    });
+
+    it("allows a sole mcp-client scope", async () => {
+      const deps = makeDeps();
+      const handlers = createTokenHandlers(deps);
+
+      const result = (await handlers["tokens.create"]!({
+        scopes: ["mcp-client"],
+        _trustLevel: "admin",
+      })) as { id: string; scopes: readonly string[] };
+
+      expect(result.scopes).toEqual(["mcp-client"]);
+    });
+
     it("tokens.create preserves an existing entry's ${VAR} secret reference in the persisted config", async () => {
       const persistDeps = makeRefPersistDeps();
       const deps = makeDeps({

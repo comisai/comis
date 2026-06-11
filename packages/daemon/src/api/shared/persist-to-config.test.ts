@@ -187,6 +187,65 @@ describe("persistToConfig", () => {
   });
 
   // -----------------------------------------------------------------------
+  // 4c. A patch that INTRODUCES a ${VAR} secret ref validates by resolving
+  //     it through the secret manager, and writes the ref VERBATIM to disk.
+  //     (Live C10 finding 2026-06-12: tokens.create re-attaches the on-disk
+  //     ${COMIS_GATEWAY_TOKEN} ref to gateway.tokens; the post-substitution
+  //     validation rejected the raw ref as "Too small", so no tokens.create
+  //     on a ${VAR}-secret config ever persisted.)
+  // -----------------------------------------------------------------------
+  it("resolves a ${VAR} secret ref through the secret manager for validation, and writes the ref verbatim", async () => {
+    writeFileSync(
+      configPath,
+      yamlStringify({
+        logLevel: "info",
+        gateway: { tokens: [{ id: "default", secret: "${COMIS_GATEWAY_TOKEN}", scopes: ["*"] }] },
+      }),
+      "utf-8",
+    );
+
+    const containerConfig = AppConfigSchema.parse({
+      logLevel: "info",
+      gateway: { tokens: [{ id: "default", secret: "x".repeat(48), scopes: ["*"] }] },
+    });
+
+    const deps: PersistToConfigDeps = {
+      container: {
+        config: containerConfig,
+        eventBus: { emit: vi.fn() },
+        secretManager: { get: (k: string) => (k === "COMIS_GATEWAY_TOKEN" ? "x".repeat(48) : undefined) },
+      } as unknown as PersistToConfigDeps["container"],
+      configPaths: [configPath],
+      defaultConfigPaths: [],
+      logger: createMockLogger(),
+    };
+
+    // The patch re-attaches the raw on-disk ref for default and appends a new
+    // entry — exactly what tokens.create now builds.
+    const opts = makeOpts({
+      patch: {
+        gateway: {
+          tokens: [
+            { id: "default", secret: "${COMIS_GATEWAY_TOKEN}", scopes: ["*"] },
+            { id: "new-tok", scopes: ["rpc"] },
+          ],
+        },
+      },
+      actionType: "tokens.create",
+      entityId: "new-tok",
+    });
+
+    const result = await persistToConfig(deps, opts);
+    expect(result.ok).toBe(true);
+
+    const parsed = parseYaml(readFileSync(configPath, "utf-8")) as Record<string, unknown>;
+    const tokens = (parsed.gateway as { tokens: Array<{ id: string; secret?: string }> }).tokens;
+    const def = tokens.find((t) => t.id === "default");
+    // The REF is written verbatim — never the resolved plaintext.
+    expect(def?.secret).toBe("${COMIS_GATEWAY_TOKEN}");
+  });
+
+  // -----------------------------------------------------------------------
   // 5. Write failure: returns err when filesystem write fails
   // -----------------------------------------------------------------------
   it("write failure: returns err when filesystem write fails", async () => {

@@ -290,6 +290,20 @@ export function createTokenHandlers(deps: TokenHandlerDeps): Record<string, RpcH
         throw new Error("Missing or empty required parameter: scopes");
       }
 
+      // Sole-scope disjointness — the SAME invariant GatewayTokenSchema's
+      // refine enforces at config-load, applied here so the runtime create
+      // RPC can't mint a token the config layer would reject. An mcp-client
+      // token is an external trust boundary; its compromise must be
+      // containable to the MCP surface only — it cannot also speak RPC/WS.
+      // (Live C10 finding 2026-06-12: a ["mcp-client","rpc"] token went live
+      // in the registry because the refine ran only on the config path.)
+      if (scopes.includes("mcp-client") && scopes.length > 1) {
+        throw new Error(
+          "[scope_disjointness] mcp-client MUST be the sole scope of a token " +
+            `(no co-issuance with ${scopes.filter((s) => s !== "mcp-client").join(", ")})`,
+        );
+      }
+
       // Strip dispatcher-injected _X internals BEFORE contract parse.
       // The contract parse runs AFTER the bespoke guard and serves as
       // type-narrowing + defense-in-depth.
