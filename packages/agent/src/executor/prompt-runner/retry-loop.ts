@@ -205,6 +205,12 @@ async function invokeModelRetry(
     timeoutConfig: {
       promptTimeoutMs: effectiveTimeout.promptTimeoutMs,
       retryPromptTimeoutMs: effectiveTimeout.retryPromptTimeoutMs,
+      // LAT-02 (177-03): makespan ceiling derivation input — threaded
+      // UNCONDITIONALLY (R-1; gate_scope all-providers per 177-01 DECISION).
+      stallCeilingMultiplier: effectiveTimeout.stallCeilingMultiplier,
+      // LAT-01 binding provenance for the prompt_timeout emit attribution.
+      source: effectiveTimeout.source,
+      operationType: effectiveTimeout.operationType,
     },
     deps: {
       eventBus: deps.eventBus,

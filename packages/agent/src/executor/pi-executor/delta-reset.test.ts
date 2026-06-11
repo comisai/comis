@@ -34,7 +34,7 @@ describe("createDeltaResetComposer (LAT-02)", () => {
     const clock = makeManualClock();
     const channel = vi.fn();
     const reset = vi.fn();
-    const onDelta = createDeltaResetComposer({
+    const onDelta = createDeltaResetComposer({}, {
       channelOnDelta: channel,
       getResetTimer: () => reset,
       clock,
@@ -49,7 +49,7 @@ describe("createDeltaResetComposer (LAT-02)", () => {
     const clock2 = makeManualClock();
     const channel2 = vi.fn();
     const reset2 = vi.fn();
-    const onDelta2 = createDeltaResetComposer({
+    const onDelta2 = createDeltaResetComposer({}, {
       channelOnDelta: channel2,
       getResetTimer: () => reset2,
       clock: clock2,
@@ -62,7 +62,7 @@ describe("createDeltaResetComposer (LAT-02)", () => {
   it("LAT-02-W-2: ~1/s throttle — 50 deltas in 500ms reset exactly once; a delta at +1000ms resets again (first delta always resets)", () => {
     const clock = makeManualClock();
     const reset = vi.fn();
-    const onDelta = createDeltaResetComposer({
+    const onDelta = createDeltaResetComposer({}, {
       channelOnDelta: undefined,
       getResetTimer: () => reset,
       clock,
@@ -86,7 +86,7 @@ describe("createDeltaResetComposer (LAT-02)", () => {
     const clock = makeManualClock();
     let liveResetRef: (() => void) | undefined;
     // Always-defined contract: built with NO channel callback, still callable.
-    const onDelta = createDeltaResetComposer({
+    const onDelta = createDeltaResetComposer({}, {
       channelOnDelta: undefined,
       getResetTimer: () => liveResetRef,
       clock,

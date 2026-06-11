@@ -484,12 +484,26 @@ export interface MessagingEvents {
     timestamp: number;
   };
 
-  /** Prompt execution timed out (wall-clock timeout exceeded) */
+  /** Prompt execution timed out (wall-clock timeout exceeded).
+   *  LAT-04 (177-03): all post-v2.20 fields are optional — old rows and
+   *  legacy emitters stay valid. Content-free by construction: numbers,
+   *  closed enums, and the pre-rendered config-KEY string only. */
   "execution:prompt_timeout": {
     agentId: string;
     sessionKey: string;
     timeoutMs: number;
     timestamp: number;
+    /** Elapsed wall-clock ms at kill (clock.now() - retryStartMs). */
+    durationMs?: number;
+    /** Which limit fired: stall budget vs makespan ceiling. Absent = whole-turn (retry-path/pre-LAT-02 rows). */
+    limit?: "stall" | "makespan";
+    /** Binding resolution level (LAT-01). */
+    source?: "operation_explicit" | "operation_default" | "agent_config" | "builtin_default" | "graph_constant";
+    /** Pre-rendered config-key string (content-free — knob NAME + ids only, never values/bodies). */
+    bindingKnob?: string;
+    operationType?: string;
+    stallBudgetMs?: number;
+    makespanMs?: number;
   };
 
   /** Output escalation triggered: LLM hit max_tokens and retry is being attempted with higher output budget */
