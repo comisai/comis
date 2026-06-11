@@ -13,6 +13,11 @@
  * parallel formula. {@link VIABLE_FLOOR_SHARED_SOURCES} is the drift-pin
  * surface: viable-floor.test.ts asserts FUNCTION-REFERENCE IDENTITY against
  * each home module, so a re-derived local copy cannot pass (Pitfall 8).
+ * WR-03 extends I8 from the formula to its INPUT: the toolSchemaTokens term
+ * measures the same CONVERTED ToolDefinition corpus the turn-time S estimate
+ * measures (lean descriptions + guidelines) via
+ * {@link AgentBootWindowInfo.convertTools} — the daemon binds the executor's
+ * own convertTools closure, so formula AND corpus are shared.
  *
  * WARN-only (I1/D-02 adapt-down moat): this module never throws on the
  * infeasible branch and never refuses boot. The daemon wiring (plan 176-05)
@@ -83,6 +88,17 @@ export interface AgentBootWindowInfo {
   scaffoldBootstrapChars: number;
   /** contextEngine.budget.minVisibleOutputTokens when configured. */
   minVisibleOutputTokens?: number;
+  /** WR-03 (176 review): convert the raw boot toolset to the SAME
+   *  ToolDefinition corpus the turn-time S estimate measures (lean-description
+   *  swap + promptGuidelines append — tool-definition-adapter.ts). The daemon
+   *  wiring binds the EXACT closure PiExecutorDeps.convertTools receives, so
+   *  the boot toolSchemaTokens term and the turn-time S term measure ONE
+   *  corpus by construction (I8 extended from the formula to its input —
+   *  pre-fix the boot term ran the shared reduce over RAW descriptions, which
+   *  are typically much longer than lean ones, systematically over-counting).
+   *  Absent ⇒ the floor measures the raw toolset (conservative over-count;
+   *  production wiring always binds it). */
+  convertTools?: (tools: ReadonlyArray<ToolOverheadInput>) => ReadonlyArray<ToolOverheadInput>;
 }
 
 /**
@@ -120,6 +136,8 @@ export function collectAgentBootWindowInfo(params: {
   explicitCapabilityClass: string | undefined;
   /** PerAgentConfig — scaffold + budget knobs (read defensively). */
   agentConfig: Parameters<typeof resolveScaffoldDefaults>[1];
+  /** WR-03: the executor's convertTools closure — see AgentBootWindowInfo.convertTools. */
+  convertTools?: (tools: ReadonlyArray<ToolOverheadInput>) => ReadonlyArray<ToolOverheadInput>;
 }): AgentBootWindowInfo {
   const normalizedId = normalizeModelId(params.providerId, params.modelId).modelId;
   const resolved = params.findModel(params.providerId, normalizedId);
@@ -154,6 +172,7 @@ export function collectAgentBootWindowInfo(params: {
     modelProfile,
     scaffoldBootstrapChars,
     minVisibleOutputTokens,
+    ...(params.convertTools !== undefined && { convertTools: params.convertTools }),
   };
 }
 
@@ -272,8 +291,15 @@ export function evaluateViableFloorForAgent(params: {
   logger: { warn(obj: Record<string, unknown>, msg: string): void };
 }): MinViableEquation | undefined {
   const { info } = params;
+  // WR-03: measure the corpus the turn actually ships. The turn-time S term
+  // runs the shared toolDefOverheadChars over the CONVERTED ToolDefinition[]
+  // (lean descriptions + guidelines, via the executor's convertTools); the
+  // daemon loop feeds this function the RAW AgentTool[], so without the same
+  // conversion the boot term systematically over-counts (raw descriptions ≫
+  // lean) and the WARN false-positives on agents that genuinely fit.
+  const floorTools = info.convertTools ? info.convertTools(params.tools) : params.tools;
   const eq = computeMinViableEquation({
-    tools: params.tools,
+    tools: floorTools,
     scaffoldBootstrapChars: info.scaffoldBootstrapChars,
     reasoningStyle: info.modelProfile.reasoningStyle,
     capabilityClass: info.modelProfile.capabilityClass,

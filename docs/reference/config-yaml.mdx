@@ -2414,8 +2414,11 @@ configured: `providers.entries.<id>.models[].contextWindow`. When tool schemas d
 floor, the hint adds the active-tool-ceiling lever: pin `capabilityClass` (the `small` class
 defers to a 24-tool active ceiling via `discover_tools`) or disable unused MCP servers /
 builtin tool groups. WARN-only: Comis **never** refuses to boot below the floor (the adapt-down
-posture) — and because the boot floor and the turn-time preflight share one source module, the
-same numbers re-appear in any later turn-time `context_exhausted` for that agent.
+posture) — and because the boot floor and the turn-time preflight share one source module **and
+one tool corpus** (the boot `toolSchemaTokens` term measures the same converted tool
+definitions — lean descriptions plus guidelines — the turn actually ships, not the raw factory
+descriptions), the same numbers re-appear in any later turn-time `context_exhausted` for that
+agent.
 
 The boot viable-floor WARN is engine-AGNOSTIC — it fires for `"dag"` and `"pipeline"` agents
 alike (the minViable arithmetic holds regardless of engine); the per-turn preflight surfaces

@@ -283,6 +283,27 @@ describe("setupSingleAgent boot-window honesty wiring (KNOB-01 + FLOOR-01)", () 
     });
   });
 
+  it("WR-03: the boot-window info carries the EXACT convertTools closure the executor receives (corpus-identity pin)", async () => {
+    // WR-03 (Phase 176 review): the FLOOR-01 boot toolSchemaTokens term must
+    // measure the SAME converted ToolDefinition corpus the turn-time S
+    // estimate measures. The pin is REFERENCE identity — one closure, two
+    // consumers — so the two corpora cannot fork (a second closure built from
+    // the same parts could silently drift).
+    const agentId = "default";
+    const container = makeContainer([agentId]);
+    const { deps, agentBootWindowInfo } = makeDeps(container);
+
+    await setupSingleAgent(agentId, container.config.agents[agentId] as PerAgentConfig, deps);
+
+    const info = agentBootWindowInfo.get(agentId) as { convertTools?: unknown } | undefined;
+    const executorDeps = (mockCreatePiExecutor.mock.calls[0] as unknown[])?.[1] as
+      | { convertTools?: unknown }
+      | undefined;
+    expect(typeof info?.convertTools).toBe("function");
+    expect(typeof executorDeps?.convertTools).toBe("function");
+    expect(info?.convertTools).toBe(executorDeps?.convertTools);
+  });
+
   it("WR-02: an unprobed provider binds servedContextWindow undefined (no pair fabricated)", async () => {
     const agentId = "default";
     const container = makeContainer([agentId]);

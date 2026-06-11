@@ -235,6 +235,32 @@ export async function setupSingleAgent(
     );
   }
 
+  const perAgentLogger = agentLogger.child({ agentId });
+
+  // Pre-resolve lean descriptions for this agent's session (extracted leaf —
+  // emits the "Tool descriptions resolved" INFO; channelType resolution is
+  // deferred to runtime). Resolved BEFORE the boot-window honesty block so the
+  // shared convertTools closure below can ride into the boot-window info.
+  const resolvedDescriptions = resolveLeanDescriptionsForAgent(agentConfig, perAgentLogger);
+
+  // WR-03 (176 review): ONE tool-conversion closure for BOTH consumers — bound
+  // into PiExecutorDeps.convertTools (the turn-time S corpus) AND
+  // AgentBootWindowInfo.convertTools (the FLOOR-01 boot corpus). Binding the
+  // SAME reference is the corpus-identity pin: the boot floor cannot measure a
+  // different description set than the turn ships (I8 extended from formula to
+  // input). The param is the floor's structural overhead shape; the cast is
+  // safe because the adapter reads only schema fields (name/label/description/
+  // parameters/promptGuidelines) at conversion time — execute is wrapped
+  // lazily and never invoked by the boot floor — and both production callers
+  // (pi-executor per-request tools; the daemon FLOOR-01 loop fed by
+  // assembleToolsForAgent) pass real AgentTool[].
+  type FloorConvertTools = NonNullable<import("@comis/agent").AgentBootWindowInfo["convertTools"]>;
+  const convertTools = (tools: Parameters<FloorConvertTools>[0]) =>
+    agentToolsToToolDefinitions(
+      tools as unknown as Parameters<typeof agentToolsToToolDefinitions>[0],
+      resolvedDescriptions,
+    );
+
   // KNOB-01 + FLOOR-01 (v2.21): served-window comparison + boot-window-info
   // collection beside the per-agent registry — the ONLY seam with the
   // registry-enriched "configured" the executor itself resolves (pi-executor.ts
@@ -265,6 +291,7 @@ export async function setupSingleAgent(
       served: deps.servedWindowByProvider?.get(resolved.provider),
       explicitCapabilityClass: providerEntry?.capabilities?.capabilityClass,
       agentConfig: effectiveConfig,
+      convertTools, // WR-03: the SAME closure PiExecutorDeps.convertTools receives (below)
     }));
   } catch (err) {
     agentLogger.warn(
@@ -306,7 +333,6 @@ export async function setupSingleAgent(
   // Prompt skill registry: discover skills from per-agent discoveryPaths,
   // produce <available_skills> XML for system prompt injection.
   const skillsConfig = effectiveConfig.skills ?? SkillsConfigSchema.parse({});
-  const perAgentLogger = agentLogger.child({ agentId });
 
   // Create runtime eligibility context for this agent
   const eligibilityContext = createRuntimeEligibilityContext(scopedManager);
@@ -394,10 +420,8 @@ export async function setupSingleAgent(
   // Uses default config: mediumThreshold=0.4, highThreshold=0.7, action="warn"
   // Operator can override via agent config in the future
 
-  // Pre-resolve lean descriptions for this agent's session (extracted leaf —
-  // emits the "Tool descriptions resolved" INFO; channelType resolution is
-  // deferred to runtime).
-  const resolvedDescriptions = resolveLeanDescriptionsForAgent(agentConfig, perAgentLogger);
+  // (resolvedDescriptions + the shared convertTools closure are created above,
+  // before the boot-window honesty block — WR-03.)
 
   // Tool pipeline for PiExecutor.
   // Platform tools (memory, cron, messaging, sessions) come per-request via
@@ -456,7 +480,9 @@ export async function setupSingleAgent(
     workspaceDir: dir,
     agentDir: resolvedAgentDir,
     customTools: [],
-    convertTools: (tools) => agentToolsToToolDefinitions(tools, resolvedDescriptions),
+    // WR-03: the SAME closure bound into AgentBootWindowInfo.convertTools above
+    // (corpus-identity pin — see the shared const's comment).
+    convertTools,
     subAgentToolNames: deps.subAgentToolNames,
     mcpToolsInherited: deps.mcpToolsInherited,
     memoryPort: memoryAdapter,

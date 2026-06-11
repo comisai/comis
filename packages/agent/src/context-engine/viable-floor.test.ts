@@ -278,6 +278,80 @@ describe("evaluateViableFloorForAgent — WARN emission", () => {
 });
 
 // ---------------------------------------------------------------------------
+// WR-03 (Phase 176 review): the boot floor must measure the CONVERTED tool
+// corpus — the SAME input the turn-time S estimate measures.
+// ---------------------------------------------------------------------------
+// The turn-time S term runs toolDefOverheadChars over the CONVERTED
+// ToolDefinition[] (the executor's convertTools swaps each description for the
+// pre-resolved LEAN one and appends promptGuidelines). Pre-fix the boot floor
+// ran the SAME shared function over the RAW AgentTool[] — identical formula,
+// different corpus — so the boot term systematically over-counted (raw
+// descriptions ≫ lean) and false-positive WARNed on tool-heavy agents that
+// genuinely fit at turn time, while under-counting guideline-carrying tools.
+
+describe("WR-03: boot floor measures the converted (turn-time) tool corpus", () => {
+  // BIG_TOOLS raw: "mega" (4) + 14_000 chars = 14_004 → raw term 4_002.
+  // Lean conversion swaps to a 700-char description: 4 + 700 = 704 chars
+  //   → converted term = ceil(704 / 3.5) = 202.
+  const LEAN_DESCRIPTION = "L".repeat(700);
+  const leanConvert = (
+    tools: ReadonlyArray<{ name?: string; description?: string; parameters?: unknown }>,
+  ) => tools.map((t) => ({ ...t, description: LEAN_DESCRIPTION }));
+
+  it("WR-03-1: applies info.convertTools so toolSchemaTokens equals the converted corpus, not the raw one", () => {
+    const { logger, warnCalls } = makeRecordingLogger();
+    evaluateViableFloorForAgent({
+      info: makeInfo({ convertTools: leanConvert }),
+      tools: BIG_TOOLS,
+      logger,
+    });
+    expect(warnCalls).toHaveLength(1);
+    // ceil((4 + 700) / 3.5) = 202 — the turn-time corpus. Pre-fix: 4_002 (raw).
+    expect(warnCalls[0].obj.toolSchemaTokens).toBe(202);
+    expect(warnCalls[0].obj.minViable).toBe(1_429 + 202 + 1_792 + 3_200 + 2_048);
+  });
+
+  it("WR-03-2: a tool-heavy agent that genuinely FITS at turn time stays SILENT at boot (the false-positive kill)", () => {
+    // Window 10_000: base terms 1_429 + 1_792 + 3_200 + 2_048 = 8_469.
+    //   raw corpus:  8_469 + 4_002 = 12_471 > 10_000 → pre-fix WARNed.
+    //   lean corpus: 8_469 +   202 =  8_671 < 10_000 → fits — silent (R-4).
+    const { logger, warnCalls } = makeRecordingLogger();
+    const result = evaluateViableFloorForAgent({
+      info: makeInfo({ effectiveWindow: 10_000, convertTools: leanConvert }),
+      tools: BIG_TOOLS,
+      logger,
+    });
+    expect(result).toBeUndefined();
+    expect(warnCalls).toHaveLength(0);
+  });
+
+  it("WR-03-3: a guideline-appending conversion GROWS the term (the under-count direction is fixed too)", () => {
+    // Conversion mirrors tool-definition-adapter.ts guideline append:
+    // EQ_TOOLS chars 176 + 2 × 24-char guideline block = 224 → ceil(224/3.5) = 64.
+    const GUIDELINE_BLOCK = "\n\nGuidelines:\n- always x"; // 24 chars
+    expect(GUIDELINE_BLOCK).toHaveLength(24);
+    const guidelineConvert = (
+      tools: ReadonlyArray<{ name?: string; description?: string; parameters?: unknown }>,
+    ) => tools.map((t) => ({ ...t, description: (t.description ?? "") + GUIDELINE_BLOCK }));
+    const { logger, warnCalls } = makeRecordingLogger();
+    evaluateViableFloorForAgent({
+      info: makeInfo({ convertTools: guidelineConvert }),
+      tools: EQ_TOOLS,
+      logger,
+    });
+    expect(warnCalls).toHaveLength(1);
+    expect(warnCalls[0].obj.toolSchemaTokens).toBe(64); // raw EQ_TOOLS_TOKENS was 51
+  });
+
+  it("WR-03-4: absent convertTools keeps the raw measurement (conservative fallback; production wiring always binds it)", () => {
+    const { logger, warnCalls } = makeRecordingLogger();
+    evaluateViableFloorForAgent({ info: makeInfo(), tools: BIG_TOOLS, logger });
+    expect(warnCalls).toHaveLength(1);
+    expect(warnCalls[0].obj.toolSchemaTokens).toBe(BIG_TOOLS_TOKENS);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // collectAgentBootWindowInfo — executor-mirrored boot resolution
 // ---------------------------------------------------------------------------
 
