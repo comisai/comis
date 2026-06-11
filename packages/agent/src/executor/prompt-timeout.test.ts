@@ -280,6 +280,30 @@ describe("withResettablePromptTimeout", () => {
 // (gate scope + first-activity scaling) is read FROM these cells, not taste
 // (design/local-model-last-mile.md S11 step 3; 177-RESEARCH Critical
 // Finding 4 / Pattern 3).
+//
+// LAT-02 DECISION (177-01): stall semantics ALL-PROVIDERS, first-activity
+// scaling NONE, fixture-(a) read as documented-local-config (300000).
+// Canonical (a)-(d) regression cells for the chosen semantics:
+//   (a) LAT-02-2  -- 200s prefill survives under the documented local budget
+//                    with pure stall semantics (LAT-02-1 documents WHY the
+//                    reading matters: (a) at DEFAULT cannot pass pure stall);
+//   (b) LAT-02-4  -- true hang dies at the stall budget (180s), makespan
+//                    carried;
+//   (c) LAT-02-6 + LAT-02-7 -- runaway dies at exactly the makespan (R-1);
+//                    reset-after-fire is a no-op;
+//   (d) LAT-02-8 + the resetTimer suite above -- tool-completion resets
+//                    unchanged;
+//   back-compat/leak: LAT-02-9, LAT-02-10.
+// UNCHOSEN-branch cells STAY as documented evidence (do not delete):
+//   LAT-02-3a/3b prove first-activity scaling executable; LAT-02-5 pins its
+//   cost -- true-hang detection degrades from 180s to the makespan (30 min
+//   at defaults), which is what ruled the scaling branch out given
+//   LAT-02-2's documented-config pass. Gate scope is all-providers because
+//   the timer is client-side (request bytes untouched -- I3 pins request
+//   construction) and the LAT-02-6 ceiling ADDS a bound cloud turns lack
+//   today; graph nodes keep their own 600s x layer governor which fires
+//   first (research Pitfall 8). Consumed by 177-03 (wiring) and 177-06
+//   (docs) via the 177-01-SUMMARY DECISION block.
 // ---------------------------------------------------------------------------
 describe("withResettablePromptTimeout -- LAT-02 decision fixture matrix", () => {
   beforeEach(() => {
