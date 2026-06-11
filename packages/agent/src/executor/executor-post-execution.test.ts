@@ -1162,11 +1162,15 @@ describe("LCD afterTurn leaf-pass wiring (Plan 129-06)", () => {
     }
 
     const logger = createMockLogger();
-    // STUB summarizer (no network) returning a fixed short string.
+    // STUB summarizer (no network) returning a fixed short string. The model
+    // window is LARGE (200_000) so the SUMW-01 chunk clamp does not bind — a
+    // 1_000-token summarizer window would be degenerate under the clamp
+    // (window < leafTargetTokens + SUMMARIZER_PROMPT_OVERHEAD_TOKENS) and turn
+    // this wiring fixture into a floor-clamped single-message drain.
     const getSummarizerDeps = (): SummarizerDeps => ({
       logger: logger as unknown as SummarizerDeps["logger"],
       summarize: async () => "WIRED-LEAF-SUMMARY",
-      getModel: () => ({ provider: "anthropic", contextWindow: 1_000, reasoning: true }),
+      getModel: () => ({ provider: "anthropic", contextWindow: 200_000, reasoning: true }),
       getApiKey: async () => "test-key",
     });
 
@@ -1182,9 +1186,9 @@ describe("LCD afterTurn leaf-pass wiring (Plan 129-06)", () => {
         freshTailTurns: 8,
       },
       getSummarizerDeps,
-      // SUMW-02: the threaded budget window — set EQUAL to the summarizer's
-      // getModel().contextWindow (the no-cap I3 identity) so the fixture's
-      // arming arithmetic is unchanged.
+      // SUMW-02: the threaded budget window is the ARMING denominator (4_000
+      // stored / 1_000 = 4.0 ≫ 0.75) — deliberately distinct from the
+      // summarizer model's window above, which keys the SUMW-01 chunk clamp.
       budgetWindowTokens: 1_000,
       now: 7000,
       logger,
@@ -1553,7 +1557,9 @@ describe("LCD afterTurn C4 deferral + R3 serializer interlock (Plan 132-04)", ()
     // that snapshot on every later resolution.
     let disposed = false;
     const sessionState: { model: SnapshotModel | undefined } = {
-      model: { provider: "anthropic", contextWindow: 1_000, reasoning: true },
+      // LARGE window (200_000) so the SUMW-01 chunk clamp does not bind — the
+      // arming denominator is the threaded budgetWindowTokens below, not this.
+      model: { provider: "anthropic", contextWindow: 200_000, reasoning: true },
     };
     const readModel = (): SnapshotModel => {
       if (disposed) throw new Error("session.agent.state read after dispose");
@@ -1598,8 +1604,9 @@ describe("LCD afterTurn C4 deferral + R3 serializer interlock (Plan 132-04)", ()
         },
         getSummarizerDeps: deferredGetter,
         // SUMW-02: the threaded budget window — a captured NUMBER, dispose-safe
-        // by construction (set EQUAL to the snapshot model's contextWindow, the
-        // no-cap I3 identity, so the arming arithmetic is unchanged).
+        // by construction. The ARMING denominator (4_000 stored / 1_000 = 4.0 ≫
+        // 0.75) — deliberately distinct from the snapshot model's window above,
+        // which keys the SUMW-01 chunk clamp (large, so the clamp doesn't bind).
         budgetWindowTokens: 1_000,
         now: 9000,
         logger,

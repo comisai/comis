@@ -118,12 +118,14 @@ function throwingSummarizer(): LeafSummarizer {
 function makeSummarizerDeps(
   summarize: LeafSummarizer,
   logger: ReturnType<typeof createMockLogger>,
+  overrides: Partial<LeafSummarizerDeps> = {},
 ): LeafSummarizerDeps {
   return {
     logger: logger as unknown as LeafSummarizerDeps["logger"],
     summarize,
     getModel: () => ({ provider: "anthropic", contextWindow: 200_000, reasoning: true }),
     getApiKey: async () => "test-key",
+    ...overrides,
   };
 }
 
@@ -1218,5 +1220,160 @@ describe("SUMW-02: trigger denominator = budget window", () => {
     const condenseTriggerSource = readFileSync(resolve(here, "lcd-condense-trigger.ts"), "utf-8");
     expect(leafTriggerSource).not.toContain(legacyRead);
     expect(condenseTriggerSource).not.toContain(legacyRead);
+  });
+});
+
+// ===========================================================================
+// SUMW-01 (Phase 178): leaf chunk clamp — input span ≤ resolved summarizer window
+// ===========================================================================
+//
+// WHY THIS EXISTS — the LCD-leaf half of the span invariant ("for all compaction
+// calls, inputTokens ≤ resolved summarizer effectiveWindow"): selectLeafChunk
+// caps the chunk ONLY at the configured `leafChunkTokens` (20_000 default), so an
+// `operationModels.compaction` 8K override summarizer received a 20K chunk —
+// opaque provider error or silent truncation. The clamp (inside maybeRunLeafPass,
+// computed ONCE per drain) caps the chunk at
+//   min(leafChunkTokens, summarizerWindow − leafTargetTokens − SUMMARIZER_PROMPT_OVERHEAD_TOKENS)
+// floored at MIN_SHRINKABLE_LEAF_CHUNK_TOKENS, keyed to the RESOLVED summarizer
+// (`overrideModel?.model ?? getRealModel()` via resolveSummarizerWindowTokens —
+// the 178-02 contract), NEVER the getModel() session-primary snapshot (Pitfall 2:
+// a 131K primary + 8K compaction override must clamp at 8K). Splitting comes
+// free: the B-2 bounded drain (≤4 passes/turn) + next-turn re-arming turn the
+// smaller cap into more, smaller passes — oversized backlogs split, never overflow.
+//
+// Arithmetic (overhead 2_048): clamped cap = min(20_000, W − 1_200 − 2_048).
+//   - L1 (RED): W=8_000 → cap 4_752 → each summarize call ≤ 4 × 1_000-token
+//     messages. Pre-patch: ONE chunk of all 11 out-of-tail messages (20_000 cap).
+//   - L2 (no-op pin, I3): W=200_000 → cap stays 20_000 → legacy chunk sizing.
+//   - L3 (degenerate): W=3_000 → 3_000−1_200−2_048 < MIN_SHRINKABLE → cap floors
+//     at 2 → the existing "too-small" terminator: NO summarize call, no throw.
+
+describe("SUMW-01: leaf chunk clamp", () => {
+  let db: Database.Database;
+  let store: ContextStorePort;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    initSchema(db, 1536);
+    store = createLcdStore(db);
+  });
+
+  /** A RECORDING summarize stub capturing each call's message count. */
+  function recordingSummarizer(): { summarize: LeafSummarizer; callSizes: () => number[] } {
+    const fn = vi.fn(async (_messages: AgentMessage[]) => "SHORT-LEAF-SUMMARY");
+    return {
+      summarize: fn as unknown as LeafSummarizer,
+      callSizes: () => fn.mock.calls.map((c) => (c[0] as AgentMessage[]).length),
+    };
+  }
+
+  /** Deps with an `operationModels.compaction`-style override summarizer window. */
+  function depsWithOverrideWindow(
+    overrideWindow: number,
+    summarize: LeafSummarizer,
+    logger: ReturnType<typeof createMockLogger>,
+  ): LeafSummarizerDeps {
+    return makeSummarizerDeps(summarize, logger, {
+      overrideModel: { model: { contextWindow: overrideWindow }, getApiKey: async () => "k" },
+      // The PRIMARY real model — a clamp wrongly keyed here (131_072) or to
+      // getModel()'s 200_000 leaves the 20_000 cap binding (Pitfall 2 regression).
+      getRealModel: () => ({ contextWindow: 131_072 }),
+    });
+  }
+
+  it("SUMW-01-L1 (8K/20K): every summarize call's chunk fits the 8K override summarizer — clamp keyed to overrideModel, not getRealModel/getModel", async () => {
+    // 26 msgs × 1_000 stored tokens = 26_000; budget window 32_000 → utilization
+    // 0.8125 > 0.75 arms. Schema defaults (freshTailTurns 8; 13 assistant steps)
+    // leave msgs 0..10 out-of-tail. Clamped cap = 8_000 − 1_200 − 2_048 = 4_752 →
+    // each chunk greedily takes ≤ 4 × 1_000-token messages (4_000 ≤ 4_752 < 5_000).
+    // Keyed to getRealModel's 131_072 or getModel's 200_000 the cap would stay
+    // 20_000 and ONE call would receive all 11 out-of-tail messages → the ≤4
+    // assertion is itself the Pitfall-2 override-keying proof. RED pre-patch.
+    seedHistory(store, 26, 1_000);
+    const logger = createMockLogger();
+    const { summarize, callSizes } = recordingSummarizer();
+    const deps = depsWithOverrideWindow(8_000, summarize, logger);
+
+    await runLeafPassAfterTurn({
+      store,
+      scope: SCOPE,
+      contextEngine: undefined, // schema defaults: threshold 0.75, chunk 20_000, target 1_200, tail 8
+      getSummarizerDeps: () => deps,
+      budgetWindowTokens: 32_000,
+      now: FIXED_NOW,
+      nowFn: undefined,
+      logger: logger as unknown as LeafSummarizerDeps["logger"],
+    });
+
+    // The pass armed and persisted at least one leaf summary (split, not skipped)...
+    expect(store.getSummaries(SCOPE).length).toBeGreaterThanOrEqual(1);
+    // ...and EVERY summarize call received a clamped chunk: ≤ 4 messages (≤ 4_000
+    // stored tokens ≤ the 4_752 effective cap) — never the legacy 11-message chunk.
+    const sizes = callSizes();
+    expect(sizes.length).toBeGreaterThanOrEqual(1);
+    expect(Math.max(...sizes)).toBeLessThanOrEqual(4);
+  });
+
+  it("SUMW-01-L2 (no-op pin, I3): a large-window override summarizer leaves the configured cap binding — legacy chunk sizing byte-identical", async () => {
+    // W=200_000 → min(20_000, 200_000−1_200−2_048) = 20_000 (the configured knob
+    // governs). The ONE summarize call receives the FULL out-of-tail chunk (all 11
+    // evictable messages, 11_000 ≤ 20_000) — exactly the pre-clamp behavior.
+    // Passes pre- AND post-patch BY DESIGN.
+    seedHistory(store, 26, 1_000);
+    const logger = createMockLogger();
+    const { summarize, callSizes } = recordingSummarizer();
+    const deps = depsWithOverrideWindow(200_000, summarize, logger);
+
+    await runLeafPassAfterTurn({
+      store,
+      scope: SCOPE,
+      contextEngine: undefined,
+      getSummarizerDeps: () => deps,
+      budgetWindowTokens: 32_000,
+      now: FIXED_NOW,
+      nowFn: undefined,
+      logger: logger as unknown as LeafSummarizerDeps["logger"],
+    });
+
+    expect(store.getSummaries(SCOPE).length).toBeGreaterThanOrEqual(1);
+    const sizes = callSizes();
+    expect(sizes.length).toBe(1);
+    expect(sizes[0]).toBe(11); // the full out-of-tail chunk — legacy sizing
+  });
+
+  it("SUMW-01-L3 (degenerate): a summarizer window below target+overhead floor-clamps and terminates via the existing too-small path — no summarize call, no throw", async () => {
+    // W=3_000 → 3_000 − 1_200 − 2_048 = −248 < MIN_SHRINKABLE → the cap floors at
+    // 2. The OLDEST out-of-tail message carries 1 stored token, so the selected
+    // chunk is that lone message (adding the next 1_000-token message would exceed
+    // the floored cap) → chunk.tokens 1 < MIN_SHRINKABLE → the existing
+    // "too-small" no-progress terminator ends the drain cleanly. Pre-patch (cap
+    // 20_000): the chunk is the full 10_001-token out-of-tail backlog → it WOULD
+    // summarize → a summary persists → FAILS (RED).
+    expect(MIN_SHRINKABLE_LEAF_CHUNK_TOKENS).toBe(2); // the fixture's premise
+    append(store, userMsg("u0"), 0, 1, 1000); // the 1-token oldest out-of-tail message
+    for (let i = 1; i < 26; i++) {
+      const msg = i % 2 === 1 ? assistantText(`a${i}`) : userMsg(`u${i}`);
+      append(store, msg, i, 1_000, 1000 + i);
+    }
+    // Stored = 1 + 25_000 = 25_001; budget window 32_000 → 0.781 > 0.75 → armed.
+    const logger = createMockLogger();
+    const { summarize, callSizes } = recordingSummarizer();
+    const deps = depsWithOverrideWindow(3_000, summarize, logger);
+
+    await expect(
+      runLeafPassAfterTurn({
+        store,
+        scope: SCOPE,
+        contextEngine: undefined,
+        getSummarizerDeps: () => deps,
+        budgetWindowTokens: 32_000,
+        now: FIXED_NOW,
+        nowFn: undefined,
+        logger: logger as unknown as LeafSummarizerDeps["logger"],
+      }),
+    ).resolves.toBeUndefined(); // no throw — a clean degenerate skip
+
+    expect(store.getSummaries(SCOPE).length).toBe(0);
+    expect(callSizes().length).toBe(0); // the summarizer was never invoked
   });
 });
