@@ -9,6 +9,7 @@ import {
   type MemoryRecall,
 } from "@comis/agent";
 import { createMemoryHandlers } from "./memory-handlers.js";
+import { bindMemoryAskHandler } from "./memory-ask-handlers.js";
 import type { MemoryHandlerDeps } from "./memory-handlers.js";
 // FIX 2: the empty-content rejection must be a typed ValidationError so the RPC
 // dispatcher classifies it as warn/validation (not error/internal).
@@ -76,7 +77,7 @@ describe("createMemoryHandlers - memory management", () => {
   describe("memory.stats", () => {
     it("returns MemoryStats object with all expected fields", async () => {
       const deps = makeDeps();
-      const handlers = createMemoryHandlers(deps);
+      const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
       const result = (await handlers["memory.stats"]!({})) as {
         totalEntries: number;
@@ -91,7 +92,7 @@ describe("createMemoryHandlers - memory management", () => {
 
     it("passes tenant_id and agent_id to memoryApi.stats", async () => {
       const deps = makeDeps();
-      const handlers = createMemoryHandlers(deps);
+      const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
       await handlers["memory.stats"]!({
         tenant_id: "custom-tenant",
@@ -106,7 +107,7 @@ describe("createMemoryHandlers - memory management", () => {
 
     it("uses deps.tenantId as fallback when no tenant_id param", async () => {
       const deps = makeDeps();
-      const handlers = createMemoryHandlers(deps);
+      const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
       await handlers["memory.stats"]!({});
 
@@ -115,7 +116,7 @@ describe("createMemoryHandlers - memory management", () => {
 
     it("works without _trustLevel (agent-level operation)", async () => {
       const deps = makeDeps();
-      const handlers = createMemoryHandlers(deps);
+      const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
       const result = (await handlers["memory.stats"]!({})) as {
         totalEntries: number;
@@ -152,7 +153,7 @@ describe("createMemoryHandlers - memory management", () => {
           stats: vi.fn(() => ({})),
         } as never,
       });
-      const handlers = createMemoryHandlers(deps);
+      const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
       const result = (await handlers["memory.browse"]!({})) as {
         entries: Array<{ id: string; content: string }>;
@@ -163,7 +164,7 @@ describe("createMemoryHandlers - memory management", () => {
 
     it("applies default offset/limit when not specified", async () => {
       const deps = makeDeps();
-      const handlers = createMemoryHandlers(deps);
+      const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
       await handlers["memory.browse"]!({});
 
@@ -174,7 +175,7 @@ describe("createMemoryHandlers - memory management", () => {
 
     it("passes filter params through to inspect", async () => {
       const deps = makeDeps();
-      const handlers = createMemoryHandlers(deps);
+      const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
       await handlers["memory.browse"]!({
         memory_type: "episodic",
@@ -219,7 +220,7 @@ describe("createMemoryHandlers - memory management", () => {
           stats: vi.fn(() => ({})),
         } as never,
       });
-      const handlers = createMemoryHandlers(deps);
+      const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
       const result = (await handlers["memory.browse"]!({ limit: 5 })) as {
         hasMore: boolean;
@@ -235,7 +236,7 @@ describe("createMemoryHandlers - memory management", () => {
 
     it("works without _trustLevel (agent-level operation)", async () => {
       const deps = makeDeps();
-      const handlers = createMemoryHandlers(deps);
+      const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
       const result = (await handlers["memory.browse"]!({})) as {
         entries: unknown[];
@@ -252,7 +253,7 @@ describe("createMemoryHandlers - memory management", () => {
   describe("memory.delete", () => {
     it("rejects memory.delete without admin trust level", async () => {
       const deps = makeDeps();
-      const handlers = createMemoryHandlers(deps);
+      const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
       await expect(
         handlers["memory.delete"]!({ ids: ["mem-1"], _trustLevel: "viewer" }),
@@ -261,7 +262,7 @@ describe("createMemoryHandlers - memory management", () => {
 
     it("rejects memory.delete without any trust level", async () => {
       const deps = makeDeps();
-      const handlers = createMemoryHandlers(deps);
+      const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
       await expect(
         handlers["memory.delete"]!({ ids: ["mem-1"] }),
@@ -270,7 +271,7 @@ describe("createMemoryHandlers - memory management", () => {
 
     it("deletes entries by ID array and returns success count", async () => {
       const deps = makeDeps();
-      const handlers = createMemoryHandlers(deps);
+      const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
       const result = (await handlers["memory.delete"]!({
         ids: ["mem-1", "mem-2"],
@@ -284,7 +285,7 @@ describe("createMemoryHandlers - memory management", () => {
 
     it("throws on empty ids array", async () => {
       const deps = makeDeps();
-      const handlers = createMemoryHandlers(deps);
+      const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
       await expect(
         handlers["memory.delete"]!({ ids: [], _trustLevel: "admin" }),
@@ -293,7 +294,7 @@ describe("createMemoryHandlers - memory management", () => {
 
     it("throws on missing ids parameter", async () => {
       const deps = makeDeps();
-      const handlers = createMemoryHandlers(deps);
+      const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
       await expect(
         handlers["memory.delete"]!({ _trustLevel: "admin" }),
@@ -312,7 +313,7 @@ describe("createMemoryHandlers - memory management", () => {
           }),
         } as never,
       });
-      const handlers = createMemoryHandlers(deps);
+      const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
       const result = (await handlers["memory.delete"]!({
         ids: ["mem-1", "mem-2", "mem-3"],
@@ -332,7 +333,7 @@ describe("createMemoryHandlers - memory management", () => {
   describe("memory.flush", () => {
     it("rejects memory.flush without admin trust level", async () => {
       const deps = makeDeps();
-      const handlers = createMemoryHandlers(deps);
+      const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
       await expect(
         handlers["memory.flush"]!({ _trustLevel: "viewer" }),
@@ -341,7 +342,7 @@ describe("createMemoryHandlers - memory management", () => {
 
     it("rejects memory.flush without any trust level", async () => {
       const deps = makeDeps();
-      const handlers = createMemoryHandlers(deps);
+      const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
       await expect(
         handlers["memory.flush"]!({}),
@@ -350,7 +351,7 @@ describe("createMemoryHandlers - memory management", () => {
 
     it("flushes entries for tenant scope and returns entriesRemoved", async () => {
       const deps = makeDeps();
-      const handlers = createMemoryHandlers(deps);
+      const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
       const result = (await handlers["memory.flush"]!({
         _trustLevel: "admin",
@@ -368,7 +369,7 @@ describe("createMemoryHandlers - memory management", () => {
 
     it("passes agentId when provided", async () => {
       const deps = makeDeps();
-      const handlers = createMemoryHandlers(deps);
+      const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
       const result = (await handlers["memory.flush"]!({
         agent_id: "custom-agent",
@@ -384,7 +385,7 @@ describe("createMemoryHandlers - memory management", () => {
 
     it("uses deps.tenantId as default scope", async () => {
       const deps = makeDeps({ tenantId: "my-tenant" });
-      const handlers = createMemoryHandlers(deps);
+      const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
       await handlers["memory.flush"]!({ _trustLevel: "admin" });
 
@@ -421,7 +422,7 @@ describe("createMemoryHandlers - memory management", () => {
           stats: vi.fn(() => ({})),
         } as never,
       });
-      const handlers = createMemoryHandlers(deps);
+      const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
       const result = (await handlers["memory.export"]!({})) as {
         entries: Array<{ id: string; content: string }>;
@@ -432,7 +433,7 @@ describe("createMemoryHandlers - memory management", () => {
 
     it("applies offset/limit pagination", async () => {
       const deps = makeDeps();
-      const handlers = createMemoryHandlers(deps);
+      const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
       await handlers["memory.export"]!({ offset: 10, limit: 50 });
 
@@ -443,7 +444,7 @@ describe("createMemoryHandlers - memory management", () => {
 
     it("passes tenant_id and agent_id filters", async () => {
       const deps = makeDeps();
-      const handlers = createMemoryHandlers(deps);
+      const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
       await handlers["memory.export"]!({
         tenant_id: "custom-tenant",
@@ -460,7 +461,7 @@ describe("createMemoryHandlers - memory management", () => {
 
     it("returns total, offset, and limit in response", async () => {
       const deps = makeDeps();
-      const handlers = createMemoryHandlers(deps);
+      const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
       const result = (await handlers["memory.export"]!({})) as {
         total: number;
@@ -475,7 +476,7 @@ describe("createMemoryHandlers - memory management", () => {
 
     it("works without _trustLevel (agent-level operation)", async () => {
       const deps = makeDeps();
-      const handlers = createMemoryHandlers(deps);
+      const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
       const result = (await handlers["memory.export"]!({})) as {
         entries: unknown[];
@@ -493,7 +494,7 @@ describe("createMemoryHandlers - memory management", () => {
 describe("memory.store - write validation", () => {
   it("stores normally without validator (backwards compat)", async () => {
     const deps = makeDeps();
-    const handlers = createMemoryHandlers(deps);
+    const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
     const result = (await handlers["memory.store"]!({
       content: "safe content",
@@ -514,7 +515,7 @@ describe("memory.store - write validation", () => {
     // this fact about" was lost on the tool path. The dispatcher injects
     // _callerSessionKey; the handler recovers the userId from it.
     const deps = makeDeps();
-    const handlers = createMemoryHandlers(deps);
+    const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
     await handlers["memory.store"]!({
       content: "user fact stored via tool",
@@ -528,7 +529,7 @@ describe("memory.store - write validation", () => {
 
   it("falls back to 'agent' attribution when no caller session key is present", async () => {
     const deps = makeDeps();
-    const handlers = createMemoryHandlers(deps);
+    const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
     await handlers["memory.store"]!({ content: "fact without session context" });
 
@@ -545,7 +546,7 @@ describe("memory.store - write validation", () => {
         criticalPatterns: [],
       })),
     });
-    const handlers = createMemoryHandlers(deps);
+    const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
     await handlers["memory.store"]!({ content: "clean content" });
 
@@ -569,7 +570,7 @@ describe("memory.store - write validation", () => {
       eventBus: { emit: vi.fn() },
       logger: { warn: vi.fn(), info: vi.fn() },
     });
-    const handlers = createMemoryHandlers(deps);
+    const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
     await handlers["memory.store"]!({ content: "suspicious content" });
 
@@ -592,7 +593,7 @@ describe("memory.store - write validation", () => {
       eventBus: { emit: vi.fn() },
       logger: { warn: vi.fn(), info: vi.fn() },
     });
-    const handlers = createMemoryHandlers(deps);
+    const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
     await expect(
       handlers["memory.store"]!({ content: "dangerous content" }),
@@ -613,7 +614,7 @@ describe("memory.store - write validation", () => {
       eventBus: { emit: mockEmit },
       logger: { warn: vi.fn(), info: vi.fn() },
     });
-    const handlers = createMemoryHandlers(deps);
+    const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
     await handlers["memory.store"]!({ content: "warn content" });
 
@@ -639,7 +640,7 @@ describe("memory.store - write validation", () => {
       eventBus: { emit: mockEmit },
       logger: { warn: vi.fn(), info: vi.fn() },
     });
-    const handlers = createMemoryHandlers(deps);
+    const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
     await expect(
       handlers["memory.store"]!({ content: "critical content" }),
@@ -707,7 +708,7 @@ describe("memory.store - write validation", () => {
 
   it("works without _trustLevel (agent-level operation)", async () => {
     const deps = makeDeps();
-    const handlers = createMemoryHandlers(deps);
+    const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
     const result = (await handlers["memory.store"]!({
       content: "agent store content",
@@ -741,7 +742,7 @@ describe("memory.store - write validation", () => {
   describe("empty-content rejection is a validation (caller) error, not internal", () => {
     async function captureStoreError(content: unknown): Promise<unknown> {
       const deps = makeDeps();
-      const handlers = createMemoryHandlers(deps);
+      const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
       try {
         await handlers["memory.store"]!(
           content === undefined ? {} : ({ content } as Record<string, unknown>),
@@ -855,7 +856,7 @@ describe("createMemoryHandlers - diagnostics", () => {
   describe("admin gate", () => {
     it("memory.recall_trace rejects a non-admin caller", async () => {
       const { deps } = makeDiagDeps();
-      const handlers = createMemoryHandlers(deps);
+      const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
       await expect(
         handlers["memory.recall_trace"]!({ session_key: "s1", _trustLevel: "viewer" }),
       ).rejects.toThrow(/Admin access required/);
@@ -863,7 +864,7 @@ describe("createMemoryHandlers - diagnostics", () => {
 
     it("memory.observations rejects a non-admin caller", async () => {
       const { deps, listObservations } = makeDiagDeps();
-      const handlers = createMemoryHandlers(deps);
+      const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
       await expect(
         handlers["memory.observations"]!({ _trustLevel: "viewer" }),
       ).rejects.toThrow(/Admin access required/);
@@ -873,7 +874,7 @@ describe("createMemoryHandlers - diagnostics", () => {
 
     it("memory.entities rejects a non-admin caller", async () => {
       const { deps, listEntities } = makeDiagDeps();
-      const handlers = createMemoryHandlers(deps);
+      const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
       await expect(
         handlers["memory.entities"]!({ _trustLevel: "viewer" }),
       ).rejects.toThrow(/Admin access required/);
@@ -882,7 +883,7 @@ describe("createMemoryHandlers - diagnostics", () => {
 
     it("memory.recall_stats rejects a non-admin caller", async () => {
       const { deps } = makeDiagDeps();
-      const handlers = createMemoryHandlers(deps);
+      const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
       await expect(
         handlers["memory.recall_stats"]!({ _trustLevel: "viewer" }),
       ).rejects.toThrow(/Admin access required/);
@@ -895,7 +896,7 @@ describe("createMemoryHandlers - diagnostics", () => {
   describe("memory.observations", () => {
     it("returns provenance rows scoped to deps.tenantId when no tenant_id param", async () => {
       const { deps, listObservations } = makeDiagDeps();
-      const handlers = createMemoryHandlers(deps);
+      const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
       const result = (await handlers["memory.observations"]!({
         _trustLevel: "admin",
@@ -917,7 +918,7 @@ describe("createMemoryHandlers - diagnostics", () => {
 
     it("truncates the content preview to <=500 chars (never the full body)", async () => {
       const { deps } = makeDiagDeps();
-      const handlers = createMemoryHandlers(deps);
+      const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
       const result = (await handlers["memory.observations"]!({
         _trustLevel: "admin",
@@ -928,7 +929,7 @@ describe("createMemoryHandlers - diagnostics", () => {
 
     it("honors an explicit tenant_id and the default agent + limit", async () => {
       const { deps, listObservations } = makeDiagDeps();
-      const handlers = createMemoryHandlers(deps);
+      const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
       await handlers["memory.observations"]!({
         _trustLevel: "admin",
@@ -946,7 +947,7 @@ describe("createMemoryHandlers - diagnostics", () => {
   describe("memory.entities", () => {
     it("returns the entity graph scoped to (tenant, agent)", async () => {
       const { deps, listEntities } = makeDiagDeps();
-      const handlers = createMemoryHandlers(deps);
+      const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
       const result = (await handlers["memory.entities"]!({
         _trustLevel: "admin",
@@ -968,7 +969,7 @@ describe("createMemoryHandlers - diagnostics", () => {
 
     it("applies the default agent + default limit (100)", async () => {
       const { deps, listEntities } = makeDiagDeps();
-      const handlers = createMemoryHandlers(deps);
+      const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
       await handlers["memory.entities"]!({ _trustLevel: "admin" });
 
@@ -982,7 +983,7 @@ describe("createMemoryHandlers - diagnostics", () => {
   describe("memory.recall_stats", () => {
     it("returns the snapshot plus derived rerankFallbackRate + recallHitRate", async () => {
       const { deps } = makeDiagDeps();
-      const handlers = createMemoryHandlers(deps);
+      const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
       const result = (await handlers["memory.recall_stats"]!({
         _trustLevel: "admin",
@@ -1007,7 +1008,7 @@ describe("createMemoryHandlers - diagnostics", () => {
 
     it("returns zeroed counters + 0 rates when recallCounters is unset", async () => {
       const { deps } = makeDiagDeps({ recallCounters: undefined });
-      const handlers = createMemoryHandlers(deps);
+      const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
       const result = (await handlers["memory.recall_stats"]!({
         _trustLevel: "admin",
@@ -1044,7 +1045,7 @@ describe("createMemoryHandlers - diagnostics", () => {
       // returned a bare empty because diagnostics.recallTrace.enabled
       // defaults false — indistinguishable from "no recalls happened".
       const { deps } = makeDiagDeps(); // no dataDir → no trace file; gate unset → disabled
-      const handlers = createMemoryHandlers(deps);
+      const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
       const result = (await handlers["memory.recall_trace"]!({
         _trustLevel: "admin",
@@ -1058,7 +1059,7 @@ describe("createMemoryHandlers - diagnostics", () => {
 
     it("an enabled recorder with no matching traces hints 're-run', not 'enable'", async () => {
       const { deps } = makeDiagDeps({ recallTraceEnabled: true });
-      const handlers = createMemoryHandlers(deps);
+      const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
       const result = (await handlers["memory.recall_trace"]!({
         _trustLevel: "admin",
@@ -1075,7 +1076,7 @@ describe("createMemoryHandlers - diagnostics", () => {
         { ts: "t", sessionId: "sess-A", traceId: "t-A", agentId: "default", finalCount: 2 },
       ]);
       const { deps } = makeDiagDeps({ dataDir, recallTraceEnabled: true });
-      const handlers = createMemoryHandlers(deps);
+      const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
       const result = (await handlers["memory.recall_trace"]!({
         _trustLevel: "admin",
@@ -1089,7 +1090,7 @@ describe("createMemoryHandlers - diagnostics", () => {
 
     it("requires at least one of session_key / trace_id", async () => {
       const { deps } = makeDiagDeps();
-      const handlers = createMemoryHandlers(deps);
+      const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
       await expect(
         handlers["memory.recall_trace"]!({ _trustLevel: "admin" }),
       ).rejects.toThrow(/at least one of session_key|session_key.*trace_id|required/i);
@@ -1106,7 +1107,7 @@ describe("createMemoryHandlers - diagnostics", () => {
         { ts: "2026-05-29T00:01:00.000Z", sessionId: "sess-B", traceId: "t-B", agentId: "default", finalCount: 1 },
       ]);
       const { deps } = makeDiagDeps({ dataDir });
-      const handlers = createMemoryHandlers(deps);
+      const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
       const result = (await handlers["memory.recall_trace"]!({
         _trustLevel: "admin",
@@ -1125,7 +1126,7 @@ describe("createMemoryHandlers - diagnostics", () => {
         { ts: "t", sessionId: "sess-A", sessionKey: "tenant-1:user:chan", traceId: "t-A", agentId: "default" },
       ]);
       const { deps } = makeDiagDeps({ dataDir });
-      const handlers = createMemoryHandlers(deps);
+      const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
       const result = (await handlers["memory.recall_trace"]!({
         _trustLevel: "admin",
@@ -1148,7 +1149,7 @@ describe("createMemoryHandlers - diagnostics", () => {
         { ts: "t", seq: 3, sessionId: "s", traceId: "t-X", agentId: "default" },
       ]);
       const { deps } = makeDiagDeps({ dataDir });
-      const handlers = createMemoryHandlers(deps);
+      const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
       const result = (await handlers["memory.recall_trace"]!({
         _trustLevel: "admin",
@@ -1171,7 +1172,7 @@ describe("createMemoryHandlers - diagnostics", () => {
         { ts: "t", sessionId: "sk-A", sessionKey: "sk-A", traceId: "t-A", agentId: "default", tenantId: "tenant-OTHER" },
       ]);
       const { deps } = makeDiagDeps({ dataDir });
-      const handlers = createMemoryHandlers(deps);
+      const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
       const result = (await handlers["memory.recall_trace"]!({
         _trustLevel: "admin",
@@ -1191,7 +1192,7 @@ describe("createMemoryHandlers - diagnostics", () => {
         `{"ts":"t","sessionId":"sess-A","traceId":"t-A"}\n{ this is not json\n`,
       );
       const { deps } = makeDiagDeps({ dataDir: dir });
-      const handlers = createMemoryHandlers(deps);
+      const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
       const result = (await handlers["memory.recall_trace"]!({
         _trustLevel: "admin",
@@ -1297,7 +1298,7 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
       buildDialecticRecall: recall.build,
       dialecticSeam: seam.seam,
     });
-    const handlers = createMemoryHandlers(deps);
+    const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
     const result = (await handlers["memory.ask"]!({
       question: "what is x",
@@ -1321,7 +1322,7 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
       buildDialecticRecall: recall.build,
       dialecticSeam: seam.seam,
     });
-    const handlers = createMemoryHandlers(deps);
+    const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
     const result = (await handlers["memory.ask"]!({
       question: "what timezone",
@@ -1344,7 +1345,7 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
       buildDialecticRecall: recall.build,
       dialecticSeam: seam.seam,
     });
-    const handlers = createMemoryHandlers(deps);
+    const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
     const result = (await handlers["memory.ask"]!({
       question: "q",
@@ -1371,7 +1372,7 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
       // external must be allowed into the grounding for this contradiction test —
       // (the recall stub already returns it; the handler does not re-filter trust).
     });
-    const handlers = createMemoryHandlers(deps);
+    const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
     await handlers["memory.ask"]!({
       question: "timezone?",
@@ -1397,7 +1398,7 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
       dialecticSeam: seam.seam,
     });
     const searchSpy = deps.memoryApi.search as ReturnType<typeof vi.fn>;
-    const handlers = createMemoryHandlers(deps);
+    const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
     await handlers["memory.ask"]!({
       question: "q",
@@ -1418,7 +1419,7 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
       logger: noopLogger,
       buildDialecticRecall: recall.build,
     });
-    const handlers = createMemoryHandlers(deps);
+    const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
     const result = (await handlers["memory.ask"]!({
       question: "q",
@@ -1451,7 +1452,7 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
       // createDialecticSeam is 2-arg, so adapt it (the wiring does this with the resolved agent).
       dialecticSeam: (_agentId, q, g) => realSeam(q, g),
     });
-    const handlers = createMemoryHandlers(deps);
+    const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
     const result = (await handlers["memory.ask"]!({
       question: "q",
@@ -1474,7 +1475,7 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
       buildDialecticRecall: recall.build,
       dialecticSeam: seam.seam,
     });
-    const handlers = createMemoryHandlers(deps);
+    const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
     const result = (await handlers["memory.ask"]!({
       question: "when is the dentist appointment",
@@ -1498,7 +1499,7 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
       buildDialecticRecall: recall.build,
       dialecticSeam: seam.seam,
     });
-    const handlers = createMemoryHandlers(deps);
+    const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
     await handlers["memory.ask"]!({ question: "q", _agentId: "agent-1" });
 
@@ -1526,7 +1527,7 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
       buildDialecticRecall: recall.build as unknown as MemoryHandlerDeps["buildDialecticRecall"],
       dialecticSeam: seam.seam,
     });
-    const handlers = createMemoryHandlers(deps);
+    const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
     // Agent path: formatted caller session key → parsed back to the object.
     await handlers["memory.ask"]!({
@@ -1549,7 +1550,7 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
       buildDialecticRecall: recall.build,
       dialecticSeam: seam.seam,
     });
-    const handlers = createMemoryHandlers(deps);
+    const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
     const result = (await handlers["memory.ask"]!({
       question: "q",
@@ -1572,7 +1573,7 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
       child: () => capturingLogger,
     } as unknown as ComisLogger;
     const deps = makeDeps({ logger: capturingLogger }); // no seam, no recall factory
-    const handlers = createMemoryHandlers(deps);
+    const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
     const result = (await handlers["memory.ask"]!({
       question: "q",
@@ -1603,7 +1604,7 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
       buildDialecticRecall: recall.build,
       dialecticSeam: seam.seam,
     });
-    const handlers = createMemoryHandlers(deps);
+    const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
     await handlers["memory.ask"]!({
       question: "SECRET-QUESTION-TEXT",
@@ -1635,7 +1636,7 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
       buildDialecticRecall: recall.build,
       dialecticSeam: seam.seam,
     });
-    const handlers = createMemoryHandlers(deps);
+    const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
     await handlers["memory.ask"]!({
       question: "q",
@@ -1663,7 +1664,7 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
       buildDialecticRecall: recall.build,
       dialecticSeam: seam.seam,
     });
-    const handlers = createMemoryHandlers(deps);
+    const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
     const result = (await handlers["memory.ask"]!({
       question: "tz?",
@@ -1690,7 +1691,7 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
       dialecticSeam: seam.seam,
       dialecticMaxRecall: () => 3,
     });
-    const handlers = createMemoryHandlers(deps);
+    const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
     await handlers["memory.ask"]!({
       question: "q",
@@ -1720,7 +1721,7 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
       dialecticSeam: seam.seam,
       dialecticMaxRecall: () => 10,
     });
-    const handlers = createMemoryHandlers(deps);
+    const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
     await expect(
       handlers["memory.ask"]!({
@@ -1746,7 +1747,7 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
       dialecticSeam: seam.seam,
       dialecticMaxRecall: () => 10,
     });
-    const handlers = createMemoryHandlers(deps);
+    const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
     // 2.7 is rejected by the tightened contract too; assert it is rejected (the int() gate).
     await expect(
@@ -1771,7 +1772,7 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
       dialecticSeam: seam.seam,
       dialecticMaxRecall: () => 4,
     });
-    const handlers = createMemoryHandlers(deps);
+    const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
     await handlers["memory.ask"]!({
       question: "q",
@@ -1809,7 +1810,7 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
       dialecticSeam: seam.seam,
       eventBus: { emit } as never,
     });
-    const handlers = createMemoryHandlers(deps);
+    const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
     const result = (await handlers["memory.ask"]!({
       question: "q",
@@ -1863,7 +1864,7 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
       dialecticSeam: seam.seam,
       eventBus: { emit } as never,
     });
-    const handlers = createMemoryHandlers(deps);
+    const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
     await handlers["memory.ask"]!({
       question: "q",
@@ -1896,7 +1897,7 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
       dialecticSeam: seam.seam,
       eventBus: { emit } as never,
     });
-    const handlers = createMemoryHandlers(deps);
+    const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
     const result = (await handlers["memory.ask"]!({
       question: "q",
@@ -1920,7 +1921,7 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
       dialecticSeam: seam.seam,
       // eventBus intentionally omitted (undefined).
     });
-    const handlers = createMemoryHandlers(deps);
+    const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
     const result = (await handlers["memory.ask"]!({
       question: "q",
@@ -1943,7 +1944,7 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
       dialecticSeam: seam.seam,
       eventBus: { emit } as never,
     });
-    const handlers = createMemoryHandlers(deps);
+    const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
     await handlers["memory.ask"]!({
       question: "SECRET-QUESTION-TEXT",

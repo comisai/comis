@@ -69,7 +69,6 @@ const OBSERVATION_PREVIEW_MAX = 500;
 // Single source of truth: MemoryApiDeps (shared with context-handlers).
 // Handler bodies and call sites are unchanged by the alias.
 import type { MemoryApiDeps as MemoryHandlerDeps } from "./types.js";
-import { bindMemoryAskHandler } from "./memory-ask-handlers.js";
 export type { MemoryHandlerDeps };
 
 // ---------------------------------------------------------------------------
@@ -81,8 +80,6 @@ export type { MemoryHandlerDeps };
  */
 export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, RpcHandler> {
   return {
-    // memory.ask — the dialectic (extracted to memory-ask-handlers.ts for the file-size cap).
-    ...bindMemoryAskHandler(deps),
     [MemorySearchFilesContract.method]: async (rawParams) => {
       const userParams = stripInternalFields(rawParams);
       const params = MemorySearchFilesContract.request.parse(userParams);
