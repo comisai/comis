@@ -21,13 +21,15 @@
  *      re-inserted (never dropped), and a cut===0 oldest message escalates
  *      through the Level-2/3 ladder (convergence — never a permanent skip).
  *   2. lcd-compaction-trigger.ts (LCD leaf): the chunk cap is clamped to
- *      `min(leafChunkTokens, summarizerWindow − leafTargetTokens − OVERHEAD)`,
- *      floored at MIN_SHRINKABLE_LEAF_CHUNK_TOKENS (the degenerate-window
- *      terminator); the bounded drain + next-turn re-arming split the backlog.
+ *      `min(leafChunkTokens, summarizerWindow − leafTargetTokens − OVERHEAD −
+ *      prevTokens)` (review WR-03: the ACTUAL threaded previousSummary tokens
+ *      — OVERHEAD covers only the instruction template), floored at
+ *      MIN_SHRINKABLE_LEAF_CHUNK_TOKENS; the bounded drain + next-turn
+ *      re-arming split the backlog.
  *   3. lcd-condense-trigger.ts (LCD condense): the selected run is prefix-trimmed
  *      to the longest child prefix whose Σ tokenCount fits `summarizerWindow −
- *      condensedTargetTokens − OVERHEAD` (keep < 2 → honest skip); trimmed
- *      children survive in the store for a later pass.
+ *      condensedTargetTokens − OVERHEAD − prevTokens` (keep < 2 → honest skip);
+ *      trimmed children survive in the store for a later pass.
  *
  * THE REGRESSION CLASS PREVENTED: a small RESOLVED summarizer fed an over-window
  * span → an opaque provider error or silent truncation, surfacing live as
@@ -55,37 +57,47 @@ const GRID_WINDOWS = [8_000, 16_000, 32_000, 131_072, 200_000] as const;
 
 describe("compaction span invariant (SUMW-01): window-independent arithmetic grid", () => {
   const cfg = ContextEngineConfigSchema.parse({});
+  // Review WR-03: the previousSummary dimension — the budget subtracts the
+  // ACTUAL threaded previousSummary tokens (the flat OVERHEAD covers only the
+  // template). Grid: none / a leaf-target-sized one / a condense-target-sized
+  // one (previousSummaryContent returns the last summary of ANY kind).
+  const PREV_TOKENS = [0, 1_200, 2_000] as const;
 
-  it("LEAF: clampedLeafChunk + leafTargetTokens + SUMMARIZER_PROMPT_OVERHEAD_TOKENS ≤ W for every grid window", () => {
+  it("LEAF: clampedLeafChunk + leafTargetTokens + OVERHEAD + prevTokens ≤ W for every grid window × previousSummary size", () => {
     for (const W of GRID_WINDOWS) {
-      // Premise guard: every grid window is above the degenerate floor (where
-      // the MAX floor would bind and the pass terminates via "too-small" instead
-      // of summarizing — the inequality deliberately does not cover that branch).
-      expect(W - cfg.leafTargetTokens - SUMMARIZER_PROMPT_OVERHEAD_TOKENS).toBeGreaterThanOrEqual(
-        MIN_SHRINKABLE_LEAF_CHUNK_TOKENS,
-      );
-      // The exact clamp formula from maybeRunLeafPass (lcd-compaction-trigger.ts).
-      const clampedLeafChunk = Math.max(
-        MIN_SHRINKABLE_LEAF_CHUNK_TOKENS,
-        Math.min(cfg.leafChunkTokens, W - cfg.leafTargetTokens - SUMMARIZER_PROMPT_OVERHEAD_TOKENS),
-      );
-      // The invariant: chunk + summary target + prompt overhead fits the window.
-      expect(clampedLeafChunk + cfg.leafTargetTokens + SUMMARIZER_PROMPT_OVERHEAD_TOKENS).toBeLessThanOrEqual(W);
-      // And the clamp never exceeds the configured knob (the no-op pin direction).
-      expect(clampedLeafChunk).toBeLessThanOrEqual(cfg.leafChunkTokens);
+      for (const prev of PREV_TOKENS) {
+        // Premise guard: every grid point is above the degenerate floor (where
+        // the MAX floor would bind and the pass terminates via "too-small" /
+        // the WR-02 deterministic floor instead — the inequality deliberately
+        // does not cover that branch).
+        expect(W - cfg.leafTargetTokens - SUMMARIZER_PROMPT_OVERHEAD_TOKENS - prev).toBeGreaterThanOrEqual(
+          MIN_SHRINKABLE_LEAF_CHUNK_TOKENS,
+        );
+        // The exact clamp formula from runOneLeafPass (lcd-compaction-trigger.ts).
+        const clampedLeafChunk = Math.max(
+          MIN_SHRINKABLE_LEAF_CHUNK_TOKENS,
+          Math.min(cfg.leafChunkTokens, W - cfg.leafTargetTokens - SUMMARIZER_PROMPT_OVERHEAD_TOKENS - prev),
+        );
+        // The invariant: chunk + summary target + template + previousSummary fits W.
+        expect(clampedLeafChunk + cfg.leafTargetTokens + SUMMARIZER_PROMPT_OVERHEAD_TOKENS + prev).toBeLessThanOrEqual(W);
+        // And the clamp never exceeds the configured knob (the no-op pin direction).
+        expect(clampedLeafChunk).toBeLessThanOrEqual(cfg.leafChunkTokens);
+      }
     }
   });
 
-  it("CONDENSE: any kept child prefix (Σ ≤ childTokenBudget) + condensedTargetTokens + OVERHEAD ≤ W for every grid window", () => {
+  it("CONDENSE: any kept child prefix (Σ ≤ childTokenBudget) + condensedTargetTokens + OVERHEAD + prevTokens ≤ W for every grid window × previousSummary size", () => {
     for (const W of GRID_WINDOWS) {
-      // The exact budget formula from maybeRunCondensePass (lcd-condense-trigger.ts).
-      const childTokenBudget = W - cfg.condensedTargetTokens - SUMMARIZER_PROMPT_OVERHEAD_TOKENS;
-      // Feasibility: every grid window leaves a positive child budget (the
-      // infeasible-window skip is the C2 behavioral fixture).
-      expect(childTokenBudget).toBeGreaterThan(0);
-      // The trim keeps Σ child tokenCount ≤ childTokenBudget by construction, so
-      // the summarizer input + target + overhead always fits the window.
-      expect(childTokenBudget + cfg.condensedTargetTokens + SUMMARIZER_PROMPT_OVERHEAD_TOKENS).toBeLessThanOrEqual(W);
+      for (const prev of PREV_TOKENS) {
+        // The exact budget formula from maybeRunCondensePass (lcd-condense-trigger.ts).
+        const childTokenBudget = W - cfg.condensedTargetTokens - SUMMARIZER_PROMPT_OVERHEAD_TOKENS - prev;
+        // Feasibility: every grid point leaves a positive child budget (the
+        // infeasible-window skip is the C2 behavioral fixture).
+        expect(childTokenBudget).toBeGreaterThan(0);
+        // The trim keeps Σ child tokenCount ≤ childTokenBudget by construction, so
+        // the summarizer input + target + template + previousSummary fits W.
+        expect(childTokenBudget + cfg.condensedTargetTokens + SUMMARIZER_PROMPT_OVERHEAD_TOKENS + prev).toBeLessThanOrEqual(W);
+      }
     }
   });
 });

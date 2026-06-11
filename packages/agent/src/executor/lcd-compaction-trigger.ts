@@ -49,8 +49,10 @@ import type {
   TypedEventBus,
 } from "@comis/core";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { Message } from "@earendil-works/pi-ai";
 import type { ContextEngineConfig } from "@comis/core";
 import { ContextEngineConfigSchema } from "@comis/core";
+import { estimateMessageTokens } from "../safety/token-estimator.js";
 import {
   selectLeafChunk,
   summarizeLeafChunk,
@@ -390,13 +392,18 @@ async function runOneLeafPass(
 
   // SUMW-01: clamp the chunk cap to the RESOLVED summarizer's window
   // (override-aware — never the getModel() session-primary snapshot) minus the
-  // summary target + prompt overhead, so a small compaction override is never
-  // fed an over-window chunk; the bounded drain + next-turn re-arming split the
-  // backlog. Review WR-05 finite guard (parity with the condense sibling's
-  // Number.isFinite(childTokenBudget) no-op): a non-finite candidate keeps the
-  // CONFIGURED cap — NaN would otherwise silently disable selectLeafChunk's
-  // break condition and select the whole out-of-tail history as one chunk.
-  const capCandidate = summarizerWindow - opts.leafTargetTokens - SUMMARIZER_PROMPT_OVERHEAD_TOKENS;
+  // summary target + prompt-template overhead + the ACTUAL previousSummary
+  // threaded into THIS pass's prompt (review WR-03: the flat 2_048 covers only
+  // the template — the last summary of any kind can be ~condense-target-sized,
+  // read per pass since each pass appends one). Review WR-05 finite guard
+  // (parity with the condense sibling's Number.isFinite no-op): a non-finite
+  // candidate keeps the CONFIGURED cap — NaN would otherwise silently disable
+  // selectLeafChunk's break condition and select the whole out-of-tail history.
+  const previousSummary = previousSummaryContent(store, scope);
+  const prevTokens = previousSummary === undefined
+    ? 0
+    : estimateMessageTokens({ role: "user", content: previousSummary } as Message);
+  const capCandidate = summarizerWindow - opts.leafTargetTokens - SUMMARIZER_PROMPT_OVERHEAD_TOKENS - prevTokens;
   const leafChunkCap = Number.isFinite(capCandidate)
     ? Math.max(MIN_SHRINKABLE_LEAF_CHUNK_TOKENS, Math.min(opts.leafChunkTokens, capCandidate))
     : opts.leafChunkTokens;
@@ -438,12 +445,9 @@ async function runOneLeafPass(
       },
       "LCD leaf pass skipped: ordinal-window divergence",
     );
-    // Phase 160 I1: emit a content-free context:dag_degraded so the leaf-window
-    // divergence persists as a health_signal row (queryable by the fleet lens)
-    // instead of being a Pino-only WARN. Identifiers + reason + timing only —
-    // NEVER message/summary content (mirrors the context:dag_compacted emit
-    // below). Reuse the injected clock for durationMs/timestamp (the globals gate
-    // bans Date.now()); a scalar-only caller degrades durationMs to 0.
+    // Phase 160 I1: content-free context:dag_degraded so the divergence persists
+    // as a health_signal row (fleet-lens queryable), not a Pino-only WARN.
+    // Identifiers + reason + timing only; injected clock (the globals gate).
     eventBus?.emit("context:dag_degraded", {
       conversationId,
       agentId: scope.agentId,
@@ -564,12 +568,12 @@ async function runOneLeafPass(
 
   // Summarize (3-level escalation; non-fatal inside — always returns a result).
   // SUM-02: resolve tier-aware effective leaf target (nano ≤256, small ≤400, mid ≤800, frontier uncapped).
+  // `previousSummary` is the SAME read the chunk-cap budget above accounted (WR-03).
   const effectiveLeafTarget = resolveSummaryTargetTokens(
     summarizerDeps.capabilityClass ?? "frontier",
     0, // leaf depth is always 0
     opts.leafTargetTokens,
   );
-  const previousSummary = previousSummaryContent(store, scope);
   const result = await summarizeLeafChunk(chunkItems, summarizerDeps, {
     reserveTokens: effectiveLeafTarget,
     previousSummary,

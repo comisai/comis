@@ -262,13 +262,18 @@ export const DEFAULT_COMPACTION_PREFIX_ANCHOR_TURNS = 2;
 export const MIN_MIDDLE_MESSAGES_FOR_COMPACTION = 3;
 
 /** SUMW-01 (Phase 178): reserved token allowance for the summarizer prompt
- *  OVERHEAD around the input span — the SDK generateSummary instruction
- *  template (order of a few hundred tokens) plus the threaded previousSummary
- *  (bounded by the pass's target tokens: 1_200 leaf / 2_000 condense defaults).
- *  The SDK exposes no overhead number, so this is a deliberate conservative
- *  reserve: too LARGE only shrinks chunks (more bounded drain passes — benign);
- *  too SMALL risks marginal overflow on exactly-window-sized spans. 2_048
- *  matches the MIN_SAFETY_MARGIN_TOKENS magnitude convention; the
+ *  TEMPLATE around the input span — the SDK generateSummary instruction
+ *  template (order of a few hundred tokens), reserved with margin. The
+ *  threaded previousSummary is NOT covered by this constant (review WR-03: it
+ *  can itself be ~target-sized — 1_200 leaf / 2_000 condense defaults, and
+ *  `condensedTargetTokens` allows 10_000 — so a flat reserve cannot cover it
+ *  by its own arithmetic); both LCD clamp sites subtract the ACTUAL
+ *  previousSummary tokens separately. The pipeline span clamp threads no
+ *  previousSummary, so there this constant covers the whole overhead. The SDK
+ *  exposes no overhead number, so this is a deliberate conservative reserve:
+ *  too LARGE only shrinks chunks (more bounded drain passes — benign); too
+ *  SMALL risks marginal overflow on exactly-window-sized spans. 2_048 matches
+ *  the MIN_SAFETY_MARGIN_TOKENS magnitude convention; the
  *  compaction-span-invariant test is the safety net.
  *  Used by: llm-compaction (pipeline span clamp), lcd-compaction-trigger
  *  (leaf chunk clamp), lcd-condense-trigger (condense prefix clamp). */

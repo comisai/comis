@@ -1262,4 +1262,67 @@ describe("SUMW-01: condense prefix clamp", () => {
     const depthById = new Map(store.getSummaries(SCOPE).map((s) => [s.summaryId, s.depth]));
     expect(items.filter((it) => it.refKind === "summary" && depthById.get(it.refId) === 1).length).toBe(0);
   });
+
+  it("WR-03: a target-depth previousSummary shrinks the child budget — the trim accounts the ACTUAL threaded prompt contents", async () => {
+    // The flat 2_048 overhead covers only the instruction TEMPLATE; the
+    // threaded previousSummary at the target depth is ~condensedTargetTokens-
+    // sized — feeding both against the flat reserve overflowed near-exactly-
+    // filled windows. Layout: 12 leaves → 6 depth-1 children (1_200 each);
+    // the FIRST 2 condense into a pre-existing depth-2 whose CONTENT is
+    // 8_000 chars ≈ 2_000 tokens (what previousSummaryAtDepth(…, 2) threads
+    // into the NEXT depth-2 condense prompt); the remaining 4 depth-1s form
+    // ONE contiguous run.
+    seedHistory(store, 40, 100);
+    seedContiguousLeaves(store, 12, 2);
+    const d1ids: string[] = [];
+    for (let i = 0; i < 6; i++) d1ids.push(collapseCondensedWithTokens(i - 1, 2, 1_200));
+    // Collapse the first 2 depth-1 refs into the pre-existing depth-2 prev.
+    const itemsNow = store.getContextItems(SCOPE);
+    const depthByIdNow = new Map(store.getSummaries(SCOPE).map((s) => [s.summaryId, s.depth]));
+    const d1refs = itemsNow.filter((it) => it.refKind === "summary" && depthByIdNow.get(it.refId) === 1);
+    const prevId = store.appendCondensedSummary({
+      scope: SCOPE,
+      tokenCount: 2_000,
+      content: "X".repeat(8_000), // estimateMessageTokens: 8_000 / 4 = 2_000
+      descendantCount: 2,
+      earliestAt: 1_000,
+      latestAt: 1_001,
+      fileIds: [],
+      fallback: false,
+      taint: false,
+      createdAt: FIXED_NOW,
+      startOrdinal: d1refs[0]!.ordinal,
+      endOrdinal: d1refs[1]!.ordinal,
+      childSummaryIds: [d1refs[0]!.refId, d1refs[1]!.refId],
+      depth: 2,
+    });
+    const logger = createMockLogger();
+    const { bus } = makeEventBus();
+    const deps = depsWithOverrideWindow(9_000, shortSummarizer(), logger);
+
+    await maybeRunCondensePass(
+      store,
+      SCOPE,
+      condenseOpts({ condensedMinFanout: 4, windowTokens: 200_000 }),
+      deps,
+      FIXED_NOW,
+      undefined,
+      logger as unknown as LeafSummarizerDeps["logger"],
+      bus,
+    );
+
+    // Child budget = 9_000 − 2_000 (target) − 2_048 (template) − 2_000
+    // (previousSummary) = 2_952 → keep 2 (2_400 ≤ 2_952 < 3_600). Pre-fix the
+    // budget ignored the previousSummary (4_952 → all 4 kept): children +
+    // target + template + prev = 4_800 + 2_000 + 2_048 + 2_000 = 10_848 >
+    // 9_000 — the provider-overflow class SUMW-01 exists to eliminate.
+    const newDepth2 = store
+      .getSummaries(SCOPE)
+      .filter((s) => s.kind === "condensed" && s.depth === 2 && s.summaryId !== prevId);
+    expect(newDepth2.length).toBe(1);
+    const rows = db
+      .prepare("SELECT child_summary_id FROM lcd_summary_parents WHERE parent_summary_id = ?")
+      .all(newDepth2[0]!.summaryId) as Array<{ child_summary_id: string }>;
+    expect(rows.map((r) => r.child_summary_id).sort()).toEqual([d1ids[2], d1ids[3]].sort());
+  });
 });

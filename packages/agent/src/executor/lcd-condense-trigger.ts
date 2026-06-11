@@ -59,6 +59,8 @@ import type {
   ContextEngineConfig,
 } from "@comis/core";
 import { ContextEngineConfigSchema } from "@comis/core";
+import type { Message } from "@earendil-works/pi-ai";
+import { estimateMessageTokens } from "../safety/token-estimator.js";
 import {
   selectCondensableTier,
   summarizeCondensedChunk,
@@ -208,15 +210,31 @@ export async function maybeRunCondensePass(
     // SUMW-01: prefix-trim the selected run to the LONGEST child prefix whose
     // Σ tokenCount fits the RESOLVED summarizer's window (override-aware via
     // resolveSummarizerWindowTokens — never the getModel() session-primary
-    // snapshot) minus the condense target + prompt overhead, so a condense pass
-    // never concatenates more child tokens than the summarizer that actually
-    // runs can read. Ordinal integrity (T-178-10): a prefix of a contiguous run
-    // stays contiguous, so [startOrdinal, children[keep-1].ordinal] remains a
-    // valid range-replace window and the trimmed children survive untouched in
-    // the store for a later pass. The no-trim path is byte-identical
+    // snapshot) minus the condense target + prompt-template overhead + the
+    // ACTUAL threaded previousSummary, so a condense pass never concatenates
+    // more child tokens than the summarizer that actually runs can read.
+    // Ordinal integrity (T-178-10): a prefix of a contiguous run stays
+    // contiguous, so [startOrdinal, children[keep-1].ordinal] remains a valid
+    // range-replace window and the trimmed children survive untouched in the
+    // store for a later pass. The no-trim path is byte-identical
     // (effectiveRun === run); pressureHigh and selectCondensableTier are unchanged.
     const summarizerWindow = resolveSummarizerWindowTokens(summarizerDeps);
-    const childTokenBudget = summarizerWindow - opts.condensedTargetTokens - SUMMARIZER_PROMPT_OVERHEAD_TOKENS;
+    // Review WR-03: the target depth and its previousSummary are knowable
+    // BEFORE the budget — a run's children share ONE depth by construction (a
+    // SummaryRefRun breaks on any depth change), so the condensed depth is
+    // run.depth + 1 regardless of how the trim lands. Subtract the ACTUAL
+    // previousSummary tokens: the flat 2_048 overhead covers only the
+    // instruction TEMPLATE, while previousSummary at this depth is
+    // ~condensedTargetTokens-sized at defaults (2_000; the knob allows
+    // 10_000) — hoping the flat reserve covered both was short by its own
+    // arithmetic and overflowed near-exactly-filled windows.
+    const depth = run.depth + 1;
+    const previousSummary = previousSummaryAtDepth(summaries, depth);
+    const prevTokens = previousSummary === undefined
+      ? 0
+      : estimateMessageTokens({ role: "user", content: previousSummary } as Message);
+    const childTokenBudget =
+      summarizerWindow - opts.condensedTargetTokens - SUMMARIZER_PROMPT_OVERHEAD_TOKENS - prevTokens;
     let effectiveRun = run;
     if (Number.isFinite(childTokenBudget)) {
       let acc = 0;
@@ -251,10 +269,11 @@ export async function maybeRunCondensePass(
       }
     }
 
-    // Derive the condensed node's metadata from the children (RESEARCH A6):
-    // depth = max(child depth) + 1; taint = OR(children.taint); descendantCount /
-    // time-range are recomputed STORE-SIDE from the child rows (advisory here).
-    const depth = Math.max(...effectiveRun.children.map((c) => c.depth)) + 1;
+    // Derive the rest of the condensed node's metadata from the KEPT children
+    // (RESEARCH A6): taint = OR(children.taint); descendantCount / time-range
+    // are recomputed STORE-SIDE from the child rows (advisory here). depth was
+    // derived above (run.depth + 1 — identical to max(child depth) + 1, since
+    // the run's children share one depth by construction).
     const childSummaryIds = effectiveRun.children.map((c) => c.summaryId);
     // taint = OR(children.taint): read taint off the SELECTED children — the
     // resolved-view `CondenseChildSummary` carries `taint` from the SAME
@@ -266,8 +285,8 @@ export async function maybeRunCondensePass(
 
     // Summarize the child CONTENT via the 3-level escalation (non-fatal inside —
     // always returns a result). The before-size is the STORED Σ child tokenCount.
-    // `previousSummary` reads the SAME resolved snapshot (WR-01) — not a re-query.
-    const previousSummary = previousSummaryAtDepth(summaries, depth);
+    // `previousSummary` is the SAME resolved-snapshot read the budget above
+    // already accounted (WR-01/WR-03) — never a re-query.
     const result = await summarizeCondensedChunk(effectiveRun.children, summarizerDeps, {
       reserveTokens: opts.condensedTargetTokens,
       previousSummary,

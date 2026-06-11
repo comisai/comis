@@ -1376,6 +1376,54 @@ describe("SUMW-01: leaf chunk clamp", () => {
     expect(store.getSummaries(SCOPE).length).toBe(0);
     expect(callSizes().length).toBe(0); // the summarizer was never invoked
   });
+
+  it("WR-03 (leaf mirror): the chunk cap subtracts the ACTUAL previousSummary tokens threaded into the pass prompt", async () => {
+    // previousSummaryContent returns the last summary of ANY kind — a
+    // pre-existing summary whose CONTENT is 8_000 chars ≈ 2_000 tokens rides
+    // into the next leaf prompt, while the flat 2_048 overhead covers only the
+    // instruction template. 8K override: cap = 8_000 − 1_200 − 2_048 − 2_000 =
+    // 2_752 → the first chunk takes ≤ 2 × 1_000-token messages. Pre-fix the cap
+    // ignored prev (4_752 → 4 messages): chunk + target + template + prev =
+    // 4_000 + 1_200 + 2_048 + 2_000 = 9_248 > 8_000 — a provider overflow.
+    seedHistory(store, 30, 1_000);
+    store.appendLeafSummary({
+      scope: SCOPE,
+      content: "X".repeat(8_000), // estimateMessageTokens: 8_000 / 4 = 2_000
+      descendantCount: 2,
+      earliestAt: 1_000,
+      latestAt: 1_001,
+      tokenCount: 2_000,
+      fileIds: [],
+      fallback: false,
+      taint: false,
+      createdAt: FIXED_NOW,
+      startOrdinal: 0,
+      endOrdinal: 1,
+    });
+    const logger = createMockLogger();
+    const { summarize, callSizes } = recordingSummarizer();
+    const deps = depsWithOverrideWindow(8_000, summarize, logger);
+
+    // ONE pass (maxLeafPassesPerTurn 1): pass 2's previousSummary would be the
+    // tiny just-written stub summary, restoring the larger cap — the prev
+    // subtraction is per pass by design, so pin the FIRST pass only.
+    await maybeRunLeafPass(
+      store,
+      SCOPE,
+      opts({ windowTokens: 32_000, maxLeafPassesPerTurn: 1 }),
+      deps,
+      FIXED_NOW,
+      undefined,
+      logger as unknown as LeafSummarizerDeps["logger"],
+    );
+
+    const sizes = callSizes();
+    // The escalation ladder may retry the SAME chunk several times (the tiny
+    // rendered fixtures never pass the shrink-accept test) — the load-bearing
+    // bound is that EVERY call's chunk respects the prev-aware cap.
+    expect(sizes.length).toBeGreaterThanOrEqual(1);
+    expect(Math.max(...sizes)).toBeLessThanOrEqual(2);
+  });
 });
 
 // ===========================================================================
