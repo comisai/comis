@@ -720,6 +720,8 @@ Memory management and recall-diagnostics commands for searching, inspecting, and
 |------|------|---------|-------------|
 | `--format <format>` | `detail` \| `json` | `detail` | Output format |
 
+Accepts a full id or an id prefix. Resolution scans the 1000 most recent entries (via `memory.browse`); for older entries use `comis memory export`.
+
 #### `memory stats`
 
 | Flag | Type | Default | Description |

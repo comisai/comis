@@ -128,28 +128,30 @@ describe("registerMemoryCommand", () => {
   });
 });
 
-describe("memory search fail-closed (DAG context engine demolished, v2.12)", () => {
-  it("fails closed with a not-available message and non-zero exit", async () => {
+describe("memory search runs the contracted entry search (stub-era exit-1 removed, live finding 2026-06-11)", () => {
+  it("renders the matched entries instead of the stale pipeline-era refusal", async () => {
     const program = new Command();
     program.exitOverride();
     registerMemoryCommand(program);
 
+    const rpc = await import("../client/rpc-client.js");
+    const callTypedSpy = vi.spyOn(rpc, "callTyped").mockResolvedValue({
+      results: [
+        { id: "8a6087cd-e867-43e4-9850-15be4f510598", content: "User has a golden retriever named Biscuit.", score: 0.97, tags: [], createdAt: 1 },
+      ],
+    } as never);
+    const withClientSpy = vi.spyOn(rpc, "withClient").mockImplementation(async (fn: (c: unknown) => Promise<unknown>) => fn({}) as never);
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    const consoleErrSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
-      throw new Error("process.exit called");
-    }) as never);
 
     try {
-      await program.parseAsync(["node", "test", "memory", "search", "test query"]);
-    } catch (e) {
-      expect((e as Error).message).toBe("process.exit called");
-      const errOutput = consoleErrSpy.mock.calls.map((c) => c.join(" ")).join("\n");
-      expect(errOutput).toContain("memory search is unavailable");
+      await program.parseAsync(["node", "test", "memory", "search", "dog name"]);
+      const out = consoleSpy.mock.calls.map((c) => c.join(" ")).join("\n");
+      expect(out).toContain("8a6087cd");
+      expect(out).toContain("golden retriever");
     } finally {
+      callTypedSpy.mockRestore();
+      withClientSpy.mockRestore();
       consoleSpy.mockRestore();
-      consoleErrSpy.mockRestore();
-      exitSpy.mockRestore();
     }
   });
 });
@@ -211,28 +213,31 @@ describe("memory clear safety checks", () => {
   });
 });
 
-describe("memory inspect fail-closed (DAG context engine demolished, v2.12)", () => {
-  it("fails closed with a not-available message and non-zero exit", async () => {
+describe("memory inspect shows the entry detail (stub-era exit-1 removed, live finding 2026-06-11)", () => {
+  it("finds the entry by id prefix via memory.browse and renders its fields", async () => {
     const program = new Command();
     program.exitOverride();
     registerMemoryCommand(program);
 
+    const rpc = await import("../client/rpc-client.js");
+    const callTypedSpy = vi.spyOn(rpc, "callTyped").mockResolvedValue({
+      entries: [
+        { id: "abc-123-full", content: "User prefers green tea.", trustLevel: "learned" },
+      ],
+      total: 1,
+    } as never);
+    const withClientSpy = vi.spyOn(rpc, "withClient").mockImplementation(async (fn: (c: unknown) => Promise<unknown>) => fn({}) as never);
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    const consoleErrSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
-      throw new Error("process.exit called");
-    }) as never);
 
     try {
       await program.parseAsync(["node", "test", "memory", "inspect", "abc-123"]);
-    } catch (e) {
-      expect((e as Error).message).toBe("process.exit called");
-      const errOutput = consoleErrSpy.mock.calls.map((c) => c.join(" ")).join("\n");
-      expect(errOutput).toContain("memory inspect is unavailable");
+      const out = consoleSpy.mock.calls.map((c) => c.join(" ")).join("\n");
+      expect(out).toContain("green tea");
+      expect(out).toContain("learned");
     } finally {
+      callTypedSpy.mockRestore();
+      withClientSpy.mockRestore();
       consoleSpy.mockRestore();
-      consoleErrSpy.mockRestore();
-      exitSpy.mockRestore();
     }
   });
 });

@@ -25,6 +25,8 @@ import {
   MemoryPortabilityImportContract,
   MemoryPinContract,
   MemoryUnpinContract,
+  MemorySearchFilesContract,
+  MemoryBrowseContract,
   parseMemoryExportEnvelope,
 } from "@comis/core";
 import { callTyped, withClient } from "../client/rpc-client.js";
@@ -41,43 +43,88 @@ import { confirm } from "../util/confirm.js";
 export function registerMemoryCommand(program: Command): void {
   const memory = program.command("memory").description("Memory management");
 
-  // memory search <query> — fail-closed.
+  // memory search <query> — the hybrid memory-entry search
+  // (memory.search_files: memoryApi.search → FTS + vector fusion).
   //
-  // This subcommand previously borrowed the daemon's context.search RPC
-  // (via the DAG context-search contract). The DAG context engine was
-  // demolished in v2.12 (Phase 126): the daemon no longer mounts
-  // context.search and there is no memory.search handler. We fail closed
-  // with an explicit message + non-zero exit rather than calling a deleted
-  // contract (which would hang or error opaquely against an unmounted
-  // method). Full-text context search returns with the LCD engine (Phase 131).
+  // Live finding 2026-06-11: this command was a hardcoded exit-1 stub left
+  // over from the Phase-126 demolition, blaming "the context engine is
+  // 'pipeline'" on a DAG-mode daemon — while the contracted search RPC
+  // worked fine. The excuse outlived the era it described.
   memory
     .command("search <query>")
     .description("Search memory entries")
     .option("--limit <n>", "Maximum results to return", "10")
     .option("--format <format>", "Output format (table|json)", "table")
-    .action((_query: string, _options: { limit: string; format: string }) => {
-      error(
-        "memory search is unavailable: the context engine is 'pipeline'. Full-text context search returns with the LCD engine (v2.12, Phase 131).",
-      );
-      process.exit(1);
+    .action(async (query: string, options: { limit: string; format: string }) => {
+      try {
+        const result = await withSpinner("Searching memory...", () =>
+          withClient(async (client) =>
+            callTyped(client, MemorySearchFilesContract, {
+              query,
+              limit: Number(options.limit),
+            }),
+          ),
+        );
+        const results = result.results ?? [];
+        if (results.length === 0) {
+          info("No memory entries matched");
+          return;
+        }
+        if (options.format === "json") {
+          json(results);
+          return;
+        }
+        renderTable(
+          ["#", "Id", "Score", "Content"],
+          results.map((r, i) => [
+            String(i + 1),
+            String(r.id).slice(0, 8),
+            (r.score ?? 0).toFixed(3),
+            String(r.content).slice(0, 80).replace(/\n/g, " "),
+          ]),
+        );
+      } catch (err) {
+        error(`Memory search failed: ${err instanceof Error ? err.message : String(err)}`);
+        process.exit(1);
+      }
     });
 
-  // memory inspect <id> — fail-closed.
+  // memory inspect <id> — single-entry detail via memory.browse (no
+  // dedicated by-id read RPC exists; the browse page is scanned client-side).
   //
-  // Previously borrowed the daemon's context.inspect RPC (via the DAG
-  // context-inspect contract). That handler was demolished with the DAG
-  // context engine in v2.12 (Phase 126) and there is no memory.inspect
-  // handler. We fail closed with an explicit message + non-zero exit.
-  // Context entry inspection returns with the LCD engine (Phase 131).
+  // Live finding 2026-06-11: like `search`, this was a hardcoded exit-1 stub
+  // blaming the demolished pipeline-era context engine.
   memory
     .command("inspect <id>")
     .description("Display full details of a memory entry")
     .option("--format <format>", "Output format (detail|json)", "detail")
-    .action((_id: string, _options: { format: string }) => {
-      error(
-        "memory inspect is unavailable: the context engine is 'pipeline'. Context entry inspection returns with the LCD engine (v2.12, Phase 131).",
-      );
-      process.exit(1);
+    .action(async (id: string, options: { format: string }) => {
+      try {
+        const result = await withSpinner("Fetching memory entry...", () =>
+          withClient(async (client) =>
+            callTyped(client, MemoryBrowseContract, { limit: 1000 }),
+          ),
+        );
+        const entries = (result.entries ?? []) as Array<Record<string, unknown>>;
+        const entry = entries.find((e) => e.id === id || String(e.id).startsWith(id));
+        if (!entry) {
+          error(`Memory entry not found in the ${entries.length} most recent entries: ${id} (use 'comis memory export' for a full dump)`);
+          process.exit(1);
+        }
+        if (options.format === "json") {
+          json(entry);
+          return;
+        }
+        renderKeyValue(
+          Object.entries(entry).map(([k, v]): [string, string] => [
+            k,
+            typeof v === "string" ? v : JSON.stringify(v),
+          ]),
+        );
+      } catch (err) {
+        error(`Memory inspect failed: ${err instanceof Error ? err.message : String(err)}`);
+        process.exit(1);
+      }
     });
 
   // memory stats — the single operator stats view. Folds in the
