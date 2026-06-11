@@ -434,6 +434,25 @@ describe("processFailurePath — knob-named timeout diagnostics (LAT-01-H-7)", (
     expect(warnCall![0].hint).toMatch(/makespan ceiling 1800000ms/);
   });
 
+  it("177-REVIEW IN-04: the ghost-cost token_usage event reports the FIRED limit as latencyMs — a makespan kill is not understated by the multiplier", async () => {
+    const { params, emit } = makeFailureParams("c-in04-ghost");
+    const makespanErr = new PromptTimeoutError(1_800_000, {
+      limit: "makespan",
+      stallBudgetMs: 180_000,
+      makespanMs: 1_800_000,
+    });
+
+    await processFailurePath(params, "hello", undefined, makespanErr);
+
+    const usage = emit.mock.calls.find((c) => c[0] === "observability:token_usage");
+    expect(usage).toBeDefined();
+    // Pre-patch latencyMs hardcoded effectiveTimeout.promptTimeoutMs
+    // (180_000) for every timeout — a makespan kill actually ran
+    // ~promptTimeoutMs × stallCeilingMultiplier ms, understating by up to
+    // the multiplier. PromptTimeoutError.timeoutMs carries the fired limit.
+    expect((usage![1] as Record<string, unknown>).latencyMs).toBe(1_800_000);
+  });
+
   it("LAT-01-H-7 regression: a non-timeout terminal error keeps finishReason 'error' + errorKind 'dependency' + the generic all-models hint", async () => {
     const { params, warn, result } = makeFailureParams("c-lat01-generic");
 

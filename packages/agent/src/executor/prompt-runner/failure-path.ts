@@ -179,9 +179,12 @@ function emitFailureDiagnostics(
   // Emit estimated token usage for timed-out requests.
   // Anthropic still bills input tokens even when the request times out,
   // but pi-ai discards partial usage. Emit a conservative estimate so
-  // the cost gap is visible in tracking.
-  if (isPromptTimeout) {
-    ghostCost = emitTimeoutGhostCost(params, messageText);
+  // the cost gap is visible in tracking. The error's timeoutMs carries the
+  // limit that FIRED (177-REVIEW IN-04: a makespan kill ran
+  // ~promptTimeoutMs × stallCeilingMultiplier ms — reporting the stall
+  // budget understated latencyMs by up to the multiplier).
+  if (promptError instanceof PromptTimeoutError) {
+    ghostCost = emitTimeoutGhostCost(params, messageText, promptError.timeoutMs);
   }
 
   // OutputGuard: scan error responses (unified in executor-response-filter.ts)
@@ -202,14 +205,20 @@ function emitFailureDiagnostics(
  * Compute and emit the timeout ghost cost event. Anthropic bills the full
  * input (system prompt + tools + user message) even on timeout — emit a
  * conservative estimate so the cost gap is visible in tracking.
+ *
+ * @param firedTimeoutMs - The ms value of the limit that FIRED
+ *   (`PromptTimeoutError.timeoutMs`): stall budget, makespan ceiling, or
+ *   whole-turn retry window — rides `latencyMs` so makespan kills are not
+ *   understated by the multiplier (177-REVIEW IN-04).
  */
 function emitTimeoutGhostCost(
   params: RunPromptParams,
   messageText: string,
+  firedTimeoutMs: number,
 ): PromptRunResult["ghostCost"] {
   const {
     msg, sessionKey, agentId, executionId,
-    config, effectiveTimeout, resolvedModel, deps,
+    config, resolvedModel, deps,
     systemPrompt, mergedCustomTools, getLastCacheWriteTokens,
   } = params;
 
@@ -271,7 +280,7 @@ function emitTimeoutGhostCost(
       cacheWrite: estimatedCacheWriteCost,
       total: estimatedTotalCost,
     },
-    latencyMs: effectiveTimeout.promptTimeoutMs,
+    latencyMs: firedTimeoutMs,
     cacheReadTokens: estimatedCacheReadTokens,
     cacheWriteTokens: estimatedCacheWriteTokens,
     sessionKey: formatSessionKey(sessionKey),
@@ -305,7 +314,7 @@ function emitTimeoutGhostCost(
       sysPromptChars,
       toolChars,
       messageChars: messageText.length,
-      timeoutMs: effectiveTimeout.promptTimeoutMs,
+      timeoutMs: firedTimeoutMs,
     },
     "Emitted estimated usage for timed-out request",
   );
