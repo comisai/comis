@@ -42,6 +42,7 @@ import {
   CHARS_PER_TOKEN_RATIO,
   MIN_MIDDLE_MESSAGES_FOR_COMPACTION,
   CACHE_AWARE_COMPACTION_BLOCK_THRESHOLD,
+  SUMMARIZER_PROMPT_OVERHEAD_TOKENS,
 } from "./constants.js";
 import {
   estimateContextCharsWithDualRatio,
@@ -513,6 +514,72 @@ export function createLlmCompactionLayer(
           return messages;
         }
 
+        // SUMW-01 (Phase 178): clamp the summarized span to the RESOLVED
+        // summarizer's window. Reads the LOCAL `model` resolved at Step 4 — the
+        // SAME variable handed to generateSummary (the try/catch override
+        // fallback already decided which model summarizes; re-resolving here
+        // could disagree — Pitfall 2). With an `operationModels.compaction`
+        // override the summarizer's window (e.g. 8K) can be far smaller than
+        // the middle zone — feeding the whole span is a provider overflow.
+        // Invalid/missing window → clamp OFF (today's behavior; never invent
+        // a window). The 85% trigger + cooldown re-fire on later turns until
+        // the remainder backlog drains (convergence).
+        const winRaw = (model as { contextWindow?: number } | undefined)?.contextWindow;
+        const summarizerWindow =
+          typeof winRaw === "number" && Number.isFinite(winRaw) && winRaw > 0
+            ? winRaw
+            : undefined;
+        let spanToSummarize = evictableMiddle;
+        let remainingMiddle: AgentMessage[] = [];
+        if (summarizerWindow !== undefined) {
+          const maxSpanTokens =
+            summarizerWindow - budget.outputReserveTokens - SUMMARIZER_PROMPT_OVERHEAD_TOKENS;
+          // Oldest-first prefix walk over the evictable middle: cut at the
+          // first message that would exceed maxSpanTokens (the file's own
+          // conservative estimator — chars / 3.5 per message).
+          let spanTokens = 0;
+          let cut = 0;
+          for (const m of evictableMiddle) {
+            /* eslint-disable @typescript-eslint/no-explicit-any */
+            const msgTokens = Math.ceil(estimateMessageChars(m as any) / CHARS_PER_TOKEN_RATIO);
+            /* eslint-enable @typescript-eslint/no-explicit-any */
+            if (spanTokens + msgTokens > maxSpanTokens) break;
+            spanTokens += msgTokens;
+            cut++;
+          }
+          if (cut === 0) {
+            // Degenerate summarizer (window < reserve + overhead, or even the
+            // oldest message alone exceeds the span budget): mirror the
+            // MIN_MIDDLE skip — honest degrade, DEBUG-only with counts/window
+            // numbers (never WARN per turn — Pitfall 6 / R-4; never content).
+            deps.logger.debug(
+              {
+                step: "compaction-span-clamp",
+                summarizerWindow,
+                maxSpanTokens,
+                middleMessages: evictableMiddle.length,
+              },
+              "Compaction skipped: no middle message fits the resolved summarizer window",
+            );
+            turnsSinceLastCompaction = 0;
+            return messages;
+          }
+          if (cut < evictableMiddle.length) {
+            spanToSummarize = evictableMiddle.slice(0, cut);
+            remainingMiddle = evictableMiddle.slice(cut);
+            deps.logger.debug(
+              {
+                step: "compaction-span-clamp",
+                spanMessages: spanToSummarize.length,
+                remainingMessages: remainingMiddle.length,
+                summarizerWindow,
+                maxSpanTokens,
+              },
+              "Compaction span clamped to the resolved summarizer window",
+            );
+          }
+        }
+
         // Emit compaction_routed for llm/strong-summarizer paths too (for observability)
         if (deps.eventBus && deps.agentId && deps.sessionKey) {
           deps.eventBus.emit("context:compaction_routed", {
@@ -545,10 +612,13 @@ export function createLlmCompactionLayer(
             : "LLM compaction triggered: context exceeds 85% threshold",
         );
 
-        // Step 7: Summarize ONLY the middle zone (do NOT pass head or tail to generateSummary).
-        // Use evictableMiddle (security-pinned messages already excluded via S4 filtering above).
+        // Step 7: Summarize ONLY the clamped middle span (do NOT pass head or tail
+        // to generateSummary). spanToSummarize is the SUMW-01 oldest-first prefix of
+        // evictableMiddle that fits the resolved summarizer's window (security-pinned
+        // messages already excluded via S4 filtering above); when the clamp does not
+        // bind it IS evictableMiddle.
         const compactionResult = await compactWithFallback(
-          evictableMiddle,
+          spanToSummarize,
           model,
           apiKey,
           budget.outputReserveTokens,
@@ -564,20 +634,41 @@ export function createLlmCompactionLayer(
           discoveredTools,
         } as unknown as AgentMessage;
 
-        // Assemble: head + pinned + summary + tail
+        // Assemble: head + pinned + summary + remainingMiddle + tail
         // S4: pinned messages from the middle zone are excluded from summarization
         // but MUST be preserved in the output so they are never evicted from context.
         // They are placed before the summary (surviving context, not part of the summary).
+        // SUMW-01: the un-summarized remainder of the middle zone is NEVER dropped
+        // (Pitfall 3 — a dropped remainder is silent, unrecoverable history deletion);
+        // it sits between the summary and the tail in original order. When the clamp
+        // does not bind, remainingMiddle is [] → output identical to before SUMW-01.
         // head stays at original positions for cache prefix stability.
         const headMessages = messages.slice(0, headEndIndex);
         const tailMessages = messages.slice(tailStartIndex);
-        const result = [...headMessages, ...pinned, summaryMessage, ...tailMessages];
+        const result = [
+          ...headMessages,
+          ...pinned,
+          summaryMessage,
+          ...remainingMiddle,
+          ...tailMessages,
+        ];
 
         // Step 8: Persist compaction to SessionManager
+        // SUMW-01: the un-summarized remainder counts as KEPT on the durable side
+        // too — it sits immediately before the tail in file order, so folding it
+        // into keptTailCount removes only the SUMMARIZED span's entries. Removing
+        // the remainder's entries would be durable history deletion the summary
+        // does not cover (the same Pitfall-3 data loss, on the session file).
         try {
           const sm = deps.getSessionManager();
           if (sm) {
-            persistCompaction(sm, compactionResult.summary, tailMessages.length, headMessages.length, discoveredTools);
+            persistCompaction(
+              sm,
+              compactionResult.summary,
+              tailMessages.length + remainingMiddle.length,
+              headMessages.length,
+              discoveredTools,
+            );
           }
         } catch {
           // Persistent write-back is best-effort
@@ -593,7 +684,10 @@ export function createLlmCompactionLayer(
             originalMessages: messages.length,
             keptHeadMessages: headMessages.length,
             keptTailMessages: tailMessages.length,
-            middleSummarized: evictableMiddle.length,
+            // SUMW-01: counts reflect the CLAMPED span actually summarized, plus
+            // the preserved un-summarized remainder (counts only — never content).
+            middleSummarized: spanToSummarize.length,
+            middleRemainder: remainingMiddle.length,
             securityPinnedCount,
           },
           "LLM compaction complete",
@@ -604,7 +698,7 @@ export function createLlmCompactionLayer(
           fallbackLevel: compactionResult.level,
           attempts: compactionResult.attempts,
           originalMessages: messages.length,
-          keptMessages: headMessages.length + tailMessages.length,
+          keptMessages: headMessages.length + remainingMiddle.length + tailMessages.length,
         });
 
         return result;
