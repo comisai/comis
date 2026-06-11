@@ -243,3 +243,94 @@ describe("bootstrap", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// 260611 live-fire fix: resolveConfigPaths ignored COMIS_DATA_DIR.
+// daemon.ts:1303 resolves the BOOT data dir as env.COMIS_DATA_DIR ?? ~/.comis
+// (so .env loading, secrets.db, the D14 lock all honor the env var), but
+// resolveConfigPaths defaulted an empty config.dataDir straight to ~/.comis —
+// a split-brain where config-derived paths (memory.dbPath, workspace,
+// sessions) land in the PRODUCTION ~/.comis while boot paths use the override.
+// Observed live: every MEM Stage-B test daemon (isolated temp COMIS_DATA_DIR)
+// opened ~/.comis/test-memory-default.db; only the VITEST write-guard kept
+// session indexes out of the real data dir. Precedence (matches the CLI and
+// daemon boot): explicit config.dataDir > env COMIS_DATA_DIR > ~/.comis.
+// ---------------------------------------------------------------------------
+
+describe("bootstrap — dataDir honors COMIS_DATA_DIR (explicit config > env > ~/.comis)", () => {
+  const tmpDirs: string[] = [];
+  const containers: AppContainer[] = [];
+
+  function makeTmpDir(): string {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "comis-bootstrap-dd-"));
+    tmpDirs.push(dir);
+    return dir;
+  }
+
+  afterEach(async () => {
+    for (const container of containers) {
+      await container.shutdown();
+    }
+    containers.length = 0;
+    for (const dir of tmpDirs) {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+    tmpDirs.length = 0;
+  });
+
+  it("empty config.dataDir + env COMIS_DATA_DIR → dataDir and memory.dbPath under the env dir", () => {
+    const dir = makeTmpDir();
+    const envDataDir = makeTmpDir();
+    const configPath = path.join(dir, "config.yaml");
+    fs.writeFileSync(configPath, 'tenantId: test\ndataDir: ""\n', "utf-8");
+
+    const result = bootstrap({
+      configPaths: [configPath],
+      env: { COMIS_DATA_DIR: envDataDir },
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      containers.push(result.value);
+      expect(result.value.config.dataDir).toBe(envDataDir);
+      expect(result.value.config.memory.dbPath).toBe(path.join(envDataDir, "memory.db"));
+    }
+  });
+
+  it("explicit config.dataDir WINS over env COMIS_DATA_DIR", () => {
+    const dir = makeTmpDir();
+    const cfgDataDir = makeTmpDir();
+    const envDataDir = makeTmpDir();
+    const configPath = path.join(dir, "config.yaml");
+    fs.writeFileSync(configPath, `tenantId: test\ndataDir: "${cfgDataDir}"\n`, "utf-8");
+
+    const result = bootstrap({
+      configPaths: [configPath],
+      env: { COMIS_DATA_DIR: envDataDir },
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      containers.push(result.value);
+      expect(result.value.config.dataDir).toBe(cfgDataDir);
+      expect(result.value.config.memory.dbPath).toBe(path.join(cfgDataDir, "memory.db"));
+    }
+  });
+
+  it("no config.dataDir and no env override → ~/.comis default (existing contract)", () => {
+    const dir = makeTmpDir();
+    const configPath = path.join(dir, "config.yaml");
+    fs.writeFileSync(configPath, "tenantId: test\n", "utf-8");
+
+    const result = bootstrap({
+      configPaths: [configPath],
+      env: {},
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      containers.push(result.value);
+      expect(result.value.config.dataDir).toBe(path.join(os.homedir(), ".comis"));
+    }
+  });
+});

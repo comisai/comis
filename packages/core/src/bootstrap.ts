@@ -30,11 +30,21 @@ export const INTERACTIVE_CALLBACK_SIGNING_SECRET_NAME =
 
 /**
  * Resolve runtime paths in config.
- * - dataDir defaults to ~/.comis
+ * - dataDir precedence: explicit config.dataDir > env COMIS_DATA_DIR > ~/.comis
+ *   (matches the daemon boot resolution at daemon.ts and the CLI). Before
+ *   260611 the env var was IGNORED here, splitting the system in two: boot
+ *   paths (.env, secrets.db, D14 lock) honored COMIS_DATA_DIR while
+ *   config-derived paths (memory.dbPath, workspace, sessions) silently landed
+ *   in the real ~/.comis — observed live when isolated test daemons opened
+ *   ~/.comis/test-memory-default.db despite COMIS_DATA_DIR pointing at a
+ *   temp dir.
  * - memory.dbPath resolves relative to dataDir if not absolute
  */
-function resolveConfigPaths(config: AppConfig): AppConfig {
-  const dataDir = config.dataDir || DEFAULT_DATA_DIR;
+function resolveConfigPaths(
+  config: AppConfig,
+  env: Record<string, string | undefined>,
+): AppConfig {
+  const dataDir = config.dataDir || env["COMIS_DATA_DIR"] || DEFAULT_DATA_DIR;
   const dbPath = path.isAbsolute(config.memory.dbPath)
     ? config.memory.dbPath
     : safePath(dataDir, config.memory.dbPath);
@@ -186,7 +196,7 @@ export function bootstrap(options: BootstrapOptions): Result<AppContainer, Confi
   }
 
   // Resolve runtime paths
-  const config = resolveConfigPaths(configResult.value);
+  const config = resolveConfigPaths(configResult.value, env);
 
   // Derive the raw per-agent rerank signal once, from the captured merged tree.
   const rawAgentRerankEnabled = deriveRawAgentRerankEnabled(rawMergedOut.value);
