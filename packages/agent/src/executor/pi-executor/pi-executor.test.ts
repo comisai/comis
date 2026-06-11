@@ -835,7 +835,10 @@ describe("PiExecutor", () => {
 
       const result = await executor.execute(testMessage, testSessionKey);
 
-      expect(result.finishReason).toBe("error");
+      // LAT-04 (Phase 177): the PromptTimeoutError terminal carries its OWN
+      // named finishReason (END_REASON_MAP → endReason "timeout") instead of
+      // flattening into the generic "error" bucket.
+      expect(result.finishReason).toBe("prompt_timeout");
       expect(result.errorContext).toEqual({
         errorType: "PromptTimeout",
         retryable: true,

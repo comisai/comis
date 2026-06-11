@@ -38,7 +38,9 @@ export interface ExecutionResult {
   };
   stepsExecuted: number;
   llmCalls: number;
-  finishReason: "stop" | "max_steps" | "budget_exceeded" | "budget_exhausted" | "circuit_open" | "provider_degraded" | "context_loop" | "context_exhausted" | "output_starved" | "session_reset" | "loop_detected" | "error";
+  // LAT-04 (Phase 177): prompt_timeout is the PromptTimeoutError terminal —
+  // END_REASON_MAP translates it to endReason timeout (the named cause).
+  finishReason: "stop" | "max_steps" | "budget_exceeded" | "budget_exhausted" | "circuit_open" | "provider_degraded" | "context_loop" | "context_exhausted" | "output_starved" | "session_reset" | "loop_detected" | "prompt_timeout" | "error";
   /** Ordered list of tool names invoked during execution (for post-mortem analysis). */
   toolCallHistory?: string[];
   /** Structured error classification for non-successful executions (operator-only, never user-facing). */
