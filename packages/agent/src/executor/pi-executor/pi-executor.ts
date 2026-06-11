@@ -1004,7 +1004,7 @@ async function runSessionLocked(
     getTokenAnchor: () => tokenAnchor,
     onAnchorReset: () => { tokenAnchor = null; },
     currentDiscoveryTracker,
-    modelProfile,  // already in scope: resolveModelProfile() at line 328; used by assembleTools at :502
+    modelProfile,  // already in scope: resolved once per execution in step 4 (the resolveModelProfile call after the CWF-03 reconcile); consumed by assembleTools' profile budget (step 5, "System token estimate")
     // KNOB-02: served/capability window provenance for the lcd-assembler's budget
     // (the second computeTokenBudgetForProfile call site) — sibling of modelProfile.
     windowProvenance,

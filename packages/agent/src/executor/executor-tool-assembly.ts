@@ -421,7 +421,8 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
 
   // C1 (Phase 152): profile-aware budget — 8K-starvation fix + 256K-overfill cap for small/nano.
   // B-1 deliberate: cachedSystemTokensEstimate and cachedFreshTailPreambleTokens were computed at ÷3.5
-  // above (lines 515-528) — this is the intended over-reservation (conservative direction). DO NOT change.
+  // in step 5 above ("System token estimate") — this is the intended over-reservation (conservative
+  // direction). DO NOT change.
   const profileBudget = computeTokenBudgetForProfile(
     modelProfile,
     cachedSystemTokensEstimate,

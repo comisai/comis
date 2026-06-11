@@ -9,9 +9,11 @@
  * Frontier/mid: byte-identical to computeTokenBudget (behavior-neutral guarantee).
  * Small/nano: effective window capped by capability class to prevent 256K-overfill degradation.
  *
- * IMPORTANT: the B-1 3.5-ratio over-reservation at executor-tool-assembly.ts:515-528
- * is PRESERVED — it is applied at the call site before passing systemTokensEstimate and
- * freshTailPreambleTokensEstimate to this function. Do NOT re-apply it here.
+ * IMPORTANT: the B-1 3.5-ratio over-reservation (the ÷CHARS_PER_TOKEN_RATIO
+ * estimates in assembleTools step 5, "System token estimate", in
+ * executor-tool-assembly.ts) is PRESERVED — it is applied at the call site
+ * before passing systemTokensEstimate and freshTailPreambleTokensEstimate to
+ * this function. Do NOT re-apply it here.
  *
  * @module
  */
