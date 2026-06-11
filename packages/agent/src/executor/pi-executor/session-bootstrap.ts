@@ -18,9 +18,11 @@ import type { CacheRetention } from "@earendil-works/pi-ai";
 import { formatSessionKey } from "@comis/core";
 import type {
   SessionKey,
+  ModelOperationType,
 } from "@comis/core";
 
 import type { ExecutionResult, ExecutionOverrides } from "../types.js";
+import type { TimeoutSource } from "../../model/operation-model-resolver.js";
 import type { ExecutionPlan } from "../../planner/types.js";
 import type { ExecutionPlanHolder } from "./execution-plan-holder.js";
 import type { PiExecutorDeps } from "./pi-executor-types.js";
@@ -66,15 +68,27 @@ export interface SessionBootstrapResult {
 }
 
 /**
+ * The merged per-execution timeout (LAT-01): values + binding provenance.
+ * `source`/`operationType` feed knob-named hints (timeout-knob.ts) and the
+ * execution:prompt_timeout payload. This is THE one effectiveTimeout shape —
+ * RunSessionLockedContext and RunPromptParams alias it (three inline copies
+ * unified). 177-03 extends this with stallCeilingMultiplier (LAT-02 makespan
+ * threading).
+ */
+export interface EffectiveTimeout {
+  promptTimeoutMs: number;
+  retryPromptTimeoutMs: number;
+  source: TimeoutSource;
+  operationType?: ModelOperationType;
+}
+
+/**
  * Per-execute override decode — separated from the bootstrap so the factory
  * can write the values into its own closure-scope `let`s via the provided
  * accessor refs.
  */
 export interface OverrideDecodeResult {
-  readonly effectiveTimeout: {
-    readonly promptTimeoutMs: number;
-    readonly retryPromptTimeoutMs: number;
-  };
+  readonly effectiveTimeout: EffectiveTimeout;
 }
 
 /**
@@ -189,14 +203,28 @@ export function decodeExecutionOverrides(
   const operationDefaultTimeout = overrides?.operationType
     ? operationDefaults[overrides.operationType]
     : undefined;
-  const effectiveTimeout = {
+  // LAT-01 binding provenance (Critical Finding 1): a present override CARRIES
+  // the source its producer labeled — the cron producer materializes
+  // promptTimeout unconditionally, so re-deriving here would call every cron
+  // timeout "explicit". An unlabeled override (legacy producer shape) IS
+  // explicit by the caller; otherwise the level that binds labels itself.
+  const overrideMs = overrides?.promptTimeout?.promptTimeoutMs;
+  const source: TimeoutSource =
+    overrideMs !== undefined
+      ? (overrides?.promptTimeout?.source ?? "operation_explicit")
+      : operationDefaultTimeout !== undefined
+        ? "operation_default"
+        : "agent_config";
+  const effectiveTimeout: EffectiveTimeout = {
     promptTimeoutMs:
-      overrides?.promptTimeout?.promptTimeoutMs
+      overrideMs
       ?? operationDefaultTimeout
       ?? config.promptTimeout.promptTimeoutMs,
     retryPromptTimeoutMs:
       overrides?.promptTimeout?.retryPromptTimeoutMs
       ?? config.promptTimeout.retryPromptTimeoutMs,
+    source,
+    operationType: overrides?.operationType,
   };
 
   // Create adaptive retention.
