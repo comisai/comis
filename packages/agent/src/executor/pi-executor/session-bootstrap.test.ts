@@ -303,4 +303,78 @@ describe("decodeExecutionOverrides", () => {
     expect(out.effectiveTimeout.promptTimeoutMs).toBe(5_000);
     expect(out.effectiveTimeout.retryPromptTimeoutMs).toBe(2_000);
   });
+
+  // -------------------------------------------------------------------------
+  // LAT-01: effectiveTimeout binding provenance. The decode computes the FINAL
+  // binding: a present override CARRIES the source its producer labeled (the
+  // cron producer materializes promptTimeout unconditionally — re-deriving
+  // here would call every cron timeout "explicit"; 177-RESEARCH Critical
+  // Finding 1 / Pitfall 4); the operation default and agent config label
+  // themselves where they bind.
+  // -------------------------------------------------------------------------
+  describe("LAT-01 effectiveTimeout binding provenance (source + operationType)", () => {
+    function decodeWith(
+      overrides: ExecutionOverrides | undefined,
+      operationDefaults: Record<string, number | undefined> = {},
+    ) {
+      const cacheRetentionRef = makeRef<CacheRetention | undefined>(undefined);
+      const adaptiveRetentionRef = makeRef<AdaptiveCacheRetention | undefined>(undefined);
+      const minTokensOverrideRef = makeRef<number | undefined>(undefined);
+      const deps = {
+        logger: makeNoopLogger(),
+        clock: { now: () => 0, nowDate: () => new Date(0) },
+      } as unknown as PiExecutorDeps;
+      return decodeExecutionOverrides({}, deps, {
+        config: baseConfig,
+        sessionKey,
+        overrides,
+        operationDefaults,
+        cacheRetentionRef,
+        adaptiveRetentionRef,
+        minTokensOverrideRef,
+      });
+    }
+
+    it("LAT-01-10: a producer-labeled cron override CARRIES source operation_default — never relabeled operation_explicit just because the override object exists (the collapse pin)", () => {
+      const overrides = {
+        operationType: "cron",
+        promptTimeout: { promptTimeoutMs: 150_000, source: "operation_default" },
+      } as ExecutionOverrides;
+
+      const out = decodeWith(overrides, { cron: 150_000 });
+
+      expect(out.effectiveTimeout.promptTimeoutMs).toBe(150_000);
+      expect(out.effectiveTimeout.source).toBe("operation_default");
+      expect(out.effectiveTimeout.operationType).toBe("cron");
+    });
+
+    it("LAT-01-11: an override present WITHOUT a source label (legacy producer shape) is conservatively operation_explicit — explicit by the caller", () => {
+      const overrides = {
+        promptTimeout: { promptTimeoutMs: 5_000 },
+      } as ExecutionOverrides;
+
+      const out = decodeWith(overrides);
+
+      expect(out.effectiveTimeout.promptTimeoutMs).toBe(5_000);
+      expect(out.effectiveTimeout.source).toBe("operation_explicit");
+    });
+
+    it("LAT-01-12: no override + operationType cron — the operation default binds and source says operation_default", () => {
+      const overrides = { operationType: "cron" } as ExecutionOverrides;
+
+      const out = decodeWith(overrides, { cron: 150_000 });
+
+      expect(out.effectiveTimeout.promptTimeoutMs).toBe(150_000);
+      expect(out.effectiveTimeout.source).toBe("operation_default");
+      expect(out.effectiveTimeout.operationType).toBe("cron");
+    });
+
+    it("LAT-01-13: no override + no operationType — the agent config binds with source agent_config and operationType undefined", () => {
+      const out = decodeWith(undefined);
+
+      expect(out.effectiveTimeout.promptTimeoutMs).toBe(60_000);
+      expect(out.effectiveTimeout.source).toBe("agent_config");
+      expect(out.effectiveTimeout.operationType).toBeUndefined();
+    });
+  });
 });

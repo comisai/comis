@@ -121,7 +121,7 @@ import { randomUUID } from "node:crypto";
 
 // Closure-extracted helpers (state-first)
 import { installCompactionTrigger } from "./compaction-trigger.js";
-import { bootstrapSession, decodeExecutionOverrides, type MutableRef } from "./session-bootstrap.js";
+import { bootstrapSession, decodeExecutionOverrides, type MutableRef, type EffectiveTimeout } from "./session-bootstrap.js";
 import { runSafetyGates } from "./safety-gate.js";
 import { maybeRunBootstrapSweep } from "./maybe-run-bootstrap-sweep.js";
 import { applyPromptRunOutcome, handleEnvelopeException } from "./message-envelope.js";
@@ -486,7 +486,7 @@ interface RunSessionLockedContext {
   readonly _prevTimestamp: number | undefined;
   readonly executionOverrides: ExecutionOverrides | undefined;
   readonly executionStartMs: number;
-  readonly effectiveTimeout: { promptTimeoutMs: number; retryPromptTimeoutMs: number };
+  readonly effectiveTimeout: EffectiveTimeout;
   readonly sepEnabled: boolean;
   readonly executionPlanRef: { current: import("../../planner/types.js").ExecutionPlan | undefined };
   readonly safetyReinforcement: string | undefined;

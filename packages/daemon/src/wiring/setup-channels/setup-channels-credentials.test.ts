@@ -547,4 +547,74 @@ describe("setup-channels-credentials", () => {
     expect(mockRunMemoryReasoning).not.toHaveBeenCalled();
     expect(onComplete).toHaveBeenCalledWith({ status: "error", error: "No agentId for memory reasoning" });
   });
+
+  // -------------------------------------------------------------------------
+  // LAT-01-14: the cron agent_turn producer THREADS the resolver's
+  // timeoutSource into cronOverrides.promptTimeout.source. Pre-fix the
+  // producer passed `promptTimeout: { promptTimeoutMs }` UNCONDITIONALLY —
+  // collapsing "the 150s cron default applied" into what decode treats as an
+  // explicit operator override (177-RESEARCH Critical Finding 1 / Pitfall 4).
+  // -------------------------------------------------------------------------
+  it("LAT-01-14: cron agent_turn threads resolution.timeoutSource into cronOverrides.promptTimeout.source (provenance not collapsed)", async () => {
+    // The resolver labeled this timeout "operation_default" (the 150s cron
+    // default applied — the operator set NO operationModels.cron.timeout).
+    mockResolveOperationModel.mockReturnValue({
+      provider: "anthropic",
+      modelId: "claude-haiku",
+      model: "anthropic:claude-haiku",
+      timeoutMs: 150_000,
+      source: "family_default",
+      timeoutSource: "operation_default",
+    } as any);
+
+    const capturedOverrides: any[] = [];
+    const executor = {
+      execute: vi.fn(async (...args: any[]) => {
+        capturedOverrides.push(args[7]);
+        return {
+          response: "cron done",
+          sessionKey: {},
+          tokensUsed: { input: 0, output: 0, total: 10 },
+          cost: { total: 0.001 },
+          stepsExecuted: 1,
+          llmCalls: 1,
+          finishReason: "stop",
+        };
+      }),
+    };
+
+    const deps = makeDeps({
+      agents: { "agent-1": { name: "Agent 1", provider: "anthropic", model: "claude-sonnet-4-5", operationModels: {} } },
+    });
+    (deps as any).executors = new Map([["agent-1", executor]]);
+    (deps as any).adaptersByType = new Map([["telegram", { channelType: "telegram" }]]);
+    (deps as any).sessionManager = { expire: vi.fn(), loadOrCreate: vi.fn(() => []), save: vi.fn() };
+    (deps as any).deliveryService = {
+      deliverToChannel: vi.fn(async () => ({
+        ok: true as const,
+        value: { ok: true, totalChunks: 1, deliveredChunks: 1, failedChunks: 0, chunks: [], totalChars: 9 },
+      })),
+    };
+    registerCronEventListeners(deps);
+
+    const onComplete = vi.fn();
+    await deps.__eventBus.fire("scheduler:job_result", {
+      result: "ping the user",
+      payloadKind: "agent_turn",
+      agentId: "agent-1",
+      jobId: "job-1",
+      jobName: "morning-ping",
+      deliveryTarget: { channelType: "telegram", channelId: "chat-1", userId: "user_a", tenantId: "tenant-a" },
+      onComplete,
+    });
+
+    expect(executor.execute).toHaveBeenCalledOnce();
+    // The full promptTimeout shape pins BOTH the value and the carried
+    // provenance — the bare { promptTimeoutMs } shape is the collapse bug.
+    expect(capturedOverrides[0].promptTimeout).toEqual({
+      promptTimeoutMs: 150_000,
+      source: "operation_default",
+    });
+    expect(onComplete).toHaveBeenCalledWith({ status: "ok" });
+  });
 });
