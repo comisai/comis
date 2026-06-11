@@ -371,6 +371,80 @@ describe("createSessionHandlers - session management", () => {
       expect(typeof response.results[0]!.timestamp).toBe("number");
     });
 
+    it("matches multi-keyword queries whose terms are non-contiguous in the message (token-AND, not substring)", async () => {
+      // Live finding 2026-06-12: `axolotl Quark` returned 0 against a message
+      // reading "...a purple axolotl named Quark" because the handler did a
+      // literal indexOf on the whole query. The tool advertises "keywords",
+      // so all query tokens present (order-independent) must match.
+      const deps = makeDeps({
+        sessionStore: {
+          listDetailed: () => [
+            {
+              sessionKey: "kw-session",
+              userId: "u1",
+              channelId: "c1",
+              metadata: {},
+              createdAt: 1000,
+              updatedAt: 2000,
+              messageCount: 1,
+            },
+          ],
+          loadByFormattedKey: () => ({
+            messages: [
+              { role: "assistant", content: "The mascot is a purple axolotl named Quark." },
+            ],
+            metadata: {},
+            createdAt: 1000,
+            updatedAt: 2000,
+          }),
+          deleteByFormattedKey: () => false,
+          saveByFormattedKey: vi.fn(),
+        },
+      });
+      const handlers = createSessionHandlers(deps);
+
+      const response = (await handlers["session.search"]!({
+        query: "axolotl Quark",
+      })) as { results: Array<{ sessionKey: string; snippet: string }>; total: number };
+
+      expect(response.total).toBe(1);
+      expect(response.results[0]!.sessionKey).toBe("kw-session");
+      // Snippet anchors on a matched term and shows the surrounding text.
+      expect(response.results[0]!.snippet.toLowerCase()).toContain("axolotl");
+    });
+
+    it("does NOT match when only some query keywords are present (AND, not OR)", async () => {
+      const deps = makeDeps({
+        sessionStore: {
+          listDetailed: () => [
+            {
+              sessionKey: "partial-session",
+              userId: "u1",
+              channelId: "c1",
+              metadata: {},
+              createdAt: 1000,
+              updatedAt: 2000,
+              messageCount: 1,
+            },
+          ],
+          loadByFormattedKey: () => ({
+            messages: [{ role: "user", content: "the axolotl is purple" }],
+            metadata: {},
+            createdAt: 1000,
+            updatedAt: 2000,
+          }),
+          deleteByFormattedKey: () => false,
+          saveByFormattedKey: vi.fn(),
+        },
+      });
+      const handlers = createSessionHandlers(deps);
+
+      const response = (await handlers["session.search"]!({
+        query: "axolotl Quark",
+      })) as { results: unknown[]; total: number };
+      expect(response.total).toBe(0);
+    });
+
     it("filters by scope=user (only user messages)", async () => {
       const deps = makeDeps({
         sessionStore: {
