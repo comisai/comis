@@ -56,11 +56,11 @@ import { estimateMessageTokens } from "../safety/token-estimator.js";
 import {
   selectLeafChunk,
   summarizeLeafChunk,
-  resolveSummarizerWindowTokens,
   MIN_SHRINKABLE_LEAF_CHUNK_TOKENS,
   type LeafChunkItem,
   type LeafSummarizerDeps,
 } from "../context-engine/lcd-leaf-summarizer.js";
+import { resolveSummarizerWindowTokens } from "../context-engine/summarizer-window.js";
 import { resolveCompactionStrategy } from "../context-engine/compaction-capability-router.js";
 import { isSecurityRelevantMessage } from "../context-engine/security-context-pinner.js";
 import {

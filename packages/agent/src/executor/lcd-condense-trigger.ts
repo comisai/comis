@@ -66,10 +66,8 @@ import {
   summarizeCondensedChunk,
   type SummaryRefRun,
 } from "../context-engine/lcd-condense.js";
-import {
-  resolveSummarizerWindowTokens,
-  type LeafSummarizerDeps,
-} from "../context-engine/lcd-leaf-summarizer.js";
+import type { LeafSummarizerDeps } from "../context-engine/lcd-leaf-summarizer.js";
+import { resolveSummarizerWindowTokens } from "../context-engine/summarizer-window.js";
 import { SUMMARIZER_PROMPT_OVERHEAD_TOKENS } from "../context-engine/constants.js";
 import { resolveContext } from "./lcd-compaction-trigger.js";
 

@@ -6,7 +6,7 @@
  * THE INVARIANT: for ALL compaction calls, inputTokens ≤ the RESOLVED
  * summarizer's effective window. The summarizer that ACTUALLY runs is
  * `overrideModel?.model ?? getRealModel()` (resolveSummarizerWindowTokens,
- * lcd-leaf-summarizer.ts — the one resolved-summarizer window read), which with
+ * summarizer-window.ts — the one resolved-summarizer window read), which with
  * an `operationModels.compaction` override can be a MUCH smaller model than the
  * session primary (e.g. an 8K local summarizer under a 131K primary).
  *
