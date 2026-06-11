@@ -108,9 +108,11 @@ export function handleEnvelopeException(
     readonly error: unknown;
     readonly sessionKey: SessionKey;
     readonly agentId: string | undefined;
+    /** Execution start (clock ms) — elapsed rides the WARN + timeout hint (177-REVIEW IN-02). */
+    readonly executionStartMs: number;
   },
 ): void {
-  const { error, sessionKey, agentId } = ctx;
+  const { error, sessionKey, agentId, executionStartMs } = ctx;
 
   // CR-01 (Phase 166): ContextExhaustionError is a clean escalation — it means
   // the pre-flight fit check determined the conversation cannot fit in the context
@@ -136,14 +138,19 @@ export function handleEnvelopeException(
   // (LAT-01). This envelope seam has no effectiveTimeout in scope (state
   // carries only the result; threading new fields is out of 177-04's scope),
   // so the binding degrades gracefully to the agent knob with the ctx
-  // agentId — the H-6/H-8 contract: a knob-named hint, never a throw.
+  // agentId — the H-6/H-8 contract: a knob-named hint, never a throw. The
+  // elapsed time IS in scope (executionStartMs, 177-REVIEW IN-02): the §2.7
+  // matrix wants durationMs on failure lines, and the hint's elapsed clause
+  // matches the failure-path consumer.
+  const durationMs = deps.clock.now() - executionStartMs;
   const isPromptTimeout = error instanceof PromptTimeoutError;
   const classifiedOuter = isPromptTimeout
-    ? classifyPromptTimeout(error, { agentId })
+    ? classifyPromptTimeout(error, { agentId }, durationMs)
     : classifyError(error);
   deps.logger.warn(
     {
       err: error,
+      durationMs,
       hint: classifiedOuter.hint ?? "PiExecutor unexpected error",
       errorKind: (isPromptTimeout ? "timeout" : "internal") as ErrorKind,
     },

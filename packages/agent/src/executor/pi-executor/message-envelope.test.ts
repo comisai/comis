@@ -91,7 +91,7 @@ describe("handleEnvelopeException", () => {
     handleEnvelopeException(
       { result },
       makeDeps({ logger: logger as unknown as MessageEnvelopeDeps["logger"] }),
-      { error: err, sessionKey: result.sessionKey, agentId: "a1" },
+      { error: err, sessionKey: result.sessionKey, agentId: "a1", executionStartMs: 0 },
     );
     expect(result.finishReason).toBe("prompt_timeout");
     expect(result.errorContext?.errorType).toBe("PromptTimeout");
@@ -105,10 +105,33 @@ describe("handleEnvelopeException", () => {
     expect(result.response).not.toContain("agents.");
   });
 
+  it("177-REVIEW IN-02: the envelope-seam timeout WARN carries durationMs and the hint carries the elapsed time (executionStartMs threaded through ctx)", () => {
+    const result = makeResult();
+    const warn = vi.fn();
+    const logger = makeNoopLogger();
+    logger.warn = warn;
+    const err = new PromptTimeoutError(180_000, { limit: "stall", stallBudgetMs: 180_000 });
+    handleEnvelopeException(
+      { result },
+      makeDeps({
+        logger: logger as unknown as MessageEnvelopeDeps["logger"],
+        clock: { now: () => 200_000, nowDate: () => new Date(200_000) },
+      }),
+      { error: err, sessionKey: result.sessionKey, agentId: "a1", executionStartMs: 5_000 },
+    );
+    const warnCall = warn.mock.calls.find((c) => c[1] === "Unexpected execution error");
+    expect(warnCall).toBeDefined();
+    // Pre-patch this second classify consumer passed only { agentId } and no
+    // elapsedMs, and the WARN had no durationMs — the §2.7 matrix wants
+    // elapsed on failure lines, and the failure-path consumer has both.
+    expect(warnCall![0].durationMs).toBe(195_000);
+    expect(warnCall![0].hint).toMatch(/after 195000ms/);
+  });
+
   it("classifies generic Error and writes user-facing message", () => {
     const result = makeResult();
     const err = new Error("kaboom");
-    handleEnvelopeException({ result }, makeDeps(), { error: err, sessionKey: result.sessionKey, agentId: "a1" });
+    handleEnvelopeException({ result }, makeDeps(), { error: err, sessionKey: result.sessionKey, agentId: "a1", executionStartMs: 0 });
     expect(result.finishReason).toBe("error");
     expect(result.errorContext?.errorType).toBe("UnexpectedError");
     expect(result.errorContext?.originalError).toBe("kaboom");
@@ -122,7 +145,7 @@ describe("handleEnvelopeException", () => {
     handleEnvelopeException(
       { result },
       makeDeps({ logger: logger as unknown as MessageEnvelopeDeps["logger"] }),
-      { error: new Error("kaboom"), sessionKey: result.sessionKey, agentId: "a1" },
+      { error: new Error("kaboom"), sessionKey: result.sessionKey, agentId: "a1", executionStartMs: 0 },
     );
     expect(result.finishReason).toBe("error");
     const warnCall = warn.mock.calls.find((c) => c[1] === "Unexpected execution error");
@@ -139,7 +162,7 @@ describe("handleEnvelopeException", () => {
     handleEnvelopeException(
       { result },
       makeDeps({ outputGuard, canaryToken: "secret-token" }),
-      { error: err, sessionKey: result.sessionKey, agentId: "a1" },
+      { error: err, sessionKey: result.sessionKey, agentId: "a1", executionStartMs: 0 },
     );
     expect(scan).toHaveBeenCalled();
   });
@@ -147,7 +170,7 @@ describe("handleEnvelopeException", () => {
   it("state.result reference is mutated in place (orchestrator reads back)", () => {
     const result = makeResult();
     const before = result;
-    handleEnvelopeException({ result }, makeDeps(), { error: new Error("x"), sessionKey: result.sessionKey, agentId: undefined });
+    handleEnvelopeException({ result }, makeDeps(), { error: new Error("x"), sessionKey: result.sessionKey, agentId: undefined, executionStartMs: 0 });
     expect(result).toBe(before);
     expect(result.finishReason).toBe("error");
   });
@@ -156,7 +179,7 @@ describe("handleEnvelopeException", () => {
   it("CR-01: ContextExhaustionError maps to finishReason 'context_exhausted' (not 'error')", () => {
     const result = makeResult();
     const err = new ContextExhaustionError(32_768, 31_500);
-    handleEnvelopeException({ result }, makeDeps(), { error: err, sessionKey: result.sessionKey, agentId: "a1" });
+    handleEnvelopeException({ result }, makeDeps(), { error: err, sessionKey: result.sessionKey, agentId: "a1", executionStartMs: 0 });
     // Must map to context_exhausted so END_REASON_MAP fires the correct degradation cause
     expect(result.finishReason).toBe("context_exhausted");
     expect(result.response).toContain("conversation history");
@@ -167,7 +190,7 @@ describe("handleEnvelopeException", () => {
   it("CR-01: ContextExhaustionError user-facing message does not expose internal details", () => {
     const result = makeResult();
     const err = new ContextExhaustionError(32_768, 31_500);
-    handleEnvelopeException({ result }, makeDeps(), { error: err, sessionKey: result.sessionKey, agentId: "a1" });
+    handleEnvelopeException({ result }, makeDeps(), { error: err, sessionKey: result.sessionKey, agentId: "a1", executionStartMs: 0 });
     // Internal token counts must not leak to user
     expect(result.response).not.toContain("31500");
     expect(result.response).not.toContain("32768");
@@ -176,7 +199,7 @@ describe("handleEnvelopeException", () => {
 
   it("CR-01: non-ContextExhaustionError still maps to 'error' (regression guard)", () => {
     const result = makeResult();
-    handleEnvelopeException({ result }, makeDeps(), { error: new Error("generic"), sessionKey: result.sessionKey, agentId: "a1" });
+    handleEnvelopeException({ result }, makeDeps(), { error: new Error("generic"), sessionKey: result.sessionKey, agentId: "a1", executionStartMs: 0 });
     expect(result.finishReason).toBe("error");
   });
 });

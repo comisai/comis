@@ -1658,7 +1658,7 @@ async function runSessionLocked(
         outputGuard: deps.outputGuard,
         canaryToken: deps.canaryToken,
       },
-      { error, sessionKey, agentId },
+      { error, sessionKey, agentId, executionStartMs },
     );
   } finally {
     // Clear thinking ceiling so next execution recalculates from current state.
