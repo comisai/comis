@@ -135,25 +135,46 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
     [MemoryAskContract.method]: async (rawParams) => {
       const askStart = systemNowMs();
       // Scope is read PRE-strip (mirrors search_files + context.recall): the
-      // dispatcher injects `_agentId` + `_callerSessionKey`; the handler scopes
-      // recall to the caller and NEVER widens it.
-      const agentId = rawParams._agentId as string | undefined;
+      // dispatcher injects `_agentId` + `_callerSessionKey` on the agent tool
+      // path; an external RPC caller (CLI / web dashboard / operator WS) has
+      // no `_agentId`, so it falls back to the DEFAULT agent — live finding
+      // 2026-06-11: without the fallback every external memory.ask call
+      // silently returned the bare abstain sentinel while the chat path
+      // recalled the same fact fine. No widening beyond existing token
+      // authority: memory.search serves the same rpc scope tenant-wide.
+      const agentId = (rawParams._agentId as string | undefined) ?? deps.defaultAgentId;
       const callerSessionKey = rawParams._callerSessionKey as string | undefined;
       const userParams = stripInternalFields(rawParams);
       const params = MemoryAskContract.request.parse(userParams);
       const question = params.question;
 
       // Graceful abstain when the dialectic is not wired (no key / seam not
-      // applied) or the caller carries no agent scope — never throws.
-      if (
-        deps.dialecticSeam === undefined ||
-        deps.buildDialecticRecall === undefined ||
-        agentId === undefined
-      ) {
+      // applied) or no agent scope is resolvable — never throws. Each branch
+      // carries a distinct `reason` + an INFO log so an infrastructure absence
+      // is never disguised as a semantic "no data" abstain (live finding
+      // 2026-06-11: all branches returned the identical bare sentinel with
+      // ZERO log lines — undiagnosable without reading the wiring).
+      if (deps.dialecticSeam === undefined || deps.buildDialecticRecall === undefined || agentId === undefined) {
+        const reason = agentId === undefined ? "no_agent_scope" : "dialectic_unavailable";
+        deps.logger?.info(
+          {
+            agentId,
+            step: "dialectic" as const,
+            durationMs: systemNowMs() - askStart,
+            abstained: true,
+            reason,
+            hint:
+              reason === "dialectic_unavailable"
+                ? "memory.ask abstained because the dialectic seam is not wired — check dialectic.enabled / memory.costFeatures.enabled and the agent's provider key"
+                : "memory.ask abstained because no agent scope was resolvable (no _agentId and no defaultAgentId)",
+          },
+          "memory.ask abstained (dialectic unavailable)",
+        );
+        const sentinel = { ...ABSTAIN_SENTINEL, reason };
         if (systemGetEnv("NODE_ENV") !== "production") {
-          MemoryAskContract.response.parse(ABSTAIN_SENTINEL);
+          MemoryAskContract.response.parse(sentinel);
         }
-        return ABSTAIN_SENTINEL;
+        return sentinel;
       }
 
       // Run the FULL createMemoryRecall (trust-FILTERED; content is RAW — this handler
@@ -170,13 +191,14 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
       // (Pitfall 5 — no grounding ⇒ no LLM call, no fabricated answer).
       if (!recalled.ok || recalled.value.length === 0) {
         deps.logger?.info(
-          { agentId, step: "dialectic" as const, durationMs: systemNowMs() - askStart, abstained: true, citationCount: 0 },
+          { agentId, step: "dialectic" as const, durationMs: systemNowMs() - askStart, abstained: true, reason: "empty_recall", citationCount: 0 },
           "memory.ask abstained (empty recall)",
         );
+        const sentinel = { ...ABSTAIN_SENTINEL, reason: "empty_recall" };
         if (systemGetEnv("NODE_ENV") !== "production") {
-          MemoryAskContract.response.parse(ABSTAIN_SENTINEL);
+          MemoryAskContract.response.parse(sentinel);
         }
-        return ABSTAIN_SENTINEL;
+        return sentinel;
       }
 
       // Trust-first ordering BEFORE building the grounding (the HARD boundary —
@@ -291,6 +313,7 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
           step: "dialectic" as const,
           durationMs: systemNowMs() - askStart,
           abstained: result.abstained,
+          ...(result.abstained ? { reason: "synthesis_abstained" } : {}),
           citationCount: result.citations.length,
           // ids-only provenance counts (NEVER bodies): how many cited claims
           // carried a sourceId chain.
@@ -299,10 +322,14 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
         "memory.ask completed",
       );
 
+      // A synthesis-level abstain (grounding existed; the seam/citation
+      // validation declined) is distinguishable from the infrastructure
+      // branches above — the model's judgment, not an absent dep.
+      const finalResult = result.abstained ? { ...result, reason: "synthesis_abstained" } : result;
       if (systemGetEnv("NODE_ENV") !== "production") {
-        MemoryAskContract.response.parse(result);
+        MemoryAskContract.response.parse(finalResult);
       }
-      return result;
+      return finalResult;
     },
 
     [MemoryGetFileContract.method]: async (rawParams) => {

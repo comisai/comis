@@ -19,7 +19,7 @@ The Memory view lets you explore everything your agents have learned and remembe
 - `memory.delete(id)` -- delete a single entry; pass an array of IDs for bulk deletion
 - `memory.get_file(id)` -- single-entry detail
 - `memory.stats()` -- store-wide statistics (total entries, vectors, database size)
-- `memory.ask(question)` -- grounded natural-language query over the memory store (opt-in: requires `dialectic.enabled: true` in agent config)
+- `memory.ask(question)` -- grounded natural-language query over the memory store (default-on; disable per-agent with `dialectic.enabled: false`, or kill all cost features with `memory.costFeatures.enabled: false`). An abstain response carries a `reason` (`empty_recall`, `synthesis_abstained`, `dialectic_unavailable`, `no_agent_scope`) so an unwired dialectic is never mistaken for "no data".
 - `memory.store(entry)` -- store a new memory entry
 - `memory.flush()` -- flush the memory store
 - `memory.export()` -- export a memory snapshot

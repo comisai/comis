@@ -1135,7 +1135,7 @@ describe("createMemoryHandlers - diagnostics", () => {
 // and surfaces the citation→sourceId chain. Counts/ids-only logging.
 // ---------------------------------------------------------------------------
 
-type AskResult = { answer: string; citations: string[]; abstained: boolean };
+type AskResult = { answer: string; citations: string[]; abstained: boolean; reason?: string };
 
 const noopLogger: ComisLogger = {
   debug: () => {},
@@ -1228,7 +1228,7 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
       _callerSessionKey: "sess-1",
     })) as AskResult;
 
-    expect(result).toEqual({ answer: "", citations: [], abstained: true });
+    expect(result).toEqual({ answer: "", citations: [], abstained: true, reason: "empty_recall" });
     // The seam is NEVER called when recall is empty (saves the LLM call).
     expect(seam.spy).not.toHaveBeenCalled();
   });
@@ -1349,7 +1349,7 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
       _callerSessionKey: "sess-1",
     })) as AskResult;
 
-    expect(result).toEqual({ answer: "", citations: [], abstained: true });
+    expect(result).toEqual({ answer: "", citations: [], abstained: true, reason: "dialectic_unavailable" });
   });
 
   it("Test 6b: a REAL createDialecticSeam with an unresolvable model degrades to abstain", async () => {
@@ -1384,6 +1384,74 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
 
     expect(result.abstained).toBe(true);
     expect(result.citations).toEqual([]);
+  });
+
+  it("an external RPC caller (CLI/dashboard, no _agentId) gets a real answer scoped to the default agent — not a silent abstain", async () => {
+    // Live finding 2026-06-11: memory.ask over raw WS RPC returned the bare
+    // abstain sentinel for a fact the chat path recalled fine — the handler
+    // treated the missing dispatcher-injected _agentId as "abstain".
+    const recall = makeRecall([memResult("id-a", "dentist appointment June 25", "learned")]);
+    const seam = makeSeam({ abstain: false, answer: "June 25", citedIds: ["id-a"] });
+    const deps = makeDeps({
+      logger: noopLogger,
+      buildDialecticRecall: recall.build,
+      dialecticSeam: seam.seam,
+    });
+    const handlers = createMemoryHandlers(deps);
+
+    const result = (await handlers["memory.ask"]!({
+      question: "when is the dentist appointment",
+      // NO _agentId — external caller.
+    })) as AskResult;
+
+    expect(result.abstained).toBe(false);
+    expect(result.answer).toBe("June 25");
+    // Recall ran under the DEFAULT agent scope (deps.defaultAgentId).
+    expect(recall.buildCalls).toEqual(["default"]);
+  });
+
+  it("a synthesis-level abstain is distinguishable from an infrastructure abstain via reason", async () => {
+    const recall = makeRecall([memResult("id-a", "fact", "learned")]);
+    const seam = makeSeam({ abstain: true, answer: "", citedIds: [] });
+    const deps = makeDeps({
+      logger: noopLogger,
+      buildDialecticRecall: recall.build,
+      dialecticSeam: seam.seam,
+    });
+    const handlers = createMemoryHandlers(deps);
+
+    const result = (await handlers["memory.ask"]!({
+      question: "q",
+      _agentId: "agent-1",
+    })) as AskResult;
+
+    expect(result.abstained).toBe(true);
+    expect(result.reason).toBe("synthesis_abstained");
+  });
+
+  it("an unwired dialectic logs the abstain with reason + hint instead of returning silently", async () => {
+    const logged: Array<Record<string, unknown>> = [];
+    const capturingLogger = {
+      debug: () => {},
+      info: (o: unknown) => logged.push(o as Record<string, unknown>),
+      warn: () => {},
+      error: () => {},
+      fatal: () => {},
+      trace: () => {},
+      child: () => capturingLogger,
+    } as unknown as ComisLogger;
+    const deps = makeDeps({ logger: capturingLogger }); // no seam, no recall factory
+    const handlers = createMemoryHandlers(deps);
+
+    const result = (await handlers["memory.ask"]!({
+      question: "q",
+      _agentId: "agent-1",
+    })) as AskResult;
+
+    expect(result.reason).toBe("dialectic_unavailable");
+    const abstainLog = logged.find((o) => o["reason"] === "dialectic_unavailable");
+    expect(abstainLog).toBeDefined();
+    expect(String(abstainLog!["hint"] ?? "")).toContain("dialectic");
   });
 
   it("Test 7: counts/ids-only logging — never the question, recalled content, or answer text", async () => {
