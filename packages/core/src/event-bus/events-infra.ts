@@ -277,7 +277,11 @@ export interface InfraEvents {
     agentId: string;
     result: string;
     success: boolean;
-    deliveryTarget: {
+    /** Absent for deliveryTarget-less system_event jobs (the memory-cron
+     *  __SENTINEL__ class — live finding 2026-06-11: their WORK rides this
+     *  event and must fire even with nothing to deliver). The delivery
+     *  listener already guards via `deliveryTarget?.channelType`. */
+    deliveryTarget?: {
       channelId: string;
       userId: string;
       tenantId: string;
