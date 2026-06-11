@@ -371,6 +371,7 @@ describe("processFailurePath — knob-named timeout diagnostics (LAT-01-H-7)", (
       effectiveTimeout: {
         promptTimeoutMs: 180_000,
         retryPromptTimeoutMs: 60_000,
+        stallCeilingMultiplier: 10,
         source: "agent_config",
       },
       systemPrompt: undefined,
@@ -411,6 +412,26 @@ describe("processFailurePath — knob-named timeout diagnostics (LAT-01-H-7)", (
       "The request took too long to process. Please try again with a simpler message.",
     );
     expect(result.response).not.toContain("agents.");
+  });
+
+  it("177-REVIEW IN-01: a terminal makespan kill renders the multiplier NUMBER in the hint — the binding carries stallCeilingMultiplier", async () => {
+    const { params, warn } = makeFailureParams("c-in01-makespan");
+    const makespanErr = new PromptTimeoutError(1_800_000, {
+      limit: "makespan",
+      stallBudgetMs: 180_000,
+      makespanMs: 1_800_000,
+    });
+
+    await processFailurePath(params, "hello", undefined, makespanErr);
+
+    const warnCall = warn.mock.calls.find((c) => c[1] === "Prompt execution error");
+    expect(warnCall).toBeDefined();
+    // Pre-patch the binding omitted stallCeilingMultiplier, so the makespan
+    // hint rendered '(stall budget 180000 × stallCeilingMultiplier)' with no
+    // multiplier value — number-less, despite EffectiveTimeout carrying the
+    // non-optional field in scope.
+    expect(warnCall![0].hint).toMatch(/stallCeilingMultiplier 10\)/);
+    expect(warnCall![0].hint).toMatch(/makespan ceiling 1800000ms/);
   });
 
   it("LAT-01-H-7 regression: a non-timeout terminal error keeps finishReason 'error' + errorKind 'dependency' + the generic all-models hint", async () => {

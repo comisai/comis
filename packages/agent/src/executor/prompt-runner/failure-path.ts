@@ -129,10 +129,9 @@ function emitFailureDiagnostics(
 
   // Classify BEFORE the WARN so the knob-named hint rides the log line
   // (LAT-01). For a PromptTimeoutError the binding provenance comes from the
-  // 177-02 effectiveTimeout (source + operationType + configured numbers) —
-  // the makespan hint's multiplier detail falls back to the numbers carried
-  // on the error itself (177-01), keeping zero coupling to the parallel
-  // 177-03 stallCeilingMultiplier threading.
+  // 177-02 effectiveTimeout (source + operationType + configured numbers,
+  // including the non-optional stallCeilingMultiplier — 177-REVIEW IN-01:
+  // without it the makespan hint's multiplier clause rendered number-less).
   const isPromptTimeout = promptError instanceof PromptTimeoutError;
   const classified = isPromptTimeout
     ? classifyPromptTimeout(
@@ -143,6 +142,7 @@ function emitFailureDiagnostics(
           agentId,
           promptTimeoutMs: effectiveTimeout.promptTimeoutMs,
           retryPromptTimeoutMs: effectiveTimeout.retryPromptTimeoutMs,
+          stallCeilingMultiplier: effectiveTimeout.stallCeilingMultiplier,
         },
         deps.clock.now() - executionStartMs,
       )
