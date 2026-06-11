@@ -41,12 +41,15 @@ const { registerChannelCommand } = await import("./channel.js");
 const { withClient } = await import("../client/rpc-client.js");
 
 /**
- * Sample channel config data with connected, disconnected, and error statuses.
+ * Sample channel CONFIG section: what is configured/enabled. Live state
+ * comes from channels.health, never from config (the old config-only read
+ * reported a healthy live adapter as "disconnected" — 2026-06-12 C5 live
+ * finding).
  */
 const CHANNELS_DATA = {
-  telegram: { enabled: true, status: "connected", botUsername: "mybot" },
-  discord: { enabled: true, status: "disconnected", applicationId: "app-123" },
-  slack: { enabled: true, status: "error", teamId: "team-456" },
+  telegram: { enabled: true, botUsername: "mybot" },
+  discord: { enabled: true, applicationId: "app-123" },
+  slack: { enabled: true, teamId: "team-456" },
 };
 
 /**
@@ -55,6 +58,35 @@ const CHANNELS_DATA = {
 const CHANNELS_DATA_WITH_DISABLED = {
   ...CHANNELS_DATA,
   whatsapp: { enabled: false },
+};
+
+/**
+ * Live health entries: telegram healthy (running), slack errored,
+ * discord ABSENT (enabled in config but adapter not running).
+ */
+function healthEntry(channelType: string, state: string, connectionMode: string) {
+  return {
+    channelType,
+    state,
+    connectionMode,
+    lastCheckedAt: 1781220286856,
+    lastMessageAt: null,
+    error: null,
+    stateChangedAt: 1781220166855,
+    consecutiveFailures: 0,
+    activeRuns: 0,
+    restartAttempts: 0,
+    uptimeMs: 264123,
+  };
+}
+
+const HEALTH_DATA = {
+  channels: [
+    healthEntry("telegram", "healthy", "polling"),
+    healthEntry("slack", "errored", "socket"),
+  ],
+  timestamp: 1781220310975,
+  enabled: true,
 };
 
 // -- channel status displays all configured channels -----------------
@@ -71,6 +103,7 @@ describe("channel status displays all configured channels", () => {
     vi.mocked(withClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
         .onCall("config.read", CHANNELS_DATA)
+        .onCall("channels.health", HEALTH_DATA)
         .build();
       return fn(mockClient);
     });
@@ -122,6 +155,7 @@ describe("channel status --format json outputs valid JSON", () => {
     vi.mocked(withClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
         .onCall("config.read", CHANNELS_DATA)
+        .onCall("channels.health", HEALTH_DATA)
         .build();
       return fn(mockClient);
     });
@@ -156,22 +190,23 @@ describe("channel status --format json outputs valid JSON", () => {
       expect(item).toHaveProperty("status");
     }
 
-    // Verify specific channel data
+    // Verify specific channel data: status comes from the LIVE health
+    // lens, never from config.
     const telegram = parsed.find((ch) => ch.type === "telegram");
     expect(telegram).toBeDefined();
     expect(telegram!.name).toBe("Telegram");
-    expect(telegram!.status).toBe("connected");
-    expect(telegram!.details).toBe("@mybot");
+    expect(telegram!.status).toBe("healthy");
+    expect(telegram!.details).toBe("@mybot, mode: polling");
 
     const discord = parsed.find((ch) => ch.type === "discord");
     expect(discord).toBeDefined();
-    expect(discord!.status).toBe("disconnected");
+    expect(discord!.status).toBe("not running");
     expect(discord!.details).toBe("App: app-123");
 
     const slack = parsed.find((ch) => ch.type === "slack");
     expect(slack).toBeDefined();
-    expect(slack!.status).toBe("error");
-    expect(slack!.details).toBe("Team: team-456");
+    expect(slack!.status).toBe("errored");
+    expect(slack!.details).toBe("Team: team-456, mode: socket");
 
     expect(exitSpy.spy).not.toHaveBeenCalled();
   });
@@ -191,6 +226,7 @@ describe("channel status color-codes status", () => {
     vi.mocked(withClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
         .onCall("config.read", CHANNELS_DATA_WITH_DISABLED)
+        .onCall("channels.health", HEALTH_DATA)
         .build();
       return fn(mockClient);
     });
@@ -201,7 +237,7 @@ describe("channel status color-codes status", () => {
     exitSpy.restore();
   });
 
-  it("displays all status variants: connected, disconnected, error, disabled", async () => {
+  it("displays all status variants: healthy, not running, errored, disabled", async () => {
     const program = createTestProgram();
     registerChannelCommand(program);
 
@@ -210,9 +246,9 @@ describe("channel status color-codes status", () => {
     const output = getSpyOutput(consoleSpy.log);
 
     // All four status strings should appear (chalk may or may not add ANSI codes)
-    expect(output).toContain("connected");
-    expect(output).toContain("disconnected");
-    expect(output).toContain("error");
+    expect(output).toContain("healthy");
+    expect(output).toContain("not running");
+    expect(output).toContain("errored");
     expect(output).toContain("disabled");
 
     // Whatsapp should be present as a disabled channel
@@ -233,9 +269,9 @@ describe("channel status color-codes status", () => {
     expect(parsed).toHaveLength(4);
 
     const statuses = parsed.map((ch) => ch.status);
-    expect(statuses).toContain("connected");
-    expect(statuses).toContain("disconnected");
-    expect(statuses).toContain("error");
+    expect(statuses).toContain("healthy");
+    expect(statuses).toContain("not running");
+    expect(statuses).toContain("errored");
     expect(statuses).toContain("disabled");
   });
 });
@@ -290,6 +326,7 @@ describe("channel status shows no channels message", () => {
     vi.mocked(withClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
         .onCall("config.read", {})
+        .onCall("channels.health", { channels: [], timestamp: 0, enabled: false })
         .build();
       return fn(mockClient);
     });
