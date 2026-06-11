@@ -2,6 +2,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { createSessionHandlers } from "./session-handlers/index.js";
 import type { SessionHandlerDeps } from "./session-handlers/index.js";
+import { scanWorkspaceSessions, scanJsonlSessions } from "./session-handlers/session-helpers.js";
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -35,6 +36,7 @@ function makeDeps(overrides?: Partial<SessionHandlerDeps>): SessionHandlerDeps {
     crossSessionSender: { send: vi.fn() } as never,
     subAgentRunner: { spawn: vi.fn(), getRunStatus: vi.fn() } as never,
     securityConfig: { agentToAgent: { enabled: true, waitTimeoutMs: 5000 } },
+    logger: { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn(), child: vi.fn().mockReturnThis() } as never,
     ...overrides,
   };
 }
@@ -110,6 +112,90 @@ describe("createSessionHandlers - session management", () => {
         _trustLevel: "admin",
       });
       expect(result).toBeDefined();
+    });
+
+    it("severs the LCD and runtime layers so a deleted session cannot resurface in session.list", async () => {
+      // Live C7 finding (2026-06-12): session.delete returned deleted:true but
+      // only removed the sessionStore row — the surviving runtime JSONL was
+      // re-surfaced by session.list's scanJsonlSessions merge, and the LCD
+      // conversation would re-feed a recreated same-key session.
+      const lcdStore = {
+        runOnConversation: vi.fn(async (_id: string, fn: () => Promise<number>) => fn()),
+        deleteConversationLcd: vi.fn(async () => 3),
+      };
+      const destroyRuntimeSession = vi.fn(async () => true);
+      const deps = makeDeps({
+        lcdStore: lcdStore as never,
+        destroyRuntimeSession: destroyRuntimeSession as never,
+        tenantId: "default",
+      });
+      const handlers = createSessionHandlers(deps);
+
+      const result = (await handlers["session.delete"]!({
+        session_key: "valid-session",
+        _trustLevel: "admin",
+      })) as { deleted: boolean };
+
+      expect(result.deleted).toBe(true);
+      expect(lcdStore.deleteConversationLcd).toHaveBeenCalled();
+      expect(destroyRuntimeSession).toHaveBeenCalledWith("valid-session");
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // workspace scanners must not surface observability artifacts as sessions
+  // -------------------------------------------------------------------------
+
+  describe("workspace session scanners", () => {
+    it("does not list a trajectory artifact as a live session after the transcript was destroyed", () => {
+      // Live C7 finding (2026-06-12): after session.delete severed the live
+      // JSONL, session.list re-surfaced "default:tooltest-del.jsonl.trajectory"
+      // — the scanner counted trajectory EVENTS as session messages.
+      const root = join(tmpdir(), `scan-traj-${Date.now()}`);
+      const channelDir = join(root, "sessions", "default", "tooltest-del");
+      mkdirSync(channelDir, { recursive: true });
+      writeFileSync(join(channelDir, "tooltest-del.jsonl.trajectory.jsonl"), '{"type":"tool.result"}\n');
+      writeFileSync(join(channelDir, "tooltest-del.jsonl.trajectory-path.json"), "{}");
+      writeFileSync(join(channelDir, "tooltest-del_session-metadata.json"), "{}");
+
+      try {
+        const rows = scanWorkspaceSessions(root);
+        expect(rows).toHaveLength(0);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    it("still lists a real live transcript while skipping its sibling trajectory artifact", () => {
+      const root = join(tmpdir(), `scan-live-${Date.now()}`);
+      const channelDir = join(root, "sessions", "default", "chat-1");
+      mkdirSync(channelDir, { recursive: true });
+      writeFileSync(join(channelDir, "chat-1.jsonl"), '{"role":"user","content":"hi"}\n');
+      writeFileSync(join(channelDir, "chat-1.jsonl.trajectory.jsonl"), '{"type":"tool.result"}\n');
+
+      try {
+        const rows = scanWorkspaceSessions(root);
+        expect(rows).toHaveLength(1);
+        expect(rows[0]?.sessionKey).toBe("default:chat-1");
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    it("agent-data scanner also skips trajectory artifacts", () => {
+      const root = join(tmpdir(), `scan-agent-${Date.now()}`);
+      const sessionsDir = join(root, "default", "sessions");
+      mkdirSync(sessionsDir, { recursive: true });
+      writeFileSync(join(sessionsDir, "s1.jsonl"), '{"role":"user","content":"hi"}\n');
+      writeFileSync(join(sessionsDir, "s1.jsonl.trajectory.jsonl"), '{"type":"tool.result"}\n');
+
+      try {
+        const rows = scanJsonlSessions(root, { default: {} as never });
+        expect(rows).toHaveLength(1);
+        expect(rows[0]?.sessionKey).toBe("s1");
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
     });
   });
 

@@ -51,6 +51,17 @@ export interface JsonlSessionInfo {
  * session info records for sessions that exist only as JSONL files.
  * Performance-guarded: skips agents with >1000 session files.
  */
+/**
+ * True for a LIVE session transcript file; false for the co-located
+ * observability artifacts (`<file>.jsonl.trajectory.jsonl`). Both scanners
+ * must share this predicate: counting trajectory EVENTS as session messages
+ * re-surfaced a deleted session in session.list as
+ * `default:<name>.jsonl.trajectory` (live C7 finding, 2026-06-12).
+ */
+function isLiveTranscriptFile(file: string): boolean {
+  return file.endsWith(".jsonl") && !file.endsWith(".trajectory.jsonl");
+}
+
 export function scanJsonlSessions(
   agentDataDir: string,
   agents: Record<string, unknown>,
@@ -61,7 +72,7 @@ export function scanJsonlSessions(
     const sessionsDir = safePath(agentDataDir, agentId, "sessions");
     let files: string[];
     try {
-      files = readdirSync(sessionsDir).filter(f => f.endsWith(".jsonl"));
+      files = readdirSync(sessionsDir).filter(isLiveTranscriptFile);
     } catch {
       continue; // Directory doesn't exist for this agent
     }
@@ -150,7 +161,7 @@ export function scanWorkspaceSessions(workspaceDir: string): JsonlSessionInfo[] 
       try {
         const st = statSync(channelPath);
         if (!st.isDirectory()) continue;
-        files = readdirSync(channelPath).filter(f => f.endsWith(".jsonl"));
+        files = readdirSync(channelPath).filter(isLiveTranscriptFile);
       } catch {
         continue;
       }

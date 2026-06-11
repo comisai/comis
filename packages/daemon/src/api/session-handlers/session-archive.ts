@@ -69,6 +69,55 @@ export function bindSessionArchiveHandlers(deps: SessionHandlerDeps): Record<str
       // session reusing the key starts genuinely fresh.
       deps.clearAgentSessionState?.(sessionKey);
 
+      // Delete ⊇ reset: sever the OTHER two transcript layers too (live C7
+      // finding, 2026-06-12). Without the runtime destroy, the surviving
+      // live JSONL re-surfaces the "deleted" session via session.list's
+      // scanJsonlSessions merge; without the LCD delete, a recreated
+      // same-key session re-reads the old conversation (the resurrection
+      // class session.reset_conversation already guards against).
+      // Best-effort on both — the store-row deletion above is the
+      // contract-bearing effect and must not be undone by a layer failure.
+      let lcdRowsDeleted = 0;
+      if (deps.lcdStore) {
+        const scope: ContextStoreScope = {
+          conversationId: sessionKey,
+          agentId: deps.defaultAgentId,
+          tenantId: deps.tenantId,
+          sessionKey,
+        };
+        try {
+          lcdRowsDeleted = await deps.lcdStore.runOnConversation(
+            scope.conversationId,
+            () => deps.lcdStore!.deleteConversationLcd(scope),
+          );
+        } catch (e: unknown) {
+          deps.logger.warn(
+            {
+              method: SessionDeleteContract.method,
+              sessionKey,
+              err: e instanceof Error ? e : new Error(String(e)),
+              errorKind: "dependency" as const,
+              hint: "LCD rows survive the delete — a recreated same-key session may re-read them",
+            },
+            "Session delete: LCD layer clear failed",
+          );
+        }
+      }
+      let runtimeSessionDestroyed = false;
+      if (deps.destroyRuntimeSession) {
+        runtimeSessionDestroyed = await deps.destroyRuntimeSession(sessionKey);
+      }
+      deps.logger.info(
+        {
+          method: SessionDeleteContract.method,
+          sessionKey,
+          messageCount: transcript.messageCount,
+          lcdRowsDeleted,
+          runtimeSessionDestroyed,
+        },
+        "Session deleted across store, LCD, and runtime layers",
+      );
+
       return { sessionKey, deleted: true, transcript };
     },
 
