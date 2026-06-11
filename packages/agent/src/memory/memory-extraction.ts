@@ -24,7 +24,7 @@
  * @module
  */
 
-import { MemoryExtractionResultSchema, systemDateFrom, type MemoryExtractionResult } from "@comis/core";
+import { MemoryExtractionResultSchema, StructuredMemorySchema, systemDateFrom, type MemoryExtractionResult } from "@comis/core";
 import { parseLenientJson } from "./llm-json.js";
 
 // ---------------------------------------------------------------------------
@@ -102,7 +102,20 @@ export function parseExtractionResult(text: string): MemoryExtractionResult | un
   const json = parseLenientJson(text);
   if (json === undefined) return undefined;
   const parsed = MemoryExtractionResultSchema.safeParse(json);
-  return parsed.success ? parsed.data : undefined;
+  if (parsed.success) return parsed.data;
+
+  // Per-memory salvage (live finding 2026-06-11): one malformed element used
+  // to fail the envelope and discard EVERY fact in the batch. Re-validate
+  // element-by-element and keep the valid memories; undefined only when the
+  // envelope itself is unusable.
+  if (typeof json !== "object" || json === null) return undefined;
+  const rawMemories = (json as { memories?: unknown }).memories;
+  if (!Array.isArray(rawMemories)) return undefined;
+  const memories = rawMemories
+    .map((m) => StructuredMemorySchema.safeParse(m))
+    .filter((r): r is { success: true; data: MemoryExtractionResult["memories"][number] } => r.success)
+    .map((r) => r.data);
+  return { memories };
 }
 
 // ---------------------------------------------------------------------------

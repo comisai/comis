@@ -156,7 +156,13 @@ export type MemorySource = z.infer<typeof MemorySourceSchema>;
  * (design §4.2's entity table is `canonical_name`-only, so there is
  * intentionally no `type` field).
  */
-export const ExtractedEntitySchema = z.strictObject({
+/** LENIENT (live finding 2026-06-11): the extraction LLM naturally emits
+ *  `{ name, type: "person" }`; a strictObject rejected the element, which
+ *  failed the memory, which failed the WHOLE extraction envelope — a single
+ *  typed entity discarded every fact in the batch. Unknown keys are
+ *  stripped; `name` stays required + non-empty (there is still no `type`
+ *  field in the domain — design §4.2 canonical_name-only). */
+export const ExtractedEntitySchema = z.object({
   name: z.string().min(1),
 });
 export type ExtractedEntity = z.infer<typeof ExtractedEntitySchema>;
@@ -188,7 +194,10 @@ export const StructuredMemorySchema = z.object({
    * The edge links MEMORY ids; the `effect` text is resolved to a stored memory
    * id by the @comis/memory adapter (scoped FTS top-1) on the agent-side write.
    */
-  causes: z.array(z.strictObject({ effect: z.string().min(1) })).default([]),
+  // LENIENT per-cause object (live finding 2026-06-11 — same class as the
+  // entity fix above): extra keys stripped, `effect` still required +
+  // non-empty so garbage is rejected without discarding the batch.
+  causes: z.array(z.object({ effect: z.string().min(1) })).default([]),
 });
 export type StructuredMemory = z.infer<typeof StructuredMemorySchema>;
 

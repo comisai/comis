@@ -41,6 +41,28 @@ describe("a narration-prefixed LLM payload still parses", () => {
   });
 });
 
+describe("one malformed memory never discards the whole extraction batch", () => {
+  it("salvages the valid memories and drops the bad element (live finding 2026-06-11)", () => {
+    const raw = JSON.stringify({
+      memories: [
+        { content: "Daniel is visiting from Berlin", entities: [{ name: "Daniel", type: "person" }] },
+        { content: "" }, // invalid: empty content
+        { content: "favorite hiking spot is Mount Tamalpais", entities: [{ name: "Mount Tamalpais" }] },
+      ],
+    });
+
+    const parsed = parseExtractionResult(raw);
+
+    expect(parsed).toBeDefined();
+    expect(parsed!.memories.map((m) => m.content)).toEqual([
+      "Daniel is visiting from Berlin",
+      "favorite hiking spot is Mount Tamalpais",
+    ]);
+    // The typed entity is kept with the extra key stripped, not rejected.
+    expect(parsed!.memories[0]!.entities).toEqual([{ name: "Daniel" }]);
+  });
+});
+
 describe("the review extraction survives the live narration shape", () => {
   it("parses memories from a commentary-prefixed envelope (the 'invalid output, skipping' class)", () => {
     const raw = [
