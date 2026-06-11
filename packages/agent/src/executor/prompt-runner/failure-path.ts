@@ -124,25 +124,44 @@ function emitFailureDiagnostics(
 ): PromptRunResult["ghostCost"] {
   const {
     sessionKey, result, executionStartMs,
-    config, deps,
+    config, deps, agentId, effectiveTimeout,
   } = params;
+
+  // Classify BEFORE the WARN so the knob-named hint rides the log line
+  // (LAT-01). For a PromptTimeoutError the binding provenance comes from the
+  // 177-02 effectiveTimeout (source + operationType + configured numbers,
+  // including the non-optional stallCeilingMultiplier — 177-REVIEW IN-01:
+  // without it the makespan hint's multiplier clause rendered number-less).
+  const isPromptTimeout = promptError instanceof PromptTimeoutError;
+  const classified = isPromptTimeout
+    ? classifyPromptTimeout(
+        promptError,
+        {
+          source: effectiveTimeout.source,
+          operationType: effectiveTimeout.operationType,
+          agentId,
+          promptTimeoutMs: effectiveTimeout.promptTimeoutMs,
+          retryPromptTimeoutMs: effectiveTimeout.retryPromptTimeoutMs,
+          stallCeilingMultiplier: effectiveTimeout.stallCeilingMultiplier,
+        },
+        deps.clock.now() - executionStartMs,
+      )
+    : classifyError(promptError);
 
   deps.logger.warn(
     {
       err: promptError,
       totalElapsedMs: deps.clock.now() - executionStartMs,
-      hint: "All models failed (primary + fallbacks)",
-      errorKind: "dependency" as ErrorKind,
+      hint: classified.hint ?? "All models failed (primary + fallbacks)",
+      errorKind: (isPromptTimeout ? "timeout" : "dependency") as ErrorKind,
     },
     "Prompt execution error",
   );
-  result.finishReason = "error";
+  result.finishReason = isPromptTimeout ? "prompt_timeout" : "error";
   // Never expose raw error internals to users.
   // The raw error is already logged to deps.logger.warn above for operator diagnostics.
-  // Classify the error to give the user an actionable (but safe) message.
-  const classified = promptError instanceof PromptTimeoutError
-    ? classifyPromptTimeout(promptError.timeoutMs)
-    : classifyError(promptError);
+  // The classified userMessage stays generic/user-safe — the knob detail
+  // rides ONLY the hint above (T-177-13).
   // Enrich auth_invalid messages with the failing provider name
   if (classified.category === "auth_invalid") {
     result.response = `The AI service could not authenticate with the "${config.provider}" provider. Please check the API key or notify the system administrator.`;
@@ -150,7 +169,7 @@ function emitFailureDiagnostics(
     result.response = classified.userMessage;
   }
   result.errorContext = {
-    errorType: promptError instanceof PromptTimeoutError ? "PromptTimeout" : "PromptFailure",
+    errorType: isPromptTimeout ? "PromptTimeout" : "PromptFailure",
     retryable: classified.retryable,
     originalError: promptError instanceof Error ? promptError.message : String(promptError),
   };
@@ -160,14 +179,16 @@ function emitFailureDiagnostics(
   // Emit estimated token usage for timed-out requests.
   // Anthropic still bills input tokens even when the request times out,
   // but pi-ai discards partial usage. Emit a conservative estimate so
-  // the cost gap is visible in tracking.
+  // the cost gap is visible in tracking. The error's timeoutMs carries the
+  // limit that FIRED (177-REVIEW IN-04: a makespan kill ran
+  // ~promptTimeoutMs × stallCeilingMultiplier ms — reporting the stall
+  // budget understated latencyMs by up to the multiplier).
   if (promptError instanceof PromptTimeoutError) {
-    ghostCost = emitTimeoutGhostCost(params, messageText);
+    ghostCost = emitTimeoutGhostCost(params, messageText, promptError.timeoutMs);
   }
 
   // OutputGuard: scan error responses (unified in executor-response-filter.ts)
   if (deps.outputGuard && result.response) {
-    const { agentId } = params;
     const guardScan = scanWithOutputGuard({
       outputGuard: deps.outputGuard, response: result.response, context: "error",
       canaryToken: deps.canaryToken, agentId: agentId ?? "unknown",
@@ -184,14 +205,20 @@ function emitFailureDiagnostics(
  * Compute and emit the timeout ghost cost event. Anthropic bills the full
  * input (system prompt + tools + user message) even on timeout — emit a
  * conservative estimate so the cost gap is visible in tracking.
+ *
+ * @param firedTimeoutMs - The ms value of the limit that FIRED
+ *   (`PromptTimeoutError.timeoutMs`): stall budget, makespan ceiling, or
+ *   whole-turn retry window — rides `latencyMs` so makespan kills are not
+ *   understated by the multiplier (177-REVIEW IN-04).
  */
 function emitTimeoutGhostCost(
   params: RunPromptParams,
   messageText: string,
+  firedTimeoutMs: number,
 ): PromptRunResult["ghostCost"] {
   const {
     msg, sessionKey, agentId, executionId,
-    config, effectiveTimeout, resolvedModel, deps,
+    config, resolvedModel, deps,
     systemPrompt, mergedCustomTools, getLastCacheWriteTokens,
   } = params;
 
@@ -253,7 +280,7 @@ function emitTimeoutGhostCost(
       cacheWrite: estimatedCacheWriteCost,
       total: estimatedTotalCost,
     },
-    latencyMs: effectiveTimeout.promptTimeoutMs,
+    latencyMs: firedTimeoutMs,
     cacheReadTokens: estimatedCacheReadTokens,
     cacheWriteTokens: estimatedCacheWriteTokens,
     sessionKey: formatSessionKey(sessionKey),
@@ -287,7 +314,7 @@ function emitTimeoutGhostCost(
       sysPromptChars,
       toolChars,
       messageChars: messageText.length,
-      timeoutMs: effectiveTimeout.promptTimeoutMs,
+      timeoutMs: firedTimeoutMs,
     },
     "Emitted estimated usage for timed-out request",
   );

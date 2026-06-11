@@ -96,7 +96,7 @@
       {
         "tab": "Operations",
         "groups": [
-          { "group": "Management", "pages": ["operations/index", "operations/daemon", "operations/logging", "operations/monitoring", "operations/observability", "operations/scheduler", "operations/web-ui", "operations/data-directory", "operations/trace-cli", "operations/incident-bundle"] },
+          { "group": "Management", "pages": ["operations/index", "operations/daemon", "operations/logging", "operations/monitoring", "operations/observability", "operations/scheduler", "operations/web-ui", "operations/data-directory", "operations/trace-cli", "operations/incident-bundle", "operations/local-models"] },
           { "group": "Deployment", "pages": ["operations/systemd", "operations/docker", "operations/docker-hub", "operations/pm2", "operations/reverse-proxy"] },
           { "group": "Help", "pages": ["operations/troubleshooting", "operations/faq", "operations/proxy"] }
         ]

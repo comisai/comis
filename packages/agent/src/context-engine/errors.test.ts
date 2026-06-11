@@ -14,6 +14,7 @@ import {
   ContextExhaustionError,
   CONTEXT_EXHAUSTION_MESSAGE_PREFIX,
   isContextExhaustionErrorMessage,
+  describeWindowCap,
 } from "./errors.js";
 
 describe("ContextExhaustionError message contract", () => {
@@ -78,5 +79,76 @@ describe("ContextExhaustionError capped-window provenance", () => {
       windowCapSource: "none",
     });
     expect(uncapped.message).toBe(plain.message);
+  });
+});
+
+// KNOB-02 (Phase 176): "served" joins WindowCapSource. The "raise it
+// (0 = uncapped)" remedy is the WRONG knob for a served-bound window — the fix
+// lives in Ollama (OLLAMA_CONTEXT_LENGTH env / Modelfile PARAMETER num_ctx),
+// not in contextEngine.budget.*. describeWindowCap must branch by source so
+// the operator gets the hint that fits the failure class, and the double-cap
+// chain (served bound first, class cap tighter) must name BOTH constraints.
+describe("describeWindowCap served-window branch (KNOB-02)", () => {
+  it("KNOB-02-6: served source names both Ollama knobs and the TRUE configured number", () => {
+    expect(
+      describeWindowCap(8_192, { rawContextWindowTokens: 131_072, windowCapSource: "served" }),
+    ).toBe(
+      " (model contextWindow 131072 but Ollama serves only 8192 — fix: OLLAMA_CONTEXT_LENGTH=131072 ollama serve, or Modelfile 'PARAMETER num_ctx 131072')",
+    );
+  });
+
+  it("KNOB-02-7: double-cap chain — cap source keeps the knob remedy and the served step is named", () => {
+    expect(
+      describeWindowCap(32_000, {
+        rawContextWindowTokens: 131_072,
+        windowCapSource: "effectiveContextCapSmall",
+        servedWindowTokens: 50_000,
+      }),
+    ).toBe(
+      " (model contextWindow 131072, Ollama serves 50000, capped to 32000 by contextEngine.budget.effectiveContextCapSmall — raise it (0 = uncapped) or reduce active tool schemas)",
+    );
+  });
+
+  it("KNOB-02-8: regression pin — the cap-only text (no servedWindowTokens) is byte-identical to pre-patch", () => {
+    expect(
+      describeWindowCap(32_000, {
+        rawContextWindowTokens: 131_072,
+        windowCapSource: "effectiveContextCapSmall",
+      }),
+    ).toBe(
+      " (model contextWindow 131072 capped to 32000 by contextEngine.budget.effectiveContextCapSmall — raise it (0 = uncapped) or reduce active tool schemas)",
+    );
+  });
+});
+
+// WR-01 (Phase 176 review): when the binding cap is the EXECUTOR-side
+// DEFAULT_EFFECTIVE_CAP_BY_CLASS (the operator pinned
+// providers.entries.<id>.capabilities.capabilityClass), the budget knob is a
+// DEAD lever — pi-executor's cap never reads contextEngine.budget.* — so the
+// remedy must name the PIN, not "raise it (0 = uncapped)".
+describe("describeWindowCap capabilityClass-pin branch (WR-01)", () => {
+  it("WR-01: a capabilityClass bind names the pin and its remedy, never the budget knob's numeric remedy", () => {
+    const text = describeWindowCap(32_000, {
+      rawContextWindowTokens: 131_072,
+      windowCapSource: "capabilityClass",
+    });
+    expect(text).toBe(
+      " (model contextWindow 131072 capped to 32000 by providers.entries.<id>.capabilities.capabilityClass — pin a higher class (or remove the pin) or reduce active tool schemas)",
+    );
+    // The dead lever must not appear anywhere in the suffix.
+    expect(text).not.toContain("contextEngine.budget.effectiveContextCapSmall");
+    expect(text).not.toContain("raise it (0 = uncapped)");
+  });
+
+  it("WR-01: the capabilityClass bind carries the served step when probed (full chain: configured → served → pin)", () => {
+    expect(
+      describeWindowCap(32_000, {
+        rawContextWindowTokens: 131_072,
+        windowCapSource: "capabilityClass",
+        servedWindowTokens: 50_000,
+      }),
+    ).toBe(
+      " (model contextWindow 131072, Ollama serves 50000, capped to 32000 by providers.entries.<id>.capabilities.capabilityClass — pin a higher class (or remove the pin) or reduce active tool schemas)",
+    );
   });
 });

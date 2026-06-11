@@ -17,7 +17,7 @@ export {
 export { BrowserConfigSchema } from "./schema-browser.js";
 export { MessagesConfigSchema } from "./schema-messages.js";
 export { ModelsConfigSchema, ModelAliasSchema } from "./schema-models.js";
-export { ProvidersConfigSchema, ProviderEntrySchema, UserModelSchema, ModelCostSchema } from "./schema-providers.js";
+export { ProvidersConfigSchema, ProviderEntrySchema, UserModelSchema, ModelCostSchema, PROVIDER_TIMEOUT_MS_DEFAULT } from "./schema-providers.js";
 export {
   SendPolicyConfigSchema,
   SendPolicyRuleSchema,

@@ -27,7 +27,7 @@ import type { Message } from "@earendil-works/pi-ai";
 import Database from "better-sqlite3";
 import { initSchema, createLcdStore } from "@comis/memory";
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { maybeRunCondensePass, type CondensePassOptions } from "./lcd-condense-trigger.js";
+import { maybeRunCondensePass, runCondensePassAfterTurn, type CondensePassOptions } from "./lcd-condense-trigger.js";
 import type { LeafSummarizer, LeafSummarizerDeps } from "../context-engine/lcd-leaf-summarizer.js";
 import { CONDENSED_FALLBACK_SUMMARY_MARKER } from "../context-engine/constants.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
@@ -871,5 +871,521 @@ describe("maybeRunCondensePass — inverted-window divergence emits context:dag_
     expect(Object.keys(degraded[0]!.payload).sort()).toEqual(
       ["agentId", "conversationId", "durationMs", "reason", "sessionKey", "timestamp"].sort(),
     );
+  });
+});
+
+// ===========================================================================
+// SUMW-02 (Phase 178): condense trigger denominator = budget window
+// ===========================================================================
+//
+// Mirror of the leaf-side SUMW-02 block (see lcd-compaction-trigger.test.ts for
+// the full DIST-01 incident narrative). The condense-specific consequence: the
+// pressureHigh gate (resolvedTokens / windowTokens > contextThreshold) decides
+// whether the HARD fanout (condensedMinFanoutHard, 2) may force a condense the
+// soft fanout (condensedMinFanout, 4) would skip. With the legacy denominator
+// (the session model's CONFIGURED window, 131_072 in DIST-01) a capability-
+// capped small model under REAL pressure (26K stored vs a 32_000 budget window)
+// computed utilization 0.198 → pressure LOW → a contiguous run of 3 summaries
+// sat un-condensed forever — condensation looked "intermittent" live.
+//
+// These tests drive the afterTurn wrapper (runCondensePassAfterTurn) — the seam
+// where the denominator lives. C1 is RED on pre-patch code; C2 (frontier parity
+// pin) passes pre+post BY DESIGN (no cap binds → budgetWindowTokens ==
+// getModel().contextWindow — I3 byte-identical). C1 also asserts the 172-02
+// onCondensed distillation seam fires with the NEW summaryId, so the threading
+// change can never silently drop the hook (T-178-04).
+
+describe("SUMW-02: condense trigger denominator = budget window", () => {
+  let db: Database.Database;
+  let store: ContextStorePort;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    initSchema(db, 1536);
+    store = createLcdStore(db);
+  });
+
+  /** Summarizer deps whose getModel() plants the CONFIGURED window the legacy read used. */
+  function depsWithConfiguredWindow(
+    contextWindow: number,
+    logger: ReturnType<typeof createMockLogger>,
+  ): LeafSummarizerDeps {
+    return {
+      logger: logger as unknown as LeafSummarizerDeps["logger"],
+      summarize: shortSummarizer(),
+      getModel: () => ({ provider: "ollama", contextWindow, reasoning: false }),
+      getApiKey: async () => "test-key",
+    };
+  }
+
+  /**
+   * Collapse the FIRST `width` surviving depth-0 leaf summary-refs (ordinal >
+   * `fromOrdinalAfter`) into ONE depth-1 condensed summary-ref (mirrors the
+   * FIX 5 helper) so successive calls produce ADJACENT depth-1 refs.
+   */
+  function collapseCondensed(fromOrdinalAfter: number, width: number): string {
+    const items = store.getContextItems(SCOPE);
+    const summaries = store.getSummaries(SCOPE);
+    const depthById = new Map(summaries.map((s) => [s.summaryId, s.depth]));
+    const leafRefs = items.filter(
+      (it) => it.refKind === "summary" && it.ordinal > fromOrdinalAfter && depthById.get(it.refId) === 0,
+    );
+    const windowRefs = leafRefs.slice(0, width);
+    const startOrdinal = windowRefs[0]!.ordinal;
+    const endOrdinal = windowRefs[windowRefs.length - 1]!.ordinal;
+    return store.appendCondensedSummary({
+      scope: SCOPE,
+      tokenCount: 5,
+      content: `DEPTH1 over ${width} leaves [${startOrdinal}..${endOrdinal}]`,
+      descendantCount: width,
+      earliestAt: 1000 + startOrdinal,
+      latestAt: 1000 + endOrdinal,
+      fileIds: [],
+      fallback: false,
+      taint: false,
+      createdAt: FIXED_NOW,
+      startOrdinal,
+      endOrdinal,
+      childSummaryIds: windowRefs.map((r) => r.refId),
+      depth: 1,
+    });
+  }
+
+  /**
+   * The DIST-01 condense layout: EXACTLY 3 contiguous depth-1 summary-refs
+   * (≥ hard fanout 2, < soft fanout 4) followed by 26 raw messages totalling
+   * ~26K resolved tokens. Construction: 38 msgs × 1_000; collapse the oldest
+   * 12 into 6 contiguous depth-0 leaves (tokenCount 5 each); fold pairs of
+   * leaves into 3 adjacent depth-1 condensed refs (tokenCount 5 each).
+   * Resolved view = 3×5 (depth-1 refs) + 26×1_000 (raw) = 26_015 tokens.
+   */
+  function seedDist01CondenseLayout(): void {
+    seedHistory(store, 38, 1_000);
+    seedContiguousLeaves(store, 6, 2);
+    for (let i = 0; i < 3; i++) collapseCondensed(i - 1, 2);
+    // Sanity on the constructed layout: a single contiguous depth-1 run of 3.
+    const items = store.getContextItems(SCOPE);
+    const depthById = new Map(store.getSummaries(SCOPE).map((s) => [s.summaryId, s.depth]));
+    const d1Run = items.filter((it) => it.refKind === "summary" && depthById.get(it.refId) === 1);
+    expect(d1Run.length).toBe(3);
+    expect(d1Run.map((it) => it.ordinal)).toEqual([0, 1, 2]);
+  }
+
+  it("SUMW-02-C1 (DIST-01): pressureHigh ratios against the BUDGET window — the hard fanout (2) forces a condense the soft fanout (4) would skip", async () => {
+    // Pre-patch: pressure = 26_015 / getModel().contextWindow (131_072) = 0.198
+    //   ≤ 0.75 → pressure LOW → soft fanout 4 governs → the run of 3 is skipped
+    //   → NO depth-2 condensed summary → FAILS (RED).
+    // Post-patch: pressure = 26_015 / budgetWindowTokens (32_000) = 0.813
+    //   > 0.75 → pressure HIGH → hard fanout 2 → the run of 3 condenses into ONE
+    //   depth-2 summary AND the 172-02 onCondensed distillation hook fires with
+    //   its summaryId.
+    seedDist01CondenseLayout();
+    const logger = createMockLogger();
+    const { bus } = makeEventBus();
+    const deps = depsWithConfiguredWindow(131_072, logger);
+    const onCondensedCalls: Array<{ summaryId: string; depth: number }> = [];
+
+    await runCondensePassAfterTurn({
+      store,
+      scope: SCOPE,
+      contextEngine: undefined, // schema defaults: soft 4 / hard 2 / threshold 0.75
+      getCondenseSummarizerDeps: () => deps,
+      budgetWindowTokens: 32_000, // the turn's budget window: min(131_072, class cap 32_000)
+      now: FIXED_NOW,
+      nowFn: undefined,
+      logger: logger as unknown as LeafSummarizerDeps["logger"],
+      eventBus: bus,
+      onCondensed: (summaryId, _content, _fallback, depth) => {
+        onCondensedCalls.push({ summaryId, depth });
+      },
+    });
+
+    // ONE depth-2 condensed summary persisted (the 3 depth-1 children folded).
+    const depth2 = store.getSummaries(SCOPE).filter((s) => s.kind === "condensed" && s.depth === 2);
+    expect(depth2.length).toBe(1);
+    // The 172-02 distillation seam fired with the NEW summary's id (T-178-04).
+    expect(onCondensedCalls.length).toBe(1);
+    expect(onCondensedCalls[0]!.summaryId).toBe(depth2[0]!.summaryId);
+    expect(onCondensedCalls[0]!.depth).toBe(2);
+  });
+
+  it("SUMW-02-C2 (frontier parity pin): equal budget and configured window (no cap binds) — pressure LOW, soft fanout governs, the 3-run is skipped", async () => {
+    // I3: window == budgetWindowTokens == 200_000 → pressure = 26_015 / 200_000
+    // = 0.13 ≤ 0.75 → pressure LOW → soft fanout 4 → the run of 3 is skipped —
+    // byte-identical to the legacy read (passes pre+post BY DESIGN).
+    seedDist01CondenseLayout();
+    const logger = createMockLogger();
+    const { bus } = makeEventBus();
+    const deps = depsWithConfiguredWindow(200_000, logger);
+    const onCondensedCalls: string[] = [];
+
+    await runCondensePassAfterTurn({
+      store,
+      scope: SCOPE,
+      contextEngine: undefined,
+      getCondenseSummarizerDeps: () => deps,
+      budgetWindowTokens: 200_000, // == getModel().contextWindow — the no-cap condition
+      now: FIXED_NOW,
+      nowFn: undefined,
+      logger: logger as unknown as LeafSummarizerDeps["logger"],
+      eventBus: bus,
+      onCondensed: (summaryId) => {
+        onCondensedCalls.push(summaryId);
+      },
+    });
+
+    // No depth-2 condensed summary, no distillation hook — identical to legacy.
+    expect(store.getSummaries(SCOPE).filter((s) => s.kind === "condensed" && s.depth === 2).length).toBe(0);
+    expect(onCondensedCalls.length).toBe(0);
+  });
+});
+
+// ===========================================================================
+// SUMW-01 (Phase 178): condense prefix clamp — run input ≤ resolved summarizer window
+// ===========================================================================
+//
+// The condense half of the span invariant ("for all compaction calls, inputTokens
+// ≤ resolved summarizer effectiveWindow"): selectCondensableTier picks by fanout
+// ONLY — Σ child tokenCount is unbounded relative to the summarizer (4+ children ×
+// up to 1_200 tokens + a 2_000 target can exceed an 8K override). The clamp
+// (inside maybeRunCondensePass, after run selection + the inverted-ordinal guard)
+// prefix-trims the selected run to the LONGEST child prefix whose Σ tokenCount
+// fits summarizerWindow − condensedTargetTokens − SUMMARIZER_PROMPT_OVERHEAD_TOKENS,
+// keyed to the RESOLVED summarizer (resolveSummarizerWindowTokens — the 178-02
+// contract). Ordinal integrity (T-178-10): a prefix of a contiguous run stays
+// contiguous, so [startOrdinal, children[keep-1].ordinal] remains a valid
+// range-replace window and the trimmed children survive UN-CONDENSED in
+// context_items for a later pass. keep < 2 → honest DEBUG skip (a 1-child
+// condense is meaningless re-summarization; T-178-12 — observable, never silent).
+//
+// Arithmetic (overhead 2_048, target 2_000): child budget = W − 2_000 − 2_048.
+//   - C1 (RED): W=8_000 → budget 3_952; 4 children × 1_200 → keep 3
+//     (3_600 ≤ 3_952 < 4_800). Pre-patch: all 4 condensed.
+//   - C2 (skip-honesty): W=4_500 → budget 452 < first child 1_200 → keep 0 < 2
+//     → NO condense, store unchanged, no throw. RED pre-patch.
+//   - C3 (no-op pin, I3): W=200_000 → all 4 condensed — legacy behavior.
+
+describe("SUMW-01: condense prefix clamp", () => {
+  let db: Database.Database;
+  let store: ContextStorePort;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    initSchema(db, 1536);
+    store = createLcdStore(db);
+  });
+
+  /**
+   * Collapse the FIRST `width` surviving depth-0 leaf summary-refs (ordinal >
+   * `fromOrdinalAfter`) into ONE depth-1 condensed ref with an EXPLICIT
+   * tokenCount (mirrors the FIX-5/SUMW-02 helpers, parameterized tokenCount —
+   * the clamp's prefix walk sums these stored counts).
+   */
+  function collapseCondensedWithTokens(
+    fromOrdinalAfter: number,
+    width: number,
+    tokenCount: number,
+  ): string {
+    const items = store.getContextItems(SCOPE);
+    const summaries = store.getSummaries(SCOPE);
+    const depthById = new Map(summaries.map((s) => [s.summaryId, s.depth]));
+    const leafRefs = items.filter(
+      (it) => it.refKind === "summary" && it.ordinal > fromOrdinalAfter && depthById.get(it.refId) === 0,
+    );
+    const windowRefs = leafRefs.slice(0, width);
+    const startOrdinal = windowRefs[0]!.ordinal;
+    const endOrdinal = windowRefs[windowRefs.length - 1]!.ordinal;
+    return store.appendCondensedSummary({
+      scope: SCOPE,
+      tokenCount,
+      content: `DEPTH1 over ${width} leaves [${startOrdinal}..${endOrdinal}]`,
+      descendantCount: width,
+      earliestAt: 1000 + startOrdinal,
+      latestAt: 1000 + endOrdinal,
+      fileIds: [],
+      fallback: false,
+      taint: false,
+      createdAt: FIXED_NOW,
+      startOrdinal,
+      endOrdinal,
+      childSummaryIds: windowRefs.map((r) => r.refId),
+      depth: 1,
+    });
+  }
+
+  /**
+   * The clamp layout: 4 CONTIGUOUS depth-1 condensed refs at ordinals 0..3,
+   * tokenCount 1_200 each (Σ 4_800), followed by the surviving raw messages.
+   * The soft fanout (4) is met, so the run is selected WITHOUT any pressure
+   * dependency (opts windowTokens 200_000 → pressure LOW → soft fanout governs).
+   * Returns the 4 depth-1 ids in run (oldest-first) order.
+   */
+  function seedFourDepth1Children(): string[] {
+    seedHistory(store, 40, 100);
+    seedContiguousLeaves(store, 8, 2); // 8 contiguous depth-0 leaves (tokenCount 5 each)
+    const ids: string[] = [];
+    for (let i = 0; i < 4; i++) ids.push(collapseCondensedWithTokens(i - 1, 2, 1_200));
+    // Sanity on the constructed layout: ONE contiguous depth-1 run of 4 at 0..3.
+    const items = store.getContextItems(SCOPE);
+    const depthById = new Map(store.getSummaries(SCOPE).map((s) => [s.summaryId, s.depth]));
+    const d1 = items.filter((it) => it.refKind === "summary" && depthById.get(it.refId) === 1);
+    expect(d1.length).toBe(4);
+    expect(d1.map((it) => it.ordinal)).toEqual([0, 1, 2, 3]);
+    return ids;
+  }
+
+  /** Deps with an `operationModels.compaction`-style override summarizer window. */
+  function depsWithOverrideWindow(
+    overrideWindow: number,
+    summarize: LeafSummarizer,
+    logger: ReturnType<typeof createMockLogger>,
+  ): LeafSummarizerDeps {
+    return {
+      ...makeSummarizerDeps(summarize, logger),
+      overrideModel: { model: { contextWindow: overrideWindow }, getApiKey: async () => "k" },
+      // The PRIMARY real model — a clamp wrongly keyed here (131_072) or to
+      // getModel()'s 200_000 would keep all 4 children (Pitfall 2 regression).
+      getRealModel: () => ({ contextWindow: 131_072 }),
+    };
+  }
+
+  it("SUMW-01-C1 (prefix-trim): an 8K summarizer condenses ONLY the 3-child prefix; the 4th child survives un-condensed for a later pass", async () => {
+    // Child budget = 8_000 − 2_000 − 2_048 = 3_952 → keep 3 (3_600 ≤ 3_952 <
+    // 4_800). Pre-patch: all 4 children condensed (childSummaryIds length 4, the
+    // 4th ref absorbed by the range-replace) → FAILS (RED).
+    const childIds = seedFourDepth1Children();
+    const logger = createMockLogger();
+    const { bus } = makeEventBus();
+    const deps = depsWithOverrideWindow(8_000, shortSummarizer(), logger);
+
+    await maybeRunCondensePass(
+      store,
+      SCOPE,
+      condenseOpts({ condensedMinFanout: 4, windowTokens: 200_000 }),
+      deps,
+      FIXED_NOW,
+      undefined,
+      logger as unknown as LeafSummarizerDeps["logger"],
+      bus,
+    );
+
+    // ONE depth-2 condensed summary persisted over the kept prefix.
+    const depth2 = store.getSummaries(SCOPE).filter((s) => s.kind === "condensed" && s.depth === 2);
+    expect(depth2.length).toBe(1);
+    const parentId = depth2[0]!.summaryId;
+
+    // childSummaryIds == the FIRST 3 seeded depth-1 ids (the kept prefix) — the
+    // 4th is NOT linked.
+    const rows = db
+      .prepare("SELECT child_summary_id FROM lcd_summary_parents WHERE parent_summary_id = ?")
+      .all(parentId) as Array<{ child_summary_id: string }>;
+    expect(rows.map((r) => r.child_summary_id).sort()).toEqual([...childIds.slice(0, 3)].sort());
+
+    // endOrdinal == the 3rd child's ordinal (2): the range-replace consumed
+    // ordinals 0..2 ONLY → the depth-2 ref sits at ordinal 0 with the 4th depth-1
+    // ref IMMEDIATELY after it — alive in context_items, available for a later
+    // pass (T-178-10 ordinal integrity).
+    const items = store.getContextItems(SCOPE);
+    expect(items[0]!.refKind).toBe("summary");
+    expect(items[0]!.refId).toBe(parentId);
+    expect(items[1]!.refKind).toBe("summary");
+    expect(items[1]!.refId).toBe(childIds[3]);
+    // The 4th child row is still an un-condensed depth-1 summary in the store.
+    const fourth = store.getSummaries(SCOPE).find((s) => s.summaryId === childIds[3]);
+    expect(fourth).toBeDefined();
+    expect(fourth!.depth).toBe(1);
+  });
+
+  it("INT-W1 (flagship): a served-bound PRIMARY summarizer (configured 131_072 / served 8_000, NO override) prefix-trims the condense run to the SERVED window", async () => {
+    // The milestone integration WARNING 1 scenario on the condense half:
+    // summarizer = the primary model on a provider serving 8_000 against a
+    // configured 131_072. Resolved window must be min(131_072, 8_000) = 8_000
+    // → child budget = 8_000 − 2_000 − 2_048 = 3_952 → keep 3 of the 4 ×
+    // 1_200-token children (the SUMW-01-C1 arithmetic, now bound by SERVED).
+    // Pre-INT-W1 the helper returned the configured 131_072 → all 4 children
+    // (4_800 tokens) were concatenated for a provider serving 8K (RED: 4
+    // children condensed). primaryServedWindow is the executor-reconcile-gated
+    // windowProvenance.served (WR-02: it binds exactly the getRealModel model).
+    const childIds = seedFourDepth1Children();
+    const logger = createMockLogger();
+    const { bus } = makeEventBus();
+    const deps: LeafSummarizerDeps = {
+      ...makeSummarizerDeps(shortSummarizer(), logger),
+      getRealModel: () => ({ id: "primary", provider: "ollama", contextWindow: 131_072 }),
+      primaryServedWindow: 8_000,
+    };
+
+    await maybeRunCondensePass(
+      store,
+      SCOPE,
+      condenseOpts({ condensedMinFanout: 4, windowTokens: 200_000 }),
+      deps,
+      FIXED_NOW,
+      undefined,
+      logger as unknown as LeafSummarizerDeps["logger"],
+      bus,
+    );
+
+    // ONE depth-2 condensed summary persisted over the served-clamped 3-child
+    // prefix; the 4th child survives un-condensed for a later pass.
+    const depth2 = store.getSummaries(SCOPE).filter((s) => s.kind === "condensed" && s.depth === 2);
+    expect(depth2.length).toBe(1);
+    const rows = db
+      .prepare("SELECT child_summary_id FROM lcd_summary_parents WHERE parent_summary_id = ?")
+      .all(depth2[0]!.summaryId) as Array<{ child_summary_id: string }>;
+    expect(rows.map((r) => r.child_summary_id).sort()).toEqual([...childIds.slice(0, 3)].sort());
+  });
+
+  it("SUMW-01-C2 (skip-honesty): a summarizer too small for even a 2-child prefix skips the condense cleanly — store unchanged, no throw", async () => {
+    // W=4_500 → child budget 4_500 − 2_000 − 2_048 = 452 < the first child's
+    // 1_200 → keep 0 < 2 → honest skip (DEBUG only — T-178-12). Pre-patch: all 4
+    // condensed → a depth-2 summary appears → FAILS (RED).
+    seedFourDepth1Children();
+    const itemsBefore = store.getContextItems(SCOPE);
+    const summarize = shortSummarizer();
+    const logger = createMockLogger();
+    const { bus, emits } = makeEventBus();
+    const deps = depsWithOverrideWindow(4_500, summarize, logger);
+
+    await expect(
+      maybeRunCondensePass(
+        store,
+        SCOPE,
+        condenseOpts({ condensedMinFanout: 4, windowTokens: 200_000 }),
+        deps,
+        FIXED_NOW,
+        undefined,
+        logger as unknown as LeafSummarizerDeps["logger"],
+        bus,
+      ),
+    ).resolves.toBeUndefined(); // no throw — a clean infeasible skip
+
+    // No condense happened: no depth-2 summary, no summarizer call, no compaction
+    // event, context_items byte-identical.
+    expect(store.getSummaries(SCOPE).filter((s) => s.kind === "condensed" && s.depth === 2).length).toBe(0);
+    expect(summarize).not.toHaveBeenCalled();
+    expect(emits.filter((e) => e.event === "context:dag_compacted").length).toBe(0);
+    expect(store.getContextItems(SCOPE)).toEqual(itemsBefore);
+  });
+
+  it("SUMW-01-C3 (no-op pin, I3): a large-window summarizer condenses ALL 4 children — legacy behavior byte-identical", async () => {
+    // W=200_000 → child budget 195_952 ≥ Σ 4_800 → no trim (effectiveRun === run):
+    // all 4 children condense; endOrdinal = the 4th child's ordinal (the whole
+    // [0..3] window range-replaced). Passes pre- AND post-patch BY DESIGN.
+    const childIds = seedFourDepth1Children();
+    const logger = createMockLogger();
+    const { bus } = makeEventBus();
+    const deps = depsWithOverrideWindow(200_000, shortSummarizer(), logger);
+
+    await maybeRunCondensePass(
+      store,
+      SCOPE,
+      condenseOpts({ condensedMinFanout: 4, windowTokens: 200_000 }),
+      deps,
+      FIXED_NOW,
+      undefined,
+      logger as unknown as LeafSummarizerDeps["logger"],
+      bus,
+    );
+
+    const depth2 = store.getSummaries(SCOPE).filter((s) => s.kind === "condensed" && s.depth === 2);
+    expect(depth2.length).toBe(1);
+    const rows = db
+      .prepare("SELECT child_summary_id FROM lcd_summary_parents WHERE parent_summary_id = ?")
+      .all(depth2[0]!.summaryId) as Array<{ child_summary_id: string }>;
+    expect(rows.map((r) => r.child_summary_id).sort()).toEqual([...childIds].sort());
+    // The WHOLE run [0..3] was range-replaced: the depth-2 ref at ordinal 0 with
+    // NO surviving depth-1 refs in context_items.
+    const items = store.getContextItems(SCOPE);
+    expect(items[0]!.refKind).toBe("summary");
+    expect(items[0]!.refId).toBe(depth2[0]!.summaryId);
+    const depthById = new Map(store.getSummaries(SCOPE).map((s) => [s.summaryId, s.depth]));
+    expect(items.filter((it) => it.refKind === "summary" && depthById.get(it.refId) === 1).length).toBe(0);
+  });
+
+  it("IN-01: a bad windowTokens gate-skip leaves a DEBUG breadcrumb — the condense pass never silently disarms", async () => {
+    // The leaf gate logs `reason: "bad-window"` on the same condition; the
+    // condense gate returned with NO trace — the exact "silently disarm" class
+    // the phase invariant forbids. Identifiers + numbers only (I7).
+    const logger = createMockLogger();
+    const deps = makeSummarizerDeps(shortSummarizer(), logger);
+
+    await maybeRunCondensePass(
+      store,
+      SCOPE,
+      condenseOpts({ windowTokens: 0 }),
+      deps,
+      FIXED_NOW,
+      undefined,
+      logger as unknown as LeafSummarizerDeps["logger"],
+    );
+
+    expect(logger.debug).toHaveBeenCalledWith(
+      expect.objectContaining({ step: "lcd-condense-gate", reason: "bad-window", windowTokens: 0 }),
+      "lcd condense pass gate skip",
+    );
+  });
+
+  it("WR-03: a target-depth previousSummary shrinks the child budget — the trim accounts the ACTUAL threaded prompt contents", async () => {
+    // The flat 2_048 overhead covers only the instruction TEMPLATE; the
+    // threaded previousSummary at the target depth is ~condensedTargetTokens-
+    // sized — feeding both against the flat reserve overflowed near-exactly-
+    // filled windows. Layout: 12 leaves → 6 depth-1 children (1_200 each);
+    // the FIRST 2 condense into a pre-existing depth-2 whose CONTENT is
+    // 8_000 chars ≈ 2_000 tokens (what previousSummaryAtDepth(…, 2) threads
+    // into the NEXT depth-2 condense prompt); the remaining 4 depth-1s form
+    // ONE contiguous run.
+    seedHistory(store, 40, 100);
+    seedContiguousLeaves(store, 12, 2);
+    const d1ids: string[] = [];
+    for (let i = 0; i < 6; i++) d1ids.push(collapseCondensedWithTokens(i - 1, 2, 1_200));
+    // Collapse the first 2 depth-1 refs into the pre-existing depth-2 prev.
+    const itemsNow = store.getContextItems(SCOPE);
+    const depthByIdNow = new Map(store.getSummaries(SCOPE).map((s) => [s.summaryId, s.depth]));
+    const d1refs = itemsNow.filter((it) => it.refKind === "summary" && depthByIdNow.get(it.refId) === 1);
+    const prevId = store.appendCondensedSummary({
+      scope: SCOPE,
+      tokenCount: 2_000,
+      content: "X".repeat(8_000), // estimateMessageTokens: 8_000 / 4 = 2_000
+      descendantCount: 2,
+      earliestAt: 1_000,
+      latestAt: 1_001,
+      fileIds: [],
+      fallback: false,
+      taint: false,
+      createdAt: FIXED_NOW,
+      startOrdinal: d1refs[0]!.ordinal,
+      endOrdinal: d1refs[1]!.ordinal,
+      childSummaryIds: [d1refs[0]!.refId, d1refs[1]!.refId],
+      depth: 2,
+    });
+    const logger = createMockLogger();
+    const { bus } = makeEventBus();
+    const deps = depsWithOverrideWindow(9_000, shortSummarizer(), logger);
+
+    await maybeRunCondensePass(
+      store,
+      SCOPE,
+      condenseOpts({ condensedMinFanout: 4, windowTokens: 200_000 }),
+      deps,
+      FIXED_NOW,
+      undefined,
+      logger as unknown as LeafSummarizerDeps["logger"],
+      bus,
+    );
+
+    // Child budget = 9_000 − 2_000 (target) − 2_048 (template) − 2_000
+    // (previousSummary) = 2_952 → keep 2 (2_400 ≤ 2_952 < 3_600). Pre-fix the
+    // budget ignored the previousSummary (4_952 → all 4 kept): children +
+    // target + template + prev = 4_800 + 2_000 + 2_048 + 2_000 = 10_848 >
+    // 9_000 — the provider-overflow class SUMW-01 exists to eliminate.
+    const newDepth2 = store
+      .getSummaries(SCOPE)
+      .filter((s) => s.kind === "condensed" && s.depth === 2 && s.summaryId !== prevId);
+    expect(newDepth2.length).toBe(1);
+    const rows = db
+      .prepare("SELECT child_summary_id FROM lcd_summary_parents WHERE parent_summary_id = ?")
+      .all(newDepth2[0]!.summaryId) as Array<{ child_summary_id: string }>;
+    expect(rows.map((r) => r.child_summary_id).sort()).toEqual([d1ids[2], d1ids[3]].sort());
   });
 });

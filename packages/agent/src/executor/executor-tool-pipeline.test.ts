@@ -17,8 +17,12 @@
  * @module
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { formatSessionKey } from "@comis/core";
 import {
   decodeHtmlEntitiesInParams,
   applyJitGuideWrapping,
@@ -27,11 +31,24 @@ import {
   applyProviderNormalization,
   applyMutationSerializer,
 } from "./executor-tool-pipeline.js";
+import * as pipelineModule from "./executor-tool-pipeline.js";
 import {
   deleteToolSchemaSnapshots,
   clearSessionToolSchemaSnapshotHash,
   setSessionStateClock,
 } from "./executor-session-state.js";
+import { clearSessionState } from "./session-snapshot-cleanup.js";
+import {
+  handleToolSchemaUnsupported,
+  resetToolSchemaStripGateForTest,
+} from "./prompt-runner/tool-schema-unsupported-handler.js";
+import type {
+  BridgeSnapshot,
+  InvokeRetry,
+  RetryState,
+} from "./prompt-runner/silent-failure-handlers.js";
+import type { RunPromptParams } from "./prompt-runner/prompt-runner-types.js";
+import { hostileMcpTool } from "../provider/tool-schema/gbnf-hostile-fixtures.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 
 // Module-level clock for executor-session-state's bounded session map.
@@ -303,5 +320,152 @@ describe("applyMutationSerializer — mutation serializer wrapping for parallel-
     const tools = [makeTool({ name: "alpha" }), makeTool({ name: "beta" }), makeTool({ name: "gamma" })];
     const result = applyMutationSerializer(tools, logger);
     expect(result.length).toBe(tools.length);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CR-02 (175-REVIEW): reactive strip must persist across turns; the
+// once-per-session gate must clear on session reset.
+//
+// The per-turn assembly order is snapshot → normalize: applySchemaSnapshot
+// rebuilds parameters from the pre-strip deep-copy snapshot every turn, and
+// on gbnf-profile providers cleanSchemaForGbnf constructs brand-new parameter
+// objects each turn — so the handler's in-place strip (correct for the
+// in-flight retry) NEVER reaches the objects the next turn sends. Pre-fix:
+// turn N heals, turn N+1 re-sends the rejected pattern/format, the provider
+// 400s deterministically, and the closed once-gate declares terminal failure
+// — the session is permanently bricked after one heal.
+// ---------------------------------------------------------------------------
+
+describe("CR-02: reactive strip persistence across turns + session-reset gate clearing", () => {
+  beforeEach(() => {
+    resetToolSchemaStripGateForTest();
+  });
+
+  /** Fresh hostile live toolset, as the per-turn assembly receives it. */
+  function makeHostileLiveTools(): ToolDefinition[] {
+    return [
+      makeTool({
+        name: hostileMcpTool.name,
+        description: hostileMcpTool.description,
+        parameters: structuredClone(hostileMcpTool.parameters) as ToolDefinition["parameters"],
+      }),
+    ];
+  }
+
+  /**
+   * One assembly turn in the production order (executor-tool-assembly.ts):
+   * snapshot → provider normalization → persisted reactive strip. The strip
+   * step is bound tolerantly via the namespace so this file still loads on
+   * the pre-patch module (the RED state, where the export does not exist and
+   * a turn is snapshot → normalize only).
+   */
+  function runAssemblyTurn(tools: ToolDefinition[], snapshotKey: string): ToolDefinition[] {
+    let out = applySchemaSnapshot({ tools, sessionKey: snapshotKey, deferredNames: [] });
+    out = applyProviderNormalization({
+      tools: out,
+      provider: "my-ollama",
+      modelId: "qwen3.6:35b",
+      compat: { toolSchemaProfile: "gbnf" },
+    });
+    const reapply = (
+      pipelineModule as unknown as {
+        applyPersistedReactiveStrip?: (p: { tools: ToolDefinition[]; sessionKey: string }) => ToolDefinition[];
+      }
+    ).applyPersistedReactiveStrip;
+    return reapply ? reapply({ tools: out, sessionKey: snapshotKey }) : out;
+  }
+
+  /** Drive the REAL strip-retry handler against this turn's wire toolset. */
+  async function fireGrammar400(
+    sessionKey: { tenantId: string; userId: string; channelId: string },
+    wireTools: ToolDefinition[],
+    invokeRetry: InvokeRetry,
+  ): Promise<RetryState> {
+    const retryState: RetryState = { promptSucceeded: false, promptError: undefined };
+    const params = {
+      session: { getLastAssistantText: vi.fn(() => "recovered visible text"), messages: [] },
+      sessionKey,
+      agentId: "agent-1",
+      bridge: { getResult: vi.fn(() => ({ llmCalls: 1, textEmitted: true })) },
+      mergedCustomTools: wireTools,
+      resolvedModel: { id: "qwen3.6:35b", provider: "my-ollama" },
+      config: { provider: "my-ollama", model: "qwen3.6:35b" },
+      deps: {
+        logger: createMockLogger(),
+        eventBus: { emit: vi.fn() },
+        clock: { now: () => 1234 },
+        timers: {
+          setTimeout: (fn: () => void) => {
+            fn();
+            return { cancelled: false, cancel: () => {}, unref: () => {} };
+          },
+        },
+      },
+    } as unknown as RunPromptParams;
+    const bridgeSnapshot = {
+      llmCalls: 1,
+      finishReason: "error",
+      textEmitted: false,
+      lastLlmErrorMessage: "JSON schema conversion failed:\nUnrecognized schema: ...",
+    } as BridgeSnapshot;
+    await handleToolSchemaUnsupported(params, "msg", undefined, bridgeSnapshot, retryState, invokeRetry);
+    return retryState;
+  }
+
+  it("turn N+1 after a healed turn N sends STRIPPED wire schemas — the heal survives the snapshot→normalize rebuild", async () => {
+    const sessionKey = { tenantId: "t1", userId: "u1", channelId: "cr02-multiturn" };
+    const snapshotKey = formatSessionKey(sessionKey);
+
+    // Turn N: assemble, grammar-400, strip-retry heals (invokeRetry succeeds).
+    const wireTurn1 = runAssemblyTurn(makeHostileLiveTools(), snapshotKey);
+    const invokeRetry: InvokeRetry = vi.fn(async () => ({ succeeded: true }));
+    const state = await fireGrammar400(sessionKey, wireTurn1, invokeRetry);
+    expect(state.promptSucceeded).toBe(true);
+    // The in-flight strip reached THIS turn's wire objects (pre-fix true too).
+    expect(JSON.stringify(wireTurn1.map((t) => t.parameters))).not.toContain('"pattern"');
+
+    // Turn N+1: per-turn assembly rebuilds from the pre-strip snapshot (live
+    // tools are re-supplied each turn) — the strip must still be in effect.
+    const wireTurn2 = runAssemblyTurn(makeHostileLiveTools(), snapshotKey);
+    const serialized = JSON.stringify(wireTurn2.map((t) => t.parameters));
+    expect(serialized).not.toContain('"pattern"');
+    expect(serialized).not.toContain('"format"');
+  });
+
+  it("session reset clears the once-gate: a reset session gets its one strip-retry again instead of instant terminal failure", async () => {
+    const sessionKey = { tenantId: "t1", userId: "u1", channelId: "cr02-reset" };
+    const snapshotKey = formatSessionKey(sessionKey);
+
+    // Turn N: the session consumes its one strip-retry.
+    const wireTurn1 = runAssemblyTurn(makeHostileLiveTools(), snapshotKey);
+    const firstRetry: InvokeRetry = vi.fn(async () => ({ succeeded: true }));
+    await fireGrammar400(sessionKey, wireTurn1, firstRetry);
+    expect(firstRetry).toHaveBeenCalledTimes(1);
+
+    // Operator resets the conversation: ALL executor session state for the
+    // key is dropped through the single authoritative cleanup path.
+    clearSessionState(snapshotKey);
+
+    // Fresh session (same key after reset): its first grammar-400 must get a
+    // strip-retry — pre-fix the process-lifetime gate stayed closed and the
+    // reset session terminal-failed with zero repair attempts.
+    const wireAfterReset = runAssemblyTurn(makeHostileLiveTools(), snapshotKey);
+    const secondRetry: InvokeRetry = vi.fn(async () => ({ succeeded: true }));
+    const state = await fireGrammar400(sessionKey, wireAfterReset, secondRetry);
+    expect(secondRetry).toHaveBeenCalledTimes(1);
+    expect(state.promptSucceeded).toBe(true);
+  });
+
+  it("wiring: executor-tool-assembly applies the persisted reactive strip AFTER provider normalization (source pin)", () => {
+    // Source-grep wiring pin (retry-loop.test.ts precedent): the unit turns
+    // above prove the mechanism; this proves assembleTools actually calls it
+    // in the load-bearing order (after normalization rebuilds objects).
+    const here = dirname(fileURLToPath(import.meta.url));
+    const source = readFileSync(resolve(here, "executor-tool-assembly.ts"), "utf-8");
+    expect(source).toMatch(/applyPersistedReactiveStrip\(/);
+    expect(source.indexOf("applyPersistedReactiveStrip(")).toBeGreaterThan(
+      source.indexOf("applyProviderNormalization("),
+    );
   });
 });

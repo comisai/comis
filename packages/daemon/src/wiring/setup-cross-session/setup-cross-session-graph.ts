@@ -464,10 +464,16 @@ export function buildExecuteSubAgent(deps: ExecuteSubAgentDeps): ExecuteSubAgent
       model: subagentResolution?.model ?? modelOverride,
       operationType: "subagent" as const,
       promptTimeout: (() => {
-        const effectiveTimeoutMs = isGraphSpawn
-          ? GRAPH_PROMPT_TIMEOUT_MS
-          : subagentResolution?.timeoutMs;
-        return effectiveTimeoutMs ? { promptTimeoutMs: effectiveTimeoutMs } : undefined;
+        if (isGraphSpawn) {
+          // LAT-01: the graph constant is NOT operator-tunable — labeled so
+          // hints render honest prose instead of a fake agents.* knob (D-11).
+          return { promptTimeoutMs: GRAPH_PROMPT_TIMEOUT_MS, source: "graph_constant" as const };
+        }
+        // Falsy-guard semantics preserved: a 0/undefined subagent resolution
+        // still yields undefined (no override materialized).
+        return subagentResolution?.timeoutMs
+          ? { promptTimeoutMs: subagentResolution.timeoutMs, source: subagentResolution.timeoutSource }
+          : undefined;
       })(),
       cacheRetention: isReuseSession
         ? "long" as const

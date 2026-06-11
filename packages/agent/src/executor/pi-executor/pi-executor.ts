@@ -97,6 +97,8 @@ import {
   getCacheSavings,
   clearSessionCacheSavings,
   setSessionStateClock,
+  getWindowReconcileLogged,
+  setWindowReconcileLogged,
 } from "../executor-session-state.js";
 import { normalizeModelCompat } from "../../provider/model-compat.js";
 import { normalizeModelId } from "../../provider/model-id-normalize.js";
@@ -107,7 +109,7 @@ import { DEFAULT_EFFECTIVE_CAP_BY_CLASS } from "../../context-engine/budget-capa
 import { isAnthropicFamily, isGoogleFamily, resolveProviderCapabilities } from "../../provider/capabilities.js";
 import { detectOnboardingState } from "../../workspace/onboarding-detector.js";
 import { validateRoleAttribution } from "../../context-engine/index.js";
-import type { TokenAnchor } from "../../context-engine/types.js";
+import type { TokenAnchor, WindowProvenance } from "../../context-engine/types.js";
 import { getElapsedSinceLastResponse } from "../ttl-guard.js";
 import { clearSessionBlockStability } from "../block-stability-tracker.js";
 import { wrapToolForAutoBackground } from "../../background/index.js";
@@ -119,7 +121,8 @@ import { randomUUID } from "node:crypto";
 
 // Closure-extracted helpers (state-first)
 import { installCompactionTrigger } from "./compaction-trigger.js";
-import { bootstrapSession, decodeExecutionOverrides, type MutableRef } from "./session-bootstrap.js";
+import { createDeltaResetComposer } from "./delta-reset.js";
+import { bootstrapSession, decodeExecutionOverrides, type MutableRef, type EffectiveTimeout } from "./session-bootstrap.js";
 import { runSafetyGates } from "./safety-gate.js";
 import { maybeRunBootstrapSweep } from "./maybe-run-bootstrap-sweep.js";
 import { applyPromptRunOutcome, handleEnvelopeException } from "./message-envelope.js";
@@ -235,6 +238,13 @@ export function createPiExecutor(
       // 4. Resolve model using ModelRegistry
       //    Apply per-node model override from ExecutionOverrides and normalize shortcuts before registry lookup
       const normalizedPrimary = normalizeModelId(config.provider, config.model);
+      // WR-02: track the provider key (config providers.entries space) the
+      // EXECUTING model resolves to — the agent's primary by default, the
+      // override provider when a per-execution model override resolves below.
+      // The served-window gate compares against THIS key rather than
+      // resolvedModel.provider because the registry's alias fallback can
+      // rename a custom provider entry to its built-in pi name.
+      let resolvedProviderKey = config.provider;
       let resolvedModel = deps.modelRegistry.find(config.provider, normalizedPrimary.modelId);
       if (!resolvedModel && deps.providerAliases) {
         const builtInName = deps.providerAliases.get(config.provider);
@@ -277,6 +287,7 @@ export function createPiExecutor(
           }
           if (overrideResolved) {
             resolvedModel = overrideResolved;
+            resolvedProviderKey = overrideProvider; // WR-02: the execution now runs on the override's provider
             deps.logger.info(
               { defaultModel: config.model, overrideModel: executionOverrides.model },
               "Model override applied from execution overrides",
@@ -311,10 +322,14 @@ export function createPiExecutor(
         (alsCtx as Record<string, unknown>).agentId = agentId;
       }
 
-      // Derive compat config via normalizeModelCompat (xAI auto-detection).
+      // Derive compat config via normalizeModelCompat (xAI + GBNF auto-detection;
+      // providerType/comisCompat resolved per-execution because model overrides
+      // can switch providers — GBNF-01).
       const modelCompat = resolvedModel ? normalizeModelCompat({
         provider: resolvedModel.provider,
         id: resolvedModel.id,
+        providerType: deps.getProviderType?.(resolvedModel.provider),
+        comisCompat: deps.getModelCompat?.(resolvedModel.provider, resolvedModel.id),
       }) : undefined;
 
       // Resolve ModelProfile once per execution (K1: resolve-once, thread everywhere).
@@ -341,20 +356,63 @@ export function createPiExecutor(
       const capabilityCap = explicitClass != null
         ? (DEFAULT_EFFECTIVE_CAP_BY_CLASS[explicitClass] ?? Infinity)
         : Infinity;
+      // WR-02 (Phase 176 review): the probed served window binds ONLY
+      // executions on the provider it was probed from. deps.servedContextWindow
+      // is bound once at construction to the agent's PRIMARY provider, but
+      // executionOverrides.model can switch providers per-execution (graph
+      // per-node models, subagent spawns — the GBNF-01 resolver-form
+      // precedent). On mismatch: no served clamp AND no served attribution —
+      // otherwise an Ollama-primary agent's 8K num_ctx would silently crush an
+      // override model on another provider and the diagnostics would assert
+      // "Ollama serves only 8192" for a model Ollama does not serve.
+      const servedWindow =
+        deps.servedContextWindow !== undefined &&
+        deps.servedContextWindow.providerKey === resolvedProviderKey
+          ? deps.servedContextWindow.window
+          : undefined;
       const effectiveContextWindowResult = resolveEffectiveContextWindow({
         configured: resolvedModel?.contextWindow ?? 8_192,
-        served: deps.servedContextWindow,
+        served: servedWindow,
         capabilityCap,
       });
+      // KNOB-02 (Phase 176): the window provenance is BORN here — the TRUE
+      // configured window before resolveModelProfile below overwrites
+      // profile.contextWindow with the reconciled value. Threaded along the
+      // modelProfile chain into BOTH computeTokenBudgetForProfile call sites
+      // (executor-tool-assembly + lcd-assembler via ContextEngineDeps) so a
+      // served-bound budget reports raw=configured with windowCapSource "served".
+      const windowProvenance: WindowProvenance = {
+        configuredWindow: resolvedModel?.contextWindow ?? 8_192,
+        ...(servedWindow !== undefined && { served: servedWindow }),
+        reconcileSource: effectiveContextWindowResult.source,
+      };
       if (effectiveContextWindowResult.source !== "configured") {
         deps.logger.debug({
           source: effectiveContextWindowResult.source,
           effectiveWindow: effectiveContextWindowResult.effectiveWindow,
           configured: resolvedModel?.contextWindow,
-          served: deps.servedContextWindow,
+          served: servedWindow,
           capabilityCap,
           submodule: "context-window-reconcile",
         }, "Context window reconciled (served or capability cap bound)");
+        // KNOB-02: promote the FIRST reconcile of a session to INFO — the
+        // reconcile is load-bearing diagnostic evidence (which window actually
+        // bound, and why) and must not depend on logLevel=debug having been set
+        // before the incident. The bounded session latch keeps it to exactly
+        // once per session (clearSessionState grants a fresh INFO on
+        // delete/reset/expiry); the DEBUG above stays per-turn.
+        const reconcileLatchKey = formatSessionKey(sessionKey);
+        if (!getWindowReconcileLogged(reconcileLatchKey)) {
+          setWindowReconcileLogged(reconcileLatchKey);
+          deps.logger.info({
+            source: effectiveContextWindowResult.source,
+            effectiveWindow: effectiveContextWindowResult.effectiveWindow,
+            configured: resolvedModel?.contextWindow ?? 8_192,
+            served: servedWindow,
+            capabilityCap,
+            submodule: "context-window-reconcile",
+          }, "Context window reconciled (served or capability cap bound)");
+        }
       }
       const modelProfile = resolveModelProfile(
         resolvedModel
@@ -387,6 +445,7 @@ export function createPiExecutor(
           resolvedModel,
           modelCompat,
           modelProfile,
+          windowProvenance,
           activeStepCounter,
           sessionAdapter,
           cacheRetentionRef,
@@ -428,13 +487,16 @@ interface RunSessionLockedContext {
   readonly _prevTimestamp: number | undefined;
   readonly executionOverrides: ExecutionOverrides | undefined;
   readonly executionStartMs: number;
-  readonly effectiveTimeout: { promptTimeoutMs: number; retryPromptTimeoutMs: number };
+  readonly effectiveTimeout: EffectiveTimeout;
   readonly sepEnabled: boolean;
   readonly executionPlanRef: { current: import("../../planner/types.js").ExecutionPlan | undefined };
   readonly safetyReinforcement: string | undefined;
   readonly resolvedModel: ReturnType<ModelRegistry["find"]> | undefined;
   readonly modelCompat: ReturnType<typeof normalizeModelCompat> | undefined;
   readonly modelProfile: ModelProfile;
+  /** KNOB-02: served/capability window provenance built at the reconcile above —
+   *  threaded as a sibling of modelProfile into both budget call sites. */
+  readonly windowProvenance: WindowProvenance;
   readonly activeStepCounter: StepCounter;
   readonly sessionAdapter: ComisSessionManager;
   readonly cacheRetentionRef: MutableRef<CacheRetention | undefined>;
@@ -450,7 +512,7 @@ async function runSessionLocked(
     config, deps, result, msg, sessionKey, tools, onDelta, agentId,
     _directives, _prevTimestamp, executionOverrides, executionStartMs,
     effectiveTimeout, sepEnabled, executionPlanRef, safetyReinforcement,
-    resolvedModel, modelCompat, modelProfile, activeStepCounter,
+    resolvedModel, modelCompat, modelProfile, windowProvenance, activeStepCounter,
     sessionAdapter,
     cacheRetentionRef, adaptiveRetentionRef, minTokensOverrideRef,
   } = ctx;
@@ -532,14 +594,14 @@ async function runSessionLocked(
   const toolAssembly = await assembleTools({
     config, deps: frozenDeps, sessionKey, msg, tools, executionOverrides,
     isFirstMessageInSession, sm, formattedKeyForGuides, deliveredGuides,
-    resolvedModel, modelCompat, modelProfile, agentId, safetyReinforcement, _directives,
+    resolvedModel, modelCompat, modelProfile, windowProvenance, agentId, safetyReinforcement, _directives,
   });
   const {
     mergedCustomTools,
   } = toolAssembly;
   const {
     deferralResult, deferredContext, capabilityIndexResult,
-    capabilityClass, discoveryTracker, settingsManager,
+    capabilityClass, budgetWindowTokens, discoveryTracker, settingsManager,
     resourceLoaderOptions, promptResult, cachedSystemTokensEstimate, cachedFreshTailPreambleTokens,
   } = toolAssembly;
   const currentDiscoveryTracker: DiscoveryTracker | undefined = toolAssembly.currentDiscoveryTracker;
@@ -943,7 +1005,10 @@ async function runSessionLocked(
     getTokenAnchor: () => tokenAnchor,
     onAnchorReset: () => { tokenAnchor = null; },
     currentDiscoveryTracker,
-    modelProfile,  // already in scope: resolveModelProfile() at line 328; used by assembleTools at :502
+    modelProfile,  // already in scope: resolved once per execution in step 4 (the resolveModelProfile call after the CWF-03 reconcile); consumed by assembleTools' profile budget (step 5, "System token estimate")
+    // KNOB-02: served/capability window provenance for the lcd-assembler's budget
+    // (the second computeTokenBudgetForProfile call site) — sibling of modelProfile.
+    windowProvenance,
     // Phase 166 T-S4: thread security-pin markers so the dag eviction never drops canary/security context.
     // contentDelimiter defaults to "" (fail-closed: isSecurityRelevantMessage with empty contentDelimiter
     // only matches on canaryToken — defense-in-depth; a real delimiter is injected by Plan 04).
@@ -1215,6 +1280,14 @@ async function runSessionLocked(
   const executionId = randomUUID();
   // Budget trajectory warning: shared mutable ref between bridge (writer) and prompt runner (reader)
   const budgetWarningRef = { current: false };
+  // LAT-02 (177-03): deltas (text + thinking) reset the stall budget — ALWAYS-
+  // defined (the bridge presence-gates on deps.onDelta), live-ref
+  // (currentResetTimer is assigned later at onResetTimer), throttled ~1/s.
+  const onDeltaWithStallReset = createDeltaResetComposer({}, {
+    channelOnDelta: onDelta,
+    getResetTimer: () => currentResetTimer,
+    clock: deps.clock,
+  });
   const bridge = createPiEventBridge({
     eventBus: deps.eventBus,
     budgetGuard: deps.budgetGuard,
@@ -1241,7 +1314,7 @@ async function runSessionLocked(
     // os.homedir() sanctioned-root pattern already used in this file for the
     // trajectory-confinement base.
     homeDir: os.homedir(),
-    onDelta,
+    onDelta: onDeltaWithStallReset,
     memoryPort: deps.memoryPort,
     onAbort: () => {
       session.abortCompaction();
@@ -1590,7 +1663,7 @@ async function runSessionLocked(
         outputGuard: deps.outputGuard,
         canaryToken: deps.canaryToken,
       },
-      { error, sessionKey, agentId },
+      { error, sessionKey, agentId, executionStartMs },
     );
   } finally {
     // Clear thinking ceiling so next execution recalculates from current state.
@@ -1608,7 +1681,7 @@ async function runSessionLocked(
       contextEngineRef, ceSetup, streamSetup,
       getTruncationSummary, getTurnBudgetSummary,
       executionPlanRef, isOnboarding,
-      geminiCacheHit, geminiCachedTokens, capabilityClass,
+      geminiCacheHit, geminiCachedTokens, capabilityClass, budgetWindowTokens,
       provider: resolvedModel?.provider ?? config.provider,
       providerFamily: resolveProviderCapabilities(resolvedModel?.provider ?? config.provider).providerFamily,
       deferralResult, mergedCustomTools, deliveredGuides,

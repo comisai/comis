@@ -13,6 +13,7 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { CommandDirectives } from "./command-directive-types.js";
 import type { StepCounter } from "./step-counter.js";
 import type { ComisSessionManager } from "../session/comis-session-manager.js";
+import type { TimeoutSource } from "../model/operation-model-resolver.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -37,7 +38,9 @@ export interface ExecutionResult {
   };
   stepsExecuted: number;
   llmCalls: number;
-  finishReason: "stop" | "max_steps" | "budget_exceeded" | "budget_exhausted" | "circuit_open" | "provider_degraded" | "context_loop" | "context_exhausted" | "output_starved" | "session_reset" | "loop_detected" | "error";
+  // LAT-04 (Phase 177): prompt_timeout is the PromptTimeoutError terminal —
+  // END_REASON_MAP translates it to endReason timeout (the named cause).
+  finishReason: "stop" | "max_steps" | "budget_exceeded" | "budget_exhausted" | "circuit_open" | "provider_degraded" | "context_loop" | "context_exhausted" | "output_starved" | "session_reset" | "loop_detected" | "prompt_timeout" | "error";
   /** Ordered list of tool names invoked during execution (for post-mortem analysis). */
   toolCallHistory?: string[];
   /** Structured error classification for non-successful executions (operator-only, never user-facing). */
@@ -107,8 +110,12 @@ export interface ExecutionOverrides {
   ephemeralSessionAdapter?: ComisSessionManager;
   /** Skip SEP for pipeline/graph nodes that have their own orchestration. */
   skipSep?: boolean;
-  /** Per-operation prompt timeout override. When set, shadows config.promptTimeout for ALL LLM calls in this execution. */
-  promptTimeout?: { promptTimeoutMs?: number; retryPromptTimeoutMs?: number };
+  /** Per-operation prompt timeout override. When set, shadows config.promptTimeout for ALL LLM calls in this execution.
+   *  `source` labels which resolution level produced promptTimeoutMs — carried,
+   *  never re-derived (LAT-01: the cron producer materializes this object
+   *  unconditionally, so the label cannot be inferred at decode). Absent ⇒
+   *  legacy producer ⇒ treated as operation_explicit at decode. */
+  promptTimeout?: { promptTimeoutMs?: number; retryPromptTimeoutMs?: number; source?: TimeoutSource };
   /** Operation type for cost attribution and timeout resolution. */
   operationType: ModelOperationType;
   /** Graph ID for cache write signal emission. Set only for graph subagents. */

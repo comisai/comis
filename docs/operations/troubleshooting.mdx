@@ -471,12 +471,12 @@ See [Resilience Architecture](/agents/resilience) for how these systems work tog
     execution:prompt_timeout
     ```
 
-    **What happened:** An LLM call exceeded the wall-clock timeout. The agent automatically retried with a shorter timeout or fell back to an alternate model.
+    **What happened:** An LLM call exceeded its prompt-level deadline — either the stall budget (no stream/tool activity for `promptTimeoutMs`) or the makespan ceiling (`promptTimeoutMs × stallCeilingMultiplier`, a streaming runaway). The agent automatically retried with a shorter timeout or fell back to an alternate model. `comis explain <sessionKey>` names which limit fired and the binding knob.
 
     **How to fix:**
 
     1. Check the provider's status page for ongoing outages
-    2. If the model legitimately needs more time for complex tasks, increase `promptTimeoutMs`:
+    2. If the model legitimately needs more silent time (e.g., slow local prefill before the first token), increase `promptTimeoutMs`:
        ```yaml
        agents:
          default:

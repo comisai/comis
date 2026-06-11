@@ -17,7 +17,7 @@ import { randomUUID } from "node:crypto";
 import type { Attachment, AppContainer, ChannelPort, ClockPort, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore, RelationshipStore, TunedAlphaStore, MemoryUsefulnessStore, MemoryLifecyclePort, NormalizedMessage, SessionKey, TranscriptionPort, DeliveryService } from "@comis/core";
 import { formatSessionKey, runWithContext, createDeliveryOrigin, systemNowMs } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
-import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry } from "@comis/agent";
+import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry, OperationModelResolution } from "@comis/agent";
 import type { createSessionStore, MemoryApi } from "@comis/memory";
 import { sanitizeAssistantResponse, resolveOperationModel, resolveProviderFamily, runMemoryReview, classifyError } from "@comis/agent";
 import { applyToolPolicy } from "@comis/skills";
@@ -313,9 +313,9 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
         );
       }
 
-      // Resolve cron operation model via 5-level priority chain
+      // Resolve cron operation model via 5-level priority chain. LAT-01: cronOverrides.promptTimeout is materialized UNCONDITIONALLY, so it must carry resolution.timeoutSource — without the label, decode would treat the 150s cron default as an explicit operator override (the provenance-collapse trap).
       const agentConfig = agents[payload.agentId];
-      let cronOverrides: { model: string; operationType: "cron"; promptTimeout: { promptTimeoutMs: number }; cacheRetention?: "none" | "short" | "long" } | undefined;
+      let cronOverrides: { model: string; operationType: "cron"; promptTimeout: { promptTimeoutMs: number; source: OperationModelResolution["timeoutSource"] }; cacheRetention?: "none" | "short" | "long" } | undefined;
       if (agentConfig) {
         const resolution = resolveOperationModel({
           operationType: "cron",
@@ -329,7 +329,7 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
         cronOverrides = {
           model: resolution.model,
           operationType: "cron",
-          promptTimeout: { promptTimeoutMs: resolution.timeoutMs },
+          promptTimeout: { promptTimeoutMs: resolution.timeoutMs, source: resolution.timeoutSource },
           cacheRetention: payload.cacheRetention ?? resolution.cacheRetention,
         };
         logger.info(

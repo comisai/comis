@@ -326,8 +326,21 @@ export function translatePayload(
       };
 
     case "execution:prompt_timeout":
+      // LAT-04 (177): stall/makespan attribution fields forward verbatim — the
+      // emit site is content-free (numbers + closed enums + the config-KEY
+      // bindingKnob string, never delta text or env values; I7). The signals
+      // reader (obs-explain-signals.ts) safeParses the row wholesale, so the
+      // explain verdict can name the binding knob with the actual numbers.
+      // agentId/sessionKey/timestamp are envelope-only and stripped.
       return {
         timeoutMs: payload.timeoutMs,
+        ...(payload.durationMs !== undefined ? { durationMs: payload.durationMs } : {}),
+        ...(payload.limit !== undefined ? { limit: payload.limit } : {}),
+        ...(payload.source !== undefined ? { source: payload.source } : {}),
+        ...(payload.bindingKnob !== undefined ? { bindingKnob: payload.bindingKnob } : {}),
+        ...(payload.operationType !== undefined ? { operationType: payload.operationType } : {}),
+        ...(payload.stallBudgetMs !== undefined ? { stallBudgetMs: payload.stallBudgetMs } : {}),
+        ...(payload.makespanMs !== undefined ? { makespanMs: payload.makespanMs } : {}),
       };
 
     case "execution:output_escalated":
@@ -341,6 +354,21 @@ export function translatePayload(
         blocksRemoved: payload.blocksRemoved,
         thoughtSignaturesStripped: payload.thoughtSignaturesStripped,
         succeeded: payload.succeeded,
+      };
+
+    case "execution:tool_schema_unsupported":
+      // GBNF-02 strip-retry self-heal. The emit site is already content-free
+      // (tool + keyword NAMES only, never schema bodies — I7), so all five
+      // diagnostic fields forward verbatim — `reason` (WR-05) is the closed
+      // branch discriminator (stripped | nothing_to_strip | gate_closed) that
+      // keeps the two terminal branches distinguishable in obs verdicts.
+      // agentId/sessionKey/timestamp are envelope-only and stripped.
+      return {
+        toolNames: payload.toolNames,
+        strippedKeywords: payload.strippedKeywords,
+        retried: payload.retried,
+        succeeded: payload.succeeded,
+        reason: payload.reason,
       };
 
     // ---- Security + Sender (scanned subset) ----

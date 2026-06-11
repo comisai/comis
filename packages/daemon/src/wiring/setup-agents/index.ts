@@ -6,9 +6,11 @@
  * No aliases — every export keeps its canonical name.
  *
  * Decomposition:
- *   - setup-agents-tooling.ts     — resolveAgentModel + pure helpers
- *   - setup-agents-runtime.ts     — setupSingleAgent + SingleAgent* types
- *   - setup-agents-registry.ts    — setupAgents + AgentsResult
+ *   - setup-agents-tooling.ts      — resolveAgentModel + pure helpers
+ *   - setup-agents-descriptions.ts — lean tool-description pre-resolution
+ *   - setup-agents-oauth.ts        — per-agent OAuth wiring + encrypted-mode notice
+ *   - setup-agents-runtime.ts      — setupSingleAgent + SingleAgent* types
+ *   - setup-agents-registry.ts     — setupAgents + AgentsResult
  *
  * @module
  */

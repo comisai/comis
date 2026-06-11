@@ -59,12 +59,16 @@ import type {
   ContextEngineConfig,
 } from "@comis/core";
 import { ContextEngineConfigSchema } from "@comis/core";
+import type { Message } from "@earendil-works/pi-ai";
+import { estimateMessageTokens } from "../safety/token-estimator.js";
 import {
   selectCondensableTier,
   summarizeCondensedChunk,
   type SummaryRefRun,
 } from "../context-engine/lcd-condense.js";
 import type { LeafSummarizerDeps } from "../context-engine/lcd-leaf-summarizer.js";
+import { resolveSummarizerWindowTokens } from "../context-engine/summarizer-window.js";
+import { SUMMARIZER_PROMPT_OVERHEAD_TOKENS } from "../context-engine/constants.js";
 import { resolveContext } from "./lcd-compaction-trigger.js";
 
 /**
@@ -139,7 +143,16 @@ export async function maybeRunCondensePass(
   // Gated on the summarizer deps + a positive window (a missing getter / model is
   // a clean skip, not a fault — mirrors the leaf gate).
   if (summarizerDeps === undefined) return;
-  if (!Number.isFinite(opts.windowTokens) || opts.windowTokens <= 0) return;
+  if (!Number.isFinite(opts.windowTokens) || opts.windowTokens <= 0) {
+    // Review IN-01: never silently disarm — leave the same one-line DEBUG
+    // breadcrumb the leaf gate leaves, so a disarmed condense pass is
+    // diagnosable from logs alone (phase invariant: no silent trigger disarm).
+    logger.debug(
+      { conversationId: scope.conversationId, agentId: scope.agentId, step: "lcd-condense-gate", reason: "bad-window", windowTokens: opts.windowTokens },
+      "lcd condense pass gate skip",
+    );
+    return;
+  }
 
   const conversationId = scope.conversationId;
   // O1: capture a pass-START clock read at entry (the injected clock CALLABLE —
@@ -201,24 +214,92 @@ export async function maybeRunCondensePass(
       return;
     }
 
-    // Derive the condensed node's metadata from the children (RESEARCH A6):
-    // depth = max(child depth) + 1; taint = OR(children.taint); descendantCount /
-    // time-range are recomputed STORE-SIDE from the child rows (advisory here).
-    const depth = Math.max(...run.children.map((c) => c.depth)) + 1;
-    const childSummaryIds = run.children.map((c) => c.summaryId);
+    // SUMW-01: prefix-trim the selected run to the LONGEST child prefix whose
+    // Σ tokenCount fits the RESOLVED summarizer's window (override-aware via
+    // resolveSummarizerWindowTokens — never the getModel() session-primary
+    // snapshot) minus the condense target + prompt-template overhead + the
+    // ACTUAL threaded previousSummary, so a condense pass never concatenates
+    // more child tokens than the summarizer that actually runs can read.
+    // Ordinal integrity (T-178-10): a prefix of a contiguous run stays
+    // contiguous, so [startOrdinal, children[keep-1].ordinal] remains a valid
+    // range-replace window and the trimmed children survive untouched in the
+    // store for a later pass. The no-trim path is byte-identical
+    // (effectiveRun === run); pressureHigh and selectCondensableTier are unchanged.
+    const summarizerWindow = resolveSummarizerWindowTokens(summarizerDeps);
+    // Review WR-03: the target depth and its previousSummary are knowable
+    // BEFORE the budget — a run's children share ONE depth by construction (a
+    // SummaryRefRun breaks on any depth change), so the condensed depth is
+    // run.depth + 1 regardless of how the trim lands. Subtract the ACTUAL
+    // previousSummary tokens: the flat 2_048 overhead covers only the
+    // instruction TEMPLATE, while previousSummary at this depth is
+    // ~condensedTargetTokens-sized at defaults (2_000; the knob allows
+    // 10_000) — hoping the flat reserve covered both was short by its own
+    // arithmetic and overflowed near-exactly-filled windows.
+    const depth = run.depth + 1;
+    const previousSummary = previousSummaryAtDepth(summaries, depth);
+    const prevTokens = previousSummary === undefined
+      ? 0
+      : estimateMessageTokens({ role: "user", content: previousSummary } as Message);
+    const childTokenBudget =
+      summarizerWindow - opts.condensedTargetTokens - SUMMARIZER_PROMPT_OVERHEAD_TOKENS - prevTokens;
+    let effectiveRun = run;
+    if (Number.isFinite(childTokenBudget)) {
+      let acc = 0;
+      let keep = 0;
+      for (const c of run.children) {
+        if (acc + c.tokenCount > childTokenBudget) break;
+        acc += c.tokenCount;
+        keep++;
+      }
+      if (keep < run.children.length) {
+        if (keep < 2) {
+          // A 1-child condense is meaningless re-summarization — honest skip
+          // (T-178-12): observable via a content-free DEBUG with both numbers
+          // (I7), never WARN spam, never a throw.
+          logger.debug(
+            { conversationId, agentId: scope.agentId, step: "lcd-condense-clamp", summarizerWindow, childTokenBudget, firstChildTokens: run.children[0]!.tokenCount },
+            "lcd condense pass skipped: summarizer window cannot fit a 2-child run",
+          );
+          return;
+        }
+        // Review IN-03 (deliberate): the fanout gate governs run SELECTION
+        // only — a binding window trim may fold FEWER children than the soft
+        // `condensedMinFanout` that selected the run (SUMW-01-C1 pins fanout 4
+        // selecting, 3 folding). Preferable to never condensing under a small
+        // summarizer; the trimmed children survive for a later pass.
+        effectiveRun = {
+          depth: run.depth,
+          children: run.children.slice(0, keep),
+          startOrdinal: run.startOrdinal,
+          endOrdinal: run.children[keep - 1]!.ordinal,
+        };
+        // Numbers only (I7) — per-pass DEBUG, never WARN (the trim is normal adaptive behavior).
+        logger.debug(
+          { conversationId, agentId: scope.agentId, step: "lcd-condense-clamp", summarizerWindow, childTokenBudget, keptChildren: keep, trimmedChildren: run.children.length - keep },
+          "lcd condense run prefix-trimmed to the resolved summarizer window",
+        );
+      }
+    }
+
+    // Derive the rest of the condensed node's metadata from the KEPT children
+    // (RESEARCH A6): taint = OR(children.taint); descendantCount / time-range
+    // are recomputed STORE-SIDE from the child rows (advisory here). depth was
+    // derived above (run.depth + 1 — identical to max(child depth) + 1, since
+    // the run's children share one depth by construction).
+    const childSummaryIds = effectiveRun.children.map((c) => c.summaryId);
     // taint = OR(children.taint): read taint off the SELECTED children — the
     // resolved-view `CondenseChildSummary` carries `taint` from the SAME
     // `getSummaries` snapshot the run was selected from (WR-01). A second
     // `getSummaries` call could observe a diverged later snapshot (the pass goes
     // deferred/async in Phase 132) and silently mis-propagate the trust boundary.
     // A tainted child taints the condensed parent (T-130; enforcement is Phase 132).
-    const taint = run.children.some((c) => c.taint);
+    const taint = effectiveRun.children.some((c) => c.taint);
 
     // Summarize the child CONTENT via the 3-level escalation (non-fatal inside —
     // always returns a result). The before-size is the STORED Σ child tokenCount.
-    // `previousSummary` reads the SAME resolved snapshot (WR-01) — not a re-query.
-    const previousSummary = previousSummaryAtDepth(summaries, depth);
-    const result = await summarizeCondensedChunk(run.children, summarizerDeps, {
+    // `previousSummary` is the SAME resolved-snapshot read the budget above
+    // already accounted (WR-01/WR-03) — never a re-query.
+    const result = await summarizeCondensedChunk(effectiveRun.children, summarizerDeps, {
       reserveTokens: opts.condensedTargetTokens,
       previousSummary,
       depth, // SUM-01: thread computed depth so d1/d2/d3+ prompt styles actually fire
@@ -245,8 +326,8 @@ export async function maybeRunCondensePass(
       fallback: result.fallback,
       taint,
       createdAt: now,
-      startOrdinal: run.startOrdinal,
-      endOrdinal: run.endOrdinal,
+      startOrdinal: effectiveRun.startOrdinal,
+      endOrdinal: effectiveRun.endOrdinal,
       childSummaryIds,
       depth,
     });
@@ -297,7 +378,7 @@ export async function maybeRunCondensePass(
         conversationId,
         agentId: scope.agentId,
         sessionKey: scope.sessionKey,
-        childCount: run.children.length,
+        childCount: effectiveRun.children.length,
         depth,
         escalationLevel: result.level,
         fallback: result.fallback,
@@ -342,6 +423,13 @@ export interface RunCondensePassAfterTurnParams {
    * condense pass is gated off cleanly (no trigger, no summary).
    */
   getCondenseSummarizerDeps: (() => LeafSummarizerDeps) | undefined;
+  /** SUMW-02: the turn's budget window — `computeTokenBudgetForProfile().windowTokens`
+   *  = min(reconciled contextWindow, capability class cap), captured at the executor
+   *  BEFORE any dispose (a plain number — dispose-safe on the deferred C4 path). The
+   *  utilization + pressureHigh denominator: one window truth with assembly +
+   *  preflight. REQUIRED — an optional-with-fallback would silently restore the
+   *  configured-window denominator (the DIST-01 4×-late-arming bug class). */
+  budgetWindowTokens: number;
   /** Injected wall-clock ms (`deps.clock.now()`) — never the ambient time global. Stamps `timestamp`. */
   now: number;
   /** Injected clock CALLABLE (`deps.clock.now`) for the O1 two-read pass timing. Absent ⇒ durationMs 0. */
@@ -367,8 +455,10 @@ export interface RunCondensePassAfterTurnParams {
  * Thin afterTurn call-site wiring for the condense pass: resolve the condense
  * summarizer deps, gate on their presence, build {@link CondensePassOptions} from
  * `config.contextEngine` (defaulted via `ContextEngineConfigSchema`) with
- * `windowTokens` taken from the summarizer's `getModel().contextWindow`, then
- * delegate to {@link maybeRunCondensePass}. Clones `runLeafPassAfterTurn`.
+ * `windowTokens` taken from the threaded per-turn `budgetWindowTokens` (SUMW-02 —
+ * the SAME budget window the assembler + preflight use, NOT the session model's
+ * configured window), then delegate to {@link maybeRunCondensePass}. Clones
+ * `runLeafPassAfterTurn`.
  *
  * This is the single call `executor-post-execution.ts` adds AFTER
  * `runLeafPassAfterTurn` inside its existing `if (deps.contextStore)` block — so a
@@ -378,7 +468,7 @@ export interface RunCondensePassAfterTurnParams {
  * @param params - the minimal afterTurn inputs (see {@link RunCondensePassAfterTurnParams}).
  */
 export async function runCondensePassAfterTurn(params: RunCondensePassAfterTurnParams): Promise<void> {
-  const { store, scope, contextEngine, getCondenseSummarizerDeps, now, nowFn, logger, eventBus, onCondensed } = params;
+  const { store, scope, contextEngine, getCondenseSummarizerDeps, budgetWindowTokens, now, nowFn, logger, eventBus, onCondensed } = params;
   // Gate: no summarizer-deps getter ⇒ the condense pass is off (clean skip).
   if (getCondenseSummarizerDeps === undefined) return;
   const summarizerDeps = getCondenseSummarizerDeps();
@@ -388,9 +478,6 @@ export async function runCondensePassAfterTurn(params: RunCondensePassAfterTurnP
   // block resolves to the schema defaults (condensedMinFanout 4,
   // condensedTargetTokens 2_000).
   const cfg = contextEngine ?? ContextEngineConfigSchema.parse({});
-  // The window W is the model's context window from the summarizer deps (the live
-  // model getter), NOT a config knob.
-  const windowTokens = summarizerDeps.getModel().contextWindow;
 
   await maybeRunCondensePass(
     store,
@@ -400,7 +487,12 @@ export async function runCondensePassAfterTurn(params: RunCondensePassAfterTurnP
       condensedMinFanoutHard: cfg.condensedMinFanoutHard,
       contextThreshold: cfg.contextThreshold,
       condensedTargetTokens: cfg.condensedTargetTokens,
-      windowTokens,
+      // SUMW-02: the utilization + pressureHigh denominator W is the threaded
+      // per-turn budget window (min(reconciled contextWindow, class cap)) —
+      // never the summarizer snapshot's configured window, which kept the hard
+      // fanout from ever firing on capped small models (DIST-01). The
+      // maybeRunCondensePass finite-positive gate is unchanged.
+      windowTokens: budgetWindowTokens,
     },
     summarizerDeps,
     now,

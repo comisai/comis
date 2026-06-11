@@ -38,9 +38,11 @@ import {
   applySchemasPruning,
   applySchemaSnapshot,
   applyProviderNormalization,
+  applyPersistedReactiveStrip,
   applyMutationSerializer,
 } from "./executor-tool-pipeline.js";
 import { assembleExecutionPrompt } from "./prompt-assembly.js";
+import { toolDefOverheadChars } from "./tool-overhead.js";
 import { CHARS_PER_TOKEN_RATIO } from "../context-engine/constants.js";
 import { computeTokenBudgetForProfile } from "../context-engine/budget-capacity-cap.js";
 import type {
@@ -57,8 +59,12 @@ import type {
  * Warn when cachedFreshTailPreambleTokens exceeds this fraction of the
  * effective context window. frontier: Infinity (never warn). small/nano:
  * tight budget (~10% of effective window is a notable preamble spend).
+ *
+ * Exported (A1, Phase 176 FLOOR-01): context-engine/viable-floor.ts consumes
+ * this table as the freshTailReserve term of the boot minViable equation —
+ * the codebase's single per-class number for expected preamble size.
  */
-const PREAMBLE_WARN_THRESHOLD_BY_CLASS: Readonly<Record<CapabilityClass, number>> = {
+export const PREAMBLE_WARN_THRESHOLD_BY_CLASS: Readonly<Record<CapabilityClass, number>> = {
   frontier: Infinity,
   mid: 8_000,
   small: 3_200,   // ~10% of 32K effective window
@@ -107,7 +113,7 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
   const {
     config, deps, sessionKey, msg, tools, executionOverrides,
     isFirstMessageInSession, sm, deliveredGuides,
-    resolvedModel, modelCompat, modelProfile: modelProfileParam, agentId, safetyReinforcement, _directives,
+    resolvedModel, modelCompat, modelProfile: modelProfileParam, windowProvenance, agentId, safetyReinforcement, _directives,
   } = params;
 
   // -------------------------------------------------------------------
@@ -336,13 +342,11 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
   // -------------------------------------------------------------------
   // 5. System token estimate
   // -------------------------------------------------------------------
-  const toolDefOverheadChars = mergedCustomTools.reduce((sum, t) => {
-    const descLen = t.description?.length ?? 0;
-    const paramLen = t.parameters ? JSON.stringify(t.parameters).length : 0;
-    return sum + (t.name?.length ?? 0) + descLen + paramLen;
-  }, 0);
+  // I8 (Phase 176 FLOOR-01): the char-overhead reduce lives in tool-overhead.ts —
+  // shared with the boot viable-floor so the two estimates cannot drift.
+  const toolDefOverheadCharsValue = toolDefOverheadChars(mergedCustomTools);
   const cachedSystemTokensEstimate = Math.ceil(
-    (promptResult.systemPrompt.length + toolDefOverheadChars) / CHARS_PER_TOKEN_RATIO,
+    (promptResult.systemPrompt.length + toolDefOverheadCharsValue) / CHARS_PER_TOKEN_RATIO,
   );
   // I1 / WR-01: the WHOLE fresh-tail preamble token estimate — the entire
   // dynamicPreamble + inlineMemory blob envelope-wrapper prepends into the latest
@@ -417,7 +421,8 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
 
   // C1 (Phase 152): profile-aware budget — 8K-starvation fix + 256K-overfill cap for small/nano.
   // B-1 deliberate: cachedSystemTokensEstimate and cachedFreshTailPreambleTokens were computed at ÷3.5
-  // above (lines 515-528) — this is the intended over-reservation (conservative direction). DO NOT change.
+  // in step 5 above ("System token estimate") — this is the intended over-reservation (conservative
+  // direction). DO NOT change.
   const profileBudget = computeTokenBudgetForProfile(
     modelProfile,
     cachedSystemTokensEstimate,
@@ -425,6 +430,10 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     -1,
     config.contextEngine?.budget?.effectiveContextCapSmall,
     config.contextEngine?.budget?.effectiveContextCapNano,
+    // KNOB-02: executor-reconcile provenance — when the Ollama-served window
+    // bound upstream, the budget reports the TRUE configured window as raw with
+    // windowCapSource "served". Absent ⇒ pre-KNOB-02 byte-identical.
+    windowProvenance,
   );
   // contextWindow: use profile-aware effective window (capped for small/nano) for BM25 re-rank budget
   // control. For frontier/mid this is byte-identical to resolvedModel.contextWindow.
@@ -641,6 +650,16 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     });
   }
 
+  // GBNF-02 / CR-02: re-apply the session's reactive pattern/format strip
+  // AFTER normalization — the per-turn snapshot→normalize rebuild constructs
+  // fresh parameter objects, so a strip that healed turn N must be re-applied
+  // here or turn N+1 re-sends the rejected keywords and (with the once-gate
+  // closed) permanently bricks the session. Identity no-op when never armed.
+  mergedCustomTools = applyPersistedReactiveStrip({
+    tools: mergedCustomTools,
+    sessionKey: schemaSnapshotKey,
+  });
+
   // Mutation serializer
   mergedCustomTools = applyMutationSerializer(mergedCustomTools, deps.logger);
 
@@ -651,6 +670,10 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     capabilityIndexResult,
     deliveredGuides,
     capabilityClass,
+    // SUMW-02: the per-turn budget window (min(reconciled contextWindow, class
+    // cap)) — windowTokens is input-independent of the systemTokens args, so
+    // this carries the same value every budget computation this turn reports.
+    budgetWindowTokens: profileBudget.windowTokens,
     discoveryTracker,
     currentDiscoveryTracker,
     lifecycleDemotedNames,

@@ -11,6 +11,10 @@
  */
 
 import { isSignedReplayError } from "./signed-replay-detector.js";
+import { describeTimeoutKnob, describeRetryTimeoutKnob } from "./timeout-knob.js";
+
+import type { PromptTimeoutError } from "./prompt-timeout.js";
+import type { TimeoutSource } from "../model/operation-model-resolver.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -33,6 +37,16 @@ export type ErrorCategory =
    * stored signed state in place and re-enters the model retry chain.
    */
   | "client_request_signed_replay"
+  /**
+   * Provider rejected the tool JSON Schema at grammar-compile/unmarshal time
+   * (llama.cpp "JSON schema conversion failed"/"Unrecognized schema"/
+   * grammar-parse, Ollama Go-side tools unmarshal). Deterministic
+   * schema-shape problem, NOT a model failure: self-healable once — the
+   * runner strips pattern/format from the offending toolset and retries a
+   * single time (see silent-failure-handlers.ts), then fails honestly. The
+   * model-retry ladder must never burn fallback models on it.
+   */
+  | "tool_schema_unsupported"
   | "client_request"
   | "prompt_timeout"
   /**
@@ -49,6 +63,9 @@ export interface ClassifiedError {
   userMessage: string;
   /** Whether the user should reasonably retry. */
   retryable: boolean;
+  /** Operator-facing detail: binding knob + numbers (I7). Rides WARN
+   *  logs/explain — NEVER the user reply (T-177-13). */
+  hint?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -119,6 +136,25 @@ const ERROR_PATTERNS: ErrorPattern[] = [
     category: "client_request_signed_replay",
     userMessage:
       "Your request couldn't be processed due to a formatting issue. The AI agent will try again automatically.",
+    retryable: true,
+  },
+  // llama.cpp-family grammar-compile + Ollama tools-unmarshal failures: must be
+  // tested BEFORE the plain client_request pattern because llama-server wraps
+  // grammar bodies in `"type":"invalid_request_error"` — first match wins, so
+  // this more-specific subcategory has to be checked first (same rationale as
+  // the signed-replay entry above). Scope guard: the Go-unmarshal alternative
+  // only matches under `tools.function.parameters` so unrelated unmarshal
+  // errors keep their current classification — the optional `(?:\w+\.)?`
+  // accepts Go's standard `Go struct field <StructTypeName>.<path>` form
+  // (e.g. `ChatRequest.tools.function.parameters...`) alongside the
+  // empty-type-name variant from ollama#10164 (175-REVIEW WR-02).
+  // Retryable=true because the runner performs exactly one
+  // strip-pattern/format-and-retry per session.
+  {
+    test: /json schema conversion failed|unrecognized schema|error parsing grammar|json-schema-to-grammar|unable to generate parser|cannot unmarshal \S+ into Go struct field (?:\w+\.)?\.?tools\.function\.parameters/i,
+    category: "tool_schema_unsupported",
+    userMessage:
+      "The AI provider couldn't compile one of the available tools. The agent will simplify the tool definition and try again automatically.",
     retryable: true,
   },
   // Client-side validation (Anthropic 400 invalid_request_error, 422, malformed)
@@ -193,16 +229,82 @@ export function classifyError(error: unknown): ClassifiedError {
 }
 
 /**
+ * The effective-timeout binding provenance a classify consumer threads in
+ * (LAT-01): which resolution level bound the timeout (177-02 `source`), whose
+ * config owns the knob, and the configured numbers. Every field optional —
+ * absent fields degrade gracefully to placeholders / the error's own numbers,
+ * so legacy callers and parallel-plan type drift (e.g. a not-yet-landed
+ * `stallCeilingMultiplier` on EffectiveTimeout) never break the call shape.
+ */
+export interface PromptTimeoutBinding {
+  source?: TimeoutSource;
+  operationType?: string;
+  agentId?: string;
+  promptTimeoutMs?: number;
+  retryPromptTimeoutMs?: number;
+  stallCeilingMultiplier?: number;
+}
+
+/**
  * Classify specifically for prompt timeout errors.
  * Separated because PromptTimeoutError is identified by instanceof,
  * not by message content.
+ *
+ * LAT-01 (Phase 177): renders the operator-facing `hint` — the BINDING knob
+ * (via the timeout-knob table), the configured value, the elapsed time, and
+ * WHICH limit fired (stall / makespan / whole-turn retry). The `userMessage`
+ * stays generic/user-safe: config-key detail rides logs + obs.explain only,
+ * never the user reply (T-177-13). A `graph_constant` binding renders honest
+ * prose instead of a fake `agents.*` key (D-11).
+ *
+ * @param error - The PromptTimeoutError (carries `limit` + the configured
+ *                numbers from 177-01).
+ * @param binding - The effective-timeout binding provenance (177-02); absent
+ *                  ⇒ legacy caller ⇒ the placeholder agent knob (graceful).
+ * @param elapsedMs - Wall-clock elapsed since execution start, when known.
  */
-export function classifyPromptTimeout(_timeoutMs: number): ClassifiedError {
+export function classifyPromptTimeout(
+  error: PromptTimeoutError,
+  binding?: PromptTimeoutBinding,
+  elapsedMs?: number,
+): ClassifiedError {
+  const knob = describeTimeoutKnob(
+    binding?.source ?? "agent_config",
+    binding?.agentId,
+    binding?.operationType,
+  );
+  const elapsed = elapsedMs !== undefined ? ` after ${String(elapsedMs)}ms` : "";
+  let hint: string;
+  if (error.limit === "makespan") {
+    hint =
+      `makespan ceiling ${String(error.makespanMs ?? error.timeoutMs)}ms` +
+      ` (stall budget ${String(error.stallBudgetMs ?? binding?.promptTimeoutMs ?? 0)} × stallCeilingMultiplier` +
+      `${binding?.stallCeilingMultiplier !== undefined ? ` ${String(binding.stallCeilingMultiplier)}` : ""}) exceeded${elapsed}` +
+      ` — streaming runaway; raise agents.${binding?.agentId ?? "<id>"}.promptTimeout.stallCeilingMultiplier or investigate model output`;
+  } else if (error.limit === "stall") {
+    hint =
+      `stall budget ${String(error.stallBudgetMs ?? error.timeoutMs)}ms exceeded${elapsed} with no stream/tool activity` +
+      (binding?.source === "graph_constant"
+        ? // Honest prose for a non-knob — never a raise-suggestion that names
+          // a config key the operator cannot set (D-11).
+          ` — ${knob}`
+        : ` — raise ${knob} (currently ${String(binding?.promptTimeoutMs ?? error.timeoutMs)});` +
+          ` local prefill on consumer hardware can exceed it`);
+  } else {
+    // limit undefined ⇒ the non-resettable whole-turn path (retry/fallback
+    // prompts keep retryPromptTimeoutMs semantics — research Open Q2; never
+    // present it as a stall-budget kill).
+    hint =
+      `whole-turn retry timeout ${String(error.timeoutMs)}ms exceeded${elapsed}` +
+      ` — retry/fallback prompts use ${describeRetryTimeoutKnob(binding?.agentId)}` +
+      ` (currently ${String(binding?.retryPromptTimeoutMs ?? error.timeoutMs)}), not the stall budget`;
+  }
   return {
     category: "prompt_timeout",
     userMessage:
       "The request took too long to process. Please try again with a simpler message.",
     retryable: true,
+    hint,
   };
 }
 

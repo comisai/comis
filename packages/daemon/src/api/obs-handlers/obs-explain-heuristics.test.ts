@@ -341,3 +341,427 @@ describe("context_exhausted with budget evidence (W3)", () => {
     expect(r!.suggestedNextSteps.length).toBeGreaterThan(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// KNOB-02 (Phase 176): served-bound context_exhausted verdict. The cap branch
+// templates `contextEngine.budget.${windowCapSource}` — for the new "served"
+// member that renders the NONSENSE knob `contextEngine.budget.served` (it is
+// not a config key; the real knobs are Ollama's OLLAMA_CONTEXT_LENGTH env /
+// Modelfile PARAMETER num_ctx). Both template sites must branch by source.
+// ---------------------------------------------------------------------------
+
+describe("context_exhausted with served-bound budget evidence (KNOB-02)", () => {
+  const SERVED_BUDGET = {
+    windowTokens: 8_192,
+    rawContextWindowTokens: 131_072,
+    windowCapSource: "served" as const,
+    systemTokens: 5_000,
+    freshTailTokens: 1_000,
+    budgetedHistoryTokens: 1_500,
+    keptCount: 3,
+    assembledInputTokens: 7_500,
+    outputHeadroom: 1_792,
+    verdict: "exhausted" as const,
+  };
+
+  it("KNOB-02-23: a served-bound verdict names the Ollama knobs + the configured number and NEVER renders contextEngine.budget.served", () => {
+    const r = rootCause(makeSignals({ endReason: "context_exhausted", contextBudget: SERVED_BUDGET }));
+    expect(r).not.toBeNull();
+    expect(r!.code).toBe("context_exhausted");
+    // The detail names the TRUE configured window and the served-bound class.
+    expect(r!.detail).toMatch(/model contextWindow 131072 but Ollama served a smaller window/);
+    // The steps name the REAL knobs with the configured number.
+    const steps = r!.suggestedNextSteps.join("\n");
+    expect(steps).toMatch(/OLLAMA_CONTEXT_LENGTH=131072/);
+    expect(steps).toMatch(/PARAMETER num_ctx 131072/);
+    // The nonsense knob must never render anywhere in the verdict.
+    expect(r!.detail).not.toMatch(/contextEngine\.budget\.served/);
+    expect(steps).not.toMatch(/contextEngine\.budget\.served/);
+  });
+
+  it("KNOB-02-24: the effectiveContextCapSmall verdict wording is byte-identical to pre-patch (cap branch untouched)", () => {
+    // The frozen W3 fixture — pins the EXACT pre-patch strings so the served
+    // branch cannot perturb the cap-knob wording.
+    const CAP_BUDGET = {
+      windowTokens: 32_000,
+      rawContextWindowTokens: 131_072,
+      windowCapSource: "effectiveContextCapSmall" as const,
+      systemTokens: 25_694,
+      freshTailTokens: 5_272,
+      budgetedHistoryTokens: 0,
+      keptCount: 0,
+      assembledInputTokens: 31_572,
+      outputHeadroom: 768,
+      verdict: "exhausted" as const,
+    };
+    const r = rootCause(makeSignals({ endReason: "context_exhausted", contextBudget: CAP_BUDGET }));
+    expect(r!.detail).toBe(
+      "context exhausted — the pre-flight guard aborted before the model could run: assembled 31572 tokens of effective window 32000 (model contextWindow 131072 capped by contextEngine.budget.effectiveContextCapSmall); system prompt + tool schemas = 25694 tokens (80% of the window); history kept: 0",
+    );
+    expect(r!.suggestedNextSteps).toEqual([
+      "raise contextEngine.budget.effectiveContextCapSmall (0 = uncapped) — the model declares 131072 tokens but the effective window was 32000",
+      "reduce the active tool surface (disable unused builtin tool groups / MCP servers) — tool schemas dominate the window",
+      "obs.explain depth=full",
+    ]);
+  });
+
+  it("WR-01: a capabilityClass-bound verdict names the pin lever and NEVER the inert budget knob nor a templated contextEngine.budget.capabilityClass", () => {
+    // The executor's DEFAULT_EFFECTIVE_CAP_BY_CLASS cap (from the operator's
+    // providers.entries.<id>.capabilities.capabilityClass pin) bound the window
+    // upstream — raising contextEngine.budget.effectiveContextCapSmall (or
+    // setting 0) changes NOTHING on this branch; suggesting it is the exact
+    // dead-knob misdirection this phase kills.
+    const PIN_BUDGET = {
+      windowTokens: 32_000,
+      rawContextWindowTokens: 131_072,
+      windowCapSource: "capabilityClass" as const,
+      systemTokens: 25_694,
+      freshTailTokens: 5_272,
+      budgetedHistoryTokens: 0,
+      keptCount: 0,
+      assembledInputTokens: 31_572,
+      outputHeadroom: 768,
+      verdict: "exhausted" as const,
+    };
+    const r = rootCause(makeSignals({ endReason: "context_exhausted", contextBudget: PIN_BUDGET }));
+    expect(r).not.toBeNull();
+    expect(r!.code).toBe("context_exhausted");
+    // The detail names the pin as the clamp.
+    expect(r!.detail).toMatch(
+      /model contextWindow 131072 capped by the providers\.entries\.<id>\.capabilities\.capabilityClass pin/,
+    );
+    const steps = r!.suggestedNextSteps.join("\n");
+    // The step names the working lever (the pin) with both numbers.
+    expect(steps).toMatch(/providers\.entries\.<id>\.capabilities\.capabilityClass/);
+    expect(steps).toMatch(/131072/);
+    expect(steps).toMatch(/32000/);
+    // The dead/nonsense knobs must never render anywhere in the verdict.
+    expect(r!.detail).not.toMatch(/contextEngine\.budget\.capabilityClass/);
+    expect(steps).not.toMatch(/contextEngine\.budget\.capabilityClass/);
+    expect(steps).not.toMatch(/raise contextEngine\.budget\.effectiveContextCapSmall/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GBNF-02 (Phase 175): tool_schema_unsupported — an acute, deterministic
+// provider-schema rejection (grammar-compile/unmarshal 400). Placement is the
+// ordering contract: AFTER the two X3-mandated codes (their frozen 678/503
+// fixtures carry no schema-rejection records, so they cannot regress), BEFORE
+// the insurance codes, and out-ranking the terminal-state explainers. Fires
+// only when the one-shot strip-retry did NOT recover — a recovered repair is
+// evidence, not a verdict.
+// ---------------------------------------------------------------------------
+
+describe("tool_schema_unsupported (GBNF-02)", () => {
+  const UNRECOVERED = {
+    toolNames: ["schedule_task"],
+    strippedKeywords: ["pattern", "format"],
+    retried: true,
+    succeeded: false,
+  };
+
+  it("an unrecovered strip-retry names the tool, the attempted strip-retry, and the toolSchemaProfile knob", () => {
+    const r = rootCause(makeSignals({ toolSchemaUnsupported: UNRECOVERED }));
+    expect(r).not.toBeNull();
+    expect(r!.code).toBe("tool_schema_unsupported");
+    expect(r!.detail).toContain("schedule_task");
+    expect(r!.detail).toContain("strip-pattern/format-retry");
+    expect(r!.suggestedNextSteps[0]).toContain("comisCompat.toolSchemaProfile");
+  });
+
+  it("a RECOVERED repair (succeeded:true) does not fire — the repair is evidence, not the session's root cause", () => {
+    const r = rootCause(makeSignals({ toolSchemaUnsupported: { ...UNRECOVERED, succeeded: true } }));
+    expect(r).toBeNull();
+  });
+
+  it("retried:false explains that nothing was strippable so no retry was attempted", () => {
+    const r = rootCause(makeSignals({ toolSchemaUnsupported: { ...UNRECOVERED, retried: false } }));
+    expect(r).not.toBeNull();
+    expect(r!.code).toBe("tool_schema_unsupported");
+    expect(r!.detail).toContain("nothing strippable");
+  });
+
+  // WR-05 (175-REVIEW): gate-closed and nothing-to-strip terminals used to
+  // emit indistinguishable payloads — with last-record-wins, a session that
+  // healed once and then hit the gate produced a verdict claiming "nothing
+  // strippable so no retry was attempted" when stripping WAS performed and a
+  // retry WAS attempted earlier in the session. The reason discriminator
+  // branches the detail.
+  it("WR-05: reason gate_closed says the strip-retry was already attempted earlier this session — never 'nothing strippable'", () => {
+    const r = rootCause(
+      makeSignals({
+        toolSchemaUnsupported: {
+          toolNames: [],
+          strippedKeywords: [],
+          retried: false,
+          succeeded: false,
+          reason: "gate_closed",
+        },
+      }),
+    );
+    expect(r).not.toBeNull();
+    expect(r!.code).toBe("tool_schema_unsupported");
+    expect(r!.detail).toContain("already attempted earlier this session");
+    expect(r!.detail).not.toContain("nothing strippable");
+  });
+
+  it("WR-05: reason nothing_to_strip keeps the nothing-strippable explanation", () => {
+    const r = rootCause(
+      makeSignals({
+        toolSchemaUnsupported: {
+          toolNames: [],
+          strippedKeywords: [],
+          retried: false,
+          succeeded: false,
+          reason: "nothing_to_strip",
+        },
+      }),
+    );
+    expect(r).not.toBeNull();
+    expect(r!.detail).toContain("nothing strippable");
+  });
+
+  it("WR-05: an absent reason (historical pre-WR-05 record) falls back to the retried-based wording", () => {
+    const r = rootCause(makeSignals({ toolSchemaUnsupported: { ...UNRECOVERED, retried: false } }));
+    expect(r).not.toBeNull();
+    expect(r!.detail).toContain("nothing strippable");
+    const retriedForm = rootCause(makeSignals({ toolSchemaUnsupported: UNRECOVERED }));
+    expect(retriedForm!.detail).toContain("strip-pattern/format-retry");
+  });
+
+  it("PRIORITY: the misclassification signal out-ranks tool_schema_unsupported (below X3 code #1)", () => {
+    const r = rootCause(
+      makeSignals({
+        toolSchemaUnsupported: UNRECOVERED,
+        hasMisclassificationSignal: true,
+        misclassifiedTool: "web_fetch",
+        misclassifiedToken: "403",
+      }),
+    );
+    expect(r!.code).toBe("content_heuristic_misclassification");
+  });
+
+  it("PRIORITY: the breaker rule out-ranks tool_schema_unsupported (below X3 code #2)", () => {
+    const r = rootCause(
+      makeSignals({
+        toolSchemaUnsupported: UNRECOVERED,
+        hasDoNotRetrySignal: true,
+        breakerOpenedTool: "web_fetch",
+        repeatedFailureCount: { web_fetch: 5 },
+        mostFailedTool: "web_fetch",
+      }),
+    );
+    expect(r!.code).toBe("breaker_opened_repeated_failure");
+  });
+
+  it("PRIORITY: tool_schema_unsupported out-ranks the terminal-state explainer (acute cause over endReason)", () => {
+    const r = rootCause(
+      makeSignals({ toolSchemaUnsupported: UNRECOVERED, endReason: "context_exhausted" }),
+    );
+    expect(r!.code).toBe("tool_schema_unsupported");
+  });
+
+  it("PRIORITY: tool_schema_unsupported out-ranks the insurance codes (sits before provider_timeout)", () => {
+    const r = rootCause(
+      makeSignals({
+        toolSchemaUnsupported: UNRECOVERED,
+        failures: [
+          {
+            seq: 0,
+            toolName: "llm_call",
+            classifiedFailureBy: "",
+            transportOk: false,
+            errorKind: "timeout",
+            resultDigest: "d",
+            resultBytes: 1,
+            errorPreview: "timed out",
+          },
+        ],
+      }),
+    );
+    expect(r!.code).toBe("tool_schema_unsupported");
+  });
+
+  it("empty toolNames degrades the detail to [unknown] instead of an empty bracket pair", () => {
+    const r = rootCause(makeSignals({ toolSchemaUnsupported: { ...UNRECOVERED, toolNames: [] } }));
+    expect(r).not.toBeNull();
+    expect(r!.code).toBe("tool_schema_unsupported");
+    expect(r!.detail).toContain("[unknown]");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// LAT-04 (Phase 177): prompt_timeout — the NAMED terminal latency cause, keyed
+// on endReason "timeout" (alive since the 177-04 END_REASON_MAP entry). Pre-
+// patch, a timeout-heavy session with clean tools got NO verdict at all (rule
+// 6 provider_timeout requires a TOOL failure — research Critical Finding 7
+// point 6); the terminal-band rule closes exactly that gap. Placement: BELOW
+// every tool-failure cause (chronic-vs-acute ordering, T-177-19); the frozen
+// 678/503 fixtures carry no prompt_timeout records and no endReason "timeout",
+// so they cannot regress (the GBNF-02 rule-3 argument).
+// ---------------------------------------------------------------------------
+
+describe("prompt_timeout terminal verdict (LAT-04)", () => {
+  const STALL_TIMEOUT = {
+    timeoutMs: 180_000,
+    durationMs: 195_000,
+    limit: "stall" as const,
+    source: "agent_config",
+    bindingKnob: "agents.my-agent.promptTimeout.promptTimeoutMs",
+    stallBudgetMs: 180_000,
+    makespanMs: 1_800_000,
+  };
+
+  it("LAT-04-O-6: the stall verdict names the budget, the elapsed time, and the binding knob with the ACTUAL numbers (the ROADMAP-quoted shape)", () => {
+    const r = rootCause(
+      makeSignals({ endReason: "timeout", agentId: "my-agent", promptTimeout: STALL_TIMEOUT }),
+    );
+    expect(r).not.toBeNull();
+    expect(r!.code).toBe("prompt_timeout");
+    expect(r!.detail).toMatch(/stall budget 180000ms exceeded/);
+    expect(r!.detail).toMatch(/195000ms/);
+    expect(r!.suggestedNextSteps[0]).toMatch(
+      /raise agents\.my-agent\.promptTimeout\.promptTimeoutMs/,
+    );
+    expect(r!.suggestedNextSteps[0]).toContain("180000");
+    expect(r!.suggestedNextSteps).toContain("obs.explain depth=full");
+  });
+
+  it("LAT-04-O-7: the makespan verdict names the ceiling and stallCeilingMultiplier (streaming runaway — never a stall framing)", () => {
+    const r = rootCause(
+      makeSignals({
+        endReason: "timeout",
+        agentId: "my-agent",
+        promptTimeout: {
+          timeoutMs: 1_800_000,
+          durationMs: 1_805_000,
+          limit: "makespan" as const,
+          source: "agent_config",
+          bindingKnob: "agents.my-agent.promptTimeout.promptTimeoutMs",
+          stallBudgetMs: 180_000,
+          makespanMs: 1_800_000,
+        },
+      }),
+    );
+    expect(r).not.toBeNull();
+    expect(r!.code).toBe("prompt_timeout");
+    expect(r!.detail).toMatch(/makespan ceiling 1800000ms/);
+    expect(r!.detail).toMatch(/streaming runaway/);
+    expect(r!.suggestedNextSteps.join("\n")).toMatch(/stallCeilingMultiplier/);
+  });
+
+  it("177-REVIEW WR-01: a terminal whole-turn retry kill (limit ABSENT) renders retry framing + the retryPromptTimeoutMs knob — never the stall framing or the stall knob", () => {
+    // The terminal record is a rotation/fallback/short-retry kill: 60_000ms
+    // whole-turn window, no stallBudgetMs, limit undefined ('LAST record
+    // wins' makes the retry kill terminal after a primary stall-kill). The
+    // row deliberately carries the OLD wrong-knob bindingKnob shape that
+    // pre-WR-01 emit sites wrote — the branch must not echo it: the lever
+    // for a whole-turn retry kill is retryPromptTimeoutMs (the same branch
+    // the agent-side classify hint takes — LAT-01-H-5).
+    const r = rootCause(
+      makeSignals({
+        endReason: "timeout",
+        agentId: "my-agent",
+        promptTimeout: {
+          timeoutMs: 60_000,
+          durationMs: 241_000,
+          source: "agent_config",
+          bindingKnob: "agents.my-agent.promptTimeout.promptTimeoutMs",
+        },
+      }),
+    );
+    expect(r).not.toBeNull();
+    expect(r!.code).toBe("prompt_timeout");
+    // Pre-patch: 'stall budget 60000ms exceeded ... with no stream/tool
+    // activity' — wrong framing (not a stall kill), wrong knob (the lever is
+    // retryPromptTimeoutMs), the 60000 retry value misattributed to the
+    // 180000 promptTimeoutMs knob.
+    expect(r!.detail).toMatch(/whole-turn retry timeout 60000ms/);
+    expect(r!.detail).toMatch(/241000ms/);
+    // The stall FRAMING ("stall budget Xms exceeded ... no stream/tool
+    // activity") must not appear — the contrast clause "not the stall
+    // budget" is the honest framing and is allowed.
+    expect(r!.detail).not.toMatch(/stall budget \d+ms exceeded/);
+    expect(r!.detail).not.toMatch(/no stream\/tool activity/);
+    expect(r!.suggestedNextSteps[0]).toBe(
+      "raise agents.my-agent.promptTimeout.retryPromptTimeoutMs (currently 60000)",
+    );
+    expect(r!.suggestedNextSteps.join("\n")).not.toMatch(/promptTimeout\.promptTimeoutMs/);
+    expect(r!.suggestedNextSteps).toContain("obs.explain depth=full");
+  });
+
+  it("LAT-04-O-8: a pre-extension timeout session (no enriched signal) still gets the verdict with a generic knob suggestion and NO invented numbers", () => {
+    const r = rootCause(makeSignals({ endReason: "timeout" }));
+    expect(r).not.toBeNull();
+    expect(r!.code).toBe("prompt_timeout");
+    expect(r!.suggestedNextSteps[0]).toMatch(/agents\.<id>\.promptTimeout\.promptTimeoutMs/);
+    // No numbers invented anywhere in the verdict (the session carried none).
+    expect(r!.detail).not.toMatch(/\d+ms/);
+    expect(r!.suggestedNextSteps[0]).not.toMatch(/\d/);
+  });
+
+  it("LAT-04-O-9: a TOOL timeout failure out-ranks the terminal rule (provider_timeout wins — insurance-band ordering)", () => {
+    // Guard pin (green pre-patch by design): the terminal rule sits BELOW the
+    // tool-failure rules; an acute tool-failure cause is upstream of the
+    // terminal state (T-177-19 — chronic-vs-acute misattribution guard).
+    const r = rootCause(
+      makeSignals({
+        endReason: "timeout",
+        promptTimeout: STALL_TIMEOUT,
+        failures: [
+          {
+            seq: 0,
+            toolName: "llm_call",
+            classifiedFailureBy: "",
+            transportOk: false,
+            errorKind: "timeout",
+            resultDigest: "d",
+            resultBytes: 1,
+            errorPreview: "timed out",
+          },
+        ],
+      }),
+    );
+    expect(r!.code).toBe("provider_timeout");
+  });
+
+  it("LAT-04-O-10: a timeout-heavy session with CLEAN tools gets the prompt_timeout verdict (pre-patch: NO verdict — Critical Finding 7 point 6)", () => {
+    const r = rootCause(
+      makeSignals({
+        endReason: "timeout",
+        agentId: "my-agent",
+        toolStats: { web_fetch: { ok: 4, failed: 0 } },
+        failures: [],
+        promptTimeout: STALL_TIMEOUT,
+      }),
+    );
+    expect(r).not.toBeNull();
+    expect(r!.code).toBe("prompt_timeout");
+  });
+
+  it("LAT-04-O-11: the frozen 678/503 fixture verdicts are UNCHANGED (no prompt_timeout records, no endReason timeout)", () => {
+    // The GBNF-02 rule-3 no-regression argument, re-pinned for the new rule.
+    const r678 = rootCause(
+      makeSignals({
+        hasMisclassificationSignal: true,
+        misclassifiedTool: "web_fetch",
+        misclassifiedToken: "403",
+        hasDoNotRetrySignal: true,
+        breakerOpenedTool: "web_fetch",
+        repeatedFailureCount: { web_fetch: 14 },
+        mostFailedTool: "web_fetch",
+      }),
+    );
+    expect(r678!.code).toBe("content_heuristic_misclassification");
+    const r503 = rootCause(
+      makeSignals({
+        hasMisclassificationSignal: false,
+        hasDoNotRetrySignal: true,
+        breakerOpenedTool: "web_fetch",
+        repeatedFailureCount: { web_fetch: 5 },
+        mostFailedTool: "web_fetch",
+      }),
+    );
+    expect(r503!.code).toBe("breaker_opened_repeated_failure");
+  });
+});

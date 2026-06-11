@@ -258,6 +258,53 @@ describe("capped-window provenance in the exhaustion throw and WARN", () => {
     expect(p.windowCapSource).toBe("effectiveContextCapSmall");
   });
 
+  it("KNOB-02-9: a served-bound exhaustion names the Ollama knobs in the throw, the WARN hint, and the budget event", () => {
+    // KNOB-02 (Phase 176): when the served window bound the effective window,
+    // the exhaustion remedy is OLLAMA_CONTEXT_LENGTH / PARAMETER num_ctx — not
+    // a contextEngine.budget.* knob. Both the thrown message and the WARN hint
+    // must carry the served-shaped remedy with the TRUE configured number, and
+    // the context:budget_computed payload must carry the "served" source.
+    const logger = makeLogger();
+    const emit = vi.fn();
+    const deps = makeDeps({
+      logger: logger as unknown as ContextEngineDeps["logger"],
+      getThinkingLevel: () => "high",
+      getSystemTokensEstimate: () => 25_584,
+      onEffectiveWindow: vi.fn(),
+      onAssembledInputTokens: vi.fn(),
+      onThinkingDownshifted: vi.fn(),
+      eventBus: { emit } as unknown as ContextEngineDeps["eventBus"],
+    });
+    const freshTail = [{ role: "user", content: "x".repeat(21_000) }]; // ~6000 tokens
+    let thrown: unknown;
+    try {
+      runPreflightFitCheck(deps, 32_000, [], 0, freshTail as never, "native", {
+        rawContextWindowTokens: 131_072,
+        windowCapSource: "served",
+      });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(ContextExhaustionError);
+    const message = (thrown as Error).message;
+    expect(message).toMatch(/OLLAMA_CONTEXT_LENGTH=131072/);
+    expect(message).toMatch(/PARAMETER num_ctx 131072/);
+
+    const exhaustionWarn = logger.warn.mock.calls.find(
+      (c) => c[1] === "pre-flight fit check: context exhausted",
+    );
+    expect(exhaustionWarn).toBeDefined();
+    const payload = exhaustionWarn?.[0] as Record<string, unknown>;
+    expect(payload.hint).toMatch(/OLLAMA_CONTEXT_LENGTH=131072/);
+    expect(payload.hint).toMatch(/PARAMETER num_ctx 131072/);
+
+    const call = emit.mock.calls.find((c) => c[0] === "context:budget_computed");
+    expect(call).toBeDefined();
+    const p = call?.[1] as Record<string, unknown>;
+    expect(p.windowCapSource).toBe("served");
+    expect(p.rawContextWindowTokens).toBe(131_072);
+  });
+
   it("omitting capInfo keeps the throw message in the uncapped form (no knob mention)", () => {
     const deps = makeDeps({
       getThinkingLevel: () => "high",

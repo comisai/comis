@@ -278,6 +278,13 @@ describe("isImmutableConfigPath", () => {
     expect(isImmutableConfigPath("agents", "default.promptTimeout.retryPromptTimeoutMs")).toBe(false);
   });
 
+  // LAT-02 (Phase 177): the makespan-ceiling multiplier joins the promptTimeout
+  // runtime-tuning family. matchesOverridePattern entries are per-leaf, so the
+  // two sibling entries above do NOT cover the new key -- it needs its own line.
+  it("allows agents.*.promptTimeout.stallCeilingMultiplier (mutable override for makespan-ceiling tuning, LAT-02)", () => {
+    expect(isImmutableConfigPath("agents", "default.promptTimeout.stallCeilingMultiplier")).toBe(false);
+  });
+
   // Mutable overrides: per-channel media processing toggles
   it("allows channels.telegram.mediaProcessing (mutable override)", () => {
     expect(isImmutableConfigPath("channels", "telegram.mediaProcessing")).toBe(false);
@@ -337,9 +344,10 @@ describe("isImmutableConfigPath", () => {
 });
 
 describe("MUTABLE_CONFIG_OVERRIDES", () => {
-  it("contains exactly 11 override patterns", () => {
-    // Bug A: down from 12 (dead "agents.*.persona" removed).
-    expect(MUTABLE_CONFIG_OVERRIDES).toHaveLength(11);
+  it("contains exactly 12 override patterns", () => {
+    // Bug A removed the dead "agents.*.persona" entry (12 -> 11); LAT-02
+    // (Phase 177) added agents.*.promptTimeout.stallCeilingMultiplier (11 -> 12).
+    expect(MUTABLE_CONFIG_OVERRIDES).toHaveLength(12);
   });
 
   it("agent/channel patterns use * wildcard for second segment", () => {
@@ -390,6 +398,7 @@ describe("getMutableOverridesForSection", () => {
       "agents.default.maxSteps",
       "agents.default.promptTimeout.promptTimeoutMs",
       "agents.default.promptTimeout.retryPromptTimeoutMs",
+      "agents.default.promptTimeout.stallCeilingMultiplier",
       "agents.default.operationModels",
       "agents.default.model",
       "agents.default.provider",

@@ -63,6 +63,12 @@ export function bindSessionArchiveHandlers(deps: SessionHandlerDeps): Record<str
       // stale cached approvals from auto-approving in a new session with the same key.
       deps.approvalGate?.clearApprovalCache(sessionKey);
 
+      // CR-02 (175-REVIEW): session destroy also drops the executor's
+      // session-scoped state for this key (schema snapshots, the GBNF-02
+      // strip-retry once-gate, JIT-guide delivery, cache latches) so a new
+      // session reusing the key starts genuinely fresh.
+      deps.clearAgentSessionState?.(sessionKey);
+
       return { sessionKey, deleted: true, transcript };
     },
 
@@ -192,6 +198,15 @@ export function bindSessionArchiveHandlers(deps: SessionHandlerDeps): Record<str
           "Runtime session layer not wired (reset is LCD + sessionStore only)",
         );
       }
+
+      // CR-02 (175-REVIEW): a COMPLETE forget must also drop the executor's
+      // session-scoped state for this key — most importantly the GBNF-02
+      // strip-retry once-gate (a reset session previously inherited the
+      // closed gate and terminal-failed its first grammar-400 with zero
+      // repair attempts), plus tool-schema snapshots / JIT-guide delivery /
+      // cache latches that would otherwise leak the old conversation's
+      // executor state into the "fresh" one.
+      deps.clearAgentSessionState?.(sessionKey);
 
       // Audit: INFO log with counts only — no message content.
       deps.logger.info(

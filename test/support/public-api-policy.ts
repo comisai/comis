@@ -503,6 +503,27 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // Keep the barrel export — the integration test needs it via
       // the bare `@comis/agent` import.
       "buildRecallTrace",
+      // Served-window comparator (KNOB-01, phase 176). 176-05 wired the daemon
+      // consumers: compareServedWindowForProvider is named-imported by
+      // setup-agents-runtime.ts and ServedWindowComparison by daemon.ts, so
+      // their transient 176-02 entries are REMOVED. The two that remain:
+      //   - resetServedWindowWarnForTest: test-only latch reset, consumed by
+      //     setup-agents-served-window-wiring.test.ts via the @comis/agent
+      //     barrel — the AST walker scans packages/*/src/** but skips .test.ts,
+      //     so that consumer can't satisfy the gate (buildRecallTrace precedent).
+      //   - ServedWindowComparisonInput: the daemon builds the comparator input
+      //     inline (mirroring MemoryConsolidationDeps' named-shape-without-
+      //     consumer posture); the type stays for external/test callers.
+      "resetServedWindowWarnForTest",
+      "ServedWindowComparisonInput",
+      // Viable floor (FLOOR-01, phase 176 plan 176-05). The two value exports +
+      // AgentBootWindowInfo have daemon consumers (setup-agents-runtime.ts /
+      // daemon.ts named imports). MinViableEquation is the structured equation
+      // result type — part of the documented floor API; the production wiring
+      // discards the return (WARN-only, I1/D-02) and the intra-package tests
+      // consume it via the local module path, which the walker skips as a
+      // self-import.
+      "MinViableEquation",
     ])],
     // @comis/channels: baseline orphans tracked here. The 5 delivery
     // helpers + the Markdown IR pipeline (incl. telegram-file-ref-guard)

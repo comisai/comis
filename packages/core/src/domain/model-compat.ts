@@ -22,8 +22,9 @@ import { z } from "zod";
  *
  * - "default" — standard JSON Schema, no modifications
  * - "xai" — strip format, pattern, min/max constraints (xAI rejects them)
+ * - "gbnf" — GBNF-safe structural transforms for llama.cpp-family local providers (collapse nullable unions/type arrays, inject properties/type on free-form and typeless nodes; removal/relaxation only)
  */
-export const ToolSchemaProfileSchema = z.enum(["default", "xai"]);
+export const ToolSchemaProfileSchema = z.enum(["default", "xai", "gbnf"]);
 export type ToolSchemaProfile = z.infer<typeof ToolSchemaProfileSchema>;
 
 /**
