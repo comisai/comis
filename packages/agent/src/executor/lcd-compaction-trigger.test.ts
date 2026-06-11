@@ -1241,12 +1241,18 @@ describe("SUMW-02: trigger denominator = budget window", () => {
 // free: the B-2 bounded drain (≤4 passes/turn) + next-turn re-arming turn the
 // smaller cap into more, smaller passes — oversized backlogs split, never overflow.
 //
-// Arithmetic (overhead 2_048): clamped cap = min(20_000, W − 1_200 − 2_048).
+// Arithmetic (overhead 2_048): clamped cap = min(20_000, W − 1_200 − 2_048 −
+// prevTokens) — prevTokens is the ACTUAL previousSummary size (review WR-03;
+// 0 in fixtures with no pre-existing summaries).
 //   - L1 (RED): W=8_000 → cap 4_752 → each summarize call ≤ 4 × 1_000-token
 //     messages. Pre-patch: ONE chunk of all 11 out-of-tail messages (20_000 cap).
 //   - L2 (no-op pin, I3): W=200_000 → cap stays 20_000 → legacy chunk sizing.
 //   - L3 (degenerate): W=3_000 → 3_000−1_200−2_048 < MIN_SHRINKABLE → cap floors
-//     at 2 → the existing "too-small" terminator: NO summarize call, no throw.
+//     at 2; the fixture's 1-token oldest message makes the selected CHUNK
+//     sub-MIN_SHRINKABLE → the "too-small" terminator (the real terminator is
+//     the tiny CHUNK, not the window itself): NO summarize call, no throw. An
+//     oldest message ≥ MIN_SHRINKABLE but over the cap instead takes the WR-02
+//     deterministic floor (also no LLM call — see the WR-02 fixture).
 
 describe("SUMW-01: leaf chunk clamp", () => {
   let db: Database.Database;
@@ -1341,14 +1347,17 @@ describe("SUMW-01: leaf chunk clamp", () => {
     expect(sizes[0]).toBe(11); // the full out-of-tail chunk — legacy sizing
   });
 
-  it("SUMW-01-L3 (degenerate): a summarizer window below target+overhead floor-clamps and terminates via the existing too-small path — no summarize call, no throw", async () => {
+  it("SUMW-01-L3 (degenerate): a summarizer window below target+overhead floor-clamps and the SUB-MIN_SHRINKABLE chunk terminates via the too-small path — no summarize call, no throw", async () => {
     // W=3_000 → 3_000 − 1_200 − 2_048 = −248 < MIN_SHRINKABLE → the cap floors at
     // 2. The OLDEST out-of-tail message carries 1 stored token, so the selected
     // chunk is that lone message (adding the next 1_000-token message would exceed
     // the floored cap) → chunk.tokens 1 < MIN_SHRINKABLE → the existing
-    // "too-small" no-progress terminator ends the drain cleanly. Pre-patch (cap
-    // 20_000): the chunk is the full 10_001-token out-of-tail backlog → it WOULD
-    // summarize → a summary persists → FAILS (RED).
+    // "too-small" no-progress terminator ends the drain cleanly. NOTE the real
+    // terminator is the sub-MIN_SHRINKABLE CHUNK, not the degenerate window —
+    // a ≥-MIN_SHRINKABLE oldest message over the cap takes the WR-02
+    // deterministic floor instead (see below). Pre-patch (cap 20_000): the
+    // chunk is the full 10_001-token out-of-tail backlog → it WOULD summarize
+    // → a summary persists → FAILS (RED).
     expect(MIN_SHRINKABLE_LEAF_CHUNK_TOKENS).toBe(2); // the fixture's premise
     append(store, userMsg("u0"), 0, 1, 1000); // the 1-token oldest out-of-tail message
     for (let i = 1; i < 26; i++) {
@@ -1375,6 +1384,44 @@ describe("SUMW-01: leaf chunk clamp", () => {
 
     expect(store.getSummaries(SCOPE).length).toBe(0);
     expect(callSizes().length).toBe(0); // the summarizer was never invoked
+  });
+
+  it("WR-02: a single message LARGER than the clamped cap goes straight to the deterministic floor — no LLM call, bounded fallback persisted", async () => {
+    // selectLeafChunk's always-include-one rule selects a lone oversized FIRST
+    // message regardless of the cap — pre-fix it was fed WHOLE to the
+    // summarizer, where every LLM attempt is a guaranteed overflow (up to 4
+    // failing calls per pass / 16 per drain — wasted spend + breaker churn),
+    // violating the span invariant the suite pins. 8K override → cap 4_752
+    // (no prior summaries): the 10_000-token oldest message exceeds it.
+    append(store, userMsg("u0-huge"), 0, 10_000, 1000);
+    for (let i = 1; i < 26; i++) {
+      const msg = i % 2 === 1 ? assistantText(`a${i}`) : userMsg(`u${i}`);
+      append(store, msg, i, 1_000, 1000 + i);
+    }
+    // Stored = 10_000 + 25_000 = 35_000; budget window 40_000 → 0.875 > 0.75 armed.
+    const logger = createMockLogger();
+    const { summarize, callSizes } = recordingSummarizer();
+    const deps = depsWithOverrideWindow(8_000, summarize, logger);
+
+    await maybeRunLeafPass(
+      store,
+      SCOPE,
+      opts({ windowTokens: 40_000, maxLeafPassesPerTurn: 1 }),
+      deps,
+      FIXED_NOW,
+      undefined,
+      logger as unknown as LeafSummarizerDeps["logger"],
+    );
+
+    // The summarizer was NEVER invoked with the over-cap chunk (RED pre-fix: 4
+    // ladder attempts against the lone 10_000-token message)...
+    expect(callSizes().length).toBe(0);
+    // ...and the bounded deterministic floor persisted instead (fallback:true,
+    // the full content stays losslessly in the message store).
+    const summaries = store.getSummaries(SCOPE);
+    expect(summaries.length).toBe(1);
+    expect(summaries[0]!.kind).toBe("leaf");
+    expect(summaries[0]!.fallback).toBe(true);
   });
 
   it("WR-03 (leaf mirror): the chunk cap subtracts the ACTUAL previousSummary tokens threaded into the pass prompt", async () => {

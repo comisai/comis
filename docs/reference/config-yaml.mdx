@@ -565,7 +565,7 @@ Context engine configuration. Controls the system that manages what your agent s
 | `condensedMinFanout` | `number` | `4` | Minimum leaf summaries before creating a condensed summary (2-20) |
 | `condensedMinFanoutHard` | `number` | `2` | Absolute minimum fanout for condensed summaries under pressure (2-10) |
 | `incrementalMaxDepth` | `number` | `0` | Maximum DAG depth for incremental compaction. -1 disables depth limit. (-1 to 10) |
-| `leafChunkTokens` | `number` | `20000` | Maximum source tokens per leaf summary chunk (1K-100K). Clamped at runtime to the resolved summarizer model's context window minus the summary target and prompt overhead, so a small compaction summarizer (e.g. an 8K operationModels.compaction model) is never fed an over-window chunk; oversized backlogs drain across multiple bounded passes. |
+| `leafChunkTokens` | `number` | `20000` | Maximum source tokens per leaf summary chunk (1K-100K). Clamped at runtime to the resolved summarizer model's context window minus the summary target, prompt-template overhead, and the threaded previous-summary size, so a small compaction summarizer (e.g. an 8K operationModels.compaction model) is never fed an over-window chunk; oversized backlogs drain across multiple bounded passes, and a single message larger than the clamped cap is replaced by a bounded deterministic extraction (no LLM call) — its full content stays in the lossless message store. |
 | `leafTargetTokens` | `number` | `1200` | Target token count for each leaf summary output (96-5K) |
 | `condensedTargetTokens` | `number` | `2000` | Target token count for each condensed summary output (256-10K) |
 | `maxExpandTokens` | `number` | `4000` | Maximum tokens a recall sub-agent can read per expansion (500-50K) |
