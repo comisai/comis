@@ -589,3 +589,139 @@ describe("tool_schema_unsupported (GBNF-02)", () => {
     expect(r!.detail).toContain("[unknown]");
   });
 });
+
+// ---------------------------------------------------------------------------
+// LAT-04 (Phase 177): prompt_timeout — the NAMED terminal latency cause, keyed
+// on endReason "timeout" (alive since the 177-04 END_REASON_MAP entry). Pre-
+// patch, a timeout-heavy session with clean tools got NO verdict at all (rule
+// 6 provider_timeout requires a TOOL failure — research Critical Finding 7
+// point 6); the terminal-band rule closes exactly that gap. Placement: BELOW
+// every tool-failure cause (chronic-vs-acute ordering, T-177-19); the frozen
+// 678/503 fixtures carry no prompt_timeout records and no endReason "timeout",
+// so they cannot regress (the GBNF-02 rule-3 argument).
+// ---------------------------------------------------------------------------
+
+describe("prompt_timeout terminal verdict (LAT-04)", () => {
+  const STALL_TIMEOUT = {
+    timeoutMs: 180_000,
+    durationMs: 195_000,
+    limit: "stall" as const,
+    source: "agent_config",
+    bindingKnob: "agents.my-agent.promptTimeout.promptTimeoutMs",
+    stallBudgetMs: 180_000,
+    makespanMs: 1_800_000,
+  };
+
+  it("LAT-04-O-6: the stall verdict names the budget, the elapsed time, and the binding knob with the ACTUAL numbers (the ROADMAP-quoted shape)", () => {
+    const r = rootCause(
+      makeSignals({ endReason: "timeout", agentId: "my-agent", promptTimeout: STALL_TIMEOUT }),
+    );
+    expect(r).not.toBeNull();
+    expect(r!.code).toBe("prompt_timeout");
+    expect(r!.detail).toMatch(/stall budget 180000ms exceeded/);
+    expect(r!.detail).toMatch(/195000ms/);
+    expect(r!.suggestedNextSteps[0]).toMatch(
+      /raise agents\.my-agent\.promptTimeout\.promptTimeoutMs/,
+    );
+    expect(r!.suggestedNextSteps[0]).toContain("180000");
+    expect(r!.suggestedNextSteps).toContain("obs.explain depth=full");
+  });
+
+  it("LAT-04-O-7: the makespan verdict names the ceiling and stallCeilingMultiplier (streaming runaway — never a stall framing)", () => {
+    const r = rootCause(
+      makeSignals({
+        endReason: "timeout",
+        agentId: "my-agent",
+        promptTimeout: {
+          timeoutMs: 1_800_000,
+          durationMs: 1_805_000,
+          limit: "makespan" as const,
+          source: "agent_config",
+          bindingKnob: "agents.my-agent.promptTimeout.promptTimeoutMs",
+          stallBudgetMs: 180_000,
+          makespanMs: 1_800_000,
+        },
+      }),
+    );
+    expect(r).not.toBeNull();
+    expect(r!.code).toBe("prompt_timeout");
+    expect(r!.detail).toMatch(/makespan ceiling 1800000ms/);
+    expect(r!.detail).toMatch(/streaming runaway/);
+    expect(r!.suggestedNextSteps.join("\n")).toMatch(/stallCeilingMultiplier/);
+  });
+
+  it("LAT-04-O-8: a pre-extension timeout session (no enriched signal) still gets the verdict with a generic knob suggestion and NO invented numbers", () => {
+    const r = rootCause(makeSignals({ endReason: "timeout" }));
+    expect(r).not.toBeNull();
+    expect(r!.code).toBe("prompt_timeout");
+    expect(r!.suggestedNextSteps[0]).toMatch(/agents\.<id>\.promptTimeout\.promptTimeoutMs/);
+    // No numbers invented anywhere in the verdict (the session carried none).
+    expect(r!.detail).not.toMatch(/\d+ms/);
+    expect(r!.suggestedNextSteps[0]).not.toMatch(/\d/);
+  });
+
+  it("LAT-04-O-9: a TOOL timeout failure out-ranks the terminal rule (provider_timeout wins — insurance-band ordering)", () => {
+    // Guard pin (green pre-patch by design): the terminal rule sits BELOW the
+    // tool-failure rules; an acute tool-failure cause is upstream of the
+    // terminal state (T-177-19 — chronic-vs-acute misattribution guard).
+    const r = rootCause(
+      makeSignals({
+        endReason: "timeout",
+        promptTimeout: STALL_TIMEOUT,
+        failures: [
+          {
+            seq: 0,
+            toolName: "llm_call",
+            classifiedFailureBy: "",
+            transportOk: false,
+            errorKind: "timeout",
+            resultDigest: "d",
+            resultBytes: 1,
+            errorPreview: "timed out",
+          },
+        ],
+      }),
+    );
+    expect(r!.code).toBe("provider_timeout");
+  });
+
+  it("LAT-04-O-10: a timeout-heavy session with CLEAN tools gets the prompt_timeout verdict (pre-patch: NO verdict — Critical Finding 7 point 6)", () => {
+    const r = rootCause(
+      makeSignals({
+        endReason: "timeout",
+        agentId: "my-agent",
+        toolStats: { web_fetch: { ok: 4, failed: 0 } },
+        failures: [],
+        promptTimeout: STALL_TIMEOUT,
+      }),
+    );
+    expect(r).not.toBeNull();
+    expect(r!.code).toBe("prompt_timeout");
+  });
+
+  it("LAT-04-O-11: the frozen 678/503 fixture verdicts are UNCHANGED (no prompt_timeout records, no endReason timeout)", () => {
+    // The GBNF-02 rule-3 no-regression argument, re-pinned for the new rule.
+    const r678 = rootCause(
+      makeSignals({
+        hasMisclassificationSignal: true,
+        misclassifiedTool: "web_fetch",
+        misclassifiedToken: "403",
+        hasDoNotRetrySignal: true,
+        breakerOpenedTool: "web_fetch",
+        repeatedFailureCount: { web_fetch: 14 },
+        mostFailedTool: "web_fetch",
+      }),
+    );
+    expect(r678!.code).toBe("content_heuristic_misclassification");
+    const r503 = rootCause(
+      makeSignals({
+        hasMisclassificationSignal: false,
+        hasDoNotRetrySignal: true,
+        breakerOpenedTool: "web_fetch",
+        repeatedFailureCount: { web_fetch: 5 },
+        mostFailedTool: "web_fetch",
+      }),
+    );
+    expect(r503!.code).toBe("breaker_opened_repeated_failure");
+  });
+});

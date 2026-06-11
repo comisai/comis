@@ -1388,6 +1388,68 @@ describe("queue + execution + sender bridge", () => {
     expect(data.timestamp).toBeUndefined();
   });
 
+  // LAT-04 (Phase 177): the enriched execution:prompt_timeout payload (177-03)
+  // must forward ALL attribution fields through the translator — the 4-sync-point
+  // chain's known silent-failure mode is extending the event but missing the
+  // translator, which silently drops the evidence from `comis explain`
+  // (research Pitfall 5; the Phase-176 safeParse-drop lesson).
+  it("LAT-04-O-1: enriched execution_prompt_timeout forwards durationMs/limit/source/bindingKnob/stallBudgetMs/makespanMs verbatim; envelope keys stripped", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("execution:prompt_timeout", {
+      agentId: "my-agent",
+      sessionKey: "t1:u1:c1",
+      timeoutMs: 180_000,
+      timestamp: Date.now(),
+      durationMs: 195_000,
+      limit: "stall",
+      source: "agent_config",
+      bindingKnob: "agents.my-agent.promptTimeout.promptTimeoutMs",
+      operationType: undefined,
+      stallBudgetMs: 180_000,
+      makespanMs: 1_800_000,
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("execution.prompt_timeout");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.timeoutMs).toBe(180_000);
+    expect(data.durationMs).toBe(195_000);
+    expect(data.limit).toBe("stall");
+    expect(data.source).toBe("agent_config");
+    expect(data.bindingKnob).toBe("agents.my-agent.promptTimeout.promptTimeoutMs");
+    expect(data.stallBudgetMs).toBe(180_000);
+    expect(data.makespanMs).toBe(1_800_000);
+    // operationType was undefined at the emit — must not materialize as a key.
+    expect("operationType" in data).toBe(false);
+    // Envelope-only correlation keys are stripped from data (the 175 house style).
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("LAT-04-O-2: a LEGACY prompt_timeout payload (no extended fields) still translates to exactly {timeoutMs} — no undefined-keyed fields", () => {
+    // Back-compat guard pin (green pre-patch by design): old emitters/rows carry
+    // only the original four fields; the conditional spreads must not materialize
+    // undefined-keyed entries on the persisted trajectory row.
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("execution:prompt_timeout", {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      timeoutMs: 30_000,
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data).toEqual({ timeoutMs: 30_000 });
+  });
+
   it("execution_output_escalated_maps_to_execution.output_escalated with originalMaxTokens/escalatedMaxTokens; sessionKey/agentId stripped", () => {
     const bus = makeBus();
     const recorder = createCaptureRecorder();
