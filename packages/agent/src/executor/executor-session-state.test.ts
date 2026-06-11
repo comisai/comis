@@ -14,7 +14,11 @@ import {
   SESSION_STATE_TTL_MS,
   createBoundedSessionMap,
   setSessionStateClock,
+  getWindowReconcileLogged,
+  setWindowReconcileLogged,
+  clearWindowReconcileLogged,
 } from "./executor-session-state.js";
+import { clearSessionState } from "./session-snapshot-cleanup.js";
 
 // Initialize module-level clock provider for tests.
 setSessionStateClock({ now: () => Date.now(), nowDate: () => new Date() });
@@ -169,5 +173,38 @@ describe("createBoundedSessionMap", () => {
     expect(map.has("a")).toBe(true);
     expect(map.get("a")).toBe(100);
     expect(map.has("b")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// KNOB-02 (Phase 176): once-per-session latch for the context-window-reconcile
+// INFO line. Load-bearing evidence must not be DEBUG-only (the troubleshooting
+// doctrine), but the reconcile runs every turn — the latch bounds the INFO to
+// exactly once per session, and clearSessionState (session delete / explicit
+// reset / expiry) grants the next session a fresh INFO.
+// ---------------------------------------------------------------------------
+
+describe("window-reconcile INFO once-per-session latch (KNOB-02)", () => {
+  it("KNOB-02-22: set→get true, clear→false, and clearSessionState clears it (delete/reset grants a fresh INFO)", () => {
+    const key = "tenant-k:user_k:chan-k";
+
+    // Unset key reads false (never latched).
+    expect(getWindowReconcileLogged(key)).toBe(false);
+
+    // set → latched.
+    setWindowReconcileLogged(key);
+    expect(getWindowReconcileLogged(key)).toBe(true);
+
+    // explicit clear → unlatched.
+    clearWindowReconcileLogged(key);
+    expect(getWindowReconcileLogged(key)).toBe(false);
+
+    // The lifecycle wiring: clearSessionState (the single authoritative
+    // session cleanup path — session:expired / session.delete /
+    // session.reset_conversation) must clear the latch too.
+    setWindowReconcileLogged(key);
+    expect(getWindowReconcileLogged(key)).toBe(true);
+    clearSessionState(key);
+    expect(getWindowReconcileLogged(key)).toBe(false);
   });
 });

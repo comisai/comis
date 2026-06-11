@@ -343,6 +343,70 @@ describe("context_exhausted with budget evidence (W3)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// KNOB-02 (Phase 176): served-bound context_exhausted verdict. The cap branch
+// templates `contextEngine.budget.${windowCapSource}` — for the new "served"
+// member that renders the NONSENSE knob `contextEngine.budget.served` (it is
+// not a config key; the real knobs are Ollama's OLLAMA_CONTEXT_LENGTH env /
+// Modelfile PARAMETER num_ctx). Both template sites must branch by source.
+// ---------------------------------------------------------------------------
+
+describe("context_exhausted with served-bound budget evidence (KNOB-02)", () => {
+  const SERVED_BUDGET = {
+    windowTokens: 8_192,
+    rawContextWindowTokens: 131_072,
+    windowCapSource: "served" as const,
+    systemTokens: 5_000,
+    freshTailTokens: 1_000,
+    budgetedHistoryTokens: 1_500,
+    keptCount: 3,
+    assembledInputTokens: 7_500,
+    outputHeadroom: 1_792,
+    verdict: "exhausted" as const,
+  };
+
+  it("KNOB-02-23: a served-bound verdict names the Ollama knobs + the configured number and NEVER renders contextEngine.budget.served", () => {
+    const r = rootCause(makeSignals({ endReason: "context_exhausted", contextBudget: SERVED_BUDGET }));
+    expect(r).not.toBeNull();
+    expect(r!.code).toBe("context_exhausted");
+    // The detail names the TRUE configured window and the served-bound class.
+    expect(r!.detail).toMatch(/model contextWindow 131072 but Ollama served a smaller window/);
+    // The steps name the REAL knobs with the configured number.
+    const steps = r!.suggestedNextSteps.join("\n");
+    expect(steps).toMatch(/OLLAMA_CONTEXT_LENGTH=131072/);
+    expect(steps).toMatch(/PARAMETER num_ctx 131072/);
+    // The nonsense knob must never render anywhere in the verdict.
+    expect(r!.detail).not.toMatch(/contextEngine\.budget\.served/);
+    expect(steps).not.toMatch(/contextEngine\.budget\.served/);
+  });
+
+  it("KNOB-02-24: the effectiveContextCapSmall verdict wording is byte-identical to pre-patch (cap branch untouched)", () => {
+    // The frozen W3 fixture — pins the EXACT pre-patch strings so the served
+    // branch cannot perturb the cap-knob wording.
+    const CAP_BUDGET = {
+      windowTokens: 32_000,
+      rawContextWindowTokens: 131_072,
+      windowCapSource: "effectiveContextCapSmall" as const,
+      systemTokens: 25_694,
+      freshTailTokens: 5_272,
+      budgetedHistoryTokens: 0,
+      keptCount: 0,
+      assembledInputTokens: 31_572,
+      outputHeadroom: 768,
+      verdict: "exhausted" as const,
+    };
+    const r = rootCause(makeSignals({ endReason: "context_exhausted", contextBudget: CAP_BUDGET }));
+    expect(r!.detail).toBe(
+      "context exhausted — the pre-flight guard aborted before the model could run: assembled 31572 tokens of effective window 32000 (model contextWindow 131072 capped by contextEngine.budget.effectiveContextCapSmall); system prompt + tool schemas = 25694 tokens (80% of the window); history kept: 0",
+    );
+    expect(r!.suggestedNextSteps).toEqual([
+      "raise contextEngine.budget.effectiveContextCapSmall (0 = uncapped) — the model declares 131072 tokens but the effective window was 32000",
+      "reduce the active tool surface (disable unused builtin tool groups / MCP servers) — tool schemas dominate the window",
+      "obs.explain depth=full",
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // GBNF-02 (Phase 175): tool_schema_unsupported — an acute, deterministic
 // provider-schema rejection (grammar-compile/unmarshal 400). Placement is the
 // ordering contract: AFTER the two X3-mandated codes (their frozen 678/503
