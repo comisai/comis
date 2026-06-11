@@ -560,7 +560,7 @@ Context engine configuration. Controls the system that manages what your agent s
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `freshTailTurns` | `number` | `8` | Recent **steps** (assistant + tool round-trips, not user-turns) always kept verbatim and never evicted (1-50) |
-| `contextThreshold` | `number` | `0.75` | Budget utilization ratio (of the model window) that triggers an end-of-turn leaf-summarization pass (0.1-0.95) |
+| `contextThreshold` | `number` | `0.75` | Budget utilization ratio that triggers the end-of-turn leaf-summarization pass and the condense pass's hard-fanout pressure gate (0.1-0.95). The ratio is computed against the turn's effective budget window (min of the reconciled context window and the capability-class cap) — not the model's configured contextWindow — so capped or served-bound small models compact at the real window. |
 | `leafMinFanout` | `number` | `8` | Minimum raw messages before creating a leaf summary (2-20) |
 | `condensedMinFanout` | `number` | `4` | Minimum leaf summaries before creating a condensed summary (2-20) |
 | `condensedMinFanoutHard` | `number` | `2` | Absolute minimum fanout for condensed summaries under pressure (2-10) |
