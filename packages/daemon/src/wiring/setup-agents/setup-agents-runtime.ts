@@ -241,6 +241,10 @@ export async function setupSingleAgent(
     sessionBaseDir: safePath(dir, "sessions"),
     lockDir,
     cwd: dir,
+    // Resolved daemon data dir: without it the session-index writer
+    // (appendSessionIndexEntry) falls back to the REAL ~/.comis, diverging
+    // from config.dataDir / COMIS_DATA_DIR installs (260611 live-fire).
+    dataDir: dataDirAbs,
     // Same FileLockPort instance the OAuth path uses — single proper-lockfile
     // adapter per daemon process.
     fileLock: deps.fileLock,
@@ -449,6 +453,11 @@ export async function setupSingleAgent(
     authRotation,
     sessionAdapter,
     workspaceDir: dir,
+    // Resolved daemon data dir → PiExecutorDeps.dataDir → the pi-event-bridge
+    // session-index writer (otherwise deps.dataDir is undefined and the bridge
+    // falls back to the REAL ~/.comis — 260611 live-fire) + prompt-assembly's
+    // recall-trace containment base.
+    dataDir: dataDirAbs,
     agentDir: resolvedAgentDir,
     customTools: [],
     convertTools: (tools) => agentToolsToToolDefinitions(tools, resolvedDescriptions),

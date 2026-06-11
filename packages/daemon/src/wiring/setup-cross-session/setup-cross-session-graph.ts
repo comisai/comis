@@ -448,6 +448,10 @@ export function buildExecuteSubAgent(deps: ExecuteSubAgentDeps): ExecuteSubAgent
         lockDir: safePath(sessionCwd, ".locks"),
         cwd: sessionCwd,
         fileLock: deps.fileLock,
+        // Resolved daemon data dir — the session-index writer otherwise
+        // falls back to the REAL ~/.comis (260611 live-fire; same fix as
+        // setup-agents-runtime's primary session adapter).
+        dataDir: container.config.dataDir || undefined,
       });
     } else {
       ephemeralSessionAdapter = createEphemeralComisSessionManager(sessionCwd);
