@@ -816,7 +816,20 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
         }
       }
 
-      const result = { records };
+      // Honest empty (live finding 2026-06-11): a bare `{records: []}` made
+      // a disabled recorder indistinguishable from "no recalls happened" —
+      // the diagnosis tool itself degraded silently. Report the recorder
+      // gate, and when empty, say WHY + which knob enables tracing.
+      const tracingEnabled = deps.recallTraceEnabled === true;
+      const result: { records: typeof records; tracingEnabled: boolean; hint?: string } = {
+        records,
+        tracingEnabled,
+      };
+      if (records.length === 0) {
+        result.hint = tracingEnabled
+          ? "no recall-trace records matched this selector yet — traces are recorded per recall while diagnostics.recallTrace.enabled is true; re-run the session and query again"
+          : "recall tracing is DISABLED (diagnostics.recallTrace.enabled defaults to false) — no traces are being recorded; set diagnostics.recallTrace.enabled: true and re-run the session";
+      }
       if (systemGetEnv("NODE_ENV") !== "production") {
         MemoryRecallTraceContract.response.parse(result);
       }

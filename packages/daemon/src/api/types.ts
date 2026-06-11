@@ -134,7 +134,7 @@ export interface SessionsApiDeps {
  * Dependencies for memory-handlers + context-handlers
  * (memory.read/write/search/embeddingCache, context.recall/expand).
  */
-// @optional-field-count: 13 optional fields — MemoryApiDeps is the shared slice
+// @optional-field-count: 14 optional fields — MemoryApiDeps is the shared slice
 // for memory-handlers, so it carries TWO feature-gated dep families: the
 // memory-diagnostic deps (consolidationStore/entityStore/
 // recallCounters/dataDir — each absent ⇒ the corresponding admin diagnostic is
@@ -191,6 +191,12 @@ export interface MemoryApiDeps {
    *  `resolveRecallTraceFilePath`. Optional — mirrors ObservabilityApiDeps.dataDir;
    *  defaults to ~/.comis at handler-construction time when omitted. */
   dataDir?: string;
+  /** The diagnostics.recallTrace.enabled gate (live finding 2026-06-11) — the
+   *  `memory.recall_trace` handler reports it as `tracingEnabled` and, on an
+   *  empty result, hints WHY (recorder disabled vs no matching traces yet)
+   *  instead of a silent `{records: []}`. Optional — absent reads as false
+   *  (the schema default for the opt-in recorder). */
+  recallTraceEnabled?: boolean;
   // Dialectic deps (the memory.ask handler).
   /** The INJECTED query-time dialectic synthesis seam (the `createDialecticSeam`
    *  output, built + injected from a cheap resolved model + key). The

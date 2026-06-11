@@ -66,6 +66,13 @@ export const MemoryRecallTraceContract = defineContract({
   }),
   response: z.object({
     records: z.array(z.record(z.string(), z.unknown())),
+    // Live finding 2026-06-11: the handler returned a bare `{records: []}`
+    // when the recorder was simply disabled (diagnostics.recallTrace.enabled
+    // defaults false) — a silent empty in the very tool that exists to
+    // diagnose recall. tracingEnabled reports the recorder gate; hint (only
+    // when records is empty) says WHY it is empty and which knob enables it.
+    tracingEnabled: z.boolean().optional(),
+    hint: z.string().optional(),
   }),
   scopes: ["admin"] as const,
 });

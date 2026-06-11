@@ -467,7 +467,7 @@ diagnostics:
 **There is no raw-content toggle.** Unlike `cacheTrace` (which has `includeMessages` / `includeSystem` / `includePrompt` opt-ins), `recallTrace` has **no** such field. Every payload is full-sanitized before disk — query text, memory bodies, secrets, and absolute paths never reach the file. This is a deliberate security property, not a missing feature: there is no supported way to persist raw recall content. Do not expect a flag to disable sanitization — adding one would be a security regression.
 </Warning>
 
-Read the trace with [`comis memory recall-trace <session>`](/reference/cli#comis-memory) — `--format json` for the full per-record ranking breakdown, the table view for correlation keys.
+Read the trace with [`comis memory recall-trace <session>`](/reference/cli#comis-memory) — `--format json` for the full per-record ranking breakdown, the table view for correlation keys. The `memory.recall_trace` response also reports `tracingEnabled` (the recorder gate) and, on an empty result, a `hint` distinguishing "recorder disabled — set `diagnostics.recallTrace.enabled: true`" from "enabled but no traces matched this selector yet" — an empty result is never silent about why.
 
 ### 15.2 Recall events (direct-emit — not bridge-mapped)
 

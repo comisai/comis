@@ -178,7 +178,14 @@ export function registerMemoryCommand(program: Command): void {
 
           const records = (result.records ?? []) as Array<Record<string, unknown>>;
           if (records.length === 0) {
-            info("No recall-trace records found");
+            // Honest empty (live finding 2026-06-11): say WHY it is empty —
+            // the recorder is opt-in, so a bare "no records" pointed nowhere.
+            const traceResult = result as { tracingEnabled?: boolean; hint?: string };
+            if (traceResult.hint !== undefined) {
+              info(`No recall-trace records found — ${traceResult.hint}`);
+            } else {
+              info("No recall-trace records found");
+            }
             return;
           }
 

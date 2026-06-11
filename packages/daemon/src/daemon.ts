@@ -1011,6 +1011,9 @@ function buildRpcDispatchDeps(deps: {
     // here — no diagnostic handler consumes it; its read path is the setupAgents
     // injection at the setupAgents({…}) call below, mirroring entityStore.)
     consolidationStore: c.consolidationStore, entityStore: c.entityStore, recallCounters, ...dialecticWiring, onSuspiciousContent: c.onSuspiciousContent,
+    // The recall-trace recorder gate — memory.recall_trace reports it as
+    // tracingEnabled + hints on empty results (live finding 2026-06-11).
+    recallTraceEnabled: c.container.config.diagnostics?.recallTrace?.enabled ?? false,
     tenantId: c.container.config.tenantId, agents: c.agentsConfig, costTrackers: c.costTrackers, stepCounters: c.stepCounters,
     agentDataDir: safePath(c.container.config.dataDir ?? safePath(os.homedir(), ".comis"), "agents"),
     sessionStore: g.sessionStoreBridge,

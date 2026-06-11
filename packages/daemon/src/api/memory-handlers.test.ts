@@ -1010,6 +1010,54 @@ describe("createMemoryHandlers - diagnostics", () => {
       return dir;
     }
 
+    it("a disabled recorder yields an honest empty — tracingEnabled:false + a hint naming the knob (never a silent {records: []})", async () => {
+      // Live finding 2026-06-11: right after a live recall, the trace query
+      // returned a bare empty because diagnostics.recallTrace.enabled
+      // defaults false — indistinguishable from "no recalls happened".
+      const { deps } = makeDiagDeps(); // no dataDir → no trace file; gate unset → disabled
+      const handlers = createMemoryHandlers(deps);
+
+      const result = (await handlers["memory.recall_trace"]!({
+        _trustLevel: "admin",
+        session_key: "sess-A",
+      })) as { records: unknown[]; tracingEnabled?: boolean; hint?: string };
+
+      expect(result.records).toHaveLength(0);
+      expect(result.tracingEnabled).toBe(false);
+      expect(result.hint).toContain("diagnostics.recallTrace.enabled");
+    });
+
+    it("an enabled recorder with no matching traces hints 're-run', not 'enable'", async () => {
+      const { deps } = makeDiagDeps({ recallTraceEnabled: true });
+      const handlers = createMemoryHandlers(deps);
+
+      const result = (await handlers["memory.recall_trace"]!({
+        _trustLevel: "admin",
+        session_key: "sess-A",
+      })) as { records: unknown[]; tracingEnabled?: boolean; hint?: string };
+
+      expect(result.records).toHaveLength(0);
+      expect(result.tracingEnabled).toBe(true);
+      expect(result.hint).toMatch(/no recall-trace records matched/i);
+    });
+
+    it("a non-empty result carries no hint (the hint is the empty-explainer, not noise)", async () => {
+      const dataDir = writeTraceFile([
+        { ts: "t", sessionId: "sess-A", traceId: "t-A", agentId: "default", finalCount: 2 },
+      ]);
+      const { deps } = makeDiagDeps({ dataDir, recallTraceEnabled: true });
+      const handlers = createMemoryHandlers(deps);
+
+      const result = (await handlers["memory.recall_trace"]!({
+        _trustLevel: "admin",
+        session_key: "sess-A",
+      })) as { records: unknown[]; tracingEnabled?: boolean; hint?: string };
+
+      expect(result.records).toHaveLength(1);
+      expect(result.tracingEnabled).toBe(true);
+      expect(result.hint).toBeUndefined();
+    });
+
     it("requires at least one of session_key / trace_id", async () => {
       const { deps } = makeDiagDeps();
       const handlers = createMemoryHandlers(deps);
