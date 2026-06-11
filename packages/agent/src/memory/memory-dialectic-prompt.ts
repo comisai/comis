@@ -25,6 +25,7 @@
  */
 
 import { z } from "zod";
+import { stripFences, extractFirstParseableJsonObject } from "./llm-json.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -124,8 +125,8 @@ export function parseDialecticOutput(raw: string): DialecticParsed {
     // commentary before the JSON payload ("The memories conflict on this
     // date. … \n\n{ \"answer\": … }") despite the no-commentary rule, so the
     // whole-string parse failed and a VALID grounded answer degraded to
-    // abstain. Recover by extracting the first balanced block that parses
-    // as JSON from the mixed text (still TOTAL — any failure ⇒ abstain).
+    // abstain. Recover via the shared lenient extractor (still TOTAL — any
+    // failure ⇒ abstain).
     const extracted = extractFirstParseableJsonObject(stripFences(raw));
     if (extracted === undefined) return { abstain: true };
     json = extracted;
@@ -142,60 +143,4 @@ export function parseDialecticOutput(raw: string): DialecticParsed {
   // filter citedIds to strings (a non-string id can never enter the citation set).
   const ids = (citedIds ?? []).filter((id): id is string => typeof id === "string");
   return { abstain: false, answer, citedIds: ids };
-}
-
-/** Strip markdown code fences from raw LLM text (mirrors the consolidation/reasoning parsers). */
-function stripFences(text: string): string {
-  return text
-    .replace(/```json?\n?/g, "")
-    .replace(/```/g, "")
-    .trim();
-}
-
-/**
- * Find the first balanced `{ … }` block (from each successive `{`) that
- * parses as JSON, and return the PARSED value. String-aware (braces inside
- * JSON strings don't count) so a commentary prefix/suffix around the payload
- * never defeats the parse, and a non-JSON brace group in the narration
- * (e.g. "{weird}") is skipped rather than fatal. Returns undefined when no
- * candidate parses.
- */
-function extractFirstParseableJsonObject(text: string): unknown {
-  let searchFrom = 0;
-  for (;;) {
-    const start = text.indexOf("{", searchFrom);
-    if (start === -1) return undefined;
-    const candidate = balancedBlockAt(text, start);
-    if (candidate !== undefined) {
-      try {
-        return JSON.parse(candidate);
-      } catch {
-        // Not JSON — keep scanning from the next character.
-      }
-    }
-    searchFrom = start + 1;
-  }
-}
-
-/** The balanced `{ … }` slice starting at `start`, or undefined if unbalanced. */
-function balancedBlockAt(text: string, start: number): string | undefined {
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-  for (let i = start; i < text.length; i++) {
-    const ch = text[i];
-    if (inString) {
-      if (escaped) escaped = false;
-      else if (ch === "\\") escaped = true;
-      else if (ch === '"') inString = false;
-      continue;
-    }
-    if (ch === '"') inString = true;
-    else if (ch === "{") depth++;
-    else if (ch === "}") {
-      depth--;
-      if (depth === 0) return text.slice(start, i + 1);
-    }
-  }
-  return undefined;
 }

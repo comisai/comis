@@ -25,6 +25,7 @@
  */
 
 import { MemoryExtractionResultSchema, systemDateFrom, type MemoryExtractionResult } from "@comis/core";
+import { parseLenientJson } from "./llm-json.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -95,13 +96,11 @@ No markdown fences, no commentary. If nothing qualifies: { "memories": [] }`;
  * (it is not the `{ memories: [...] }` envelope).
  */
 export function parseExtractionResult(text: string): MemoryExtractionResult | undefined {
-  const cleaned = text.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
-  let json: unknown;
-  try {
-    json = JSON.parse(cleaned);
-  } catch {
-    return undefined;
-  }
+  // parseLenientJson tolerates the narration-before-JSON pattern observed
+  // live 2026-06-11 (the whole-string parse degraded a VALID extraction to
+  // "invalid output, skipping" on a fact-rich conversation).
+  const json = parseLenientJson(text);
+  if (json === undefined) return undefined;
   const parsed = MemoryExtractionResultSchema.safeParse(json);
   return parsed.success ? parsed.data : undefined;
 }

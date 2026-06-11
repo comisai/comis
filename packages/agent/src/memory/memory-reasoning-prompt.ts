@@ -29,6 +29,7 @@
  */
 
 import { z } from "zod";
+import { parseLenientJson } from "./llm-json.js";
 
 // ---------------------------------------------------------------------------
 // Prompts
@@ -143,12 +144,10 @@ function stripFences(text: string): string {
  * `patternType` omitted).
  */
 export function parseInductiveResult(text: string): InductiveResult | undefined {
-  let json: unknown;
-  try {
-    json = JSON.parse(stripFences(text));
-  } catch {
-    return undefined;
-  }
+  const json: unknown = parseLenientJson(text);
+  // parseLenientJson tolerates narration around the payload (live finding
+  // 2026-06-11 — the whole-string parse degraded valid payloads).
+  if (json === undefined) return undefined;
   const parsed = InductiveResultSchema.safeParse(json);
   return parsed.success ? parsed.data : undefined;
 }
