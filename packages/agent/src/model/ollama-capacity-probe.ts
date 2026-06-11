@@ -259,6 +259,21 @@ export interface ProbeAllOllamaProvidersParams {
 }
 
 /**
+ * Single source for "which model did the probe use" (KNOB-01's served-window
+ * comparator shares it — the 17fdd1e5 bug class was two sites deriving this
+ * expression differently). ProviderEntrySchema has NO `defaultModel`; the
+ * model lives under `models[].id`. Falling back to the first configured model
+ * lets the /api/show cold-start path (boot, before any inference, when
+ * /api/ps is empty) send a real model name instead of "" (which Ollama
+ * rejects with HTTP 400 → served window never found).
+ */
+export function resolveProbedModelId(
+  entry: { defaultModel?: string; models?: Array<{ id?: string }> } | undefined,
+): string {
+  return entry?.defaultModel ?? entry?.models?.[0]?.id ?? "";
+}
+
+/**
  * Probe all Ollama providers at boot and return a map of provider ID → served
  * context window.
  *
@@ -290,11 +305,7 @@ export async function probeAllOllamaProviders(
     if (entry.capabilities?.probeServedWindow === false) continue;
 
     const nativeBase = deriveOllamaNativeBase(entry.baseUrl ?? "http://localhost:11434");
-    // ProviderEntrySchema has NO `defaultModel` — the model lives under `models[].id`.
-    // Fall back to the first configured model so the /api/show cold-start path
-    // (boot, before any inference, when /api/ps is empty) sends a real model name
-    // instead of "" (which Ollama rejects with HTTP 400 → served window never found).
-    const modelId = entry.defaultModel ?? entry.models?.[0]?.id ?? "";
+    const modelId = resolveProbedModelId(entry);
 
     const task = probeOllamaServedWindow(nativeBase, modelId, { fetchFn, timeoutMs }).then(
       (result) => {
