@@ -45,8 +45,10 @@ export const IncidentContextBudgetSchema = z.object({
   windowTokens: z.number(),
   /** The model's declared contextWindow before any cap (== windowTokens when uncapped). */
   rawContextWindowTokens: z.number(),
-  /** Which contextEngine.budget.* knob clamped the window. */
-  windowCapSource: z.enum(["effectiveContextCapSmall", "effectiveContextCapNano", "none"]),
+  /** What clamped the window. The cap members are contextEngine.budget.* knob
+   *  names; "served" (KNOB-02) means the Ollama-served num_ctx bound the window
+   *  (knobs: OLLAMA_CONTEXT_LENGTH env / Modelfile PARAMETER num_ctx). */
+  windowCapSource: z.enum(["effectiveContextCapSmall", "effectiveContextCapNano", "served", "none"]),
   /** S: system prompt + tool schemas estimate. */
   systemTokens: z.number(),
   /** Estimated fresh-tail tokens (latest user message + preamble + pending tool results). */

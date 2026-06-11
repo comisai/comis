@@ -16,7 +16,7 @@
  * @module
  */
 import { computeTokenBudget } from "./token-budget.js";
-import type { TokenBudget, WindowCapSource } from "./types.js";
+import type { TokenBudget, WindowCapSource, WindowProvenance } from "./types.js";
 import { OUTPUT_RESERVE_TOKENS } from "./constants.js";
 import type { ModelProfile } from "../executor/model-profile.js";
 
@@ -51,6 +51,12 @@ export const DEFAULT_EFFECTIVE_CAP_BY_CLASS: Readonly<Record<string, number>> = 
  * @param cacheFenceIndex - Optional; passed through to computeTokenBudget. Default: -1.
  * @param effectiveContextCapSmall - Optional override for the small class cap (from contextEngine.budget.effectiveContextCapSmall).
  * @param effectiveContextCapNano  - Optional override for the nano class cap (from contextEngine.budget.effectiveContextCapNano).
+ * @param windowProvenance - Optional KNOB-02 provenance from the executor's
+ *   resolveEffectiveContextWindow reconcile. When present, rawContextWindowTokens
+ *   reports the TRUE configuredWindow (profile.contextWindow arrives ALREADY
+ *   overwritten with the reconciled value) and windowCapSource gains "served" /
+ *   the class knob for upstream binds. Absent ⇒ byte-identical pre-provenance
+ *   behavior (I3 frontier/mid pin).
  */
 export function computeTokenBudgetForProfile(
   profile: ModelProfile,
@@ -59,6 +65,7 @@ export function computeTokenBudgetForProfile(
   cacheFenceIndex: number = -1,
   effectiveContextCapSmall?: number,
   effectiveContextCapNano?: number,
+  windowProvenance?: WindowProvenance,
 ): TokenBudget {
   // Effective context window: cap for small/nano to prevent 256K-overfill degradation.
   // frontier/mid: Infinity → Math.min(contextWindow, Infinity) = contextWindow (byte-identical).
@@ -68,10 +75,20 @@ export function computeTokenBudgetForProfile(
     effectiveContextCapNano,
   );
   const effectiveWindow = Math.min(profile.contextWindow, classCap);
-  // W1 cap provenance: the source is reported ONLY when the cap actually bit —
-  // a small model whose declared window already fits under the cap is "none".
-  const windowCapSource: WindowCapSource =
-    effectiveWindow < profile.contextWindow ? capKnob : "none";
+  // W1 cap provenance: when this function's OWN class cap bit, it is the
+  // binding (tightest) constraint — name the knob. Otherwise (KNOB-02) consult
+  // the executor-side reconcile provenance: "served" when the Ollama-served
+  // window bound upstream; the class knob when the executor's capability cap
+  // bound upstream (no silent clamp); "none" when nothing clamped or no
+  // provenance was threaded (pre-KNOB-02 byte-identical behavior).
+  const capBit = effectiveWindow < profile.contextWindow;
+  const windowCapSource: WindowCapSource = capBit
+    ? capKnob
+    : windowProvenance === undefined || windowProvenance.reconcileSource === "configured"
+      ? "none"
+      : windowProvenance.reconcileSource === "served"
+        ? "served"
+        : capKnob; // "capability": the executor-side class cap bound upstream — name the class knob (no silent clamp)
 
   // 8K-starvation fix: cap O at maxOutputTokens so it cannot consume the whole window.
   // On an 8K window with OUTPUT_RESERVE_TOKENS=8192, uncapped O leaves H=0.
@@ -94,8 +111,12 @@ export function computeTokenBudgetForProfile(
     return {
       ...rawBudget,
       windowTokens: effectiveWindow,
-      rawContextWindowTokens: profile.contextWindow,
+      // KNOB-02: profile.contextWindow arrives executor-OVERWRITTEN with the
+      // reconciled (possibly served) value — the TRUE configured window lives
+      // on the provenance. Absent provenance ⇒ pre-KNOB-02 behavior.
+      rawContextWindowTokens: windowProvenance?.configuredWindow ?? profile.contextWindow,
       windowCapSource,
+      ...(windowProvenance?.served !== undefined && { servedWindowTokens: windowProvenance.served }),
       outputReserveTokens: effectiveO,
       availableHistoryTokens: Math.max(0, rawBudget.availableHistoryTokens + oReduction),
     };
@@ -105,8 +126,10 @@ export function computeTokenBudgetForProfile(
   // For frontier: effectiveWindow == contextWindow (Infinity cap) → byte-identical.
   return {
     ...computeTokenBudget(effectiveWindow, systemTokensEstimate, cacheFenceIndex, freshTailPreambleTokensEstimate),
-    rawContextWindowTokens: profile.contextWindow,
+    // KNOB-02: see the starvation-path comment above — raw = the TRUE configured window.
+    rawContextWindowTokens: windowProvenance?.configuredWindow ?? profile.contextWindow,
     windowCapSource,
+    ...(windowProvenance?.served !== undefined && { servedWindowTokens: windowProvenance.served }),
   };
 }
 

@@ -22,24 +22,44 @@ import type { ContextWindowCapInfo } from "./types-core.js";
 export const CONTEXT_EXHAUSTION_MESSAGE_PREFIX = "Context exhausted: assembled" as const;
 
 /**
- * Maps a WindowCapSource onto the exact `contextEngine.budget.*` config key —
- * the message must name the KNOB, not just the number, so an operator (or an
+ * Maps a WindowCapSource onto the exact knob an operator must turn — the
+ * message must name the KNOB, not just the number, so an operator (or an
  * LLM agent reading the log) can fix it without reading budget-capacity-cap.ts
  * (W1 obs-llm-troubleshooting; the live incident reported "effective window
  * 32000" against a configured contextWindow of 131072 with no link between them).
+ * KNOB-02: the cap-class entries are `contextEngine.budget.*` config keys; the
+ * `served` entry names the OLLAMA knobs (env / Modelfile) — NEVER template
+ * `contextEngine.budget.${source}` (for "served" that renders a nonsense
+ * config key that does not exist).
  */
-const CAP_KNOB_BY_SOURCE: Record<"effectiveContextCapSmall" | "effectiveContextCapNano", string> = {
+const CAP_KNOB_BY_SOURCE: Record<
+  "effectiveContextCapSmall" | "effectiveContextCapNano" | "served",
+  string
+> = {
   effectiveContextCapSmall: "contextEngine.budget.effectiveContextCapSmall",
   effectiveContextCapNano: "contextEngine.budget.effectiveContextCapNano",
+  served: "OLLAMA_CONTEXT_LENGTH (ollama serve env) / PARAMETER num_ctx (Modelfile)",
 };
 
 /** Returns the capped-window suffix for the exhaustion message, or "" when
- *  uncapped/unknown. Exported for reuse by the pre-flight WARN hint. */
+ *  uncapped/unknown. Exported for reuse by the pre-flight WARN hint.
+ *  KNOB-02: branched by source — the served bind gets the Ollama remedy
+ *  ("raise it (0 = uncapped)" is the WRONG knob for served), and a cap bind
+ *  with served provenance names the full chain (configured → served → cap). */
 export function describeWindowCap(effectiveWindow: number, capInfo?: ContextWindowCapInfo): string {
   if (capInfo === undefined || capInfo.windowCapSource === "none") return "";
+  if (capInfo.windowCapSource === "served") {
+    return (
+      ` (model contextWindow ${capInfo.rawContextWindowTokens} but Ollama serves only ${effectiveWindow}` +
+      ` — fix: OLLAMA_CONTEXT_LENGTH=${capInfo.rawContextWindowTokens} ollama serve,` +
+      ` or Modelfile 'PARAMETER num_ctx ${capInfo.rawContextWindowTokens}')`
+    );
+  }
   const knob = CAP_KNOB_BY_SOURCE[capInfo.windowCapSource];
+  const servedClause =
+    capInfo.servedWindowTokens !== undefined ? `, Ollama serves ${capInfo.servedWindowTokens},` : "";
   return (
-    ` (model contextWindow ${capInfo.rawContextWindowTokens} capped to ${effectiveWindow}` +
+    ` (model contextWindow ${capInfo.rawContextWindowTokens}${servedClause} capped to ${effectiveWindow}` +
     ` by ${knob} — raise it (0 = uncapped) or reduce active tool schemas)`
   );
 }
