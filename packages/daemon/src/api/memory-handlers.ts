@@ -32,7 +32,6 @@
 
 import {
   MemorySearchFilesContract,
-  MemoryAskContract,
   MemoryGetFileContract,
   MemoryStoreContract,
   MemoryStatsContract,
