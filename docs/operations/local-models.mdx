@@ -1,0 +1,198 @@
+---
+title: "Local Models"
+description: "Running Comis on local Ollama models — recommended models with measured receipts, capacity and latency knobs, and what each boot WARN means"
+icon: "microchip"
+---
+
+Comis adapts **down** to small local models instead of refusing them. Capability tiers size the
+scaffold to the model class, the context engine budgets against the window the model actually
+serves, and every capacity, schema, and latency check WARNs with the exact knob and the actual
+numbers — it never aborts a boot or a turn. There is no minimum-window floor: a constrained
+deployment boots, runs, and tells you precisely which lever to pull. This page is the operator
+playbook: which models to run (with the measured receipts), how to size the context window,
+which knobs govern capacity and latency, and what each boot WARN means.
+
+Two-tier triage applies throughout: [`comis fleet`](/reference/cli#comis-fleet) surfaces the
+daemon-wide pattern, then [`comis explain`](/reference/cli#comis-explain) root-causes the worst
+session it points at.
+
+## Recommended models (the receipts)
+
+The numbers below are measured, not asserted. Reproduce them with the in-repo
+`scripts/bench-small-model/` harness (standalone — drives models through Ollama's
+OpenAI-compatible API with a Comis-style prompt and tools, no daemon needed) and the
+daemon-routed live tier under `test/live/` (`test/live/scenarios/local/local-models.test.ts`).
+
+| Model | Verdict | Measured receipt |
+|-------|---------|------------------|
+| `qwen3.6:35b` | **Recommended** | 9/9 bench scenarios passed; security floor 100% injection-resisted / 0% secret-leaked / 0% over-refused — even bare-prompt (no guardrail instructions); comprehension 8/8 |
+| `qwen3.6:27b` | Works — one caveat | Security floor holds (100/0/0, fair and bare prompts alike); comprehension 7/8 — fails the one-step natural-language-to-orchestration-graph instruction that 35b passes |
+| `gemma4:31b` | **Not recommended** | Runaway generation: 16× latency and 3.6× tokens vs qwen3.6; one scenario ran 810 s / 56 K tokens (correctness 6/6 — the failure is runaway, not wrong answers) |
+| `gemini-flash-lite` | Frontier control | 100% across the matrix at ~2,240 ms — the calibration baseline for what "good" looks like |
+
+**`qwen3.6:35b`** is the recommended local executive. The 9/9 is a bench-scenario count (the
+full failure-taxonomy matrix: reliability, honesty, comprehension, security), not an
+orchestration-node count — and the security floor held even with a bare prompt carrying no
+guardrail instructions at all.
+
+**`qwen3.6:27b`** is a viable smaller alternative. Its security floor is identical to 35b. The
+one measured cliff is comprehension 7/8: it fails the single-step "turn this natural-language
+request into a multi-agent graph" instruction that 35b passes. The v2.19 orchestration repair
+loop — type-aware validation of graph instructions, recovery of malformed completion markers,
+and tolerance for every common instruction form the model emits — is what makes 27b
+orchestration usable in practice.
+
+**`gemma4:31b`** answers correctly (6/6) but generates without restraint: 16× the latency and
+3.6× the tokens of qwen3.6, with one scenario running 810 seconds and 56 K tokens. The makespan
+ceiling (`stallCeilingMultiplier`, below) exists for exactly this failure class, but the better
+fix is not running the model.
+
+For the full security-hardened local configuration, see the
+[Recommended Secure qwen3.6 Configuration](/reference/config-yaml#recommended-secure-qwen36-configuration).
+
+## Tool-calling models only
+
+Comis requires **native tool-calling**. There is no XML-tag tool-call fallback by design —
+a model that cannot emit structured tool calls cannot drive the agent loop, and a prose-parsing
+fallback would reintroduce the malformed-call failure class the platform measures against. Pick
+tool-calling-capable tags (every model in the table above qualifies; check the Ollama model
+card for "tools" support before adopting a new one).
+
+## Context window setup
+
+The served-window mechanics are documented once, canonically, in the
+[Local model context window](/reference/config-yaml#local-model-context-window) section of the
+config reference: how the boot probe reconciles the Ollama-served `num_ctx` with the configured
+`contextWindow`, the `OLLAMA_CONTEXT_LENGTH` environment variable and Modelfile
+`PARAMETER num_ctx` knobs for raising the served window, the double-cap chain when both the
+served window and a capability cap clamp, the VRAM caveat, and the boot WARN. Start there —
+this page does not restate those instructions.
+
+What the canonical section does not carry is the **quantization lever**: quantized weights and
+a quantized KV cache trade GPU memory for a larger affordable `num_ctx`. A 4-bit weight quant
+(the `q4_K_M`-class tags most Ollama models default to) frees VRAM relative to 8-bit or fp16
+weights, and a quantized KV cache (Ollama's `OLLAMA_KV_CACHE_TYPE=q8_0`, where supported,
+roughly halves KV memory vs the `f16` default) frees memory that scales with context length —
+together they let the same GPU serve a meaningfully larger window. The trade is model quality
+and (for the KV cache) a small accuracy risk on long contexts, so move one step at a time and
+re-run the bench. Raising `num_ctx` without the VRAM headroom triggers exactly the
+OOM-or-thrash caveat documented at the
+[canonical anchor](/reference/config-yaml#local-model-context-window).
+
+## Capacity knobs
+
+- `contextEngine.budget.effectiveContextCapSmall` / `effectiveContextCapNano` — the
+  unconditional class caps (defaults 32000 / 16000; `0` = uncapped): the effective window for a
+  small/nano-class model never exceeds them regardless of what the model serves. See
+  [Capacity Cap](/reference/config-yaml#capacity-cap-agents-contextengine-budget).
+- `providers.entries.<id>.capabilities.capabilityClass` — the override escape hatch: pins the
+  capability class (scaffold level, security level, and the per-class window cap) when the
+  resolver heuristic guesses wrong. The
+  [served-window section](/reference/config-yaml#local-model-context-window) documents when the
+  pin — not the budget caps — is the lever that actually binds the window.
+- `providers.entries.<id>.capabilities.probeServedWindow` — the boot-probe opt-out (set
+  `false` when Ollama is offline at daemon start). Documented with a YAML example at the
+  [served-window section](/reference/config-yaml#local-model-context-window).
+
+## Latency knobs
+
+- `agents.<id>.promptTimeout.promptTimeoutMs` is a **stall budget**, not a wall clock: the
+  deadline resets on stream activity (text and thinking deltas, throttled to about once per
+  second) and on tool completions, so only a fully silent gap kills the turn. It needs to cover
+  the longest silent stretch — in practice the prefill before the first token, which on a
+  loaded local GPU can exceed the 180000 ms default. Raise it for local deployments (e.g.
+  `300000`). See [Prompt Timeout](/reference/config-yaml#prompt-timeout-agents-prompttimeout).
+- `agents.<id>.promptTimeout.stallCeilingMultiplier` is the **makespan ceiling**: a turn is
+  aborted at `promptTimeoutMs × stallCeilingMultiplier` (default 10) even while still
+  streaming. This bounds streaming runaways that would otherwise reset the stall budget forever
+  — the gemma4:31b 810-second receipt above is why this knob exists. Same
+  [table](/reference/config-yaml#prompt-timeout-agents-prompttimeout).
+- `providers.entries.<id>.timeoutMs` is **config-echo only** — it is not enforced on
+  completion calls. The completion deadline lives on `agents.<id>.promptTimeout`; setting a
+  non-default provider value emits a one-time boot WARN naming the real knob (quoted in the
+  WARN list below).
+- `agents.<id>.operationModels.<op>.timeout` overrides the deadline per operation type (the
+  key is `timeout`, not `timeoutMs`). See
+  [Operation Model Overrides](/reference/config-yaml#operation-model-overrides-agents-operationmodels).
+
+## Schema hygiene (GBNF)
+
+llama.cpp-family servers compile tool schemas into GBNF grammars and reject JSON-Schema
+keywords the grammar cannot express. Comis ships a `gbnf` tool-schema profile
+(`models[].comisCompat.toolSchemaProfile: "gbnf"`) that applies structural, removal-only
+transforms before the schemas reach the provider. Providers with `type: "ollama"` enable it
+**automatically** (an explicit `toolSchemaProfile` value always wins); LM Studio, llama-server
+(llama.cpp), and vLLM endpoints opt in explicitly per model with the same key. If a provider
+still rejects a schema at grammar-compile time, the 400 is classified
+(`tool_schema_unsupported`), Comis strips `pattern`/`format` from the offending tools and
+retries exactly once per session before failing honestly — and `comis explain` names the
+offending tool. The enum row, auto-detection Note, and a worked YAML example live in the
+providers section of the [config reference](/reference/config-yaml) (the `comisCompat` model
+table).
+
+## What each boot WARN means
+
+One line each — the shipped message, what it tells you, and the fix.
+
+**"Ollama served context window below configured"** (WARN, once per provider per boot): the
+probe found Ollama serving a smaller `num_ctx` than your configured `contextWindow`, so agents
+on that provider silently run with the smaller window. Fix by raising the served window
+(`OLLAMA_CONTEXT_LENGTH=<configured> ollama serve`, or Modelfile `PARAMETER num_ctx
+<configured>`), or pin `probeServedWindow: false` to skip the probe. Full mechanics at the
+[served-window section](/reference/config-yaml#local-model-context-window).
+
+**"Boot viable-floor check: effective window below minViable — agent will degrade on real
+turns (WARN-only, boot continues)"** (WARN, per infeasible agent): the five-term floor
+(`bootstrapTotalTokens + toolSchemaTokens + outputHeadroomFloor + freshTailReserve +
+safetyMargin`) does not fit the effective window; the hint spells every term's value and names
+the knob for the binding window source. When `toolSchemaTokens` dominates, the lever is the
+tool surface, not the window: the `small` class defers cold tools behind a 24-tool active
+ceiling via `discover_tools`, so pin `capabilityClass` or disable unused MCP servers / builtin
+tool groups. Equation and worked example at the
+[served-window section](/reference/config-yaml#local-model-context-window).
+
+**"providers.timeoutMs is config-echo only — completion deadline lives on
+agents.promptTimeout"** (WARN, once per provider per boot, only for non-default values): you
+set a provider `timeoutMs` expecting it to govern completions — it does not. Remove the
+provider key or tune `agents.<id>.promptTimeout.promptTimeoutMs`
+([Prompt Timeout](/reference/config-yaml#prompt-timeout-agents-prompttimeout)).
+
+**"GBNF tool-schema transforms applied for local provider"** (INFO, once per provider per
+boot): the `gbnf` profile transformed tool schemas — the line carries tool and keyword counts
+and names only, never schema bodies. This is healthy, expected behavior on Ollama providers,
+not a problem to fix.
+
+**"Context window reconciled (served or capability cap bound)"** (INFO, once per session, on
+the first reconciled turn): something smaller than the configured window — the served
+`num_ctx` or a capability cap — is the effective window for this session. Expected on capped
+or served-bound models; a session whose configured window simply wins logs no reconcile line
+at all.
+
+## Compaction on small models
+
+Compaction triggers ratio against the turn's **effective budget window** (the reconciled
+window under the class cap), not the model's configured `contextWindow` — so a capped or
+served-bound small model compacts when its real window fills, not 4× late. And compaction
+input spans are clamped to the **resolved summarizer's** window: a small
+`operationModels.compaction` summarizer (say 8K) is never fed an over-window chunk — oversized
+backlogs split across multiple bounded passes, and the un-summarized remainder stays in
+context, never dropped. The governing knobs are the `contextThreshold` and `leafChunkTokens`
+rows in the [Context Engine section](/reference/config-yaml#context-engine-agents-contextengine);
+pick the summarizer model per agent via
+[`operationModels.compaction`](/reference/config-yaml#operation-model-overrides-agents-operationmodels).
+
+## Diagnosing a degraded local session
+
+Start fleet-wide: `comis fleet --since 24` surfaces the
+`config_posture:served_below_configured` finding (the count of providers serving below their
+configured window at the latest boot — `servedBelowConfiguredCount` on the
+[`obs.fleet.health`](/reference/json-rpc#obs-fleet-health) RPC), the degraded-by-cause
+breakdown (`context_exhausted`, `output_starved`, `timeout`), and breaker/cost rollups. See
+[`comis fleet`](/reference/cli#comis-fleet).
+
+Then go single-session: `comis explain <sessionKey>` returns the numbers-backed verdict naming
+the binding knob — for `context_exhausted` sessions the `contextBudget` section reports
+`windowCapSource` (`served`, the `contextEngine.budget.*` cap, or the `capabilityClass` pin)
+with the assembled-vs-window totals; for `timeout` sessions the verdict names the stall budget
+or the makespan ceiling with the configured and elapsed numbers. See
+[`obs.explain`](/reference/json-rpc#obs-explain).
