@@ -29,8 +29,8 @@
  * @module
  */
 
-import { fingerprint, sanitizeLogString, IncidentContextBudgetSchema } from "@comis/core";
-import type { IncidentContextBudget, IncidentFailure, IncidentSignals } from "@comis/core";
+import { fingerprint, sanitizeLogString, IncidentContextBudgetSchema, IncidentPromptTimeoutSchema } from "@comis/core";
+import type { IncidentContextBudget, IncidentFailure, IncidentPromptTimeout, IncidentSignals } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Tunable thresholds (module-top constants per the naming contract).
@@ -90,6 +90,14 @@ interface Acc {
   misclassTokenByTool: Map<string, string>;
   /** W3: the LAST context.budget trajectory record (the terminal fit check). */
   contextBudget?: IncidentContextBudget;
+  /** LAT-04: the LAST execution.prompt_timeout record (the terminal kill
+   *  explains the end state — a retry-path kill earlier in the session is
+   *  superseded by the kill that actually ended it). */
+  promptTimeout?: IncidentPromptTimeout;
+  /** GBNF-02: the LAST `execution.tool_schema_unsupported` record — the
+   *  strip-retry self-heal outcome (one strip-retry per session means at most
+   *  a handful; the terminal repair state explains the end). */
+  toolSchemaUnsupported?: IncidentSignals["toolSchemaUnsupported"];
   /** W8: event-shape tool.result toolCallIds already counted (dedup — the same
    *  call must not count twice if its result event is duplicated across sources). */
   seenToolResultCallIds: Set<string>;
@@ -120,6 +128,13 @@ function asString(v: unknown): string | undefined {
 
 function asNumber(v: unknown): number | undefined {
   return typeof v === "number" && Number.isFinite(v) ? v : undefined;
+}
+
+/** Keep only string entries of an array payload field (non-array → empty).
+ * Defensive read for record fields that cross the provider/MCP-influenced
+ * trust boundary into admin-facing verdict text (T-175-17). */
+function asStringArray(v: unknown): string[] {
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
 }
 
 /**
@@ -314,6 +329,18 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
       if (parsed.success) acc.contextBudget = parsed.data;
       return;
     }
+    case "execution.prompt_timeout": {
+      // LAT-04 (177): the terminal prompt-timeout attribution record (stall
+      // budget / makespan ceiling / whole-turn — 177-03 emit sites). LAST
+      // record wins — the terminal kill explains the end state. Validated
+      // wholesale against the shared wire schema (the context.budget
+      // discipline, T-177-17); a malformed/partial record is ignored
+      // (forward-compatible — pre-extension rows carrying only timeoutMs
+      // still parse, every other field is optional).
+      const parsed = IncidentPromptTimeoutSchema.safeParse(data);
+      if (parsed.success) acc.promptTimeout = parsed.data;
+      return;
+    }
     case "tool.result_offloaded": {
       if (!tool) return;
       acc.offloads.push({
@@ -326,6 +353,27 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
         // silently yielded "<offloaded>" for every post-Phase-151 event-shape session.
         pointer: relativizeDiskPath(asString(data.diskPathRel)),
       });
+      return;
+    }
+    case "execution.tool_schema_unsupported": {
+      // GBNF-02 (Phase 175): the strip-retry self-heal record (Plan 05 bridge
+      // mapping). LAST record wins — the terminal repair state explains the
+      // end. Content-free by construction (tool + keyword NAMES only — I7);
+      // the string-array filters + exact-true boolean reads keep smuggled
+      // non-string payload entries out of the verdict text (T-175-17). The
+      // WR-05 reason discriminator is validated against its closed vocabulary
+      // (same trust-boundary posture); absent/off-vocabulary → undefined so
+      // pre-WR-05 trajectory records on disk stay readable.
+      const rawReason = asString(data.reason);
+      acc.toolSchemaUnsupported = {
+        toolNames: asStringArray(data.toolNames),
+        strippedKeywords: asStringArray(data.strippedKeywords),
+        retried: data.retried === true,
+        succeeded: data.succeeded === true,
+        ...(rawReason === "stripped" || rawReason === "nothing_to_strip" || rawReason === "gate_closed"
+          ? { reason: rawReason }
+          : {}),
+      };
       return;
     }
     default:
@@ -437,6 +485,10 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     ...(misclassifiedTool !== undefined ? { misclassifiedTool } : {}),
     ...(misclassifiedToken !== undefined ? { misclassifiedToken } : {}),
     ...(acc.contextBudget !== undefined ? { contextBudget: acc.contextBudget } : {}),
+    ...(acc.promptTimeout !== undefined ? { promptTimeout: acc.promptTimeout } : {}),
+    ...(acc.toolSchemaUnsupported !== undefined
+      ? { toolSchemaUnsupported: acc.toolSchemaUnsupported }
+      : {}),
     ...(acc.agentId !== undefined ? { agentId: acc.agentId } : {}),
     ...(acc.channel !== undefined ? { channel: acc.channel } : {}),
   };

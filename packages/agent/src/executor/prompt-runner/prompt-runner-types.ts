@@ -26,6 +26,7 @@ import type { CommandDirectives } from "../command-directive-types.js";
 import type { BudgetGuard } from "../../budget/budget-guard.js";
 import type { CostTracker } from "../../budget/cost-tracker.js";
 import type { ExecutionResult, ExecutionOverrides } from "../types.js";
+import type { EffectiveTimeout } from "../pi-executor/session-bootstrap.js";
 import type { ExecutionPlan } from "../../planner/types.js";
 import type { AuthRotationAdapter } from "../../model/auth-rotation-adapter.js";
 import type { ProviderHealthMonitor } from "../../safety/provider-health-monitor.js";
@@ -65,7 +66,7 @@ export interface RunPromptParams {
   result: ExecutionResult;
   executionOverrides: ExecutionOverrides | undefined;
   executionStartMs: number;
-  effectiveTimeout: { promptTimeoutMs: number; retryPromptTimeoutMs: number };
+  effectiveTimeout: EffectiveTimeout;
   executionId: string;
   bridge: PromptRunnerBridge;
   // Prompt assembly data

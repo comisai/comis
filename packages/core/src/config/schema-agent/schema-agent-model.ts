@@ -125,6 +125,22 @@ export const PromptTimeoutConfigSchema = z.strictObject({
   promptTimeoutMs: z.number().int().positive().default(180_000),
   /** Wall-clock timeout for retry prompt calls in milliseconds. Default: 60s. */
   retryPromptTimeoutMs: z.number().int().positive().default(60_000),
+  /**
+   * Makespan ceiling multiplier (LAT-02, R-1 non-optional): a
+   * streaming-but-runaway generation is aborted at
+   * promptTimeoutMs x stallCeilingMultiplier even though stream/tool
+   * activity keeps resetting the stall budget (gemma4 16x/810s receipt,
+   * scripts/bench-small-model/README.md). Default: 10.
+   *
+   * Bounded 1..100 (177-REVIEW WR-02): a value below 1 INVERTS the
+   * semantics (the makespan fires before the stall budget can ever elapse,
+   * so every timeout -- including genuine provider hangs -- is classified
+   * makespan and suppressed from providerHealth); a huge value overflows
+   * Node's 32-bit setTimeout (promptTimeoutMs x multiplier > 2^31-1 clamps
+   * the delay to 1ms -- every prompt killed instantly). The derivation site
+   * (model-retry.ts) additionally clamps the product as defense-in-depth.
+   */
+  stallCeilingMultiplier: z.number().min(1).max(100).default(10),
 });
 
 /**

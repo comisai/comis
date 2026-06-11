@@ -120,6 +120,16 @@ export interface SessionsApiDeps {
    *  Optional for the same handler-test reason; absent ⇒ the unlink/purge steps are
    *  skipped (the by-session memory delete itself still runs). */
   consolidationStore?: import("@comis/core").MemoryConsolidationStore;
+  /** Executor session-scoped state cleanup (175-REVIEW CR-02): wired at the
+   *  composition root (daemon.ts) to @comis/agent's clearSessionState — the
+   *  single authoritative path that drops the per-key tool-schema snapshots,
+   *  the GBNF-02 strip-retry once-gate, JIT-guide delivery, cache latches,
+   *  etc. session.reset_conversation / session.delete call it so a reset or
+   *  recreated session does not inherit the old key's executor state (the
+   *  strip once-gate would otherwise terminal-fail the "fresh" session's
+   *  first grammar-400 with zero repair attempts). Optional so existing
+   *  handler tests construct deps without it; absent ⇒ skipped. */
+  clearAgentSessionState?: (formattedSessionKey: string) => void;
 }
 
 /**

@@ -232,6 +232,14 @@ export interface SingleAgentDeps {
    *  Map from provider config key (e.g. "qwen36-local") to discovered num_ctx.
    *  Absent → probe not run or all failed; executors fall back to configured window. */
   servedWindowByProvider?: Map<string, number>;
+  /** KNOB-01/03: daemon-owned collector — one served-vs-configured comparison per
+   *  provider; daemon.ts derives servedBelowConfiguredCount from it at the posture
+   *  write (one comparison, two surfaces — no drift). */
+  servedWindowComparisons?: Map<string, import("@comis/agent").ServedWindowComparison>;
+  /** FLOOR-01: daemon-owned collector of per-agent boot window info (registry-mirrored
+   *  configured window + reconciled effective window + profile) — consumed by the
+   *  daemon's viable-floor loop after setupTools. */
+  agentBootWindowInfo?: Map<string, import("@comis/agent").AgentBootWindowInfo>;
 }
 
 /** Per-agent outputs from setupSingleAgent(), matching the Maps in AgentsResult. */

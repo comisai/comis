@@ -21,16 +21,31 @@
  *      failure (HTTP 503 → "overloaded") repeated until the per-tool breaker
  *      opened. The 503 has NO misclassification signal, so it falls through to
  *      here.
- *   3. context_bloat / exec_dependency / provider_timeout — three low-risk
+ *   3. tool_schema_unsupported (GBNF-02, Phase 175) — an acute, deterministic
+ *      provider-schema rejection: upstream of any terminal state (out-ranks
+ *      context_exhausted/output_starved) but downstream of the two X3-mandated
+ *      codes, whose frozen fixtures carry no schema-rejection records (cannot
+ *      regress them). Fires only when the one-shot strip-retry did NOT
+ *      recover — a recovered repair is evidence, not a verdict.
+ *   4. context_bloat / exec_dependency / provider_timeout — three low-risk
  *      "insurance" codes that broaden 156/G1 corpus coverage. They never fire on
  *      the two X3 fixtures (the two above match first), so they cannot regress
  *      the phase-done gate.
- *   4. context_exhausted / output_starved (QT2/QT3 — the Glass Box degradation
+ *   5. context_exhausted / output_starved (QT2/QT3 — the Glass Box degradation
  *      detectors) — the two NAMED terminal-state causes. They key on the
  *      metadata-derived `endReason` (threaded onto the signals by the handler),
  *      NOT a tool failure, so they sit LAST: a tool-failure cause is upstream of
  *      the terminal state and out-ranks them. They fire only when the run's
  *      mapped endReason IS the cause, and never on a clean session.
+ *   6. prompt_timeout (LAT-04, Phase 177) — the NAMED terminal latency cause,
+ *      keyed on endReason "timeout" (alive since the 177-04 END_REASON_MAP
+ *      `prompt_timeout → "timeout"` entry). Same terminal band as #5 (the three
+ *      endReason keys are mutually exclusive); every tool-failure cause
+ *      out-ranks it. Numbers-backed from the enriched execution.prompt_timeout
+ *      signal when present (stall names the binding knob, makespan names
+ *      stallCeilingMultiplier); pre-extension sessions degrade to a generic
+ *      knob suggestion. The frozen 678/503 fixtures carry no prompt_timeout
+ *      records and no endReason "timeout" — cannot regress them.
  *
  * The two X3-mandated codes are #1 and #2; phase-done gates ONLY on X1/X2/X3.
  *
@@ -161,7 +176,40 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
     };
   },
 
-  // 3) context_bloat (insurance — large-result offloads + a token spike).
+  // 3) tool_schema_unsupported (GBNF-02 — acute provider-schema rejection at
+  //    grammar-compile/unmarshal time). Fires ONLY on an UNRECOVERED one-shot
+  //    strip-retry: a recovered repair is evidence, not a verdict (T-175-19).
+  //    Detail is assembled solely from Comis-registry tool names + the closed
+  //    keyword names — the signal carries no body fields by construction
+  //    (T-175-17). The WR-05 reason discriminator branches the wording: the
+  //    gate-closed terminal previously emitted the same payload as
+  //    nothing-to-strip, so a session that healed once and then hit the gate
+  //    produced a verdict claiming "nothing strippable" when stripping WAS
+  //    performed earlier — the exact wrong-way pointer the troubleshooting
+  //    doctrine forbids. Absent reason (pre-WR-05 records) falls back to the
+  //    retried-based wording.
+  (s) => {
+    if (!s.toolSchemaUnsupported || s.toolSchemaUnsupported.succeeded) return null;
+    const { toolNames, strippedKeywords, retried, reason } = s.toolSchemaUnsupported;
+    const branch =
+      reason === "gate_closed"
+        ? ", a strip-pattern/format-retry was already attempted earlier this session (once-per-session gate closed)"
+        : reason === "nothing_to_strip"
+          ? ", nothing strippable so no retry was attempted"
+          : retried
+            ? `, one strip-${strippedKeywords.join("/")}-retry already attempted`
+            : ", nothing strippable so no retry was attempted";
+    return {
+      code: "tool_schema_unsupported",
+      detail: `provider rejected the tool JSON Schema at grammar-compile (GBNF) — tool(s) [${toolNames.join(", ") || "unknown"}]${branch}, still failing`,
+      suggestedNextSteps: [
+        'set providers.entries.<provider>.models[].comisCompat.toolSchemaProfile: "gbnf" (auto-enabled only for provider type "ollama"; LM Studio/llama.cpp/vLLM need the explicit value)',
+        "obs.explain depth=full for the raw failure rows",
+      ],
+    };
+  },
+
+  // 4) context_bloat (insurance — large-result offloads + a token spike).
   (s) => {
     if (s.offloads.length < CONTEXT_BLOAT_MIN_OFFLOADS) return null;
     const spike = s.offloads.some((o) => o.originalChars >= TOKEN_SPIKE_CHARS);
@@ -185,7 +233,7 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
     };
   },
 
-  // 4) exec_dependency (insurance — ModuleNotFound-class exec failure).
+  // 5) exec_dependency (insurance — ModuleNotFound-class exec failure).
   (s) => {
     if (!hasModuleNotFound(s)) return null;
     const failure = s.failures.find(
@@ -208,7 +256,7 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
     };
   },
 
-  // 5) provider_timeout (insurance — any timeout-kind failure).
+  // 6) provider_timeout (insurance — any timeout-kind failure).
   (s) => {
     const failure = s.failures.find((f) => f.errorKind === "timeout");
     if (failure === undefined) return null;
@@ -226,7 +274,7 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
     };
   },
 
-  // 6) context_exhausted (QT2 — the NAMED terminal degradation cause). Keyed on
+  // 7) context_exhausted (QT2 — the NAMED terminal degradation cause). Keyed on
   //    the metadata-derived endReason, NOT a tool failure — so it sits BELOW the
   //    tool-failure rules above (a misclassification/breaker/dependency/timeout
   //    cause is upstream of, and out-ranks, the terminal state). Fires only when
@@ -248,8 +296,23 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
       const capped = b.windowCapSource !== "none";
       const systemSharePct =
         b.windowTokens > 0 ? Math.round((b.systemTokens / b.windowTokens) * 100) : 0;
+      // KNOB-02 (Phase 176): "served" is NOT a contextEngine.budget.* knob —
+      // templating it would render a nonsense config key (the union member name
+      // suffixed onto the knob prefix) and misdirect the operator. The served
+      // branch names the failure class (Ollama served a smaller window than
+      // configured); the real knobs are in the suggested step below.
+      // WR-01: "capabilityClass" is ALSO not a budget knob — the executor-side
+      // DEFAULT_EFFECTIVE_CAP_BY_CLASS cap reads only the operator's
+      // providers.entries.<id>.capabilities.capabilityClass pin, so the verdict
+      // must name the PIN ("raise contextEngine.budget.effectiveContextCapSmall"
+      // changes nothing on that branch — the dead-knob misdirection this phase
+      // exists to kill). The genuine budget-knob branch stays byte-identical.
       const capClause = capped
-        ? ` (model contextWindow ${String(b.rawContextWindowTokens)} capped by contextEngine.budget.${b.windowCapSource})`
+        ? (b.windowCapSource === "served"
+            ? ` (model contextWindow ${String(b.rawContextWindowTokens)} but Ollama served a smaller window)`
+            : b.windowCapSource === "capabilityClass"
+              ? ` (model contextWindow ${String(b.rawContextWindowTokens)} capped by the providers.entries.<id>.capabilities.capabilityClass pin)`
+              : ` (model contextWindow ${String(b.rawContextWindowTokens)} capped by contextEngine.budget.${b.windowCapSource})`)
         : "";
       return {
         code: "context_exhausted",
@@ -261,8 +324,12 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
         suggestedNextSteps: [
           ...(capped
             ? [
-                `raise contextEngine.budget.${b.windowCapSource} (0 = uncapped) — the model declares ` +
-                  `${String(b.rawContextWindowTokens)} tokens but the effective window was ${String(b.windowTokens)}`,
+                b.windowCapSource === "served"
+                  ? `set OLLAMA_CONTEXT_LENGTH=${String(b.rawContextWindowTokens)} (ollama serve) or Modelfile 'PARAMETER num_ctx ${String(b.rawContextWindowTokens)}' — the model is configured for ${String(b.rawContextWindowTokens)} but Ollama serves less`
+                  : b.windowCapSource === "capabilityClass"
+                    ? `pin a higher providers.entries.<id>.capabilities.capabilityClass (or remove the pin) — the pinned class capped the model's declared ${String(b.rawContextWindowTokens)} tokens to ${String(b.windowTokens)}; the contextEngine.budget.* caps do not move this bind`
+                    : `raise contextEngine.budget.${b.windowCapSource} (0 = uncapped) — the model declares ` +
+                      `${String(b.rawContextWindowTokens)} tokens but the effective window was ${String(b.windowTokens)}`,
               ]
             : []),
           systemSharePct >= 50
@@ -284,7 +351,7 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
     };
   },
 
-  // 7) output_starved (QT3 — the NAMED terminal output-truncation cause). Same
+  // 8) output_starved (QT3 — the NAMED terminal output-truncation cause). Same
   //    lowest-priority placement as context_exhausted: it explains the terminal
   //    state, so any tool-failure cause out-ranks it. Fires only when the mapped
   //    endReason IS the output-starvation cause (a terminal output-cap truncation
@@ -298,6 +365,82 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
       suggestedNextSteps: [
         "raise the agent's maxTokens, or enable contextEngine.outputEscalation so a capped turn retries with a larger output budget",
         "if the answer is legitimately long, split the request or ask the agent to continue",
+        "obs.explain depth=full",
+      ],
+    };
+  },
+
+  // 9) prompt_timeout (LAT-04, Phase 177 — the NAMED terminal latency cause).
+  //    Keyed on the metadata-derived endReason (END_REASON_MAP prompt_timeout →
+  //    "timeout", 177-04), NOT a tool failure — sits BELOW the tool-failure
+  //    rules: a session that died on a prompt timeout with CLEAN tools used to
+  //    fall through to NO verdict (rule 6 provider_timeout requires a tool
+  //    failure — research Critical Finding 7 point 6). Numbers-backed from the
+  //    enriched execution.prompt_timeout signal when present; bindingKnob is
+  //    the PRE-RENDERED config-key string from the agent-side source→knob
+  //    table (never re-templated here — the KNOB-02 discipline; the only local
+  //    templating is the agents.<id>.promptTimeout.* fallback, a REAL key
+  //    family). Cannot regress the frozen 678/503 fixtures (no prompt_timeout
+  //    records, no endReason "timeout" in them).
+  (s) => {
+    if (s.endReason !== "timeout") return null;
+    const t = s.promptTimeout;
+    if (t !== undefined) {
+      if (t.limit === "makespan") {
+        // Makespan kill = streaming runaway (the model kept producing past the
+        // ceiling) — never framed as a stall; the lever is the multiplier.
+        return {
+          code: "prompt_timeout",
+          detail:
+            `makespan ceiling ${String(t.makespanMs ?? t.timeoutMs)}ms exceeded after ${String(t.durationMs ?? t.timeoutMs)}ms ` +
+            `while still streaming — streaming runaway (stall budget ${String(t.stallBudgetMs ?? 0)} × stallCeilingMultiplier)`,
+          suggestedNextSteps: [
+            `raise agents.${s.agentId ?? "<id>"}.promptTimeout.stallCeilingMultiplier (ceiling ${String(t.makespanMs ?? 0)}ms) or investigate runaway model output`,
+            "obs.explain depth=full",
+          ],
+        };
+      }
+      if (t.limit === undefined) {
+        // Whole-turn retry kill (`limit` ABSENT): rotation/fallback/short-
+        // retry prompts race the NON-resettable retryPromptTimeoutMs — never
+        // framed as a stall kill, and the lever is the RETRY knob (177-REVIEW
+        // WR-01; the same branch the agent-side classify hint takes). The
+        // retry knob is a REAL agents.* key family, so local templating is
+        // sanctioned (the KNOB-02 fallback discipline) — deliberately NOT
+        // t.bindingKnob: pre-WR-01 rows on disk carry the wrong
+        // promptTimeoutMs knob for exactly this class.
+        return {
+          code: "prompt_timeout",
+          detail:
+            `whole-turn retry timeout ${String(t.timeoutMs)}ms exceeded after ${String(t.durationMs ?? t.timeoutMs)}ms — ` +
+            `retry/fallback prompts use the non-resettable retryPromptTimeoutMs, not the stall budget`,
+          suggestedNextSteps: [
+            `raise agents.${s.agentId ?? "<id>"}.promptTimeout.retryPromptTimeoutMs (currently ${String(t.timeoutMs)})`,
+            "obs.explain depth=full",
+          ],
+        };
+      }
+      // Stall kill (limit === "stall") — the binding knob came pre-rendered
+      // from the emit site when present.
+      const knob = t.bindingKnob ?? `agents.${s.agentId ?? "<id>"}.promptTimeout.promptTimeoutMs`;
+      return {
+        code: "prompt_timeout",
+        detail:
+          `stall budget ${String(t.stallBudgetMs ?? t.timeoutMs)}ms exceeded after ${String(t.durationMs ?? t.timeoutMs)}ms ` +
+          `with no stream/tool activity — binding knob: ${knob}`,
+        suggestedNextSteps: [
+          `raise ${knob} (currently ${String(t.stallBudgetMs ?? t.timeoutMs)}) — local prefill on consumer hardware can exceed it`,
+          "obs.explain depth=full",
+        ],
+      };
+    }
+    // Pre-extension session (endReason "timeout" but no enriched record on the
+    // trajectory): still name the cause, suggest the knob FAMILY, invent no numbers.
+    return {
+      code: "prompt_timeout",
+      detail: "prompt timed out (no enriched timeout record — pre-extension session)",
+      suggestedNextSteps: [
+        `raise agents.${s.agentId ?? "<id>"}.promptTimeout.promptTimeoutMs`,
         "obs.explain depth=full",
       ],
     };

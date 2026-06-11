@@ -358,8 +358,14 @@ export interface MessagingEvents {
     windowTokens: number;
     /** The model's declared contextWindow before any cap (== windowTokens when uncapped). */
     rawContextWindowTokens: number;
-    /** Which contextEngine.budget.* knob clamped the window (closed union — never an open string). */
-    windowCapSource: "effectiveContextCapSmall" | "effectiveContextCapNano" | "none";
+    /** What clamped the window (closed union — never an open string). The cap
+     *  members are contextEngine.budget.* knob names; "served" (KNOB-02) means
+     *  the Ollama-served num_ctx bound the window (knobs: OLLAMA_CONTEXT_LENGTH
+     *  env / Modelfile PARAMETER num_ctx); "capabilityClass" (WR-01) means the
+     *  executor-side class cap from the operator's
+     *  providers.entries.<id>.capabilities.capabilityClass pin bound — the pin
+     *  is the lever (the budget knobs are inert on that branch). */
+    windowCapSource: "effectiveContextCapSmall" | "effectiveContextCapNano" | "served" | "capabilityClass" | "none";
     /** S: system prompt + tool schemas estimate. */
     systemTokens: number;
     /** Estimated fresh-tail tokens (latest user message + preamble + pending tool results). */
@@ -478,12 +484,26 @@ export interface MessagingEvents {
     timestamp: number;
   };
 
-  /** Prompt execution timed out (wall-clock timeout exceeded) */
+  /** Prompt execution timed out (wall-clock timeout exceeded).
+   *  LAT-04 (177-03): all post-v2.20 fields are optional — old rows and
+   *  legacy emitters stay valid. Content-free by construction: numbers,
+   *  closed enums, and the pre-rendered config-KEY string only. */
   "execution:prompt_timeout": {
     agentId: string;
     sessionKey: string;
     timeoutMs: number;
     timestamp: number;
+    /** Elapsed wall-clock ms at kill (clock.now() - retryStartMs). */
+    durationMs?: number;
+    /** Which limit fired: stall budget vs makespan ceiling. Absent = whole-turn (retry-path/pre-LAT-02 rows). */
+    limit?: "stall" | "makespan";
+    /** Binding resolution level (LAT-01). */
+    source?: "operation_explicit" | "operation_default" | "agent_config" | "builtin_default" | "graph_constant";
+    /** Pre-rendered config-key string (content-free — knob NAME + ids only, never values/bodies). */
+    bindingKnob?: string;
+    operationType?: string;
+    stallBudgetMs?: number;
+    makespanMs?: number;
   };
 
   /** Output escalation triggered: LLM hit max_tokens and retry is being attempted with higher output budget */
@@ -509,6 +529,30 @@ export interface MessagingEvents {
     blocksRemoved: number;
     thoughtSignaturesStripped: number;
     succeeded: boolean;
+    timestamp: number;
+  };
+
+  /** GBNF-02 self-heal fired: the provider rejected the tool JSON Schema at
+   *  grammar-compile/unmarshal time (llama.cpp "JSON schema conversion
+   *  failed", Ollama Go-side tools unmarshal). The runner stripped
+   *  pattern/format from the named session-held tool schemas and retried
+   *  exactly once per session ('retried' false when nothing was strippable).
+   *  Payload is content-free: tool + keyword NAMES only, never schema bodies
+   *  (I7). 'succeeded' reports whether the retry produced a non-empty
+   *  response. 'reason' discriminates the branch (175-REVIEW WR-05 — the two
+   *  terminal branches were otherwise byte-identical and the obs verdict
+   *  misdirected the operator): "stripped" = strip applied + one retry fired;
+   *  "nothing_to_strip" = no pattern/format anywhere, futile retry skipped;
+   *  "gate_closed" = the session's single strip-retry was already consumed
+   *  earlier (a repair WAS attempted this session). */
+  "execution:tool_schema_unsupported": {
+    agentId: string;
+    sessionKey: string;
+    toolNames: string[];
+    strippedKeywords: string[];
+    retried: boolean;
+    succeeded: boolean;
+    reason: "stripped" | "nothing_to_strip" | "gate_closed";
     timestamp: number;
   };
 

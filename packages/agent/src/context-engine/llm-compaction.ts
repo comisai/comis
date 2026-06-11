@@ -32,6 +32,7 @@ import { systemNowMs } from "@comis/core";
 import type { ContextLayer, TokenBudget, CompactionLayerDeps } from "./types.js";
 import type { CapabilityClass } from "../executor/model-profile.js";
 import { resolveCompactionStrategy } from "./compaction-capability-router.js";
+import { effectiveSummarizerWindow } from "./summarizer-window.js";
 import { isSecurityRelevantMessage } from "./security-context-pinner.js";
 import type { SecurityPinMarkers } from "./security-context-pinner.js";
 import {
@@ -42,6 +43,7 @@ import {
   CHARS_PER_TOKEN_RATIO,
   MIN_MIDDLE_MESSAGES_FOR_COMPACTION,
   CACHE_AWARE_COMPACTION_BLOCK_THRESHOLD,
+  SUMMARIZER_PROMPT_OVERHEAD_TOKENS,
 } from "./constants.js";
 import {
   estimateContextCharsWithDualRatio,
@@ -147,15 +149,25 @@ export function validateCompactionSummary(summary: string): {
 /**
  * Persist a compaction entry to the SessionManager's fileEntries.
  *
- * Creates a compaction summary message at the beginning of the session,
- * removes old entries before the cut point, and calls `_rewriteFile()` once.
+ * Inserts a compaction summary message immediately after the preserved head
+ * (or at the very front when `headCount === 0`), removes EXACTLY the message
+ * entries named by `removeMessageOrdinals`, and calls `_rewriteFile()` once.
+ *
+ * Review WR-01: removal is by IDENTITY — the caller passes the file-order
+ * message ordinals of the SUMMARIZED span — never by count. The previous
+ * count-based removal took the first (pinned + span) middle entries
+ * positionally, which deleted un-summarized REMAINDER entries from the durable
+ * session file whenever an S4-pinned message sat later in the middle: durable
+ * history deletion the summary does not cover (Pitfall 3). With identity
+ * removal, pinned messages AND the remainder survive in the file regardless of
+ * interleaving; only content the summary actually covers is removed.
  *
  * This is safe because `transformContext` runs within the `withSession()` write lock.
  */
 function persistCompaction(
   sm: unknown,
   summaryText: string,
-  keptTailCount: number,
+  removeMessageOrdinals: ReadonlySet<number>,
   headCount: number,
   discoveredTools: string[],
 ): void {
@@ -175,77 +187,34 @@ function persistCompaction(
     },
   };
 
-  // Calculate which message entries to remove: only the MIDDLE zone.
-  // Preserve: first `headCount` message entries + last `keptTailCount` message entries.
-  const messageEntries = fileEntries.filter((e: any) => e.type === "message");
-  const entriesToRemove = messageEntries.length - headCount - keptTailCount;
-
-  if (entriesToRemove > 0) {
-    // Find indices of middle message entries to remove (skip first headCount, remove next entriesToRemove)
-    let messagesSeen = 0;
-    let removedCount = 0;
-    const indicesToRemove = new Set<number>();
-    for (let i = 0; i < fileEntries.length && removedCount < entriesToRemove; i++) {
-      if (fileEntries[i].type === "message") { // eslint-disable-line security/detect-object-injection
-        messagesSeen++;
-        // Skip head entries (first headCount message entries)
-        if (messagesSeen > headCount) {
-          indicesToRemove.add(i);
-          removedCount++;
-        }
-      }
-    }
-
-    // Build new fileEntries: preserved head + compaction entry + non-removed tail
-    // Insert the compaction entry after the last preserved head message entry
-    let lastHeadMsgIdx = -1;
-    let headMsgsSeen = 0;
-    for (let i = 0; i < fileEntries.length; i++) {
-      if (fileEntries[i].type === "message") { // eslint-disable-line security/detect-object-injection
-        headMsgsSeen++;
-        if (headMsgsSeen <= headCount) lastHeadMsgIdx = i;
-        else break;
-      }
-    }
-
-    const newEntries: unknown[] = [];
-    for (let i = 0; i < fileEntries.length; i++) {
-      if (!indicesToRemove.has(i)) {
-        newEntries.push(fileEntries[i]); // eslint-disable-line security/detect-object-injection
-      }
-      // Insert compaction entry after the last head message entry
-      if (i === lastHeadMsgIdx) {
+  // Single walk over fileEntries: drop the named message ordinals, insert the
+  // compaction entry immediately after the headCount-th message entry (the
+  // pre-existing placement), or prepend when there is no preserved head.
+  const newEntries: unknown[] = [];
+  let inserted = false;
+  if (headCount === 0) {
+    newEntries.push(compactionEntry);
+    inserted = true;
+  }
+  let ordinal = 0; // index among MESSAGE entries, file order
+  for (const entry of fileEntries) {
+    if ((entry as { type?: string }).type === "message") {
+      if (!removeMessageOrdinals.has(ordinal)) newEntries.push(entry);
+      ordinal++;
+      if (ordinal === headCount && !inserted) {
         newEntries.push(compactionEntry);
+        inserted = true;
       }
-    }
-
-    // If no head messages (headCount=0), prepend compaction entry
-    if (headCount === 0 && !newEntries.includes(compactionEntry)) {
-      newEntries.unshift(compactionEntry);
-    }
-
-    // Replace fileEntries in-place
-    fileEntries.length = 0;
-    fileEntries.push(...newEntries);
-  } else {
-    // No entries to remove -- insert compaction entry after head
-    if (headCount > 0) {
-      let headMsgsSeen = 0;
-      let insertIdx = 0;
-      for (let i = 0; i < fileEntries.length; i++) {
-        if (fileEntries[i].type === "message") { // eslint-disable-line security/detect-object-injection
-          headMsgsSeen++;
-          if (headMsgsSeen === headCount) {
-            insertIdx = i + 1;
-            break;
-          }
-        }
-      }
-      fileEntries.splice(insertIdx, 0, compactionEntry);
     } else {
-      fileEntries.unshift(compactionEntry);
+      newEntries.push(entry);
     }
   }
+  // Defensive: fewer message entries than headCount — append at the end.
+  if (!inserted) newEntries.push(compactionEntry);
+
+  // Replace fileEntries in-place
+  fileEntries.length = 0;
+  fileEntries.push(...newEntries);
 
   if (typeof sessionManager._rewriteFile === "function") {
     sessionManager._rewriteFile();
@@ -367,14 +336,17 @@ export function createLlmCompactionLayer(
           }
         }
 
-        // Step 4: Resolve model
+        // Step 4: Resolve model. INT-W1: the served-window truth rides the SAME
+        // branch as the model selection (gated per candidate at the wiring site).
         /* eslint-disable @typescript-eslint/no-explicit-any */
         let model: any;
         let apiKey: string;
+        let servedSummarizerWindow: number | undefined;
         if (deps.overrideModel) {
           try {
             model = deps.overrideModel.model;
             apiKey = await deps.overrideModel.getApiKey();
+            servedSummarizerWindow = deps.overrideModel.servedWindow;
           } catch (overrideErr) {
             deps.logger.warn(
               {
@@ -386,10 +358,12 @@ export function createLlmCompactionLayer(
             );
             model = deps.getModel();
             apiKey = await deps.getApiKey();
+            servedSummarizerWindow = deps.primaryServedWindow;
           }
         } else {
           model = deps.getModel();
           apiKey = await deps.getApiKey();
+          servedSummarizerWindow = deps.primaryServedWindow;
         }
         /* eslint-enable @typescript-eslint/no-explicit-any */
 
@@ -513,6 +487,94 @@ export function createLlmCompactionLayer(
           return messages;
         }
 
+        // SUMW-01 (Phase 178): clamp the summarized span to the RESOLVED
+        // summarizer's window. Reads the LOCAL `model` resolved at Step 4 — the
+        // SAME variable handed to generateSummary (the try/catch override
+        // fallback already decided which model summarizes; re-resolving here
+        // could disagree — Pitfall 2). With an `operationModels.compaction`
+        // override the summarizer's window (e.g. 8K) can be far smaller than
+        // the middle zone — feeding the whole span is a provider overflow.
+        // INT-W1: the configured window is min()'d with the Phase-176 SERVED
+        // window bound to the SAME Step-4 candidate (a served-bound PRIMARY —
+        // num_ctx 8_192 under a configured 131_072 — clamps too, not just
+        // overrides). Neither valid → clamp OFF (never invent a window). The 85%
+        // trigger + cooldown re-fire until the remainder backlog drains (the
+        // cut===0 escalation guarantees every evaluation makes progress).
+        const summarizerWindow = effectiveSummarizerWindow(
+          (model as { contextWindow?: number } | undefined)?.contextWindow, servedSummarizerWindow,
+        );
+        // Review CR-01: the summary-output reserve must be SUMMARIZER-sized, not
+        // session-sized — subtracting the session's outputReserveTokens (8_192 on
+        // any frontier session) from an 8K summarizer's window goes permanently
+        // negative and silently disables compaction forever (a regression vs the
+        // pre-clamp Level-2/3 floor). Reserve at most a QUARTER of the resolved
+        // summarizer's own window, and pass the SAME value to compactWithFallback
+        // below so the clamp and the generateSummary reserveTokens agree.
+        const summaryReserve =
+          summarizerWindow === undefined
+            ? budget.outputReserveTokens
+            : Math.min(budget.outputReserveTokens, Math.max(1, Math.floor(summarizerWindow / 4)));
+        let spanToSummarize = evictableMiddle;
+        let remainingMiddle: AgentMessage[] = [];
+        if (summarizerWindow !== undefined) {
+          const maxSpanTokens =
+            summarizerWindow - summaryReserve - SUMMARIZER_PROMPT_OVERHEAD_TOKENS;
+          // Oldest-first prefix walk over the evictable middle: cut at the
+          // first message that would exceed maxSpanTokens. Review WR-04: each
+          // message is measured with the SAME dual-ratio estimate the layer's
+          // own 85% trigger uses (toolResult chars weighted ×2 before the 3.5
+          // divide) — a flat chars/3.5 walk under-counts structured content by
+          // ~15-17%, re-opening the provider-overflow class on toolResult-heavy
+          // middles. One estimator per layer (single-sourced with the trigger).
+          let spanTokens = 0;
+          let cut = 0;
+          for (const m of evictableMiddle) {
+            /* eslint-disable @typescript-eslint/no-explicit-any */
+            const msgTokens = Math.ceil(
+              estimateContextCharsWithDualRatio([m] as any) / CHARS_PER_TOKEN_RATIO,
+            );
+            /* eslint-enable @typescript-eslint/no-explicit-any */
+            if (spanTokens + msgTokens > maxSpanTokens) break;
+            spanTokens += msgTokens;
+            cut++;
+          }
+          if (cut === 0) {
+            // Review CR-01 (convergence): even the OLDEST evictable message alone
+            // exceeds the span budget (or the window is below reserve + overhead).
+            // Skipping here would disarm compaction PERMANENTLY — the oldest
+            // message never leaves the middle's head, so every later evaluation
+            // takes the same exit while context grows unboundedly. Instead feed
+            // that ONE message to compactWithFallback and let its pre-existing
+            // escalation bound it (Level 2 filters oversized messages; Level 3 is
+            // the guaranteed-shrink count-only note) — degraded but ALWAYS
+            // shrinking, exactly the pre-clamp floor. DEBUG, counts/window only.
+            deps.logger.debug(
+              {
+                step: "compaction-span-clamp",
+                summarizerWindow,
+                maxSpanTokens,
+                middleMessages: evictableMiddle.length,
+              },
+              "Compaction span clamp: oldest middle message exceeds the summarizer budget; escalating one message through the fallback ladder",
+            );
+            cut = 1;
+          }
+          if (cut < evictableMiddle.length) {
+            spanToSummarize = evictableMiddle.slice(0, cut);
+            remainingMiddle = evictableMiddle.slice(cut);
+            deps.logger.debug(
+              {
+                step: "compaction-span-clamp",
+                spanMessages: spanToSummarize.length,
+                remainingMessages: remainingMiddle.length,
+                summarizerWindow,
+                maxSpanTokens,
+              },
+              "Compaction span clamped to the resolved summarizer window",
+            );
+          }
+        }
+
         // Emit compaction_routed for llm/strong-summarizer paths too (for observability)
         if (deps.eventBus && deps.agentId && deps.sessionKey) {
           deps.eventBus.emit("context:compaction_routed", {
@@ -545,13 +607,17 @@ export function createLlmCompactionLayer(
             : "LLM compaction triggered: context exceeds 85% threshold",
         );
 
-        // Step 7: Summarize ONLY the middle zone (do NOT pass head or tail to generateSummary).
-        // Use evictableMiddle (security-pinned messages already excluded via S4 filtering above).
+        // Step 7: Summarize ONLY the clamped middle span (do NOT pass head or tail
+        // to generateSummary). spanToSummarize is the SUMW-01 oldest-first prefix of
+        // evictableMiddle that fits the resolved summarizer's window (security-pinned
+        // messages already excluded via S4 filtering above); when the clamp does not
+        // bind it IS evictableMiddle. summaryReserve is the SAME summarizer-sized
+        // reserve the clamp budgeted (review CR-01) — clamp and call always agree.
         const compactionResult = await compactWithFallback(
-          evictableMiddle,
+          spanToSummarize,
           model,
           apiKey,
-          budget.outputReserveTokens,
+          summaryReserve,
           deps.logger,
         );
 
@@ -564,20 +630,50 @@ export function createLlmCompactionLayer(
           discoveredTools,
         } as unknown as AgentMessage;
 
-        // Assemble: head + pinned + summary + tail
+        // Assemble: head + pinned + summary + remainingMiddle + tail
         // S4: pinned messages from the middle zone are excluded from summarization
         // but MUST be preserved in the output so they are never evicted from context.
         // They are placed before the summary (surviving context, not part of the summary).
+        // SUMW-01: the un-summarized remainder of the middle zone is NEVER dropped
+        // (Pitfall 3 — a dropped remainder is silent, unrecoverable history deletion);
+        // it sits between the summary and the tail in original order. When the clamp
+        // does not bind, remainingMiddle is [] → output identical to before SUMW-01.
         // head stays at original positions for cache prefix stability.
         const headMessages = messages.slice(0, headEndIndex);
         const tailMessages = messages.slice(tailStartIndex);
-        const result = [...headMessages, ...pinned, summaryMessage, ...tailMessages];
+        const result = [
+          ...headMessages,
+          ...pinned,
+          summaryMessage,
+          ...remainingMiddle,
+          ...tailMessages,
+        ];
 
         // Step 8: Persist compaction to SessionManager
+        // SUMW-01 / review WR-01: durable-side conservation is by IDENTITY —
+        // messages[i] corresponds 1:1 to the i-th message entry in fileEntries
+        // (the positional model the head/tail counts already relied on), so we
+        // remove EXACTLY the summarized span's entries. Pinned messages and the
+        // un-summarized remainder survive in the durable file regardless of how
+        // they interleave; removing anything else would be durable history
+        // deletion the summary does not cover (the Pitfall-3 data loss).
         try {
           const sm = deps.getSessionManager();
           if (sm) {
-            persistCompaction(sm, compactionResult.summary, tailMessages.length, headMessages.length, discoveredTools);
+            const spanSet = new Set(spanToSummarize);
+            const removeMessageOrdinals = new Set<number>();
+            /* eslint-disable security/detect-object-injection -- array index access */
+            for (let i = headEndIndex; i < tailStartIndex; i++) {
+              if (spanSet.has(messages[i]!)) removeMessageOrdinals.add(i);
+            }
+            /* eslint-enable security/detect-object-injection */
+            persistCompaction(
+              sm,
+              compactionResult.summary,
+              removeMessageOrdinals,
+              headMessages.length,
+              discoveredTools,
+            );
           }
         } catch {
           // Persistent write-back is best-effort
@@ -593,7 +689,10 @@ export function createLlmCompactionLayer(
             originalMessages: messages.length,
             keptHeadMessages: headMessages.length,
             keptTailMessages: tailMessages.length,
-            middleSummarized: evictableMiddle.length,
+            // SUMW-01: counts reflect the CLAMPED span actually summarized, plus
+            // the preserved un-summarized remainder (counts only — never content).
+            middleSummarized: spanToSummarize.length,
+            middleRemainder: remainingMiddle.length,
             securityPinnedCount,
           },
           "LLM compaction complete",
@@ -604,7 +703,7 @@ export function createLlmCompactionLayer(
           fallbackLevel: compactionResult.level,
           attempts: compactionResult.attempts,
           originalMessages: messages.length,
-          keptMessages: headMessages.length + tailMessages.length,
+          keptMessages: headMessages.length + remainingMiddle.length + tailMessages.length,
         });
 
         return result;

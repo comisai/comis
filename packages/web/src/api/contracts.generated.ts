@@ -7720,6 +7720,8 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
               "enum": [
                 "effectiveContextCapSmall",
                 "effectiveContextCapNano",
+                "served",
+                "capabilityClass",
                 "none"
               ]
             },

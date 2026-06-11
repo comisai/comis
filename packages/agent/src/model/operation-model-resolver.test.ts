@@ -373,6 +373,65 @@ describe("timeout resolution", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// LAT-01: timeout binding provenance. `timeoutSource` labels WHICH of the four
+// resolver levels bound `timeoutMs` (operation_explicit > operation_default >
+// agent_config > builtin_default). It is born HERE where the chain branches —
+// producers thread it, decode merges it, hints render knobs from it. Deriving
+// it anywhere downstream cannot work: the cron producer materializes
+// `promptTimeout` unconditionally, collapsing "the 150s cron default applied"
+// into what looks like an explicit operator override (177-RESEARCH Critical
+// Finding 1).
+// ---------------------------------------------------------------------------
+describe("LAT-01 timeout binding provenance (timeoutSource)", () => {
+  it("LAT-01-1: explicit operationModels.verification.timeout binds with timeoutSource operation_explicit", () => {
+    const result = resolveOperationModel(
+      baseParams({
+        operationType: "verification",
+        operationModels: { verification: { timeout: 30_000 } } as OperationModels,
+      }),
+    );
+    expect(result.timeoutMs).toBe(30_000);
+    expect(result.timeoutSource).toBe("operation_explicit");
+  });
+
+  it("LAT-01-2: cron with NO entry timeout binds the 150s OPERATION_TIMEOUT_DEFAULTS.cron with timeoutSource operation_default", () => {
+    const result = resolveOperationModel(baseParams({ operationType: "cron" }));
+    expect(result.timeoutMs).toBe(150_000);
+    expect(result.timeoutSource).toBe("operation_default");
+  });
+
+  it("LAT-01-3: planning (absent from OPERATION_TIMEOUT_DEFAULTS) falls through to agentPromptTimeoutMs with timeoutSource agent_config", () => {
+    const result = resolveOperationModel(
+      baseParams({ operationType: "planning", agentPromptTimeoutMs: 200_000 }),
+    );
+    expect(result.timeoutMs).toBe(200_000);
+    expect(result.timeoutSource).toBe("agent_config");
+  });
+
+  it("LAT-01-4: planning with NO agent knob falls through to the 180s built-in with timeoutSource builtin_default", () => {
+    const result = resolveOperationModel(
+      baseParams({ operationType: "planning", agentPromptTimeoutMs: undefined }),
+    );
+    expect(result.timeoutMs).toBe(180_000);
+    expect(result.timeoutSource).toBe("builtin_default");
+  });
+
+  it("LAT-01-5: a non-positive entry timeout (0) falls through the > 0 guard exactly as today — source labels the level that actually bound, never operation_explicit", () => {
+    const result = resolveOperationModel(
+      baseParams({
+        operationType: "cron",
+        operationModels: { cron: { timeout: 0 } } as OperationModels,
+      }),
+    );
+    // Value semantics unchanged: 0 is rejected by the > 0 guard, the cron
+    // operation default binds — and the label must say so.
+    expect(result.timeoutMs).toBe(150_000);
+    expect(result.timeoutSource).toBe("operation_default");
+    expect(result.timeoutSource).not.toBe("operation_explicit");
+  });
+});
+
 describe("cache retention", () => {
   it("includes cacheRetention from OPERATION_CACHE_DEFAULTS for heartbeat", () => {
     const result = resolveOperationModel(

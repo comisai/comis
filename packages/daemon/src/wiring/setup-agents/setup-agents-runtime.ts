@@ -42,9 +42,6 @@ import {
   createAuthProfileManager,
   createAuthRotationAdapter,
   resolveCompactionModel,
-  LEAN_TOOL_DESCRIPTIONS,
-  resolveDescription,
-  type ToolDescriptionContext,
 } from "@comis/agent";
 import { ensureWorkspace, resolveWorkspaceDir } from "@comis/core";
 import {
@@ -54,6 +51,8 @@ import {
   type SkillWatcherHandle,
 } from "@comis/skills";
 import { resolveAgentModel, deriveCanaryFallback, resolveEffectiveRerank } from "./setup-agents-tooling.js";
+import { resolveLeanDescriptionsForAgent } from "./setup-agents-descriptions.js";
+import { runBootWindowHonestyChecks } from "./setup-agents-boot-window.js";
 import { createAcpWiring } from "./setup-acp-wiring.js";
 import { wireAuthProvider } from "./setup-agents-oauth.js";
 import type { SingleAgentDeps, SingleAgentResult } from "./setup-agents-types.js";
@@ -235,6 +234,42 @@ export async function setupSingleAgent(
     );
   }
 
+  const perAgentLogger = agentLogger.child({ agentId });
+
+  // Pre-resolve lean descriptions for this agent's session (extracted leaf —
+  // emits the "Tool descriptions resolved" INFO; channelType resolution is
+  // deferred to runtime). Resolved BEFORE the boot-window honesty block so the
+  // shared convertTools closure below can ride into the boot-window info.
+  const resolvedDescriptions = resolveLeanDescriptionsForAgent(agentConfig, perAgentLogger);
+
+  // WR-03 (176 review): ONE tool-conversion closure for BOTH consumers —
+  // PiExecutorDeps.convertTools (turn-time S corpus) AND
+  // AgentBootWindowInfo.convertTools (FLOOR-01 boot corpus). Same reference =
+  // corpus-identity pin (I8 extended from formula to input). Cast safe: the
+  // adapter reads only schema fields at conversion time; execute is lazy.
+  type FloorConvertTools = NonNullable<import("@comis/agent").AgentBootWindowInfo["convertTools"]>;
+  const convertTools = (tools: Parameters<FloorConvertTools>[0]) =>
+    agentToolsToToolDefinitions(
+      tools as unknown as Parameters<typeof agentToolsToToolDefinitions>[0],
+      resolvedDescriptions,
+    );
+
+  // KNOB-01 + FLOOR-01 (v2.21): extracted to setup-agents-boot-window.ts
+  // (600-line cap split, 177 wave 1). Fail-open inside; convertTools
+  // reference identity preserved (WR-03).
+  runBootWindowHonestyChecks({
+    agentId,
+    providerId: resolved.provider,
+    modelId: resolved.model,
+    container,
+    deps,
+    piModelRegistry,
+    providerAliases,
+    agentLogger,
+    effectiveConfig,
+    convertTools,
+  });
+
   // Create JSONL session adapter for this agent
   const lockDir = safePath(dir, ".locks");
   const sessionAdapter = createComisSessionManager({
@@ -268,7 +303,6 @@ export async function setupSingleAgent(
   // Prompt skill registry: discover skills from per-agent discoveryPaths,
   // produce <available_skills> XML for system prompt injection.
   const skillsConfig = effectiveConfig.skills ?? SkillsConfigSchema.parse({});
-  const perAgentLogger = agentLogger.child({ agentId });
 
   // Create runtime eligibility context for this agent
   const eligibilityContext = createRuntimeEligibilityContext(scopedManager);
@@ -356,43 +390,8 @@ export async function setupSingleAgent(
   // Uses default config: mediumThreshold=0.4, highThreshold=0.7, action="warn"
   // Operator can override via agent config in the future
 
-  // Pre-resolve lean descriptions for this agent's session.
-  // channelType unavailable at agent setup time; message tool resolves to "chat"
-  // fallback. Per-channel resolution deferred to runtime.
-  const descriptionContext: ToolDescriptionContext = {
-    channelType: undefined,
-    trustLevel: "default", // Trust comes from token/context at message time, not config
-    // Capability class is resolved per-execution in pi-executor via resolveModelProfile().
-    // This setup-time modelTier only affects lean description text (e.g., admin suffix).
-    modelTier: agentConfig.bootstrap?.promptMode === "minimal" ? "small" : "large",
-  };
-  const resolvedDescriptions: Record<string, string> = {};
-  let dynamicCount = 0;
-  for (const name of Object.keys(LEAN_TOOL_DESCRIPTIONS)) {
-    const raw = LEAN_TOOL_DESCRIPTIONS[name];
-    if (typeof raw === "function") dynamicCount++;
-    resolvedDescriptions[name] = resolveDescription(
-      { name },
-      LEAN_TOOL_DESCRIPTIONS,
-      descriptionContext,
-    );
-  }
-  const totalDescriptionTokens = Object.values(resolvedDescriptions)
-    .reduce((sum, d) => sum + Math.ceil(d.length / 4), 0);
-  const overLimitCount = Object.values(resolvedDescriptions)
-    .filter((d) => d.length > 300).length;
-  // agentId already bound on perAgentLogger child -- do not duplicate
-  perAgentLogger.info(
-    {
-      descriptionCount: Object.keys(resolvedDescriptions).length,
-      tokenCount: totalDescriptionTokens,
-      dynamicCount,
-      overLimitCount,
-      // Setup-time modelTier for lean description selection (per-execution tier may differ)
-      modelTier: descriptionContext.modelTier,
-    },
-    "Tool descriptions resolved",
-  );
+  // (resolvedDescriptions + the shared convertTools closure are created above,
+  // before the boot-window honesty block — WR-03.)
 
   // Tool pipeline for PiExecutor.
   // Platform tools (memory, cron, messaging, sessions) come per-request via
@@ -451,7 +450,9 @@ export async function setupSingleAgent(
     workspaceDir: dir,
     agentDir: resolvedAgentDir,
     customTools: [],
-    convertTools: (tools) => agentToolsToToolDefinitions(tools, resolvedDescriptions),
+    // WR-03: the SAME closure bound into AgentBootWindowInfo.convertTools above
+    // (corpus-identity pin — see the shared const's comment).
+    convertTools,
     subAgentToolNames: deps.subAgentToolNames,
     mcpToolsInherited: deps.mcpToolsInherited,
     memoryPort: memoryAdapter,
@@ -550,7 +551,20 @@ export async function setupSingleAgent(
     fastMode: effectiveConfig.fastMode,
     storeCompletions: effectiveConfig.storeCompletions,
     providerCapabilities: container.config.providers?.entries?.[resolved.provider]?.capabilities,
-    servedContextWindow: deps.servedWindowByProvider?.get(resolved.provider),  // CWF-03: Ollama served-window
+    // CWF-03 + WR-02: the probed Ollama served window, PAIRED with the provider
+    // key it was probed from so the executor's reconcile can gate the clamp
+    // per-execution (override models on other providers keep their full window
+    // and never get "Ollama serves only N" attribution).
+    servedContextWindow: (() => {
+      const probed = deps.servedWindowByProvider?.get(resolved.provider);
+      return probed !== undefined ? { providerKey: resolved.provider, window: probed } : undefined;
+    })(),
+    // GBNF-01: resolver form (not static values) because per-execution model
+    // overrides can switch providers mid-agent — a static agent-primary type
+    // would mis-gate (WR-04 getProviderCapabilityClass precedent).
+    getProviderType: (p: string) => container.config.providers?.entries?.[p]?.type,
+    getModelCompat: (p: string, id: string) =>
+      container.config.providers?.entries?.[p]?.models?.find((m) => m.id === id)?.comisCompat,
     maxSendsPerExecution: container.config.messages?.maxSendsPerExecution,
     // Runtime adapter ports threaded into the executor.
     clock: deps.clock,

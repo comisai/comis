@@ -466,6 +466,70 @@ describe("context.budget extraction (W3 obs-llm-troubleshooting)", () => {
     ]);
     expect(s.contextBudget).toBeUndefined();
   });
+
+  it("KNOB-02-10: a windowCapSource 'served' record SURVIVES the safeParse gate onto contextBudget", () => {
+    // KNOB-02 (Phase 176): "served" joins the WindowCapSource closed union. If
+    // the IncidentContextBudgetSchema enum lags, safeParse silently DROPS the
+    // whole budget equation from `comis explain` — the exact silent-degrade
+    // class this milestone kills. Every other field is valid per the schema, so
+    // the ONLY thing that can reject this record is the enum.
+    const s = toIncidentSignals([
+      {
+        traceSchema: "comis-trajectory",
+        schemaVersion: 1,
+        type: "context.budget",
+        seq: 1,
+        data: {
+          windowTokens: 8_192,
+          rawContextWindowTokens: 131_072,
+          windowCapSource: "served",
+          systemTokens: 5_000,
+          freshTailTokens: 1_200,
+          budgetedHistoryTokens: 0,
+          keptCount: 0,
+          assembledInputTokens: 7_800,
+          outputHeadroom: 768,
+          verdict: "exhausted",
+        },
+      },
+    ]);
+    expect(s.contextBudget).toBeDefined();
+    expect(s.contextBudget?.windowCapSource).toBe("served");
+    expect(s.contextBudget?.rawContextWindowTokens).toBe(131_072);
+  });
+
+  it("WR-01: a windowCapSource 'capabilityClass' record SURVIVES the safeParse gate onto contextBudget", () => {
+    // WR-01 (Phase 176 review): "capabilityClass" joins the WindowCapSource
+    // closed union so the capability-pin bind stops masquerading as the budget
+    // knob. Same silent-drop trap as KNOB-02-10: if the
+    // IncidentContextBudgetSchema enum lags, safeParse silently DROPS the whole
+    // budget equation from `comis explain` for every pin-bound turn. Every
+    // other field is valid per the schema, so the ONLY thing that can reject
+    // this record is the enum.
+    const s = toIncidentSignals([
+      {
+        traceSchema: "comis-trajectory",
+        schemaVersion: 1,
+        type: "context.budget",
+        seq: 1,
+        data: {
+          windowTokens: 32_000,
+          rawContextWindowTokens: 131_072,
+          windowCapSource: "capabilityClass",
+          systemTokens: 25_694,
+          freshTailTokens: 5_272,
+          budgetedHistoryTokens: 0,
+          keptCount: 0,
+          assembledInputTokens: 31_572,
+          outputHeadroom: 768,
+          verdict: "exhausted",
+        },
+      },
+    ]);
+    expect(s.contextBudget).toBeDefined();
+    expect(s.contextBudget?.windowCapSource).toBe("capabilityClass");
+    expect(s.contextBudget?.rawContextWindowTokens).toBe(131_072);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -540,5 +604,192 @@ describe("agentId + channel extraction (W8)", () => {
     ]);
     expect(s.agentId).toBe("default");
     expect(s.channel).toEqual({ type: "telegram", id: "678314278" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GBNF-02 (Phase 175): execution.tool_schema_unsupported derivation. The
+// strip-retry self-heal record (the kind Plan 05's bridge mapping writes:
+// data = {toolNames, strippedKeywords, retried, succeeded}) must reach
+// IncidentSignals so the explain heuristic can NAME the schema failure
+// instead of "unknown".
+// ---------------------------------------------------------------------------
+
+describe("toolSchemaUnsupported derivation (GBNF-02)", () => {
+  it("derives toolSchemaUnsupported from an execution.tool_schema_unsupported trajectory record", () => {
+    const s = toIncidentSignals([
+      event("execution.tool_schema_unsupported", 5, {
+        toolNames: ["schedule_task"],
+        strippedKeywords: ["pattern", "format"],
+        retried: true,
+        succeeded: false,
+        reason: "stripped",
+      }),
+    ]);
+    expect(s.toolSchemaUnsupported).toEqual({
+      toolNames: ["schedule_task"],
+      strippedKeywords: ["pattern", "format"],
+      retried: true,
+      succeeded: false,
+      reason: "stripped",
+    });
+  });
+
+  it("WR-05: the reason discriminator survives derivation for the gate_closed terminal (last record wins)", () => {
+    const s = toIncidentSignals([
+      event("execution.tool_schema_unsupported", 1, {
+        toolNames: ["schedule_task"],
+        strippedKeywords: ["pattern", "format"],
+        retried: true,
+        succeeded: true,
+        reason: "stripped",
+      }),
+      event("execution.tool_schema_unsupported", 2, {
+        toolNames: [],
+        strippedKeywords: [],
+        retried: false,
+        succeeded: false,
+        reason: "gate_closed",
+      }),
+    ]);
+    expect(s.toolSchemaUnsupported?.reason).toBe("gate_closed");
+  });
+
+  it("WR-05: an absent or off-vocabulary reason yields undefined (historical pre-WR-05 trajectory records stay readable; payload smuggling guarded)", () => {
+    const absent = toIncidentSignals([
+      event("execution.tool_schema_unsupported", 1, {
+        toolNames: [],
+        strippedKeywords: [],
+        retried: false,
+        succeeded: false,
+      }),
+    ]);
+    expect(absent.toolSchemaUnsupported?.reason).toBeUndefined();
+
+    const smuggled = toIncidentSignals([
+      event("execution.tool_schema_unsupported", 1, {
+        toolNames: [],
+        strippedKeywords: [],
+        retried: false,
+        succeeded: false,
+        reason: "<script>evil</script>",
+      }),
+    ]);
+    expect(smuggled.toolSchemaUnsupported?.reason).toBeUndefined();
+  });
+
+  it("the LAST execution.tool_schema_unsupported record wins (terminal repair state explains the end)", () => {
+    const s = toIncidentSignals([
+      event("execution.tool_schema_unsupported", 1, {
+        toolNames: ["alpha_tool"],
+        strippedKeywords: ["pattern"],
+        retried: false,
+        succeeded: false,
+      }),
+      event("execution.tool_schema_unsupported", 2, {
+        toolNames: ["schedule_task"],
+        strippedKeywords: ["pattern", "format"],
+        retried: true,
+        succeeded: true,
+      }),
+    ]);
+    expect(s.toolSchemaUnsupported).toEqual({
+      toolNames: ["schedule_task"],
+      strippedKeywords: ["pattern", "format"],
+      retried: true,
+      succeeded: true,
+    });
+  });
+
+  it("omits toolSchemaUnsupported when no record of that kind exists", () => {
+    const s = toIncidentSignals([log678Success(), log678Failure()]);
+    expect(s.toolSchemaUnsupported).toBeUndefined();
+  });
+
+  it("filters non-string entries out of toolNames/strippedKeywords and coerces non-boolean flags (T-175-17 payload guard)", () => {
+    // Record payloads cross a trust boundary (provider/MCP-influenced events →
+    // admin-facing report): only string entries survive the array reads, and
+    // the booleans are exact-true checks — payload smuggling of other types
+    // cannot reach the verdict text.
+    const s = toIncidentSignals([
+      event("execution.tool_schema_unsupported", 1, {
+        toolNames: ["schedule_task", 42, { evil: true }],
+        strippedKeywords: ["pattern", null],
+        retried: "yes",
+        succeeded: false,
+      }),
+    ]);
+    expect(s.toolSchemaUnsupported).toEqual({
+      toolNames: ["schedule_task"],
+      strippedKeywords: ["pattern"],
+      retried: false,
+      succeeded: false,
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// LAT-04 (Phase 177): execution.prompt_timeout derivation — the terminal
+// prompt-timeout attribution record must land on IncidentSignals.promptTimeout
+// (the silent-drop gate: pre-patch, toIncidentSignals IGNORED these rows, so a
+// timeout-killed session carried ZERO evidence into the verdict — research
+// Critical Finding 7 point 6 / Pitfall 5, the Phase-176 safeParse-drop lesson).
+// ---------------------------------------------------------------------------
+
+describe("promptTimeout derivation (LAT-04)", () => {
+  it("LAT-04-O-3: an execution.prompt_timeout record with the full field set survives onto signals.promptTimeout", () => {
+    const s = toIncidentSignals([
+      event("execution.prompt_timeout", 9, {
+        timeoutMs: 180_000,
+        durationMs: 195_000,
+        limit: "stall",
+        source: "agent_config",
+        bindingKnob: "agents.my-agent.promptTimeout.promptTimeoutMs",
+        stallBudgetMs: 180_000,
+        makespanMs: 1_800_000,
+      }),
+    ]);
+    expect(s.promptTimeout).toBeDefined();
+    expect(s.promptTimeout?.limit).toBe("stall");
+    expect(s.promptTimeout?.bindingKnob).toBe("agents.my-agent.promptTimeout.promptTimeoutMs");
+    expect(s.promptTimeout?.stallBudgetMs).toBe(180_000);
+    expect(s.promptTimeout?.timeoutMs).toBe(180_000);
+    expect(s.promptTimeout?.durationMs).toBe(195_000);
+    expect(s.promptTimeout?.makespanMs).toBe(1_800_000);
+  });
+
+  it("LAT-04-O-4: the LAST execution.prompt_timeout record wins (the terminal kill explains the end state)", () => {
+    const s = toIncidentSignals([
+      // A retry-path kill first (whole-turn semantics: no limit discriminator).
+      event("execution.prompt_timeout", 4, {
+        timeoutMs: 60_000,
+        durationMs: 60_000,
+        source: "agent_config",
+        bindingKnob: "agents.my-agent.promptTimeout.retryPromptTimeoutMs",
+      }),
+      // …then the terminal stall kill — the SECOND record must win.
+      event("execution.prompt_timeout", 7, {
+        timeoutMs: 180_000,
+        durationMs: 195_000,
+        limit: "stall",
+        source: "agent_config",
+        bindingKnob: "agents.my-agent.promptTimeout.promptTimeoutMs",
+        stallBudgetMs: 180_000,
+      }),
+    ]);
+    expect(s.promptTimeout?.limit).toBe("stall");
+    expect(s.promptTimeout?.timeoutMs).toBe(180_000);
+    expect(s.promptTimeout?.bindingKnob).toBe("agents.my-agent.promptTimeout.promptTimeoutMs");
+  });
+
+  it("LAT-04-O-5: a malformed record (timeoutMs not a number) is rejected WHOLESALE — promptTimeout stays undefined, no throw", () => {
+    // Forward-compatible tolerance (green pre-patch by design): the wholesale
+    // safeParse (the contextBudget discipline) drops a malformed/partial row
+    // instead of partially trusting it (T-177-17 — trajectory rows are
+    // untrusted persisted data).
+    const s = toIncidentSignals([
+      event("execution.prompt_timeout", 2, { timeoutMs: "garbage", limit: "stall" }),
+    ]);
+    expect(s.promptTimeout).toBeUndefined();
   });
 });

@@ -4,49 +4,37 @@
  *
  * Activates the previously-inert `contextThreshold` config: at the afterTurn
  * (`postExecution`) boundary, when context utilization exceeds
- * `contextThreshold` (0.75 × W by default), fire ONE leaf pass — select the
- * oldest out-of-tail chunk, summarize it (the Plan-03 3-level escalation), and
- * range-replace the covered `context_items` message-refs with one summary-ref at
- * the EXACT covered ordinal window (C3). Below the threshold, nothing fires (the
- * trigger is inert until load-bearing).
- *
- * Extracted into its own module because `executor-post-execution.ts` is already
- * over the 800L file-size cap — the call site there is a thin gated invocation
- * (mirroring how `ingestTurn` lives in `lcd-ingest.ts`); the body lives here.
+ * `contextThreshold` (0.75 × W by default), fire a bounded leaf-pass drain —
+ * select the oldest out-of-tail chunk, summarize it (the Plan-03 3-level
+ * escalation), and range-replace the covered `context_items` message-refs with
+ * one summary-ref at the EXACT covered ordinal window (C3). Below the
+ * threshold, nothing fires. Lives in its own module because
+ * `executor-post-execution.ts` is already at the file-size cap.
  *
  * Three load-bearing contracts (mirroring `ingestTurnGuarded`):
  *   1. NON-FATAL: a summarizer / store failure must NEVER fail the live turn.
- *      The whole body is wrapped in one try/catch → WARN (errorKind
+ *      The whole drain is wrapped in one try/catch → WARN (errorKind
  *      `dependency`) and returns; the call site simply awaits a promise that
- *      never rejects (T-129-18). The leaf summarizer's own deterministic Level-3
+ *      never rejects (T-129-18). The leaf summarizer's deterministic Level-3
  *      truncation is the in-pass degrade; a store failure is the outer degrade.
  *   2. AGENT-SIDE TOKENS: utilization + chunk-size use the STORED per-message
- *      `tokenCount` (computed at ingest via `estimateMessageTokens`, which counts
- *      the F3 `thinking` block — re-estimation under-counts); the persisted
- *      summary `tokenCount` is the leaf summarizer's `tokenCount`. The store
- *      NEVER computes tokens (the 127 contract keeps core/memory estimator-free).
+ *      `tokenCount` (computed at ingest via `estimateMessageTokens`, counting
+ *      the F3 `thinking` block — re-estimation under-counts). The store NEVER
+ *      computes tokens (the 127 contract keeps core/memory estimator-free).
  *   3. INJECTED CLOCK: every timestamp comes from the supplied `now`, never the
  *      ambient wall-clock global (the globals gate; AGENTS.md §2.2).
  *
  * The C3 ordinal mapping is the tampering guard (T-129-22): the
  * `[startOrdinal, endOrdinal]` window passed to `appendLeafSummary` is the
- * contiguous run of message-refs covering the selected chunk — `startOrdinal` is
- * the ordinal of the FIRST covered message-ref, `endOrdinal` the LAST. A wrong
- * window silently corrupts context_items ordering, so it is read back + asserted
- * in the RED test (`getContextItems` shows the summary-ref at `startOrdinal` with
- * `descendantCount == chunk length`).
+ * contiguous message-ref run covering the selected chunk; a wrong window
+ * silently corrupts context_items ordering, so it is read back + asserted in
+ * the RED test. Bounded (T-129-19): the drain is capped per turn; Phase 132
+ * wraps the injected summarizer seam with spend governance + a breaker.
  *
- * Bounded (T-129-19): ONE leaf pass per call. 129 fires inline + synchronously;
- * Phase 132 makes it deferred/background + adds bounded spend + a circuit breaker
- * — so the whole pass lives behind THIS one function for a clean 132 swap.
- *
- * Architecture cut (agent↛memory): this module imports ONLY the CORE
- * `ContextStorePort`/`ContextStoreScope`/`LcdMessage` TYPES + the core
- * `partsToMessage` runtime codec + the agent-side leaf summarizer + token
- * estimator. The concrete `createLcdStore` is injected by the daemon — this
- * module NEVER imports the memory package directly (the build cut). It NEVER logs
- * message or summary content — ids/counts/durations/level only (AGENTS.md §2.2;
- * T-129-20).
+ * Architecture cut (agent↛memory): imports ONLY core TYPES + the core
+ * `partsToMessage` codec + the agent-side summarizer/estimator. The concrete
+ * `createLcdStore` is daemon-injected (the build cut). NEVER logs message or
+ * summary content — ids/counts/durations/level only (AGENTS.md §2.2; T-129-20).
  *
  * @module
  */
@@ -61,8 +49,10 @@ import type {
   TypedEventBus,
 } from "@comis/core";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { Message } from "@earendil-works/pi-ai";
 import type { ContextEngineConfig } from "@comis/core";
 import { ContextEngineConfigSchema } from "@comis/core";
+import { estimateMessageTokens } from "../safety/token-estimator.js";
 import {
   selectLeafChunk,
   summarizeLeafChunk,
@@ -70,13 +60,14 @@ import {
   type LeafChunkItem,
   type LeafSummarizerDeps,
 } from "../context-engine/lcd-leaf-summarizer.js";
+import { resolveSummarizerWindowTokens } from "../context-engine/summarizer-window.js";
 import { resolveCompactionStrategy } from "../context-engine/compaction-capability-router.js";
 import { isSecurityRelevantMessage } from "../context-engine/security-context-pinner.js";
 import {
   buildNanoStructuredExtraction,
   resolveSummaryTargetTokens,
 } from "../context-engine/summarize-tier-targets.js";
-import { LCD_MAX_LEAF_PASSES_PER_TURN } from "../context-engine/constants.js";
+import { LCD_MAX_LEAF_PASSES_PER_TURN, SUMMARIZER_PROMPT_OVERHEAD_TOKENS } from "../context-engine/constants.js";
 import type {
   CondenseChildSummary,
   SummaryRefRun,
@@ -89,7 +80,11 @@ import type {
 export interface LeafPassOptions {
   /** Utilization fraction that triggers a leaf pass (`contextThreshold`, 0.75). */
   contextThreshold: number;
-  /** Chunk token cap for one leaf (`leafChunkTokens`, 20_000). */
+  /** Chunk token cap for one leaf (`leafChunkTokens`, 20_000). SUMW-01: clamped
+   *  PER PASS (in runOneLeafPass) to the RESOLVED summarizer's window minus
+   *  `leafTargetTokens` + `SUMMARIZER_PROMPT_OVERHEAD_TOKENS`, floored at
+   *  MIN_SHRINKABLE and finite-guarded (an invalid window keeps this configured
+   *  cap — never an unbounded chunk; review WR-05). */
   leafChunkTokens: number;
   /** Summary token target (`leafTargetTokens`, 1_200) → the SDK `reserveTokens`. */
   leafTargetTokens: number;
@@ -120,41 +115,36 @@ export interface LeafPassOptions {
  */
 export interface ResolvedContext {
   /**
-   * The contiguous run of `message`-ref items, oldest-first, that FOLLOWS any
-   * leading `summary`-refs (a leaf never re-summarizes a prior summary in 129;
-   * summary-refs are depth-0 terminals). This is the pure input chunk selection
-   * consumes — so `selectLeafChunk` always picks LIVE message-refs whose ids map
-   * back to a `context_items` ordinal, and the second pass collapses the NEXT
-   * chunk instead of re-hitting the first one.
+   * The contiguous run of `message`-ref items, oldest-first, FOLLOWING any
+   * leading `summary`-refs (a leaf never re-summarizes a prior summary). The
+   * pure input chunk selection consumes — `selectLeafChunk` always picks LIVE
+   * message-refs whose ids map back to a `context_items` ordinal, so the second
+   * pass collapses the NEXT chunk instead of re-hitting the first one.
    */
   history: LeafChunkItem[];
   /** Message id → its `context_items` ordinal (for the exact C3 window). */
   ordinalById: Map<string, number>;
   /**
-   * Total tokens of the RESOLVED view = every summary-ref `tokenCount`
-   * (`getSummaries`) + every message-ref `tokenCount` (the row). This is what the
-   * model actually sees, so utilization reflects the compaction the trigger
-   * performed (CR-02) — not the un-compacted raw history.
+   * Total tokens of the RESOLVED view = every summary-ref + surviving
+   * message-ref `tokenCount` — what the model actually sees, so utilization
+   * reflects prior compaction (CR-02), not the un-compacted raw history.
    */
   resolvedTokens: number;
   /**
-   * The per-depth CONTIGUOUS summary-ref runs (Phase 130, C2 — RESEARCH Open Q2):
-   * walking `context_items` in order, every maximal run of `summary`-refs sharing
-   * one `depth` is one {@link SummaryRefRun}; a run BREAKS at any message-ref or a
-   * depth change. The condense pass selects the shallowest run ≥ fanout from this
-   * list — so utilization (CR-02), leaf selection (CR-01) AND condense selection
-   * all come from the SAME single `getContextItems`/`getMessages`/`getSummaries`
-   * read (the "one resolved view is source of truth" invariant). Because a run is
-   * contiguous by construction, the condense window can never span a
-   * non-contiguous fanout (Pitfall 3 / T-130-08).
+   * The per-depth CONTIGUOUS summary-ref runs (Phase 130, C2): every maximal
+   * run of `summary`-refs sharing one `depth`; a run BREAKS at any message-ref
+   * or depth change. Condense selection reads this list, so utilization, leaf
+   * selection AND condense selection all come from ONE resolved read (the "one
+   * resolved view is source of truth" invariant); a run is contiguous by
+   * construction, so a condense window can never span a non-contiguous fanout
+   * (Pitfall 3 / T-130-08).
    */
   summaryRunsByDepth: SummaryRefRun[];
   /**
-   * The SAME oldest-first `getSummaries` snapshot the runs/utilization were
-   * derived from (WR-01). The condense trigger reads `previousSummary` (the
-   * most-recent same-depth summary content, for continuity) from THIS array —
-   * never a second `getSummaries` call — so the whole pass observes one resolved
-   * view and a later, possibly-diverged snapshot can never re-decide continuity.
+   * The SAME oldest-first `getSummaries` snapshot the runs/utilization derive
+   * from (WR-01). The condense trigger reads `previousSummary` from THIS array
+   * — never a second `getSummaries` call — so the whole pass observes one
+   * resolved view; a later, diverged snapshot can never re-decide continuity.
    */
   summaries: LcdSummary[];
 }
@@ -170,17 +160,14 @@ export interface ResolvedContext {
  * utilization even though they are not selectable chunk items.
  */
 export function resolveContext(store: ContextStorePort, scope: ContextStoreScope): ResolvedContext {
-  // R4 (132-03): the three reads are scoped by (conversation, agent, tenant) so a
-  // leaf/condense pass observes ONLY the acting agent's view (WR-02). `scope` is
-  // the SAME scope the afterTurn ingest stamped; the assembler uses the matching
-  // read scope, so trigger + assembler agree on what the agent sees.
+  // R4 (132-03): the three reads are scoped by (conversation, agent, tenant) so
+  // a leaf/condense pass observes ONLY the acting agent's view (WR-02) — the
+  // SAME scope the afterTurn ingest stamped and the assembler reads with.
   const items = store.getContextItems(scope);
   const rowById = new Map(store.getMessages(scope).map((r) => [r.id, r]));
-  // Index summaries by id for BOTH the utilization token sum (CR-02) AND the
-  // per-depth contiguous-run construction (C2): the run needs each child's
-  // depth/content/tokenCount/taint, all on the `LcdSummary` row. Read
-  // `getSummaries` ONCE here (WR-01) and carry the array out on `ResolvedContext`
-  // so the trigger derives taint + previousSummary from this single snapshot.
+  // Read `getSummaries` ONCE (WR-01) — it serves the utilization token sum
+  // (CR-02), the per-depth run construction (C2), and rides out on
+  // `ResolvedContext` so taint + previousSummary derive from this one snapshot.
   const summaries = store.getSummaries(scope);
   const summaryById = new Map(summaries.map((s) => [s.summaryId, s]));
 
@@ -188,11 +175,9 @@ export function resolveContext(store: ContextStorePort, scope: ContextStoreScope
   const ordinalById = new Map<string, number>();
   let resolvedTokens = 0;
 
-  // Per-depth contiguous summary-ref run accumulation (C2). `summaryRunsByDepth`
-  // collects every COMPLETED run; `openRun` is the run currently being extended
-  // (flushed when the next item is a message-ref OR a summary-ref of a different
-  // depth). The leaf `history`/`ordinalById`/`resolvedTokens` are UNCHANGED — the
-  // condense data rides alongside on the SAME single walk (one resolved view).
+  // Per-depth contiguous summary-ref run accumulation (C2): `openRun` extends
+  // until the next item is a message-ref or a different-depth summary-ref, then
+  // flushes into `summaryRunsByDepth`. The leaf half rides the SAME walk.
   const summaryRunsByDepth: SummaryRefRun[] = [];
   let openRun: SummaryRefRun | undefined;
   const flushOpenRun = (): void => {
@@ -330,6 +315,64 @@ interface LeafPassResult {
 }
 
 /**
+ * Persist the deterministic (no-LLM) leaf floor for a chunk: nano structured
+ * extraction (SUM-02 — carries LEAF_FALLBACK_SUMMARY_MARKER; shrink-guarded
+ * inside buildNanoStructuredExtraction) → appendLeafSummary (fallback:true) →
+ * `context:dag_compacted` emit → completion INFO. Shared by the C5
+ * capability-eviction branch and the review-WR-02 over-cap chunk branch.
+ */
+function persistDeterministicLeafFloor(
+  store: ContextStorePort,
+  scope: ContextStoreScope,
+  chunkItems: LeafChunkItem[],
+  chunkTokens: number,
+  window: { startOrdinal: number; endOrdinal: number },
+  now: number,
+  nowFn: (() => number) | undefined,
+  passStart: number,
+  logger: ComisLogger,
+  eventBus: TypedEventBus | undefined,
+  completionMessage: string,
+): LeafPassResult {
+  const nanoExtraction = buildNanoStructuredExtraction(
+    chunkItems.map((it) => it.msg),
+    chunkTokens,
+  );
+  store.appendLeafSummary({
+    scope,
+    content: nanoExtraction.content,
+    descendantCount: chunkItems.length,
+    earliestAt: chunkItems.length > 0 ? Math.min(...chunkItems.map((it) => it.createdAt)) : now,
+    latestAt: chunkItems.length > 0 ? Math.max(...chunkItems.map((it) => it.createdAt)) : now,
+    tokenCount: nanoExtraction.tokenCount,
+    fileIds: [],
+    fallback: true,
+    taint: false,
+    createdAt: now,
+    startOrdinal: window.startOrdinal,
+    endOrdinal: window.endOrdinal,
+  });
+  // O1 timing + dag_compacted event (counts only — never content).
+  const durationMs = Math.max(0, (nowFn?.() ?? now) - passStart);
+  eventBus?.emit("context:dag_compacted", {
+    conversationId: scope.conversationId,
+    agentId: scope.agentId,
+    sessionKey: scope.sessionKey,
+    leafSummariesCreated: 1,
+    condensedSummariesCreated: 0,
+    maxDepthReached: 0,
+    totalSummariesCreated: 1,
+    durationMs,
+    timestamp: now,
+  });
+  logger.info(
+    { step: "lcd-leaf", conversationId: scope.conversationId, agentId: scope.agentId, sessionKey: scope.sessionKey, descendantCount: chunkItems.length, escalationLevel: 3, fallback: true, durationMs },
+    completionMessage,
+  );
+  return { made: true, reason: "compacted" };
+}
+
+/**
  * Run ONE leaf pass against the CURRENT store state and return whether it made
  * progress. Re-resolves the model-facing `context_items` view itself (CR-01/CR-02)
  * so a caller looping this observes its own prior compaction. Throws only on a
@@ -342,6 +385,7 @@ async function runOneLeafPass(
   store: ContextStorePort,
   scope: ContextStoreScope,
   opts: LeafPassOptions,
+  summarizerWindow: number,
   summarizerDeps: LeafSummarizerDeps,
   now: number,
   nowFn: (() => number) | undefined,
@@ -383,22 +427,39 @@ async function runOneLeafPass(
     if (pinned.length > 0) {
       pinnedMessageIds = new Set(pinned.map((it) => it.id));
       logger.debug(
-        {
-          conversationId,
-          agentId: scope.agentId,
-          step: "lcd-leaf-gate",
-          securityPinnedCount: pinned.length,
-        },
+        { conversationId, agentId: scope.agentId, step: "lcd-leaf-gate", securityPinnedCount: pinned.length },
         "S4: security-relevant messages excluded from LCD leaf eviction",
       );
     }
   }
 
-  // Select the oldest out-of-tail chunk (pair-safe, capped at leafChunkTokens)
+  // SUMW-01: clamp the chunk cap to the RESOLVED summarizer's window
+  // (override-aware — never the getModel() session-primary snapshot) minus the
+  // summary target + prompt-template overhead + the ACTUAL previousSummary
+  // threaded into THIS pass's prompt (review WR-03: the flat 2_048 covers only
+  // the template — the last summary of any kind can be ~condense-target-sized,
+  // read per pass since each pass appends one). Review WR-05 finite guard
+  // (parity with the condense sibling's Number.isFinite no-op): a non-finite
+  // candidate keeps the CONFIGURED cap — NaN would otherwise silently disable
+  // selectLeafChunk's break condition and select the whole out-of-tail history.
+  const previousSummary = previousSummaryContent(store, scope);
+  const prevTokens = previousSummary === undefined
+    ? 0
+    : estimateMessageTokens({ role: "user", content: previousSummary } as Message);
+  const capCandidate = summarizerWindow - opts.leafTargetTokens - SUMMARIZER_PROMPT_OVERHEAD_TOKENS - prevTokens;
+  const leafChunkCap = Number.isFinite(capCandidate)
+    ? Math.max(MIN_SHRINKABLE_LEAF_CHUNK_TOKENS, Math.min(opts.leafChunkTokens, capCandidate))
+    : opts.leafChunkTokens;
+  if (leafChunkCap < opts.leafChunkTokens) {
+    // Numbers only (I7) — a binding clamp is normal adaptive behavior, never WARN.
+    logger.debug({ conversationId, agentId: scope.agentId, step: "lcd-leaf-gate", summarizerWindow, configuredLeafChunkTokens: opts.leafChunkTokens, clampedLeafChunkTokens: leafChunkCap }, "lcd leaf chunk cap clamped to the resolved summarizer window");
+  }
+
+  // Select the oldest out-of-tail chunk (pair-safe, capped at the CLAMPED cap)
   // from the RESOLVED message-ref run — so the selected ids always map back to a
   // context_items ordinal (the second-pass divergence is structurally gone).
   // S4: pass pinnedMessageIds so pinned messages are excluded from chunk selection.
-  const chunk = selectLeafChunk(history, opts.freshTailTurns, opts.leafChunkTokens, pinnedMessageIds);
+  const chunk = selectLeafChunk(history, opts.freshTailTurns, leafChunkCap, pinnedMessageIds);
   if (chunk === undefined) return { made: false, reason: "no-chunk" }; // no evictable out-of-tail history.
 
   // Skip a trivially-tiny chunk (WR-01): a chunk below the minimum shrinkable size
@@ -427,12 +488,9 @@ async function runOneLeafPass(
       },
       "LCD leaf pass skipped: ordinal-window divergence",
     );
-    // Phase 160 I1: emit a content-free context:dag_degraded so the leaf-window
-    // divergence persists as a health_signal row (queryable by the fleet lens)
-    // instead of being a Pino-only WARN. Identifiers + reason + timing only —
-    // NEVER message/summary content (mirrors the context:dag_compacted emit
-    // below). Reuse the injected clock for durationMs/timestamp (the globals gate
-    // bans Date.now()); a scalar-only caller degrades durationMs to 0.
+    // Phase 160 I1: content-free context:dag_degraded so the divergence persists
+    // as a health_signal row (fleet-lens queryable), not a Pino-only WARN.
+    // Identifiers + reason + timing only; injected clock (the globals gate).
     eventBus?.emit("context:dag_degraded", {
       conversationId,
       agentId: scope.agentId,
@@ -461,8 +519,21 @@ async function runOneLeafPass(
   );
   const securityPinnedCount = pinnedMessageIds?.size ?? 0;
 
+  // Emit context:compaction_routed for BOTH strategy branches (observability —
+  // the payload is identical, so it is emitted once before the branch).
+  eventBus?.emit("context:compaction_routed", {
+    agentId: summarizerDeps.agentId ?? scope.agentId,
+    sessionKey: summarizerDeps.sessionKey ?? scope.sessionKey,
+    capabilityClass: summarizerDeps.capabilityClass ?? "frontier",
+    strategy: compactionStrategy,
+    layer: "lcd",
+    securityPinnedCount,
+    timestamp: now,
+  });
+
   if (compactionStrategy === "eviction" || compactionStrategy === "deterministic") {
-    // Small/nano: skip LLM summarization — use deterministic fallback.
+    // Small/nano: skip LLM summarization — use the deterministic fallback
+    // (SUM-02 nano structured extraction; carries LEAF_FALLBACK_SUMMARY_MARKER).
     logger.warn(
       {
         conversationId,
@@ -474,91 +545,34 @@ async function runOneLeafPass(
       },
       "C5: LCD leaf compaction capability gate — eviction selected",
     );
-
-    // Emit context:compaction_routed event
-    eventBus?.emit("context:compaction_routed", {
-      agentId: summarizerDeps.agentId ?? scope.agentId,
-      sessionKey: summarizerDeps.sessionKey ?? scope.sessionKey,
-      capabilityClass: summarizerDeps.capabilityClass ?? "frontier",
-      strategy: compactionStrategy,
-      layer: "lcd",
-      securityPinnedCount,
-      timestamp: now,
-    });
-
-    // Deterministic Level-3 fallback (SUM-02): nano structured extraction replaces
-    // the bare count-note with decisions/files/entities/constraints. Still carries
-    // LEAF_FALLBACK_SUMMARY_MARKER so DOC-01 scans detect it. Passes shrink invariant
-    // (computeShrinkBounds guard inside buildNanoStructuredExtraction).
-    const nanoExtraction = buildNanoStructuredExtraction(
-      chunkItems.map((it) => it.msg),
-      chunk.tokens,
-    );
-    const fallbackContent = nanoExtraction.content;
-    const fallbackTokenCount = nanoExtraction.tokenCount;
-    store.appendLeafSummary({
-      scope,
-      content: fallbackContent,
-      descendantCount: chunkItems.length,
-      earliestAt: chunkItems.length > 0 ? Math.min(...chunkItems.map((it) => it.createdAt)) : now,
-      latestAt: chunkItems.length > 0 ? Math.max(...chunkItems.map((it) => it.createdAt)) : now,
-      tokenCount: fallbackTokenCount,
-      fileIds: [],
-      fallback: true,
-      taint: false,
-      createdAt: now,
-      startOrdinal: window.startOrdinal,
-      endOrdinal: window.endOrdinal,
-    });
-
-    // O1 timing + dag_compacted event
-    const durationMs = Math.max(0, (nowFn?.() ?? now) - passStart);
-    eventBus?.emit("context:dag_compacted", {
-      conversationId,
-      agentId: scope.agentId,
-      sessionKey: scope.sessionKey,
-      leafSummariesCreated: 1,
-      condensedSummariesCreated: 0,
-      maxDepthReached: 0,
-      totalSummariesCreated: 1,
-      durationMs,
-      timestamp: now,
-    });
-    logger.info(
-      {
-        step: "lcd-leaf",
-        conversationId,
-        agentId: scope.agentId,
-        sessionKey: scope.sessionKey,
-        descendantCount: chunkItems.length,
-        escalationLevel: 3,
-        fallback: true,
-        durationMs,
-      },
+    return persistDeterministicLeafFloor(
+      store, scope, chunkItems, chunk.tokens, window, now, nowFn, passStart, logger, eventBus,
       "LCD leaf summary persisted (C5: deterministic eviction)",
     );
-    return { made: true, reason: "compacted" };
   }
 
-  // Emit context:compaction_routed for llm/strong-summarizer paths (observability)
-  eventBus?.emit("context:compaction_routed", {
-    agentId: summarizerDeps.agentId ?? scope.agentId,
-    sessionKey: summarizerDeps.sessionKey ?? scope.sessionKey,
-    capabilityClass: summarizerDeps.capabilityClass ?? "frontier",
-    strategy: compactionStrategy,
-    layer: "lcd",
-    securityPinnedCount,
-    timestamp: now,
-  });
+  // Review WR-02: a single message larger than the clamped cap (selected via
+  // selectLeafChunk's always-include-one rule, or a pair-safety extension past
+  // the cap) makes every LLM attempt a guaranteed overflow — up to 4 failing
+  // calls per pass, repeating each turn until the backlog drains. Go straight
+  // to the bounded deterministic floor instead (no LLM; the full content stays
+  // losslessly in the message store). DEBUG, numbers only (I7).
+  if (chunk.tokens > leafChunkCap) {
+    logger.debug({ conversationId, agentId: scope.agentId, step: "lcd-leaf-gate", reason: "over-cap-chunk", chunkTokens: chunk.tokens, clampedLeafChunkTokens: leafChunkCap }, "lcd leaf chunk exceeds the resolved summarizer cap; deterministic floor (no LLM)");
+    return persistDeterministicLeafFloor(
+      store, scope, chunkItems, chunk.tokens, window, now, nowFn, passStart, logger, eventBus,
+      "LCD leaf summary persisted (SUMW-01: over-cap chunk — deterministic floor)",
+    );
+  }
 
   // Summarize (3-level escalation; non-fatal inside — always returns a result).
   // SUM-02: resolve tier-aware effective leaf target (nano ≤256, small ≤400, mid ≤800, frontier uncapped).
+  // `previousSummary` is the SAME read the chunk-cap budget above accounted (WR-03).
   const effectiveLeafTarget = resolveSummaryTargetTokens(
     summarizerDeps.capabilityClass ?? "frontier",
     0, // leaf depth is always 0
     opts.leafTargetTokens,
   );
-  const previousSummary = previousSummaryContent(store, scope);
   const result = await summarizeLeafChunk(chunkItems, summarizerDeps, {
     reserveTokens: effectiveLeafTarget,
     previousSummary,
@@ -619,24 +633,21 @@ async function runOneLeafPass(
 
 /**
  * AfterTurn threshold sweep: a BOUNDED multi-pass leaf DRAIN (B-2). Loops
- * {@link runOneLeafPass} — re-resolving the model-facing view each iteration so it
- * observes its own compaction (CR-02) — until the FIRST of:
- *   - utilization ≤ `contextThreshold` (the view is drained — the success exit),
- *   - a no-progress guard fires (no chunk / chunk < MIN_SHRINKABLE / ordinal-window
- *     divergence — re-resolving would re-select the SAME chunk, so the loop stops),
- *   - the hard `maxLeafPassesPerTurn` cap is reached (the infinite-loop backstop).
- * It NEVER loops without one of these terminating it.
+ * {@link runOneLeafPass} — re-resolving the model-facing view each iteration so
+ * it observes its own compaction (CR-02) — until the FIRST of: utilization ≤
+ * `contextThreshold` (drained), a no-progress guard (no chunk / sub-MIN_SHRINKABLE
+ * chunk / ordinal-window divergence — re-resolving would re-select the SAME
+ * chunk), or the hard `maxLeafPassesPerTurn` cap (the infinite-loop backstop).
  *
- * Why bounded BOTH ways: under `deferCompaction:false` the afterTurn drain runs
- * INLINE + synchronously, so each pass is a real LLM round-trip blocking the live
- * turn — the cap guarantees a turn can never fire unbounded synchronous summarizer
- * calls. A sustained over-threshold load the cap can't fully drain in one turn keeps
- * draining on the NEXT afterTurn (the gate stays armed) rather than stalling at one
- * pass forever (the B-2 stall this replaces).
+ * Why bounded BOTH ways: under `deferCompaction:false` each pass is a real LLM
+ * round-trip blocking the live turn — the cap guarantees a turn never fires
+ * unbounded synchronous summarizer calls; a load the cap can't fully drain
+ * keeps draining on the NEXT afterTurn (the gate stays armed) rather than
+ * stalling at one pass forever (the B-2 stall this replaces).
  *
- * Non-fatal end-to-end (mirrors `ingestTurnGuarded`): the WHOLE loop is wrapped in
- * one try/catch → WARN → return, so a throw in pass K never fails the live turn and
- * never loses passes 1..K-1 (each persisted atomically). See the module header.
+ * Non-fatal end-to-end (mirrors `ingestTurnGuarded`): the WHOLE loop is wrapped
+ * in one try/catch → WARN → return, so a throw in pass K never fails the live
+ * turn and never loses passes 1..K-1 (each persisted atomically).
  *
  * @param store          The injected core ContextStorePort (daemon-injected concrete store).
  * @param scope          The SECURITY scope columns (conversationId/tenantId/agentId/sessionKey).
@@ -667,8 +678,15 @@ export async function maybeRunLeafPass(
   // single-pass — the prior behavior) rather than silently disabling compaction.
   const maxPasses = Math.max(1, Math.floor(opts.maxLeafPassesPerTurn ?? LCD_MAX_LEAF_PASSES_PER_TURN));
   try {
+    // SUMW-01 / review WR-05: resolve the summarizer window INSIDE the
+    // never-rejects boundary — resolveSummarizerWindowTokens invokes the
+    // caller-supplied getRealModel()/getModel(), and a throwing getter must
+    // degrade to the WARN below (T-129-18), never reject the live turn
+    // (parity with maybeRunCondensePass, which resolves inside its try). The
+    // per-pass chunk-cap clamp derived from it lives in runOneLeafPass.
+    const summarizerWindow = resolveSummarizerWindowTokens(summarizerDeps);
     for (let pass = 0; pass < maxPasses; pass++) {
-      const { made } = await runOneLeafPass(store, scope, opts, summarizerDeps, now, nowFn, logger, eventBus);
+      const { made } = await runOneLeafPass(store, scope, opts, summarizerWindow, summarizerDeps, now, nowFn, logger, eventBus);
       if (!made) break; // drained / no-progress / divergence — stop (never spin).
     }
   } catch (err) {
@@ -709,6 +727,13 @@ export interface RunLeafPassAfterTurnParams {
    * — the wiring gate, mirroring how the ingest gates on `deps.contextStore`.
    */
   getSummarizerDeps: (() => LeafSummarizerDeps) | undefined;
+  /** SUMW-02: the turn's budget window — `computeTokenBudgetForProfile().windowTokens`
+   *  = min(reconciled contextWindow, capability class cap), captured at the executor
+   *  BEFORE any dispose (a plain number — dispose-safe on the deferred C4 path). The
+   *  utilization denominator: one window truth with assembly + preflight. REQUIRED —
+   *  an optional-with-fallback would silently restore the configured-window
+   *  denominator (the DIST-01 4×-late-arming bug class). */
+  budgetWindowTokens: number;
   /** Injected wall-clock ms (`deps.clock.now()`) — never the ambient time global. Stamps `timestamp`. */
   now: number;
   /** Injected clock CALLABLE (`deps.clock.now`) for the O1 two-read pass timing. Absent ⇒ durationMs 0. */
@@ -723,7 +748,9 @@ export interface RunLeafPassAfterTurnParams {
  * Thin afterTurn call-site wiring for the leaf pass: resolve the summarizer deps,
  * gate on their presence, build {@link LeafPassOptions} from `config.contextEngine`
  * (defaulted via `ContextEngineConfigSchema`) with `windowTokens` taken from the
- * summarizer's `getModel().contextWindow`, then delegate to {@link maybeRunLeafPass}.
+ * threaded per-turn `budgetWindowTokens` (SUMW-02 — the SAME budget window the
+ * assembler + preflight use, NOT the session model's configured window), then
+ * delegate to {@link maybeRunLeafPass}.
  *
  * This is the single call `executor-post-execution.ts` adds inside its existing
  * `if (deps.contextStore)` block (after `ingestTurnGuarded`) — the body stays in
@@ -734,7 +761,7 @@ export interface RunLeafPassAfterTurnParams {
  * @param params - the minimal afterTurn inputs (see {@link RunLeafPassAfterTurnParams}).
  */
 export async function runLeafPassAfterTurn(params: RunLeafPassAfterTurnParams): Promise<void> {
-  const { store, scope, contextEngine, getSummarizerDeps, now, nowFn, logger, eventBus } = params;
+  const { store, scope, contextEngine, getSummarizerDeps, budgetWindowTokens, now, nowFn, logger, eventBus } = params;
   // Gate: no summarizer-deps getter ⇒ the leaf pass is off (clean skip).
   if (getSummarizerDeps === undefined) return;
   const summarizerDeps = getSummarizerDeps();
@@ -744,9 +771,6 @@ export async function runLeafPassAfterTurn(params: RunLeafPassAfterTurnParams): 
   // absent contextEngine block resolves to the schema defaults (contextThreshold
   // 0.75, leafChunkTokens 20_000, leafTargetTokens 1_200, freshTailTurns 8).
   const cfg = contextEngine ?? ContextEngineConfigSchema.parse({});
-  // The utilization denominator W is the model's context window from the
-  // summarizer deps (the live model getter), NOT a config knob.
-  const windowTokens = summarizerDeps.getModel().contextWindow;
 
   await maybeRunLeafPass(
     store,
@@ -756,7 +780,11 @@ export async function runLeafPassAfterTurn(params: RunLeafPassAfterTurnParams): 
       leafChunkTokens: cfg.leafChunkTokens,
       leafTargetTokens: cfg.leafTargetTokens,
       freshTailTurns: cfg.freshTailTurns,
-      windowTokens,
+      // SUMW-02: the utilization denominator W is the threaded per-turn budget
+      // window (min(reconciled contextWindow, class cap)) — never the summarizer
+      // snapshot's configured window, which armed ~4× late on capped small
+      // models (DIST-01). The maybeRunLeafPass finite-positive gate is unchanged.
+      windowTokens: budgetWindowTokens,
     },
     summarizerDeps,
     now,

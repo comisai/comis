@@ -47,6 +47,7 @@ const mocks = vi.hoisted(() => ({
   applySchemasPruningMock: vi.fn(),
   applySchemaSnapshotMock: vi.fn(),
   applyProviderNormalizationMock: vi.fn(),
+  applyPersistedReactiveStripMock: vi.fn(),
   applyMutationSerializerMock: vi.fn(),
 }));
 
@@ -103,8 +104,21 @@ vi.mock("./executor-tool-pipeline.js", () => ({
   applySchemasPruning: mocks.applySchemasPruningMock,
   applySchemaSnapshot: mocks.applySchemaSnapshotMock,
   applyProviderNormalization: mocks.applyProviderNormalizationMock,
+  applyPersistedReactiveStrip: mocks.applyPersistedReactiveStripMock,
   applyMutationSerializer: mocks.applyMutationSerializerMock,
 }));
+
+// KNOB-02: passthrough spy on the profile budget — the threading pin (KNOB-02-20)
+// must observe BOTH the windowProvenance argument reaching the call site AND the
+// REAL computed budget (rawContextWindowTokens / windowCapSource). The actual
+// implementation runs unchanged for every other test in this file.
+vi.mock("../context-engine/budget-capacity-cap.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../context-engine/budget-capacity-cap.js")>();
+  return {
+    ...actual,
+    computeTokenBudgetForProfile: vi.fn(actual.computeTokenBudgetForProfile),
+  };
+});
 
 // ---------------------------------------------------------------------------
 // SUT + co-imports
@@ -112,6 +126,7 @@ vi.mock("./executor-tool-pipeline.js", () => ({
 
 import { assembleTools } from "./executor-tool-assembly.js";
 import type { ToolAssemblyDeps, ToolAssemblyParams } from "./executor-tool-assembly.js";
+import { computeTokenBudgetForProfile } from "../context-engine/budget-capacity-cap.js";
 import { TypedEventBus, type SessionKey } from "@comis/core";
 import { createCapabilityPortStub } from "../../../core/src/ports/__test-helpers/tool-capability-stub.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
@@ -245,6 +260,7 @@ beforeEach(() => {
   mocks.applySchemasPruningMock.mockImplementation((params: { tools: unknown[] }) => params.tools);
   mocks.applySchemaSnapshotMock.mockImplementation((params: { tools: unknown[] }) => params.tools);
   mocks.applyProviderNormalizationMock.mockImplementation((params: { tools: unknown[] }) => params.tools);
+  mocks.applyPersistedReactiveStripMock.mockImplementation((params: { tools: unknown[] }) => params.tools);
   mocks.applyMutationSerializerMock.mockImplementation((tools: unknown[]) => tools);
 });
 
@@ -1155,5 +1171,54 @@ describe("assembleTools — C3 deferred-tools list capped for small/nano via DEF
       expect.anything(),
       undefined,
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// KNOB-02 (Phase 176): window-provenance threading into the profile budget.
+// Plan 176-01 made computeTokenBudgetForProfile provenance-AWARE (optional 7th
+// arg); without the ToolAssemblyParams field + the call-site pass-through, the
+// parameter is never populated — "built-but-not-wired" (Pitfall 4). This is
+// the RED pin proving the value REACHES the budget call site.
+// ---------------------------------------------------------------------------
+
+describe("assembleTools — KNOB-02 window provenance threading into computeTokenBudgetForProfile", () => {
+  // The executor-reconciled profile: contextWindow ALREADY overwritten with the
+  // served value (8_192) by pi-executor's resolveModelProfile-on-reconciled-window.
+  const servedBoundSmallProfile = {
+    contextWindow: 8_192,
+    maxOutputTokens: 4096,
+    capabilityClass: "small" as const,
+    scaffoldLevel: "standard" as const,
+    securityLevel: "hardened" as const,
+    supportsVision: false,
+    supportsTools: true,
+    supportsPromptCache: false,
+    supportsServerToolSearch: false,
+    supportsStructuredOutput: false,
+    reasoningStyle: "none" as const,
+  };
+
+  it("KNOB-02-20: threads params.windowProvenance to the budget call so a served-bound budget reports raw=configured 131072 with windowCapSource 'served'", async () => {
+    const budgetSpy = vi.mocked(computeTokenBudgetForProfile);
+    await assembleTools(makeParams({
+      modelProfile: servedBoundSmallProfile,
+      resolvedModel: { id: "qwen-small", provider: "ollama", contextWindow: 131_072, reasoning: false },
+      windowProvenance: { configuredWindow: 131_072, served: 8_192, reconcileSource: "served" },
+    }));
+    // The provenance object must arrive as the 7th argument (index 6) — RED
+    // pre-patch: ToolAssemblyParams has no windowProvenance field and the call
+    // site passes 6 args, so this is undefined.
+    const lastCall = budgetSpy.mock.calls.at(-1);
+    expect(lastCall?.[6]).toEqual({ configuredWindow: 131_072, served: 8_192, reconcileSource: "served" });
+    // And the REAL budget computed from it reports the TRUE configured window
+    // (not the served value masquerading as the model's declared window) with
+    // the served cap source — RED pre-patch: raw === 8_192, source === "none".
+    const budgetResult = budgetSpy.mock.results.at(-1)?.value as {
+      rawContextWindowTokens: number;
+      windowCapSource: string;
+    };
+    expect(budgetResult.rawContextWindowTokens).toBe(131_072);
+    expect(budgetResult.windowCapSource).toBe("served");
   });
 });

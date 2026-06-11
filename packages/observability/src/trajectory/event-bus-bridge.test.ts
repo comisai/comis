@@ -797,6 +797,15 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       succeeded: true,
       timestamp: 0,
     },
+    "execution:tool_schema_unsupported": {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      toolNames: ["schedule_task"],
+      strippedKeywords: ["pattern", "format"],
+      retried: true,
+      succeeded: true,
+      timestamp: 0,
+    },
     // scanned subset
     "security:injection_detected": {
       source: "user_input",
@@ -1379,6 +1388,68 @@ describe("queue + execution + sender bridge", () => {
     expect(data.timestamp).toBeUndefined();
   });
 
+  // LAT-04 (Phase 177): the enriched execution:prompt_timeout payload (177-03)
+  // must forward ALL attribution fields through the translator — the 4-sync-point
+  // chain's known silent-failure mode is extending the event but missing the
+  // translator, which silently drops the evidence from `comis explain`
+  // (research Pitfall 5; the Phase-176 safeParse-drop lesson).
+  it("LAT-04-O-1: enriched execution_prompt_timeout forwards durationMs/limit/source/bindingKnob/stallBudgetMs/makespanMs verbatim; envelope keys stripped", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("execution:prompt_timeout", {
+      agentId: "my-agent",
+      sessionKey: "t1:u1:c1",
+      timeoutMs: 180_000,
+      timestamp: Date.now(),
+      durationMs: 195_000,
+      limit: "stall",
+      source: "agent_config",
+      bindingKnob: "agents.my-agent.promptTimeout.promptTimeoutMs",
+      operationType: undefined,
+      stallBudgetMs: 180_000,
+      makespanMs: 1_800_000,
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("execution.prompt_timeout");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.timeoutMs).toBe(180_000);
+    expect(data.durationMs).toBe(195_000);
+    expect(data.limit).toBe("stall");
+    expect(data.source).toBe("agent_config");
+    expect(data.bindingKnob).toBe("agents.my-agent.promptTimeout.promptTimeoutMs");
+    expect(data.stallBudgetMs).toBe(180_000);
+    expect(data.makespanMs).toBe(1_800_000);
+    // operationType was undefined at the emit — must not materialize as a key.
+    expect("operationType" in data).toBe(false);
+    // Envelope-only correlation keys are stripped from data (the 175 house style).
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("LAT-04-O-2: a LEGACY prompt_timeout payload (no extended fields) still translates to exactly {timeoutMs} — no undefined-keyed fields", () => {
+    // Back-compat guard pin (green pre-patch by design): old emitters/rows carry
+    // only the original four fields; the conditional spreads must not materialize
+    // undefined-keyed entries on the persisted trajectory row.
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("execution:prompt_timeout", {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      timeoutMs: 30_000,
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data).toEqual({ timeoutMs: 30_000 });
+  });
+
   it("execution_output_escalated_maps_to_execution.output_escalated with originalMaxTokens/escalatedMaxTokens; sessionKey/agentId stripped", () => {
     const bus = makeBus();
     const recorder = createCaptureRecorder();
@@ -1423,6 +1494,53 @@ describe("queue + execution + sender bridge", () => {
     expect(data.blocksRemoved).toBe(2);
     expect(data.thoughtSignaturesStripped).toBe(1);
     expect(data.succeeded).toBe(true);
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  // GBNF-02 (Phase 175 Plan 05): the strip-retry self-heal event must be
+  // registered + bridged BEFORE the executor emit lands so the architecture
+  // test (trajectory-event-types-known) can never catch an unmapped emit.
+  // Payload is content-free per I7: tool + keyword NAMES only — never schema
+  // bodies and never the raw provider error body.
+  it("execution_tool_schema_unsupported_maps_to_execution.tool_schema_unsupported with toolNames/strippedKeywords/retried/succeeded; agentId/sessionKey stripped", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    // Mapping entry locked: "execution:tool_schema_unsupported" →
+    // "execution.tool_schema_unsupported" (full name — NOT shortened like
+    // signed_replay_recovered → replay_recovered).
+    expect(
+      (TRAJECTORY_BRIDGE_MAPPING as Record<string, string>)["execution:tool_schema_unsupported"],
+    ).toBe("execution.tool_schema_unsupported");
+    // The canonical record kind must be in the closed TrajectoryEventType union.
+    expect(TRAJECTORY_EVENT_TYPES).toContain("execution.tool_schema_unsupported");
+
+    bus.emit("execution:tool_schema_unsupported" as keyof EventMap, {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      toolNames: ["schedule_task"],
+      strippedKeywords: ["pattern", "format"],
+      retried: true,
+      succeeded: false,
+      reason: "stripped",
+      timestamp: Date.now(),
+    } as never);
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("execution.tool_schema_unsupported");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    // All 5 payload fields survive translation (Plan 06's explain heuristic input).
+    expect(data.toolNames).toEqual(["schedule_task"]);
+    expect(data.strippedKeywords).toEqual(["pattern", "format"]);
+    expect(data.retried).toBe(true);
+    expect(data.succeeded).toBe(false);
+    // WR-05 (175-REVIEW): the branch discriminator must reach the trajectory
+    // so gate-closed and nothing-to-strip terminals stay distinguishable.
+    expect(data.reason).toBe("stripped");
+    // Envelope-only correlation keys are stripped from data.
     expect(data.agentId).toBeUndefined();
     expect(data.sessionKey).toBeUndefined();
     expect(data.timestamp).toBeUndefined();
@@ -2477,10 +2595,11 @@ describe("attachTrajectoryToEventBus -- dedup events", () => {
 // ---------------------------------------------------------------------------
 
 describe("health:budget_exceeded entry (bridge entry count guard)", () => {
-  it("bridge entry count is exactly 60 (+2 D3 breaker + 1 D7 offload Phase 151; +1 session:summary Phase 152; +1 context:budget_computed W2)", () => {
+  it("bridge entry count is exactly 61 (+2 D3 breaker + 1 D7 offload Phase 151; +1 session:summary Phase 152; +1 context:budget_computed W2; +1 execution:tool_schema_unsupported Phase 175)", () => {
     // 55 + tool:breaker_opened + tool:breaker_reset (D3) + tool:result_offloaded (D7)
-    // + session:summary (F2/D5, Phase 152).
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(60);
+    // + session:summary (F2/D5, Phase 152)
+    // + execution:tool_schema_unsupported (GBNF-02, Phase 175 Plan 05).
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(61);
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {

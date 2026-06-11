@@ -32,6 +32,7 @@ import type {
 } from "@comis/core";
 import type { ExcludeDeferralResult } from "./tool-deferral.js";
 import type { ModelProfile, CapabilityClass } from "./model-profile.js";
+import type { WindowProvenance } from "../context-engine/types.js";
 import type { CapabilityIndexRenderResult } from "./capability-index-context.js";
 import type { DiscoveryTracker } from "./discovery-tracker.js";
 import type { ExecutionPromptResult } from "./prompt-assembly.js";
@@ -185,6 +186,12 @@ export interface ToolAssemblyResult {
   deliveredGuides: Set<string>;
   /** Capability class from ModelProfile (resolved once per execution in pi-executor). */
   capabilityClass: CapabilityClass;
+  /** SUMW-02: the turn's budget window — computeTokenBudgetForProfile().windowTokens
+   *  = min(reconciled contextWindow, capability class cap). The ONE utilization
+   *  denominator shared with assembly + CWF-02 preflight; threaded through
+   *  postExecution to the LCD after-turn triggers (REQUIRED — a fallback would
+   *  silently restore the configured-window denominator, the DIST-01 bug class). */
+  budgetWindowTokens: number;
   /** Discovery tracker for deferred tool discovery state. */
   discoveryTracker: DiscoveryTracker;
   /** Mutable ref for compaction deps to serialize discovered tools. */
@@ -228,9 +235,12 @@ export interface ToolAssemblyParams {
   formattedKeyForGuides: string;
   deliveredGuides: Set<string>;
   resolvedModel?: { id: string; provider: string; contextWindow?: number; reasoning?: boolean };
-  modelCompat?: { supportsTools?: boolean; toolSchemaProfile?: "default" | "xai"; toolCallArgumentsEncoding?: "json" | "html-entities"; nativeWebSearchTool?: boolean };
+  modelCompat?: { supportsTools?: boolean; toolSchemaProfile?: "default" | "xai" | "gbnf"; toolCallArgumentsEncoding?: "json" | "html-entities"; nativeWebSearchTool?: boolean };
   /** ModelProfile resolved once per execution in pi-executor. Used to thread capabilityClass to consumers. */
   modelProfile?: ModelProfile;
+  /** KNOB-02: served/capability window provenance built at the pi-executor reconcile.
+   *  Absent ⇒ budget reports profile.contextWindow as raw (pre-KNOB-02). */
+  windowProvenance?: WindowProvenance;
   agentId?: string;
   safetyReinforcement?: string;
   _directives?: { thinkingLevel?: string; compact?: unknown };

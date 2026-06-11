@@ -57,6 +57,13 @@ export interface ConfigPostureInputs {
    * (the boot `mergedEnv` is store-wins) — NOT a per-agent count.
    */
   canaryFallbackActive: boolean;
+  /**
+   * KNOB-03 (Phase 176): providers whose Ollama-served window < configured at
+   * this boot — a COUNT, never provider names (the no-free-text contract).
+   * Derived in daemon.ts from the SAME comparison results the KNOB-01 boot
+   * WARN used (one comparison, two surfaces — no drift).
+   */
+  servedBelowConfiguredCount: number;
 }
 
 /**
@@ -65,9 +72,9 @@ export interface ConfigPostureInputs {
  * No-ops when `obsStore` is `undefined` (observability persistence disabled) —
  * the `?.` is mandatory so a disabled-persistence boot cannot crash shutdown
  * (Pitfall 5). Severity is `"warning"` when ANY posture issue is present
- * (`tlsOff` OR a stranded finding OR `canaryFallbackActive`), else `"info"`. The
- * timestamp comes from the injected `ClockPort` — never `Date.now()` (globals
- * gate).
+ * (`tlsOff` OR a stranded finding OR `canaryFallbackActive` OR
+ * `servedBelowConfiguredCount > 0`), else `"info"`. The timestamp comes from
+ * the injected `ClockPort` — never `Date.now()` (globals gate).
  */
 export function buildConfigPostureRecord(
   obsStore: ObservabilityStore | undefined,
@@ -77,7 +84,8 @@ export function buildConfigPostureRecord(
   const hasIssue =
     inputs.tlsOff ||
     inputs.strandedFindings.length > 0 ||
-    inputs.canaryFallbackActive;
+    inputs.canaryFallbackActive ||
+    inputs.servedBelowConfiguredCount > 0;
 
   obsStore?.insertDiagnostic({
     timestamp: clock.now(),
@@ -89,6 +97,7 @@ export function buildConfigPostureRecord(
       allowInsecureHttp: inputs.allowInsecureHttp,
       stranded: inputs.strandedFindings,
       canaryFallbackActive: inputs.canaryFallbackActive,
+      servedBelowConfiguredCount: inputs.servedBelowConfiguredCount,
     }),
   });
 }

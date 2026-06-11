@@ -207,6 +207,39 @@ describe("session.reset_conversation handler", () => {
     expect(lcdStore.deleteConversationLcd).toHaveBeenCalledTimes(1);
   });
 
+  // CR-02 (175-REVIEW): executor session-scoped state (tool-schema snapshots,
+  // the GBNF-02 strip-retry once-gate, JIT-guide delivery, cache latches)
+  // survives a conversation reset because the reset handler only cleared LCD +
+  // sessionStore. The reused session key then inherits the OLD gate/snapshots
+  // — a reset session got ZERO strip-retries and terminal-failed its first
+  // grammar-400. The handler must drop the agent-side state through the
+  // injected single authoritative cleanup path.
+  it("CR-02: reset_conversation clears executor session-scoped state via clearAgentSessionState (strip once-gate re-arms)", async () => {
+    const clearAgentSessionState = vi.fn();
+    const deps = makeDeps({ lcdStore: makeLcdStore(1), clearAgentSessionState });
+    const handlers = bindSessionArchiveHandlers(deps);
+
+    await handlers["session.reset_conversation"]!({
+      session_key: SESSION_KEY,
+      _trustLevel: "admin",
+    });
+
+    expect(clearAgentSessionState).toHaveBeenCalledWith(SESSION_KEY);
+  });
+
+  it("CR-02: session.delete (session destroy) also clears executor session-scoped state for the key", async () => {
+    const clearAgentSessionState = vi.fn();
+    const deps = makeDeps({ lcdStore: makeLcdStore(1), clearAgentSessionState });
+    const handlers = bindSessionArchiveHandlers(deps);
+
+    await handlers["session.delete"]!({
+      session_key: SESSION_KEY,
+      _trustLevel: "admin",
+    });
+
+    expect(clearAgentSessionState).toHaveBeenCalledWith(SESSION_KEY);
+  });
+
   it("H4b: deleteConversationLcd called inside runOnConversation (scope threaded correctly)", async () => {
     const lcdStore = makeLcdStore(5);
     const deps = makeDeps({ lcdStore });

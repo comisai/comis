@@ -39,6 +39,7 @@ describe("buildConfigPostureRecord", () => {
         allowInsecureHttp: false,
         strandedFindings: [{ stranded: "encrypted:secrets", entryCount: 2 }],
         canaryFallbackActive: true,
+        servedBelowConfiguredCount: 0,
       },
       clock,
     );
@@ -51,14 +52,16 @@ describe("buildConfigPostureRecord", () => {
     expect(row.message).toBe("config_posture");
 
     const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
-    // EXACTLY the four closed keys — counts + booleans + closed labels only.
+    // EXACTLY the five closed keys — counts + booleans + closed labels only.
     // WR-01: the canary field is an HONEST boolean (0|N presence proxy keyed on
     // CANARY_SECRET in env-or-store), NOT a misleading per-agent tally.
+    // KNOB-03: servedBelowConfiguredCount is a COUNT, never provider names.
     expect(details).toEqual({
       tlsOff: true,
       allowInsecureHttp: false,
       stranded: [{ stranded: "encrypted:secrets", entryCount: 2 }],
       canaryFallbackActive: true,
+      servedBelowConfiguredCount: 0,
     });
     // SECURITY: the stranded entry is a {label, count} — no value-bearing key.
     const strandedJson = JSON.stringify(details["stranded"]);
@@ -76,6 +79,7 @@ describe("buildConfigPostureRecord", () => {
         allowInsecureHttp: true,
         strandedFindings: [],
         canaryFallbackActive: false,
+        servedBelowConfiguredCount: 0,
       },
       clock,
     );
@@ -88,6 +92,7 @@ describe("buildConfigPostureRecord", () => {
       allowInsecureHttp: true,
       stranded: [],
       canaryFallbackActive: false,
+      servedBelowConfiguredCount: 0,
     });
   });
 
@@ -99,7 +104,7 @@ describe("buildConfigPostureRecord", () => {
       const { obsStore, insertDiagnostic } = createSpiedObsStore();
       buildConfigPostureRecord(
         obsStore,
-        { tlsOff: true, allowInsecureHttp: false, strandedFindings: [], canaryFallbackActive: false },
+        { tlsOff: true, allowInsecureHttp: false, strandedFindings: [], canaryFallbackActive: false, servedBelowConfiguredCount: 0 },
         clock,
       );
       expect((insertDiagnostic.mock.calls[0]?.[0] as DiagnosticRow).severity).toBe("warning");
@@ -114,6 +119,7 @@ describe("buildConfigPostureRecord", () => {
           allowInsecureHttp: false,
           strandedFindings: [{ stranded: "file:secrets", entryCount: 1 }],
           canaryFallbackActive: false,
+          servedBelowConfiguredCount: 0,
         },
         clock,
       );
@@ -124,7 +130,7 @@ describe("buildConfigPostureRecord", () => {
       const { obsStore, insertDiagnostic } = createSpiedObsStore();
       buildConfigPostureRecord(
         obsStore,
-        { tlsOff: false, allowInsecureHttp: false, strandedFindings: [], canaryFallbackActive: true },
+        { tlsOff: false, allowInsecureHttp: false, strandedFindings: [], canaryFallbackActive: true, servedBelowConfiguredCount: 0 },
         clock,
       );
       expect((insertDiagnostic.mock.calls[0]?.[0] as DiagnosticRow).severity).toBe("warning");
@@ -144,6 +150,7 @@ describe("buildConfigPostureRecord", () => {
           allowInsecureHttp: false,
           strandedFindings: [{ stranded: "encrypted:secrets", entryCount: 5 }],
           canaryFallbackActive: true,
+          servedBelowConfiguredCount: 0,
         },
         clock,
       ),
@@ -158,12 +165,64 @@ describe("buildConfigPostureRecord", () => {
 
     buildConfigPostureRecord(
       obsStore,
-      { tlsOff: false, allowInsecureHttp: false, strandedFindings: [], canaryFallbackActive: false },
+      { tlsOff: false, allowInsecureHttp: false, strandedFindings: [], canaryFallbackActive: false, servedBelowConfiguredCount: 0 },
       clock,
     );
 
     const row = insertDiagnostic.mock.calls[0]?.[0] as DiagnosticRow;
     // 42 + 8 = 50 — the fake clock's value, proving no Date.now() leak.
     expect(row.timestamp).toBe(50);
+  });
+
+  // -------------------------------------------------------------------------
+  // KNOB-03 (Phase 176): servedBelowConfiguredCount — providers whose
+  // Ollama-served window < configured at the latest boot. A COUNT, never
+  // provider names (the record's counts/booleans-only contract). The count
+  // alone must flip severity to "warning" (Pitfall 10: forget the hasIssue OR
+  // and severity stays "info" while the fleet finding fires).
+  // -------------------------------------------------------------------------
+
+  it("KNOB-03-1: flips severity to warning when ONLY servedBelowConfiguredCount is non-zero, and carries the count in details", () => {
+    const { obsStore, insertDiagnostic } = createSpiedObsStore();
+    const clock = createFakeClock(7000);
+
+    buildConfigPostureRecord(
+      obsStore,
+      {
+        tlsOff: false,
+        allowInsecureHttp: false,
+        strandedFindings: [],
+        canaryFallbackActive: false,
+        servedBelowConfiguredCount: 1,
+      },
+      clock,
+    );
+
+    const row = insertDiagnostic.mock.calls[0]?.[0] as DiagnosticRow;
+    expect(row.severity).toBe("warning");
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(details["servedBelowConfiguredCount"]).toBe(1);
+  });
+
+  it("KNOB-03-2: keeps severity info when servedBelowConfiguredCount is 0 and all else is healthy, and details carries the 0", () => {
+    const { obsStore, insertDiagnostic } = createSpiedObsStore();
+    const clock = createFakeClock(8000);
+
+    buildConfigPostureRecord(
+      obsStore,
+      {
+        tlsOff: false,
+        allowInsecureHttp: false,
+        strandedFindings: [],
+        canaryFallbackActive: false,
+        servedBelowConfiguredCount: 0,
+      },
+      clock,
+    );
+
+    const row = insertDiagnostic.mock.calls[0]?.[0] as DiagnosticRow;
+    expect(row.severity).toBe("info");
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(details["servedBelowConfiguredCount"]).toBe(0);
   });
 });

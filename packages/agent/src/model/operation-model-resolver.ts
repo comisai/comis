@@ -30,6 +30,24 @@ import {
 // Public types
 // ---------------------------------------------------------------------------
 
+/**
+ * Which level of the timeout resolution bound the effective timeout (LAT-01).
+ * Born HERE — producers thread it; decodeExecutionOverrides merges it; hints
+ * render knobs from it via executor/timeout-knob.ts. Deriving the label
+ * anywhere downstream cannot work: the cron producer materializes
+ * ExecutionOverrides.promptTimeout unconditionally, so by decode time
+ * "the 150s cron default applied" is indistinguishable from an explicit
+ * operator override. "graph_constant" is produced ONLY by the daemon graph
+ * spawn (setup-cross-session-graph.ts hardcodes 600_000ms) — the resolver
+ * never emits it.
+ */
+export type TimeoutSource =
+  | "operation_explicit"   // agents.<id>.operationModels.<op>.timeout
+  | "operation_default"    // OPERATION_TIMEOUT_DEFAULTS[op]
+  | "agent_config"         // agents.<id>.promptTimeout.promptTimeoutMs
+  | "builtin_default"      // DEFAULT_PROMPT_TIMEOUT_MS (180_000)
+  | "graph_constant";      // GRAPH_PROMPT_TIMEOUT_MS (600_000) — not operator-tunable
+
 /** Result of resolving which model to use for a given operation. */
 export interface OperationModelResolution {
   /** Full model string in "provider:modelId" format. */
@@ -44,6 +62,10 @@ export interface OperationModelResolution {
   operationType: ModelOperationType;
   /** Resolved timeout in milliseconds. */
   timeoutMs: number;
+  /** Which resolution level bound timeoutMs (LAT-01) — mirrors `source` for
+   *  the MODEL pick. Carried through ExecutionOverrides so hints can name the
+   *  binding knob without re-deriving it. */
+  timeoutSource: TimeoutSource;
   /** Cache retention hint override (undefined means use agent default). */
   cacheRetention?: "none" | "short";
 }
@@ -82,6 +104,7 @@ function buildResult(
   source: OperationModelResolution["source"],
   operationType: ModelOperationType,
   timeoutMs: number,
+  timeoutSource: TimeoutSource,
   cacheRetention?: "none" | "short",
 ): OperationModelResolution {
   return {
@@ -91,6 +114,7 @@ function buildResult(
     source,
     operationType,
     timeoutMs,
+    timeoutSource,
     cacheRetention,
   };
 }
@@ -166,12 +190,27 @@ export function resolveOperationModel(params: {
   } = params;
 
   // -- Resolve timeout (independent of which level picks the model) --
+  // LAT-01: the binding provenance is born at these branch points — never
+  // re-derived downstream (value-equality inference is ambiguous when an
+  // operator sets a value equal to a default; T-177-06).
   const entry = (operationModels as Partial<Record<ModelOperationType, OperationModelEntry>>)[operationType];
   const explicitTimeout = entry?.timeout;
-  const timeoutMs =
-    typeof explicitTimeout === "number" && explicitTimeout > 0
-      ? explicitTimeout
-      : OPERATION_TIMEOUT_DEFAULTS[operationType] ?? agentPromptTimeoutMs ?? DEFAULT_PROMPT_TIMEOUT_MS;
+  const operationDefaultTimeout = OPERATION_TIMEOUT_DEFAULTS[operationType];
+  let timeoutMs: number;
+  let timeoutSource: TimeoutSource;
+  if (typeof explicitTimeout === "number" && explicitTimeout > 0) {
+    timeoutMs = explicitTimeout;
+    timeoutSource = "operation_explicit";
+  } else if (operationDefaultTimeout !== undefined) {
+    timeoutMs = operationDefaultTimeout;
+    timeoutSource = "operation_default";
+  } else if (agentPromptTimeoutMs !== undefined) {
+    timeoutMs = agentPromptTimeoutMs;
+    timeoutSource = "agent_config";
+  } else {
+    timeoutMs = DEFAULT_PROMPT_TIMEOUT_MS;
+    timeoutSource = "builtin_default";
+  }
 
   // -- Resolve cache retention --
   const cacheRetention = OPERATION_CACHE_DEFAULTS[operationType];
@@ -179,28 +218,28 @@ export function resolveOperationModel(params: {
   // -- Level 1: invocationOverride --
   if (invocationOverride != null && invocationOverride.length > 0) {
     if (invocationOverride === "primary") {
-      return buildResult(agentProvider, agentModel, "cron_job_override", operationType, timeoutMs, cacheRetention);
+      return buildResult(agentProvider, agentModel, "cron_job_override", operationType, timeoutMs, timeoutSource, cacheRetention);
     }
     const parsed = parseModelString(invocationOverride, agentProvider);
-    return buildResult(parsed.provider, parsed.modelId, "cron_job_override", operationType, timeoutMs, cacheRetention);
+    return buildResult(parsed.provider, parsed.modelId, "cron_job_override", operationType, timeoutMs, timeoutSource, cacheRetention);
   }
 
   // -- Level 2: explicit config (operationModels[operationType]) --
   const configValue = entry?.model;
   if (typeof configValue === "string" && configValue.length > 0) {
     if (configValue === "primary") {
-      return buildResult(agentProvider, agentModel, "explicit_config", operationType, timeoutMs, cacheRetention);
+      return buildResult(agentProvider, agentModel, "explicit_config", operationType, timeoutMs, timeoutSource, cacheRetention);
     }
     const parsed = parseModelString(configValue, agentProvider);
     // Run normalizeModelId for shortcut resolution on operator-provided values
     const normalized = normalizeModelId(parsed.provider, parsed.modelId);
-    return buildResult(normalized.provider, normalized.modelId, "explicit_config", operationType, timeoutMs, cacheRetention);
+    return buildResult(normalized.provider, normalized.modelId, "explicit_config", operationType, timeoutMs, timeoutSource, cacheRetention);
   }
 
   // -- Level 3: parentModel (subagent only) --
   if (operationType === "subagent" && parentModel != null && parentModel.length > 0) {
     const parsed = parseModelString(parentModel, agentProvider);
-    return buildResult(parsed.provider, parsed.modelId, "parent_inherited", operationType, timeoutMs, cacheRetention);
+    return buildResult(parsed.provider, parsed.modelId, "parent_inherited", operationType, timeoutMs, timeoutSource, cacheRetention);
   }
 
   // -- Level 4: catalog-derived tier --
@@ -214,10 +253,10 @@ export function resolveOperationModel(params: {
     if (modelId) {
       // Do NOT call normalizeModelId on catalog ids — they are already
       // canonical pi-ai registry entries.
-      return buildResult(agentProvider, modelId, "family_default", operationType, timeoutMs, cacheRetention);
+      return buildResult(agentProvider, modelId, "family_default", operationType, timeoutMs, timeoutSource, cacheRetention);
     }
   }
 
   // -- Level 5: agent primary (ultimate fallback) --
-  return buildResult(agentProvider, agentModel, "agent_primary", operationType, timeoutMs, cacheRetention);
+  return buildResult(agentProvider, agentModel, "agent_primary", operationType, timeoutMs, timeoutSource, cacheRetention);
 }

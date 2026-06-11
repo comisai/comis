@@ -189,6 +189,99 @@ describe("createLlmCompactionLayer", () => {
   });
 
   // -------------------------------------------------------------------------
+  // 1b. FLOOR-02 (Phase 176) — the pipeline-path parity verdict pins.
+  //
+  // The "pipeline" context engine has no CWF-02 preflight, no output-headroom
+  // enforcement, and no proactive exhaustion classification (those are
+  // dag-only). Its de-facto fit guard is THIS budget-aware 85% compaction
+  // trigger (llm-compaction.ts: thresholdTokens =
+  // floor(budget.windowTokens * COMPACTION_TRIGGER_PERCENT / 100)). These are
+  // CHARACTERIZATION pins of existing behavior — the written half of the
+  // FLOOR-02 verdict (the doc half lives in docs/reference/config-yaml.mdx).
+  // The below-threshold direction is pinned above; these pin the other
+  // direction (arms at threshold) and the threshold's derivation source.
+  // -------------------------------------------------------------------------
+
+  it("FLOOR-02-1: arms compaction when above 85% of budget.windowTokens (pipeline de-facto fit guard — parity verdict pin)", async () => {
+    const { deps, logger } = createMockDeps();
+    const layer = createLlmCompactionLayer({ compactionCooldownTurns: 5 }, deps);
+    // 10 text messages × ~50K chars ≈ 500K chars ≈ 143K tokens (ratio 3.5) —
+    // ABOVE floor(128_000 × 85 / 100) = 108_800 tokens, while messageCount 10
+    // stays below the 60-message block-count trigger, so the firing trigger is
+    // the 85% token threshold. Zoning: tail budget 76_408 × 3.5 ≈ 267K chars
+    // fits ~5 messages; head 0 (no prefixAnchorTurns) → middle ≥ 3, so the
+    // compaction actually runs (not just evaluates).
+    const messages: AgentMessage[] = [];
+    for (let i = 0; i < 5; i++) {
+      messages.push(makeUserMsg(`Q${i}: ` + "x".repeat(50_000)));
+      messages.push(makeAssistantMsg(`A${i}: ` + "y".repeat(50_000)));
+    }
+    mockGenerateSummary.mockResolvedValueOnce(buildValidSummary());
+
+    const result = await layer.apply(messages, BUDGET);
+
+    // The de-facto guard armed: summarization ran and the context was compacted.
+    expect(mockGenerateSummary).toHaveBeenCalledTimes(1);
+    expect(result).not.toBe(messages);
+    // The trigger that fired is the budget-window token threshold (cooldown=5
+    // did not suppress the FIRST trigger — turnsSinceLastCompaction starts at
+    // Infinity, exactly as the :180 below-threshold pin relies on).
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        trigger: "token_threshold",
+        thresholdTokens: Math.floor((BUDGET.windowTokens * 85) / 100),
+        windowTokens: BUDGET.windowTokens,
+        errorKind: "resource",
+      }),
+      "LLM compaction triggered: context exceeds 85% threshold",
+    );
+  });
+
+  it("FLOOR-02-2: threshold derives from budget.windowTokens, not the model's configured contextWindow", async () => {
+    const { deps, logger } = createMockDeps();
+    // The deps' model declares contextWindow 128_000 (createMockDeps), but the
+    // budget handed to the layer carries a SMALLER windowTokens — the shape a
+    // served/capability-capped budget would have. The trigger must key on the
+    // budget value.
+    const smallBudget: TokenBudget = {
+      windowTokens: 32_000, // ≪ deps.getModel().contextWindow (128_000)
+      systemTokens: 2_000,
+      outputReserveTokens: 4_096,
+      safetyMarginTokens: 2_048,
+      contextRotBufferTokens: 8_000,
+      availableHistoryTokens: 15_856,
+    };
+    const layer = createLlmCompactionLayer({ compactionCooldownTurns: 5 }, deps);
+    // 10 text messages × ~16K chars ≈ 160K chars ≈ 46K tokens (ratio 3.5):
+    //   ABOVE floor(32_000 × 85 / 100) = 27_200  (85% of budget.windowTokens)
+    //   BELOW floor(128_000 × 85 / 100) = 108_800 (85% of the model's window)
+    // If the threshold derived from the model's configured contextWindow, this
+    // conversation would NOT trigger — the firing itself proves budget-keying.
+    // Zoning: tail budget 15_856 × 3.5 ≈ 55K chars fits ~3 messages → middle 7 ≥ 3.
+    const messages: AgentMessage[] = [];
+    for (let i = 0; i < 5; i++) {
+      messages.push(makeUserMsg(`Q${i}: ` + "x".repeat(16_000)));
+      messages.push(makeAssistantMsg(`A${i}: ` + "y".repeat(16_000)));
+    }
+    mockGenerateSummary.mockResolvedValueOnce(buildValidSummary());
+
+    const result = await layer.apply(messages, smallBudget);
+
+    expect(mockGenerateSummary).toHaveBeenCalledTimes(1);
+    expect(result).not.toBe(messages);
+    // The logged threshold is floor(budget.windowTokens × 85 / 100) — the
+    // budget value, NOT floor(128_000 × 85 / 100) = 108_800 from the model.
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        trigger: "token_threshold",
+        thresholdTokens: 27_200,
+        windowTokens: 32_000,
+      }),
+      "LLM compaction triggered: context exceeds 85% threshold",
+    );
+  });
+
+  // -------------------------------------------------------------------------
   // 2. Within cooldown -- no compaction
   // -------------------------------------------------------------------------
 
@@ -1677,5 +1770,488 @@ describe("S4: security context pinning (pipeline layer)", () => {
     expect(result).not.toBe(messages);
     // The safety-pinned message must be present in the output.
     expect(result).toContain(pinnedSafety);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SUMW-01 (Phase 178): pipeline span clamp — the compaction input span must
+// never exceed the RESOLVED summarizer's window minus output reserve minus
+// prompt overhead. Today the layer feeds the WHOLE evictableMiddle to SDK
+// generateSummary (:550 → compactWithFallback), unbounded relative to the
+// summarizer — an `operationModels.compaction` 8K model handed a ~20K-token
+// span is a provider overflow. These fixtures pin BOTH halves of the fix:
+//   1. the clamp keys on the LOCAL resolved `model` (the same variable fed to
+//      generateSummary — override wins over the session primary, Pitfall 2);
+//   2. the un-summarized remainder of the middle zone is PRESERVED in the
+//      output between the summary and the tail (:574 assembly — Pitfall 3:
+//      a dropped remainder is silent, unrecoverable history deletion).
+// Span budget arithmetic (values pinned deliberately — SUMMARIZER_PROMPT_
+// OVERHEAD_TOKENS = 2_048, plan-adopted research A1; review CR-01 replaced the
+// session outputReserveTokens with a SUMMARIZER-sized reserve so small windows
+// never go permanently negative):
+//   summaryReserve = min(budget.outputReserveTokens, max(1, ⌊W/4⌋))
+//   maxSpanTokens  = W − summaryReserve − 2_048
+//   8K override:   8_000 − 2_000 − 2_048 = 3_952  (the binding fixture)
+//   200K override: 200_000 − 4_096 − 2_048 = 193_856 (the no-op I3 pin)
+//   3K override:   3_000 − 750 − 2_048 = 202     (oldest msg alone exceeds →
+//                  CR-01 single-message escalation, never a permanent skip)
+// ---------------------------------------------------------------------------
+
+import type { Message } from "@earendil-works/pi-ai";
+import { estimateMessageChars, estimateContextCharsWithDualRatio } from "../safety/token-estimator.js";
+import { CHARS_PER_TOKEN_RATIO } from "./constants.js";
+
+describe("SUMW-01: pipeline span clamp", () => {
+  beforeEach(() => {
+    mockGenerateSummary.mockReset();
+  });
+
+  /** The FLOOR-02-2 budget shape: a served/capability-capped small budget whose
+   *  85% trigger threshold is floor(32_000 × 85 / 100) = 27_200 tokens. */
+  const smallBudget: TokenBudget = {
+    windowTokens: 32_000,
+    systemTokens: 2_000,
+    outputReserveTokens: 4_096,
+    safetyMarginTokens: 2_048,
+    contextRotBufferTokens: 8_000,
+    availableHistoryTokens: 15_856,
+  };
+
+  /** maxSpanTokens for the 8K summarizer (see header): summaryReserve =
+   *  min(4_096, ⌊8_000/4⌋) = 2_000 → 8_000 − 2_000 − 2_048. */
+  const MAX_SPAN_TOKENS_8K = 8_000 - 2_000 - 2_048; // = 3_952
+
+  /**
+   * 30 text messages × ~4K chars ≈ 120K chars ≈ 34.3K tokens (ratio 3.5) —
+   * ABOVE the 27_200 trigger threshold, while messageCount 30 stays below the
+   * 60-message block-count trigger (so the firing trigger is token_threshold).
+   * Zoning under smallBudget: tail budget 15_856 × 3.5 ≈ 55.5K chars fits the
+   * last ~13 messages → middle ≈ 17 messages ≈ 68K chars ≈ 19.4K tokens —
+   * the genuinely-overflowing ~20K-token span an 8K summarizer cannot take.
+   */
+  function buildSpanClampConversation(): AgentMessage[] {
+    const messages: AgentMessage[] = [];
+    for (let i = 0; i < 15; i++) {
+      messages.push(makeUserMsg(`Q${i}: ` + "x".repeat(4_000)));
+      messages.push(makeAssistantMsg(`A${i}: ` + "y".repeat(4_000)));
+    }
+    return messages;
+  }
+
+  /** Accumulate per-message ceil(chars / 3.5) — mirrors the clamp's prefix walk. */
+  function spanTokensOf(msgs: AgentMessage[]): number {
+    let total = 0;
+    for (const m of msgs) {
+      total += Math.ceil(estimateMessageChars(m as unknown as Message) / CHARS_PER_TOKEN_RATIO);
+    }
+    return total;
+  }
+
+  /** Mirror the layer's tail walk (headEndIndex 0 — no prefixAnchorTurns in
+   *  these fixtures): tailBudgetChars = availableHistoryTokens × ratio. */
+  function mirrorTailStartIndex(messages: AgentMessage[], budget: TokenBudget): number {
+    const tailBudgetChars = budget.availableHistoryTokens * CHARS_PER_TOKEN_RATIO;
+    let tailStartIndex = messages.length;
+    let tailChars = 0;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msgChars = estimateMessageChars(messages[i] as unknown as Message);
+      if (tailChars + msgChars > tailBudgetChars) break;
+      tailChars += msgChars;
+      tailStartIndex = i;
+    }
+    return tailStartIndex;
+  }
+
+  function make8kOverrideDeps(): ReturnType<typeof createMockDeps> {
+    return createMockDeps({
+      overrideModel: {
+        model: { id: "small-summarizer", provider: "ollama", contextWindow: 8_000 },
+        getApiKey: vi.fn().mockResolvedValue("k"),
+      },
+    });
+  }
+
+  it("SUMW-01-P1: clamps the summarized span to the OVERRIDE summarizer's 8K window, not the primary's 128K", async () => {
+    const { deps } = make8kOverrideDeps(); // primary getModel() stays at 128_000
+    const layer = createLlmCompactionLayer({ compactionCooldownTurns: 5 }, deps);
+    const messages = buildSpanClampConversation();
+    const middleCount = mirrorTailStartIndex(messages, smallBudget); // middle = [0, tailStart)
+    mockGenerateSummary.mockResolvedValue(buildValidSummary());
+
+    await layer.apply(messages, smallBudget);
+
+    expect(mockGenerateSummary).toHaveBeenCalled();
+    const spanArg = mockGenerateSummary.mock.calls[0][0] as AgentMessage[];
+    // The span fed to the summarizer fits the RESOLVED (override) window:
+    // ≤ 8_000 − 2_000 − 2_048 = 3_952 tokens. A clamp keyed to the primary's
+    // 128_000 would allow 121_856 tokens — i.e. the whole ~19.4K-token middle —
+    // so this bound also proves override-keying (Pitfall 2).
+    expect(spanArg.length).toBeGreaterThanOrEqual(1);
+    const spanTokens = spanTokensOf(spanArg);
+    expect(spanTokens).toBeGreaterThan(0);
+    expect(spanTokens).toBeLessThanOrEqual(MAX_SPAN_TOKENS_8K);
+    // Strict subset: the clamp actually bound (pre-patch the WHOLE middle is passed).
+    expect(spanArg.length).toBeLessThan(middleCount);
+  });
+
+  it("SUMW-01-P2: the un-summarized remainder is PRESERVED between summary and tail — kept ∪ summarized == middle, disjoint", async () => {
+    const { deps } = make8kOverrideDeps();
+    const layer = createLlmCompactionLayer({ compactionCooldownTurns: 5 }, deps);
+    const messages = buildSpanClampConversation();
+    const tailStartIndex = mirrorTailStartIndex(messages, smallBudget);
+    const middle = messages.slice(0, tailStartIndex);
+    const tail = messages.slice(tailStartIndex);
+    mockGenerateSummary.mockResolvedValue(buildValidSummary());
+
+    const result = await layer.apply(messages, smallBudget);
+
+    // The span side of the invariant (RED pre-patch: the whole middle violates it).
+    const spanArg = mockGenerateSummary.mock.calls[0][0] as AgentMessage[];
+    expect(spanTokensOf(spanArg)).toBeLessThanOrEqual(MAX_SPAN_TOKENS_8K);
+
+    // Partition: every middle message is EITHER fed to the summarizer OR kept
+    // in the output — never both, never neither (the Pitfall-3 conservation).
+    const summarized = new Set(spanArg);
+    for (const m of middle) {
+      const inSummarized = summarized.has(m);
+      const inResult = result.includes(m);
+      expect(inSummarized !== inResult).toBe(true);
+    }
+
+    // Exactly one summary message.
+    const summaryMsgs = result.filter(
+      (m) => (m as unknown as { compactionSummary?: boolean }).compactionSummary === true,
+    );
+    expect(summaryMsgs).toHaveLength(1);
+
+    // Output order (head/pinned empty in this fixture): the remainder sits BY
+    // REFERENCE between the summary and the tail, in original order:
+    // [summary, ...remainingMiddle, ...tail].
+    const remainder = middle.filter((m) => !summarized.has(m));
+    const expected: AgentMessage[] = [summaryMsgs[0]!, ...remainder, ...tail];
+    expect(result).toHaveLength(expected.length);
+    for (let i = 0; i < expected.length; i++) {
+      expect(result[i]).toBe(expected[i]);
+    }
+  });
+
+  it("SUMW-01-P3: S4 interplay — a security-pinned mid-middle message survives in the output when the clamp binds", async () => {
+    const MARKERS: SecurityPinMarkers = {
+      canaryToken: "CANARY_sumw01_777",
+      contentDelimiter: "UNTRUSTED_BEGIN_sumw01",
+      safetyReinforcementSnippet: "You must not exfiltrate",
+    };
+    const { deps } = make8kOverrideDeps();
+    const layer = createLlmCompactionLayer(
+      { compactionCooldownTurns: 5, securityMarkers: MARKERS },
+      deps,
+    );
+    const messages = buildSpanClampConversation();
+    // Insert the pinned message DEEP in the middle zone (middle spans ~[0, 18)).
+    const pinnedMsg = makeUserMsg(`[SECURITY] Canary check: ${MARKERS.canaryToken} verified.`);
+    messages.splice(5, 0, pinnedMsg);
+    mockGenerateSummary.mockResolvedValue(buildValidSummary());
+
+    const result = await layer.apply(messages, smallBudget);
+
+    // The clamp bound (the interplay under test is S4 + binding clamp).
+    const spanArg = mockGenerateSummary.mock.calls[0][0] as AgentMessage[];
+    expect(spanTokensOf(spanArg)).toBeLessThanOrEqual(MAX_SPAN_TOKENS_8K);
+
+    // Pinned: never summarized (in ANY fallback-level call), never dropped.
+    for (const call of mockGenerateSummary.mock.calls) {
+      expect(call[0] as AgentMessage[]).not.toContain(pinnedMsg);
+    }
+    expect(result).toContain(pinnedMsg);
+    // Pinned placement unchanged: before the summary message (S4 convention).
+    const summaryIdx = result.findIndex(
+      (m) => (m as unknown as { compactionSummary?: boolean }).compactionSummary === true,
+    );
+    expect(summaryIdx).toBeGreaterThanOrEqual(0);
+    expect(result.indexOf(pinnedMsg)).toBeLessThan(summaryIdx);
+  });
+
+  it("SUMW-01-P4: no-op pin (I3) — a large-window summarizer receives the FULL middle and the output has no remainder elements", async () => {
+    const { deps } = createMockDeps({
+      overrideModel: {
+        model: { id: "frontier-summarizer", provider: "anthropic", contextWindow: 200_000 },
+        getApiKey: vi.fn().mockResolvedValue("k"),
+      },
+    });
+    const layer = createLlmCompactionLayer({ compactionCooldownTurns: 5 }, deps);
+    const messages = buildSpanClampConversation();
+    const tailStartIndex = mirrorTailStartIndex(messages, smallBudget);
+    const middle = messages.slice(0, tailStartIndex);
+    const tail = messages.slice(tailStartIndex);
+    mockGenerateSummary.mockResolvedValue(buildValidSummary());
+
+    const result = await layer.apply(messages, smallBudget);
+
+    // The summarizer received the FULL evictableMiddle (clamp does not bind:
+    // 200_000 − 4_096 − 2_048 = 193_856 ≥ the ~19.4K-token middle).
+    const spanArg = mockGenerateSummary.mock.calls[0][0] as AgentMessage[];
+    expect(spanArg).toHaveLength(middle.length);
+    for (let i = 0; i < middle.length; i++) {
+      expect(spanArg[i]).toBe(middle[i]);
+    }
+
+    // Output shape EXACTLY [...head(0), ...pinned(0), summary, ...tail] —
+    // no remainder elements inserted (byte-identical to today's assembly).
+    expect(result).toHaveLength(1 + tail.length);
+    expect(
+      (result[0] as unknown as { compactionSummary?: boolean }).compactionSummary,
+    ).toBe(true);
+    for (let i = 0; i < tail.length; i++) {
+      expect(result[i + 1]).toBe(tail[i]);
+    }
+  });
+
+  // INT-W1 (milestone integration WARNING 1): the served-window truth must
+  // reach the pipeline Step-4 clamp too. Arithmetic for the served-bound
+  // primary (configured 128_000 from getModel(), served 8_192):
+  //   summarizerWindow = min(128_000, 8_192) = 8_192
+  //   summaryReserve   = min(4_096, ⌊8_192/4⌋ = 2_048) = 2_048
+  //   maxSpanTokens    = 8_192 − 2_048 − 2_048 = 4_096
+  const MAX_SPAN_TOKENS_SERVED_8K = 8_192 - 2_048 - 2_048; // = 4_096
+
+  it("INT-W1-P1 (flagship): a served-bound PRIMARY (no override, served 8_192) clamps the pipeline span to the SERVED window, not the configured 128K", async () => {
+    // Pre-INT-W1: the Step-4 model is getModel() (configured 128_000) →
+    // maxSpan 121_856 → the WHOLE ~19.4K-token middle in one call to a
+    // provider serving 8K — silent input truncation of the summary source
+    // (RED: the strict-subset assertion below fails).
+    const { deps } = createMockDeps();
+    deps.primaryServedWindow = 8_192; // the executor-reconcile-gated windowProvenance.served
+    const layer = createLlmCompactionLayer({ compactionCooldownTurns: 5 }, deps);
+    const messages = buildSpanClampConversation();
+    const middleCount = mirrorTailStartIndex(messages, smallBudget);
+    mockGenerateSummary.mockResolvedValue(buildValidSummary());
+
+    await layer.apply(messages, smallBudget);
+
+    expect(mockGenerateSummary).toHaveBeenCalled();
+    const spanArg = mockGenerateSummary.mock.calls[0][0] as AgentMessage[];
+    expect(spanArg.length).toBeGreaterThanOrEqual(1);
+    const spanTokens = spanTokensOf(spanArg);
+    expect(spanTokens).toBeGreaterThan(0);
+    expect(spanTokens).toBeLessThanOrEqual(MAX_SPAN_TOKENS_SERVED_8K);
+    // Strict subset: the served clamp actually bound (pre-INT-W1 the whole
+    // middle is passed).
+    expect(spanArg.length).toBeLessThan(middleCount);
+  });
+
+  it("INT-W1-P2 (provider scoping, WR-02): a cloud override summarizer is NOT clamped by the primary provider's served window", async () => {
+    // The wiring site attaches NO servedWindow to a cross-provider override —
+    // the override's own 200K window governs and the full middle is summarized
+    // in one call (byte-identical to SUMW-01-P4). Pins that primaryServedWindow
+    // can never leak onto an override candidate.
+    const { deps } = createMockDeps({
+      overrideModel: {
+        model: { id: "cloud-summarizer", provider: "anthropic", contextWindow: 200_000 },
+        getApiKey: vi.fn().mockResolvedValue("k"),
+      },
+    });
+    deps.primaryServedWindow = 8_192;
+    const layer = createLlmCompactionLayer({ compactionCooldownTurns: 5 }, deps);
+    const messages = buildSpanClampConversation();
+    const middleCount = mirrorTailStartIndex(messages, smallBudget);
+    mockGenerateSummary.mockResolvedValue(buildValidSummary());
+
+    await layer.apply(messages, smallBudget);
+
+    const spanArg = mockGenerateSummary.mock.calls[0][0] as AgentMessage[];
+    expect(spanArg).toHaveLength(middleCount); // full middle — no served clamp
+  });
+
+  it("INT-W1-P3: when the override key fails and Step 4 falls back to the PRIMARY, the primary's served window binds the clamp (clamp/call agreement)", async () => {
+    // The Step-4 try/catch decides WHICH model summarizes; the served value
+    // must ride the SAME branch. Override (200K, key throws) → fallback model
+    // = getModel() (128K) + primaryServedWindow 8_192 → span ≤ 4_096 tokens.
+    // Pre-INT-W1: fallback window 128_000 → whole middle (RED).
+    const { deps } = createMockDeps({
+      overrideModel: {
+        model: { id: "cloud-summarizer", provider: "anthropic", contextWindow: 200_000 },
+        getApiKey: vi.fn().mockRejectedValue(new Error("key boom")),
+      },
+    });
+    deps.primaryServedWindow = 8_192;
+    const layer = createLlmCompactionLayer({ compactionCooldownTurns: 5 }, deps);
+    const messages = buildSpanClampConversation();
+    const middleCount = mirrorTailStartIndex(messages, smallBudget);
+    mockGenerateSummary.mockResolvedValue(buildValidSummary());
+
+    await layer.apply(messages, smallBudget);
+
+    expect(mockGenerateSummary).toHaveBeenCalled();
+    const spanArg = mockGenerateSummary.mock.calls[0][0] as AgentMessage[];
+    expect(spanTokensOf(spanArg)).toBeLessThanOrEqual(MAX_SPAN_TOKENS_SERVED_8K);
+    expect(spanArg.length).toBeLessThan(middleCount);
+  });
+
+  it("SUMW-01-P5 (review CR-01): degenerate summarizer — the single oldest message escalates through the ladder, remainder conserved, never a permanent skip", async () => {
+    const { deps } = createMockDeps({
+      overrideModel: {
+        // maxSpanTokens = 3_000 − min(4_096, 750) − 2_048 = 202 — even the
+        // oldest ~1_145-token message alone exceeds it (the cut===0 branch).
+        model: { id: "degenerate-summarizer", provider: "ollama", contextWindow: 3_000 },
+        getApiKey: vi.fn().mockResolvedValue("k"),
+      },
+    });
+    const layer = createLlmCompactionLayer({ compactionCooldownTurns: 5 }, deps);
+    const messages = buildSpanClampConversation();
+    const tailStartIndex = mirrorTailStartIndex(messages, smallBudget);
+    const middle = messages.slice(0, tailStartIndex);
+    const tail = messages.slice(tailStartIndex);
+    mockGenerateSummary.mockResolvedValue(buildValidSummary());
+
+    const result = await layer.apply(messages, smallBudget);
+
+    // The pre-review code returned `messages` unchanged here (cut===0 skip) —
+    // PERMANENTLY, since the oldest message never leaves the middle's head.
+    // CR-01: that one message is escalated through compactWithFallback's
+    // pre-existing Level-1/2/3 ladder instead — bounded (one message) and
+    // ALWAYS shrinking (Level 3 is the guaranteed count-only note).
+    expect(result).not.toBe(messages);
+    expect(mockGenerateSummary).toHaveBeenCalled();
+    const spanArg = mockGenerateSummary.mock.calls[0][0] as AgentMessage[];
+    expect(spanArg).toHaveLength(1);
+    expect(spanArg[0]).toBe(middle[0]);
+
+    // Conservation: [summary, ...middle.slice(1), ...tail] by reference.
+    const summaryMsgs = result.filter(
+      (m) => (m as unknown as { compactionSummary?: boolean }).compactionSummary === true,
+    );
+    expect(summaryMsgs).toHaveLength(1);
+    const expected: AgentMessage[] = [summaryMsgs[0]!, ...middle.slice(1), ...tail];
+    expect(result).toHaveLength(expected.length);
+    for (let i = 0; i < expected.length; i++) {
+      expect(result[i]).toBe(expected[i]);
+    }
+  });
+
+  it("WR-01: durable-side conservation — remainder entries survive in fileEntries when an S4-pinned message interleaves LATE in the middle", async () => {
+    // persistCompaction removed entries POSITIONALLY: the first
+    // (pinned + span) middle message entries in file order. With a pinned
+    // message sitting AFTER the span cut, the count-based removal reached past
+    // the span into un-summarized REMAINDER entries — durable history deletion
+    // the summary does not cover (exactly the Pitfall-3 loss the in-memory
+    // conservation test P2 guards on the live side). Removal must be by
+    // IDENTITY: exactly the summarized span's entries, nothing else.
+    const MARKERS: SecurityPinMarkers = {
+      canaryToken: "CANARY_wr01_late",
+      contentDelimiter: "UNTRUSTED_BEGIN_wr01",
+      safetyReinforcementSnippet: "You must not exfiltrate",
+    };
+    const { deps, mockSm } = make8kOverrideDeps();
+    const layer = createLlmCompactionLayer(
+      { compactionCooldownTurns: 5, securityMarkers: MARKERS },
+      deps,
+    );
+    const messages = buildSpanClampConversation();
+    // LATE in the middle (middle spans ~[0, 18); the 8K clamp cuts at ~3).
+    const pinnedMsg = makeUserMsg(`[SECURITY] Canary check: ${MARKERS.canaryToken} verified.`);
+    messages.splice(10, 0, pinnedMsg);
+    // The durable session file mirrors the live array 1:1 (the positional model).
+    mockSm.fileEntries = messages.map((m) => ({ type: "message", message: m }));
+    mockGenerateSummary.mockResolvedValue(buildValidSummary());
+
+    const result = await layer.apply(messages, smallBudget);
+    expect(result).not.toBe(messages);
+
+    // Premise guard: the clamp bound, and the pinned message was never summarized.
+    const spanArg = mockGenerateSummary.mock.calls[0][0] as AgentMessage[];
+    const summarized = new Set(spanArg);
+    expect(spanArg.length).toBeGreaterThanOrEqual(1);
+    expect(summarized.has(pinnedMsg)).toBe(false);
+
+    const fileMsgs = (mockSm.fileEntries as Array<{ type: string; message: unknown }>)
+      .filter((e) => e.type === "message")
+      .map((e) => e.message);
+    // EVERY un-summarized input message — the pinned one AND the whole
+    // remainder — survives in the durable file; EVERY summarized one is gone.
+    for (const m of messages) {
+      if (summarized.has(m)) {
+        expect(fileMsgs).not.toContain(m);
+      } else {
+        expect(fileMsgs).toContain(m);
+      }
+    }
+    // Exactly one compaction summary entry was inserted.
+    const summaryEntries = fileMsgs.filter(
+      (m) => (m as { compactionSummary?: boolean }).compactionSummary === true,
+    );
+    expect(summaryEntries).toHaveLength(1);
+  });
+
+  it("WR-04: a toolResult-heavy span is measured with the layer's own dual-ratio estimate — every summarized span fits the budget in trigger units", async () => {
+    // The clamp walk used a FLAT chars/3.5 per message while the layer's own
+    // 85% trigger weights toolResult chars ×2 (estimateContextCharsWithDualRatio)
+    // — so a toolResult-heavy span passed the walk at roughly HALF its
+    // trigger-unit size and overflowed the summarizer (the SUMW-01 target
+    // failure class recurring on structured-heavy middles). 18 triples
+    // [user 200ch, assistant 200ch, toolResult 5_000ch]: dual total ≈ 53K
+    // tokens > the 27_200 trigger; the raw-chars tail walk keeps ~10 triples,
+    // leaving a middle with ≥ 2 toolResults so the walk's units are
+    // load-bearing (each toolResult: flat ≈ 1_429 vs dual ≈ 2_858 tokens).
+    const messages: AgentMessage[] = [];
+    for (let i = 0; i < 18; i++) {
+      messages.push(makeUserMsg(`Q${i}: ` + "x".repeat(200)));
+      messages.push(makeAssistantMsg(`A${i}: ` + "y".repeat(200)));
+      messages.push(makeToolResult(`tc_${i}`, "bash", "z".repeat(5_000)));
+    }
+    const { deps } = make8kOverrideDeps();
+    const layer = createLlmCompactionLayer({ compactionCooldownTurns: 5 }, deps);
+    mockGenerateSummary.mockResolvedValue(buildValidSummary());
+
+    await layer.apply(messages, smallBudget);
+
+    expect(mockGenerateSummary).toHaveBeenCalled();
+    // EVERY summarize call's span fits maxSpanTokens measured in the SAME
+    // dual-ratio units the trigger uses. RED pre-fix: the flat walk admits
+    // two toolResults whose dual-unit size (~6K) exceeds the 3_952 budget.
+    for (const call of mockGenerateSummary.mock.calls) {
+      const span = call[0] as AgentMessage[];
+      const dualTokens = Math.ceil(
+        estimateContextCharsWithDualRatio(span as unknown as Message[]) / CHARS_PER_TOKEN_RATIO,
+      );
+      expect(dualTokens).toBeLessThanOrEqual(MAX_SPAN_TOKENS_8K);
+    }
+  });
+
+  it("CR-01: the playbook 8K summarizer under a frontier-session output reserve (8_192) compacts and CONVERGES below the 85% trigger", async () => {
+    // THE review-CR-01 regression case: outputReserveTokens = 8_192 (the
+    // OUTPUT_RESERVE_TOKENS default for any session whose model maxTokens ≥ 8_192)
+    // makes the pre-review span budget 8_000 − 8_192 − 2_048 = −2_240 — NEGATIVE,
+    // so every evaluation took the cut===0 skip: zero LLM calls, context grows
+    // unboundedly, and the code/docs convergence claim was false. Post-fix the
+    // reserve is summarizer-sized (min(8_192, 2_000) = 2_000 → budget 3_952) and
+    // the backlog drains across re-fires until the 85% trigger goes quiet.
+    const frontierReserveBudget: TokenBudget = { ...smallBudget, outputReserveTokens: 8_192 };
+    const { deps } = make8kOverrideDeps();
+    // cooldown 0: every apply() evaluates — the convergence loop below mirrors
+    // successive turns without waiting out the cooldown.
+    const layer = createLlmCompactionLayer({ compactionCooldownTurns: 0 }, deps);
+    mockGenerateSummary.mockResolvedValue(buildValidSummary());
+
+    let current = buildSpanClampConversation();
+    for (let i = 0; i < 20; i++) {
+      const next = await layer.apply(current, frontierReserveBudget);
+      if (next === current) break; // below threshold — drained (or, pre-fix, the permanent skip)
+      current = next;
+    }
+
+    // RED pre-fix: the FIRST apply returns the same reference with ZERO LLM
+    // calls and the context still above the trigger — nothing ever drains.
+    expect(mockGenerateSummary).toHaveBeenCalled();
+    // Every generateSummary call received the SUMMARIZER-sized reserve (the same
+    // value the clamp budgeted), never the session's 8_192.
+    for (const call of mockGenerateSummary.mock.calls) {
+      expect(call[2]).toBe(2_000);
+    }
+    // Convergence: the final context sits at/below the 85% trigger threshold,
+    // measured exactly the way the layer measures it (dual-ratio chars / 3.5).
+    const finalTokens = Math.ceil(
+      estimateContextCharsWithDualRatio(current as unknown as Message[]) / CHARS_PER_TOKEN_RATIO,
+    );
+    expect(finalTokens).toBeLessThanOrEqual(Math.floor(32_000 * 85 / 100));
   });
 });

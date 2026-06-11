@@ -24,8 +24,8 @@
  *       scrubProcessEnv, buildMergedEnv)
  *   6.  Agents-stage helpers (restoreApprovalState, wirePostAgentsCleanup)
  *   7.  Channels-stage helpers (buildChannelManagerDeps,
- *       buildGraphCoordinatorDeps, setupChannelHealthMonitor,
- *       wirePostChannelsLifecycle)
+ *       buildGraphCoordinatorDeps, wirePostChannelsLifecycle;
+ *       setupChannelHealthMonitor lives in wiring/main-helpers.ts)
  *   8.  Gateway-stage helpers (resolveGatewayTokens, createHotAdd,
  *       createHotRemove, buildRpcDispatchDeps, replayContinuationsIfAny)
  *   9.  Shutdown-stage helpers (wireHealthLogging, emitStartupBanner)
@@ -152,15 +152,19 @@ import {
 import {
   createActiveRunRegistry,
   createBackgroundSessionResolver,
+  clearSessionState,
   createGeminiCacheManager,
   createSessionTrackerRegistry,
+  evaluateViableFloorForAgent,
   probeAllOllamaProviders,
   seedDefaultDagTemplates,
   validateProviderOverrides,
   wireGeminiCacheCleanup,
   wireMcpDisconnectCleanup,
   wireSessionStateCleanup,
+  type AgentBootWindowInfo,
   type GeminiCacheManager,
+  type ServedWindowComparison,
   type SessionTrackerRegistry,
 } from "@comis/agent";
 // createModelCatalog + resolveWorkspaceDir live in @comis/core.
@@ -170,7 +174,6 @@ import {
   createImageGenRateLimiter,
   detectSandboxProvider,
 } from "@comis/skills";
-import { createChannelHealthMonitor } from "@comis/channels";
 // The single process-singleton activity circuit breaker is constructed
 // here and threaded down through ChannelsDeps → buildAndStartChannelManager
 // into every per-turn coordinator. The daemon is the composition root that owns
@@ -215,7 +218,7 @@ import {
 import { setupSingleAgent } from "./wiring/setup-agents/index.js";
 import { buildDialecticWiring, dialecticWiringDepsFromBoot } from "./wiring/setup-dialectic.js";
 import { setupSecretManager } from "./wiring/setup-secret-manager.js";
-import { restoreApprovalState, resolveGatewayTokens } from "./wiring/main-helpers.js";
+import { restoreApprovalState, resolveGatewayTokens, setupChannelHealthMonitor } from "./wiring/main-helpers.js";
 import { createInboundMessageIdResolver, type InboundMessageIdResolver } from "./wiring/inbound-message-id-resolver.js";
 import { logOperationModelDryRun } from "./wiring/startup-dry-run.js";
 import { emitDockerRestartPolicyWarn } from "./setup-docker-restart-warn.js";
@@ -223,6 +226,7 @@ import { hasAnyOAuthAgent, emitOAuthTlsPreflightWarn } from "./wiring/oauth-pref
 import { emitStartupInvariants } from "./wiring/setup-startup-invariants.js";
 import { checkStorageModeConsistency } from "./wiring/setup-storage-mismatch-warn.js";
 import { buildPlaceholdersFromBindings } from "./wiring/broker-placeholder-builder.js";
+import { warnOnProviderTimeoutRedirect } from "./wiring/provider-timeout-redirect.js";
 import os from "node:os";
 import { dirname as pathDirname } from "node:path";
 import { inspect } from "node:util";
@@ -511,7 +515,9 @@ function wirePostAgentsCleanup(deps: {
 //     pre-warm cache config; undefined when no API key resolvable).
 //   - setupChannelHealthMonitor — wraps createChannelHealthMonitor +
 //     monitor.start so both let bindings (monitor, stop) move out of the
-//     stage body into a single helper return value.
+//     stage body into a single helper return value. Lives in
+//     wiring/main-helpers.ts (extracted to keep this file under the
+//     architecture line cap).
 //   - wirePostChannelsLifecycle — populates the delivery-queue
 //     channelAdapters map, drains + starts prune timer, mirrors prune
 //     lifecycle, wires delivery-queue logging, and starts the output
@@ -737,41 +743,6 @@ function buildGraphCoordinatorDeps(deps: {
 }
 
 /**
- * Set up the channel health monitor. Returns `{ monitor, stop }`; both let
- * slots disappear from bootChannels into this single helper return value.
- */
-function setupChannelHealthMonitor(deps: {
-  adaptersByType: Awaited<ReturnType<typeof setupChannels>>["adaptersByType"];
-  daemonLogger: ReturnType<typeof setupLogging>["daemonLogger"];
-  container: BootContext["container"];
-}): { monitor: ReturnType<typeof createChannelHealthMonitor> | undefined; stop: (() => void) | undefined } {
-  const { adaptersByType, daemonLogger, container } = deps;
-  const healthCheckConfig = container.config.channels?.healthCheck;
-  if (healthCheckConfig?.enabled === false) return { monitor: undefined, stop: undefined };
-  const monitor = createChannelHealthMonitor({
-    eventBus: container.eventBus,
-    pollIntervalMs: healthCheckConfig?.pollIntervalMs,
-    staleThresholdMs: healthCheckConfig?.staleThresholdMs,
-    idleThresholdMs: healthCheckConfig?.idleThresholdMs,
-    errorThreshold: healthCheckConfig?.errorThreshold,
-    stuckThresholdMs: healthCheckConfig?.stuckThresholdMs,
-    startupGraceMs: healthCheckConfig?.startupGraceMs,
-    autoRestartOnStale: healthCheckConfig?.autoRestartOnStale,
-    maxRestartsPerHour: healthCheckConfig?.maxRestartsPerHour,
-    restartCooldownMs: healthCheckConfig?.restartCooldownMs,
-    restartAdapter: async (channelType: string) => {
-      const adapter = adaptersByType.get(channelType);
-      if (!adapter) return;
-      daemonLogger.info({ channelType }, "Health monitor triggering auto-restart for stale adapter");
-      await adapter.stop();
-      await adapter.start();
-    },
-  });
-  const stop = monitor.start(adaptersByType);
-  return { monitor, stop };
-}
-
-/**
  * Wire post-setupChannels lifecycle hooks: populate the delivery-queue
  * channelAdapters map, drain + start prune timer, mirror prune lifecycle,
  * delivery-queue logging, and output retention housekeeper.
@@ -978,6 +949,12 @@ function buildRpcDispatchDeps(deps: {
     // SAME object satisfies SessionsApiDeps.memoryPort. consolidationStore (the
     // unlink/purge surface) is already on the spread below.
     memoryPort: c.memoryAdapter,
+    // CR-02 (175-REVIEW): session.reset_conversation / session.delete drop
+    // the executor's session-scoped state (tool-schema snapshots, GBNF-02
+    // strip-retry once-gate, JIT-guide delivery, cache latches) through the
+    // agent's single authoritative cleanup path — the same function the
+    // session:expired listener uses (wireSessionStateCleanup above).
+    clearAgentSessionState: clearSessionState,
     // context.* operator-browse RPC deps (Context DAG browser): the LCD
     // ContextStorePort (context.tree reads getSummaries/getContextItems) + the
     // ContextBrowsePort (context.conversations). Both R4 agent+tenant scoped.
@@ -1889,6 +1866,17 @@ async function bootAgents(
     return new Map<string, number>();
   });
 
+  // LAT-03: one-time redirect WARN for the config-echo-only providers.*.timeoutMs.
+  try {
+    warnOnProviderTimeoutRedirect({ providerEntries: container.config.providers?.entries ?? {}, logger: agentLogger });
+  } catch { /* fail-open — a WARN helper must never block boot (I1) */ }
+
+  // KNOB-01/03 + FLOOR-01 (v2.21): daemon-owned boot-honesty collectors, populated
+  // per-agent in setup-agents beside the registry; read by the bootChannels floor
+  // loop + the bootShutdown posture count (ONE comparison feeds WARN + count).
+  const servedWindowComparisons = new Map<string, ServedWindowComparison>();
+  const agentBootWindowInfo = new Map<string, AgentBootWindowInfo>();
+
   const {
     sessionManager, executors, workspaceDirs, costTrackers, budgetGuards, stepCounters,
     getExecutor, piSessionAdapters,
@@ -1940,6 +1928,7 @@ async function bootAgents(
     mcpClientManager,
     clock, env, timers,
     servedWindowByProvider,  // CWF-03: Ollama served context-window probe result
+    servedWindowComparisons, agentBootWindowInfo,  // KNOB-01/03 + FLOOR-01 collectors
   });
 
   // Log operation model resolutions at startup (dry-run validation)
@@ -2088,7 +2077,7 @@ async function bootAgents(
     transcriber, ssrfFetcher, fileExtractor,
     rpcCall, wireDispatch, approvalGate, interactiveCallbackWiring,
     channelAdaptersRef, deliveryQueue, drainAndStartDeliveryPrune, shutdownDeliveryQueue,
-    cronWakeCallbackRef, trajectoryRegistry, executionPlanPorts,
+    cronWakeCallbackRef, trajectoryRegistry, executionPlanPorts, servedWindowComparisons, agentBootWindowInfo,
   });
 }
 
@@ -2254,6 +2243,16 @@ async function bootChannels(boot: BootContext): Promise<void> {
         }
       : undefined,
   });
+
+  // FLOOR-01 (v2.21): boot-time viable-floor WARN per agent — WARN-only (I1/D-02),
+  // awaited for determinism, fail-open per agent (a throw never aborts boot, T-176-15).
+  for (const [floorAgentId, bootInfo] of handle.agentBootWindowInfo ?? new Map<string, AgentBootWindowInfo>()) {
+    try {
+      evaluateViableFloorForAgent({ info: bootInfo, tools: await assembleToolsForAgent(floorAgentId), logger: daemonLogger });
+    } catch (err) {
+      daemonLogger.warn({ err, agentId: floorAgentId, errorKind: "internal" as const, hint: "viable-floor boot check failed — boot continues (fail-open); turn-time guards still apply (dag: CWF-02 preflight; pipeline: 85% compaction trigger + reactive classification)" }, "viable-floor boot evaluation threw — skipped for agent");
+    }
+  }
 
   // 6.6.8. Channels — pass assembleToolsForAgent DIRECTLY (no ref) and
   // pass accessor closures for sessionTracker / inboundMessageIdResolver
@@ -2841,7 +2840,9 @@ async function bootShutdown(
   const tlsOff = (boot.container.config.gateway.tls === undefined) && (boot.container.config.gateway.allowInsecureHttp !== true);
   const allowInsecureHttp = boot.container.config.gateway.allowInsecureHttp === true;
   const canaryFallbackActive = !boot.env.get("CANARY_SECRET");
-  buildConfigPostureRecord(boot.obsStore, { tlsOff, allowInsecureHttp, strandedFindings: posture.findings, canaryFallbackActive }, boot.clock);
+  // KNOB-03: derived from the SAME boot comparisons the KNOB-01 WARN used (no second comparison).
+  const servedBelowConfiguredCount = [...(boot.servedWindowComparisons?.values() ?? [])].filter((c) => c.belowConfigured).length;
+  buildConfigPostureRecord(boot.obsStore, { tlsOff, allowInsecureHttp, strandedFindings: posture.findings, canaryFallbackActive, servedBelowConfiguredCount }, boot.clock);
 
   // Snapshot current config as last-known-good after successful startup.
   // Honor diagnostics.configAudit.enabled.

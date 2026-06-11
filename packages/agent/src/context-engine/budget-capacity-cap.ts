@@ -9,14 +9,16 @@
  * Frontier/mid: byte-identical to computeTokenBudget (behavior-neutral guarantee).
  * Small/nano: effective window capped by capability class to prevent 256K-overfill degradation.
  *
- * IMPORTANT: the B-1 3.5-ratio over-reservation at executor-tool-assembly.ts:515-528
- * is PRESERVED — it is applied at the call site before passing systemTokensEstimate and
- * freshTailPreambleTokensEstimate to this function. Do NOT re-apply it here.
+ * IMPORTANT: the B-1 3.5-ratio over-reservation (the ÷CHARS_PER_TOKEN_RATIO
+ * estimates in assembleTools step 5, "System token estimate", in
+ * executor-tool-assembly.ts) is PRESERVED — it is applied at the call site
+ * before passing systemTokensEstimate and freshTailPreambleTokensEstimate to
+ * this function. Do NOT re-apply it here.
  *
  * @module
  */
 import { computeTokenBudget } from "./token-budget.js";
-import type { TokenBudget, WindowCapSource } from "./types.js";
+import type { TokenBudget, WindowCapSource, WindowProvenance } from "./types.js";
 import { OUTPUT_RESERVE_TOKENS } from "./constants.js";
 import type { ModelProfile } from "../executor/model-profile.js";
 
@@ -51,6 +53,12 @@ export const DEFAULT_EFFECTIVE_CAP_BY_CLASS: Readonly<Record<string, number>> = 
  * @param cacheFenceIndex - Optional; passed through to computeTokenBudget. Default: -1.
  * @param effectiveContextCapSmall - Optional override for the small class cap (from contextEngine.budget.effectiveContextCapSmall).
  * @param effectiveContextCapNano  - Optional override for the nano class cap (from contextEngine.budget.effectiveContextCapNano).
+ * @param windowProvenance - Optional KNOB-02 provenance from the executor's
+ *   resolveEffectiveContextWindow reconcile. When present, rawContextWindowTokens
+ *   reports the TRUE configuredWindow (profile.contextWindow arrives ALREADY
+ *   overwritten with the reconciled value) and windowCapSource gains "served" /
+ *   the class knob for upstream binds. Absent ⇒ byte-identical pre-provenance
+ *   behavior (I3 frontier/mid pin).
  */
 export function computeTokenBudgetForProfile(
   profile: ModelProfile,
@@ -59,6 +67,7 @@ export function computeTokenBudgetForProfile(
   cacheFenceIndex: number = -1,
   effectiveContextCapSmall?: number,
   effectiveContextCapNano?: number,
+  windowProvenance?: WindowProvenance,
 ): TokenBudget {
   // Effective context window: cap for small/nano to prevent 256K-overfill degradation.
   // frontier/mid: Infinity → Math.min(contextWindow, Infinity) = contextWindow (byte-identical).
@@ -68,10 +77,24 @@ export function computeTokenBudgetForProfile(
     effectiveContextCapNano,
   );
   const effectiveWindow = Math.min(profile.contextWindow, classCap);
-  // W1 cap provenance: the source is reported ONLY when the cap actually bit —
-  // a small model whose declared window already fits under the cap is "none".
-  const windowCapSource: WindowCapSource =
-    effectiveWindow < profile.contextWindow ? capKnob : "none";
+  // W1 cap provenance: when this function's OWN class cap bit, it is the
+  // binding (tightest) constraint — name the budget knob (raising it genuinely
+  // works on this branch). Otherwise (KNOB-02) consult the executor-side
+  // reconcile provenance: "served" when the Ollama-served window bound
+  // upstream; "capabilityClass" when the executor's DEFAULT_EFFECTIVE_CAP_BY_CLASS
+  // cap bound upstream (WR-01: that cap comes from the operator's
+  // providers.entries.<id>.capabilities.capabilityClass pin — it never reads
+  // the contextEngine.budget.* knobs, so naming the budget knob here would send
+  // operators to a dead lever); "none" when nothing clamped or no provenance
+  // was threaded (pre-KNOB-02 byte-identical behavior).
+  const capBit = effectiveWindow < profile.contextWindow;
+  const windowCapSource: WindowCapSource = capBit
+    ? capKnob
+    : windowProvenance === undefined || windowProvenance.reconcileSource === "configured"
+      ? "none"
+      : windowProvenance.reconcileSource === "served"
+        ? "served"
+        : "capabilityClass"; // "capability" reconcile: the executor-side class-pin cap bound upstream — name the PIN (no silent clamp, no dead budget knob)
 
   // 8K-starvation fix: cap O at maxOutputTokens so it cannot consume the whole window.
   // On an 8K window with OUTPUT_RESERVE_TOKENS=8192, uncapped O leaves H=0.
@@ -94,8 +117,12 @@ export function computeTokenBudgetForProfile(
     return {
       ...rawBudget,
       windowTokens: effectiveWindow,
-      rawContextWindowTokens: profile.contextWindow,
+      // KNOB-02: profile.contextWindow arrives executor-OVERWRITTEN with the
+      // reconciled (possibly served) value — the TRUE configured window lives
+      // on the provenance. Absent provenance ⇒ pre-KNOB-02 behavior.
+      rawContextWindowTokens: windowProvenance?.configuredWindow ?? profile.contextWindow,
       windowCapSource,
+      ...(windowProvenance?.served !== undefined && { servedWindowTokens: windowProvenance.served }),
       outputReserveTokens: effectiveO,
       availableHistoryTokens: Math.max(0, rawBudget.availableHistoryTokens + oReduction),
     };
@@ -105,8 +132,10 @@ export function computeTokenBudgetForProfile(
   // For frontier: effectiveWindow == contextWindow (Infinity cap) → byte-identical.
   return {
     ...computeTokenBudget(effectiveWindow, systemTokensEstimate, cacheFenceIndex, freshTailPreambleTokensEstimate),
-    rawContextWindowTokens: profile.contextWindow,
+    // KNOB-02: see the starvation-path comment above — raw = the TRUE configured window.
+    rawContextWindowTokens: windowProvenance?.configuredWindow ?? profile.contextWindow,
     windowCapSource,
+    ...(windowProvenance?.served !== undefined && { servedWindowTokens: windowProvenance.served }),
   };
 }
 
@@ -121,7 +150,7 @@ function resolveEffectiveCap(
   capabilityClass: string,
   effectiveContextCapSmall: number | undefined,
   effectiveContextCapNano: number | undefined,
-): { cap: number; source: Exclude<WindowCapSource, "none"> } {
+): { cap: number; source: Extract<WindowCapSource, "effectiveContextCapSmall" | "effectiveContextCapNano"> } {
   if (capabilityClass === "small") {
     if (effectiveContextCapSmall !== undefined) {
       return {

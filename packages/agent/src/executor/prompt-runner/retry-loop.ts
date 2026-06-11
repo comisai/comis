@@ -2,10 +2,11 @@
 /**
  * Model retry orchestration — wraps `runWithModelRetry` and layers on
  * stuck-session detection plus the silent-failure detection cascade
- * (signed-replay self-heal, rate-limit short-circuit, client-request
- * short-circuit, default strip-and-retry, LKW auth-failure fallback).
+ * (signed-replay self-heal, tool-schema strip-retry, rate-limit
+ * short-circuit, client-request short-circuit, default strip-and-retry,
+ * LKW auth-failure fallback).
  *
- * The four silent-failure branches live in `./silent-failure-handlers.js`;
+ * The five silent-failure branches live in `./silent-failure-handlers.js`;
  * this module owns the entry control flow and the stuck-session guard.
  *
  * Imports types only from `./prompt-runner-types.js` — never from
@@ -29,6 +30,7 @@ import {
   handleRateLimited,
   handleSignedReplay,
   handleSilentRetryDefault,
+  handleToolSchemaUnsupported,
   declareSilentTerminalFailure,
   type BridgeSnapshot,
   type InvokeRetry,
@@ -85,6 +87,23 @@ export async function runRetryLoop(
         agentId ?? "default",
         retryResult.effectiveModel.provider,
         retryResult.effectiveModel.model,
+      );
+    }
+
+    // WR-01 (175-REVIEW): grammar-400s can also surface on the THROWN path —
+    // session.prompt() throws and runWithModelRetry's GBNF-02 ladder guard
+    // returns { succeeded: false, error } immediately. Without this dispatch
+    // the failure went straight to output-escalation, where the canned
+    // tool_schema_unsupported userMessage PROMISED an automatic retry that
+    // never happened (and no execution:tool_schema_unsupported event fired,
+    // blinding obs-explain). Route it through the same strip-retry handler
+    // the silent path uses — its session-lifetime once-gate bounds re-entry.
+    if (
+      !retryState.promptSucceeded &&
+      classifyError(retryState.promptError).category === "tool_schema_unsupported"
+    ) {
+      await handleToolSchemaUnsupported(
+        params, messageText, promptImages, bridge.getResult(), retryState, invokeRetry,
       );
     }
   }
@@ -186,6 +205,12 @@ async function invokeModelRetry(
     timeoutConfig: {
       promptTimeoutMs: effectiveTimeout.promptTimeoutMs,
       retryPromptTimeoutMs: effectiveTimeout.retryPromptTimeoutMs,
+      // LAT-02 (177-03): makespan ceiling derivation input — threaded
+      // UNCONDITIONALLY (R-1; gate_scope all-providers per 177-01 DECISION).
+      stallCeilingMultiplier: effectiveTimeout.stallCeilingMultiplier,
+      // LAT-01 binding provenance for the prompt_timeout emit attribution.
+      source: effectiveTimeout.source,
+      operationType: effectiveTimeout.operationType,
     },
     deps: {
       eventBus: deps.eventBus,
@@ -211,9 +236,11 @@ async function invokeModelRetry(
  *   1. followUp("(continued)") — Gemini thinking-only recovery
  *   2. classify the bridge's recorded LLM error → branch:
  *        a. client_request_signed_replay  → scrub + retry (signed-replay self-heal)
- *        b. rate_limited                  → short-circuit (window can't roll)
- *        c. client_request                → short-circuit (deterministic failure)
- *        d. default                       → strip empty turns + retry + LKW fallback
+ *        b. tool_schema_unsupported       → strip pattern/format + retry once
+ *                                           per session (GBNF-02 self-heal)
+ *        c. rate_limited                  → short-circuit (window can't roll)
+ *        d. client_request                → short-circuit (deterministic failure)
+ *        e. default                       → strip empty turns + retry + LKW fallback
  */
 async function detectSilentFailure(
   params: RunPromptParams,
@@ -268,6 +295,8 @@ async function detectSilentFailure(
 
     if (earlyClassification.category === "client_request_signed_replay") {
       await handleSignedReplay(params, messageText, promptImages, earlyBridgeResult, retryState, invokeRetry);
+    } else if (earlyClassification.category === "tool_schema_unsupported") {
+      await handleToolSchemaUnsupported(params, messageText, promptImages, earlyBridgeResult, retryState, invokeRetry);
     } else if (earlyClassification.category === "rate_limited") {
       handleRateLimited(params, earlyBridgeResult, retryState);
     } else if (earlyClassification.category === "client_request") {

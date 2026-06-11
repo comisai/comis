@@ -105,6 +105,16 @@ export type { ScanResult, ModelScanner, ModelScannerDeps } from "./model/model-s
 // the remaining probe symbols are intra-package only.
 export { probeAllOllamaProviders } from "./model/ollama-capacity-probe.js";
 
+// Served-window comparator (KNOB-01: boot-time served<configured WARN).
+// Only compareServedWindowForProvider + the comparison type are consumed
+// cross-package (daemon setup-agents wiring); the latch reset is test-only.
+export { compareServedWindowForProvider, resetServedWindowWarnForTest, type ServedWindowComparison, type ServedWindowComparisonInput } from "./model/served-window-comparator.js";
+
+// Viable floor (FLOOR-01: boot-time minViable WARN). collectAgentBootWindowInfo +
+// evaluateViableFloorForAgent are consumed cross-package (daemon boot wiring);
+// computeMinViableEquation + the drift-pin surface are intra-package/test only.
+export { collectAgentBootWindowInfo, evaluateViableFloorForAgent, type AgentBootWindowInfo, type MinViableEquation } from "./context-engine/viable-floor.js";
+
 // OAuth token manager (runtime stays in agent due to chokidar + pi-ai/oauth deps)
 export { createOAuthTokenManager } from "./model/oauth-token-manager.js";
 

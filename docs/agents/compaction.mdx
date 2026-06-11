@@ -18,7 +18,8 @@ the **default** engine — `contextEngine.version` defaults to `"dag"` (set
 `"pipeline"` to opt into the simpler engine). DAG
 stores every message losslessly and **automatically summarizes** the oldest
 out-of-tail history when context utilization crosses `contextThreshold` (default
-0.75 × the model's window) at the end of a turn: it collapses the oldest chunk
+0.75 × the turn's effective budget window — the reconciled context window under
+any capability-class cap) at the end of a turn: it collapses the oldest chunk
 into a leaf summary via the same three-level escalation as pipeline mode
 (normal → aggressive → a deterministic count-only floor that always fits), then
 assembles the context under the model's token budget — always keeping the
@@ -286,7 +287,7 @@ view (raw messages plus
 any leaf summaries) and **evicts the oldest out-of-tail history** when the budget
 is exceeded — always keeping the verbatim fresh tail. **Automatic leaf
 summarization is now live**: when context utilization crosses `contextThreshold`
-(default 0.75 × the model's window) at the end of a turn, the oldest out-of-tail
+(default 0.75 × the turn's effective budget window) at the end of a turn, the oldest out-of-tail
 chunk is summarized into a leaf summary and slotted back into the context view in
 its original position. The multi-tier **condensed** summary hierarchy (summaries
 of summaries) is **now live too** — when enough same-depth summaries accumulate
@@ -467,9 +468,9 @@ change anything.
 | `contextEngine.outputEscalation.escalatedMaxTokens` | number | `32768` | Maximum output tokens after escalation (4096-128000) |
 | `contextEngine.observationDeactivationChars` | number | `80000` | Character threshold to deactivate observation masking (20K-500K) |
 | `contextEngine.ephemeralKeepWindow` | number | `10` | Recent ephemeral tool results to preserve from masking (1-50) |
-| `contextEngine.contextThreshold` | number | `0.75` | **DAG mode (live):** context-utilization fraction (of the model window) that triggers a leaf-summarization pass at the end of a turn (0.1-0.95) |
+| `contextEngine.contextThreshold` | number | `0.75` | **DAG mode (live):** context-utilization fraction (of the turn's effective budget window — the reconciled context window under any capability-class cap) that triggers a leaf-summarization pass at the end of a turn (0.1-0.95) |
 | `contextEngine.freshTailTurns` | number | `8` | **DAG mode (live):** most-recent steps (assistant + tool round-trips) always kept verbatim and never summarized/evicted (1-50) |
-| `contextEngine.leafChunkTokens` | number | `20000` | **DAG mode (live):** token cap for the oldest out-of-tail chunk summarized into one leaf summary (1K-100K) |
+| `contextEngine.leafChunkTokens` | number | `20000` | **DAG mode (live):** token cap for the oldest out-of-tail chunk summarized into one leaf summary (1K-100K); clamped at runtime to the resolved summarizer model's window — the smaller of its configured window and the probed served window when the summarizer runs on the served-bound provider — minus the summary target, template overhead, and previous-summary size, so a small compaction summarizer or a served-bound primary is never fed an over-window chunk; a single message larger than the clamped cap is replaced by a bounded deterministic extraction (no LLM call) |
 | `contextEngine.leafTargetTokens` | number | `1200` | **DAG mode (live):** target token size for a leaf summary (96-5000) |
 | `contextEngine.deferCompaction` | boolean | `true` | **DAG mode (live):** run the afterTurn leaf + condense passes in the background on the per-conversation serializer (never blocking the turn). `false` runs them inline (deterministic, for tests) |
 | `contextEngine.summarizerSpend.maxTokensPerTenantPerHour` | number | `500000` | **DAG mode (live):** per-tenant rolling-hour ceiling on summarizer (input+output) tokens; over the cap the summarizer is bypassed and assembly degrades to truncation-only. `0` disables the hourly cap |

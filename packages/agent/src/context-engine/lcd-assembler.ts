@@ -425,6 +425,12 @@ export function createLcdContextEngine(
         -1,
         config.budget?.effectiveContextCapSmall,
         config.budget?.effectiveContextCapNano,
+        // KNOB-02 (Phase 176): executor-reconcile provenance — when present,
+        // rawContextWindowTokens reports the TRUE configured window (not the
+        // served value the executor overwrote contextWindow with) and
+        // windowCapSource gains "served". Undefined until the executor wires
+        // it (plan 176-04) ⇒ byte-identical until then.
+        deps.windowProvenance,
       );
 
       // RETR-02/03/05 eviction seam (step 4 above). Frontier/mid (relevanceFirst falsy) take
@@ -482,10 +488,14 @@ export function createLcdContextEngine(
         freshTail,
         (profile.reasoningStyle ?? "none") as "none" | "native",
         // W1 cap provenance: lets the exhaustion throw/WARN name the raw
-        // declared window and the contextEngine.budget.* knob that clamped it.
+        // declared window and the knob that clamped it (contextEngine.budget.*
+        // or, for "served", the Ollama knobs). Fields come off the budget —
+        // never re-derived. servedWindowTokens (KNOB-02) lets the double-cap
+        // message name the whole chain.
         {
           rawContextWindowTokens: budget.rawContextWindowTokens,
           windowCapSource: budget.windowCapSource,
+          servedWindowTokens: budget.servedWindowTokens,
         },
       );
 
@@ -502,6 +512,7 @@ export function createLcdContextEngine(
           windowTokens: budget.windowTokens,
           rawContextWindowTokens: budget.rawContextWindowTokens,
           windowCapSource: budget.windowCapSource,
+          servedWindowTokens: budget.servedWindowTokens,
           systemTokens: budget.systemTokens,
           freshTailPreambleTokens: budget.freshTailPreambleTokens,
           availableHistoryTokens: budget.availableHistoryTokens,

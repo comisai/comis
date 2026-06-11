@@ -90,6 +90,17 @@ export interface ContextEngineSetupDeps {
    *  ONE daemon-owned instance (per-tenant aggregate across sessions/agents);
    *  absent ⇒ the raw seam (non-daemon callers / tests). */
   summarizerSpendBreaker?: SummarizerSpendBreaker;
+  /** INT-W1: the Phase-176 boot-probe served window PAIRED with the
+   *  `providers.entries` key it was probed from (= PiExecutorDeps.
+   *  servedContextWindow, auto-present on the frozenDeps this subset is built
+   *  from). Consumed by `resolveCompactionModelChain` to provider-gate the
+   *  served bound for a compaction OVERRIDE model (`servedContextWindow.
+   *  providerKey === compactionResolution.provider` — WR-02 config-key space);
+   *  the PRIMARY summarizer's served bound instead reuses the executor
+   *  reconcile's already-gated `windowProvenance.served`. Absent ⇒ no served
+   *  truth (non-Ollama provider or probe off/failed) — configured windows
+   *  govern, byte-identical pre-INT-W1. */
+  servedContextWindow?: { providerKey: string; window: number };
 }
 
 /** Parameters for context engine creation. */
@@ -138,6 +149,11 @@ export interface ContextEngineSetupParams {
    *  Absent ⇒ lcd-assembler applies the fail-closed nano cap + WARN.
    *  Pass params.modelProfile (already in scope at the pi-executor call site). */
   modelProfile?: import("./model-profile.js").ModelProfile;
+  /** KNOB-02 (Phase 176): served/capability window provenance built at the
+   *  pi-executor reconcile — threaded onto ContextEngineDeps so the
+   *  lcd-assembler's computeTokenBudgetForProfile reports the TRUE configured
+   *  window when the served window binds. Absent ⇒ pre-KNOB-02 raw reporting. */
+  windowProvenance?: import("../context-engine/types.js").WindowProvenance;
   /** Phase 166 T-S4: security-pin markers sourced from pi-executor's deps.canaryToken.
    *  Threaded into ContextEngineDeps so the dag eviction never drops security context. */
   securityPinMarkers?: import("../context-engine/security-context-pinner.js").SecurityPinMarkers;
@@ -269,6 +285,7 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
     getCachedSystemTokensEstimate, getCachedFreshTailPreambleTokens, getTokenAnchor, onAnchorReset,
     currentDiscoveryTracker,
     modelProfile,
+    windowProvenance,
   } = params;
 
   // DAG-CRIT-1: prefer the caller-supplied turn agentId (the positional
@@ -365,7 +382,8 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
     getModel: () => CompactionModelSnapshot;
     getRealModel: () => unknown;
     getApiKey: () => Promise<string>;
-    overrideModel?: { model: unknown; getApiKey: () => Promise<string> };
+    overrideModel?: { model: unknown; getApiKey: () => Promise<string>; servedWindow?: number };
+    primaryServedWindow?: number;
   } => ({
     getModel: () => {
       if (modelSnapshot !== undefined) return modelSnapshot;
@@ -395,6 +413,15 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
         oauthManager: deps.oauthManager,
         agentConfig: config,
       }),
+    // INT-W1: the served window binding the PRIMARY (getRealModel) summarizer.
+    // windowProvenance.served is the Phase-176 pair ALREADY provider-gated by
+    // the executor reconcile (`servedContextWindow.providerKey ===
+    // resolvedProviderKey` — pi-executor WR-02), so it binds exactly the model
+    // params.resolvedModel holds. A plain setup-time number — dispose-safe on
+    // the WR-04 deferred path. Absent ⇒ no served truth (byte-identical).
+    ...(windowProvenance?.served !== undefined && {
+      primaryServedWindow: windowProvenance.served,
+    }),
     // Resolve compaction model via the 5-level priority chain; only set
     // overrideModel when the resolver picked a non-primary model.
     ...(() => {
@@ -413,6 +440,16 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
             compactionResolution.modelId,
           );
           if (compactionModel) {
+            // INT-W1: gate the Phase-176 served pair for THIS override in
+            // CONFIG space — the pair's providerKey and the operation-model
+            // resolution's provider are both `providers.entries` keys (WR-02:
+            // never compare model.provider, which the registry alias fallback
+            // can rename). A cross-provider override gets NO served bound.
+            const overrideServedWindow =
+              deps.servedContextWindow !== undefined &&
+              deps.servedContextWindow.providerKey === compactionResolution.provider
+                ? deps.servedContextWindow.window
+                : undefined;
             return {
               overrideModel: {
                 model: compactionModel,
@@ -422,6 +459,9 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
                     oauthManager: deps.oauthManager,
                     agentConfig: config,
                   }),
+                ...(overrideServedWindow !== undefined && {
+                  servedWindow: overrideServedWindow,
+                }),
               },
             };
           }
@@ -506,7 +546,11 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
       // hands generateSummary — not the 4-field snapshot getModel returns.
       getRealModel: chain.getRealModel,
       getApiKey: chain.getApiKey,
+      // INT-W1: overrideModel carries its own provider-gated servedWindow;
+      // primaryServedWindow binds the getRealModel candidate. Both feed
+      // resolveSummarizerWindowTokens' candidate-bound served selection.
       overrideModel: chain.overrideModel,
+      primaryServedWindow: chain.primaryServedWindow,
     };
   };
 
@@ -686,6 +730,8 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
     // C1 (Phase 165): the resolved ModelProfile for budget-aware eviction cap.
     // Absent ⇒ lcd-assembler applies the fail-closed nano cap + WARN.
     modelProfile,
+    // KNOB-02: served-window provenance for the budget's rawContextWindowTokens.
+    windowProvenance,
     // RETR-02/03 (Phase 173): the resolved relevance-first policy + the shared scorer for
     // the margin arbiter. relevanceFirst undefined/false ⇒ the assembler takes the verbatim
     // recency path (frontier/mid byte-identical, LOCKED #2).

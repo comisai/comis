@@ -26,8 +26,19 @@ export interface CompactionLayerDeps {
   /** Getter for API key for the current model's provider. */
   getApiKey: () => Promise<string>;
   /** Optional: resolved override model + apiKey for cheaper compaction.
-   *  When provided, compaction uses this model instead of the session model. */
-  overrideModel?: { model: unknown; getApiKey: () => Promise<string> };
+   *  When provided, compaction uses this model instead of the session model.
+   *  INT-W1: `servedWindow` is the provider-served window binding THIS override
+   *  model, provider-gated at the wiring site (executor-context-engine-setup)
+   *  against the Phase-176 `servedContextWindow` pair — see the identical
+   *  fields on `LeafSummarizerDeps` (lcd-leaf-summarizer.ts). */
+  overrideModel?: { model: unknown; getApiKey: () => Promise<string>; servedWindow?: number };
+  /** INT-W1: the provider-served window binding the PRIMARY (session) model —
+   *  `windowProvenance.served`, already provider-gated by the executor
+   *  reconcile (WR-02). Consumed by the Step-4 model read in llm-compaction:
+   *  the served value is selected in the SAME branch that selects the
+   *  summarizer model, so clamp and call always agree. Absent ⇒ configured
+   *  window governs (byte-identical pre-INT-W1 behavior). */
+  primaryServedWindow?: number;
   /** Optional callback for reporting compaction stats. */
   onCompacted?: (stats: { fallbackLevel: 1 | 2 | 3; attempts: number; originalMessages: number; keptMessages: number }) => void;
   /** Getter for current session's discovered deferred tool names.

@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
+// node:fs is partially mocked below (appendFileSync/statSync/renameSync/unlinkSync);
+// readFileSync passes through to the real implementation via the ...actual spread,
+// so the source-text wiring guard at the bottom of this file can use it.
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { ok, err } from "@comis/shared";
 import { resolveModelProfile } from "../model-profile.js";
 import type { PerAgentConfig, SessionKey, NormalizedMessage } from "@comis/core";
@@ -295,6 +301,7 @@ vi.mock("node:fs", async (importOriginal) => {
 import { createPiExecutor, type PiExecutorDeps } from "./pi-executor.js";
 import {
   clearSessionToolSchemaSnapshotHash,
+  clearWindowReconcileLogged,
   getOrCreateSessionLatches as _getOrCreateSessionLatchesForTest,
   clearSessionLatches as _clearSessionLatchesForTest,
 } from "../executor-session-state.js";
@@ -828,7 +835,10 @@ describe("PiExecutor", () => {
 
       const result = await executor.execute(testMessage, testSessionKey);
 
-      expect(result.finishReason).toBe("error");
+      // LAT-04 (Phase 177): the PromptTimeoutError terminal carries its OWN
+      // named finishReason (END_REASON_MAP → endReason "timeout") instead of
+      // flattening into the generic "error" bucket.
+      expect(result.finishReason).toBe("prompt_timeout");
       expect(result.errorContext).toEqual({
         errorType: "PromptTimeout",
         retryable: true,
@@ -6647,5 +6657,225 @@ describe("IN-01 (CR-01 regression): pi-executor capabilityCap absent-providerCap
     const logPayload = capLogCall![0] as Record<string, unknown>;
     expect(logPayload["source"]).toBe("capability");
     expect(logPayload["effectiveWindow"]).toBe(32_000);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WR-02 (Phase 176 review): the primary provider's served window must NOT be
+// applied (or attributed) to per-execution override models on other providers.
+// ---------------------------------------------------------------------------
+// deps.servedContextWindow is bound ONCE at executor construction to the
+// agent's PRIMARY provider. Pre-patch, the reconcile consumed the bare number
+// unconditionally: an Ollama-primary agent with served num_ctx 8192 whose
+// graph node overrides to anthropic:claude-* (200K) had its window silently
+// crushed to 8K, with the KNOB-02 surfaces confidently asserting
+// `source: "served"` / "Ollama serves only 8192" for a model Ollama does not
+// serve. Post-patch the dep pairs {providerKey, window} and the reconcile
+// applies the window only when the executing model resolves to that provider.
+
+describe("WR-02: served-window gate on per-execution provider identity", () => {
+  /** The probed primary provider (config providers.entries key space). */
+  const OLLAMA_PRIMARY = "qwen-local";
+  const ollamaConfig: PerAgentConfig = {
+    ...testConfig,
+    model: "qwen3.6:35b",
+    provider: OLLAMA_PRIMARY,
+  } as PerAgentConfig;
+
+  /** Registry resolving BOTH providers — the override target carries a 200K
+   *  frontier window; the primary carries the configured 131_072. */
+  function makeTwoProviderRegistry() {
+    return {
+      find: vi.fn().mockImplementation((provider: string, id: string) => {
+        if (provider === OLLAMA_PRIMARY) {
+          return { provider: OLLAMA_PRIMARY, id, contextWindow: 131_072 };
+        }
+        if (provider === "anthropic") {
+          return { provider: "anthropic", id, contextWindow: 200_000 };
+        }
+        return undefined;
+      }),
+      getAll: vi.fn().mockReturnValue([]),
+      getAvailable: vi.fn().mockReturnValue([]),
+    } as any;
+  }
+
+  function findReconcileDebug(deps: PiExecutorDeps) {
+    return vi.mocked(deps.logger.debug).mock.calls.find(
+      (args) => typeof args[1] === "string" && args[1].includes("Context window reconciled"),
+    );
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    clearSessionToolNameSnapshot(formatSessionKey(testSessionKey));
+    clearSessionBootstrapFileSnapshot(formatSessionKey(testSessionKey));
+    clearSessionPromptSkillsXmlSnapshot(formatSessionKey(testSessionKey));
+    clearSessionToolSchemaSnapshot(formatSessionKey(testSessionKey));
+    clearSessionToolSchemaSnapshotHash(formatSessionKey(testSessionKey));
+    clearWindowReconcileLogged(formatSessionKey(testSessionKey));
+    mockPrompt.mockResolvedValue(undefined);
+    mockGetLastAssistantText.mockReturnValue("test response");
+    mockSetModel.mockResolvedValue(undefined);
+    mockSubscribe.mockReturnValue(vi.fn());
+  });
+
+  it("an override model on ANOTHER provider keeps its full window — no served clamp, no served attribution (RED pre-patch: source 'served', effectiveWindow 8192)", async () => {
+    const deps = createMockDeps({
+      modelRegistry: makeTwoProviderRegistry(),
+      providerCapabilities: undefined, // isolate the served gate (capabilityCap = Infinity)
+      servedContextWindow: { providerKey: OLLAMA_PRIMARY, window: 8_192 },
+    });
+    const executor = createPiExecutor(ollamaConfig, deps);
+
+    await executor.execute(
+      testMessage, testSessionKey, undefined, undefined, "agent-wr02",
+      undefined, undefined, { model: "anthropic:claude-sonnet-4-5-20250929" },
+    );
+
+    // Override applied → executing provider is "anthropic" ≠ probed
+    // "qwen-local" → served skipped → configured 200_000 wins with
+    // capabilityCap Infinity → source "configured" → NO reconcile line at any
+    // level (nothing was reconciled). Pre-patch the bare served 8_192 entered
+    // the min race and emitted source:"served" / effectiveWindow:8192 here.
+    expect(findReconcileDebug(deps)).toBeUndefined();
+  });
+
+  it("the PRIMARY provider's execution still gets the served clamp (no-regression control: source 'served', effectiveWindow 8192)", async () => {
+    const deps = createMockDeps({
+      modelRegistry: makeTwoProviderRegistry(),
+      providerCapabilities: undefined,
+      servedContextWindow: { providerKey: OLLAMA_PRIMARY, window: 8_192 },
+    });
+    const executor = createPiExecutor(ollamaConfig, deps);
+
+    await executor.execute(testMessage, testSessionKey, undefined, undefined, "agent-wr02");
+
+    const reconcile = findReconcileDebug(deps);
+    expect(reconcile).toBeDefined();
+    const payload = reconcile![0] as Record<string, unknown>;
+    expect(payload["source"]).toBe("served");
+    expect(payload["effectiveWindow"]).toBe(8_192);
+    expect(payload["served"]).toBe(8_192);
+  });
+
+  it("an override model on the SAME probed provider still gets the served clamp (the map is keyed per provider, not per model)", async () => {
+    const deps = createMockDeps({
+      modelRegistry: makeTwoProviderRegistry(),
+      providerCapabilities: undefined,
+      servedContextWindow: { providerKey: OLLAMA_PRIMARY, window: 8_192 },
+    });
+    const executor = createPiExecutor(ollamaConfig, deps);
+
+    await executor.execute(
+      testMessage, testSessionKey, undefined, undefined, "agent-wr02",
+      undefined, undefined, { model: `${OLLAMA_PRIMARY}:qwen3.6:4b` },
+    );
+
+    const reconcile = findReconcileDebug(deps);
+    expect(reconcile).toBeDefined();
+    expect((reconcile![0] as Record<string, unknown>)["source"]).toBe("served");
+    expect((reconcile![0] as Record<string, unknown>)["effectiveWindow"]).toBe(8_192);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// LAT-02 (177-03): delta→stall-reset wiring at the composition root.
+// ---------------------------------------------------------------------------
+// The bridge presence-gates on deps.onDelta (pi-event-bridge.ts message_update
+// case), so the hand-off at the bridge-deps literal must be an ALWAYS-DEFINED
+// composed wrapper — not the raw channel callback, which is undefined for
+// channel-less runs (cron, graph, this harness) and silently disables
+// delta→reset: a silent local prefill then dies at the whole-turn race
+// (Critical Finding 6). Per the 177-01 DECISION the wrapper is unconditional
+// (gate_scope: all-providers — no providerType gating).
+
+describe("LAT-02: composed onDelta wrapper at the bridge hand-off (177-03)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    clearSessionToolNameSnapshot(formatSessionKey(testSessionKey));
+    clearSessionBootstrapFileSnapshot(formatSessionKey(testSessionKey));
+    clearSessionPromptSkillsXmlSnapshot(formatSessionKey(testSessionKey));
+    clearSessionToolSchemaSnapshot(formatSessionKey(testSessionKey));
+    clearSessionToolSchemaSnapshotHash(formatSessionKey(testSessionKey));
+    clearWindowReconcileLogged(formatSessionKey(testSessionKey));
+    mockPrompt.mockResolvedValue(undefined);
+    mockGetLastAssistantText.mockReturnValue("test response");
+    mockSetModel.mockResolvedValue(undefined);
+    mockSubscribe.mockReturnValue(vi.fn());
+  });
+
+  it("LAT-02-W-8: bridge deps onDelta is ALWAYS defined with no channel callback, and invoking it re-arms the stall timer through the live ref", async () => {
+    // Hung prompt keeps the resettable race live while the bridge deps are
+    // probed (the resetTimer hand-off happens when the race starts).
+    mockPrompt.mockReturnValue(new Promise(() => {}));
+    const probe = createMockDeps();
+    const setTimeoutSpy = vi.fn(probe.timers.setTimeout);
+    const deps = createMockDeps({ timers: { ...probe.timers, setTimeout: setTimeoutSpy } });
+    // Small budgets so the stall kill unwinds the hung run quickly (real timers).
+    const cfg = {
+      ...testConfig,
+      promptTimeout: { promptTimeoutMs: 300, retryPromptTimeoutMs: 100 },
+    } as PerAgentConfig;
+    const executor = createPiExecutor(cfg, deps);
+
+    const execPromise = executor.execute(testMessage, testSessionKey); // NO onDelta supplied
+
+    // Wait until the bridge exists AND the prompt race armed the stall timer
+    // (withResettablePromptTimeout arms synchronously beside the onResetTimer
+    // hand-off, so currentResetTimer is assigned once a timer is armed).
+    await vi.waitFor(() => {
+      expect((createPiEventBridge as Mock).mock.calls.length).toBeGreaterThan(0);
+      expect(setTimeoutSpy.mock.calls.length).toBeGreaterThan(0);
+    });
+
+    const bridgeCall = (createPiEventBridge as Mock).mock.calls.at(-1)![0] as {
+      onDelta: ((delta: string, kind: "text" | "thinking") => void) | undefined;
+    };
+    // RED (pre-patch): the bridge-deps literal passes the RAW channel
+    // callback — undefined here — and the bridge's presence gate then drops
+    // every delta, so streaming activity never resets the stall budget.
+    expect(typeof bridgeCall.onDelta).toBe("function");
+
+    // Invoking the wrapper reads currentResetTimer through the LIVE ref and
+    // re-arms the stall timer: exactly one new timers.setTimeout call,
+    // synchronously (nothing else can interleave between these two lines).
+    const armsBefore = setTimeoutSpy.mock.calls.length;
+    bridgeCall.onDelta!("streamed token", "text");
+    expect(setTimeoutSpy.mock.calls.length).toBe(armsBefore + 1);
+
+    // Unwind: the stall budget (300ms after the delta) kills the hung prompt
+    // and the execution resolves with a failed-but-handled result.
+    await execPromise;
+  }, 15_000);
+});
+
+// ---------------------------------------------------------------------------
+// Source-text wiring guard: normalizeModelCompat call-site threading (175-04)
+// ---------------------------------------------------------------------------
+
+describe("normalizeModelCompat call-site wiring guard (175-04)", () => {
+  it("passes providerType and comisCompat from deps resolvers into normalizeModelCompat", () => {
+    // GBNF-01 built-but-not-wired guard. RED on pre-patch code: the call
+    // passed only {provider, id}, dropping the user's models[].comisCompat
+    // entirely and giving auto-detection no provider-type signal. Resolver
+    // form (deps.getProviderType / deps.getModelCompat) is load-bearing:
+    // per-execution model overrides can switch providers mid-agent, so a
+    // static agent-primary value would mis-gate (WR-04 precedent).
+    const here = dirname(fileURLToPath(import.meta.url));
+    const src = readFileSync(resolve(here, "pi-executor.ts"), "utf-8");
+
+    const callStart = src.indexOf("normalizeModelCompat({");
+    expect(callStart).toBeGreaterThan(-1);
+    const callEnd = src.indexOf("})", callStart);
+    expect(callEnd).toBeGreaterThan(callStart);
+
+    const callBlock = src.slice(callStart, callEnd);
+    expect(callBlock).toContain(
+      "providerType: deps.getProviderType?.(resolvedModel.provider)",
+    );
+    expect(callBlock).toContain(
+      "comisCompat: deps.getModelCompat?.(resolvedModel.provider, resolvedModel.id)",
+    );
   });
 });

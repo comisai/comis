@@ -878,3 +878,7 @@ describe("wrapSummarizerWithFailover — SUM-03", () => {
     expect(logger.warn).not.toHaveBeenCalled();
   });
 });
+
+// resolveSummarizerWindowTokens (SUMW-01) tests moved to
+// summarizer-window.test.ts alongside the production extraction (this file's
+// production sibling sat at the 800-line file-size cap).

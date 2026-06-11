@@ -24,6 +24,8 @@ const mockClearSessionCadenceTracker = vi.hoisted(() => vi.fn());
 const mockClearSessionLatches = vi.hoisted(() => vi.fn());
 const mockClearSessionEvictionCooldown = vi.hoisted(() => vi.fn());
 const mockClearSessionCacheSavings = vi.hoisted(() => vi.fn());
+const mockClearSessionReactiveSchemaStrip = vi.hoisted(() => vi.fn());
+const mockClearWindowReconcileLogged = vi.hoisted(() => vi.fn());
 
 vi.mock("./prompt-assembly.js", () => ({
   clearSessionToolNameSnapshot: mockClearSessionToolNameSnapshot,
@@ -41,6 +43,8 @@ vi.mock("./executor-session-state.js", () => ({
   clearSessionLatches: mockClearSessionLatches,
   clearSessionEvictionCooldown: mockClearSessionEvictionCooldown,
   clearSessionCacheSavings: mockClearSessionCacheSavings,
+  clearSessionReactiveSchemaStrip: mockClearSessionReactiveSchemaStrip,
+  clearWindowReconcileLogged: mockClearWindowReconcileLogged,
 }));
 
 vi.mock("./tool-lifecycle.js", () => ({
@@ -86,7 +90,7 @@ describe("session-snapshot-cleanup", () => {
   // ---------------------------------------------------------------------------
 
   describe("clearSessionState", () => {
-    it("delegates to all 21 clearSession* functions with the same key", () => {
+    it("delegates to all 23 clearSession* functions with the same key", () => {
       const key = "agent:bot1:t:u:c";
 
       clearSessionState(key);
@@ -112,6 +116,12 @@ describe("session-snapshot-cleanup", () => {
       expect(mockClearSessionCacheSavings).toHaveBeenCalledWith(key);
       expect(mockClearSessionPrefixStability).toHaveBeenCalledWith(key);
       expect(mockClearSessionCadenceTracker).toHaveBeenCalledWith(key);
+      // CR-02 (175-REVIEW): the GBNF-02 strip once-gate is session-lifetime —
+      // it must re-arm when the session is reset/expired.
+      expect(mockClearSessionReactiveSchemaStrip).toHaveBeenCalledWith(key);
+      // KNOB-02 (Phase 176): the window-reconcile INFO latch is once-per-session —
+      // delete/reset must grant the next session a fresh INFO.
+      expect(mockClearWindowReconcileLogged).toHaveBeenCalledWith(key);
     });
 
     it("calls each function exactly once", () => {
@@ -138,6 +148,8 @@ describe("session-snapshot-cleanup", () => {
       expect(mockClearSessionCacheSavings).toHaveBeenCalledTimes(1);
       expect(mockClearSessionPrefixStability).toHaveBeenCalledTimes(1);
       expect(mockClearSessionCadenceTracker).toHaveBeenCalledTimes(1);
+      expect(mockClearSessionReactiveSchemaStrip).toHaveBeenCalledTimes(1);
+      expect(mockClearWindowReconcileLogged).toHaveBeenCalledTimes(1);
     });
   });
 
