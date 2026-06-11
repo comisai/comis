@@ -23,7 +23,7 @@ import type {
   SecretManager,
 } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
-import { wireAuthProvider, type WireAuthProviderArgs } from "./setup-agents-oauth.js";
+import { warnEncryptedModeOnce, wireAuthProvider, type WireAuthProviderArgs } from "./setup-agents-oauth.js";
 
 function makeSecretManager(): SecretManager {
   const secrets: Record<string, string> = { ANTHROPIC_API_KEY: "sk-test" };
@@ -132,5 +132,23 @@ describe("wireAuthProvider", () => {
   it("resolves the API key from the scoped secret manager (storage wired from it)", async () => {
     const provider = wireAuthProvider(makeArgs());
     expect(await provider.authStorage.getApiKey("anthropic")).toBe("sk-test");
+  });
+});
+
+describe("warnEncryptedModeOnce (moved from setup-agents-registry — once-per-process latch)", () => {
+  it("warns exactly once per process for encrypted mode and never for file mode", () => {
+    // Single combined case: the module-level latch is shared across calls in
+    // this test file, so the once-semantics must be proven in one pass.
+    const agentLogger = makeLogger();
+    warnEncryptedModeOnce("file", agentLogger);
+    expect(agentLogger.warn).not.toHaveBeenCalled();
+
+    warnEncryptedModeOnce("encrypted", agentLogger);
+    warnEncryptedModeOnce("encrypted", agentLogger);
+    expect(agentLogger.warn).toHaveBeenCalledTimes(1);
+    expect(agentLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ errorKind: "config", submodule: "setup-agents" }),
+      "OAuth hot-reload disabled in encrypted-store mode",
+    );
   });
 });

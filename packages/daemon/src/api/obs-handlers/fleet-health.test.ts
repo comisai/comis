@@ -521,6 +521,127 @@ describe("assembleFleetHealthReport (R2 — 4-source read fan-in)", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// KNOB-03 (Phase 176): the dedicated config_posture:served_below_configured
+// finding. Count comes from the LATEST config_posture row's details JSON
+// (posture is STANDING STATE, not cumulative — research Open Q3 resolution),
+// parsed defensively (the healthSignalLabel clone: malformed/missing/non-number
+// folds to 0, never throws — T-176-13).
+// ---------------------------------------------------------------------------
+
+/** A config_posture `details` JSON in the buildConfigPostureRecord shape. */
+function postureDetails(servedBelowConfiguredCount: unknown): string {
+  return JSON.stringify({
+    tlsOff: false,
+    allowInsecureHttp: false,
+    stranded: [],
+    canaryFallbackActive: false,
+    servedBelowConfiguredCount,
+  });
+}
+
+/** Insert one config_posture row at `timestamp` with the given raw details. */
+function insertPostureRow(store: ObservabilityStore, timestamp: number, details: string): void {
+  store.insertDiagnostic({
+    timestamp,
+    category: "config_posture",
+    severity: "warning",
+    message: "config_posture",
+    details,
+  });
+}
+
+/** A fresh empty tmp dataDir (the A3 reader soft-fails to daysMissing). */
+function emptyDataDir(): string {
+  return fs.mkdtempSync(path.join(os.tmpdir(), "fleet-served-below-"));
+}
+
+describe("buildFindings — config_posture:served_below_configured (KNOB-03)", () => {
+  it("KNOB-03-3: emits the dedicated finding with the row's count, the provider-count detail, and the Ollama-knob hint", async () => {
+    const now = systemNowMs();
+    const store = makeStore();
+    insertPostureRow(store, now - 1_000, postureDetails(2));
+
+    const report = await assembleFleetHealthReport(
+      { obsStore: store, dataDir: emptyDataDir(), clock: createFakeClock(now) },
+      24,
+    );
+
+    const finding = report.findings.find((f) => f.code === "config_posture:served_below_configured");
+    expect(finding).toBeDefined();
+    expect(finding?.count).toBe(2);
+    expect(finding?.detail).toBe("Ollama served context window below configured for 2 provider(s)");
+    expect(finding?.hint).toMatch(/OLLAMA_CONTEXT_LENGTH/);
+    expect(finding?.hint).toMatch(/num_ctx/);
+  });
+
+  it("KNOB-03-4: reads the LATEST row only (standing state, not cumulative) — a newer 0 suppresses an older 3; a newer 1 emits count 1", async () => {
+    const now = systemNowMs();
+
+    // Newer row (count 0) inserted FIRST so any insertion-order shortcut picks
+    // the wrong row — the impl must scan for max timestamp.
+    const storeSuppressed = makeStore();
+    insertPostureRow(storeSuppressed, now - 1_000, postureDetails(0));
+    insertPostureRow(storeSuppressed, now - 5_000, postureDetails(3));
+    const reportSuppressed = await assembleFleetHealthReport(
+      { obsStore: storeSuppressed, dataDir: emptyDataDir(), clock: createFakeClock(now) },
+      24,
+    );
+    expect(
+      reportSuppressed.findings.some((f) => f.code === "config_posture:served_below_configured"),
+    ).toBe(false);
+
+    // Newer row count 1 over an older count 3 → finding count 1 (never 3 or 4).
+    const storeLatest = makeStore();
+    insertPostureRow(storeLatest, now - 1_000, postureDetails(1));
+    insertPostureRow(storeLatest, now - 5_000, postureDetails(3));
+    const reportLatest = await assembleFleetHealthReport(
+      { obsStore: storeLatest, dataDir: emptyDataDir(), clock: createFakeClock(now) },
+      24,
+    );
+    const finding = reportLatest.findings.find(
+      (f) => f.code === "config_posture:served_below_configured",
+    );
+    expect(finding?.count).toBe(1);
+  });
+
+  it("KNOB-03-5: folds malformed / missing-field / non-number details to 0 without throwing, keeps the generic rollup, and a valid LATEST row still emits over an older malformed one", async () => {
+    const now = systemNowMs();
+
+    // Each defensive fold variant as the (only, hence latest) posture row:
+    // (a) not JSON at all, (b) valid JSON missing the field, (c) non-number field.
+    const variants = [
+      "not json",
+      JSON.stringify({ tlsOff: true, allowInsecureHttp: false, stranded: [], canaryFallbackActive: false }),
+      postureDetails("two"),
+    ];
+    for (const details of variants) {
+      const store = makeStore();
+      insertPostureRow(store, now - 1_000, details);
+      const report = await assembleFleetHealthReport(
+        { obsStore: store, dataDir: emptyDataDir(), clock: createFakeClock(now) },
+        24,
+      );
+      // No served finding, no throw — and the generic config_posture rollup
+      // finding is still emitted (the malformed row only loses its count).
+      expect(report.findings.some((f) => f.code === "config_posture:served_below_configured")).toBe(false);
+      expect(report.findings.some((f) => f.code === "config_posture")).toBe(true);
+    }
+
+    // An older malformed row never blocks the valid LATEST row's count.
+    const store = makeStore();
+    insertPostureRow(store, now - 5_000, "not json");
+    insertPostureRow(store, now - 1_000, postureDetails(2));
+    const report = await assembleFleetHealthReport(
+      { obsStore: store, dataDir: emptyDataDir(), clock: createFakeClock(now) },
+      24,
+    );
+    expect(
+      report.findings.find((f) => f.code === "config_posture:served_below_configured")?.count,
+    ).toBe(2);
+  });
+});
+
 describe("bindFleetHealthHandlers (H1 — admin dual-layer gate)", () => {
   it("admin gate: missing _trustLevel:admin throws", async () => {
     const handlers = bindFleetHealthHandlers(makeDeps({ obsStore: makeStore(), clock: createFakeClock(systemNowMs()) }));

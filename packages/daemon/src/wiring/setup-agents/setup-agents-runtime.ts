@@ -42,9 +42,8 @@ import {
   createAuthProfileManager,
   createAuthRotationAdapter,
   resolveCompactionModel,
-  LEAN_TOOL_DESCRIPTIONS,
-  resolveDescription,
-  type ToolDescriptionContext,
+  compareServedWindowForProvider,
+  collectAgentBootWindowInfo,
 } from "@comis/agent";
 import { ensureWorkspace, resolveWorkspaceDir } from "@comis/core";
 import {
@@ -54,6 +53,7 @@ import {
   type SkillWatcherHandle,
 } from "@comis/skills";
 import { resolveAgentModel, deriveCanaryFallback, resolveEffectiveRerank } from "./setup-agents-tooling.js";
+import { resolveLeanDescriptionsForAgent } from "./setup-agents-descriptions.js";
 import { createAcpWiring } from "./setup-acp-wiring.js";
 import { wireAuthProvider } from "./setup-agents-oauth.js";
 import type { SingleAgentDeps, SingleAgentResult } from "./setup-agents-types.js";
@@ -235,6 +235,44 @@ export async function setupSingleAgent(
     );
   }
 
+  // KNOB-01 + FLOOR-01 (v2.21): served-window comparison + boot-window-info
+  // collection beside the per-agent registry — the ONLY seam with the
+  // registry-enriched "configured" the executor itself resolves (pi-executor.ts
+  // find + ?? 8_192). Fail-open wholesale (FLOOR-01-16 / T-176-15).
+  try {
+    const findModel = (p: string, m: string) => {
+      let r = piModelRegistry.find(p, m);
+      if (!r) {
+        const builtIn = providerAliases.get(p);
+        if (builtIn) r = piModelRegistry.find(builtIn, m);
+      }
+      return r ?? undefined;
+    };
+    const providerEntry = container.config.providers?.entries?.[resolved.provider];
+    const comparison = compareServedWindowForProvider({
+      providerId: resolved.provider,
+      served: deps.servedWindowByProvider?.get(resolved.provider),
+      providerEntry,
+      findModel,
+      logger: agentLogger,
+    });
+    if (comparison) deps.servedWindowComparisons?.set(comparison.providerId, comparison);
+    deps.agentBootWindowInfo?.set(agentId, collectAgentBootWindowInfo({
+      agentId,
+      providerId: resolved.provider,
+      modelId: resolved.model,
+      findModel,
+      served: deps.servedWindowByProvider?.get(resolved.provider),
+      explicitCapabilityClass: providerEntry?.capabilities?.capabilityClass,
+      agentConfig: effectiveConfig,
+    }));
+  } catch (err) {
+    agentLogger.warn(
+      { err, agentId, errorKind: "internal" as const, hint: "served-window comparison / boot-window collection failed — boot continues (fail-open); turn-time reconcile still applies" },
+      "Boot window honesty checks skipped for agent",
+    );
+  }
+
   // Create JSONL session adapter for this agent
   const lockDir = safePath(dir, ".locks");
   const sessionAdapter = createComisSessionManager({
@@ -356,43 +394,10 @@ export async function setupSingleAgent(
   // Uses default config: mediumThreshold=0.4, highThreshold=0.7, action="warn"
   // Operator can override via agent config in the future
 
-  // Pre-resolve lean descriptions for this agent's session.
-  // channelType unavailable at agent setup time; message tool resolves to "chat"
-  // fallback. Per-channel resolution deferred to runtime.
-  const descriptionContext: ToolDescriptionContext = {
-    channelType: undefined,
-    trustLevel: "default", // Trust comes from token/context at message time, not config
-    // Capability class is resolved per-execution in pi-executor via resolveModelProfile().
-    // This setup-time modelTier only affects lean description text (e.g., admin suffix).
-    modelTier: agentConfig.bootstrap?.promptMode === "minimal" ? "small" : "large",
-  };
-  const resolvedDescriptions: Record<string, string> = {};
-  let dynamicCount = 0;
-  for (const name of Object.keys(LEAN_TOOL_DESCRIPTIONS)) {
-    const raw = LEAN_TOOL_DESCRIPTIONS[name];
-    if (typeof raw === "function") dynamicCount++;
-    resolvedDescriptions[name] = resolveDescription(
-      { name },
-      LEAN_TOOL_DESCRIPTIONS,
-      descriptionContext,
-    );
-  }
-  const totalDescriptionTokens = Object.values(resolvedDescriptions)
-    .reduce((sum, d) => sum + Math.ceil(d.length / 4), 0);
-  const overLimitCount = Object.values(resolvedDescriptions)
-    .filter((d) => d.length > 300).length;
-  // agentId already bound on perAgentLogger child -- do not duplicate
-  perAgentLogger.info(
-    {
-      descriptionCount: Object.keys(resolvedDescriptions).length,
-      tokenCount: totalDescriptionTokens,
-      dynamicCount,
-      overLimitCount,
-      // Setup-time modelTier for lean description selection (per-execution tier may differ)
-      modelTier: descriptionContext.modelTier,
-    },
-    "Tool descriptions resolved",
-  );
+  // Pre-resolve lean descriptions for this agent's session (extracted leaf —
+  // emits the "Tool descriptions resolved" INFO; channelType resolution is
+  // deferred to runtime).
+  const resolvedDescriptions = resolveLeanDescriptionsForAgent(agentConfig, perAgentLogger);
 
   // Tool pipeline for PiExecutor.
   // Platform tools (memory, cron, messaging, sessions) come per-request via

@@ -8,6 +8,7 @@
  */
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { safePath, createApprovalGate, generateStrongToken } from "@comis/core";
+import { createChannelHealthMonitor } from "@comis/channels";
 import type { LoggingResult } from "./setup-logging.js";
 import type { BootContext } from "../daemon-types.js";
 
@@ -65,6 +66,44 @@ export function restoreApprovalState(deps: {
       try { unlinkSync(approvalCacheRestorePath); } catch { /* ignore */ }
     }
   }
+}
+
+/**
+ * Set up the channel health monitor. Returns `{ monitor, stop }`; both let
+ * slots disappear from bootChannels into this single helper return value.
+ *
+ * Extracted from `daemon.ts` to keep the composition root under its
+ * architecture line cap (runs during `bootChannels`).
+ */
+export function setupChannelHealthMonitor(deps: {
+  adaptersByType: NonNullable<BootContext["adaptersByType"]>;
+  daemonLogger: LoggingResult["daemonLogger"];
+  container: BootContext["container"];
+}): { monitor: ReturnType<typeof createChannelHealthMonitor> | undefined; stop: (() => void) | undefined } {
+  const { adaptersByType, daemonLogger, container } = deps;
+  const healthCheckConfig = container.config.channels?.healthCheck;
+  if (healthCheckConfig?.enabled === false) return { monitor: undefined, stop: undefined };
+  const monitor = createChannelHealthMonitor({
+    eventBus: container.eventBus,
+    pollIntervalMs: healthCheckConfig?.pollIntervalMs,
+    staleThresholdMs: healthCheckConfig?.staleThresholdMs,
+    idleThresholdMs: healthCheckConfig?.idleThresholdMs,
+    errorThreshold: healthCheckConfig?.errorThreshold,
+    stuckThresholdMs: healthCheckConfig?.stuckThresholdMs,
+    startupGraceMs: healthCheckConfig?.startupGraceMs,
+    autoRestartOnStale: healthCheckConfig?.autoRestartOnStale,
+    maxRestartsPerHour: healthCheckConfig?.maxRestartsPerHour,
+    restartCooldownMs: healthCheckConfig?.restartCooldownMs,
+    restartAdapter: async (channelType: string) => {
+      const adapter = adaptersByType.get(channelType);
+      if (!adapter) return;
+      daemonLogger.info({ channelType }, "Health monitor triggering auto-restart for stale adapter");
+      await adapter.stop();
+      await adapter.start();
+    },
+  });
+  const stop = monitor.start(adaptersByType);
+  return { monitor, stop };
 }
 
 /**
