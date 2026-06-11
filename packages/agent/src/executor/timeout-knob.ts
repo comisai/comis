@@ -51,3 +51,21 @@ export function describeTimeoutKnob(
       return "graph subagent timeout is fixed at 600000ms (not operator-tunable)";
   }
 }
+
+/**
+ * Render the retry/fallback whole-turn knob (177-REVIEW WR-01).
+ *
+ * Rotation, model-fallback, and LKW prompts race the NON-resettable
+ * `retryPromptTimeoutMs` (LAT-02 Open Q2: whole-turn semantics,
+ * pin-and-document), so a kill on those paths — `PromptTimeoutError.limit`
+ * absent — must name the retry knob. The source→knob table above describes
+ * the **promptTimeoutMs** binding and would render the stall knob for a kill
+ * the stall budget never saw (wrong framing, wrong lever, the retry value
+ * misattributed to the stall key).
+ *
+ * Same interpolation discipline as the table: agentId only (T-177-05); the
+ * key is a REAL `agents.*` family, never a rendered fake (D-11).
+ */
+export function describeRetryTimeoutKnob(agentId: string | undefined): string {
+  return `agents.${agentId ?? "<id>"}.promptTimeout.retryPromptTimeoutMs`;
+}

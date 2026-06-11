@@ -35,7 +35,7 @@ import type { ProviderHealthMonitor } from "../safety/provider-health-monitor.js
 import type { LastKnownModelTracker } from "../model/last-known-model.js";
 import type { TimeoutSource } from "../model/operation-model-resolver.js";
 import { withPromptTimeout, withResettablePromptTimeout, PromptTimeoutError } from "./prompt-timeout.js";
-import { describeTimeoutKnob } from "./timeout-knob.js";
+import { describeTimeoutKnob, describeRetryTimeoutKnob } from "./timeout-knob.js";
 import { normalizeModelId } from "../provider/model-id-normalize.js";
 import { classifyError } from "./error-classifier.js";
 
@@ -439,7 +439,10 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
             "Rotated key retry failed",
           );
           // Emit prompt timeout event on rotation retry timeout (LAT-04
-          // attribution; `limit` absent ⇒ whole-turn retry semantics).
+          // attribution; `limit` absent ⇒ whole-turn retry semantics — the
+          // kill that fired is the retryPromptTimeoutMs race, so the knob is
+          // the RETRY key, never the promptTimeoutMs binding that
+          // timeoutConfig.source describes (177-REVIEW WR-01).
           if (rotatedKeyError instanceof PromptTimeoutError) {
             eventBus.emit("execution:prompt_timeout", {
               agentId: deps.agentId ?? "unknown",
@@ -449,7 +452,9 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
               durationMs: clock.now() - retryStartMs,
               ...(rotatedKeyError.limit !== undefined && { limit: rotatedKeyError.limit }),
               ...(timeoutConfig.source !== undefined && { source: timeoutConfig.source }),
-              bindingKnob: describeTimeoutKnob(timeoutConfig.source ?? "agent_config", deps.agentId, timeoutConfig.operationType),
+              bindingKnob: rotatedKeyError.limit === undefined
+                ? describeRetryTimeoutKnob(deps.agentId)
+                : describeTimeoutKnob(timeoutConfig.source ?? "agent_config", deps.agentId, timeoutConfig.operationType),
               ...(timeoutConfig.operationType !== undefined && { operationType: timeoutConfig.operationType }),
               ...(rotatedKeyError.stallBudgetMs !== undefined && { stallBudgetMs: rotatedKeyError.stallBudgetMs }),
               ...(rotatedKeyError.makespanMs !== undefined && { makespanMs: rotatedKeyError.makespanMs }),
@@ -549,7 +554,8 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
           "Fallback model prompt error",
         );
         // Emit prompt timeout event on fallback timeout (LAT-04 attribution;
-        // `limit` absent ⇒ whole-turn retry semantics).
+        // `limit` absent ⇒ whole-turn retry semantics — the knob is the RETRY
+        // key, never the promptTimeoutMs binding; 177-REVIEW WR-01).
         if (fallbackError instanceof PromptTimeoutError) {
           eventBus.emit("execution:prompt_timeout", {
             agentId: deps.agentId ?? "unknown",
@@ -559,7 +565,9 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
             durationMs: clock.now() - retryStartMs,
             ...(fallbackError.limit !== undefined && { limit: fallbackError.limit }),
             ...(timeoutConfig.source !== undefined && { source: timeoutConfig.source }),
-            bindingKnob: describeTimeoutKnob(timeoutConfig.source ?? "agent_config", deps.agentId, timeoutConfig.operationType),
+            bindingKnob: fallbackError.limit === undefined
+              ? describeRetryTimeoutKnob(deps.agentId)
+              : describeTimeoutKnob(timeoutConfig.source ?? "agent_config", deps.agentId, timeoutConfig.operationType),
             ...(timeoutConfig.operationType !== undefined && { operationType: timeoutConfig.operationType }),
             ...(fallbackError.stallBudgetMs !== undefined && { stallBudgetMs: fallbackError.stallBudgetMs }),
             ...(fallbackError.makespanMs !== undefined && { makespanMs: fallbackError.makespanMs }),

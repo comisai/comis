@@ -11,7 +11,7 @@
  */
 
 import { isSignedReplayError } from "./signed-replay-detector.js";
-import { describeTimeoutKnob } from "./timeout-knob.js";
+import { describeTimeoutKnob, describeRetryTimeoutKnob } from "./timeout-knob.js";
 
 import type { PromptTimeoutError } from "./prompt-timeout.js";
 import type { TimeoutSource } from "../model/operation-model-resolver.js";
@@ -296,7 +296,7 @@ export function classifyPromptTimeout(
     // present it as a stall-budget kill).
     hint =
       `whole-turn retry timeout ${String(error.timeoutMs)}ms exceeded${elapsed}` +
-      ` — retry/fallback prompts use agents.${binding?.agentId ?? "<id>"}.promptTimeout.retryPromptTimeoutMs` +
+      ` — retry/fallback prompts use ${describeRetryTimeoutKnob(binding?.agentId)}` +
       ` (currently ${String(binding?.retryPromptTimeoutMs ?? error.timeoutMs)}), not the stall budget`;
   }
   return {

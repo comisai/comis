@@ -1587,7 +1587,43 @@ describe("runWithModelRetry", () => {
       expect(fallbackPayload.timeoutMs).toBe(60_000);
       expect(fallbackPayload.limit).toBeUndefined();
       expect(typeof fallbackPayload.durationMs).toBe("number");
-      expect(fallbackPayload.bindingKnob).toBe("agents.test-agent.promptTimeout.promptTimeoutMs");
+      // 177-REVIEW WR-01: the kill that fired was the retryPromptTimeoutMs
+      // whole-turn race — the payload must name the RETRY knob, not the
+      // promptTimeoutMs binding that timeoutConfig.source describes (the
+      // original pin codified the wrong knob).
+      expect(fallbackPayload.bindingKnob).toBe("agents.test-agent.promptTimeout.retryPromptTimeoutMs");
+    });
+
+    it("177-REVIEW WR-01: the rotated-key whole-turn kill emits the retryPromptTimeoutMs bindingKnob (limit absent ⇒ retry semantics, never the stall knob)", async () => {
+      const session = makeSession();
+      session.prompt
+        .mockRejectedValueOnce(new Error("upstream 500")) // primary fails fast (non-timeout)
+        .mockReturnValue(new Promise(() => {}));          // rotated retry hangs → whole-turn 60s kill
+      const eventBus = makeEventBus();
+      const authRotation = makeAuthRotation();
+      const params = makeParams({
+        session,
+        timeoutConfig: LAT_TIMEOUT_CONFIG,
+        deps: makeLatDeps({ eventBus, authRotation }),
+      });
+
+      const resultPromise = runWithModelRetry(params);
+      await flushMicrotasks();
+      await vi.advanceTimersByTimeAsync(60_000);
+      const result = await resultPromise;
+
+      expect(result.succeeded).toBe(false);
+      // The primary error was not a timeout — only the rotated-key kill emits.
+      const emits = vi.mocked(eventBus.emit).mock.calls.filter(
+        (c: unknown[]) => c[0] === "execution:prompt_timeout",
+      );
+      expect(emits).toHaveLength(1);
+      const payload = emits[0]![1] as Record<string, unknown>;
+      expect(payload.timeoutMs).toBe(60_000);
+      expect(payload.limit).toBeUndefined();
+      // RED (pre-patch): bindingKnob said agents.test-agent.promptTimeout
+      // .promptTimeoutMs — the stall knob for a kill the stall budget never saw.
+      expect(payload.bindingKnob).toBe("agents.test-agent.promptTimeout.retryPromptTimeoutMs");
     });
 
     it("177-REVIEW WR-02: a makespan product past Node's 2^31-1 timer cap is clamped at the derivation site — the ceiling does NOT collapse to an instant 1ms kill", async () => {

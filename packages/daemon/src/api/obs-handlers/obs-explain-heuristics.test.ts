@@ -650,6 +650,46 @@ describe("prompt_timeout terminal verdict (LAT-04)", () => {
     expect(r!.suggestedNextSteps.join("\n")).toMatch(/stallCeilingMultiplier/);
   });
 
+  it("177-REVIEW WR-01: a terminal whole-turn retry kill (limit ABSENT) renders retry framing + the retryPromptTimeoutMs knob — never the stall framing or the stall knob", () => {
+    // The terminal record is a rotation/fallback/short-retry kill: 60_000ms
+    // whole-turn window, no stallBudgetMs, limit undefined ('LAST record
+    // wins' makes the retry kill terminal after a primary stall-kill). The
+    // row deliberately carries the OLD wrong-knob bindingKnob shape that
+    // pre-WR-01 emit sites wrote — the branch must not echo it: the lever
+    // for a whole-turn retry kill is retryPromptTimeoutMs (the same branch
+    // the agent-side classify hint takes — LAT-01-H-5).
+    const r = rootCause(
+      makeSignals({
+        endReason: "timeout",
+        agentId: "my-agent",
+        promptTimeout: {
+          timeoutMs: 60_000,
+          durationMs: 241_000,
+          source: "agent_config",
+          bindingKnob: "agents.my-agent.promptTimeout.promptTimeoutMs",
+        },
+      }),
+    );
+    expect(r).not.toBeNull();
+    expect(r!.code).toBe("prompt_timeout");
+    // Pre-patch: 'stall budget 60000ms exceeded ... with no stream/tool
+    // activity' — wrong framing (not a stall kill), wrong knob (the lever is
+    // retryPromptTimeoutMs), the 60000 retry value misattributed to the
+    // 180000 promptTimeoutMs knob.
+    expect(r!.detail).toMatch(/whole-turn retry timeout 60000ms/);
+    expect(r!.detail).toMatch(/241000ms/);
+    // The stall FRAMING ("stall budget Xms exceeded ... no stream/tool
+    // activity") must not appear — the contrast clause "not the stall
+    // budget" is the honest framing and is allowed.
+    expect(r!.detail).not.toMatch(/stall budget \d+ms exceeded/);
+    expect(r!.detail).not.toMatch(/no stream\/tool activity/);
+    expect(r!.suggestedNextSteps[0]).toBe(
+      "raise agents.my-agent.promptTimeout.retryPromptTimeoutMs (currently 60000)",
+    );
+    expect(r!.suggestedNextSteps.join("\n")).not.toMatch(/promptTimeout\.promptTimeoutMs/);
+    expect(r!.suggestedNextSteps).toContain("obs.explain depth=full");
+  });
+
   it("LAT-04-O-8: a pre-extension timeout session (no enriched signal) still gets the verdict with a generic knob suggestion and NO invented numbers", () => {
     const r = rootCause(makeSignals({ endReason: "timeout" }));
     expect(r).not.toBeNull();

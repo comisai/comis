@@ -400,8 +400,28 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
           ],
         };
       }
-      // Stall kill (or a whole-turn retry-path kill: limit undefined) — the
-      // binding knob came pre-rendered from the emit site when present.
+      if (t.limit === undefined) {
+        // Whole-turn retry kill (`limit` ABSENT): rotation/fallback/short-
+        // retry prompts race the NON-resettable retryPromptTimeoutMs — never
+        // framed as a stall kill, and the lever is the RETRY knob (177-REVIEW
+        // WR-01; the same branch the agent-side classify hint takes). The
+        // retry knob is a REAL agents.* key family, so local templating is
+        // sanctioned (the KNOB-02 fallback discipline) — deliberately NOT
+        // t.bindingKnob: pre-WR-01 rows on disk carry the wrong
+        // promptTimeoutMs knob for exactly this class.
+        return {
+          code: "prompt_timeout",
+          detail:
+            `whole-turn retry timeout ${String(t.timeoutMs)}ms exceeded after ${String(t.durationMs ?? t.timeoutMs)}ms — ` +
+            `retry/fallback prompts use the non-resettable retryPromptTimeoutMs, not the stall budget`,
+          suggestedNextSteps: [
+            `raise agents.${s.agentId ?? "<id>"}.promptTimeout.retryPromptTimeoutMs (currently ${String(t.timeoutMs)})`,
+            "obs.explain depth=full",
+          ],
+        };
+      }
+      // Stall kill (limit === "stall") — the binding knob came pre-rendered
+      // from the emit site when present.
       const knob = t.bindingKnob ?? `agents.${s.agentId ?? "<id>"}.promptTimeout.promptTimeoutMs`;
       return {
         code: "prompt_timeout",

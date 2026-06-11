@@ -16,7 +16,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { describeTimeoutKnob } from "./timeout-knob.js";
+import { describeTimeoutKnob, describeRetryTimeoutKnob } from "./timeout-knob.js";
 
 describe("describeTimeoutKnob (LAT-01 knob table)", () => {
   it("LAT-01-6: agent_config and builtin_default both name agents.<id>.promptTimeout.promptTimeoutMs — the knob to RAISE is identical", () => {
@@ -62,6 +62,18 @@ describe("describeTimeoutKnob (LAT-01 knob table)", () => {
     // form ending in the real key.
     expect(describeTimeoutKnob("operation_explicit", undefined, undefined)).toBe(
       "agents.<id>.operationModels.<op>.timeout",
+    );
+  });
+
+  it("177-REVIEW WR-01: describeRetryTimeoutKnob names the whole-turn retry key (retryPromptTimeoutMs) with the same placeholder discipline", () => {
+    // The retry/fallback/LKW whole-turn race (limit ABSENT on the error) is
+    // governed by retryPromptTimeoutMs, never the source-table stall knob —
+    // every retry-site emit and the classify hint render from this helper.
+    expect(describeRetryTimeoutKnob("my-agent")).toBe(
+      "agents.my-agent.promptTimeout.retryPromptTimeoutMs",
+    );
+    expect(describeRetryTimeoutKnob(undefined)).toBe(
+      "agents.<id>.promptTimeout.retryPromptTimeoutMs",
     );
   });
 });
