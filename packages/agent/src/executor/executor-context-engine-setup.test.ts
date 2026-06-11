@@ -202,6 +202,23 @@ describe("setupContextEngine — createContextEngine() dependency wiring", () =>
     expect(typeof deps.getFreshTailPreambleTokensEstimate).toBe("function");
     expect(deps.getFreshTailPreambleTokensEstimate!()).toBe(321);
   });
+
+  // KNOB-02 (Phase 176): the second computeTokenBudgetForProfile call site lives
+  // in lcd-assembler, which reads ContextEngineDeps.windowProvenance (the 176-01
+  // seam). Without this params→deps hop the seam stays permanently undefined —
+  // "built-but-not-wired" (Pitfall 4).
+  it("KNOB-02-21: threads params.windowProvenance verbatim onto the createContextEngine deps (the lcd-assembler budget seam)", () => {
+    const windowProvenance = {
+      configuredWindow: 131_072,
+      served: 8_192,
+      reconcileSource: "served" as const,
+    };
+    setupContextEngine(makeParams({ windowProvenance }));
+    // RED pre-patch: ContextEngineSetupParams has no windowProvenance field, so
+    // the constructed deps carry undefined and the assembler's budget stays
+    // provenance-blind.
+    expect(captured.calls[0].deps.windowProvenance).toEqual(windowProvenance);
+  });
 });
 
 // ---------------------------------------------------------------------------

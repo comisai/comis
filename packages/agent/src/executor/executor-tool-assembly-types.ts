@@ -32,6 +32,7 @@ import type {
 } from "@comis/core";
 import type { ExcludeDeferralResult } from "./tool-deferral.js";
 import type { ModelProfile, CapabilityClass } from "./model-profile.js";
+import type { WindowProvenance } from "../context-engine/types.js";
 import type { CapabilityIndexRenderResult } from "./capability-index-context.js";
 import type { DiscoveryTracker } from "./discovery-tracker.js";
 import type { ExecutionPromptResult } from "./prompt-assembly.js";
@@ -231,6 +232,9 @@ export interface ToolAssemblyParams {
   modelCompat?: { supportsTools?: boolean; toolSchemaProfile?: "default" | "xai" | "gbnf"; toolCallArgumentsEncoding?: "json" | "html-entities"; nativeWebSearchTool?: boolean };
   /** ModelProfile resolved once per execution in pi-executor. Used to thread capabilityClass to consumers. */
   modelProfile?: ModelProfile;
+  /** KNOB-02: served/capability window provenance built at the pi-executor reconcile.
+   *  Absent ⇒ budget reports profile.contextWindow as raw (pre-KNOB-02). */
+  windowProvenance?: WindowProvenance;
   agentId?: string;
   safetyReinforcement?: string;
   _directives?: { thinkingLevel?: string; compact?: unknown };

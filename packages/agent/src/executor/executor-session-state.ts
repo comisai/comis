@@ -149,6 +149,36 @@ export function clearSessionDeliveredGuides(sessionKey: string): void {
 }
 
 // ---------------------------------------------------------------------------
+// Session-scoped context-window-reconcile INFO latch (KNOB-02 / Phase 176)
+// ---------------------------------------------------------------------------
+
+/** KNOB-02: once-per-session latch for the context-window-reconcile INFO line.
+ *  The reconcile runs every execute(), but load-bearing evidence must not be
+ *  DEBUG-only (troubleshooting doctrine) — pi-executor promotes the first
+ *  reconcile of a session to INFO and latches here so subsequent turns stay
+ *  DEBUG-only. Keyed by formatted session key; cleared by clearSessionState
+ *  (session delete / explicit reset / expiry), so a reset session gets a
+ *  fresh INFO. */
+const sessionWindowReconcileLogged = createBoundedSessionMap<boolean>();
+
+/** True when this session already emitted its reconcile INFO line. */
+export function getWindowReconcileLogged(sessionKey: string): boolean {
+  return sessionWindowReconcileLogged.get(sessionKey) === true;
+}
+
+/** Latch the session: its reconcile INFO line has been emitted. */
+export function setWindowReconcileLogged(sessionKey: string): void {
+  sessionWindowReconcileLogged.set(sessionKey, true);
+}
+
+/** Clear the per-session reconcile-INFO latch. Exported for session cleanup
+ *  (wired into clearSessionState alongside clearSessionDeliveredGuides /
+ *  clearSessionReactiveSchemaStrip). */
+export function clearWindowReconcileLogged(sessionKey: string): void {
+  sessionWindowReconcileLogged.delete(sessionKey);
+}
+
+// ---------------------------------------------------------------------------
 // Session-scoped tool schema snapshot
 // ---------------------------------------------------------------------------
 

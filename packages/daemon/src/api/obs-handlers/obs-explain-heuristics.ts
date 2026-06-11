@@ -287,8 +287,16 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
       const capped = b.windowCapSource !== "none";
       const systemSharePct =
         b.windowTokens > 0 ? Math.round((b.systemTokens / b.windowTokens) * 100) : 0;
+      // KNOB-02 (Phase 176): "served" is NOT a contextEngine.budget.* knob —
+      // templating it would render a nonsense config key (the union member name
+      // suffixed onto the knob prefix) and misdirect the operator. The served
+      // branch names the failure class (Ollama served a smaller window than
+      // configured); the real knobs are in the suggested step below. The cap
+      // branch stays byte-identical.
       const capClause = capped
-        ? ` (model contextWindow ${String(b.rawContextWindowTokens)} capped by contextEngine.budget.${b.windowCapSource})`
+        ? (b.windowCapSource === "served"
+            ? ` (model contextWindow ${String(b.rawContextWindowTokens)} but Ollama served a smaller window)`
+            : ` (model contextWindow ${String(b.rawContextWindowTokens)} capped by contextEngine.budget.${b.windowCapSource})`)
         : "";
       return {
         code: "context_exhausted",
@@ -300,8 +308,10 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
         suggestedNextSteps: [
           ...(capped
             ? [
-                `raise contextEngine.budget.${b.windowCapSource} (0 = uncapped) — the model declares ` +
-                  `${String(b.rawContextWindowTokens)} tokens but the effective window was ${String(b.windowTokens)}`,
+                b.windowCapSource === "served"
+                  ? `set OLLAMA_CONTEXT_LENGTH=${String(b.rawContextWindowTokens)} (ollama serve) or Modelfile 'PARAMETER num_ctx ${String(b.rawContextWindowTokens)}' — the model is configured for ${String(b.rawContextWindowTokens)} but Ollama serves less`
+                  : `raise contextEngine.budget.${b.windowCapSource} (0 = uncapped) — the model declares ` +
+                    `${String(b.rawContextWindowTokens)} tokens but the effective window was ${String(b.windowTokens)}`,
               ]
             : []),
           systemSharePct >= 50

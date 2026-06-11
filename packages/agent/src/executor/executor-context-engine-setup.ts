@@ -138,6 +138,11 @@ export interface ContextEngineSetupParams {
    *  Absent ⇒ lcd-assembler applies the fail-closed nano cap + WARN.
    *  Pass params.modelProfile (already in scope at the pi-executor call site). */
   modelProfile?: import("./model-profile.js").ModelProfile;
+  /** KNOB-02 (Phase 176): served/capability window provenance built at the
+   *  pi-executor reconcile — threaded onto ContextEngineDeps so the
+   *  lcd-assembler's computeTokenBudgetForProfile reports the TRUE configured
+   *  window when the served window binds. Absent ⇒ pre-KNOB-02 raw reporting. */
+  windowProvenance?: import("../context-engine/types.js").WindowProvenance;
   /** Phase 166 T-S4: security-pin markers sourced from pi-executor's deps.canaryToken.
    *  Threaded into ContextEngineDeps so the dag eviction never drops security context. */
   securityPinMarkers?: import("../context-engine/security-context-pinner.js").SecurityPinMarkers;
@@ -269,6 +274,7 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
     getCachedSystemTokensEstimate, getCachedFreshTailPreambleTokens, getTokenAnchor, onAnchorReset,
     currentDiscoveryTracker,
     modelProfile,
+    windowProvenance,
   } = params;
 
   // DAG-CRIT-1: prefer the caller-supplied turn agentId (the positional
@@ -686,6 +692,8 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
     // C1 (Phase 165): the resolved ModelProfile for budget-aware eviction cap.
     // Absent ⇒ lcd-assembler applies the fail-closed nano cap + WARN.
     modelProfile,
+    // KNOB-02: served-window provenance for the budget's rawContextWindowTokens.
+    windowProvenance,
     // RETR-02/03 (Phase 173): the resolved relevance-first policy + the shared scorer for
     // the margin arbiter. relevanceFirst undefined/false ⇒ the assembler takes the verbatim
     // recency path (frontier/mid byte-identical, LOCKED #2).
