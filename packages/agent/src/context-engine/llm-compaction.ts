@@ -523,17 +523,29 @@ export function createLlmCompactionLayer(
         // the middle zone — feeding the whole span is a provider overflow.
         // Invalid/missing window → clamp OFF (today's behavior; never invent
         // a window). The 85% trigger + cooldown re-fire on later turns until
-        // the remainder backlog drains (convergence).
+        // the remainder backlog drains (convergence — the cut===0 escalation
+        // below guarantees every evaluation makes progress).
         const winRaw = (model as { contextWindow?: number } | undefined)?.contextWindow;
         const summarizerWindow =
           typeof winRaw === "number" && Number.isFinite(winRaw) && winRaw > 0
             ? winRaw
             : undefined;
+        // Review CR-01: the summary-output reserve must be SUMMARIZER-sized, not
+        // session-sized — subtracting the session's outputReserveTokens (8_192 on
+        // any frontier session) from an 8K summarizer's window goes permanently
+        // negative and silently disables compaction forever (a regression vs the
+        // pre-clamp Level-2/3 floor). Reserve at most a QUARTER of the resolved
+        // summarizer's own window, and pass the SAME value to compactWithFallback
+        // below so the clamp and the generateSummary reserveTokens agree.
+        const summaryReserve =
+          summarizerWindow === undefined
+            ? budget.outputReserveTokens
+            : Math.min(budget.outputReserveTokens, Math.max(1, Math.floor(summarizerWindow / 4)));
         let spanToSummarize = evictableMiddle;
         let remainingMiddle: AgentMessage[] = [];
         if (summarizerWindow !== undefined) {
           const maxSpanTokens =
-            summarizerWindow - budget.outputReserveTokens - SUMMARIZER_PROMPT_OVERHEAD_TOKENS;
+            summarizerWindow - summaryReserve - SUMMARIZER_PROMPT_OVERHEAD_TOKENS;
           // Oldest-first prefix walk over the evictable middle: cut at the
           // first message that would exceed maxSpanTokens (the file's own
           // conservative estimator — chars / 3.5 per message).
@@ -548,10 +560,15 @@ export function createLlmCompactionLayer(
             cut++;
           }
           if (cut === 0) {
-            // Degenerate summarizer (window < reserve + overhead, or even the
-            // oldest message alone exceeds the span budget): mirror the
-            // MIN_MIDDLE skip — honest degrade, DEBUG-only with counts/window
-            // numbers (never WARN per turn — Pitfall 6 / R-4; never content).
+            // Review CR-01 (convergence): even the OLDEST evictable message alone
+            // exceeds the span budget (or the window is below reserve + overhead).
+            // Skipping here would disarm compaction PERMANENTLY — the oldest
+            // message never leaves the middle's head, so every later evaluation
+            // takes the same exit while context grows unboundedly. Instead feed
+            // that ONE message to compactWithFallback and let its pre-existing
+            // escalation bound it (Level 2 filters oversized messages; Level 3 is
+            // the guaranteed-shrink count-only note) — degraded but ALWAYS
+            // shrinking, exactly the pre-clamp floor. DEBUG, counts/window only.
             deps.logger.debug(
               {
                 step: "compaction-span-clamp",
@@ -559,10 +576,9 @@ export function createLlmCompactionLayer(
                 maxSpanTokens,
                 middleMessages: evictableMiddle.length,
               },
-              "Compaction skipped: no middle message fits the resolved summarizer window",
+              "Compaction span clamp: oldest middle message exceeds the summarizer budget; escalating one message through the fallback ladder",
             );
-            turnsSinceLastCompaction = 0;
-            return messages;
+            cut = 1;
           }
           if (cut < evictableMiddle.length) {
             spanToSummarize = evictableMiddle.slice(0, cut);
@@ -616,12 +632,13 @@ export function createLlmCompactionLayer(
         // to generateSummary). spanToSummarize is the SUMW-01 oldest-first prefix of
         // evictableMiddle that fits the resolved summarizer's window (security-pinned
         // messages already excluded via S4 filtering above); when the clamp does not
-        // bind it IS evictableMiddle.
+        // bind it IS evictableMiddle. summaryReserve is the SAME summarizer-sized
+        // reserve the clamp budgeted (review CR-01) — clamp and call always agree.
         const compactionResult = await compactWithFallback(
           spanToSummarize,
           model,
           apiKey,
-          budget.outputReserveTokens,
+          summaryReserve,
           deps.logger,
         );
 

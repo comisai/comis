@@ -1786,15 +1786,19 @@ describe("S4: security context pinning (pipeline layer)", () => {
 //      output between the summary and the tail (:574 assembly — Pitfall 3:
 //      a dropped remainder is silent, unrecoverable history deletion).
 // Span budget arithmetic (values pinned deliberately — SUMMARIZER_PROMPT_
-// OVERHEAD_TOKENS = 2_048, plan-adopted research A1):
-//   maxSpanTokens = summarizerWindow − budget.outputReserveTokens − 2_048
-//   8K override:   8_000 − 4_096 − 2_048 = 1_856  (the binding fixture)
+// OVERHEAD_TOKENS = 2_048, plan-adopted research A1; review CR-01 replaced the
+// session outputReserveTokens with a SUMMARIZER-sized reserve so small windows
+// never go permanently negative):
+//   summaryReserve = min(budget.outputReserveTokens, max(1, ⌊W/4⌋))
+//   maxSpanTokens  = W − summaryReserve − 2_048
+//   8K override:   8_000 − 2_000 − 2_048 = 3_952  (the binding fixture)
 //   200K override: 200_000 − 4_096 − 2_048 = 193_856 (the no-op I3 pin)
-//   3K override:   3_000 − 4_096 − 2_048 < 0      (the degenerate skip)
+//   3K override:   3_000 − 750 − 2_048 = 202     (oldest msg alone exceeds →
+//                  CR-01 single-message escalation, never a permanent skip)
 // ---------------------------------------------------------------------------
 
 import type { Message } from "@earendil-works/pi-ai";
-import { estimateMessageChars } from "../safety/token-estimator.js";
+import { estimateMessageChars, estimateContextCharsWithDualRatio } from "../safety/token-estimator.js";
 import { CHARS_PER_TOKEN_RATIO } from "./constants.js";
 
 describe("SUMW-01: pipeline span clamp", () => {
@@ -1813,8 +1817,9 @@ describe("SUMW-01: pipeline span clamp", () => {
     availableHistoryTokens: 15_856,
   };
 
-  /** maxSpanTokens for the 8K summarizer under smallBudget (see header). */
-  const MAX_SPAN_TOKENS_8K = 8_000 - 4_096 - 2_048; // = 1_856
+  /** maxSpanTokens for the 8K summarizer (see header): summaryReserve =
+   *  min(4_096, ⌊8_000/4⌋) = 2_000 → 8_000 − 2_000 − 2_048. */
+  const MAX_SPAN_TOKENS_8K = 8_000 - 2_000 - 2_048; // = 3_952
 
   /**
    * 30 text messages × ~4K chars ≈ 120K chars ≈ 34.3K tokens (ratio 3.5) —
@@ -1878,7 +1883,7 @@ describe("SUMW-01: pipeline span clamp", () => {
     expect(mockGenerateSummary).toHaveBeenCalled();
     const spanArg = mockGenerateSummary.mock.calls[0][0] as AgentMessage[];
     // The span fed to the summarizer fits the RESOLVED (override) window:
-    // ≤ 8_000 − 4_096 − 2_048 = 1_856 tokens. A clamp keyed to the primary's
+    // ≤ 8_000 − 2_000 − 2_048 = 3_952 tokens. A clamp keyed to the primary's
     // 128_000 would allow 121_856 tokens — i.e. the whole ~19.4K-token middle —
     // so this bound also proves override-keying (Pitfall 2).
     expect(spanArg.length).toBeGreaterThanOrEqual(1);
@@ -2001,31 +2006,82 @@ describe("SUMW-01: pipeline span clamp", () => {
     }
   });
 
-  it("SUMW-01-P5: degenerate summarizer (window < reserve + overhead) — compaction SKIPPED, no LLM call, no WARN", async () => {
-    const { deps, logger } = createMockDeps({
+  it("SUMW-01-P5 (review CR-01): degenerate summarizer — the single oldest message escalates through the ladder, remainder conserved, never a permanent skip", async () => {
+    const { deps } = createMockDeps({
       overrideModel: {
-        // maxSpanTokens = 3_000 − 4_096 − 2_048 < 0 → nothing fits.
+        // maxSpanTokens = 3_000 − min(4_096, 750) − 2_048 = 202 — even the
+        // oldest ~1_145-token message alone exceeds it (the cut===0 branch).
         model: { id: "degenerate-summarizer", provider: "ollama", contextWindow: 3_000 },
         getApiKey: vi.fn().mockResolvedValue("k"),
       },
     });
     const layer = createLlmCompactionLayer({ compactionCooldownTurns: 5 }, deps);
     const messages = buildSpanClampConversation();
+    const tailStartIndex = mirrorTailStartIndex(messages, smallBudget);
+    const middle = messages.slice(0, tailStartIndex);
+    const tail = messages.slice(tailStartIndex);
     mockGenerateSummary.mockResolvedValue(buildValidSummary());
 
     const result = await layer.apply(messages, smallBudget);
 
-    // Same-reference skip (the :185-188 below-threshold pin style) — compaction
-    // simply does not run against an infeasible summarizer (honest degrade).
-    expect(result).toBe(messages);
-    expect(mockGenerateSummary).not.toHaveBeenCalled();
+    // The pre-review code returned `messages` unchanged here (cut===0 skip) —
+    // PERMANENTLY, since the oldest message never leaves the middle's head.
+    // CR-01: that one message is escalated through compactWithFallback's
+    // pre-existing Level-1/2/3 ladder instead — bounded (one message) and
+    // ALWAYS shrinking (Level 3 is the guaranteed count-only note).
+    expect(result).not.toBe(messages);
+    expect(mockGenerateSummary).toHaveBeenCalled();
+    const spanArg = mockGenerateSummary.mock.calls[0][0] as AgentMessage[];
+    expect(spanArg).toHaveLength(1);
+    expect(spanArg[0]).toBe(middle[0]);
 
-    // WARN-noise-free (T-178-08 / R-4): the skip is DEBUG-only — the trigger
-    // WARN must NOT fire when compaction does not actually run (V5 convention).
-    const warnCalls = (logger.warn as ReturnType<typeof vi.fn>).mock.calls;
-    const triggerWarnCalls = warnCalls.filter(
-      (c) => typeof c[1] === "string" && c[1].includes("LLM compaction triggered"),
+    // Conservation: [summary, ...middle.slice(1), ...tail] by reference.
+    const summaryMsgs = result.filter(
+      (m) => (m as unknown as { compactionSummary?: boolean }).compactionSummary === true,
     );
-    expect(triggerWarnCalls).toHaveLength(0);
+    expect(summaryMsgs).toHaveLength(1);
+    const expected: AgentMessage[] = [summaryMsgs[0]!, ...middle.slice(1), ...tail];
+    expect(result).toHaveLength(expected.length);
+    for (let i = 0; i < expected.length; i++) {
+      expect(result[i]).toBe(expected[i]);
+    }
+  });
+
+  it("CR-01: the playbook 8K summarizer under a frontier-session output reserve (8_192) compacts and CONVERGES below the 85% trigger", async () => {
+    // THE review-CR-01 regression case: outputReserveTokens = 8_192 (the
+    // OUTPUT_RESERVE_TOKENS default for any session whose model maxTokens ≥ 8_192)
+    // makes the pre-review span budget 8_000 − 8_192 − 2_048 = −2_240 — NEGATIVE,
+    // so every evaluation took the cut===0 skip: zero LLM calls, context grows
+    // unboundedly, and the code/docs convergence claim was false. Post-fix the
+    // reserve is summarizer-sized (min(8_192, 2_000) = 2_000 → budget 3_952) and
+    // the backlog drains across re-fires until the 85% trigger goes quiet.
+    const frontierReserveBudget: TokenBudget = { ...smallBudget, outputReserveTokens: 8_192 };
+    const { deps } = make8kOverrideDeps();
+    // cooldown 0: every apply() evaluates — the convergence loop below mirrors
+    // successive turns without waiting out the cooldown.
+    const layer = createLlmCompactionLayer({ compactionCooldownTurns: 0 }, deps);
+    mockGenerateSummary.mockResolvedValue(buildValidSummary());
+
+    let current = buildSpanClampConversation();
+    for (let i = 0; i < 20; i++) {
+      const next = await layer.apply(current, frontierReserveBudget);
+      if (next === current) break; // below threshold — drained (or, pre-fix, the permanent skip)
+      current = next;
+    }
+
+    // RED pre-fix: the FIRST apply returns the same reference with ZERO LLM
+    // calls and the context still above the trigger — nothing ever drains.
+    expect(mockGenerateSummary).toHaveBeenCalled();
+    // Every generateSummary call received the SUMMARIZER-sized reserve (the same
+    // value the clamp budgeted), never the session's 8_192.
+    for (const call of mockGenerateSummary.mock.calls) {
+      expect(call[2]).toBe(2_000);
+    }
+    // Convergence: the final context sits at/below the 85% trigger threshold,
+    // measured exactly the way the layer measures it (dual-ratio chars / 3.5).
+    const finalTokens = Math.ceil(
+      estimateContextCharsWithDualRatio(current as unknown as Message[]) / CHARS_PER_TOKEN_RATIO,
+    );
+    expect(finalTokens).toBeLessThanOrEqual(Math.floor(32_000 * 85 / 100));
   });
 });

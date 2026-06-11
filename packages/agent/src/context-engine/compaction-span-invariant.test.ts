@@ -14,8 +14,12 @@
  * all three subtract the SHARED `SUMMARIZER_PROMPT_OVERHEAD_TOKENS` reserve
  * (constants.ts) from the resolved window before sizing their input span:
  *   1. llm-compaction.ts (pipeline): summarizes only the oldest-first prefix of
- *      `evictableMiddle` fitting `summarizerWindow − budget.outputReserveTokens −
- *      OVERHEAD`; the un-summarized remainder is re-inserted (never dropped).
+ *      `evictableMiddle` fitting `summarizerWindow − summaryReserve − OVERHEAD`
+ *      (review CR-01: summaryReserve = min(budget.outputReserveTokens,
+ *      max(1, ⌊W/4⌋)) — summarizer-sized, never the session reserve, so small
+ *      windows cannot go permanently negative); the un-summarized remainder is
+ *      re-inserted (never dropped), and a cut===0 oldest message escalates
+ *      through the Level-2/3 ladder (convergence — never a permanent skip).
  *   2. lcd-compaction-trigger.ts (LCD leaf): the chunk cap is clamped to
  *      `min(leafChunkTokens, summarizerWindow − leafTargetTokens − OVERHEAD)`,
  *      floored at MIN_SHRINKABLE_LEAF_CHUNK_TOKENS (the degenerate-window

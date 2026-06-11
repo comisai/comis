@@ -608,8 +608,12 @@ Context engine configuration. Controls the system that manages what your agent s
   capability-class cap) — plus reactive provider-side `context_too_long` classification when
   the provider rejects an oversized request. (The trigger behavior is test-pinned.)
   Pipeline compaction likewise summarizes only the longest oldest-first span that fits the
-  summarizer's window and keeps the un-summarized remainder in context (never dropped); the
-  85% trigger re-fires on later turns until the backlog drains.
+  summarizer's window (reserving a summarizer-sized output allowance — at most a quarter of
+  that window — for the summary itself) and keeps the un-summarized remainder in context
+  (never dropped). When even the oldest message alone exceeds that budget, that single
+  message is escalated through the compaction fallback ladder (worst case a bounded
+  count-only note), so every evaluation shrinks the backlog and the 85% trigger re-fires on
+  later turns until it drains.
 
   Recorded decision: the boot viable-floor WARN (the `minViable` equation) is deliberately
   ENGINE-AGNOSTIC — it fires for dag AND pipeline agents alike, because the minViable
