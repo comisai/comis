@@ -44,7 +44,7 @@ Pipeline mode is the **opt-in** engine (set `contextEngine.version: "pipeline"`;
 | 5 | History window | Keeps the last N turns (15 by default). Earlier turns are dropped wholesale before any other shaping. |
 | 6 | Dead-content evictor | Removes superseded tool results — older copies of the same tool call when a newer one exists. |
 | 7 | Observation masker | When the conversation crosses 120K characters, masks old tool outputs in three tiers: protected (kept), standard (content masked, metadata kept), ephemeral (removed entirely). |
-| 8 | LLM compaction | When the prompt is past ~85% of the model's window, calls the model to summarize older turns into one assistant message. Cooldown of 5 turns prevents thrashing. See [Compaction](/agents/compaction). |
+| 8 | LLM compaction | When the prompt is past ~85% of the turn's budget window (the effective window after served-window and capability caps — not the raw model window), calls the model to summarize older turns into one assistant message. Cooldown of 5 turns prevents thrashing. See [Compaction](/agents/compaction). |
 | 9 | Rehydration | After compaction runs, re-injects critical references (the agent's `AGENTS.md`, files referenced by ID) so the summarized agent does not lose its bearings. |
 | 10 | Objective reinforcement | Always runs last. Re-injects the original objective so the agent never drifts after being summarized. |
 
