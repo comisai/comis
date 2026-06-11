@@ -166,4 +166,56 @@ describe("buildConfigPostureRecord", () => {
     // 42 + 8 = 50 — the fake clock's value, proving no Date.now() leak.
     expect(row.timestamp).toBe(50);
   });
+
+  // -------------------------------------------------------------------------
+  // KNOB-03 (Phase 176): servedBelowConfiguredCount — providers whose
+  // Ollama-served window < configured at the latest boot. A COUNT, never
+  // provider names (the record's counts/booleans-only contract). The count
+  // alone must flip severity to "warning" (Pitfall 10: forget the hasIssue OR
+  // and severity stays "info" while the fleet finding fires).
+  // -------------------------------------------------------------------------
+
+  it("KNOB-03-1: flips severity to warning when ONLY servedBelowConfiguredCount is non-zero, and carries the count in details", () => {
+    const { obsStore, insertDiagnostic } = createSpiedObsStore();
+    const clock = createFakeClock(7000);
+
+    buildConfigPostureRecord(
+      obsStore,
+      {
+        tlsOff: false,
+        allowInsecureHttp: false,
+        strandedFindings: [],
+        canaryFallbackActive: false,
+        servedBelowConfiguredCount: 1,
+      },
+      clock,
+    );
+
+    const row = insertDiagnostic.mock.calls[0]?.[0] as DiagnosticRow;
+    expect(row.severity).toBe("warning");
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(details["servedBelowConfiguredCount"]).toBe(1);
+  });
+
+  it("KNOB-03-2: keeps severity info when servedBelowConfiguredCount is 0 and all else is healthy, and details carries the 0", () => {
+    const { obsStore, insertDiagnostic } = createSpiedObsStore();
+    const clock = createFakeClock(8000);
+
+    buildConfigPostureRecord(
+      obsStore,
+      {
+        tlsOff: false,
+        allowInsecureHttp: false,
+        strandedFindings: [],
+        canaryFallbackActive: false,
+        servedBelowConfiguredCount: 0,
+      },
+      clock,
+    );
+
+    const row = insertDiagnostic.mock.calls[0]?.[0] as DiagnosticRow;
+    expect(row.severity).toBe("info");
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(details["servedBelowConfiguredCount"]).toBe(0);
+  });
 });
