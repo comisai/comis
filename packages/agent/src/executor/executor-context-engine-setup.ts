@@ -90,6 +90,17 @@ export interface ContextEngineSetupDeps {
    *  ONE daemon-owned instance (per-tenant aggregate across sessions/agents);
    *  absent ⇒ the raw seam (non-daemon callers / tests). */
   summarizerSpendBreaker?: SummarizerSpendBreaker;
+  /** INT-W1: the Phase-176 boot-probe served window PAIRED with the
+   *  `providers.entries` key it was probed from (= PiExecutorDeps.
+   *  servedContextWindow, auto-present on the frozenDeps this subset is built
+   *  from). Consumed by `resolveCompactionModelChain` to provider-gate the
+   *  served bound for a compaction OVERRIDE model (`servedContextWindow.
+   *  providerKey === compactionResolution.provider` — WR-02 config-key space);
+   *  the PRIMARY summarizer's served bound instead reuses the executor
+   *  reconcile's already-gated `windowProvenance.served`. Absent ⇒ no served
+   *  truth (non-Ollama provider or probe off/failed) — configured windows
+   *  govern, byte-identical pre-INT-W1. */
+  servedContextWindow?: { providerKey: string; window: number };
 }
 
 /** Parameters for context engine creation. */
@@ -371,7 +382,8 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
     getModel: () => CompactionModelSnapshot;
     getRealModel: () => unknown;
     getApiKey: () => Promise<string>;
-    overrideModel?: { model: unknown; getApiKey: () => Promise<string> };
+    overrideModel?: { model: unknown; getApiKey: () => Promise<string>; servedWindow?: number };
+    primaryServedWindow?: number;
   } => ({
     getModel: () => {
       if (modelSnapshot !== undefined) return modelSnapshot;
@@ -401,6 +413,15 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
         oauthManager: deps.oauthManager,
         agentConfig: config,
       }),
+    // INT-W1: the served window binding the PRIMARY (getRealModel) summarizer.
+    // windowProvenance.served is the Phase-176 pair ALREADY provider-gated by
+    // the executor reconcile (`servedContextWindow.providerKey ===
+    // resolvedProviderKey` — pi-executor WR-02), so it binds exactly the model
+    // params.resolvedModel holds. A plain setup-time number — dispose-safe on
+    // the WR-04 deferred path. Absent ⇒ no served truth (byte-identical).
+    ...(windowProvenance?.served !== undefined && {
+      primaryServedWindow: windowProvenance.served,
+    }),
     // Resolve compaction model via the 5-level priority chain; only set
     // overrideModel when the resolver picked a non-primary model.
     ...(() => {
@@ -419,6 +440,16 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
             compactionResolution.modelId,
           );
           if (compactionModel) {
+            // INT-W1: gate the Phase-176 served pair for THIS override in
+            // CONFIG space — the pair's providerKey and the operation-model
+            // resolution's provider are both `providers.entries` keys (WR-02:
+            // never compare model.provider, which the registry alias fallback
+            // can rename). A cross-provider override gets NO served bound.
+            const overrideServedWindow =
+              deps.servedContextWindow !== undefined &&
+              deps.servedContextWindow.providerKey === compactionResolution.provider
+                ? deps.servedContextWindow.window
+                : undefined;
             return {
               overrideModel: {
                 model: compactionModel,
@@ -428,6 +459,9 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
                     oauthManager: deps.oauthManager,
                     agentConfig: config,
                   }),
+                ...(overrideServedWindow !== undefined && {
+                  servedWindow: overrideServedWindow,
+                }),
               },
             };
           }
@@ -512,7 +546,11 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
       // hands generateSummary — not the 4-field snapshot getModel returns.
       getRealModel: chain.getRealModel,
       getApiKey: chain.getApiKey,
+      // INT-W1: overrideModel carries its own provider-gated servedWindow;
+      // primaryServedWindow binds the getRealModel candidate. Both feed
+      // resolveSummarizerWindowTokens' candidate-bound served selection.
       overrideModel: chain.overrideModel,
+      primaryServedWindow: chain.primaryServedWindow,
     };
   };
 

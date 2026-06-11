@@ -32,6 +32,7 @@ import { systemNowMs } from "@comis/core";
 import type { ContextLayer, TokenBudget, CompactionLayerDeps } from "./types.js";
 import type { CapabilityClass } from "../executor/model-profile.js";
 import { resolveCompactionStrategy } from "./compaction-capability-router.js";
+import { effectiveSummarizerWindow } from "./summarizer-window.js";
 import { isSecurityRelevantMessage } from "./security-context-pinner.js";
 import type { SecurityPinMarkers } from "./security-context-pinner.js";
 import {
@@ -335,14 +336,17 @@ export function createLlmCompactionLayer(
           }
         }
 
-        // Step 4: Resolve model
+        // Step 4: Resolve model. INT-W1: the served-window truth rides the SAME
+        // branch as the model selection (gated per candidate at the wiring site).
         /* eslint-disable @typescript-eslint/no-explicit-any */
         let model: any;
         let apiKey: string;
+        let servedSummarizerWindow: number | undefined;
         if (deps.overrideModel) {
           try {
             model = deps.overrideModel.model;
             apiKey = await deps.overrideModel.getApiKey();
+            servedSummarizerWindow = deps.overrideModel.servedWindow;
           } catch (overrideErr) {
             deps.logger.warn(
               {
@@ -354,10 +358,12 @@ export function createLlmCompactionLayer(
             );
             model = deps.getModel();
             apiKey = await deps.getApiKey();
+            servedSummarizerWindow = deps.primaryServedWindow;
           }
         } else {
           model = deps.getModel();
           apiKey = await deps.getApiKey();
+          servedSummarizerWindow = deps.primaryServedWindow;
         }
         /* eslint-enable @typescript-eslint/no-explicit-any */
 
@@ -488,15 +494,15 @@ export function createLlmCompactionLayer(
         // could disagree — Pitfall 2). With an `operationModels.compaction`
         // override the summarizer's window (e.g. 8K) can be far smaller than
         // the middle zone — feeding the whole span is a provider overflow.
-        // Invalid/missing window → clamp OFF (today's behavior; never invent
-        // a window). The 85% trigger + cooldown re-fire on later turns until
-        // the remainder backlog drains (convergence — the cut===0 escalation
-        // below guarantees every evaluation makes progress).
-        const winRaw = (model as { contextWindow?: number } | undefined)?.contextWindow;
-        const summarizerWindow =
-          typeof winRaw === "number" && Number.isFinite(winRaw) && winRaw > 0
-            ? winRaw
-            : undefined;
+        // INT-W1: the configured window is min()'d with the Phase-176 SERVED
+        // window bound to the SAME Step-4 candidate (a served-bound PRIMARY —
+        // num_ctx 8_192 under a configured 131_072 — clamps too, not just
+        // overrides). Neither valid → clamp OFF (never invent a window). The 85%
+        // trigger + cooldown re-fire until the remainder backlog drains (the
+        // cut===0 escalation guarantees every evaluation makes progress).
+        const summarizerWindow = effectiveSummarizerWindow(
+          (model as { contextWindow?: number } | undefined)?.contextWindow, servedSummarizerWindow,
+        );
         // Review CR-01: the summary-output reserve must be SUMMARIZER-sized, not
         // session-sized — subtracting the session's outputReserveTokens (8_192 on
         // any frontier session) from an 8K summarizer's window goes permanently

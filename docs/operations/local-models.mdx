@@ -172,10 +172,17 @@ at all.
 Compaction triggers ratio against the turn's **effective budget window** (the reconciled
 window under the class cap), not the model's configured `contextWindow` — so a capped or
 served-bound small model compacts when its real window fills, not 4× late. And compaction
-input spans are clamped to the **resolved summarizer's** window: a small
-`operationModels.compaction` summarizer (say 8K) is never fed an over-window chunk — oversized
-backlogs split across multiple bounded passes, and the un-summarized remainder stays in
-context, never dropped. The governing knobs are the `contextThreshold` and `leafChunkTokens`
+input spans are clamped to the **resolved summarizer's** window, taken as the smaller of its
+configured `contextWindow` and the probed served window whenever the summarizer runs on the
+provider the served value was probed from: a small `operationModels.compaction` summarizer
+(say 8K) — or the primary model itself when Ollama serves less than its configured window —
+is never fed an over-window chunk. Oversized backlogs split across multiple bounded passes,
+and the un-summarized remainder stays in context, never dropped. A summarizer on a different
+provider keeps its own full window (a local served bound never clamps a cloud summarizer).
+One honest exception: `summarizerFallbackProviders` models that take over after a primary
+summarizer failure are not window-checked — an over-window span on a smaller fallback
+degrades through the escalation ladder to a bounded summary, never data loss. The governing
+knobs are the `contextThreshold` and `leafChunkTokens`
 rows in the [Context Engine section](/reference/config-yaml#context-engine-agents-contextengine);
 pick the summarizer model per agent via
 [`operationModels.compaction`](/reference/config-yaml#operation-model-overrides-agents-operationmodels).
