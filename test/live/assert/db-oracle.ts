@@ -225,6 +225,48 @@ export async function runDbOracle(
  * @param dbPath - Absolute path to the SQLite database file.
  * @param tables - Table names to snapshot.
  */
+/**
+ * Count rows in `table` whose `content` column contains ALL of the given
+ * substrings (SQLite LIKE — case-insensitive for ASCII).
+ *
+ * 260611 predicate re-pin: MEM Stage-B asserted exact row-count deltas that
+ * encoded a 1-row-per-conversation assumption, but the product's ingestion
+ * stores one memory PER USER TURN (observed live: 2 turns → 2 semantic rows,
+ * with the Stage-C judge passing). The durable invariant is "the planted fact
+ * exists in the store" — content-anchored, policy-tolerant. Counts remain as
+ * BOUNDS, not exact equalities.
+ *
+ * Opens the database READONLY — never writes.
+ */
+export function countRowsLike(
+  dbPath: string,
+  table: string,
+  substrings: string[],
+): number {
+  const db = openReadonlyWithVec(dbPath);
+  try {
+    const existingTables = new Set<string>(
+      (
+        db
+          .prepare("SELECT name FROM sqlite_master WHERE type='table'")
+          .all() as { name: string }[]
+      ).map((r) => r.name),
+    );
+    if (!existingTables.has(table)) {
+      throw new Error(`countRowsLike: table '${table}' not present in ${dbPath}`);
+    }
+    const where = substrings.map(() => "content LIKE ?").join(" AND ");
+    const params = substrings.map((s) => `%${s}%`);
+    return (
+      db
+        .prepare(`SELECT count(*) as c FROM ${table} WHERE ${where}`)
+        .get(...params) as { c: number }
+    ).c;
+  } finally {
+    db.close();
+  }
+}
+
 export function snapshotRowCounts(
   dbPath: string,
   tables: string[],

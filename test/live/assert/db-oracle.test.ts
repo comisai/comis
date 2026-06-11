@@ -477,3 +477,43 @@ describe("snapshotRowCounts — real vec0 virtual table (sqlite-vec loaded in re
     await expect(runDbOracle(dbPath)).resolves.toBeUndefined();
   });
 });
+
+describe("countRowsLike — content-anchored ground truth (260611 predicate re-pin)", () => {
+  it("counts rows whose content contains ALL given substrings (AND semantics)", async () => {
+    const dbPath = await writeMemoryDbToFile((db) => {
+      db.exec(MEMORIES_DDL);
+      const ins = db.prepare(
+        `INSERT INTO memories
+         (id, tenant_id, agent_id, user_id, content, trust_level, memory_type, source_who, tags, created_at, has_embedding)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      );
+      ins.run("m1", "t", "a", "u", "the Eiffel Tower is 330 meters tall", "high", "episodic", "user", "[]", Date.now(), 0);
+      ins.run("m2", "t", "a", "u", "what is the height of the Eiffel Tower?", "high", "episodic", "user", "[]", Date.now(), 0);
+    });
+    const { countRowsLike } = await import("./db-oracle.js");
+    expect(countRowsLike(dbPath, "memories", ["Eiffel", "330"])).toBe(1);
+    expect(countRowsLike(dbPath, "memories", ["Eiffel"])).toBe(2);
+    expect(countRowsLike(dbPath, "memories", ["nonexistent-fact"])).toBe(0);
+  });
+
+  it("matching is case-insensitive (LIKE semantics)", async () => {
+    const dbPath = await writeMemoryDbToFile((db) => {
+      db.exec(MEMORIES_DDL);
+      db.prepare(
+        `INSERT INTO memories
+         (id, tenant_id, agent_id, user_id, content, trust_level, memory_type, source_who, tags, created_at, has_embedding)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run("m1", "t", "a", "u", "Lane-Test fact for combo", "high", "episodic", "user", "[]", Date.now(), 0);
+    });
+    const { countRowsLike } = await import("./db-oracle.js");
+    expect(countRowsLike(dbPath, "memories", ["lane-test"])).toBe(1);
+  });
+
+  it("rejects a table name not present in the DB (allowlist guard)", async () => {
+    const dbPath = await writeMemoryDbToFile((db) => {
+      db.exec(MEMORIES_DDL);
+    });
+    const { countRowsLike } = await import("./db-oracle.js");
+    expect(() => countRowsLike(dbPath, "evil; DROP TABLE memories", ["x"])).toThrow(/not present/);
+  });
+});

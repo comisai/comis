@@ -16,7 +16,7 @@ import { describe, it, expect } from "vitest";
 import { existsSync, rmSync } from "node:fs";
 import { ConversationDriver, flushDaemonLogs } from "../../harness/conversation.js";
 import { runLogOracle } from "../../assert/log-oracle.js";
-import { runDbOracle, snapshotRowCounts } from "../../assert/db-oracle.js";
+import { runDbOracle, snapshotRowCounts, countRowsLike } from "../../assert/db-oracle.js";
 import { assertRecallAtK, recallAtK, meanReciprocalRank } from "../../assert/memory-recall.js";
 import { judgeAnswer } from "../../judge.js";
 import { buildMemConfig } from "../../harness/mem-config.js";
@@ -92,12 +92,18 @@ describe.skipIf(!isLive)(
             expectedErrors: ["JSON-RPC method error"],
           });
           expect(existsSync(dbPath), "memory DB missing after run - store never opened (dbPath: " + dbPath + ")").toBe(true);
-        {
-            await runDbOracle(dbPath, {
-              expectedDeltas: [{ table: "memories", expectedRowDelta: 1 }],
-              beforeCounts,
-            });
-          }
+          // Ground truth (260611 re-pin): the planted fact is durably stored —
+          // content-anchored, not an exact row count (ingestion stores one
+          // memory per USER TURN, so 2 turns yield 2 rows by design).
+          expect(
+            countRowsLike(dbPath, "memories", ["Eiffel", "330"]),
+            "planted fact not found in memories store",
+          ).toBeGreaterThanOrEqual(1);
+          const afterCounts = snapshotRowCounts(dbPath, MEM_TABLES);
+          const delta = (afterCounts["memories"] ?? 0) - (beforeCounts["memories"] ?? 0);
+          expect(delta, "no memory rows written").toBeGreaterThanOrEqual(1);
+          expect(delta, "runaway memory writes (>3 rows for 2 turns)").toBeLessThanOrEqual(3);
+          await runDbOracle(dbPath, { beforeCounts });
         } finally {
           await driver.close().catch(() => {});
           try {

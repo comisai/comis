@@ -17,7 +17,7 @@ import { describe, it, expect } from "vitest";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { ConversationDriver, flushDaemonLogs } from "../../harness/conversation.js";
 import { runLogOracle } from "../../assert/log-oracle.js";
-import { runDbOracle, snapshotRowCounts } from "../../assert/db-oracle.js";
+import { runDbOracle, snapshotRowCounts, countRowsLike } from "../../assert/db-oracle.js";
 import { buildMemConfig } from "../../harness/mem-config.js";
 
 const isLive = !!process.env["COMIS_LIVE"];
@@ -63,13 +63,24 @@ describe.skipIf(!isLive)("MEM-07 Stage-B — costFeatures.enabled=false → no c
       await flushDaemonLogs(driver);
       await runLogOracle(driver.capturedLogLines(), { expectedErrors: ["JSON-RPC method error"] });
       expect(existsSync(dbPath), "memory DB missing after run - store never opened (dbPath: " + dbPath + ")").toBe(true);
-        {
+      // Content-anchored (260611 re-pin): both planted facts stored (catches
+      // "0 rows written" false-pass — WARNING-1). Ingestion stores one row per
+      // distinct USER TURN (3 turns here), so the no-consolidation invariant
+      // is delta <= 3: no room for an observation row beyond the raw turns.
+      expect(
+        countRowsLike(dbPath, "memories", ["cost-features test fact A"]),
+        "planted fact A not found in memories store",
+      ).toBeGreaterThanOrEqual(1);
+      expect(
+        countRowsLike(dbPath, "memories", ["cost-features test fact B"]),
+        "planted fact B not found in memories store",
+      ).toBeGreaterThanOrEqual(1);
+      {
         const afterCounts = snapshotRowCounts(dbPath, MEM_TABLES);
         const storeDelta = (afterCounts["memories"] ?? 0) - (beforeCounts["memories"] ?? 0);
-        // Lower bound: at least 1 fact stored (catches "0 rows written" false-pass — WARNING-1)
-        expect(storeDelta).toBeGreaterThanOrEqual(1);
+        expect(storeDelta, "no memory rows written").toBeGreaterThanOrEqual(2);
         // Upper bound: no consolidation observation (costFeatures disabled → LLM-bearing cron off)
-        expect(storeDelta).toBeLessThanOrEqual(2);
+        expect(storeDelta, "extra rows beyond the 3 raw turns (consolidation observation?)").toBeLessThanOrEqual(3);
         await runDbOracle(dbPath, { beforeCounts });
       }
     } finally {

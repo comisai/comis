@@ -70,9 +70,45 @@ export interface ConversationDriverOptions {
 // ---------------------------------------------------------------------------
 
 type RpcEnvelope = {
-  result?: { reply?: string };
+  result?: { response?: string; error?: string; finishReason?: string };
   error?: { code: number; message: string };
 };
+
+/**
+ * Parse an agent.execute RPC envelope into the agent's reply text.
+ *
+ * 260611 live-fire fix: the gateway's handleAgentRequest returns
+ * `{ response, tokensUsed, finishReason }` (packages/gateway/src/rpc/
+ * rpc-adapters.ts) — the driver previously read `result.reply`, a field that
+ * has never existed, so EVERY live turn threw "returned no reply string" even
+ * when the model answered. Handler-level failures also arrive as
+ * `result.error` (a string), not as a JSON-RPC error object — both shapes now
+ * fail honestly.
+ *
+ * Exported for unit tests (conversation.test.ts) — pure, no I/O.
+ *
+ * @throws on JSON-RPC error envelopes, handler `result.error`, or a missing
+ *         response string. A degraded-but-honest reply (finishReason:"error"
+ *         fallback text) is RETURNED, not thrown — scenario oracles judge it.
+ */
+export function parseAgentExecuteResult(envelope: RpcEnvelope): string {
+  if (envelope.error) {
+    throw new Error(
+      `agent.execute RPC error ${envelope.error.code}: ${envelope.error.message}`,
+    );
+  }
+  const result = envelope.result;
+  if (result?.error) {
+    throw new Error(`agent.execute handler error: ${result.error}`);
+  }
+  const response = result?.response;
+  if (typeof response !== "string" || response.length === 0) {
+    throw new Error(
+      `agent.execute returned no response string (result: ${JSON.stringify(result)})`,
+    );
+  }
+  return response;
+}
 
 // ---------------------------------------------------------------------------
 // ConversationDriver class
@@ -272,22 +308,7 @@ export class ConversationDriver {
         Date.now(),
         { timeoutMs: this._timeoutMs },
       );
-      const envelope = resp as RpcEnvelope;
-
-      if (envelope.error) {
-        throw new Error(
-          `agent.execute RPC error ${envelope.error.code}: ${envelope.error.message}`,
-        );
-      }
-
-      const reply = envelope.result?.reply;
-      if (typeof reply !== "string") {
-        throw new Error(
-          `agent.execute returned no reply string (result: ${JSON.stringify(envelope.result)})`,
-        );
-      }
-
-      return reply;
+      return parseAgentExecuteResult(resp as RpcEnvelope);
     } finally {
       ws.close();
     }
