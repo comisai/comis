@@ -279,6 +279,39 @@ describe("assembleTools — per-request tool merging with deps.customTools", () 
     expect(result.mergedCustomTools.length).toBeGreaterThan(0);
   });
 
+  it("reserves system-token budget for the POST-deferral active tools, not the full pre-deferral set", async () => {
+    // Live finding (2026-06-12 UC-2): cachedSystemTokensEstimate was computed at
+    // ÷3.5 over mergedCustomTools BEFORE applyToolDeferral ran, so a small-class
+    // agent that defers ~58 of 82 tools still reserved budget for all 82 — a ~16K
+    // over-reservation that squeezed the history partition and falsely
+    // context-exhausted multi-turn local-model sessions. The estimate must reflect
+    // the tools that actually ship (active + discovered + discover_tools), not the
+    // deferred ones (which the stub filter strips from the wire).
+    const manyTools = Array.from({ length: 30 }, (_, i) => makeTool(`tool-${i}`, "a".repeat(200)));
+    const activeSubset = manyTools.slice(0, 4);
+
+    // Run A: deferral keeps ALL 30 active (no deferral).
+    mocks.applyToolDeferralMock.mockImplementationOnce((tools: unknown[]) => ({
+      activeTools: tools, discoveredTools: [], deferredEntries: [], deferredNames: [], discoverTool: undefined,
+    }));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const noDefer = await assembleTools(makeParams({ deps: makeDeps({ customTools: manyTools as any }) }));
+
+    // Run B: deferral keeps only 4 active, defers 26.
+    mocks.applyToolDeferralMock.mockImplementationOnce(() => ({
+      activeTools: activeSubset,
+      discoveredTools: [],
+      deferredEntries: manyTools.slice(4).map((t) => ({ name: (t as { name: string }).name })),
+      deferredNames: manyTools.slice(4).map((t) => (t as { name: string }).name),
+      discoverTool: undefined,
+    }));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const deferred = await assembleTools(makeParams({ deps: makeDeps({ customTools: manyTools as any }) }));
+
+    // The deferred run ships far fewer tool schemas, so its reservation must be smaller.
+    expect(deferred.cachedSystemTokensEstimate).toBeLessThan(noDefer.cachedSystemTokensEstimate);
+  });
+
   it("merges deps.customTools with converted per-request AgentTool[] when convertTools is provided", async () => {
     const customTools = [makeTool("a")];
     const convertedTool = makeTool("b-converted");
