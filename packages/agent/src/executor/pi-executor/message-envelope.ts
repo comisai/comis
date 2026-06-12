@@ -131,6 +131,14 @@ export function handleEnvelopeException(
     );
     state.result.finishReason = "context_exhausted";
     state.result.response = "The conversation history is too large to process. Please start a new conversation or use the `sessions reset` command.";
+    // Issue-6: carry the exhaustion message (which embeds the `[cause: …]` tag)
+    // so postExecution's buildContextExhaustedReply can branch its advice by
+    // cause — mirrors what the HR-01 mid-turn path gets via lastLlmErrorMessage.
+    state.result.errorContext = {
+      errorType: "ContextExhaustion",
+      retryable: false,
+      originalError: error.message,
+    };
     return;
   }
 

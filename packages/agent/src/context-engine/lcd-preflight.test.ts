@@ -667,3 +667,65 @@ describe("runPreflightFitCheck return value (W5)", () => {
     expect(assembled).toBe(1_200);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Issue-6 (small-model e2e 2026-06-12 UC-3): the throw classifies WHY the fit
+// failed, so the degraded reply can branch its advice. "narrow the ask" was
+// misleading when the offender was a persisted oversized HISTORY message.
+// ---------------------------------------------------------------------------
+describe("Issue-6: exhaustion cause classification at the throw", () => {
+  function throwFrom(
+    evictable: BudgetItem[],
+    keptCount: number,
+    freshTail: unknown[],
+  ): ContextExhaustionError {
+    const deps = makeDeps({
+      getThinkingLevel: () => "medium",
+      getSystemTokensEstimate: () => 0,
+      onEffectiveWindow: vi.fn(),
+      onAssembledInputTokens: vi.fn(),
+    });
+    let caught: unknown;
+    try {
+      // reasoningStyle "none" → no downshift ladder; bound = 32000 − 768 = 31232.
+      runPreflightFitCheck(deps, 32_000, evictable, keptCount, freshTail as never, "none");
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(ContextExhaustionError);
+    return caught as ContextExhaustionError;
+  }
+
+  it("the CURRENT user input alone over the bound → cause oversized_input", () => {
+    // 140K chars → 40000 tokens; it is the LAST user message in the fresh tail.
+    const freshTail = [
+      { role: "assistant", content: "working on it" },
+      { role: "user", content: "X".repeat(140_000) },
+    ];
+    const err = throwFrom([], 0, freshTail);
+    expect(err.exhaustionCause).toBe("oversized_input");
+    expect(err.message).toContain("[cause: oversized_input]");
+  });
+
+  it("a single oversized EARLIER message (kept history item) → cause oversized_history_message", () => {
+    // One kept history BudgetItem of 40000 tokens; the current input is tiny.
+    const evictable: BudgetItem[] = [
+      { msg: { role: "user" as const, content: "old oversized paste" }, tokens: 40_000 },
+    ];
+    const freshTail = [{ role: "user", content: "what is 2 + 2?" }];
+    const err = throwFrom(evictable, 1, freshTail);
+    expect(err.exhaustionCause).toBe("oversized_history_message");
+    expect(err.message).toContain("[cause: oversized_history_message]");
+  });
+
+  it("many individually-fitting messages overflowing together → cause aggregate (unmarked message)", () => {
+    // 5 × 28K chars = 8000 tokens each (each < 31232) — only the SUM overflows.
+    const freshTail = Array.from({ length: 5 }, (_, i) => ({
+      role: i % 2 === 0 ? "user" : "assistant",
+      content: "X".repeat(28_000),
+    }));
+    const err = throwFrom([], 0, freshTail);
+    expect(err.exhaustionCause).toBe("aggregate");
+    expect(err.message).not.toContain("[cause:");
+  });
+});

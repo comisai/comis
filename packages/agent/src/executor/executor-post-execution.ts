@@ -106,6 +106,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { shouldRunCritic, runVerificationCritic } from "./verification-gate.js";
 // CWF-05: deterministic user-facing reply for named degraded terminal causes.
 import { buildOutputStarvedAnnotation, buildContextExhaustedReply } from "./degraded-reply.js";
+import { parseContextExhaustionCause } from "../context-engine/errors.js";
 import { buildSyntheticCriticDeps } from "./verification-gate-synth-deps.js";
 import { resolveScaffoldDefaults } from "./scaffold-defaults.js";
 import { generateCanaryToken } from "@comis/core";
@@ -123,6 +124,9 @@ export interface PostExecutionBridgeResult {
   toolCallHistory?: string[];
   finishReason?: ExecutionResult["finishReason"];
   lastActiveToolName?: string;
+  /** The last LLM error message the bridge captured (HR-01 mid-turn path) —
+   *  Issue-6 reads the `[cause: …]` tag from it when errorContext is absent. */
+  lastLlmErrorMessage?: string;
   failedToolCalls?: number;
   failedTools?: string[];
   cumulativeLlmDurationMs?: number;
@@ -1257,10 +1261,19 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     // W4 (obs-llm-troubleshooting): name the exact cap knob for small/nano and
     // append the incident traceId so `comis explain <traceId>` is one step away
     // from the chat message itself.
+    // Issue-6: recover the exhaustion CAUSE from the message that crossed the
+    // type-stripping boundary — errorContext.originalError on the top-level
+    // path, lastLlmErrorMessage on the HR-01 mid-turn path — so the reply's
+    // advice names the remedy that actually applies (an oversized HISTORY
+    // message is fixed by a session reset, never by "narrowing the ask").
     const incidentTraceId = tryGetContext()?.traceId;
+    const exhaustionCause = parseContextExhaustionCause(
+      result.errorContext?.originalError ?? bridgeResult.lastLlmErrorMessage,
+    );
     result.response = buildContextExhaustedReply({
       ...(capabilityClass !== undefined ? { capabilityClass } : {}),
       ...(incidentTraceId !== undefined ? { traceId: incidentTraceId } : {}),
+      cause: exhaustionCause,
     });
     deps.logger.warn(
       { step: "degraded-reply", errorKind: "resource" as const, hint: "context_exhausted synthesized reply" },

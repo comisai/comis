@@ -22,6 +22,49 @@ import type { ContextWindowCapInfo } from "./types-core.js";
 export const CONTEXT_EXHAUSTION_MESSAGE_PREFIX = "Context exhausted: assembled" as const;
 
 /**
+ * Issue-6 (small-model e2e 2026-06-12 UC-3): WHY the fit failed, so the
+ * degraded reply can point at the right knob. The generic "narrow the ask"
+ * advice was actively misleading when the offender was a persisted oversized
+ * message in HISTORY (the ask was tiny).
+ *
+ *  - `oversized_input`: the CURRENT user message alone cannot fit — "narrow
+ *    the ask" / "shorten the message" is the correct remedy.
+ *  - `oversized_history_message`: a SINGLE earlier message alone cannot fit —
+ *    only clearing the session (or raising the window) helps; with the Issue-1
+ *    assembly bound in place this cause should no longer occur, but the
+ *    classification stays for robustness (e.g. an operator-cranked cap).
+ *  - `aggregate`: the conversation + tools collectively overflow — compaction /
+ *    cap-raise / fewer tools advice applies (the historical behavior).
+ */
+export type ContextExhaustionCause =
+  | "oversized_input"
+  | "oversized_history_message"
+  | "aggregate";
+
+/**
+ * The `[cause: …]` tag appended to the exhaustion message. Like
+ * {@link CONTEXT_EXHAUSTION_MESSAGE_PREFIX}, the tag is a SHARED CONTRACT
+ * between the constructor and {@link parseContextExhaustionCause}: the error
+ * crosses the SDK's turn_end-error boundary as a bare STRING (HR-01), so the
+ * cause must survive inside the message text. "aggregate" is the unmarked
+ * default — historical messages (no tag) parse as aggregate.
+ */
+const CAUSE_TAG_PATTERN = /\[cause: (oversized_input|oversized_history_message)\]/;
+
+/**
+ * Recover the {@link ContextExhaustionCause} from an exhaustion message string
+ * that crossed a type-stripping boundary (`result.errorContext.originalError`
+ * on the top-level path, `lastLlmErrorMessage` on the HR-01 mid-turn path).
+ * Pure; tolerant of undefined/untagged input (→ "aggregate").
+ */
+export function parseContextExhaustionCause(
+  message: string | undefined,
+): ContextExhaustionCause {
+  const match = typeof message === "string" ? CAUSE_TAG_PATTERN.exec(message) : null;
+  return match ? (match[1] as ContextExhaustionCause) : "aggregate";
+}
+
+/**
  * Maps a WindowCapSource onto the exact knob an operator must turn — the
  * message must name the KNOB, not just the number, so an operator (or an
  * LLM agent reading the log) can fix it without reading budget-capacity-cap.ts
@@ -88,10 +131,15 @@ export class ContextExhaustionError extends Error {
     public readonly effectiveWindow: number,
     public readonly assembledTokens: number,
     capInfo?: ContextWindowCapInfo,
+    /** Issue-6: why the fit failed (default "aggregate" — the historical shape). */
+    public readonly exhaustionCause: ContextExhaustionCause = "aggregate",
   ) {
     super(
       `${CONTEXT_EXHAUSTION_MESSAGE_PREFIX} ${assembledTokens} tokens leaves no room in effective window ${effectiveWindow}` +
-        describeWindowCap(effectiveWindow, capInfo),
+        describeWindowCap(effectiveWindow, capInfo) +
+        // The tag must survive the HR-01 string boundary; "aggregate" stays
+        // unmarked so historical message shapes are byte-identical.
+        (exhaustionCause === "aggregate" ? "" : ` [cause: ${exhaustionCause}]`),
     );
   }
 }

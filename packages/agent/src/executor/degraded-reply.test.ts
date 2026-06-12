@@ -156,4 +156,53 @@ describe("buildContextExhaustedReply — knob naming + incident ref (W4)", () =>
     expect(reply).toContain("effectiveContextCapSmall");
     expect(reply).toContain("abc-123");
   });
+
+  // Issue-6 (small-model e2e 2026-06-12 UC-3): the advice must name the remedy
+  // that actually applies. After the Issue-1 brick, a tiny follow-up got
+  // "…or narrow the ask." — but the ask WAS tiny; the offender was a persisted
+  // oversized message in history.
+  describe("cause-branched advice (Issue 6)", () => {
+    it("oversized_input: tells the user their MESSAGE is too large — shortening/splitting applies", () => {
+      const reply = buildContextExhaustedReply({ capabilityClass: "small", cause: "oversized_input" });
+      expect(reply.toLowerCase()).toContain("your message");
+      expect(reply.toLowerCase()).toContain("shorter");
+    });
+
+    it("oversized_history_message: names the persisted history message + reset remedy, and does NOT say 'narrowing the ask'", () => {
+      const reply = buildContextExhaustedReply({
+        capabilityClass: "small",
+        cause: "oversized_history_message",
+      });
+      expect(reply.toLowerCase()).toContain("previous message");
+      expect(reply.toLowerCase()).toContain("reset the session");
+      // The misleading clause from the live incident must be gone for this cause.
+      expect(reply.toLowerCase()).not.toContain("narrow");
+      // The knob is still named as the alternative lever.
+      expect(reply).toContain("effectiveContextCapSmall");
+    });
+
+    it("aggregate / omitted cause: byte-identical to the historical reply", () => {
+      const explicit = buildContextExhaustedReply({ capabilityClass: "small", cause: "aggregate" });
+      const omitted = buildContextExhaustedReply({ capabilityClass: "small" });
+      expect(explicit).toBe(omitted);
+      expect(omitted).toContain("narrowing the ask");
+    });
+
+    it("the three causes produce three DISTINCT replies", () => {
+      const replies = new Set([
+        buildContextExhaustedReply({ cause: "oversized_input" }),
+        buildContextExhaustedReply({ cause: "oversized_history_message" }),
+        buildContextExhaustedReply({ cause: "aggregate" }),
+      ]);
+      expect(replies.size).toBe(3);
+    });
+
+    it("cause-branched replies keep the security guards (no '[Stopped:', no 'too large')", () => {
+      for (const cause of ["oversized_input", "oversized_history_message"] as const) {
+        const reply = buildContextExhaustedReply({ cause });
+        expect(reply).not.toContain("[Stopped:");
+        expect(reply.toLowerCase()).not.toContain("too large");
+      }
+    });
+  });
 });
