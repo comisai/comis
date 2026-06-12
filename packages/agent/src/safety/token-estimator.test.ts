@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from "vitest";
 import type { Message, UserMessage, AssistantMessage, ToolResultMessage } from "@earendil-works/pi-ai";
+import { scriptTokenFactor } from "@comis/core";
 import {
   CHARS_PER_TOKEN,
   IMAGE_TOKEN_ESTIMATE,
@@ -363,5 +364,104 @@ describe("estimateWithAnchor", () => {
     expect(deltaPercent).toBeLessThan(5);
     // Also verify the result is larger than the anchor (new messages added tokens)
     expect(result).toBeGreaterThan(anchor.inputTokens);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// estimateMessageTokens — script-aware factors (TOK-01)
+// ---------------------------------------------------------------------------
+
+// Dense non-Latin scripts tokenize at far fewer chars/token than the flat
+// CHARS_PER_TOKEN=4 heuristic assumes (Hebrew chat measured ~2.2-2.9
+// chars/token vs the 4.0 the divisor uses), so the estimator stores roughly
+// half of Hebrew's true token weight. The bounds below divide by
+// `ratio * scriptTokenFactor(text)` — the exact string whose `.length` is
+// divided, one rule at every site (no second "structured" factor; the 3 vs 4
+// ratio already encodes structured-ness).
+//
+// Pre-patch: estimateMessageTokens divides by the bare ratio (chars/4,
+// structured chars/3) with no script awareness -> every Hebrew bound FAILS
+// (RED). The I1 pins and the I3 property pass pre-patch and must keep
+// passing post-patch (the conservative direction is structural).
+describe("estimateMessageTokens — script-aware factors (TOK-01)", () => {
+  // 22 Hebrew letters + 5 neutral spaces = 27 UTF-16 units; factor 0.55.
+  const he = "שלום עולם זה מבחן ארוך מאוד";
+
+  it("bounds Hebrew string content from below by chars/(4*0.55) instead of flat chars/4", () => {
+    // Pre-patch: ceil(27/4) = 7 < ceil(27/(4*0.55)) = 13 -> RED.
+    expect(estimateMessageTokens(userMsg(he))).toBeGreaterThanOrEqual(
+      Math.ceil(he.length / (4 * 0.55)),
+    );
+  });
+
+  it("bounds Hebrew text blocks from below by chars/(4*0.55)", () => {
+    // Pre-patch: the text-block site divides by the bare ratio -> RED.
+    const msg = assistantMsg([{ type: "text", text: he }]);
+    expect(estimateMessageTokens(msg)).toBeGreaterThanOrEqual(
+      Math.ceil(he.length / (4 * 0.55)),
+    );
+  });
+
+  it("bounds Hebrew thinking blocks from below by chars/(4*0.55)", () => {
+    // Pre-patch: the thinking site divides by bare CHARS_PER_TOKEN -> RED.
+    const msg = assistantMsg([{ type: "thinking", thinking: he }]);
+    expect(estimateMessageTokens(msg)).toBeGreaterThanOrEqual(
+      Math.ceil(he.length / (4 * 0.55)),
+    );
+  });
+
+  it("bounds toolCall arguments carrying Hebrew payload values via the stringified-JSON blend", () => {
+    // The factor scans the STRINGIFIED JSON itself — Hebrew payload values
+    // and Latin JSON syntax blend harmonically (Pitfall 6: never a second
+    // factor for structured-ness).
+    // Pre-patch: ceil(len/3) with no factor -> RED.
+    const msg = assistantMsg([
+      { type: "toolCall", id: "t1", name: "echo", arguments: { msg: he } },
+    ]);
+    const json = JSON.stringify({ msg: he });
+    expect(estimateMessageTokens(msg)).toBeGreaterThanOrEqual(
+      Math.ceil(json.length / (3 * scriptTokenFactor(json))),
+    );
+  });
+
+  it("keeps pure-ASCII user content byte-identical to ceil(len/4) (I1 exact pin)", () => {
+    for (const t of ["hello world", "a".repeat(100), "GET /api/users?id=42"]) {
+      expect(estimateMessageTokens(userMsg(t))).toBe(Math.ceil(t.length / 4));
+    }
+  });
+
+  it("keeps pure-ASCII toolResult string content byte-identical to ceil(len/3) (I1 exact pin)", () => {
+    const content = "ls -la /var/log && echo done";
+    const msg: ToolResultMessage = {
+      role: "toolResult",
+      toolCallId: "tc_i1",
+      toolName: "bash",
+      content,
+      isError: false,
+      timestamp: Date.now(),
+    };
+    expect(estimateMessageTokens(msg)).toBe(Math.ceil(content.length / 3));
+  });
+
+  it("never estimates below the flat chars/4 heuristic for any script fixture (I3 property)", () => {
+    const fixtures = [
+      he,
+      "Привет, как дела сегодня?",
+      "مرحبا بالعالم الكبير",
+      "你好世界你好",
+      "hello שלום world",
+    ];
+    for (const t of fixtures) {
+      expect(estimateMessageTokens(userMsg(t))).toBeGreaterThanOrEqual(
+        Math.ceil(t.length / 4),
+      );
+    }
+  });
+
+  it("returns identical results when re-estimating the same message object twice (memo transparency)", () => {
+    const msg = userMsg(he);
+    const first = estimateMessageTokens(msg);
+    const second = estimateMessageTokens(msg);
+    expect(second).toBe(first);
   });
 });
