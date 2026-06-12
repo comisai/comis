@@ -193,8 +193,14 @@ Start fleet-wide: `comis fleet --since 24` surfaces the
 `config_posture:served_below_configured` finding (the count of providers serving below their
 configured window at the latest boot — `servedBelowConfiguredCount` on the
 [`obs.fleet.health`](/reference/json-rpc#obs-fleet-health) RPC), the degraded-by-cause
-breakdown (`context_exhausted`, `output_starved`, `timeout`), and breaker/cost rollups. See
-[`comis fleet`](/reference/cli#comis-fleet).
+breakdown (`context_exhausted`, `output_starved`, `timeout`, `narration_stall`), and
+breaker/cost rollups. See [`comis fleet`](/reference/cli#comis-fleet).
+
+One cause is specific to `small`/`nano` models: **`narration_stall`** — the model announced
+an action ("Now let me run the tool:") but never emitted the tool call, and the one bounded
+continuation re-prompt the platform injects did not recover a real answer. The turn delivers
+the narration but is recorded **degraded** with this named cause instead of a false-clean
+`success`. Frontier/mid models are never re-prompted by this guard.
 
 Then go single-session: `comis explain <sessionKey>` returns the numbers-backed verdict naming
 the binding knob — for `context_exhausted` sessions the `contextBudget` section reports

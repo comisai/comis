@@ -127,7 +127,7 @@ export interface SessionMetadata {
   sessionEnd?: {
     type: "session_end";
     timestamp: string;
-    endReason: "success" | "error" | "timeout" | "budget_exceeded" | "budget_exhausted" | "circuit_open" | "provider_degraded" | "completed_with_tool_errors" | "context_exhausted" | "output_starved";
+    endReason: "success" | "error" | "timeout" | "budget_exceeded" | "budget_exhausted" | "circuit_open" | "provider_degraded" | "completed_with_tool_errors" | "context_exhausted" | "output_starved" | "narration_stall";
     durationMs: number;
     totalTokens: number;
     /** Per-session health rollup (D5/F1) — additive optional on schemaVersion:1. */

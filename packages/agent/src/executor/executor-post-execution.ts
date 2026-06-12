@@ -640,6 +640,10 @@ export const END_REASON_MAP: Record<string, NonNullable<SessionMetadata["session
   // fleet degradedByCause record are pre-wired for "timeout".
   prompt_timeout: "timeout",
   completed_with_tool_errors: "completed_with_tool_errors",
+  // Issue-4: the narrate-without-emit terminal promoted at the chokepoint
+  // (see promoteNarrationStall) — a small/nano turn that ended on intent
+  // narration with no tool call and did not recover after the one nudge.
+  narration_stall: "narration_stall",
   // Known in-union reasons — explicit, not via the catch-all fallthrough (WR-02).
   loop_detected: "error",
   session_reset: "error",
@@ -697,6 +701,34 @@ export function promoteOutputStarved(
   // Gate 2: the terminal model stop must be the output cap.
   if (lastStopReason !== undefined && TERMINAL_OUTPUT_STARVED_STOP_REASONS.has(lastStopReason)) {
     return "output_starved";
+  }
+  return effectiveFinishReason;
+}
+
+/**
+ * Issue-4 (small-model e2e 2026-06-12) — promote a narrate-without-emit
+ * terminal to the named cause `narration_stall`.
+ *
+ * Fires IFF the run would OTHERWISE end clean (`stop`/`end_turn`) AND the
+ * narrate-nudge FIRED for this turn but did NOT recover a real answer — the
+ * delivered response is still mid-task narration ("Now let me run the
+ * tool:") with no tool call behind it. Such a turn was previously recorded
+ * `degraded:false, endReason:success` (the soft false-clean: live session
+ * uc4-uc5-35). Mirrors {@link promoteOutputStarved}'s conservative shape:
+ * an already-non-clean cause always wins, and a recovered (or never-fired)
+ * nudge changes nothing.
+ *
+ * Pure. Exported for unit tests (both directions pinned).
+ */
+export function promoteNarrationStall(
+  effectiveFinishReason: string,
+  narrateNudge: { fired: boolean; recovered: boolean } | undefined,
+): string {
+  if (effectiveFinishReason !== "stop" && effectiveFinishReason !== "end_turn") {
+    return effectiveFinishReason;
+  }
+  if (narrateNudge?.fired === true && narrateNudge.recovered === false) {
+    return "narration_stall";
   }
   return effectiveFinishReason;
 }
@@ -1069,9 +1101,11 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // tool-error / budget / breaker / context_exhausted terminal is untouched (the
   // upstream cause wins), and a continued/mid-run length-stop is not flagged
   // (the terminal stop reason is no longer "length"). See promoteOutputStarved.
-  const effectiveFinishReason = promoteOutputStarved(
-    toolReconciledFinishReason,
-    bridgeResult.lastStopReason,
+  // Stage 3 (Issue-4): promote a narrate-without-emit terminal that the one
+  // bounded nudge could not recover — same conservative shape as stage 2.
+  const effectiveFinishReason = promoteNarrationStall(
+    promoteOutputStarved(toolReconciledFinishReason, bridgeResult.lastStopReason),
+    result.narrateNudge,
   );
 
   // Execution bookend INFO log with summary stats
@@ -1317,7 +1351,8 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // dependency on isCompletionClaim patterns).
   const isDegradedTurn =
     effectiveFinishReason === "output_starved" ||
-    effectiveFinishReason === "context_exhausted";
+    effectiveFinishReason === "context_exhausted" ||
+    effectiveFinishReason === "narration_stall";
   if (!isDegradedTurn && shouldRunCritic({ // R4: critic hook (WR-02: keyless-only gate)
     capabilityClass, config, executionPlanRef, provider,
     logger: deps.logger,
