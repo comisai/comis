@@ -23,7 +23,7 @@ import {
   type TestDaemonHandle,
 } from "../support/daemon-harness.js";
 import { openAuthenticatedWebSocket, sendJsonRpc } from "../support/ws-helpers.js";
-import { RPC_FAST_MS } from "../support/timeouts.js";
+import { DAEMON_STARTUP_MS, RPC_FAST_MS } from "../support/timeouts.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -40,7 +40,9 @@ describe("CLI Query Commands Integration (real daemon)", () => {
   beforeAll(async () => {
     handle = await startTestDaemon({ configPath: CONFIG_PATH });
     ws = await openAuthenticatedWebSocket(handle.gatewayUrl, handle.authToken);
-  }, 60_000);
+    // DAEMON_STARTUP_MS + headroom — a bare 60s equals the harness's internal
+    // startup budget and flakes on a loaded runner (see secretmanager-daemon).
+  }, DAEMON_STARTUP_MS + 30_000);
 
   afterAll(async () => {
     if (ws) ws.close();

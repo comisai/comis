@@ -43,8 +43,11 @@ import { buildCredentialRegistry } from "../../credentials.js";
 
 const isLive = !!process.env["COMIS_LIVE"];
 
-// Daemon startup budget for beforeAll timeout.
-const DAEMON_STARTUP_MS = 15_000;
+// Daemon startup budget for beforeAll timeout. Matches the shared
+// test/support/timeouts.ts value — the prior local 15s shadow gave Stage-A a
+// 45s hook budget, which a loaded runner (concurrent daemon boots + GGUF
+// embedding-model load) blows through.
+const DAEMON_STARTUP_MS = 60_000;
 
 // ---------------------------------------------------------------------------
 // Stage-A — event-bus wiring, always runs (CI-safe, no COMIS_LIVE needed)
