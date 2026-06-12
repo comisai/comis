@@ -21,7 +21,7 @@ import {
   type TestDaemonHandle,
 } from "../support/daemon-harness.js";
 import { openAuthenticatedWebSocket, sendJsonRpc } from "../support/ws-helpers.js";
-import { RPC_FAST_MS } from "../support/timeouts.js";
+import { DAEMON_STARTUP_MS, RPC_FAST_MS } from "../support/timeouts.js";
 import { createLogCapture } from "../support/log-verifier.js";
 import { sanitizeLogString } from "@comis/core";
 
@@ -45,7 +45,11 @@ describe("SecretManager Daemon E2E Tests (real daemon)", () => {
       logStream: logCapture.stream,
     });
     ws = await openAuthenticatedWebSocket(handle.gatewayUrl, handle.authToken);
-  }, 60_000);
+    // DAEMON_STARTUP_MS + headroom, matching the other daemon-boot suites: a
+    // bare 60s equals the harness's own internal startup budget, so a slow
+    // CI runner (concurrent GGUF model loads across fork workers) times the
+    // hook out before startTestDaemon can even report failure.
+  }, DAEMON_STARTUP_MS + 30_000);
 
   afterAll(async () => {
     if (ws) ws.close();
