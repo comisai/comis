@@ -566,7 +566,8 @@ export function createContextEngine(
       // compacted context are likely the system-adjacent prefix that's still cached.
       if (snap.compaction !== null) {
         const prevFence = engine.lastBreakpointIndex;
-        const compactedLength = Array.isArray(snap.compaction) ? snap.compaction.length : 0;
+        // Review WR-05: `result` IS the compacted array the fence indexes into; the old Array.isArray(snap.compaction) read the stats OBJECT (always false), silently resetting the fence to -1.
+        const compactedLength = result.length;
         engine.lastBreakpointIndex = compactedLength > 0
           ? Math.max(0, Math.floor(compactedLength / 3))
           : -1;

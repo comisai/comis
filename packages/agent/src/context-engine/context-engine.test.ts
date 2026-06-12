@@ -1675,10 +1675,10 @@ describe("STRESS: Compaction and rehydration under context pressure", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test F: lastBreakpointIndex resets after compaction
+  // Test F: stale fence is replaced after compaction
   // -------------------------------------------------------------------------
 
-  it("f) lastBreakpointIndex resets to -1 after compaction", async () => {
+  it("f) a stale pre-compaction fence is replaced by the conservative 1/3 fence after compaction (WR-05)", async () => {
     const logger = createStressMockLogger();
     const mockSessionManager = { fileEntries: [] as unknown[], _rewriteFile: vi.fn() };
 
@@ -1719,10 +1719,17 @@ describe("STRESS: Compaction and rehydration under context pressure", () => {
       messages.push(makeAssistantMessage(`Done ${i}`));
     }
 
-    await engine.transformContext(messages);
+    const result = await engine.transformContext(messages);
 
-    // After compaction, lastBreakpointIndex must reset to -1
-    expect(engine.lastBreakpointIndex).toBe(-1);
+    // Compaction replaces the entire message array, so the seeded fence (50)
+    // is meaningless in the new array and must be REPLACED — by the
+    // documented conservative fence at 1/3 of the compacted message array,
+    // NOT by a reset to -1 (the -1 this test previously asserted was the
+    // WR-05 dead-code outcome: Array.isArray on the compaction stats OBJECT
+    // never fired, so every compaction silently dropped all prefix
+    // protection while the docs promised the 1/3 fence).
+    expect(engine.lastBreakpointIndex).not.toBe(50);
+    expect(engine.lastBreakpointIndex).toBe(Math.floor(result.length / 3));
     expect(engine.lastTrimOffset).toBe(0);
   });
 
@@ -2046,6 +2053,71 @@ describe("token anchor estimation", () => {
     await engine.transformContext(messages);
 
     expect(onAnchorReset).not.toHaveBeenCalled();
+  });
+
+  it("engages the documented post-compaction fence at 1/3 of the compacted message array instead of -1 (WR-05)", async () => {
+    const logger = createMockLogger();
+    const mockSessionManager = { fileEntries: [] as unknown[], _rewriteFile: vi.fn() };
+
+    const deps: ContextEngineDeps = {
+      logger: logger as unknown as ContextEngineDeps["logger"],
+      getModel: () => ({ reasoning: false, contextWindow: 32_000, maxTokens: 8_192 }),
+      getSessionManager: () => mockSessionManager,
+      getCompactionDeps: () => ({
+        logger: logger as unknown as ContextEngineDeps["logger"],
+        getSessionManager: () => mockSessionManager,
+        getModel: () => ({
+          id: "claude-sonnet-4-5-20250929",
+          provider: "anthropic",
+          contextWindow: 32_000,
+          reasoning: false,
+        }),
+        getApiKey: async () => "test-api-key",
+      }),
+    };
+
+    const validSummary = COMPACTION_REQUIRED_SECTIONS.map((s) => `## ${s}\n- content`).join("\n\n");
+    mockGenerateSummary.mockResolvedValue(validSummary);
+
+    const config: ContextEngineConfig = {
+      enabled: true,
+      thinkingKeepTurns: 10,
+      historyTurns: 200,
+      compactionCooldownTurns: 0,
+    };
+
+    const engine = createContextEngine(config, deps);
+
+    // Exceed 85% of the 32K window so the compaction layer fires (same
+    // trigger shape the anchor-reset test above pins).
+    const messages: AgentMessage[] = [];
+    for (let i = 0; i < 40; i++) {
+      messages.push({ role: "user", content: `Q${i}: ${"x".repeat(1000)}`, timestamp: Date.now() } as AgentMessage);
+      messages.push({
+        role: "toolResult",
+        toolCallId: `tc_${i}`,
+        toolName: "bash",
+        content: [{ type: "text", text: "z".repeat(2000) }],
+        isError: false,
+        timestamp: Date.now(),
+      } as AgentMessage);
+    }
+
+    const result = await engine.transformContext(messages);
+
+    // Compaction really ran.
+    expect(engine.lastMetrics!.tokensCompacted).toBeGreaterThan(0);
+
+    // Documented contract (context-engine.ts): "Instead of resetting to -1
+    // (no protection), set a conservative fence at 1/3 of the compacted
+    // message array." Pre-fix the implementation read
+    // Array.isArray(snap.compaction) on the compaction stats OBJECT — always
+    // false — so compactedLength was always 0 and the fence was reset to -1
+    // on EVERY compaction, leaving post-compaction turns with no prefix
+    // protection (thinking cleaner / microcompaction saw everything as
+    // unprotected) while the DEBUG line claimed an adjustment -> RED.
+    expect(engine.lastBreakpointIndex).toBe(Math.floor(result.length / 3));
+    expect(engine.lastBreakpointIndex).toBeGreaterThan(0);
   });
 
   // ---------------------------------------------------------------------------
