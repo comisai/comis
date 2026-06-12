@@ -24,6 +24,7 @@ import {
   writeFilePreserving,
 } from "./shared/file-encoding.js";
 import { parseNotebook } from "./shared/notebook-utils.js";
+import { pathOutsideWorkspaceMessage } from "./path-error.js";
 import {
   resolveCellIndex,
   replaceCell,
@@ -196,7 +197,7 @@ export function createComisNotebookEditTool(
       } catch (error) {
         if (!(error instanceof PathTraversalError)) throw error;
         throw new Error(
-          `[path_traversal] Path outside workspace bounds: ${filePath}`,
+          pathOutsideWorkspaceMessage(filePath),
           { cause: error },
         );
       }

@@ -110,6 +110,28 @@ describe("path validation", () => {
     ).rejects.toThrow("[path_traversal]");
   });
 
+  it("normalizes a leading ~/ to the workspace root instead of a literal ~ dir (F-10)", async () => {
+    const tool = createTool();
+    // Live: model wrote `~/Desktop/notes.md` thinking it hit the real Desktop; safePath
+    // would create `<ws>/~/Desktop/notes.md` (unfindable). Normalize → `<ws>/Desktop/notes.md`.
+    const res = await tool.execute("id", { path: "~/Desktop/notes.md", content: "hi" });
+    expect(res.isError).toBeFalsy();
+    const onDesktop = path.join(workspaceDir, "Desktop", "notes.md");
+    const tildeJunk = path.join(workspaceDir, "~", "Desktop", "notes.md");
+    expect(await fs.readFile(onDesktop, "utf-8")).toBe("hi");
+    await expect(fs.access(tildeJunk)).rejects.toThrow(); // no literal ~ dir created
+  });
+
+  it("path-traversal error names the workspace-relative remedy so the model self-corrects (F-10)", async () => {
+    const tool = createTool();
+    // Live shape: a small model wrote to an out-of-workspace path (an expanded
+    // ~/Desktop/report.md → /Users/.../Desktop/...), hit the bare error, couldn't
+    // infer the fix, and gave up. The message must name the relative-path remedy.
+    await expect(
+      tool.execute("id", { path: "../../../../etc/report.md", content: "x" }),
+    ).rejects.toThrow(/relative to your workspace/i);
+  });
+
   it("allows sharedPaths -- path outside workspace resolves", async () => {
     const sharedDir = await createWorkspace();
     try {

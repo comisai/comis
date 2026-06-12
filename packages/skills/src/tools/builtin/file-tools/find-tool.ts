@@ -18,6 +18,7 @@ import { safePath, PathTraversalError, registerActivityLabelSpec } from "@comis/
 import { type LazyPaths, resolvePaths } from "../file/safe-path-wrapper.js";
 import { readStringParam, readNumberParam, readBooleanParam } from "../../../platform-tools/tool-helpers.js";
 import ignore from "ignore";
+import { pathOutsideWorkspaceMessage } from "./path-error.js";
 
 // Activity label spec (SPEC §6.1). Descriptor name == emitted name for
 // builtins (find-tool.ts:295 → `name: "find"`).
@@ -111,7 +112,7 @@ function resolveSearchPath(
     }
   }
 
-  throw new Error(`[path_traversal] Path outside workspace bounds: ${filePath}`);
+  throw new Error(pathOutsideWorkspaceMessage(filePath));
 }
 
 /**

@@ -19,6 +19,7 @@ import { type LazyPaths, resolvePaths } from "../file/safe-path-wrapper.js";
 import { readStringParam, readNumberParam, readBooleanParam } from "../../../platform-tools/tool-helpers.js";
 import { truncateLine, GREP_MAX_LINE_WIDTH } from "../truncate.js";
 import { ensureTool } from "../tool-provisioner.js";
+import { pathOutsideWorkspaceMessage } from "./path-error.js";
 
 // Activity label spec (SPEC §6.1). Descriptor name == emitted name for
 // builtins (grep-tool.ts:402 → `name: "grep"`). Two detailKeys (`pattern` +
@@ -166,7 +167,7 @@ function resolveSearchPath(
     }
   }
 
-  throw new Error(`[path_traversal] Path outside workspace bounds: ${filePath}`);
+  throw new Error(pathOutsideWorkspaceMessage(filePath));
 }
 
 /**

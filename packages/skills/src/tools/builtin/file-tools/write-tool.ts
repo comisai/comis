@@ -36,6 +36,7 @@ import {
 import { validateConfigContent } from "./shared/edit-diff.js";
 import { getGitDiffStat } from "./shared/git-diff.js";
 import { withFileMutationQueue } from "./shared/file-mutation-queue.js";
+import { pathOutsideWorkspaceMessage } from "./path-error.js";
 
 // Activity label spec. Descriptor name ==
 // emitted name for builtins (write-tool.ts:178 → `name: "write"`).
@@ -130,9 +131,17 @@ function resolveWritePath(
   filePath: string,
   sharedPaths: LazyPaths | undefined,
 ): string {
+  // F-10 (live 2026-06-12): a small model asked to write "to your Desktop" emits a
+  // home-relative path like `~/Desktop/report.md`. `~` means the user's home —
+  // unreachable from the sandbox — but `safePath` treats it as a literal segment and
+  // would happily create `<workspace>/~/Desktop/report.md`: a junk directory the user
+  // never finds, while the agent believes it satisfied the request. A leading `~/`
+  // (or bare `~`) therefore ALWAYS signals an attempted escape; normalize it to the
+  // workspace root so the file lands somewhere discoverable (`<workspace>/Desktop/...`).
+  const normalizedPath = filePath.replace(/^~(?=$|[/\\])[/\\]?/, "");
   // Try workspace first
   try {
-    return safePath(workspacePath, filePath);
+    return safePath(workspacePath, normalizedPath);
   } catch (error) {
     if (!(error instanceof PathTraversalError)) throw error;
   }
@@ -141,14 +150,15 @@ function resolveWritePath(
   const resolved = resolvePaths(sharedPaths);
   for (const sp of resolved) {
     try {
-      return safePath(sp, filePath);
+      return safePath(sp, normalizedPath);
     } catch (error) {
       if (!(error instanceof PathTraversalError)) throw error;
     }
   }
 
+  // Error shows the ORIGINAL path (what the model sent) so the remedy is legible.
   throw new Error(
-    `[path_traversal] Path outside workspace bounds: ${filePath}`,
+    pathOutsideWorkspaceMessage(filePath),
   );
 }
 
