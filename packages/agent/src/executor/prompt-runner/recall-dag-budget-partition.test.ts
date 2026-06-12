@@ -68,22 +68,32 @@ describe("recall ↔ DAG-budget partition: recalled memory is budgeted as HISTOR
     // This is the value the DAG subtracts as systemTokens (getSystemTokensEstimate
     // → cachedSystemTokensEstimate). It deliberately does not see the dynamic
     // preamble / inline memory, because those are budgeted as history instead.
-    expect(toolAssemblySource).toContain("const cachedSystemTokensEstimate = Math.ceil(");
-    // toolDefOverheadCharsValue = toolDefOverheadChars(mergedCustomTools) — the
-    // shared tool-overhead.ts reduce (FLOOR-01/I8 extraction); still tool overhead ONLY.
+    // Since the live UC-2 fix (8e988e2f) S is assigned TWICE: a pre-deferral
+    // estimate (`let`) and a post-deferral recompute over the tools that
+    // actually ship — both must stay systemPrompt + tool overhead ONLY.
+    expect(toolAssemblySource).toContain("let cachedSystemTokensEstimate = Math.ceil(");
+    // Pre-deferral site: toolDefOverheadCharsValue = toolDefOverheadChars(mergedCustomTools)
+    // — the shared tool-overhead.ts reduce (FLOOR-01/I8 extraction); tool overhead ONLY.
     expect(toolAssemblySource).toContain(
       "(promptResult.systemPrompt.length + toolDefOverheadCharsValue) / CHARS_PER_TOKEN_RATIO",
+    );
+    // Post-deferral recompute site: same shape, re-reduced over the shipped set.
+    expect(toolAssemblySource).toContain(
+      "(promptResult.systemPrompt.length + toolDefOverheadChars(mergedCustomTools)) / CHARS_PER_TOKEN_RATIO",
     );
   });
 
   it("S does NOT fold the dynamic preamble or inline memory into the system-token estimate", () => {
-    // Negative lock scoped to the S-estimate expression: the cachedSystemTokensEstimate
-    // computation references neither dynamicPreamble nor inlineMemory. (Scoped to the
-    // single statement so it is not perturbed by unrelated occurrences elsewhere.)
-    const start = toolAssemblySource.indexOf("const cachedSystemTokensEstimate = Math.ceil(");
-    expect(start).toBeGreaterThanOrEqual(0);
-    const estimateExpr = toolAssemblySource.slice(start, start + 200);
-    expect(estimateExpr).not.toMatch(/dynamicPreamble|inlineMemory/);
+    // Negative lock scoped to the S-estimate expressions: NO assignment of
+    // cachedSystemTokensEstimate (initial `let` or the post-deferral recompute)
+    // may reference dynamicPreamble or inlineMemory. (Scoped per statement so
+    // it is not perturbed by unrelated occurrences elsewhere.)
+    const sites = [...toolAssemblySource.matchAll(/cachedSystemTokensEstimate = Math\.ceil\(/g)];
+    expect(sites.length).toBeGreaterThanOrEqual(2); // pre-deferral let + post-deferral recompute
+    for (const site of sites) {
+      const estimateExpr = toolAssemblySource.slice(site.index, site.index + 200);
+      expect(estimateExpr).not.toMatch(/dynamicPreamble|inlineMemory/);
+    }
   });
 
   // RESOLVED (2026-06-02): the open behavioral question was traced to ground.

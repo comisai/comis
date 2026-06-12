@@ -186,9 +186,11 @@ describe("@comis/daemon -- architecture invariants", () => {
     ).toBeLessThanOrEqual(3000);
   });
 
-  // 30s timeout (default 5s) — under v8 coverage instrumentation, the
-  // 27-handler AST walk slows enough to exceed the default budget. Without
-  // coverage the test runs in ~1.5s.
+  // 90s timeout (default 5s) — under v8 coverage instrumentation the
+  // 27-handler AST walk slows enough to exceed the default budget, and on a
+  // loaded CI runner (full-workspace coverage, 2026-06-12 run 27408093972)
+  // it blew through the earlier 30s bump too. Without coverage the test
+  // runs in ~1.5s; the generous ceiling only delays a REAL hang's report.
   it(
     "api/*-handlers.ts never imports another api/*-handlers.ts file",
     () => {
@@ -251,7 +253,7 @@ describe("@comis/daemon -- architecture invariants", () => {
       ).toEqual([]);
     }
     },
-    30_000,
+    90_000,
   );
 
   // Per-domain audit-coverage invariants. For each cluster slice in
