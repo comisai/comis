@@ -17,8 +17,14 @@
  *
  * Merge semantics: an existing token-counts.json is loaded and only the
  * requested leg's fields are (re)filled by entry id, so the two legs can run
- * at different times / on different machines. maxTokenCount is recomputed as
- * the max over the PRESENT legs after every merge; an un-run leg stays null.
+ * at different times / on different machines. Carried-forward counts are kept
+ * ONLY when the entry's committed text still equals the corpus text (review
+ * WR-04: counts measured against an older revision of an entry must never
+ * silently attach to edited text — the conservativeness suite would then
+ * assert against corrupted ground truth); on a text change the stale counts
+ * are dropped with a WARN and the entry must be re-measured. maxTokenCount is
+ * recomputed as the max over the PRESENT legs after every merge; an un-run
+ * leg stays null.
  *
  * Config via env (see token-fixtures.env.example):
  *   ANTHROPIC_API_KEY      leg A credential — never printed, never committed
@@ -83,13 +89,24 @@ const existing = existsSync(OUTPUT_PATH) ? JSON.parse(readFileSync(OUTPUT_PATH, 
 const existingById = new Map((existing?.entries ?? []).map((e) => [e.id, e]));
 const entries = CORPUS.map((c) => {
   const prev = existingById.get(c.id);
+  // Review WR-04: a merge by id alone silently attaches counts measured
+  // against an OLDER text revision to edited corpus text — corrupted ground
+  // truth the conservativeness suite then asserts against (can false-pass on
+  // shortened text, false-fail on lengthened). The fixture stores the full
+  // text, so direct equality decides whether prior counts are still valid.
+  const prevTextMatches = prev !== undefined && prev.text === c.text;
+  if (prev !== undefined && !prevTextMatches) {
+    console.warn(
+      `WARN: corpus text changed for id "${c.id}" — dropping its previously measured counts; re-run the legs to re-measure this entry.`,
+    );
+  }
   return {
     id: c.id,
     script: c.script,
     category: c.category,
     text: c.text,
-    anthropicTokens: typeof prev?.anthropicTokens === "number" ? prev.anthropicTokens : null,
-    qwenTokens: typeof prev?.qwenTokens === "number" ? prev.qwenTokens : null,
+    anthropicTokens: prevTextMatches && typeof prev.anthropicTokens === "number" ? prev.anthropicTokens : null,
+    qwenTokens: prevTextMatches && typeof prev.qwenTokens === "number" ? prev.qwenTokens : null,
     maxTokenCount: null, // recomputed after the requested legs run
   };
 });

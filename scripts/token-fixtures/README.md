@@ -25,7 +25,10 @@ asserted without measurement are the same failure class as the unverified
 Legs can run at different times / on different machines: the generator MERGES
 into an existing `token-counts.json` by entry id, fills only the requested
 leg, and recomputes `maxTokenCount` over the legs measured so far. An un-run
-leg stays `null`.
+leg stays `null`. Carried-forward counts survive a merge ONLY while the
+entry's text is unchanged — if you edit an entry's text in `corpus.mjs`, the
+generator drops that entry's stale counts with a WARN and both legs must be
+re-run for it (counts measured against old text never attach to new text).
 
 ## Run
 
