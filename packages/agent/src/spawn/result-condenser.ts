@@ -479,7 +479,15 @@ function headTailTruncate(
   maxTokens: number,
   task: string,
 ): { result: SubagentResult; condensedTokens: number } {
-  const budget = maxTokens * CHARS_PER_TOKEN;
+  // Review WR-02: factor the char budget by the same script factor this
+  // module's estimateTokens divides by. tokens->chars is the OUTPUT direction
+  // here — a flat maxTokens*4 budget over-emits dense scripts ~2x past
+  // maxResultTokens under the module's own (factored) measure, the inverse
+  // of the conservative tokens->chars reservation sites. The full result's
+  // factor approximates the head+tail slices' factor (strictly conservative
+  // for the budget direction); ASCII factor 1.0 keeps the budget
+  // byte-identical (I1).
+  const budget = Math.floor(maxTokens * CHARS_PER_TOKEN * scriptTokenFactor(fullResult));
   const headBudget = Math.floor(budget * HEAD_RATIO);
   const tailBudget = Math.floor(budget * TAIL_RATIO);
 
