@@ -67,22 +67,66 @@ describe("ROTATION_STREAM_PATTERNS", () => {
 });
 
 describe("sweepRotatedFiles", () => {
-  it("sweeps daemon.log rotated files", async () => {
-    // Create the active base file (daemon.log is present = pino-roll has not yet
-    // advanced to an indexed filename, so daemon.1.log is a genuine rotated file).
-    touch(tmpDir, "daemon.log");
-    touch(tmpDir, "daemon.1.log");
+  // Issue 5 (small-model e2e 2026-06-12 log audit): pino-roll's LIVE file
+  // always carries a numeric index — it never writes the bare daemon.log. A
+  // stale (often 0-byte) daemon.log in the dir therefore says NOTHING about
+  // which indexed file is live, but the old guard keyed on base presence: with
+  // the stale base present, every daemon startup gzip+unlinked the just-opened
+  // daemon.1.log while the daemon held its fd — the process kept appending to
+  // the unlinked inode and the on-disk history was lost (daemon.1.log.gz at
+  // ~300 bytes, daemon.log at 0 bytes, the real log reachable only via lsof).
+  it("does NOT gzip the newest indexed daemon log even when a stale daemon.log base exists (the live-incident shape)", async () => {
+    const nowSec = Date.now() / 1000;
+    // The stale 0-byte base — present but never written by pino-roll.
+    const staleBase = path.join(tmpDir, "daemon.log");
+    fs.writeFileSync(staleBase, "");
+    fs.utimesSync(staleBase, nowSec - 3600, nowSec - 3600);
+    // An older indexed sibling — genuinely rotated, must be swept.
+    const older = touch(tmpDir, "daemon.1.log");
+    fs.utimesSync(older, nowSec - 600, nowSec - 600);
+    // The LIVE file: newest mtime (pino-roll advances to the next index on roll).
+    const live = touch(tmpDir, "daemon.2.log");
+    fs.utimesSync(live, nowSec, nowSec);
 
     await sweepRotatedFiles(tmpDir, policy, {});
 
-    // After sweep with compressAged=true, daemon.1.log should become .gz.
+    expect(
+      fs.existsSync(path.join(tmpDir, "daemon.2.log")),
+      "daemon.2.log (live, newest) must still exist",
+    ).toBe(true);
+    expect(
+      fs.existsSync(path.join(tmpDir, "daemon.2.log.gz")),
+      "daemon.2.log must NOT be gzipped",
+    ).toBe(false);
+    // The genuinely rotated older sibling is still swept.
     expect(
       fs.existsSync(path.join(tmpDir, "daemon.1.log.gz")),
-      "daemon.1.log should be gzipped",
+      "daemon.1.log (older) should be gzipped",
     ).toBe(true);
     expect(
       fs.existsSync(path.join(tmpDir, "daemon.1.log")),
       "original daemon.1.log should be removed",
+    ).toBe(false);
+  });
+
+  it("a .gz sibling is never the live-file candidate (the newest UNCOMPRESSED file is protected)", async () => {
+    const nowSec = Date.now() / 1000;
+    // A .gz with the NEWEST mtime (e.g. just produced by a prior sweep) must not
+    // steal the live-candidate slot from the actually-live uncompressed file.
+    const gz = touch(tmpDir, "daemon.1.log.gz");
+    fs.utimesSync(gz, nowSec, nowSec);
+    const live = touch(tmpDir, "daemon.2.log");
+    fs.utimesSync(live, nowSec - 5, nowSec - 5);
+
+    await sweepRotatedFiles(tmpDir, policy, {});
+
+    expect(
+      fs.existsSync(path.join(tmpDir, "daemon.2.log")),
+      "daemon.2.log (only uncompressed candidate) must still exist",
+    ).toBe(true);
+    expect(
+      fs.existsSync(path.join(tmpDir, "daemon.2.log.gz")),
+      "daemon.2.log must NOT be gzipped",
     ).toBe(false);
   });
 
@@ -145,8 +189,13 @@ describe("sweepRotatedFiles", () => {
     touch(tmpDir, "daemon.log");
     touch(tmpDir, "cache-trace.jsonl");
     touch(tmpDir, "config-audit.jsonl");
-    // Create one rotated artifact per stream.
-    touch(tmpDir, "daemon.1.log");
+    // Create one rotated artifact per stream. For the daemon stream (live file
+    // carries the index — Issue 5) the NEWEST indexed file is protected, so the
+    // swept artifact is the OLDER sibling.
+    const nowSec = Date.now() / 1000;
+    const olderDaemon = touch(tmpDir, "daemon.1.log");
+    fs.utimesSync(olderDaemon, nowSec - 600, nowSec - 600);
+    touch(tmpDir, "daemon.2.log"); // live (newest) — protected
     touch(tmpDir, "cache-trace.1.jsonl");
     touch(tmpDir, "config-audit.jsonl.1");
     touch(tmpDir, "abc123.trajectory.jsonl");
@@ -160,6 +209,7 @@ describe("sweepRotatedFiles", () => {
 
     // All 4 non-session-index rotated files should have been gzipped.
     expect(fs.existsSync(path.join(tmpDir, "daemon.1.log.gz"))).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, "daemon.2.log")), "live daemon.2.log protected").toBe(true);
     expect(fs.existsSync(path.join(tmpDir, "cache-trace.1.jsonl.gz"))).toBe(true);
     expect(fs.existsSync(path.join(tmpDir, "config-audit.jsonl.1.gz"))).toBe(true);
     expect(fs.existsSync(path.join(tmpDir, "abc123.trajectory.jsonl.gz"))).toBe(true);

@@ -42,12 +42,26 @@ export const ROTATION_STREAM_PATTERNS: ReadonlyArray<{
   readonly label: string;
   readonly basePattern: RegExp;
   readonly rotatedPattern: RegExp;
+  /**
+   * Issue 5 (small-model e2e 2026-06-12): true when the stream's LIVE writer
+   * always uses an INDEXED filename (pino-roll never writes the bare base —
+   * its active file is the highest-index `daemon.N.log` from the very first
+   * boot). For such streams the newest uncompressed indexed file must be
+   * protected from the sweep UNCONDITIONALLY: a stale (often 0-byte) base
+   * file in the dir says nothing about liveness, and keying the protection
+   * on base ABSENCE let every daemon startup gzip+unlink the just-opened
+   * live file while the daemon held its fd — the process kept appending to
+   * the unlinked inode and the on-disk history was lost.
+   */
+  readonly liveFileCarriesIndex?: true;
 }> = [
-  // daemon.log / daemon.1.log / daemon.1.log.gz
+  // daemon.log / daemon.1.log / daemon.1.log.gz — pino-roll stream: the live
+  // file is ALWAYS indexed (see liveFileCarriesIndex).
   {
     label: "daemon.log",
     basePattern: /^daemon\.log$/,
     rotatedPattern: /^daemon\.\d+\.log(\.gz)?$/,
+    liveFileCarriesIndex: true,
   },
   // cache-trace.jsonl / cache-trace.1.jsonl / cache-trace.1.jsonl.gz
   {
@@ -133,23 +147,41 @@ export async function sweepRotatedFiles(
       (n) => stream.rotatedPattern.test(n) && n !== activeBase,
     );
 
-    // When no base file is found (pino-roll's active file carries a numeric index),
-    // the most-recently-modified rotated file IS the live file. Exclude it from the
-    // sweep to prevent gzip+unlink of an open inode.
-    if (hasBase && !stream.label.startsWith("session-index") && activeBase === undefined && rotated.length > 0) {
-      const mtimes = await Promise.all(
-        rotated.map(async (name) => {
-          try {
-            const statPath = safePath(logsDir, name);
-            const st = await fs.stat(statPath);
-            return { name, mtimeMs: st.mtimeMs };
-          } catch {
-            return { name, mtimeMs: 0 };
-          }
-        }),
-      );
-      const newestName = mtimes.reduce((a, b) => (a.mtimeMs >= b.mtimeMs ? a : b)).name;
-      rotated = rotated.filter((n) => n !== newestName);
+    // Live-file protection: when the stream's active file carries a numeric
+    // index, the most-recently-modified UNCOMPRESSED rotated-pattern file IS
+    // (or may be) the live file — exclude it from the sweep to prevent
+    // gzip+unlink of an open inode. Two triggers:
+    //  - `liveFileCarriesIndex` streams (pino-roll: daemon.log): ALWAYS — the
+    //    live file is indexed from the first boot, so a (stale, often 0-byte)
+    //    base file in the dir is no evidence the indexed files are rotated
+    //    (Issue 5: the base-absence-only guard let every startup gzip the
+    //    just-opened daemon.N.log out from under the daemon's open fd).
+    //  - other base-writing streams: only when the base file is absent (the
+    //    original guard, unchanged — their live writer is the base file).
+    // Only UNCOMPRESSED files are live candidates: a `.gz` is never a live
+    // writer, and letting one win the newest-mtime race would leave the real
+    // live file unprotected.
+    const protectNewestIndexed =
+      hasBase &&
+      !stream.label.startsWith("session-index") &&
+      (stream.liveFileCarriesIndex === true || activeBase === undefined);
+    if (protectNewestIndexed && rotated.length > 0) {
+      const liveCandidates = rotated.filter((n) => !n.endsWith(".gz"));
+      if (liveCandidates.length > 0) {
+        const mtimes = await Promise.all(
+          liveCandidates.map(async (name) => {
+            try {
+              const statPath = safePath(logsDir, name);
+              const st = await fs.stat(statPath);
+              return { name, mtimeMs: st.mtimeMs };
+            } catch {
+              return { name, mtimeMs: 0 };
+            }
+          }),
+        );
+        const newestName = mtimes.reduce((a, b) => (a.mtimeMs >= b.mtimeMs ? a : b)).name;
+        rotated = rotated.filter((n) => n !== newestName);
+      }
     }
 
     if (rotated.length === 0) continue;
