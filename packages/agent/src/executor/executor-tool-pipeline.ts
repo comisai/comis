@@ -32,6 +32,7 @@ import {
   REACTIVE_STRIP_KEYWORDS,
 } from "./prompt-runner/tool-schema-strip.js";
 import { createMutationSerializer, isConcurrencySafe } from "./tool-parallelism.js";
+import { coerceStringifiedStructuredFields } from "./tool-arg-coercion.js";
 
 // ---------------------------------------------------------------------------
 // HTML entity decoding for xAI/Grok tool call arguments
@@ -242,16 +243,29 @@ export function applyProviderNormalization(params: ProviderNormalizeParams): Too
     compat: params.compat,
   });
 
-  // Decode HTML entities in xAI tool call arguments via prepareArguments hook.
-  // Runs BEFORE TypeBox schema validation in the SDK agent loop (agent-loop.js:300-301),
-  // which is the correct interception point for argument normalization.
-  if (params.compat?.toolCallArgumentsEncoding === "html-entities") {
-    tools = tools.map((tool) => ({
+  // prepareArguments runs BEFORE TypeBox schema validation in the SDK agent loop
+  // (agent-loop.js prepareToolCall → validateToolArguments) — the correct interception
+  // point for argument normalization. We compose two normalizations into it:
+  //   1. xAI/Grok HTML-entity decode (provider-gated), then
+  //   2. per-field stringified-JSON coercion (F-3, universal): a small model emits
+  //      e.g. memory_manage {ids:"[\"uuid\"]"} — the SDK validator coerces stringified
+  //      primitives but NOT arrays/objects, so the call was rejected and the model
+  //      fabricated a result. Coerce array/object fields back to structured values,
+  //      schema-awarely (never string-typed fields). Applied to ALL tools so every
+  //      capability class benefits; identity no-op when nothing needs coercing.
+  const decodeHtmlEntities = params.compat?.toolCallArgumentsEncoding === "html-entities";
+  tools = tools.map((tool) => {
+    const schema = tool.parameters as { properties?: Record<string, unknown> } | undefined;
+    return {
       ...tool,
-      prepareArguments: (args: unknown) =>
-        decodeHtmlEntitiesInParams(args as Record<string, unknown>),
-    }));
-  }
+      prepareArguments: (args: unknown) => {
+        let next = (args ?? {}) as Record<string, unknown>;
+        if (decodeHtmlEntities) next = decodeHtmlEntitiesInParams(next);
+        next = coerceStringifiedStructuredFields(next, schema).args;
+        return next;
+      },
+    };
+  });
 
   return tools;
 }

@@ -288,7 +288,7 @@ describe("applyProviderNormalization — provider-specific tool normalization an
     expect((decoded as { url: string }).url).toBe("a & b");
   });
 
-  it("leaves tools unchanged when no provider-specific compat flags apply", () => {
+  it("attaches a universal prepareArguments hook even without provider compat flags (F-3 coercion)", () => {
     const tools = [makeTool({ name: "calculator" })];
     const result = applyProviderNormalization({
       tools,
@@ -296,7 +296,64 @@ describe("applyProviderNormalization — provider-specific tool normalization an
       modelId: "claude-sonnet-4-5-20250929",
     });
     expect(result.map((t) => t.name)).toEqual(["calculator"]);
-    expect(result[0].prepareArguments).toBeUndefined();
+    // Every tool now carries the F-3 stringified-JSON coercer; it is an identity
+    // no-op when nothing needs coercing (empty-properties schema here).
+    expect(typeof result[0].prepareArguments).toBe("function");
+    expect(result[0].prepareArguments!({ a: "1" })).toEqual({ a: "1" });
+  });
+
+  it("coerces a stringified array field to an array via prepareArguments (F-3, live 2026-06-12)", () => {
+    const tools = [
+      makeTool({
+        name: "memory_manage",
+        parameters: {
+          type: "object",
+          properties: { action: { type: "string" }, ids: { type: "array", items: { type: "string" } } },
+        } as unknown as ToolDefinition["parameters"],
+      }),
+    ];
+    const result = applyProviderNormalization({
+      tools,
+      provider: "ollama",
+      modelId: "qwen3.6:35b",
+    });
+    const prepared = result[0].prepareArguments!({ action: "delete", ids: '["abc-123"]' });
+    expect(prepared).toEqual({ action: "delete", ids: ["abc-123"] });
+  });
+
+  it("does NOT coerce a JSON-array-shaped string when the field is declared a string (F-3 safety)", () => {
+    const tools = [
+      makeTool({
+        name: "file_write",
+        parameters: {
+          type: "object",
+          properties: { path: { type: "string" }, content: { type: "string" } },
+        } as unknown as ToolDefinition["parameters"],
+      }),
+    ];
+    const result = applyProviderNormalization({ tools, provider: "ollama", modelId: "qwen3.6:35b" });
+    const prepared = result[0].prepareArguments!({ path: "a.json", content: "[1,2,3]" });
+    expect(prepared).toEqual({ path: "a.json", content: "[1,2,3]" });
+  });
+
+  it("composes xAI html-entity decode THEN F-3 coercion in prepareArguments", () => {
+    const tools = [
+      makeTool({
+        name: "tool",
+        parameters: {
+          type: "object",
+          properties: { note: { type: "string" }, ids: { type: "array", items: { type: "string" } } },
+        } as unknown as ToolDefinition["parameters"],
+      }),
+    ];
+    const result = applyProviderNormalization({
+      tools,
+      provider: "xai",
+      modelId: "grok-beta",
+      compat: { toolCallArgumentsEncoding: "html-entities" },
+    });
+    const prepared = result[0].prepareArguments!({ note: "a &amp; b", ids: '["x"]' });
+    expect(prepared).toEqual({ note: "a & b", ids: ["x"] });
   });
 });
 
