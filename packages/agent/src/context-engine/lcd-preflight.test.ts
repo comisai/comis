@@ -12,9 +12,11 @@
  * @module
  */
 import { describe, it, expect, vi } from "vitest";
+import { scriptTokenFactor } from "@comis/core";
 import { runPreflightFitCheck } from "./lcd-preflight.js";
 import type { ContextEngineDeps } from "./types-core.js";
 import type { BudgetItem } from "./lcd-budget-eviction.js";
+import { CHARS_PER_TOKEN_RATIO } from "./constants.js";
 import { ContextExhaustionError } from "./errors.js";
 
 // ---------------------------------------------------------------------------
@@ -727,5 +729,75 @@ describe("Issue-6: exhaustion cause classification at the throw", () => {
     const err = throwFrom([], 0, freshTail);
     expect(err.exhaustionCause).toBe("aggregate");
     expect(err.message).not.toContain("[cause:");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TOK-01 (Phase 179): script-aware freshTail accounting in the fit check
+//
+// The freshTail per-message math divides flat chars by 3.5, blind to script
+// density — a Hebrew message carries ~1.8× the tokens the flat estimate counts,
+// so the assembled sum (systemTokens + budgetedTokens + freshTailTokens) under-
+// states the real prompt and the v2.18 fit guarantee is void for non-Latin.
+// Pre-patch the Hebrew case computes flat chars/3.5 → RED. The per-message
+// ARRAY shape must survive (the Issue-6 cause classifier above consumes it
+// element-wise — its suite is the regression proof).
+// ---------------------------------------------------------------------------
+describe("TOK-01: script-aware freshTail token accounting", () => {
+  it("a Hebrew freshTail message raises freshTailTokens to the factored estimate in the budget event and the assembled sum", () => {
+    // Pure-Hebrew payload (letters + neutral spaces → hebrew-letters row factor).
+    // Pre-patch: freshTailTokens = ceil(he.length / 3.5) ≈ 0.55× the factored
+    // bound → RED on both assertions.
+    const he = "שלום עולם זה מבחן ארוך מאוד לבדיקת חלוקה ".repeat(40); // ~1_680 chars
+    const emit = vi.fn();
+    const onAssembledInputTokens = vi.fn();
+    const deps = makeDeps({
+      getThinkingLevel: () => "off",
+      onEffectiveWindow: vi.fn(),
+      onAssembledInputTokens,
+      eventBus: { emit } as unknown as ContextEngineDeps["eventBus"],
+    });
+    // Large window → no pressure; the observable is the accounting, not the ladder.
+    runPreflightFitCheck(deps, 100_000, [], 0, [{ role: "user", content: he }] as never, "none");
+
+    const factoredBound = Math.ceil(he.length / (CHARS_PER_TOKEN_RATIO * scriptTokenFactor(he)));
+    const call = emit.mock.calls.find((c) => c[0] === "context:budget_computed");
+    expect(call).toBeDefined();
+    const payload = call?.[1] as { freshTailTokens: number; verdict: string };
+    expect(payload.freshTailTokens).toBeGreaterThanOrEqual(factoredBound);
+    // The assembled sum (S=0, history=0 here) carries the same honest term.
+    expect(onAssembledInputTokens.mock.calls[0]?.[0] as number).toBeGreaterThanOrEqual(factoredBound);
+  });
+
+  it("I1: an all-ASCII freshTail (string + array blocks) reports byte-identical flat per-message tokens", () => {
+    // The Latin guarantee: factor 1.0 → per-message ceil(chars / 3.5) EXACTLY as
+    // today, including the array-content text/content fallback chain (IN-01 shape).
+    const emit = vi.fn();
+    const captured: number[] = [];
+    const deps = makeDeps({
+      getThinkingLevel: () => "off",
+      onEffectiveWindow: vi.fn(),
+      onAssembledInputTokens: (t) => captured.push(t),
+      eventBus: { emit } as unknown as ContextEngineDeps["eventBus"],
+    });
+    const freshTail = [
+      { role: "user" as const, content: "x".repeat(701) }, // ceil(701/3.5) = 201
+      {
+        role: "tool" as const,
+        content: [
+          { type: "text", text: "y".repeat(353) },
+          { type: "tool_result", content: "z".repeat(211) },
+        ],
+      }, // ceil((353+211)/3.5) = ceil(161.1) = 162
+    ];
+    runPreflightFitCheck(deps, 100_000, [], 0, freshTail as never, "none");
+
+    // Expected values computed with TODAY'S flat per-message formula inline.
+    const expected = Math.ceil(701 / 3.5) + Math.ceil((353 + 211) / 3.5);
+    expect(captured[0]).toBe(expected);
+    const payload = emit.mock.calls.find((c) => c[0] === "context:budget_computed")?.[1] as {
+      freshTailTokens: number;
+    };
+    expect(payload.freshTailTokens).toBe(expected);
   });
 });
