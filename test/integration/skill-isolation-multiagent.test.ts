@@ -24,7 +24,6 @@
 import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync, rmSync } from "node:fs";
-import { homedir } from "node:os";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
   startTestDaemon,
@@ -45,7 +44,16 @@ const CONFIG_PATH = resolve(__dirname, "../config/config.test-skill-isolation.ya
 // Constants
 // ---------------------------------------------------------------------------
 
-const COMIS_DIR = join(homedir(), ".comis");
+/**
+ * Resolved daemon data dir, captured AFTER boot from the live container.
+ * Do NOT hardcode ~/.comis here: the harness boots each daemon with a
+ * per-fork COMIS_DATA_DIR, and since #186 resolveConfigPaths honors it
+ * (config dataDir "" > env > ~/.comis) — shared skills land under the
+ * per-fork temp dir, not the real home. The old ~/.comis assertion only
+ * worked while config-derived paths ignored the env var (the split-brain
+ * #186 fixed).
+ */
+let comisDataDir: string;
 
 /** Skill names prefixed with test-iso- to avoid collisions and simplify cleanup. */
 const ALPHA_SKILL = "test-iso-alpha-local";
@@ -105,6 +113,7 @@ describe("Skill Isolation Multi-Agent E2E", () => {
 
   beforeAll(async () => {
     handle = await startTestDaemon({ configPath: CONFIG_PATH });
+    comisDataDir = (handle.daemon.container.config as { dataDir: string }).dataDir;
     ws = await openAuthenticatedWebSocket(handle.gatewayUrl, handle.authToken);
   }, 120_000);
 
@@ -135,9 +144,9 @@ describe("Skill Isolation Multi-Agent E2E", () => {
     }
 
     // Also rmSync any remaining test skill dirs from filesystem
-    rmSync(join(COMIS_DIR, "workspace-alpha/skills", ALPHA_SKILL), { force: true, recursive: true });
-    rmSync(join(COMIS_DIR, "workspace-beta/skills", BETA_SKILL), { force: true, recursive: true });
-    rmSync(join(COMIS_DIR, "skills", SHARED_SKILL), { force: true, recursive: true });
+    rmSync(join(comisDataDir, "workspace-alpha/skills", ALPHA_SKILL), { force: true, recursive: true });
+    rmSync(join(comisDataDir, "workspace-beta/skills", BETA_SKILL), { force: true, recursive: true });
+    rmSync(join(comisDataDir, "skills", SHARED_SKILL), { force: true, recursive: true });
 
     // Daemon cleanup
     if (handle) {
@@ -260,22 +269,24 @@ describe("Skill Isolation Multi-Agent E2E", () => {
 
       expect(uploadResult.ok).toBe(true);
 
-      // List alpha's skills -- should contain the shared skill
+      // List alpha's skills -- should contain the shared skill.
+      // toContain (not .some()→boolean) so a failure names the missing skill
+      // AND prints the list each agent actually sees.
       const alphaSkills = await rpc(ws, "skills.list", {
         agentId: "alpha",
       }) as { skills: Array<{ name: string; source: string }> };
 
-      expect(alphaSkills.skills.some((s) => s.name === SHARED_SKILL)).toBe(true);
+      expect(alphaSkills.skills.map((s) => s.name)).toContain(SHARED_SKILL);
 
       // List beta's skills -- should also contain the shared skill
       const betaSkills = await rpc(ws, "skills.list", {
         agentId: "beta",
       }) as { skills: Array<{ name: string; source: string }> };
 
-      expect(betaSkills.skills.some((s) => s.name === SHARED_SKILL)).toBe(true);
+      expect(betaSkills.skills.map((s) => s.name)).toContain(SHARED_SKILL);
 
       // Verify filesystem: shared skill exists in the shared skills directory
-      expect(existsSync(join(COMIS_DIR, "skills", SHARED_SKILL, "SKILL.md"))).toBe(true);
+      expect(existsSync(join(comisDataDir, "skills", SHARED_SKILL, "SKILL.md"))).toBe(true);
     },
     RPC_FAST_MS * 3,
   );
