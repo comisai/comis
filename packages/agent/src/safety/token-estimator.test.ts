@@ -465,3 +465,44 @@ describe("estimateMessageTokens — script-aware factors (TOK-01)", () => {
     expect(second).toBe(first);
   });
 });
+
+// ---------------------------------------------------------------------------
+// estimateMessageTokens — memo keyed on content identity (review WR-01)
+// ---------------------------------------------------------------------------
+
+// The "Message objects are never mutated post-construction" premise the
+// original memo relied on is FALSE: four in-repo pipeline layers reassign
+// `msg.content` in place on live Message objects (observation-masker
+// placeholder swap at :198, microcompaction-guard empty-toolResult
+// normalization at :249, schema-stripping at :82, tool-result-clearing TTL
+// clears). A memo keyed on object identity alone returns STALE counts after
+// those swaps — and a stale-LOW count after a content-GROWING reassignment
+// is exactly the anti-conservative under-count class TOK-01 exists to close.
+//
+// Pre-fix: both tests below FAIL (the second estimate returns the memoized
+// pre-mutation count). Post-fix: the memo records the content reference it
+// was computed from and recomputes when `msg.content` no longer matches.
+describe("estimateMessageTokens — memo invalidation on content reassignment (WR-01)", () => {
+  it("recomputes after string content is reassigned to LONGER content (no stale anti-conservative under-count)", () => {
+    const msg = userMsg("short");
+    const before = estimateMessageTokens(msg);
+    const grown = "a much longer replacement that a stale memo would silently under-count";
+    msg.content = grown;
+    const after = estimateMessageTokens(msg);
+    // Pure ASCII -> exact ceil(len/4); pre-fix returns the stale `before`.
+    expect(after).toBe(Math.ceil(grown.length / 4));
+    expect(after).toBeGreaterThan(before);
+  });
+
+  it("recomputes after a block-array swap (the observation-masker/tool-result-clearing placeholder pattern)", () => {
+    const msg = toolResultMsg([{ type: "text", text: "x".repeat(3000) }]);
+    const before = estimateMessageTokens(msg);
+    // observation-masker.ts:198 pattern: reassign a fresh placeholder block array.
+    const placeholder = "[masked placeholder]";
+    msg.content = [{ type: "text", text: placeholder }];
+    const after = estimateMessageTokens(msg);
+    // Structured ratio, pure ASCII -> exact ceil(len/3); pre-fix returns 1000.
+    expect(after).toBe(Math.ceil(placeholder.length / 3));
+    expect(after).toBeLessThan(before);
+  });
+});

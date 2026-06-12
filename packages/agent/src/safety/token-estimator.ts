@@ -170,13 +170,31 @@ export function estimateContextCharsWithDualRatio(
 const CHARS_PER_TOKEN_STRUCTURED = 3;
 
 /**
- * Memo for the factored per-message estimate (TOK-01). Message objects are
- * stable identities (never mutated post-construction in this codebase);
- * fresh objects (e.g. partsToMessage output) simply miss and are GC'd. The
- * script factor adds an O(n) codepoint scan per text — the memo prevents
- * re-scans when triggers/assemblers re-estimate the same live Message.
+ * Memo for the factored per-message estimate (TOK-01), keyed on CONTENT
+ * IDENTITY, not object identity alone (review WR-01). Several pipeline
+ * layers reassign `msg.content` in place on live Message objects
+ * (observation-masker placeholder swap, microcompaction-guard
+ * empty-toolResult normalization, schema-stripping, tool-result-clearing
+ * TTL clears) — an object-keyed memo returns stale counts after those
+ * swaps, and a stale-LOW count after a content-GROWING reassignment is
+ * exactly the anti-conservative under-count class TOK-01 closes. Each
+ * entry therefore records the content value/reference it was computed from
+ * and is recomputed whenever `msg.content` no longer matches (one compare
+ * on the hit path; every in-repo mutation site reassigns a fresh array or
+ * string, which always breaks the match). Mutating the EXISTING content
+ * array or its blocks in place would still bypass this memo — reassign
+ * `msg.content` instead (the pattern all current mutation sites use).
+ * Fresh objects (e.g. partsToMessage output) simply miss and are GC'd.
+ * The script factor adds an O(n) codepoint scan per text — the memo
+ * prevents re-scans when triggers/assemblers re-estimate the same
+ * unchanged Message.
  */
-const factoredTokensMemo = new WeakMap<Message, number>();
+interface FactoredTokensMemoEntry {
+  /** The `msg.content` value the tokens were computed from. */
+  readonly contentRef: Message["content"];
+  readonly tokens: number;
+}
+const factoredTokensMemo = new WeakMap<Message, FactoredTokensMemoEntry>();
 
 /**
  * Estimate token count for a single message with content-aware ratios.
@@ -197,9 +215,9 @@ const factoredTokensMemo = new WeakMap<Message, number>();
  */
 export function estimateMessageTokens(msg: Message): number {
   const cached = factoredTokensMemo.get(msg);
-  if (cached !== undefined) return cached;
+  if (cached !== undefined && cached.contentRef === msg.content) return cached.tokens;
   const tokens = computeMessageTokens(msg);
-  factoredTokensMemo.set(msg, tokens);
+  factoredTokensMemo.set(msg, { contentRef: msg.content, tokens });
   return tokens;
 }
 
