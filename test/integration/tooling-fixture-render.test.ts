@@ -127,7 +127,10 @@ describe("Capability index renders three skill fixtures", () => {
       const first = preambleAssemblies[0] as LogEntry;
       expect(first).toBeDefined();
 
-      // Seven canonical fields (executor-prompt-runner.ts:212-223).
+      // Seven canonical fields (envelope-wrapper.ts emitPreambleDebug). The
+      // tool counts carry capabilityIndex-prefixed names since W6
+      // (obs-llm-troubleshooting): the bare activeToolCount/deferredToolCount
+      // keys collided with the executor-wide counts on other log lines.
       expect(typeof first.capabilityIndexTokens).toBe("number");
       expect(first.capabilityIndexTokens).toBeGreaterThan(0);
       expect(first.capabilityIndexTokens).toBeLessThanOrEqual(
@@ -136,9 +139,9 @@ describe("Capability index renders three skill fixtures", () => {
       expect(typeof first.deferredContextTokens).toBe("number");
       expect(typeof first.fullPreambleTokens).toBe("number");
       expect(first.clusterCount).toBeGreaterThanOrEqual(1);
-      expect(typeof first.activeToolCount).toBe("number");
-      expect(first.activeToolCount).toBeGreaterThanOrEqual(0);
-      expect(typeof first.deferredToolCount).toBe("number");
+      expect(typeof first.capabilityIndexActiveTools).toBe("number");
+      expect(first.capabilityIndexActiveTools).toBeGreaterThanOrEqual(0);
+      expect(typeof first.capabilityIndexDeferredTools).toBe("number");
 
       // The three fixture skills MUST all render. Skill registry may include
       // additional auto-discovered skills depending on test dataDir; assert
