@@ -221,7 +221,7 @@ describe("buildContextExhaustedReply — knob naming + incident ref (W4)", () =>
       expect(reply).toContain("incident abc-123");
     });
 
-    it("is deterministic", () => {
+    it("is deterministic (same endReason → byte-identical reply)", () => {
       expect(buildDegradedReply("loop_detected")).toBe(buildDegradedReply("loop_detected"));
     });
   });
