@@ -144,33 +144,20 @@ describe("ORCH-03 Stage-B — daemon routing via ConversationDriver (no LLM)", (
   });
 
   it("daemon accepts a turn attempt with multi-agent routing config", async () => {
-    // Send a turn — dummy keys cause the LLM to error, but daemon routing accepted
-    // the config. A sendTurn attempt triggers agent routing (even on dummy-key error),
-    // confirming the routing config was parsed and the daemon is live.
+    // Send a turn — this triggers agent routing, confirming the routing config
+    // was parsed and the daemon is live.
     //
-    // Liveness proof strategy: sendTurn WILL throw with a dummy-key LLM error (not a
-    // "daemon down" / routing crash). We catch that error and assert it matches the
-    // expected pattern — that IS the deterministic proof that the daemon accepted and
-    // routed the turn. The previous `expect(events.length).toBeGreaterThan(0)` assertion
-    // was flaky: capturedEvents() can be empty if the event bus hasn't flushed by the
-    // time the assertion runs (timing race). The error from sendTurn is synchronous
-    // (the RPC round-trip completed) — it is always available immediately after the call.
-    let thrownError: Error | undefined;
-    try {
-      await driver.sendTurn("ping");
-    } catch (err) {
-      thrownError = err instanceof Error ? err : new Error(String(err));
-    }
-    // sendTurn MUST throw with a dummy-key LLM/provider error — no throw means an
-    // unexpected success (real LLM keys present) or a silent drop (neither is expected).
-    // The error message must match an LLM/provider/RPC failure pattern, NOT a routing
-    // crash ("routing config not parsed", "agent not found") or a daemon-down error.
-    expect(
-      thrownError,
-      "sendTurn should throw a dummy-key LLM error — if it returned successfully, real LLM keys may be present",
-    ).toBeDefined();
-    const msg = thrownError!.message;
-    expect(msg).toMatch(/RPC error|provider|LLM|authentication|401|JSON-RPC|no reply string|finishReason/i);
+    // Liveness proof strategy: sendTurn resolves with a NON-EMPTY reply. Since
+    // #186 a dummy-key LLM failure no longer surfaces as an RPC error envelope:
+    // the executor returns a degraded-but-honest fallback reply
+    // (finishReason:"error") and parseAgentExecuteResult RETURNS it (see its
+    // docstring). So a resolved non-empty string is the deterministic proof
+    // that the daemon accepted, routed, and answered the turn in BOTH key
+    // states — keyless CI gets the honest fallback text, a real-key local run
+    // gets a real reply. A daemon-down or routing crash still REJECTS
+    // (JSON-RPC error envelope / transport error), failing this await.
+    const reply = await driver.sendTurn("ping");
+    expect(reply.length).toBeGreaterThan(0);
 
     // Secondary: flush the event bus and assert at least one event was captured.
     // This is done AFTER confirming the turn was accepted (via the error above), so
