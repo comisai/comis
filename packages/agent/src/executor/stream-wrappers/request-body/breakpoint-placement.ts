@@ -145,6 +145,16 @@ export function placeCacheBreakpoints(
   // Estimate cumulative tokens for threshold checking.
   // Uses content-aware char/token ratio: structured content (tool results,
   // tool use JSON) tokenizes at ~3 chars/token; natural language at ~4.
+  //
+  // Deliberately UNFACTORED (TOK-01): this measure feeds only cache-marker
+  // PLACEMENT — the relative 50% cumulative split (factor approximately
+  // cancels: same measure in numerator and denominator) and the absolute
+  // `>= minTokens` minimum-cacheable gates, where a dense-script under-count
+  // merely skips/defers a breakpoint (cache efficiency, never budget/fit;
+  // an over-placed marker on a too-small segment is equally a provider
+  // no-op). Factoring it would shift WHERE markers land for dense scripts —
+  // a live-measurable cache-behavior change deferred to the multilingual
+  // milestone's later phases (Phase 181 candidate), not a correctness fix.
   function estimateTokensInRange(start: number, end: number): number {
     let tokens = 0;
     for (let i = start; i <= end && i < messages.length; i++) {
@@ -158,16 +168,19 @@ export function placeCacheBreakpoints(
       const ratio = isStructured ? CHARS_PER_TOKEN_RATIO_STRUCTURED : CHARS_PER_TOKEN_RATIO;
 
       if (typeof content === "string") {
+        // flat-by-design: cache-placement heuristic, never budget/fit — see function docstring (TOK-01)
         tokens += Math.ceil(content.length / ratio);
       } else if (Array.isArray(content)) {
         for (const block of content) {
           if (typeof block.text === "string") {
+            // flat-by-design: cache-placement heuristic, never budget/fit — see function docstring (TOK-01)
             tokens += Math.ceil(block.text.length / ratio);
           }
           // tool_result blocks nest text inside block.content[]
           if (Array.isArray(block.content)) {
             for (const inner of block.content) {
               if (typeof inner.text === "string") {
+                // flat-by-design: cache-placement heuristic, never budget/fit — see function docstring (TOK-01)
                 tokens += Math.ceil(inner.text.length / ratio);
               }
             }
