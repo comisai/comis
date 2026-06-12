@@ -10,6 +10,7 @@
  */
 
 import type { Message } from "@earendil-works/pi-ai";
+import { scriptTokenFactor } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -141,6 +142,9 @@ export function estimateContextChars(
  * This normalizes to a single char scale where tool result chars are
  * weighted 2x to reflect their higher token density. Used ONLY by the
  * observation masker threshold check.
+ *
+ * Deliberately factor-free: a RELATIVE char-pressure heuristic — a script
+ * factor would cancel (TOK-01, design §4).
  */
 export function estimateContextCharsWithDualRatio(
   messages: Message[],
@@ -166,6 +170,15 @@ export function estimateContextCharsWithDualRatio(
 const CHARS_PER_TOKEN_STRUCTURED = 3;
 
 /**
+ * Memo for the factored per-message estimate (TOK-01). Message objects are
+ * stable identities (never mutated post-construction in this codebase);
+ * fresh objects (e.g. partsToMessage output) simply miss and are GC'd. The
+ * script factor adds an O(n) codepoint scan per text — the memo prevents
+ * re-scans when triggers/assemblers re-estimate the same live Message.
+ */
+const factoredTokensMemo = new WeakMap<Message, number>();
+
+/**
  * Estimate token count for a single message with content-aware ratios.
  *
  * Uses different chars-per-token ratios based on content type:
@@ -175,13 +188,25 @@ const CHARS_PER_TOKEN_STRUCTURED = 3;
  * - Thinking blocks: 4:1 (natural language reasoning)
  * - Images: fixed estimate (IMAGE_TOKEN_ESTIMATE)
  *
- * This provides more accurate token estimates than the flat 4:1 ratio,
- * especially for code-heavy and tool-intensive conversations.
+ * Each ratio is additionally multiplied by `scriptTokenFactor(text)` over
+ * the EXACT string whose `.length` is divided (TOK-01, one rule every
+ * site): dense non-Latin scripts (Hebrew/Arabic/CJK/...) tokenize at far
+ * fewer chars/token than the flat ratios assume, so the divisor shrinks and
+ * the estimate grows. Pure-ASCII text has factor 1.0 — byte-identical to
+ * the unfactored math (I1).
  */
 export function estimateMessageTokens(msg: Message): number {
+  const cached = factoredTokensMemo.get(msg);
+  if (cached !== undefined) return cached;
+  const tokens = computeMessageTokens(msg);
+  factoredTokensMemo.set(msg, tokens);
+  return tokens;
+}
+
+function computeMessageTokens(msg: Message): number {
   if (typeof msg.content === "string") {
     const ratio = msg.role === "toolResult" ? CHARS_PER_TOKEN_STRUCTURED : CHARS_PER_TOKEN;
-    return Math.ceil(msg.content.length / ratio);
+    return Math.ceil(msg.content.length / (ratio * scriptTokenFactor(msg.content)));
   }
 
   if (!Array.isArray(msg.content)) return 0;
@@ -193,7 +218,10 @@ export function estimateMessageTokens(msg: Message): number {
     switch (block.type) {
       case "text": {
         const text = (block as { text: string }).text;
-        tokens += Math.ceil(text.length / (isStructured ? CHARS_PER_TOKEN_STRUCTURED : CHARS_PER_TOKEN));
+        tokens += Math.ceil(
+          text.length /
+            ((isStructured ? CHARS_PER_TOKEN_STRUCTURED : CHARS_PER_TOKEN) * scriptTokenFactor(text)),
+        );
         break;
       }
 
@@ -201,21 +229,26 @@ export function estimateMessageTokens(msg: Message): number {
         tokens += IMAGE_TOKEN_ESTIMATE;
         break;
 
-      case "thinking":
-        tokens += Math.ceil((block as { thinking: string }).thinking.length / CHARS_PER_TOKEN);
+      case "thinking": {
+        const thinking = (block as { thinking: string }).thinking;
+        tokens += Math.ceil(thinking.length / (CHARS_PER_TOKEN * scriptTokenFactor(thinking)));
         break;
+      }
 
       case "toolCall": {
         try {
           const args = (block as { arguments: unknown }).arguments ?? {};
-          tokens += Math.ceil(JSON.stringify(args).length / CHARS_PER_TOKEN_STRUCTURED);
+          const json = JSON.stringify(args);
+          tokens += Math.ceil(json.length / (CHARS_PER_TOKEN_STRUCTURED * scriptTokenFactor(json)));
         } catch {
+          // flat-by-design: constant penalty, no source text in scope (TOK-01)
           tokens += Math.ceil(TOOL_STRINGIFY_FALLBACK / CHARS_PER_TOKEN_STRUCTURED);
         }
         break;
       }
 
       default:
+        // flat-by-design: constant penalty, no source text in scope (TOK-01)
         tokens += Math.ceil(UNKNOWN_BLOCK_CHARS / CHARS_PER_TOKEN);
         break;
     }
