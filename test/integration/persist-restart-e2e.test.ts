@@ -91,8 +91,10 @@ describe("PERSIST-RESTART-E2E: Management actions survive daemon restart", () =>
 
   beforeAll(() => {
     // Resolve the config's `${COMIS_GATEWAY_TOKEN}` ref to a real ≥32-char
-    // secret. Set before any daemon boots; COMIS_* is not in the daemon's
-    // SENSITIVE_PREFIXES, so it survives the env-scrub and the restart boot.
+    // secret. Set before any daemon boots. NOTE: COMIS_ escapes the stage-1
+    // prefix scrub, but the stage-2 scrub deletes every CONFIG-REFERENCED
+    // name from process.env regardless of prefix — so the restart describe
+    // re-seeds this var before the second boot.
     priorGatewayToken = process.env["COMIS_GATEWAY_TOKEN"];
     process.env["COMIS_GATEWAY_TOKEN"] = "test-secret-persist-restart-gateway-token-pad32";
     // Create temp dir and copy config
@@ -262,6 +264,16 @@ describe("PERSIST-RESTART-E2E: Management actions survive daemon restart", () =>
     let rpcCall2: RpcCall;
 
     beforeAll(async () => {
+      // Re-seed the gateway token before the second boot. The FIRST boot's
+      // stage-2 scrub (daemon.ts: platformSecretNames) deleted it from
+      // process.env because the config references ${COMIS_GATEWAY_TOKEN} —
+      // regardless of the COMIS_ prefix. A production restart is a fresh
+      // process whose env comes from .env/systemd, so re-seeding here models
+      // reality. (This was masked until #186: tokens.create used to SEVER the
+      // ${VAR} ref and persist plaintext tokens, so the restart never needed
+      // the env var. The ref now survives — and so must the env var.)
+      process.env["COMIS_GATEWAY_TOKEN"] =
+        "test-secret-persist-restart-gateway-token-pad32";
       // Start a completely new daemon instance reading the same (now-modified) config
       handle2 = await startTestDaemon({ configPath: tmpConfigPath });
       rpcCall2 = (handle2.daemon as any).rpcCall;
