@@ -185,6 +185,13 @@ const sessionCacheSafeParams = new Map<string, CacheSafeParams>();
  *  preventing cache-invalidating changes when the agent creates skills mid-session. */
 const sessionPromptSkillsXmlSnapshots = new Map<string, string | undefined>();
 
+/** Per-agent dedup for the WR-02 "S1: sender-trust not injected in compact-secure"
+ *  WARN. The trigger (compact-secure promptMode + senderTrustDisplayConfig disabled)
+ *  is STATIC per agent, so emitting it once-per-prompt-assembly spams the log on every
+ *  turn (live finding, 2026-06-12 UC-4 run: 9× in a 9-turn small-model session). The
+ *  operator signal is preserved once per agent; the per-turn repetition is dropped. */
+const wr02SenderTrustWarnedAgents = new Set<string>();
+
 // ---------------------------------------------------------------------------
 // Feature flag hash for tool cache key invalidation.
 // Computes a stable string from config fields that affect tool rendering.
@@ -231,6 +238,15 @@ export function clearSessionBootstrapFileSnapshot(sessionKey: string): void {
  */
 export function clearSessionPromptSkillsXmlSnapshot(sessionKey: string): void {
   sessionPromptSkillsXmlSnapshots.delete(sessionKey);
+}
+
+/**
+ * Reset the per-agent WR-02 sender-trust WARN dedup. Test-only seam (mirrors
+ * the clearSession* snapshot resets) so suites don't leak the once-per-agent
+ * state across cases.
+ */
+export function clearWr02SenderTrustWarned(): void {
+  wr02SenderTrustWarnedAgents.clear();
 }
 
 /** Frozen prompt state captured after first-turn assembly for sub-agent cache prefix sharing.
@@ -781,15 +797,23 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
   // the data it receives is always an empty array when the feature is not configured —
   // producing a structurally-satisfied but content-empty section. Operators should
   // configure senderTrustDisplayConfig to get meaningful anti-injection trust display.
+  // WR-02 trigger is STATIC per agent (capabilityClass-derived promptMode +
+  // per-agent senderTrustDisplayConfig), so warn ONCE per agent — not per
+  // prompt assembly — to keep the log readable (the per-turn repetition was
+  // pure noise: 9× in a 9-turn small-model session, 2026-06-12 UC-4 run).
   if (promptMode === "compact-secure" && !deps.senderTrustDisplayConfig?.enabled) {
-    logger.warn(
-      {
-        submodule: "prompt-assembly",
-        hint: "compact-secure mode active but senderTrustDisplayConfig is disabled — sender-trust section will be empty. Configure senderTrustDisplayConfig.enabled=true for S1 anti-injection trust display.",
-        errorKind: "config" as const,
-      },
-      "S1: sender-trust not injected in compact-secure (feature disabled)",
-    );
+    const wr02Key = agentId ?? config.name;
+    if (!wr02SenderTrustWarnedAgents.has(wr02Key)) {
+      wr02SenderTrustWarnedAgents.add(wr02Key);
+      logger.warn(
+        {
+          submodule: "prompt-assembly",
+          hint: "compact-secure mode active but senderTrustDisplayConfig is disabled — sender-trust section will be empty. Configure senderTrustDisplayConfig.enabled=true for S1 anti-injection trust display.",
+          errorKind: "config" as const,
+        },
+        "S1: sender-trust not injected in compact-secure (feature disabled)",
+      );
+    }
   }
 
   // Consolidated lightContext flag: heartbeat implies light-context regardless

@@ -121,7 +121,7 @@ vi.mock("node:os", async (importOriginal) => {
   };
 });
 
-import { assembleExecutionPrompt, extractUserLanguage, resolvePromptModeForProfile, clearSessionToolNameSnapshot, clearSessionBootstrapFileSnapshot, clearSessionPromptSkillsXmlSnapshot, getCacheSafeParams, clearCacheSafeParams, buildRecallTrace, type PromptAssemblyParams, type CacheSafeParams } from "./prompt-assembly.js";
+import { assembleExecutionPrompt, extractUserLanguage, resolvePromptModeForProfile, clearSessionToolNameSnapshot, clearSessionBootstrapFileSnapshot, clearSessionPromptSkillsXmlSnapshot, clearWr02SenderTrustWarned, getCacheSafeParams, clearCacheSafeParams, buildRecallTrace, type PromptAssemblyParams, type CacheSafeParams } from "./prompt-assembly.js";
 import { resolveRecallTraceFilePath } from "@comis/observability";
 import * as nodeOs from "node:os";
 import { formatSessionKey, type SpawnPacket, type MemorySearchResult } from "@comis/core";
@@ -250,6 +250,34 @@ describe("assembleExecutionPrompt", () => {
     expect(call.promptMode).toBe("full");
     expect(call.toolNames).toEqual(["read", "exec"]);
     expect(call.hasMemoryTools).toBe(false);
+  });
+
+  // -----------------------------------------------------------------
+  // WR-02 (2026-06-12 UC-4 live finding): the "sender-trust not injected
+  // in compact-secure" WARN fires ONCE PER AGENT, not once per prompt
+  // assembly. Trigger (small/nano compact-secure + senderTrustDisplayConfig
+  // disabled) is static per agent, so per-turn repetition is pure log noise.
+  // -----------------------------------------------------------------
+  it("WR-02: warns about disabled sender-trust ONCE per agent, not per assembly", async () => {
+    clearWr02SenderTrustWarned();
+    const logger = createMockLogger();
+    const params = makeParams({
+      agentId: "wr02-agent",
+      // small capabilityClass + baseMode "full" → compact-secure promptMode
+      modelProfile: { capabilityClass: "small" } as any,
+      // senderTrustDisplayConfig omitted → disabled → WR-02 trigger fires
+      logger,
+    });
+
+    await assembleExecutionPrompt(params);
+    await assembleExecutionPrompt(params);
+    await assembleExecutionPrompt(params);
+
+    const wr02Calls = (logger.warn as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (c: unknown[]) => typeof c[1] === "string" && (c[1] as string).includes("sender-trust not injected"),
+    );
+    // Pre-fix: 3 (one per assembly). Post-fix: 1 (deduped per agent).
+    expect(wr02Calls.length).toBe(1);
   });
 
   // -----------------------------------------------------------------
