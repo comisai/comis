@@ -26,6 +26,15 @@ import {
   type ServerResponse,
 } from "node:http";
 import { createRedirectPolicyFetch } from "@comis/skills";
+import { ok } from "@comis/shared";
+
+/**
+ * Both test servers bind 127.0.0.1, which the default cross-host SSRF guard
+ * (core `validateUrl`) rightly blocks. These tests exercise the header-scrub
+ * policy, not the SSRF guard, so inject the same permissive validator the
+ * co-located unit tests use (mcp-client-redirect-policy.test.ts).
+ */
+const allowAllSsrf = async () => ok<unknown>(undefined);
 
 interface CapturedRequest {
   url: string;
@@ -96,7 +105,10 @@ describe("MCP redirect scrub — cross-host header policy", () => {
       capturedA,
     );
 
-    const wrappedFetch = createRedirectPolicyFetch({ maxRedirections: 20 });
+    const wrappedFetch = createRedirectPolicyFetch({
+      maxRedirections: 20,
+      validateRedirectTarget: allowAllSsrf,
+    });
     await wrappedFetch(serverA.baseUrl, {
       headers: {
         authorization: "Bearer secret-token",
@@ -109,6 +121,31 @@ describe("MCP redirect scrub — cross-host header policy", () => {
     expect(capturedB[0]!.headers.authorization).toBeUndefined();
     expect(capturedB[0]!.headers.cookie).toBeUndefined();
     expect(capturedB[0]!.headers["proxy-authorization"]).toBeUndefined();
+  });
+
+  it("default SSRF guard refuses a cross-host redirect to a loopback address", async () => {
+    serverB = await startTestHttpServer((req, res, captured) => {
+      captured.push({
+        url: req.url ?? "",
+        headers: { ...req.headers } as Record<string, string | string[] | undefined>,
+      });
+      res.writeHead(200);
+      res.end("ok");
+    }, capturedB);
+
+    serverA = await startTestHttpServer(
+      (req, res) => {
+        res.writeHead(302, { location: serverB!.baseUrl });
+        res.end();
+      },
+      capturedA,
+    );
+
+    const wrappedFetch = createRedirectPolicyFetch({ maxRedirections: 20 });
+    await expect(wrappedFetch(serverA.baseUrl, {})).rejects.toThrow(
+      /\[redirect_blocked_ssrf\]/,
+    );
+    expect(capturedB).toHaveLength(0);
   });
 
   it("same-host redirect preserves Authorization header through second-hop request", async () => {
