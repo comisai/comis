@@ -381,6 +381,22 @@ describe("detectShellSubstitutions", () => {
     expect(detectShellSubstitutions("git log --oneline")).toBeNull();
   });
 
+  // F-18 (live 2026-06-12, Anthropic UC-12): $((...)) is ARITHMETIC expansion (no command
+  // execution) — it must NOT be flagged as command substitution. The old `$(` check
+  // over-blocked `echo $((6*7))`. A nested REAL substitution inside arithmetic is still caught.
+  it("allows arithmetic expansion $((6*7)) (not command substitution)", () => {
+    expect(detectShellSubstitutions("echo OK-$((6*7))")).toBeNull();
+  });
+  it("allows arithmetic expansion with variables $((a+b))", () => {
+    expect(detectShellSubstitutions("result=$((x + y * 2))")).toBeNull();
+  });
+  it("STILL blocks a command substitution nested inside arithmetic", () => {
+    expect(detectShellSubstitutions("echo $(( $(cat /etc/passwd | wc -l) + 1 ))")).not.toBeNull();
+  });
+  it("STILL blocks plain command substitution $( with a space (subshell)", () => {
+    expect(detectShellSubstitutions("echo $( cat /etc/passwd )")).not.toBeNull();
+  });
+
   it("allows grep -r pattern", () => {
     expect(detectShellSubstitutions('grep -r "pattern" .')).toBeNull();
   });
