@@ -106,6 +106,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { shouldRunCritic, runVerificationCritic } from "./verification-gate.js";
 // CWF-05: deterministic user-facing reply for named degraded terminal causes.
 import { buildOutputStarvedAnnotation, buildContextExhaustedReply } from "./degraded-reply.js";
+import { parseContextExhaustionCause } from "../context-engine/errors.js";
 import { buildSyntheticCriticDeps } from "./verification-gate-synth-deps.js";
 import { resolveScaffoldDefaults } from "./scaffold-defaults.js";
 import { generateCanaryToken } from "@comis/core";
@@ -123,6 +124,9 @@ export interface PostExecutionBridgeResult {
   toolCallHistory?: string[];
   finishReason?: ExecutionResult["finishReason"];
   lastActiveToolName?: string;
+  /** The last LLM error message the bridge captured (HR-01 mid-turn path) —
+   *  Issue-6 reads the `[cause: …]` tag from it when errorContext is absent. */
+  lastLlmErrorMessage?: string;
   failedToolCalls?: number;
   failedTools?: string[];
   cumulativeLlmDurationMs?: number;
@@ -636,6 +640,10 @@ export const END_REASON_MAP: Record<string, NonNullable<SessionMetadata["session
   // fleet degradedByCause record are pre-wired for "timeout".
   prompt_timeout: "timeout",
   completed_with_tool_errors: "completed_with_tool_errors",
+  // Issue-4: the narrate-without-emit terminal promoted at the chokepoint
+  // (see promoteNarrationStall) — a small/nano turn that ended on intent
+  // narration with no tool call and did not recover after the one nudge.
+  narration_stall: "narration_stall",
   // Known in-union reasons — explicit, not via the catch-all fallthrough (WR-02).
   loop_detected: "error",
   session_reset: "error",
@@ -693,6 +701,34 @@ export function promoteOutputStarved(
   // Gate 2: the terminal model stop must be the output cap.
   if (lastStopReason !== undefined && TERMINAL_OUTPUT_STARVED_STOP_REASONS.has(lastStopReason)) {
     return "output_starved";
+  }
+  return effectiveFinishReason;
+}
+
+/**
+ * Issue-4 (small-model e2e 2026-06-12) — promote a narrate-without-emit
+ * terminal to the named cause `narration_stall`.
+ *
+ * Fires IFF the run would OTHERWISE end clean (`stop`/`end_turn`) AND the
+ * narrate-nudge FIRED for this turn but did NOT recover a real answer — the
+ * delivered response is still mid-task narration ("Now let me run the
+ * tool:") with no tool call behind it. Such a turn was previously recorded
+ * `degraded:false, endReason:success` (the soft false-clean: live session
+ * uc4-uc5-35). Mirrors {@link promoteOutputStarved}'s conservative shape:
+ * an already-non-clean cause always wins, and a recovered (or never-fired)
+ * nudge changes nothing.
+ *
+ * Pure. Exported for unit tests (both directions pinned).
+ */
+export function promoteNarrationStall(
+  effectiveFinishReason: string,
+  narrateNudge: { fired: boolean; recovered: boolean } | undefined,
+): string {
+  if (effectiveFinishReason !== "stop" && effectiveFinishReason !== "end_turn") {
+    return effectiveFinishReason;
+  }
+  if (narrateNudge?.fired === true && narrateNudge.recovered === false) {
+    return "narration_stall";
   }
   return effectiveFinishReason;
 }
@@ -1065,9 +1101,11 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // tool-error / budget / breaker / context_exhausted terminal is untouched (the
   // upstream cause wins), and a continued/mid-run length-stop is not flagged
   // (the terminal stop reason is no longer "length"). See promoteOutputStarved.
-  const effectiveFinishReason = promoteOutputStarved(
-    toolReconciledFinishReason,
-    bridgeResult.lastStopReason,
+  // Stage 3 (Issue-4): promote a narrate-without-emit terminal that the one
+  // bounded nudge could not recover — same conservative shape as stage 2.
+  const effectiveFinishReason = promoteNarrationStall(
+    promoteOutputStarved(toolReconciledFinishReason, bridgeResult.lastStopReason),
+    result.narrateNudge,
   );
 
   // Execution bookend INFO log with summary stats
@@ -1257,10 +1295,19 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     // W4 (obs-llm-troubleshooting): name the exact cap knob for small/nano and
     // append the incident traceId so `comis explain <traceId>` is one step away
     // from the chat message itself.
+    // Issue-6: recover the exhaustion CAUSE from the message that crossed the
+    // type-stripping boundary — errorContext.originalError on the top-level
+    // path, lastLlmErrorMessage on the HR-01 mid-turn path — so the reply's
+    // advice names the remedy that actually applies (an oversized HISTORY
+    // message is fixed by a session reset, never by "narrowing the ask").
     const incidentTraceId = tryGetContext()?.traceId;
+    const exhaustionCause = parseContextExhaustionCause(
+      result.errorContext?.originalError ?? bridgeResult.lastLlmErrorMessage,
+    );
     result.response = buildContextExhaustedReply({
       ...(capabilityClass !== undefined ? { capabilityClass } : {}),
       ...(incidentTraceId !== undefined ? { traceId: incidentTraceId } : {}),
+      cause: exhaustionCause,
     });
     deps.logger.warn(
       { step: "degraded-reply", errorKind: "resource" as const, hint: "context_exhausted synthesized reply" },
@@ -1304,7 +1351,8 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // dependency on isCompletionClaim patterns).
   const isDegradedTurn =
     effectiveFinishReason === "output_starved" ||
-    effectiveFinishReason === "context_exhausted";
+    effectiveFinishReason === "context_exhausted" ||
+    effectiveFinishReason === "narration_stall";
   if (!isDegradedTurn && shouldRunCritic({ // R4: critic hook (WR-02: keyless-only gate)
     capabilityClass, config, executionPlanRef, provider,
     logger: deps.logger,

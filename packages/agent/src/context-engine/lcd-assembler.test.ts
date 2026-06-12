@@ -538,6 +538,188 @@ describe("B-8: fresh-tail tool-result bounding", () => {
   });
 });
 
+describe("fresh-tail oversized-MESSAGE bounding (Issue 1: one oversized message bricks the session)", () => {
+  // Small-model e2e 2026-06-12 UC-3: a single ~170K-char user message on a 32K
+  // small window made the turn fail context_exhausted (correct) — and then EVERY
+  // later turn too (the brick): the message persisted into the live array, rode
+  // the UNCONDITIONAL fresh tail forever (a failed turn appends no assistant
+  // step, so the fresh-tail boundary never advances past it), and whole-message
+  // eviction can never shrink ONE message. The fix bounds any oversized
+  // user/assistant message AT ASSEMBLY (head+tail+honest marker), like the B-8
+  // tool-result guard — the full content stays losslessly in the LCD store.
+  let store: ContextStorePort;
+
+  beforeEach(() => {
+    const db = new Database(":memory:");
+    initSchema(db, 1536);
+    store = createLcdStore(db);
+  });
+
+  /** Deps with a 32K small-class profile (the live qwen3.6 incident shape). */
+  function makeSmallDeps(): { deps: ContextEngineDeps; onAssembledInputTokens: ReturnType<typeof vi.fn<[number], void>> } {
+    const onAssembledInputTokens = vi.fn<[number], void>();
+    const profile32K: ModelProfile = {
+      ...FAIL_CLOSED_PROFILE,
+      capabilityClass: "small" as const,
+      contextWindow: 32_768,
+      maxOutputTokens: 4_096,
+      reasoningStyle: "none" as const,
+    };
+    const deps: ContextEngineDeps = {
+      logger: createMockLogger() as unknown as ContextEngineDeps["logger"],
+      getModel: () => ({ reasoning: false, contextWindow: 32_768, maxTokens: 4_096 }),
+      contextStore: store,
+      conversationId: CONVERSATION_ID,
+      agentId: "agent_a",
+      tenantId: "tenant_a",
+      sessionKey: "sess-a",
+      modelProfile: profile32K,
+      getThinkingLevel: () => "medium",
+      onAssembledInputTokens,
+    };
+    return { deps, onAssembledInputTokens };
+  }
+
+  function textOf(m: AgentMessage): string {
+    const c = (m as unknown as { content: unknown }).content;
+    if (typeof c === "string") return c;
+    if (!Array.isArray(c)) return "";
+    return (c as { type: string; text?: string }[])
+      .map((b) => (b.type === "text" && b.text ? b.text : ""))
+      .join("");
+  }
+
+  it("Issue1-A: ONE user message larger than the effective window is bounded at assembly — the turn assembles instead of throwing context_exhausted", async () => {
+    // ~170K chars ≈ 48.6K tokens at the 3.5 ratio — alone exceeds the 32K window.
+    const HUGE = "The semiconductor sector saw revenue growth amid shifting macro conditions. ".repeat(2200);
+    expect(HUGE.length).toBeGreaterThan(160_000);
+    const live: AgentMessage[] = [
+      userMsg(HUGE) as AgentMessage,
+      assistantText("noted") as AgentMessage,
+      userMsg("Quick: what is 2 + 2?") as AgentMessage,
+    ];
+
+    const { deps, onAssembledInputTokens } = makeSmallDeps();
+    const engine = createLcdContextEngine(dagConfig(8), deps);
+    // Pre-patch: the fresh tail ships the 170K-char message verbatim → the
+    // pre-flight fit check throws ContextExhaustionError. Post-patch: bounded.
+    const out = await engine.transformContext(live);
+
+    const outUser = out.find((m) => roleOf(m) === "user" && textOf(m).length > 200);
+    expect(outUser).toBeDefined();
+    const boundedText = textOf(outUser as AgentMessage);
+    expect(boundedText.length).toBeLessThan(HUGE.length); // genuinely shrunk
+    // Honest marker advertising lossless recovery (parity with the B-8 wording).
+    expect(boundedText).toContain("truncated");
+    expect(boundedText.toLowerCase()).toContain("lossless");
+    // The head of the message is still processed (not a hard refusal).
+    expect(boundedText.startsWith("The semiconductor sector")).toBe(true);
+
+    // The assembled input now fits the small window minus headroom:
+    // headroomBound = 32000 (small cap) − computeOutputHeadroom("none","medium")=768.
+    expect(onAssembledInputTokens).toHaveBeenCalled();
+    const reported = onAssembledInputTokens.mock.calls[0]![0];
+    expect(reported).toBeLessThanOrEqual(32_000 - 768);
+  });
+
+  it("Issue1-B: the brick repro — after the oversized turn, a TINY follow-up in the same session assembles fine (no permanent context_exhausted)", async () => {
+    // The persisted shape after the failed oversized turn: history holds the
+    // oversized message too (ingestion stores the RAW message), and the live
+    // array still carries it in the fresh tail.
+    const HUGE = "X".repeat(170_000);
+    append(store, userMsg("My portfolio rule: never more than 5% in one name. Got it?"), 0);
+    append(store, assistantText("Got it."), 1);
+    const hugeInput: AppendMessageInput = {
+      scope: SCOPE,
+      seq: 2,
+      role: "user",
+      tokenCount: Math.ceil(HUGE.length / 3.5), // the stored token authority is honest
+      createdAt: FIXED_CREATED_AT,
+      parts: messageToParts(userMsg(HUGE)),
+    };
+    store.append(hugeInput);
+
+    const live: AgentMessage[] = [
+      userMsg("My portfolio rule: never more than 5% in one name. Got it?") as AgentMessage,
+      assistantText("Got it.") as AgentMessage,
+      userMsg(HUGE) as AgentMessage,
+      userMsg("Quick: what is 2 + 2?") as AgentMessage,
+    ];
+
+    const { deps, onAssembledInputTokens } = makeSmallDeps();
+    const engine = createLcdContextEngine(dagConfig(8), deps);
+    // Pre-patch: throws ContextExhaustionError forever (the brick). Post-patch:
+    // the oversized message is bounded every turn, so the tiny follow-up works.
+    const out = await engine.transformContext(live);
+    expect(out.length).toBeGreaterThan(0);
+    const reported = onAssembledInputTokens.mock.calls[0]![0];
+    expect(reported).toBeLessThanOrEqual(32_000 - 768);
+    // The tiny follow-up survives verbatim.
+    expect(out.some((m) => textOf(m).includes("what is 2 + 2"))).toBe(true);
+  });
+
+  it("Issue1-C (A1): a user message below the cap passes through unchanged — the bound is a no-op for everything that fits", async () => {
+    const live: AgentMessage[] = [
+      userMsg("a normal sized question about the market") as AgentMessage,
+      assistantText("a normal answer") as AgentMessage,
+    ];
+    const { deps } = makeSmallDeps();
+    const engine = createLcdContextEngine(dagConfig(8), deps);
+    const out = await engine.transformContext(live);
+
+    const outUser = out.find((m) => roleOf(m) === "user");
+    expect(outUser).toBeDefined();
+    expect(textOf(outUser as AgentMessage)).toBe("a normal sized question about the market");
+    expect(JSON.stringify(out)).not.toContain("truncated");
+  });
+
+  it("Issue1-D (A2): an assistant message with a toolCall block and oversized text is bounded WITHOUT touching the toolCall block or its id", async () => {
+    const HUGE = "Y".repeat(170_000);
+    const assistantHuge = {
+      role: "assistant",
+      content: [
+        { type: "text", text: HUGE },
+        { type: "toolCall", id: "tu_keep", name: "read", arguments: { path: "/x" } },
+      ],
+      api: "anthropic.messages",
+      provider: "anthropic",
+      model: "claude-test",
+      usage: { inputTokens: 1, outputTokens: 1 },
+      stopReason: "toolUse",
+      timestamp: FIXED_CREATED_AT,
+    } as unknown as AgentMessage;
+    const live: AgentMessage[] = [
+      userMsg("go") as AgentMessage,
+      assistantHuge,
+      toolResult("tu_keep", "read", "ok") as AgentMessage,
+      assistantText("done") as AgentMessage,
+    ];
+
+    const { deps } = makeSmallDeps();
+    const engine = createLcdContextEngine(dagConfig(8), deps);
+    const out = await engine.transformContext(live);
+
+    const outAssistant = out.find(
+      (m) =>
+        roleOf(m) === "assistant" &&
+        Array.isArray((m as unknown as { content: unknown }).content) &&
+        ((m as unknown as { content: unknown[] }).content).some((b) => isToolCallBlock(b) && b.id === "tu_keep"),
+    );
+    expect(outAssistant).toBeDefined();
+    const blocks = (outAssistant as unknown as { content: { type: string; text?: string; id?: string }[] }).content;
+    const textBlock = blocks.find((b) => b.type === "text");
+    const callBlock = blocks.find((b) => b.type === "toolCall");
+    expect(textBlock!.text!.length).toBeLessThan(HUGE.length); // text bounded
+    expect(callBlock).toMatchObject({ id: "tu_keep", name: "read" }); // call untouched
+    // A2: the toolResult is still paired after the (call-id-preserving) bound.
+    const resultIdx = out.findIndex(
+      (m) => roleOf(m) === "toolResult" && (m as unknown as { toolCallId: string }).toolCallId === "tu_keep",
+    );
+    const callIdx = out.indexOf(outAssistant as AgentMessage);
+    expect(resultIdx).toBeGreaterThan(callIdx);
+  });
+});
+
 describe("createLcdContextEngine context_items + eviction (Plan 05, C3/A3)", () => {
   let store: ContextStorePort;
 
@@ -1803,19 +1985,25 @@ describe("Phase 166 CWF-02: pre-flight fit check + security-pin", () => {
     // computeOutputHeadroom("native","high") = 8192 + 768 = 8960
     // headroomBound_high = 32000 − 8960 = 23040
     //
-    // Strategy: seed small history (fits comfortably), create a LARGE fresh-tail user
-    // message. assembledInputTokens = budgetedTokens + freshTailTokens.
-    // budgetedTokens ≤ availableHistoryTokens ≈ 17856 for this profile (see plan).
-    // We set freshTailTokens > headroomBound − budgetedTokens + 1.
+    // Strategy: seed small history (fits comfortably), create a large fresh tail of
+    // SEVERAL sub-cap messages. (A single huge message no longer reaches the governor:
+    // the Issue-1 fresh-tail bound shrinks it first — bounding is per-message, so the
+    // governor's pressure case is now the AGGREGATE of individually-fitting messages.)
+    // assembledInputTokens = budgetedTokens + freshTailTokens.
     // With budgetedTokens=0 (empty store), freshTailTokens must > 23040.
-    // freshTailTokens = ceil(chars / 3.5) → chars = 23040 * 3.5 + 1 = 80641 chars.
+    // 3 × 28000 chars ≈ 84000 / 3.5 = 24000 tokens > 23040; each message stays below
+    // the Issue-1 per-message cap (0.8 × H × 3.5 ≈ 50K chars for this profile).
     //
     // After governor down-shifts to "medium": headroomBound_medium = 32000 - (3072+768) = 28160
-    // assembledInputTokens = freshTailTokens ≈ 23041 < 28160 → fits under "medium". Governor wins.
-    const LARGE_CONTENT = "X".repeat(85_000); // 85000 / 3.5 ≈ 24286 tokens > headroomBound_high=23040
+    // assembledInputTokens ≈ 24000 < 28160 → fits under "medium". Governor wins.
+    const LARGE_CONTENT = "X".repeat(28_000);
 
     const live: AgentMessage[] = [
-      userMsg(LARGE_CONTENT) as AgentMessage,   // large user message in fresh tail
+      userMsg(LARGE_CONTENT) as AgentMessage,
+      assistantText("ok") as AgentMessage,
+      userMsg(LARGE_CONTENT) as AgentMessage,
+      assistantText("ok") as AgentMessage,
+      userMsg(LARGE_CONTENT) as AgentMessage,
       assistantText("done") as AgentMessage,
     ];
     // Nothing persisted → store is empty; fresh tail = entire live array
@@ -1855,9 +2043,12 @@ describe("Phase 166 CWF-02: pre-flight fit check + security-pin", () => {
     // computeOutputHeadroom("native","low") = 1024 + 768 = 1792
     // headroomBound_low = 32000 − 1792 = 30208
     //
-    // Use a VERY large fresh-tail user message that exceeds even the "low" headroomBound:
-    // freshTailTokens > 30208 → chars > 30208 * 3.5 = 105728 → use 115000 chars
-    const VERY_LARGE_CONTENT = "X".repeat(115_000); // 115000 / 3.5 ≈ 32857 tokens > 30208
+    // The fresh tail must exceed even the "low" headroomBound through the AGGREGATE of
+    // individually-fitting messages (a single huge message is bounded by the Issue-1
+    // fresh-tail guard before the pre-flight ever sees it — that class no longer
+    // throws). 3 × 40000 chars = 120000 / 3.5 ≈ 34286 tokens > 30208 (and > every
+    // down-shift bound); each message stays below the per-message cap (≈50K chars).
+    const VERY_LARGE_CONTENT = "X".repeat(40_000);
 
     const nativeSmallProfile: ModelProfile = {
       ...FAIL_CLOSED_PROFILE,
@@ -1868,6 +2059,10 @@ describe("Phase 166 CWF-02: pre-flight fit check + security-pin", () => {
     };
 
     const live: AgentMessage[] = [
+      userMsg(VERY_LARGE_CONTENT) as AgentMessage,
+      assistantText("ok") as AgentMessage,
+      userMsg(VERY_LARGE_CONTENT) as AgentMessage,
+      assistantText("ok") as AgentMessage,
       userMsg(VERY_LARGE_CONTENT) as AgentMessage,
       assistantText("done") as AgentMessage,
     ];

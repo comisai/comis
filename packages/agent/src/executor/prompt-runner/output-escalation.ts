@@ -26,6 +26,7 @@ import {
   surfaceDiscardedPreToolUrl,
 } from "../executor-response-filter.js";
 import { runPostBatchContinuation } from "../post-batch-continuation.js";
+import { runNarrateNudge } from "../narrate-nudge.js";
 import { getVisibleAssistantText } from "../phase-filter.js";
 
 import type { ImageContent } from "@earendil-works/pi-ai";
@@ -300,6 +301,15 @@ async function processSuccessPath(
   // observability — see pi-event-bridge.ts:949-1024.
   await runPostBatchContinuationStep(params);
 
+  // Issue 4 (small-model e2e 2026-06-12): narrate-without-emit nudge — the
+  // sibling of L4 for turns that END ON intent narration ("Now let me write
+  // the script:") with NO tool call. small/nano-gated, one bounded re-prompt;
+  // an unrecovered fire marks result.narrateNudge so the post-execution
+  // chokepoint promotes the turn to the named degraded cause narration_stall.
+  // Mutually exclusive with L4 by construction (L4 requires an EMPTY final
+  // turn; this requires visible text).
+  await runNarrateNudgeStep(params);
+
   // Budget-driven continuation loop
   if (budgetTracker) {
     await runBudgetContinuation(params, budgetTracker, budgetCapped, requestedBudget);
@@ -371,6 +381,29 @@ async function runPostBatchContinuationStep(params: RunPromptParams): Promise<vo
       "Post-batch continuation error",
     );
     result.continuationMetrics = { fired: false, attempts: 0, outcome: "still_empty" };
+  }
+}
+
+/** Issue-4 narrate-without-emit nudge step — separated like the post-batch step. */
+async function runNarrateNudgeStep(params: RunPromptParams): Promise<void> {
+  const { session, agentId, result, deps } = params;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const sessionMessages: unknown[] = (session as any).messages ?? [];
+  const outcome = await runNarrateNudge({
+    session,
+    messages: sessionMessages,
+    capabilityClass: params.modelProfile?.capabilityClass,
+    logger: deps.logger,
+    agentId,
+    getVisibleAssistantText,
+  });
+  if (outcome.recovered && outcome.response) {
+    result.response = outcome.response;
+  }
+  if (outcome.fired) {
+    // Stash for the post-execution chokepoint: an unrecovered fire promotes
+    // the clean would-be terminal to narration_stall (the soft-false-clean fix).
+    result.narrateNudge = { fired: true, recovered: outcome.recovered };
   }
 }
 

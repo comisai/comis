@@ -202,6 +202,86 @@ describe("cleanSchemaForGbnf", () => {
     });
   });
 
+  describe("T4 in open-record VALUE position (never scalar-narrow patternProperties/additionalProperties values)", () => {
+    // The pipeline tool's `type_config` compiled to
+    // `{"type":"object","patternProperties":{"^.*$":{}}}` — an open record
+    // whose VALUE schema is typeless. T4's default stamped `type:"string"`
+    // onto it, so the wire schema contradicted the daemon driver (debate
+    // wants `agents: array`, `rounds: number`) and the model oscillated
+    // between "must be string" and "expected array, received string" forever
+    // (small-model e2e 2026-06-12, UC-1/UC-6). An open record's values must
+    // stay grammar-valid (llama.cpp rejects truly typeless nodes) WITHOUT
+    // lying about their type: the full JSON type union admits the identical
+    // value set as `{}`.
+    it("injects the full JSON type union (not string) on a typeless patternProperties VALUE schema", () => {
+      const input = { type: "object", patternProperties: { "^.*$": {} } };
+      const { schema, transformedKeywords } = cleanSchemaForGbnf(input);
+      const pp = (schema as Record<string, unknown>).patternProperties as Record<
+        string,
+        Record<string, unknown>
+      >;
+      expect(pp["^.*$"].type).toEqual(["object", "array", "string", "number", "boolean", "null"]);
+      expect(transformedKeywords).toContain("missing_type");
+    });
+
+    it("injects the full JSON type union (not string) on a typeless additionalProperties VALUE schema", () => {
+      const input = { type: "object", additionalProperties: { description: "any value" } };
+      const { schema } = cleanSchemaForGbnf(input);
+      const ap = (schema as Record<string, unknown>).additionalProperties as Record<
+        string,
+        unknown
+      >;
+      expect(ap.type).toEqual(["object", "array", "string", "number", "boolean", "null"]);
+      expect(ap.description).toBe("any value");
+    });
+
+    it("open-record VALUE schemas with constraint hints still infer honestly (number/array/string families)", () => {
+      const input = {
+        type: "object",
+        patternProperties: {
+          "^n-": { minimum: 0 },
+          "^a-": { minItems: 1 },
+          "^s-": { minLength: 3 },
+        },
+      };
+      const { schema } = cleanSchemaForGbnf(input);
+      const pp = (schema as Record<string, unknown>).patternProperties as Record<
+        string,
+        Record<string, unknown>
+      >;
+      expect(pp["^n-"].type).toBe("number");
+      expect(pp["^a-"].type).toBe("array");
+      expect(pp["^s-"].type).toBe("string");
+    });
+
+    it("nodes NESTED INSIDE an open-record value keep the plain string default (position applies to the value node only)", () => {
+      const input = {
+        type: "object",
+        additionalProperties: {
+          type: "object",
+          properties: { note: { description: "bare leaf" } },
+        },
+      };
+      const { schema } = cleanSchemaForGbnf(input);
+      const ap = (schema as Record<string, unknown>).additionalProperties as {
+        properties: Record<string, Record<string, unknown>>;
+      };
+      expect(ap.properties.note.type).toBe("string");
+    });
+
+    it("open-record union injection is idempotent (twice = once, byte-identical)", () => {
+      const input = {
+        type: "object",
+        patternProperties: { "^.*$": {} },
+        additionalProperties: {},
+      };
+      const once = cleanSchemaForGbnf(input);
+      const twice = cleanSchemaForGbnf(once.schema);
+      expect(JSON.stringify(twice.schema)).toBe(JSON.stringify(once.schema));
+      expect(twice.transformedKeywords).toEqual([]);
+    });
+  });
+
   describe("recursion into nested schema positions", () => {
     it("collapses a nullable union inside items of an array property", () => {
       const { schema, transformedKeywords } = cleanSchemaForGbnf(

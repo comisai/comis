@@ -16,7 +16,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect, vi } from "vitest";
-import { buildSessionEndMetadata, shouldStorePairedMemory, shouldRunLcdStorePasses, emitSessionSummary, END_REASON_MAP, promoteOutputStarved, unrecoveredFailedToolNames } from "./executor-post-execution.js";
+import { buildSessionEndMetadata, shouldStorePairedMemory, shouldRunLcdStorePasses, emitSessionSummary, END_REASON_MAP, promoteOutputStarved, promoteNarrationStall, unrecoveredFailedToolNames } from "./executor-post-execution.js";
 import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildDegradedReply } from "./degraded-reply.js";
 import { buildSessionHealthRollup, type SessionHealthRollup } from "./session-health-rollup.js";
 import { attributeRecallUsage } from "../rag/recall-attribution.js";
@@ -350,6 +350,35 @@ describe("buildSessionEndMetadata", () => {
       .filter((l) => !l.trim().startsWith("//"))
       .join("\n");
     expect(stripped).toMatch(/buildSessionEndMetadata\([\s\S]*?traceId:\s*tryGetContext\(\)\?\.traceId/);
+  });
+});
+
+// Issue-4 (small-model e2e 2026-06-12): a narrate-without-emit terminal the
+// one bounded nudge could not recover must stop reading as a clean success
+// (live: uc4-uc5-35 recorded degraded:false despite a starved narration answer).
+describe("promoteNarrationStall (Issue 4 — narrate-without-emit soft-false-clean fix)", () => {
+  it("promotes a clean would-be terminal when the nudge fired and did NOT recover", () => {
+    expect(promoteNarrationStall("stop", { fired: true, recovered: false })).toBe("narration_stall");
+    expect(promoteNarrationStall("end_turn", { fired: true, recovered: false })).toBe("narration_stall");
+    // The promoted reason maps to the NAMED degraded cause (≠ success ⇒ degraded:true).
+    expect(END_REASON_MAP[promoteNarrationStall("stop", { fired: true, recovered: false })]).toBe(
+      "narration_stall",
+    );
+  });
+
+  it("does NOT promote when the nudge recovered a real answer (clean turn)", () => {
+    expect(promoteNarrationStall("stop", { fired: true, recovered: true })).toBe("stop");
+  });
+
+  it("does NOT promote when the nudge never fired (frontier / no-match turns)", () => {
+    expect(promoteNarrationStall("stop", undefined)).toBe("stop");
+    expect(promoteNarrationStall("stop", { fired: false, recovered: false })).toBe("stop");
+  });
+
+  it("an already-non-clean upstream cause always wins (never overwritten)", () => {
+    for (const reason of ["context_exhausted", "completed_with_tool_errors", "error", "output_starved"]) {
+      expect(promoteNarrationStall(reason, { fired: true, recovered: false })).toBe(reason);
+    }
   });
 });
 

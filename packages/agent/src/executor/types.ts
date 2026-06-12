@@ -43,6 +43,10 @@ export interface ExecutionResult {
   finishReason: "stop" | "max_steps" | "budget_exceeded" | "budget_exhausted" | "circuit_open" | "provider_degraded" | "context_loop" | "context_exhausted" | "output_starved" | "session_reset" | "loop_detected" | "prompt_timeout" | "error";
   /** Ordered list of tool names invoked during execution (for post-mortem analysis). */
   toolCallHistory?: string[];
+  /** Issue-4 narrate-without-emit nudge outcome (small/nano only). A fired-but-
+   *  unrecovered nudge promotes the clean would-be terminal to the named
+   *  degraded cause `narration_stall` at the post-execution chokepoint. */
+  narrateNudge?: { fired: boolean; recovered: boolean };
   /** Structured error classification for non-successful executions (operator-only, never user-facing). */
   errorContext?: {
     errorType: string;

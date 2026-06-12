@@ -17,7 +17,11 @@
  */
 
 import { computeOutputHeadroom, downshiftThinkingLevel } from "./output-headroom.js";
-import { ContextExhaustionError, describeWindowCap } from "./errors.js";
+import {
+  ContextExhaustionError,
+  describeWindowCap,
+  type ContextExhaustionCause,
+} from "./errors.js";
 import { isSecurityRelevantMessage } from "./security-context-pinner.js";
 import { evictHistoryUnderBudget, type BudgetItem } from "./lcd-budget-eviction.js";
 import { CHARS_PER_TOKEN_RATIO } from "./constants.js";
@@ -84,22 +88,12 @@ export function runPreflightFitCheck(
 
   // Estimate fresh tail token count from char lengths (CHARS_PER_TOKEN_RATIO heuristic).
   // IN-01 fix: count chars from both string and array (multi-part/tool-result) content.
-  const freshTailChars = freshTail.reduce((s, m) => {
-    const content = (m as { content?: unknown }).content;
-    if (typeof content === "string") return s + content.length;
-    if (Array.isArray(content)) {
-      return s + content.reduce((acc: number, block: unknown) => {
-        if (typeof block === "string") return acc + block.length;
-        if (block !== null && typeof block === "object") {
-          const b = block as { text?: string; content?: string };
-          return acc + (b.text?.length ?? b.content?.length ?? 0);
-        }
-        return acc;
-      }, 0);
-    }
-    return s;
-  }, 0);
-  const freshTailTokens = Math.ceil(freshTailChars / CHARS_PER_TOKEN_RATIO);
+  // Per-message counts are kept (not just the sum) so the Issue-6 cause classifier
+  // below can tell a single-oversized-message failure from an aggregate overflow.
+  const freshTailMsgTokens = freshTail.map((m) =>
+    Math.ceil(messageTextChars(m) / CHARS_PER_TOKEN_RATIO),
+  );
+  const freshTailTokens = freshTailMsgTokens.reduce((s, t) => s + t, 0);
   // OF-01 (v2.19): count the FULL SDK prompt, not just history+freshTail. The
   // dominant term is the system prompt + tool schemas (S = getSystemTokensEstimate)
   // — the SAME value the eviction budget subtracts (lcd-assembler `S`). The
@@ -204,6 +198,22 @@ export function runPreflightFitCheck(
     const finalHeadroom = computeOutputHeadroom(reasoningStyle, effectiveThinkingLevel, minVisibleFloor);
     const finalBound = effectiveWindow - finalHeadroom;
     if (assembledInputTokens > finalBound) {
+      // Issue-6: classify WHY. A single item whose tokens alone (on top of the
+      // non-evictable S) exceed the bound is an oversized-MESSAGE failure —
+      // eviction/narrowing other content can never fix it, so the generic
+      // "narrow the ask" advice would mislead. Distinguish the current input
+      // (the LAST user message in the fresh tail — "shorten your message" is
+      // actionable) from an earlier message (only a session reset helps).
+      // Everything else is the historical aggregate overflow.
+      const singleItemBound = finalBound - systemTokens;
+      const lastUserIdx = findLastUserIndex(freshTail);
+      const cause: ContextExhaustionCause =
+        lastUserIdx >= 0 && (freshTailMsgTokens[lastUserIdx] ?? 0) > singleItemBound
+          ? "oversized_input"
+          : freshTailMsgTokens.some((t) => t > singleItemBound) ||
+              evictable.some((b) => b.tokens > singleItemBound)
+            ? "oversized_history_message"
+            : "aggregate";
       deps.logger.warn(
         {
           step: "lcd-pre-flight",
@@ -215,6 +225,7 @@ export function runPreflightFitCheck(
           sessionKey: deps.sessionKey,
           assembledInputTokens,
           effectiveWindow,
+          exhaustionCause: cause,
           ...(capInfo !== undefined && {
             rawContextWindowTokens: capInfo.rawContextWindowTokens,
             windowCapSource: capInfo.windowCapSource,
@@ -223,7 +234,7 @@ export function runPreflightFitCheck(
         "pre-flight fit check: context exhausted",
       );
       emitBudgetComputed("exhausted", assembledInputTokens, finalHeadroom);
-      throw new ContextExhaustionError(effectiveWindow, assembledInputTokens, capInfo);
+      throw new ContextExhaustionError(effectiveWindow, assembledInputTokens, capInfo, cause);
     }
   }
 
@@ -240,4 +251,28 @@ export function runPreflightFitCheck(
   emitBudgetComputed(governorFired ? "downshifted" : "fits", originalAssembledInputTokens, outputHeadroom);
 
   return originalAssembledInputTokens;
+}
+
+/** Total text chars of one message: string content, or the text/content fields
+ *  of array blocks (the IN-01 multi-part/tool-result shape). */
+function messageTextChars(m: AgentMessage): number {
+  const content = (m as { content?: unknown }).content;
+  if (typeof content === "string") return content.length;
+  if (!Array.isArray(content)) return 0;
+  return content.reduce((acc: number, block: unknown) => {
+    if (typeof block === "string") return acc + block.length;
+    if (block !== null && typeof block === "object") {
+      const b = block as { text?: string; content?: string };
+      return acc + (b.text?.length ?? b.content?.length ?? 0);
+    }
+    return acc;
+  }, 0);
+}
+
+/** Index of the LAST user-role message in the fresh tail (the current input), or -1. */
+function findLastUserIndex(freshTail: AgentMessage[]): number {
+  for (let i = freshTail.length - 1; i >= 0; i--) {
+    if ((freshTail[i] as { role?: string }).role === "user") return i;
+  }
+  return -1;
 }

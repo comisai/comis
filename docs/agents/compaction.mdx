@@ -344,6 +344,16 @@ The most recent turns (the "fresh tail", default 8 turns) are always protected
 from compaction, ensuring your agent has full, uncompressed access to the latest
 exchanges.
 
+One size guard applies inside the protected fresh tail: a single message whose
+text alone approaches the model's effective context window (an oversized tool
+result, or a pasted document far larger than the window) is **bounded at
+assembly** — head and tail preserved around an honest truncation marker — so
+that one message can never overflow the window or permanently wedge the session
+into `context_exhausted`. Everything below the cap passes through verbatim, and
+the full content always remains in the lossless store (recoverable via
+`ctx_expand`). The cap scales with the model's effective window (up to 100,000
+characters per message on large windows).
+
 The condensed hierarchy is **depth-aware**: a depth-0 leaf summarizes raw
 messages, a depth-1 condensed summary summarizes depth-0 leaves once at least
 `condensedMinFanout` (default 4) of them accumulate, and so on. Higher depth means

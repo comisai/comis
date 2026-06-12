@@ -15,6 +15,7 @@ import {
   CONTEXT_EXHAUSTION_MESSAGE_PREFIX,
   isContextExhaustionErrorMessage,
   describeWindowCap,
+  parseContextExhaustionCause,
 } from "./errors.js";
 
 describe("ContextExhaustionError message contract", () => {
@@ -150,5 +151,42 @@ describe("describeWindowCap capabilityClass-pin branch (WR-01)", () => {
     ).toBe(
       " (model contextWindow 131072, Ollama serves 50000, capped to 32000 by providers.entries.<id>.capabilities.capabilityClass — pin a higher class (or remove the pin) or reduce active tool schemas)",
     );
+  });
+});
+
+// Issue-6 (small-model e2e 2026-06-12 UC-3): the exhaustion CAUSE must survive
+// the same string boundary the prefix does, so the degraded reply can branch
+// its advice ("narrow the ask" was misleading when the offender was a
+// persisted oversized HISTORY message — the ask was tiny).
+describe("ContextExhaustionError cause tag round-trip (Issue 6)", () => {
+  it("oversized_input survives constructor → message → parseContextExhaustionCause", () => {
+    const err = new ContextExhaustionError(32000, 48000, undefined, "oversized_input");
+    expect(parseContextExhaustionCause(err.message)).toBe("oversized_input");
+    // The prefix contract is untouched by the tag.
+    expect(isContextExhaustionErrorMessage(err.message)).toBe(true);
+  });
+
+  it("oversized_history_message survives the round-trip", () => {
+    const err = new ContextExhaustionError(32000, 48000, undefined, "oversized_history_message");
+    expect(parseContextExhaustionCause(err.message)).toBe("oversized_history_message");
+  });
+
+  it("aggregate stays UNMARKED — the historical message shape is byte-identical", () => {
+    const tagged = new ContextExhaustionError(32000, 30525, undefined, "aggregate");
+    const historical = new ContextExhaustionError(32000, 30525);
+    expect(tagged.message).toBe(historical.message);
+    expect(tagged.message).not.toContain("[cause:");
+    expect(parseContextExhaustionCause(tagged.message)).toBe("aggregate");
+  });
+
+  it("parse is tolerant of undefined / untagged / unrelated strings (→ aggregate)", () => {
+    expect(parseContextExhaustionCause(undefined)).toBe("aggregate");
+    expect(parseContextExhaustionCause("")).toBe("aggregate");
+    expect(parseContextExhaustionCause("Unknown LLM error")).toBe("aggregate");
+    expect(
+      parseContextExhaustionCause(
+        "Context exhausted: assembled 30525 tokens leaves no room in effective window 32000",
+      ),
+    ).toBe("aggregate");
   });
 });

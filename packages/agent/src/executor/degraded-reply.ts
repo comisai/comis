@@ -9,6 +9,8 @@
  * @module
  */
 
+import type { ContextExhaustionCause } from "../context-engine/errors.js";
+
 // ---------------------------------------------------------------------------
 // output_starved — APPEND to the truncated partial text.
 //
@@ -49,6 +51,23 @@ const CAP_KNOB_BY_CLASS: Record<string, string> = {
   nano: "contextEngine.budget.effectiveContextCapNano",
 };
 
+/** Issue-6: the cause-specific lead sentence. "narrow the ask" is correct ONLY
+ *  for the oversized-input cause; for an oversized HISTORY message it pointed
+ *  the operator the wrong way (the ask was tiny — the offender was a persisted
+ *  earlier message only a session reset can clear). `aggregate` has no lead —
+ *  the knob/generic advice below is the whole story (byte-identical to the
+ *  historical reply). */
+const CAUSE_LEAD: Record<ContextExhaustionCause, string> = {
+  oversized_input:
+    "Your message alone is larger than this model's context window — send a " +
+    "shorter message or split it into parts. ",
+  oversized_history_message:
+    "A previous message in this session exceeds this model's context window, " +
+    "so every new turn overflows regardless of its size — reset the session " +
+    "to clear it. ",
+  aggregate: "",
+};
+
 /** Optional context for the synthesized context-exhausted reply (W4). */
 export interface ContextExhaustedReplyOpts {
   /** The model's capabilityClass — "small"/"nano" name the exact cap knob to raise. */
@@ -56,6 +75,9 @@ export interface ContextExhaustedReplyOpts {
   /** The turn's traceId — appended as an incident ref so the operator (or an LLM
    *  agent) can run `comis explain <traceId>` directly from the chat message. */
   traceId?: string;
+  /** Issue-6: why the fit failed — branches the advice so it names the remedy
+   *  that actually applies. Omitted/aggregate → the historical reply. */
+  cause?: ContextExhaustionCause;
 }
 
 /**
@@ -74,15 +96,23 @@ export function buildOutputStarvedAnnotation(): string {
  * byte-identical.
  */
 export function buildContextExhaustedReply(opts?: ContextExhaustedReplyOpts): string {
+  const cause: ContextExhaustionCause = opts?.cause ?? "aggregate";
   const knob =
     opts?.capabilityClass !== undefined ? CAP_KNOB_BY_CLASS[opts.capabilityClass] : undefined;
+  // Issue-6: "narrowing the ask" only belongs in the advice when the ask (or
+  // the aggregate) is actually the problem — for an oversized history message
+  // it is the misleading clause the live incident surfaced.
   const advice =
     knob !== undefined
-      ? `Try raising ${knob} (0 = uncapped), reducing the agent's active tools, or narrowing the ask.`
-      : CONTEXT_EXHAUSTED_GENERIC_ADVICE;
+      ? cause === "oversized_history_message"
+        ? `Alternatively raise ${knob} (0 = uncapped).`
+        : `Try raising ${knob} (0 = uncapped), reducing the agent's active tools, or narrowing the ask.`
+      : cause === "oversized_history_message"
+        ? "Alternatively raise the agent's context engine settings."
+        : CONTEXT_EXHAUSTED_GENERIC_ADVICE;
   const incidentRef =
     opts?.traceId !== undefined && opts.traceId.length > 0 ? ` (incident ${opts.traceId})` : "";
-  return CONTEXT_EXHAUSTED_BASE + advice + incidentRef;
+  return CONTEXT_EXHAUSTED_BASE + CAUSE_LEAD[cause] + advice + incidentRef;
 }
 
 /**

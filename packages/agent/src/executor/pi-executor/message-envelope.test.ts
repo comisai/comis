@@ -183,8 +183,24 @@ describe("handleEnvelopeException", () => {
     // Must map to context_exhausted so END_REASON_MAP fires the correct degradation cause
     expect(result.finishReason).toBe("context_exhausted");
     expect(result.response).toContain("conversation history");
-    // errorContext must NOT be set (context_exhausted is a clean escalation, not an unclassified error)
-    expect(result.errorContext).toBeUndefined();
+    // Issue-6: errorContext now carries the exhaustion message (the `[cause: …]`
+    // tag rides originalError so postExecution can branch the degraded reply's
+    // advice) — but the clean-escalation contract holds: the type is the named
+    // "ContextExhaustion" (never the generic "UnexpectedError" classification)
+    // and the finishReason above is context_exhausted, not "error".
+    expect(result.errorContext).toMatchObject({
+      errorType: "ContextExhaustion",
+      retryable: false,
+    });
+    expect(result.errorContext?.originalError).toContain("Context exhausted");
+  });
+
+  it("Issue-6: the exhaustion CAUSE tag survives into errorContext.originalError for the degraded-reply branch", () => {
+    const result = makeResult();
+    const err = new ContextExhaustionError(32_768, 48_000, undefined, "oversized_history_message");
+    handleEnvelopeException({ result }, makeDeps(), { error: err, sessionKey: result.sessionKey, agentId: "a1", executionStartMs: 0 });
+    expect(result.finishReason).toBe("context_exhausted");
+    expect(result.errorContext?.originalError).toContain("[cause: oversized_history_message]");
   });
 
   it("CR-01: ContextExhaustionError user-facing message does not expose internal details", () => {
