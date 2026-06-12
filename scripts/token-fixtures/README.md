@@ -6,8 +6,10 @@ counts the ~180-string multilingual corpus (`corpus.mjs` — 9 scripts ×
 writes the result to `packages/core/src/text/__fixtures__/token-counts.json`.
 
 That committed JSON is the durable deliverable: the offline conservativeness
-suite (`packages/core/src/text/token-factor.test.ts`, plan 179-05) asserts
-`estimate >= worst measured tokenizer count` against it forever. "Factors
+suite (`packages/agent/src/safety/token-conservativeness.test.ts`, plan
+179-05 — agent-side placement is a documented plan deviation in that file's
+header) asserts `estimate >= worst measured tokenizer count` against it
+forever; core's `token-factor.test.ts` is the unit pin suite. "Factors
 asserted without measurement are the same failure class as the unverified
 3.5" (`context-engine/constants.ts`'s own history).
 
