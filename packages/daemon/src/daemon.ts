@@ -1004,6 +1004,10 @@ function buildRpcDispatchDeps(deps: {
     // 161-02: ObservabilityApiDeps.clock = the SAME boot ClockPort (one createSystemClock()
     // at the composition root) so the obs.fleet.health assembler has a clock (asserts deps.clock!).
     obsStore: c.obsStore, clock: c.clock, startupTimestamp: startupStartMs, sharedCostTracker: c.sharedCostTracker,
+    // obs.getCacheStats reads deps.tokenTracker for the in-memory hit-rate/effectiveness;
+    // without this it fell to the `!deps.tokenTracker` branch and returned a silent 0/0
+    // forever, even at an 85% live hit rate (live cache-management finding, 2026-06-12).
+    tokenTracker: c.tokenTracker,
     contextPipelineCollector: c.contextPipelineCollector, execGit: c.execGit,
     deliveryQueue: c.deliveryQueue, deliveryService: c.deliveryService,
     channelPlugins: c.channelPlugins, healthMonitor: c.channelHealthMonitor,
