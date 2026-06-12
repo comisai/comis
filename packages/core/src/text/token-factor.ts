@@ -18,6 +18,7 @@
  * @module
  */
 import { classifyCodepointToRow } from "./script-classes.js";
+import type { ScriptClassRow } from "./script-classes.js";
 
 /**
  * Harmonic share-weighted token factor in (0, 1]; returns 1.0 for
@@ -25,9 +26,35 @@ import { classifyCodepointToRow } from "./script-classes.js";
  * UTF-16 code units (matching the `.length` the estimators divide), weighted
  * per table ROW (not per class) so combining-mark rows carry their own,
  * lower factor than the letter rows of the same class.
+ *
+ * Why arithmetic mean is forbidden: tokens add per-class, so
+ * `len/(R*f)` must equal `sum(len_i/(R*f_i))` — i.e. `1/f = sum(share_i/f_i)`
+ * (harmonic). Probe evidence: the mixed he+latin design string measured 15
+ * qwen tokens — harmonic estimates 15 exactly, arithmetic estimates 14
+ * (under-count) [179-RESEARCH Pattern 3, 2026-06-12].
  */
 export function scriptTokenFactor(text: string): number {
-  void text;
-  void classifyCodepointToRow;
-  throw new Error("not implemented");
+  // One O(n) pass accumulating per-ROW UTF-16-unit counts (rows, not classes —
+  // the marks rows carry different factors than their letter rows).
+  const rowUnits = new Map<ScriptClassRow, number>();
+  let totalUnits = 0;
+  for (const ch of text) {
+    const cp = ch.codePointAt(0) ?? 0;
+    const row = classifyCodepointToRow(cp);
+    if (row === null) continue; // neutral ASCII — excluded from shares
+    rowUnits.set(row, (rowUnits.get(row) ?? 0) + ch.length);
+    totalUnits += ch.length;
+  }
+  if (totalUnits === 0) return 1;
+  // Single contributing row: return its factor exactly (avoids the FP
+  // round-trip drift of 1/(1/f) so single-class pins hold strictly).
+  if (rowUnits.size === 1) {
+    for (const row of rowUnits.keys()) return row.tokenFactor;
+  }
+  // HARMONIC per-class summation: 1/f = sum(share_i / f_i).
+  let inv = 0;
+  for (const [row, units] of rowUnits) {
+    inv += units / totalUnits / row.tokenFactor;
+  }
+  return Math.min(1, 1 / inv);
 }
