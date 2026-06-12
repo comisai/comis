@@ -5942,7 +5942,7 @@ describe("ExcludeDeferralResult wiring", () => {
       expect(decoded).toEqual({ query: "foo & bar <baz>" });
     });
 
-    it("does NOT set prepareArguments when provider is not xai", async () => {
+    it("sets a universal prepareArguments (F-3 coercer; identity no-op) even when provider is not xai", async () => {
       const mockTool = {
         name: "anthropic_tool",
         label: "Anthropic Tool",
@@ -5970,7 +5970,11 @@ describe("ExcludeDeferralResult wiring", () => {
         (t: any) => t.name === "anthropic_tool",
       );
       expect(testToolInSession).toBeDefined();
-      expect(testToolInSession).not.toHaveProperty("prepareArguments");
+      // F-3: every tool now carries the universal stringified-JSON coercer via
+      // prepareArguments (no xAI html-entity decode for a non-xai provider). On an
+      // empty-properties schema it is an identity no-op.
+      expect(testToolInSession).toHaveProperty("prepareArguments");
+      expect(testToolInSession.prepareArguments({ a: "1" })).toEqual({ a: "1" });
     });
   });
 

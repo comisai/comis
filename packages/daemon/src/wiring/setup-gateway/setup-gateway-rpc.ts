@@ -39,6 +39,7 @@ import {
   deriveTrustLevel,
   detectGreetingTrigger,
   handleConfigChatCommand,
+  resolveExecAgentId,
 } from "./setup-gateway-admin.js";
 
 /**
@@ -264,24 +265,8 @@ export function buildRpcAdapterDeps(deps: RpcAdapterBuilderDeps): RpcAdapterDeps
   return {
     isValidAgentId: (agentId: string) => !!agents[agentId],
     executeAgent: async (params) => {
-      // Resolve agent ID from params. An ABSENT agentId defaults (intended);
-      // an explicit but UNKNOWN agentId is an ERROR, not a silent fallback.
-      // Live finding (F-1, 2026-06-12): falling back to default on an unknown
-      // agentId meant a request addressed to a local $0 model (e.g. "qwen35")
-      // was silently answered — and billed — by the paid default provider, with
-      // no signal to the caller. Fail honestly before any execution or spend.
-      const rawAgentId = (params as Record<string, unknown>).agentId as string | undefined;
-      if (rawAgentId !== undefined && !agents[rawAgentId]) {
-        // clientFacing: this is a deterministic caller error (a typo'd / non-
-        // existent agentId), safe and useful to surface verbatim — the gateway's
-        // handleAgentRequest forwards clientFacing messages instead of masking
-        // them as the generic "Internal error" used for provider/internal faults.
-        throw Object.assign(
-          new Error(`unknown agent: ${rawAgentId} (available: ${Object.keys(agents).join(", ")})`),
-          { clientFacing: true },
-        );
-      }
-      const execAgentId = rawAgentId ?? defaultAgentId;
+      // F-1: unknown agentId errors (clientFacing) vs silent paid-default fallback; absent defaults.
+      const execAgentId = resolveExecAgentId(agents, (params as Record<string, unknown>).agentId as string | undefined, defaultAgentId);
       const connectionId = (params as Record<string, unknown>).connectionId as string | undefined;
 
       // Trust level from token scopes: admin/wildcard → admin, else user (fail-closed).
