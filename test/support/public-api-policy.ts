@@ -1879,8 +1879,8 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // SCRIPT_CLASSES + the three classifier functions ship dark in 179
       // (zero-behavior-change success criterion); consumers land in
       // Phase 180 (FTS routing, obs event classes) and Phase 181
-      // (reply-language resolver). scriptTokenFactor gains its @comis/agent
-      // estimator consumer in plan 179-03 (entry removed there).
+      // (reply-language resolver). The token-factor function gained its
+      // @comis/agent estimator consumers in plan 179-03 (entry removed there).
       // Shrink each entry as a real in-repo production caller lands.
       "SCRIPT_CLASSES",
       "ScriptClass",
@@ -1888,7 +1888,6 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "classifyCodepoint",
       "scriptShares",
       "dominantScript",
-      "scriptTokenFactor",
     ])],
     // @comis/daemon: baseline orphans tracked here. All three
     // value-side root re-exports (createAnnouncementDeadLetterQueue,
