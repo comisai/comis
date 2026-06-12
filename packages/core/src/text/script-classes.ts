@@ -67,19 +67,24 @@ export const SCRIPT_CLASSES: ReadonlyArray<ScriptClassRow> = [
   },
   {
     // hebrew letters — block + presentation forms.
-    // unpointed chat Hebrew measured 2.71 chars/token → implied max 0.679;
-    // conservative 0.55 (probe 2026-06-12).
+    // unpointed chat Hebrew measured 2.71 chars/token → implied max 0.679
+    // (probe 2026-06-12); shipped 0.55. The TOK-02 corpus held for every
+    // pure-Hebrew entry (worst implied 0.600) but the MIXED entry he_mixed_04
+    // violated through the harmonic blend with latin LOCKED at 1.0 — implied
+    // letters bound 0.5016 — lowered by TOK-02 corpus, 2026-06-12
+    // (same-commit rule, plan 179-05).
     class: "hebrew",
     ranges: [
       [0x0590, 0x05ff], // Hebrew block
       [0xfb1d, 0xfb4f], // Alphabetic Presentation Forms (Hebrew subset)
     ],
-    tokenFactor: 0.55,
+    tokenFactor: 0.5,
   },
   {
     // arabic MARKS — harakat/tanween + superscript alef.
     // Same byte-level BPE behavior as Hebrew niqqud (≈ 1 token per mark) → 0.1;
-    // refined by scripts/token-fixtures.
+    // TOK-02 corpus measured the harakat entries at 1.26 chars/token aggregate
+    // (2026-06-12) — 0.1 holds; refined by scripts/token-fixtures.
     class: "arabic",
     ranges: [
       [0x064b, 0x065f], // harakat + tanween
@@ -104,6 +109,8 @@ export const SCRIPT_CLASSES: ReadonlyArray<ScriptClassRow> = [
   {
     // latin — A–Z, a–z, Latin-1 letters excl. × U+00D7 / ÷ U+00F7,
     // Extended-A/B, Extended Additional.
+    // TOK-02 corpus measured en at 5.16 chars/token aggregate, worst entry
+    // implied max 1.150 (2026-06-12) — 1.0 holds with margin.
     // 1.0 LOCKED — I1 Latin byte-identity; never lower.
     class: "latin",
     ranges: [
@@ -117,14 +124,17 @@ export const SCRIPT_CLASSES: ReadonlyArray<ScriptClassRow> = [
     tokenFactor: 1.0,
   },
   {
-    // cyrillic — measured 3.32 chars/token → implied max 0.831;
-    // conservative 0.75 (probe 2026-06-12).
+    // cyrillic — single-sentence probe measured 3.32 chars/token → implied
+    // max 0.831 → shipped 0.75 (probe 2026-06-12). The TOK-02 corpus measured
+    // 13 ru chat/mixed violations (worst ru_chat_14 at 2.39 chars/token,
+    // implied max 0.598) — lowered by TOK-02 corpus, 2026-06-12
+    // (same-commit rule, plan 179-05).
     class: "cyrillic",
     ranges: [
       [0x0400, 0x04ff], // Cyrillic
       [0x0500, 0x052f], // Cyrillic Supplement
     ],
-    tokenFactor: 0.75,
+    tokenFactor: 0.59,
   },
   {
     // greek — measured 1.12 chars/token → implied max 0.279 (design's 0.8
