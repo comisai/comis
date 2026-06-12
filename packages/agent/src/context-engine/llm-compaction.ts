@@ -28,7 +28,7 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Message } from "@earendil-works/pi-ai";
 import { generateSummary } from "@earendil-works/pi-coding-agent";
-import { systemNowMs } from "@comis/core";
+import { systemNowMs, scriptTokenFactor } from "@comis/core";
 import type { ContextLayer, TokenBudget, CompactionLayerDeps } from "./types.js";
 import type { CapabilityClass } from "../executor/model-profile.js";
 import { resolveCompactionStrategy } from "./compaction-capability-router.js";
@@ -281,6 +281,43 @@ function estimateRangeChars(
   return total;
 }
 
+/**
+ * TOK-01 (Phase 179): the text of one message used to compute its
+ * scriptTokenFactor at the SUMW-01 span-clamp walk — string content, or for
+ * array content the concatenated text/thinking fields plus JSON.stringify of
+ * toolCall arguments, mirroring what estimateContextCharsWithDualRatio counts.
+ * A plain concat is sufficient for the FACTOR; the dual-ratio CHAR COUNT stays
+ * authoritative and untouched (image/unknown blocks contribute flat synthetic
+ * chars there and need no factor input here).
+ */
+function clampFactorText(m: AgentMessage): string {
+  const content = (m as { content?: unknown }).content;
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  let out = "";
+  for (const block of content) {
+    if (typeof block === "string") {
+      out += block;
+      continue;
+    }
+    if (block === null || typeof block !== "object") continue;
+    const b = block as { type?: string; text?: string; thinking?: string; arguments?: unknown };
+    if (typeof b.text === "string") {
+      out += b.text;
+    } else if (typeof b.thinking === "string") {
+      out += b.thinking;
+    } else if (b.type === "toolCall") {
+      try {
+        out += JSON.stringify(b.arguments ?? {});
+      } catch {
+        // Unstringifiable args contribute no factor text (the char walk's
+        // TOOL_STRINGIFY_FALLBACK still counts them flat).
+      }
+    }
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
@@ -526,12 +563,19 @@ export function createLlmCompactionLayer(
           // divide) — a flat chars/3.5 walk under-counts structured content by
           // ~15-17%, re-opening the provider-overflow class on toolResult-heavy
           // middles. One estimator per layer (single-sourced with the trigger).
+          // TOK-01 (Phase 179): the divisor is modulated by scriptTokenFactor
+          // over the message's extracted text — a Hebrew message carries ~1.8×
+          // the tokens the flat measure admits, the same under-count class the
+          // WR-04 dual-ratio fix closed for toolResults. The dual-ratio CHAR
+          // walk stays authoritative (ASCII factor 1.0 → byte-identical cut).
           let spanTokens = 0;
           let cut = 0;
           for (const m of evictableMiddle) {
+            const factorText = clampFactorText(m);
             /* eslint-disable @typescript-eslint/no-explicit-any */
             const msgTokens = Math.ceil(
-              estimateContextCharsWithDualRatio([m] as any) / CHARS_PER_TOKEN_RATIO,
+              estimateContextCharsWithDualRatio([m] as any) /
+                (CHARS_PER_TOKEN_RATIO * scriptTokenFactor(factorText)),
             );
             /* eslint-enable @typescript-eslint/no-explicit-any */
             if (spanTokens + msgTokens > maxSpanTokens) break;

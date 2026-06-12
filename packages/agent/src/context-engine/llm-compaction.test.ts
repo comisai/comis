@@ -1798,6 +1798,7 @@ describe("S4: security context pinning (pipeline layer)", () => {
 // ---------------------------------------------------------------------------
 
 import type { Message } from "@earendil-works/pi-ai";
+import { scriptTokenFactor } from "@comis/core";
 import { estimateMessageChars, estimateContextCharsWithDualRatio } from "../safety/token-estimator.js";
 import { CHARS_PER_TOKEN_RATIO } from "./constants.js";
 
@@ -2253,5 +2254,102 @@ describe("SUMW-01: pipeline span clamp", () => {
       estimateContextCharsWithDualRatio(current as unknown as Message[]) / CHARS_PER_TOKEN_RATIO,
     );
     expect(finalTokens).toBeLessThanOrEqual(Math.floor(32_000 * 85 / 100));
+  });
+
+  // -------------------------------------------------------------------------
+  // TOK-01 (Phase 179): the per-message clamp walk must be script-aware. The
+  // flat dual-chars/3.5 measure under-counts a Hebrew message by ~1.8×, so a
+  // Hebrew-heavy span passes the walk at ~0.55× its honest size and overflows
+  // the summarizer — the SAME failure class WR-04 above closed for toolResults,
+  // recurring on dense scripts. The dual-ratio CHAR walk stays authoritative;
+  // only the divisor gains the per-message script factor.
+  // -------------------------------------------------------------------------
+
+  /** Mirror of the production clamp's per-message factor text: string content,
+   *  or concatenated text/thinking fields + JSON.stringify of toolCall args. */
+  function clampTextOf(m: AgentMessage): string {
+    const content = (m as { content?: unknown }).content;
+    if (typeof content === "string") return content;
+    if (!Array.isArray(content)) return "";
+    return content
+      .map((b: unknown) => {
+        if (typeof b === "string") return b;
+        if (b === null || typeof b !== "object") return "";
+        const block = b as { type?: string; text?: string; thinking?: string; arguments?: unknown };
+        if (typeof block.text === "string") return block.text;
+        if (typeof block.thinking === "string") return block.thinking;
+        if (block.type === "toolCall") {
+          try {
+            return JSON.stringify(block.arguments ?? {});
+          } catch {
+            return "";
+          }
+        }
+        return "";
+      })
+      .join("");
+  }
+
+  it("TOK-01: a Hebrew-heavy middle is clamped script-aware — every summarized span fits the budget in FACTORED units", async () => {
+    // Pre-patch: the prefix walk admits ~3 × 4_200-char Hebrew messages (flat
+    // ≈ 1_200 tokens each) under the 3_952 budget, but their factored size is
+    // ≈ 2_182 tokens each → the span overflows the summarizer ~1.8× → RED.
+    const he = "שלום עולם זה מבחן ארוך מאוד לבדיקת חלוקה ";
+    const messages: AgentMessage[] = [];
+    for (let i = 0; i < 15; i++) {
+      messages.push(makeUserMsg(he.repeat(100)));      // ~4_200 Hebrew chars
+      messages.push(makeAssistantMsg(he.repeat(100)));
+    }
+    const { deps } = make8kOverrideDeps();
+    const layer = createLlmCompactionLayer({ compactionCooldownTurns: 5 }, deps);
+    mockGenerateSummary.mockResolvedValue(buildValidSummary());
+
+    await layer.apply(messages, smallBudget);
+
+    expect(mockGenerateSummary).toHaveBeenCalled();
+    // EVERY summarize call's span fits maxSpanTokens measured script-aware —
+    // per-message ceil(dualChars / (3.5 × scriptTokenFactor(text))), summed,
+    // exactly mirroring the factored walk.
+    for (const call of mockGenerateSummary.mock.calls) {
+      const span = call[0] as AgentMessage[];
+      const factoredTokens = span.reduce((sum, m) => {
+        const text = clampTextOf(m);
+        return (
+          sum +
+          Math.ceil(
+            estimateContextCharsWithDualRatio([m] as unknown as Message[]) /
+              (CHARS_PER_TOKEN_RATIO * scriptTokenFactor(text)),
+          )
+        );
+      }, 0);
+      expect(factoredTokens).toBeLessThanOrEqual(MAX_SPAN_TOKENS_8K);
+    }
+  });
+
+  it("TOK-01 I1: a pure-ASCII middle clamps at the byte-identical flat cut point (factor 1.0 — Latin unchanged)", async () => {
+    // The Latin guarantee: scriptTokenFactor(ascii) === 1 → the factored walk IS
+    // today's flat walk. Mirror the production prefix walk with TODAY'S flat
+    // math; the admitted span must be exactly that cut.
+    const { deps } = make8kOverrideDeps();
+    const layer = createLlmCompactionLayer({ compactionCooldownTurns: 5 }, deps);
+    const messages = buildSpanClampConversation();
+    const tailStart = mirrorTailStartIndex(messages, smallBudget);
+    const middle = messages.slice(0, tailStart);
+    mockGenerateSummary.mockResolvedValue(buildValidSummary());
+
+    await layer.apply(messages, smallBudget);
+
+    let walkedTokens = 0;
+    let expectedCut = 0;
+    for (const m of middle) {
+      const t = Math.ceil(
+        estimateContextCharsWithDualRatio([m] as unknown as Message[]) / CHARS_PER_TOKEN_RATIO,
+      );
+      if (walkedTokens + t > MAX_SPAN_TOKENS_8K) break;
+      walkedTokens += t;
+      expectedCut++;
+    }
+    const spanArg = mockGenerateSummary.mock.calls[0][0] as AgentMessage[];
+    expect(spanArg.length).toBe(expectedCut);
   });
 });
