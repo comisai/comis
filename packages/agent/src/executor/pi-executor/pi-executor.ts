@@ -1453,6 +1453,10 @@ async function runSessionLocked(
     nodeId: executionOverrides?.nodeId,
     // Pass sub-agent's active tool groups for "Tool X not found" enrichment
     activeToolGroups: executionOverrides?.activeToolGroups,
+    // F-13: the assembled tool names, so a "Tool X not found" error can suggest the
+    // closest real tool when a small model hallucinates a name (e.g. an mcp__-prefixed
+    // guess for a builtin). Names only — no schemas/secrets.
+    allToolNames: mergedCustomTools.map((t) => t.name),
     onCacheBreakDetected: capturedBridgeRetention
       ? (event) => {
           if (event.reason === "lookback_window_exceeded") {
