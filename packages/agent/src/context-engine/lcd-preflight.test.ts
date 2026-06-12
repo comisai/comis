@@ -801,3 +801,67 @@ describe("TOK-01: script-aware freshTail token accounting", () => {
     expect(payload.freshTailTokens).toBe(expected);
   });
 });
+
+// ---------------------------------------------------------------------------
+// TOK-01 (Phase 179, plan 179-05) — CONTRACT test, NO RED claim: the preflight
+// itself is unchanged by plan 179-05 (these pass pre-patch by design). This
+// documents the boundary the assembler's read-time max(stored, factored-live)
+// relies on: BudgetItem.tokens is the preflight's ONLY history-token authority,
+// so flat stored under-counts slip under headroomBound silently, while the
+// SAME conversation at factored counts crosses the bound and the exhaustion
+// ladder engages. Hand-built items are legitimate HERE (and only here): the
+// contract under pin is the preflight's consumption of item.tokens, not the
+// assembler's construction of it (that end-to-end RED lives in
+// lcd-assembler.test.ts). Also pins the 179-04 freshTail-factoring interaction
+// at the small cap: the Hebrew fresh tail is factored in BOTH cases.
+// ---------------------------------------------------------------------------
+describe("contract: flat stored counts slip under the small cap where the SAME items at factored counts engage the ladder (TOK-01)", () => {
+  // A pure-Hebrew chat sentence (letters + neutral spaces), ~3485 chars total.
+  const HE = "שלום עולם זה מבחן ארוך מאוד לבדיקת חלוקה ".repeat(85);
+
+  it("hand-built flat-count budget items pass the fit check at the small cap (the silent pre-phase state)", () => {
+    // effectiveWindow 32000, "none" style → headroomBound = 32000 − 768 = 31232.
+    // 25 items × 1000 flat tokens + the factored Hebrew freshTail (~1.8K) stays
+    // under the bound → verdict "fits", no throw.
+    const emit = vi.fn();
+    const onAssembledInputTokens = vi.fn();
+    const deps = makeDeps({
+      getThinkingLevel: () => "medium",
+      onEffectiveWindow: vi.fn(),
+      onAssembledInputTokens,
+      eventBus: { emit } as unknown as ContextEngineDeps["eventBus"],
+    });
+    const flatItems = makeBudgetItems(25, 1_000); // 25_000 stored (flat) history tokens
+    const freshTail = [{ role: "user", content: HE }];
+    expect(() =>
+      runPreflightFitCheck(deps, 32_000, flatItems, 25, freshTail as never, "none"),
+    ).not.toThrow();
+
+    // The freshTail term is FACTORED (179-04) in both cases — pin the sum.
+    const heTokens = Math.ceil(HE.length / (CHARS_PER_TOKEN_RATIO * scriptTokenFactor(HE)));
+    expect(onAssembledInputTokens.mock.calls[0]?.[0]).toBe(25_000 + heTokens);
+    const payload = emit.mock.calls.find((c) => c[0] === "context:budget_computed")?.[1] as {
+      verdict: string;
+    };
+    expect(payload.verdict).toBe("fits");
+  });
+
+  it("the SAME items lifted to factored counts cross headroomBound and the ladder engages (ContextExhaustionError)", () => {
+    // The same 25 stored rows, now carrying what the assembler max() would
+    // construct for Hebrew text whose flat count was 1000: ceil(1000 / factor)
+    // ≈ 1.8x. The factored sum (~45K) + the factored freshTail crosses the
+    // 31232 bound; with "none" style the ladder is the loud throw.
+    const deps = makeDeps({
+      getThinkingLevel: () => "medium",
+      onEffectiveWindow: vi.fn(),
+      onAssembledInputTokens: vi.fn(),
+      eventBus: { emit: vi.fn() } as unknown as ContextEngineDeps["eventBus"],
+    });
+    const liftedTokens = Math.ceil(1_000 / scriptTokenFactor(HE)); // factored-live for a 1000-flat Hebrew row
+    const factoredItems = makeBudgetItems(25, liftedTokens);
+    const freshTail = [{ role: "user", content: HE }];
+    expect(() =>
+      runPreflightFitCheck(deps, 32_000, factoredItems, 25, freshTail as never, "none"),
+    ).toThrow(ContextExhaustionError);
+  });
+});
