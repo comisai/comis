@@ -294,6 +294,68 @@ describe("buildRpcAdapterDeps getConfig non-secret allowlist", () => {
   });
 });
 
+describe("buildRpcAdapterDeps executeAgent unknown-agent guard", () => {
+  // Live finding (2026-06-12, 30-UC run, F-1): agent.execute with an explicit
+  // but UNKNOWN agentId silently fell back to the default agent — so a request
+  // addressed to a local $0 model (e.g. "qwen35") was answered by the paid
+  // default provider with NO indication of the substitution. Silent cross-provider
+  // spend + a routing-integrity hole (an operator typo bills the wrong model).
+  // An ABSENT agentId must still default (intended); an explicit UNKNOWN one must
+  // error before any execution/spend.
+  async function makeExecDeps(agents: Record<string, unknown>) {
+    const mod = await import("./setup-gateway-rpc.js");
+    const getExecutor = vi.fn(() => ({ execute: vi.fn(async () => ({ response: "x", tokensUsed: { input: 0, output: 0, total: 0 }, finishReason: "stop", cost: { total: 0 }, stepsExecuted: 0, llmCalls: 0 })) }));
+    const container = { config: { tenantId: "t" }, eventBus: { emit: vi.fn() } } as unknown as Parameters<typeof mod.buildRpcAdapterDeps>[0]["container"];
+    const deps = mod.buildRpcAdapterDeps({
+      container,
+      gwConfig: {} as never,
+      agents: agents as never,
+      defaultAgentId: "default",
+      gatewayLogger: createMockLogger() as never,
+      memoryApi: {} as never,
+      sessionStore: { load: () => undefined, save: () => {} } as never,
+      getExecutor: getExecutor as never,
+      assembleToolsForAgent: (async () => []) as never,
+      preprocessMessageText: (async (t: string) => t) as never,
+      rpcCall: (async () => ({})) as never,
+      costTrackers: new Map() as never,
+      workspaceDirs: new Map() as never,
+      activeExecutions: new Map() as never,
+    });
+    return { executeAgent: deps.executeAgent, getExecutor };
+  }
+
+  const baseParams = { message: "hi", scopes: ["*"], sessionKey: { userId: "u", channelId: "c", peerId: "p" } };
+
+  it("rejects an explicit unknown agentId without executing (no silent fallback, no spend)", async () => {
+    const { executeAgent, getExecutor } = await makeExecDeps({ default: { name: "d" } });
+    await expect(
+      executeAgent({ ...baseParams, agentId: "qwen35" } as never),
+    ).rejects.toThrow(/unknown agent: qwen35/);
+    // The fallback executed the default agent (billing) before this fix.
+    expect(getExecutor).not.toHaveBeenCalled();
+  });
+
+  it("names the available agents in the error to aid the caller", async () => {
+    const { executeAgent } = await makeExecDeps({ default: { name: "d" }, editor: { name: "e" } });
+    await expect(
+      executeAgent({ ...baseParams, agentId: "ghost" } as never),
+    ).rejects.toThrow(/available:.*default.*editor|available:.*editor.*default/);
+  });
+
+  it("still defaults when agentId is ABSENT (intended) and executes the default agent", async () => {
+    const { executeAgent, getExecutor } = await makeExecDeps({ default: { name: "d" } });
+    await executeAgent({ ...baseParams } as never);
+    expect(getExecutor).toHaveBeenCalledWith("default");
+  });
+
+  it("executes a known agentId unchanged", async () => {
+    const { executeAgent, getExecutor } = await makeExecDeps({ default: { name: "d" }, qwen35: { name: "q" } });
+    await executeAgent({ ...baseParams, agentId: "qwen35" } as never);
+    expect(getExecutor).toHaveBeenCalledWith("qwen35");
+  });
+});
+
 describe("setup-gateway-rpc source guard", () => {
   it("wires buildExecutionRequestedLogFields into the executeAgent log call and removes the raw-message logger pattern", async () => {
     // The executeAgent adapter that consumes buildExecutionRequestedLogFields
