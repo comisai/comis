@@ -307,6 +307,7 @@ export function pruneToolSchemas(
     return { ...tool, parameters: cloned } as ToolDefinition;
   });
 
+  // flat-by-design: chars-REMOVED aggregate stat (TOK-01)
   const estimatedTokensSaved = Math.ceil(
     totalCharsRemoved / CHARS_PER_TOKEN_RATIO,
   );

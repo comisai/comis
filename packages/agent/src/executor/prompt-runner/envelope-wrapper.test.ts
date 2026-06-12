@@ -21,6 +21,8 @@
 import { describe, it, expect, vi } from "vitest";
 import { wrapExternalContent } from "@comis/core";
 import { createOutputGuard } from "@comis/core";
+import { scriptTokenFactor } from "@comis/core";
+import { CHARS_PER_TOKEN_RATIO } from "../../context-engine/constants.js";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -95,6 +97,8 @@ function makeParams(overrides: {
   planRequest?: string;
   planSteps?: ExecutionPlan["steps"];
   msgText?: string;
+  /** TOK-01: inject a dynamic preamble so emitPreambleDebug estimates over it. */
+  dynamicPreamble?: string;
 }): RunPromptParams {
   const {
     scaffoldLevel = "max",
@@ -155,7 +159,7 @@ function makeParams(overrides: {
     effectiveTimeout: { promptTimeoutMs: 30000, retryPromptTimeoutMs: 30000 },
     executionId: "exec-1",
     bridge: { getResult: () => ({}) } as RunPromptParams["bridge"],
-    dynamicPreamble: undefined,
+    dynamicPreamble: overrides.dynamicPreamble,
     deferredContext: undefined,
     capabilityIndexResult: { text: "", capabilityIndexTokens: 0, clusterCount: 0, activeToolCount: 0, deferredToolCount: 0, promptSkillCount: 0 },
     inlineMemory: undefined,
@@ -462,5 +466,51 @@ describe("S7: OutputGuard canary oracle — image-borne instruction caught", () 
     const endIdx = wrappedHint.indexOf("<<<END_UNTRUSTED_");
     const innerContent = wrappedHint.slice(startIdx, endIdx);
     expect(innerContent).toContain("SYSTEM OVERRIDE");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TOK-01: script-aware preamble token estimate (179-06)
+// ---------------------------------------------------------------------------
+
+describe("TOK-01: emitPreambleDebug script-aware token estimate", () => {
+  it("reports fullPreambleTokens at or above the factored bound for a Hebrew dynamic preamble", () => {
+    // Pre-patch: fullPreambleTokens = ceil(len / 3.5) — Hebrew under-counted
+    // ~1.8x (chars/3.5 blindness) → this assertion FAILS on pre-patch code
+    // (RED). Post-patch the divisor is CHARS_PER_TOKEN_RATIO *
+    // scriptTokenFactor(text). The bound is computed via the imported
+    // scriptTokenFactor (not a hardcoded 0.55) so it tracks any future
+    // measured-factor lowering (TOK-02 same-commit rule).
+    const HEBREW_PREAMBLE =
+      "שלום עולם זהו טקסט עברי ארוך מאוד שנכתב כדי לבדוק את הערכת האסימונים בעברית";
+    const params = makeParams({ msgText: "do the thing", dynamicPreamble: HEBREW_PREAMBLE });
+    wrapEnvelope(params);
+
+    // makeLogger().child is mockReturnThis(), so the submodule logger IS the
+    // root mock — its debug calls are observable directly.
+    const logger = params.deps.logger as unknown as ReturnType<typeof makeLogger>;
+    const call = logger.debug.mock.calls.find((c) => c[1] === "Dynamic preamble assembled");
+    expect(call, "expected the 'Dynamic preamble assembled' DEBUG line to be emitted").toBeDefined();
+
+    // capabilityIndexResult.text is "" and deferredContext is undefined in
+    // makeParams, so fullDynamicPreamble === HEBREW_PREAMBLE exactly.
+    const payload = (call?.[0] ?? {}) as { fullPreambleTokens?: number };
+    const factoredBound = Math.ceil(
+      HEBREW_PREAMBLE.length / (CHARS_PER_TOKEN_RATIO * scriptTokenFactor(HEBREW_PREAMBLE)),
+    );
+    expect(payload.fullPreambleTokens ?? 0).toBeGreaterThanOrEqual(factoredBound);
+  });
+
+  it("keeps the pure-ASCII preamble estimate byte-identical to the flat formula (I1 pin)", () => {
+    // Factor 1.0 for pure ASCII — the factored divisor reduces to the
+    // pre-patch flat formula exactly. Passes pre- AND post-patch by design.
+    const ASCII_PREAMBLE = "Current date: 2026-06-12. Channel: discord. Plain ascii preamble text.";
+    const params = makeParams({ msgText: "do the thing", dynamicPreamble: ASCII_PREAMBLE });
+    wrapEnvelope(params);
+
+    const logger = params.deps.logger as unknown as ReturnType<typeof makeLogger>;
+    const call = logger.debug.mock.calls.find((c) => c[1] === "Dynamic preamble assembled");
+    const payload = (call?.[0] ?? {}) as { fullPreambleTokens?: number };
+    expect(payload.fullPreambleTokens).toBe(Math.ceil(ASCII_PREAMBLE.length / CHARS_PER_TOKEN_RATIO));
   });
 });

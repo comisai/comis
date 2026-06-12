@@ -17,7 +17,7 @@
 
 import type { ImageContent } from "@earendil-works/pi-ai";
 import type { ComisLogger, ErrorKind } from "@comis/core";
-import { wrapExternalContent } from "@comis/core";
+import { scriptTokenFactor, wrapExternalContent } from "@comis/core";
 
 import { parseUserTokenBudget } from "../../budget/budget-parser.js";
 import {
@@ -250,8 +250,12 @@ function emitPreambleDebug(
   deferredContext: string | undefined,
 ): void {
   const submoduleLogger = logger.child({ submodule: "executor.capability-index" });
-  const fullPreambleTokens = Math.ceil((fullDynamicPreamble ?? "").length / CHARS_PER_TOKEN_RATIO);
-  const deferredContextTokens = Math.ceil((deferredContext ?? "").length / CHARS_PER_TOKEN_RATIO);
+  // Script-factored estimates (TOK-01) — the preamble can carry non-Latin
+  // content (recalled memories, skills); numbers-only payload, no text logged.
+  const fullPreambleText = fullDynamicPreamble ?? "";
+  const deferredText = deferredContext ?? "";
+  const fullPreambleTokens = Math.ceil(fullPreambleText.length / (CHARS_PER_TOKEN_RATIO * scriptTokenFactor(fullPreambleText)));
+  const deferredContextTokens = Math.ceil(deferredText.length / (CHARS_PER_TOKEN_RATIO * scriptTokenFactor(deferredText)));
 
   submoduleLogger.debug(
     {

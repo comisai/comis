@@ -272,6 +272,7 @@ export function createLlmCompactionLayer(
           /* eslint-disable @typescript-eslint/no-explicit-any */
           const contextChars = estimateContextCharsWithDualRatio(messages as any);
           /* eslint-enable @typescript-eslint/no-explicit-any */
+          // flat-by-design: aggregate cold-start compare, no text in scope; anti-conservative for ONE unanchored turn — estimateWithAnchor self-corrects from turn 2 (TOK-01, design §4)
           const charBasedTokens = Math.ceil(contextChars / CHARS_PER_TOKEN_RATIO);
           const anchor = deps.getTokenAnchor?.() ?? null;
           contextTokens = estimateWithAnchor(anchor, messages as unknown as Message[], charBasedTokens);

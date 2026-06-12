@@ -498,6 +498,7 @@ export function createContextEngine(
         /* eslint-disable @typescript-eslint/no-explicit-any */
         const initialChars = estimateContextCharsWithDualRatio(messages as any);
         /* eslint-enable @typescript-eslint/no-explicit-any */
+        // flat-by-design: pipeline cold-start aggregate (same window as llm-compaction trigger; anchor self-corrects) (TOK-01)
         const charBasedTokens = Math.ceil(initialChars / CHARS_PER_TOKEN_RATIO);
         const anchor = deps.getTokenAnchor?.() ?? null;
         tokensLoaded = estimateWithAnchor(anchor, messages as unknown as Message[], charBasedTokens);
@@ -549,6 +550,7 @@ export function createContextEngine(
       } catch {
         // Estimation failure should not block the pipeline
       }
+      // flat-by-design: aggregate observability stat — numbers-only log, not budget math (TOK-01)
       const resultTokens = Math.ceil(resultChars / CHARS_PER_TOKEN_RATIO);
       const budgetUtilization = budget.availableHistoryTokens > 0
         ? resultTokens / budget.availableHistoryTokens
@@ -619,10 +621,13 @@ export function createContextEngine(
       }
 
       // Build metrics
+      // flat-by-design: aggregate observability stat — numbers-only log, not budget math (TOK-01)
       const tokensMasked = snap.masker ? Math.ceil(snap.masker.totalChars / CHARS_PER_TOKEN_RATIO) : 0;
       const tokensCompacted = snap.compaction
+        // flat-by-design: aggregate observability stat — numbers-only log, not budget math (TOK-01)
         ? Math.max(0, tokensLoaded - Math.ceil(resultChars / CHARS_PER_TOKEN_RATIO))
         : 0;
+      // flat-by-design: aggregate observability stat — numbers-only log, not budget math (TOK-01)
       const tokensEvicted = snap.evictor ? Math.ceil(snap.evictor.evictedChars / CHARS_PER_TOKEN_RATIO) : 0;
       const durationMs = systemNowMs() - pipelineStart;
 
@@ -694,7 +699,9 @@ export function createContextEngine(
           deps.eventBus.emit("context:overflow", {
             agentId,
             sessionKey,
+            // flat-by-design: aggregate observability stat — numbers-only log, not budget math (TOK-01)
             contextTokens: Math.ceil(snap.overflow.contextChars / CHARS_PER_TOKEN_RATIO),
+            // flat-by-design: aggregate observability stat — numbers-only log, not budget math (TOK-01)
             budgetTokens: Math.ceil(snap.overflow.budgetChars / CHARS_PER_TOKEN_RATIO),
             recoveryAction: snap.overflow.recoveryAction,
             timestamp,

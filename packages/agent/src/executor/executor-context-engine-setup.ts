@@ -711,8 +711,8 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
         deps.eventBus?.emit("context:overflow", {
           agentId: agentId ?? config.name,
           sessionKey: formattedKey,
-          contextTokens: Math.ceil(stats.contextChars / CHARS_PER_TOKEN_RATIO),
-          budgetTokens: Math.ceil(stats.budgetChars / CHARS_PER_TOKEN_RATIO),
+          contextTokens: Math.ceil(stats.contextChars / CHARS_PER_TOKEN_RATIO), // flat-by-design: aggregate stats logging (TOK-01)
+          budgetTokens: Math.ceil(stats.budgetChars / CHARS_PER_TOKEN_RATIO), // flat-by-design: aggregate stats logging (TOK-01)
           recoveryAction: stats.recoveryAction,
           timestamp: deps.clock.now(),
         });

@@ -119,6 +119,7 @@ export function computeShrinkBounds(
   renderedChars: number,
   configuredReserveTokens: number,
 ): { shrinkCeilingTokens: number; effectiveReserveTokens: number } {
+  // flat-by-design: shrink-ceiling convergence bound over aggregate renderedChars (correctness comes from the shrink loop, see docstring) (TOK-01)
   const shrinkCeilingTokens = Math.ceil(renderedChars / CHARS_PER_TOKEN);
   const effectiveReserveTokens = Math.min(
     configuredReserveTokens,
