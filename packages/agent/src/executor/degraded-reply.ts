@@ -126,5 +126,24 @@ export function buildDegradedReply(
 ): string | undefined {
   if (endReason === "output_starved") return buildOutputStarvedAnnotation();
   if (endReason === "context_exhausted") return buildContextExhaustedReply(opts);
+  if (endReason === "loop_detected") return buildLoopDetectedReply(opts);
   return undefined;
+}
+
+/**
+ * Honest reply for a turn the loop-guard stopped (F-15): the model kept repeating
+ * an action that made no progress (most often a tool that kept failing or was
+ * blocked) and was halted before it could run to the makespan ceiling. Used as an
+ * APPEND when partial text exists, or a REPLACE when the turn produced no usable
+ * text (a pure tool-loop). PURE: same opts → same string.
+ */
+export function buildLoopDetectedReply(opts?: ContextExhaustedReplyOpts): string {
+  const incidentRef =
+    opts?.traceId !== undefined && opts.traceId.length > 0 ? ` (incident ${opts.traceId})` : "";
+  return (
+    "I stopped because I kept repeating an action that wasn't making progress " +
+    "(usually a tool that failed or was blocked) and didn't want to loop. The " +
+    "request may need a different approach, or that capability isn't available here." +
+    incidentRef
+  );
 }

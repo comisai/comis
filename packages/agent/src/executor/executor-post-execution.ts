@@ -105,7 +105,7 @@ import { createHash, randomUUID } from "node:crypto";
 // R4: critic hook (no inline logic — all logic in verification-gate.ts)
 import { shouldRunCritic, runVerificationCritic } from "./verification-gate.js";
 // CWF-05: deterministic user-facing reply for named degraded terminal causes.
-import { buildOutputStarvedAnnotation, buildContextExhaustedReply } from "./degraded-reply.js";
+import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply } from "./degraded-reply.js";
 import { parseContextExhaustionCause } from "../context-engine/errors.js";
 import { buildSyntheticCriticDeps } from "./verification-gate-synth-deps.js";
 import { resolveScaffoldDefaults } from "./scaffold-defaults.js";
@@ -1314,6 +1314,20 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       "CWF-05: context_exhausted — synthesized honest reply delivered",
     );
   }
+  if (effectiveFinishReason === "loop_detected") {
+    // F-15: the loop-guard halted a no-progress repeat (e.g. a tool that kept
+    // failing/being blocked). APPEND an honest note when partial text exists,
+    // REPLACE when the turn produced none (a pure tool-loop) — never a silent empty.
+    const existing = (result.response ?? "").trim();
+    const loopReply = buildLoopDetectedReply(
+      tryGetContext()?.traceId !== undefined ? { traceId: tryGetContext()!.traceId } : undefined,
+    );
+    result.response = existing.length > 0 ? `${existing}\n\n${loopReply}` : loopReply;
+    deps.logger.warn(
+      { step: "degraded-reply", errorKind: "resource" as const, hint: "loop_detected synthesized reply" },
+      "CWF-05: loop_detected — synthesized honest reply delivered",
+    );
+  }
 
   // SD3 (Phase 158): resolve capability-gated verification default before the gate check.
   // modelProfile is not in scope at this layer — use a synthetic profile derived from
@@ -1352,6 +1366,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   const isDegradedTurn =
     effectiveFinishReason === "output_starved" ||
     effectiveFinishReason === "context_exhausted" ||
+    effectiveFinishReason === "loop_detected" ||
     effectiveFinishReason === "narration_stall";
   if (!isDegradedTurn && shouldRunCritic({ // R4: critic hook (WR-02: keyless-only gate)
     capabilityClass, config, executionPlanRef, provider,

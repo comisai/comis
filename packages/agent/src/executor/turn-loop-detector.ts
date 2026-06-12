@@ -104,6 +104,26 @@ function cacheKey(toolName: string, args: unknown): string {
 }
 
 /**
+ * True when a tool result represents a FAILURE / blocked call (F-15). The canonical
+ * signal is `isError: true`; we also catch content-gate / sandbox rejections that
+ * surface a marker but may not set the flag. A failed mutation makes NO progress —
+ * a small model looping on a doomed tool (e.g. exec repeatedly content-gate-rejected,
+ * varying the command to evade signature matching) must count toward the no-progress
+ * guard, or it runs to makespan instead of degrading honestly.
+ */
+function isFailureResult(result: unknown): boolean {
+  if (result === null || typeof result !== "object") return false;
+  // Canonical signal — the SDK / tools set isError on every failed or blocked call.
+  if ((result as { isError?: unknown }).isError === true) return true;
+  // Precise fallbacks for content-gate / validation rejections + failed exec that may
+  // surface a marker without the flag. Deliberately NOT matching ambiguous words like
+  // "not found"/"blocked"/"denied" — those appear in legitimate SUCCESSFUL tool output
+  // and would false-positive a real result into a no-progress step.
+  const s = canonicalize(result);
+  return /\[(invalid_value|validation)\]|Validation failed for tool|"exitCode":\s*[1-9]/.test(s);
+}
+
+/**
  * Construct a per-execution loop detector. One instance per run; closure-local
  * state only.
  */
@@ -132,11 +152,18 @@ export function createTurnLoopDetector(): TurnLoopDetector {
 
     recordCall(toolName, args, result): void {
       if (!isIdempotentRead(toolName)) {
-        // Mutation: invalidate the read cache (write-between-reads forces a
-        // real re-execution of the next read) and count as genuine progress.
+        // Mutation: invalidate the read cache (write-between-reads forces a real
+        // re-execution of the next read). A SUCCESSFUL mutation is genuine progress
+        // (reset). A FAILED/blocked mutation is NOT progress (F-15): count it so a
+        // model looping on a doomed tool trips the loop guard and degrades honestly
+        // instead of running to makespan.
         readCache.clear();
-        noProgressCount = 0;
-        emptyTurnCount = 0;
+        if (isFailureResult(result)) {
+          noProgressCount++;
+        } else {
+          noProgressCount = 0;
+          emptyTurnCount = 0;
+        }
         return;
       }
       const key = cacheKey(toolName, args);

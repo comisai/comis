@@ -205,4 +205,24 @@ describe("buildContextExhaustedReply — knob naming + incident ref (W4)", () =>
       }
     });
   });
+
+  // F-15 (live 2026-06-12): loop_detected must yield an HONEST reply (not a silent
+  // empty) when the loop-guard halts a no-progress repeat.
+  describe("loop_detected (F-15)", () => {
+    it("returns a non-empty honest reply naming the no-progress/looping cause", () => {
+      const reply = buildDegradedReply("loop_detected");
+      expect(reply).toBeDefined();
+      expect(reply!.length).toBeGreaterThan(0);
+      expect(reply!.toLowerCase()).toMatch(/repeat|loop|progress/);
+    });
+
+    it("appends the incident traceId when provided", () => {
+      const reply = buildDegradedReply("loop_detected", { traceId: "abc-123" });
+      expect(reply).toContain("incident abc-123");
+    });
+
+    it("is deterministic", () => {
+      expect(buildDegradedReply("loop_detected")).toBe(buildDegradedReply("loop_detected"));
+    });
+  });
 });
