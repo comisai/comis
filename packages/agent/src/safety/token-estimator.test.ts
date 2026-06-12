@@ -384,7 +384,11 @@ describe("estimateWithAnchor", () => {
 // (RED). The I1 pins and the I3 property pass pre-patch and must keep
 // passing post-patch (the conservative direction is structural).
 describe("estimateMessageTokens — script-aware factors (TOK-01)", () => {
-  // 22 Hebrew letters + 5 neutral spaces = 27 UTF-16 units; factor 0.55.
+  // 22 Hebrew letters + 5 neutral spaces = 27 UTF-16 units. The shipped
+  // hebrew-letters factor is 0.50 (lowered by the TOK-02 corpus, same-commit
+  // rule; pinned exactly in core's token-factor.test.ts) — the lower bounds
+  // below were computed at the pre-lowering 0.55 and are deliberately LOOSER
+  // than the shipped value (0.50 estimates exceed 0.55 bounds).
   const he = "שלום עולם זה מבחן ארוך מאוד";
 
   it("bounds Hebrew string content from below by chars/(4*0.55) instead of flat chars/4", () => {

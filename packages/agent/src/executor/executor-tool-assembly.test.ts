@@ -1274,7 +1274,10 @@ describe("assembleTools — TOK-01 script-aware system/preamble token estimates"
   // The budget-path char ratio (constants.ts CHARS_PER_TOKEN_RATIO).
   const RATIO = 3.5;
   // Pure-Hebrew payload (letters + neutral spaces → hebrew-letters row factor,
-  // 0.55 at table-ship): factored tokens ≈ 1.8× flat — comfortably discriminating.
+  // shipped 0.50 after the TOK-02 same-commit lowering — pinned exactly in
+  // core's token-factor.test.ts): factored tokens ≈ 2× flat — comfortably
+  // discriminating. Bounds here import scriptTokenFactor, so they track the
+  // table value automatically.
   const HE = "שלום עולם זה מבחן ארוך מאוד לבדיקת חלוקה ";
 
   it("SITE A: a Hebrew-saturated systemPrompt reserves the FACTORED system-token estimate, not flat chars/3.5", async () => {

@@ -11,7 +11,10 @@ import { estimateBlockTokens } from "./token-estimation.js";
 // below FAIL on the pre-patch code (RED); the ASCII pin passes pre/post
 // byte-identically (I1 — factor is exactly 1.0 for pure-ASCII text).
 describe("estimateBlockTokens — script-aware factors (TOK-01)", () => {
-  // 22 Hebrew letters + 5 neutral spaces = 27 UTF-16 units; factor 0.55.
+  // 22 Hebrew letters + 5 neutral spaces = 27 UTF-16 units. The shipped
+  // hebrew-letters factor is 0.50 (TOK-02 same-commit lowering; pinned in
+  // core's token-factor.test.ts) — the bound below was computed at the
+  // pre-lowering 0.55 and is deliberately looser than the shipped value.
   const he = "שלום עולם זה מבחן ארוך מאוד";
 
   it("bounds Hebrew text blocks from below by chars/(3.5*0.55) instead of flat chars/3.5", () => {
