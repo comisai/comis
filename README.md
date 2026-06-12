@@ -34,6 +34,8 @@ It is built for more than a single bot. One Comis install can run multiple agent
 
 Comis is fully self-hosted. No hosted tier, no telemetry, and no cloud dependency unless you choose a cloud model.
 
+It runs on **small local models**, not just frontier ones. Because Comis's security and reliability are properties of the *platform, not the model*, those guarantees hold even on a **27B model running on your own hardware at $0/token** — verified end-to-end across the full security and reliability suite.
+
 ---
 
 ## Quick Start
@@ -80,6 +82,7 @@ Requirements: Node.js **22.19+** for npm/source installs. Production deployments
 | --- | --- |
 | **Agents where people already work** | Put agents in chat, not in another browser tab. Comis handles platform differences, message splitting, delivery retries, typing indicators, media, and rich messages. |
 | **Self-hosted control** | Keep the daemon, logs, memory, config, and secrets on infrastructure you control. Use cloud models, local models, or both. |
+| **First-class small local models** | Small models are not a fallback. Capability-aware scaffolding (frontier → nano) tightens the security lockdown, defers cold tools, and anchors goals as the model shrinks — so the guarantees stay the platform's, not the model's. Tested end-to-end down to a **27B model**, on-device, at $0/token. |
 | **Security boundaries that do real work** | Sandboxed exec runtimes, encrypted secrets, SSRF guards, prompt-injection scanning, output guards, canary tokens, per-agent tool policy, and approval gates for risky actions. |
 | **Multi-agent operations** | Run specialized agents with separate memory, models, budgets, permissions, and routing. Spawn sub-agents or build DAG workflows from natural language. |
 | **Memory that learns, not just remembers** | Comis consolidates repeated facts, builds user profiles, learns from use, and keeps recall trust-aware. Under the hood: SQLite + FTS5 + vectors, local storage, and [published benchmark manifests](benchmarks/results/) for reproducible claims. |
@@ -112,7 +115,7 @@ Requirements: Node.js **22.19+** for npm/source installs. Production deployments
 | **Agent runtime** | Per-agent model selection, tool policy, budget controls, memory, session history, sender trust levels, sub-agents, and background tasks. |
 | **Learning memory** | Long-term memory that improves with use: durable facts, user profiles, trust-aware recall, consolidation of repeated knowledge, and local SQLite-backed storage. |
 | **Tools and MCP** | Built-in web, browser, media, messaging, scheduling, memory, session, and infrastructure tools. Connect the MCP ecosystem's 50+ servers; Comis can also expose a permission-gated MCP server. |
-| **Models** | 35 catalog providers via `pi-ai`, local Ollama/LM Studio, OpenAI-compatible endpoints, OAuth-backed OpenAI Codex profiles, fallback chains, and provider-specific tool-schema handling. |
+| **Models** | 35 catalog providers via `pi-ai`, local Ollama/LM Studio with **capability-tiered scaffolding (frontier → nano) for first-class small-model support**, OpenAI-compatible endpoints, OAuth-backed OpenAI Codex profiles, fallback chains, and provider-specific tool-schema handling. |
 | **Media** | Speech-to-text, text-to-speech, image analysis, video analysis, image generation, PDF/document extraction, and link context. |
 | **Security** | AES-256-GCM encrypted secrets, credential broker for API-key CLIs, sandboxed exec tools, URL validation, content scanning, memory-write validation, output guards, signed approvals, and `comis security audit`. |
 | **Operations** | Web dashboard, JSON-RPC, WebSocket, OpenAI-compatible API, ACP server/bridge primitives, cron, heartbeat monitoring, trace export, health checks, config history, and rollback. |
