@@ -120,6 +120,14 @@ export interface SessionsApiDeps {
    *  Optional for the same handler-test reason; absent ⇒ the unlink/purge steps are
    *  skipped (the by-session memory delete itself still runs). */
   consolidationStore?: import("@comis/core").MemoryConsolidationStore;
+  /** Runtime-layer (L3) destroy for `session.reset_conversation` — live finding
+   *  2026-06-11: clearing LCD + sessionStore alone resurrects (the surviving pi
+   *  runtime JSONL re-ingests wholesale via the lcd-ingest epoch rebase). Wired
+   *  at the composition root from `createConversationReset(...).destroyRuntimeSession`
+   *  bound to the default agent. Returns true when an adapter destroy ran.
+   *  Optional: absent ⇒ the handler reports `runtimeSessionDestroyed: false`
+   *  and WARNs with the resurrection consequence (honest degradation). */
+  destroyRuntimeSession?: (formattedSessionKey: string) => Promise<boolean>;
   /** Executor session-scoped state cleanup (175-REVIEW CR-02): wired at the
    *  composition root (daemon.ts) to @comis/agent's clearSessionState — the
    *  single authoritative path that drops the per-key tool-schema snapshots,
@@ -136,7 +144,7 @@ export interface SessionsApiDeps {
  * Dependencies for memory-handlers + context-handlers
  * (memory.read/write/search/embeddingCache, context.recall/expand).
  */
-// @optional-field-count: 13 optional fields — MemoryApiDeps is the shared slice
+// @optional-field-count: 14 optional fields — MemoryApiDeps is the shared slice
 // for memory-handlers, so it carries TWO feature-gated dep families: the
 // memory-diagnostic deps (consolidationStore/entityStore/
 // recallCounters/dataDir — each absent ⇒ the corresponding admin diagnostic is
@@ -193,6 +201,12 @@ export interface MemoryApiDeps {
    *  `resolveRecallTraceFilePath`. Optional — mirrors ObservabilityApiDeps.dataDir;
    *  defaults to ~/.comis at handler-construction time when omitted. */
   dataDir?: string;
+  /** The diagnostics.recallTrace.enabled gate (live finding 2026-06-11) — the
+   *  `memory.recall_trace` handler reports it as `tracingEnabled` and, on an
+   *  empty result, hints WHY (recorder disabled vs no matching traces yet)
+   *  instead of a silent `{records: []}`. Optional — absent reads as false
+   *  (the schema default for the opt-in recorder). */
+  recallTraceEnabled?: boolean;
   // Dialectic deps (the memory.ask handler).
   /** The INJECTED query-time dialectic synthesis seam (the `createDialecticSeam`
    *  output, built + injected from a cheap resolved model + key). The

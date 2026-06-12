@@ -668,6 +668,17 @@ describe("createCronHandlers", () => {
   // -------------------------------------------------------------------------
 
   describe("cron.run", () => {
+    it("names the missing parameter when neither jobId nor jobName is given, instead of 'Job not found: undefined'", async () => {
+      // Live finding (2026-06-11 memory run, deferred; fixed in the C11 pass):
+      // a caller using the wrong param key got the unmatched var echoed back.
+      const deps = makeDeps();
+      const handlers = createCronHandlers(deps);
+
+      await expect(handlers["cron.run"]!({ mode: "force" })).rejects.toThrow(
+        "Missing required parameter: jobName",
+      );
+    });
+
     it("force mode resolves job by name, executes via runMissedJobs, and returns triggered: true", async () => {
       const deps = makeDeps();
       const handlers = createCronHandlers(deps);

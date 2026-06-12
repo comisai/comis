@@ -10,9 +10,15 @@
  * @module
  */
 
-import { LEAN_TOOL_DESCRIPTIONS, resolveDescription, type ToolDescriptionContext } from "@comis/agent";
+import {
+  LEAN_TOOL_DESCRIPTIONS,
+  resolveDescription,
+  type AgentBootWindowInfo,
+  type ToolDescriptionContext,
+} from "@comis/agent";
 import type { PerAgentConfig } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
+import { agentToolsToToolDefinitions } from "@comis/skills";
 
 /**
  * Resolve every lean tool description once at agent setup time.
@@ -63,4 +69,24 @@ export function resolveLeanDescriptionsForAgent(
     "Tool descriptions resolved",
   );
   return resolvedDescriptions;
+}
+
+/** AgentBootWindowInfo's convertTools slot — the shared closure's signature. */
+type FloorConvertTools = NonNullable<AgentBootWindowInfo["convertTools"]>;
+
+/**
+ * WR-03 (176 review): build the ONE tool-conversion closure shared by BOTH
+ * consumers — PiExecutorDeps.convertTools (turn-time S corpus) AND
+ * AgentBootWindowInfo.convertTools (FLOOR-01 boot corpus). setupSingleAgent
+ * calls this once per agent and binds the single returned reference into both:
+ * that reference identity is the corpus-identity pin (I8 extended from formula
+ * to input). Cast safe: the adapter reads only schema fields at conversion
+ * time; execute is lazy.
+ */
+export function buildSharedConvertTools(resolvedDescriptions: Record<string, string>) {
+  return (tools: Parameters<FloorConvertTools>[0]) =>
+    agentToolsToToolDefinitions(
+      tools as unknown as Parameters<typeof agentToolsToToolDefinitions>[0],
+      resolvedDescriptions,
+    );
 }

@@ -27,7 +27,6 @@
 import { describe, it, expect } from "vitest";
 import Database from "better-sqlite3";
 import { existsSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { ConversationDriver, flushDaemonLogs } from "../../harness/conversation.js";
 import { runLogOracle } from "../../assert/log-oracle.js";
 import { runDbOracle, snapshotRowCounts } from "../../assert/db-oracle.js";
@@ -159,16 +158,17 @@ describe.skipIf(!isLive)("MEM-06 Stage-B — consolidation + pinned immunity ($0
   it("stores 3 facts and observes consolidation non-destruction via db-oracle", async () => {
     const configPath = buildMemConfig({ embeddingProvider: "local", label: "mem-06-consol" });
     const driver = new ConversationDriver({ agentId: "mem-06-consol", configPath });
-    await driver.init();
-    const dbPath = join(driver.getDataDir(), "memory.db");
-    const beforeCounts = existsSync(dbPath) ? snapshotRowCounts(dbPath, MEM_TABLES) : {};
     try {
+      await driver.init();
+      const dbPath = driver.getMemoryDbPath();
+      const beforeCounts = existsSync(dbPath) ? snapshotRowCounts(dbPath, MEM_TABLES) : {};
       await driver.sendTurn("Fact 1: TypeScript is a superset of JavaScript.");
       await driver.sendTurn("Fact 2: Node.js uses the V8 engine.");
       await driver.sendTurn("Fact 3: SQLite is a serverless database.");
       await flushDaemonLogs(driver);
       await runLogOracle(driver.capturedLogLines(), { expectedErrors: ["JSON-RPC method error"] });
-      if (existsSync(dbPath)) {
+      expect(existsSync(dbPath), "memory DB missing after run - store never opened (dbPath: " + dbPath + ")").toBe(true);
+        {
         const afterCounts = snapshotRowCounts(dbPath, MEM_TABLES);
         const delta = (afterCounts["memories"] ?? 0) - (beforeCounts["memories"] ?? 0);
         expect(delta).toBeGreaterThanOrEqual(3);

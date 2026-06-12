@@ -15,14 +15,7 @@ import type { AppContainer } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
 import { createCommandHandler, parseSlashCommand, createMessageRouter, createCommandQueue, createActivityTurnCoordinator, type CommandHandlerDeps, type CommandQueue, type ActivityTurnCoordinator, type ActivityBreakerGate } from "@comis/orchestrator";
-import {
-  type VoiceResponsePipelineDeps,
-  createLifecycleReactor,
-  reactWithFallback,
-  createTestSink,
-  type LifecycleReactor,
-  type ChannelRegistry,
-} from "@comis/channels";
+import { type VoiceResponsePipelineDeps, createLifecycleReactor, reactWithFallback, createTestSink, type LifecycleReactor, type ChannelRegistry } from "@comis/channels";
 import { buildReadOnlyChannelRegistry, buildChannelCredentialMap } from "./setup-channels-registry-builder.js";
 import { buildActivityRenderers, type ActivityRendererFactory } from "./setup-channels-activity-renderers.js";
 import { resolveActivityKillSwitchSlice } from "./activity-kill-switch.js";
@@ -100,6 +93,8 @@ export interface ChannelManagerBuildDeps {
     getSessionStats(key: SessionKey): { messageCount: number; createdAt?: number; tokens?: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number }; userMessages?: number; assistantMessages?: number; toolCalls?: number; toolResults?: number; cost?: number } | undefined;
     destroySession(key: SessionKey): Promise<void>;
   }>;
+  /** Complete three-layer forget for slash /new + /reset (live 2026-06-11: runtime-only destroy left LCD context the DAG re-presented). */
+  destroyConversation?: (agentId: string, key: SessionKey) => Promise<unknown>;
   costTrackers?: Map<string, {
     getByProvider(): Array<{ provider: string; model: string; totalTokens: number; totalCost: number; callCount: number }>;
     getBySession(key: string): { totalTokens: number; totalCost: number };
@@ -459,14 +454,17 @@ export async function buildAndStartChannelManager(
             maxSteps: execAgentConfig?.maxSteps ?? 10,
           }),
           destroySession: (key) => {
+            // Complete three-layer forget when wired (live 2026-06-11); legacy runtime-only destroy otherwise.
             const adapter = deps.piSessionAdapters?.get(agentId);
-            if (adapter) {
+            if (deps.destroyConversation) {
               // eslint-disable-next-line no-restricted-syntax -- intentional fire-and-forget
-              adapter.destroySession(key).catch(() => { /* fire-and-forget session destroy */ });
-              container.eventBus.emit("session:expired", { sessionKey: key, reason: "chat-reset" });
-              return;
+              deps.destroyConversation(agentId, key).catch(() => { /* fire-and-forget */ });
+            } else if (adapter) {
+              // eslint-disable-next-line no-restricted-syntax -- intentional fire-and-forget
+              adapter.destroySession(key).catch(() => { /* fire-and-forget */ });
+            } else {
+              sessionManager.expire(key);
             }
-            sessionManager.expire(key);
             container.eventBus.emit("session:expired", { sessionKey: key, reason: "chat-reset" });
           },
           getAvailableModels: () => [],

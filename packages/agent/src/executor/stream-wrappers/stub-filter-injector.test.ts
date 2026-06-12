@@ -34,6 +34,39 @@ describe("createStubFilterInjector", () => {
     expect(tools[1].name).toBe("write");
   });
 
+  it("filters stubs from the OpenAI/Ollama nested function.name tool shape", async () => {
+    // Live finding (2026-06-12 Ollama-models run): Ollama's OpenAI-compatible
+    // API receives tools as {type:"function", function:{name,...}} — the name is
+    // NESTED, not top-level. The filter checked only t.name (undefined here), so
+    // ZERO stubs were removed and all deferred-tool schemas reached the model,
+    // nullifying the small-class tool deferral and context-exhausting local models.
+    const logger = createMockLogger();
+    const stubNames = new Set(["mcp__yfinance--get_screener", "mcp__yfinance--get_stock"]);
+    const wrapper = createStubFilterInjector({ getStubToolNames: () => stubNames }, logger);
+
+    const mockNext = createMockStreamFn();
+    const wrappedFn = wrapper(mockNext);
+    wrappedFn("model", { systemPrompt: "", messages: [], tools: [] }, {});
+
+    const enhancedOptions = mockNext.mock.calls[0][2] as Record<string, unknown>;
+    const onPayload = enhancedOptions.onPayload as (payload: unknown, model: unknown) => Promise<unknown>;
+
+    const payload = {
+      tools: [
+        { type: "function", function: { name: "mcp__yfinance--get_screener", description: "Screen stocks" } },
+        { type: "function", function: { name: "read", description: "Read a file" } },
+        { type: "function", function: { name: "mcp__yfinance--get_stock", description: "Get stock" } },
+        { type: "function", function: { name: "write", description: "Write a file" } },
+      ],
+    };
+
+    const result = await onPayload(payload, { provider: "ollama" }) as Record<string, unknown>;
+    const tools = result.tools as Array<Record<string, unknown>>;
+    expect(tools).toHaveLength(2);
+    expect((tools[0].function as { name: string }).name).toBe("read");
+    expect((tools[1].function as { name: string }).name).toBe("write");
+  });
+
   it("filters stubs from nested params.config.tools by name (Google AI Studio shape)", async () => {
     const logger = createMockLogger();
     const stubNames = new Set(["mcp__yfinance--get_screener"]);

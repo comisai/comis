@@ -336,10 +336,17 @@ describe("ExtractedEntitySchema", () => {
     expect(result.success).toBe(false);
   });
 
-  it("rejects an unknown key (strict internal contract)", () => {
-    // ExtractedEntitySchema is strict — there is NO `type` field (design §4.2 canonical_name-only).
+  it("STRIPS a benign extra key like type instead of rejecting (live finding 2026-06-11)", () => {
+    // The extraction LLM naturally emits { name, type: "person" }. The old
+    // strictObject rejected it — failing the memory and discarding the WHOLE
+    // extraction batch. There is still no `type` field in the domain
+    // (design §4.2 canonical_name-only); it is stripped, not carried.
     const result = ExtractedEntitySchema.safeParse({ name: "user", type: "person" });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.name).toBe("user");
+      expect("type" in result.data).toBe(false);
+    }
   });
 });
 
@@ -382,6 +389,30 @@ describe("StructuredMemorySchema (lenient LLM output)", () => {
   it("rejects empty content (min(1))", () => {
     const result = StructuredMemorySchema.safeParse({ content: "", entities: [] });
     expect(result.success).toBe(false);
+  });
+
+  it("accepts plain string entities and normalizes them to { name } (live finding 2026-06-11)", () => {
+    // The extraction LLM emits "entities": ["user", "Biscuit"] — every memory
+    // in every live batch failed on this field when only objects were accepted.
+    const result = StructuredMemorySchema.safeParse({
+      content: "User has a golden retriever named Biscuit.",
+      entities: ["user", "Biscuit"],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.entities).toEqual([{ name: "user" }, { name: "Biscuit" }]);
+    }
+  });
+
+  it("accepts mixed string and object entities in one array", () => {
+    const result = StructuredMemorySchema.safeParse({
+      content: "x",
+      entities: ["user", { name: "Maya", type: "person" }],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.entities).toEqual([{ name: "user" }, { name: "Maya" }]);
+    }
   });
 
   it("defaults entities to [] when omitted", () => {
@@ -470,14 +501,19 @@ describe("StructuredMemorySchema (lenient LLM output)", () => {
     expect(result.success).toBe(false);
   });
 
-  it("rejects a causes entry carrying an unknown key (the per-cause shape is strict)", () => {
-    // The inner cause object is strict (z.strictObject) — only `effect` is allowed;
-    // a `cause` key (the envelope-level shape we did NOT adopt, A2) is rejected.
+  it("STRIPS an unknown key on a causes entry instead of rejecting (live finding 2026-06-11)", () => {
+    // Same class as the entity fix: an extra key on one cause used to fail
+    // the memory and discard the whole extraction batch. `effect` stays
+    // required + non-empty; the extra key is stripped.
     const result = StructuredMemorySchema.safeParse({
       content: "x",
+      entities: [],
       causes: [{ effect: "y", cause: "z" }],
     });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.causes).toEqual([{ effect: "y" }]);
+    }
   });
 });
 

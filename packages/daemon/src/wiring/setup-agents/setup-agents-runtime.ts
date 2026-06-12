@@ -45,13 +45,12 @@ import {
 } from "@comis/agent";
 import { ensureWorkspace, resolveWorkspaceDir } from "@comis/core";
 import {
-  agentToolsToToolDefinitions,
   createSkillRegistry,
   createRuntimeEligibilityContext,
   type SkillWatcherHandle,
 } from "@comis/skills";
 import { resolveAgentModel, deriveCanaryFallback, resolveEffectiveRerank } from "./setup-agents-tooling.js";
-import { resolveLeanDescriptionsForAgent } from "./setup-agents-descriptions.js";
+import { resolveLeanDescriptionsForAgent, buildSharedConvertTools } from "./setup-agents-descriptions.js";
 import { runBootWindowHonestyChecks } from "./setup-agents-boot-window.js";
 import { createAcpWiring } from "./setup-acp-wiring.js";
 import { wireAuthProvider } from "./setup-agents-oauth.js";
@@ -148,9 +147,10 @@ export async function setupSingleAgent(
     }
   }
 
-  // Per-agent workspace (default → ~/.comis/workspace, named → ~/.comis/workspace-{id}).
+  // Per-agent workspace (default → <dataDir>/workspace, named →
+  // <dataDir>/workspace-{id}; ~/.comis only when no dataDir is configured).
   // ensureWorkspace bootstraps personality .md files (write-if-missing).
-  const dir = resolveWorkspaceDir(effectiveConfig, agentId);
+  const dir = resolveWorkspaceDir(effectiveConfig, agentId, container.config.dataDir || undefined);
   await ensureWorkspace({ dir });
 
   // Per-agent safety controls (shared by PiExecutor)
@@ -236,23 +236,15 @@ export async function setupSingleAgent(
 
   const perAgentLogger = agentLogger.child({ agentId });
 
-  // Pre-resolve lean descriptions for this agent's session (extracted leaf —
-  // emits the "Tool descriptions resolved" INFO; channelType resolution is
-  // deferred to runtime). Resolved BEFORE the boot-window honesty block so the
-  // shared convertTools closure below can ride into the boot-window info.
+  // Pre-resolve lean descriptions (extracted leaf — emits the "Tool
+  // descriptions resolved" INFO; channelType resolution deferred to runtime).
+  // Resolved BEFORE the boot-window block so convertTools can ride into it.
   const resolvedDescriptions = resolveLeanDescriptionsForAgent(agentConfig, perAgentLogger);
 
-  // WR-03 (176 review): ONE tool-conversion closure for BOTH consumers —
-  // PiExecutorDeps.convertTools (turn-time S corpus) AND
-  // AgentBootWindowInfo.convertTools (FLOOR-01 boot corpus). Same reference =
-  // corpus-identity pin (I8 extended from formula to input). Cast safe: the
-  // adapter reads only schema fields at conversion time; execute is lazy.
-  type FloorConvertTools = NonNullable<import("@comis/agent").AgentBootWindowInfo["convertTools"]>;
-  const convertTools = (tools: Parameters<FloorConvertTools>[0]) =>
-    agentToolsToToolDefinitions(
-      tools as unknown as Parameters<typeof agentToolsToToolDefinitions>[0],
-      resolvedDescriptions,
-    );
+  // WR-03 (176 review): the ONE tool-conversion closure for BOTH consumers —
+  // PiExecutorDeps.convertTools (turn-time S corpus) AND AgentBootWindowInfo's
+  // (FLOOR-01 boot corpus). Single reference below = corpus-identity pin.
+  const convertTools = buildSharedConvertTools(resolvedDescriptions);
 
   // KNOB-01 + FLOOR-01 (v2.21): extracted to setup-agents-boot-window.ts
   // (600-line cap split, 177 wave 1). Fail-open inside; convertTools
@@ -276,6 +268,9 @@ export async function setupSingleAgent(
     sessionBaseDir: safePath(dir, "sessions"),
     lockDir,
     cwd: dir,
+    // Resolved daemon data dir: without it the session-index writer falls back
+    // to the REAL ~/.comis, diverging from COMIS_DATA_DIR installs (260611 live-fire).
+    dataDir: dataDirAbs,
     // Same FileLockPort instance the OAuth path uses — single proper-lockfile
     // adapter per daemon process.
     fileLock: deps.fileLock,
@@ -448,6 +443,10 @@ export async function setupSingleAgent(
     authRotation,
     sessionAdapter,
     workspaceDir: dir,
+    // Resolved daemon data dir → PiExecutorDeps.dataDir → the pi-event-bridge
+    // session-index writer (else it falls back to the REAL ~/.comis — 260611
+    // live-fire) + prompt-assembly's recall-trace containment base.
+    dataDir: dataDirAbs,
     agentDir: resolvedAgentDir,
     customTools: [],
     // WR-03: the SAME closure bound into AgentBootWindowInfo.convertTools above

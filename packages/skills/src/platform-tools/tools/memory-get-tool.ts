@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: platform-tool boundary; throws caught by AgentTool wrapper (returns AgentToolResult) — agent execution boundary catch.
 /**
  * Memory Get Tool: Read specific memory file sections by path.
  *
@@ -34,6 +35,14 @@ const MemoryGetParams = Type.Object({
   ),
 });
 
+/**
+ * A bare UUID is a long-term-memory row id (what memory_store returns),
+ * never a workspace file path. Caught tool-side so the model gets a
+ * redirect to the right tool instead of a daemon ENOENT that names the
+ * symptom, not the misuse (live finding, 2026-06-12 C7 run).
+ */
+const MEMORY_ID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 // ── Factory ─────────────────────────────────────────────────────────
 
 /**
@@ -50,7 +59,9 @@ export function createMemoryGetTool(rpcCall: RpcCall): AgentTool<typeof MemoryGe
     name: "memory_get",
     label: "Memory Get",
     description:
-      "Read specific memory file sections by path. Supports line range selection. Paths are validated for security via SafePath.",
+      "Read specific memory FILE sections by workspace path (e.g. paths returned by memory_search). " +
+      "Not for stored-memory ids: content of long-term memories comes back from memory_search/memory_ask, " +
+      "not from this tool. Supports line range selection. Paths are validated for security via SafePath.",
     parameters: MemoryGetParams,
 
     async execute(
@@ -59,6 +70,12 @@ export function createMemoryGetTool(rpcCall: RpcCall): AgentTool<typeof MemoryGe
     ): Promise<AgentToolResult<unknown>> {
       try {
         const path = readStringParam(params, "path");
+        if (path !== undefined && MEMORY_ID_SHAPE.test(path.trim())) {
+          throw new Error(
+            `'${path}' is a memory id, not a workspace file path. memory_get reads memory FILES; ` +
+              "stored-memory content is returned by memory_search or memory_ask directly.",
+          );
+        }
         const startLine = readNumberParam(params, "start_line", false);
         const endLine = readNumberParam(params, "end_line", false);
 

@@ -21,6 +21,7 @@ import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry, Operatio
 import type { createSessionStore, MemoryApi } from "@comis/memory";
 import { sanitizeAssistantResponse, resolveOperationModel, resolveProviderFamily, runMemoryReview, classifyError } from "@comis/agent";
 import { applyToolPolicy } from "@comis/skills";
+import { buildReviewSessionSource } from "./review-session-source.js";
 import { filterResponse } from "@comis/channels";
 import type { ExecutionLogEntry } from "@comis/scheduler";
 import { handleMemoryCronSentinel } from "./setup-channels-memory-crons.js";
@@ -29,7 +30,7 @@ import { resolveMemoryOpsCapability } from "./resolve-memory-ops-capability.js";
 /**
  * Closure-captured dependencies for the cron delivery listeners.
  */
-// @optional-field-count: 14 optional fields — CronEventListenerDeps is a composition-root cron-deps
+// @optional-field-count: 16 optional fields — CronEventListenerDeps is a composition-root cron-deps
 // bag that accretes the OFFLINE memory-cron sentinels' injected ports (consolidationStore for
 // __MEMORY_CONSOLIDATION__; tripleStore for __MEMORY_REASONING__; userRepresentationStore + memoryApi
 // for __USER_REPRESENTATION__) alongside the channel/media optionals. Each is an optional injected
@@ -53,6 +54,8 @@ export interface CronEventListenerDeps {
   transcriber?: TranscriptionPort;
   workspaceDirs?: Map<string, string>;
   memoryAdapter?: MemoryPort;
+  /** LCD read + browse for the review session source (live 2026-06-11: DAG transcripts live in LCD, not the near-empty daemon store). Absent ⇒ daemon-store-only review. */
+  lcdStore?: import("@comis/core").ContextStorePort; contextBrowse?: import("@comis/core").ContextBrowsePort;
   /** Entity-associative store. Threaded into runMemoryReview so each
    *  successfully-stored memory's entity mentions are resolved + linked
    *  (memory_entities / memory_entity_links), scoped to the entry's (tenantId, agentId).
@@ -201,10 +204,7 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
         memoryPort: deps.memoryAdapter!,
         // R6 (CR-01): small/nano cron model abstains via resolve-memory-ops-capability.ts (never fabricates into trusted storage).
         ...resolveMemoryOpsCapability(resolved, providerEntry?.capabilities),
-        sessionStore: deps.sessionStore as unknown as {
-          listDetailed(tenantId?: string): Array<{ sessionKey: string; tenantId: string; userId: string; channelId: string; metadata: Record<string, unknown> | null; createdAt: number; updatedAt: number; messageCount: number }>;
-          loadByFormattedKey(sessionKey: string): { messages: unknown[]; metadata: Record<string, unknown>; createdAt: number; updatedAt: number } | undefined;
-        },
+        sessionStore: buildReviewSessionSource({ sessionStore: deps.sessionStore as unknown as Parameters<typeof buildReviewSessionSource>[0]["sessionStore"], lcdStore: deps.lcdStore, contextBrowse: deps.contextBrowse, agentId, tenantId: deps.tenantId ?? container.config.tenantId ?? "default" }),
         eventBus: container.eventBus,
         workspacePath,
         provider: resolved.provider,

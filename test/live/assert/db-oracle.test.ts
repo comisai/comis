@@ -435,3 +435,125 @@ describe("runDbOracle — check 3d: vec_memories desynced → throws with check 
     await expect(runDbOracle(dbPath)).rejects.toThrow("[db-oracle check 3d]");
   });
 });
+
+// ---------------------------------------------------------------------------
+// 260611 live-fire fix: the oracle connections must load sqlite-vec.
+// MEM Stage-B daemons create vec_memories as a REAL vec0 virtual table; the
+// oracle/snapshot reader opening its own connection without the extension threw
+// "SqliteError: no such module: vec0" (snapshotRowCounts) and silently skipped
+// check 3d (runDbOracle). The reader now loads sqlite-vec like the product does
+// (packages/memory schema.ts initSchema), so vec tables are first-class ground
+// truth in both functions.
+// ---------------------------------------------------------------------------
+
+describe("snapshotRowCounts — real vec0 virtual table (sqlite-vec loaded in reader)", () => {
+  it("counts vec_memories rows in a product-shaped DB instead of throwing 'no such module: vec0'", async () => {
+    const { initSchema } = await import("@comis/memory");
+    const dir = mkdtempSync(join(tmpdir(), "comis-db-oracle-vec-"));
+    const dbPath = join(dir, "vec.db");
+    const writer = new Database(dbPath);
+    try {
+      initSchema(writer, 8); // loads sqlite-vec + creates vec_memories as vec0
+    } finally {
+      writer.close();
+    }
+
+    const { snapshotRowCounts } = await import("./db-oracle.js");
+    const counts = snapshotRowCounts(dbPath, ["memories", "vec_memories"]);
+    expect(counts["memories"]).toBe(0);
+    expect(counts["vec_memories"]).toBe(0);
+  });
+
+  it("runDbOracle on a product-shaped vec DB passes (check 3d actually executes)", async () => {
+    const { initSchema } = await import("@comis/memory");
+    const dir = mkdtempSync(join(tmpdir(), "comis-db-oracle-vec2-"));
+    const dbPath = join(dir, "vec2.db");
+    const writer = new Database(dbPath);
+    try {
+      initSchema(writer, 8);
+    } finally {
+      writer.close();
+    }
+    await expect(runDbOracle(dbPath)).resolves.toBeUndefined();
+  });
+});
+
+describe("countRowsLike — content-anchored ground truth (260611 predicate re-pin)", () => {
+  it("counts rows whose content contains ALL given substrings (AND semantics)", async () => {
+    const dbPath = await writeMemoryDbToFile((db) => {
+      db.exec(MEMORIES_DDL);
+      const ins = db.prepare(
+        `INSERT INTO memories
+         (id, tenant_id, agent_id, user_id, content, trust_level, memory_type, source_who, tags, created_at, has_embedding)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      );
+      ins.run("m1", "t", "a", "u", "the Eiffel Tower is 330 meters tall", "high", "episodic", "user", "[]", Date.now(), 0);
+      ins.run("m2", "t", "a", "u", "what is the height of the Eiffel Tower?", "high", "episodic", "user", "[]", Date.now(), 0);
+    });
+    const { countRowsLike } = await import("./db-oracle.js");
+    expect(countRowsLike(dbPath, "memories", ["Eiffel", "330"])).toBe(1);
+    expect(countRowsLike(dbPath, "memories", ["Eiffel"])).toBe(2);
+    expect(countRowsLike(dbPath, "memories", ["nonexistent-fact"])).toBe(0);
+  });
+
+  it("matching is case-insensitive (LIKE semantics)", async () => {
+    const dbPath = await writeMemoryDbToFile((db) => {
+      db.exec(MEMORIES_DDL);
+      db.prepare(
+        `INSERT INTO memories
+         (id, tenant_id, agent_id, user_id, content, trust_level, memory_type, source_who, tags, created_at, has_embedding)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run("m1", "t", "a", "u", "Lane-Test fact for combo", "high", "episodic", "user", "[]", Date.now(), 0);
+    });
+    const { countRowsLike } = await import("./db-oracle.js");
+    expect(countRowsLike(dbPath, "memories", ["lane-test"])).toBe(1);
+  });
+
+  it("rejects a table name not present in the DB (allowlist guard)", async () => {
+    const dbPath = await writeMemoryDbToFile((db) => {
+      db.exec(MEMORIES_DDL);
+    });
+    const { countRowsLike } = await import("./db-oracle.js");
+    expect(() => countRowsLike(dbPath, "evil; DROP TABLE memories", ["x"])).toThrow(/not present/);
+  });
+});
+
+describe("countObservationRows — proof_count signature (260611 MEM-07 invariant)", () => {
+  it("counts only rows with proof_count NOT NULL (consolidation observations)", async () => {
+    const dbPath = await writeMemoryDbToFile((db) => {
+      db.exec(MEMORIES_DDL);
+      const ins = db.prepare(
+        `INSERT INTO memories
+         (id, tenant_id, agent_id, user_id, content, trust_level, memory_type, source_who, tags, created_at, has_embedding, proof_count)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      );
+      // 2 raw turns (proof_count NULL) + 1 consolidation observation (proof_count=3)
+      ins.run("u1", "t", "a", "u", "[user] fact A", "learned", "semantic", "rpc-client", "[]", Date.now(), 0, null);
+      ins.run("u2", "t", "a", "u", "[user] fact B", "learned", "semantic", "rpc-client", "[]", Date.now(), 0, null);
+      ins.run("obs1", "t", "a", "u", "consolidated A+B", "learned", "semantic", "a", "[]", Date.now(), 0, 3);
+    });
+    const { countObservationRows } = await import("./db-oracle.js");
+    expect(countObservationRows(dbPath)).toBe(1);
+  });
+
+  it("returns 0 when no observation rows exist (all raw turns)", async () => {
+    const dbPath = await writeMemoryDbToFile((db) => {
+      db.exec(MEMORIES_DDL);
+      db.prepare(
+        `INSERT INTO memories
+         (id, tenant_id, agent_id, user_id, content, trust_level, memory_type, source_who, tags, created_at, has_embedding, proof_count)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run("u1", "t", "a", "u", "[user] x", "learned", "semantic", "rpc-client", "[]", Date.now(), 0, null);
+    });
+    const { countObservationRows } = await import("./db-oracle.js");
+    expect(countObservationRows(dbPath)).toBe(0);
+  });
+
+  it("returns 0 when the proof_count column is absent (pre-feature DB)", async () => {
+    const dbPath = await writeMemoryDbToFile((db) => {
+      db.exec(MEMORIES_DDL);
+    });
+    const { countObservationRows } = await import("./db-oracle.js");
+    expect(countObservationRows(dbPath)).toBe(0);
+  });
+});

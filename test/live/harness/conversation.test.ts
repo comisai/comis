@@ -103,6 +103,39 @@ describe("ConversationDriver — unit (Stage-A, no daemon required)", () => {
     expect(events).toEqual([]);
   });
 
+  it("getMemoryDbPath() resolves a RELATIVE memory.dbPath against the daemon's dataDir", () => {
+    // 260611 live-fire fix: scenario files hand-built join(dataDir,"memory.db"),
+    // which never matched config.test.yaml's dbPath "test-memory-default.db" —
+    // every existsSync-guarded db-oracle silently skipped (§2.10 bug class).
+    const driver = new StubDriver();
+    (driver as unknown as { _handle: unknown })._handle = {
+      daemon: { container: { config: { dataDir: "/data/root", memory: { dbPath: "test-memory-default.db" } } } },
+    };
+    expect(driver.getMemoryDbPath()).toBe(join("/data/root", "test-memory-default.db"));
+  });
+
+  it("getMemoryDbPath() returns an ABSOLUTE memory.dbPath unchanged", () => {
+    const driver = new StubDriver();
+    (driver as unknown as { _handle: unknown })._handle = {
+      daemon: { container: { config: { dataDir: "/data/root", memory: { dbPath: "/abs/elsewhere.db" } } } },
+    };
+    expect(driver.getMemoryDbPath()).toBe("/abs/elsewhere.db");
+  });
+
+  it("getMemoryDbPath() falls back to the driver dataDir when config.dataDir is empty", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "comis-test-dbp-"));
+    const driver = new StubDriver(dataDir);
+    (driver as unknown as { _handle: unknown })._handle = {
+      daemon: { container: { config: { dataDir: "", memory: { dbPath: "memory.db" } } } },
+    };
+    expect(driver.getMemoryDbPath()).toBe(join(dataDir, "memory.db"));
+  });
+
+  it("getMemoryDbPath() throws before init() (no handle)", () => {
+    const driver = new StubDriver();
+    expect(() => driver.getMemoryDbPath()).toThrow(/init\(\)/);
+  });
+
   it("getSessionIndexEvents() parses valid JSONL", async () => {
     // Create a temp dir with a session-index JSONL file containing one event
     const dataDir = mkdtempSync(join(tmpdir(), "comis-test-si-"));
@@ -208,5 +241,51 @@ describe("ConversationDriver — unit (Stage-A, no daemon required)", () => {
     // The mutation must NOT have leaked into internal state
     expect(copy2).toHaveLength(1);
     expect(copy2[0]?.name).toBe("context:dag_compacted");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// parseAgentExecuteResult — 260611 live-fire fix. The gateway returns
+// { response, tokensUsed, finishReason } (rpc-adapters.ts handleAgentRequest);
+// the driver previously read `result.reply` (never existed) so every live turn
+// threw even when the model answered. Handler failures arrive as result.error
+// (string), not a JSON-RPC error object.
+// ---------------------------------------------------------------------------
+
+describe("parseAgentExecuteResult — agent.execute envelope parsing", () => {
+  it("returns result.response (the REAL gateway field — not 'reply')", async () => {
+    const { parseAgentExecuteResult } = await import("./conversation.js");
+    expect(
+      parseAgentExecuteResult({ result: { response: "330 meters." } }),
+    ).toBe("330 meters.");
+  });
+
+  it("returns a degraded-but-honest fallback reply instead of throwing (oracles judge it)", async () => {
+    const { parseAgentExecuteResult } = await import("./conversation.js");
+    expect(
+      parseAgentExecuteResult({
+        result: { response: "The AI didn't produce a response.", finishReason: "error" },
+      }),
+    ).toBe("The AI didn't produce a response.");
+  });
+
+  it("throws on a JSON-RPC error envelope", async () => {
+    const { parseAgentExecuteResult } = await import("./conversation.js");
+    expect(() =>
+      parseAgentExecuteResult({ error: { code: -32000, message: "boom" } }),
+    ).toThrow(/RPC error -32000/);
+  });
+
+  it("throws on handler-level result.error (string shape)", async () => {
+    const { parseAgentExecuteResult } = await import("./conversation.js");
+    expect(() =>
+      parseAgentExecuteResult({ result: { error: "Missing required parameter: message (string)" } }),
+    ).toThrow(/handler error: Missing required parameter/);
+  });
+
+  it("throws on a missing/empty response string", async () => {
+    const { parseAgentExecuteResult } = await import("./conversation.js");
+    expect(() => parseAgentExecuteResult({ result: {} })).toThrow(/no response string/);
+    expect(() => parseAgentExecuteResult({ result: { response: "" } })).toThrow(/no response string/);
   });
 });

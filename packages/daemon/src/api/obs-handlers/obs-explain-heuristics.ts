@@ -445,6 +445,33 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
       ],
     };
   },
+
+  // 10) completed_with_tool_errors (CATCH-ALL — LAST, lowest priority). A
+  //     degraded session whose tool failures matched none of the named rules
+  //     above (not misclassification, breaker, schema-strip, context-bloat,
+  //     module-not-found, or timeout) used to fall through to a NULL verdict —
+  //     comis explain captured the per-tool {ok,failed} but root-caused nothing
+  //     (live C13 finding, 2026-06-12: memory_get + image_analyze both failed
+  //     with errorKind=dependency on bad input). Keys on ACTUAL failures, never
+  //     the endReason label alone, so a `completed_with_tool_errors` end state
+  //     with no failure records (a degenerate/contradictory signal) still names
+  //     nothing — and a clean session (zero failures) never fires.
+  (s) => {
+    if (s.failures.length === 0) return null;
+    const failedTools = [...new Set(s.failures.map((f) => f.toolName))];
+    const kinds = [...new Set(s.failures.map((f) => f.errorKind))].filter(Boolean);
+    const kindStr = kinds.length > 0 ? ` (errorKind: ${kinds.join(", ")})` : "";
+    return {
+      code: "completed_with_tool_errors",
+      detail:
+        `${s.failures.length} tool failure(s) across ${failedTools.join(", ")}${kindStr} — ` +
+        "the turn finished but one or more tools errored; no upstream named cause matched",
+      suggestedNextSteps: [
+        `inspect the failing tool(s): ${failedTools.join(", ")}`,
+        "obs.explain depth=full for the per-failure errorPreview and resultDigest",
+      ],
+    };
+  },
 ];
 
 /**

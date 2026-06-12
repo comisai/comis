@@ -216,12 +216,13 @@ describe("RPC failure exit code 1", () => {
 
   // -- Memory commands ------------------------------------------------------
 
-  // NOTE (v2.12, Phase 126): memory search/inspect fail closed before any RPC
-  // (DAG context engine demolished), so there is no "RPC failure" path — they
-  // exit 1 with the not-available message regardless of daemon state.
-  it("memory search exits 1 (fail-closed, not-available)", async () => {
+  // (live finding 2026-06-11): memory search/inspect are real RPC commands now
+  // (the Phase-126 stub-era exit-1 is gone), so they get the standard
+  // RPC-failure contract: exit 1 with an actionable error.
+  it("memory search exits 1 with the failure message when the RPC rejects", async () => {
     const program = createTestProgram();
     registerMemoryCommand(program);
+    vi.mocked(withClient).mockRejectedValue(new Error("gateway unreachable"));
 
     try {
       await program.parseAsync(["node", "test", "memory", "search", "test"]);
@@ -231,12 +232,13 @@ describe("RPC failure exit code 1", () => {
 
     expect(exitSpy.spy).toHaveBeenCalledWith(1);
     const errOutput = getSpyOutput(consoleSpy.error);
-    expect(errOutput).toContain("memory search is unavailable");
+    expect(errOutput).toContain("Memory search failed");
   });
 
-  it("memory inspect exits 1 (fail-closed, not-available)", async () => {
+  it("memory inspect exits 1 with the failure message when the RPC rejects", async () => {
     const program = createTestProgram();
     registerMemoryCommand(program);
+    vi.mocked(withClient).mockRejectedValue(new Error("gateway unreachable"));
 
     try {
       await program.parseAsync(["node", "test", "memory", "inspect", "abc-123"]);
@@ -246,7 +248,7 @@ describe("RPC failure exit code 1", () => {
 
     expect(exitSpy.spy).toHaveBeenCalledWith(1);
     const errOutput = getSpyOutput(consoleSpy.error);
-    expect(errOutput).toContain("memory inspect is unavailable");
+    expect(errOutput).toContain("Memory inspect failed");
   });
 
   it("memory stats exits 1 on RPC failure", async () => {

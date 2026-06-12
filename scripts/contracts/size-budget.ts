@@ -31,7 +31,11 @@ import { gzipSync } from "node:zlib";
  * real wire cost) stays well under the 38 KB gzipped budget, so this tracks the
  * legitimate contract growth rather than loosening the wire constraint.
  */
-export const BUDGET_MINIFIED_BYTES = 122_000;
+// 2026-06-11: +5 response fields across 3 contracts (memory.ask reason,
+// reset_conversation runtimeSessionDestroyed, recall_trace tracingEnabled +
+// hint) pushed minified to 122,032 — bumped with headroom; gzipped stays
+// far under its own budget.
+export const BUDGET_MINIFIED_BYTES = 126_000;
 
 /** Budget: 38 KB gzipped. */
 export const BUDGET_GZIPPED_BYTES = 38_912;

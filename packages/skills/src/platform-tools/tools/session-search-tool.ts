@@ -25,7 +25,7 @@ import { sanitizeFts5Query } from "./fts5-sanitizer.js";
 
 const SessionSearchParams = Type.Object({
   query: Type.Optional(
-    Type.String({ description: "Search query -- keywords, phrases, or boolean expressions. Omit for recent sessions metadata." }),
+    Type.String({ description: "Search query -- one or more keywords. A message matches when ALL keywords appear in it (case-insensitive, order-independent); a single keyword matches as a substring. Omit for recent sessions metadata." }),
   ),
   scope: Type.Optional(
     Type.String({ description: "Filter by message role: 'all' (default), 'user', 'assistant', 'tool'" }),

@@ -232,7 +232,39 @@ describe("obs-explain-heuristics", () => {
     // success / end_turn / a non-cause endReason must NOT produce a verdict from
     // the QT2/QT3 rules (no false degradation cause on a healthy session).
     expect(rootCause(makeSignals({ endReason: "success" }))).toBeNull();
+    // endReason ALONE (no tool failures in the signals) names no cause — the
+    // catch-all keys on actual failures, not the terminal label.
     expect(rootCause(makeSignals({ endReason: "completed_with_tool_errors" }))).toBeNull();
+  });
+
+  it("a degraded session with tool failures and no named cause gets a catch-all tool-failure verdict", () => {
+    // Live C13 finding (2026-06-12): an induced 2-tool-failure session
+    // (memory_get + image_analyze, errorKind dependency, endReason
+    // completed_with_tool_errors) fell through all 9 named rules to a NULL
+    // verdict — comis explain captured the data but root-caused nothing.
+    const r = rootCause(
+      makeSignals({
+        endReason: "completed_with_tool_errors",
+        toolStats: {
+          memory_get: { ok: 0, failed: 1, topErrorKind: "dependency" },
+          image_analyze: { ok: 0, failed: 1, topErrorKind: "dependency" },
+        },
+        failures: [
+          { seq: 8, toolName: "image_analyze", classifiedFailureBy: "sdk_iserror", transportOk: false, errorKind: "dependency", resultDigest: "d", resultBytes: 0, errorPreview: "" },
+          { seq: 7, toolName: "memory_get", classifiedFailureBy: "sdk_iserror", transportOk: false, errorKind: "dependency", resultDigest: "d", resultBytes: 0, errorPreview: "" },
+        ],
+      }),
+    );
+    expect(r).not.toBeNull();
+    expect(r!.code).toBe("completed_with_tool_errors");
+    // Names the failed tools so the operator knows WHERE to look.
+    expect(r!.detail).toContain("image_analyze");
+    expect(r!.detail).toContain("memory_get");
+    expect(r!.suggestedNextSteps.length).toBeGreaterThan(0);
+  });
+
+  it("the catch-all never fires on a clean session (no failures)", () => {
+    expect(rootCause(makeSignals({ endReason: "success", toolStats: { web_fetch: { ok: 3, failed: 0 } } }))).toBeNull();
   });
 
   // ------------------------------------------------------------------------

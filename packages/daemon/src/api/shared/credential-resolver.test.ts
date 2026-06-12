@@ -137,6 +137,65 @@ describe("resolveProviderCredential", () => {
   });
 
   // ---------------------------------------------------------------------
+  // Source: secret-store canonical (encrypted-storage mode)
+  //
+  // Live finding 2026-06-12 (agent-tools run): in `security.storage: encrypted`
+  // mode the canonical key (e.g. ANTHROPIC_API_KEY) lives in the encrypted
+  // secret store, NOT process.env. The runtime hydrates the DEFAULT_PROVIDER_KEYS
+  // providers into AuthStorage via secretManager.get(canonicalKey)
+  // (setup-agents-runtime.ts createAuthStorageAdapter), so a bare
+  // `provider: anthropic` agent with no providers.entries block works. The
+  // pre-write resolver previously only consulted the secret store via Source A
+  // (which requires a providers.entries.apiKeyName mapping) then fell to
+  // getEnvApiKey (process.env) — false-rejecting an agent whose key IS present,
+  // and (worse) telling the operator to env_set a key that already exists.
+  // ---------------------------------------------------------------------
+
+  it("passes via secret store when a bare DEFAULT_PROVIDER_KEYS provider's canonical key is in secretManager but not env", () => {
+    // The live encrypted-store case: ANTHROPIC_API_KEY in the secret store,
+    // not in env, and NO providers.entries.anthropic block.
+    const r = resolveProviderCredential("anthropic", {
+      providerEntries: {},
+      secretManager: { has: (k) => k === "ANTHROPIC_API_KEY" },
+    });
+    expect(r.ok).toBe(true);
+    expect(r.source).toBe("secret_store_canonical");
+    expect(r.resolvedProvider).toBe("anthropic");
+  });
+
+  it("resolves provider:default → DEFAULT_PROVIDER_KEYS provider from the secret store", () => {
+    const r = resolveProviderCredential("default", {
+      providerEntries: {},
+      modelsConfig: { defaultProvider: "anthropic" },
+      secretManager: { has: (k) => k === "ANTHROPIC_API_KEY" },
+    });
+    expect(r.ok).toBe(true);
+    expect(r.source).toBe("secret_store_canonical");
+    expect(r.resolvedProvider).toBe("anthropic");
+  });
+
+  it("does NOT apply secret-store canonical to non-DEFAULT_PROVIDER_KEYS providers (runtime does not hydrate them)", () => {
+    // openrouter is not in DEFAULT_PROVIDER_KEYS, so the runtime only hydrates
+    // it from the secret store via a providers.entries.apiKeyName mapping. A
+    // bare openrouter with the key loose in the store must still reject —
+    // matching what the runtime would actually do.
+    const r = resolveProviderCredential("openrouter", {
+      providerEntries: {},
+      secretManager: { has: (k) => k === "OPENROUTER_API_KEY" },
+    });
+    expect(r.ok).toBe(false);
+  });
+
+  it("prefers Source A (providers_entry) over secret-store canonical when both match", () => {
+    const r = resolveProviderCredential("anthropic", {
+      providerEntries: { anthropic: makeEntry({ type: "anthropic", apiKeyName: "CUSTOM_ANTHROPIC" }) },
+      secretManager: { has: (k) => k === "CUSTOM_ANTHROPIC" || k === "ANTHROPIC_API_KEY" },
+    });
+    expect(r.ok).toBe(true);
+    expect(r.source).toBe("providers_entry");
+  });
+
+  // ---------------------------------------------------------------------
   // Rejection — message content (actionable for LLMs)
   // ---------------------------------------------------------------------
 

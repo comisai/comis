@@ -2,57 +2,33 @@
 /**
  * Channel health check unit tests.
  *
- * Tests channel-health check for no channels (skip), missing
- * credentials (fail), configured credentials (pass), and partial
- * credentials scenarios.
+ * Tests channel-health check against the resolution-driven contract
+ * (2026-06-12 doctor split-brain fix): enabled channels pass when their
+ * `${VAR}` credential references resolved (env, ~/.comis/.env, or the
+ * encrypted secret store), fail naming the exact unresolved reference,
+ * and the no-config skip names the resolution failure instead of
+ * claiming nothing is configured.
  *
  * @module
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect } from "vitest";
 import type { DoctorContext } from "../types.js";
 import type { AppConfig } from "@comis/core";
 import { channelHealthCheck } from "./channel-health.js";
 
 const baseContext: DoctorContext = {
-  configPaths: [],
+  configPaths: ["/cfg/config.yaml"],
   dataDir: "/tmp/test-comis",
   daemonPidFile: "/tmp/test-comis/daemon.pid",
 };
 
+/** Build a config whose channels section is exactly `channels`. */
+function configWith(channels: Record<string, unknown>): AppConfig {
+  return { channels } as unknown as AppConfig;
+}
+
 describe("channelHealthCheck", () => {
-  /** Store original env vars to restore after each test. */
-  const savedEnv: Record<string, string | undefined> = {};
-  const envVarsToClean = [
-    "TELEGRAM_BOT_TOKEN",
-    "DISCORD_BOT_TOKEN",
-    "SLACK_BOT_TOKEN",
-    "SLACK_SIGNING_SECRET",
-    "WHATSAPP_ACCESS_TOKEN",
-    "WHATSAPP_VERIFY_TOKEN",
-    "LINE_CHANNEL_ACCESS_TOKEN",
-    "LINE_CHANNEL_SECRET",
-  ];
-
-  beforeEach(() => {
-    // Save current env values
-    for (const key of envVarsToClean) {
-      savedEnv[key] = process.env[key];
-      delete process.env[key];
-    }
-  });
-
-  afterEach(() => {
-    // Restore original env values
-    for (const key of envVarsToClean) {
-      if (savedEnv[key] !== undefined) {
-        process.env[key] = savedEnv[key];
-      } else {
-        delete process.env[key];
-      }
-    }
-  });
-
   it("produces skip when no channels configured", async () => {
     const findings = await channelHealthCheck.run({
       ...baseContext,
@@ -60,85 +36,137 @@ describe("channelHealthCheck", () => {
     });
 
     expect(findings).toHaveLength(1);
-    expect(findings[0].status).toBe("skip");
-    expect(findings[0].message).toContain("No channels configured");
+    expect(findings[0]?.status).toBe("skip");
+    expect(findings[0]?.message).toContain("No channels configured");
+  });
+
+  it("names the config-resolution failure instead of claiming no channels are configured", async () => {
+    const findings = await channelHealthCheck.run({
+      ...baseContext,
+      config: undefined,
+      configResolution: {
+        foundPath: "/cfg/config.yaml",
+        unresolvedRefs: [{ path: "gateway.tokens[0].secret", varName: "COMIS_GATEWAY_TOKEN" }],
+        validationIssues: ["gateway.tokens.0.secret: Too small: expected string to have >=32 characters"],
+      },
+    });
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.status).toBe("skip");
+    expect(findings[0]?.message).toContain("COMIS_GATEWAY_TOKEN");
+    expect(findings[0]?.message).not.toContain("No channels configured");
   });
 
   it("produces skip when no channels enabled", async () => {
-    const config = {
-      channels: {
-        telegram: { enabled: false },
-      },
-    } as unknown as AppConfig;
+    const config = configWith({ telegram: { enabled: false } });
 
     const findings = await channelHealthCheck.run({
       ...baseContext,
       config,
+      configResolution: { foundPath: "/cfg/config.yaml", config },
     });
 
     expect(findings).toHaveLength(1);
-    expect(findings[0].status).toBe("skip");
-    expect(findings[0].message).toContain("No channels enabled");
+    expect(findings[0]?.status).toBe("skip");
+    expect(findings[0]?.message).toContain("No channels enabled");
   });
 
-  it("produces fail for missing Telegram credentials", async () => {
-    const config = {
-      channels: {
-        telegram: { enabled: true },
-      },
-    } as unknown as AppConfig;
-
-    // Ensure TELEGRAM_BOT_TOKEN is not set
-    delete process.env["TELEGRAM_BOT_TOKEN"];
+  it("passes an enabled channel whose credential references all resolved (store-backed deployment)", async () => {
+    const config = configWith({
+      telegram: { enabled: true, botToken: "12345:resolved-from-store" },
+    });
 
     const findings = await channelHealthCheck.run({
       ...baseContext,
       config,
+      configResolution: { foundPath: "/cfg/config.yaml", config },
     });
 
     expect(findings).toHaveLength(1);
-    expect(findings[0].status).toBe("fail");
-    expect(findings[0].message).toContain("TELEGRAM_BOT_TOKEN");
+    expect(findings[0]?.status).toBe("pass");
+    expect(findings[0]?.check).toBe("telegram credentials");
+    expect(findings[0]?.message).toContain("resolved");
   });
 
-  it("produces pass for configured Telegram credentials", async () => {
-    const config = {
-      channels: {
-        telegram: { enabled: true },
-      },
-    } as unknown as AppConfig;
-
-    process.env["TELEGRAM_BOT_TOKEN"] = "test-token-12345";
+  it("fails an enabled channel naming the exact unresolved reference and the places checked", async () => {
+    const config = configWith({
+      telegram: { enabled: true, botToken: "${TELEGRAM_BOT_TOKEN}" },
+    });
 
     const findings = await channelHealthCheck.run({
       ...baseContext,
       config,
+      configResolution: {
+        foundPath: "/cfg/config.yaml",
+        config,
+        unresolvedRefs: [{ path: "channels.telegram.botToken", varName: "TELEGRAM_BOT_TOKEN" }],
+      },
     });
 
     expect(findings).toHaveLength(1);
-    expect(findings[0].status).toBe("pass");
-    expect(findings[0].message).toContain("telegram");
-    expect(findings[0].message).toContain("configured");
+    expect(findings[0]?.status).toBe("fail");
+    expect(findings[0]?.message).toContain("TELEGRAM_BOT_TOKEN");
+    expect(findings[0]?.message).toContain("channels.telegram.botToken");
+    expect(findings[0]?.message).toContain("encrypted secret store");
+    expect(findings[0]?.suggestion).toContain("comis secrets set");
   });
 
-  it("produces fail for partial Slack credentials", async () => {
-    const config = {
-      channels: {
-        slack: { enabled: true },
-      },
-    } as unknown as AppConfig;
-
-    // Set only SLACK_BOT_TOKEN but NOT SLACK_SIGNING_SECRET
-    process.env["SLACK_BOT_TOKEN"] = "xoxb-test-token";
-    delete process.env["SLACK_SIGNING_SECRET"];
+  it("scopes unresolved references to their own channel so a sibling channel still passes", async () => {
+    const config = configWith({
+      telegram: { enabled: true, botToken: "12345:resolved" },
+      discord: { enabled: true, botToken: "${DISCORD_BOT_TOKEN}" },
+    });
 
     const findings = await channelHealthCheck.run({
       ...baseContext,
       config,
+      configResolution: {
+        foundPath: "/cfg/config.yaml",
+        config,
+        unresolvedRefs: [{ path: "channels.discord.botToken", varName: "DISCORD_BOT_TOKEN" }],
+      },
+    });
+
+    expect(findings).toHaveLength(2);
+    const telegram = findings.find((f) => f.check === "telegram credentials");
+    const discord = findings.find((f) => f.check === "discord credentials");
+    expect(telegram?.status).toBe("pass");
+    expect(discord?.status).toBe("fail");
+    expect(discord?.message).toContain("DISCORD_BOT_TOKEN");
+  });
+
+  it("does not report the channels.healthCheck settings block as a channel", async () => {
+    const config = configWith({
+      telegram: { enabled: true, botToken: "12345:resolved" },
+      healthCheck: { enabled: true, intervalMs: 60_000 },
+    });
+
+    const findings = await channelHealthCheck.run({
+      ...baseContext,
+      config,
+      configResolution: { foundPath: "/cfg/config.yaml", config },
     });
 
     expect(findings).toHaveLength(1);
-    expect(findings[0].status).toBe("fail");
-    expect(findings[0].message).toContain("SLACK_SIGNING_SECRET");
+    expect(findings[0]?.check).toBe("telegram credentials");
+  });
+
+  it("ignores unresolved references outside the channels section when judging channel credentials", async () => {
+    const config = configWith({
+      telegram: { enabled: true, botToken: "12345:resolved" },
+    });
+
+    const findings = await channelHealthCheck.run({
+      ...baseContext,
+      config,
+      configResolution: {
+        foundPath: "/cfg/config.yaml",
+        config,
+        unresolvedRefs: [{ path: "providers.entries.custom.apiKeyName", varName: "CUSTOM_KEY" }],
+      },
+    });
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.status).toBe("pass");
   });
 });

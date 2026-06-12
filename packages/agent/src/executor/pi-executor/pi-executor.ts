@@ -1303,6 +1303,11 @@ async function runSessionLocked(
     model: config.model,
     operationType: executionOverrides?.operationType ?? "interactive",
     logger: deps.logger,
+    // Resolved daemon data dir — the bridge's session-index writer
+    // (appendSessionIndexEntry) otherwise falls back to the REAL ~/.comis,
+    // diverging from config.dataDir / COMIS_DATA_DIR installs (260611
+    // live-fire: 166 blocked test-guard writes per MEM suite run).
+    dataDir: deps.dataDir,
     // Thread the operator $HOME so the bridge's tool:started/tool:executed
     // params compact $HOME→~ for ALL bus consumers (delivery-tracer, trajectory
     // writers, plan-stream), not only the activity renderer. Matches the

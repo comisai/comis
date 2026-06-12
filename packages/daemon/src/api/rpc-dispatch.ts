@@ -23,6 +23,9 @@ import { RequiredToolsUnreachableError } from "@comis/core";
 
 import { createCronHandlers } from "./cron-handlers.js";
 import { createMemoryHandlers } from "./memory-handlers.js";
+// memory.ask extracted from memory-handlers.ts for the file-size cap — composed
+// HERE (handler files never import each other; daemon architecture invariant).
+import { bindMemoryAskHandler } from "./memory-ask-handlers.js";
 import { createContextHandlers } from "./context-handlers.js";
 // Memory sub-handlers extracted from memory-handlers.ts for the file-size cap.
 // Composed here (not via memory-handlers.ts importing them) so handler files
@@ -122,6 +125,7 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
   const handlers: Record<string, (params: Record<string, unknown>) => Promise<unknown>> = {
     ...createCronHandlers(deps),
     ...createMemoryHandlers(deps),
+    ...bindMemoryAskHandler(deps),
     // context.* operator-browse RPCs (conversations + tree). Shares the
     // MemoryApiDeps slice; lcdStore + contextBrowse ride deps from setup-memory.
     ...createContextHandlers(deps),

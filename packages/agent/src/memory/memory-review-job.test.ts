@@ -155,6 +155,23 @@ describe("runMemoryReview", () => {
     }));
   });
 
+  it("logs a counts INFO line when nothing qualifies so a no-op nightly run is diagnosable at default level", async () => {
+    // Live C11 finding (2026-06-12): the zero-qualifying early exit logged
+    // only DEBUG — at default INFO the operator saw 'Job started/completed'
+    // bracketing silence, indistinguishable from a productive run.
+    const deps = makeDeps();
+    (deps.sessionStore.listDetailed as Mock).mockReturnValue([
+      makeSession("default:user1:ch1", 3), // below 5 -> nothing qualifies
+    ]);
+
+    await runMemoryReview(deps);
+
+    expect(deps.logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({ totalSessions: 1, qualifying: 0 }),
+      expect.stringContaining("nothing to review"),
+    );
+  });
+
   it("skips sessions whose updatedAt is before watermark", async () => {
     const deps = makeDeps();
     const session = makeSession("default:user1:ch1", 10, 1000);
@@ -867,9 +884,11 @@ describe("runMemoryReview", () => {
     expect(prompt).not.toContain("msg-12");
   });
 
-  it("skips the LLM call when the first session already exceeds the token budget", async () => {
-    // maxReviewTokens 1 → maxChars 4; the seeded prompt header alone exceeds it,
-    // so the first summary trips the budget break and no session is reviewed.
+  it("a pathological budget (cannot fit ANY summary) skips LOUDLY instead of silently", async () => {
+    // maxReviewTokens 1 → maxChars 4; below the truncate-to-fit floor, so the
+    // session is skipped — but with a WARN naming the knob (live finding
+    // 2026-06-11: the silent skip left the session unwatermarked and
+    // re-skipped on every run, an invisible permanent blind spot).
     const deps = makeDeps({ config: makeConfig({ maxReviewTokens: 1 }) });
     (deps.sessionStore.listDetailed as Mock).mockReturnValue([
       makeSession("default:user1:ch1", 10, 6500),
@@ -884,10 +903,49 @@ describe("runMemoryReview", () => {
     const result = await runMemoryReview(deps);
     expect(result.ok).toBe(true);
     expect(completeSimple).not.toHaveBeenCalled();
+    const warnCalls = (deps.logger.warn as Mock).mock.calls;
+    const budgetWarn = warnCalls.find((c) =>
+      String((c[0] as Record<string, unknown>)["hint"] ?? "").includes("maxReviewTokens"),
+    );
+    expect(budgetWarn).toBeDefined();
     expect(deps.eventBus.emit).toHaveBeenCalledWith("memory:review_completed", expect.objectContaining({
       sessionsReviewed: 0,
       memoriesExtracted: 0,
     }));
+  });
+
+  it("a long real conversation (one 6K-char essay turn) is still reviewed — capped per message, never skipped", async () => {
+    // Live finding 2026-06-11: a 16-message conversation totalling ~25K chars
+    // (one assistant essay alone 6,137 chars) exceeded the whole 16K batch
+    // budget and was skipped ENTIRELY on every run. Per-message caps keep the
+    // summary inside the budget so the session is reviewed and watermarked.
+    const essay = "x".repeat(6137);
+    const deps = makeDeps(); // default maxReviewTokens 4096 → 16384 chars
+    (deps.sessionStore.listDetailed as Mock).mockReturnValue([
+      makeSession("default:openai-api:openai", 16, 6500),
+    ]);
+    (deps.sessionStore.loadByFormattedKey as Mock).mockReturnValue({
+      messages: [
+        { role: "user", content: "my sister Maya moved to Lisbon" },
+        { role: "assistant", content: essay },
+        { role: "assistant", content: essay },
+        { role: "assistant", content: essay },
+        { role: "assistant", content: essay },
+      ],
+      metadata: {},
+      createdAt: 1000,
+      updatedAt: 6500,
+    });
+    (completeSimple as Mock).mockResolvedValue(structuredResponse({ memories: [] }));
+
+    const result = await runMemoryReview(deps);
+
+    expect(result.ok).toBe(true);
+    expect(completeSimple).toHaveBeenCalledTimes(1);
+    const prompt = (completeSimple as Mock).mock.calls[0]![1].messages[0].content as string;
+    expect(prompt).toContain("Maya moved to Lisbon");
+    // The essay turns are capped, so the batch stays within budget.
+    expect(prompt.length).toBeLessThanOrEqual(4096 * 4 + 200);
   });
 
   // -------------------------------------------------------------------------

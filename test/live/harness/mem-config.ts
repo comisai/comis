@@ -2,22 +2,41 @@
 /**
  * buildMemConfig — shared helper for MEM scenario tests.
  *
- * Builds a temp YAML config file patching memory-specific keys under
- * agents.default. The gateway port is NOT patched here —
- * ConversationDriver._buildPortedConfigPath() handles that separately so each
- * driver gets its own unique port.
+ * Builds a temp YAML config file patching memory-specific keys at their REAL
+ * schema paths (260611 live-fire fix — the original regex patcher wrote
+ * embedding/memory under agents.default, which AppConfigSchema rejects with
+ * "Unrecognized key", so every Stage-B daemon boot failed; keyless CI never
+ * caught it because Stage-B is COMIS_LIVE-gated):
+ *
+ *   - embedding.provider / embedding.local.gpu   → TOP-LEVEL embedding (schema.ts)
+ *   - memory.embeddingDimensions                 → TOP-LEVEL memory (schema-memory.ts)
+ *   - memory.costFeatures.enabled                → TOP-LEVEL memory
+ *   - rag.*                                      → agents.default.rag (schema-agent-runtime.ts),
+ *     using the REAL RagConfigSchema shapes (schema-agent-prompt.ts):
+ *       fts/vector     → rag.lanes.<lane>.weight (these lanes have NO enabled knob;
+ *                        weight 0 neutralizes the lane's RRF contribution)
+ *       temporal/causal/graphSpread → rag.lanes.<lane>.enabled
+ *       entity         → rag.entityLane.enabled
+ *       rerank/mmr/pinned → rag.<knob>.enabled
+ *       includeTrustLevels:true → ["system","learned","external"] (TrustLevel[] —
+ *                        the boolean maps to the full spectrum so trust
+ *                        arbitration is actually exercised)
+ *     and rag.enabled is forced true (the base config ships enabled:false —
+ *     without this every lane knob is dead config).
+ *
+ * Operator model-path knobs (avoid a ~146MB HuggingFace download per daemon
+ * boot — each ConversationDriver uses a fresh temp dataDir, so the default
+ * hf: URI re-downloads into <dataDir>/models on EVERY boot):
+ *   - COMIS_LIVE_EMBED_MODEL_PATH    → embedding.local.modelUri
+ *   - COMIS_LIVE_RERANKER_MODEL_PATH → memory.rerankerModel
+ * Both are absolute paths to pre-downloaded GGUFs (see test/live/live.env.example).
+ *
+ * The gateway port is NOT patched here — ConversationDriver._buildPortedConfigPath()
+ * handles that separately so each driver gets its own unique port.
  *
  * Base config: test/config/config.test.yaml
- *
- * Keys patched (all under agents.default):
- *   - embedding.provider  (schema-embedding.ts: EmbeddingConfigSchema.provider)
- *   - embedding.local.gpu (schema-embedding.ts: EmbeddingLocalSchema.gpu)
- *   - memory.embeddingDimensions (schema-memory.ts: MemoryConfigSchema.embeddingDimensions)
- *   - memory.costFeatures.enabled (schema-memory.ts: CostFeaturesConfigSchema.enabled)
- *   - rag.{fts,vector,temporal,causal,graphSpread,entity,rerank,mmr,pinned}.enabled
- *   - rag.includeTrustLevels
- *
- * Mirrors ctx-config.ts exactly, changing only the patched key paths.
+ * Implementation: real YAML parse → object mutation → stringify (the regex
+ * approach is what allowed schema-invalid placement to ship).
  *
  * @module
  */
@@ -26,6 +45,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 const _here = dirname(fileURLToPath(import.meta.url));
 
@@ -43,18 +63,20 @@ export interface RagConfig {
   mmr?: boolean;
   pinned?: boolean;
   includeTrustLevels?: boolean;
+  /** rag.rerank.timeoutMs override (MEM-03 forced-timeout scenario). */
+  rerankTimeoutMs?: number;
 }
 
 export interface MemConfigOpts {
-  /** embedding.provider under agents.default (schema-embedding.ts) */
+  /** TOP-LEVEL embedding.provider (schema-embedding.ts) */
   embeddingProvider?: EmbeddingProvider;
-  /** memory.embeddingDimensions under agents.default (schema-memory.ts) */
+  /** TOP-LEVEL memory.embeddingDimensions (schema-memory.ts) */
   embeddingDimensions?: number;
-  /** embedding.local.gpu under agents.default (schema-embedding.ts) */
+  /** TOP-LEVEL embedding.local.gpu (schema-embedding.ts) */
   localGpu?: LocalGpu;
-  /** memory.costFeatures.enabled under agents.default (schema-memory.ts) */
+  /** TOP-LEVEL memory.costFeatures.enabled (schema-memory.ts) */
   costFeaturesEnabled?: boolean;
-  /** rag lane config under agents.default */
+  /** agents.default.rag lane/knob config (schema-agent-prompt.ts RagConfigSchema) */
   ragConfig?: RagConfig;
   /** Human-readable label used in the output filename (sanitised). */
   label: string;
@@ -62,8 +84,21 @@ export interface MemConfigOpts {
   filePrefix?: string;
 }
 
+type Doc = Record<string, unknown>;
+
+function ensureObj(parent: Doc, key: string): Doc {
+  const existing = parent[key];
+  if (existing && typeof existing === "object" && !Array.isArray(existing)) {
+    return existing as Doc;
+  }
+  const fresh: Doc = {};
+  parent[key] = fresh;
+  return fresh;
+}
+
 /**
- * Build a temp YAML config patching memory-specific keys under agents.default.
+ * Build a temp YAML config patching memory-specific keys at their real schema
+ * paths (top-level embedding/memory; agents.default.rag).
  *
  * The gateway port is NOT patched here — ConversationDriver._buildPortedConfigPath()
  * handles that separately so each driver gets its own unique port.
@@ -72,162 +107,82 @@ export interface MemConfigOpts {
  */
 export function buildMemConfig(opts: MemConfigOpts): string {
   const base = join(_here, "../../config/config.test.yaml");
-  let content = readFileSync(base, "utf-8");
+  const doc = parseYaml(readFileSync(base, "utf-8")) as Doc;
 
-  // ── embedding.provider ────────────────────────────────────────────────────
-  // WR-03 fix: scope the provider: replacement to within the embedding: block
-  // only. A bare /provider:\s*\S+/ would match ANY provider: key in the file
-  // (e.g. agents.default.provider or llm.provider) if it appears before the
-  // embedding: block. Use a look-behind anchored to the embedding block.
-  if (opts.embeddingProvider !== undefined) {
-    if (/embedding:/.test(content)) {
-      // Patch existing embedding.provider line — scoped to the embedding block.
-      // The regex matches "provider: <value>" only when preceded (somewhere in
-      // the embedding block) by "embedding:\n" + optional indented lines.
-      const embProviderPattern = /(embedding:\s*\n(?:\s+[^\n]*\n)*?\s+provider:\s*)\S+/;
-      if (embProviderPattern.test(content)) {
-        content = content.replace(embProviderPattern, `$1${opts.embeddingProvider}`);
-      } else {
-        // embedding block exists but no provider line — inject after "embedding:"
-        content = content.replace(
-          /(embedding:\s*\n)/,
-          `$1      provider: ${opts.embeddingProvider}\n`,
-        );
-      }
-    } else {
-      // No embedding block — inject under agents.default
-      content = content.replace(
-        /(agents:\s*\n\s*default:[\s\S]*?)(\n[^\s])/,
-        `$1\n    embedding:\n      enabled: true\n      provider: ${opts.embeddingProvider}$2`,
-      );
+  // ── embedding.* — TOP-LEVEL ───────────────────────────────────────────────
+  if (opts.embeddingProvider !== undefined || opts.localGpu !== undefined) {
+    const embedding = ensureObj(doc, "embedding");
+    embedding["enabled"] = true;
+    if (opts.embeddingProvider !== undefined) {
+      embedding["provider"] = opts.embeddingProvider;
+    }
+    if (opts.localGpu !== undefined) {
+      ensureObj(embedding, "local")["gpu"] = opts.localGpu;
     }
   }
-
-  // ── embedding.local.gpu ───────────────────────────────────────────────────
-  // WR-03 fix: scope the gpu: replacement to within the embedding: block only.
-  // A bare /gpu:\s*\S+/ would match any gpu: key in the file if it appears
-  // before the embedding: block. Use a look-behind anchored to the embedding
-  // block's local: sub-block.
-  if (opts.localGpu !== undefined) {
-    // gpu: only appears inside embedding.local — scope to embedding block
-    const embGpuPattern = /(embedding:[\s\S]*?local:[\s\S]*?gpu:\s*)\S+/;
-    if (embGpuPattern.test(content)) {
-      content = content.replace(embGpuPattern, `$1${opts.localGpu}`);
-    } else if (/embedding:/.test(content)) {
-      // embedding block exists — inject local.gpu after "embedding:" or "local:"
-      if (/local:\s*\n/.test(content)) {
-        content = content.replace(/(local:\s*\n)/, `$1        gpu: ${opts.localGpu}\n`);
-      } else {
-        content = content.replace(
-          /(embedding:[\s\S]*?)(\n\s{4}[a-z]|\n[^\s])/,
-          `$1\n      local:\n        gpu: ${opts.localGpu}$2`,
-        );
-      }
-    } else {
-      // No embedding block — inject the full embedding.local.gpu under agents.default
-      content = content.replace(
-        /(agents:\s*\n\s*default:[\s\S]*?)(\n[^\s])/,
-        `$1\n    embedding:\n      local:\n        gpu: ${opts.localGpu}$2`,
-      );
-    }
+  // Operator knob: use a pre-downloaded GGUF instead of the default hf: URI
+  // (which would download ~146MB into the fresh temp dataDir on EVERY boot).
+  // Applied UNCONDITIONALLY (unless the test explicitly targets openai):
+  // embedding.enabled defaults true with provider "auto" → local, so even
+  // configs that never set embeddingProvider (e.g. MEM-03's ragConfig-only
+  // lane combos) boot the local embedder — observed re-downloading mid-run
+  // when this knob was nested inside the embeddingProvider branch (260611).
+  const embedModelPath = process.env["COMIS_LIVE_EMBED_MODEL_PATH"];
+  if (embedModelPath && opts.embeddingProvider !== "openai") {
+    ensureObj(ensureObj(doc, "embedding"), "local")["modelUri"] = embedModelPath;
   }
 
-  // ── memory.embeddingDimensions ────────────────────────────────────────────
+  // ── memory.* — TOP-LEVEL ──────────────────────────────────────────────────
   if (opts.embeddingDimensions !== undefined) {
-    if (/embeddingDimensions:\s*\d+/.test(content)) {
-      content = content.replace(
-        /embeddingDimensions:\s*\d+/,
-        `embeddingDimensions: ${opts.embeddingDimensions}`,
-      );
-    } else {
-      // Inject under agents.default.memory block (or create it)
-      if (/^\s+memory:\s*$/m.test(content) || /^\s+memory:\s*\n\s+\w/m.test(content)) {
-        // memory block exists under agents.default — append embeddingDimensions
-        content = content.replace(
-          /(^\s+memory:\s*\n)/m,
-          `$1      embeddingDimensions: ${opts.embeddingDimensions}\n`,
-        );
-      } else {
-        // No memory block under agents.default — inject
-        content = content.replace(
-          /(agents:\s*\n\s*default:[\s\S]*?)(\n[^\s])/,
-          `$1\n    memory:\n      embeddingDimensions: ${opts.embeddingDimensions}$2`,
-        );
-      }
-    }
+    ensureObj(doc, "memory")["embeddingDimensions"] = opts.embeddingDimensions;
   }
-
-  // ── memory.costFeatures.enabled ───────────────────────────────────────────
   if (opts.costFeaturesEnabled !== undefined) {
-    const val = String(opts.costFeaturesEnabled);
-    if (/costFeatures:/.test(content)) {
-      // Patch existing costFeatures.enabled line
-      content = content.replace(
-        /(costFeatures:\s*\n\s*enabled:\s*)\S+/,
-        `$1${val}`,
-      );
-    } else {
-      // Inject costFeatures block under agents.default.memory
-      if (/^\s+memory:\s*$/m.test(content) || /^\s+memory:\s*\n\s+\w/m.test(content)) {
-        content = content.replace(
-          /(^\s+memory:\s*\n)/m,
-          `$1      costFeatures:\n        enabled: ${val}\n`,
-        );
-      } else {
-        content = content.replace(
-          /(agents:\s*\n\s*default:[\s\S]*?)(\n[^\s])/,
-          `$1\n    memory:\n      costFeatures:\n        enabled: ${val}$2`,
-        );
-      }
-    }
+    ensureObj(ensureObj(doc, "memory"), "costFeatures")["enabled"] = opts.costFeaturesEnabled;
+  }
+  const rerankerModelPath = process.env["COMIS_LIVE_RERANKER_MODEL_PATH"];
+  if (rerankerModelPath) {
+    ensureObj(doc, "memory")["rerankerModel"] = rerankerModelPath;
   }
 
-  // ── rag lane config ───────────────────────────────────────────────────────
+  // ── rag — agents.default.rag (RagConfigSchema shapes) ────────────────────
   if (opts.ragConfig !== undefined) {
-    const lanes = [
-      "fts", "vector", "temporal", "causal", "graphSpread",
-      "entity", "rerank", "mmr", "pinned",
-    ] as const;
+    const rc = opts.ragConfig;
+    const rag = ensureObj(ensureObj(ensureObj(doc, "agents"), "default"), "rag");
+    // Base config ships rag.enabled:false — without this every lane knob is dead.
+    rag["enabled"] = true;
 
-    for (const lane of lanes) {
-      const val = opts.ragConfig[lane];
-      if (val !== undefined) {
-        // Check if this lane block already exists: "rerank:\n   enabled:"
-        const lanePattern = new RegExp(`(${lane}:\\s*\\n\\s*enabled:\\s*)\\S+`);
-        if (lanePattern.test(content)) {
-          content = content.replace(lanePattern, `$1${String(val)}`);
-        } else if (/rag:\s*\n/.test(content)) {
-          // rag block exists — inject this lane block inside it (before the next top-level key after rag)
-          // Append lane after the last known rag key or after "rag:\n"
-          content = content.replace(
-            /(rag:\s*\n(?:\s+\S[^\n]*\n)*)/,
-            `$1      ${lane}:\n        enabled: ${String(val)}\n`,
-          );
-        } else {
-          // No rag block — inject a full rag block under agents.default
-          content = content.replace(
-            /(agents:\s*\n\s*default:[\s\S]*?)(\n[^\s])/,
-            `$1\n    rag:\n      ${lane}:\n        enabled: ${String(val)}$2`,
-          );
-        }
-      }
+    if (rc.fts !== undefined) {
+      ensureObj(ensureObj(rag, "lanes"), "fts")["weight"] = rc.fts ? 1.0 : 0;
     }
-
-    if (opts.ragConfig.includeTrustLevels !== undefined) {
-      const val = String(opts.ragConfig.includeTrustLevels);
-      if (/includeTrustLevels:\s*\S+/.test(content)) {
-        content = content.replace(/includeTrustLevels:\s*\S+/, `includeTrustLevels: ${val}`);
-      } else if (/rag:\s*\n/.test(content)) {
-        content = content.replace(
-          /(rag:\s*\n(?:\s+\S[^\n]*\n)*)/,
-          `$1      includeTrustLevels: ${val}\n`,
-        );
-      } else {
-        content = content.replace(
-          /(agents:\s*\n\s*default:[\s\S]*?)(\n[^\s])/,
-          `$1\n    rag:\n      includeTrustLevels: ${val}$2`,
-        );
-      }
+    if (rc.vector !== undefined) {
+      ensureObj(ensureObj(rag, "lanes"), "vector")["weight"] = rc.vector ? 1.5 : 0;
+    }
+    if (rc.temporal !== undefined) {
+      ensureObj(ensureObj(rag, "lanes"), "temporal")["enabled"] = rc.temporal;
+    }
+    if (rc.causal !== undefined) {
+      ensureObj(ensureObj(rag, "lanes"), "causal")["enabled"] = rc.causal;
+    }
+    if (rc.graphSpread !== undefined) {
+      ensureObj(ensureObj(rag, "lanes"), "graphSpread")["enabled"] = rc.graphSpread;
+    }
+    if (rc.entity !== undefined) {
+      ensureObj(rag, "entityLane")["enabled"] = rc.entity;
+    }
+    if (rc.rerank !== undefined) {
+      ensureObj(rag, "rerank")["enabled"] = rc.rerank;
+    }
+    if (rc.rerankTimeoutMs !== undefined) {
+      ensureObj(rag, "rerank")["timeoutMs"] = rc.rerankTimeoutMs;
+    }
+    if (rc.mmr !== undefined) {
+      ensureObj(rag, "mmr")["enabled"] = rc.mmr;
+    }
+    if (rc.pinned !== undefined) {
+      ensureObj(rag, "pinned")["enabled"] = rc.pinned;
+    }
+    if (rc.includeTrustLevels === true) {
+      rag["includeTrustLevels"] = ["system", "learned", "external"];
     }
   }
 
@@ -236,6 +191,6 @@ export function buildMemConfig(opts: MemConfigOpts): string {
     tmpdir(),
     `${prefix}-${opts.label.replace(/[^a-zA-Z0-9_-]/g, "_")}-${Date.now()}.yaml`,
   );
-  writeFileSync(outPath, content, "utf-8");
+  writeFileSync(outPath, stringifyYaml(doc), "utf-8");
   return outPath;
 }

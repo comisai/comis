@@ -4,7 +4,7 @@
 **Status:** FINAL
 **Interface source:** `packages/daemon/src/api/types.ts:63–100`
 **Construction site:** `packages/daemon/src/daemon.ts:1863` (`buildRpcDispatchDeps`); call site at `packages/daemon/src/daemon.ts:2066`
-**Field count:** 17 (11 required + 6 optional + 0 stale-fallback)
+**Field count:** 18 (11 required + 7 optional + 0 stale-fallback)
 **Location:** co-located with @comis/daemon package. The `files: ["dist", "bundled-skills"]` entry in `packages/daemon/package.json` excludes this doc from the npm tarball.
 
 ## Field Classification
@@ -31,16 +31,17 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | lcdStore | optional | session.reset_conversation is the only consumer; it fails CLOSED when absent (`session-archive.ts:135` `if (!deps.lcdStore) throw "LCD store not available"`) rather than silently returning 0 — absent only before full daemon init (Phase 164-06) | packages/daemon/src/api/types.ts:109 |
 | memoryPort | optional | session.reset_conversation `--memory` (DIST-05) gates on it (`session-archive.ts` `if (!deps.memoryPort?.deleteBySessionKey)`); when absent the --memory flag logs a not-available WARN and clears LCD + sessionStore only (no RAG delete) — same object as MemoryApiDeps.memoryAdapter, threaded at the composition root | packages/daemon/src/api/types.ts:117 |
 | consolidationStore | optional | session.reset_conversation `--memory` (DIST-05) unlink/purge gates on it (`session-archive.ts` `if (… && deps.consolidationStore)`); when absent the consolidated-observation unlink + --purge-derived steps are skipped (the by-session memory delete itself still runs) — same instance as MemoryApiDeps.consolidationStore | packages/daemon/src/api/types.ts:122 |
-| clearAgentSessionState | optional | session.reset_conversation / session.delete skip the executor session-state drop (`session-archive.ts` `deps.clearAgentSessionState?.(sessionKey)`); when absent the per-key executor state (tool-schema snapshots, GBNF-02 strip once-gate, JIT-guide delivery, cache latches) survives until session:expired TTL — wired at the composition root to @comis/agent clearSessionState (175-REVIEW CR-02) | packages/daemon/src/api/types.ts:124 |
+| destroyRuntimeSession | optional | session.reset_conversation Layer-3 runtime destroy (live finding 2026-06-11: without it the surviving pi runtime JSONL re-ingested wholesale on the next turn and the forget resurrected); when absent the handler WARNs with the resurrection consequence and reports `runtimeSessionDestroyed: false` (honest degradation) — wired at the composition root from `createConversationReset(...).destroyRuntimeSession` bound to the default agent | packages/daemon/src/api/types.ts:130 |
+| clearAgentSessionState | optional | session.reset_conversation / session.delete skip the executor session-state drop (`session-archive.ts` `deps.clearAgentSessionState?.(sessionKey)`); when absent the per-key executor state (tool-schema snapshots, GBNF-02 strip once-gate, JIT-guide delivery, cache latches) survives until session:expired TTL — wired at the composition root to @comis/agent clearSessionState (175-REVIEW CR-02) | packages/daemon/src/api/types.ts:140 |
 
 ## Removed Fields (stale-fallback — deleted)
 
-**None.** Every optional field has a verified production absent-mode code path: `agentDataDir` gates the JSONL session scan, `approvalGate` gates approval-cache clearing on session.delete/reset, `summarizeSession` gates the LLM summarization branch of session.search, `deliveryQueue` gates the deliveryStatus join, `lcdStore` gates session.reset_conversation (fail-closed throw when absent), `memoryPort` + `consolidationStore` gate the session.reset_conversation `--memory` honest reset (DIST-05 — graceful degrade when absent), and `clearAgentSessionState` gates the executor session-state drop on reset/delete (CR-02 — when absent the state survives until session:expired TTL). Daemon wires them unconditionally in `buildRpcDispatchDeps` when their upstream prerequisites exist; tests omit them to exercise the absent-branch paths.
+**None.** Every optional field has a verified production absent-mode code path: `agentDataDir` gates the JSONL session scan, `approvalGate` gates approval-cache clearing on session.delete/reset, `summarizeSession` gates the LLM summarization branch of session.search, `deliveryQueue` gates the deliveryStatus join, `lcdStore` gates session.reset_conversation (fail-closed throw when absent), `memoryPort` + `consolidationStore` gate the session.reset_conversation `--memory` honest reset (DIST-05 — graceful degrade when absent), `clearAgentSessionState` gates the executor session-state drop on reset/delete (CR-02 — when absent the state survives until session:expired TTL), and `destroyRuntimeSession` gates the Layer-3 pi-runtime destroy on reset (when absent the handler WARNs with the resurrection consequence and reports `runtimeSessionDestroyed: false`). Daemon wires them unconditionally in `buildRpcDispatchDeps` when their upstream prerequisites exist; tests omit them to exercise the absent-branch paths.
 
 ## Summary
 
 - **Pre-audit count:** 16
-- **Final count:** 17 (11 required + 6 optional; `clearAgentSessionState` added by 175-REVIEW CR-02)
+- **Final count:** 18 (11 required + 7 optional; `clearAgentSessionState` added by 175-REVIEW CR-02, `destroyRuntimeSession` added by the live-mem 2026-06-11 forget-resurrection fix)
 - **Removed (stale-fallback):** 0
 - **`stale-fallback` classification rows:** 0 (architecture test enforces; no row may carry this terminal value at any commit)
 

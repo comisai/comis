@@ -12,7 +12,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { LEAN_TOOL_DESCRIPTIONS } from "@comis/agent";
 import { PerAgentConfigSchema, type PerAgentConfig } from "@comis/core";
-import { resolveLeanDescriptionsForAgent } from "./setup-agents-descriptions.js";
+import { resolveLeanDescriptionsForAgent, buildSharedConvertTools } from "./setup-agents-descriptions.js";
 
 function makeLogger(): { info: ReturnType<typeof vi.fn> } {
   return { info: vi.fn() };
@@ -56,5 +56,24 @@ describe("resolveLeanDescriptionsForAgent", () => {
 
     const [fields] = logger.info.mock.calls[0] as [Record<string, unknown>, string];
     expect(fields["modelTier"]).toBe("small");
+  });
+});
+
+describe("buildSharedConvertTools", () => {
+  it("converts tools with the pre-resolved lean description overriding the factory one (WR-03 shared closure)", () => {
+    const convertTools = buildSharedConvertTools({ alpha: "lean alpha" });
+
+    const execute = async (): Promise<never> => {
+      throw new Error("execute must stay lazy at conversion time");
+    };
+    const defs = convertTools([
+      { name: "alpha", description: "factory alpha", parameters: {}, execute },
+      { name: "beta", description: "factory beta", parameters: {}, execute },
+    ] as never);
+
+    expect(defs.map((d) => ({ name: d.name, description: d.description }))).toEqual([
+      { name: "alpha", description: "lean alpha" },
+      { name: "beta", description: "factory beta" },
+    ]);
   });
 });

@@ -630,7 +630,7 @@ export const SessionCompactContract = defineContract({
  *     preserved and the failure degrades to a WARN.
  *
  * Request: `{ session_key, memory?, purge_derived? }`.
- * Response: `{ sessionKey, lcdRowsDeleted, sessionMessagesCleared, memoriesDeleted? }`.
+ * Response: `{ sessionKey, lcdRowsDeleted, sessionMessagesCleared, memoriesDeleted?, runtimeSessionDestroyed? }`.
  *
  * Schema uses the 12-shape allowlist: z.object, z.string, z.number,
  * z.boolean, z.optional (ASVS V5 / contract policy).
@@ -647,6 +647,12 @@ export const SessionResetConversationContract = defineContract({
     lcdRowsDeleted: z.number(),
     sessionMessagesCleared: z.number(),
     memoriesDeleted: z.number().optional(),
+    // Live finding 2026-06-11: without the runtime-layer destroy the next
+    // turn re-ingested the surviving pi session JSONL and resurrected the
+    // whole "forgotten" conversation (lcd-ingest epoch rebase). True when the
+    // pi runtime session was destroyed; false = the layer was unavailable and
+    // the conversation may resurrect (WARN logged with the consequence).
+    runtimeSessionDestroyed: z.boolean().optional(),
   }),
   scopes: ["admin"] as const,
 });

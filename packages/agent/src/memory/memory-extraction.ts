@@ -24,7 +24,8 @@
  * @module
  */
 
-import { MemoryExtractionResultSchema, systemDateFrom, type MemoryExtractionResult } from "@comis/core";
+import { MemoryExtractionResultSchema, StructuredMemorySchema, systemDateFrom, type MemoryExtractionResult } from "@comis/core";
+import { parseLenientJson } from "./llm-json.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -53,7 +54,8 @@ For each fact, output an object: { "content", "occurredAt"?, "entities", "memory
 - "occurredAt": if the fact references WHEN something happened, convert ALL relative temporal
   expressions ("yesterday", "last month", "two weeks ago") to an ABSOLUTE ISO 8601 timestamp.
   Omit "occurredAt" entirely if no event time is implied.
-- "entities": the people, things, and topics the fact mentions. ALWAYS include "user" when the
+- "entities": an array of name strings — the people, things, and topics the fact mentions,
+  e.g. "entities": ["user", "Dana", "Acme"]. ALWAYS include "user" when the
   fact is about the user. Resolve coreferences: replace pronouns and generic references
   ("she", "my boss", "the project") with the concrete canonical name they refer to
   ("Dana", "Acme"), and use the SAME canonical spelling for every mention so repeat
@@ -95,15 +97,26 @@ No markdown fences, no commentary. If nothing qualifies: { "memories": [] }`;
  * (it is not the `{ memories: [...] }` envelope).
  */
 export function parseExtractionResult(text: string): MemoryExtractionResult | undefined {
-  const cleaned = text.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
-  let json: unknown;
-  try {
-    json = JSON.parse(cleaned);
-  } catch {
-    return undefined;
-  }
+  // parseLenientJson tolerates the narration-before-JSON pattern observed
+  // live 2026-06-11 (the whole-string parse degraded a VALID extraction to
+  // "invalid output, skipping" on a fact-rich conversation).
+  const json = parseLenientJson(text);
+  if (json === undefined) return undefined;
   const parsed = MemoryExtractionResultSchema.safeParse(json);
-  return parsed.success ? parsed.data : undefined;
+  if (parsed.success) return parsed.data;
+
+  // Per-memory salvage (live finding 2026-06-11): one malformed element used
+  // to fail the envelope and discard EVERY fact in the batch. Re-validate
+  // element-by-element and keep the valid memories; undefined only when the
+  // envelope itself is unusable.
+  if (typeof json !== "object" || json === null) return undefined;
+  const rawMemories = (json as { memories?: unknown }).memories;
+  if (!Array.isArray(rawMemories)) return undefined;
+  const memories = rawMemories
+    .map((m) => StructuredMemorySchema.safeParse(m))
+    .filter((r): r is { success: true; data: MemoryExtractionResult["memories"][number] } => r.success)
+    .map((r) => r.data);
+  return { memories };
 }
 
 // ---------------------------------------------------------------------------

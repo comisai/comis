@@ -191,6 +191,22 @@ export function bindSessionListHandlers(deps: SessionHandlerDeps): Record<string
 
       const results: SearchResult[] = [];
       const queryLower = query.toLowerCase();
+      // Token-AND matching: a message matches when EVERY whitespace-delimited
+      // query term appears in it (order-independent), not when the whole query
+      // is a contiguous substring. The tool advertises "keywords"; a literal
+      // indexOf on the joined query silently returned 0 for multi-keyword
+      // queries whose terms were separated in the text (e.g. "axolotl Quark"
+      // vs "...axolotl named Quark") — a silent-empty footgun (live finding
+      // 2026-06-12). A single-token query degenerates to the prior substring
+      // behavior, so existing phrase/keyword callers are unaffected.
+      // Strip surrounding double-quotes per token: the tool-side FTS5
+      // sanitizer wraps dotted/hyphenated terms (e.g. "chat-send", "v1.0")
+      // in quotes for an FTS5 path this substring handler never takes, so the
+      // quotes would otherwise defeat indexOf.
+      const queryTokens = queryLower
+        .split(/\s+/)
+        .map((t) => t.replace(/^"+|"+$/g, ""))
+        .filter((t) => t.length > 0);
 
       for (const session of sessions) {
         if (results.length >= limit) break;
@@ -228,12 +244,24 @@ export function bindSessionListHandlers(deps: SessionHandlerDeps): Record<string
           if (!text) continue;
 
           const textLower = text.toLowerCase();
-          const matchIdx = textLower.indexOf(queryLower);
-          if (matchIdx === -1) continue;
+          // Require ALL query tokens present (AND). Anchor the snippet on the
+          // earliest-matching token so the surrounding context is shown.
+          let anchorIdx = -1;
+          let allPresent = true;
+          for (const token of queryTokens) {
+            const idx = textLower.indexOf(token);
+            if (idx === -1) {
+              allPresent = false;
+              break;
+            }
+            if (anchorIdx === -1 || idx < anchorIdx) anchorIdx = idx;
+          }
+          if (!allPresent || anchorIdx === -1) continue;
+          const matchIdx = anchorIdx;
 
-          // Build snippet: up to 200 chars surrounding the match
+          // Build snippet: up to 200 chars surrounding the earliest match
           const snippetStart = Math.max(0, matchIdx - 80);
-          const snippetEnd = Math.min(text.length, matchIdx + query.length + 120);
+          const snippetEnd = Math.min(text.length, matchIdx + 120);
           const snippet = (snippetStart > 0 ? "..." : "") +
             text.slice(snippetStart, snippetEnd) +
             (snippetEnd < text.length ? "..." : "");

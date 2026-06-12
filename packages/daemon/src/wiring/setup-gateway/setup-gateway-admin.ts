@@ -263,6 +263,12 @@ export interface SlashCommandDepsInput {
       toolResults?: number;
     } | undefined;
   }>;
+  /** Complete three-layer conversation forget (LCD + sessionStore + runtime)
+   *  from createConversationReset. Live finding 2026-06-11: /new + /reset
+   *  destroyed only the runtime session, so in DAG mode the LCD context items
+   *  survived and the model saw the old conversation right back. When present,
+   *  destroySession severs ALL layers; absent ⇒ legacy runtime-only destroy. */
+  destroyConversation?: (agentId: string, key: SessionKey) => Promise<unknown>;
 }
 
 /**
@@ -271,7 +277,7 @@ export interface SlashCommandDepsInput {
  * per-command behavior contract.
  */
 export function buildSlashCommandDeps(input: SlashCommandDepsInput): CommandHandlerDeps {
-  const { execAgentId, defaultAgentId, execAgentConfig, container, costTrackers, workspaceDirs, piSessionAdapters } = input;
+  const { execAgentId, defaultAgentId, execAgentConfig, container, costTrackers, workspaceDirs, piSessionAdapters, destroyConversation } = input;
   return {
     getSessionInfo: (key) => {
       const adapter = piSessionAdapters?.get(execAgentId);
@@ -292,6 +298,13 @@ export function buildSlashCommandDeps(input: SlashCommandDepsInput): CommandHand
       maxSteps: execAgentConfig?.maxSteps ?? 10,
     }),
     destroySession: (key) => {
+      // Complete three-layer forget when wired (live finding 2026-06-11:
+      // runtime-only destroy left LCD context items the DAG re-presented).
+      if (destroyConversation) {
+        suppressError(destroyConversation(execAgentId, key), "fire-and-forget conversation destroy");
+        container.eventBus.emit("session:expired", { sessionKey: key, reason: "gateway-reset" });
+        return;
+      }
       const adapter = piSessionAdapters?.get(execAgentId);
       if (adapter) {
         suppressError(adapter.destroySession(key), "fire-and-forget session destroy");

@@ -32,7 +32,6 @@
 
 import {
   MemorySearchFilesContract,
-  MemoryAskContract,
   MemoryGetFileContract,
   MemoryStoreContract,
   MemoryStatsContract,
@@ -44,17 +43,14 @@ import {
   MemoryObservationsContract,
   MemoryEntitiesContract,
   MemoryRecallStatsContract,
+  parseFormattedSessionKey,
   safePath,
   stripInternalFields,
   systemGetEnv,
   systemNowMs,
-  tryGetContext,
-  wrapExternalContent,
 } from "@comis/core";
-import type { SessionKey } from "@comis/core";
 // ValidationError: typed caller-error → dispatcher logs warn/validation (FIX 2).
 import { ValidationError } from "./errors.js";
-import { assembleSynthesis, citationChains, orderByTrust, sanitizeToolOutput } from "@comis/agent";
 import { resolveRecallTraceFilePath } from "@comis/observability";
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
@@ -64,14 +60,6 @@ import type { RpcHandler } from "./types.js";
 /** Max chars of an observation body surfaced as a provenance PREVIEW
  *  (never the full body unbounded; mirrors memory.search_files). */
 const OBSERVATION_PREVIEW_MAX = 500;
-
-/** Default cap on the dialectic grounding-set size when the request omits `limit`
- *  and no per-agent `dialectic.maxRecall` is threaded (mirrors the schema default). */
-const DIALECTIC_DEFAULT_MAX_RECALL = 10;
-
-/** The mandatory-abstention sentinel — the explicit { abstained: true } signal
- *  (never inferred from an empty answer); matches MemoryAskContract + assembleSynthesis. */
-const ABSTAIN_SENTINEL = { answer: "", citations: [] as string[], abstained: true } as const;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -117,193 +105,6 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
       return result;
     },
 
-    // -----------------------------------------------------------------------
-    // memory.ask — the dialectic. The KEYSTONE: a
-    // grounded, cited NL answer over the agent's LLM-free recall pipeline. Runs the
-    // FULL createMemoryRecall (the injected `buildDialecticRecall`) — NEVER
-    // `deps.memoryApi.search`, which bypasses the TRUST FILTER (the documented trap).
-    // Recall trust-FILTERS but returns RAW `entry.content`; redaction/sanitization is
-    // THIS handler's job (mirroring rag-retriever, never inside recall). Empty recall
-    // ⇒ abstain in CODE WITHOUT the seam (Pitfall 5). Else: order trust-first
-    // (orderByTrust) → the SAME neutralization rag-retriever uses (sanitizeToolOutput
-    // + wrapExternalContent) → clamp to the per-agent dialectic.maxRecall DoS bound →
-    // the ONE injected query-time seam → assembleSynthesis (abstain-in-code + citations
-    // VALIDATED ⊆ recalled ids). The citation→sourceId chain (counts/ids-only)
-    // for the recall-trace. Logging is counts/ids-ONLY — never the question, the
-    // recalled content, or the answer.
-    // -----------------------------------------------------------------------
-    [MemoryAskContract.method]: async (rawParams) => {
-      const askStart = systemNowMs();
-      // Scope is read PRE-strip (mirrors search_files + context.recall): the
-      // dispatcher injects `_agentId` + `_callerSessionKey`; the handler scopes
-      // recall to the caller and NEVER widens it.
-      const agentId = rawParams._agentId as string | undefined;
-      const callerSessionKey = rawParams._callerSessionKey as string | undefined;
-      const userParams = stripInternalFields(rawParams);
-      const params = MemoryAskContract.request.parse(userParams);
-      const question = params.question;
-
-      // Graceful abstain when the dialectic is not wired (no key / seam not
-      // applied) or the caller carries no agent scope — never throws.
-      if (
-        deps.dialecticSeam === undefined ||
-        deps.buildDialecticRecall === undefined ||
-        agentId === undefined
-      ) {
-        if (systemGetEnv("NODE_ENV") !== "production") {
-          MemoryAskContract.response.parse(ABSTAIN_SENTINEL);
-        }
-        return ABSTAIN_SENTINEL;
-      }
-
-      // Run the FULL createMemoryRecall (trust-FILTERED; content is RAW — this handler
-      // sanitizes + wraps it below, NOT recall) — NOT memoryApi.search. The factory builds
-      // a per-agent orchestrator with the daemon's store set + the agent's RagConfig.
-      const recall = deps.buildDialecticRecall(agentId);
-      const recalled = await recall.recall(
-        question,
-        (callerSessionKey ?? "") as unknown as SessionKey,
-        agentId,
-      );
-
-      // Empty / failed recall ⇒ abstain in CODE, WITHOUT calling the seam
-      // (Pitfall 5 — no grounding ⇒ no LLM call, no fabricated answer).
-      if (!recalled.ok || recalled.value.length === 0) {
-        deps.logger?.info(
-          { agentId, step: "dialectic" as const, durationMs: systemNowMs() - askStart, abstained: true, citationCount: 0 },
-          "memory.ask abstained (empty recall)",
-        );
-        if (systemGetEnv("NODE_ENV") !== "production") {
-          MemoryAskContract.response.parse(ABSTAIN_SENTINEL);
-        }
-        return ABSTAIN_SENTINEL;
-      }
-
-      // Trust-first ordering BEFORE building the grounding (the HARD boundary —
-      // the higher-trust claim is presented first; a lower-trust contradiction
-      // never blends in).
-      const ordered = orderByTrust(recalled.value);
-
-      // ENFORCE the per-agent `dialectic.maxRecall` as the HARD ceiling (the DoS bound
-      // on the synthesis LLM input) and VALIDATE the caller-controlled `limit`. The contract
-      // now types `limit` as a positive int, but defense-in-depth here so a non-int / huge /
-      // negative value (or a caller that bypasses the contract parse) can never:
-      //   - flood the prompt: `limit: 100000` is clamped DOWN to the configured ceiling, and
-      //   - negative-slice: `limit: -5` would make `slice(0, -5)` silently drop the LAST 5
-      //     (lowest-trust) items — so a non-positive/non-int `limit` falls back to the ceiling.
-      const ceiling = deps.dialecticMaxRecall?.(agentId) ?? DIALECTIC_DEFAULT_MAX_RECALL;
-      const requested = params.limit;
-      const cap =
-        typeof requested === "number" && Number.isInteger(requested) && requested > 0
-          ? Math.min(requested, ceiling)
-          : ceiling;
-      const grounding = ordered.slice(0, cap);
-
-      // Build the grounding text from the ordered survivors. createMemoryRecall returns
-      // trust-FILTERED but RAW `entry.content` — redaction is the PROMPT-ASSEMBLY step's job,
-      // NOT recall's (rag-retriever.ts applies it downstream; recall never does). So this
-      // handler MUST apply the SAME two-layer neutralization rag-retriever.ts:57-70 runs, in
-      // the SAME order, before the ONE query-time LLM (the seam) sees it:
-      //   (1) sanitizeToolOutput — NFKC-normalize + strip zero-width/tag-block bypass chars,
-      //       then redact the INSTRUCTION_PATTERNS set ([SYSTEM]/[INST]/"ignore previous
-      //       instructions"/role markers/…) to [REDACTED]. Applied to ALL trust levels
-      //       (incl. system, matching the retriever's sanitize-before-system-skip), so an
-      //       indirect prompt-injection in a hostile external/learned memory is neutralized
-      //       on this surface — no weaker than every other place recalled content reaches an
-      //       LLM in the codebase.
-      //   (2) wrapExternalContent — delimiter-fence NON-system content (random
-      //       <<<UNTRUSTED_…>>> markers + the EXTERNAL_CONTENT_WARNING security notice via
-      //       includeWarning:true) and surface suspicious-pattern telemetry
-      //       (onSuspiciousContent). System content is already trusted ⇒ skip the wrap (the
-      //       retriever's skip-system rule), but it is STILL sanitized in (1).
-      // The `[id]` fence sits OUTSIDE the wrapped region, so a forged `[<other-id>]`
-      // smuggled in a memory's CONTENT lands INSIDE the warned <<<UNTRUSTED_…>>> fence — the
-      // model is explicitly told that region is untrusted data, and the final `citations`
-      // array is independently validated ⊆ recalled ids in code (assembleSynthesis), so a
-      // smuggled label can neither forge a citation nor masquerade as a trusted id line.
-      const groundingText = grounding
-        .map((r) => {
-          const sanitized = sanitizeToolOutput(r.entry.content);
-          const safe =
-            r.entry.trustLevel === "system"
-              ? sanitized
-              : wrapExternalContent(sanitized, {
-                  source: "api",
-                  includeWarning: true,
-                  ...(deps.onSuspiciousContent !== undefined
-                    ? { onSuspiciousContent: deps.onSuspiciousContent }
-                    : {}),
-                });
-          return `[${r.entry.id}] ${safe}`;
-        })
-        .join("\n");
-
-      // The ONE allowed query-time LLM (the injected seam). Pass the invoking
-      // agentId so the seam synthesizes with THAT agent's own cheap model/key/token bound. It
-      // returns the raw parse (or abstains non-fatally); the code-level abstention + citation
-      // validation run AROUND it in assembleSynthesis.
-      const parsed = await deps.dialecticSeam(agentId, question, groundingText);
-
-      // Assemble: abstain-in-code (parser-abstain / no validated citation) OR a
-      // grounded answer with citations VALIDATED ⊆ the recalled ids (bogus
-      // dropped). Validation runs over the SAME ordered grounding set the seam saw.
-      const result = assembleSynthesis(grounding, parsed);
-
-      // The citation→recalled-id→sourceId reasoning-tree chain (counts/
-      // ids-ONLY) for the recall-trace observability surface. Empty on abstain.
-      const chains = citationChains(grounding, result.abstained ? [] : result.citations);
-
-      // The dialectic's VALIDATED citations (⊆ recalled ids — definitively
-      // used) are HIGH-signal "used" attribution. Emit on the SAME event the usefulness-feedback
-      // subscriber already consumes (wireMemoryUsefulness → recordUsage) — NO new event, NO new
-      // subscriber. usedIds = the citations; ignoredIds = recalled ∖ citations. Guarded on
-      // !result.abstained so an abstained (no grounded answer) turn never attributes a "used"
-      // (Pitfall 4); the emit is fire-and-forget by the bus contract and the subscriber is
-      // already non-fatal, so a usefulness-write failure can NEVER break the answer. ids/counts
-      // ONLY — never the question, recalled content, or answer (AGENTS.md §2.7).
-      //
-      // `intent` is OMITTED here (Pitfall 2): classifyIntent is NOT exported from @comis/agent
-      // — importing it would force a public-export-consumer + a daemon→agent-internal edge, and
-      // the handler does not re-classify. Omitting it makes the subscriber record the GLOBAL
-      // bucket; the per-intent write rides the turn-end emit (in-package).
-      if (!result.abstained && deps.eventBus !== undefined) {
-        const recalledIds = grounding.map((r) => r.entry.id);
-        const usedSet = new Set(result.citations);
-        const ignoredIds = recalledIds.filter((id) => !usedSet.has(id));
-        deps.eventBus.emit("memory:recall_used", {
-          agentId,
-          // traceId is REQUIRED on the event — prefer the AsyncLocalStorage request
-          // trace, fall back to the caller's formatted session key, then "" (mirrors
-          // the turn-end emit in executor-post-execution.ts).
-          traceId: tryGetContext()?.traceId ?? callerSessionKey ?? "",
-          ...(callerSessionKey !== undefined ? { sessionKey: callerSessionKey } : {}),
-          usedIds: result.citations,
-          ignoredIds,
-          usedCount: result.citations.length,
-          ignoredCount: ignoredIds.length,
-          timestamp: systemNowMs(),
-        });
-      }
-
-      deps.logger?.info(
-        {
-          agentId,
-          step: "dialectic" as const,
-          durationMs: systemNowMs() - askStart,
-          abstained: result.abstained,
-          citationCount: result.citations.length,
-          // ids-only provenance counts (NEVER bodies): how many cited claims
-          // carried a sourceId chain.
-          chainCount: chains.length,
-        },
-        "memory.ask completed",
-      );
-
-      if (systemGetEnv("NODE_ENV") !== "production") {
-        MemoryAskContract.response.parse(result);
-      }
-      return result;
-    },
 
     [MemoryGetFileContract.method]: async (rawParams) => {
       const userParams = stripInternalFields(rawParams);
@@ -420,11 +221,22 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
         : { who: storeAgentId, channel: "agent-tool" };
       const storeTag = isAdminCaller ? "operator-stored" : "agent-stored";
 
+      // Attribution (live finding 2026-06-11): tool-stored user facts carried
+      // the literal user_id "agent" while paired auto-captures carried the
+      // real session user — "who is this fact about" was lost on the tool
+      // path. Recover the userId from the dispatcher-injected caller session
+      // key; fall back to "agent" when no session context exists.
+      const storeCallerSessionKey = rawParams._callerSessionKey as string | undefined;
+      const storeCallerUserId =
+        storeCallerSessionKey !== undefined
+          ? parseFormattedSessionKey(storeCallerSessionKey)?.userId
+          : undefined;
+
       const storeResult = await deps.memoryAdapter.store({
         id: storeEntryId,
         tenantId: deps.tenantId,
         agentId: storeAgentId,
-        userId: isAdminCaller ? "operator" : "agent",
+        userId: isAdminCaller ? "operator" : (storeCallerUserId ?? "agent"),
         content: storeContent,
         trustLevel: storeTrustLevel,
         source: storeSource,
@@ -789,7 +601,20 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
         }
       }
 
-      const result = { records };
+      // Honest empty (live finding 2026-06-11): a bare `{records: []}` made
+      // a disabled recorder indistinguishable from "no recalls happened" —
+      // the diagnosis tool itself degraded silently. Report the recorder
+      // gate, and when empty, say WHY + which knob enables tracing.
+      const tracingEnabled = deps.recallTraceEnabled === true;
+      const result: { records: typeof records; tracingEnabled: boolean; hint?: string } = {
+        records,
+        tracingEnabled,
+      };
+      if (records.length === 0) {
+        result.hint = tracingEnabled
+          ? "no recall-trace records matched this selector yet — traces are recorded per recall while diagnostics.recallTrace.enabled is true; re-run the session and query again"
+          : "recall tracing is DISABLED (diagnostics.recallTrace.enabled defaults to false) — no traces are being recorded; set diagnostics.recallTrace.enabled: true and re-run the session";
+      }
       if (systemGetEnv("NODE_ENV") !== "production") {
         MemoryRecallTraceContract.response.parse(result);
       }

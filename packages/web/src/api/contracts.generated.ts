@@ -5345,6 +5345,9 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         },
         "abstained": {
           "type": "boolean"
+        },
+        "reason": {
+          "type": "string"
         }
       },
       "required": [
@@ -6157,6 +6160,12 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
             },
             "additionalProperties": {}
           }
+        },
+        "tracingEnabled": {
+          "type": "boolean"
+        },
+        "hint": {
+          "type": "string"
         }
       },
       "required": [
@@ -9685,6 +9694,9 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         },
         "memoriesDeleted": {
           "type": "number"
+        },
+        "runtimeSessionDestroyed": {
+          "type": "boolean"
         }
       },
       "required": [

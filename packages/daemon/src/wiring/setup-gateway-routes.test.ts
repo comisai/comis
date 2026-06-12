@@ -293,6 +293,58 @@ describe("mountGatewayRoutes", () => {
 // they must runWithContext once per request.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Model-validation guard on /v1/chat/completions (live finding 2026-06-11):
+// the route factory ships a resolveModel → 404 guard, but the wiring never
+// passed resolveModel, so ANY model string (model: "bogus-xyz") returned 200
+// served by the default agent — a dishonest surface for OpenAI clients.
+// ---------------------------------------------------------------------------
+
+describe("an OpenAI client sending an unknown model name gets a 404, not a silent default-agent answer", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function capturedResolveModel(): (m: string) => { provider: string; modelId: string } | undefined {
+    const deps = createMockDeps();
+    mountGatewayRoutes(deps);
+    const routeArgs = vi.mocked(createOpenaiCompletionsRoute).mock.calls[0]![0] as {
+      resolveModel?: (m: string) => { provider: string; modelId: string } | undefined;
+    };
+    expect(routeArgs.resolveModel).toBeDefined();
+    return routeArgs.resolveModel!;
+  }
+
+  it("accepts the catalog id form provider/model (what /v1/models advertises)", () => {
+    const resolve = capturedResolveModel();
+    expect(resolve("anthropic/claude-sonnet-4-5-20250929")).toEqual({
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-5-20250929",
+    });
+  });
+
+  it("accepts the bare configured model id", () => {
+    const resolve = capturedResolveModel();
+    expect(resolve("claude-sonnet-4-5-20250929")).toEqual({
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-5-20250929",
+    });
+  });
+
+  it("accepts an agent id as the model (routes to that agent's model)", () => {
+    const resolve = capturedResolveModel();
+    expect(resolve("default")).toEqual({
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-5-20250929",
+    });
+  });
+
+  it("rejects an unknown model name (the route factory turns undefined into a 404)", () => {
+    const resolve = capturedResolveModel();
+    expect(resolve("bogus-model-does-not-exist-xyz")).toBeUndefined();
+  });
+});
+
 describe("openai/responses executeAgent request-context wrap (§2.6)", () => {
   beforeEach(() => {
     vi.clearAllMocks();

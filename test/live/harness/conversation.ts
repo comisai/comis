@@ -22,7 +22,7 @@
 
 import { mkdtempSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve, dirname } from "node:path";
+import { join, resolve, dirname, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import {
@@ -70,9 +70,45 @@ export interface ConversationDriverOptions {
 // ---------------------------------------------------------------------------
 
 type RpcEnvelope = {
-  result?: { reply?: string };
+  result?: { response?: string; error?: string; finishReason?: string };
   error?: { code: number; message: string };
 };
+
+/**
+ * Parse an agent.execute RPC envelope into the agent's reply text.
+ *
+ * 260611 live-fire fix: the gateway's handleAgentRequest returns
+ * `{ response, tokensUsed, finishReason }` (packages/gateway/src/rpc/
+ * rpc-adapters.ts) — the driver previously read `result.reply`, a field that
+ * has never existed, so EVERY live turn threw "returned no reply string" even
+ * when the model answered. Handler-level failures also arrive as
+ * `result.error` (a string), not as a JSON-RPC error object — both shapes now
+ * fail honestly.
+ *
+ * Exported for unit tests (conversation.test.ts) — pure, no I/O.
+ *
+ * @throws on JSON-RPC error envelopes, handler `result.error`, or a missing
+ *         response string. A degraded-but-honest reply (finishReason:"error"
+ *         fallback text) is RETURNED, not thrown — scenario oracles judge it.
+ */
+export function parseAgentExecuteResult(envelope: RpcEnvelope): string {
+  if (envelope.error) {
+    throw new Error(
+      `agent.execute RPC error ${envelope.error.code}: ${envelope.error.message}`,
+    );
+  }
+  const result = envelope.result;
+  if (result?.error) {
+    throw new Error(`agent.execute handler error: ${result.error}`);
+  }
+  const response = result?.response;
+  if (typeof response !== "string" || response.length === 0) {
+    throw new Error(
+      `agent.execute returned no response string (result: ${JSON.stringify(result)})`,
+    );
+  }
+  return response;
+}
 
 // ---------------------------------------------------------------------------
 // ConversationDriver class
@@ -272,22 +308,7 @@ export class ConversationDriver {
         Date.now(),
         { timeoutMs: this._timeoutMs },
       );
-      const envelope = resp as RpcEnvelope;
-
-      if (envelope.error) {
-        throw new Error(
-          `agent.execute RPC error ${envelope.error.code}: ${envelope.error.message}`,
-        );
-      }
-
-      const reply = envelope.result?.reply;
-      if (typeof reply !== "string") {
-        throw new Error(
-          `agent.execute returned no reply string (result: ${JSON.stringify(envelope.result)})`,
-        );
-      }
-
-      return reply;
+      return parseAgentExecuteResult(resp as RpcEnvelope);
     } finally {
       ws.close();
     }
@@ -506,6 +527,31 @@ export class ConversationDriver {
   /** Returns the isolated temp data dir for this driver instance. */
   getDataDir(): string {
     return this._dataDir;
+  }
+
+  /**
+   * Resolve the ACTUAL memory DB path from the booted daemon's own config —
+   * `resolve(config.dataDir, config.memory.dbPath)` (absolute dbPath returned
+   * unchanged). Requires init().
+   *
+   * 260611 live-fire fix: scenario files previously hand-built
+   * `join(getDataDir(), "memory.db")`, which never matched the test config's
+   * `memory.dbPath: "test-memory-default.db"` — so every
+   * `if (existsSync(dbPath))`-guarded db-oracle silently skipped and ground
+   * truth was never checked (the §2.10 hand-built-path bug class). This
+   * accessor is the single source of truth: the path comes from the live
+   * daemon's resolved config, not a guess.
+   */
+  getMemoryDbPath(): string {
+    const handle = this._requireHandle();
+    const cfg = (
+      handle.daemon as unknown as {
+        container: { config: { dataDir?: string; memory: { dbPath?: string } } };
+      }
+    ).container.config;
+    const dbPath = cfg.memory.dbPath || "memory.db";
+    if (isAbsolute(dbPath)) return dbPath;
+    return resolve(cfg.dataDir || this._dataDir, dbPath);
   }
 
   /** Returns the EchoChannelAdapter instance for direct getSentMessages() assertions. */

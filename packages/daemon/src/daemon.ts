@@ -217,6 +217,7 @@ import {
 } from "./wiring/restart-continuation.js";
 import { setupSingleAgent } from "./wiring/setup-agents/index.js";
 import { buildDialecticWiring, dialecticWiringDepsFromBoot } from "./wiring/setup-dialectic.js";
+import { createConversationReset } from "./wiring/conversation-reset.js";
 import { setupSecretManager } from "./wiring/setup-secret-manager.js";
 import { restoreApprovalState, resolveGatewayTokens, setupChannelHealthMonitor } from "./wiring/main-helpers.js";
 import { createInboundMessageIdResolver, type InboundMessageIdResolver } from "./wiring/inbound-message-id-resolver.js";
@@ -572,6 +573,8 @@ function buildChannelManagerDeps(deps: {
     onSuspiciousContent, dataDir, clock, timers, activityBreaker, activityStream, activityRendererFactoryOverride,
     executionPlanPorts,
   } = agents;
+  // Complete three-layer forget for channel /new + /reset (live 2026-06-11).
+  const channelConversationReset = createConversationReset({ lcdStore: agents.lcdStore, piSessionAdapters, tenantId: container.config.tenantId, logger });
   // Build exportSessionBundle DI closure for the /export-trajectory slash
   // command. Uses exportTrajectoryBundle from @comis/observability (same
   // pipeline as `comis trace export`).
@@ -660,6 +663,8 @@ function buildChannelManagerDeps(deps: {
     },
     approvalGate: container.config.approvals?.enabled ? approvalGate : undefined,
     piSessionAdapters, costTrackers, deliveryQueue,
+    destroyConversation: channelConversationReset.destroyConversationCompletely,
+    lcdStore: agents.lcdStore, contextBrowse: agents.contextBrowse, // review session source (DAG transcripts)
     cronExecutionTrackers: executionTrackers,
     exportSessionBundle,
   };
@@ -938,6 +943,8 @@ function buildRpcDispatchDeps(deps: {
   // gauge is daemon-lifetime — it resets on restart.
   const recallCounters = c.recallCounters;
   const dialecticWiring = buildDialecticWiring(dialecticWiringDepsFromBoot(c)); // the memory.ask seam + per-agent recall factory (setup-dialectic.ts owns the wiring; the cost gate returns {} when off). Spread into the dispatch deps below; the forward-presence belt locks the spread.
+  // L3 destroy for session.reset_conversation (live 2026-06-11: skipping it resurrected the forget).
+  const conversationReset = createConversationReset({ lcdStore: c.lcdStore, sessionStore: g.sessionStoreBridge, piSessionAdapters: c.piSessionAdapters, tenantId: c.container.config.tenantId, logger: c.logger });
   return {
     defaultAgentId: c.defaultAgentId, getAgentCronScheduler: c.getAgentCronScheduler,
     cronSchedulers: c.cronSchedulers, executionTrackers: c.executionTrackers, wakeCoalescer: c.wakeCoalescer,
@@ -949,6 +956,7 @@ function buildRpcDispatchDeps(deps: {
     // SAME object satisfies SessionsApiDeps.memoryPort. consolidationStore (the
     // unlink/purge surface) is already on the spread below.
     memoryPort: c.memoryAdapter,
+    destroyRuntimeSession: (formattedSessionKey: string) => conversationReset.destroyRuntimeSession(c.defaultAgentId, formattedSessionKey),
     // CR-02 (175-REVIEW): session.reset_conversation / session.delete drop
     // the executor's session-scoped state (tool-schema snapshots, GBNF-02
     // strip-retry once-gate, JIT-guide delivery, cache latches) through the
@@ -965,6 +973,7 @@ function buildRpcDispatchDeps(deps: {
     // here — no diagnostic handler consumes it; its read path is the setupAgents
     // injection at the setupAgents({…}) call below, mirroring entityStore.)
     consolidationStore: c.consolidationStore, entityStore: c.entityStore, recallCounters, ...dialecticWiring, onSuspiciousContent: c.onSuspiciousContent,
+    recallTraceEnabled: c.container.config.diagnostics?.recallTrace?.enabled ?? false, // memory.recall_trace honest-empty gate
     tenantId: c.container.config.tenantId, agents: c.agentsConfig, costTrackers: c.costTrackers, stepCounters: c.stepCounters,
     agentDataDir: safePath(c.container.config.dataDir ?? safePath(os.homedir(), ".comis"), "agents"),
     sessionStore: g.sessionStoreBridge,
@@ -995,6 +1004,10 @@ function buildRpcDispatchDeps(deps: {
     // 161-02: ObservabilityApiDeps.clock = the SAME boot ClockPort (one createSystemClock()
     // at the composition root) so the obs.fleet.health assembler has a clock (asserts deps.clock!).
     obsStore: c.obsStore, clock: c.clock, startupTimestamp: startupStartMs, sharedCostTracker: c.sharedCostTracker,
+    // obs.getCacheStats reads deps.tokenTracker for the in-memory hit-rate/effectiveness;
+    // without this it fell to the `!deps.tokenTracker` branch and returned a silent 0/0
+    // forever, even at an 85% live hit rate (live cache-management finding, 2026-06-12).
+    tokenTracker: c.tokenTracker,
     contextPipelineCollector: c.contextPipelineCollector, execGit: c.execGit,
     deliveryQueue: c.deliveryQueue, deliveryService: c.deliveryService,
     channelPlugins: c.channelPlugins, healthMonitor: c.channelHealthMonitor,
@@ -1775,7 +1788,7 @@ async function bootAgents(
     agentsConfig[defaultAgentId] ??
     agentsConfig.default ??
     ({} as PerAgentConfig);
-  const defaultWorkspaceDir = resolveWorkspaceDir(defaultAgentConfig, defaultAgentId);
+  const defaultWorkspaceDir = resolveWorkspaceDir(defaultAgentConfig, defaultAgentId, container.config.dataDir || dataDir);
 
   // Boot-path skill-bundle re-merge MUST run BEFORE setupMcp (sequencing
   // gate). The orchestrator
@@ -2545,6 +2558,8 @@ async function bootGateway(
     assembleToolsForAgent, preprocessMessageText, rpcCall,
     costTrackers, workspaceDirs,
     _createGatewayServer, piSessionAdapters,
+    // Complete three-layer forget for gateway slash /new + /reset (live 2026-06-11).
+    destroyConversation: createConversationReset({ lcdStore: channels.lcdStore, sessionStore: sessionStoreBridge, piSessionAdapters, tenantId: container.config.tenantId, logger: gatewayLogger }).destroyConversationCompletely,
     resolvedTokens: resolvedGatewayTokens,
     daemonVersion: boot.daemonVersion,
     suspendedAgents,

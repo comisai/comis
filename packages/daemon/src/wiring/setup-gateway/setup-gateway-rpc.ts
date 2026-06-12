@@ -228,6 +228,10 @@ export interface RpcAdapterBuilderDeps {
   activeExecutions: Map<string, { agentId: string; startedAt: number }>;
   /** Unused; preserves GatewayDeps optional surface for consumer parity. */
   _memoryAdapter?: SqliteMemoryAdapter;
+  /** Complete three-layer conversation forget for slash /new + /reset
+   *  (createConversationReset — live finding 2026-06-11: runtime-only destroy
+   *  left the LCD context the DAG re-presented). */
+  destroyConversation?: (agentId: string, key: SessionKey) => Promise<unknown>;
 }
 
 /**
@@ -252,6 +256,7 @@ export function buildRpcAdapterDeps(deps: RpcAdapterBuilderDeps): RpcAdapterDeps
     costTrackers,
     workspaceDirs,
     piSessionAdapters,
+    destroyConversation,
     greetingGenerator,
     activeExecutions,
   } = deps;
@@ -538,6 +543,7 @@ export function buildRpcAdapterDeps(deps: RpcAdapterBuilderDeps): RpcAdapterDeps
         costTrackers,
         workspaceDirs,
         piSessionAdapters,
+        destroyConversation,
       });
 
       const handler = createCommandHandler(cmdDeps);

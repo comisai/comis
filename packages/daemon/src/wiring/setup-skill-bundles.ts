@@ -395,7 +395,7 @@ export function buildSkillRegistriesForBundles(
     // dir prepended; relative discoveryPaths resolved against dataDir.
     let agentDir: string;
     try {
-      agentDir = resolveWorkspaceDir(effectiveConfig, agentId);
+      agentDir = resolveWorkspaceDir(effectiveConfig, agentId, container.config.dataDir || undefined);
     } catch (e) {
       logger.warn(
         {

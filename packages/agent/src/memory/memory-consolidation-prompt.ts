@@ -19,6 +19,7 @@
  */
 
 import { z } from "zod";
+import { parseLenientJson } from "./llm-json.js";
 
 // ---------------------------------------------------------------------------
 // Prompt
@@ -84,12 +85,10 @@ export type ConsolidationResult = z.infer<typeof ConsolidationResultSchema>;
  */
 export function parseConsolidationResult(text: string): ConsolidationResult | undefined {
   const cleaned = text.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
-  let json: unknown;
-  try {
-    json = JSON.parse(cleaned);
-  } catch {
-    return undefined;
-  }
+  const json: unknown = parseLenientJson(cleaned);
+  // parseLenientJson tolerates narration around the payload (live finding
+  // 2026-06-11 — the whole-string parse degraded valid payloads).
+  if (json === undefined) return undefined;
   const parsed = ConsolidationResultSchema.safeParse(json);
   return parsed.success ? parsed.data : undefined;
 }

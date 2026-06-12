@@ -130,6 +130,14 @@ describe("NotificationService", () => {
         reason: "no_channel",
       }),
     );
+    // The error must name the resolution ladder it walked and the knob that
+    // fixes it — not just the symptom (live finding, 2026-06-12 C7 run).
+    if (!result.ok) {
+      expect(result.error.message).toContain("tried:");
+      expect(result.error.message).toContain("recent_session");
+      expect(result.error.message).toContain("notification.primaryChannel");
+      expect(result.error.message).toContain("channel_type");
+    }
   });
 
   it("quiet hours active + priority normal: suppressed event emitted, enqueue called with future scheduledAt", async () => {

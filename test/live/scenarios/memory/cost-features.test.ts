@@ -8,17 +8,19 @@
  *   by YAML string checks. Stage-B daemon-boot with costFeatures.enabled=false
  *   validates the key at runtime — a wrong YAML key would fail daemon config parse.
  *
- * Stage-B (COMIS_LIVE, $0): storeDelta >= 1 AND <= 2 when costFeatures disabled.
- *   The lower bound >= 1 catches a "0 rows written" false-pass (WARNING-1).
+ * Stage-B (COMIS_LIVE, $0): both planted facts stored (content-anchored) AND
+ *   ZERO consolidation-observation rows (proof_count NOT NULL) when costFeatures
+ *   is disabled. The precise observation-signature invariant replaces the old
+ *   raw-row count ceiling, which wrongly assumed one row per user turn
+ *   (ingestion also stores agent replies + agent-extracted memories — 260611).
  *
  * @module
  */
 import { describe, it, expect } from "vitest";
 import { existsSync, readFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { ConversationDriver, flushDaemonLogs } from "../../harness/conversation.js";
 import { runLogOracle } from "../../assert/log-oracle.js";
-import { runDbOracle, snapshotRowCounts } from "../../assert/db-oracle.js";
+import { runDbOracle, snapshotRowCounts, countRowsLike, countObservationRows } from "../../assert/db-oracle.js";
 import { buildMemConfig } from "../../harness/mem-config.js";
 
 const isLive = !!process.env["COMIS_LIVE"];
@@ -54,22 +56,40 @@ describe.skipIf(!isLive)("MEM-07 Stage-B — costFeatures.enabled=false → no c
       label: "mem-07-cost",
     });
     const driver = new ConversationDriver({ agentId: "mem-07-cost", configPath });
-    await driver.init();
-    const dbPath = join(driver.getDataDir(), "memory.db");
-    const beforeCounts = existsSync(dbPath) ? snapshotRowCounts(dbPath, MEM_TABLES) : {};
     try {
+      await driver.init();
+      const dbPath = driver.getMemoryDbPath();
+      const beforeCounts = existsSync(dbPath) ? snapshotRowCounts(dbPath, MEM_TABLES) : {};
       await driver.sendTurn("Remember: cost-features test fact A.");
       await driver.sendTurn("Remember: cost-features test fact B.");
       await driver.sendTurn("What are the cost-features test facts?");
       await flushDaemonLogs(driver);
       await runLogOracle(driver.capturedLogLines(), { expectedErrors: ["JSON-RPC method error"] });
-      if (existsSync(dbPath)) {
+      expect(existsSync(dbPath), "memory DB missing after run - store never opened (dbPath: " + dbPath + ")").toBe(true);
+      // Content-anchored (260611 re-pin): both planted facts stored (catches
+      // "0 rows written" false-pass — WARNING-1).
+      expect(
+        countRowsLike(dbPath, "memories", ["cost-features test fact A"]),
+        "planted fact A not found in memories store",
+      ).toBeGreaterThanOrEqual(1);
+      expect(
+        countRowsLike(dbPath, "memories", ["cost-features test fact B"]),
+        "planted fact B not found in memories store",
+      ).toBeGreaterThanOrEqual(1);
+      {
         const afterCounts = snapshotRowCounts(dbPath, MEM_TABLES);
         const storeDelta = (afterCounts["memories"] ?? 0) - (beforeCounts["memories"] ?? 0);
-        // Lower bound: at least 1 fact stored (catches "0 rows written" false-pass — WARNING-1)
-        expect(storeDelta).toBeGreaterThanOrEqual(1);
-        // Upper bound: no consolidation observation (costFeatures disabled → LLM-bearing cron off)
-        expect(storeDelta).toBeLessThanOrEqual(2);
+        expect(storeDelta, "no memory rows written").toBeGreaterThanOrEqual(1);
+        // The PRECISE no-consolidation invariant (260611): costFeatures.enabled=
+        // false turns the LLM-bearing consolidation cron OFF, so there must be
+        // ZERO consolidation-observation rows (proof_count NOT NULL). A raw-row
+        // COUNT ceiling was wrong — ingestion stores combined user+agent turns
+        // AND agent-extracted memories, so the count is nondeterministic; the
+        // observation signature is not.
+        expect(
+          countObservationRows(dbPath),
+          "consolidation observation rows present despite costFeatures.enabled=false",
+        ).toBe(0);
         await runDbOracle(dbPath, { beforeCounts });
       }
     } finally {

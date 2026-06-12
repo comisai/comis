@@ -7,9 +7,12 @@
  *   - session.delete: delete session + return transcript (admin-only)
  *   - session.reset: clear session messages while preserving metadata
  *   - session.export: dump full session payload (admin-only)
- *   - session.reset_conversation: COMPLETE cross-mode forget — clears BOTH
- *     the LCD lossless-store history AND the daemon sessionStore working
- *     transcript (Phase 164-06; supersedes Phase 164-03 context.reset_lcd).
+ *   - session.reset_conversation: COMPLETE cross-mode forget — clears ALL
+ *     THREE transcript layers: the LCD lossless-store history, the daemon
+ *     sessionStore working transcript (Phase 164-06; supersedes Phase 164-03
+ *     context.reset_lcd), and the pi runtime session (live finding 2026-06-11:
+ *     without the runtime destroy the surviving JSONL re-ingested wholesale on
+ *     the next turn and the "forgotten" conversation resurrected).
  *
  * @module
  */
@@ -65,6 +68,55 @@ export function bindSessionArchiveHandlers(deps: SessionHandlerDeps): Record<str
       // strip-retry once-gate, JIT-guide delivery, cache latches) so a new
       // session reusing the key starts genuinely fresh.
       deps.clearAgentSessionState?.(sessionKey);
+
+      // Delete ⊇ reset: sever the OTHER two transcript layers too (live C7
+      // finding, 2026-06-12). Without the runtime destroy, the surviving
+      // live JSONL re-surfaces the "deleted" session via session.list's
+      // scanJsonlSessions merge; without the LCD delete, a recreated
+      // same-key session re-reads the old conversation (the resurrection
+      // class session.reset_conversation already guards against).
+      // Best-effort on both — the store-row deletion above is the
+      // contract-bearing effect and must not be undone by a layer failure.
+      let lcdRowsDeleted = 0;
+      if (deps.lcdStore) {
+        const scope: ContextStoreScope = {
+          conversationId: sessionKey,
+          agentId: deps.defaultAgentId,
+          tenantId: deps.tenantId,
+          sessionKey,
+        };
+        try {
+          lcdRowsDeleted = await deps.lcdStore.runOnConversation(
+            scope.conversationId,
+            () => deps.lcdStore!.deleteConversationLcd(scope),
+          );
+        } catch (e: unknown) {
+          deps.logger.warn(
+            {
+              method: SessionDeleteContract.method,
+              sessionKey,
+              err: e instanceof Error ? e : new Error(String(e)),
+              errorKind: "dependency" as const,
+              hint: "LCD rows survive the delete — a recreated same-key session may re-read them",
+            },
+            "Session delete: LCD layer clear failed",
+          );
+        }
+      }
+      let runtimeSessionDestroyed = false;
+      if (deps.destroyRuntimeSession) {
+        runtimeSessionDestroyed = await deps.destroyRuntimeSession(sessionKey);
+      }
+      deps.logger.info(
+        {
+          method: SessionDeleteContract.method,
+          sessionKey,
+          messageCount: transcript.messageCount,
+          lcdRowsDeleted,
+          runtimeSessionDestroyed,
+        },
+        "Session deleted across store, LCD, and runtime layers",
+      );
 
       return { sessionKey, deleted: true, transcript };
     },
@@ -175,6 +227,27 @@ export function bindSessionArchiveHandlers(deps: SessionHandlerDeps): Record<str
       // fresh context after the reset (same pattern as session.delete + session.reset).
       deps.approvalGate?.clearApprovalCache(sessionKey);
 
+      // Layer 3: pi runtime session (live finding 2026-06-11). Without this
+      // destroy, the surviving runtime JSONL re-ingests WHOLESALE on the next
+      // turn (lcd-ingest epoch rebase — the deleted cursor makes live[0] a new
+      // epoch) and the "forgotten" conversation resurrects into the DAG.
+      // Best-effort like --memory: a runtime failure never undoes L1/L2.
+      let runtimeSessionDestroyed = false;
+      if (deps.destroyRuntimeSession) {
+        runtimeSessionDestroyed = await deps.destroyRuntimeSession(sessionKey);
+      } else {
+        deps.logger.warn(
+          {
+            method: SessionResetConversationContract.method,
+            conversationId: scope.conversationId,
+            submodule: "session-reset-conversation",
+            errorKind: "precondition" as const,
+            hint: "destroyRuntimeSession not wired — the pi runtime transcript survives this reset and the conversation may resurrect on the next turn (lcd-ingest re-ingests the surviving JSONL)",
+          },
+          "Runtime session layer not wired (reset is LCD + sessionStore only)",
+        );
+      }
+
       // CR-02 (175-REVIEW): a COMPLETE forget must also drop the executor's
       // session-scoped state for this key — most importantly the GBNF-02
       // strip-retry once-gate (a reset session previously inherited the
@@ -193,10 +266,11 @@ export function bindSessionArchiveHandlers(deps: SessionHandlerDeps): Record<str
           tenantId: scope.tenantId,
           lcdRowsDeleted,
           sessionMessagesCleared,
+          runtimeSessionDestroyed,
           durationMs: systemNowMs() - startMs,
           submodule: "session-reset-conversation",
         },
-        "Conversation reset (LCD + sessionStore)",
+        "Conversation reset (LCD + sessionStore + runtime)",
       );
 
       // Phase 172-03 (DIST-05): --memory honest reset. Deletes the RAG-memory
@@ -213,10 +287,12 @@ export function bindSessionArchiveHandlers(deps: SessionHandlerDeps): Record<str
         lcdRowsDeleted: number;
         sessionMessagesCleared: number;
         memoriesDeleted?: number;
+        runtimeSessionDestroyed: boolean;
       } = {
         sessionKey,
         lcdRowsDeleted,
         sessionMessagesCleared,
+        runtimeSessionDestroyed,
       };
 
       const requestMemory = (rawParams.memory ?? false) as boolean;

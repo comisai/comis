@@ -178,6 +178,12 @@ export interface ChannelsDeps {
   defaultWorkspaceDir?: string;
   /** Memory adapter for storing media file references. */
   memoryAdapter?: MemoryPort;
+  /** LCD store + browse — the memory-review session source reads DAG
+   *  transcripts from them (live finding 2026-06-11: the daemon session store
+   *  is near-empty in DAG mode, so the nightly extraction was a silent
+   *  no-op). Absent ⇒ daemon-store-only review (pipeline byte-identical). */
+  lcdStore?: import("@comis/core").ContextStorePort;
+  contextBrowse?: import("@comis/core").ContextBrowsePort;
   /** Memory read API — the __USER_REPRESENTATION__ sentinel scopes the
    *  per-(tenant, agent, user) high-trust source read over `inspect`. Built in setup-memory;
    *  daemon-side (the agent imports no memory package). */
@@ -274,6 +280,10 @@ export interface ChannelsDeps {
     getSessionStats(key: SessionKey): { messageCount: number; createdAt?: number; tokens?: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number }; userMessages?: number; assistantMessages?: number; toolCalls?: number; toolResults?: number; cost?: number } | undefined;
     destroySession(key: SessionKey): Promise<void>;
   }>;
+  /** Complete three-layer conversation forget for slash /new + /reset
+   *  (createConversationReset — live finding 2026-06-11: runtime-only destroy
+   *  left the LCD context the DAG re-presented on the next turn). */
+  destroyConversation?: (agentId: string, key: SessionKey) => Promise<unknown>;
   /** Per-agent cost trackers for /usage and /status cost data. */
   costTrackers?: Map<string, {
     getByProvider(): Array<{ provider: string; model: string; totalTokens: number; totalCost: number; callCount: number }>;
@@ -380,6 +390,8 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
     transcriber,
     workspaceDirs: deps.workspaceDirs,
     memoryAdapter: deps.memoryAdapter,
+    lcdStore: deps.lcdStore,
+    contextBrowse: deps.contextBrowse,
     entityStore: deps.entityStore,
     causalStore: deps.causalStore,
     consolidationStore: deps.consolidationStore,
@@ -435,6 +447,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
       onMessageProcessed: deps.onMessageProcessed,
       approvalGate: deps.approvalGate,
       piSessionAdapters: deps.piSessionAdapters,
+      destroyConversation: deps.destroyConversation,
       costTrackers: deps.costTrackers,
       cronExecutionTrackers: deps.cronExecutionTrackers,
       exportSessionBundle: deps.exportSessionBundle,

@@ -204,6 +204,24 @@ export function createDialecticSeam(
     if (text === undefined) return { abstain: true };
     // The lenient/total parser STRIPS any smuggled trust + degrades a malformed payload to
     // { abstain: true } (never throws).
-    return parseDialecticOutput(text);
+    const parsed = parseDialecticOutput(text);
+    // Counts-only parse outcome (live finding 2026-06-11): an abstain caused by a
+    // malformed payload was indistinguishable from the model's explicit
+    // {"abstain": true} — both returned the bare sentinel with zero log lines.
+    // responseChars + the explicit-abstain marker discriminate the two without
+    // ever logging the response body (AGENTS.md §2.7).
+    logger.debug(
+      {
+        agentId,
+        step: "dialectic" as const,
+        responseChars: text.length,
+        parsedAbstain: parsed.abstain,
+        explicitAbstain: parsed.abstain && /"abstain"\s*:\s*true/.test(text),
+        citedCount: parsed.abstain ? 0 : parsed.citedIds.length,
+        groundingChars: groundingText.length,
+      },
+      "Dialectic synthesis parsed",
+    );
+    return parsed;
   };
 }

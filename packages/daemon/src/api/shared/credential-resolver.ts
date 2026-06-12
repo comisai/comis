@@ -9,12 +9,18 @@
  * Resolution chain (matches pi-coding-agent runtime semantics):
  *   1. KEYLESS_PROVIDER_TYPES.has(entry.type) — ollama / lm-studio
  *   2. providers.entries.<provider>.apiKeyName → secretManager.has(...)
- *   3. pi-ai's getEnvApiKey(provider) — canonical env vars (incl. ANTHROPIC_OAUTH_TOKEN
- *      and AWS/ADC special-cases). Does NOT cover comis-managed OAuth profiles in
- *      ~/.comis/auth-profiles.json (e.g. openai-codex).
- *   4. Comis OAuth profiles — agent.oauthProfiles[provider] resolved against an
+ *   3. Comis OAuth profiles — agent.oauthProfiles[provider] resolved against an
  *      injected oauthProfileLoader (the OAuthCredentialStorePort handle held by
  *      the daemon, adapted to a synchronous has-check at the call site).
+ *   4. Secret-store canonical key — for the DEFAULT_PROVIDER_KEYS providers
+ *      (anthropic/openai/google/groq/mistral), secretManager.has(canonicalKey).
+ *      This mirrors the runtime: createAuthStorageAdapter hydrates exactly these
+ *      providers into AuthStorage via secretManager.get(canonicalKey), so a bare
+ *      `provider: anthropic` agent (no providers.entries block) works in
+ *      `security.storage: encrypted` mode where the key is NOT in process.env.
+ *   5. pi-ai's getEnvApiKey(provider) — canonical env vars (incl. ANTHROPIC_OAUTH_TOKEN
+ *      and AWS/ADC special-cases). Does NOT cover comis-managed OAuth profiles in
+ *      ~/.comis/auth-profiles.json (e.g. openai-codex).
  *
  * Note on synchronous loader facade: `OAuthCredentialStorePort.has`
  * is async (returns Promise<Result<boolean, Error>>). To avoid an async cascade
@@ -28,6 +34,7 @@
  */
 import { getEnvApiKey, getProviders, getModels, type KnownProvider } from "@earendil-works/pi-ai";
 import { KEYLESS_PROVIDER_TYPES, type ProviderEntry } from "@comis/core";
+import { DEFAULT_PROVIDER_KEYS } from "@comis/agent";
 
 export interface CredentialResolverDeps {
   /** Provider-entry map from comis config (providers.entries). */
@@ -64,7 +71,7 @@ export interface CredentialResolution {
   /** When ok=false: actionable error message ready to throw. */
   reason?: string;
   /** When ok=true: which source resolved. Useful for debug logs. */
-  source?: "keyless" | "providers_entry" | "env_canonical" | "oauth_profile";
+  source?: "keyless" | "providers_entry" | "env_canonical" | "oauth_profile" | "secret_store_canonical";
   /** When ok=true: the provider name actually checked (after "default" resolution). */
   resolvedProvider?: string;
 }
@@ -132,7 +139,24 @@ export function resolveProviderCredential(
     return { ok: true, source: "oauth_profile", resolvedProvider: effectiveProvider };
   }
 
-  // 4. Source B: pi-ai canonical env / OAuth / ADC chain
+  // 4. Source D: secret-store canonical key for the DEFAULT_PROVIDER_KEYS
+  //    providers. In `security.storage: encrypted` mode the canonical key
+  //    (ANTHROPIC_API_KEY, etc.) lives in the encrypted secret store, NOT
+  //    process.env — so getEnvApiKey (Source B below) misses it. The runtime
+  //    hydrates exactly these providers from secretManager.get(canonicalKey)
+  //    via createAuthStorageAdapter, so a bare `provider: anthropic` agent
+  //    (no providers.entries block) resolves at runtime; this source keeps the
+  //    pre-write check faithful to that. Scoped to DEFAULT_PROVIDER_KEYS (not
+  //    the broader canonicalEnvKeyHint map) precisely because those are the
+  //    only providers the runtime auto-hydrates from the store without an
+  //    explicit providers.entries.apiKeyName mapping (which is Source A).
+  // eslint-disable-next-line security/detect-object-injection -- read of static const Record<string,string> indexed by validated provider string
+  const canonicalSecretKey = DEFAULT_PROVIDER_KEYS[effectiveProvider];
+  if (canonicalSecretKey && deps.secretManager?.has(canonicalSecretKey)) {
+    return { ok: true, source: "secret_store_canonical", resolvedProvider: effectiveProvider };
+  }
+
+  // 5. Source B: pi-ai canonical env / OAuth / ADC chain
   if (getEnvApiKey(effectiveProvider)) {
     return { ok: true, source: "env_canonical", resolvedProvider: effectiveProvider };
   }

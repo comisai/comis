@@ -58,7 +58,7 @@ must match exactly -- unknown fields are rejected (`strictObject`).
 
 | Field | Type | Required | Constraints | Default | Description |
 |-------|------|----------|-------------|---------|-------------|
-| `model` | `string` | Yes | `min(1)` | -- | Model identifier (e.g., `"anthropic/claude-sonnet-4-5-20250929"`) |
+| `model` | `string` | Yes | `min(1)` | -- | Model identifier. Accepted forms (validated against the configured agents — the same catalog `/v1/models` advertises): `"provider/model"` (e.g. `"anthropic/claude-sonnet-4-5-20250929"`), the bare model id, or an agent id (e.g. `"default"`). An unknown model returns `404 Model not found` |
 | `messages` | `ChatMessage[]` | Yes | `min(1)` array | -- | Conversation messages in order |
 | `stream` | `boolean` | No | -- | `false` | Enable Server-Sent Events streaming |
 | `temperature` | `number` | No | `min(0)`, `max(2)` | -- | Sampling temperature |

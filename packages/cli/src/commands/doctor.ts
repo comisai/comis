@@ -11,10 +11,8 @@
 
 import type { Command } from "commander";
 import * as os from "node:os";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import Database from "better-sqlite3";
-import { loadConfigFile, validateConfig } from "@comis/core";
-import type { AppConfig } from "@comis/core";
 import { success, error, info } from "../output/format.js";
 import { withSpinner } from "../output/spinner.js";
 import { runDoctorChecks } from "../doctor/check-runner.js";
@@ -32,6 +30,7 @@ import { repairDaemon } from "../doctor/repairs/repair-daemon.js";
 import { repairWorkspace } from "../doctor/repairs/repair-workspace.js";
 import { repairConfigAudit } from "../doctor/repairs/repair-config-audit.js";
 import { repairFtsDrift, repairContextItems } from "../doctor/repairs/repair-lcd.js";
+import { resolveDoctorConfig } from "../doctor/config-resolve.js";
 import type { DoctorContext } from "../doctor/types.js";
 
 /** All doctor checks in execution order (8 categories). */
@@ -67,29 +66,15 @@ function resolveDefaultConfigPaths(): string[] {
 /**
  * Build a DoctorContext from CLI options.
  *
- * Loads config if paths provided, resolves data directory,
- * daemon PID file path, and gateway URL.
+ * Resolves the config ONCE via the shared store-aware path (env ->
+ * ~/.comis/.env -> encrypted secret store, mirroring daemon boot) so every
+ * check sees the same config the daemon would. The full resolution outcome
+ * rides on the context: when the config is unavailable, checks must name
+ * the real reason instead of claiming nothing is configured.
  */
 function buildDoctorContext(configPaths: string[]): DoctorContext {
-  let config: AppConfig | undefined;
-
-  if (configPaths.length > 0) {
-    for (const configPath of configPaths) {
-      try {
-        readFileSync(configPath, "utf-8"); // verify readable
-        const loadResult = loadConfigFile(configPath);
-        if (loadResult.ok) {
-          const validateResult = validateConfig(loadResult.value);
-          if (validateResult.ok) {
-            config = validateResult.value;
-            break;
-          }
-        }
-      } catch {
-        // Try next path
-      }
-    }
-  }
+  const configResolution = resolveDoctorConfig(configPaths);
+  const config = configResolution.config;
 
   const dataDir = config?.dataDir || os.homedir() + "/.comis";
   const daemonPidFile = dataDir + "/daemon.pid";
@@ -108,6 +93,7 @@ function buildDoctorContext(configPaths: string[]): DoctorContext {
 
   return {
     config,
+    configResolution,
     configPaths,
     dataDir,
     daemonPidFile,

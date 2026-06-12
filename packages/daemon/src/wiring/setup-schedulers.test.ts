@@ -242,7 +242,76 @@ describe("setupSchedulers", () => {
     const result = await executeJob(job);
 
     expect(result.status).toBe("ok");
+    expect(result.summary).toBe("No delivery target (event emitted)");
+  });
+
+  // -------------------------------------------------------------------------
+  // 5b. deliveryTarget-less system_event jobs still emit scheduler:job_result
+  // (live finding 2026-06-11): the memory crons (review/consolidation/
+  // reasoning/user-representation/usefulness-judge/online-tuning) are
+  // registered as deliveryTarget-less __SENTINEL__ system_event jobs whose
+  // WORK rides the scheduler:job_result listener. The old short-circuit
+  // returned BEFORE the emit, so every memory cron completed "ok" nightly
+  // while doing NOTHING — zero entities/causal edges/observations on a live
+  // daemon with days of conversations.
+  // -------------------------------------------------------------------------
+
+  it("a deliveryTarget-less system_event job (memory cron sentinel) still emits scheduler:job_result so its work runs", async () => {
+    const setupSchedulers = await getSetupSchedulers();
+    const deps = createMinimalDeps({ cronEnabled: true });
+    await setupSchedulers(deps);
+
+    const cronArgs = mockCreateCronScheduler.mock.calls[0][0];
+    const executeJob = cronArgs.executeJob;
+
+    const job = {
+      id: "memory-review-agent-1",
+      name: "Memory review",
+      agentId: "agent-1",
+      payload: { kind: "system_event", text: "__MEMORY_REVIEW__" },
+      schedule: { kind: "cron", expr: "0 2 * * *" },
+      deliveryTarget: undefined,
+      sessionTarget: "isolated",
+    };
+
+    const result = await executeJob(job);
+
+    expect(result.status).toBe("ok");
+    expect(deps.container.eventBus.emit).toHaveBeenCalledWith(
+      "scheduler:job_result",
+      expect.objectContaining({
+        jobId: "memory-review-agent-1",
+        agentId: "agent-1",
+        result: "__MEMORY_REVIEW__",
+        success: true,
+      }),
+    );
+  });
+
+  it("a deliveryTarget-less agent_turn job keeps the old short-circuit (no emit, no execution)", async () => {
+    const setupSchedulers = await getSetupSchedulers();
+    const deps = createMinimalDeps({ cronEnabled: true });
+    await setupSchedulers(deps);
+
+    const cronArgs = mockCreateCronScheduler.mock.calls[0][0];
+    const executeJob = cronArgs.executeJob;
+
+    const job = {
+      id: "job-3",
+      name: "orphan-agent-turn",
+      agentId: "agent-1",
+      payload: { kind: "agent_turn", message: "do things" },
+      deliveryTarget: undefined,
+    };
+
+    const result = await executeJob(job);
+
+    expect(result.status).toBe("ok");
     expect(result.summary).toBe("No delivery target");
+    expect(deps.container.eventBus.emit).not.toHaveBeenCalledWith(
+      "scheduler:job_result",
+      expect.anything(),
+    );
   });
 
   // -------------------------------------------------------------------------

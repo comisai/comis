@@ -2,6 +2,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { createSessionHandlers } from "./session-handlers/index.js";
 import type { SessionHandlerDeps } from "./session-handlers/index.js";
+import { scanWorkspaceSessions, scanJsonlSessions } from "./session-handlers/session-helpers.js";
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -35,6 +36,7 @@ function makeDeps(overrides?: Partial<SessionHandlerDeps>): SessionHandlerDeps {
     crossSessionSender: { send: vi.fn() } as never,
     subAgentRunner: { spawn: vi.fn(), getRunStatus: vi.fn() } as never,
     securityConfig: { agentToAgent: { enabled: true, waitTimeoutMs: 5000 } },
+    logger: { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn(), child: vi.fn().mockReturnThis() } as never,
     ...overrides,
   };
 }
@@ -110,6 +112,90 @@ describe("createSessionHandlers - session management", () => {
         _trustLevel: "admin",
       });
       expect(result).toBeDefined();
+    });
+
+    it("severs the LCD and runtime layers so a deleted session cannot resurface in session.list", async () => {
+      // Live C7 finding (2026-06-12): session.delete returned deleted:true but
+      // only removed the sessionStore row — the surviving runtime JSONL was
+      // re-surfaced by session.list's scanJsonlSessions merge, and the LCD
+      // conversation would re-feed a recreated same-key session.
+      const lcdStore = {
+        runOnConversation: vi.fn(async (_id: string, fn: () => Promise<number>) => fn()),
+        deleteConversationLcd: vi.fn(async () => 3),
+      };
+      const destroyRuntimeSession = vi.fn(async () => true);
+      const deps = makeDeps({
+        lcdStore: lcdStore as never,
+        destroyRuntimeSession: destroyRuntimeSession as never,
+        tenantId: "default",
+      });
+      const handlers = createSessionHandlers(deps);
+
+      const result = (await handlers["session.delete"]!({
+        session_key: "valid-session",
+        _trustLevel: "admin",
+      })) as { deleted: boolean };
+
+      expect(result.deleted).toBe(true);
+      expect(lcdStore.deleteConversationLcd).toHaveBeenCalled();
+      expect(destroyRuntimeSession).toHaveBeenCalledWith("valid-session");
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // workspace scanners must not surface observability artifacts as sessions
+  // -------------------------------------------------------------------------
+
+  describe("workspace session scanners", () => {
+    it("does not list a trajectory artifact as a live session after the transcript was destroyed", () => {
+      // Live C7 finding (2026-06-12): after session.delete severed the live
+      // JSONL, session.list re-surfaced "default:tooltest-del.jsonl.trajectory"
+      // — the scanner counted trajectory EVENTS as session messages.
+      const root = join(tmpdir(), `scan-traj-${Date.now()}`);
+      const channelDir = join(root, "sessions", "default", "tooltest-del");
+      mkdirSync(channelDir, { recursive: true });
+      writeFileSync(join(channelDir, "tooltest-del.jsonl.trajectory.jsonl"), '{"type":"tool.result"}\n');
+      writeFileSync(join(channelDir, "tooltest-del.jsonl.trajectory-path.json"), "{}");
+      writeFileSync(join(channelDir, "tooltest-del_session-metadata.json"), "{}");
+
+      try {
+        const rows = scanWorkspaceSessions(root);
+        expect(rows).toHaveLength(0);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    it("still lists a real live transcript while skipping its sibling trajectory artifact", () => {
+      const root = join(tmpdir(), `scan-live-${Date.now()}`);
+      const channelDir = join(root, "sessions", "default", "chat-1");
+      mkdirSync(channelDir, { recursive: true });
+      writeFileSync(join(channelDir, "chat-1.jsonl"), '{"role":"user","content":"hi"}\n');
+      writeFileSync(join(channelDir, "chat-1.jsonl.trajectory.jsonl"), '{"type":"tool.result"}\n');
+
+      try {
+        const rows = scanWorkspaceSessions(root);
+        expect(rows).toHaveLength(1);
+        expect(rows[0]?.sessionKey).toBe("default:chat-1");
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    it("agent-data scanner also skips trajectory artifacts", () => {
+      const root = join(tmpdir(), `scan-agent-${Date.now()}`);
+      const sessionsDir = join(root, "default", "sessions");
+      mkdirSync(sessionsDir, { recursive: true });
+      writeFileSync(join(sessionsDir, "s1.jsonl"), '{"role":"user","content":"hi"}\n');
+      writeFileSync(join(sessionsDir, "s1.jsonl.trajectory.jsonl"), '{"type":"tool.result"}\n');
+
+      try {
+        const rows = scanJsonlSessions(root, { default: {} as never });
+        expect(rows).toHaveLength(1);
+        expect(rows[0]?.sessionKey).toBe("s1");
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
     });
   });
 
@@ -369,6 +455,80 @@ describe("createSessionHandlers - session management", () => {
       expect(response.results[0]!.snippet).toContain("TypeScript");
       expect(response.results[0]!.score).toBe(1.0);
       expect(typeof response.results[0]!.timestamp).toBe("number");
+    });
+
+    it("matches multi-keyword queries whose terms are non-contiguous in the message (token-AND, not substring)", async () => {
+      // Live finding 2026-06-12: `axolotl Quark` returned 0 against a message
+      // reading "...a purple axolotl named Quark" because the handler did a
+      // literal indexOf on the whole query. The tool advertises "keywords",
+      // so all query tokens present (order-independent) must match.
+      const deps = makeDeps({
+        sessionStore: {
+          listDetailed: () => [
+            {
+              sessionKey: "kw-session",
+              userId: "u1",
+              channelId: "c1",
+              metadata: {},
+              createdAt: 1000,
+              updatedAt: 2000,
+              messageCount: 1,
+            },
+          ],
+          loadByFormattedKey: () => ({
+            messages: [
+              { role: "assistant", content: "The mascot is a purple axolotl named Quark." },
+            ],
+            metadata: {},
+            createdAt: 1000,
+            updatedAt: 2000,
+          }),
+          deleteByFormattedKey: () => false,
+          saveByFormattedKey: vi.fn(),
+        },
+      });
+      const handlers = createSessionHandlers(deps);
+
+      const response = (await handlers["session.search"]!({
+        query: "axolotl Quark",
+      })) as { results: Array<{ sessionKey: string; snippet: string }>; total: number };
+
+      expect(response.total).toBe(1);
+      expect(response.results[0]!.sessionKey).toBe("kw-session");
+      // Snippet anchors on a matched term and shows the surrounding text.
+      expect(response.results[0]!.snippet.toLowerCase()).toContain("axolotl");
+    });
+
+    it("does NOT match when only some query keywords are present (AND, not OR)", async () => {
+      const deps = makeDeps({
+        sessionStore: {
+          listDetailed: () => [
+            {
+              sessionKey: "partial-session",
+              userId: "u1",
+              channelId: "c1",
+              metadata: {},
+              createdAt: 1000,
+              updatedAt: 2000,
+              messageCount: 1,
+            },
+          ],
+          loadByFormattedKey: () => ({
+            messages: [{ role: "user", content: "the axolotl is purple" }],
+            metadata: {},
+            createdAt: 1000,
+            updatedAt: 2000,
+          }),
+          deleteByFormattedKey: () => false,
+          saveByFormattedKey: vi.fn(),
+        },
+      });
+      const handlers = createSessionHandlers(deps);
+
+      const response = (await handlers["session.search"]!({
+        query: "axolotl Quark",
+      })) as { results: unknown[]; total: number };
+      expect(response.total).toBe(0);
     });
 
     it("filters by scope=user (only user messages)", async () => {

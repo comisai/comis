@@ -10,7 +10,7 @@
 
 import type { Command } from "commander";
 import chalk from "chalk";
-import { ConfigReadContract } from "@comis/core";
+import { ChannelsHealthContract, ConfigReadContract } from "@comis/core";
 import { callTyped, withClient } from "../client/rpc-client.js";
 import { error, info, json } from "../output/format.js";
 import { withSpinner } from "../output/spinner.js";
@@ -22,19 +22,32 @@ import { renderFindings, type Section } from "../util/render-findings.js";
 interface ChannelStatus {
   name: string;
   type: string;
-  status: "connected" | "disconnected" | "error" | "disabled" | string;
+  status: string;
   details?: string;
 }
 
 /**
  * Color-code a channel status string.
+ *
+ * The status vocabulary is the health monitor's live state union
+ * (healthy/idle/stale/stuck/startup-grace/disconnected/errored/unknown)
+ * plus the CLI-derived "disabled" (config) and "not running" (enabled but
+ * absent from the monitor).
  */
 function colorStatus(status: string): string {
   switch (status) {
+    case "healthy":
     case "connected":
       return chalk.green(status);
+    case "idle":
+    case "startup-grace":
+      return chalk.cyan(status);
+    case "stale":
+    case "stuck":
+    case "not running":
     case "disconnected":
       return chalk.yellow(status);
+    case "errored":
     case "error":
       return chalk.red(status);
     case "disabled":
@@ -59,15 +72,22 @@ export function registerChannelCommand(program: Command): void {
     .option("--format <format>", "Output format (table|json)", "table")
     .action(async (options: { format: string }) => {
       try {
-        const config = await withSpinner("Fetching channel status...", () =>
+        // Config tells us what is CONFIGURED (enabled/disabled + identity
+        // details); channels.health tells us what is actually RUNNING. The
+        // old config-only read defaulted every enabled channel to
+        // "disconnected" — a static lie against a healthy live adapter
+        // (live C5 finding, 2026-06-12).
+        const { config, health } = await withSpinner("Fetching channel status...", () =>
           withClient(async (client) => {
-            return await callTyped(client, ConfigReadContract, {
+            const config = await callTyped(client, ConfigReadContract, {
               section: "channels",
             }) as Record<string, unknown>;
+            const health = await callTyped(client, ChannelsHealthContract, {});
+            return { config, health };
           }),
         );
 
-        const channels = extractChannels(config);
+        const channels = extractChannels(config, health.channels);
 
         if (channels.length === 0) {
           info("No channels configured");
@@ -102,36 +122,61 @@ export function registerChannelCommand(program: Command): void {
     });
 }
 
+/** Live health entry shape consumed from the channels.health response. */
+interface HealthEntry {
+  channelType: string;
+  state: string;
+  connectionMode?: string | null;
+}
+
 /**
- * Extract channel status entries from the config response.
+ * Extract channel status entries by joining the config section (what is
+ * configured) with the live health entries (what is actually running).
  *
- * Handles various response shapes, normalizing into ChannelStatus objects.
- * If channel config has enabled=false, status is marked as "disabled".
+ * Status per channel: `disabled` when the config disables it; otherwise the
+ * health monitor's live state verbatim; `not running` when enabled in
+ * config but absent from the monitor (adapter never started).
  */
-function extractChannels(config: Record<string, unknown>): ChannelStatus[] {
+function extractChannels(
+  config: Record<string, unknown>,
+  healthEntries: readonly HealthEntry[],
+): ChannelStatus[] {
   const channels: ChannelStatus[] = [];
 
   // Check direct channels section or nested under "channels"
   const channelsObj = (config["channels"] as Record<string, unknown> | undefined) ?? config;
 
-  const channelTypes = ["telegram", "discord", "slack", "whatsapp"] as const;
+  const healthByType = new Map<string, HealthEntry>();
+  for (const entry of healthEntries) {
+    healthByType.set(entry.channelType, entry);
+  }
+
+  const channelTypes = [
+    "telegram", "discord", "slack", "whatsapp", "signal",
+    "imessage", "line", "irc", "email",
+  ] as const;
 
   for (const type of channelTypes) {
     const chConfig = channelsObj[type] as Record<string, unknown> | undefined;
     if (!chConfig) continue;
 
-    const enabled = chConfig["enabled"] !== false;
+    const enabled = chConfig["enabled"] === true;
+    const live = healthByType.get(type);
     const status: ChannelStatus["status"] = !enabled
       ? "disabled"
-      : typeof chConfig["status"] === "string"
-        ? chConfig["status"]
-        : "disconnected";
+      : live?.state ?? "not running";
+
+    const configDetails = getChannelDetails(type, chConfig);
+    const mode = live?.connectionMode;
+    const details = [configDetails, mode ? `mode: ${mode}` : undefined]
+      .filter((part): part is string => part !== undefined)
+      .join(", ");
 
     channels.push({
       name: type.charAt(0).toUpperCase() + type.slice(1),
       type,
       status,
-      details: getChannelDetails(type, chConfig),
+      ...(details.length > 0 && { details }),
     });
   }
 

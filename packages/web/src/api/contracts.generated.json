@@ -5223,6 +5223,9 @@
         },
         "abstained": {
           "type": "boolean"
+        },
+        "reason": {
+          "type": "string"
         }
       },
       "required": [
@@ -6035,6 +6038,12 @@
             },
             "additionalProperties": {}
           }
+        },
+        "tracingEnabled": {
+          "type": "boolean"
+        },
+        "hint": {
+          "type": "string"
         }
       },
       "required": [
@@ -9563,6 +9572,9 @@
         },
         "memoriesDeleted": {
           "type": "number"
+        },
+        "runtimeSessionDestroyed": {
+          "type": "boolean"
         }
       },
       "required": [

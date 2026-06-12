@@ -30,6 +30,7 @@
  */
 
 import { z } from "zod";
+import { parseLenientJson } from "./llm-json.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -127,12 +128,10 @@ const CandidateSchema = z.object({
  * `trust`.
  */
 export function parseRelationshipOutput(raw: string): RelationshipBuildOutput {
-  let json: unknown;
-  try {
-    json = JSON.parse(stripFences(raw));
-  } catch {
-    return [];
-  }
+  const json: unknown = parseLenientJson(raw);
+  // parseLenientJson tolerates narration around the payload (live finding
+  // 2026-06-11 — the whole-string parse degraded valid payloads).
+  if (json === undefined) return [];
   if (!Array.isArray(json)) return [];
 
   const out: RelationshipBuildOutput = [];
@@ -150,7 +149,3 @@ export function parseRelationshipOutput(raw: string): RelationshipBuildOutput {
   return out;
 }
 
-/** Strip markdown code fences from raw LLM text (mirrors the per-user-profile parser). */
-function stripFences(text: string): string {
-  return text.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
-}

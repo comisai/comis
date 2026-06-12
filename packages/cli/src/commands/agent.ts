@@ -18,7 +18,7 @@ import {
   type AgentConfig,
 } from "@comis/core";
 import type { Command } from "commander";
-import { ensureWorkspace, resolveWorkspaceDir } from "@comis/core";
+import { ensureWorkspace, resolveWorkspaceDir, systemGetEnv } from "@comis/core";
 import chalk from "chalk";
 import { withClient, callTyped } from "../client/rpc-client.js";
 import { success, error, info, warn, json } from "../output/format.js";
@@ -110,8 +110,14 @@ export function registerAgentCommand(program: Command): void {
           }),
         );
 
-        // Initialize dedicated workspace for the new agent
-        const workspaceDir = resolveWorkspaceDir({ workspacePath: undefined } as AgentConfig, name);
+        // Initialize dedicated workspace for the new agent (honors
+        // COMIS_DATA_DIR like the daemon's resolution — 260611 dataDir fix).
+        // systemGetEnv (not raw process.env) per the no-restricted-syntax gate.
+        const workspaceDir = resolveWorkspaceDir(
+          { workspacePath: undefined } as AgentConfig,
+          name,
+          systemGetEnv("COMIS_DATA_DIR"),
+        );
         try {
           await ensureWorkspace({ dir: workspaceDir });
           success(`Agent "${name}" created with workspace at ${workspaceDir}`);

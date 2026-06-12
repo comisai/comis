@@ -126,7 +126,14 @@ export function createNotificationService(deps: NotificationServiceDeps): Notifi
           { agentId: opts.agentId, attempted: channelResult.error.attempted },
           "Notification suppressed: no channel resolved",
         );
-        return err(new Error("No channel resolved for notification delivery"));
+        return err(
+          new Error(
+            `No channel resolved for notification delivery (tried: ${channelResult.error.attempted.join(" -> ")}). ` +
+              "Pass channel_type + channel_id explicitly, set agents." +
+              `${opts.agentId}.notification.primaryChannel in config, ` +
+              "or notify after the agent has a recent channel session.",
+          ),
+        );
       }
 
       const { channelType, channelId } = channelResult.value;

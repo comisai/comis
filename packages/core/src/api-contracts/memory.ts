@@ -178,6 +178,15 @@ export const MemoryAskContract = defineContract({
     answer: z.string(),
     citations: z.array(z.string()),
     abstained: z.boolean(),
+    // Live finding 2026-06-11: every abstain branch (dialectic not wired,
+    // empty recall, synthesis abstain) returned the IDENTICAL bare sentinel —
+    // an infrastructure absence was indistinguishable from a genuine "no
+    // data" answer. Present ONLY when abstained:true. Values:
+    //   "dialectic_unavailable" — seam/recall factory not wired (config/key)
+    //   "no_agent_scope"        — no caller agent scope and no default agent
+    //   "empty_recall"          — recall ran and returned nothing
+    //   "synthesis_abstained"   — grounded synthesis declined to answer
+    reason: z.string().optional(),
   }),
   scopes: ["rpc"] as const,
 });

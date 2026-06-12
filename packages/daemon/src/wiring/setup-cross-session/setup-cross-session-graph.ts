@@ -353,12 +353,12 @@ export function buildExecuteSubAgent(deps: ExecuteSubAgentDeps): ExecuteSubAgent
     if (meta.taskDescription && !isReuseSession) {
       const spawnAgentConfig = container.config.agents[effectiveAgentId];
       const workspaceDir = spawnAgentConfig
-        ? resolveWorkspaceDir(spawnAgentConfig, effectiveAgentId)
-        : resolveWorkspaceDir(container.config.agents["default"] ?? {} as AgentConfig, effectiveAgentId);
+        ? resolveWorkspaceDir(spawnAgentConfig, effectiveAgentId, container.config.dataDir || undefined)
+        : resolveWorkspaceDir(container.config.agents["default"] ?? {} as AgentConfig, effectiveAgentId, container.config.dataDir || undefined);
 
       const agentWorkspaces: Record<string, string> = {};
       for (const [id, agentCfg] of Object.entries(container.config.agents)) {
-        agentWorkspaces[id] = resolveWorkspaceDir(agentCfg, id);
+        agentWorkspaces[id] = resolveWorkspaceDir(agentCfg, id, container.config.dataDir || undefined);
       }
 
       const builder = createSpawnPacketBuilder({
@@ -437,8 +437,8 @@ export function buildExecuteSubAgent(deps: ExecuteSubAgentDeps): ExecuteSubAgent
     const subAgentPersistence = container.config.security?.agentToAgent?.subAgentSessionPersistence ?? false;
     const spawnAgentConfigForSession = container.config.agents[effectiveAgentId];
     const sessionCwd = spawnAgentConfigForSession
-      ? resolveWorkspaceDir(spawnAgentConfigForSession, effectiveAgentId)
-      : resolveWorkspaceDir(container.config.agents["default"] ?? {} as AgentConfig, effectiveAgentId);
+      ? resolveWorkspaceDir(spawnAgentConfigForSession, effectiveAgentId, container.config.dataDir || undefined)
+      : resolveWorkspaceDir(container.config.agents["default"] ?? {} as AgentConfig, effectiveAgentId, container.config.dataDir || undefined);
 
     let ephemeralSessionAdapter;
     if (isReuseSession || subAgentPersistence) {
@@ -448,6 +448,10 @@ export function buildExecuteSubAgent(deps: ExecuteSubAgentDeps): ExecuteSubAgent
         lockDir: safePath(sessionCwd, ".locks"),
         cwd: sessionCwd,
         fileLock: deps.fileLock,
+        // Resolved daemon data dir — the session-index writer otherwise
+        // falls back to the REAL ~/.comis (260611 live-fire; same fix as
+        // setup-agents-runtime's primary session adapter).
+        dataDir: container.config.dataDir || undefined,
       });
     } else {
       ephemeralSessionAdapter = createEphemeralComisSessionManager(sessionCwd);

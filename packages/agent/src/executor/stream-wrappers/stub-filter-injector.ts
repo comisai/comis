@@ -15,8 +15,10 @@
  *    Gemini CachedContent entry (gemini-cache-injector.ts line 191-195),
  *    bloating the cache for its entire lifetime.
  *
- * Provider-agnostic: filters both top-level `params.tools` (Anthropic,
- * OpenAI, xAI) and nested `params.config.tools` (Google AI Studio).
+ * Provider-agnostic: filters both top-level `params.tools` (Anthropic's
+ * `{name}` shape AND OpenAI/Ollama/xAI's `{type:"function", function:{name}}`
+ * shape — the name is NESTED under `function` there) and nested
+ * `params.config.tools` (Google AI Studio).
  *
  * @module
  */
@@ -28,6 +30,19 @@ import type { StreamFnWrapper } from "./types.js";
 export interface StubFilterInjectorConfig {
   /** Getter for stub tool names. Filtered from the rendered API payload. */
   getStubToolNames: () => ReadonlySet<string>;
+}
+
+/**
+ * Extract a tool's name across provider shapes: Anthropic puts it at top-level
+ * `t.name`; OpenAI/Ollama (the /v1 tools array) nests it at `t.function.name`.
+ * Checking only `t.name` silently no-ops the filter for OpenAI-format providers
+ * (live finding, 2026-06-12: all deferred-tool stubs reached Ollama, nullifying
+ * the small-class tool deferral and context-exhausting local models).
+ */
+function toolName(tool: Record<string, unknown>): string | undefined {
+  if (typeof tool.name === "string") return tool.name;
+  const fn = tool.function as { name?: unknown } | undefined;
+  return typeof fn?.name === "string" ? fn.name : undefined;
 }
 
 export function createStubFilterInjector(
@@ -54,11 +69,11 @@ export function createStubFilterInjector(
 
           let removed = 0;
 
-          // Top-level tools (Anthropic, OpenAI, xAI)
+          // Top-level tools (Anthropic `{name}` + OpenAI/Ollama/xAI `{function:{name}}`)
           if (Array.isArray(resolvedParams.tools)) {
             const before = (resolvedParams.tools as unknown[]).length;
             resolvedParams.tools = (resolvedParams.tools as Array<Record<string, unknown>>)
-              .filter(t => !stubNames.has(t.name as string));
+              .filter(t => { const n = toolName(t); return n === undefined || !stubNames.has(n); });
             removed += before - (resolvedParams.tools as unknown[]).length;
           }
 
@@ -67,7 +82,7 @@ export function createStubFilterInjector(
           if (cfg && Array.isArray(cfg.tools)) {
             const before = (cfg.tools as unknown[]).length;
             cfg.tools = (cfg.tools as Array<Record<string, unknown>>)
-              .filter(t => !stubNames.has(t.name as string));
+              .filter(t => { const n = toolName(t); return n === undefined || !stubNames.has(n); });
             removed += before - (cfg.tools as unknown[]).length;
           }
 

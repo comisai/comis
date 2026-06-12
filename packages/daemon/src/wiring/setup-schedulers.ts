@@ -171,6 +171,34 @@ export async function setupSchedulers(deps: {
             job.payload.kind === "system_event" ? job.payload.text : job.payload.message;
 
           if (!job.deliveryTarget) {
+            // system_event jobs STILL emit scheduler:job_result (live finding
+            // 2026-06-11): the memory crons (review / consolidation /
+            // reasoning / user-representation / usefulness-judge /
+            // online-tuning) are deliveryTarget-less __SENTINEL__ jobs whose
+            // actual WORK rides the scheduler:job_result listener
+            // (setup-channels-credentials). The old return-before-emit made
+            // every memory cron complete "ok" nightly while doing NOTHING.
+            // The sentinel listeners return before delivery; a non-sentinel
+            // deliveryTarget-less system_event hits the listener's own
+            // skip-delivery warn — no delivery is ever attempted either way.
+            if (job.payload.kind === "system_event") {
+              container.eventBus.emit("scheduler:job_result", {
+                jobId: job.id,
+                jobName: job.name,
+                agentId: job.agentId,
+                result: resultText,
+                success: true,
+                timestamp: systemNowMs(),
+                payloadKind: job.payload.kind,
+                sessionStrategy: job.sessionStrategy,
+                maxHistoryTurns: job.maxHistoryTurns,
+                cadenceMs: job.schedule?.kind === "every" ? job.schedule.everyMs : undefined,
+                cacheRetention: job.cacheRetention,
+                toolPolicy: job.toolPolicy,
+              });
+              await agentExecTracker.record({ ts: systemNowMs(), jobId: job.id, status: "ok", durationMs: systemNowMs() - startTs, summary: "No delivery target (event emitted)" });
+              return { status: "ok" as const, summary: "No delivery target (event emitted)" };
+            }
             jobLogger.warn(
               { payloadKind: job.payload.kind, hint: "Job has no delivery target — result cannot be delivered. Was the job created from a channel context?", errorKind: "config" as const },
               "Cron job has no delivery target, skipping delivery",

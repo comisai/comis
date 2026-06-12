@@ -34,6 +34,7 @@ import { systemSetTimeout, systemClearTimeout } from "@comis/core";
 import type { ClockPort, ComisLogger } from "@comis/core";
 import { completeSimple, getModel } from "@earendil-works/pi-ai";
 import { z } from "zod";
+import { parseLenientJson } from "./llm-json.js";
 
 /** Hard abort ceiling per LLM call (mirrors the userrep/reasoning seam LLM timeout). */
 const LLM_TIMEOUT_MS = 120_000;
@@ -126,12 +127,10 @@ const EMPTY_VERDICT: UsefulnessJudgeVerdict = { usedIds: [], ignoredIds: [] };
  * anti-injection boundary) → dedupe within each array.
  */
 function parseVerdict(raw: string, candidateIds: string[]): UsefulnessJudgeVerdict {
-  let json: unknown;
-  try {
-    json = JSON.parse(stripFences(raw));
-  } catch {
-    return EMPTY_VERDICT;
-  }
+  const json: unknown = parseLenientJson(raw);
+  // parseLenientJson tolerates narration around the payload (live finding
+  // 2026-06-11 — the whole-string parse degraded valid payloads).
+  if (json === undefined) return EMPTY_VERDICT;
   const parsed = VerdictSchema.safeParse(json);
   if (!parsed.success) return EMPTY_VERDICT;
 
@@ -155,10 +154,6 @@ function parseVerdict(raw: string, candidateIds: string[]): UsefulnessJudgeVerdi
   };
 }
 
-/** Strip markdown code fences from raw LLM text (mirrors the userrep parser). */
-function stripFences(text: string): string {
-  return text.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
-}
 
 /**
  * Build the OFFLINE usefulness-judge seam from a cheap resolved model.
