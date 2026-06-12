@@ -25,7 +25,7 @@
 
 import { generateSummary, truncateHead, truncateTail } from "@earendil-works/pi-coding-agent";
 import { type SubagentResult, SubagentResultSchema, type CondensedResult } from "@comis/core";
-import { safePath, systemNowMs, systemNowDate, scrubSecretsFromText } from "@comis/core";
+import { safePath, scriptTokenFactor, systemNowMs, systemNowDate, scrubSecretsFromText } from "@comis/core";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { CHARS_PER_TOKEN } from "../safety/token-estimator.js";
@@ -316,7 +316,10 @@ async function condenseInternal(params: CondenseParams, deps: ResultCondenserDep
 // ---------------------------------------------------------------------------
 
 function estimateTokens(text: string): number {
-  return Math.ceil(text.length / CHARS_PER_TOKEN);
+  // Script-factored (TOK-01): sub-agent results can be non-Latin (GEN-03 /
+  // Phase 181 increases this) — honest condensation thresholds are the
+  // conservative direction.
+  return Math.ceil(text.length / (CHARS_PER_TOKEN * scriptTokenFactor(text)));
 }
 
 // ---------------------------------------------------------------------------

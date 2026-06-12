@@ -32,6 +32,7 @@ import {
   safePath,
   formatSessionKey,
   generateCanaryToken,
+  scriptTokenFactor,
   tryGetContext,
   systemNowMs,
 } from "@comis/core";
@@ -1766,9 +1767,11 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
   }
   const dynamicPreamble = dynamicPreambleParts.join("\n\n");
 
-  // Token budget breakdown for optimization measurement.
-  const systemPromptTokens = Math.ceil(systemPrompt.length / CHARS_PER_TOKEN_RATIO);
-  const dynamicPreambleTokens = Math.ceil(dynamicPreamble.length / CHARS_PER_TOKEN_RATIO);
+  // Token budget breakdown for optimization measurement. Script-factored
+  // (TOK-01) so the operator-visible numbers stay consistent with the real
+  // factored reservation in executor-tool-assembly.
+  const systemPromptTokens = Math.ceil(systemPrompt.length / (CHARS_PER_TOKEN_RATIO * scriptTokenFactor(systemPrompt)));
+  const dynamicPreambleTokens = Math.ceil(dynamicPreamble.length / (CHARS_PER_TOKEN_RATIO * scriptTokenFactor(dynamicPreamble)));
   logger.info(
     {
       systemPromptTokens,

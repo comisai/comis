@@ -216,7 +216,9 @@ export function computeMinViableEquation(params: {
   effectiveWindow: number;
   minVisibleOutputTokens?: number;
 }): MinViableEquation {
+  // flat-by-design: boot viable-floor over machine bootstrap/tool-schema chars (Latin by construction) (TOK-01)
   const bootstrapTotalTokens = Math.ceil(params.scaffoldBootstrapChars / CHARS_PER_TOKEN_RATIO);
+  // flat-by-design: boot viable-floor over machine bootstrap/tool-schema chars (Latin by construction) (TOK-01)
   const toolSchemaTokens = Math.ceil(toolDefOverheadChars(params.tools) / CHARS_PER_TOKEN_RATIO);
 
   // Post-downshift minimum thinking level: native → "low", none → "off".

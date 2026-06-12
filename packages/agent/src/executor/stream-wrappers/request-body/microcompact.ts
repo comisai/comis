@@ -84,6 +84,7 @@ export function runTokenCeilingMicrocompact(
   if (!config.microcompactTokenCeiling || !config.sessionKey) return;
   const msgs = result.messages as Array<Record<string, unknown>>;
   if (!Array.isArray(msgs)) return;
+  // flat-by-design: aggregate in-request hygiene trigger over estimateContextChars; the request-body accounting roots (estimateBlockTokens) are factored (TOK-01)
   const estimatedTokens = estimateContextChars(msgs as unknown as Message[]) / CHARS_PER_TOKEN_RATIO;
   if (estimatedTokens <= config.microcompactTokenCeiling) return;
 
