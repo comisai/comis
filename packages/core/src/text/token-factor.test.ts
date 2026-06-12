@@ -50,8 +50,11 @@ describe("scriptTokenFactor — I1 exact: empty/neutral/pure-ASCII text is exact
 });
 
 describe("scriptTokenFactor — single-class factors ride the matching table row", () => {
-  it("returns the hebrew letters factor 0.55 for pure unpointed Hebrew", () => {
-    expect(scriptTokenFactor("שלום")).toBeCloseTo(0.55, 9);
+  it("returns the hebrew letters factor 0.50 for pure unpointed Hebrew (lowered by TOK-02 corpus)", () => {
+    // 0.55 → 0.50: he_mixed_04 violated the harmonic blend with latin LOCKED
+    // at 1.0 (plan 179-05 same-commit lowering rule, 2026-06-12). The pin
+    // tracks the TABLE value — the formula is what this suite pins.
+    expect(scriptTokenFactor("שלום")).toBeCloseTo(0.5, 9);
   });
 
   it("weights an astral Ext-B char at 2 UTF-16 units, all on the cjk row factor 0.3", () => {
@@ -60,15 +63,19 @@ describe("scriptTokenFactor — single-class factors ride the matching table row
 });
 
 describe("scriptTokenFactor — HARMONIC per-class summation, arithmetic mean forbidden", () => {
-  it("pins the mixed he+latin fixture at the harmonic 0.7289, BELOW the arithmetic 0.7955", () => {
+  it("pins the mixed he+latin fixture at the harmonic 0.6875, BELOW the arithmetic 0.7727", () => {
     // "ספר על docker": hebrew 5 units, latin 6 units, 2 neutral spaces.
-    // Harmonic: 1 / ((5/11)/0.55 + (6/11)/1.0) ≈ 0.7289 → ceil(43/(4*0.7289)) = 15
-    // = the measured qwen token count (179-RESEARCH Pattern 3, 2026-06-12).
-    // Arithmetic mean would give (5/11)*0.55 + (6/11)*1.0 ≈ 0.7955 → estimate 14,
-    // an under-count violation — this assertion pins the combination rule.
+    // With the TOK-02-lowered hebrew letters factor 0.50 (plan 179-05):
+    // Harmonic: 1 / ((5/11)/0.50 + (6/11)/1.0) = 0.6875 → ceil(43/(4*0.6875))
+    // = 16 >= the measured 15 qwen tokens (conservative direction preserved;
+    // at the pre-lowering 0.7289 the estimate was exactly 15 —
+    // 179-RESEARCH Pattern 3, 2026-06-12).
+    // Arithmetic mean would give (5/11)*0.50 + (6/11)*1.0 ≈ 0.7727 — the
+    // higher, anti-conservative value; this assertion pins the combination
+    // rule (harmonic strictly BELOW arithmetic for mixed scripts).
     const factor = scriptTokenFactor("ספר על docker");
-    expect(factor).toBeCloseTo(0.7289, 3);
-    expect(factor).toBeLessThan(0.795);
+    expect(factor).toBeCloseTo(0.6875, 3);
+    expect(factor).toBeLessThan(0.7727);
   });
 });
 
@@ -77,15 +84,16 @@ describe("scriptTokenFactor — combining marks dominate via their own low-facto
     expect(scriptTokenFactor(MARKS_ONLY)).toBeCloseTo(0.1, 9);
   });
 
-  it("prices pointed Hebrew near 0.188 — niqqud rides the marks row, not the letters row", () => {
+  it("prices pointed Hebrew near 0.184 — niqqud rides the marks row, not the letters row", () => {
     // Pitfall 2: niqqud-bearing Hebrew measured 0.84 chars/token (46 chars →
-    // 55 qwen tokens) — a letters-only 0.55 under-counts ~2x. Per-row harmonic
-    // with 4 letter units at 0.55 and 3 mark units at 0.1:
+    // 55 qwen tokens) — a letters-only factor under-counts ~2x. Per-row
+    // harmonic with 4 letter units at the TOK-02-lowered 0.50 (plan 179-05)
+    // and 3 mark units at 0.1:
     expect(POINTED_SHALOM.length).toBe(7);
     expect(scriptTokenFactor(POINTED_SHALOM)).toBeCloseTo(
-      1 / ((4 / 7) / 0.55 + (3 / 7) / 0.1),
+      1 / ((4 / 7) / 0.5 + (3 / 7) / 0.1),
       3,
-    ); // ≈ 0.188
+    ); // ≈ 0.184
   });
 });
 

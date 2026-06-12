@@ -40,6 +40,9 @@ import type { SecurityPinMarkers } from "./security-context-pinner.js";
 // DEPTH-01: the test file (excluded from the I2 grep) imports the real scorer to prove the
 // END-TO-END relevance reorder through the wired margin-arbiter middle-band seam.
 import { scoreRelevance } from "../rag/relevance-scorer.js";
+// TOK-01 (Phase 179): the factored family-2 root — the read-time max() at
+// resolveContextItem compares stored counts against THIS estimator.
+import { estimateMessageTokens } from "../safety/token-estimator.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -2857,5 +2860,284 @@ describe("RETR-02/03/05: margin arbiter at the evict seam (frontier byte-identic
       relevanceFirst: false, // recency path — the arbiter does NOT run
     }).transformContext(live);
     expect(JSON.stringify(outRecency)).not.toContain("zebra deploy trading bot configuration");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TOK-01 (Phase 179, plan 179-05): read-time max(stored, factored-live) at
+// resolveContextItem — stored-row honesty for pre-phase under-counted rows.
+//
+// Rows ingested BEFORE the script-aware factor carry flat ceil(chars/4)
+// token_counts that under-count dense scripts ~2x. The fix lifts each budget
+// item at READ time to max(stored, estimateMessageTokens(reconstructed)) —
+// max(), never replace (the stored count carries F3 thinking weight a
+// re-estimate would miss), with the summary leg comparing against
+// summary.content (the SAME input the stored count was computed over), NEVER
+// the rendered summaryRefToMessage wrap.
+//
+// Every fixture row round-trips the REAL parts codec (messageToParts at
+// store-time, partsToMessage inside the real assembly) — RESEARCH Pitfall 4:
+// hand-built rows can fabricate or hide an I1 break via UNKNOWN_BLOCK_CHARS
+// inflation. The observable is the preflight's context:budget_computed event
+// (budgetedHistoryTokens = the kept evictable items' token sum), so resolution
+// happens through the REAL assembly entry — hand-built BudgetItems are
+// FORBIDDEN here (they bypass the production change under test).
+// ---------------------------------------------------------------------------
+describe("resolveContextItem read-time max() (TOK-01 stored-row honesty)", () => {
+  let store: ContextStorePort;
+
+  beforeEach(() => {
+    const db = new Database(":memory:");
+    initSchema(db, 1536);
+    store = createLcdStore(db);
+  });
+
+  // A pure-Hebrew chat sentence (letters + neutral spaces) — 41 UTF-16 units.
+  const HE_SENTENCE = "שלום עולם זה מבחן ארוך מאוד לבדיקת חלוקה ";
+
+  /** Frontier profile: no window pressure — the observable is the item
+   *  accounting, never the ladder. */
+  const frontierProfile: ModelProfile = {
+    ...FAIL_CLOSED_PROFILE,
+    capabilityClass: "frontier" as const,
+    contextWindow: 200_000,
+    maxOutputTokens: 8_192,
+    reasoningStyle: "none" as const,
+  };
+
+  /** Persist one message through the REAL parts codec with an EXPLICIT stored
+   *  tokenCount (simulating what a given ingest version wrote). */
+  function appendStored(msg: Message, seq: number, storedTokenCount: number): void {
+    store.append({
+      scope: SCOPE,
+      seq,
+      role: msg.role,
+      tokenCount: storedTokenCount,
+      createdAt: FIXED_CREATED_AT,
+      parts: messageToParts(msg), // the REAL codec round-trip (Pitfall 4)
+    });
+  }
+
+  /** Drive the REAL assembly over `live` and return the preflight's
+   *  context:budget_computed payload (budgetedHistoryTokens = kept evictable
+   *  item token sum — the read-time max() observable). */
+  async function assembleAndReadBudget(
+    live: AgentMessage[],
+  ): Promise<{ budgetedHistoryTokens: number }> {
+    const emit = vi.fn();
+    const { deps: base } = makeDeps(store);
+    const engine = createLcdContextEngine(dagConfig(1), {
+      ...base,
+      modelProfile: frontierProfile,
+      getThinkingLevel: () => "medium",
+      eventBus: { emit } as unknown as ContextEngineDeps["eventBus"],
+    });
+    await engine.transformContext(live);
+    const call = emit.mock.calls.find((c) => c[0] === "context:budget_computed");
+    expect(call).toBeDefined();
+    return call?.[1] as { budgetedHistoryTokens: number };
+  }
+
+  /** Seed 2 text turns, lazy-seed context_items, then collapse ordinals [0,2]
+   *  (u0,a0,u1) into ONE leaf summary with an EXPLICIT stored tokenCount.
+   *  context_items becomes [SUMMARY, a1-ref]; with freshTailTurns=1 the
+   *  trailing a1 is excluded by the overlap math, so the summary is the ONLY
+   *  evictable item — budgetedHistoryTokens IS the summary item's tokens. */
+  function seedSummaryOnly(content: string, storedTokenCount: number): Message[] {
+    const msgs: Message[] = [userMsg("u0"), assistantText("a0"), userMsg("u1"), assistantText("a1")];
+    for (let i = 0; i < msgs.length; i++) append(store, msgs[i] as Message, i);
+    store.getContextItems(SCOPE); // force the lazy 1:1 seed
+    store.appendLeafSummary({
+      scope: SCOPE,
+      tokenCount: storedTokenCount,
+      content,
+      descendantCount: 3,
+      earliestAt: FIXED_CREATED_AT,
+      latestAt: FIXED_CREATED_AT,
+      fileIds: [],
+      fallback: false,
+      taint: false,
+      createdAt: FIXED_CREATED_AT,
+      startOrdinal: 0,
+      endOrdinal: 2,
+    });
+    return msgs;
+  }
+
+  it("a stored pre-phase Hebrew row carries max(stored, factored-live), not the stored under-count", async () => {
+    // Pre-patch: tokens === row.tokenCount (stored under-count) — the fit
+    // guarantee ran on stale math. The flat formula is what pre-179 ingest
+    // wrote: ceil(chars/4), ~0.55x the factored estimate for Hebrew → RED.
+    const heText = HE_SENTENCE.repeat(15); // 615 chars
+    const heMsg = userMsg(heText);
+    appendStored(heMsg, 0, Math.ceil(heText.length / 4)); // SIMULATED pre-phase flat count
+    const live: AgentMessage[] = [heMsg as AgentMessage, assistantText("ok") as AgentMessage];
+
+    const payload = await assembleAndReadBudget(live);
+    expect(payload.budgetedHistoryTokens).toBeGreaterThanOrEqual(estimateMessageTokens(heMsg));
+  });
+
+  it("I1: an ASCII row stored with today's factored count resolves byte-identical (max is a no-op)", async () => {
+    // The Latin no-op: the same estimator over the real codec round-trip
+    // reproduces the stored value exactly, so max() returns stored verbatim.
+    // Passes pre- AND post-patch by design (the byte-identical direction).
+    const asciiText = "The quarterly report shows steady growth across all regions this year.";
+    const asciiMsg = userMsg(asciiText);
+    const stored = estimateMessageTokens(asciiMsg); // today's factored root — flat for ASCII
+    expect(stored).toBe(Math.ceil(asciiText.length / 4)); // factor 1.0 — identical to flat
+    appendStored(asciiMsg, 0, stored);
+    const live: AgentMessage[] = [asciiMsg as AgentMessage, assistantText("ok") as AgentMessage];
+
+    const payload = await assembleAndReadBudget(live);
+    expect(payload.budgetedHistoryTokens).toBe(stored); // EXACT — never lifted
+  });
+
+  it("a stored pre-phase Hebrew summary carries max(stored, factored estimate of summary.content)", async () => {
+    // Pre-patch: the summary item carries the stored flat count verbatim → RED.
+    const heContent = HE_SENTENCE.repeat(49); // ~2009 chars of Hebrew summary body
+    const flatStored = Math.ceil(heContent.length / 4); // SIMULATED pre-phase flat count
+    const msgs = seedSummaryOnly(heContent, flatStored);
+
+    const payload = await assembleAndReadBudget(msgs as AgentMessage[]);
+    const factored = estimateMessageTokens({ role: "user", content: heContent } as Message);
+    expect(factored).toBeGreaterThan(flatStored); // the under-count is real (sanity)
+    expect(payload.budgetedHistoryTokens).toBeGreaterThanOrEqual(factored);
+  });
+
+  it("summary comparison runs against summary.content, never the rendered wrap", async () => {
+    // The I1 trap (RESEARCH Pitfall 5): summaryRefToMessage wraps the body in a
+    // trusted header + delimited untrusted region + footer. If the read-time
+    // re-estimate ran over that RENDERED wrap, the extra header/footer chars
+    // would EXCEED the stored count and max() would lift EVERY Latin summary —
+    // this exact-equality pin fails in that case. The comparison must use
+    // summary.content — the SAME input summarize-tier-targets computed the
+    // stored count over. Passes pre- AND post-patch by design.
+    const asciiContent =
+      "Earlier discussion summarized: deployment pipeline configured; tests green; release scheduled.";
+    const stored = estimateMessageTokens({ role: "user", content: asciiContent } as Message);
+    const msgs = seedSummaryOnly(asciiContent, stored);
+
+    const payload = await assembleAndReadBudget(msgs as AgentMessage[]);
+    expect(payload.budgetedHistoryTokens).toBe(stored); // EXACT — the wrap never inflates it
+  });
+
+  it("F3 direction: a stored count EXCEEDING the re-estimate is kept (max, not replacement)", async () => {
+    // The stored count carries F3 thinking weight a re-estimate would
+    // under-count (lcd-assembler docstring) — a LOWER re-estimate must fall
+    // back to stored. Simulate stored thinking weight: stored = estimate + 50.
+    // Passes pre- AND post-patch by design (replacement would break it).
+    const asciiText = "Reviewed the incident timeline and drafted the remediation steps for rollout.";
+    const asciiMsg = userMsg(asciiText);
+    const storedWithThinking = estimateMessageTokens(asciiMsg) + 50;
+    appendStored(asciiMsg, 0, storedWithThinking);
+    const live: AgentMessage[] = [asciiMsg as AgentMessage, assistantText("ok") as AgentMessage];
+
+    const payload = await assembleAndReadBudget(live);
+    expect(payload.budgetedHistoryTokens).toBe(storedWithThinking); // stored wins
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE PHASE PIN (TOK-01, plan 179-05): the v2.18 fit guarantee must hold for a
+// Hebrew-saturated prompt at the small-model cap INCLUDING pre-existing
+// under-counted history. Stored flat-count rows flow through REAL assembly
+// (messageToParts → store → resolveContextItem → eviction) into the preflight
+// (lcd-assembler.ts itself calls runPreflightFitCheck), so this harness is the
+// genuine end-to-end RED:
+//
+//   Pre-patch: the assembler copies the stored under-counts into the budget
+//   items, assembledInputTokens stays under headroomBound, the fit check
+//   passes silently (the silent-truncation bug) → the ladder-engages assertion
+//   FAILS = RED.
+//   Post-patch (read-time max()): the honest items push assembledInputTokens
+//   over the bound and the thinking governor engages (downshift) = GREEN.
+//
+// Hand-built BudgetItems are FORBIDDEN for this pin — they bypass the
+// production change under test and pass pre-patch (checker finding).
+// ---------------------------------------------------------------------------
+describe("fit guarantee honest for a Hebrew-saturated prompt at the small cap incl. pre-existing history (TOK-01)", () => {
+  let store: ContextStorePort;
+
+  beforeEach(() => {
+    const db = new Database(":memory:");
+    initSchema(db, 1536);
+    store = createLcdStore(db);
+  });
+
+  const HE_SENTENCE = "שלום עולם זה מבחן ארוך מאוד לבדיקת חלוקה ";
+
+  it("the exhaustion ladder engages at honest utilization where the flat stored math silently passed", async () => {
+    // Small native profile: W=32768 → effectiveWindow = min(32768, 32000 small
+    // cap) = 32000. computeOutputHeadroom("native","high") = 8960 →
+    // headroomBound(high) = 23040; medium bound = 28160. Budget math:
+    // H = (32000 − 8192 − 2048 − 8000) + (8192 − 4096) = 17856.
+    //
+    // History: 31 Hebrew turns (62 rows × ~1025 chars) stored with SIMULATED
+    // PRE-PHASE flat counts ceil(len/4) = 257 each → flat sum 15934:
+    //   - fits H (15934 < 17856) → nothing evicted pre-patch;
+    //   - flat sum + factored freshTail ≈ 22.1K < 23040 → pre-patch the fit
+    //     check passes SILENTLY (no downshift, no throw) → RED.
+    // Post-patch each item lifts to estimateMessageTokens ≈ 466 → the factored
+    // sum (~28.9K) overfills H, eviction keeps ~17.7K, and the assembled input
+    // (~23.9K) crosses headroomBound(high) → the governor downshifts = GREEN.
+    const heRowText = HE_SENTENCE.repeat(25); // ~1025 chars per row
+    const flatCount = Math.ceil(heRowText.length / 4); // the flat formula — what pre-179 ingest wrote
+    const persisted: Message[] = [];
+    for (let i = 0; i < 31; i++) {
+      persisted.push(userMsg(heRowText));
+      persisted.push(assistantText(heRowText));
+    }
+    for (let i = 0; i < persisted.length; i++) {
+      store.append({
+        scope: SCOPE,
+        seq: i,
+        role: persisted[i]!.role,
+        tokenCount: flatCount, // SIMULATED pre-phase stored under-count
+        createdAt: FIXED_CREATED_AT,
+        parts: messageToParts(persisted[i] as Message), // REAL codec (Pitfall 4)
+      });
+    }
+
+    // A Hebrew fresh tail (~11.9K chars ≈ 6.2K factored tokens — under the
+    // Issue-1 per-message cap of ~50K chars, so it ships unbounded).
+    const heFresh = HE_SENTENCE.repeat(290);
+    const live: AgentMessage[] = [
+      ...(persisted as AgentMessage[]),
+      assistantText("ok") as AgentMessage,
+      userMsg(heFresh) as AgentMessage,
+    ];
+
+    const smallNativeProfile: ModelProfile = {
+      ...FAIL_CLOSED_PROFILE,
+      capabilityClass: "small" as const,
+      contextWindow: 32_768,
+      maxOutputTokens: 4_096,
+      reasoningStyle: "native" as const,
+    };
+    const downshiftSpy = vi.fn<[string], void>();
+    const eventBusEmit = vi.fn<[string, unknown], void>();
+    const { deps: base } = makeDeps(store);
+    const deps: ContextEngineDeps = {
+      ...base,
+      getModel: () => ({ reasoning: true, contextWindow: 32_768, maxTokens: 4_096 }),
+      modelProfile: smallNativeProfile,
+      getThinkingLevel: () => "high",
+      onThinkingDownshifted: downshiftSpy,
+      eventBus: { emit: eventBusEmit } as unknown as ContextEngineDeps["eventBus"],
+    };
+
+    const engine = createLcdContextEngine(dagConfig(1), deps);
+    // The honest degrade is a DOWNSHIFT, not a failure: the turn still
+    // assembles (the ladder fits it at "medium").
+    const out = await engine.transformContext(live);
+    expect(out.length).toBeGreaterThan(0);
+
+    // THE PHASE ASSERTION: the ladder engaged. Pre-patch: the stored flat
+    // under-counts keep assembledInputTokens below headroomBound — neither the
+    // callback nor the event fires → FAILS (RED).
+    const ladderEngaged =
+      downshiftSpy.mock.calls.length > 0 ||
+      eventBusEmit.mock.calls.some(([name]) => name === "context:thinking_downshifted");
+    expect(ladderEngaged).toBe(true);
   });
 });
