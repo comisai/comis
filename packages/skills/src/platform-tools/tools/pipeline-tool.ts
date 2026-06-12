@@ -73,8 +73,40 @@ const PipelineNode = Type.Object({
   ], {
     description: `Built-in node type for MULTI-agent orchestration. OMIT this for a regular single-agent node (just set "agent" + "task" — that already runs one sub-agent). Only set type_id when you need: debate (multi-round adversarial, ~N*R calls), vote (parallel independent voting, ~N calls), refine (sequential review chain, ~N calls), collaborate (sequential building, ~N*R calls), approval-gate (pause for human approval, 0 calls), map-reduce (parallel map then reduce, ~N+1 calls). Each of these REQUIRES a matching type_config. ("agent" is accepted but redundant — a node with "agent"+"task" already runs one sub-agent, so omit type_id instead.)`
   })),
-  type_config: Type.Optional(Type.Record(Type.String(), Type.Unknown(), {
-    description: `Configuration for a MULTI-agent node type. MUST be set whenever type_id is set, and MUST be omitted when type_id is omitted (both-or-neither). For a single-agent node, set the node's "agent" field and OMIT both type_id and type_config. Examples (by type_id):
+  // Concrete per-field types (NOT an open record): on GBNF providers
+  // (Ollama/llama.cpp) a `Type.Record(String, Unknown)` compiles to a
+  // typeless open record whose value schema the missing-type injection
+  // stamps `type:"string"` — the wire schema then contradicts the daemon
+  // drivers (debate wants `agents: array`, `rounds: number`) and the model
+  // oscillates between the two validators' errors (small-model e2e
+  // 2026-06-12, UC-1/UC-6). Field VALUE validation (required-ness, ranges,
+  // strictness per type_id) stays with the daemon driver Zod schemas — the
+  // single source of truth; this schema only declares accurate wire types.
+  type_config: Type.Optional(Type.Object({
+    agents: Type.Optional(Type.Array(Type.String(), { minItems: 2, description: "debate/collaborate: 2+ agent IDs" })),
+    rounds: Type.Optional(Type.Integer({ description: "debate (1-5, default 2) / collaborate (1-3, default 1): number of rounds" })),
+    synthesizer: Type.Optional(Type.String({ description: "debate: agent ID that synthesizes the final verdict" })),
+    voters: Type.Optional(Type.Array(Type.String(), { minItems: 2, description: "vote: 2+ agent IDs voting independently" })),
+    prompt_suffix: Type.Optional(Type.String({ description: "vote: extra instruction appended to each voter's prompt" })),
+    verdict_format: Type.Optional(Type.String({ description: "vote: required verdict format description" })),
+    min_voters: Type.Optional(Type.Integer({ description: "vote: minimum voters required" })),
+    reviewers: Type.Optional(Type.Array(Type.String(), { minItems: 2, description: "refine: 2+ agent IDs in review-chain order" })),
+    message: Type.Optional(Type.String({ description: "approval-gate: message shown to the approver" })),
+    timeout_minutes: Type.Optional(Type.Number({ description: "approval-gate: approval timeout in minutes (default 60)" })),
+    mappers: Type.Optional(Type.Array(
+      Type.Object({
+        agent: Type.String({ description: "map-reduce: agent ID for this mapper" }),
+        task_suffix: Type.Optional(Type.String({ description: "map-reduce: per-mapper task suffix" })),
+      }),
+      { description: "map-reduce: one entry per parallel mapper" },
+    )),
+    reducer: Type.Optional(Type.String({ description: "map-reduce: agent ID that reduces mapper outputs" })),
+    reducer_prompt: Type.Optional(Type.String({ description: "map-reduce: custom reducer instruction" })),
+    agent: Type.Optional(Type.String({ description: "agent: agent ID to run (prefer the node-level \"agent\" field instead)" })),
+    model: Type.Optional(Type.String({ description: "agent: model override" })),
+    max_steps: Type.Optional(Type.Integer({ description: "agent: maximum execution steps" })),
+  }, {
+    description: `Configuration for a MULTI-agent node type. MUST be set whenever type_id is set, and MUST be omitted when type_id is omitted (both-or-neither). For a single-agent node, set the node's "agent" field and OMIT both type_id and type_config. Set ONLY the fields for the chosen type_id. Examples (by type_id):
   debate:        { "agents": ["ta-bull", "ta-bear"], "rounds": 2, "synthesizer": "ta-judge" }
   vote:          { "voters": ["analyst-1", "analyst-2", "analyst-3"] }
   refine:        { "reviewers": ["drafter", "editor", "pm"] }

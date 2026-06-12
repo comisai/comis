@@ -22,7 +22,8 @@
  * (T1/T2 drop the null branch; T4 injects an inferred `type` that narrows a
  * previously-unconstrained node) or the IDENTICAL set (T3 —
  * `{"type":"object","properties":{}}` WITHOUT `additionalProperties:false`
- * still admits any properties). Narrowing can never authorize new tool
+ * still admits any properties; T4's full-JSON-type union on hint-free
+ * open-record VALUES). Narrowing can never authorize new tool
  * inputs, so the security direction is safe; the cost is functional
  * narrowing on pathological inputs, which beats the alternative — a hard
  * grammar-compile 400 that fails the whole toolset. Non-null unions and
@@ -198,6 +199,26 @@ const NUMERIC_CONSTRAINT_KEYS = [
 /** WR-04: typeless nodes carrying any of these keys infer `type: "array"`. */
 const ARRAY_CONSTRAINT_KEYS = ["minItems", "maxItems", "uniqueItems", "contains"] as const;
 
+/** Typeless nodes carrying any of these keys infer `type: "string"` honestly. */
+const STRING_CONSTRAINT_KEYS = ["minLength", "maxLength", "pattern", "format"] as const;
+
+/**
+ * The `type` union T4 injects on a hint-free open-record VALUE schema: every
+ * JSON type, so the admitted value set is IDENTICAL to the original `{}`
+ * (never a narrowing lie). llama.cpp's grammar converter handles type arrays
+ * (alternatives), and the union rides the `type` field — the one field every
+ * llama.cpp-family transport preserves (unlike an injected `anyOf`, which the
+ * Go-side strictness T1/T2 exist for could drop or reject).
+ */
+const OPEN_RECORD_VALUE_TYPE_UNION = [
+  "object",
+  "array",
+  "string",
+  "number",
+  "boolean",
+  "null",
+] as const;
+
 /** True when the node carries at least one of the given keys. */
 function hasAnyKey(node: Record<string, unknown>, keys: readonly string[]): boolean {
   return keys.some((key) => key in node);
@@ -212,24 +233,38 @@ function hasAnyKey(node: Record<string, unknown>, keys: readonly string[]): bool
  * properties/required/additionalProperties → "object";
  * items/minItems/maxItems/uniqueItems/contains → "array";
  * minimum/maximum/exclusiveMinimum/exclusiveMaximum/multipleOf → "number";
- * otherwise "string" (the bare description-only leaf, and the
- * minLength/maxLength/pattern/format string-constraint family).
+ * minLength/maxLength/pattern/format → "string";
+ * otherwise "string" (the bare description-only leaf) — EXCEPT in
+ * open-record VALUE position (`openRecordValue`, the value schema of
+ * `patternProperties`/`additionalProperties`), where a hint-free node gets
+ * the full JSON type union instead. Scalar-narrowing an open record's values
+ * is always wrong: the pipeline tool's `type_config` (`{"type":"object",
+ * "patternProperties":{"^.*$":{}}}`) got `type:"string"` stamped on its
+ * value schema, so the wire schema contradicted the daemon driver
+ * (`agents: array`, `rounds: number`) and the model oscillated between the
+ * two validators' errors forever (small-model e2e 2026-06-12, UC-1/UC-6).
+ * The union keeps the node grammar-valid (llama.cpp still rejects truly
+ * typeless nodes) while admitting the identical value set — an I6
+ * identical-set transform like T3, not a narrowing.
  */
 function injectMissingType(
   node: Record<string, unknown>,
   applied: Set<GbnfTransformKeyword>,
+  openRecordValue: boolean,
 ): Record<string, unknown> {
   for (const key of TYPE_BEARING_KEYS) {
     if (key in node) return node;
   }
-  const inferred =
+  const inferred: string | string[] =
     "properties" in node || "required" in node || "additionalProperties" in node
       ? "object"
       : "items" in node || hasAnyKey(node, ARRAY_CONSTRAINT_KEYS)
         ? "array"
         : hasAnyKey(node, NUMERIC_CONSTRAINT_KEYS)
           ? "number"
-          : "string";
+          : openRecordValue && !hasAnyKey(node, STRING_CONSTRAINT_KEYS)
+            ? [...OPEN_RECORD_VALUE_TYPE_UNION]
+            : "string";
   applied.add("missing_type");
   return { ...node, type: inferred };
 }
@@ -267,6 +302,7 @@ function walk(
   applied: Set<GbnfTransformKeyword>,
   depth: number,
   limited: { hit: boolean },
+  openRecordValue = false,
 ): unknown {
   if (schema === null || schema === undefined) return schema;
   if (typeof schema !== "object" || Array.isArray(schema)) return schema;
@@ -287,7 +323,7 @@ function walk(
     collapsed = collapseNullableUnionOnce(node, applied);
   }
   node = collapseTypeArray(node, applied);
-  node = injectMissingType(node, applied);
+  node = injectMissingType(node, applied, openRecordValue);
   node = injectEmptyProperties(node, applied);
 
   const out: Record<string, unknown> = {};
@@ -297,7 +333,8 @@ function walk(
     // definition names, key regexes) — never treated as schema nodes; each
     // VALUE is a schema. $defs/definitions matter because llama.cpp RESOLVES
     // $ref at grammar-compile — hostility inside a definition 400s exactly
-    // like inline hostility.
+    // like inline hostility. patternProperties values are open-record VALUE
+    // position — T4 must never scalar-narrow them (see injectMissingType).
     if (
       (key === "properties" ||
         key === "$defs" ||
@@ -309,7 +346,13 @@ function walk(
     ) {
       const mapOut: Record<string, unknown> = {};
       for (const [entryName, entrySchema] of Object.entries(value as Record<string, unknown>)) {
-        mapOut[entryName] = walk(entrySchema, applied, depth + 1, limited);
+        mapOut[entryName] = walk(
+          entrySchema,
+          applied,
+          depth + 1,
+          limited,
+          key === "patternProperties",
+        );
       }
       out[key] = mapOut;
       continue;
@@ -332,14 +375,15 @@ function walk(
 
     // Recurse into additionalProperties when it is an object schema — the
     // free-form transform needs this branch (deviation from the sibling
-    // cleaners' walk, documented in the phase pattern map).
+    // cleaners' walk, documented in the phase pattern map). Open-record
+    // VALUE position, like patternProperties values above.
     if (
       key === "additionalProperties" &&
       value !== null &&
       typeof value === "object" &&
       !Array.isArray(value)
     ) {
-      out[key] = walk(value, applied, depth + 1, limited);
+      out[key] = walk(value, applied, depth + 1, limited, true);
       continue;
     }
 

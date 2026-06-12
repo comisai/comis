@@ -383,9 +383,100 @@
                 "type": "integer"
               },
               "type_config": {
-                "description": "Configuration for a MULTI-agent node type. MUST be set whenever type_id is set, and MUST be omitted when type_id is omitted (both-or-neither). For a single-agent node, set the node's \"agent\" field and OMIT both type_id and type_config. Examples (by type_id):\n  debate:        { \"agents\": [\"ta-bull\", \"ta-bear\"], \"rounds\": 2, \"synthesizer\": \"ta-judge\" }\n  vote:          { \"voters\": [\"analyst-1\", \"analyst-2\", \"analyst-3\"] }\n  refine:        { \"reviewers\": [\"drafter\", \"editor\", \"pm\"] }\n  collaborate:   { \"agents\": [\"team-1\", \"team-2\"], \"rounds\": 1 }\n  approval-gate: { \"message\": \"Approve the trade?\", \"timeout_minutes\": 60 }\n  map-reduce:    { \"mappers\": [{\"agent\": \"a1\"}, {\"agent\": \"a2\"}], \"reducer\": \"pm\" }",
-                "patternProperties": {
-                  "^.*$": {}
+                "description": "Configuration for a MULTI-agent node type. MUST be set whenever type_id is set, and MUST be omitted when type_id is omitted (both-or-neither). For a single-agent node, set the node's \"agent\" field and OMIT both type_id and type_config. Set ONLY the fields for the chosen type_id. Examples (by type_id):\n  debate:        { \"agents\": [\"ta-bull\", \"ta-bear\"], \"rounds\": 2, \"synthesizer\": \"ta-judge\" }\n  vote:          { \"voters\": [\"analyst-1\", \"analyst-2\", \"analyst-3\"] }\n  refine:        { \"reviewers\": [\"drafter\", \"editor\", \"pm\"] }\n  collaborate:   { \"agents\": [\"team-1\", \"team-2\"], \"rounds\": 1 }\n  approval-gate: { \"message\": \"Approve the trade?\", \"timeout_minutes\": 60 }\n  map-reduce:    { \"mappers\": [{\"agent\": \"a1\"}, {\"agent\": \"a2\"}], \"reducer\": \"pm\" }",
+                "properties": {
+                  "agent": {
+                    "description": "agent: agent ID to run (prefer the node-level \"agent\" field instead)",
+                    "type": "string"
+                  },
+                  "agents": {
+                    "description": "debate/collaborate: 2+ agent IDs",
+                    "items": {
+                      "type": "string"
+                    },
+                    "minItems": 2,
+                    "type": "array"
+                  },
+                  "mappers": {
+                    "description": "map-reduce: one entry per parallel mapper",
+                    "items": {
+                      "properties": {
+                        "agent": {
+                          "description": "map-reduce: agent ID for this mapper",
+                          "type": "string"
+                        },
+                        "task_suffix": {
+                          "description": "map-reduce: per-mapper task suffix",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "agent"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "max_steps": {
+                    "description": "agent: maximum execution steps",
+                    "type": "integer"
+                  },
+                  "message": {
+                    "description": "approval-gate: message shown to the approver",
+                    "type": "string"
+                  },
+                  "min_voters": {
+                    "description": "vote: minimum voters required",
+                    "type": "integer"
+                  },
+                  "model": {
+                    "description": "agent: model override",
+                    "type": "string"
+                  },
+                  "prompt_suffix": {
+                    "description": "vote: extra instruction appended to each voter's prompt",
+                    "type": "string"
+                  },
+                  "reducer": {
+                    "description": "map-reduce: agent ID that reduces mapper outputs",
+                    "type": "string"
+                  },
+                  "reducer_prompt": {
+                    "description": "map-reduce: custom reducer instruction",
+                    "type": "string"
+                  },
+                  "reviewers": {
+                    "description": "refine: 2+ agent IDs in review-chain order",
+                    "items": {
+                      "type": "string"
+                    },
+                    "minItems": 2,
+                    "type": "array"
+                  },
+                  "rounds": {
+                    "description": "debate (1-5, default 2) / collaborate (1-3, default 1): number of rounds",
+                    "type": "integer"
+                  },
+                  "synthesizer": {
+                    "description": "debate: agent ID that synthesizes the final verdict",
+                    "type": "string"
+                  },
+                  "timeout_minutes": {
+                    "description": "approval-gate: approval timeout in minutes (default 60)",
+                    "type": "number"
+                  },
+                  "verdict_format": {
+                    "description": "vote: required verdict format description",
+                    "type": "string"
+                  },
+                  "voters": {
+                    "description": "vote: 2+ agent IDs voting independently",
+                    "items": {
+                      "type": "string"
+                    },
+                    "minItems": 2,
+                    "type": "array"
+                  }
                 },
                 "type": "object"
               },

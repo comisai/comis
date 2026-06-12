@@ -980,6 +980,81 @@ describe("createPipelineTool", () => {
       const nodes = calledParams.nodes as Record<string, unknown>[];
       expect(nodes[0]).not.toHaveProperty("debate");
     });
+
+    // The old `Type.Record(Type.String(), Type.Unknown())` shape compiled to
+    // `{"type":"object","patternProperties":{"^.*$":{}}}` — a typeless open
+    // record. On GBNF providers (Ollama/llama.cpp) the missing-type injection
+    // stamped the value schema `type:"string"`, so the wire schema said
+    // "every type_config value is a string" while the daemon drivers demand
+    // `agents: array` / `rounds: number` — the model oscillated between the
+    // two validators' errors and complex graphs never converged (small-model
+    // e2e 2026-06-12, UC-1/UC-6). The wire schema must declare the concrete
+    // per-field types the drivers actually validate.
+    describe("type_config wire schema accuracy (GBNF-survivable concrete types)", () => {
+      function typeConfigSchema(): Record<string, Record<string, unknown>> {
+        const tool = createPipelineTool(rpcCall);
+        const params = tool.parameters as unknown as {
+          properties: {
+            nodes: { items: { properties: { type_config: Record<string, unknown> } } };
+          };
+        };
+        return params.properties.nodes.items.properties.type_config as Record<
+          string,
+          Record<string, unknown>
+        >;
+      }
+
+      it("is a concrete object schema, not a typeless open record (no patternProperties)", () => {
+        const tc = typeConfigSchema();
+        expect(tc.type).toBe("object");
+        expect(tc.patternProperties).toBeUndefined();
+        expect(tc.properties).toBeDefined();
+      });
+
+      it("types the debate/collaborate fields to match the daemon drivers (agents: array-of-string, rounds: integer, synthesizer: string)", () => {
+        const tc = typeConfigSchema();
+        const props = tc.properties as Record<string, Record<string, unknown>>;
+        expect(props.agents).toMatchObject({ type: "array", items: { type: "string" } });
+        expect(props.rounds.type).toBe("integer");
+        expect(props.synthesizer.type).toBe("string");
+      });
+
+      it("types the vote/refine/approval-gate/map-reduce/agent fields to match their drivers", () => {
+        const tc = typeConfigSchema();
+        const props = tc.properties as Record<string, Record<string, unknown>>;
+        expect(props.voters).toMatchObject({ type: "array", items: { type: "string" } });
+        expect(props.reviewers).toMatchObject({ type: "array", items: { type: "string" } });
+        expect(props.message.type).toBe("string");
+        expect(props.timeout_minutes.type).toBe("number");
+        expect(props.mappers).toMatchObject({
+          type: "array",
+          items: { type: "object", properties: { agent: { type: "string" } } },
+        });
+        expect(props.reducer.type).toBe("string");
+        expect(props.agent.type).toBe("string");
+      });
+
+      it("a debate type_config {agents:[...], rounds:2} still passes through to the RPC unchanged", async () => {
+        const tool = createPipelineTool(rpcCall);
+        await tool.execute("tc-wire1", {
+          action: "define",
+          nodes: [
+            {
+              node_id: "d",
+              task: "Debate it",
+              type_id: "debate",
+              type_config: { agents: ["bull", "bear"], rounds: 2, synthesizer: "judge" },
+            },
+          ],
+        } as never);
+        const nodes = rpcCall.mock.calls[0]![1].nodes as Record<string, unknown>[];
+        expect(nodes[0]!.typeConfig).toEqual({
+          agents: ["bull", "bear"],
+          rounds: 2,
+          synthesizer: "judge",
+        });
+      });
+    });
   });
 
   // -----------------------------------------------------------------------
