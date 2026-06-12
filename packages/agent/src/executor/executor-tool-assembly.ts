@@ -20,7 +20,7 @@ import {
 /** Partial<Settings> extracted from SettingsManager.applyOverrides() parameter type.
  *  Settings is not re-exported from the SDK's index -- extract from the class method. */
 type SettingsOverrides = Parameters<SettingsManager['applyOverrides']>[0];
-import { formatSessionKey } from "@comis/core";
+import { formatSessionKey, scriptTokenFactor } from "@comis/core";
 import type { ErrorKind } from "@comis/core";
 import { applyToolDeferral, buildDeferredToolsContext, createDiscoverTool, createAutoDiscoveryStubs, extractRecentlyUsedToolNames, CORE_TOOLS } from "./tool-deferral.js";
 import type { DeferralContext } from "./tool-deferral.js";
@@ -91,6 +91,23 @@ export type {
   ToolAssemblyResult,
   ToolAssemblyParams,
 } from "./executor-tool-assembly-types.js";
+
+// ---------------------------------------------------------------------------
+// TOK-01 (Phase 179): script-aware system-tokens estimate
+// ---------------------------------------------------------------------------
+
+/** System-tokens estimate with script-aware effective chars (TOK-01).
+ *  systemPrompt text gets its own factor (recalled content can be non-Latin);
+ *  the tool-def overhead is an aggregate char count (machine-Latin JSON) and
+ *  rides flat. ONE ceil over the summed effective chars — per-term ceils would
+ *  inflate ASCII results and break the I1 byte-identity pin. Shared by the
+ *  pre-deferral AND post-deferral (#190) sites so the two estimates cannot
+ *  drift — the same anti-drift rule as the tool-overhead.ts extraction. */
+function estimateSystemTokensFactored(systemPrompt: string, toolOverheadChars: number): number {
+  return Math.ceil(
+    (systemPrompt.length / scriptTokenFactor(systemPrompt) + toolOverheadChars) / CHARS_PER_TOKEN_RATIO,
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Assembly function
@@ -352,8 +369,10 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
   // not the ~58 deferred ones the stub filter strips from the wire (live UC-2
   // finding, 2026-06-12: the pre-deferral 82-tool estimate over-reserved ~16K and
   // falsely context-exhausted multi-turn local-model sessions).
-  let cachedSystemTokensEstimate = Math.ceil(
-    (promptResult.systemPrompt.length + toolDefOverheadCharsValue) / CHARS_PER_TOKEN_RATIO,
+  // TOK-01 (Phase 179): script-aware effective chars — see estimateSystemTokensFactored.
+  let cachedSystemTokensEstimate = estimateSystemTokensFactored(
+    promptResult.systemPrompt,
+    toolDefOverheadCharsValue,
   );
   // I1 / WR-01: the WHOLE fresh-tail preamble token estimate — the entire
   // dynamicPreamble + inlineMemory blob envelope-wrapper prepends into the latest
@@ -364,8 +383,14 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
   // fresh tail and is reserved nowhere else, so this is the only window-headroom
   // reservation for it (recall is a strict subset → a heavier recall block still
   // grows this and compacts harder, preserving I1's intent). See token-budget.ts WR-01.
+  // TOK-01 (Phase 179): both terms are TEXT (the preamble carries recalled
+  // memories/skills which can be non-Latin) — each term's chars divided by its
+  // own script factor, ONE ceil over the summed effective chars (I1: ASCII
+  // factors are 1.0 → byte-identical to the previous flat sum).
+  const inlineMemoryText = promptResult.inlineMemory ?? "";
   const cachedFreshTailPreambleTokens = Math.ceil(
-    (promptResult.dynamicPreamble.length + (promptResult.inlineMemory?.length ?? 0)) / CHARS_PER_TOKEN_RATIO,
+    (promptResult.dynamicPreamble.length / scriptTokenFactor(promptResult.dynamicPreamble) +
+      inlineMemoryText.length / scriptTokenFactor(inlineMemoryText)) / CHARS_PER_TOKEN_RATIO,
   );
 
   // -------------------------------------------------------------------
@@ -593,8 +618,12 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
   // windowTokens is input-independent of this value, so the earlier budget call's
   // window is unaffected; only the downstream history partition + fit check use
   // this corrected, smaller reservation.
-  cachedSystemTokensEstimate = Math.ceil(
-    (promptResult.systemPrompt.length + toolDefOverheadChars(mergedCustomTools)) / CHARS_PER_TOKEN_RATIO,
+  // TOK-01 (#190 third site): the recompute MUST use the same factored helper as
+  // the pre-deferral estimate — a flat recompute here would silently UNDO the
+  // script factor right before the history partition + fit check consume it.
+  cachedSystemTokensEstimate = estimateSystemTokensFactored(
+    promptResult.systemPrompt,
+    toolDefOverheadChars(mergedCustomTools),
   );
 
   // 7b. Auto-discovery stubs for deferred tools.

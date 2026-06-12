@@ -156,7 +156,13 @@ export function resolveToolMaskingTier(toolName: string): ToolMaskingTier {
 
 /** Chars-per-token estimation ratio for natural language text.
  *  3.5 better matches Anthropic's tokenizer (measured 38.8% overcount at 4.0
- *  against production dashboard data). Aligned with estimateBlockTokens(). */
+ *  against production dashboard data). Aligned with estimateBlockTokens().
+ *
+ *  Ratios are Latin-calibrated and stay flat here; since Phase 179 (TOK-01),
+ *  call sites with source text in scope modulate the divisor by
+ *  scriptTokenFactor(text) from @comis/core (dense scripts — Hebrew/Arabic/
+ *  CJK/etc — carry ~2-3× tokens per char). Sites without text in scope are
+ *  marked flat-by-design at the call site. */
 export const CHARS_PER_TOKEN_RATIO = 3.5;
 
 /** Chars-per-token estimation ratio for structured content (JSON, code, tool results).

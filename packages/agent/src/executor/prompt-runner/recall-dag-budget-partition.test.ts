@@ -19,8 +19,9 @@
  *     message stream the DAG measures as history.
  *   - executor-tool-assembly.ts computes `cachedSystemTokensEstimate` (= S, the
  *     value the DAG subtracts via getSystemTokensEstimate) from ONLY
- *     `promptResult.systemPrompt.length + toolDefOverheadChars` — it EXCLUDES
- *     `dynamicPreamble`/`inlineMemory`.
+ *     `promptResult.systemPrompt` + `toolDefOverheadChars` (since Phase 179 via
+ *     the shared `estimateSystemTokensFactored` helper — script-aware divisor,
+ *     same two inputs) — it EXCLUDES `dynamicPreamble`/`inlineMemory`.
  *
  * THE COUPLING RISK this guards: if a future refactor moves the recalled-memory
  * block out of the dynamic preamble and INTO the frozen system prompt (a
@@ -70,16 +71,21 @@ describe("recall ↔ DAG-budget partition: recalled memory is budgeted as HISTOR
     // preamble / inline memory, because those are budgeted as history instead.
     // Since the live UC-2 fix (8e988e2f) S is assigned TWICE: a pre-deferral
     // estimate (`let`) and a post-deferral recompute over the tools that
-    // actually ship — both must stay systemPrompt + tool overhead ONLY.
-    expect(toolAssemblySource).toContain("let cachedSystemTokensEstimate = Math.ceil(");
-    // Pre-deferral site: toolDefOverheadCharsValue = toolDefOverheadChars(mergedCustomTools)
-    // — the shared tool-overhead.ts reduce (FLOOR-01/I8 extraction); tool overhead ONLY.
-    expect(toolAssemblySource).toContain(
-      "(promptResult.systemPrompt.length + toolDefOverheadCharsValue) / CHARS_PER_TOKEN_RATIO",
+    // actually ship. Since Phase 179 (TOK-01) BOTH sites route through the ONE
+    // shared estimateSystemTokensFactored helper — same two inputs (frozen
+    // system prompt + aggregate tool-overhead chars), script-aware divisor —
+    // so the partition AND the factoring cannot drift between the sites.
+    expect(toolAssemblySource).toMatch(
+      /let cachedSystemTokensEstimate = estimateSystemTokensFactored\(\s*promptResult\.systemPrompt,\s*toolDefOverheadCharsValue,\s*\)/,
     );
-    // Post-deferral recompute site: same shape, re-reduced over the shipped set.
+    // Post-deferral recompute site: same helper, re-reduced over the shipped set.
+    expect(toolAssemblySource).toMatch(
+      /cachedSystemTokensEstimate = estimateSystemTokensFactored\(\s*promptResult\.systemPrompt,\s*toolDefOverheadChars\(mergedCustomTools\),\s*\)/,
+    );
+    // The helper's body: system prompt (factored effective chars) + flat tool
+    // overhead ONLY — the shared tool-overhead.ts reduce (FLOOR-01/I8 extraction).
     expect(toolAssemblySource).toContain(
-      "(promptResult.systemPrompt.length + toolDefOverheadChars(mergedCustomTools)) / CHARS_PER_TOKEN_RATIO",
+      "(systemPrompt.length / scriptTokenFactor(systemPrompt) + toolOverheadChars) / CHARS_PER_TOKEN_RATIO",
     );
   });
 
@@ -88,12 +94,19 @@ describe("recall ↔ DAG-budget partition: recalled memory is budgeted as HISTOR
     // cachedSystemTokensEstimate (initial `let` or the post-deferral recompute)
     // may reference dynamicPreamble or inlineMemory. (Scoped per statement so
     // it is not perturbed by unrelated occurrences elsewhere.)
-    const sites = [...toolAssemblySource.matchAll(/cachedSystemTokensEstimate = Math\.ceil\(/g)];
+    const sites = [...toolAssemblySource.matchAll(/cachedSystemTokensEstimate = estimateSystemTokensFactored\(/g)];
     expect(sites.length).toBeGreaterThanOrEqual(2); // pre-deferral let + post-deferral recompute
     for (const site of sites) {
-      const estimateExpr = toolAssemblySource.slice(site.index, site.index + 200);
+      const end = toolAssemblySource.indexOf(");", site.index);
+      expect(end).toBeGreaterThan(site.index ?? -1);
+      const estimateExpr = toolAssemblySource.slice(site.index, end);
       expect(estimateExpr).not.toMatch(/dynamicPreamble|inlineMemory/);
     }
+    // And the shared helper body itself (TOK-01): systemPrompt + toolOverheadChars only.
+    const helperIdx = toolAssemblySource.indexOf("function estimateSystemTokensFactored(");
+    expect(helperIdx).toBeGreaterThan(-1);
+    const helperBody = toolAssemblySource.slice(helperIdx, toolAssemblySource.indexOf("}", helperIdx));
+    expect(helperBody).not.toMatch(/dynamicPreamble|inlineMemory/);
   });
 
   // RESOLVED (2026-06-02): the open behavioral question was traced to ground.

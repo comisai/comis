@@ -16,6 +16,7 @@
  * @module
  */
 
+import { scriptTokenFactor } from "@comis/core";
 import { computeOutputHeadroom, downshiftThinkingLevel } from "./output-headroom.js";
 import {
   ContextExhaustionError,
@@ -88,10 +89,14 @@ export function runPreflightFitCheck(
 
   // Estimate fresh tail token count from char lengths (CHARS_PER_TOKEN_RATIO heuristic).
   // IN-01 fix: count chars from both string and array (multi-part/tool-result) content.
+  // TOK-01 (Phase 179): the divisor is modulated by scriptTokenFactor over the
+  // message's OWN extracted text (dense scripts carry ~2-3× tokens per char; ASCII
+  // factor 1.0 → byte-identical). messageTextChars delegates to messageText, so the
+  // counted length and the factor input can never diverge.
   // Per-message counts are kept (not just the sum) so the Issue-6 cause classifier
   // below can tell a single-oversized-message failure from an aggregate overflow.
   const freshTailMsgTokens = freshTail.map((m) =>
-    Math.ceil(messageTextChars(m) / CHARS_PER_TOKEN_RATIO),
+    Math.ceil(messageTextChars(m) / (CHARS_PER_TOKEN_RATIO * scriptTokenFactor(messageText(m)))),
   );
   const freshTailTokens = freshTailMsgTokens.reduce((s, t) => s + t, 0);
   // OF-01 (v2.19): count the FULL SDK prompt, not just history+freshTail. The
@@ -253,20 +258,33 @@ export function runPreflightFitCheck(
   return originalAssembledInputTokens;
 }
 
-/** Total text chars of one message: string content, or the text/content fields
- *  of array blocks (the IN-01 multi-part/tool-result shape). */
-function messageTextChars(m: AgentMessage): number {
+/** The exact text of one message that the fresh-tail estimate counts: string
+ *  content, or the text/content fields of array blocks (the IN-01 multi-part/
+ *  tool-result shape). Per object block the fallback chain is `text ?? content`
+ *  — mirroring the historical `b.text?.length ?? b.content?.length ?? 0`
+ *  exactly (NOT text+content summed). TOK-01: this concatenation feeds
+ *  scriptTokenFactor so the factor is computed over precisely the chars whose
+ *  length is divided. */
+function messageText(m: AgentMessage): string {
   const content = (m as { content?: unknown }).content;
-  if (typeof content === "string") return content.length;
-  if (!Array.isArray(content)) return 0;
-  return content.reduce((acc: number, block: unknown) => {
-    if (typeof block === "string") return acc + block.length;
-    if (block !== null && typeof block === "object") {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  let out = "";
+  for (const block of content) {
+    if (typeof block === "string") {
+      out += block;
+    } else if (block !== null && typeof block === "object") {
       const b = block as { text?: string; content?: string };
-      return acc + (b.text?.length ?? b.content?.length ?? 0);
+      out += b.text ?? b.content ?? "";
     }
-    return acc;
-  }, 0);
+  }
+  return out;
+}
+
+/** Total text chars of one message — delegates to messageText so the counted
+ *  length and the TOK-01 factor input can NEVER diverge (identity by construction). */
+function messageTextChars(m: AgentMessage): number {
+  return messageText(m).length;
 }
 
 /** Index of the LAST user-role message in the fresh tail (the current input), or -1. */
