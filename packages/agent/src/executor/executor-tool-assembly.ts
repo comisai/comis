@@ -345,7 +345,14 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
   // I8 (Phase 176 FLOOR-01): the char-overhead reduce lives in tool-overhead.ts —
   // shared with the boot viable-floor so the two estimates cannot drift.
   const toolDefOverheadCharsValue = toolDefOverheadChars(mergedCustomTools);
-  const cachedSystemTokensEstimate = Math.ceil(
+  // Computed over the PRE-deferral set here so the input-independent windowTokens
+  // (computeTokenBudgetForProfile below) has a value; RECOMPUTED over the
+  // post-deferral active set after applyToolDeferral so the history-budget
+  // partition + pre-flight fit check reserve for the tools that actually ship,
+  // not the ~58 deferred ones the stub filter strips from the wire (live UC-2
+  // finding, 2026-06-12: the pre-deferral 82-tool estimate over-reserved ~16K and
+  // falsely context-exhausted multi-turn local-model sessions).
+  let cachedSystemTokensEstimate = Math.ceil(
     (promptResult.systemPrompt.length + toolDefOverheadCharsValue) / CHARS_PER_TOKEN_RATIO,
   );
   // I1 / WR-01: the WHOLE fresh-tail preamble token estimate — the entire
@@ -576,6 +583,19 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
   if (deferralResult.discoverTool) {
     mergedCustomTools.push(deferralResult.discoverTool);
   }
+
+  // Recompute the system-token reservation over the tools that ACTUALLY ship
+  // (active + discovered + discover_tools — the current mergedCustomTools, BEFORE
+  // the auto-discovery stubs added below, which the stub filter strips from the
+  // wire). The pre-deferral estimate above counted every registered tool, so a
+  // small-class agent that defers most of its surface over-reserved budget and
+  // falsely context-exhausted multi-turn sessions (live UC-2 finding, 2026-06-12).
+  // windowTokens is input-independent of this value, so the earlier budget call's
+  // window is unaffected; only the downstream history partition + fit check use
+  // this corrected, smaller reservation.
+  cachedSystemTokensEstimate = Math.ceil(
+    (promptResult.systemPrompt.length + toolDefOverheadChars(mergedCustomTools)) / CHARS_PER_TOKEN_RATIO,
+  );
 
   // 7b. Auto-discovery stubs for deferred tools.
   // Lightweight stubs so the SDK's agent-loop finds deferred tools during
