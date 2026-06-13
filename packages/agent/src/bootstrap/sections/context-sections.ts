@@ -29,6 +29,8 @@ export interface SubagentRoleParams {
   parentSummary?: string;
   /** Map of all registered agent IDs to their workspace directories. */
   agentWorkspaces?: Record<string, string>;
+  /** Inherited conversation language (DET-02 tag) for non-en user-facing output. */
+  language?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -274,6 +276,14 @@ export function buildSubagentRoleSection(
   ];
 
   // --- New enriched sections (inserted BEFORE Rules) ---
+
+  if (params.language && params.language !== "en") {
+    lines.push(
+      "",
+      "### Language",
+      `Produce all user-facing output in ${params.language} (the conversation language). Code, identifiers, and file paths stay verbatim.`,
+    );
+  }
 
   if (params.objective) {
     lines.push(
