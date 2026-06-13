@@ -156,10 +156,14 @@ test.describe("Security view", () => {
 
     await securityView.getByRole("tab", { name: "Secrets" }).click();
 
-    // The Secrets tab surfaces the encrypted secrets store toggle and the
-    // database path; it does not list secret names directly (that lives in
-    // the agent editor's secrets section).
-    await expect(securityView.getByText("Encrypted Secrets Store")).toBeVisible();
+    // The Secrets tab surfaces the read-only credential-storage config: the
+    // storage mode (runtime-immutable per D17 — no toggle) and the database
+    // path. It does not list secret names directly (that lives in the agent
+    // editor's secrets section).
+    await expect(securityView.getByText("Credential Storage")).toBeVisible();
+    // exact: the "Storage Mode" label would otherwise also match the
+    // "Storage mode is set in config.yaml…" helper note (strict-mode clash).
+    await expect(securityView.getByText("Storage Mode", { exact: true })).toBeVisible();
     await expect(securityView.getByText("secrets.db")).toBeVisible();
   });
 
