@@ -15,12 +15,17 @@
 //   - cap-knob x cause variants mirror the live nested advice branching.
 //   - Fallback contract: an unknown language returns the en string; never throws.
 //   - I2 (gate-blocking security): NO phrase-table string contains a bidi
-//     control codepoint. The regex is built from ESCAPED codepoints only —
-//     never a literal bidi glyph in this source (the Trojan-Source hazard).
+//     control codepoint. The BIDI regex is built from NUMERIC codepoints via
+//     String.fromCodePoint (see :47-51) — never a literal bidi glyph and never
+//     a \u escape in this source. \u escapes round-trip back into literal
+//     glyphs in some tools, which is exactly the Trojan-Source hazard I2 exists
+//     to stop, so numeric construction is the deliberate, required approach.
 //
 // AUTHORING NOTE: this file NEVER pastes a raw bidi codepoint or the warning
-// glyph. The warning marker is referenced via String.fromCodePoint(0x26A0, 0xFE0F)
-// and the bidi set via \u escapes only.
+// glyph, and NEVER uses \u escapes for them. Both the warning marker
+// (String.fromCodePoint(0x26A0, 0xFE0F)) and the bidi set (the cp() helper at
+// :47, also String.fromCodePoint) are built from numeric codepoints only. Do
+// NOT "simplify" the BIDI regex back to \u escapes — that reintroduces I2.
 
 import { describe, it, expect } from "vitest";
 import type { ContextExhaustionCause } from "../context-engine/errors.js";
@@ -83,6 +88,53 @@ describe("degraded-reply-i18n — en selectors are byte-identical to the live bu
     expect(selectLoopDetectedReply("en", {})).toBe(buildLoopDetectedReply());
     expect(selectLoopDetectedReply("en", { traceId: "abc" })).toBe(
       buildLoopDetectedReply({ traceId: "abc" }),
+    );
+  });
+
+  // WR-03: the equality assertions above are NECESSARY but not SUFFICIENT as an
+  // I1 oracle. After 181-03, buildContextExhaustedReply (degraded-reply.ts)
+  // DELEGATES to selectContextExhaustedReply("en", …) — both sides resolve to
+  // the SAME `en` row, so `selected === live` is tautological and would stay
+  // green even if the `en` row drifted away from the historical literals. Anchor
+  // the en row against HARDCODED literals (copied from the pre-181 builders,
+  // matching the sibling literal pins at degraded-reply.test.ts:144/:274) so
+  // en-row byte-identity is guarded independently of the builder delegation —
+  // not via a round-trip through the same code path.
+  it("WR-03: DEGRADED_REPLY_TABLE.en pins the historical English literals (independent I1 anchor)", () => {
+    expect(DEGRADED_REPLY_TABLE.en.contextExhaustedBase).toBe(
+      "I was unable to process your request — the context window was exhausted " +
+        "before the model could run. ",
+    );
+    expect(DEGRADED_REPLY_TABLE.en.causeLead.oversized_input).toBe(
+      "Your message alone is larger than this model's context window — send a " +
+        "shorter message or split it into parts. ",
+    );
+    expect(DEGRADED_REPLY_TABLE.en.causeLead.oversized_history_message).toBe(
+      "A previous message in this session exceeds this model's context window, " +
+        "so every new turn overflows regardless of its size — reset the session " +
+        "to clear it. ",
+    );
+    expect(DEGRADED_REPLY_TABLE.en.causeLead.aggregate).toBe("");
+    expect(DEGRADED_REPLY_TABLE.en.capKnobAdviceDefault).toBe(
+      "Try raising {knob} (0 = uncapped), reducing the agent's active tools, or narrowing the ask.",
+    );
+    expect(DEGRADED_REPLY_TABLE.en.capKnobAdviceHistory).toBe(
+      "Alternatively raise {knob} (0 = uncapped).",
+    );
+    expect(DEGRADED_REPLY_TABLE.en.genericAdviceDefault).toBe(
+      "Try raising the agent's context engine settings or narrowing the ask.",
+    );
+    expect(DEGRADED_REPLY_TABLE.en.genericAdviceHistory).toBe(
+      "Alternatively raise the agent's context engine settings.",
+    );
+    expect(DEGRADED_REPLY_TABLE.en.outputStarvedAnnotation).toBe(
+      "\n\n" + WARNING_MARKER + " My answer was cut off at the model's output limit — too many tools are " +
+        "loaded for this model's context window. Narrow the ask or raise the model's context size.",
+    );
+    expect(DEGRADED_REPLY_TABLE.en.loopDetected).toBe(
+      "I stopped because I kept repeating an action that wasn't making progress " +
+        "(usually a tool that failed or was blocked) and didn't want to loop. The " +
+        "request may need a different approach, or that capability isn't available here.",
     );
   });
 });
