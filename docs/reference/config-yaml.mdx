@@ -254,6 +254,7 @@ Multi-agent configuration map. Each key is an agent ID, and the value is a `PerA
 | `preserveRecent` | `number` | `4` | Minimum recent messages to always preserve during compaction |
 | `workspacePath` | `string` | _(unset)_ | Path to agent workspace directory containing identity files |
 | `reactionLevel` | `enum` | _(unset)_ | Reaction frequency: `minimal` (1 per 5-10 exchanges) or `extensive` (react freely) |
+| `language` | `string` | _(unset)_ | Reply language for deterministic degraded replies (context-exhausted / output-starved notices). Accepts a BCP-47 tag (`"he"`) or an English display name (`"Hebrew"`). When omitted, Comis auto-detects the reply language from the USER.md preferred language, then the inbound message script (Hebrew, Arabic, and Russian/Cyrillic only). Does not affect the live agent reply, which always follows the user's language. |
 | `enforceFinalTag` | `boolean` | `false` | When enabled, only content inside `<final>` blocks reaches users. Suppresses all content outside final tags on both streaming and non-streaming paths. |
 | `fastMode` | `boolean` | `false` | Enables fast mode for the LLM provider (provider-specific behavior). |
 | `storeCompletions` | `boolean` | `false` | When enabled, sends `store: true` to OpenAI-compatible providers for completion storage. |
