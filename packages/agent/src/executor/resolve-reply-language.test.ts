@@ -97,21 +97,21 @@ describe("resolveReplyLanguage — tier-2 (USER.md preferred language)", () => {
 });
 
 describe("resolveReplyLanguage — tier-3 (inbound message script, strict >0.5 majority)", () => {
-  it("all-Hebrew text → he", () => {
+  it("resolves all-Hebrew text to he", () => {
     expect(resolveReplyLanguage({ inboundText: "שלום עולם זהו טקסט עברי בלבד" })).toBe("he");
   });
 
-  it("all-Arabic text → ar", () => {
+  it("resolves all-Arabic text to ar", () => {
     expect(resolveReplyLanguage({ inboundText: "مرحبا بالعالم هذا نص عربي فقط" })).toBe("ar");
   });
 
-  it("all-Russian (Cyrillic) text → ru", () => {
+  it("resolves all-Russian Cyrillic text to ru", () => {
     expect(resolveReplyLanguage({ inboundText: "это полностью русский текст без латиницы" })).toBe(
       "ru",
     );
   });
 
-  it("THE KEYSTONE (Pitfall 4): plurality-but-NOT-majority Hebrew → en, NOT he", () => {
+  it("resolves plurality-but-not-majority Hebrew to en, not he (THE KEYSTONE, Pitfall 4)", () => {
     // Construct a string where Hebrew is the plurality of non-neutral codepoints
     // but NOT a strict majority. dominantScript (0.30 non-Latin floor) would
     // return "hebrew"; DET-02's strict >0.5 rule must fall through to "en".
@@ -156,7 +156,7 @@ describe("resolveReplyLanguage — tier-3 (inbound message script, strict >0.5 m
     expect(resolveReplyLanguage({ inboundText: "12345 67890 !!! ???" })).toBe("en");
   });
 
-  it("pure-English (Latin) text → en", () => {
+  it("resolves pure-English Latin text to en", () => {
     expect(resolveReplyLanguage({ inboundText: "this is a normal english sentence" })).toBe("en");
   });
 });
