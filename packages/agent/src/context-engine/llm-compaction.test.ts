@@ -2423,13 +2423,25 @@ describe("createLlmCompactionLayer — summary_language_mismatch (OBS-01, depth 
     return messages;
   }
 
-  /** A valid summary whose narrative body is Hebrew (script preserved). */
+  /**
+   * A valid summary (the 9 required sections) whose section BODIES are all
+   * Hebrew, so dominantScript(summary) === "hebrew" (the ASCII `##` headings are
+   * a minority of the codepoints — verified). This is what GEN-01's
+   * headings-exempt instruction produces on a Hebrew conversation.
+   */
   function buildHebrewSummary(): string {
-    const body = `${HEBREW_WORD} ${HEBREW_WORD} ${HEBREW_WORD}`;
-    return buildValidSummary().replace(
-      "- User wants to implement structured compaction with semantic sections",
-      `- ${body} ${body} ${body} ${body} ${body}`,
-    );
+    const hb = `${HEBREW_WORD} ${HEBREW_WORD} ${HEBREW_WORD} ${HEBREW_WORD} ${HEBREW_WORD} ${HEBREW_WORD}`;
+    return [
+      "## Identifiers", `- ${hb}`,
+      "## Primary Request and Intent", `- ${hb} ${hb}`,
+      "## Decisions", `- ${hb}`,
+      "## Files and Code", `- ${hb}`,
+      "## Errors and Resolutions", `- ${hb}`,
+      "## User Messages", `- ${hb}`,
+      "## Constraints", `- ${hb}`,
+      "## Active Work", `- ${hb}`,
+      "## Next Steps", `- ${hb}`,
+    ].join("\n");
   }
 
   beforeEach(() => {

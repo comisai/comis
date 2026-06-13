@@ -1511,15 +1511,16 @@ describe("maybeRunCondensePass — summary_language_mismatch (OBS-01, condense d
 
   it("never leaks the summary or source body into the mismatch payload", async () => {
     seedHistory(store, 40, 100);
-    const uniqueSource = `UNIQUE-SOURCE-${HEBREW_WORD}-probe`;
-    seedLeavesWithContent(4, 4, uniqueSource);
-    const uniqueSummary = "UNIQUE-SUMMARY-english-probe books";
+    // Source = pure Hebrew (so the mismatch fires); the unique English marker
+    // lives ONLY in the summary. The payload must contain neither body.
+    seedLeavesWithContent(4, 4, `${HEBREW_WORD} ${HEBREW_WORD} ${HEBREW_WORD}`);
+    const uniqueSummary = "UNIQUE-SUMMARY-english-probe books and reading";
     const { bus, emits } = makeEventBus();
     await runCondense(uniqueSummary, bus);
     const mism = emits.filter((e) => e.event === "context:summary_language_mismatch");
     expect(mism.length).toBe(1);
     const blob = JSON.stringify(mism[0]!.payload);
-    expect(blob).not.toContain("UNIQUE-SOURCE");
     expect(blob).not.toContain("UNIQUE-SUMMARY");
+    expect(blob).not.toContain(HEBREW_WORD);
   });
 });
