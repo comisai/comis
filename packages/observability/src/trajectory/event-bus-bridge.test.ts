@@ -999,6 +999,24 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       overflowStripped: false,
       timestamp: 0,
     },
+    // OBS-01 (Phase 180): the two multilingual signals — the envelope-only
+    // correlation invariant must hold for them too (no agentId/sessionKey leak).
+    "context:script_zero_hit": {
+      conversationId: "t1:u1:c1",
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      scriptClass: "hebrew",
+      lane: "tri",
+      timestamp: 0,
+    },
+    "context:summary_language_mismatch": {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      sourceScript: "hebrew",
+      summaryScript: "latin",
+      depth: 1,
+      timestamp: 0,
+    },
     // approval events
     "approval:requested": {
       requestId: "req-1",
@@ -2233,6 +2251,62 @@ describe("security + compaction + context + approval bridge", () => {
     expect(data.sessionKey).toBeUndefined();
   });
 
+  // OBS-01 / Phase 180 — the two new multilingual signals on the explain path.
+  // RED: nothing is declared/mapped yet, so the bridge drops these events
+  // (recorder.calls is empty) → both cases FAIL until Task 2 wires the EventMap
+  // declaration + mapping entry + translator + trajectory type.
+  it("context_script_zero_hit_maps_to_context.script_zero_hit forwarding scriptClass/lane/conversationId; envelope stripped", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("context:script_zero_hit", {
+      conversationId: "t1:u1:c1",
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      scriptClass: "hebrew",
+      lane: "tri",
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("context.script_zero_hit");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.scriptClass).toBe("hebrew");
+    expect(data.lane).toBe("tri");
+    expect(data.conversationId).toBe("t1:u1:c1");
+    // Envelope-only fields are stripped from data (the budget_computed precedent).
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("context_summary_language_mismatch_maps_to_context.summary_language_mismatch forwarding sourceScript/summaryScript/depth; envelope stripped", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("context:summary_language_mismatch", {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      sourceScript: "hebrew",
+      summaryScript: "latin",
+      depth: 1,
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("context.summary_language_mismatch");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.sourceScript).toBe("hebrew");
+    expect(data.summaryScript).toBe("latin");
+    expect(data.depth).toBe(1);
+    // Envelope-only fields are stripped from data.
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
   it("context_masked_maps_to_context.masked with maskedCount/totalChars/persistedToDisk; envelope stripped", () => {
     const bus = makeBus();
     const recorder = createCaptureRecorder();
@@ -2595,11 +2669,12 @@ describe("attachTrajectoryToEventBus -- dedup events", () => {
 // ---------------------------------------------------------------------------
 
 describe("health:budget_exceeded entry (bridge entry count guard)", () => {
-  it("bridge entry count is exactly 61 (+2 D3 breaker + 1 D7 offload Phase 151; +1 session:summary Phase 152; +1 context:budget_computed W2; +1 execution:tool_schema_unsupported Phase 175)", () => {
+  it("bridge entry count is exactly 63 (+2 D3 breaker + 1 D7 offload Phase 151; +1 session:summary Phase 152; +1 context:budget_computed W2; +1 execution:tool_schema_unsupported Phase 175; +2 OBS-01 script signals Phase 180)", () => {
     // 55 + tool:breaker_opened + tool:breaker_reset (D3) + tool:result_offloaded (D7)
     // + session:summary (F2/D5, Phase 152)
-    // + execution:tool_schema_unsupported (GBNF-02, Phase 175 Plan 05).
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(61);
+    // + execution:tool_schema_unsupported (GBNF-02, Phase 175 Plan 05)
+    // + context:script_zero_hit + context:summary_language_mismatch (OBS-01, Phase 180 Plan 03).
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(63);
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {

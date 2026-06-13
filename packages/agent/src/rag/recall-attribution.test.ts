@@ -109,3 +109,86 @@ describe("attributeRecallUsage — overlap heuristic partition", () => {
     expect(lenient.usedIds.length + lenient.ignoredIds.length).toBe(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// OBS-01 / Phase 180 — de-Anglicization (RED on pre-patch code).
+//
+// Pre-patch the tokenizer is `.toLowerCase().replace(/[^a-z0-9]+/g, " ")` — every
+// non-ASCII letter is stripped to whitespace, so a Hebrew/Arabic/Cyrillic memory
+// and an overlapping non-Latin response BOTH tokenize to nothing. denom === 0 →
+// the memory is forced into `ignoredIds` (the zero-denominator guard), so its
+// attribution is PERMANENTLY 0 regardless of how much real content overlaps.
+// Every non-Latin case below asserts the memory is USED — each FAILS on the
+// pre-patch tokenizer and flips GREEN once the split becomes Unicode-aware.
+//
+// The Latin byte-identity case + the Latin-gated stopword case pin I1: the fix
+// must NOT move any pure-ASCII result and must keep STOPWORDS filtering Latin
+// tokens only (a non-Latin token that transliterates near a stopword survives).
+// ---------------------------------------------------------------------------
+
+describe("attributeRecallUsage — de-Anglicization (non-Latin scripts, OBS-01)", () => {
+  it("scores a Hebrew memory overlapping a Hebrew response > 0 (USED) — RED: 0 pre-patch", () => {
+    // Two-word Hebrew phrase shared verbatim → significant unigrams + a bigram overlap.
+    const recalled = [{ id: "he", content: "הספרייה הלאומית פתוחה היום" }];
+    const response = "כן, הספרייה הלאומית פתוחה היום עד שש בערב.";
+    const out = attributeRecallUsage(recalled, response);
+    expect(out.usedIds).toContain("he");
+    expect(out.ignoredIds).not.toContain("he");
+  });
+
+  it("scores an Arabic memory overlapping an Arabic response > 0 (USED) — RED: 0 pre-patch", () => {
+    const recalled = [{ id: "ar", content: "المكتبة الوطنية مفتوحة اليوم" }];
+    const response = "نعم، المكتبة الوطنية مفتوحة اليوم حتى المساء.";
+    const out = attributeRecallUsage(recalled, response);
+    expect(out.usedIds).toContain("ar");
+    expect(out.ignoredIds).not.toContain("ar");
+  });
+
+  it("scores a Cyrillic memory overlapping a Cyrillic response > 0 (USED) — RED: 0 pre-patch", () => {
+    const recalled = [{ id: "ru", content: "национальная библиотека сегодня открыта" }];
+    const response = "Да, национальная библиотека сегодня открыта до вечера.";
+    const out = attributeRecallUsage(recalled, response);
+    expect(out.usedIds).toContain("ru");
+    expect(out.ignoredIds).not.toContain("ru");
+  });
+
+  it("produces a bigram for a space-delimited two-word Hebrew phrase (phrase structure preserved)", () => {
+    // A memory whose ONLY signal is a shared two-word phrase: the bigram axis must
+    // fire for non-Latin tokens exactly as it does for Latin ones. Pre-patch the
+    // phrase tokenizes to nothing → no bigram → ignored.
+    const recalled = [{ id: "phrase", content: "ספרייה לאומית" }];
+    const response = "ביקרנו אתמול בספרייה לאומית גדולה מאוד.";
+    const out = attributeRecallUsage(recalled, response);
+    expect(out.usedIds).toContain("phrase");
+  });
+
+  it("does NOT filter a non-Latin token even when it collides with a Latin stopword spelling (stopword gate is Latin-only)", () => {
+    // STOPWORDS holds ASCII "is"/"it"/"on" etc. A non-Latin token must never be
+    // dropped by that English set — gate it behind a Latin-script test. A Cyrillic
+    // memory whose tokens are short stays attributable (its tokens are significant,
+    // not stopwords), so overlap with the echoed response is > 0.
+    const recalled = [{ id: "cyr-short", content: "это новая политика безопасности" }];
+    const response = "Подтверждаю: это новая политика безопасности с сегодняшнего дня.";
+    const out = attributeRecallUsage(recalled, response);
+    expect(out.usedIds).toContain("cyr-short");
+  });
+});
+
+describe("attributeRecallUsage — pure-ASCII byte identity (I1)", () => {
+  it("produces a frozen partition for a pure-ASCII corpus (the de-Anglicization is a no-op for ASCII)", () => {
+    // I1 pin: an English-only deployment must be UNCHANGED. This case is explicit
+    // (not just the inherited cases above) so the de-Anglicization is provably a
+    // no-op for ASCII. Mixed used/ignored exercises both buckets + the bigram axis.
+    const recalled = [
+      { id: "u1", content: "the nightly backup job writes to the offsite bucket at midnight" },
+      { id: "i1", content: "an unrelated note about espresso roast preferences" },
+      { id: "u2", content: "rate limiting is enforced at one hundred requests per minute" },
+    ];
+    const response =
+      "Confirmed — the nightly backup job writes to the offsite bucket at midnight, and rate limiting is enforced at one hundred requests per minute.";
+    const out = attributeRecallUsage(recalled, response);
+    // Exact partition (the byte-identity baseline — frozen for I1).
+    expect(out.usedIds).toEqual(["u1", "u2"]);
+    expect(out.ignoredIds).toEqual(["i1"]);
+  });
+});
