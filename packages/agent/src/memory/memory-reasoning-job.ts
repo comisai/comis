@@ -81,6 +81,7 @@ import {
   surprisalSelect,
 } from "./memory-consolidation-clustering.js";
 import type { DeductiveResult, InductiveResult } from "./memory-reasoning-prompt.js";
+import { emitGenerationQuality } from "./emit-generation-quality.js";
 
 // ---------------------------------------------------------------------------
 // Trust ceiling helpers
@@ -419,6 +420,22 @@ export async function runMemoryReasoning(deps: MemoryReasoningDeps): Promise<Mem
       continue;
     }
     const output = reasoned.value;
+
+    // GENQ-01: classify the scope source vs the raw reasoning output (deductive
+    // objects + inductive contents) BEFORE the per-write security/trust filtering —
+    // this measures the MODEL's output quality (the F-ML1 class: a non-Latin scope
+    // reasoned into Latin observations, or an empty reasoning). Fires only on an
+    // issue; content-free, guarded, VISIBILITY ONLY (no gating).
+    emitGenerationQuality(eventBus, logger, {
+      agentId,
+      pass: "reasoning",
+      sourceText: clusterText,
+      outputText: [
+        ...output.deductive.map((d) => d.object),
+        ...output.inductive.map((p) => p.content),
+      ].join("\n"),
+      nowMs: clock.now(),
+    });
 
     // --- 4a. DEDUCTIVE branch — the SHIPPED trust-first upsertTriple.
     //     The scope is homogeneous, so its single trust level IS the source-trust cap.

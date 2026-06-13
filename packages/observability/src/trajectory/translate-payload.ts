@@ -247,6 +247,19 @@ export function translatePayload(
         durationMs: payload.durationMs,
       };
 
+    case "memory:generation_quality":
+      // GENQ-01: which pass + the source/output dominant scripts + the issue flags.
+      // Closed enums + booleans ONLY — never the source or generated body; agentId/
+      // sessionKey are envelope correlation ids (§2.7 / H1).
+      return {
+        pass: payload.pass,
+        sourceScript: payload.sourceScript,
+        outputScript: payload.outputScript,
+        languageMismatch: payload.languageMismatch,
+        emptyOutput: payload.emptyOutput,
+        formatViolation: payload.formatViolation,
+      };
+
     case "delivery:enqueued":
       return {
         entryId: payload.entryId,

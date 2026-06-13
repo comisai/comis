@@ -763,6 +763,41 @@ describe("buildFindings — OBS-01 summary_language_mismatch dedicated finding",
   });
 });
 
+describe("buildFindings — GENQ-01 generation_quality dedicated finding", () => {
+  it("rolls up the memory-generation passes to one count whose hint names the R6 memory-ops knob", async () => {
+    const now = systemNowMs();
+    const store = makeStore();
+    // Mixed passes + issue flags — all roll into the one generation_quality count.
+    const rows = [
+      { pass: "user_representation", languageMismatch: true, emptyOutput: false, formatViolation: false },
+      { pass: "consolidation", languageMismatch: false, emptyOutput: false, formatViolation: true },
+      { pass: "reasoning", languageMismatch: true, emptyOutput: false, formatViolation: false },
+    ];
+    rows.forEach((r, i) =>
+      store.insertDiagnostic({
+        timestamp: now - i,
+        category: "health_signal",
+        severity: "warning",
+        message: "memory:generation_quality",
+        details: JSON.stringify({ signal: "generation_quality", sourceScript: "hebrew", outputScript: "latin", ...r }),
+      }),
+    );
+
+    const report = await assembleFleetHealthReport(
+      { obsStore: store, dataDir: emptyDataDir(), clock: createFakeClock(now) },
+      24,
+    );
+
+    const finding = report.findings.find((f) => f.code === "generation_quality");
+    expect(finding).toBeDefined();
+    expect(finding?.count).toBe(3);
+    expect(finding?.hint).toMatch(/capabilityClass/);
+    expect(finding?.hint).toMatch(/memory/i);
+    // No double-report via the generic health_signal:<label> rollup.
+    expect(report.findings.some((f) => f.code === "health_signal:generation_quality")).toBe(false);
+  });
+});
+
 describe("bindFleetHealthHandlers (H1 — admin dual-layer gate)", () => {
   it("admin gate: missing _trustLevel:admin throws", async () => {
     const handlers = bindFleetHealthHandlers(makeDeps({ obsStore: makeStore(), clock: createFakeClock(systemNowMs()) }));

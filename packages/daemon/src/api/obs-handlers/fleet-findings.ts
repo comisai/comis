@@ -108,6 +108,7 @@ function multilingualFromRow(row: DiagnosticRow): {
 const DEDICATED_SCRIPT_SIGNALS: ReadonlySet<string> = new Set([
   "script_zero_hit",
   "summary_language_mismatch",
+  "generation_quality",
 ]);
 
 /** OBS-01: `{scriptClass, lane}` from a script_zero_hit row's details JSON.
@@ -195,6 +196,22 @@ export function buildFindings(
       detail: `${mismatchCount} summary(ies) whose dominant script diverged from the source (non-Latin source → Latin summary)`,
       count: mismatchCount,
       hint: "summaries are drifting to Latin for non-Latin sources; set contextEngine.compaction.strongerSummarizerModel to a model that preserves the source language (visibility only — not gated)",
+    });
+  }
+
+  // GENQ-01: dedicated generation_quality finding — the memory-generation analog of
+  // summary_language_mismatch over the consolidation/reasoning/user-representation
+  // passes (the F-ML1 regression class made a fleet count instead of an offline
+  // probe). Counts only, no source/generated body; visibility only, never gated.
+  const genQualityCount = healthSignals.filter(
+    (row) => healthSignalLabel(row) === "generation_quality",
+  ).length;
+  if (genQualityCount > 0) {
+    findings.push({
+      code: "generation_quality",
+      detail: `${genQualityCount} memory-generation pass(es) whose output diverged from the source (non-Latin source → Latin output, empty, or unparseable)`,
+      count: genQualityCount,
+      hint: "a memory-generation pass (consolidation/reasoning/user-representation) is producing low-quality output for non-Latin sources; the memory-pipeline model is too weak — configure a stronger memory model or pin providers.entries.<id>.capabilities.capabilityClass to frontier/mid (the R6 memory-ops override). Visibility only — not gated",
     });
   }
 

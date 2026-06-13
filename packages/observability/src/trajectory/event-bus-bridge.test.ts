@@ -710,6 +710,16 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       fellBack: false,
       durationMs: 7,
     },
+    "memory:generation_quality": {
+      agentId: "default",
+      pass: "user_representation",
+      sourceScript: "hebrew",
+      outputScript: "latin",
+      languageMismatch: true,
+      emptyOutput: false,
+      formatViolation: false,
+      timestamp: 1000,
+    },
     "delivery:enqueued": {
       entryId: "e",
       channelType: "telegram",
@@ -2686,13 +2696,14 @@ describe("attachTrajectoryToEventBus -- dedup events", () => {
 // ---------------------------------------------------------------------------
 
 describe("health:budget_exceeded entry (bridge entry count guard)", () => {
-  it("bridge entry count is exactly 65 (+2 D3 breaker + 1 D7 offload Phase 151; +1 session:summary Phase 152; +1 context:budget_computed W2; +1 execution:tool_schema_unsupported Phase 175; +2 OBS-01 script signals Phase 180; +2 RECALL-01 memory:recalled/reranked)", () => {
+  it("bridge entry count is exactly 66 (+2 D3 breaker + 1 D7 offload Phase 151; +1 session:summary Phase 152; +1 context:budget_computed W2; +1 execution:tool_schema_unsupported Phase 175; +2 OBS-01 script signals Phase 180; +2 RECALL-01 memory:recalled/reranked; +1 GENQ-01 memory:generation_quality)", () => {
     // 55 + tool:breaker_opened + tool:breaker_reset (D3) + tool:result_offloaded (D7)
     // + session:summary (F2/D5, Phase 152)
     // + execution:tool_schema_unsupported (GBNF-02, Phase 175 Plan 05)
     // + context:script_zero_hit + context:summary_language_mismatch (OBS-01, Phase 180 Plan 03)
-    // + memory:recalled + memory:reranked (RECALL-01, observability-excellence).
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(65);
+    // + memory:recalled + memory:reranked (RECALL-01, observability-excellence)
+    // + memory:generation_quality (GENQ-01, observability-excellence).
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(66);
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {

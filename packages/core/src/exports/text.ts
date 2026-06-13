@@ -6,6 +6,8 @@
 
 export { SCRIPT_CLASSES, classifyCodepoint, scriptShares, dominantScript } from "../text/script-classes.js";
 export type { ScriptClass, ScriptClassRow } from "../text/script-classes.js";
+export { classifyGenerationQuality } from "../text/generation-quality.js";
+export type { GenerationPass } from "../text/generation-quality.js";
 export { scriptTokenFactor } from "../text/token-factor.js";
 export { normalizeForSearch } from "../text/normalize-search.js";
 export { routeSearchQuery } from "../text/trigram-query.js";

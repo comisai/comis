@@ -373,6 +373,36 @@ export function summaryLanguageMismatchEventToRow(
   };
 }
 
+/**
+ * GENQ-01: map a `memory:generation_quality` event to a `health_signal`
+ * diagnostic row. Mirrors `summaryLanguageMismatchEventToRow` — the generalization
+ * to the consolidation/reasoning/user-representation passes. Cron-job passes carry
+ * no `sessionKey`. `details` is closed enums + booleans ONLY (the `pass` + scripts
+ * + the three issue flags) — NEVER the source or generated body (§2.7).
+ */
+export function generationQualityEventToRow(
+  payload: EventMap["memory:generation_quality"],
+): DiagnosticRow {
+  return {
+    timestamp: payload.timestamp,
+    category: "health_signal",
+    severity: "warning",
+    agentId: payload.agentId,
+    sessionKey: payload.sessionKey,
+    message: "memory:generation_quality",
+    details: JSON.stringify({
+      signal: "generation_quality",
+      pass: payload.pass,
+      sourceScript: payload.sourceScript,
+      outputScript: payload.outputScript,
+      languageMismatch: payload.languageMismatch,
+      emptyOutput: payload.emptyOutput,
+      formatViolation: payload.formatViolation,
+    }),
+    traceId: undefined,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Factory types
 // ---------------------------------------------------------------------------
@@ -511,6 +541,11 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
   });
   eventBus.on("context:summary_language_mismatch", (payload) => {
     diagnosticBuffer.push(summaryLanguageMismatchEventToRow(payload));
+  });
+  // GENQ-01: the memory-generation-pass quality signal → health_signal row (same
+  // diagnosticBuffer). Fires only on a detected issue, so each row is a regression.
+  eventBus.on("memory:generation_quality", (payload) => {
+    diagnosticBuffer.push(generationQualityEventToRow(payload));
   });
 
   // c. Periodic channel snapshot timer

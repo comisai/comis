@@ -265,13 +265,14 @@ playbook documents:
 - For the full secure local configuration, see the
   [Recommended Secure qwen3.6 Configuration](/reference/config-yaml#recommended-secure-qwen36-configuration).
 
-**The three fleet checks that prove a multilingual local stack works.** Run
+**The four fleet checks that prove a multilingual local stack works.** Run
 [`comis fleet`](/reference/cli#comis-fleet) and look for these — together they answer "is my
 local multilingual stack actually working?" without a log dive:
 
 | Fleet check | What it tells you | Remedy |
 |-------------|-------------------|--------|
 | `summary_language_mismatch` | The local summarizer is writing English summaries of non-Latin conversations (the recall hole reopening) | Set `contextEngine.compaction.strongerSummarizerModel` to a language-capable (qwen-class) model |
+| `generation_quality` | A **memory-generation** pass (consolidation / reasoning / user-representation) translated non-Latin source memories into Latin output, or produced empty / unparseable output — the recall hole reopening on the *memory* side (GENQ-01; the F-ML1 class) | Use a language-capable memory model — pin `providers.entries.<id>.capabilities.capabilityClass` to `frontier`/`mid` for the memory pipeline (the R6 memory-ops override) |
 | `script_zero_hit` | Non-Latin searches are returning zero hits (with the lane: `word` / `tri` / `scan`) — is the trigram lane carrying recall? | Verify the trigram tokenizer is present; run the `comis doctor` twin-backfill for old history |
 | `embeddingMultilingual` / `rerankerMultilingual` | The embedder or reranker is English-only (or unknown) — non-Latin semantic recall / ordering is degraded | Configure a multilingual embedder (`bge-m3` / `multilingual-e5`) and reranker (`bge-reranker-v2-m3`); recall still works on the FTS floor regardless |
 

@@ -75,6 +75,8 @@ export const TRAJECTORY_EVENT_TYPES = [
   // RECALL-01: per-recall lane/candidate/final counts + rerank outcome (content-free).
   "memory.recalled",
   "memory.reranked",
+  // GENQ-01: a memory-generation pass's output diverged from its source (content-free).
+  "memory.generation_quality",
 
   // Delivery queue lifecycle.
   "delivery.queued",

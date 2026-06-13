@@ -6,7 +6,7 @@ icon: "chart-line"
 
 A fleet-wide bug must be diagnosable from one structured artifact with one command in under five minutes.
 
-This page documents the observability foundations. It covers the trajectory layer, the 65-entry bridge mapping, lifecycle envelopes, forensic INFO promotions, the dedup detector, boot invariants, the alert budget, `step:` discipline, log rotation, the memory & recall diagnostics (recall-trace artifact, recall events, degradation signals), and the bundle export entry point. If you are new to Comis observability, start here; then follow the cross-links for operator workflows.
+This page documents the observability foundations. It covers the trajectory layer, the 66-entry bridge mapping, lifecycle envelopes, forensic INFO promotions, the dedup detector, boot invariants, the alert budget, `step:` discipline, log rotation, the memory & recall diagnostics (recall-trace artifact, recall events, degradation signals), and the bundle export entry point. If you are new to Comis observability, start here; then follow the cross-links for operator workflows.
 
 <CardGroup cols={2}>
   <Card title="Incident Bundle" icon="folder-tree" href="/operations/incident-bundle">
@@ -62,12 +62,12 @@ The bundle exporter reads `trace.metadata` to populate `metadata.json` and `trac
 
 ---
 
-## 4. Bridge Mapping (65 entries)
+## 4. Bridge Mapping (66 entries)
 
-The trajectory bus-bridge maps 65 event types from the typed event bus to trajectory events (up from 18 previously — a ~3.6× coverage improvement).
+The trajectory bus-bridge maps 66 event types from the typed event bus to trajectory events (up from 18 previously — a ~3.7× coverage improvement).
 
 <Info>
-**Architecture invariant:** `test/architecture/trajectory-event-types-known.test.ts` asserts the disjoint-set invariant (no overlap between bridge-mapped types and direct-emit types) and a bridge count ≥ 45. Current count: 65.
+**Architecture invariant:** `test/architecture/trajectory-event-types-known.test.ts` asserts the disjoint-set invariant (no overlap between bridge-mapped types and direct-emit types) and a bridge count ≥ 45. Current count: 66.
 </Info>
 
 | Category | Bridge prefix | Event types |
@@ -471,7 +471,7 @@ Read the trace with [`comis memory recall-trace <session>`](/reference/cli#comis
 
 ### 15.2 Recall & curation events
 
-Typed events report recall and curation activity on the event bus. Two of them — **`memory:recalled`** and **`memory:reranked`** — are part of the [§4 bridge mapping](#4-bridge-mapping-65-entries) (RECALL-01): they cross onto the per-session **trajectory timeline** as `memory.recalled` / `memory.reranked`, so a recall now shows up in `comis explain` (its lane/candidate/final counts and the rerank outcome) and aggregates into the report's [`recall` section](/reference/json-rpc#obs-explain). The remaining recall/curation events (`memory:entities_linked`, `memory:consolidated`, `memory:recall_used`, `memory:review_completed`) are emitted **directly** at a single canonical site each and are **not** bridge-mapped — `test/architecture/trajectory-event-types-known.test.ts` allowlists those four as not-trajectory-mapped, and asserts the disjoint-set invariant (no event is both bridged and direct-emit).
+Typed events report recall, generation-quality, and curation activity on the event bus. Three of them — **`memory:recalled`**, **`memory:reranked`**, and **`memory:generation_quality`** — are part of the [§4 bridge mapping](#4-bridge-mapping-66-entries): they cross onto the per-session **trajectory timeline** as `memory.recalled` / `memory.reranked` / `memory.generation_quality`. RECALL-01: a recall now shows up in `comis explain` (its lane/candidate/final counts and the rerank outcome) and aggregates into the report's [`recall` section](/reference/json-rpc#obs-explain). GENQ-01: a memory-generation pass whose output diverged from its source fires `memory:generation_quality` (only on an issue) and rolls up into the `comis fleet` `generation_quality` finding. The remaining recall/curation events (`memory:entities_linked`, `memory:consolidated`, `memory:recall_used`, `memory:review_completed`) are emitted **directly** at a single canonical site each and are **not** bridge-mapped — `test/architecture/trajectory-event-types-known.test.ts` allowlists those four as not-trajectory-mapped, and asserts the disjoint-set invariant (no event is both bridged and direct-emit).
 
 Every payload is **counts, booleans, and IDs only** — never query text, memory bodies, or entity names (AGENTS.md §2.7). The per-recall ranking detail lives in the opt-in recall-trace artifact above, not on the bus.
 
@@ -481,6 +481,7 @@ Every payload is **counts, booleans, and IDs only** — never query text, memory
 | `memory:reranked` | When a rerank stage ran (rerank opt-in) | `candidateCount`, `hitCount`, `rerankerAvailable`, `timedOut`, `fellBack`, `durationMs` |
 | `memory:entities_linked` | After an entity resolve-and-link pass (memory-review job) | `entityCount`, `newEntities`, `durationMs` |
 | `memory:consolidated` | After a consolidation run (consolidation job) | `clustersProcessed`, `observationsCreated`, `dedupHits`, `durationMs` |
+| `memory:generation_quality` | After a memory-generation pass (consolidation / reasoning / user-representation), **only on a detected issue** | `pass`, `sourceScript`, `outputScript`, `languageMismatch`, `emptyOutput`, `formatViolation` |
 | `context:evicted` | When the LCD/DAG assembler evicts the oldest out-of-tail history to fit the token budget | `agentId`, `sessionKey`, `evictedCount`, `evictedChars`, `categories`, `timestamp` |
 | `context:dag_compacted` | After a DAG compaction pass updates the summary hierarchy (DAG mode) | `conversationId`, `agentId`, `sessionKey`, `leafSummariesCreated`, `condensedSummariesCreated`, `maxDepthReached`, `totalSummariesCreated`, `durationMs`, `timestamp` |
 | `context:dag_expanded` | When an in-session expansion tool (`ctx_search`/`ctx_inspect`/`ctx_expand`) recovers compressed detail (DAG mode) | `conversationId`, `agentId`, `sessionKey`, `tool`, `recoveredCount`, `durationMs`, `timestamp` |

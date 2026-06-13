@@ -89,6 +89,12 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   "memory:recalled": "memory.recalled",
   "memory:reranked": "memory.reranked",
 
+  // GENQ-01 (observability-excellence): a memory-generation pass (consolidation /
+  // reasoning / user-representation) produced output whose quality diverged from
+  // its source — the F-ML1 class. Emitted only on an issue. Content-free (closed
+  // enums + booleans — H1); the source/generated body never crosses the bus.
+  "memory:generation_quality": "memory.generation_quality",
+
   // ---- Delivery lifecycle ----
   "delivery:enqueued": "delivery.queued",
   "delivery:complete": "delivery.dispatched",

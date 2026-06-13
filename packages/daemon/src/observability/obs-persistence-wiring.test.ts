@@ -10,6 +10,7 @@ import {
   mcpReconnectFailedEventToRow,
   scriptZeroHitEventToRow,
   summaryLanguageMismatchEventToRow,
+  generationQualityEventToRow,
   setupObsPersistence,
 } from "./obs-persistence-wiring.js";
 import type { EventMap } from "@comis/core";
@@ -546,6 +547,67 @@ describe("summaryLanguageMismatchEventToRow", () => {
     });
     const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
     expect(details.depth).toBe(-1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GENQ-01 — generationQualityEventToRow (the memory-generation fleet path).
+// Visibility-only → severity ALWAYS "warning". details carries the closed
+// GenerationPass + ScriptClass enums + the three issue booleans ONLY — never the
+// source or generated body. Cron-job passes carry no sessionKey.
+// ---------------------------------------------------------------------------
+
+describe("generationQualityEventToRow", () => {
+  it("maps a memory:generation_quality payload to a warning health_signal row (enums + booleans only)", () => {
+    const row = generationQualityEventToRow({
+      agentId: "agent-1",
+      pass: "user_representation",
+      sourceScript: "hebrew",
+      outputScript: "latin",
+      languageMismatch: true,
+      emptyOutput: false,
+      formatViolation: false,
+      timestamp: 6000,
+    });
+
+    expect(row.timestamp).toBe(6000);
+    expect(row.category).toBe("health_signal");
+    expect(row.severity).toBe("warning");
+    expect(row.agentId).toBe("agent-1");
+    expect(row.message).toBe("memory:generation_quality");
+    expect(row.traceId).toBeUndefined();
+    // Cron-job pass: no sessionKey on the payload → undefined on the row.
+    expect(row.sessionKey).toBeUndefined();
+
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(details).toEqual({
+      signal: "generation_quality",
+      pass: "user_representation",
+      sourceScript: "hebrew",
+      outputScript: "latin",
+      languageMismatch: true,
+      emptyOutput: false,
+      formatViolation: false,
+    });
+  });
+
+  it("carries each pass + issue-flag combination verbatim (closed enums + booleans)", () => {
+    const row = generationQualityEventToRow({
+      agentId: "a",
+      sessionKey: "t:u:c",
+      pass: "consolidation",
+      sourceScript: "arabic",
+      outputScript: "arabic",
+      languageMismatch: false,
+      emptyOutput: false,
+      formatViolation: true,
+      timestamp: 1,
+    });
+    expect(row.sessionKey).toBe("t:u:c");
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(details.pass).toBe("consolidation");
+    expect(details.formatViolation).toBe(true);
+    expect(row.severity).toBe("warning");
   });
 });
 
