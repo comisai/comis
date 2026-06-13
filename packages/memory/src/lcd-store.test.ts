@@ -2107,3 +2107,332 @@ describe("createLcdStore — DIST-05 provenance write surface", () => {
     expect(row!.superseded_by).toBe(memId);
   });
 });
+
+// ===========================================================================
+// Phase 180 (FTS-01) — G10 forget-hole close + normalized LCD twin populate
+//
+// RED FIRST. These tests fail on TODAY's code (the pre-180-04 tree), which:
+//   (a) DELIBERATELY ORPHANS lcd_messages_fts in deleteConversationLcdTxn — the
+//       comment at lcd-store.ts:312-314 calls the contentless shadow rows a
+//       "documented tradeoff". Because those rows are SELF-CONTAINED (they store
+//       their own content + the UNINDEXED conversation_id/agent_id scope columns),
+//       a scoped MATCH still returns them AFTER `sessions reset` → full message
+//       text stays ctx_search-matchable post-reset. That contradicts the v2.17
+//       COMPLETE-FORGET spec (`sessions reset` must leave nothing matchable in ANY
+//       FTS object). This is a LIVE PRIVACY DEFECT (ROADMAP criterion 3 / G10).
+//   (b) NEVER populates the lcd_messages_fts_tri / lcd_summaries_fts_tri trigram
+//       twins (DDL landed in 180-02; the TS-side normalized inserts land HERE), so
+//       a script-routed trigram MATCH finds nothing — the index side of the FTS-01
+//       symmetry does not exist yet.
+//
+// The twin populate stores normalizeForSearch(text) — the SAME @comis/core symbol
+// the query side imports (the I7 contract). The discriminating assertion: a folded
+// query token (final-mem folded) matches the stored row, while the RAW (un-folded,
+// final-mem) token does NOT — proving the stored content was normalized at index
+// time, not stored raw.
+//
+// Hebrew strings are built from String.fromCodePoint (WR-01 — never literal glyphs;
+// also dodges the ASCII-quote-in-source hazard). Reference letters:
+//   he 0x05D4  samekh 0x05E1  pe 0x05E4  resh 0x05E8  yod 0x05D9
+//   final-mem 0x05DD  regular-mem 0x05DE
+// "הספרים" = he+samekh+pe+resh+yod+final-mem; normalizeForSearch folds the final
+// mem → regular mem AND strips nothing else, yielding "הספרימ" (the leading he is
+// kept — normalization folds finals, it does NOT strip prefixes).
+// ===========================================================================
+
+describe("Phase 180 (FTS-01) — G10 forget close + normalized LCD twin populate", () => {
+  let db: Database.Database;
+  let store: ReturnType<typeof createLcdStore>;
+
+  // Typed cast for the explicit-reset method (mirrors the Phase 164 block above).
+  type ResetMethod = { deleteConversationLcd(scope: ContextStoreScope): number };
+  function storeWithReset(): ReturnType<typeof createLcdStore> & ResetMethod {
+    return store as unknown as ReturnType<typeof createLcdStore> & ResetMethod;
+  }
+
+  // ── Hebrew fixtures (codepoint-built; WR-01) ──────────────────────────────
+  /** "הספרים" — he+samekh+pe+resh+yod+FINAL-mem (the raw stored message text). */
+  const HE_HASFARIM_RAW = String.fromCodePoint(0x05d4, 0x05e1, 0x05e4, 0x05e8, 0x05d9, 0x05dd);
+  /** "ספרימ" — samekh+pe+resh+yod+REGULAR-mem: the FOLDED query token (final mem
+   *  folded, no leading he). A substring of the normalized store "הספרימ". */
+  const HE_SFARIM_FOLDED = String.fromCodePoint(0x05e1, 0x05e4, 0x05e8, 0x05d9, 0x05de);
+  /** "ספרים" — samekh+pe+resh+yod+FINAL-mem: the RAW (un-folded) token. NOT a
+   *  substring of the normalized store — the discriminator that proves the index
+   *  side was normalized at write time. */
+  const HE_SFARIM_RAW = String.fromCodePoint(0x05e1, 0x05e4, 0x05e8, 0x05d9, 0x05dd);
+
+  /** A double-quoted FTS5 phrase token, assembled without a literal ASCII quote. */
+  const DQUOTE = String.fromCodePoint(0x22);
+  function quoted(token: string): string {
+    return DQUOTE + token + DQUOTE;
+  }
+
+  /** A bare scoped MATCH against a named FTS object — returns the matched rows. */
+  function ftsMatch(table: string, matchExpr: string, scope: ContextStoreScope): unknown[] {
+    return db
+      .prepare(`SELECT rowid FROM ${table} WHERE ${table} MATCH ? AND conversation_id = ? AND agent_id = ?`)
+      .all(matchExpr, scope.conversationId, scope.agentId);
+  }
+
+  /** Append one message whose single text part carries `text`; returns its id. */
+  function appendText(text: string, seq: number, scope: ContextStoreScope = SCOPE_A): string {
+    store.append({
+      scope,
+      seq,
+      role: "user",
+      tokenCount: 1,
+      createdAt: 1000 + seq * 10,
+      parts: [{ kind: "text", metadata: { raw: { type: "text", text }, rawType: "text" } }],
+    });
+    return store.getMessages(scope).find((m) => m.seq === seq)!.id;
+  }
+
+  /** Minimal leaf AppendSummaryInput over [start,end] with the given content. */
+  function leafInput(startOrdinal: number, endOrdinal: number, content: string): AppendSummaryInput {
+    return {
+      scope: SCOPE_A,
+      tokenCount: 5,
+      content,
+      descendantCount: 0,
+      earliestAt: 0,
+      latestAt: 0,
+      fileIds: [],
+      fallback: false,
+      taint: false,
+      createdAt: 9999,
+      startOrdinal,
+      endOrdinal,
+    };
+  }
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    db.pragma("foreign_keys = ON");
+    initSchema(db, 1536); // full schema → word lane + 180-02 trigram twins both exist
+    store = createLcdStore(db);
+  });
+
+  // ── G10: the forget hole on the WORD lane (FAILS on today's code) ──────────
+  it("G10 word lane: after deleteConversationLcd a previously-matching lcd_messages_fts MATCH returns zero (v2.17 complete-forget)", () => {
+    const messageId = appendText(HE_HASFARIM_RAW, 0);
+    // BEFORE reset: the self-contained word-lane row is matchable (porter unicode61
+    // tokenizes the whole Hebrew word; a whole-word MATCH finds it).
+    const before = ftsMatch("lcd_messages_fts", quoted(HE_HASFARIM_RAW), SCOPE_A);
+    expect(before.length).toBeGreaterThan(0);
+    expect(store.getMessages(SCOPE_A).some((m) => m.id === messageId)).toBe(true);
+
+    // sessions reset.
+    storeWithReset().deleteConversationLcd(SCOPE_A);
+
+    // AFTER reset: the base message is gone AND the FTS object must hold nothing
+    // matchable. TODAY this FAILS — the orphaned self-contained row keeps its
+    // UNINDEXED scope columns and stays matchable (lcd-store.ts:312-314).
+    expect(store.getMessages(SCOPE_A)).toHaveLength(0);
+    const after = ftsMatch("lcd_messages_fts", quoted(HE_HASFARIM_RAW), SCOPE_A);
+    expect(after).toHaveLength(0);
+  });
+
+  // ── Twin populate: message twin stores NORMALIZED text (FAILS today) ───────
+  it("message twin: append הספרים → lcd_messages_fts_tri MATCH on the FOLDED token finds it; the RAW token does not (normalized index side)", () => {
+    appendText(HE_HASFARIM_RAW, 0);
+
+    // The folded query token (final mem folded) is a substring of the normalized
+    // stored content "הספרימ" → MATCH finds it. TODAY: zero twin rows exist (the
+    // populate does not write the twin), so this returns nothing → RED.
+    const folded = ftsMatch("lcd_messages_fts_tri", quoted(HE_SFARIM_FOLDED), SCOPE_A);
+    expect(folded.length).toBeGreaterThan(0);
+
+    // Discriminator: the RAW (un-folded, FINAL-mem) token is NOT a substring of the
+    // normalized store → no match. This proves the stored content was normalized at
+    // write time (not stored raw — a raw store WOULD match the raw token).
+    const raw = ftsMatch("lcd_messages_fts_tri", quoted(HE_SFARIM_RAW), SCOPE_A);
+    expect(raw).toHaveLength(0);
+  });
+
+  // ── G10: the twins are also wiped on reset (FAIL today) ────────────────────
+  it("G10 twins: after deleteConversationLcd a previously-matching MATCH returns zero from lcd_messages_fts_tri AND lcd_summaries_fts_tri", () => {
+    appendText(HE_HASFARIM_RAW, 0);
+    store.getContextItems(SCOPE_A); // seed the model-facing view before the leaf pass
+    store.appendLeafSummary(leafInput(0, 0, HE_HASFARIM_RAW));
+
+    // BEFORE reset the twins hold matchable normalized rows (these assertions are
+    // ALSO the populate RED — today the rows are never written, so they are 0).
+    expect(ftsMatch("lcd_messages_fts_tri", quoted(HE_SFARIM_FOLDED), SCOPE_A).length).toBeGreaterThan(0);
+    expect(ftsMatch("lcd_summaries_fts_tri", quoted(HE_SFARIM_FOLDED), SCOPE_A).length).toBeGreaterThan(0);
+
+    storeWithReset().deleteConversationLcd(SCOPE_A);
+
+    // AFTER reset both twins must be empty for this scope (complete forget).
+    expect(ftsMatch("lcd_messages_fts_tri", quoted(HE_SFARIM_FOLDED), SCOPE_A)).toHaveLength(0);
+    expect(ftsMatch("lcd_summaries_fts_tri", quoted(HE_SFARIM_FOLDED), SCOPE_A)).toHaveLength(0);
+  });
+
+  // ── Summary twins: BOTH write sites populate normalized rows (FAIL today) ──
+  it("summary twins: a leaf summary and a condensed summary each write a normalized lcd_summaries_fts_tri row", () => {
+    // Two messages → a leaf over each → a condensed over the two leaves; all carry
+    // the Hebrew content so the folded token matches the normalized twin rows.
+    appendText(HE_HASFARIM_RAW, 0);
+    appendText(HE_HASFARIM_RAW, 1);
+    store.getContextItems(SCOPE_A);
+    const leaf0 = store.appendLeafSummary(leafInput(0, 0, HE_HASFARIM_RAW));
+    const leaf1 = store.appendLeafSummary(leafInput(1, 1, HE_HASFARIM_RAW));
+
+    // Leaf write site populates the summary twin (RED today).
+    const afterLeaves = ftsMatch("lcd_summaries_fts_tri", quoted(HE_SFARIM_FOLDED), SCOPE_A);
+    expect(afterLeaves.length).toBeGreaterThanOrEqual(2);
+
+    store.appendCondensedSummary({
+      scope: SCOPE_A,
+      tokenCount: 9,
+      content: HE_HASFARIM_RAW,
+      descendantCount: 0,
+      earliestAt: 0,
+      latestAt: 0,
+      fileIds: [],
+      fallback: false,
+      taint: false,
+      createdAt: 5555,
+      startOrdinal: 0,
+      endOrdinal: 1,
+      childSummaryIds: [leaf0, leaf1],
+      depth: 1,
+    });
+
+    // Condensed write site ALSO populates the summary twin (one more matchable row).
+    const afterCondensed = ftsMatch("lcd_summaries_fts_tri", quoted(HE_SFARIM_FOLDED), SCOPE_A);
+    expect(afterCondensed.length).toBeGreaterThan(afterLeaves.length);
+
+    // Discriminator: the RAW final-mem token never matches the normalized rows.
+    expect(ftsMatch("lcd_summaries_fts_tri", quoted(HE_SFARIM_RAW), SCOPE_A)).toHaveLength(0);
+  });
+
+  // ── R4: twin rows carry the writing agent's scope (cross-agent isolation) ──
+  it("twin R4: agent A's message-twin row is never matched under agent B within a shared conversation", () => {
+    appendText(HE_HASFARIM_RAW, 0, SCOPE_AGENT_A);
+
+    // Agent A finds its own normalized twin row.
+    expect(ftsMatch("lcd_messages_fts_tri", quoted(HE_SFARIM_FOLDED), SCOPE_AGENT_A).length).toBeGreaterThan(0);
+    // Agent B (same conversation_id + tenant, different agent_id) does NOT — the
+    // twin insert stamps agent_id from the write scope (R4); the MATCH filters it.
+    expect(ftsMatch("lcd_messages_fts_tri", quoted(HE_SFARIM_FOLDED), SCOPE_AGENT_B)).toHaveLength(0);
+  });
+
+  // ── Trigram-less host: append succeeds, twin lane silently off ─────────────
+  it("trigram-less host: a store built where ensureTrigramTwins never ran appends without throwing and writes zero twin rows", () => {
+    // Build a db with the base LCD tables + the WORD-lane FTS but WITHOUT the
+    // trigram twins (the trigram-tokenizer-absent host shape).
+    const noTri = new Database(":memory:");
+    noTri.pragma("foreign_keys = ON");
+    ensureLcdTablesWithoutTwins(noTri);
+    const noTriStore = createLcdStore(noTri);
+
+    // Append must NOT throw (the twin lane is probe-gated off, not an error).
+    expect(() =>
+      noTriStore.append({
+        scope: SCOPE_A,
+        seq: 0,
+        role: "user",
+        tokenCount: 1,
+        createdAt: 1000,
+        parts: [{ kind: "text", metadata: { raw: { type: "text", text: HE_HASFARIM_RAW }, rawType: "text" } }],
+      }),
+    ).not.toThrow();
+
+    // The base write committed; the twin table simply does not exist.
+    expect(noTriStore.getMessages(SCOPE_A)).toHaveLength(1);
+    const triExists = noTri
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'lcd_messages_fts_tri'")
+      .get();
+    expect(triExists).toBeUndefined();
+  });
+
+  // ── Base-write authority: a twin-insert failure never fails the base write ──
+  it("base-write authority: dropping the message twin after store creation leaves append succeeding with the base row intact", () => {
+    // The store has already prepared the twin statements (twins existed at build).
+    // Drop the twin table out from under it → the populate INSERT will throw,
+    // which the narrow catch must swallow (the base write is authoritative).
+    db.exec("DROP TABLE lcd_messages_fts_tri");
+
+    expect(() => appendText(HE_HASFARIM_RAW, 0)).not.toThrow();
+    // The authoritative base row survived the best-effort twin failure.
+    expect(store.getMessages(SCOPE_A)).toHaveLength(1);
+    expect(JSON.stringify(store.getMessages(SCOPE_A)[0]!.parts)).toContain(HE_HASFARIM_RAW);
+  });
+});
+
+/**
+ * Build the base LCD tables + the WORD-lane FTS section but DELIBERATELY skip the
+ * trigram twins — the "trigram tokenizer absent" host shape. We cannot call
+ * `ensureLcdTables` (it now wires `ensureTrigramTwins`), so reproduce the base +
+ * word-lane DDL the store's prepares depend on, minus the twins. Mirrors the A5
+ * test's hand-rolled base-table DDL.
+ */
+function ensureLcdTablesWithoutTwins(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS lcd_messages (
+      id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, tenant_id TEXT NOT NULL,
+      agent_id TEXT NOT NULL, session_key TEXT NOT NULL, seq INTEGER NOT NULL,
+      role TEXT NOT NULL, token_count INTEGER NOT NULL, created_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS lcd_message_parts (
+      id TEXT PRIMARY KEY, message_id TEXT NOT NULL REFERENCES lcd_messages(id) ON DELETE CASCADE,
+      ordinal INTEGER NOT NULL, kind TEXT NOT NULL, tool_call_id TEXT, tool_name TEXT,
+      tool_input TEXT, tool_output TEXT,
+      is_error INTEGER,                       -- 0/1; NULL for non-tool_result (matches schema-lcd.ts:103)
+      metadata TEXT NOT NULL DEFAULT '{}'
+    );
+    CREATE TABLE IF NOT EXISTS lcd_summaries (
+      summary_id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, tenant_id TEXT NOT NULL,
+      agent_id TEXT NOT NULL, session_key TEXT NOT NULL, kind TEXT NOT NULL, depth INTEGER NOT NULL,
+      earliest_at INTEGER NOT NULL, latest_at INTEGER NOT NULL, descendant_count INTEGER NOT NULL,
+      token_count INTEGER NOT NULL, content TEXT NOT NULL, file_ids TEXT NOT NULL DEFAULT '[]',
+      taint INTEGER NOT NULL DEFAULT 0, fallback INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS lcd_summary_messages (
+      summary_id TEXT NOT NULL REFERENCES lcd_summaries(summary_id) ON DELETE CASCADE,
+      message_id TEXT NOT NULL REFERENCES lcd_messages(id),
+      PRIMARY KEY (summary_id, message_id)
+    );
+    CREATE TABLE IF NOT EXISTS lcd_summary_parents (
+      parent_summary_id TEXT NOT NULL REFERENCES lcd_summaries(summary_id) ON DELETE CASCADE,
+      child_summary_id TEXT NOT NULL REFERENCES lcd_summaries(summary_id),
+      PRIMARY KEY (parent_summary_id, child_summary_id)
+    );
+    CREATE TABLE IF NOT EXISTS lcd_context_items (
+      id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, tenant_id TEXT NOT NULL,
+      agent_id TEXT NOT NULL, session_key TEXT NOT NULL, ordinal INTEGER NOT NULL,
+      ref_kind TEXT NOT NULL, ref_id TEXT NOT NULL,
+      UNIQUE (conversation_id, agent_id, tenant_id, ordinal)
+    );
+    CREATE TABLE IF NOT EXISTS lcd_ingest_cursor (
+      conversation_id TEXT NOT NULL, agent_id TEXT NOT NULL, tenant_id TEXT NOT NULL,
+      epoch_anchor TEXT NOT NULL, ingested_live_len INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+      PRIMARY KEY (conversation_id, agent_id, tenant_id)
+    );
+    CREATE TABLE IF NOT EXISTS memories (id TEXT PRIMARY KEY);
+    CREATE TABLE IF NOT EXISTS lcd_memory_provenance (
+      provenance_id TEXT PRIMARY KEY, memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+      summary_id TEXT NOT NULL, source_session_key TEXT NOT NULL, conversation_id TEXT NOT NULL,
+      agent_id TEXT NOT NULL, tenant_id TEXT NOT NULL, created_at INTEGER NOT NULL,
+      superseded_by TEXT, superseded_at INTEGER
+    );
+    -- Word-lane self-contained FTS (the twin populate's gate probes lcd_summaries_fts;
+    -- the WORD lane is present so the store's word-lane populate path stays live).
+    CREATE VIRTUAL TABLE IF NOT EXISTS lcd_messages_fts USING fts5(
+      content, conversation_id UNINDEXED, agent_id UNINDEXED, message_id UNINDEXED,
+      tokenize='porter unicode61'
+    );
+    CREATE VIRTUAL TABLE IF NOT EXISTS lcd_summaries_fts USING fts5(
+      content, conversation_id UNINDEXED, agent_id UNINDEXED, summary_id UNINDEXED,
+      content='lcd_summaries', content_rowid='rowid', tokenize='porter unicode61'
+    );
+    CREATE TRIGGER IF NOT EXISTS lcd_summaries_ai AFTER INSERT ON lcd_summaries BEGIN
+      INSERT INTO lcd_summaries_fts(rowid, content, conversation_id, agent_id, summary_id)
+      VALUES (new.rowid, new.content, new.conversation_id, new.agent_id, new.summary_id);
+    END;
+    CREATE TRIGGER IF NOT EXISTS lcd_summaries_ad AFTER DELETE ON lcd_summaries BEGIN
+      INSERT INTO lcd_summaries_fts(lcd_summaries_fts, rowid, content, conversation_id, agent_id, summary_id)
+      VALUES('delete', old.rowid, old.content, old.conversation_id, old.agent_id, old.summary_id);
+    END;
+  `);
+}
