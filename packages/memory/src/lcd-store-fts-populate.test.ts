@@ -166,3 +166,71 @@ describe("createFtsPopulator — null-handle no-op on a trigram-less host", () =
     expect(triExists).toBeUndefined();
   });
 });
+
+describe("createFtsPopulator — per-twin prep independence on a partial-schema host (WR-01)", () => {
+  let partial: Database.Database;
+
+  beforeEach(() => {
+    // The PARTIAL-schema host WR-01 guards: the MESSAGE twin exists (its
+    // ensureTrigramTwins block succeeded) but the SUMMARY twin does NOT (its block
+    // failed — base tables diverged, a hand-edited dev db, or the summaries CREATE
+    // threw while the messages one succeeded). schema-trigram.ts creates each twin
+    // in its OWN per-block try/catch, so this state is genuinely reachable.
+    partial = new Database(":memory:");
+    partial.pragma("foreign_keys = ON");
+    partial.exec(`
+      CREATE TABLE lcd_messages (
+        id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, tenant_id TEXT NOT NULL,
+        agent_id TEXT NOT NULL, session_key TEXT NOT NULL, seq INTEGER NOT NULL,
+        role TEXT NOT NULL, token_count INTEGER NOT NULL, created_at INTEGER NOT NULL
+      );
+      CREATE TABLE lcd_summaries (
+        summary_id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, tenant_id TEXT NOT NULL,
+        agent_id TEXT NOT NULL, session_key TEXT NOT NULL, kind TEXT NOT NULL, depth INTEGER NOT NULL,
+        earliest_at INTEGER NOT NULL, latest_at INTEGER NOT NULL, descendant_count INTEGER NOT NULL,
+        token_count INTEGER NOT NULL, content TEXT NOT NULL, file_ids TEXT NOT NULL DEFAULT '[]',
+        taint INTEGER NOT NULL DEFAULT 0, fallback INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL
+      );
+      -- The WORD-lane FTS exists (its section runs before ensureTrigramTwins, so a
+      -- host that got as far as creating the message TWIN necessarily has it).
+      CREATE VIRTUAL TABLE lcd_messages_fts USING fts5(
+        content, conversation_id UNINDEXED, agent_id UNINDEXED, message_id UNINDEXED, tokenize='porter unicode61'
+      );
+      -- The MESSAGE twin is present (its DDL block succeeded) …
+      CREATE VIRTUAL TABLE lcd_messages_fts_tri USING fts5(
+        content, conversation_id UNINDEXED, agent_id UNINDEXED, message_id UNINDEXED, tokenize='trigram'
+      );
+      -- … but the SUMMARY twin is deliberately ABSENT (its block failed).
+    `);
+  });
+
+  it("populateMessageTri still indexes into the PRESENT message twin even though the summary twin is absent (WR-01)", () => {
+    // The defect: createFtsPopulator prepped all three twin statements in ONE
+    // try/catch, so the absent-summary-twin prep threw and nulled ALL handles —
+    // silently de-activating the message-twin write path even though
+    // lcd_messages_fts_tri exists and searchTrigram reads it (a silent search
+    // degrade with no signal). Per-twin prep must keep the message twin live.
+    seedMessage(partial, "m1", "conv", "agent");
+    const pop = createFtsPopulator(partial);
+    pop.populateMessageTri("m1", textParts(HE_HASFARIM_RAW), { conversationId: "conv", agentId: "agent" });
+
+    // The message twin received the folded row (proves the message-twin handle was
+    // NOT nulled by the absent summary-twin prep).
+    expect(triMatch(partial, "lcd_messages_fts_tri", quoted(HE_SFARIM_FOLDED), "conv", "agent").length).toBeGreaterThan(0);
+  });
+
+  it("insertSummaryTri is a clean no-op when only the summary twin is absent (no throw, message twin unaffected)", () => {
+    seedSummary(partial, "sum1", "conv", "agent", HE_HASFARIM_RAW);
+    const pop = createFtsPopulator(partial);
+    // The summary twin genuinely does not exist → insertSummaryTri early-returns.
+    expect(() => pop.insertSummaryTri("sum1", HE_HASFARIM_RAW, { conversationId: "conv", agentId: "agent" })).not.toThrow();
+    const summaryTriExists = partial
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'lcd_summaries_fts_tri'")
+      .get();
+    expect(summaryTriExists).toBeUndefined();
+  });
+
+  it("createFtsPopulator does not throw on the partial-schema host (guarded per-twin prep)", () => {
+    expect(() => createFtsPopulator(partial)).not.toThrow();
+  });
+});
