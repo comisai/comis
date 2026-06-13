@@ -39,8 +39,24 @@
  * @module
  */
 import type { ClockPort } from "@comis/core";
+import { isProviderModelChimera } from "@comis/core";
 import type { ObservabilityStore } from "@comis/memory";
 import type { StrandedFinding } from "../wiring/setup-storage-mismatch-warn.js";
+
+/**
+ * RESOLVE-01: count configured agents whose NATIVE provider family disagrees with
+ * their model id's family (the `ffe11736` chimera). Conservative — gateway/custom
+ * providers + an unknown model family never flag (see `isProviderModelChimera`).
+ * Lives here (not inline in daemon.ts) to keep daemon.ts under its 3000-line cap.
+ * Count only — the caller persists the COUNT, never agent ids/model names (I3).
+ */
+export function countChimericModels(
+  agents: Readonly<Record<string, { provider?: string; model?: string }>>,
+): number {
+  return Object.values(agents).filter(
+    (a) => typeof a.provider === "string" && typeof a.model === "string" && isProviderModelChimera(a.provider, a.model),
+  ).length;
+}
 
 /** The boot-time config-posture inputs (counts/booleans/closed labels only). */
 export interface ConfigPostureInputs {

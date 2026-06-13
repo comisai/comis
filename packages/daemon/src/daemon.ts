@@ -168,7 +168,7 @@ import {
   type SessionTrackerRegistry,
 } from "@comis/agent";
 // createModelCatalog + resolveWorkspaceDir live in @comis/core.
-import { createModelCatalog, resolveWorkspaceDir, isProviderModelChimera } from "@comis/core";
+import { createModelCatalog, resolveWorkspaceDir } from "@comis/core";
 import {
   createFileStateTracker,
   createImageGenRateLimiter,
@@ -192,7 +192,7 @@ import { createEmptyBootContext } from "./daemon-types.js";
 export type { DaemonInstance, DaemonOverrides } from "./daemon-types.js";
 import { setupObsPersistence } from "./observability/obs-persistence-wiring.js";
 import { recordModelHealth } from "./observability/record-model-health.js";
-import { buildConfigPostureRecord } from "./observability/build-config-posture-record.js";
+import { buildConfigPostureRecord, countChimericModels } from "./observability/build-config-posture-record.js";
 import { setupDeliveryQueueLogging } from "./observability/delivery-queue-logger.js";
 import { createContextPipelineCollector } from "./observability/context-pipeline-collector.js";
 import { createLogLevelManager, expandTilde } from "./observability/log-infra.js";
@@ -2862,13 +2862,7 @@ async function bootShutdown(
   const canaryFallbackActive = !boot.env.get("CANARY_SECRET");
   // KNOB-03: derived from the SAME boot comparisons the KNOB-01 WARN used (no second comparison).
   const servedBelowConfiguredCount = [...(boot.servedWindowComparisons?.values() ?? [])].filter((c) => c.belowConfigured).length;
-  // RESOLVE-01: count agents whose NATIVE provider family disagrees with their model
-  // id's family (the ffe11736 chimera). Conservative: gateway/custom providers + an
-  // unknown model family never flag (see isProviderModelChimera). Count only, no ids.
-  const chimericModelCount = Object.values(container.config.agents).filter(
-    (a) => typeof a.provider === "string" && typeof a.model === "string" && isProviderModelChimera(a.provider, a.model),
-  ).length;
-  buildConfigPostureRecord(boot.obsStore, { tlsOff, allowInsecureHttp, strandedFindings: posture.findings, canaryFallbackActive, servedBelowConfiguredCount, chimericModelCount }, boot.clock);
+  buildConfigPostureRecord(boot.obsStore, { tlsOff, allowInsecureHttp, strandedFindings: posture.findings, canaryFallbackActive, servedBelowConfiguredCount, chimericModelCount: countChimericModels(container.config.agents) }, boot.clock);
 
   // Snapshot current config as last-known-good after successful startup.
   // Honor diagnostics.configAudit.enabled.
