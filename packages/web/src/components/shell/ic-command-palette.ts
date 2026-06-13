@@ -2,6 +2,11 @@
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { sharedStyles, focusStyles, srOnly } from "../../styles/shared.js";
+// Side-effect import to register the <ic-icon> custom element. The palette is
+// loaded eagerly by the shell and can open before any lazy view registers
+// ic-icon, so it must pull the element in itself — otherwise every result-row
+// icon renders blank.
+import "../display/ic-icon.js";
 
 /**
  * Command item displayed in palette search results.
@@ -17,31 +22,31 @@ export interface CommandItem {
 
 /** Static palette items for all navigable views. */
 const VIEW_ITEMS: CommandItem[] = [
-  { id: "v-dashboard", label: "Dashboard", category: "view", icon: "home", action: "dashboard" },
-  { id: "v-agents", label: "Agents", category: "view", icon: "users", action: "agents" },
-  { id: "v-sessions", label: "Sessions", category: "view", icon: "message-circle", action: "sessions" },
-  { id: "v-channels", label: "Channels", category: "view", icon: "radio", action: "channels" },
-  { id: "v-chat", label: "Chat Console", category: "view", icon: "message-square", action: "chat" },
-  { id: "v-memory", label: "Memory Inspector", category: "view", icon: "database", action: "memory" },
-  { id: "v-skills", label: "Skills", category: "view", icon: "zap", action: "skills" },
-  { id: "v-models", label: "Models", category: "view", icon: "cpu", action: "models" },
-  { id: "v-scheduler", label: "Scheduler", category: "view", icon: "clock", action: "scheduler" },
+  { id: "v-dashboard", label: "Dashboard", category: "view", icon: "dashboard", action: "dashboard" },
+  { id: "v-agents", label: "Agents", category: "view", icon: "agents", action: "agents" },
+  { id: "v-sessions", label: "Sessions", category: "view", icon: "sessions", action: "sessions" },
+  { id: "v-channels", label: "Channels", category: "view", icon: "channels", action: "channels" },
+  { id: "v-chat", label: "Chat Console", category: "view", icon: "chat", action: "chat" },
+  { id: "v-memory", label: "Memory Inspector", category: "view", icon: "memory", action: "memory" },
+  { id: "v-skills", label: "Skills", category: "view", icon: "skills", action: "skills" },
+  { id: "v-models", label: "Models", category: "view", icon: "models", action: "models" },
+  { id: "v-scheduler", label: "Scheduler", category: "view", icon: "scheduler", action: "scheduler" },
   { id: "v-pipelines", label: "Pipelines", category: "view", icon: "git-branch", action: "pipelines" },
-  { id: "v-observe", label: "Observability", category: "view", icon: "bar-chart-2", action: "observe/overview" },
+  { id: "v-observe", label: "Observability", category: "view", icon: "observe", action: "observe/overview" },
   { id: "v-billing", label: "Billing", category: "view", icon: "dollar-sign", action: "observe/billing" },
   { id: "v-delivery", label: "Delivery", category: "view", icon: "send", action: "observe/delivery" },
   { id: "v-diagnostics", label: "Diagnostics", category: "view", icon: "activity", action: "observe/diagnostics" },
   { id: "v-context", label: "Context Engine", category: "view", icon: "layers", action: "observe/context" },
-  { id: "v-security", label: "Security", category: "view", icon: "shield", action: "security" },
+  { id: "v-security", label: "Security", category: "view", icon: "security", action: "security" },
   { id: "v-config", label: "Settings", category: "view", icon: "settings", action: "config" },
-  { id: "v-setup", label: "Setup Wizard", category: "view", icon: "compass", action: "setup" },
+  { id: "v-setup", label: "Setup Wizard", category: "view", icon: "setup", action: "setup" },
 ];
 
 /** Static command items. */
 const COMMAND_ITEMS: CommandItem[] = [
-  { id: "c-refresh", label: "Refresh Data", category: "command", icon: "refresh-cw", action: "refresh" },
-  { id: "c-sidebar", label: "Toggle Sidebar", category: "command", icon: "sidebar", action: "toggle-sidebar" },
-  { id: "c-logout", label: "Logout", category: "command", icon: "log-out", action: "logout" },
+  { id: "c-refresh", label: "Refresh Data", category: "command", icon: "refresh", action: "refresh" },
+  { id: "c-sidebar", label: "Toggle Sidebar", category: "command", icon: "menu", action: "toggle-sidebar" },
+  { id: "c-logout", label: "Logout", category: "command", icon: "logout", action: "logout" },
   { id: "c-shortcuts", label: "Show Keyboard Shortcuts", category: "command", icon: "help-circle", action: "show-shortcuts" },
 ];
 
@@ -238,7 +243,7 @@ export class IcCommandPalette extends LitElement {
         id: `a-${agent.id}`,
         label: agent.name ?? agent.id,
         category: "agent",
-        icon: "user",
+        icon: "agents",
         action: `agents/${agent.id}`,
       });
     }
@@ -249,7 +254,7 @@ export class IcCommandPalette extends LitElement {
         id: `s-${session.key}`,
         label: `${session.agentId}: ${session.key}`,
         category: "session",
-        icon: "message-circle",
+        icon: "sessions",
         action: `sessions/${session.key}`,
       });
     }

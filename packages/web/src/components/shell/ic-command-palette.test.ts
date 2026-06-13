@@ -2,18 +2,11 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import type { IcCommandPalette } from "./ic-command-palette.js";
 
-// Import side-effect to register custom element
+// Import side-effect to register the command palette. As an eagerly-loaded
+// shell component it must ALSO transitively register <ic-icon> (rendered for
+// every result row). We deliberately do NOT stub ic-icon here so the
+// "renders a real icon" regression test exercises the real registration path.
 import "./ic-command-palette.js";
-
-// Register ic-icon stub to avoid missing element warnings
-if (!customElements.get("ic-icon")) {
-  customElements.define(
-    "ic-icon",
-    class extends HTMLElement {
-      static get observedAttributes() { return ["name", "size", "color"]; }
-    },
-  );
-}
 
 async function createElement<T extends HTMLElement>(
   tag: string,
@@ -39,6 +32,72 @@ describe("IcCommandPalette", () => {
     });
     const backdrop = el.shadowRoot?.querySelector(".backdrop");
     expect(backdrop).toBeTruthy();
+  });
+
+  it("registers the real ic-icon element and renders a non-blank icon for every result", async () => {
+    // Regression: the palette is loaded eagerly by the shell but historically
+    // never imported ic-icon, and its item icon names (lucide-style: "home",
+    // "dollar-sign", "git-branch", ...) did not exist in ic-icon's ICON_MAP.
+    // Every result-row icon was therefore blank until some lazy view happened
+    // to register ic-icon. Both halves must hold: ic-icon is registered purely
+    // by importing the palette, AND every rendered icon resolves to a real <svg>.
+    const el = await createElement<IcCommandPalette>("ic-command-palette", {
+      open: true,
+    });
+    // updated() populates _results on open; await the follow-up render.
+    await (el as any).updateComplete;
+
+    expect(
+      customElements.get("ic-icon"),
+      "importing the command palette must register ic-icon",
+    ).toBeTruthy();
+
+    const icons = Array.from(
+      el.shadowRoot?.querySelectorAll("ic-icon") ?? [],
+    ) as HTMLElement[];
+    expect(icons.length).toBeGreaterThan(0);
+
+    for (const icon of icons) {
+      await (icon as any).updateComplete;
+      const name = icon.getAttribute("name");
+      const svg = icon.shadowRoot?.querySelector("svg");
+      expect(
+        svg,
+        `palette icon "${name}" must resolve to a real SVG path in ICON_MAP`,
+      ).toBeTruthy();
+    }
+  });
+
+  it("renders non-blank icons for dynamic agent and session results", async () => {
+    // The dynamic agent/session items also used names absent from ICON_MAP
+    // ("user", "message-circle"). Surface those categories via search and
+    // assert each resolves to a real SVG.
+    const el = await createElement<IcCommandPalette>("ic-command-palette", {
+      open: true,
+      agents: [{ id: "default", name: "default" }],
+      sessions: [{ key: "agent:default:web:1", agentId: "default" }],
+    });
+    await (el as any).updateComplete;
+
+    const input = el.shadowRoot?.querySelector<HTMLInputElement>(".search-input");
+    if (input) {
+      input.value = "default";
+      input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    }
+    await (el as any).updateComplete;
+
+    const icons = Array.from(
+      el.shadowRoot?.querySelectorAll("ic-icon") ?? [],
+    ) as HTMLElement[];
+    expect(icons.length).toBeGreaterThan(0);
+    for (const icon of icons) {
+      await (icon as any).updateComplete;
+      const svg = icon.shadowRoot?.querySelector("svg");
+      expect(
+        svg,
+        `dynamic palette icon "${icon.getAttribute("name")}" must resolve to a real SVG`,
+      ).toBeTruthy();
+    }
   });
 
   it("does not render when open=false", async () => {
