@@ -165,6 +165,8 @@ export function buildContextEnvelope(params: {
   failedUpstream?: string[];
   /** Upstream node IDs that were skipped (computed by caller from state machine). */
   skippedUpstream?: string[];
+  /** Resolved conversation language (DET-02 tag); emits a verbatim-preserving Language section when non-en. */
+  language?: string;
 }): string {
   const {
     graphLabel,
@@ -179,6 +181,7 @@ export function buildContextEnvelope(params: {
     contextMode = "full",
     failedUpstream = [],
     skippedUpstream = [],
+    language,
   } = params;
 
   // Sort dependsOn alphabetically for deterministic envelope prefix.
@@ -249,6 +252,15 @@ export function buildContextEnvelope(params: {
     lines.push(`Your output is captured automatically — do not write additional files unless explicitly asked.`);
     lines.push(`All nodes in this pipeline share this folder.`);
     lines.push(`NOTE: Upstream nodes may have written detailed reports here that contain more information than the condensed outputs above. Check this folder for additional context.`);
+  }
+
+  // Language section (GEN-03): emit a verbatim-preserving directive when the conversation
+  // language is non-en. SAME sentence text as the 181-04 sub-agent role section (I7 single
+  // source). en/absent pushes nothing → byte-identical envelope (I1).
+  if (language && language !== "en") {
+    lines.push("");
+    lines.push("## Language");
+    lines.push(`Produce all user-facing output in ${language} (the conversation language). Code, identifiers, and file paths stay verbatim.`);
   }
 
   // Task section
