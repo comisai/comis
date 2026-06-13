@@ -15,6 +15,7 @@
  */
 import Database from "better-sqlite3";
 import { describe, it, expect } from "vitest";
+import { normalizeForSearch, dominantScript } from "@comis/core";
 import { ensureLcdTables } from "./schema-lcd.js";
 import { renderMessageFtsText, searchLcdImpl, hasCjkCodepoints } from "./lcd-fts.js";
 
@@ -59,7 +60,7 @@ describe("lcd-fts — LIKE fallback when FTS5 is unavailable", () => {
     `).run();
 
     // No FTS table exists → the probe reports unavailable → LIKE scan, never throws.
-    let result: ReturnType<typeof searchLcdImpl> = { hits: [], cjkZeroHit: false };
+    let result: ReturnType<typeof searchLcdImpl> = { hits: [], cjkZeroHit: false, lane: "word", matchErrored: false };
     expect(() => {
       result = searchLcdImpl(db, "conv-a", "a", "revenue", { limit: 10, scope: "summaries" });
     }).not.toThrow();
@@ -598,5 +599,477 @@ describe("schema-lcd — boot-safety when FTS5 is uncompiled", () => {
     expect(tables).toContain("lcd_messages");
     expect(tables).toContain("lcd_summaries");
     expect(tables).toContain("lcd_summary_parents");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FTS-01 / OBS-01 (Plan 180-05): LCD script routing — twin MATCH lane, the
+// bounded normalized-scan floor, isTriAvailable probe, safeAll signal-purity
+// reshape, and the LcdSearchResult widening (scriptZeroHit/lane/matchErrored/
+// scanCapped).
+//
+// These pins MUST fail on the pre-patch tree: searchLcdImpl currently has a
+// PLACEHOLDER body (always lane "word", never routes non-Latin to the trigram
+// twins, no scan floor, no script-aware scriptZeroHit). The word-lane + R4 +
+// WR + cjkZeroHit-corpus suites above stay GREEN (the placeholder keeps the
+// Latin path byte-identical).
+//
+// All non-Latin strings are assembled from String.fromCodePoint (the WR-01
+// boundary-codepoint discipline) so they survive shell/editor round-trips
+// intact — a live probe showed inline Arabic/Hebrew glyphs get mangled, which
+// would silently desync a stored row from its query (180-01 SUMMARY issue).
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── Hebrew ──────────────────────────────────────────────────────────────────
+const HE_HASEFARIM = String.fromCodePoint(0x5d4, 0x5e1, 0x5e4, 0x5e8, 0x5d9, 0x5dd); // הספרים ("the books")
+const HE_SEFER = String.fromCodePoint(0x5e1, 0x5e4, 0x5e8); // ספר ("book")
+const HE_SEFARIM = String.fromCodePoint(0x5e1, 0x5e4, 0x5e8, 0x5d9, 0x5dd); // ספרים ("books")
+const HE_MELACHIM = String.fromCodePoint(0x5de, 0x5dc, 0x5db, 0x5d9, 0x5dd); // מלכים ("kings")
+const HE_MELECH = String.fromCodePoint(0x5de, 0x5dc, 0x5da); // מלך ("king", final kaf)
+const HE_GAM = String.fromCodePoint(0x5d2, 0x5dd); // גם ("also") — 2 codepoints → below the trigram floor
+// ── Cyrillic (suffixing — Option B OR-of-trigrams) ───────────────────────────
+const RU_KNIGI = String.fromCodePoint(0x43a, 0x43d, 0x438, 0x433, 0x438); // книги ("books")
+const RU_KNIGA = String.fromCodePoint(0x43a, 0x43d, 0x438, 0x433, 0x430); // книга ("book")
+// ── CJK ──────────────────────────────────────────────────────────────────────
+const CJK_PHRASE = String.fromCodePoint(0x6211, 0x559c, 0x6b22, 0x8bfb, 0x4e2d, 0x6587, 0x4e66, 0x7c4d); // 我喜欢读中文书籍
+const CJK_QUERY = String.fromCodePoint(0x4e2d, 0x6587, 0x4e66); // 中文书 ("Chinese book")
+// ── Arabic ─────────────────────────────────────────────────────────────────
+const AR_WALKITAB = String.fromCodePoint(0x648, 0x627, 0x644, 0x643, 0x62a, 0x627, 0x628); // والكتاب ("and the book")
+const AR_KITAB = String.fromCodePoint(0x643, 0x62a, 0x627, 0x628); // كتاب ("book")
+
+/**
+ * A full LCD-schema db (base tables + word-lane FTS + the trigram twins, via
+ * ensureLcdTables which calls ensureTrigramTwins as its last statement). This is
+ * the routing-matrix harness: the twins exist and isTriAvailable verdicts true,
+ * so a non-Latin query routes to the trigram lane. Twin rows are inserted with
+ * NORMALIZED content via raw SQL (this plan does NOT depend on 180-04's populate;
+ * the twins store normalizeForSearch(content) per FTS-02).
+ */
+function lcdDbWithTwins(): Database.Database {
+  const db = new Database(":memory:");
+  db.pragma("foreign_keys = ON");
+  ensureLcdTables(db);
+  return db;
+}
+
+/** Insert a NORMALIZED message-twin row (the FTS-02 stored shape). `content` is
+ *  pre-normalized by the caller to mirror the real TS-side write path. */
+function seedMessageTwin(
+  db: Database.Database,
+  args: { content: string; conversationId?: string; agentId?: string; messageId: string },
+): void {
+  db.prepare(
+    "INSERT INTO lcd_messages_fts_tri(content, conversation_id, agent_id, message_id) VALUES (?,?,?,?)",
+  ).run(args.content, args.conversationId ?? "conv-a", args.agentId ?? "agent-a", args.messageId);
+}
+
+/** Insert a NORMALIZED summary-twin row (the FTS-02 stored shape). */
+function seedSummaryTwin(
+  db: Database.Database,
+  args: { content: string; conversationId?: string; agentId?: string; summaryId: string },
+): void {
+  db.prepare(
+    "INSERT INTO lcd_summaries_fts_tri(content, conversation_id, agent_id, summary_id) VALUES (?,?,?,?)",
+  ).run(args.content, args.conversationId ?? "conv-a", args.agentId ?? "agent-a", args.summaryId);
+}
+
+/** Insert a base lcd_messages row + a text part whose RAW text feeds the scan
+ *  floor's haystack (the scan floor reads the SAME columns the LIKE floor LIKEs:
+ *  lcd_summaries.content and the message parts' tool_input/tool_output/metadata).
+ *  For the scan floor over messages we put the searchable text in metadata.raw.text. */
+function seedBaseMessage(
+  db: Database.Database,
+  args: { id: string; seq: number; text: string; conversationId?: string; agentId?: string },
+): void {
+  db.prepare(
+    "INSERT INTO lcd_messages(id, conversation_id, tenant_id, agent_id, session_key, seq, role, token_count, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+  ).run(args.id, args.conversationId ?? "conv-a", "t", args.agentId ?? "agent-a", "s", args.seq, "user", 1, args.seq);
+  db.prepare(
+    "INSERT INTO lcd_message_parts(id, message_id, ordinal, kind, tool_call_id, tool_name, tool_input, tool_output, is_error, metadata) VALUES (?,?,?,?,?,?,?,?,?,?)",
+  ).run(`${args.id}-p0`, args.id, 0, "text", null, null, null, null, null,
+    JSON.stringify({ raw: { type: "text", text: args.text }, rawType: "text" }));
+}
+
+/** Insert a base lcd_summaries row (the scan floor over summaries reads .content). */
+function seedBaseSummary(
+  db: Database.Database,
+  args: { id: string; content: string; createdAt: number; conversationId?: string; agentId?: string },
+): void {
+  db.prepare(`
+    INSERT INTO lcd_summaries
+      (summary_id, conversation_id, tenant_id, agent_id, session_key, kind, depth,
+       earliest_at, latest_at, descendant_count, token_count, content, file_ids, taint, fallback, created_at)
+    VALUES (?, ?, 't', ?, 's', 'leaf', 0, 1, 1, 1, 1, ?, '[]', 0, 0, ?)
+  `).run(args.id, args.conversationId ?? "conv-a", args.agentId ?? "agent-a", args.content, args.createdAt);
+}
+
+describe("lcd-fts (180-05) — word lane stays byte-identical for all-Latin (I1)", () => {
+  it("routes an all-Latin query to the word lane and feeds searchViaFts the ORIGINAL query string", () => {
+    const db = lcdDbWithTwins();
+    // Seed the WORD-lane FTS (not the twins) so a real word-FTS hit comes back.
+    db.prepare(`INSERT INTO lcd_messages VALUES ('m1','conv-a','t','agent-a','s',0,'user',1,1)`).run();
+    db.prepare(`INSERT INTO lcd_message_parts VALUES ('p1','m1',0,'text',NULL,NULL,NULL,NULL,NULL,?)`).run(
+      JSON.stringify({ raw: { type: "text", text: "docker compose orchestration" }, rawType: "text" }),
+    );
+    // Drive the word-FTS populate the store normally does (renderMessageFtsText → lcd_messages_fts).
+    db.prepare(
+      "INSERT INTO lcd_messages_fts(content, conversation_id, agent_id, message_id) VALUES (?,?,?,?)",
+    ).run("docker compose orchestration", "conv-a", "agent-a", "m1");
+
+    const result = searchLcdImpl(db, "conv-a", "agent-a", "docker compose", { limit: 10, scope: "messages" });
+    expect(result.lane).toBe("word");
+    expect(result.matchErrored).toBe(false);
+    expect(result.hits.map((h) => h.refId)).toContain("m1");
+  });
+
+  it("a word-lane query intercepted at prepare receives the ORIGINAL string (never a normalized copy)", () => {
+    // Source-shape pin: intercept the word-FTS MATCH and capture the bound query
+    // arg. The word lane must pass `query` (the ORIGINAL parameter) through — NOT
+    // a normalizeForSearch copy (I1 byte-identical SQL + bound params).
+    const real = new Database(":memory:");
+    real.pragma("foreign_keys = ON");
+    ensureLcdTables(real);
+    let boundQueryArg: unknown = undefined;
+    const proxy = new Proxy(real, {
+      get(target, prop, receiver) {
+        if (prop === "prepare") {
+          return (sql: string): unknown => {
+            const stmt = target.prepare(sql);
+            if (/FROM\s+lcd_messages_fts\b/i.test(sql) && /MATCH/i.test(sql) && !/SELECT\s+rowid/i.test(sql)) {
+              return {
+                all: (...params: unknown[]) => {
+                  boundQueryArg = params[0];
+                  return stmt.all(...(params as [])); // delegate so it still runs
+                },
+              };
+            }
+            return stmt;
+          };
+        }
+        const value = Reflect.get(target, prop, receiver);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as unknown as Database.Database;
+
+    searchLcdImpl(proxy, "conv-a", "agent-a", "Docker COMPOSE", { limit: 5, scope: "messages" });
+    // The ORIGINAL mixed-case string reaches the MATCH — not a lowercased/normalized copy.
+    expect(boundQueryArg).toBe("Docker COMPOSE");
+  });
+});
+
+describe("lcd-fts (180-05) — trigram lane: query-time normalization symmetry (I7)", () => {
+  it("a Hebrew query finds a normalized stored Hebrew message through the trigram twin", () => {
+    const db = lcdDbWithTwins();
+    seedMessageTwin(db, { content: normalizeForSearch(HE_HASEFARIM), messageId: "m1" });
+    const result = searchLcdImpl(db, "conv-a", "agent-a", HE_SEFER, { limit: 10, scope: "messages" });
+    expect(result.lane).toBe("tri");
+    expect(result.matchErrored).toBe(false);
+    expect(result.hits.map((h) => h.refId)).toContain("m1");
+  });
+
+  it("a Hebrew query with final-letter morphology finds the stored inflection (מלך → מלכים)", () => {
+    // Query-time normalization regression: fails if ONLY the index side normalizes.
+    // Stored מלכים → מלכימ; query מלך → מלכ (final kaf folded) which is a substring.
+    const db = lcdDbWithTwins();
+    seedMessageTwin(db, { content: normalizeForSearch(HE_MELACHIM), messageId: "m1" });
+    const result = searchLcdImpl(db, "conv-a", "agent-a", HE_MELECH, { limit: 10, scope: "messages" });
+    expect(result.hits.map((h) => h.refId)).toContain("m1");
+  });
+
+  it("a Russian query finds a stored suffixing inflection via Option B OR-of-trigrams (книга → книги)", () => {
+    // The OQ-1 Option B end-to-end pin: книга is NOT a substring of книги, so a
+    // whole-quoted token misses; the OR-of-trigrams group matches it.
+    const db = lcdDbWithTwins();
+    seedMessageTwin(db, { content: normalizeForSearch(RU_KNIGI), messageId: "m1" });
+    const result = searchLcdImpl(db, "conv-a", "agent-a", RU_KNIGA, { limit: 10, scope: "messages" });
+    expect(result.lane).toBe("tri");
+    expect(result.hits.map((h) => h.refId)).toContain("m1");
+  });
+
+  it("a CJK phrase query finds a stored CJK message substring (中文书 ⊂ 我喜欢读中文书籍)", () => {
+    const db = lcdDbWithTwins();
+    seedMessageTwin(db, { content: normalizeForSearch(CJK_PHRASE), messageId: "m1" });
+    const result = searchLcdImpl(db, "conv-a", "agent-a", CJK_QUERY, { limit: 10, scope: "messages" });
+    expect(result.lane).toBe("tri");
+    expect(result.hits.map((h) => h.refId)).toContain("m1");
+  });
+
+  it("an Arabic query finds a stored Arabic inflection (كتاب ⊂ والكتاب)", () => {
+    const db = lcdDbWithTwins();
+    seedMessageTwin(db, { content: normalizeForSearch(AR_WALKITAB), messageId: "m1" });
+    const result = searchLcdImpl(db, "conv-a", "agent-a", AR_KITAB, { limit: 10, scope: "messages" });
+    expect(result.lane).toBe("tri");
+    expect(result.hits.map((h) => h.refId)).toContain("m1");
+  });
+
+  it("a short token in an implicit-AND Hebrew query is dropped, not allowed to kill the match (ספרים גם → הספרים)", () => {
+    // Probe correction #2 at the lane level: גם (2 cp) is below the trigram floor.
+    // It must be DROPPED so the surviving ספרים still matches — not ANDed in (which
+    // would return zero rows). Stored הספרים → הספרימ; query token ספרים → ספרימ.
+    const db = lcdDbWithTwins();
+    seedMessageTwin(db, { content: normalizeForSearch(HE_HASEFARIM), messageId: "m1" });
+    const result = searchLcdImpl(db, "conv-a", "agent-a", `${HE_SEFARIM} ${HE_GAM}`, { limit: 10, scope: "messages" });
+    expect(result.lane).toBe("tri");
+    expect(result.hits.map((h) => h.refId)).toContain("m1");
+  });
+
+  it("scope 'both' interleaves matching message AND summary twin rows by rank", () => {
+    const db = lcdDbWithTwins();
+    seedMessageTwin(db, { content: normalizeForSearch(HE_HASEFARIM), messageId: "m1" });
+    seedSummaryTwin(db, { content: normalizeForSearch(HE_HASEFARIM), summaryId: "s1" });
+    const result = searchLcdImpl(db, "conv-a", "agent-a", HE_SEFER, { limit: 10, scope: "both" });
+    expect(result.lane).toBe("tri");
+    expect(result.hits.some((h) => h.kind === "message" && h.refId === "m1")).toBe(true);
+    expect(result.hits.some((h) => h.kind === "summary" && h.refId === "s1")).toBe(true);
+  });
+});
+
+describe("lcd-fts (180-05) — opts.scope is honored on the trigram lane (the relevance-eviction contract)", () => {
+  it("scope 'messages' returns ONLY the message-twin hit, never the summary twin", () => {
+    const db = lcdDbWithTwins();
+    seedMessageTwin(db, { content: normalizeForSearch(HE_HASEFARIM), messageId: "m1" });
+    seedSummaryTwin(db, { content: normalizeForSearch(HE_HASEFARIM), summaryId: "s1" });
+    const result = searchLcdImpl(db, "conv-a", "agent-a", HE_SEFER, { limit: 10, scope: "messages" });
+    expect(result.hits.map((h) => h.refId)).toContain("m1");
+    expect(result.hits.every((h) => h.kind === "message")).toBe(true);
+    expect(result.hits.some((h) => h.refId === "s1")).toBe(false); // summary twin excluded
+  });
+
+  it("scope 'summaries' returns ONLY the summary-twin hit, never the message twin", () => {
+    const db = lcdDbWithTwins();
+    seedMessageTwin(db, { content: normalizeForSearch(HE_HASEFARIM), messageId: "m1" });
+    seedSummaryTwin(db, { content: normalizeForSearch(HE_HASEFARIM), summaryId: "s1" });
+    const result = searchLcdImpl(db, "conv-a", "agent-a", HE_SEFER, { limit: 10, scope: "summaries" });
+    expect(result.hits.map((h) => h.refId)).toContain("s1");
+    expect(result.hits.every((h) => h.kind === "summary")).toBe(true);
+    expect(result.hits.some((h) => h.refId === "m1")).toBe(false); // message twin excluded
+  });
+
+  it("an OR-joined eviction-shape query routes cleanly to the tri lane and returns message hits (scope 'messages')", () => {
+    // The exact lcd-arbiter-seam tokenizer output form: bare tokens joined with
+    // " OR ". Operators must be preserved (the route stays "tri", not "scan").
+    const db = lcdDbWithTwins();
+    seedMessageTwin(db, { content: normalizeForSearch(HE_HASEFARIM), messageId: "m1" });
+    const query = `${HE_SEFARIM} OR docker OR ${HE_MELECH}`;
+    const result = searchLcdImpl(db, "conv-a", "agent-a", query, { limit: 10, scope: "messages" });
+    expect(result.lane).toBe("tri");
+    expect(result.matchErrored).toBe(false);
+    expect(result.hits.map((h) => h.refId)).toContain("m1");
+  });
+
+  it("the SAME OR-joined query against an EMPTY twin set returns a clean empty (hits [], matchErrored false, no throw)", () => {
+    // The relevance-eviction recency fallback keys on hits.length === 0 — a clean
+    // empty (NOT a throw, NOT matchErrored) must come back so the fallback fires.
+    const db = lcdDbWithTwins(); // twins exist but hold no rows
+    const query = `${HE_SEFARIM} OR docker OR ${HE_MELECH}`;
+    let result: ReturnType<typeof searchLcdImpl> | undefined;
+    expect(() => {
+      result = searchLcdImpl(db, "conv-a", "agent-a", query, { limit: 10, scope: "messages" });
+    }).not.toThrow();
+    expect(result!.hits).toHaveLength(0);
+    expect(result!.matchErrored).toBe(false);
+  });
+});
+
+describe("lcd-fts (180-05) — the bounded normalized-scan floor (all-short / trigram-absent)", () => {
+  it("an all-short non-Latin query routes to the scan floor and finds rows by normalized substring", () => {
+    const db = lcdDbWithTwins();
+    // גם (2 cp) is below the trigram floor → route lane "scan". The scan floor reads
+    // the message parts' raw text the LIKE floor reads; the haystack normalizes and
+    // .includes the normalized scan token.
+    seedBaseMessage(db, { id: "m1", seq: 0, text: `${HE_SEFARIM} ${HE_GAM}` });
+    const result = searchLcdImpl(db, "conv-a", "agent-a", HE_GAM, { limit: 10, scope: "messages" });
+    expect(result.lane).toBe("scan");
+    expect(result.hits.map((h) => h.refId)).toContain("m1");
+  });
+
+  it("the scan floor honors scope 'messages' — a matching summary row is never scanned", () => {
+    const db = lcdDbWithTwins();
+    seedBaseMessage(db, { id: "m1", seq: 0, text: `${HE_SEFARIM} ${HE_GAM}` });
+    seedBaseSummary(db, { id: "s1", content: `${HE_SEFARIM} ${HE_GAM}`, createdAt: 1 });
+    const result = searchLcdImpl(db, "conv-a", "agent-a", HE_GAM, { limit: 10, scope: "messages" });
+    expect(result.lane).toBe("scan");
+    expect(result.hits.map((h) => h.refId)).toContain("m1");
+    expect(result.hits.every((h) => h.kind === "message")).toBe(true);
+    expect(result.hits.some((h) => h.refId === "s1")).toBe(false);
+  });
+
+  it("the scan floor honors scope 'summaries' — a matching message row is never scanned", () => {
+    const db = lcdDbWithTwins();
+    seedBaseMessage(db, { id: "m1", seq: 0, text: `${HE_SEFARIM} ${HE_GAM}` });
+    seedBaseSummary(db, { id: "s1", content: `${HE_SEFARIM} ${HE_GAM}`, createdAt: 1 });
+    const result = searchLcdImpl(db, "conv-a", "agent-a", HE_GAM, { limit: 10, scope: "summaries" });
+    expect(result.lane).toBe("scan");
+    expect(result.hits.map((h) => h.refId)).toContain("s1");
+    expect(result.hits.every((h) => h.kind === "summary")).toBe(true);
+    expect(result.hits.some((h) => h.refId === "m1")).toBe(false);
+  });
+
+  it("the scan floor is R4-scoped — agent A never scans agent B's row (both directions)", () => {
+    const db = lcdDbWithTwins();
+    seedBaseSummary(db, { id: "s-a", content: `${HE_SEFARIM} ${HE_GAM}`, createdAt: 1, agentId: "agent-a" });
+    seedBaseSummary(db, { id: "s-b", content: `${HE_SEFARIM} ${HE_GAM}`, createdAt: 2, agentId: "agent-b" });
+    const a = searchLcdImpl(db, "conv-a", "agent-a", HE_GAM, { limit: 10, scope: "summaries" });
+    expect(a.hits.map((h) => h.refId)).toContain("s-a");
+    expect(a.hits.some((h) => h.refId === "s-b")).toBe(false);
+    const b = searchLcdImpl(db, "conv-a", "agent-b", HE_GAM, { limit: 10, scope: "summaries" });
+    expect(b.hits.map((h) => h.refId)).toContain("s-b");
+    expect(b.hits.some((h) => h.refId === "s-a")).toBe(false);
+  });
+
+  it("the scan floor sets scanCapped=true and bounds results when more than the cap rows match", () => {
+    const db = lcdDbWithTwins();
+    // Seed more than SCAN_ROW_CAP (2000) matching summary rows so a branch exhausts
+    // its cap with rows still remaining → scanCapped true; results bounded by limit.
+    const insert = db.prepare(`
+      INSERT INTO lcd_summaries
+        (summary_id, conversation_id, tenant_id, agent_id, session_key, kind, depth,
+         earliest_at, latest_at, descendant_count, token_count, content, file_ids, taint, fallback, created_at)
+      VALUES (?, 'conv-a', 't', 'agent-a', 's', 'leaf', 0, 1, 1, 1, 1, ?, '[]', 0, 0, ?)
+    `);
+    const txn = db.transaction(() => {
+      for (let i = 0; i < 2100; i++) insert.run(`s${i}`, `${HE_SEFARIM} ${HE_GAM}`, i);
+    });
+    txn();
+    const result = searchLcdImpl(db, "conv-a", "agent-a", HE_GAM, { limit: 5, scope: "summaries" });
+    expect(result.lane).toBe("scan");
+    expect(result.hits.length).toBeLessThanOrEqual(5);
+    expect(result.scanCapped).toBe(true);
+  });
+
+  it("a Hebrew query on a trigram-ABSENT host routes to the scan floor (probe verdicts false)", () => {
+    // Simulate a host whose better-sqlite3 lacks the trigram tokenizer: the twins
+    // were never created (base + word-FTS only), so isTriAvailable verdicts false on
+    // `no such table` → the non-Latin query falls to the scan floor, never throws.
+    const db = baseTablesOnlyDb();
+    seedBaseMessage(db, { id: "m1", seq: 0, text: HE_SEFARIM });
+    const result = searchLcdImpl(db, "conv-a", "agent-a", HE_SEFER, { limit: 10, scope: "messages" });
+    expect(result.lane).toBe("scan");
+    expect(result.hits.map((h) => h.refId)).toContain("m1");
+  });
+});
+
+describe("lcd-fts (180-05) — FTS5-absent host: Latin queries keep the LIKE floor (lane word)", () => {
+  it("an all-Latin query on a base-tables-only db uses the LIKE floor and reports lane 'word'", () => {
+    const db = baseTablesOnlyDb();
+    db.prepare(`
+      INSERT INTO lcd_summaries
+        (summary_id, conversation_id, tenant_id, agent_id, session_key, kind, depth,
+         earliest_at, latest_at, descendant_count, token_count, content, file_ids, taint, fallback, created_at)
+      VALUES ('s1','conv-a','t','agent-a','s','leaf',0,1,1,1,1,'the quarterly revenue report','[]',0,0,1)
+    `).run();
+    const result = searchLcdImpl(db, "conv-a", "agent-a", "revenue", { limit: 10, scope: "summaries" });
+    expect(result.lane).toBe("word");
+    expect(result.matchErrored).toBe(false);
+    expect(result.hits.map((h) => h.refId)).toContain("s1");
+  });
+});
+
+describe("lcd-fts (180-05) — R4 cross-agent isolation on the trigram MATCH lane (both directions)", () => {
+  it("agent A's twin MATCH returns only agent A's row; agent B's returns only agent B's", () => {
+    const db = lcdDbWithTwins();
+    seedMessageTwin(db, { content: normalizeForSearch(HE_HASEFARIM), agentId: "agent-a", messageId: "m-a" });
+    seedMessageTwin(db, { content: normalizeForSearch(HE_HASEFARIM), agentId: "agent-b", messageId: "m-b" });
+
+    const a = searchLcdImpl(db, "conv-a", "agent-a", HE_SEFER, { limit: 10, scope: "messages" });
+    expect(a.lane).toBe("tri");
+    expect(a.hits.map((h) => h.refId)).toContain("m-a");
+    expect(a.hits.some((h) => h.refId === "m-b")).toBe(false);
+
+    const b = searchLcdImpl(db, "conv-a", "agent-b", HE_SEFER, { limit: 10, scope: "messages" });
+    expect(b.hits.map((h) => h.refId)).toContain("m-b");
+    expect(b.hits.some((h) => h.refId === "m-a")).toBe(false);
+  });
+});
+
+describe("lcd-fts (180-05) — OBS-01 signal purity: an errored zero-result is NOT a lane gap", () => {
+  it("a swallowed MATCH error sets matchErrored=true and leaves scriptZeroHit UNDEFINED", () => {
+    // Cache isTriAvailable=true (a clean probe), THEN drop the twin tables so the
+    // scoped MATCH throws and safeAll swallows it to []. The zero result is an
+    // ERROR, not a true lane gap: matchErrored must be true and scriptZeroHit must
+    // stay undefined (the OBS-01 emit at the tool boundary gates on !matchErrored).
+    const db = lcdDbWithTwins();
+    seedMessageTwin(db, { content: normalizeForSearch(HE_HASEFARIM), messageId: "m1" });
+    // Prime the isTriAvailable WeakMap with a CLEAN true verdict (twins present).
+    const primed = searchLcdImpl(db, "conv-a", "agent-a", HE_SEFER, { limit: 1, scope: "messages" });
+    expect(primed.lane).toBe("tri");
+    // Now drop BOTH twins — the cached probe still says available → the scoped
+    // MATCH throws → safeAll → [] but matchErrored must surface the error fact.
+    db.exec("DROP TABLE lcd_messages_fts_tri; DROP TABLE lcd_summaries_fts_tri;");
+    const result = searchLcdImpl(db, "conv-a", "agent-a", HE_SEFER, { limit: 10, scope: "messages" });
+    expect(result.hits).toHaveLength(0);
+    expect(result.matchErrored).toBe(true);
+    expect(result.scriptZeroHit).toBeUndefined(); // an errored zero is NOT a signal
+  });
+
+  it("a CLEAN zero-hit non-Latin query sets scriptZeroHit to the dominant script (lane tri)", () => {
+    // Twins exist, the MATCH runs cleanly, but no row matches → a true lane gap.
+    const db = lcdDbWithTwins();
+    seedMessageTwin(db, { content: normalizeForSearch("hello world"), messageId: "m1" }); // no Hebrew
+    const result = searchLcdImpl(db, "conv-a", "agent-a", HE_SEFER, { limit: 10, scope: "messages" });
+    expect(result.hits).toHaveLength(0);
+    expect(result.matchErrored).toBe(false);
+    expect(result.lane).toBe("tri");
+    expect(result.scriptZeroHit).toBe("hebrew");
+  });
+});
+
+describe("lcd-fts (180-05) — LcdSearchResult widening: cjkZeroHit derives from scriptZeroHit", () => {
+  it("a clean CJK zero-hit sets scriptZeroHit='cjk' AND the derived cjkZeroHit=true", () => {
+    const db = lcdDbWithTwins();
+    seedMessageTwin(db, { content: normalizeForSearch("hello world"), messageId: "m1" });
+    const result = searchLcdImpl(db, "conv-a", "agent-a", CJK_QUERY, { limit: 10, scope: "messages" });
+    expect(result.hits).toHaveLength(0);
+    expect(result.scriptZeroHit).toBe("cjk");
+    expect(result.cjkZeroHit).toBe(true);
+    // The derived-boolean identity holds.
+    expect(result.cjkZeroHit).toBe(result.scriptZeroHit === "cjk");
+  });
+
+  it("a clean Hebrew zero-hit sets scriptZeroHit='hebrew' but cjkZeroHit STAYS false (the derivation)", () => {
+    const db = lcdDbWithTwins();
+    seedMessageTwin(db, { content: normalizeForSearch("hello world"), messageId: "m1" });
+    const result = searchLcdImpl(db, "conv-a", "agent-a", HE_SEFER, { limit: 10, scope: "messages" });
+    expect(result.scriptZeroHit).toBe("hebrew");
+    expect(result.cjkZeroHit).toBe(false); // hebrew !== cjk
+  });
+
+  it("a neutral / all-Latin zero-hit query never signals (scriptZeroHit undefined, cjkZeroHit false)", () => {
+    // dominantScript("") and dominantScript(neutral/Latin) → "latin"; the guard
+    // script !== "latin" keeps neutral-only and Latin queries silent.
+    const db = lcdDbWithTwins();
+    const latin = searchLcdImpl(db, "conv-a", "agent-a", "no such latin term", { limit: 10, scope: "messages" });
+    expect(latin.scriptZeroHit).toBeUndefined();
+    expect(latin.cjkZeroHit).toBe(false);
+    const numeric = searchLcdImpl(db, "conv-a", "agent-a", "12345", { limit: 10, scope: "messages" });
+    expect(numeric.scriptZeroHit).toBeUndefined();
+    expect(numeric.cjkZeroHit).toBe(false);
+  });
+});
+
+// The :439-483 hasCjkCodepoints corpus (above) is the SUPERSET gate for the new
+// dominantScript-based detection. Mixed-string semantics moved from
+// "any CJK codepoint" to "dominant script" BY DESIGN — but that corpus is
+// single-script per case, so EVERY verdict is preserved. This re-asserts the
+// load-bearing ones against dominantScript directly (the detection's new basis):
+// 你好/こんにちは/カタカナ/안녕하세요 → cjk; hello/café/"" → latin; the boundary
+// codepoints (Yi U+A000, Hangul-Jamo U+1100 → NOT cjk; U+F900 → cjk).
+describe("lcd-fts (180-05) — dominantScript preserves the hasCjkCodepoints corpus verdicts", () => {
+  it("classifies every CJK corpus string as the cjk dominant script", () => {
+    expect(dominantScript("你好")).toBe("cjk");
+    expect(dominantScript(String.fromCodePoint(0x3053, 0x3093, 0x306b, 0x3061, 0x306f))).toBe("cjk"); // こんにちは
+    expect(dominantScript(String.fromCodePoint(0x30ab, 0x30bf, 0x30ab, 0x30ca))).toBe("cjk"); // カタカナ
+    expect(dominantScript(String.fromCodePoint(0xc548, 0xb155, 0xd558, 0xc138, 0xc694))).toBe("cjk"); // 안녕하세요
+    expect(dominantScript(String.fromCodePoint(0xf900))).toBe("cjk"); // U+F900 compat ideograph → cjk
+  });
+
+  it("classifies the non-CJK corpus strings as latin (the false verdicts)", () => {
+    expect(dominantScript("hello")).toBe("latin");
+    expect(dominantScript("café")).toBe("latin");
+    expect(dominantScript("")).toBe("latin");
+    // Boundary codepoints that hasCjkCodepoints (corrected) returns false for: a Yi
+    // syllable (U+A000) and a Hangul Jamo leading consonant (U+1100) are NOT cjk.
+    expect(dominantScript(String.fromCodePoint(0xa000))).not.toBe("cjk");
+    expect(dominantScript(String.fromCodePoint(0x1100))).not.toBe("cjk");
   });
 });

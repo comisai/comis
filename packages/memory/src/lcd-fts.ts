@@ -171,14 +171,18 @@ export function searchLcdImpl(
 ): LcdSearchResult {
   const scope: LcdSearchScope = opts.scope ?? "both";
   const limit = opts.limit;
-  if (limit <= 0) return { hits: [], cjkZeroHit: false };
+  if (limit <= 0) return { hits: [], cjkZeroHit: false, lane: "word", matchErrored: false };
 
   const hits = isFtsAvailable(db)
     ? searchViaFts(db, conversationId, agentId, query, scope, limit)
     : searchViaLike(db, conversationId, agentId, query, scope, limit);
 
+  // PLACEHOLDER (180-05 Task 1): the word-lane path is byte-identical to today;
+  // lane/matchErrored carry compile-honest placeholders so the widened contract
+  // type-checks. Task 2 (GREEN) replaces this body with script routing + the
+  // trigram/scan lanes + the dominantScript-based scriptZeroHit signal.
   const cjkZeroHit = hits.length === 0 && hasCjkCodepoints(query);
-  return { hits, cjkZeroHit };
+  return { hits, cjkZeroHit, lane: "word", matchErrored: false };
 }
 
 /** FTS5 MATCH path — BM25 `ORDER BY rank` (the in-tree recall-FTS query shape). */

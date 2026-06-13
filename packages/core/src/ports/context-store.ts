@@ -147,10 +147,17 @@ export interface ContextStorePort {
    * LIKE fallback filter agent_id so a different agent's hits never leak (WR-02,
    * Pitfall 3). The conversation_id prefix carries the tenant boundary.
    *
-   * Returns an {@link LcdSearchResult} wrapper: `hits` is the FTS/LIKE result
-   * array; `cjkZeroHit` is true when the query contained CJK codepoints AND
-   * `hits.length === 0` — the §14.4 instrumented trigger (EFF-03). The flag is
-   * content-free; the caller's logging boundary emits a DEBUG event when true.
+   * Returns an {@link LcdSearchResult} wrapper (OBS-01): `hits` is the
+   * FTS/trigram/scan result array; `lane` names the lane that served the query
+   * ("word" word-FTS/LIKE, "tri" trigram twins, "scan" the bounded normalized
+   * floor); `matchErrored` is true iff a MATCH threw and degraded to [] (an
+   * errored zero-result is NOT a lane gap — signal purity); `scriptZeroHit` is the
+   * dominant non-Latin {@link ScriptClass} when the search ran cleanly and
+   * returned zero hits (the §14.4 trigger generalized beyond CJK); `cjkZeroHit`
+   * stays as the derived `scriptZeroHit === "cjk"` boolean; `scanCapped` flags a
+   * scan floor that hit its row cap. All diagnostics are content-free
+   * (enums/booleans, never the query text — I8); the caller's logging boundary
+   * (skills/agent) emits the `script_zero_hit` event when `scriptZeroHit` is set.
    */
   searchLcd(
     scope: ContextStoreScope,
