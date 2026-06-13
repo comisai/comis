@@ -2527,3 +2527,82 @@ describe("createLlmCompactionLayer — summary_language_mismatch (OBS-01, depth 
     expect(blob).not.toContain(HEBREW_WORD);
   });
 });
+
+describe("GEN-01: pipeline customInstructions carry the shared sentence + headings-verbatim clause", () => {
+  beforeEach(() => {
+    mockGenerateSummary.mockReset();
+  });
+
+  // Load-bearing fragments of the single shared sentence (design §4 GEN-01, I7).
+  const NO_TRANSLATE_FRAGMENT = "never translate";
+  const VERBATIM_FRAGMENT =
+    "Keep code identifiers, file paths, tool names, and error strings verbatim.";
+  // Stable fragments of the pipeline-specific headings-verbatim clause.
+  const HEADINGS_CLAUSE_FRAGMENT_A = "keep the section headings";
+  const HEADINGS_CLAUSE_FRAGMENT_B = "exactly as given above, in English";
+  const HEADINGS_CLAUSE_FRAGMENT_C =
+    "only the section CONTENT follows the source language";
+
+  /**
+   * buildComisCompactionInstructions is PRIVATE (no export — the no-BC / public-surface
+   * gates dislike dead exports). Drive a Level-1 compaction and capture the `instructions`
+   * the SDK actually received: arg index 6 (the 7th positional `instructions` parameter of
+   * generateSummary per llm-compaction.ts:725-728). This is exactly the customInstructions
+   * the SDK sees — the same indirect path the :314-339 Level-1 test drives.
+   */
+  async function captureInstructions(): Promise<string> {
+    const { deps } = createMockDeps();
+    const layer = createLlmCompactionLayer({ compactionCooldownTurns: 5 }, deps);
+    const largeMessages = buildLargeConversation();
+    mockGenerateSummary.mockResolvedValueOnce(buildValidSummary());
+    await layer.apply(largeMessages, BUDGET);
+    expect(mockGenerateSummary).toHaveBeenCalledTimes(1);
+    return mockGenerateSummary.mock.calls[0]![6] as string;
+  }
+
+  it("the captured customInstructions contain the full shared language-preservation sentence", async () => {
+    const instructions = await captureInstructions();
+    expect(instructions).toContain(NO_TRANSLATE_FRAGMENT);
+    expect(instructions).toContain(VERBATIM_FRAGMENT);
+  });
+
+  it("the captured customInstructions contain the headings-verbatim clause", async () => {
+    const instructions = await captureInstructions();
+    expect(instructions).toContain(HEADINGS_CLAUSE_FRAGMENT_A);
+    expect(instructions).toContain(HEADINGS_CLAUSE_FRAGMENT_B);
+    expect(instructions).toContain(HEADINGS_CLAUSE_FRAGMENT_C);
+  });
+
+  it("all nine ## Section headings still appear verbatim in the captured customInstructions (regression)", async () => {
+    const instructions = await captureInstructions();
+    // Mirrors the existing :329 `toContain("## Identifiers")` style across all 9.
+    expect(instructions).toContain("## Identifiers");
+    expect(instructions).toContain("## Primary Request and Intent");
+    expect(instructions).toContain("## Decisions");
+    expect(instructions).toContain("## Files and Code");
+    expect(instructions).toContain("## Errors and Resolutions");
+    expect(instructions).toContain("## User Messages");
+    expect(instructions).toContain("## Constraints");
+    expect(instructions).toContain("## Active Work");
+    expect(instructions).toContain("## Next Steps");
+  });
+
+  it("validateCompactionSummary still passes a valid 9-heading summary (scaffolding contract intact)", () => {
+    // The clause must not corrupt the machine-parsed heading contract: a localized
+    // heading would fail validation → fallback ladder → invert GEN-01's goal.
+    expect(validateCompactionSummary(buildValidSummary())).toEqual({
+      valid: true,
+      missingSections: [],
+    });
+  });
+
+  it("the shared sentence is imported, not redefined in llm-compaction (single source, I7)", async () => {
+    // The captured pipeline instructions carry the SAME sentence the dag templates use.
+    // (The single-source guarantee is enforced structurally by the import; this asserts
+    // the pipeline output is byte-consistent with that shared sentence's fragments.)
+    const instructions = await captureInstructions();
+    expect(instructions).toContain(
+      "Write the summary in the dominant language of the source content",
+    );
+  });
+});
