@@ -148,6 +148,41 @@ export function emitExpansionMetric(
   }
 }
 
+/**
+ * Emit the OBS-01 `context:script_zero_hit` signal (a clean non-Latin search
+ * that returned zero hits), GUARDED so a throwing subscriber can NEVER fail the
+ * already-completed search — the exact non-fatal contract of
+ * {@link emitExpansionMetric} (a trajectory writer / metrics sink that throws
+ * must not unwind out of the tool). The caller fires this ONLY when the search
+ * ran cleanly (`!matchErrored`) and the store classified the query as non-Latin
+ * (`result.scriptZeroHit` set) — the errored-MATCH branch WARNs instead, so a
+ * `safeAll`-swallowed FTS5 syntax error never pollutes the lane-gap signal
+ * (signal purity, RESEARCH Pitfall 9).
+ *
+ * `data` is the already-assembled, content-free payload (ids + the closed
+ * `scriptClass`/`lane` enums + timestamp ONLY — NEVER the query text); this
+ * helper does not read or shape it. The swallowed-error WARN is content-free
+ * (toolName + a sanitized error message + an actionable hint, AGENTS.md §2.7).
+ */
+export function emitScriptZeroHit(
+  deps: Pick<ContextToolDeps, "eventBus" | "logger">,
+  data: unknown,
+): void {
+  try {
+    deps.eventBus?.emit("context:script_zero_hit", data);
+  } catch (err) {
+    deps.logger.warn(
+      {
+        toolName: "ctx_search",
+        err: err instanceof Error ? err.message : String(err),
+        hint: "context:script_zero_hit subscriber threw; signal dropped, search result unaffected — inspect the failing event subscriber (trajectory writer / health-signal sink)",
+        errorKind: "dependency" as const,
+      },
+      "ctx_search script_zero_hit emit failed (non-fatal)",
+    );
+  }
+}
+
 /** JSON.stringify that degrades to `""` on a cycle/throw — never crashes the recovery path. */
 function safeStringify(value: unknown): string {
   if (typeof value === "string") return value;
