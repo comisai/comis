@@ -182,6 +182,15 @@ weak summarizer that silently ignores the language instruction is made visible (
 [Local Models compaction section](/operations/local-models#compaction-on-small-models) for the
 full small-model compaction mechanics, which this page does not restate.
 
+The same preservation rule extends to the long-term-memory learning jobs that generate
+human-readable text from stored memories — consolidation (merged observations), reasoning
+(inferred facts), and the per-user representation (profile entries). Each carries the same
+never-translate instruction, so a Hebrew conversation yields a Hebrew profile and Hebrew
+consolidated/inferred memories, not English ones. Structural field keys (a memory's `entryType`,
+a triple's snake_case `predicate`, a pattern's `patternType`) and code identifiers stay verbatim in
+English — only the human-readable values follow the source language. As with summaries, a weak
+local model is the risk; a language-capable (qwen-class) model honors the instruction.
+
 ## Embedding and reranker
 
 Semantic recall (the vector lane) and recall re-ranking (the local GGUF cross-encoder) are only

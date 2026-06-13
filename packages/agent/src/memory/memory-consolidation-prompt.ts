@@ -20,6 +20,7 @@
 
 import { z } from "zod";
 import { parseLenientJson } from "./llm-json.js";
+import { MEMORY_LANGUAGE_PRESERVATION_INSTRUCTION } from "./memory-prompt-language.js";
 
 // ---------------------------------------------------------------------------
 // Prompt
@@ -47,7 +48,8 @@ Return ONLY valid JSON of the form:
 - "sourceIds": optional — the ids of the inputs you merged.
 
 Do NOT include a trust level. Do NOT mark anything as superseded or deleted.
-Output the merged statement only. No markdown fences, no commentary.`;
+Output the merged statement only. No markdown fences, no commentary.
+${MEMORY_LANGUAGE_PRESERVATION_INSTRUCTION}`;
 
 // ---------------------------------------------------------------------------
 // Parsing

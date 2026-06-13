@@ -30,6 +30,7 @@
 
 import { z } from "zod";
 import { parseLenientJson } from "./llm-json.js";
+import { MEMORY_LANGUAGE_PRESERVATION_INSTRUCTION } from "./memory-prompt-language.js";
 
 // ---------------------------------------------------------------------------
 // Prompts
@@ -57,7 +58,8 @@ Return ONLY valid JSON of the form:
 - "confidence": optional — your confidence (0.0-1.0) that the evidence supports this fact.
 
 Do NOT include a trust level. Do NOT mark anything as superseded or deleted.
-Output the single fact only. No markdown fences, no commentary.`;
+Output the single fact only. No markdown fences, no commentary.
+${MEMORY_LANGUAGE_PRESERVATION_INSTRUCTION}`;
 
 /**
  * The INDUCTIVE reasoning system prompt. Each call receives ONE
@@ -82,7 +84,8 @@ Return ONLY valid JSON of the form:
 - "confidence": optional — your confidence (0.0-1.0) that the evidence supports this pattern.
 
 Do NOT include a trust level. Do NOT mark anything as superseded or deleted.
-Output the single pattern only. No markdown fences, no commentary.`;
+Output the single pattern only. No markdown fences, no commentary.
+${MEMORY_LANGUAGE_PRESERVATION_INSTRUCTION}`;
 
 // ---------------------------------------------------------------------------
 // Parsing
