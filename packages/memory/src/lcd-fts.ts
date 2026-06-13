@@ -671,10 +671,19 @@ function searchViaScan(
     // Aggregate each message's parts into one haystack (the same tool_input/
     // tool_output/metadata columns searchViaLike scans), newest-first, R4-scoped.
     // GROUP BY collapses to one row per message (the DISTINCT-message contract).
+    //
+    // WR-03 (egress parity): the HAYSTACK stays the full multi-part concat —
+    // matchesAll must see every part's text. But the SNIPPET is bounded to ONE
+    // representative part (the first by ordinal), matching searchViaLike's
+    // single-part snippet and the FTS lane's single content column. The old
+    // group_concat(p.metadata) snippet dumped EVERY part's raw metadata JSON to
+    // the model (post taint-wrap + scrub), surfacing materially more content per
+    // hit than the other lanes for the same query. The correlated subquery is
+    // static SQL + the GROUP-BY key only (no interpolated identifiers).
     const stmt = db.prepare(`
       SELECT m.id AS ref_id,
              group_concat(COALESCE(p.tool_input,'') || ' ' || COALESCE(p.tool_output,'') || ' ' || COALESCE(p.metadata,''), ' ') AS haystack,
-             group_concat(p.metadata, ' ') AS snippet
+             (SELECT metadata FROM lcd_message_parts WHERE message_id = m.id ORDER BY ordinal LIMIT 1) AS snippet
       FROM lcd_messages m
       JOIN lcd_message_parts p ON p.message_id = m.id
       WHERE m.conversation_id = ? AND m.agent_id = ?
