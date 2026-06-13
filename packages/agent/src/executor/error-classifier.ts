@@ -55,6 +55,22 @@ export type ErrorCategory =
    * the upstream data integrity issue is understood.
    */
   | "empty_response"
+  /**
+   * Provider returned 404/not_found for the requested model — gated, renamed,
+   * or not enabled on this API plan (e.g. Anthropic "Claude Fable 5 is not
+   * available. Please use Opus 4.8."). Deterministic: the same model keeps
+   * 404-ing, so not retryable. Distinct from empty_response so the user is told
+   * the real, actionable cause instead of "a tool call returned no output".
+   */
+  | "model_not_available"
+  /**
+   * Couldn't reach the provider — DNS/socket/connection failure (ECONNREFUSED,
+   * ETIMEDOUT, fetch failed, …). Transient, so retryable. Distinct from
+   * content_filtered (whose /refus/ pattern would otherwise steal ECONNREFUSED)
+   * and from empty_response (the silent-failure handler wraps it as an empty
+   * response after retry).
+   */
+  | "provider_unreachable"
   | "unknown";
 
 export interface ClassifiedError {
@@ -168,6 +184,37 @@ const ERROR_PATTERNS: ErrorPattern[] = [
     category: "client_request",
     userMessage:
       "Your request couldn't be processed due to a formatting issue. This conversation may need to be reset.",
+    retryable: false,
+  },
+  // Provider unreachable: DNS/socket/connection failure reaching the API.
+  // Tested BEFORE content_filtered because ECONNREFUSED contains the literal
+  // "REFUSED" that the /refus/ content-filter pattern would otherwise steal
+  // (mislabelling a network outage as a "content restriction"), and BEFORE
+  // empty_response because the silent-failure handler wraps a connection error
+  // as "…produced empty response after retry … — <ECONNREFUSED…>" (F-17).
+  // Transient → retryable.
+  {
+    test: /ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|EPIPE|socket hang ?up|fetch failed|getaddrinfo|network error|connect(?:ion)?[ _](?:refused|reset|timed out|failure)/i,
+    category: "provider_unreachable",
+    userMessage:
+      "Couldn't reach the AI provider due to a network or connection problem. Please try again in a moment.",
+    retryable: true,
+  },
+  // Model unavailable: provider 404 / not_found for the requested model (gated,
+  // renamed, or not enabled on this API plan). Tested BEFORE empty_response
+  // because the silent-failure handler wraps it as "…produced empty response
+  // after retry … — 404 {…not_found_error… is not available…}", which would
+  // otherwise be misreported to the user as "a tool call returned no output"
+  // (F-17 — live-found 2026-06-13 via claude-fable-5 → 404 "Claude Fable 5 is
+  // not available. Please use Opus 4.8."). Deterministic (same model keeps
+  // 404-ing) → not retryable. Scoped to model/not_found semantics so it never
+  // steals the OpenAI reasoning_item "not found" case (signed-replay, tested
+  // above) nor a 503 "service unavailable" (overloaded, tested above).
+  {
+    test: /not_found_error|model_not_found|no such model|\bis not available\b|requested model.{0,30}(?:unavailable|not found|does not exist)/i,
+    category: "model_not_available",
+    userMessage:
+      "The requested AI model is unavailable from the provider — it may not exist, be renamed, or not be enabled on this API plan. Check the agent's configured model or notify the system administrator.",
     retryable: false,
   },
   // Content filtering / safety
