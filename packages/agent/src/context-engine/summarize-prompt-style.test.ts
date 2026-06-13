@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from "vitest";
-import { buildDepthAwareInstructions } from "./summarize-prompt-style.js";
+import {
+  buildDepthAwareInstructions,
+  LANGUAGE_PRESERVATION_INSTRUCTION,
+} from "./summarize-prompt-style.js";
 
 describe("buildDepthAwareInstructions — SUM-01 depth-keyed prompt styles", () => {
   describe("d0 (leaf extractive) — depth <= 0", () => {
@@ -115,6 +118,65 @@ describe("buildDepthAwareInstructions — SUM-01 depth-keyed prompt styles", () 
       expect(aggressive1.toLowerCase()).toMatch(/terse|brief|concise|shorter/);
       expect(aggressive2.toLowerCase()).toMatch(/terse|brief|concise|shorter/);
       expect(aggressive3.toLowerCase()).toMatch(/terse|brief|concise|shorter/);
+    });
+  });
+
+  describe("GEN-01: language-preservation sentence in every dag depth template", () => {
+    // Load-bearing fragments of the single shared sentence (design §4 GEN-01, I7).
+    // "never translate" pins the no-translation directive; the verbatim clause pins
+    // the code-identifier carve-out — together they assert the FULL sentence is present.
+    const NO_TRANSLATE_FRAGMENT = "never translate";
+    const VERBATIM_FRAGMENT =
+      "Keep code identifiers, file paths, tool names, and error strings verbatim.";
+
+    // depth ∈ {0, 1, 2, 3} × aggressive ∈ {true, false} = 8 cases.
+    const depths = [0, 1, 2, 3];
+    const modes = [true, false];
+    for (const depth of depths) {
+      for (const aggressive of modes) {
+        it(`depth=${depth} aggressive=${aggressive} contains the full shared language-preservation sentence`, () => {
+          const result = buildDepthAwareInstructions(depth, aggressive);
+          // The exported constant is the single source — the output must carry it whole.
+          expect(result).toContain(LANGUAGE_PRESERVATION_INSTRUCTION);
+          // Belt-and-suspenders on the two load-bearing fragments.
+          expect(result).toContain(NO_TRANSLATE_FRAGMENT);
+          expect(result).toContain(VERBATIM_FRAGMENT);
+        });
+      }
+    }
+
+    it("the exported constant itself carries both load-bearing fragments", () => {
+      expect(LANGUAGE_PRESERVATION_INSTRUCTION).toContain(NO_TRANSLATE_FRAGMENT);
+      expect(LANGUAGE_PRESERVATION_INSTRUCTION).toContain(VERBATIM_FRAGMENT);
+      // Anchored to the dominant-language phrasing from design §4 GEN-01.
+      expect(LANGUAGE_PRESERVATION_INSTRUCTION).toContain(
+        "Write the summary in the dominant language of the source content",
+      );
+    });
+
+    it("structural scaffolding tokens stay English — depth-0 keeps 'Files:' and 'Expand for:'", () => {
+      // Regression guard: the appended sentence must not displace the existing
+      // machine-parsed English scaffolding tokens (both aggressive modes).
+      for (const aggressive of modes) {
+        const d0 = buildDepthAwareInstructions(0, aggressive);
+        expect(d0).toContain("Files:");
+        expect(d0).toContain("Expand for:");
+      }
+    });
+
+    it("structural scaffolding tokens stay English — depth-1 keeps '[SUPERSEDED]'", () => {
+      for (const aggressive of modes) {
+        const d1 = buildDepthAwareInstructions(1, aggressive);
+        expect(d1).toContain("[SUPERSEDED]");
+      }
+    });
+
+    it("aggressive mode still appends the terse brevity directive AFTER the shared sentence (both carried)", () => {
+      // The append onto `base` precedes the aggressive ternary, so an aggressive
+      // output carries BOTH the shared sentence and the terse directive.
+      const aggressive = buildDepthAwareInstructions(0, true);
+      expect(aggressive).toContain(LANGUAGE_PRESERVATION_INSTRUCTION);
+      expect(aggressive.toLowerCase()).toContain("terse");
     });
   });
 });

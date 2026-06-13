@@ -56,6 +56,7 @@ import {
   clampFactorText,
   emitSummaryLanguageMismatch,
 } from "./compaction-zone-helpers.js";
+import { LANGUAGE_PRESERVATION_INSTRUCTION } from "./summarize-prompt-style.js";
 
 // ---------------------------------------------------------------------------
 // Compaction config subset
@@ -118,7 +119,9 @@ function buildComisCompactionInstructions(): string {
 - Currently in-progress work items and what is actively being worked on right now
 
 ## Next Steps
-- Ordered list of what should happen next`;
+- Ordered list of what should happen next
+
+${LANGUAGE_PRESERVATION_INSTRUCTION} However, keep the section headings (the "## ..." lines) exactly as given above, in English — only the section CONTENT follows the source language.`;
 }
 
 // ---------------------------------------------------------------------------
