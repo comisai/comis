@@ -1598,3 +1598,131 @@ describe("SUMW-01 review WR-05: leaf clamp defensive posture", () => {
     expect(Math.max(...sizes)).toBeLessThanOrEqual(20);
   });
 });
+
+// ===========================================================================
+// OBS-01 (Phase 180-08): summary_language_mismatch at the dag LEAF site (depth 0)
+// ===========================================================================
+//
+// The requirement's exact four-row matrix at the leaf site. RED on pre-patch:
+// maybeRunLeafPass emits NO context:summary_language_mismatch. The source script
+// is driven by the seeded MESSAGE content (the summarizer INPUT chunk); the
+// summary script is driven by the injected summarizer's output text. All Hebrew
+// glyphs are built from String.fromCodePoint (WR-01) so a shell/editor mojibake
+// can never desync the fixture.
+describe("maybeRunLeafPass — summary_language_mismatch (OBS-01, depth 0)", () => {
+  let db: Database.Database;
+  let store: ContextStorePort;
+
+  // Hebrew word "ספר" (samekh-pe-resh) repeated — unambiguously Hebrew-dominant.
+  const HEBREW_WORD = String.fromCodePoint(0x05e1, 0x05e4, 0x05e8);
+  const HEBREW_TEXT = `${HEBREW_WORD} ${HEBREW_WORD} ${HEBREW_WORD} ${HEBREW_WORD}`;
+  const HEBREW_SUMMARY = `${HEBREW_WORD} ${HEBREW_WORD}`;
+  const ENGLISH_SUMMARY = "the user discussed books and reading at length";
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    initSchema(db, 1536);
+    store = createLcdStore(db);
+  });
+
+  /** Seed `count` alternating Hebrew-content user/assistant messages. */
+  function seedHebrew(count: number, tokensEach: number): void {
+    for (let i = 0; i < count; i++) {
+      const msg = i % 2 === 0 ? userMsg(HEBREW_TEXT) : assistantText(HEBREW_TEXT);
+      append(store, msg, i, tokensEach, 1000 + i);
+    }
+  }
+
+  /** Seed `count` alternating English-content messages. */
+  function seedEnglish(count: number, tokensEach: number): void {
+    for (let i = 0; i < count; i++) {
+      const msg = i % 2 === 0 ? userMsg("the user discussed books") : assistantText("books and reading");
+      append(store, msg, i, tokensEach, 1000 + i);
+    }
+  }
+
+  async function runLeaf(summaryText: string, bus: TypedEventBus): Promise<void> {
+    const logger = createMockLogger();
+    await maybeRunLeafPass(
+      store,
+      SCOPE,
+      opts({ windowTokens: 1_000 }),
+      makeSummarizerDeps(shortSummarizer(summaryText), logger),
+      FIXED_NOW,
+      undefined,
+      logger as unknown as LeafSummarizerDeps["logger"],
+      bus,
+    );
+  }
+
+  it("FIRES on a Hebrew source → English summary with { sourceScript: hebrew, summaryScript: latin, depth: 0 }", async () => {
+    seedHebrew(40, 100);
+    const { bus, emits } = makeEventBus();
+    await runLeaf(ENGLISH_SUMMARY, bus);
+
+    const mism = emits.filter((e) => e.event === "context:summary_language_mismatch");
+    expect(mism.length).toBe(1);
+    expect(mism[0]!.payload.sourceScript).toBe("hebrew");
+    expect(mism[0]!.payload.summaryScript).toBe("latin");
+    expect(mism[0]!.payload.depth).toBe(0);
+    expect(mism[0]!.payload.agentId).toBe("agent_a");
+    expect(mism[0]!.payload.sessionKey).toBe("sess-a");
+    expect(typeof mism[0]!.payload.timestamp).toBe("number");
+  });
+
+  it("is SILENT on a Hebrew source → Hebrew summary (the instruction was obeyed)", async () => {
+    seedHebrew(40, 100);
+    const { bus, emits } = makeEventBus();
+    await runLeaf(HEBREW_SUMMARY, bus);
+    expect(emits.filter((e) => e.event === "context:summary_language_mismatch").length).toBe(0);
+  });
+
+  it("is SILENT on a Latin source → Latin summary", async () => {
+    seedEnglish(40, 100);
+    const { bus, emits } = makeEventBus();
+    await runLeaf(ENGLISH_SUMMARY, bus);
+    expect(emits.filter((e) => e.event === "context:summary_language_mismatch").length).toBe(0);
+  });
+
+  it("is SILENT on a code-heavy mixed chunk (latin-dominant under the 0.3 threshold) → English summary", async () => {
+    // A chunk that is mostly code/ASCII with only a little Hebrew → dominantScript
+    // returns "latin" for the source (the mismatch-tolerance dependency), so even
+    // an English summary does NOT fire. Seed a long code-heavy body per message.
+    const codeHeavy = `function handleRequest(req, res) { const x = 42; return res.json({ ok: true }); } // ${HEBREW_WORD}`;
+    for (let i = 0; i < 40; i++) {
+      const msg = i % 2 === 0 ? userMsg(codeHeavy) : assistantText(codeHeavy);
+      append(store, msg, i, 100, 1000 + i);
+    }
+    const { bus, emits } = makeEventBus();
+    await runLeaf(ENGLISH_SUMMARY, bus);
+    expect(emits.filter((e) => e.event === "context:summary_language_mismatch").length).toBe(0);
+  });
+
+  it("never fails the leaf pass when the mismatch subscriber throws (guarded emit)", async () => {
+    seedHebrew(40, 100);
+    // A bus that throws ONLY for the mismatch event (dag_compacted still records).
+    const throwingBus = {
+      emit: (event: string) => {
+        if (event === "context:summary_language_mismatch") throw new Error("subscriber boom");
+        return true;
+      },
+    } as unknown as TypedEventBus;
+    // The pass must complete: the leaf summary is still persisted.
+    await runLeaf(ENGLISH_SUMMARY, throwingBus);
+    const summaries = store.getSummaries(SCOPE);
+    expect(summaries.length).toBe(1);
+    expect(summaries[0]!.kind).toBe("leaf");
+  });
+
+  it("never leaks the summary or source body into the mismatch payload", async () => {
+    seedHebrew(40, 100);
+    const uniqueSummary = `UNIQUE-LEAK-PROBE-${HEBREW_WORD}-marker the books`;
+    const { bus, emits } = makeEventBus();
+    await runLeaf(uniqueSummary, bus);
+    const mism = emits.filter((e) => e.event === "context:summary_language_mismatch");
+    expect(mism.length).toBe(1);
+    const blob = JSON.stringify(mism[0]!.payload);
+    expect(blob).not.toContain("UNIQUE-LEAK-PROBE");
+    expect(blob).not.toContain(HEBREW_TEXT);
+  });
+});
