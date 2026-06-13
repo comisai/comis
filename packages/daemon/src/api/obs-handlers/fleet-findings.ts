@@ -58,6 +58,36 @@ function servedBelowConfiguredFromRow(row: DiagnosticRow): number {
   }
 }
 
+/** A single advisory multilingual flag from a model_health row. `undefined`
+ *  means the key was absent or not a recognized value (omitted, no advisory). */
+type MultilingualFlag = boolean | "unknown" | undefined;
+
+/** EMB-01: the two advisory multilingual flags from a model_health row's details
+ *  JSON. Defensive parse cloning servedBelowConfiguredFromRow — malformed/missing
+ *  details folds to `{}` (soft-fail, never throws, NEVER echoes a body). A field
+ *  is read only when it is a boolean or the exact string "unknown", else omitted
+ *  (an old row that predates EMB-01 lacks the keys -> no advisory). */
+function multilingualFromRow(row: DiagnosticRow): {
+  embedding: MultilingualFlag;
+  reranker: MultilingualFlag;
+} {
+  if (row.details === undefined) return { embedding: undefined, reranker: undefined };
+  try {
+    const parsed = JSON.parse(row.details) as {
+      embeddingMultilingual?: unknown;
+      rerankerMultilingual?: unknown;
+    };
+    const coerce = (v: unknown): MultilingualFlag =>
+      typeof v === "boolean" || v === "unknown" ? v : undefined;
+    return {
+      embedding: coerce(parsed.embeddingMultilingual),
+      reranker: coerce(parsed.rerankerMultilingual),
+    };
+  } catch {
+    return { embedding: undefined, reranker: undefined };
+  }
+}
+
 /** OBS-01 (Phase 180): health_signal labels that get a DEDICATED fleet finding
  *  (the KNOB-03 precedent) and are therefore EXCLUDED from the generic
  *  `health_signal:<label>` rollup below — listing one here without adding its
@@ -162,6 +192,33 @@ export function buildFindings(
       count: modelHealth.length,
       hint: "check provider status + rate-limit headroom; confirm the model/provider config",
     });
+
+    // EMB-01: multilingual advisory read from the LATEST model_health row
+    // (STANDING STATE, not a reboot count — mirror the KNOB-03 latest-row pattern
+    // below, NOT the generic count above; Pitfall 4). Counts/codes/hints only; the
+    // hint names the DOC-01 recommendation + the I4 FTS floor. Advisory ONLY — no
+    // recall/search behavior gates on these flags anywhere (I4).
+    let latestModelHealth = modelHealth[0]!;
+    for (const row of modelHealth) {
+      if (row.timestamp > latestModelHealth.timestamp) latestModelHealth = row;
+    }
+    const ml = multilingualFromRow(latestModelHealth);
+    if (ml.embedding === false || ml.embedding === "unknown") {
+      findings.push({
+        code: "model_health:embedder_not_multilingual",
+        detail: `embedder not multilingual (${ml.embedding === "unknown" ? "id-inferred unknown" : "declared/known English"}): non-Latin semantic recall coverage degraded`,
+        count: 1,
+        hint: "set embedding.multilingual or switch to bge-m3 / multilingual-e5 / LaBSE; the FTS trigram floor still carries recall (advisory only, not gated)",
+      });
+    }
+    if (ml.reranker === false || ml.reranker === "unknown") {
+      findings.push({
+        code: "model_health:reranker_not_multilingual",
+        detail: `reranker not multilingual (${ml.reranker === "unknown" ? "id-inferred unknown" : "known English"}): non-Latin recall ORDERING degraded`,
+        count: 1,
+        hint: "switch the reranker to bge-reranker-v2-m3 (the default); the FTS trigram floor still carries recall (advisory only, not gated)",
+      });
+    }
   }
   if (configPosture.length > 0) {
     findings.push({
