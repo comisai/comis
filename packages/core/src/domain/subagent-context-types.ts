@@ -100,6 +100,8 @@ export interface SpawnPacket {
    *  Child agents restore these into their DiscoveryTracker so previously-discovered
    *  tools are immediately available without re-discovery. */
   discoveredDeferredTools?: string[];
+  /** Inherited conversation language (DET-02 tag); auto-populated from parent. */
+  language?: string;
   /** Cached prompt state from parent for prefix sharing.
    *  When present and model/provider match, sub-agent reuses parent's frozen
    *  system prompt instead of building its own. */
