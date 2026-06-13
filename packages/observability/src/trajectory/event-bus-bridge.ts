@@ -83,6 +83,11 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // F2 (D5): per-session health rollup emitted once at agent-end.
   "session:summary": "session.summary",
   "memory:injected": "memory.injected",
+  // RECALL-01 (observability-excellence): the per-recall lane/candidate/final counts +
+  // rerank outcome — previously emitted but UNMAPPED (invisible to comis explain/trace,
+  // the #1 troubleshooting blind spot). Content-free (counts/booleans only — H1).
+  "memory:recalled": "memory.recalled",
+  "memory:reranked": "memory.reranked",
 
   // ---- Delivery lifecycle ----
   "delivery:enqueued": "delivery.queued",

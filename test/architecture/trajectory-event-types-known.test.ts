@@ -120,15 +120,13 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
   // Recall-pipeline diagnostic counters — counts-only observability
   // events fed into the recall-trace sidecar + recall-counters store, NOT
   // turn-level trajectory steps. Same class as memory:consolidated above:
-  //   memory:recalled        — per-recall lane/candidate/final counts.
-  //   memory:reranked         — rerank candidate/hit counts + outcome flags.
   //   memory:entities_linked — entity resolveAndLink counts (newEntities).
   //   memory:recall_used     — recall-usage attribution: used/ignored
   //     memory ids + counts, consumed by the daemon write-back subscriber
   //     (setup-memory-usefulness-wiring.ts → MemoryUsefulnessStore.recordUsage),
   //     NOT a turn-level trajectory step.
-  "memory:recalled",
-  "memory:reranked",
+  // NB: memory:recalled / memory:reranked are now BRIDGED to the trajectory
+  // (RECALL-01 — the #1 troubleshooting blind spot), so they are NOT listed here.
   "memory:entities_linked",
   "memory:recall_used",
 

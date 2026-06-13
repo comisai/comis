@@ -221,6 +221,32 @@ export function translatePayload(
         trustTags: payload.trustTags,
       };
 
+    case "memory:recalled":
+      // RECALL-01: per-recall lane/candidate/final counts (the #1 blind spot, now on
+      // the explain/trace timeline). Counts/booleans ONLY — never query text or memory
+      // bodies; agentId/sessionKey/traceId are envelope correlation ids (§2.7 / H1).
+      return {
+        lanes: payload.lanes,
+        ftsCandidates: payload.ftsCandidates,
+        vectorCandidates: payload.vectorCandidates,
+        entityCandidates: payload.entityCandidates,
+        finalCount: payload.finalCount,
+        rerankerAvailable: payload.rerankerAvailable,
+        durationMs: payload.durationMs,
+      };
+
+    case "memory:reranked":
+      // RECALL-01: rerank candidate/hit counts + the graceful-degradation flags
+      // (timedOut/fellBack) — counts/booleans ONLY (§2.7 / H1).
+      return {
+        candidateCount: payload.candidateCount,
+        hitCount: payload.hitCount,
+        rerankerAvailable: payload.rerankerAvailable,
+        timedOut: payload.timedOut,
+        fellBack: payload.fellBack,
+        durationMs: payload.durationMs,
+      };
+
     case "delivery:enqueued":
       return {
         entryId: payload.entryId,

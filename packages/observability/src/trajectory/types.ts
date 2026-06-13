@@ -72,6 +72,9 @@ export const TRAJECTORY_EVENT_TYPES = [
 
   // Memory injection observability.
   "memory.injected",
+  // RECALL-01: per-recall lane/candidate/final counts + rerank outcome (content-free).
+  "memory.recalled",
+  "memory.reranked",
 
   // Delivery queue lifecycle.
   "delivery.queued",
