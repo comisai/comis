@@ -27,13 +27,19 @@ function createSpiedObsStore(): {
 }
 
 describe("recordModelHealth", () => {
-  it("writes a model_health row with severity info when embedding is available and details carry exactly the three booleans", () => {
+  it("writes a model_health row with severity info when embedding is available and details carry exactly the five advisory keys", () => {
     const { obsStore, insertDiagnostic } = createSpiedObsStore();
     const clock = createFakeClock(1000);
 
     recordModelHealth(
       obsStore,
-      { embeddingAvailable: true, rerankerModelPresent: true, rerankerBuilt: true },
+      {
+        embeddingAvailable: true,
+        rerankerModelPresent: true,
+        rerankerBuilt: true,
+        embeddingMultilingual: "unknown",
+        rerankerMultilingual: true,
+      },
       clock,
     );
 
@@ -45,11 +51,14 @@ describe("recordModelHealth", () => {
     expect(row.message).toBe("model_health");
 
     const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
-    // EXACTLY the three booleans — no extra keys, no free text, no model paths.
+    // EXACTLY the five booleans/"unknown" values — no extra keys, no free text,
+    // no model paths/URIs (I8 content-free contract).
     expect(details).toEqual({
       embeddingAvailable: true,
       rerankerModelPresent: true,
       rerankerBuilt: true,
+      embeddingMultilingual: "unknown",
+      rerankerMultilingual: true,
     });
   });
 
@@ -59,7 +68,13 @@ describe("recordModelHealth", () => {
 
     recordModelHealth(
       obsStore,
-      { embeddingAvailable: false, rerankerModelPresent: true, rerankerBuilt: false },
+      {
+        embeddingAvailable: false,
+        rerankerModelPresent: true,
+        rerankerBuilt: false,
+        embeddingMultilingual: false,
+        rerankerMultilingual: "unknown",
+      },
       clock,
     );
 
@@ -72,7 +87,83 @@ describe("recordModelHealth", () => {
       embeddingAvailable: false,
       rerankerModelPresent: true,
       rerankerBuilt: false,
+      embeddingMultilingual: false,
+      rerankerMultilingual: "unknown",
     });
+  });
+
+  it("round-trips an \"unknown\" multilingual value in details as the string \"unknown\"", () => {
+    const { obsStore, insertDiagnostic } = createSpiedObsStore();
+    const clock = createFakeClock(2500);
+
+    recordModelHealth(
+      obsStore,
+      {
+        embeddingAvailable: true,
+        rerankerModelPresent: false,
+        rerankerBuilt: false,
+        embeddingMultilingual: "unknown",
+        rerankerMultilingual: "unknown",
+      },
+      clock,
+    );
+
+    const row = insertDiagnostic.mock.calls[0]?.[0] as DiagnosticRow;
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(details.embeddingMultilingual).toBe("unknown");
+    expect(details.rerankerMultilingual).toBe("unknown");
+  });
+
+  it("keeps severity driven by embeddingAvailable only — a non-multilingual but AVAILABLE embedder is info, not warning", () => {
+    const { obsStore, insertDiagnostic } = createSpiedObsStore();
+    const clock = createFakeClock(2700);
+
+    recordModelHealth(
+      obsStore,
+      {
+        embeddingAvailable: true, // available...
+        rerankerModelPresent: true,
+        rerankerBuilt: true,
+        embeddingMultilingual: false, // ...but English-leaning — must NOT escalate severity
+        rerankerMultilingual: false,
+      },
+      clock,
+    );
+
+    const row = insertDiagnostic.mock.calls[0]?.[0] as DiagnosticRow;
+    expect(row.severity).toBe("info");
+  });
+
+  it("carries NO model URI / path / secret in details — only the five booleans/\"unknown\" keys (I8 content-free)", () => {
+    const { obsStore, insertDiagnostic } = createSpiedObsStore();
+    const clock = createFakeClock(2900);
+
+    recordModelHealth(
+      obsStore,
+      {
+        embeddingAvailable: true,
+        rerankerModelPresent: true,
+        rerankerBuilt: true,
+        embeddingMultilingual: true,
+        rerankerMultilingual: true,
+      },
+      clock,
+    );
+
+    const row = insertDiagnostic.mock.calls[0]?.[0] as DiagnosticRow;
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    // Exactly the expected key set — no modelUri / rerankerModel / path leaked.
+    expect(Object.keys(details).sort()).toEqual([
+      "embeddingAvailable",
+      "embeddingMultilingual",
+      "rerankerBuilt",
+      "rerankerModelPresent",
+      "rerankerMultilingual",
+    ]);
+    const serialized = row.details ?? "";
+    expect(serialized).not.toContain("hf:");
+    expect(serialized).not.toContain(".gguf");
+    expect(serialized).not.toContain("modelUri");
   });
 
   it("no-ops without throwing when persistence is disabled (obsStore undefined)", () => {
@@ -83,7 +174,13 @@ describe("recordModelHealth", () => {
     expect(() =>
       recordModelHealth(
         undefined,
-        { embeddingAvailable: true, rerankerModelPresent: false, rerankerBuilt: false },
+        {
+          embeddingAvailable: true,
+          rerankerModelPresent: false,
+          rerankerBuilt: false,
+          embeddingMultilingual: "unknown",
+          rerankerMultilingual: "unknown",
+        },
         clock,
       ),
     ).not.toThrow();
@@ -97,7 +194,13 @@ describe("recordModelHealth", () => {
 
     recordModelHealth(
       obsStore,
-      { embeddingAvailable: true, rerankerModelPresent: true, rerankerBuilt: true },
+      {
+        embeddingAvailable: true,
+        rerankerModelPresent: true,
+        rerankerBuilt: true,
+        embeddingMultilingual: "unknown",
+        rerankerMultilingual: true,
+      },
       clock,
     );
 
