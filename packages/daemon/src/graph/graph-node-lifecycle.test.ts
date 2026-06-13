@@ -432,6 +432,89 @@ describe("spawnNode: mcpServers pre-seeding", () => {
 });
 
 // ---------------------------------------------------------------------------
+// spawnNode: resolvedLanguage -> envelope Language line (GEN-03 graph leg)
+//
+// The carrier GraphRunState.resolvedLanguage (set once at graph submission from
+// the caller's RequestContext.resolvedLanguage) is threaded into
+// buildContextEnvelope, so the enveloped task the node spawns with carries the
+// verbatim-preserving Language directive in the conversation language.
+// ---------------------------------------------------------------------------
+
+describe("spawnNode: resolvedLanguage threading", () => {
+  let state: CoordinatorSharedState;
+  let deps: ReturnType<typeof makeDeps>;
+  let config: CoordinatorConfig;
+
+  beforeEach(() => {
+    state = makeState();
+    deps = makeDeps();
+    config = makeConfig();
+  });
+
+  it("threads a non-en resolvedLanguage into the node task envelope Language line", () => {
+    const gs = makeGraphRunState({
+      resolvedLanguage: "he",
+      graph: {
+        graph: {
+          label: "test",
+          nodes: [
+            { nodeId: "node-1", task: "Summarize the findings", agentId: "agent-1", dependsOn: [] },
+          ],
+          edges: [],
+        },
+      } as any,
+    });
+
+    const callbacks = {
+      markNodeFailed: vi.fn(),
+      startDriverNode: vi.fn(),
+      spawnReadyNodes: vi.fn(),
+    };
+
+    spawnNode(state, deps, config, gs, "node-1", callbacks);
+
+    expect(deps.subAgentRunner.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        // The enveloped task carries the verbatim-preserving Language directive
+        // (I7: same sentence as the 181-04 sub-agent role section).
+        task: expect.stringContaining(
+          "Produce all user-facing output in he (the conversation language). Code, identifiers, and file paths stay verbatim.",
+        ),
+      }),
+    );
+    expect(deps.subAgentRunner.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({ task: expect.stringContaining("## Language") }),
+    );
+  });
+
+  it("emits no Language line in the node task envelope when resolvedLanguage is undefined (I1)", () => {
+    const gs = makeGraphRunState({
+      // resolvedLanguage not set (undefined)
+      graph: {
+        graph: {
+          label: "test",
+          nodes: [
+            { nodeId: "node-1", task: "Summarize the findings", agentId: "agent-1", dependsOn: [] },
+          ],
+          edges: [],
+        },
+      } as any,
+    });
+
+    const callbacks = {
+      markNodeFailed: vi.fn(),
+      startDriverNode: vi.fn(),
+      spawnReadyNodes: vi.fn(),
+    };
+
+    spawnNode(state, deps, config, gs, "node-1", callbacks);
+
+    const spawnArg = (deps.subAgentRunner.spawn as ReturnType<typeof vi.fn>).mock.calls[0]![0] as { task: string };
+    expect(spawnArg.task).not.toContain("## Language");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // graph-node-lifecycle honors §1.4 mode invariants on substrate-routed writes
 //
 // The node-lifecycle's two write sites — the `${nodeId}-output.md`
