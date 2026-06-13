@@ -600,6 +600,25 @@ export function translatePayload(
         overflowStripped: payload.overflowStripped,
       };
 
+    // OBS-01 (Phase 180): the multilingual signals. Closed ScriptClass/lane
+    // enums + identifiers ONLY — never query text or summary bodies. agentId +
+    // sessionKey are envelope-only and stripped (the budget_computed precedent);
+    // conversationId is the DAG conversation identifier (an id, not content) and
+    // is forwarded so the explain timeline can join the zero-hit to its session.
+    case "context:script_zero_hit":
+      return {
+        scriptClass: payload.scriptClass,
+        lane: payload.lane,
+        conversationId: payload.conversationId,
+      };
+
+    case "context:summary_language_mismatch":
+      return {
+        sourceScript: payload.sourceScript,
+        summaryScript: payload.summaryScript,
+        depth: payload.depth,
+      };
+
     // ---- Approval / human-in-the-loop ----
     // SECURITY INVARIANT: approval:requested.params is raw unconstrained
     // tool arguments — file paths, message bodies, or credentials. MUST be omitted

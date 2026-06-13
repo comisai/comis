@@ -999,6 +999,24 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       overflowStripped: false,
       timestamp: 0,
     },
+    // OBS-01 (Phase 180): the two multilingual signals — the envelope-only
+    // correlation invariant must hold for them too (no agentId/sessionKey leak).
+    "context:script_zero_hit": {
+      conversationId: "t1:u1:c1",
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      scriptClass: "hebrew",
+      lane: "tri",
+      timestamp: 0,
+    },
+    "context:summary_language_mismatch": {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      sourceScript: "hebrew",
+      summaryScript: "latin",
+      depth: 1,
+      timestamp: 0,
+    },
     // approval events
     "approval:requested": {
       requestId: "req-1",

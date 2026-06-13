@@ -18,7 +18,7 @@ import { describe, it, expect } from "vitest";
 import { translatePayload } from "./translate-payload.js";
 
 describe("translatePayload — OBS-01 script signals (envelope stripping)", () => {
-  it("context:script_zero_hit -> exactly {scriptClass, lane, conversationId}", () => {
+  it("forwards context:script_zero_hit as exactly {scriptClass, lane, conversationId}", () => {
     const data = translatePayload("context:script_zero_hit", {
       conversationId: "t1:u1:c1",
       agentId: "agent-1",
@@ -34,7 +34,7 @@ describe("translatePayload — OBS-01 script signals (envelope stripping)", () =
     expect(data.timestamp).toBeUndefined();
   });
 
-  it("context:summary_language_mismatch -> exactly {sourceScript, summaryScript, depth}", () => {
+  it("forwards context:summary_language_mismatch as exactly {sourceScript, summaryScript, depth}", () => {
     const data = translatePayload("context:summary_language_mismatch", {
       agentId: "agent-1",
       sessionKey: "t1:u1:c1",
