@@ -268,6 +268,63 @@ describe("handleMemoryCronSentinel", () => {
     expect(mockRunMemoryReasoning).not.toHaveBeenCalled();
     expect(onComplete).toHaveBeenCalledWith({ status: "error", error: "No agentId for memory reasoning" });
   });
+
+  // -------------------------------------------------------------------------
+  // KEYLESS-CRON (live-found 2026-06-13, qwen3.6:35b run): the main completion
+  // path resolves keyless local providers (ollama / lm-studio) via
+  // KEYLESS_PROVIDER_TYPES, but the cost-cron gate blindly required an API key
+  // and SILENTLY SKIPPED — disabling the entire LTM-learning layer
+  // (consolidation/reasoning/user-representation/review) on local-model
+  // deployments, with a MISLEADING "Set OLLAMA_API_KEY" hint (Ollama is keyless).
+  // The fix mirrors credential-resolver.ts: keyless providers proceed with the
+  // KEYLESS_API_KEY_SENTINEL instead of being skipped.
+  // -------------------------------------------------------------------------
+  it("KEYLESS: an ollama agent with NO API key STILL runs consolidation (keyless sentinel, not skipped)", async () => {
+    mockResolveOperationModel.mockReturnValue({
+      provider: "ollama",
+      modelId: "ollama:qwen3.6:35b",
+      model: "ollama:qwen3.6:35b",
+      timeoutMs: 60_000,
+      source: "default",
+    } as any);
+    const ctx = makeCtx({
+      agents: { "agent-1": { name: "Agent 1", provider: "ollama", memoryConsolidation: { enabled: true } } },
+      apiKey: undefined, // NO key in the secret store — keyless local provider
+    });
+    const onComplete = vi.fn();
+    await handleMemoryCronSentinel("__MEMORY_CONSOLIDATION__", { agentId: "agent-1", onComplete }, ctx);
+    expect(mockRunMemoryConsolidation).toHaveBeenCalledOnce();
+    const arg = mockRunMemoryConsolidation.mock.calls[0][0] as Record<string, unknown>;
+    expect(arg.apiKey).toBe("ollama-no-auth");
+    expect(onComplete).toHaveBeenCalledWith({ status: "ok", error: undefined });
+  });
+
+  it("KEYLESS: an ollama agent with NO API key STILL runs the user-representation build", async () => {
+    mockResolveOperationModel.mockReturnValue({
+      provider: "ollama", modelId: "ollama:qwen3.6:35b", model: "ollama:qwen3.6:35b", timeoutMs: 60_000, source: "default",
+    } as any);
+    const ctx = makeCtx({
+      agents: { "agent-1": { name: "Agent 1", provider: "ollama", memoryUserRepresentation: { enabled: true } } },
+      apiKey: undefined,
+      inspectRows: [{ id: "m1", userId: "u1", content: "fact", trustLevel: "learned", source: { sessionKey: "s1" } }],
+    });
+    // The user-rep handler requires the write surface (injected from setup-memory).
+    (ctx as any).userRepresentationStore = { upsert: vi.fn(), read: vi.fn() };
+    const onComplete = vi.fn();
+    await handleMemoryCronSentinel("__USER_REPRESENTATION__", { agentId: "agent-1", onComplete }, ctx);
+    expect(mockRunUserRepresentationBuild).toHaveBeenCalled();
+  });
+
+  it("KEYLESS-guard: a NON-keyless (anthropic) agent with NO API key STILL skips (real misconfig fails loud)", async () => {
+    // The keyless allowance must NOT mask a genuine missing-key misconfiguration.
+    const ctx = makeCtx({
+      agents: { "agent-1": { name: "Agent 1", provider: "anthropic", memoryConsolidation: { enabled: true } } },
+      apiKey: undefined,
+    });
+    const onComplete = vi.fn();
+    await handleMemoryCronSentinel("__MEMORY_CONSOLIDATION__", { agentId: "agent-1", onComplete }, ctx);
+    expect(mockRunMemoryConsolidation).not.toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------
