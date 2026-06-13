@@ -2303,10 +2303,15 @@ describe("GEN-02: degraded-reply chokepoint resolves language once + passes the 
       .split("\n")
       .filter((l) => !l.trim().startsWith("//"))
       .join("\n");
-    // Scope to the CWF-05 degraded section (the 3 endReason gates).
-    const start = stripped.indexOf("CWF-05: degrade loudly");
-    const startPos = start >= 0 ? start : 0;
-    // End at the next major block marker after the loop_detected gate.
+    // Scope to the CWF-05 degraded section (the 3 endReason gates). Anchor on
+    // CODE that survives comment-stripping: the resolve line is emitted just
+    // before the first gate, so start at the resolveReplyLanguage call (or, as a
+    // pre-patch fallback, the first effectiveFinishReason gate) and end at the
+    // resolveScaffoldDefaults block that follows the loop_detected gate.
+    const resolveStart = stripped.indexOf("resolveReplyLanguage(");
+    const gateStart = stripped.indexOf('effectiveFinishReason === "output_starved"');
+    const candidates = [resolveStart, gateStart].filter((p) => p >= 0);
+    const startPos = candidates.length > 0 ? Math.min(...candidates) : 0;
     const endMarker = stripped.indexOf("resolveScaffoldDefaults", startPos);
     return endMarker > startPos ? stripped.slice(startPos, endMarker) : stripped.slice(startPos);
   }
