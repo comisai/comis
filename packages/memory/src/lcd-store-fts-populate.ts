@@ -19,11 +19,13 @@
  * (plan 180-05) imports, which is the entire FTS-01 contract: query מלך finds
  * stored מלכים because both fold identically.
  *
- * The twin statements are prepared inside a try/catch — `prepare()` THROWS on a
- * trigram-less host (the twin tables are absent → "no such table"), so a failed
- * prep sets the handles null and every twin method becomes a clean no-op. This
- * mirrors the `isFtsAvailable` defensive posture without a second probe: if the
- * twin statements compiled, the twin tables exist.
+ * Each twin's statements are prepared inside its OWN try/catch — `prepare()`
+ * THROWS on a trigram-less host (the twin tables are absent → "no such table"),
+ * so a failed prep sets THAT twin's handles null and its methods become a clean
+ * no-op. This mirrors the `isFtsAvailable` defensive posture without a second
+ * probe: if a twin's statements compiled, that twin's table exists. The preps are
+ * INDEPENDENT (WR-01) so a partial-schema host with one twin present and the other
+ * absent keeps the present twin live — matching ensureTrigramTwins's per-block DDL.
  *
  * `@comis/memory` is infra-free (AGENTS.md §2.4 — no logger): a degraded
  * populate skips the index row silently by design (WR-03); a twin failure leaves
@@ -129,22 +131,39 @@ export function createFtsPopulator(db: Database.Database): FtsPopulator {
   // (so no second runtime probe is needed). The twin's rowid = the base rowid
   // (the same linkage insertMessageFts uses) so the 180-02 AFTER DELETE triggers
   // mirror twin deletes by `old.rowid`.
+  //
+  // WR-01: prepare EACH twin in its OWN try/catch — mirror ensureTrigramTwins's
+  // per-block DDL independence. On a partial-schema host where the message twin
+  // exists but the summaries twin does NOT (e.g. the summaries CREATE failed while
+  // the messages one succeeded, or a hand-edited dev DB — each DDL twin lives in
+  // its own block, so this divergence is reachable), a single shared try/catch
+  // would let the absent-summaries prep throw and null the message-twin handle
+  // too, silently de-activating a message trigram lane that IS present and IS
+  // being read by searchTrigram. Independent preps keep each present twin live.
   let insertMessageTri: Database.Statement | null = null;
-  let insertSummaryTriStmt: Database.Statement | null = null;
-  let selectSummaryRowid: Database.Statement | null = null;
   try {
     insertMessageTri = db.prepare(
       "INSERT INTO lcd_messages_fts_tri(rowid, content, conversation_id, agent_id, message_id) VALUES (?, ?, ?, ?, ?)",
     );
+  } catch {
+    // Message twin absent (trigram tokenizer missing, or this twin's DDL block
+    // failed) → the handle stays null and populateMessageTri is a clean no-op.
+    insertMessageTri = null;
+  }
+
+  // The summary twin needs BOTH statements (the rowid lookup + the insert), so
+  // they share ONE try/catch — they target the SAME twin and are useless apart.
+  let insertSummaryTriStmt: Database.Statement | null = null;
+  let selectSummaryRowid: Database.Statement | null = null;
+  try {
     insertSummaryTriStmt = db.prepare(
       "INSERT INTO lcd_summaries_fts_tri(rowid, content, conversation_id, agent_id, summary_id) VALUES (?, ?, ?, ?, ?)",
     );
     selectSummaryRowid = db.prepare("SELECT rowid FROM lcd_summaries WHERE summary_id = ?");
   } catch {
-    // Trigram tokenizer not compiled into this host's better-sqlite3 (the twin
-    // tables are absent — ensureTrigramTwins skipped them). Boot WITHOUT the twin
-    // lane: the handles stay null and every twin method below is a clean no-op.
-    insertMessageTri = null;
+    // Summary twin absent (trigram tokenizer missing, or this twin's DDL block
+    // failed) → both handles stay null and insertSummaryTri is a clean no-op. A
+    // present message twin (above) is UNAFFECTED (WR-01).
     insertSummaryTriStmt = null;
     selectSummaryRowid = null;
   }
