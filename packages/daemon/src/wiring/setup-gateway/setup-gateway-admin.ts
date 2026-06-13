@@ -77,6 +77,32 @@ export function deriveTrustLevel(scopes: readonly string[] | undefined): "admin"
   return "user";
 }
 
+/**
+ * Resolve the agent id for an execute request. An ABSENT agentId defaults to
+ * `defaultAgentId` (intended); an explicit but UNKNOWN agentId is an ERROR, not a
+ * silent fallback.
+ *
+ * Live finding (F-1, 2026-06-12): falling back to default on an unknown agentId
+ * meant a request addressed to a local $0 model (e.g. "qwen35") was silently
+ * answered — and billed — by the paid default provider, with no signal to the
+ * caller (a routing-integrity hole + silent cross-provider spend). The thrown
+ * error is `clientFacing` so the gateway surfaces its message verbatim instead of
+ * the generic "Internal error" reserved for provider/internal faults.
+ */
+export function resolveExecAgentId(
+  agents: Record<string, unknown>,
+  rawAgentId: string | undefined,
+  defaultAgentId: string,
+): string {
+  if (rawAgentId !== undefined && !agents[rawAgentId]) {
+    throw Object.assign(
+      new Error(`unknown agent: ${rawAgentId} (available: ${Object.keys(agents).join(", ")})`),
+      { clientFacing: true },
+    );
+  }
+  return rawAgentId ?? defaultAgentId;
+}
+
 // ---------------------------------------------------------------------------
 // /config chat command handler
 // ---------------------------------------------------------------------------

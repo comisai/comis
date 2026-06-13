@@ -14,7 +14,7 @@
  * @module
  */
 
-import { formatSessionKey, resolveModelPricing } from "@comis/core";
+import { formatSessionKey, resolveModelPricing, scriptTokenFactor } from "@comis/core";
 import type { ErrorKind } from "@comis/core";
 
 import { withPromptTimeout, PromptTimeoutError } from "../prompt-timeout.js";
@@ -226,18 +226,25 @@ function emitTimeoutGhostCost(
   // Anthropic bills the full input (system prompt + tools + user message) even on timeout.
   // systemPrompt and mergedCustomTools are both in scope from the outer function.
   const sysPromptChars = systemPrompt?.length ?? 0;
+  const sysPromptText = systemPrompt ?? "";
   const toolChars = mergedCustomTools.reduce((sum, t) => {
     const descLen = t.description?.length ?? 0;
     const paramLen = t.parameters ? JSON.stringify(t.parameters).length : 0;
     return sum + t.name.length + descLen + paramLen;
   }, 0);
+  // Effective-chars ONE-ceil form (TOK-01): each text term divides by its own
+  // script factor; per-term ceils would inflate pure-ASCII results.
   const estimatedPromptTokens = Math.ceil(
-    (messageText.length + sysPromptChars + toolChars) / CHARS_PER_TOKEN_RATIO,
+    (messageText.length / scriptTokenFactor(messageText) +
+      sysPromptText.length / scriptTokenFactor(sysPromptText) +
+      toolChars) / CHARS_PER_TOKEN_RATIO, // toolChars: aggregate machine-Latin JSON chars — rides flat inside the factored sum
   );
 
   // Estimated cache write cost for the system prompt portion.
   // System prompt is sent as cacheable prefix; on first request it incurs cache write cost.
-  const estimatedCacheWriteTokens = Math.ceil(sysPromptChars / CHARS_PER_TOKEN_RATIO);
+  const estimatedCacheWriteTokens = Math.ceil(
+    sysPromptText.length / scriptTokenFactor(sysPromptText) / CHARS_PER_TOKEN_RATIO,
+  );
   const effectiveModelId = resolvedModel?.id ?? config.model;
   const pricing = resolveModelPricing(config.provider, effectiveModelId);
   if (pricing.input === 0) {

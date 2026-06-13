@@ -5806,6 +5806,44 @@ describe("session-index emit sites", () => {
       expect(toolFailWarn![0].errorText).not.toContain("Re-spawn with tool_groups");
     });
 
+    // F-13 (live 2026-06-12): a small model hallucinated `mcp__memory_manage--delete`
+    // for the builtin `memory_manage`, hit "Tool not found", and looped. With allToolNames
+    // available, the error must suggest the closest real tool — for TOP-LEVEL agents too
+    // (no activeToolGroups), which is exactly where the live failure happened.
+    it("'Tool mcp__memory_manage--delete not found' suggests the real builtin (top-level, F-13)", () => {
+      const enrichedDeps = createMockDeps({
+        allToolNames: ["memory_manage", "memory_search", "web_search", "exec"],
+      } as unknown as Partial<PiEventBridgeDeps>);
+      const { listener } = createPiEventBridge(enrichedDeps);
+
+      const result = { message: "Tool mcp__memory_manage--delete not found" };
+      listener(makeToolExecutionEndEvent("mcp__memory_manage--delete", "tc-f13-a", true, result) as any);
+
+      const warnCalls = (enrichedDeps.logger.warn as ReturnType<typeof vi.fn>).mock.calls;
+      const toolFailWarn = warnCalls.find(
+        (c) => c[1] === "Tool execution failed" && c[0]?.toolName === "mcp__memory_manage--delete",
+      );
+      expect(toolFailWarn).toBeDefined();
+      expect(toolFailWarn![0].errorText).toContain('Did you mean "memory_manage"');
+    });
+
+    it("'Tool launch_rockets not found' gets NO suggestion when nothing is close (no false steer, F-13)", () => {
+      const enrichedDeps = createMockDeps({
+        allToolNames: ["memory_manage", "memory_search", "web_search", "exec"],
+      } as unknown as Partial<PiEventBridgeDeps>);
+      const { listener } = createPiEventBridge(enrichedDeps);
+
+      const result = { message: "Tool launch_rockets not found" };
+      listener(makeToolExecutionEndEvent("launch_rockets", "tc-f13-b", true, result) as any);
+
+      const warnCalls = (enrichedDeps.logger.warn as ReturnType<typeof vi.fn>).mock.calls;
+      const toolFailWarn = warnCalls.find(
+        (c) => c[1] === "Tool execution failed" && c[0]?.toolName === "launch_rockets",
+      );
+      expect(toolFailWarn).toBeDefined();
+      expect(toolFailWarn![0].errorText).not.toContain("Did you mean");
+    });
+
     it("'Tool mcp__db--query not found' errorKind is NOT overwritten to 'validation' (MCP kind preserved)", () => {
       const enrichedDeps = createMockDeps({
         activeToolGroups: ["coding"],

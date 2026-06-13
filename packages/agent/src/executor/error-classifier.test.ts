@@ -454,6 +454,69 @@ describe("classifyError — Silent LLM failure", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Provider error masked as empty_response (F-17 — live-found 2026-06-13)
+// A provider 404 (model gated/unavailable) or a connection failure arrives
+// WRAPPED by the silent-failure handler as
+//   "Silent LLM failure: N LLM call(s) produced empty response after retry … — <providerError>"
+// (silent-failure-handlers.ts appends ` — ${lastLlmErrorMessage}`). The
+// empty_response pattern would otherwise steal it and tell the user
+// "a tool call returned no output" — false; there was no tool call. The real,
+// actionable cause (model unavailable / provider unreachable) must win — the
+// same ordering principle the "overloaded wins over silent-failure" test above
+// relies on. Live repro: agent model claude-fable-5 → Anthropic 404
+// not_found_error "Claude Fable 5 is not available. Please use Opus 4.8."
+// ---------------------------------------------------------------------------
+
+describe("classifyError — provider error masked as empty_response (F-17)", () => {
+  it("classifies a wrapped Anthropic 404 model-not-available as model_not_available, not empty_response", () => {
+    const error = new Error(
+      'Silent LLM failure: 3 LLM call(s) produced empty response after retry (finishReason: stop) — '
+      + '404 {"type":"error","error":{"type":"not_found_error","message":"Claude Fable 5 is not available. Please use Opus 4.8. Learn more: https://www.anthropic.com/news/fable-mythos-access"},"request_id":"req_011Cc1TeMsPBGHhGTv5m8M47"}',
+    );
+    const result = classifyError(error);
+    expect(result.category).toBe("model_not_available");
+    expect(result.retryable).toBe(false);
+    // honest: must NOT claim a tool call returned no output
+    expect(result.userMessage.toLowerCase()).not.toContain("tool call");
+    // no leak of the raw provider body / request id / error type
+    expect(result.userMessage).not.toContain("req_011");
+    expect(result.userMessage).not.toContain("not_found_error");
+  });
+
+  it("classifies a bare Anthropic not_found_error model body as model_not_available", () => {
+    const error = new Error(
+      '404 {"type":"error","error":{"type":"not_found_error","message":"model: claude-made-up-9 is not available"}}',
+    );
+    expect(classifyError(error).category).toBe("model_not_available");
+  });
+
+  it("classifies a wrapped provider connection failure as provider_unreachable, not empty_response", () => {
+    const error = new Error(
+      'Silent LLM failure: 2 LLM call(s) produced empty response after retry (finishReason: stop) — '
+      + 'FetchError: request to https://api.anthropic.com/v1/messages failed, reason: connect ECONNREFUSED 127.0.0.1:443',
+    );
+    const result = classifyError(error);
+    expect(result.category).toBe("provider_unreachable");
+    expect(result.retryable).toBe(true);
+    expect(result.userMessage.toLowerCase()).not.toContain("tool call");
+  });
+
+  it("regression: a genuine empty response with NO provider error stays empty_response", () => {
+    const error = new Error(
+      "Silent LLM failure: 2 LLM call(s) produced empty response after retry (finishReason: stop)",
+    );
+    expect(classifyError(error).category).toBe("empty_response");
+  });
+
+  it("regression: OpenAI reasoning_item not found still classifies as signed-replay (ordering lock)", () => {
+    const error = new Error(
+      "400 invalid_request_error: reasoning_item rs_abc123 not found in conversation state",
+    );
+    expect(classifyError(error).category).toBe("client_request_signed_replay");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // tool_schema_unsupported classification (GBNF-02)
 // ---------------------------------------------------------------------------
 //

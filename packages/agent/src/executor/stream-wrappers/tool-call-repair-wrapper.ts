@@ -100,7 +100,10 @@ export function createToolCallRepairWrapper(
           const toolCall = block as ToolCall;
           const rawArgs = toolCall.arguments;
 
-          // If arguments is already a parsed object (the normal case), pass through unchanged
+          // If arguments is already a parsed object (the normal case), pass through unchanged.
+          // (Per-field stringified-JSON coercion for object args happens at the tool's
+          // prepareArguments hook — applyProviderNormalization — which runs at the actual
+          // tool-dispatch point; this wrapper only sees the model-call input context.)
           if (typeof rawArgs !== "string") return block;
 
           // Arguments arrived as a raw JSON string — attempt shape-only repair via the SDK's

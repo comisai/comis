@@ -24,6 +24,7 @@
 
 import { z } from "zod";
 import { parseLenientJson } from "./llm-json.js";
+import { MEMORY_LANGUAGE_PRESERVATION_INSTRUCTION } from "./memory-prompt-language.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -74,7 +75,8 @@ Return ONLY valid JSON: an ARRAY of objects of the form
 - "content": the durable fact, stated once, concisely. Omit transient, low-signal, or speculative claims.
 
 Do NOT include a trust level. Do NOT mark anything as superseded or deleted.
-Return [] if the memories establish no durable profile fact. No markdown fences, no commentary.`;
+Return [] if the memories establish no durable profile fact. No markdown fences, no commentary.
+${MEMORY_LANGUAGE_PRESERVATION_INSTRUCTION}`;
 
 /**
  * Build the builder system prompt for one source-memory set. The source text is

@@ -56,6 +56,7 @@ import {
   contentSimilarity,
 } from "./memory-consolidation-clustering.js";
 import { CONSOLIDATION_PROMPT, parseConsolidationResult } from "./memory-consolidation-prompt.js";
+import { emitGenerationQuality } from "./emit-generation-quality.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -397,8 +398,29 @@ export async function runMemoryConsolidation(
         },
         "Consolidation merge returned invalid output, skipping",
       );
+      // GENQ-01: the produced merge text failed the schema parse — a format
+      // violation. Classify the raw output too (a non-Latin cluster whose merge
+      // came back Latin also surfaces here). Content-free, guarded, no gating.
+      emitGenerationQuality(eventBus, logger, {
+        agentId,
+        pass: "consolidation",
+        sourceText: cluster.map((entry) => entry.content).join("\n"),
+        outputText: mergeText,
+        formatViolation: true,
+        nowMs: clock.now(),
+      });
       continue;
     }
+    // GENQ-01: the merged observation parsed — classify the cluster source vs the
+    // observation content (the F-ML1 class: a non-Latin cluster merged into a Latin
+    // observation, or an empty merge). Fires only on an issue; VISIBILITY ONLY.
+    emitGenerationQuality(eventBus, logger, {
+      agentId,
+      pass: "consolidation",
+      sourceText: cluster.map((entry) => entry.content).join("\n"),
+      outputText: parsed.content,
+      nowMs: clock.now(),
+    });
 
     // The injected-clock epoch ms shared by BOTH the fold branch and the create
     // path below (one read per cluster — never Date.now). Used for the fold

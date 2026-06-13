@@ -194,14 +194,18 @@ export function bindSessionArchiveHandlers(deps: SessionHandlerDeps): Record<str
       if (!deps.lcdStore) throw new Error("LCD store not available — daemon not fully initialized");
 
       const userParams = stripInternalFields(rawParams);
-      SessionResetConversationContract.request.parse(userParams);
+      const params = SessionResetConversationContract.request.parse(userParams);
 
       const startMs = systemNowMs();
 
-      // Scope derived from trusted daemon context (never from user params).
+      // TARGET-01: this is an ADMIN RPC, so the caller is trusted to name which agent's
+      // conversation to forget. An explicit `agentId` selects the scope; absent, fall
+      // back to the default. (tenantId stays from trusted daemon context.) Live finding
+      // 2026-06-13: hardcoding defaultAgentId reset the wrong agent's LCD (0 rows).
+      const resolvedAgentId = params.agentId ?? deps.defaultAgentId;
       const scope: ContextStoreScope = {
         conversationId: sessionKey,
-        agentId: deps.defaultAgentId,
+        agentId: resolvedAgentId,
         tenantId: deps.tenantId,
         sessionKey,
       };
@@ -288,11 +292,13 @@ export function bindSessionArchiveHandlers(deps: SessionHandlerDeps): Record<str
         sessionMessagesCleared: number;
         memoriesDeleted?: number;
         runtimeSessionDestroyed: boolean;
+        resolvedAgentId: string;
       } = {
         sessionKey,
         lcdRowsDeleted,
         sessionMessagesCleared,
         runtimeSessionDestroyed,
+        resolvedAgentId, // TARGET-01: state the agent acted on (no silent default)
       };
 
       const requestMemory = (rawParams.memory ?? false) as boolean;

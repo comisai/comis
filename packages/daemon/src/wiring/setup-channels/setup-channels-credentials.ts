@@ -15,7 +15,7 @@
 
 import { randomUUID } from "node:crypto";
 import type { Attachment, AppContainer, ChannelPort, ClockPort, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore, RelationshipStore, TunedAlphaStore, MemoryUsefulnessStore, MemoryLifecyclePort, NormalizedMessage, SessionKey, TranscriptionPort, DeliveryService } from "@comis/core";
-import { formatSessionKey, runWithContext, createDeliveryOrigin, systemNowMs } from "@comis/core";
+import { formatSessionKey, runWithContext, createDeliveryOrigin, systemNowMs, KEYLESS_PROVIDER_TYPES, KEYLESS_API_KEY_SENTINEL } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry, OperationModelResolution } from "@comis/agent";
 import type { createSessionStore, MemoryApi } from "@comis/memory";
@@ -187,7 +187,7 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
       });
       const providerEntry = container.config.providers?.entries?.[resolved.provider];
       const apiKeyName = providerEntry?.apiKeyName || `${resolved.provider.toUpperCase()}_API_KEY`;
-      const apiKey = container.secretManager.get(apiKeyName) ?? "";
+      const apiKey = container.secretManager.get(apiKeyName) ?? (KEYLESS_PROVIDER_TYPES.has(resolved.provider) ? KEYLESS_API_KEY_SENTINEL : "");
       if (!apiKey) {
         logger.warn({ agentId, provider: resolved.provider, hint: `Set ${apiKeyName} in secrets for memory review`, errorKind: "config" as const }, "Skipping memory review -- no API key");
         payload.onComplete?.({ status: "error", error: `No API key for ${resolved.provider}` });

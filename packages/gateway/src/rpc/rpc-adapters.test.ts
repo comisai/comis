@@ -87,12 +87,34 @@ describe("createRpcAdapters", () => {
       // Raw error must not reach client
       expect(result).toEqual({ error: "Internal error" });
       expect(JSON.stringify(result)).not.toContain("LLM timeout");
+    });
+
+    it("surfaces a client-facing error message verbatim (e.g. unknown agent)", async () => {
+      // Live finding F-1 follow-through (2026-06-12): the unknown-agentId guard
+      // throws a clientFacing error; it must reach the caller as its real message,
+      // not be flattened to the generic "Internal error" (a diagnosability gap —
+      // the caller could not tell a typo'd agentId from a provider outage).
+      const clientErr = Object.assign(new Error("unknown agent: qwen35 (available: default)"), {
+        clientFacing: true,
+      });
+      const deps = createMockDeps({
+        executeAgent: vi.fn().mockRejectedValue(clientErr),
+      });
+      const adapters = createRpcAdapters(deps);
+
+      const result = await adapters["agent.execute"](
+        { message: "test", agentId: "qwen35" },
+        { clientId: "c1", scopes: ["rpc"] },
+      );
+
+      expect(result).toEqual({ error: "unknown agent: qwen35 (available: default)" });
+      // Logged as a validation rejection (not a dependency fault); the raw `err`
+      // object is intentionally NOT logged on this branch — the message is the signal.
       expect(deps.logger.warn).toHaveBeenCalledWith(
         expect.objectContaining({
-          err: expect.anything(),
           method: "agent.execute",
+          errorKind: "validation",
           hint: expect.any(String),
-          errorKind: expect.any(String),
         }),
         expect.any(String),
       );

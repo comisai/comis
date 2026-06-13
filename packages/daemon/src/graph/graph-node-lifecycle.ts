@@ -249,6 +249,7 @@ export function spawnNode(
     contextMode: node.contextMode,
     failedUpstream,
     skippedUpstream,
+    language: gs.resolvedLanguage,
   });
 
   // Resolve mcpServers to discovered tool names from graph tool superset

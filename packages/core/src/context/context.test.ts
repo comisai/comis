@@ -223,6 +223,52 @@ describe("RequestContext", () => {
     });
   });
 
+  // ---------------------------------------------------------------------------
+  // resolvedLanguage — GEN-03 ALS carrier (mirrors resolvedModel :60)
+  // ---------------------------------------------------------------------------
+  describe("resolvedLanguage (GEN-03 ALS carrier)", () => {
+    it("RequestContext carries resolvedLanguage when provided (parses through strictObject)", () => {
+      // HIGH-risk boundary: z.strictObject REJECTS unknown keys, so the carrier
+      // field MUST be modeled for the parent's ALS set-side mutation to survive
+      // a parse. Mirrors the resolvedModel precedent (:60).
+      const result = RequestContextSchema.safeParse({
+        userId: "user-1",
+        sessionKey: "default:user-1:chan-1",
+        traceId: randomUUID(),
+        startedAt: Date.now(),
+        resolvedLanguage: "he",
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.resolvedLanguage).toBe("he");
+      }
+    });
+
+    it("context without resolvedLanguage still parses (optional) and yields undefined", () => {
+      const result = RequestContextSchema.safeParse({
+        userId: "user-1",
+        sessionKey: "default:user-1:chan-1",
+        traceId: randomUUID(),
+        startedAt: Date.now(),
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.resolvedLanguage).toBeUndefined();
+      }
+    });
+
+    it("resolvedLanguage set on the LIVE context is observable via tryGetContext within scope (sub-agent inheritance shape)", () => {
+      // Mirrors the resolvedModel ALS mutation in pi-executor: the parent casts
+      // through Record<string, unknown> and writes resolvedLanguage onto the live
+      // context; sub-agent-leg reads see it via tryGetContext()?.resolvedLanguage.
+      const ctx = makeContext();
+      runWithContext(ctx, () => {
+        (getContext() as Record<string, unknown>).resolvedLanguage = "ar";
+        expect(tryGetContext()?.resolvedLanguage).toBe("ar");
+      });
+    });
+  });
+
   describe("trustLevel", () => {
     it("trustLevel defaults to 'admin'", () => {
       const result = RequestContextSchema.parse({

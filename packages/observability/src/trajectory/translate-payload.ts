@@ -221,6 +221,45 @@ export function translatePayload(
         trustTags: payload.trustTags,
       };
 
+    case "memory:recalled":
+      // RECALL-01: per-recall lane/candidate/final counts (the #1 blind spot, now on
+      // the explain/trace timeline). Counts/booleans ONLY — never query text or memory
+      // bodies; agentId/sessionKey/traceId are envelope correlation ids (§2.7 / H1).
+      return {
+        lanes: payload.lanes,
+        ftsCandidates: payload.ftsCandidates,
+        vectorCandidates: payload.vectorCandidates,
+        entityCandidates: payload.entityCandidates,
+        finalCount: payload.finalCount,
+        rerankerAvailable: payload.rerankerAvailable,
+        durationMs: payload.durationMs,
+      };
+
+    case "memory:reranked":
+      // RECALL-01: rerank candidate/hit counts + the graceful-degradation flags
+      // (timedOut/fellBack) — counts/booleans ONLY (§2.7 / H1).
+      return {
+        candidateCount: payload.candidateCount,
+        hitCount: payload.hitCount,
+        rerankerAvailable: payload.rerankerAvailable,
+        timedOut: payload.timedOut,
+        fellBack: payload.fellBack,
+        durationMs: payload.durationMs,
+      };
+
+    case "memory:generation_quality":
+      // GENQ-01: which pass + the source/output dominant scripts + the issue flags.
+      // Closed enums + booleans ONLY — never the source or generated body; agentId/
+      // sessionKey are envelope correlation ids (§2.7 / H1).
+      return {
+        pass: payload.pass,
+        sourceScript: payload.sourceScript,
+        outputScript: payload.outputScript,
+        languageMismatch: payload.languageMismatch,
+        emptyOutput: payload.emptyOutput,
+        formatViolation: payload.formatViolation,
+      };
+
     case "delivery:enqueued":
       return {
         entryId: payload.entryId,
@@ -598,6 +637,25 @@ export function translatePayload(
         filesInjected: payload.filesInjected,
         skillsInjected: payload.skillsInjected,
         overflowStripped: payload.overflowStripped,
+      };
+
+    // OBS-01 (Phase 180): the multilingual signals. Closed ScriptClass/lane
+    // enums + identifiers ONLY — never query text or summary bodies. agentId +
+    // sessionKey are envelope-only and stripped (the budget_computed precedent);
+    // conversationId is the DAG conversation identifier (an id, not content) and
+    // is forwarded so the explain timeline can join the zero-hit to its session.
+    case "context:script_zero_hit":
+      return {
+        scriptClass: payload.scriptClass,
+        lane: payload.lane,
+        conversationId: payload.conversationId,
+      };
+
+    case "context:summary_language_mismatch":
+      return {
+        sourceScript: payload.sourceScript,
+        summaryScript: payload.summaryScript,
+        depth: payload.depth,
       };
 
     // ---- Approval / human-in-the-loop ----

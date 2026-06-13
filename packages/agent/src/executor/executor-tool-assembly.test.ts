@@ -127,7 +127,8 @@ vi.mock("../context-engine/budget-capacity-cap.js", async (importOriginal) => {
 import { assembleTools } from "./executor-tool-assembly.js";
 import type { ToolAssemblyDeps, ToolAssemblyParams } from "./executor-tool-assembly.js";
 import { computeTokenBudgetForProfile } from "../context-engine/budget-capacity-cap.js";
-import { TypedEventBus, type SessionKey } from "@comis/core";
+import { toolDefOverheadChars } from "./tool-overhead.js";
+import { TypedEventBus, scriptTokenFactor, type SessionKey } from "@comis/core";
 import { createCapabilityPortStub } from "../../../core/src/ports/__test-helpers/tool-capability-stub.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
@@ -1253,5 +1254,114 @@ describe("assembleTools — KNOB-02 window provenance threading into computeToke
     };
     expect(budgetResult.rawContextWindowTokens).toBe(131_072);
     expect(budgetResult.windowCapSource).toBe("served");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TOK-01 (Phase 179): script-aware token factors on the THREE char→token sites
+//
+// All three executor-tool-assembly conversions divide flat chars by 3.5, blind
+// to script density — a Hebrew systemPrompt/preamble carries ~1.8× the tokens
+// the flat estimate reserves, voiding the v2.18 fit guarantee for non-Latin.
+// Pre-patch every Hebrew case below computes flat chars/3.5 → RED. The fix
+// divides each TEXT term's chars by scriptTokenFactor(text) (effective chars),
+// rides aggregate char counts (tool-def overhead — machine-Latin JSON) flat,
+// and takes ONE ceil over the sum (per-term ceils would inflate ASCII results
+// and break the I1 byte-identity pin).
+// ---------------------------------------------------------------------------
+
+describe("assembleTools — TOK-01 script-aware system/preamble token estimates", () => {
+  // The budget-path char ratio (constants.ts CHARS_PER_TOKEN_RATIO).
+  const RATIO = 3.5;
+  // Pure-Hebrew payload (letters + neutral spaces → hebrew-letters row factor,
+  // shipped 0.50 after the TOK-02 same-commit lowering — pinned exactly in
+  // core's token-factor.test.ts): factored tokens ≈ 2× flat — comfortably
+  // discriminating. Bounds here import scriptTokenFactor, so they track the
+  // table value automatically.
+  const HE = "שלום עולם זה מבחן ארוך מאוד לבדיקת חלוקה ";
+
+  it("SITE A: a Hebrew-saturated systemPrompt reserves the FACTORED system-token estimate, not flat chars/3.5", async () => {
+    // Pre-patch: cachedSystemTokensEstimate = ceil(hePrompt.length / 3.5) → RED.
+    const hePrompt = HE.repeat(100); // ~4_200 Hebrew chars
+    mocks.assembleExecutionPromptMock.mockResolvedValueOnce({
+      systemPrompt: hePrompt,
+      dynamicPreamble: "",
+    });
+    // Default params carry zero custom tools → tool-def overhead chars = 0.
+    const r = await assembleTools(makeParams());
+    expect(r.cachedSystemTokensEstimate).toBeGreaterThanOrEqual(
+      Math.ceil(hePrompt.length / (RATIO * scriptTokenFactor(hePrompt))),
+    );
+  });
+
+  it("SITE B: a Hebrew dynamicPreamble + Hebrew inlineMemory yields the factored preamble estimate (effective chars, ONE ceil)", async () => {
+    // The preamble CAN carry Hebrew (recalled memories, skills). Pre-patch:
+    // ceil((pre + mem) / 3.5) flat → RED. Post-patch: each text term divided by
+    // its own factor, ONE ceil over the summed effective chars.
+    const hePre = HE.repeat(50);
+    const heMem = HE.repeat(25);
+    mocks.assembleExecutionPromptMock.mockResolvedValueOnce({
+      systemPrompt: "x".repeat(100),
+      dynamicPreamble: hePre,
+      inlineMemory: heMem,
+    });
+    const r = await assembleTools(makeParams());
+    expect(r.cachedFreshTailPreambleTokens).toBeGreaterThanOrEqual(
+      Math.ceil(
+        (hePre.length / scriptTokenFactor(hePre) + heMem.length / scriptTokenFactor(heMem)) / RATIO,
+      ),
+    );
+  });
+
+  it("post-deferral recompute preserves the script factor (#190 third site)", async () => {
+    // THE #190 pitfall pin: assembleTools RECOMPUTES cachedSystemTokensEstimate over
+    // the post-deferral toolset (the tools that actually ship). If only the
+    // pre-deferral site were factored, this recompute would OVERWRITE the honest
+    // estimate with flat math right before the history partition + fit check
+    // consume it. Pre-patch the recompute is flat chars/3.5 → RED even if SITE A
+    // were factored, because the returned value IS the recomputed one.
+    const hePrompt = HE.repeat(100);
+    const manyTools = Array.from({ length: 30 }, (_, i) => makeTool(`tool-${i}`, "d".repeat(50)));
+    const activeSubset = manyTools.slice(0, 4);
+    mocks.assembleExecutionPromptMock.mockResolvedValueOnce({
+      systemPrompt: hePrompt,
+      dynamicPreamble: "",
+    });
+    // Drive the DEFERRAL path: keep 4 active, defer 26 (mirrors the UC-2 fixture above).
+    mocks.applyToolDeferralMock.mockImplementationOnce(() => ({
+      activeTools: activeSubset,
+      discoveredTools: [],
+      deferredEntries: manyTools.slice(4).map((t) => ({ name: (t as { name: string }).name })),
+      deferredNames: manyTools.slice(4).map((t) => (t as { name: string }).name),
+      discoverTool: undefined,
+    }));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ToolDefinition[] cast
+    const r = await assembleTools(makeParams({ deps: makeDeps({ customTools: manyTools as any }) }));
+    // The recomputed estimate covers the POST-deferral overhead (4 active tools,
+    // flat machine-Latin chars) PLUS the factored Hebrew systemPrompt — ONE ceil.
+    const postDeferralOverhead = toolDefOverheadChars(activeSubset as never);
+    expect(r.cachedSystemTokensEstimate).toBeGreaterThanOrEqual(
+      Math.ceil((hePrompt.length / scriptTokenFactor(hePrompt) + postDeferralOverhead) / RATIO),
+    );
+  });
+
+  it("I1: pure-ASCII systemPrompt and preamble estimates are byte-identical to the flat formulas (factor 1.0)", async () => {
+    // The Latin guarantee: scriptTokenFactor(ascii) === 1 and ONE ceil over the
+    // summed effective chars reproduces today's values EXACTLY (per-term ceil
+    // splitting would inflate these — the I1 break this pin guards against).
+    const asciiPrompt = "x".repeat(443); // odd lengths exercise the ceil boundary
+    const asciiPre = "P".repeat(353);
+    const asciiMem = "M".repeat(211);
+    mocks.assembleExecutionPromptMock.mockResolvedValueOnce({
+      systemPrompt: asciiPrompt,
+      dynamicPreamble: asciiPre,
+      inlineMemory: asciiMem,
+    });
+    const r = await assembleTools(makeParams());
+    // Expected values computed with TODAY'S flat formulas inline — exact equality.
+    expect(r.cachedSystemTokensEstimate).toBe(Math.ceil(asciiPrompt.length / RATIO));
+    expect(r.cachedFreshTailPreambleTokens).toBe(
+      Math.ceil((asciiPre.length + asciiMem.length) / RATIO),
+    );
   });
 });

@@ -97,4 +97,40 @@ describe("createTurnLoopDetector", () => {
     detector.recordProgress();
     expect(detector.shouldBreakEmptyTurns()).toBe(false);
   });
+
+  // F-15 / forget-exec-loop (live 2026-06-12): a small model that loops on a
+  // FAILING/blocked mutation (e.g. exec repeatedly content-gate-rejected, varying
+  // the command each time) used to clear the no-progress counter on every attempt
+  // (mutations counted as "progress"), so the loop guard never fired and the turn
+  // ran to makespan. A failed mutation makes NO progress and must count.
+  it("breaks the loop after six consecutive FAILED mutations (isError), even with varying args", () => {
+    const detector = createTurnLoopDetector();
+    for (let i = 0; i < 6; i++) {
+      // different command each time (the model evades signature matching)
+      detector.recordCall("exec", { command: `git step-${i}` }, { content: [], isError: true });
+    }
+    expect(detector.shouldBreakLoop()).toBe(true);
+  });
+
+  it("counts a content-gate-rejected mutation (marker, no isError flag) as no-progress", () => {
+    const detector = createTurnLoopDetector();
+    for (let i = 0; i < 6; i++) {
+      detector.recordCall("exec", { command: `c${i}` }, { content: [{ type: "text", text: "[invalid_value] Shell command substitution $(...) detected" }] });
+    }
+    expect(detector.shouldBreakLoop()).toBe(true);
+  });
+
+  it("a SUCCESSFUL mutation still resets the no-progress count (genuine progress preserved)", () => {
+    const detector = createTurnLoopDetector();
+    for (let i = 0; i < 5; i++) detector.recordCall("exec", { command: `c${i}` }, { content: [], isError: true });
+    detector.recordCall("exec", { command: "ok" }, { content: [{ type: "text", text: "done" }], isError: false });
+    detector.recordCall("exec", { command: "next" }, { content: [], isError: true });
+    expect(detector.shouldBreakLoop()).toBe(false); // counter restarted after the success
+  });
+
+  it("does not break on repeated SUCCESSFUL mutations (no false trip)", () => {
+    const detector = createTurnLoopDetector();
+    for (let i = 0; i < 10; i++) detector.recordCall("write", { path: `/f${i}`, content: "x" }, { ok: true });
+    expect(detector.shouldBreakLoop()).toBe(false);
+  });
 });

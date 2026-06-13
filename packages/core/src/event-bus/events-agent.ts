@@ -6,6 +6,8 @@
  */
 import type { NodeStatus, GraphStatus } from "../domain/execution-graph.js";
 import type { ErrorKind } from "../logging/log-fields.js";
+import type { ScriptClass } from "../text/script-classes.js";
+import type { GenerationPass } from "../text/generation-quality.js";
 
 export interface AgentEvents {
   /** Skill loaded from disk and validated */
@@ -689,6 +691,39 @@ export interface AgentEvents {
      * cross the bus (AGENTS.md §2.7), never bodies/query/response.
      */
     intent?: string;
+    timestamp: number;
+  };
+
+  /**
+   * GENQ-01: a memory-generation pass produced output whose quality diverged from
+   * its source — the generalization of `context:summary_language_mismatch` to the
+   * consolidation / reasoning / user-representation passes (the F-ML1 regression
+   * class: a weak local model silently translating non-Latin source memories into
+   * a Latin output). VISIBILITY ONLY — never gated (I8; a mixed code-heavy source
+   * legitimately skews Latin via `dominantScript`'s 0.3 threshold, so this is a
+   * count an operator reviews, not an error to block). Emitted ONLY when an issue
+   * is detected (`languageMismatch || emptyOutput || formatViolation`); a clean
+   * pass emits nothing. Bridged to the trajectory as `memory.generation_quality`
+   * AND persisted as a `health_signal` row. Payload is the closed `GenerationPass`
+   * + closed `ScriptClass` enums + booleans + ids ONLY — NEVER the source or the
+   * generated body (§2.7); the classifier reads the text locally and nothing leaks.
+   */
+  "memory:generation_quality": {
+    agentId: string;
+    /** Cron-job passes have no session — optional, mirrors the memory:* family. */
+    sessionKey?: string;
+    /** Which generation pass produced the output (closed union). */
+    pass: GenerationPass;
+    /** Dominant script of the generation source/input. */
+    sourceScript: ScriptClass;
+    /** Dominant script of the generated output. */
+    outputScript: ScriptClass;
+    /** Non-Latin source whose output came back Latin (the translate-when-preserve regression). */
+    languageMismatch: boolean;
+    /** The generation produced empty / whitespace-only output. */
+    emptyOutput: boolean;
+    /** The output failed to parse into the pass's expected structured form. */
+    formatViolation: boolean;
     timestamp: number;
   };
 

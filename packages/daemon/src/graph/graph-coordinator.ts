@@ -7,7 +7,7 @@
  */
 
 import { createGraphStateMachine, type GraphExecutionSnapshot } from "./graph-state-machine.js";
-import { safePath, type GraphStatus, systemNowMs, systemSetInterval, systemClearInterval, systemSetTimeout } from "@comis/core";
+import { safePath, type GraphStatus, systemNowMs, systemSetInterval, systemClearInterval, systemSetTimeout, tryGetContext } from "@comis/core";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { ok, err, type Result } from "@comis/shared";
@@ -201,6 +201,10 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
       runningCount: 0,
       callerSessionKey: params.callerSessionKey,
       callerAgentId: params.callerAgentId,
+      // GEN-03 (A2 fallback): graph submission carries no inbound NormalizedMessage, so resolve
+      // the reply language once from the caller's RequestContext.resolvedLanguage — set by the
+      // parent executor in 181-04 — and thread it to every node envelope via buildContextEnvelope.
+      resolvedLanguage: tryGetContext()?.resolvedLanguage,
       announceChannelType: params.announceChannelType,
       announceChannelId: params.announceChannelId,
       nodeProgress: params.nodeProgress ?? false,

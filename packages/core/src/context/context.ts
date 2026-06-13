@@ -58,6 +58,8 @@ export const RequestContextSchema = z.strictObject({
     deliveryOrigin: DeliveryOriginSchema.optional(),
     /** Resolved model string ("provider:modelId") set by parent executor for sub-agent inheritance via ALS. */
     resolvedModel: z.string().optional(),
+    /** Resolved reply language (DET-02 tag) set by parent executor for sub-agent inheritance via ALS. */
+    resolvedLanguage: z.string().optional(),
   });
 
 export type RequestContext = z.infer<typeof RequestContextSchema>;

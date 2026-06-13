@@ -6,7 +6,7 @@ icon: "chart-line"
 
 A fleet-wide bug must be diagnosable from one structured artifact with one command in under five minutes.
 
-This page documents the observability foundations. It covers the trajectory layer, the 55-entry bridge mapping, lifecycle envelopes, forensic INFO promotions, the dedup detector, boot invariants, the alert budget, `step:` discipline, log rotation, the memory & recall diagnostics (recall-trace artifact, recall events, degradation signals), and the bundle export entry point. If you are new to Comis observability, start here; then follow the cross-links for operator workflows.
+This page documents the observability foundations. It covers the trajectory layer, the 66-entry bridge mapping, lifecycle envelopes, forensic INFO promotions, the dedup detector, boot invariants, the alert budget, `step:` discipline, log rotation, the memory & recall diagnostics (recall-trace artifact, recall events, degradation signals), and the bundle export entry point. If you are new to Comis observability, start here; then follow the cross-links for operator workflows.
 
 <CardGroup cols={2}>
   <Card title="Incident Bundle" icon="folder-tree" href="/operations/incident-bundle">
@@ -62,12 +62,12 @@ The bundle exporter reads `trace.metadata` to populate `metadata.json` and `trac
 
 ---
 
-## 4. Bridge Mapping (55 entries)
+## 4. Bridge Mapping (66 entries)
 
-The trajectory bus-bridge maps 55 event types from the typed event bus to trajectory events (up from 18 previously — a ~3× coverage improvement).
+The trajectory bus-bridge maps 66 event types from the typed event bus to trajectory events (up from 18 previously — a ~3.7× coverage improvement).
 
 <Info>
-**Architecture invariant:** `test/architecture/trajectory-event-types-known.test.ts` asserts the disjoint-set invariant (no overlap between bridge-mapped types and direct-emit types) and a bridge count ≥ 45. Current count: 55.
+**Architecture invariant:** `test/architecture/trajectory-event-types-known.test.ts` asserts the disjoint-set invariant (no overlap between bridge-mapped types and direct-emit types) and a bridge count ≥ 45. Current count: 66.
 </Info>
 
 | Category | Bridge prefix | Event types |
@@ -469,9 +469,9 @@ diagnostics:
 
 Read the trace with [`comis memory recall-trace <session>`](/reference/cli#comis-memory) — `--format json` for the full per-record ranking breakdown, the table view for correlation keys. The `memory.recall_trace` response also reports `tracingEnabled` (the recorder gate) and, on an empty result, a `hint` distinguishing "recorder disabled — set `diagnostics.recallTrace.enabled: true`" from "enabled but no traces matched this selector yet" — an empty result is never silent about why.
 
-### 15.2 Recall events (direct-emit — not bridge-mapped)
+### 15.2 Recall & curation events
 
-Five typed events report recall and curation activity on the event bus. They are emitted **directly** at a single canonical site each — they are **not** part of the [§4 bridge mapping](#4-bridge-mapping-55-entries) (the disjoint-set invariant in `test/architecture/trajectory-event-types-known.test.ts` explicitly allowlists them as not-trajectory-mapped, so the 55-entry bridge count is unaffected).
+Typed events report recall, generation-quality, and curation activity on the event bus. Three of them — **`memory:recalled`**, **`memory:reranked`**, and **`memory:generation_quality`** — are part of the [§4 bridge mapping](#4-bridge-mapping-66-entries): they cross onto the per-session **trajectory timeline** as `memory.recalled` / `memory.reranked` / `memory.generation_quality`. RECALL-01: a recall now shows up in `comis explain` (its lane/candidate/final counts and the rerank outcome) and aggregates into the report's [`recall` section](/reference/json-rpc#obs-explain). GENQ-01: a memory-generation pass whose output diverged from its source fires `memory:generation_quality` (only on an issue) and rolls up into the `comis fleet` `generation_quality` finding. The remaining recall/curation events (`memory:entities_linked`, `memory:consolidated`, `memory:recall_used`, `memory:review_completed`) are emitted **directly** at a single canonical site each and are **not** bridge-mapped — `test/architecture/trajectory-event-types-known.test.ts` allowlists those four as not-trajectory-mapped, and asserts the disjoint-set invariant (no event is both bridged and direct-emit).
 
 Every payload is **counts, booleans, and IDs only** — never query text, memory bodies, or entity names (AGENTS.md §2.7). The per-recall ranking detail lives in the opt-in recall-trace artifact above, not on the bus.
 
@@ -481,12 +481,13 @@ Every payload is **counts, booleans, and IDs only** — never query text, memory
 | `memory:reranked` | When a rerank stage ran (rerank opt-in) | `candidateCount`, `hitCount`, `rerankerAvailable`, `timedOut`, `fellBack`, `durationMs` |
 | `memory:entities_linked` | After an entity resolve-and-link pass (memory-review job) | `entityCount`, `newEntities`, `durationMs` |
 | `memory:consolidated` | After a consolidation run (consolidation job) | `clustersProcessed`, `observationsCreated`, `dedupHits`, `durationMs` |
+| `memory:generation_quality` | After a memory-generation pass (consolidation / reasoning / user-representation), **only on a detected issue** | `pass`, `sourceScript`, `outputScript`, `languageMismatch`, `emptyOutput`, `formatViolation` |
 | `context:evicted` | When the LCD/DAG assembler evicts the oldest out-of-tail history to fit the token budget | `agentId`, `sessionKey`, `evictedCount`, `evictedChars`, `categories`, `timestamp` |
 | `context:dag_compacted` | After a DAG compaction pass updates the summary hierarchy (DAG mode) | `conversationId`, `agentId`, `sessionKey`, `leafSummariesCreated`, `condensedSummariesCreated`, `maxDepthReached`, `totalSummariesCreated`, `durationMs`, `timestamp` |
 | `context:dag_expanded` | When an in-session expansion tool (`ctx_search`/`ctx_inspect`/`ctx_expand`) recovers compressed detail (DAG mode) | `conversationId`, `agentId`, `sessionKey`, `tool`, `recoveredCount`, `durationMs`, `timestamp` |
 | `context:mode_switched` | On an actual `pipeline`⇄`dag` engine direction change | `from`, `to`, `fullImport`, `importedCount`, `durationMs` |
 
-`memory:recalled.finalCount == 0` means recall returned nothing for that turn. `memory:reranked.fellBack` / `.timedOut` flag the graceful-degradation paths (see below). `context:evicted` and `context:dag_compacted` both fire in DAG mode (the default engine) — `context:dag_compacted.durationMs` reports the real wall-clock of each compaction pass; `context:dag_expanded` reports an in-session zoom into the DAG (counts/`durationMs` only — never message or summary content). `context:mode_switched` fires only on a real engine-mode direction change and reports the one-time reconciliation `importedCount`; the mid-conversation `pipeline`⇄`dag` reconciliation that emits it lands in a later phase, so that one event is currently dormant.
+`memory:recalled.finalCount == 0` means recall returned nothing for that turn — a recall **miss**. When *every* recall in a **degraded** session missed (and no tool/context/breaker cause matched), `comis explain` root-causes it as `recall_miss` and points at the recall scope and (for non-Latin queries) the trigram-twin lanes. `memory:reranked.fellBack` / `.timedOut` flag the graceful-degradation paths (see below). `context:evicted` and `context:dag_compacted` both fire in DAG mode (the default engine) — `context:dag_compacted.durationMs` reports the real wall-clock of each compaction pass; `context:dag_expanded` reports an in-session zoom into the DAG (counts/`durationMs` only — never message or summary content). `context:mode_switched` fires only on a real engine-mode direction change and reports the one-time reconciliation `importedCount`; the mid-conversation `pipeline`⇄`dag` reconciliation that emits it lands in a later phase, so that one event is currently dormant.
 
 ### 15.3 No-silent-degradation signals (`errorKind` + `hint`)
 

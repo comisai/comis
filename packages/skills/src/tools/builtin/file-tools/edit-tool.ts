@@ -40,6 +40,7 @@ import {
 } from "./shared/edit-diff.js";
 import { getGitDiffStat } from "./shared/git-diff.js";
 import { withFileMutationQueue } from "./shared/file-mutation-queue.js";
+import { pathOutsideWorkspaceMessage } from "./path-error.js";
 
 // Activity label spec (SPEC §6.1). Descriptor name == emitted name for
 // builtins (edit-tool.ts:196 → `name: "edit"`).
@@ -164,7 +165,7 @@ function resolveEditPath(
   }
 
   throw new Error(
-    `[path_traversal] Path outside workspace bounds: ${filePath}`,
+    pathOutsideWorkspaceMessage(filePath),
   );
 }
 

@@ -68,6 +68,8 @@ import {
   resolveSummaryTargetTokens,
 } from "../context-engine/summarize-tier-targets.js";
 import { LCD_MAX_LEAF_PASSES_PER_TURN, SUMMARIZER_PROMPT_OVERHEAD_TOKENS } from "../context-engine/constants.js";
+import { clampFactorText, emitSummaryLanguageMismatch } from "../context-engine/compaction-zone-helpers.js";
+import { previousSummaryContent, chunkOrdinalWindow } from "./lcd-compaction-helpers.js";
 import type {
   CondenseChildSummary,
   SummaryRefRun,
@@ -260,39 +262,6 @@ export function resolveContext(store: ContextStorePort, scope: ContextStoreScope
   return { history, ordinalById, resolvedTokens, summaryRunsByDepth, summaries };
 }
 
-/**
- * The most recent leaf summary content (for continuity) — passed to the
- * summarizer as `previousSummary` (the 8th `generateSummary` param). The store
- * returns summaries oldest-first, so the LAST element is the most recent. R4
- * (132-03): the read is agent + tenant scoped via `scope` (WR-02).
- */
-function previousSummaryContent(store: ContextStorePort, scope: ContextStoreScope): string | undefined {
-  const summaries = store.getSummaries(scope);
-  if (summaries.length === 0) return undefined;
-  return summaries[summaries.length - 1]!.content;
-}
-
-/**
- * Map the selected chunk's first/last covered message id to the contiguous
- * `context_items` ordinal window `[startOrdinal, endOrdinal]` (the C3 window),
- * using the `ordinalById` map built by {@link resolveContext} from the SAME
- * resolved view the chunk was selected from. `startOrdinal` is the ordinal of
- * the chunk's FIRST message id; `endOrdinal` the LAST. Because both the chunk and
- * the map derive from one resolved `context_items` walk, the lookup always
- * succeeds for a selected message-ref — the divergence path is retained only as a
- * defensive guard against a future non-1:1 mapping (it never corrupts ordering).
- */
-function chunkOrdinalWindow(
-  ordinalById: Map<string, number>,
-  firstMessageId: string,
-  lastMessageId: string,
-): { startOrdinal: number; endOrdinal: number } | undefined {
-  const startOrdinal = ordinalById.get(firstMessageId);
-  const endOrdinal = ordinalById.get(lastMessageId);
-  if (startOrdinal === undefined || endOrdinal === undefined) return undefined;
-  if (endOrdinal < startOrdinal) return undefined;
-  return { startOrdinal, endOrdinal };
-}
 
 /**
  * The terminal outcome of one leaf pass — drives the B-2 drain loop. `made` is
@@ -595,6 +564,16 @@ async function runOneLeafPass(
     createdAt: now,
     startOrdinal: window.startOrdinal,
     endOrdinal: window.endOrdinal,
+  });
+
+  // OBS-01 (Phase 180): the small-model G4 detector — a non-Latin chunk whose
+  // leaf summary came back Latin emits context:summary_language_mismatch (depth
+  // 0; source = the SAME chunk text the summarizer saw, never a store re-read).
+  // Visibility only — guarded, content-free, never fails the pass.
+  emitSummaryLanguageMismatch(eventBus, logger, {
+    agentId: scope.agentId, sessionKey: scope.sessionKey,
+    sourceText: chunkItems.map((it) => clampFactorText(it.msg)).join(" "),
+    summaryText: result.content, depth: 0, nowMs: now,
   });
 
   // O1 (Phase 133): real per-pass timing — a SECOND injected-clock read at emit

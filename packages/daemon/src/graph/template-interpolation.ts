@@ -10,6 +10,8 @@
  * @module
  */
 
+import { adjustSliceBoundary } from "@comis/core";
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -97,7 +99,9 @@ export function interpolateTaskText(
       const suffix = sharedDir
         ? `... [truncated -- full output: ${sharedDir}/${nodeId}-output.md]`
         : "... [truncated]";
-      replacement = rawOutput.slice(0, maxResultLength) + suffix;
+      // SAFE-01: snap the content-length cut off a split surrogate pair / orphaned
+      // combining run so the injected upstream output is mojibake-free.
+      replacement = rawOutput.slice(0, adjustSliceBoundary(rawOutput, maxResultLength)) + suffix;
     } else {
       replacement = rawOutput;
     }
@@ -117,6 +121,9 @@ export function interpolateTaskText(
 
   let result = taskText;
   for (const m of matches) {
+    // SAFE-01 EXCLUDED: this splices on regex MATCH indices of the ASCII
+    // `{{nodeId.result}}` template pattern — not a content-length cut. Snapping
+    // these boundaries would corrupt the splice (m.start/m.end are pattern edges).
     result = result.slice(0, m.start) + m.replacement + result.slice(m.end);
   }
 
@@ -165,6 +172,8 @@ export function buildContextEnvelope(params: {
   failedUpstream?: string[];
   /** Upstream node IDs that were skipped (computed by caller from state machine). */
   skippedUpstream?: string[];
+  /** Resolved conversation language (DET-02 tag); emits a verbatim-preserving Language section when non-en. */
+  language?: string;
 }): string {
   const {
     graphLabel,
@@ -179,6 +188,7 @@ export function buildContextEnvelope(params: {
     contextMode = "full",
     failedUpstream = [],
     skippedUpstream = [],
+    language,
   } = params;
 
   // Sort dependsOn alphabetically for deterministic envelope prefix.
@@ -223,7 +233,9 @@ export function buildContextEnvelope(params: {
         const suffix = sharedDir
           ? `... [truncated -- full output: ${sharedDir}/${depId}-output.md]`
           : "... [truncated]";
-        lines.push(output.slice(0, effectiveMaxLen) + suffix);
+        // SAFE-01: snap the content-length cut off a split surrogate pair / orphaned
+        // combining run so the upstream-output section is mojibake-free.
+        lines.push(output.slice(0, adjustSliceBoundary(output, effectiveMaxLen)) + suffix);
       } else {
         lines.push(output);
       }
@@ -249,6 +261,15 @@ export function buildContextEnvelope(params: {
     lines.push(`Your output is captured automatically — do not write additional files unless explicitly asked.`);
     lines.push(`All nodes in this pipeline share this folder.`);
     lines.push(`NOTE: Upstream nodes may have written detailed reports here that contain more information than the condensed outputs above. Check this folder for additional context.`);
+  }
+
+  // Language section (GEN-03): emit a verbatim-preserving directive when the conversation
+  // language is non-en. SAME sentence text as the 181-04 sub-agent role section (I7 single
+  // source). en/absent pushes nothing → byte-identical envelope (I1).
+  if (language && language !== "en") {
+    lines.push("");
+    lines.push("## Language");
+    lines.push(`Produce all user-facing output in ${language} (the conversation language). Code, identifiers, and file paths stay verbatim.`);
   }
 
   // Task section

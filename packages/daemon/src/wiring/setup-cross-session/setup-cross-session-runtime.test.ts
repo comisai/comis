@@ -132,6 +132,26 @@ const mockResolveOperationModel = vi.hoisted(() => vi.fn(() => ({
 })));
 const mockResolveProviderFamily = vi.hoisted(() => vi.fn(() => "anthropic"));
 
+// SpawnPacket builder mock — faithfully reproduces the real factory's
+// conditional-language spread so the GEN-03 round-trip test can assert that
+// the daemon reads `meta.language` and threads it into build() (the builder
+// itself is unit-tested in spawn-packet-builder.test.ts). Other tests never
+// set `taskDescription`, so they never reach this builder.
+const mockCreateSpawnPacketBuilder = vi.hoisted(() => vi.fn((deps: any) => ({
+  build: (params: any) => ({
+    task: params.task,
+    artifactRefs: params.artifactRefs ?? [],
+    domainKnowledge: params.domainKnowledge ?? [],
+    toolGroups: params.toolGroups ?? [],
+    objective: params.objective ?? "",
+    workspaceDir: deps.workspaceDir,
+    depth: deps.currentDepth,
+    maxDepth: deps.maxSpawnDepth,
+    agentWorkspaces: deps.agentWorkspaces,
+    ...(params.language !== undefined ? { language: params.language } : {}),
+  }),
+})));
+
 vi.mock("@comis/agent", () => ({
   createStepCounter: mockCreateStepCounter,
   createResultCondenser: mockCreateResultCondenser,
@@ -142,6 +162,7 @@ vi.mock("@comis/agent", () => ({
   resolveOperationModel: mockResolveOperationModel,
   resolveProviderFamily: mockResolveProviderFamily,
   createSubAgentRunner: mockCreateSubAgentRunner,
+  createSpawnPacketBuilder: mockCreateSpawnPacketBuilder,
 }));
 
 // resolveWorkspaceDir lives in @comis/core.
@@ -2272,6 +2293,72 @@ describe("setupCrossSession", () => {
         undefined, "agent-2", undefined, undefined,
         expect.objectContaining({ ephemeralSessionAdapter: diskAdapter }),
       );
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Sub-agent reply-language round-trip (GEN-03): session metadata.language ->
+  // builder.build -> SpawnPacket.language at child boot. Proves the parent's
+  // resolved tag survives the persistence boundary.
+  // -------------------------------------------------------------------------
+  describe("sub-agent reply-language round-trip (GEN-03)", () => {
+    it("carries metadata.language into the child SpawnPacket at boot", async () => {
+      const setupCrossSession = await getSetupCrossSession();
+      const mockExecutor = {
+        execute: vi.fn(async () => ({
+          response: "Done",
+          tokensUsed: { total: 100 },
+          cost: { total: 0.01 },
+          finishReason: "stop",
+          stepsExecuted: 2,
+        })),
+      };
+      const deps = createMinimalDeps({ getExecutor: vi.fn(() => mockExecutor) });
+      // Child boot reads the persisted spawn metadata; taskDescription gates the
+      // SpawnPacket build, language rides alongside it (mirrors objective/toolGroups).
+      deps.sessionStore.loadByFormattedKey.mockReturnValue({
+        metadata: { taskDescription: "Summarize the thread", language: "he" },
+      });
+      setupCrossSession(deps);
+
+      const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
+      const executeAgent = runnerArgs.executeAgent;
+      const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
+      await executeAgent("agent-2", sessionKey, "task");
+
+      expect(mockExecutor.execute).toHaveBeenCalledWith(
+        expect.any(Object), sessionKey, expect.any(Array),
+        undefined, "agent-2", undefined, undefined,
+        expect.objectContaining({ spawnPacket: expect.objectContaining({ language: "he" }) }),
+      );
+    });
+
+    it("produces a SpawnPacket without a language field when metadata omits language (byte-identical, I1)", async () => {
+      const setupCrossSession = await getSetupCrossSession();
+      const mockExecutor = {
+        execute: vi.fn(async () => ({
+          response: "Done",
+          tokensUsed: { total: 100 },
+          cost: { total: 0.01 },
+          finishReason: "stop",
+          stepsExecuted: 2,
+        })),
+      };
+      const deps = createMinimalDeps({ getExecutor: vi.fn(() => mockExecutor) });
+      deps.sessionStore.loadByFormattedKey.mockReturnValue({
+        metadata: { taskDescription: "Summarize the thread" },
+      });
+      setupCrossSession(deps);
+
+      const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
+      const executeAgent = runnerArgs.executeAgent;
+      const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
+      await executeAgent("agent-2", sessionKey, "task");
+
+      const overrides = mockExecutor.execute.mock.calls[0][7];
+      expect(overrides.spawnPacket).toBeDefined();
+      expect(overrides.spawnPacket.language).toBeUndefined();
+      expect(Object.prototype.hasOwnProperty.call(overrides.spawnPacket, "language")).toBe(false);
     });
   });
 

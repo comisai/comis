@@ -85,6 +85,7 @@ import { setupContextEngine } from "../executor-context-engine-setup.js";
 import { runPrompt } from "../prompt-runner/index.js";
 import { wrapToolResultWithGuide } from "../jit-guide-injector.js";
 import { postExecution } from "../executor-post-execution.js";
+import { resolveReplyLanguage } from "../resolve-reply-language.js";
 import { assembleTools } from "../executor-tool-assembly.js";
 import {
   getDeliveredGuides,
@@ -320,6 +321,12 @@ export function createPiExecutor(
       // unsafe when one wiring serves multiple agents (the exact WR-02 threat).
       if (alsCtx && agentId) {
         (alsCtx as Record<string, unknown>).agentId = agentId;
+      }
+      // GEN-03 (181-04): tag the resolved reply language on ALS for the sub-agent leg
+      // (DET-02 config+inbound order; set only when non-en so the en path is untouched, I1).
+      if (alsCtx) {
+        const lang = resolveReplyLanguage({ inboundText: msg.text ?? "", configLanguage: config.language });
+        if (lang !== "en") (alsCtx as Record<string, unknown>).resolvedLanguage = lang;
       }
 
       // Derive compat config via normalizeModelCompat (xAI + GBNF auto-detection;
@@ -605,7 +612,7 @@ async function runSessionLocked(
     resourceLoaderOptions, promptResult, cachedSystemTokensEstimate, cachedFreshTailPreambleTokens,
   } = toolAssembly;
   const currentDiscoveryTracker: DiscoveryTracker | undefined = toolAssembly.currentDiscoveryTracker;
-  const { systemPrompt, systemPromptBlocks, dynamicPreamble, inlineMemory, recalledMemories } = promptResult;
+  const { systemPrompt, systemPromptBlocks, dynamicPreamble, inlineMemory, recalledMemories, userLanguage } = promptResult;
 
   const resourceLoader = new DefaultResourceLoader(resourceLoaderOptions);
   await resourceLoader.reload();
@@ -1453,6 +1460,10 @@ async function runSessionLocked(
     nodeId: executionOverrides?.nodeId,
     // Pass sub-agent's active tool groups for "Tool X not found" enrichment
     activeToolGroups: executionOverrides?.activeToolGroups,
+    // F-13: the assembled tool names, so a "Tool X not found" error can suggest the
+    // closest real tool when a small model hallucinates a name (e.g. an mcp__-prefixed
+    // guess for a builtin). Names only — no schemas/secrets.
+    allToolNames: mergedCustomTools.map((t) => t.name),
     onCacheBreakDetected: capturedBridgeRetention
       ? (event) => {
           if (event.reason === "lookback_window_exceeded") {
@@ -1676,6 +1687,7 @@ async function runSessionLocked(
     await postExecution({
       result, session, sm, config, msg, sessionKey, formattedKey, resolverRegisterKey, agentId,
       recalledMemories,
+      userMdLanguage: userLanguage, // DET-02 tier-2 (consumed by the degraded-reply resolver, 181-03)
       executionStartMs, executionId, executionOverrides,
       bridge, unsubscribe,
       contextEngineRef, ceSetup, streamSetup,

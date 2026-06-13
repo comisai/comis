@@ -1389,3 +1389,138 @@ describe("SUMW-01: condense prefix clamp", () => {
     expect(rows.map((r) => r.child_summary_id).sort()).toEqual([d1ids[2], d1ids[3]].sort());
   });
 });
+
+// ===========================================================================
+// OBS-01 (Phase 180-08): summary_language_mismatch at the dag CONDENSE site
+// ===========================================================================
+//
+// The requirement's four-row matrix at the condense site (depth = run.depth + 1).
+// The condense SOURCE is the children summaries' concatenated CONTENT (the
+// summarizer INPUT); the SUMMARY is the injected condense summarizer's output.
+// RED on pre-patch: maybeRunCondensePass emits NO summary_language_mismatch. All
+// Hebrew glyphs are built from String.fromCodePoint (WR-01).
+describe("maybeRunCondensePass — summary_language_mismatch (OBS-01, condense depth)", () => {
+  let db: Database.Database;
+  let store: ContextStorePort;
+
+  const HEBREW_WORD = String.fromCodePoint(0x05e1, 0x05e4, 0x05e8); // ספר
+  const HEBREW_SUMMARY = `${HEBREW_WORD} ${HEBREW_WORD}`;
+  const ENGLISH_SUMMARY = "the user discussed books and reading";
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    initSchema(db, 1536);
+    store = createLcdStore(db);
+  });
+
+  /**
+   * Seed `n` contiguous depth-0 leaves whose CONTENT is `leafContent` — the
+   * condense source. Mirrors seedContiguousLeaves but parametrizes the content.
+   */
+  function seedLeavesWithContent(n: number, width: number, leafContent: string): void {
+    for (let i = 0; i < n; i++) {
+      const items = store.getContextItems(SCOPE);
+      const msgRefs = items.filter((it) => it.refKind === "message" && it.ordinal > i - 1);
+      const windowRefs = msgRefs.slice(0, width);
+      const startOrdinal = windowRefs[0]!.ordinal;
+      const endOrdinal = windowRefs[windowRefs.length - 1]!.ordinal;
+      store.appendLeafSummary({
+        scope: SCOPE,
+        tokenCount: 5,
+        content: leafContent,
+        descendantCount: width,
+        earliestAt: 1000 + startOrdinal,
+        latestAt: 1000 + endOrdinal,
+        fileIds: [],
+        fallback: false,
+        taint: false,
+        createdAt: FIXED_NOW,
+        startOrdinal,
+        endOrdinal,
+      });
+    }
+  }
+
+  async function runCondense(summaryText: string, bus: TypedEventBus): Promise<void> {
+    const logger = createMockLogger();
+    await maybeRunCondensePass(
+      store,
+      SCOPE,
+      condenseOpts({ condensedMinFanout: 4 }),
+      makeSummarizerDeps(shortSummarizer(summaryText), logger),
+      FIXED_NOW,
+      undefined,
+      logger as unknown as LeafSummarizerDeps["logger"],
+      bus,
+    );
+  }
+
+  it("FIRES on Hebrew children → English condensed summary with { sourceScript: hebrew, summaryScript: latin, depth: 1 }", async () => {
+    seedHistory(store, 40, 100);
+    seedLeavesWithContent(4, 4, HEBREW_WORD); // 4 contiguous Hebrew-content leaves
+    const { bus, emits } = makeEventBus();
+    await runCondense(ENGLISH_SUMMARY, bus);
+
+    const mism = emits.filter((e) => e.event === "context:summary_language_mismatch");
+    expect(mism.length).toBe(1);
+    expect(mism[0]!.payload.sourceScript).toBe("hebrew");
+    expect(mism[0]!.payload.summaryScript).toBe("latin");
+    expect(mism[0]!.payload.depth).toBe(1); // condense depth = leaf depth 0 + 1
+    expect(mism[0]!.payload.agentId).toBe("agent_a");
+    expect(mism[0]!.payload.sessionKey).toBe("sess-a");
+  });
+
+  it("is SILENT on Hebrew children → Hebrew condensed summary", async () => {
+    seedHistory(store, 40, 100);
+    seedLeavesWithContent(4, 4, HEBREW_WORD);
+    const { bus, emits } = makeEventBus();
+    await runCondense(HEBREW_SUMMARY, bus);
+    expect(emits.filter((e) => e.event === "context:summary_language_mismatch").length).toBe(0);
+  });
+
+  it("is SILENT on Latin children → Latin condensed summary", async () => {
+    seedHistory(store, 40, 100);
+    seedLeavesWithContent(4, 4, "books and reading discussion");
+    const { bus, emits } = makeEventBus();
+    await runCondense(ENGLISH_SUMMARY, bus);
+    expect(emits.filter((e) => e.event === "context:summary_language_mismatch").length).toBe(0);
+  });
+
+  it("is SILENT on code-heavy children (latin-dominant under 0.3) → English condensed summary", async () => {
+    seedHistory(store, 40, 100);
+    const codeHeavy = `const handler = (req) => { return { ok: true, n: 42 }; }; // ${HEBREW_WORD}`;
+    seedLeavesWithContent(4, 4, codeHeavy);
+    const { bus, emits } = makeEventBus();
+    await runCondense(ENGLISH_SUMMARY, bus);
+    expect(emits.filter((e) => e.event === "context:summary_language_mismatch").length).toBe(0);
+  });
+
+  it("never fails the condense pass when the mismatch subscriber throws (guarded emit)", async () => {
+    seedHistory(store, 40, 100);
+    seedLeavesWithContent(4, 4, HEBREW_WORD);
+    const throwingBus = {
+      emit: (event: string) => {
+        if (event === "context:summary_language_mismatch") throw new Error("subscriber boom");
+        return true;
+      },
+    } as unknown as TypedEventBus;
+    await runCondense(ENGLISH_SUMMARY, throwingBus);
+    // The condensed summary is still persisted (the pass completed).
+    expect(store.getSummaries(SCOPE).filter((s) => s.kind === "condensed").length).toBe(1);
+  });
+
+  it("never leaks the summary or source body into the mismatch payload", async () => {
+    seedHistory(store, 40, 100);
+    // Source = pure Hebrew (so the mismatch fires); the unique English marker
+    // lives ONLY in the summary. The payload must contain neither body.
+    seedLeavesWithContent(4, 4, `${HEBREW_WORD} ${HEBREW_WORD} ${HEBREW_WORD}`);
+    const uniqueSummary = "UNIQUE-SUMMARY-english-probe books and reading";
+    const { bus, emits } = makeEventBus();
+    await runCondense(uniqueSummary, bus);
+    const mism = emits.filter((e) => e.event === "context:summary_language_mismatch");
+    expect(mism.length).toBe(1);
+    const blob = JSON.stringify(mism[0]!.payload);
+    expect(blob).not.toContain("UNIQUE-SUMMARY");
+    expect(blob).not.toContain(HEBREW_WORD);
+  });
+});

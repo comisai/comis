@@ -498,6 +498,7 @@ export function createContextEngine(
         /* eslint-disable @typescript-eslint/no-explicit-any */
         const initialChars = estimateContextCharsWithDualRatio(messages as any);
         /* eslint-enable @typescript-eslint/no-explicit-any */
+        // flat-by-design: pipeline cold-start aggregate (same window as llm-compaction trigger; anchor self-corrects) (TOK-01)
         const charBasedTokens = Math.ceil(initialChars / CHARS_PER_TOKEN_RATIO);
         const anchor = deps.getTokenAnchor?.() ?? null;
         tokensLoaded = estimateWithAnchor(anchor, messages as unknown as Message[], charBasedTokens);
@@ -549,6 +550,7 @@ export function createContextEngine(
       } catch {
         // Estimation failure should not block the pipeline
       }
+      // flat-by-design: aggregate observability stat — numbers-only log, not budget math (TOK-01)
       const resultTokens = Math.ceil(resultChars / CHARS_PER_TOKEN_RATIO);
       const budgetUtilization = budget.availableHistoryTokens > 0
         ? resultTokens / budget.availableHistoryTokens
@@ -564,7 +566,8 @@ export function createContextEngine(
       // compacted context are likely the system-adjacent prefix that's still cached.
       if (snap.compaction !== null) {
         const prevFence = engine.lastBreakpointIndex;
-        const compactedLength = Array.isArray(snap.compaction) ? snap.compaction.length : 0;
+        // Review WR-05: `result` IS the compacted array the fence indexes into; the old Array.isArray(snap.compaction) read the stats OBJECT (always false), silently resetting the fence to -1.
+        const compactedLength = result.length;
         engine.lastBreakpointIndex = compactedLength > 0
           ? Math.max(0, Math.floor(compactedLength / 3))
           : -1;
@@ -619,10 +622,13 @@ export function createContextEngine(
       }
 
       // Build metrics
+      // flat-by-design: aggregate observability stat — numbers-only log, not budget math (TOK-01)
       const tokensMasked = snap.masker ? Math.ceil(snap.masker.totalChars / CHARS_PER_TOKEN_RATIO) : 0;
       const tokensCompacted = snap.compaction
+        // flat-by-design: aggregate observability stat — numbers-only log, not budget math (TOK-01)
         ? Math.max(0, tokensLoaded - Math.ceil(resultChars / CHARS_PER_TOKEN_RATIO))
         : 0;
+      // flat-by-design: aggregate observability stat — numbers-only log, not budget math (TOK-01)
       const tokensEvicted = snap.evictor ? Math.ceil(snap.evictor.evictedChars / CHARS_PER_TOKEN_RATIO) : 0;
       const durationMs = systemNowMs() - pipelineStart;
 
@@ -694,7 +700,9 @@ export function createContextEngine(
           deps.eventBus.emit("context:overflow", {
             agentId,
             sessionKey,
+            // flat-by-design: aggregate observability stat — numbers-only log, not budget math (TOK-01)
             contextTokens: Math.ceil(snap.overflow.contextChars / CHARS_PER_TOKEN_RATIO),
+            // flat-by-design: aggregate observability stat — numbers-only log, not budget math (TOK-01)
             budgetTokens: Math.ceil(snap.overflow.budgetChars / CHARS_PER_TOKEN_RATIO),
             recoveryAction: snap.overflow.recoveryAction,
             timestamp,

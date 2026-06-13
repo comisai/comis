@@ -38,11 +38,12 @@ export function detectShellSubstitutions(command: string): string | null {
 
     // Check BEFORE feeding to tracker so we can use current state
     if (!tracker.escaped && !tracker.isInSingleQuote()) {
-      // Command substitution: $(
+      // $( command substitution — but NOT $(( arithmetic (F-18; a nested $(cmd) is still caught at its own position).
       if (
         ch === "$" &&
         i + 1 < command.length &&
         command[i + 1] === "(" &&
+        command[i + 2] !== "(" &&
         tracker.state !== "BACKTICK"
       ) {
         return "Shell command substitution $(...) detected";

@@ -43,6 +43,7 @@ import { resolveModelPricing } from "@comis/core";
 import { getCacheProviderInfo } from "../executor/cache-usage-helpers.js";
 import { sanitizeMcpToolNameForAnalytics } from "../executor/cache-detection/index.js";
 import { classifyError } from "../executor/error-classifier.js";
+import { suggestClosestTool } from "./tool-name-suggest.js";
 import type { BudgetGuard } from "../budget/budget-guard.js";
 import type { CostTracker } from "../budget/cost-tracker.js";
 import type { StepCounter } from "../executor/step-counter.js";
@@ -315,6 +316,12 @@ export interface PiEventBridgeDeps {
    *  enriched with delegation routing hints. Omit for top-level
    *  agents where all tools are reachable. */
   activeToolGroups?: string[];
+  /** Names of the tools actually assembled for this turn. When provided,
+   *  "Tool X not found" errors are enriched with a `Did you mean "<closest>"?`
+   *  hint (F-13) so a small model that hallucinated a tool name (e.g.
+   *  `mcp__memory_manage--delete` for the builtin `memory_manage`) self-corrects
+   *  instead of looping. Fires for top-level AND sub-agents. */
+  allToolNames?: readonly string[];
 }
 
 /** Estimated cost payload for a timed-out API request. */
@@ -778,16 +785,31 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             // MCP tool reachability is governed by subAgentMcpTools policy, not by tool
             // profiles. Profile-widening hints are misleading for MCP tools. Preserve the
             // MCP-classified errorKind (dependency/timeout) rather than overwriting with "validation".
-            if (errorText && deps.activeToolGroups && deps.activeToolGroups.length > 0) {
+            if (errorText) {
               const notFoundMatch = NOT_FOUND_RE.exec(errorText);
               if (notFoundMatch) {
                 const missingTool = notFoundMatch[1]!;
-                if (extractMcpServerName(missingTool) === undefined) {
-                  // Non-MCP tool: enrich with profile-widening hint
+                // Sub-agent profile-widening hint (unchanged): only non-MCP names, only
+                // when an activeToolGroups ceiling is in force.
+                if (
+                  deps.activeToolGroups &&
+                  deps.activeToolGroups.length > 0 &&
+                  extractMcpServerName(missingTool) === undefined
+                ) {
                   errorText = classifyUnreachableTool(missingTool, deps.activeToolGroups);
                   toolErrorKind = "validation";
                 }
-                // MCP tool: leave errorText + classified MCP errorKind intact
+                // F-13: "did you mean <closest>?" for a hallucinated tool name. Fires
+                // for top-level AND sub-agents whenever a confident match exists — this is
+                // exactly the path a small model needs when it guessed e.g.
+                // `mcp__memory_manage--delete` for the builtin `memory_manage`.
+                const suggestion = deps.allToolNames
+                  ? suggestClosestTool(missingTool, deps.allToolNames)
+                  : undefined;
+                if (suggestion && suggestion !== missingTool) {
+                  errorText = `${errorText} Did you mean "${suggestion}"? Call it by that exact name (builtin tools have no "mcp__" prefix).`;
+                  toolErrorKind = "validation";
+                }
               }
             }
 

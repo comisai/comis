@@ -95,7 +95,11 @@ export const CronAddContract = defineContract({
  */
 export const CronListContract = defineContract({
   method: "cron.list",
-  request: z.object({}),
+  // TARGET-01: optional explicit `agentId` selects one agent's jobs; `agentId: "*"`
+  // returns EVERY agent's jobs (each tagged by `agentId`) — the admin inventory view
+  // I lacked when a non-default agent's crons were invisible. Absent → connection
+  // `_agentId` ?? default (unchanged per-connection scoping).
+  request: z.object({ agentId: z.string().optional() }),
   response: z.object({
     jobs: z.array(z.record(z.string(), z.unknown())),
   }),
@@ -183,10 +187,11 @@ export const CronRemoveContract = defineContract({
  */
 export const CronStatusContract = defineContract({
   method: "cron.status",
-  request: z.object({}),
+  request: z.object({ agentId: z.string().optional() }), // TARGET-01
   response: z.object({
     running: z.boolean(),
     jobCount: z.number(),
+    resolvedAgentId: z.string().optional(), // TARGET-01: the agent this status is for
   }),
   scopes: ["rpc"] as const,
 });
@@ -211,6 +216,7 @@ export const CronRunsContract = defineContract({
   request: z.object({
     jobName: z.string(),
     limit: z.number().optional(),
+    agentId: z.string().optional(), // TARGET-01: which agent's run-history
   }),
   response: z.object({
     runs: z.array(z.record(z.string(), z.unknown())),
@@ -238,11 +244,17 @@ export const CronRunContract = defineContract({
   request: z.object({
     jobName: z.string().optional(),
     mode: z.string().optional(),
+    // TARGET-01: explicit per-agent targeting. When present it selects that agent's
+    // per-agent scheduler; absent, the handler falls back to the connection `_agentId`
+    // then the default — but the response ALWAYS states the resolved agent (I5).
+    agentId: z.string().optional(),
   }),
   response: z.object({
     triggered: z.boolean(),
     mode: z.string(),
     jobName: z.string().optional(),
+    // TARGET-01: the agent the trigger actually acted on (never a silent default).
+    resolvedAgentId: z.string().optional(),
   }),
   scopes: ["rpc"] as const,
 });

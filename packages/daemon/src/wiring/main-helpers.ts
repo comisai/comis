@@ -7,7 +7,14 @@
  * @module
  */
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
-import { safePath, createApprovalGate, generateStrongToken } from "@comis/core";
+import {
+  safePath,
+  createApprovalGate,
+  generateStrongToken,
+  resolveMultilingual,
+  EMBED_MULTILINGUAL,
+  RERANK_MULTILINGUAL,
+} from "@comis/core";
 import { createChannelHealthMonitor } from "@comis/channels";
 import type { LoggingResult } from "./setup-logging.js";
 import type { BootContext } from "../daemon-types.js";
@@ -184,4 +191,32 @@ export function resolveGatewayTokens(deps: {
     }
   }
   return resolved;
+}
+
+/**
+ * EMB-01: resolve the two advisory multilingual booleans for the boot
+ * `model_health` snapshot, PROVIDER-AWARE.
+ *
+ * The embedder id mirrors `setup-memory.ts:308,316` — OpenAI provider →
+ * `embedding.openai.model`; local/auto → `embedding.local.modelUri`. It is NOT
+ * the legacy `memory.embeddingModel` field (Pitfall 3 — that predates the
+ * top-level embedding block and is not the running embedder). The reranker id is
+ * `memory.rerankerModel` (default `bge-reranker-v2-m3`, which the core heuristic
+ * classifies multilingual — Pitfall 2). Only the embedder has a config override
+ * flag today, so the reranker passes `undefined` declared.
+ *
+ * Pure (config in → booleans out); no I/O. ADVISORY ONLY — nothing gates recall
+ * on the result (I4; the FTS trigram floor carries recall regardless). Extracted
+ * from `daemon.ts` to keep the composition root under its architecture line cap.
+ */
+export function resolveModelHealthMultilingual(
+  config: BootContext["container"]["config"],
+): { embeddingMultilingual: boolean | "unknown"; rerankerMultilingual: boolean | "unknown" } {
+  const emb = config.embedding;
+  const embedModelId = emb.provider === "openai" ? emb.openai.model : emb.local.modelUri;
+  const rerankerModelId = config.memory.rerankerModel;
+  return {
+    embeddingMultilingual: resolveMultilingual(emb.multilingual, embedModelId, EMBED_MULTILINGUAL),
+    rerankerMultilingual: resolveMultilingual(undefined, rerankerModelId, RERANK_MULTILINGUAL),
+  };
 }

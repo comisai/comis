@@ -919,6 +919,11 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "integer"
   },
   {
+    "immutable": true,
+    "path": "agents.language",
+    "type": "string"
+  },
+  {
     "default": 100000,
     "immutable": true,
     "path": "agents.maxContextChars",
@@ -5549,6 +5554,11 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("embed
     "immutable": false,
     "path": "embedding.local.modelsDir",
     "type": "string"
+  },
+  {
+    "immutable": false,
+    "path": "embedding.multilingual",
+    "type": "boolean"
   },
   {
     "default": {
@@ -11031,6 +11041,11 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "type": "string"
   },
   {
+    "immutable": false,
+    "path": "embedding.multilingual",
+    "type": "boolean"
+  },
+  {
     "default": {
       "dimensions": 1536,
       "model": "text-embedding-3-small"
@@ -15813,6 +15828,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         "maxCriticRetries"
       ],
       "type": "object"
+    },
+    "language": {
+      "type": "string"
     },
     "maxContextChars": {
       "default": 100000,
@@ -26193,6 +26211,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             ],
             "type": "object"
           },
+          "language": {
+            "type": "string"
+          },
           "maxContextChars": {
             "default": 100000,
             "exclusiveMinimum": 0,
@@ -33079,6 +33100,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "contextSize"
           ],
           "type": "object"
+        },
+        "multilingual": {
+          "type": "boolean"
         },
         "openai": {
           "additionalProperties": false,

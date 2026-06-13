@@ -72,6 +72,11 @@ export const TRAJECTORY_EVENT_TYPES = [
 
   // Memory injection observability.
   "memory.injected",
+  // RECALL-01: per-recall lane/candidate/final counts + rerank outcome (content-free).
+  "memory.recalled",
+  "memory.reranked",
+  // GENQ-01: a memory-generation pass's output diverged from its source (content-free).
+  "memory.generation_quality",
 
   // Delivery queue lifecycle.
   "delivery.queued",
@@ -143,6 +148,9 @@ export const TRAJECTORY_EVENT_TYPES = [
   "context.overflow",
   "context.integrity",
   "context.rehydrated",
+  // OBS-01 (Phase 180): the two multilingual signals on the explain timeline.
+  "context.script_zero_hit",
+  "context.summary_language_mismatch",
 
   // Approval / human-in-the-loop
   "approval.requested",

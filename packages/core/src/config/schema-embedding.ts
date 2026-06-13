@@ -56,6 +56,8 @@ export const EmbeddingConfigSchema = z.strictObject({
     enabled: z.boolean().default(true),
     /** Provider preference: "auto" tries local then remote */
     provider: z.enum(["auto", "local", "openai"]).default("auto"),
+    /** Advisory: declare the embedder multilingual for the `comis fleet` model-health line. Omitted -> inferred from the model id (fleet-only; no behavior gated, I4). */
+    multilingual: z.boolean().optional(),
     /** Local model configuration (node-llama-cpp GGUF) */
     local: EmbeddingLocalSchema.default(() => EmbeddingLocalSchema.parse({})),
     /** Remote OpenAI configuration */

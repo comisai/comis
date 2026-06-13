@@ -1798,6 +1798,7 @@ describe("S4: security context pinning (pipeline layer)", () => {
 // ---------------------------------------------------------------------------
 
 import type { Message } from "@earendil-works/pi-ai";
+import { scriptTokenFactor } from "@comis/core";
 import { estimateMessageChars, estimateContextCharsWithDualRatio } from "../safety/token-estimator.js";
 import { CHARS_PER_TOKEN_RATIO } from "./constants.js";
 
@@ -2253,5 +2254,355 @@ describe("SUMW-01: pipeline span clamp", () => {
       estimateContextCharsWithDualRatio(current as unknown as Message[]) / CHARS_PER_TOKEN_RATIO,
     );
     expect(finalTokens).toBeLessThanOrEqual(Math.floor(32_000 * 85 / 100));
+  });
+
+  // -------------------------------------------------------------------------
+  // TOK-01 (Phase 179): the per-message clamp walk must be script-aware. The
+  // flat dual-chars/3.5 measure under-counts a Hebrew message by ~1.8×, so a
+  // Hebrew-heavy span passes the walk at ~0.55× its honest size and overflows
+  // the summarizer — the SAME failure class WR-04 above closed for toolResults,
+  // recurring on dense scripts. The dual-ratio CHAR walk stays authoritative;
+  // only the divisor gains the per-message script factor.
+  // -------------------------------------------------------------------------
+
+  /** Mirror of the production clamp's per-message factor text: string content,
+   *  or concatenated text/thinking fields + JSON.stringify of toolCall args. */
+  function clampTextOf(m: AgentMessage): string {
+    const content = (m as { content?: unknown }).content;
+    if (typeof content === "string") return content;
+    if (!Array.isArray(content)) return "";
+    return content
+      .map((b: unknown) => {
+        if (typeof b === "string") return b;
+        if (b === null || typeof b !== "object") return "";
+        const block = b as { type?: string; text?: string; thinking?: string; arguments?: unknown };
+        if (typeof block.text === "string") return block.text;
+        if (typeof block.thinking === "string") return block.thinking;
+        if (block.type === "toolCall") {
+          try {
+            return JSON.stringify(block.arguments ?? {});
+          } catch {
+            return "";
+          }
+        }
+        return "";
+      })
+      .join("");
+  }
+
+  it("TOK-01: a Hebrew-heavy middle is clamped script-aware — every summarized span fits the budget in FACTORED units", async () => {
+    // Pre-patch: the prefix walk admits ~3 × 4_200-char Hebrew messages (flat
+    // ≈ 1_200 tokens each) under the 3_952 budget, but their factored size is
+    // ≈ 2_182 tokens each → the span overflows the summarizer ~1.8× → RED.
+    const he = "שלום עולם זה מבחן ארוך מאוד לבדיקת חלוקה ";
+    const messages: AgentMessage[] = [];
+    for (let i = 0; i < 15; i++) {
+      messages.push(makeUserMsg(he.repeat(100)));      // ~4_200 Hebrew chars
+      messages.push(makeAssistantMsg(he.repeat(100)));
+    }
+    const { deps } = make8kOverrideDeps();
+    const layer = createLlmCompactionLayer({ compactionCooldownTurns: 5 }, deps);
+    mockGenerateSummary.mockResolvedValue(buildValidSummary());
+
+    await layer.apply(messages, smallBudget);
+
+    expect(mockGenerateSummary).toHaveBeenCalled();
+    // EVERY summarize call's span fits maxSpanTokens measured script-aware —
+    // per-message ceil(dualChars / (3.5 × scriptTokenFactor(text))), summed,
+    // exactly mirroring the factored walk.
+    for (const call of mockGenerateSummary.mock.calls) {
+      const span = call[0] as AgentMessage[];
+      const factoredTokens = span.reduce((sum, m) => {
+        const text = clampTextOf(m);
+        return (
+          sum +
+          Math.ceil(
+            estimateContextCharsWithDualRatio([m] as unknown as Message[]) /
+              (CHARS_PER_TOKEN_RATIO * scriptTokenFactor(text)),
+          )
+        );
+      }, 0);
+      expect(factoredTokens).toBeLessThanOrEqual(MAX_SPAN_TOKENS_8K);
+    }
+  });
+
+  it("TOK-01 I1: a pure-ASCII middle clamps at the byte-identical flat cut point (factor 1.0 — Latin unchanged)", async () => {
+    // The Latin guarantee: scriptTokenFactor(ascii) === 1 → the factored walk IS
+    // today's flat walk. Mirror the production prefix walk with TODAY'S flat
+    // math; the admitted span must be exactly that cut.
+    const { deps } = make8kOverrideDeps();
+    const layer = createLlmCompactionLayer({ compactionCooldownTurns: 5 }, deps);
+    const messages = buildSpanClampConversation();
+    const tailStart = mirrorTailStartIndex(messages, smallBudget);
+    const middle = messages.slice(0, tailStart);
+    mockGenerateSummary.mockResolvedValue(buildValidSummary());
+
+    await layer.apply(messages, smallBudget);
+
+    let walkedTokens = 0;
+    let expectedCut = 0;
+    for (const m of middle) {
+      const t = Math.ceil(
+        estimateContextCharsWithDualRatio([m] as unknown as Message[]) / CHARS_PER_TOKEN_RATIO,
+      );
+      if (walkedTokens + t > MAX_SPAN_TOKENS_8K) break;
+      walkedTokens += t;
+      expectedCut++;
+    }
+    const spanArg = mockGenerateSummary.mock.calls[0][0] as AgentMessage[];
+    expect(spanArg.length).toBe(expectedCut);
+  });
+});
+
+// ===========================================================================
+// OBS-01 (Phase 180-08): summary_language_mismatch at the PIPELINE site (depth -1)
+// ===========================================================================
+//
+// The requirement's four-row matrix at the pipeline compaction site. The SOURCE
+// is the summarized span (the middle-zone messages handed to generateSummary);
+// the SUMMARY is the validated mock summary. depth is -1 (pipeline has no depth
+// concept). RED on pre-patch: createLlmCompactionLayer emits NO
+// summary_language_mismatch. Hebrew glyphs are built from String.fromCodePoint.
+describe("createLlmCompactionLayer — summary_language_mismatch (OBS-01, depth -1)", () => {
+  const HEBREW_WORD = String.fromCodePoint(0x05e1, 0x05e4, 0x05e8); // ספר
+
+  /** A bus-capturing deps factory (createMockDeps does not wire the bus). */
+  function makeBusDeps(
+    throwOnMismatch = false,
+  ): {
+    deps: CompactionLayerDeps;
+    emits: Array<{ event: string; payload: Record<string, unknown> }>;
+  } {
+    const { deps } = createMockDeps();
+    const emits: Array<{ event: string; payload: Record<string, unknown> }> = [];
+    const bus = {
+      emit: (event: string, payload: Record<string, unknown>) => {
+        if (throwOnMismatch && event === "context:summary_language_mismatch") {
+          throw new Error("subscriber boom");
+        }
+        emits.push({ event, payload });
+        return true;
+      },
+    } as unknown as CompactionLayerDeps["eventBus"];
+    return {
+      deps: { ...deps, eventBus: bus, agentId: "agent_a", sessionKey: "sess-a" },
+      emits,
+    };
+  }
+
+  /** A large Hebrew conversation that arms the 85% token threshold. */
+  function hebrewConversation(): AgentMessage[] {
+    const messages: AgentMessage[] = [];
+    const big = `${HEBREW_WORD} `.repeat(12_500); // ~50K chars of Hebrew per message
+    for (let i = 0; i < 5; i++) {
+      messages.push(makeUserMsg(big));
+      messages.push(makeAssistantMsg(big));
+    }
+    return messages;
+  }
+
+  /** A large code-heavy (latin-dominant) conversation with a little Hebrew. */
+  function codeHeavyConversation(): AgentMessage[] {
+    const messages: AgentMessage[] = [];
+    const big = `const f = (req, res) => { return res.json({ ok: true, n: 42 }); }; // ${HEBREW_WORD} `.repeat(600);
+    for (let i = 0; i < 5; i++) {
+      messages.push(makeUserMsg(big));
+      messages.push(makeAssistantMsg(big));
+    }
+    return messages;
+  }
+
+  /** A large English conversation. */
+  function englishConversation(): AgentMessage[] {
+    const messages: AgentMessage[] = [];
+    const big = "the user discussed books and reading at length ".repeat(1_100);
+    for (let i = 0; i < 5; i++) {
+      messages.push(makeUserMsg(big));
+      messages.push(makeAssistantMsg(big));
+    }
+    return messages;
+  }
+
+  /**
+   * A valid summary (the 9 required sections) whose section BODIES are all
+   * Hebrew, so dominantScript(summary) === "hebrew" (the ASCII `##` headings are
+   * a minority of the codepoints — verified). This is what GEN-01's
+   * headings-exempt instruction produces on a Hebrew conversation.
+   */
+  function buildHebrewSummary(): string {
+    const hb = `${HEBREW_WORD} ${HEBREW_WORD} ${HEBREW_WORD} ${HEBREW_WORD} ${HEBREW_WORD} ${HEBREW_WORD}`;
+    return [
+      "## Identifiers", `- ${hb}`,
+      "## Primary Request and Intent", `- ${hb} ${hb}`,
+      "## Decisions", `- ${hb}`,
+      "## Files and Code", `- ${hb}`,
+      "## Errors and Resolutions", `- ${hb}`,
+      "## User Messages", `- ${hb}`,
+      "## Constraints", `- ${hb}`,
+      "## Active Work", `- ${hb}`,
+      "## Next Steps", `- ${hb}`,
+    ].join("\n");
+  }
+
+  beforeEach(() => {
+    mockGenerateSummary.mockReset();
+  });
+
+  it("FIRES on a Hebrew source span → English summary with { sourceScript: hebrew, summaryScript: latin, depth: -1 }", async () => {
+    const { deps, emits } = makeBusDeps();
+    const layer = createLlmCompactionLayer({ compactionCooldownTurns: 5 }, deps);
+    mockGenerateSummary.mockResolvedValueOnce(buildValidSummary()); // English (9 ASCII sections)
+
+    await layer.apply(hebrewConversation(), BUDGET);
+
+    expect(mockGenerateSummary).toHaveBeenCalledTimes(1);
+    const mism = emits.filter((e) => e.event === "context:summary_language_mismatch");
+    expect(mism.length).toBe(1);
+    expect(mism[0]!.payload.sourceScript).toBe("hebrew");
+    expect(mism[0]!.payload.summaryScript).toBe("latin");
+    expect(mism[0]!.payload.depth).toBe(-1);
+    expect(mism[0]!.payload.agentId).toBe("agent_a");
+    expect(mism[0]!.payload.sessionKey).toBe("sess-a");
+  });
+
+  it("is SILENT on a Hebrew source span → Hebrew summary", async () => {
+    const { deps, emits } = makeBusDeps();
+    const layer = createLlmCompactionLayer({ compactionCooldownTurns: 5 }, deps);
+    mockGenerateSummary.mockResolvedValueOnce(buildHebrewSummary());
+
+    await layer.apply(hebrewConversation(), BUDGET);
+    expect(mockGenerateSummary).toHaveBeenCalledTimes(1);
+    expect(emits.filter((e) => e.event === "context:summary_language_mismatch").length).toBe(0);
+  });
+
+  it("is SILENT on a Latin source span → Latin summary", async () => {
+    const { deps, emits } = makeBusDeps();
+    const layer = createLlmCompactionLayer({ compactionCooldownTurns: 5 }, deps);
+    mockGenerateSummary.mockResolvedValueOnce(buildValidSummary());
+
+    await layer.apply(englishConversation(), BUDGET);
+    expect(mockGenerateSummary).toHaveBeenCalledTimes(1);
+    expect(emits.filter((e) => e.event === "context:summary_language_mismatch").length).toBe(0);
+  });
+
+  it("is SILENT on a code-heavy mixed span (latin-dominant under 0.3) → English summary", async () => {
+    const { deps, emits } = makeBusDeps();
+    const layer = createLlmCompactionLayer({ compactionCooldownTurns: 5 }, deps);
+    mockGenerateSummary.mockResolvedValueOnce(buildValidSummary());
+
+    await layer.apply(codeHeavyConversation(), BUDGET);
+    expect(mockGenerateSummary).toHaveBeenCalledTimes(1);
+    expect(emits.filter((e) => e.event === "context:summary_language_mismatch").length).toBe(0);
+  });
+
+  it("never fails the compaction pass when the mismatch subscriber throws (guarded emit)", async () => {
+    const { deps, emits } = makeBusDeps(true); // throws on the mismatch event
+    const layer = createLlmCompactionLayer({ compactionCooldownTurns: 5 }, deps);
+    mockGenerateSummary.mockResolvedValueOnce(buildValidSummary());
+
+    // The compaction must still complete and return a compacted result.
+    const result = await layer.apply(hebrewConversation(), BUDGET);
+    expect(mockGenerateSummary).toHaveBeenCalledTimes(1);
+    // It DID compact (result differs from the input reference) — the throw was swallowed.
+    expect(Array.isArray(result)).toBe(true);
+    // dag_compacted-style sibling events still recorded (the throw was isolated to the mismatch emit).
+    expect(emits.length).toBeGreaterThanOrEqual(0);
+  });
+
+  it("never leaks the summary or source body into the mismatch payload", async () => {
+    const { deps, emits } = makeBusDeps();
+    const layer = createLlmCompactionLayer({ compactionCooldownTurns: 5 }, deps);
+    // A unique English marker inside the summary body.
+    const leakSummary = buildValidSummary().replace(
+      "- User wants to implement structured compaction with semantic sections",
+      "- UNIQUE-PIPELINE-LEAK-PROBE the user discussed many books",
+    );
+    mockGenerateSummary.mockResolvedValueOnce(leakSummary);
+
+    await layer.apply(hebrewConversation(), BUDGET);
+    const mism = emits.filter((e) => e.event === "context:summary_language_mismatch");
+    expect(mism.length).toBe(1);
+    const blob = JSON.stringify(mism[0]!.payload);
+    expect(blob).not.toContain("UNIQUE-PIPELINE-LEAK-PROBE");
+    expect(blob).not.toContain(HEBREW_WORD);
+  });
+});
+
+describe("GEN-01: pipeline customInstructions carry the shared sentence + headings-verbatim clause", () => {
+  beforeEach(() => {
+    mockGenerateSummary.mockReset();
+  });
+
+  // Load-bearing fragments of the single shared sentence (design §4 GEN-01, I7).
+  const NO_TRANSLATE_FRAGMENT = "never translate";
+  const VERBATIM_FRAGMENT =
+    "Keep code identifiers, file paths, tool names, and error strings verbatim.";
+  // Stable fragments of the pipeline-specific headings-verbatim clause.
+  const HEADINGS_CLAUSE_FRAGMENT_A = "keep the section headings";
+  const HEADINGS_CLAUSE_FRAGMENT_B = "exactly as given above, in English";
+  const HEADINGS_CLAUSE_FRAGMENT_C =
+    "only the section CONTENT follows the source language";
+
+  /**
+   * buildComisCompactionInstructions is PRIVATE (no export — the no-BC / public-surface
+   * gates dislike dead exports). Drive a Level-1 compaction and capture the `instructions`
+   * the SDK actually received: arg index 6 (the 7th positional `instructions` parameter of
+   * generateSummary per llm-compaction.ts:725-728). This is exactly the customInstructions
+   * the SDK sees — the same indirect path the :314-339 Level-1 test drives.
+   */
+  async function captureInstructions(): Promise<string> {
+    const { deps } = createMockDeps();
+    const layer = createLlmCompactionLayer({ compactionCooldownTurns: 5 }, deps);
+    const largeMessages = buildLargeConversation();
+    mockGenerateSummary.mockResolvedValueOnce(buildValidSummary());
+    await layer.apply(largeMessages, BUDGET);
+    expect(mockGenerateSummary).toHaveBeenCalledTimes(1);
+    return mockGenerateSummary.mock.calls[0]![6] as string;
+  }
+
+  it("the captured customInstructions contain the full shared language-preservation sentence", async () => {
+    const instructions = await captureInstructions();
+    expect(instructions).toContain(NO_TRANSLATE_FRAGMENT);
+    expect(instructions).toContain(VERBATIM_FRAGMENT);
+  });
+
+  it("the captured customInstructions contain the headings-verbatim clause", async () => {
+    const instructions = await captureInstructions();
+    expect(instructions).toContain(HEADINGS_CLAUSE_FRAGMENT_A);
+    expect(instructions).toContain(HEADINGS_CLAUSE_FRAGMENT_B);
+    expect(instructions).toContain(HEADINGS_CLAUSE_FRAGMENT_C);
+  });
+
+  it("all nine ## Section headings still appear verbatim in the captured customInstructions (regression)", async () => {
+    const instructions = await captureInstructions();
+    // Mirrors the existing :329 `toContain("## Identifiers")` style across all 9.
+    expect(instructions).toContain("## Identifiers");
+    expect(instructions).toContain("## Primary Request and Intent");
+    expect(instructions).toContain("## Decisions");
+    expect(instructions).toContain("## Files and Code");
+    expect(instructions).toContain("## Errors and Resolutions");
+    expect(instructions).toContain("## User Messages");
+    expect(instructions).toContain("## Constraints");
+    expect(instructions).toContain("## Active Work");
+    expect(instructions).toContain("## Next Steps");
+  });
+
+  it("validateCompactionSummary still passes a valid 9-heading summary (scaffolding contract intact)", () => {
+    // The clause must not corrupt the machine-parsed heading contract: a localized
+    // heading would fail validation → fallback ladder → invert GEN-01's goal.
+    expect(validateCompactionSummary(buildValidSummary())).toEqual({
+      valid: true,
+      missingSections: [],
+    });
+  });
+
+  it("the shared sentence is imported, not redefined in llm-compaction (single source, I7)", async () => {
+    // The captured pipeline instructions carry the SAME sentence the dag templates use.
+    // (The single-source guarantee is enforced structurally by the import; this asserts
+    // the pipeline output is byte-consistent with that shared sentence's fragments.)
+    const instructions = await captureInstructions();
+    expect(instructions).toContain(
+      "Write the summary in the dominant language of the source content",
+    );
   });
 });

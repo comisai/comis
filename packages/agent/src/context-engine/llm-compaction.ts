@@ -28,7 +28,7 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Message } from "@earendil-works/pi-ai";
 import { generateSummary } from "@earendil-works/pi-coding-agent";
-import { systemNowMs } from "@comis/core";
+import { systemNowMs, scriptTokenFactor } from "@comis/core";
 import type { ContextLayer, TokenBudget, CompactionLayerDeps } from "./types.js";
 import type { CapabilityClass } from "../executor/model-profile.js";
 import { resolveCompactionStrategy } from "./compaction-capability-router.js";
@@ -50,6 +50,13 @@ import {
   estimateMessageChars,
   estimateWithAnchor,
 } from "../safety/token-estimator.js";
+import {
+  extendHeadForPairSafety,
+  estimateRangeChars,
+  clampFactorText,
+  emitSummaryLanguageMismatch,
+} from "./compaction-zone-helpers.js";
+import { LANGUAGE_PRESERVATION_INSTRUCTION } from "./summarize-prompt-style.js";
 
 // ---------------------------------------------------------------------------
 // Compaction config subset
@@ -112,7 +119,9 @@ function buildComisCompactionInstructions(): string {
 - Currently in-progress work items and what is actively being worked on right now
 
 ## Next Steps
-- Ordered list of what should happen next`;
+- Ordered list of what should happen next
+
+${LANGUAGE_PRESERVATION_INSTRUCTION} However, keep the section headings (the "## ..." lines) exactly as given above, in English — only the section CONTENT follows the source language.`;
 }
 
 // ---------------------------------------------------------------------------
@@ -223,65 +232,6 @@ function persistCompaction(
 }
 
 // ---------------------------------------------------------------------------
-// Three-zone partitioning helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Extend head boundary forward to include trailing tool_use/tool_result exchanges.
- * If the last message in the head zone is a user message followed by an assistant
- * with tool_use calls, extend to include the assistant + all matching tool_results.
- * This prevents orphaned tool results in the middle zone.
- */
-function extendHeadForPairSafety(
-  messages: AgentMessage[],
-  headEndIndex: number,
-): number {
-  let extended = headEndIndex;
-  while (extended < messages.length) {
-    const msg = messages[extended]!;
-    // If next message is an assistant with tool_use, include it
-    if (msg.role === "assistant") {
-      const content = Array.isArray(msg.content) ? msg.content : [];
-      /* eslint-disable @typescript-eslint/no-explicit-any */
-      const hasToolUse = content.some(
-        (block: any) => block.type === "tool_use" || block.type === "toolCall",
-      );
-      /* eslint-enable @typescript-eslint/no-explicit-any */
-      if (hasToolUse) {
-        extended++;
-        // Include all subsequent tool_result messages
-        while (
-          extended < messages.length &&
-          messages[extended]!.role === "toolResult"
-        ) {
-          extended++;
-        }
-        continue;
-      }
-    }
-    break;
-  }
-  return extended;
-}
-
-/**
- * Estimate total chars for a range of messages [startIdx, endIdx).
- */
-function estimateRangeChars(
-  messages: AgentMessage[],
-  startIdx: number,
-  endIdx: number,
-): number {
-  let total = 0;
-  for (let i = startIdx; i < endIdx; i++) {
-    /* eslint-disable @typescript-eslint/no-explicit-any */
-    total += estimateMessageChars(messages[i] as any);
-    /* eslint-enable @typescript-eslint/no-explicit-any */
-  }
-  return total;
-}
-
-// ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
 
@@ -326,6 +276,7 @@ export function createLlmCompactionLayer(
           /* eslint-disable @typescript-eslint/no-explicit-any */
           const contextChars = estimateContextCharsWithDualRatio(messages as any);
           /* eslint-enable @typescript-eslint/no-explicit-any */
+          // flat-by-design: aggregate cold-start compare, no text in scope; anti-conservative for ONE unanchored turn — estimateWithAnchor self-corrects from turn 2 (TOK-01, design §4)
           const charBasedTokens = Math.ceil(contextChars / CHARS_PER_TOKEN_RATIO);
           const anchor = deps.getTokenAnchor?.() ?? null;
           contextTokens = estimateWithAnchor(anchor, messages as unknown as Message[], charBasedTokens);
@@ -526,12 +477,19 @@ export function createLlmCompactionLayer(
           // divide) — a flat chars/3.5 walk under-counts structured content by
           // ~15-17%, re-opening the provider-overflow class on toolResult-heavy
           // middles. One estimator per layer (single-sourced with the trigger).
+          // TOK-01 (Phase 179): the divisor is modulated by scriptTokenFactor
+          // over the message's extracted text — a Hebrew message carries ~1.8×
+          // the tokens the flat measure admits, the same under-count class the
+          // WR-04 dual-ratio fix closed for toolResults. The dual-ratio CHAR
+          // walk stays authoritative (ASCII factor 1.0 → byte-identical cut).
           let spanTokens = 0;
           let cut = 0;
           for (const m of evictableMiddle) {
+            const factorText = clampFactorText(m);
             /* eslint-disable @typescript-eslint/no-explicit-any */
             const msgTokens = Math.ceil(
-              estimateContextCharsWithDualRatio([m] as any) / CHARS_PER_TOKEN_RATIO,
+              estimateContextCharsWithDualRatio([m] as any) /
+                (CHARS_PER_TOKEN_RATIO * scriptTokenFactor(factorText)),
             );
             /* eslint-enable @typescript-eslint/no-explicit-any */
             if (spanTokens + msgTokens > maxSpanTokens) break;
@@ -620,6 +578,23 @@ export function createLlmCompactionLayer(
           summaryReserve,
           deps.logger,
         );
+
+        // OBS-01 (Phase 180): the small-model G4 detector at the PIPELINE site
+        // (depth -1). The summary is now final (post-validate inside
+        // compactWithFallback); when a non-Latin source span produced a Latin
+        // summary, emit context:summary_language_mismatch. Source = the SAME span
+        // handed to generateSummary (clampFactorText over spanToSummarize, never a
+        // re-read). Visibility only — guarded, content-free, never fails compaction.
+        if (deps.agentId && deps.sessionKey) {
+          emitSummaryLanguageMismatch(deps.eventBus, deps.logger, {
+            agentId: deps.agentId,
+            sessionKey: deps.sessionKey,
+            sourceText: spanToSummarize.map((m) => clampFactorText(m)).join(" "),
+            summaryText: compactionResult.summary,
+            depth: -1,
+            nowMs: systemNowMs(),
+          });
+        }
 
         // Build compaction summary message matching SDK format
         const discoveredTools = deps.getDiscoveredTools?.() ?? [];

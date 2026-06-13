@@ -25,6 +25,7 @@ import { type LazyPaths, resolvePaths } from "../file/safe-path-wrapper.js";
 import { readStringParam, readNumberParam } from "../../../platform-tools/tool-helpers.js";
 import { readFileWithMetadata } from "./shared/file-encoding.js";
 import { parseNotebook, renderNotebookCells } from "./shared/notebook-utils.js";
+import { pathOutsideWorkspaceMessage } from "./path-error.js";
 
 // Activity label spec. Descriptor name ==
 // emitted name for builtins (see read-tool.ts:361 → `name: "read"`). The
@@ -335,7 +336,7 @@ function resolveReadPath(
     }
   }
 
-  throw new Error(`[path_traversal] Path outside workspace bounds: ${filePath}`);
+  throw new Error(pathOutsideWorkspaceMessage(filePath));
 }
 
 // ---------------------------------------------------------------------------

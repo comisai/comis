@@ -375,6 +375,7 @@ export function buildExecuteSubAgent(deps: ExecuteSubAgentDeps): ExecuteSubAgent
         toolGroups: (meta.toolGroups as string[]) ?? [],
         includeParentHistory: ((meta.includeParentHistory as "none" | "summary") ?? "none"),
         domainKnowledge: (meta.domainKnowledge as string[]) ?? [],
+        ...(typeof meta.language === "string" ? { language: meta.language } : {}),
       });
 
       if (parentSummary) {

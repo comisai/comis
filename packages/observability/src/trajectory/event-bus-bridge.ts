@@ -83,6 +83,17 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // F2 (D5): per-session health rollup emitted once at agent-end.
   "session:summary": "session.summary",
   "memory:injected": "memory.injected",
+  // RECALL-01 (observability-excellence): the per-recall lane/candidate/final counts +
+  // rerank outcome — previously emitted but UNMAPPED (invisible to comis explain/trace,
+  // the #1 troubleshooting blind spot). Content-free (counts/booleans only — H1).
+  "memory:recalled": "memory.recalled",
+  "memory:reranked": "memory.reranked",
+
+  // GENQ-01 (observability-excellence): a memory-generation pass (consolidation /
+  // reasoning / user-representation) produced output whose quality diverged from
+  // its source — the F-ML1 class. Emitted only on an issue. Content-free (closed
+  // enums + booleans — H1); the source/generated body never crosses the bus.
+  "memory:generation_quality": "memory.generation_quality",
 
   // ---- Delivery lifecycle ----
   "delivery:enqueued": "delivery.queued",
@@ -166,6 +177,12 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   "context:overflow": "context.overflow",
   "context:integrity": "context.integrity",
   "context:rehydrated": "context.rehydrated",
+  // OBS-01 (Phase 180): the two multilingual signals on the explain path. Not
+  // yet emitted (emit sites land in 180-08) — declared/mapped here so the
+  // trajectory bridge records them the moment they fire. NOT added to
+  // EVENTS_NOT_TRAJECTORY_MAPPED (these are mapping entries, not allowlist entries).
+  "context:script_zero_hit": "context.script_zero_hit",
+  "context:summary_language_mismatch": "context.summary_language_mismatch",
 
   // Approval / human-in-the-loop (events-infra.ts; emitter packages/core/approval — not arch-scanned)
   // SECURITY INVARIANT: approval:requested.params is raw unconstrained tool arguments

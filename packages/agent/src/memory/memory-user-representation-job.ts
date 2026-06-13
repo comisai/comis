@@ -57,6 +57,7 @@ import {
   parseUserRepresentationOutput,
   type UserRepresentationBuildOutput,
 } from "./memory-user-representation-prompt.js";
+import { emitGenerationQuality } from "./emit-generation-quality.js";
 
 // ---------------------------------------------------------------------------
 // Trust ceiling helper
@@ -448,6 +449,16 @@ export async function runUserRepresentationBuild(
     { agentId, step: "user-repr" as const, ...stats(), durationMs: clock.now() - startMs },
     "User representation build completed",
   );
+  // GENQ-01: classify the source memories vs the built profile. Fires only on an
+  // issue (the F-ML1 class: non-Latin sources translated into a Latin profile, or
+  // an empty build) — VISIBILITY ONLY, content-free, guarded (never fails the run).
+  emitGenerationQuality(eventBus, logger, {
+    agentId,
+    pass: "user_representation",
+    sourceText,
+    outputText: candidates.map((candidate) => candidate.content).join("\n"),
+    nowMs: clock.now(),
+  });
   emit();
   return ok(stats());
 }

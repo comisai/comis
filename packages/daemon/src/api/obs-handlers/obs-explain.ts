@@ -162,7 +162,13 @@ export async function assembleIncidentReportFromSources(
     // reads the trajectory record stream and never sees it — so the assembler's
     // resolved `report.outcome.endReason` is the single source threaded here. A
     // tool-failure cause still out-ranks it (the named-cause rules sit LAST).
-    report.likelyRootCause = rootCause({ ...signals, endReason: report.outcome.endReason });
+    // RECALL-01: also thread the authoritative `degraded` flag so `recall_miss`
+    // gates on genuine degradation (a zero-hit recall on a healthy turn is benign).
+    report.likelyRootCause = rootCause({
+      ...signals,
+      endReason: report.outcome.endReason,
+      degraded: report.outcome.degraded,
+    });
   }
   const bounded = boundIncidentReport(report, params.depth ?? "summary");
 

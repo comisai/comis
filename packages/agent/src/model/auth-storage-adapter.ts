@@ -9,17 +9,7 @@
  */
 
 import { AuthStorage, InMemoryAuthStorageBackend } from "@earendil-works/pi-coding-agent";
-import { KEYLESS_PROVIDER_TYPES, type SecretManager } from "@comis/core";
-
-/**
- * Keyless sentinel for local providers (Ollama / LM Studio) that need no real
- * credential. MUST match `model-registry-adapter.ts` (which bakes the same value
- * into the built Model) so the summarizer/compaction key path — which resolves
- * through `authStorage.getApiKey` rather than the baked model key — sees the same
- * sentinel and never throws the SDK's "No API key for provider" on a keyless
- * local deployment.
- */
-const KEYLESS_API_KEY_SENTINEL = "ollama-no-auth";
+import { KEYLESS_PROVIDER_TYPES, KEYLESS_API_KEY_SENTINEL, type SecretManager } from "@comis/core";
 
 /** Default provider-to-env-var mapping for known LLM providers. */
 export const DEFAULT_PROVIDER_KEYS: Record<string, string> = {

@@ -53,34 +53,14 @@
  */
 
 import type { IncidentSignals } from "@comis/core";
-
-// ---------------------------------------------------------------------------
-// Tunable thresholds (module-top constants per the naming contract).
-// ---------------------------------------------------------------------------
-
-/**
- * Minimum same-tool failures for the repeated-failure breaker path to fire when
- * no explicit breaker event / "DO NOT retry" line is present. Re-exported from
- * the signals module's `BREAKER_N` intent (kept literal here so the registry has
- * no runtime import cycle with the normalizer).
- */
-const BREAKER_N = 5;
-
-/** Minimum disk offloads for the context-bloat insurance signal. */
-const CONTEXT_BLOAT_MIN_OFFLOADS = 3;
-
-/**
- * A single large-result offload (chars) that, on its own, marks a token spike
- * for the context-bloat heuristic — one ~50 KB body offloaded is already a
- * working-set spike.
- */
-const TOKEN_SPIKE_CHARS = 32_000;
-
-/** Substrings that mark a missing-dependency exec failure (insurance code). */
-const MODULE_NOT_FOUND_MARKERS: readonly string[] = [
-  "ModuleNotFoundError",
-  "Cannot find module",
-];
+import {
+  BREAKER_N,
+  CONTEXT_BLOAT_MIN_OFFLOADS,
+  TOKEN_SPIKE_CHARS,
+  MODULE_NOT_FOUND_MARKERS,
+  breakerTool,
+  hasModuleNotFound,
+} from "./obs-explain-heuristics-helpers.js";
 
 // ---------------------------------------------------------------------------
 // Public shape: matches IncidentReport.likelyRootCause 1:1 (Plan 01).
@@ -94,31 +74,6 @@ export interface RootCause {
   code: string;
   detail: string;
   suggestedNextSteps: string[];
-}
-
-// ---------------------------------------------------------------------------
-// Rule helpers.
-// ---------------------------------------------------------------------------
-
-/**
- * The tool the breaker most plausibly opened on: the explicit breaker-opened
- * tool, else the most-failed tool, else the first tool with a repeated-failure
- * count. Returns `undefined` when no tool can be named.
- */
-function breakerTool(s: IncidentSignals): string | undefined {
-  if (s.breakerOpenedTool !== undefined) return s.breakerOpenedTool;
-  if (s.mostFailedTool !== undefined) return s.mostFailedTool;
-  for (const tool of Object.keys(s.repeatedFailureCount)) return tool;
-  return undefined;
-}
-
-/** Does any failure body carry a known module-not-found marker? */
-function hasModuleNotFound(s: IncidentSignals): boolean {
-  return s.failures.some(
-    (f) =>
-      f.errorKind === "dependency" &&
-      MODULE_NOT_FOUND_MARKERS.some((marker) => f.errorPreview.includes(marker)),
-  );
 }
 
 // ---------------------------------------------------------------------------
@@ -442,6 +397,36 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
       suggestedNextSteps: [
         `raise agents.${s.agentId ?? "<id>"}.promptTimeout.promptTimeoutMs`,
         "obs.explain depth=full",
+      ],
+    };
+  },
+
+  // 9c) recall_miss (RECALL-01). A DEGRADED session whose memory recalls ALL
+  //     returned zero injected memories AND that matched no tool/context/breaker
+  //     cause above — the agent ran with no memory context. Low-noise by
+  //     construction: requires EVERY recall to have missed (zeroHits === recalls),
+  //     NO tool failures (so it never steals from the catch-all, which REQUIRES
+  //     failures — the two are mutually exclusive), and the authoritative
+  //     `degraded` flag (a zero-hit recall on a healthy turn is benign — the agent
+  //     simply didn't need memory — and never fires). Grounded in the v2.22 Hebrew
+  //     / LM-3 runs where recall silently missed and `comis explain` root-caused
+  //     nothing, so I hand-queried memory_fts to find the lane/scope gap.
+  (s) => {
+    if (s.recall === undefined) return null;
+    if (s.recall.recalls === 0 || s.recall.zeroHits < s.recall.recalls) return null;
+    if (s.failures.length > 0) return null;
+    if (s.degraded !== true) return null;
+    return {
+      code: "recall_miss",
+      detail:
+        `recall miss — all ${s.recall.recalls} recall query(ies) returned zero injected ` +
+        `memories (terminal lanes=${s.recall.lastLanes}, reranker ` +
+        `${s.recall.rerankerAvailable ? "available" : "absent"}); the turn ran with no memory ` +
+        "context and no tool/context/breaker cause matched",
+      suggestedNextSteps: [
+        "verify the recall SCOPE (agent- vs user-scoped) matches where the memory was written",
+        "for non-Latin queries confirm the trigram-twin lanes fired (comis fleet → health_signal); for weak semantic recall check comis fleet config_posture for the embedder",
+        "obs.explain depth=full for the per-recall lane/candidate counts",
       ],
     };
   },

@@ -1,0 +1,1627 @@
+{
+  "generatedAt": "2026-06-12T20:10:38.981Z",
+  "anthropicModel": null,
+  "qwenGguf": "sha256-1194192cf2a187eb02722edcc3f77b11d21f537048ce04b67ccf8ba78863006a",
+  "entries": [
+    {
+      "id": "he_chat_01",
+      "script": "he",
+      "category": "chat",
+      "text": "מה השעה עכשיו? אני צריך לצאת בקרוב לפגישה במרכז העיר",
+      "anthropicTokens": null,
+      "qwenTokens": 15,
+      "maxTokenCount": 15
+    },
+    {
+      "id": "he_chat_02",
+      "script": "he",
+      "category": "chat",
+      "text": "אתמול קראתי ספר מרתק על תולדות המדע וההמצאות הגדולות, ממליץ בחום",
+      "anthropicTokens": null,
+      "qwenTokens": 26,
+      "maxTokenCount": 26
+    },
+    {
+      "id": "he_chat_03",
+      "script": "he",
+      "category": "chat",
+      "text": "תוכל להמליץ לי על מתכון פשוט לארוחת ערב קלה עם ירקות של העונה?",
+      "anthropicTokens": null,
+      "qwenTokens": 25,
+      "maxTokenCount": 25
+    },
+    {
+      "id": "he_chat_04",
+      "script": "he",
+      "category": "chat",
+      "text": "מזג האוויר נראה נהדר הבוקר, אולי נצא לטיול קצר בפארק אחרי הצהריים",
+      "anthropicTokens": null,
+      "qwenTokens": 20,
+      "maxTokenCount": 20
+    },
+    {
+      "id": "he_chat_05",
+      "script": "he",
+      "category": "chat",
+      "text": "אני מנסה ללמוד שפה חדשה כבר חצי שנה, ההתקדמות איטית אבל עקבית",
+      "anthropicTokens": null,
+      "qwenTokens": 21,
+      "maxTokenCount": 21
+    },
+    {
+      "id": "he_chat_06",
+      "script": "he",
+      "category": "chat",
+      "text": "איפה אפשר לקנות ירקות טריים בשוק? אני מחפש דוכן אמין עם מחירים הוגנים",
+      "anthropicTokens": null,
+      "qwenTokens": 26,
+      "maxTokenCount": 26
+    },
+    {
+      "id": "he_chat_07",
+      "script": "he",
+      "category": "chat",
+      "text": "הרכבת התעכבה שוב הבוקר, כדאי לבדוק את לוח הזמנים החדש לפני היציאה",
+      "anthropicTokens": null,
+      "qwenTokens": 23,
+      "maxTokenCount": 23
+    },
+    {
+      "id": "he_chat_08",
+      "script": "he",
+      "category": "chat",
+      "text": "תכננו טיול משפחתי לצפון בסוף השבוע הקרוב: נצא מוקדם בבוקר, נעצור לארוחת בוקר ליד האגם, נטייל בשמורת הטבע עד הצהריים, ואחר כך נמשיך לכפר קטן עם בתי קפה נחמדים ונחזור הביתה רק אחרי השקיעה",
+      "anthropicTokens": null,
+      "qwenTokens": 67,
+      "maxTokenCount": 67
+    },
+    {
+      "id": "he_chat_09",
+      "script": "he",
+      "category": "chat",
+      "text": "מתי נפתחת הספרייה העירונית מחר בבוקר?",
+      "anthropicTokens": null,
+      "qwenTokens": 12,
+      "maxTokenCount": 12
+    },
+    {
+      "id": "he_chat_10",
+      "script": "he",
+      "category": "chat",
+      "text": "השכנים מארגנים מסיבת רחוב בשבת, כולם מוזמנים להביא משהו טעים",
+      "anthropicTokens": null,
+      "qwenTokens": 25,
+      "maxTokenCount": 25
+    },
+    {
+      "id": "he_mixed_docker",
+      "script": "he",
+      "category": "mixed",
+      "text": "אני רוצה להבין איך docker עובד מאחורי הקלעים, תוכל להסביר בקצרה?",
+      "anthropicTokens": null,
+      "qwenTokens": 19,
+      "maxTokenCount": 19
+    },
+    {
+      "id": "he_mixed_02",
+      "script": "he",
+      "category": "mixed",
+      "text": "הפקודה kubectl get pods מחזירה שגיאה מוזרה מאז העדכון האחרון",
+      "anthropicTokens": null,
+      "qwenTokens": 22,
+      "maxTokenCount": 22
+    },
+    {
+      "id": "he_mixed_03",
+      "script": "he",
+      "category": "mixed",
+      "text": "הרצתי npm install בתיקיית הפרויקט אבל הקובץ package.json לא השתנה בכלל",
+      "anthropicTokens": null,
+      "qwenTokens": 20,
+      "maxTokenCount": 20
+    },
+    {
+      "id": "he_mixed_04",
+      "script": "he",
+      "category": "mixed",
+      "text": "קיבלתי שגיאת ECONNREFUSED כשניסיתי להתחבר אל localhost בפורט 8080",
+      "anthropicTokens": null,
+      "qwenTokens": 26,
+      "maxTokenCount": 26
+    },
+    {
+      "id": "he_marks_01",
+      "script": "he",
+      "category": "marks",
+      "text": "הַיְּלָדִים שָׂמְחוּ מְאֹד כַּאֲשֶׁר יָרַד הַגֶּשֶׁם הָרִאשׁוֹן שֶׁל הַחֹרֶף",
+      "anthropicTokens": null,
+      "qwenTokens": 98,
+      "maxTokenCount": 98
+    },
+    {
+      "id": "he_marks_02",
+      "script": "he",
+      "category": "marks",
+      "text": "בַּבֹּקֶר אָנוּ אוֹכְלִים לֶחֶם טָרִי עִם גְּבִינָה לְבָנָה וְיָרָק",
+      "anthropicTokens": null,
+      "qwenTokens": 80,
+      "maxTokenCount": 80
+    },
+    {
+      "id": "he_marks_03",
+      "script": "he",
+      "category": "marks",
+      "text": "הוּא קרא אֶת הספר בעִיון רב לפני השֵׁנה, ונרדם רק מאוחר בלילה",
+      "anthropicTokens": null,
+      "qwenTokens": 34,
+      "maxTokenCount": 34
+    },
+    {
+      "id": "he_acronym_01",
+      "script": "he",
+      "category": "acronym",
+      "text": "המנכ״ל הציג את הדו״ח השנתי בפני חברי ההנהלה בישיבת הבוקר",
+      "anthropicTokens": null,
+      "qwenTokens": 22,
+      "maxTokenCount": 22
+    },
+    {
+      "id": "he_acronym_02",
+      "script": "he",
+      "category": "acronym",
+      "text": "חיילי צה״ל השתתפו בתרגיל חילוץ משותף עם כוחות ההצלה בצפון",
+      "anthropicTokens": null,
+      "qwenTokens": 26,
+      "maxTokenCount": 26
+    },
+    {
+      "id": "he_acronym_03",
+      "script": "he",
+      "category": "acronym",
+      "text": "העובדים קיבלו עדכון מהמנכ\"ל לגבי שעות העבודה בערב החג",
+      "anthropicTokens": null,
+      "qwenTokens": 20,
+      "maxTokenCount": 20
+    },
+    {
+      "id": "ar_chat_01",
+      "script": "ar",
+      "category": "chat",
+      "text": "كيف حالك اليوم؟ أتمنى أن يكون يومك جميلا ومليئا بالنشاط",
+      "anthropicTokens": null,
+      "qwenTokens": 22,
+      "maxTokenCount": 22
+    },
+    {
+      "id": "ar_chat_02",
+      "script": "ar",
+      "category": "chat",
+      "text": "الطقس رائع هذا الصباح، ربما نخرج في نزهة قصيرة بعد الظهر",
+      "anthropicTokens": null,
+      "qwenTokens": 21,
+      "maxTokenCount": 21
+    },
+    {
+      "id": "ar_chat_03",
+      "script": "ar",
+      "category": "chat",
+      "text": "قرأت كتابا ممتعا عن تاريخ العلوم والاختراعات الكبرى، أنصح به بشدة",
+      "anthropicTokens": null,
+      "qwenTokens": 23,
+      "maxTokenCount": 23
+    },
+    {
+      "id": "ar_chat_04",
+      "script": "ar",
+      "category": "chat",
+      "text": "هل يمكنك اقتراح وصفة سهلة لعشاء خفيف مع خضار الموسم؟",
+      "anthropicTokens": null,
+      "qwenTokens": 22,
+      "maxTokenCount": 22
+    },
+    {
+      "id": "ar_chat_05",
+      "script": "ar",
+      "category": "chat",
+      "text": "أحاول تعلم لغة جديدة منذ ستة أشهر، التقدم بطيء لكنه ثابت",
+      "anthropicTokens": null,
+      "qwenTokens": 22,
+      "maxTokenCount": 22
+    },
+    {
+      "id": "ar_chat_06",
+      "script": "ar",
+      "category": "chat",
+      "text": "أين أجد خضروات طازجة بأسعار معقولة في السوق القديم؟",
+      "anthropicTokens": null,
+      "qwenTokens": 23,
+      "maxTokenCount": 23
+    },
+    {
+      "id": "ar_chat_07",
+      "script": "ar",
+      "category": "chat",
+      "text": "تأخر القطار مرة أخرى هذا الصباح، يجب التحقق من الجدول الجديد",
+      "anthropicTokens": null,
+      "qwenTokens": 17,
+      "maxTokenCount": 17
+    },
+    {
+      "id": "ar_chat_08",
+      "script": "ar",
+      "category": "chat",
+      "text": "خططنا لرحلة عائلية إلى الجبال في نهاية الأسبوع: سننطلق مبكرا، نتوقف للإفطار قرب البحيرة، نتجول في المحمية الطبيعية حتى الظهر، ثم نزور قرية صغيرة فيها مقاه جميلة ونعود بعد الغروب",
+      "anthropicTokens": null,
+      "qwenTokens": 67,
+      "maxTokenCount": 67
+    },
+    {
+      "id": "ar_chat_09",
+      "script": "ar",
+      "category": "chat",
+      "text": "متى تفتح المكتبة العامة أبوابها غدا صباحا؟",
+      "anthropicTokens": null,
+      "qwenTokens": 16,
+      "maxTokenCount": 16
+    },
+    {
+      "id": "ar_chat_10",
+      "script": "ar",
+      "category": "chat",
+      "text": "الجيران ينظمون حفلة في الحي يوم السبت والجميع مدعوون للمشاركة",
+      "anthropicTokens": null,
+      "qwenTokens": 21,
+      "maxTokenCount": 21
+    },
+    {
+      "id": "ar_chat_11",
+      "script": "ar",
+      "category": "chat",
+      "text": "نسيت مظلتي في المقهى أمس، أرجو أن تكون ما زالت هناك",
+      "anthropicTokens": null,
+      "qwenTokens": 20,
+      "maxTokenCount": 20
+    },
+    {
+      "id": "ar_chat_12",
+      "script": "ar",
+      "category": "chat",
+      "text": "أفكر في زراعة بعض الأعشاب على الشرفة هذا الربيع، هل لديك نصائح؟",
+      "anthropicTokens": null,
+      "qwenTokens": 23,
+      "maxTokenCount": 23
+    },
+    {
+      "id": "ar_chat_13",
+      "script": "ar",
+      "category": "chat",
+      "text": "الفيلم الجديد في السينما حصل على تقييمات ممتازة من النقاد",
+      "anthropicTokens": null,
+      "qwenTokens": 21,
+      "maxTokenCount": 21
+    },
+    {
+      "id": "ar_mixed_01",
+      "script": "ar",
+      "category": "mixed",
+      "text": "أحاول تشغيل docker على الخادم لكن الخدمة لا تستجيب منذ الصباح",
+      "anthropicTokens": null,
+      "qwenTokens": 20,
+      "maxTokenCount": 20
+    },
+    {
+      "id": "ar_mixed_02",
+      "script": "ar",
+      "category": "mixed",
+      "text": "الأمر kubectl get pods يعيد رسالة خطأ غريبة بعد التحديث الأخير",
+      "anthropicTokens": null,
+      "qwenTokens": 18,
+      "maxTokenCount": 18
+    },
+    {
+      "id": "ar_mixed_03",
+      "script": "ar",
+      "category": "mixed",
+      "text": "نفذت npm install في المجلد لكن الملف package.json لم يتغير أبدا",
+      "anthropicTokens": null,
+      "qwenTokens": 18,
+      "maxTokenCount": 18
+    },
+    {
+      "id": "ar_mixed_04",
+      "script": "ar",
+      "category": "mixed",
+      "text": "ظهرت رسالة الخطأ ECONNREFUSED عند محاولة الاتصال بالخادم على المنفذ 8080",
+      "anthropicTokens": null,
+      "qwenTokens": 28,
+      "maxTokenCount": 28
+    },
+    {
+      "id": "ar_marks_01",
+      "script": "ar",
+      "category": "marks",
+      "text": "ذَهَبَ الطَّالِبُ إِلَى الْمَكْتَبَةِ لِيَقْرَأَ كِتَابًا جَدِيدًا عَنِ التَّارِيخِ",
+      "anthropicTokens": null,
+      "qwenTokens": 63,
+      "maxTokenCount": 63
+    },
+    {
+      "id": "ar_marks_02",
+      "script": "ar",
+      "category": "marks",
+      "text": "كَتَبَتِ الْمُعَلِّمَةُ الدَّرْسَ عَلَى اللَّوْحِ بِخَطٍّ وَاضِحٍ وَجَمِيلٍ",
+      "anthropicTokens": null,
+      "qwenTokens": 64,
+      "maxTokenCount": 64
+    },
+    {
+      "id": "ar_marks_03",
+      "script": "ar",
+      "category": "marks",
+      "text": "الْعِلْمُ نُورٌ يُضِيءُ طَرِيقَ الْإِنْسَانِ فِي الْحَيَاةِ كُلِّهَا",
+      "anthropicTokens": null,
+      "qwenTokens": 53,
+      "maxTokenCount": 53
+    },
+    {
+      "id": "ru_chat_01",
+      "script": "ru",
+      "category": "chat",
+      "text": "Какая сегодня погода? Кажется, к вечеру обещали дождь и сильный ветер",
+      "anthropicTokens": null,
+      "qwenTokens": 28,
+      "maxTokenCount": 28
+    },
+    {
+      "id": "ru_chat_02",
+      "script": "ru",
+      "category": "chat",
+      "text": "Вчера я дочитал увлекательную книгу об истории великих открытий",
+      "anthropicTokens": null,
+      "qwenTokens": 22,
+      "maxTokenCount": 22
+    },
+    {
+      "id": "ru_chat_03",
+      "script": "ru",
+      "category": "chat",
+      "text": "Посоветуй простой рецепт лёгкого ужина из сезонных овощей",
+      "anthropicTokens": null,
+      "qwenTokens": 23,
+      "maxTokenCount": 23
+    },
+    {
+      "id": "ru_chat_04",
+      "script": "ru",
+      "category": "chat",
+      "text": "Я учу новый язык уже полгода, прогресс медленный, но стабильный",
+      "anthropicTokens": null,
+      "qwenTokens": 22,
+      "maxTokenCount": 22
+    },
+    {
+      "id": "ru_chat_05",
+      "script": "ru",
+      "category": "chat",
+      "text": "Где можно купить свежие овощи по разумной цене на рынке?",
+      "anthropicTokens": null,
+      "qwenTokens": 20,
+      "maxTokenCount": 20
+    },
+    {
+      "id": "ru_chat_06",
+      "script": "ru",
+      "category": "chat",
+      "text": "Поезд снова опаздывает сегодня утром, нужно проверить новое расписание",
+      "anthropicTokens": null,
+      "qwenTokens": 19,
+      "maxTokenCount": 19
+    },
+    {
+      "id": "ru_chat_07",
+      "script": "ru",
+      "category": "chat",
+      "text": "Мы запланировали семейную поездку в горы на выходные: выедем рано утром, остановимся позавтракать у озера, погуляем по заповеднику до полудня, заедем в деревню с уютными кафе и вернёмся домой после заката",
+      "anthropicTokens": null,
+      "qwenTokens": 79,
+      "maxTokenCount": 79
+    },
+    {
+      "id": "ru_chat_08",
+      "script": "ru",
+      "category": "chat",
+      "text": "Когда завтра утром открывается городская библиотека?",
+      "anthropicTokens": null,
+      "qwenTokens": 18,
+      "maxTokenCount": 18
+    },
+    {
+      "id": "ru_chat_09",
+      "script": "ru",
+      "category": "chat",
+      "text": "Соседи устраивают уличный праздник в субботу и приглашают всех",
+      "anthropicTokens": null,
+      "qwenTokens": 22,
+      "maxTokenCount": 22
+    },
+    {
+      "id": "ru_chat_10",
+      "script": "ru",
+      "category": "chat",
+      "text": "Я забыл зонтик в кафе вчера вечером, надеюсь, он ещё там",
+      "anthropicTokens": null,
+      "qwenTokens": 22,
+      "maxTokenCount": 22
+    },
+    {
+      "id": "ru_chat_11",
+      "script": "ru",
+      "category": "chat",
+      "text": "Думаю посадить пряные травы на балконе этой весной, есть советы?",
+      "anthropicTokens": null,
+      "qwenTokens": 23,
+      "maxTokenCount": 23
+    },
+    {
+      "id": "ru_chat_12",
+      "script": "ru",
+      "category": "chat",
+      "text": "Новый фильм в кинотеатре получил отличные отзывы критиков",
+      "anthropicTokens": null,
+      "qwenTokens": 17,
+      "maxTokenCount": 17
+    },
+    {
+      "id": "ru_chat_13",
+      "script": "ru",
+      "category": "chat",
+      "text": "Сколько стоит билет на вечерний сеанс в новом кинотеатре?",
+      "anthropicTokens": null,
+      "qwenTokens": 21,
+      "maxTokenCount": 21
+    },
+    {
+      "id": "ru_chat_14",
+      "script": "ru",
+      "category": "chat",
+      "text": "Мне нравится гулять по парку рано утром, когда ещё тихо и прохладно",
+      "anthropicTokens": null,
+      "qwenTokens": 28,
+      "maxTokenCount": 28
+    },
+    {
+      "id": "ru_chat_15",
+      "script": "ru",
+      "category": "chat",
+      "text": "Завтра встречаемся с друзьями в кафе на углу около семи вечера",
+      "anthropicTokens": null,
+      "qwenTokens": 19,
+      "maxTokenCount": 19
+    },
+    {
+      "id": "ru_chat_16",
+      "script": "ru",
+      "category": "chat",
+      "text": "Осень в этом году тёплая и солнечная, листья только начали желтеть",
+      "anthropicTokens": null,
+      "qwenTokens": 24,
+      "maxTokenCount": 24
+    },
+    {
+      "id": "ru_mixed_01",
+      "script": "ru",
+      "category": "mixed",
+      "text": "Пытаюсь запустить docker на сервере, но служба не отвечает с самого утра",
+      "anthropicTokens": null,
+      "qwenTokens": 22,
+      "maxTokenCount": 22
+    },
+    {
+      "id": "ru_mixed_02",
+      "script": "ru",
+      "category": "mixed",
+      "text": "Команда kubectl get pods возвращает странную ошибку после обновления",
+      "anthropicTokens": null,
+      "qwenTokens": 18,
+      "maxTokenCount": 18
+    },
+    {
+      "id": "ru_mixed_03",
+      "script": "ru",
+      "category": "mixed",
+      "text": "Запустил npm install в папке проекта, но файл package.json совсем не изменился",
+      "anthropicTokens": null,
+      "qwenTokens": 24,
+      "maxTokenCount": 24
+    },
+    {
+      "id": "ru_mixed_04",
+      "script": "ru",
+      "category": "mixed",
+      "text": "Получил ошибку ECONNREFUSED при подключении к localhost на порту 8080",
+      "anthropicTokens": null,
+      "qwenTokens": 23,
+      "maxTokenCount": 23
+    },
+    {
+      "id": "zh_chat_01",
+      "script": "zh",
+      "category": "chat",
+      "text": "今天天气怎么样?听说傍晚可能会下雨,出门的时候记得带上雨伞和外套",
+      "anthropicTokens": null,
+      "qwenTokens": 17,
+      "maxTokenCount": 17
+    },
+    {
+      "id": "zh_chat_02",
+      "script": "zh",
+      "category": "chat",
+      "text": "昨天我读完了一本关于科学发展史的好书,内容很精彩,值得推荐给朋友",
+      "anthropicTokens": null,
+      "qwenTokens": 20,
+      "maxTokenCount": 20
+    },
+    {
+      "id": "zh_chat_03",
+      "script": "zh",
+      "category": "chat",
+      "text": "能推荐一个简单的晚餐食谱吗?最好是用当季的新鲜蔬菜做的家常菜",
+      "anthropicTokens": null,
+      "qwenTokens": 20,
+      "maxTokenCount": 20
+    },
+    {
+      "id": "zh_chat_04",
+      "script": "zh",
+      "category": "chat",
+      "text": "我学习一门新的语言已经半年了,进步虽然缓慢,但是一直都很稳定",
+      "anthropicTokens": null,
+      "qwenTokens": 18,
+      "maxTokenCount": 18
+    },
+    {
+      "id": "zh_chat_05",
+      "script": "zh",
+      "category": "chat",
+      "text": "在哪里能买到新鲜又便宜的蔬菜?市场里面有没有值得推荐的摊位呢",
+      "anthropicTokens": null,
+      "qwenTokens": 18,
+      "maxTokenCount": 18
+    },
+    {
+      "id": "zh_chat_06",
+      "script": "zh",
+      "category": "chat",
+      "text": "火车今天早上又晚点了,出门之前最好先查一下最新的列车时刻表",
+      "anthropicTokens": null,
+      "qwenTokens": 17,
+      "maxTokenCount": 17
+    },
+    {
+      "id": "zh_chat_07",
+      "script": "zh",
+      "category": "chat",
+      "text": "我们计划下个周末去山里进行一次家庭旅行:一大早出发,在湖边停下来吃早餐,中午之前在自然保护区里散步,下午去一个有漂亮咖啡馆的小村庄休息,直到日落之后才慢慢开车回家",
+      "anthropicTokens": null,
+      "qwenTokens": 50,
+      "maxTokenCount": 50
+    },
+    {
+      "id": "zh_chat_08",
+      "script": "zh",
+      "category": "chat",
+      "text": "市立图书馆明天早上几点开门?我想去借几本关于烹饪和园艺的书",
+      "anthropicTokens": null,
+      "qwenTokens": 20,
+      "maxTokenCount": 20
+    },
+    {
+      "id": "zh_chat_09",
+      "script": "zh",
+      "category": "chat",
+      "text": "邻居们打算在星期六举办一场街区聚会,欢迎大家带自己做的菜来分享",
+      "anthropicTokens": null,
+      "qwenTokens": 18,
+      "maxTokenCount": 18
+    },
+    {
+      "id": "zh_chat_10",
+      "script": "zh",
+      "category": "chat",
+      "text": "我昨天把雨伞忘在咖啡馆里了,希望今天过去的时候它还在那里",
+      "anthropicTokens": null,
+      "qwenTokens": 19,
+      "maxTokenCount": 19
+    },
+    {
+      "id": "zh_chat_11",
+      "script": "zh",
+      "category": "chat",
+      "text": "我想今年春天在阳台上种一些香草和小番茄,你有什么好的建议吗",
+      "anthropicTokens": null,
+      "qwenTokens": 19,
+      "maxTokenCount": 19
+    },
+    {
+      "id": "zh_chat_12",
+      "script": "zh",
+      "category": "chat",
+      "text": "电影院新上映的那部片子得到了影评人的一致好评,周末一起去看吧",
+      "anthropicTokens": null,
+      "qwenTokens": 19,
+      "maxTokenCount": 19
+    },
+    {
+      "id": "zh_chat_13",
+      "script": "zh",
+      "category": "chat",
+      "text": "晚上的电影票多少钱一张?新开的那家影院环境听说特别不错",
+      "anthropicTokens": null,
+      "qwenTokens": 16,
+      "maxTokenCount": 16
+    },
+    {
+      "id": "zh_chat_14",
+      "script": "zh",
+      "category": "chat",
+      "text": "我喜欢清晨在公园里散步,那个时候很安静,空气也特别清新",
+      "anthropicTokens": null,
+      "qwenTokens": 15,
+      "maxTokenCount": 15
+    },
+    {
+      "id": "zh_chat_15",
+      "script": "zh",
+      "category": "chat",
+      "text": "明天傍晚七点左右和朋友们在街角的咖啡馆见面,别忘了带上照片",
+      "anthropicTokens": null,
+      "qwenTokens": 19,
+      "maxTokenCount": 19
+    },
+    {
+      "id": "zh_chat_16",
+      "script": "zh",
+      "category": "chat",
+      "text": "今年的秋天又暖和又晴朗,公园里的树叶才刚刚开始慢慢变黄",
+      "anthropicTokens": null,
+      "qwenTokens": 19,
+      "maxTokenCount": 19
+    },
+    {
+      "id": "zh_mixed_01",
+      "script": "zh",
+      "category": "mixed",
+      "text": "我想在服务器上运行 docker,但是这个服务从早上开始就没有响应",
+      "anthropicTokens": null,
+      "qwenTokens": 15,
+      "maxTokenCount": 15
+    },
+    {
+      "id": "zh_mixed_02",
+      "script": "zh",
+      "category": "mixed",
+      "text": "执行 kubectl get pods 命令之后返回了一个奇怪的错误信息",
+      "anthropicTokens": null,
+      "qwenTokens": 16,
+      "maxTokenCount": 16
+    },
+    {
+      "id": "zh_mixed_03",
+      "script": "zh",
+      "category": "mixed",
+      "text": "我在项目目录里运行了 npm install,但是 package.json 文件没有任何变化",
+      "anthropicTokens": null,
+      "qwenTokens": 15,
+      "maxTokenCount": 15
+    },
+    {
+      "id": "zh_mixed_04",
+      "script": "zh",
+      "category": "mixed",
+      "text": "连接本地服务器的 8080 端口时出现了 ECONNREFUSED 错误提示",
+      "anthropicTokens": null,
+      "qwenTokens": 23,
+      "maxTokenCount": 23
+    },
+    {
+      "id": "ja_chat_01",
+      "script": "ja",
+      "category": "chat",
+      "text": "今日の天気はどうですか?夕方から雨が降るかもしれないので傘を忘れずに",
+      "anthropicTokens": null,
+      "qwenTokens": 21,
+      "maxTokenCount": 21
+    },
+    {
+      "id": "ja_chat_02",
+      "script": "ja",
+      "category": "chat",
+      "text": "昨日、科学の歴史についての面白い本を読み終えました。とてもおすすめです",
+      "anthropicTokens": null,
+      "qwenTokens": 20,
+      "maxTokenCount": 20
+    },
+    {
+      "id": "ja_chat_03",
+      "script": "ja",
+      "category": "chat",
+      "text": "旬の野菜を使った簡単な夕食のレシピを教えてもらえませんか?",
+      "anthropicTokens": null,
+      "qwenTokens": 19,
+      "maxTokenCount": 19
+    },
+    {
+      "id": "ja_chat_04",
+      "script": "ja",
+      "category": "chat",
+      "text": "新しい言語を半年前から勉強していますが、進歩はゆっくりでも着実です",
+      "anthropicTokens": null,
+      "qwenTokens": 20,
+      "maxTokenCount": 20
+    },
+    {
+      "id": "ja_chat_05",
+      "script": "ja",
+      "category": "chat",
+      "text": "新鮮な野菜を手頃な値段で買えるお店は市場のどこにありますか?",
+      "anthropicTokens": null,
+      "qwenTokens": 25,
+      "maxTokenCount": 25
+    },
+    {
+      "id": "ja_chat_06",
+      "script": "ja",
+      "category": "chat",
+      "text": "今朝も電車が遅れていたので、出かける前に新しい時刻表を確認したほうがいい",
+      "anthropicTokens": null,
+      "qwenTokens": 24,
+      "maxTokenCount": 24
+    },
+    {
+      "id": "ja_chat_07",
+      "script": "ja",
+      "category": "chat",
+      "text": "来週末は家族で山へ旅行に行く予定です。朝早く出発して、湖のほとりで朝ごはんを食べて、お昼まで自然保護区を散歩します。その後はかわいいカフェのある小さな村に寄って、日が沈んでからゆっくり家に帰るつもりです",
+      "anthropicTokens": null,
+      "qwenTokens": 69,
+      "maxTokenCount": 69
+    },
+    {
+      "id": "ja_chat_08",
+      "script": "ja",
+      "category": "chat",
+      "text": "市立図書館は明日の朝何時に開きますか?料理の本を何冊か借りたいです",
+      "anthropicTokens": null,
+      "qwenTokens": 26,
+      "maxTokenCount": 26
+    },
+    {
+      "id": "ja_chat_09",
+      "script": "ja",
+      "category": "chat",
+      "text": "近所の人たちが土曜日に街角でお祭りを計画していて、みんな招待されています",
+      "anthropicTokens": null,
+      "qwenTokens": 21,
+      "maxTokenCount": 21
+    },
+    {
+      "id": "ja_chat_10",
+      "script": "ja",
+      "category": "chat",
+      "text": "昨日カフェに傘を忘れてしまいました。まだそこにあるといいのですが",
+      "anthropicTokens": null,
+      "qwenTokens": 15,
+      "maxTokenCount": 15
+    },
+    {
+      "id": "ja_chat_11",
+      "script": "ja",
+      "category": "chat",
+      "text": "今年の春はベランダでハーブを育てたいと思っています。何かアドバイスはありますか",
+      "anthropicTokens": null,
+      "qwenTokens": 25,
+      "maxTokenCount": 25
+    },
+    {
+      "id": "ja_chat_12",
+      "script": "ja",
+      "category": "chat",
+      "text": "映画館で公開された新作が批評家からとても高い評価を受けています",
+      "anthropicTokens": null,
+      "qwenTokens": 21,
+      "maxTokenCount": 21
+    },
+    {
+      "id": "ja_chat_13",
+      "script": "ja",
+      "category": "chat",
+      "text": "夜の映画のチケットは一枚いくらですか?新しい映画館は雰囲気がいいらしい",
+      "anthropicTokens": null,
+      "qwenTokens": 24,
+      "maxTokenCount": 24
+    },
+    {
+      "id": "ja_chat_14",
+      "script": "ja",
+      "category": "chat",
+      "text": "朝早く公園を散歩するのが好きです。静かで空気がとても気持ちいいから",
+      "anthropicTokens": null,
+      "qwenTokens": 19,
+      "maxTokenCount": 19
+    },
+    {
+      "id": "ja_chat_15",
+      "script": "ja",
+      "category": "chat",
+      "text": "明日の夜七時ごろ、角のカフェで友達と会う約束をしています",
+      "anthropicTokens": null,
+      "qwenTokens": 21,
+      "maxTokenCount": 21
+    },
+    {
+      "id": "ja_chat_16",
+      "script": "ja",
+      "category": "chat",
+      "text": "今年の秋は暖かくて晴れの日が多く、木の葉はやっと色づき始めたところです",
+      "anthropicTokens": null,
+      "qwenTokens": 25,
+      "maxTokenCount": 25
+    },
+    {
+      "id": "ja_mixed_01",
+      "script": "ja",
+      "category": "mixed",
+      "text": "サーバーで docker を動かしたいのですが、朝からサービスが応答しません",
+      "anthropicTokens": null,
+      "qwenTokens": 21,
+      "maxTokenCount": 21
+    },
+    {
+      "id": "ja_mixed_02",
+      "script": "ja",
+      "category": "mixed",
+      "text": "kubectl get pods を実行すると、更新のあとから変なエラーが返ってきます",
+      "anthropicTokens": null,
+      "qwenTokens": 20,
+      "maxTokenCount": 20
+    },
+    {
+      "id": "ja_mixed_03",
+      "script": "ja",
+      "category": "mixed",
+      "text": "プロジェクトで npm install を実行しましたが、package.json は何も変わりません",
+      "anthropicTokens": null,
+      "qwenTokens": 17,
+      "maxTokenCount": 17
+    },
+    {
+      "id": "ja_mixed_04",
+      "script": "ja",
+      "category": "mixed",
+      "text": "ローカルサーバーの 8080 番ポートに接続すると ECONNREFUSED エラーが出ます",
+      "anthropicTokens": null,
+      "qwenTokens": 30,
+      "maxTokenCount": 30
+    },
+    {
+      "id": "el_chat_01",
+      "script": "el",
+      "category": "chat",
+      "text": "Τι καιρό θα κάνει σήμερα; Άκουσα ότι το βράδυ ίσως βρέξει, πάρε ομπρέλα",
+      "anthropicTokens": null,
+      "qwenTokens": 62,
+      "maxTokenCount": 62
+    },
+    {
+      "id": "el_chat_02",
+      "script": "el",
+      "category": "chat",
+      "text": "Χθες τελείωσα ένα συναρπαστικό βιβλίο για την ιστορία της επιστήμης",
+      "anthropicTokens": null,
+      "qwenTokens": 60,
+      "maxTokenCount": 60
+    },
+    {
+      "id": "el_chat_03",
+      "script": "el",
+      "category": "chat",
+      "text": "Μπορείς να μου προτείνεις μια εύκολη συνταγή για ελαφρύ βραδινό με λαχανικά εποχής;",
+      "anthropicTokens": null,
+      "qwenTokens": 70,
+      "maxTokenCount": 70
+    },
+    {
+      "id": "el_chat_04",
+      "script": "el",
+      "category": "chat",
+      "text": "Μαθαίνω μια καινούρια γλώσσα εδώ και έξι μήνες, η πρόοδος είναι αργή αλλά σταθερή",
+      "anthropicTokens": null,
+      "qwenTokens": 67,
+      "maxTokenCount": 67
+    },
+    {
+      "id": "el_chat_05",
+      "script": "el",
+      "category": "chat",
+      "text": "Πού μπορώ να βρω φρέσκα λαχανικά σε λογικές τιμές στην αγορά;",
+      "anthropicTokens": null,
+      "qwenTokens": 51,
+      "maxTokenCount": 51
+    },
+    {
+      "id": "el_chat_06",
+      "script": "el",
+      "category": "chat",
+      "text": "Το τρένο καθυστέρησε πάλι σήμερα το πρωί, καλύτερα να κοιτάξεις τα νέα δρομολόγια",
+      "anthropicTokens": null,
+      "qwenTokens": 69,
+      "maxTokenCount": 69
+    },
+    {
+      "id": "el_chat_07",
+      "script": "el",
+      "category": "chat",
+      "text": "Σχεδιάσαμε εκδρομή στα βουνά το σαββατοκύριακο: θα ξεκινήσουμε νωρίς, θα σταματήσουμε για πρωινό δίπλα στη λίμνη, θα περπατήσουμε στο φυσικό πάρκο μέχρι το μεσημέρι και θα γυρίσουμε μετά το ηλιοβασίλεμα",
+      "anthropicTokens": null,
+      "qwenTokens": 173,
+      "maxTokenCount": 173
+    },
+    {
+      "id": "el_chat_08",
+      "script": "el",
+      "category": "chat",
+      "text": "Πότε ανοίγει αύριο το πρωί η δημοτική βιβλιοθήκη;",
+      "anthropicTokens": null,
+      "qwenTokens": 43,
+      "maxTokenCount": 43
+    },
+    {
+      "id": "el_chat_09",
+      "script": "el",
+      "category": "chat",
+      "text": "Οι γείτονες οργανώνουν γιορτή στη γειτονιά το Σάββατο και όλοι είναι καλεσμένοι",
+      "anthropicTokens": null,
+      "qwenTokens": 68,
+      "maxTokenCount": 68
+    },
+    {
+      "id": "el_chat_10",
+      "script": "el",
+      "category": "chat",
+      "text": "Ξέχασα την ομπρέλα μου στο καφέ χθες, ελπίζω να είναι ακόμα εκεί",
+      "anthropicTokens": null,
+      "qwenTokens": 53,
+      "maxTokenCount": 53
+    },
+    {
+      "id": "el_chat_11",
+      "script": "el",
+      "category": "chat",
+      "text": "Σκέφτομαι να φυτέψω μυρωδικά στο μπαλκόνι αυτή την άνοιξη, έχεις καμιά συμβουλή;",
+      "anthropicTokens": null,
+      "qwenTokens": 69,
+      "maxTokenCount": 69
+    },
+    {
+      "id": "el_chat_12",
+      "script": "el",
+      "category": "chat",
+      "text": "Η καινούρια ταινία στο σινεμά πήρε εξαιρετικές κριτικές από τους κριτικούς",
+      "anthropicTokens": null,
+      "qwenTokens": 60,
+      "maxTokenCount": 60
+    },
+    {
+      "id": "el_chat_13",
+      "script": "el",
+      "category": "chat",
+      "text": "Πόσο κοστίζει το εισιτήριο για τη βραδινή προβολή στο νέο σινεμά;",
+      "anthropicTokens": null,
+      "qwenTokens": 55,
+      "maxTokenCount": 55
+    },
+    {
+      "id": "el_chat_14",
+      "script": "el",
+      "category": "chat",
+      "text": "Μου αρέσει να περπατάω στο πάρκο νωρίς το πρωί όταν είναι ακόμα ήσυχα",
+      "anthropicTokens": null,
+      "qwenTokens": 57,
+      "maxTokenCount": 57
+    },
+    {
+      "id": "el_chat_15",
+      "script": "el",
+      "category": "chat",
+      "text": "Αύριο στις επτά το απόγευμα συναντιόμαστε με φίλους στο καφέ της γωνίας",
+      "anthropicTokens": null,
+      "qwenTokens": 59,
+      "maxTokenCount": 59
+    },
+    {
+      "id": "el_chat_16",
+      "script": "el",
+      "category": "chat",
+      "text": "Το φθινόπωρο φέτος είναι ζεστό και ηλιόλουστο, τα φύλλα μόλις άρχισαν να κιτρινίζουν",
+      "anthropicTokens": null,
+      "qwenTokens": 71,
+      "maxTokenCount": 71
+    },
+    {
+      "id": "el_mixed_01",
+      "script": "el",
+      "category": "mixed",
+      "text": "Προσπαθώ να τρέξω docker στον διακομιστή αλλά η υπηρεσία δεν αποκρίνεται από το πρωί",
+      "anthropicTokens": null,
+      "qwenTokens": 67,
+      "maxTokenCount": 67
+    },
+    {
+      "id": "el_mixed_02",
+      "script": "el",
+      "category": "mixed",
+      "text": "Η εντολή kubectl get pods επιστρέφει ένα περίεργο σφάλμα μετά την ενημέρωση",
+      "anthropicTokens": null,
+      "qwenTokens": 55,
+      "maxTokenCount": 55
+    },
+    {
+      "id": "el_mixed_03",
+      "script": "el",
+      "category": "mixed",
+      "text": "Έτρεξα npm install στον φάκελο αλλά το αρχείο package.json δεν άλλαξε καθόλου",
+      "anthropicTokens": null,
+      "qwenTokens": 48,
+      "maxTokenCount": 48
+    },
+    {
+      "id": "el_mixed_04",
+      "script": "el",
+      "category": "mixed",
+      "text": "Εμφανίστηκε σφάλμα ECONNREFUSED όταν προσπάθησα να συνδεθώ στη θύρα 8080",
+      "anthropicTokens": null,
+      "qwenTokens": 58,
+      "maxTokenCount": 58
+    },
+    {
+      "id": "th_chat_01",
+      "script": "th",
+      "category": "chat",
+      "text": "วันนี้อากาศเป็นอย่างไรบ้าง ได้ยินว่าตอนเย็นอาจจะมีฝนตก อย่าลืมพกร่มไปด้วย",
+      "anthropicTokens": null,
+      "qwenTokens": 40,
+      "maxTokenCount": 40
+    },
+    {
+      "id": "th_chat_02",
+      "script": "th",
+      "category": "chat",
+      "text": "เมื่อวานอ่านหนังสือเกี่ยวกับประวัติศาสตร์วิทยาศาสตร์จบแล้ว สนุกมากแนะนำเลย",
+      "anthropicTokens": null,
+      "qwenTokens": 41,
+      "maxTokenCount": 41
+    },
+    {
+      "id": "th_chat_03",
+      "script": "th",
+      "category": "chat",
+      "text": "ช่วยแนะนำสูตรอาหารเย็นง่ายๆ ที่ใช้ผักตามฤดูกาลหน่อยได้ไหม",
+      "anthropicTokens": null,
+      "qwenTokens": 29,
+      "maxTokenCount": 29
+    },
+    {
+      "id": "th_chat_04",
+      "script": "th",
+      "category": "chat",
+      "text": "ฉันเรียนภาษาใหม่มาหกเดือนแล้ว ความคืบหน้าช้าแต่มั่นคงดี",
+      "anthropicTokens": null,
+      "qwenTokens": 31,
+      "maxTokenCount": 31
+    },
+    {
+      "id": "th_chat_05",
+      "script": "th",
+      "category": "chat",
+      "text": "ซื้อผักสดราคาไม่แพงได้ที่ไหนในตลาด มีร้านไหนแนะนำบ้าง",
+      "anthropicTokens": null,
+      "qwenTokens": 26,
+      "maxTokenCount": 26
+    },
+    {
+      "id": "th_chat_06",
+      "script": "th",
+      "category": "chat",
+      "text": "เช้านี้รถไฟมาช้าอีกแล้ว ก่อนออกจากบ้านควรเช็คตารางเวลาใหม่ก่อน",
+      "anthropicTokens": null,
+      "qwenTokens": 27,
+      "maxTokenCount": 27
+    },
+    {
+      "id": "th_chat_07",
+      "script": "th",
+      "category": "chat",
+      "text": "เราวางแผนไปเที่ยวภูเขากับครอบครัวสุดสัปดาห์หน้า จะออกเดินทางแต่เช้า แวะกินข้าวเช้าริมทะเลสาบ เดินเล่นในเขตอนุรักษ์ธรรมชาติจนถึงเที่ยง แล้วไปต่อที่หมู่บ้านเล็กๆ ที่มีร้านกาแฟน่ารัก กว่าจะกลับถึงบ้านก็หลังพระอาทิตย์ตก",
+      "anthropicTokens": null,
+      "qwenTokens": 121,
+      "maxTokenCount": 121
+    },
+    {
+      "id": "th_chat_08",
+      "script": "th",
+      "category": "chat",
+      "text": "ห้องสมุดประชาชนเปิดกี่โมงพรุ่งนี้เช้า อยากไปยืมหนังสือทำอาหาร",
+      "anthropicTokens": null,
+      "qwenTokens": 31,
+      "maxTokenCount": 31
+    },
+    {
+      "id": "th_chat_09",
+      "script": "th",
+      "category": "chat",
+      "text": "เพื่อนบ้านจัดงานเลี้ยงในซอยวันเสาร์นี้ ทุกคนได้รับเชิญให้เอาอาหารมาแบ่งกัน",
+      "anthropicTokens": null,
+      "qwenTokens": 42,
+      "maxTokenCount": 42
+    },
+    {
+      "id": "th_chat_10",
+      "script": "th",
+      "category": "chat",
+      "text": "เมื่อวานลืมร่มไว้ที่ร้านกาแฟ หวังว่าวันนี้มันจะยังอยู่ที่นั่น",
+      "anthropicTokens": null,
+      "qwenTokens": 38,
+      "maxTokenCount": 38
+    },
+    {
+      "id": "th_chat_11",
+      "script": "th",
+      "category": "chat",
+      "text": "ฤดูใบไม้ผลินี้อยากปลูกสมุนไพรไว้ที่ระเบียง มีคำแนะนำบ้างไหม",
+      "anthropicTokens": null,
+      "qwenTokens": 30,
+      "maxTokenCount": 30
+    },
+    {
+      "id": "th_chat_12",
+      "script": "th",
+      "category": "chat",
+      "text": "หนังเรื่องใหม่ที่โรงภาพยนตร์ได้รับคำวิจารณ์ดีมากจากนักวิจารณ์",
+      "anthropicTokens": null,
+      "qwenTokens": 36,
+      "maxTokenCount": 36
+    },
+    {
+      "id": "th_chat_13",
+      "script": "th",
+      "category": "chat",
+      "text": "ตั๋วหนังรอบค่ำราคาเท่าไหร่ โรงใหม่ที่เพิ่งเปิดบรรยากาศดีมาก",
+      "anthropicTokens": null,
+      "qwenTokens": 32,
+      "maxTokenCount": 32
+    },
+    {
+      "id": "th_chat_14",
+      "script": "th",
+      "category": "chat",
+      "text": "ชอบเดินเล่นในสวนตอนเช้าตรู่ เพราะเงียบสงบและอากาศสดชื่นมาก",
+      "anthropicTokens": null,
+      "qwenTokens": 24,
+      "maxTokenCount": 24
+    },
+    {
+      "id": "th_chat_15",
+      "script": "th",
+      "category": "chat",
+      "text": "พรุ่งนี้เย็นประมาณหนึ่งทุ่มนัดเจอเพื่อนที่ร้านกาแฟหัวมุมถนน",
+      "anthropicTokens": null,
+      "qwenTokens": 32,
+      "maxTokenCount": 32
+    },
+    {
+      "id": "th_chat_16",
+      "script": "th",
+      "category": "chat",
+      "text": "ฤดูใบไม้ร่วงปีนี้อากาศอบอุ่นและแดดดี ใบไม้เพิ่งเริ่มเปลี่ยนเป็นสีเหลือง",
+      "anthropicTokens": null,
+      "qwenTokens": 44,
+      "maxTokenCount": 44
+    },
+    {
+      "id": "th_mixed_01",
+      "script": "th",
+      "category": "mixed",
+      "text": "พยายามรัน docker บนเซิร์ฟเวอร์อยู่ แต่บริการไม่ตอบสนองมาตั้งแต่เช้า",
+      "anthropicTokens": null,
+      "qwenTokens": 36,
+      "maxTokenCount": 36
+    },
+    {
+      "id": "th_mixed_02",
+      "script": "th",
+      "category": "mixed",
+      "text": "คำสั่ง kubectl get pods ส่งข้อความผิดพลาดแปลกๆ กลับมาหลังจากอัปเดต",
+      "anthropicTokens": null,
+      "qwenTokens": 31,
+      "maxTokenCount": 31
+    },
+    {
+      "id": "th_mixed_03",
+      "script": "th",
+      "category": "mixed",
+      "text": "รัน npm install ในโฟลเดอร์โปรเจกต์แล้ว แต่ไฟล์ package.json ไม่เปลี่ยนเลย",
+      "anthropicTokens": null,
+      "qwenTokens": 33,
+      "maxTokenCount": 33
+    },
+    {
+      "id": "th_mixed_04",
+      "script": "th",
+      "category": "mixed",
+      "text": "เจอข้อผิดพลาด ECONNREFUSED ตอนพยายามเชื่อมต่อพอร์ต 8080 บนเครื่อง",
+      "anthropicTokens": null,
+      "qwenTokens": 32,
+      "maxTokenCount": 32
+    },
+    {
+      "id": "hi_chat_01",
+      "script": "hi",
+      "category": "chat",
+      "text": "आज मौसम कैसा है? सुना है शाम को बारिश हो सकती है, छाता लेकर निकलना",
+      "anthropicTokens": null,
+      "qwenTokens": 62,
+      "maxTokenCount": 62
+    },
+    {
+      "id": "hi_chat_02",
+      "script": "hi",
+      "category": "chat",
+      "text": "कल मैंने विज्ञान के इतिहास पर एक बहुत रोचक किताब पढ़कर खत्म की",
+      "anthropicTokens": null,
+      "qwenTokens": 58,
+      "maxTokenCount": 58
+    },
+    {
+      "id": "hi_chat_03",
+      "script": "hi",
+      "category": "chat",
+      "text": "क्या आप मौसमी सब्जियों से बनने वाली कोई आसान रात के खाने की रेसिपी बता सकते हैं?",
+      "anthropicTokens": null,
+      "qwenTokens": 74,
+      "maxTokenCount": 74
+    },
+    {
+      "id": "hi_chat_04",
+      "script": "hi",
+      "category": "chat",
+      "text": "मैं छह महीने से एक नई भाषा सीख रहा हूँ, प्रगति धीमी है लेकिन लगातार है",
+      "anthropicTokens": null,
+      "qwenTokens": 67,
+      "maxTokenCount": 67
+    },
+    {
+      "id": "hi_chat_05",
+      "script": "hi",
+      "category": "chat",
+      "text": "बाजार में ताजी सब्जियाँ उचित दाम पर कहाँ मिलती हैं? कोई अच्छी दुकान बताइए",
+      "anthropicTokens": null,
+      "qwenTokens": 67,
+      "maxTokenCount": 67
+    },
+    {
+      "id": "hi_chat_06",
+      "script": "hi",
+      "category": "chat",
+      "text": "आज सुबह ट्रेन फिर देर से आई, निकलने से पहले नई समय सारणी देख लेना बेहतर है",
+      "anthropicTokens": null,
+      "qwenTokens": 67,
+      "maxTokenCount": 67
+    },
+    {
+      "id": "hi_chat_07",
+      "script": "hi",
+      "category": "chat",
+      "text": "हमने अगले सप्ताहांत पहाड़ों की पारिवारिक यात्रा की योजना बनाई है: सुबह जल्दी निकलेंगे, झील के किनारे नाश्ते के लिए रुकेंगे, दोपहर तक प्राकृतिक उद्यान में घूमेंगे, फिर सुंदर कैफे वाले छोटे गाँव जाएँगे और सूर्यास्त के बाद घर लौटेंगे",
+      "anthropicTokens": null,
+      "qwenTokens": 220,
+      "maxTokenCount": 220
+    },
+    {
+      "id": "hi_chat_08",
+      "script": "hi",
+      "category": "chat",
+      "text": "नगर पुस्तकालय कल सुबह कितने बजे खुलता है? मुझे खाना पकाने की किताबें चाहिए",
+      "anthropicTokens": null,
+      "qwenTokens": 66,
+      "maxTokenCount": 66
+    },
+    {
+      "id": "hi_chat_09",
+      "script": "hi",
+      "category": "chat",
+      "text": "पड़ोसी शनिवार को गली में उत्सव का आयोजन कर रहे हैं, सभी आमंत्रित हैं",
+      "anthropicTokens": null,
+      "qwenTokens": 63,
+      "maxTokenCount": 63
+    },
+    {
+      "id": "hi_chat_10",
+      "script": "hi",
+      "category": "chat",
+      "text": "कल मैं कैफे में अपना छाता भूल गया, उम्मीद है वह अभी भी वहीं होगा",
+      "anthropicTokens": null,
+      "qwenTokens": 63,
+      "maxTokenCount": 63
+    },
+    {
+      "id": "hi_chat_11",
+      "script": "hi",
+      "category": "chat",
+      "text": "इस वसंत में बालकनी पर कुछ जड़ी-बूटियाँ उगाने की सोच रहा हूँ, कोई सुझाव?",
+      "anthropicTokens": null,
+      "qwenTokens": 67,
+      "maxTokenCount": 67
+    },
+    {
+      "id": "hi_chat_12",
+      "script": "hi",
+      "category": "chat",
+      "text": "सिनेमा में लगी नई फिल्म को समीक्षकों से बहुत अच्छी प्रतिक्रिया मिली है",
+      "anthropicTokens": null,
+      "qwenTokens": 62,
+      "maxTokenCount": 62
+    },
+    {
+      "id": "hi_chat_13",
+      "script": "hi",
+      "category": "chat",
+      "text": "नए सिनेमाघर में शाम के शो का टिकट कितने का है? माहौल अच्छा बताते हैं",
+      "anthropicTokens": null,
+      "qwenTokens": 62,
+      "maxTokenCount": 62
+    },
+    {
+      "id": "hi_chat_14",
+      "script": "hi",
+      "category": "chat",
+      "text": "मुझे सुबह-सुबह पार्क में टहलना पसंद है, उस समय शांति और ताजगी रहती है",
+      "anthropicTokens": null,
+      "qwenTokens": 64,
+      "maxTokenCount": 64
+    },
+    {
+      "id": "hi_chat_15",
+      "script": "hi",
+      "category": "chat",
+      "text": "कल शाम करीब सात बजे कोने वाले कैफे में दोस्तों से मिलना तय हुआ है",
+      "anthropicTokens": null,
+      "qwenTokens": 58,
+      "maxTokenCount": 58
+    },
+    {
+      "id": "hi_chat_16",
+      "script": "hi",
+      "category": "chat",
+      "text": "इस साल शरद ऋतु गर्म और धूप वाली है, पत्ते अभी पीले होने लगे हैं",
+      "anthropicTokens": null,
+      "qwenTokens": 60,
+      "maxTokenCount": 60
+    },
+    {
+      "id": "hi_mixed_01",
+      "script": "hi",
+      "category": "mixed",
+      "text": "मैं सर्वर पर docker चलाने की कोशिश कर रहा हूँ लेकिन सेवा सुबह से जवाब नहीं दे रही",
+      "anthropicTokens": null,
+      "qwenTokens": 69,
+      "maxTokenCount": 69
+    },
+    {
+      "id": "hi_mixed_02",
+      "script": "hi",
+      "category": "mixed",
+      "text": "kubectl get pods कमांड अपडेट के बाद से एक अजीब त्रुटि लौटा रही है",
+      "anthropicTokens": null,
+      "qwenTokens": 49,
+      "maxTokenCount": 49
+    },
+    {
+      "id": "hi_mixed_03",
+      "script": "hi",
+      "category": "mixed",
+      "text": "मैंने फोल्डर में npm install चलाया लेकिन package.json फाइल बिल्कुल नहीं बदली",
+      "anthropicTokens": null,
+      "qwenTokens": 55,
+      "maxTokenCount": 55
+    },
+    {
+      "id": "hi_mixed_04",
+      "script": "hi",
+      "category": "mixed",
+      "text": "स्थानीय सर्वर के पोर्ट 8080 से जुड़ने पर ECONNREFUSED त्रुटि आ रही है",
+      "anthropicTokens": null,
+      "qwenTokens": 55,
+      "maxTokenCount": 55
+    },
+    {
+      "id": "en_chat_01",
+      "script": "en",
+      "category": "chat",
+      "text": "What's the weather looking like today? I heard it might rain this evening",
+      "anthropicTokens": null,
+      "qwenTokens": 15,
+      "maxTokenCount": 15
+    },
+    {
+      "id": "en_chat_02",
+      "script": "en",
+      "category": "chat",
+      "text": "I just finished a fascinating book about the history of science, highly recommend it",
+      "anthropicTokens": null,
+      "qwenTokens": 15,
+      "maxTokenCount": 15
+    },
+    {
+      "id": "en_chat_03",
+      "script": "en",
+      "category": "chat",
+      "text": "Could you suggest an easy dinner recipe that uses seasonal vegetables?",
+      "anthropicTokens": null,
+      "qwenTokens": 12,
+      "maxTokenCount": 12
+    },
+    {
+      "id": "en_chat_04",
+      "script": "en",
+      "category": "chat",
+      "text": "I've been learning a new language for six months now, progress is slow but steady",
+      "anthropicTokens": null,
+      "qwenTokens": 17,
+      "maxTokenCount": 17
+    },
+    {
+      "id": "en_chat_05",
+      "script": "en",
+      "category": "chat",
+      "text": "Where can I find fresh vegetables at a reasonable price at the market?",
+      "anthropicTokens": null,
+      "qwenTokens": 14,
+      "maxTokenCount": 14
+    },
+    {
+      "id": "en_chat_06",
+      "script": "en",
+      "category": "chat",
+      "text": "The train was late again this morning, better check the new timetable before leaving",
+      "anthropicTokens": null,
+      "qwenTokens": 15,
+      "maxTokenCount": 15
+    },
+    {
+      "id": "en_chat_07",
+      "script": "en",
+      "category": "chat",
+      "text": "We planned a family trip to the mountains next weekend: we'll leave early in the morning, stop for breakfast by the lake, walk around the nature reserve until noon, then drive on to a little village with lovely cafes and head home only after sunset",
+      "anthropicTokens": null,
+      "qwenTokens": 50,
+      "maxTokenCount": 50
+    },
+    {
+      "id": "en_chat_08",
+      "script": "en",
+      "category": "chat",
+      "text": "When does the public library open tomorrow morning? I want to borrow some cookbooks",
+      "anthropicTokens": null,
+      "qwenTokens": 16,
+      "maxTokenCount": 16
+    },
+    {
+      "id": "en_chat_09",
+      "script": "en",
+      "category": "chat",
+      "text": "The neighbors are organizing a street party on Saturday and everyone is invited",
+      "anthropicTokens": null,
+      "qwenTokens": 13,
+      "maxTokenCount": 13
+    },
+    {
+      "id": "en_chat_10",
+      "script": "en",
+      "category": "chat",
+      "text": "I left my umbrella at the cafe yesterday, hopefully it is still there today",
+      "anthropicTokens": null,
+      "qwenTokens": 15,
+      "maxTokenCount": 15
+    },
+    {
+      "id": "en_chat_11",
+      "script": "en",
+      "category": "chat",
+      "text": "I'm thinking about growing some herbs on the balcony this spring, any advice?",
+      "anthropicTokens": null,
+      "qwenTokens": 16,
+      "maxTokenCount": 16
+    },
+    {
+      "id": "en_chat_12",
+      "script": "en",
+      "category": "chat",
+      "text": "The new movie at the cinema got excellent reviews from all the critics",
+      "anthropicTokens": null,
+      "qwenTokens": 13,
+      "maxTokenCount": 13
+    },
+    {
+      "id": "en_chat_13",
+      "script": "en",
+      "category": "chat",
+      "text": "How much is a ticket for the evening show at the new cinema downtown?",
+      "anthropicTokens": null,
+      "qwenTokens": 15,
+      "maxTokenCount": 15
+    },
+    {
+      "id": "en_chat_14",
+      "script": "en",
+      "category": "chat",
+      "text": "I love walking in the park early in the morning when it is still quiet and cool",
+      "anthropicTokens": null,
+      "qwenTokens": 17,
+      "maxTokenCount": 17
+    },
+    {
+      "id": "en_chat_15",
+      "script": "en",
+      "category": "chat",
+      "text": "We're meeting friends at the corner cafe around seven tomorrow evening",
+      "anthropicTokens": null,
+      "qwenTokens": 12,
+      "maxTokenCount": 12
+    },
+    {
+      "id": "en_chat_16",
+      "script": "en",
+      "category": "chat",
+      "text": "Autumn has been warm and sunny this year, the leaves are only starting to turn yellow",
+      "anthropicTokens": null,
+      "qwenTokens": 18,
+      "maxTokenCount": 18
+    },
+    {
+      "id": "en_mixed_01",
+      "script": "en",
+      "category": "mixed",
+      "text": "My friend keeps telling me to learn docker but I have no idea where to start",
+      "anthropicTokens": null,
+      "qwenTokens": 16,
+      "maxTokenCount": 16
+    },
+    {
+      "id": "en_mixed_02",
+      "script": "en",
+      "category": "mixed",
+      "text": "The tutorial says to run npm install first and then start the development server",
+      "anthropicTokens": null,
+      "qwenTokens": 14,
+      "maxTokenCount": 14
+    },
+    {
+      "id": "en_mixed_03",
+      "script": "en",
+      "category": "mixed",
+      "text": "Our admin spent the whole morning debugging a kubectl command that kept failing",
+      "anthropicTokens": null,
+      "qwenTokens": 14,
+      "maxTokenCount": 14
+    },
+    {
+      "id": "en_mixed_04",
+      "script": "en",
+      "category": "mixed",
+      "text": "The app crashed with a connection refused error before I even opened the page",
+      "anthropicTokens": null,
+      "qwenTokens": 14,
+      "maxTokenCount": 14
+    }
+  ]
+}

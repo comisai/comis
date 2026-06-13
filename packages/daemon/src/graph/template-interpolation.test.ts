@@ -493,6 +493,100 @@ describe("buildContextEnvelope", () => {
     expect(result).not.toContain("Your output is captured automatically");
   });
 
+  // --- language section tests (GEN-03 graph leg) ---
+
+  describe("buildContextEnvelope language section", () => {
+    it("emits the verbatim-preserving Language section for a non-en conversation language", () => {
+      const result = buildContextEnvelope({
+        graphLabel: "Test",
+        nodeId: "B",
+        task: "Summarize the findings",
+        originalTask: "Summarize the findings",
+        dependsOn: [],
+        nodeOutputs: new Map(),
+        totalNodeCount: 2,
+        language: "he",
+      });
+
+      expect(result).toContain("## Language");
+      // I7: the SAME sentence as the 181-04 sub-agent role section (single-source assertion).
+      expect(result).toContain(
+        "Produce all user-facing output in he (the conversation language). Code, identifiers, and file paths stay verbatim.",
+      );
+    });
+
+    it("places the Language section before the Your Task section", () => {
+      const result = buildContextEnvelope({
+        graphLabel: "Test",
+        nodeId: "B",
+        task: "Do the merge",
+        originalTask: "Do the merge",
+        dependsOn: [],
+        nodeOutputs: new Map(),
+        totalNodeCount: 2,
+        language: "ar",
+      });
+
+      expect(result.indexOf("## Language")).toBeLessThan(result.indexOf("## Your Task"));
+    });
+
+    it("interpolates the resolved language tag verbatim into the Language sentence", () => {
+      const result = buildContextEnvelope({
+        graphLabel: "Test",
+        nodeId: "B",
+        task: "Summarize",
+        originalTask: "Summarize",
+        dependsOn: [],
+        nodeOutputs: new Map(),
+        totalNodeCount: 2,
+        language: "ru",
+      });
+
+      expect(result).toContain(
+        "Produce all user-facing output in ru (the conversation language). Code, identifiers, and file paths stay verbatim.",
+      );
+    });
+
+    it("omits the Language section and stays byte-identical when language is en (I1)", () => {
+      const baseParams = {
+        graphLabel: "Test Graph",
+        nodeId: "root",
+        task: "Do the first thing",
+        originalTask: "Do the first thing",
+        dependsOn: [],
+        nodeOutputs: new Map<string, string | undefined>(),
+        totalNodeCount: 3,
+      } as const;
+
+      const withoutLanguage = buildContextEnvelope({ ...baseParams });
+      const withEn = buildContextEnvelope({ ...baseParams, language: "en" });
+
+      expect(withEn).not.toContain("## Language");
+      // en must be byte-identical to the no-language envelope (I1).
+      expect(withEn).toBe(withoutLanguage);
+    });
+
+    it("omits the Language section and stays byte-identical when language is undefined (I1)", () => {
+      const baseParams = {
+        graphLabel: "Pipeline",
+        nodeId: "B",
+        task: "Summarize the findings",
+        originalTask: "Summarize the findings",
+        dependsOn: ["A"],
+        nodeOutputs: new Map([["A", "Findings from node A"]]),
+        totalNodeCount: 2,
+        sharedDir: "/tmp/graph-runs/abc123",
+      } as const;
+
+      const withoutLanguage = buildContextEnvelope({ ...baseParams });
+      const withUndefined = buildContextEnvelope({ ...baseParams, language: undefined });
+
+      expect(withoutLanguage).not.toContain("## Language");
+      expect(withUndefined).not.toContain("## Language");
+      expect(withUndefined).toBe(withoutLanguage);
+    });
+  });
+
   // --- contextMode tests ---
 
   describe("buildContextEnvelope contextMode", () => {
@@ -903,5 +997,157 @@ describe("buildContextEnvelope", () => {
       expect(result1).toBe("Use A result and Z result");
       expect(result2).toBe("Use A result and Z result");
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SAFE-01 — grapheme-safe graph output truncation (the two content-length cuts:
+// interpolateTaskText :100 and buildContextEnvelope :229 route through
+// @comis/core adjustSliceBoundary). The regex-match-index splice (:120) is NOT a
+// content-length cut and is excluded.
+//
+// RED on pre-patch (raw output.slice(0, maxResultLength)): a boundary mid-pair /
+// inside a combining run yields a lone surrogate / orphaned mark. All non-ASCII
+// fixtures are built from \u{...} escapes (the auditable-boundary convention).
+// ---------------------------------------------------------------------------
+
+describe("SAFE-01 grapheme-safe graph output truncation", () => {
+  /** Detects an isolated (unpaired) UTF-16 surrogate code unit. */
+  function hasLoneSurrogate(s: string): boolean {
+    for (let i = 0; i < s.length; i++) {
+      const c = s.charCodeAt(i);
+      if (c >= 0xd800 && c <= 0xdbff) {
+        const next = i + 1 < s.length ? s.charCodeAt(i + 1) : 0;
+        if (!(next >= 0xdc00 && next <= 0xdfff)) return true;
+        i++;
+      } else if (c >= 0xdc00 && c <= 0xdfff) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  const ASTRAL = "\u{20000}"; // 𠀀 — a single surrogate pair (2 code units)
+  // shin(05E9) qamats(05B8,Mn) shin-dot(05C1,Mn) lamed(05DC) vav(05D5) holam(05B9,Mn) mem(05DD)
+  const NIQQUD_WORD = "\u{05E9}\u{05B8}\u{05C1}\u{05DC}\u{05D5}\u{05B9}\u{05DD}";
+  const TRUNC_SUFFIX = "... [truncated]";
+
+  describe("interpolateTaskText (:100)", () => {
+    it("does not leave a lone surrogate when maxResultLength splits a pair", () => {
+      // maxResultLength 5: the cut target is index 5. Astral pair at units 4/5 →
+      // the raw cut lands on the low surrogate.
+      const raw = "ABCD" + ASTRAL + "EFGHIJ"; // 4 + 2 + 6 = 12
+      expect(raw.charCodeAt(5)).toBeGreaterThanOrEqual(0xdc00);
+      const result = interpolateTaskText("X {{n.result}} Y", ["n"], new Map([["n", raw]]), 5);
+      const prefix = result.slice(result.indexOf("X ") + 2, result.indexOf(TRUNC_SUFFIX));
+      expect(hasLoneSurrogate(prefix)).toBe(false);
+    });
+
+    it("does not orphan a combining mark when maxResultLength falls in a niqqud run", () => {
+      const raw = NIQQUD_WORD.repeat(5);
+      // maxResultLength 2 lands on the shin-dot (a combining mark) — raw ends on a mark.
+      const result = interpolateTaskText("{{n.result}}", ["n"], new Map([["n", raw]]), 2);
+      const prefix = result.slice(0, result.indexOf(TRUNC_SUFFIX));
+      expect(/\p{M}$/u.test(prefix)).toBe(false);
+    });
+
+    it("truncates ASCII output byte-identically (I1 no-op)", () => {
+      const raw = "L".repeat(40);
+      const result = interpolateTaskText("{{n.result}}", ["n"], new Map([["n", raw]]), 10);
+      // helper is a no-op at the ASCII boundary 10 → exactly 10 'L's then the suffix.
+      expect(result).toBe("L".repeat(10) + TRUNC_SUFFIX);
+    });
+  });
+
+  describe("buildContextEnvelope (:229)", () => {
+    function outputLineFor(env: string, depId: string): string {
+      const lines = env.split("\n");
+      const idx = lines.findIndex((l) => l.includes(`Output from "${depId}"`));
+      return lines[idx + 1] ?? "";
+    }
+
+    it("does not leave a lone surrogate when effectiveMaxLen splits a pair", () => {
+      const output = "abcd" + ASTRAL + "efghij"; // cut@5 splits the pair (maxResultLength 5)
+      const env = buildContextEnvelope({
+        graphLabel: "G",
+        nodeId: "b",
+        task: "T",
+        originalTask: "T",
+        dependsOn: ["a"],
+        nodeOutputs: new Map([["a", output]]),
+        totalNodeCount: 2,
+        maxResultLength: 5,
+      });
+      const line = outputLineFor(env, "a").replace(TRUNC_SUFFIX, "");
+      expect(hasLoneSurrogate(line)).toBe(false);
+    });
+
+    it("does not orphan a combining mark when effectiveMaxLen falls in a niqqud run", () => {
+      const output = NIQQUD_WORD.repeat(5);
+      const env = buildContextEnvelope({
+        graphLabel: "G",
+        nodeId: "b",
+        task: "T",
+        originalTask: "T",
+        dependsOn: ["a"],
+        nodeOutputs: new Map([["a", output]]),
+        totalNodeCount: 2,
+        maxResultLength: 2,
+      });
+      const line = outputLineFor(env, "a").replace(TRUNC_SUFFIX, "");
+      expect(/\p{M}$/u.test(line)).toBe(false);
+    });
+
+    it("truncates ASCII output byte-identically (I1 no-op)", () => {
+      const output = "L".repeat(40);
+      const env = buildContextEnvelope({
+        graphLabel: "G",
+        nodeId: "b",
+        task: "T",
+        originalTask: "T",
+        dependsOn: ["a"],
+        nodeOutputs: new Map([["a", output]]),
+        totalNodeCount: 2,
+        maxResultLength: 10,
+      });
+      expect(outputLineFor(env, "a")).toBe("L".repeat(10) + TRUNC_SUFFIX);
+    });
+
+    it("produces a byte-identical envelope when language is en or absent (181 section stays out)", () => {
+      const base = {
+        graphLabel: "G",
+        nodeId: "b",
+        task: "T",
+        originalTask: "T",
+        dependsOn: [] as string[],
+        nodeOutputs: new Map<string, string | undefined>(),
+        totalNodeCount: 1,
+      };
+      const absent = buildContextEnvelope(base);
+      const en = buildContextEnvelope({ ...base, language: "en" });
+      expect(absent.includes("## Language")).toBe(false);
+      expect(en.includes("## Language")).toBe(false);
+      expect(en).toBe(absent); // no regression from the SAFE-01 edit
+    });
+  });
+
+  it("routes exactly the 2 content-length cuts through adjustSliceBoundary and excludes the regex-splice", async () => {
+    // Structural greppable invariant (Pitfall 1): read the SOURCE, drop comment
+    // lines first (so the header prose cannot self-trigger), then assert exactly the
+    // 2 truncation cuts route the helper, and the :120 regex-match-index splice does NOT.
+    const { readFile } = await import("node:fs/promises");
+    const { fileURLToPath } = await import("node:url");
+    const srcPath = fileURLToPath(new URL("./template-interpolation.ts", import.meta.url));
+    const source = await readFile(srcPath, "utf8");
+    const codeLines = source.split("\n").filter((line) => !/^\s*\/\//.test(line));
+    const code = codeLines.join("\n");
+
+    const adjustCount = (code.match(/adjustSliceBoundary\(/g) ?? []).length;
+    expect(adjustCount).toBe(2);
+
+    // The regex-match-index splice is still present and is NOT wrapped by the helper.
+    const spliceLine = codeLines.find((l) => l.includes("result.slice(0, m.start)"));
+    expect(spliceLine).toBeDefined();
+    expect(spliceLine).not.toContain("adjustSliceBoundary");
   });
 });

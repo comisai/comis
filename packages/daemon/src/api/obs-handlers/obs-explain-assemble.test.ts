@@ -690,3 +690,29 @@ describe("assembleIncidentReport — agentId/channel fallback (W8)", () => {
     expect(report.agentId).toBe("from-metadata");
   });
 });
+
+describe("assembleIncidentReport — RECALL-01 recall section", () => {
+  it("surfaces signals.recall on the report (counts/booleans only — no bodies)", () => {
+    const report = assembleIncidentReport(
+      makeSignals({
+        recall: { recalls: 3, zeroHits: 2, lastLanes: 4, lastFinalCount: 0, rerankerAvailable: true },
+      }),
+      makeMetadata(),
+      null,
+      SESSION_KEY,
+      READ_COUNT,
+    );
+    expect(report.recall).toEqual({
+      recalls: 3,
+      zeroHits: 2,
+      lastLanes: 4,
+      lastFinalCount: 0,
+      rerankerAvailable: true,
+    });
+  });
+
+  it("omits the recall section when the signals carry no recall data (pre-RECALL-01 / no-recall session)", () => {
+    const report = assembleIncidentReport(makeSignals(), makeMetadata(), null, SESSION_KEY, READ_COUNT);
+    expect(report.recall).toBeUndefined();
+  });
+});

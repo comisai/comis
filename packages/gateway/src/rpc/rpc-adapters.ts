@@ -143,6 +143,15 @@ async function handleAgentRequest(
       directives: cmdResult?.directives,
     });
   } catch (err) {
+    // clientFacing errors are deterministic caller faults (e.g. unknown agentId)
+    // — surface their message verbatim so the caller can self-correct. Everything
+    // else (provider outages, internal faults) stays the generic "Internal error"
+    // so raw internals never leak to the client.
+    if (err && typeof err === "object" && (err as { clientFacing?: unknown }).clientFacing === true) {
+      const message = err instanceof Error ? err.message : String(err);
+      deps.logger.warn({ method: methodName, hint: "Client-facing validation error returned to caller", errorKind: "validation" as const }, `RPC ${methodName} rejected`);
+      return { error: message };
+    }
     deps.logger.warn(
       {
         err,

@@ -16,17 +16,24 @@
  * event would imply recurrence/streaming and go stale; a once-per-boot record
  * is the correct point-in-time model.
  *
- * `details` carries ONLY the three booleans — no provider secrets, no model
- * paths, no free text. Booleans cannot leak a credential (bounded-payload
- * discipline, §2.7). The native node-llama-cpp stdout tokenizer line is OUT of
- * scope; only the in-process flags we control are recorded.
+ * EMB-01 adds two advisory signals — `embeddingMultilingual` and
+ * `rerankerMultilingual` (each `true | false | "unknown"`) — so a degraded
+ * non-Latin semantic-recall stack (an English-leaning embedder/reranker) is
+ * named in one `comis fleet` look. They are ADVISORY ONLY: nothing gates search
+ * or recall on them (I4; the FTS trigram floor carries recall regardless).
+ *
+ * `details` carries ONLY the booleans / `"unknown"` markers — no provider
+ * secrets, no model paths/URIs, no free text. A boolean or `"unknown"` cannot
+ * leak a credential (bounded-payload discipline, §2.7; the I8 content-free
+ * contract). The native node-llama-cpp stdout tokenizer line is OUT of scope;
+ * only the in-process flags we control are recorded.
  *
  * @module
  */
 import type { ClockPort } from "@comis/core";
 import type { ObservabilityStore } from "@comis/memory";
 
-/** The three boot-time load-level model-health signals (booleans only). */
+/** The boot-time load-level model-health signals (booleans / "unknown" only). */
 export interface ModelHealthSignals {
   /** The embedding provider/cached wrapper is available (else FTS5-only). */
   embeddingAvailable: boolean;
@@ -34,6 +41,11 @@ export interface ModelHealthSignals {
   rerankerModelPresent: boolean;
   /** The GGUF reranker provider loaded successfully (vs. unavailable). */
   rerankerBuilt: boolean;
+  /** EMB-01 advisory (true | false | "unknown", I8 content-free): the resolved
+   *  embedder model id reads multilingual. Advisory only — never gated (I4). */
+  embeddingMultilingual: boolean | "unknown";
+  /** EMB-01 advisory: the resolved reranker GGUF id reads multilingual. */
+  rerankerMultilingual: boolean | "unknown";
 }
 
 /**
@@ -60,6 +72,8 @@ export function recordModelHealth(
       embeddingAvailable: signals.embeddingAvailable,
       rerankerModelPresent: signals.rerankerModelPresent,
       rerankerBuilt: signals.rerankerBuilt,
+      embeddingMultilingual: signals.embeddingMultilingual,
+      rerankerMultilingual: signals.rerankerMultilingual,
     }),
   });
 }

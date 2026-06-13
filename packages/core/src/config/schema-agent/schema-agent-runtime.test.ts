@@ -143,3 +143,34 @@ describe("per-agent memoryLifecycle config block", () => {
     expect(bad.success).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// DET-02 (v2.22 Multilingual Excellence): agents.<id>.language — the reply
+// language hint for deterministic degraded replies. `.optional()` loose string
+// mirroring the transcription `language` hint (schema-integrations.ts:240):
+// BCP-47 ("he") OR an English display name ("Hebrew"); auto-detect when omitted.
+// A default agent registers NO language (byte-identical). The AGENTS.md §7
+// config-test triplet: defaults (absent) / valid / invalid (non-string).
+// These cases fail on the pre-patch schema (no `language` field) — RED.
+// ---------------------------------------------------------------------------
+describe("DET-02 — agents.<id>.language config key", () => {
+  it("is optional — absent on a bare config (auto-detect, byte-identical default)", () => {
+    const cfg = PerAgentConfigSchema.parse({});
+    expect(cfg.language).toBeUndefined();
+  });
+
+  it("accepts a BCP-47 tag (e.g. 'he')", () => {
+    const cfg = PerAgentConfigSchema.parse({ language: "he" });
+    expect(cfg.language).toBe("he");
+  });
+
+  it("accepts a BCP-47 region tag and an English display name (loose string — normalization is the resolver's job)", () => {
+    expect(PerAgentConfigSchema.parse({ language: "he-IL" }).language).toBe("he-IL");
+    expect(PerAgentConfigSchema.parse({ language: "Hebrew" }).language).toBe("Hebrew");
+  });
+
+  it("rejects a non-string language (number)", () => {
+    const bad = PerAgentConfigSchema.safeParse({ language: 42 });
+    expect(bad.success).toBe(false);
+  });
+});

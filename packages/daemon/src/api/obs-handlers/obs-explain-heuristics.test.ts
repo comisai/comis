@@ -268,6 +268,63 @@ describe("obs-explain-heuristics", () => {
   });
 
   // ------------------------------------------------------------------------
+  // RECALL-01: recall_miss verdict.
+  // ------------------------------------------------------------------------
+
+  const allMissRecall = { recalls: 2, zeroHits: 2, lastLanes: 3, lastFinalCount: 0, rerankerAvailable: false };
+
+  it("RECALL-01: a DEGRADED session whose recalls ALL missed (no tool/context cause) → recall_miss", () => {
+    // Grounded in the v2.22 Hebrew / LM-3 runs where recall silently returned
+    // nothing and comis explain root-caused nothing.
+    const r = rootCause(makeSignals({ endReason: "error", degraded: true, recall: allMissRecall }));
+    expect(r).not.toBeNull();
+    expect(r!.code).toBe("recall_miss");
+    expect(r!.detail).toContain("all 2 recall");
+    expect(r!.detail).toContain("lanes=3");
+    expect(r!.detail).toContain("reranker absent");
+    // Points at the two real gaps from the live runs: scope + non-Latin lanes.
+    expect(r!.suggestedNextSteps.join(" ")).toMatch(/scope/i);
+    expect(r!.suggestedNextSteps.join(" ")).toMatch(/trigram|non-Latin/i);
+  });
+
+  it("RECALL-01: a zero-hit recall on a HEALTHY (non-degraded) turn is benign → no verdict", () => {
+    // The agent simply didn't need memory. degraded=false must never name a cause.
+    expect(rootCause(makeSignals({ endReason: "success", degraded: false, recall: allMissRecall }))).toBeNull();
+    // Defensive: degraded absent entirely is also benign.
+    expect(rootCause(makeSignals({ recall: allMissRecall }))).toBeNull();
+  });
+
+  it("RECALL-01: a degraded session where SOME recalls hit does not fire recall_miss", () => {
+    const r = rootCause(
+      makeSignals({
+        endReason: "error",
+        degraded: true,
+        recall: { recalls: 3, zeroHits: 1, lastLanes: 4, lastFinalCount: 5, rerankerAvailable: true },
+      }),
+    );
+    expect(r).toBeNull();
+  });
+
+  it("RECALL-01: recall_miss yields to the tool-failure catch-all (mutually exclusive — failures present)", () => {
+    // A degraded session with BOTH zero-hit recalls AND tool failures is a
+    // tool-failure session; recall_miss requires failures.length===0 so the
+    // catch-all wins and the operator is pointed at the failing tool.
+    const r = rootCause(
+      makeSignals({
+        endReason: "completed_with_tool_errors",
+        degraded: true,
+        recall: allMissRecall,
+        toolStats: { web_fetch: { ok: 0, failed: 1, topErrorKind: "dependency" } },
+        failures: [
+          { seq: 1, toolName: "web_fetch", classifiedFailureBy: "sdk_iserror", transportOk: false, errorKind: "dependency", resultDigest: "d", resultBytes: 0, errorPreview: "" },
+        ],
+      }),
+    );
+    expect(r).not.toBeNull();
+    expect(r!.code).toBe("completed_with_tool_errors");
+  });
+
+  // ------------------------------------------------------------------------
   // No-match + populated-shape invariants.
   // ------------------------------------------------------------------------
 

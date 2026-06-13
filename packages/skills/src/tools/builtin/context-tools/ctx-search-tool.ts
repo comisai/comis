@@ -25,7 +25,16 @@ import { wrapExternalContent, scrubSecretsFromText, type LcdSearchHit, type LcdS
 
 import { jsonResult, throwToolError, readStringParam, readNumberParam } from "../../../platform-tools/tool-helpers.js";
 import { sanitizeFts5Query } from "../../../platform-tools/tools/fts5-sanitizer.js";
-import { emitExpansionMetric, requireCtxScope, type ContextToolDeps } from "./context-tools-shared.js";
+import { emitExpansionMetric, emitScriptZeroHit, requireCtxScope, type ContextToolDeps } from "./context-tools-shared.js";
+
+/**
+ * OBS-01 scan-floor cap note surfaced to the model when the bounded normalized
+ * scan reached its row cap (`lane === "scan" && scanCapped`). Content-free
+ * (no query text) — names the SCAN_ROW_CAP (`@comis/memory` `SCAN_ROW_CAP = 2000`)
+ * so the model knows older messages were not scanned. Pinned by the tool test.
+ */
+const SCAN_CAP_NOTE =
+  "Search scanned the 2,000 most recent messages (scan cap reached); older messages were not searched.";
 
 const CtxSearchParams = Type.Object({
   query: Type.String({ description: "Full-text query over THIS conversation's compressed history." }),
@@ -92,9 +101,10 @@ export function createCtxSearchTool(deps: ContextToolDeps): AgentTool<typeof Ctx
       const limit = Math.min(Math.max(1, requested), 30);
 
       const t0 = deps.nowMs();
-      // EFF-03: searchLcd now returns LcdSearchResult { hits, cjkZeroHit } — destructure
-      // to preserve the hits array for downstream processing and surface the CJK flag
-      // at THIS logging boundary (infra-free seam: @comis/memory has no logger import).
+      // OBS-01: searchLcd returns the 180-05-widened LcdSearchResult
+      // { hits, scriptZeroHit?, lane, matchErrored, scanCapped? } — preserve the
+      // hits array for downstream processing and surface the script-health signals
+      // at THIS logging/emit boundary (infra-free seam: @comis/memory has no logger).
       const result: LcdSearchResult = deps.store.searchLcd(ctxScope, q, { limit, scope });
       const hits: LcdSearchHit[] = result.hits;
 
@@ -115,15 +125,42 @@ export function createCtxSearchTool(deps: ContextToolDeps): AgentTool<typeof Ctx
       // emit durationMs, AND the emit timestamp, so the three are a single
       // consistent clock snapshot (the afterTurn triggers' one-read pattern).
       const endMs = deps.nowMs();
-      // EFF-03: CJK zero-hit counter — content-free DEBUG event (boolean flag only;
-      // the query string is intentionally ABSENT per T-170-05-01). This is the
-      // §14.4 instrumented trigger for the deferred CJK-trigram FTS path: when this
-      // counter climbs on a real non-Latin channel, CJK-01 (trigram FTS) is activated.
-      if (result.cjkZeroHit) {
-        deps.logger.debug(
-          { step: "lcd-search", agentId: ctxScope.agentId, sessionKey: ctxScope.sessionKey, cjkZeroHit: true },
-          "lcd FTS returned zero hits for CJK query",
+      // OBS-01 signal purity (RESEARCH Pitfall 9): the 180-05 store sets
+      // `scriptZeroHit` ONLY on a CLEAN zero-hit (`!matchErrored`); a swallowed
+      // FTS5 MATCH error surfaces as `matchErrored` instead and must NEVER count
+      // as a lane gap.
+      if (result.matchErrored) {
+        // §2.7 failure branch: a degraded MATCH error stays a content-free WARN
+        // (hint + errorKind) at the TOOL boundary (the memory package is
+        // logger-free). NO query text. NOT a script_zero_hit signal.
+        deps.logger.warn(
+          {
+            step: "lcd-search",
+            agentId: ctxScope.agentId,
+            sessionKey: ctxScope.sessionKey,
+            lane: result.lane,
+            hint: "FTS MATCH errored and degraded to zero rows — not counted as a lane gap; if persistent, run comis doctor (FTS drift) or check SQLite FTS5/trigram availability",
+            errorKind: "dependency" as const,
+          },
+          "lcd search MATCH errored (degraded)",
         );
+      } else if (result.scriptZeroHit) {
+        // OBS-01: a clean non-Latin zero-hit. Promote the §14.4 instrumented
+        // trigger (the old DEBUG-only CJK-zero-hit line, now replaced) to a
+        // content-free event-bus signal — onto the `comis explain` timeline AND
+        // `comis fleet`
+        // health_signal (plan 180-03's dual-path plumbing). Guarded: a throwing
+        // subscriber can NEVER fail the already-completed search. Payload carries
+        // the closed `scriptClass`/`lane` enums + ids + timestamp ONLY (I8) —
+        // the query string is intentionally ABSENT.
+        emitScriptZeroHit(deps, {
+          conversationId: ctxScope.conversationId,
+          agentId: ctxScope.agentId,
+          sessionKey: ctxScope.sessionKey,
+          scriptClass: result.scriptZeroHit,
+          lane: result.lane,
+          timestamp: endMs,
+        });
       }
       deps.logger.debug(
         {
@@ -155,7 +192,18 @@ export function createCtxSearchTool(deps: ContextToolDeps): AgentTool<typeof Ctx
         timestamp: endMs,
       });
 
-      return jsonResult({ hits: safeHits });
+      // OBS-01: surface the lane to the model (which path served the query) and,
+      // when the bounded normalized scan floor hit its row cap, the cap note (the
+      // "cap noted in result" criterion) — so the model knows older messages were
+      // not searched and can narrow/retry. Content-free (no query text). The cap
+      // note rides ONLY the scan lane (the only lane that caps).
+      const scanCapped = result.lane === "scan" && result.scanCapped === true;
+      return jsonResult({
+        hits: safeHits,
+        lane: result.lane,
+        ...(result.lane === "scan" ? { scanCapped } : {}),
+        ...(scanCapped ? { capNote: SCAN_CAP_NOTE } : {}),
+      });
     },
   };
 }

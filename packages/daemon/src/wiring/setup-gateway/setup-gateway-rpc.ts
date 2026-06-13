@@ -39,6 +39,7 @@ import {
   deriveTrustLevel,
   detectGreetingTrigger,
   handleConfigChatCommand,
+  resolveExecAgentId,
 } from "./setup-gateway-admin.js";
 
 /**
@@ -264,9 +265,8 @@ export function buildRpcAdapterDeps(deps: RpcAdapterBuilderDeps): RpcAdapterDeps
   return {
     isValidAgentId: (agentId: string) => !!agents[agentId],
     executeAgent: async (params) => {
-      // Resolve agent ID from params, falling back to default when unknown.
-      const requestedAgentId = (params as Record<string, unknown>).agentId as string | undefined ?? defaultAgentId;
-      const execAgentId = agents[requestedAgentId] ? requestedAgentId : defaultAgentId;
+      // F-1: unknown agentId errors (clientFacing) vs silent paid-default fallback; absent defaults.
+      const execAgentId = resolveExecAgentId(agents, (params as Record<string, unknown>).agentId as string | undefined, defaultAgentId);
       const connectionId = (params as Record<string, unknown>).connectionId as string | undefined;
 
       // Trust level from token scopes: admin/wildcard → admin, else user (fail-closed).

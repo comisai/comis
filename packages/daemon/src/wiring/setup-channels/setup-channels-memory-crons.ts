@@ -17,7 +17,7 @@
  */
 
 import type { AppContainer, ClockPort, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore, RelationshipStore, TunedAlphaStore, MemoryUsefulnessStore, MemoryLifecyclePort } from "@comis/core";
-import { parseFormattedSessionKey } from "@comis/core";
+import { parseFormattedSessionKey, KEYLESS_PROVIDER_TYPES, KEYLESS_API_KEY_SENTINEL } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { MemoryApi } from "@comis/memory";
 import { resolveOperationModel, resolveProviderFamily, runMemoryConsolidation, runMemoryReasoning, createReasoningSeam, runUserRepresentationBuild, createUserRepresentationSeam, runRelationshipBuild, createRelationshipSeam, runOnlineTuning, type UserRepresentationSourceMemory, type RelationshipSourceMemory, type OnlineTuningFeedEntry } from "@comis/agent";
@@ -105,7 +105,7 @@ export async function handleMemoryCronSentinel(
 
     const providerEntry = container.config.providers?.entries?.[resolved.provider];
     const apiKeyName = providerEntry?.apiKeyName || `${resolved.provider.toUpperCase()}_API_KEY`;
-    const apiKey = container.secretManager.get(apiKeyName) ?? "";
+    const apiKey = container.secretManager.get(apiKeyName) ?? (KEYLESS_PROVIDER_TYPES.has(resolved.provider) ? KEYLESS_API_KEY_SENTINEL : "");
     if (!apiKey) {
       logger.warn({ agentId, provider: resolved.provider, hint: `Set ${apiKeyName} in secrets for memory consolidation`, errorKind: "config" as const }, "Skipping memory consolidation -- no API key");
       payload.onComplete?.({ status: "error", error: `No API key for ${resolved.provider}` });
@@ -165,7 +165,7 @@ export async function handleMemoryCronSentinel(
 
     const providerEntry = container.config.providers?.entries?.[resolved.provider];
     const apiKeyName = providerEntry?.apiKeyName || `${resolved.provider.toUpperCase()}_API_KEY`;
-    const apiKey = container.secretManager.get(apiKeyName) ?? "";
+    const apiKey = container.secretManager.get(apiKeyName) ?? (KEYLESS_PROVIDER_TYPES.has(resolved.provider) ? KEYLESS_API_KEY_SENTINEL : "");
     if (!apiKey) {
       logger.warn({ agentId, provider: resolved.provider, hint: `Set ${apiKeyName} in secrets for memory reasoning`, errorKind: "config" as const }, "Skipping memory reasoning -- no API key");
       payload.onComplete?.({ status: "error", error: `No API key for ${resolved.provider}` });
@@ -246,7 +246,7 @@ export async function handleMemoryCronSentinel(
 
     const providerEntry = container.config.providers?.entries?.[resolved.provider];
     const apiKeyName = providerEntry?.apiKeyName || `${resolved.provider.toUpperCase()}_API_KEY`;
-    const apiKey = container.secretManager.get(apiKeyName) ?? "";
+    const apiKey = container.secretManager.get(apiKeyName) ?? (KEYLESS_PROVIDER_TYPES.has(resolved.provider) ? KEYLESS_API_KEY_SENTINEL : "");
     if (!apiKey) {
       logger.warn({ agentId, provider: resolved.provider, hint: `Set ${apiKeyName} in secrets for user representation build`, errorKind: "config" as const }, "Skipping user representation build -- no API key");
       payload.onComplete?.({ status: "error", error: `No API key for ${resolved.provider}` });
@@ -498,7 +498,7 @@ export async function handleMemoryCronSentinel(
 
     const providerEntry = container.config.providers?.entries?.[resolved.provider];
     const apiKeyName = providerEntry?.apiKeyName || `${resolved.provider.toUpperCase()}_API_KEY`;
-    const apiKey = container.secretManager.get(apiKeyName) ?? "";
+    const apiKey = container.secretManager.get(apiKeyName) ?? (KEYLESS_PROVIDER_TYPES.has(resolved.provider) ? KEYLESS_API_KEY_SENTINEL : "");
     if (!apiKey) {
       logger.warn({ agentId, provider: resolved.provider, hint: `Set ${apiKeyName} in secrets for social modeling build`, errorKind: "config" as const }, "Skipping social modeling build -- no API key");
       payload.onComplete?.({ status: "error", error: `No API key for ${resolved.provider}` });

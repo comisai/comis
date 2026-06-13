@@ -8,6 +8,9 @@ import {
   dagDegradedEventToRow,
   healthBudgetExceededEventToRow,
   mcpReconnectFailedEventToRow,
+  scriptZeroHitEventToRow,
+  summaryLanguageMismatchEventToRow,
+  generationQualityEventToRow,
   setupObsPersistence,
 } from "./obs-persistence-wiring.js";
 import type { EventMap } from "@comis/core";
@@ -452,6 +455,163 @@ describe("mcpReconnectFailedEventToRow", () => {
 });
 
 // ---------------------------------------------------------------------------
+// OBS-01 / Phase 180 — script_zero_hit + summary_language_mismatch (the fleet
+// path). Both are visibility-only signals → severity ALWAYS "warning" (no
+// gating, no benign allow-set like dag_degraded's). details carries closed
+// ScriptClass/lane enums + ids + counts ONLY — never query text / summary body.
+// RED: the two mappers do not exist yet (undefined import → not a function).
+// ---------------------------------------------------------------------------
+
+describe("scriptZeroHitEventToRow", () => {
+  it("maps a context:script_zero_hit payload to a warning health_signal row (closed enums + ids only)", () => {
+    const row = scriptZeroHitEventToRow({
+      conversationId: "t1:u1:c1",
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      scriptClass: "hebrew",
+      lane: "tri",
+      timestamp: 4000,
+    });
+
+    expect(row.timestamp).toBe(4000);
+    expect(row.category).toBe("health_signal");
+    expect(row.severity).toBe("warning");
+    expect(row.agentId).toBe("agent-1");
+    expect(row.sessionKey).toBe("t1:u1:c1");
+    expect(row.message).toBe("context:script_zero_hit");
+    expect(row.traceId).toBeUndefined();
+
+    // details = closed label + scriptClass enum + lane union + conversationId ONLY.
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(details).toEqual({
+      signal: "script_zero_hit",
+      scriptClass: "hebrew",
+      lane: "tri",
+      conversationId: "t1:u1:c1",
+    });
+  });
+
+  it("carries each lane verbatim (closed union — safe)", () => {
+    for (const lane of ["word", "tri", "scan"] as const) {
+      const row = scriptZeroHitEventToRow({
+        conversationId: "c",
+        agentId: "a",
+        sessionKey: "s",
+        scriptClass: "arabic",
+        lane,
+        timestamp: 1,
+      });
+      const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+      expect(details.lane).toBe(lane);
+      expect(row.severity).toBe("warning");
+    }
+  });
+});
+
+describe("summaryLanguageMismatchEventToRow", () => {
+  it("maps a context:summary_language_mismatch payload to a warning health_signal row (enums + depth only)", () => {
+    const row = summaryLanguageMismatchEventToRow({
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      sourceScript: "hebrew",
+      summaryScript: "latin",
+      depth: 1,
+      timestamp: 5000,
+    });
+
+    expect(row.timestamp).toBe(5000);
+    expect(row.category).toBe("health_signal");
+    expect(row.severity).toBe("warning");
+    expect(row.agentId).toBe("agent-1");
+    expect(row.sessionKey).toBe("t1:u1:c1");
+    expect(row.message).toBe("context:summary_language_mismatch");
+    expect(row.traceId).toBeUndefined();
+
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(details).toEqual({
+      signal: "summary_language_mismatch",
+      sourceScript: "hebrew",
+      summaryScript: "latin",
+      depth: 1,
+    });
+  });
+
+  it("carries a -1 pipeline depth verbatim (no depth concept in pipeline compaction)", () => {
+    const row = summaryLanguageMismatchEventToRow({
+      agentId: "a",
+      sessionKey: "s",
+      sourceScript: "cjk",
+      summaryScript: "latin",
+      depth: -1,
+      timestamp: 1,
+    });
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(details.depth).toBe(-1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GENQ-01 — generationQualityEventToRow (the memory-generation fleet path).
+// Visibility-only → severity ALWAYS "warning". details carries the closed
+// GenerationPass + ScriptClass enums + the three issue booleans ONLY — never the
+// source or generated body. Cron-job passes carry no sessionKey.
+// ---------------------------------------------------------------------------
+
+describe("generationQualityEventToRow", () => {
+  it("maps a memory:generation_quality payload to a warning health_signal row (enums + booleans only)", () => {
+    const row = generationQualityEventToRow({
+      agentId: "agent-1",
+      pass: "user_representation",
+      sourceScript: "hebrew",
+      outputScript: "latin",
+      languageMismatch: true,
+      emptyOutput: false,
+      formatViolation: false,
+      timestamp: 6000,
+    });
+
+    expect(row.timestamp).toBe(6000);
+    expect(row.category).toBe("health_signal");
+    expect(row.severity).toBe("warning");
+    expect(row.agentId).toBe("agent-1");
+    expect(row.message).toBe("memory:generation_quality");
+    expect(row.traceId).toBeUndefined();
+    // Cron-job pass: no sessionKey on the payload → undefined on the row.
+    expect(row.sessionKey).toBeUndefined();
+
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(details).toEqual({
+      signal: "generation_quality",
+      pass: "user_representation",
+      sourceScript: "hebrew",
+      outputScript: "latin",
+      languageMismatch: true,
+      emptyOutput: false,
+      formatViolation: false,
+    });
+  });
+
+  it("carries each pass + issue-flag combination verbatim (closed enums + booleans)", () => {
+    const row = generationQualityEventToRow({
+      agentId: "a",
+      sessionKey: "t:u:c",
+      pass: "consolidation",
+      sourceScript: "arabic",
+      outputScript: "arabic",
+      languageMismatch: false,
+      emptyOutput: false,
+      formatViolation: true,
+      timestamp: 1,
+    });
+    expect(row.sessionKey).toBe("t:u:c");
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(details.pass).toBe("consolidation");
+    expect(details.formatViolation).toBe(true);
+    expect(row.severity).toBe("warning");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // setupObsPersistence
 // ---------------------------------------------------------------------------
 
@@ -545,6 +705,9 @@ describe("setupObsPersistence", () => {
     expect(eventBus.on).toHaveBeenCalledWith("context:dag_degraded", expect.any(Function));
     expect(eventBus.on).toHaveBeenCalledWith("health:budget_exceeded", expect.any(Function));
     expect(eventBus.on).toHaveBeenCalledWith("mcp:server:reconnect_failed", expect.any(Function));
+    // OBS-01 (Phase 180): the 2 multilingual health_signal subscriptions.
+    expect(eventBus.on).toHaveBeenCalledWith("context:script_zero_hit", expect.any(Function));
+    expect(eventBus.on).toHaveBeenCalledWith("context:summary_language_mismatch", expect.any(Function));
 
     // Cleanup
     clearInterval(result.snapshotTimer);
@@ -579,18 +742,32 @@ describe("setupObsPersistence", () => {
     eventBus.emit("health:budget_exceeded", { kind: "dependency", count: 5, windowMs: 60_000, timestamp: 1001 });
     // c. MCP reconnect exhaustion (lastError must be dropped on the way to the row).
     eventBus.emit("mcp:server:reconnect_failed", { serverName: "srv", attempts: 3, lastError: "x".repeat(500), timestamp: 1002 });
+    // d. OBS-01: a non-Latin zero-hit search.
+    eventBus.emit("context:script_zero_hit", {
+      conversationId: "conv-1", agentId: "a1", sessionKey: "sk-1", scriptClass: "hebrew", lane: "tri", timestamp: 1003,
+    });
+    // e. OBS-01: a summary whose script diverged from its source.
+    eventBus.emit("context:summary_language_mismatch", {
+      agentId: "a1", sessionKey: "sk-1", sourceScript: "hebrew", summaryScript: "latin", depth: 1, timestamp: 1004,
+    });
 
     // Flush the diagnostic buffer.
     vi.advanceTimersByTime(500);
 
-    // Exactly one health_signal row per event (3 total), each with the right message.
+    // Exactly one health_signal row per event (5 total), each with the right message.
     const calls = (obsStore.insertDiagnostic as ReturnType<typeof vi.fn>).mock.calls;
     const healthRows = calls
       .map((c) => c[0] as { category?: string; message?: string; details?: string })
       .filter((r) => r.category === "health_signal");
-    expect(healthRows).toHaveLength(3);
+    expect(healthRows).toHaveLength(5);
     const messages = healthRows.map((r) => r.message).sort();
-    expect(messages).toEqual(["context:dag_degraded", "health:budget_exceeded", "mcp:server:reconnect_failed"]);
+    expect(messages).toEqual([
+      "context:dag_degraded",
+      "context:script_zero_hit",
+      "context:summary_language_mismatch",
+      "health:budget_exceeded",
+      "mcp:server:reconnect_failed",
+    ]);
 
     // The MCP row never carries the error body (bounded payload).
     const mcpRow = healthRows.find((r) => r.message === "mcp:server:reconnect_failed")!;

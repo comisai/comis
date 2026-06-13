@@ -66,6 +66,8 @@ import type {
 } from "@comis/core";
 import type { ContextEngineConfig } from "@comis/core";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { Message } from "@earendil-works/pi-ai";
+import { estimateMessageTokens } from "../safety/token-estimator.js";
 import { sanitizeToolUseResultPairing } from "./transcript-repair.js";
 import { resolveClampedFreshTailTurns } from "../model/fresh-tail-clamp.js";
 import { computeTokenBudgetForProfile } from "./budget-capacity-cap.js";
@@ -646,12 +648,32 @@ function resolveContextItem(
       // pass (rankMiddleBandByRelevance) can match a searchLcd hit by its stable `refId`
       // (= row.id) instead of a fragile snippet substring. row.id IS the refId every hit
       // carries — so a pure tool_use/tool_result message (empty block-text render) now ranks.
-      return { msg: partsToMessage(row) as AgentMessage, tokens: row.tokenCount, lcdId: row.id };
+      // TOK-01 (Phase 179): stored token_count on rows ingested before the script-aware
+      // factor under-counts dense scripts ~2x. Lift at READ time — max(), never replace:
+      // the stored count carries F3 thinking weight a re-estimate would miss, and for
+      // Latin rows the same estimator over the same lossless round-trip reproduces the
+      // stored value exactly (max = no-op, the I1 byte-identical direction). No migration
+      // (forward-only schema, schema-lcd.ts).
+      const msg = partsToMessage(row) as AgentMessage;
+      return {
+        msg,
+        tokens: Math.max(row.tokenCount, estimateMessageTokens(msg as unknown as Message)),
+        lcdId: row.id,
+      };
     }
     case "summary": {
       const summary = summaryById.get(item.refId);
       if (summary === undefined) return undefined; // dangling summary-ref (drift) — skip.
-      return { msg: summaryRefToMessage(summary), tokens: summary.tokenCount };
+      // TOK-01: compare against summary.content — the SAME input the stored count was
+      // computed over (summarize-tier-targets) — NEVER the rendered summaryRefToMessage
+      // wrap, whose header/footer would inflate every summary including English (I1 break).
+      return {
+        msg: summaryRefToMessage(summary),
+        tokens: Math.max(
+          summary.tokenCount,
+          estimateMessageTokens({ role: "user", content: summary.content } as Message),
+        ),
+      };
     }
     default: {
       const _exhaustive: never = item.refKind;

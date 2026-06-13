@@ -16,6 +16,7 @@ import * as fsp from "node:fs/promises";
 import { safePath, PathTraversalError, registerActivityLabelSpec } from "@comis/core";
 import { type LazyPaths, resolvePaths } from "../file/safe-path-wrapper.js";
 import { readStringParam, readNumberParam } from "../../../platform-tools/tool-helpers.js";
+import { pathOutsideWorkspaceMessage } from "./path-error.js";
 
 // Activity label spec (SPEC §6.1). Descriptor name == emitted name for
 // builtins (ls-tool.ts:126 → `name: "ls"`).
@@ -98,7 +99,7 @@ function resolveSearchPath(
     }
   }
 
-  throw new Error(`[path_traversal] Path outside workspace bounds: ${filePath}`);
+  throw new Error(pathOutsideWorkspaceMessage(filePath));
 }
 
 // ---------------------------------------------------------------------------

@@ -16,7 +16,7 @@ import { getModels, getProviders } from "@earendil-works/pi-ai";
 import type { Api, Model, KnownProvider } from "@earendil-works/pi-ai";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { SecretManager } from "@comis/core";
-import { KEYLESS_PROVIDER_TYPES } from "@comis/core";
+import { KEYLESS_PROVIDER_TYPES, KEYLESS_API_KEY_SENTINEL } from "@comis/core";
 import type { ModelAllowlist } from "./model-allowlist.js";
 
 /**
@@ -305,9 +305,9 @@ export function registerCustomProviders(
       ?? FALLBACK_API_FOR_CUSTOM_TYPES[entry.type]
       ?? "openai-completions";
     const headersResolved = Object.keys(entry.headers).length > 0 ? entry.headers : undefined;
-    const resolvedApiKey = apiKey ?? (isKeylessType ? "ollama-no-auth" : undefined);
+    const resolvedApiKey = apiKey ?? (isKeylessType ? KEYLESS_API_KEY_SENTINEL : undefined);
 
-    if (resolvedApiKey === "ollama-no-auth") {
+    if (resolvedApiKey === KEYLESS_API_KEY_SENTINEL) {
       logger.debug(
         {
           providerName,

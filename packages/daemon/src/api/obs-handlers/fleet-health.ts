@@ -53,10 +53,11 @@ import {
   type FleetHealthReport,
   type ClockPort,
 } from "@comis/core";
-import { reduceFleetWindow, type ObservabilityStore, type DiagnosticRow } from "@comis/memory";
+import { reduceFleetWindow, type ObservabilityStore } from "@comis/memory";
 import type { RpcHandler } from "../types.js";
 import { IS_DEV, type ObsHandlerDeps } from "./obs-helpers.js";
 import { readSessionIndexWindow } from "./fleet-session-index.js";
+import { buildFindings, type Finding } from "./fleet-findings.js";
 
 /** Default data directory (lazy). Mirrors obs-explain.ts / fleet-session-index.ts. */
 function defaultDataDir(): string {
@@ -83,115 +84,10 @@ const FLEET_FINDINGS_CAP = 8;
  */
 const HIGH_DEGRADED_RATE = 0.5;
 
-// ---------------------------------------------------------------------------
-// Findings: derive {code, detail, count, hint} from the I-track rows.
-// Counts + short codes + hints ONLY — NEVER concatenate raw row.message/details
-// bodies (H1 + the 159 schema is digest-only).
-// ---------------------------------------------------------------------------
-
-/** One report finding. Shape-identical to `FleetHealthReport.findings[number]`. */
-interface Finding {
-  code: string;
-  detail: string;
-  count: number;
-  hint: string;
-}
-
-/**
- * The closed `signal` label a Phase-160 `health_signal` row carries in its
- * `details` JSON (`lcd_divergence` / `alert_budget` / `mcp_reconnect_failed`).
- * Parsed defensively from the untrusted row — a missing/malformed label folds
- * into the generic `unknown` bucket (soft-fail, never throw, never a raw body).
- */
-function healthSignalLabel(row: DiagnosticRow): string {
-  if (row.details === undefined) return "unknown";
-  try {
-    const parsed = JSON.parse(row.details) as { signal?: unknown };
-    return typeof parsed.signal === "string" && parsed.signal.length > 0 ? parsed.signal : "unknown";
-  } catch {
-    return "unknown"; // malformed details JSON — counts only, no body.
-  }
-}
-
-/** KNOB-03: servedBelowConfiguredCount from a config_posture row's details JSON.
- *  Defensive parse — malformed/missing folds to 0 (soft-fail, counts only;
- *  the healthSignalLabel clone, T-176-13). */
-function servedBelowConfiguredFromRow(row: DiagnosticRow): number {
-  if (row.details === undefined) return 0;
-  try {
-    const parsed = JSON.parse(row.details) as { servedBelowConfiguredCount?: unknown };
-    const n = parsed.servedBelowConfiguredCount;
-    return typeof n === "number" && Number.isFinite(n) && n > 0 ? n : 0;
-  } catch {
-    return 0;
-  }
-}
-
-/**
- * Derive `{code, detail, count, hint}` findings from the I-track rows. Counts +
- * short codes + hints ONLY — NEVER the raw `row.message`/`row.details` body (H1 +
- * the 159 schema is digest-only). `health_signal` rows are grouped by their
- * closed `signal` label (so distinct signal classes are distinct findings);
- * `model_health` / `config_posture` are category-level rollups.
- */
-function buildFindings(
-  healthSignals: readonly DiagnosticRow[],
-  modelHealth: readonly DiagnosticRow[],
-  configPosture: readonly DiagnosticRow[],
-): Finding[] {
-  const findings: Finding[] = [];
-
-  // health_signal — one finding per closed `signal` label (counts only).
-  const bySignal = new Map<string, number>();
-  for (const row of healthSignals) {
-    const label = healthSignalLabel(row);
-    bySignal.set(label, (bySignal.get(label) ?? 0) + 1);
-  }
-  for (const [label, count] of bySignal) {
-    findings.push({
-      code: `health_signal:${label}`,
-      detail: `${count} ${label} health signal(s) in the window`,
-      count,
-      hint: "run `comis explain` on an affected session; inspect the recurring health WARNs",
-    });
-  }
-
-  if (modelHealth.length > 0) {
-    findings.push({
-      code: "model_health",
-      detail: `${modelHealth.length} model-health signal(s) (provider degradation)`,
-      count: modelHealth.length,
-      hint: "check provider status + rate-limit headroom; confirm the model/provider config",
-    });
-  }
-  if (configPosture.length > 0) {
-    findings.push({
-      code: "config_posture",
-      detail: `${configPosture.length} config-posture signal(s) (insecure or drifted config)`,
-      count: configPosture.length,
-      hint: "review the gateway TLS / token posture and the flagged config keys",
-    });
-    // KNOB-03: dedicated served-below-configured finding from the LATEST posture
-    // row (max timestamp — scan, never assume query order). Posture is STANDING
-    // STATE, not cumulative: an old under-served boot superseded by a healthy
-    // one must not keep flagging the fleet.
-    let latest = configPosture[0]!;
-    for (const row of configPosture) {
-      if (row.timestamp > latest.timestamp) latest = row;
-    }
-    const latestCount = servedBelowConfiguredFromRow(latest);
-    if (latestCount > 0) {
-      findings.push({
-        code: "config_posture:served_below_configured",
-        detail: `Ollama served context window below configured for ${latestCount} provider(s)`,
-        count: latestCount,
-        hint: "set OLLAMA_CONTEXT_LENGTH / Modelfile 'PARAMETER num_ctx' to the configured window (config-yaml served-window section); run `comis explain` on a served-bound session for the numbers",
-      });
-    }
-  }
-  // Deterministic order: highest-count first, then code asc (stable tie-break).
-  return findings.sort((a, b) => b.count - a.count || a.code.localeCompare(b.code));
-}
+// Findings derivation (`buildFindings` + the `Finding` shape + the defensive
+// details parsers) is extracted to ./fleet-findings.ts to keep this module under
+// the obs-handlers file-size cap (the OBS-01 Phase-180 script findings pushed it
+// over). Counts + short codes + hints ONLY — NEVER raw row.message/details bodies.
 
 // ---------------------------------------------------------------------------
 // Heuristic registry — the deterministic likelyRootCause verdict.

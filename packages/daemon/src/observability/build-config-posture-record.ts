@@ -39,8 +39,24 @@
  * @module
  */
 import type { ClockPort } from "@comis/core";
+import { isProviderModelChimera } from "@comis/core";
 import type { ObservabilityStore } from "@comis/memory";
 import type { StrandedFinding } from "../wiring/setup-storage-mismatch-warn.js";
+
+/**
+ * RESOLVE-01: count configured agents whose NATIVE provider family disagrees with
+ * their model id's family (the `ffe11736` chimera). Conservative — gateway/custom
+ * providers + an unknown model family never flag (see `isProviderModelChimera`).
+ * Lives here (not inline in daemon.ts) to keep daemon.ts under its 3000-line cap.
+ * Count only — the caller persists the COUNT, never agent ids/model names (I3).
+ */
+export function countChimericModels(
+  agents: Readonly<Record<string, { provider?: string; model?: string }>>,
+): number {
+  return Object.values(agents).filter(
+    (a) => typeof a.provider === "string" && typeof a.model === "string" && isProviderModelChimera(a.provider, a.model),
+  ).length;
+}
 
 /** The boot-time config-posture inputs (counts/booleans/closed labels only). */
 export interface ConfigPostureInputs {
@@ -64,6 +80,15 @@ export interface ConfigPostureInputs {
    * WARN used (one comparison, two surfaces — no drift).
    */
   servedBelowConfiguredCount: number;
+  /**
+   * RESOLVE-01 (observability-excellence): number of configured agents whose
+   * NATIVE provider family disagrees with their model id's family (the `ffe11736`
+   * chimera — e.g. `provider: anthropic` + a qwen model → phantom profile). A
+   * COUNT, never agent ids or model names (the no-free-text contract). Computed in
+   * daemon.ts via `isProviderModelChimera` over the configured agents at boot.
+   * Optional (defaults to 0 in the record) so existing callers/tests need no change.
+   */
+  chimericModelCount?: number;
 }
 
 /**
@@ -81,11 +106,13 @@ export function buildConfigPostureRecord(
   inputs: ConfigPostureInputs,
   clock: ClockPort,
 ): void {
+  const chimericModelCount = inputs.chimericModelCount ?? 0;
   const hasIssue =
     inputs.tlsOff ||
     inputs.strandedFindings.length > 0 ||
     inputs.canaryFallbackActive ||
-    inputs.servedBelowConfiguredCount > 0;
+    inputs.servedBelowConfiguredCount > 0 ||
+    chimericModelCount > 0;
 
   obsStore?.insertDiagnostic({
     timestamp: clock.now(),
@@ -98,6 +125,9 @@ export function buildConfigPostureRecord(
       stranded: inputs.strandedFindings,
       canaryFallbackActive: inputs.canaryFallbackActive,
       servedBelowConfiguredCount: inputs.servedBelowConfiguredCount,
+      // RESOLVE-01: agents booted with a NATIVE provider + a foreign model family
+      // (the ffe11736 chimera). A COUNT, never agent ids/model names (no free text).
+      chimericModelCount,
     }),
   });
 }

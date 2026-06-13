@@ -559,7 +559,7 @@ When `--repair` is passed, actionable findings are automatically repaired offlin
 | Finding | Repair action |
 |---------|---------------|
 | Dangling `context_items` refs | Stale `lcd_context_items` entries whose `ref_id` points to a deleted summary or message are removed. |
-| FTS row-count drift | `lcd_summaries_fts` (external-content) is rebuilt via the FTS5 `rebuild` command. `lcd_messages_fts` (contentless — message text lives in `lcd_message_parts`, not a `content` column) is repopulated by re-rendering each message's parts into the index. |
+| FTS row-count drift | `lcd_summaries_fts` (external-content) is rebuilt via the FTS5 `rebuild` command. `lcd_messages_fts` (self-contained — it stores its own re-rendered content, not a reference into `lcd_message_parts`) is repopulated by re-rendering each message's parts into the index. The three trigram twins (`lcd_messages_fts_tri`, `lcd_summaries_fts_tri`, `memory_fts_tri`) — the multilingual search lane — are repopulated with **normalized** text (the same per-script fold applied at write time, so a Hebrew/Arabic/Cyrillic/CJK query matches pre-existing history), making rows written before the trigram lane existed searchable. Skipped on hosts whose SQLite lacks the trigram tokenizer. |
 
 **Fallback-marker summaries (`fallback=1`) are not repairable offline.** They are quality debt produced when the LLM summarizer was unavailable — re-summarization requires the running daemon. The daemon re-summarizes fallback-marker summaries automatically during normal compaction as conversations are processed.
 
