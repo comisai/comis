@@ -58,7 +58,8 @@ import {
 } from "@comis/core";
 import type { LcdSearchResult } from "@comis/core";
 import { randomUUID } from "node:crypto";
-import { renderMessageFtsText, searchLcdImpl, isFtsAvailable } from "./lcd-fts.js";
+import { searchLcdImpl } from "./lcd-fts.js";
+import { createFtsPopulator } from "./lcd-store-fts-populate.js";
 import { createIngestSerializer } from "./lcd-ingest-serializer.js";
 import {
   buildAppendCondensedSummaryTxn,
@@ -76,7 +77,6 @@ import {
   ctxCountRowMapper,
   ctxMaxOrdinalRowMapper,
   summaryMessageIdRowMapper,
-  messageRowidRowMapper,
   cursorRowMapper,
   parseMetadata,
   parseJsonColumn,
@@ -208,17 +208,14 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
     ORDER BY m.seq
   `);
 
-  // Contentless lcd_messages_fts populate (gap #1): one row per appended message,
-  // rowid joinable to the lcd_messages rowid, content = rendered part-text. Only
-  // run when the FTS table exists (guarded at the call site so an FTS-less host's
-  // append never throws).
-  const insertMessageFts = db.prepare(
-    "INSERT INTO lcd_messages_fts(rowid, content, conversation_id, agent_id, message_id) VALUES (?, ?, ?, ?, ?)",
-  );
-
-  // The just-inserted message's rowid — keeps lcd_messages_fts.rowid joinable to
-  // lcd_messages.rowid. Bound by the message id.
-  const selectMessageRowid = db.prepare("SELECT rowid FROM lcd_messages WHERE id = ?");
+  // FTS populate (the index-write half of search) — extracted to
+  // ./lcd-store-fts-populate.ts so this adapter stays under the 800-line cap
+  // (mirrors the lcd-store-writes.ts / lcd-fts.ts extractions). Prepares the
+  // word-lane + trigram-twin statements ONCE here (the "prepare once" discipline
+  // is preserved) and exposes the gated populate methods appendTxn / the summary
+  // write transactions call. Normalization for the twins lives there (the I7
+  // single call site), so this file never folds search text itself.
+  const ftsPopulator = createFtsPopulator(db);
 
   // The covered run [start,end] (inclusive), ordinal-ascending — used to gather
   // the message refIds the new summary links + to count descendants. R4: the
@@ -304,15 +301,18 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
   // Phase 172 (DIST-01/DIST-03): lcd_memory_provenance writes (extracted helper).
   const provenanceWrites = buildProvenanceWrites(db);
 
-  // ── Phase 164 (RR4): deleteConversationLcd transaction ──────────────────────
+  // ── Phase 164 (RR4) + Phase 180 (FTS-01 / G10): deleteConversationLcd ────────
   // Deletes ALL lcd_* rows for a (conversation, agent, tenant) scope in FK-safe
   // dependency order. The RESTRICT FK on lcd_summary_messages.message_id →
   // lcd_messages.id REQUIRES deleting lcd_summary_messages rows BEFORE
-  // lcd_messages rows (verified: schema-lcd.ts:138). lcd_message_parts rows are
-  // removed automatically by the ON DELETE CASCADE on message_id. The
-  // lcd_messages_fts contentless shadow rows are orphaned (FTS5 contentless tables
-  // degrade gracefully — no FK; documented tradeoff). Never throws; returns the
-  // count of lcd_messages rows deleted (0 for an empty/nonexistent conversation).
+  // lcd_messages rows (verified: schema-lcd.ts:138). lcd_message_parts rows ride
+  // the ON DELETE CASCADE on message_id. G10 CLOSE (Phase 180): step 7 wipes the
+  // three self-contained FTS objects — the word lane lcd_messages_fts (NO trigger;
+  // adapter-populated, so a missed wipe leaves full message text matchable
+  // post-reset — the live privacy defect this fixes) PLUS both trigram twins (the
+  // 180-02 AFTER DELETE triggers ALSO fire per-row during steps 4/5 — belt and
+  // braces). Satisfies the v2.17 complete-forget spec: nothing stays matchable in
+  // ANY FTS object. Never throws; returns the lcd_messages delete count.
   const deleteConversationLcdTxn = db.transaction((scope: ContextStoreScope): number => {
     // 1. lcd_summary_messages: RESTRICT FK on message_id — must delete BEFORE lcd_messages.
     db.prepare(
@@ -340,6 +340,33 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
     db.prepare(
       "DELETE FROM lcd_ingest_cursor WHERE conversation_id=? AND agent_id=? AND tenant_id=?",
     ).run(scope.conversationId, scope.agentId, scope.tenantId);
+    // 7. G10 CLOSE (FTS-01): wipe the three self-contained FTS objects. Each is
+    // guarded — the table is ABSENT on an FTS5-less / trigram-less host (nothing
+    // indexed → nothing to wipe); vtables have no FK so the order is free. The
+    // scope is TWO-column: the FTS tables carry NO tenant_id — conversation_id
+    // encodes the tenant (lcd-fts.ts:24). The word lane has no AFTER DELETE
+    // trigger (adapter-populated), so this explicit wipe is the ONLY forget for it.
+    try {
+      db.prepare(
+        "DELETE FROM lcd_messages_fts WHERE conversation_id=? AND agent_id=?",
+      ).run(scope.conversationId, scope.agentId);
+    } catch {
+      // Word-lane FTS table absent (FTS5 not compiled) — nothing indexed, nothing to wipe.
+    }
+    try {
+      db.prepare(
+        "DELETE FROM lcd_messages_fts_tri WHERE conversation_id=? AND agent_id=?",
+      ).run(scope.conversationId, scope.agentId);
+    } catch {
+      // Message trigram twin absent (trigram tokenizer not compiled) — nothing to wipe.
+    }
+    try {
+      db.prepare(
+        "DELETE FROM lcd_summaries_fts_tri WHERE conversation_id=? AND agent_id=?",
+      ).run(scope.conversationId, scope.agentId);
+    } catch {
+      // Summary trigram twin absent (trigram tokenizer not compiled) — nothing to wipe.
+    }
     return info.changes as number;
   });
 
@@ -422,6 +449,8 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
     messageSeedRowMapper,
     summaryRowMapper,
     ctxOrdinalRowMapper,
+    // FTS-01 (Phase 180): the normalized summary-twin insert (folds internally, I7).
+    insertSummaryTri: ftsPopulator.insertSummaryTri,
   };
   const appendLeafSummaryTxn = buildAppendLeafSummaryTxn(db, summaryWriteDeps);
   const appendCondensedSummaryTxn = buildAppendCondensedSummaryTxn(db, summaryWriteDeps);
@@ -496,45 +525,16 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
     );
 
     // E1 (gap #1): populate the CONTENTLESS lcd_messages_fts with the rendered
-    // part-text so ctx_search finds this message. lcd_messages has no content
-    // column (text is JSON in the parts), so the adapter — not a trigger — is the
-    // only place that can render + index it; keep the FTS rowid in step with the
-    // lcd_messages rowid (joinable).
-    //
-    // WR-03: GATE the populate on isFtsAvailable(db) (memoized per db). On an
-    // FTS5-uncompiled host the lcd_*_fts tables are absent, so this is a CLEAN
-    // CONDITIONAL SKIP — the EXPECTED degraded-host case no longer rides the
-    // exception path (the old bare `catch {}` swallowed it indistinguishably from
-    // a genuine fault, masking a real populate regression — search would silently
-    // degrade with no signal). The remaining narrow try/catch then covers ONLY a
-    // genuinely-exceptional populate failure (e.g. on-disk FTS corruption after a
-    // healthy boot). The swallow is RETAINED — and must be — because appendTxn is
-    // a db.transaction: re-throwing would roll back the message+parts write the
-    // contentless index is merely best-effort for (LOSSLESS-CLAW §4: the lossless
-    // base tables are authoritative; search is a recoverable derived index that
-    // the LIKE fallback also covers). @comis/memory is intentionally logger-free
-    // (AGENTS.md §2.4 — no getLogger import), so this content-free swallow is the
-    // floor; the agent-side boundary-observability line for FTS-populate health
-    // rides the injected-logger write path (Plan 128), not this layer.
-    if (isFtsAvailable(db)) {
-      try {
-        const parsedRowid = messageRowidRowMapper.parseOptionalRow(selectMessageRowid.get(messageId));
-        if (parsedRowid.ok && parsedRowid.value) {
-          insertMessageFts.run(
-            parsedRowid.value.rowid,
-            renderMessageFtsText(input.parts),
-            input.scope.conversationId,
-            input.scope.agentId, // R4: agent_id UNINDEXED so the FTS MATCH filters by agent (WR-02)
-            messageId,
-          );
-        }
-      } catch {
-        // FTS available at boot but the populate INSERT failed (genuinely
-        // exceptional — e.g. FTS index corruption). Best-effort: skip indexing
-        // THIS message rather than fail the authoritative base-table write
-        // (cannot re-throw inside the txn). The LIKE fallback still covers it.
-      }
-    }
+    // part-text so ctx_search finds this message (extracted to
+    // ./lcd-store-fts-populate.ts — byte-identical: same gate on isFtsAvailable,
+    // same rowid resolve + insert, same narrow swallow because appendTxn is a
+    // db.transaction and the contentless index is best-effort only).
+    ftsPopulator.populateMessageFts(messageId, input.parts, input.scope);
+    // FTS-01 (Phase 180): also index the NORMALIZED trigram twin so a
+    // script-routed MATCH reads Hebrew/Arabic/Cyrillic/CJK. The populator applies
+    // the search fold internally (the I7 single call site) at the same base rowid;
+    // best-effort (a twin failure never fails this authoritative append).
+    ftsPopulator.populateMessageTri(messageId, input.parts, input.scope);
   });
 
   return {

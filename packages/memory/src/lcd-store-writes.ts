@@ -92,6 +92,20 @@ export interface LcdSummaryWriteDeps {
   summaryRowMapper: RowMapper<z.infer<typeof LcdSummaryRowSchema>>;
   /** Per-row degrade mapper for a single-column ordinal projection (WR-02). */
   ctxOrdinalRowMapper: RowMapper<{ ordinal: number }>;
+  /**
+   * FTS-01 (Phase 180): index the NORMALIZED summary twin (`lcd_summaries_fts_tri`)
+   * at the summary's base rowid. Called immediately after the summary base write
+   * (leaf + condensed). Applies the search fold to `rawContent` INTERNALLY (the I7
+   * single call site lives in lcd-store-fts-populate.ts — the index side of the
+   * symmetry), gated on twin availability, best-effort (a twin failure NEVER fails
+   * the authoritative summary write — the throw inside this db.transaction would
+   * roll it back).
+   */
+  insertSummaryTri: (
+    summaryId: string,
+    rawContent: string,
+    scope: { conversationId: string; agentId: string },
+  ) => void;
 }
 
 /**
@@ -118,6 +132,7 @@ export function buildAppendLeafSummaryTxn(
     ctxItemRowMapper,
     messageSeedRowMapper,
     ctxOrdinalRowMapper,
+    insertSummaryTri,
   } = deps;
 
   return db.transaction((input: AppendSummaryInput): string => {
@@ -185,6 +200,17 @@ export function buildAppendLeafSummaryTxn(
       input.fallback ? 1 : 0,
       input.createdAt,
     );
+
+    // 1b. FTS-01 (Phase 180): index the NORMALIZED summary twin at this summary's
+    // base rowid (resolved by summary_id inside the helper). The base row exists
+    // now (just inserted). The search fold is applied inside insertSummaryTri (the
+    // I7 single call site); the FTS tables carry no tenant_id, so only the
+    // (conversationId, agentId) scope is passed. Best-effort (de-indexed on
+    // failure, never a rolled-back summary write).
+    insertSummaryTri(summaryId, input.content, {
+      conversationId,
+      agentId: input.scope.agentId,
+    });
 
     // 2. Link one row per covered message id (losslessness ledger).
     for (const messageId of coveredMessageIds) {
@@ -255,6 +281,7 @@ export function buildAppendCondensedSummaryTxn(
     ctxItemRowMapper,
     summaryRowMapper,
     ctxOrdinalRowMapper,
+    insertSummaryTri,
   } = deps;
 
   return db.transaction((input: AppendCondensedSummaryInput): string => {
@@ -336,6 +363,15 @@ export function buildAppendCondensedSummaryTxn(
       input.fallback ? 1 : 0,
       input.createdAt,
     );
+
+    // 1b. FTS-01 (Phase 180): index the NORMALIZED summary twin at this condensed
+    // summary's base rowid (resolved by summary_id inside the helper). Same I7
+    // single-call-site fold + best-effort discipline as the leaf path; the FTS
+    // tables carry no tenant_id (only conversationId + agentId scope passed).
+    insertSummaryTri(summaryId, input.content, {
+      conversationId,
+      agentId: input.scope.agentId,
+    });
 
     // 2. Link one row per RANGE-DERIVED child summary id (losslessness ledger —
     //    children, not messages). Derived from the range (WR-02), so the links and
