@@ -116,6 +116,11 @@ vi.mock("@comis/core", async () => {
   return {
     formatSessionKey: vi.fn((sk: SessionKey) => `${sk.tenantId}:${sk.userId}:${sk.channelId}`),
     runWithContext: vi.fn(async (_ctx: any, fn: () => any) => fn()),
+    // F-OLL1: credentials.ts (memory-review gate) now consults the keyless
+    // allowlist + sentinel; mirror the real @comis/core values so the partial
+    // mock resolves them (anthropic provider here is non-keyless → still skips).
+    KEYLESS_PROVIDER_TYPES: new Set(["ollama", "lm-studio"]),
+    KEYLESS_API_KEY_SENTINEL: "ollama-no-auth",
     createDeliveryOrigin: vi.fn((input: any) => Object.freeze({ ...input })),
     safePath: vi.fn((base: string, ...segs: string[]) => [base, ...segs].join("/")),
     RetryConfigSchema: { parse: vi.fn(() => ({ maxAttempts: 3, minDelayMs: 500, maxDelayMs: 30000, jitter: true, respectRetryAfter: true, markdownFallback: true })) },
