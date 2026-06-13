@@ -16,6 +16,7 @@ import { join } from "node:path";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { cleanupDatabase } from "./db-cleanup.js";
+import { seedModelCache } from "./model-cache.js";
 import { ASYNC_SETTLE_MS } from "./timeouts.js";
 import { createFakeTimers, type FakeTimers, type FakeTimerEntry } from "./fake-timers.js";
 import type { DaemonInstance } from "@comis/daemon";
@@ -183,7 +184,13 @@ let activeHandle: TestDaemonHandle | null = null;
 let forkDataDir: string | undefined;
 
 function getForkDataDir(): string {
-  forkDataDir ??= mkdtempSync(join(tmpdir(), "comis-test-data-"));
+  if (forkDataDir === undefined) {
+    forkDataDir = mkdtempSync(join(tmpdir(), "comis-test-data-"));
+    // Reuse the developer's cached local models (hard link, zero extra disk)
+    // so the daemon skips the ~139 MB embedding download per fork. No-op on
+    // CI / fresh machines. See test/support/model-cache.ts for the rationale.
+    seedModelCache(forkDataDir);
+  }
   return forkDataDir;
 }
 

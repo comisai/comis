@@ -35,6 +35,7 @@ import {
   sendJsonRpc,
 } from "../../support/ws-helpers.js";
 import { createLogCapture } from "../../support/log-verifier.js";
+import { seedModelCache } from "../../support/model-cache.js";
 import { getFreePort } from "../../support/free-port.js";
 import { EchoChannelAdapter } from "@comis/channels";
 import { TypedEventBus } from "@comis/core";
@@ -171,6 +172,10 @@ export class ConversationDriver {
 
     // Create isolated temp data dir — never pollutes ~/.comis
     this._dataDir = mkdtempSync(join(tmpdir(), "comis-live-loop-"));
+    // Reuse the developer's cached local models (hard link, zero extra disk)
+    // so the daemon skips the ~139 MB embedding download. No-op on CI / fresh
+    // machines. See test/support/model-cache.ts for the rationale.
+    seedModelCache(this._dataDir);
 
     // Store prior COMIS_DATA_DIR for restore in close()
     this._hadDataDir = process.env["COMIS_DATA_DIR"] !== undefined;
