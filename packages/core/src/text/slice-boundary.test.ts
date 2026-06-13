@@ -78,21 +78,21 @@ describe("adjustSliceBoundary", () => {
   });
 
   describe("combining marks (Hebrew niqqud)", () => {
-    it("backs off past a contiguous combining run to before the base letter", () => {
+    it("backs off a contiguous combining run so the slice does not end on a mark", () => {
       // Index 2 lands on the shin-dot (a combining mark) — raw slice ends on a mark.
       expect(endsOnMark(NIQQUD.slice(0, 2))).toBe(true); // RED proof (pre-patch)
       const adjusted = adjustSliceBoundary(NIQQUD, 2);
-      // Backs off shin-dot + qamats + the shin base → lands at 0 (no orphaned mark).
+      // Drops the shin-dot (idx 2) + the qamats (idx 1) → cut after the shin base.
       expect(adjusted).toBe(1);
+      expect(NIQQUD.slice(0, adjusted)).toBe("\u{05E9}"); // bare shin, no orphaned mark
       expect(endsOnMark(NIQQUD.slice(0, adjusted))).toBe(false);
     });
 
-    it("does not end on a mark when the index falls inside the second mark run", () => {
-      // Index 6 (final-mem start) — the char before it is holam (a mark on vav).
-      // A raw slice(0,6) keeps lamed+vav but the cut at 6 starts on a base, while
-      // index 5 (holam start) backs off to the vav.
+    it("is a no-op when the char just before the index is already a base letter", () => {
+      // Index 5 is the holam (a mark on vav); the char ENDING before index 5 is the
+      // vav (index 4, a base), so no backoff is needed — the cut excludes the holam.
       const adjusted = adjustSliceBoundary(NIQQUD, 5);
-      expect(adjusted).toBe(5); // char before 5 is vav (a base) → no backoff
+      expect(adjusted).toBe(5);
       expect(endsOnMark(NIQQUD.slice(0, adjusted))).toBe(false);
     });
   });
@@ -118,12 +118,13 @@ describe("adjustSliceBoundary", () => {
   });
 
   describe("variation selectors", () => {
-    it("backs off past a trailing variation selector to its base", () => {
+    it("backs off the trailing variation selector so the slice does not end on it", () => {
       // base 'A' + VS16 (U+FE0F) + 'B' — index 2 ('B' start) follows the VS.
       const text = "A\u{FE0F}B";
       expect(/\u{FE0F}$/u.test(text.slice(0, 2))).toBe(true); // RED proof: ends on VS
       const adjusted = adjustSliceBoundary(text, 2);
-      expect(adjusted).toBe(0); // drop VS + its base 'A'
+      // The VS at index 1 is dropped; the base 'A' (index 0) is a safe boundary.
+      expect(adjusted).toBe(1);
       expect(/\u{FE0F}$/u.test(text.slice(0, adjusted))).toBe(false);
     });
   });
