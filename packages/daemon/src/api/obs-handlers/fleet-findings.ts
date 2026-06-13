@@ -58,6 +58,19 @@ function servedBelowConfiguredFromRow(row: DiagnosticRow): number {
   }
 }
 
+/** RESOLVE-01: chimericModelCount from a config_posture row's details JSON.
+ *  Defensive parse — malformed/missing folds to 0 (the servedBelowConfigured clone). */
+function chimericModelFromRow(row: DiagnosticRow): number {
+  if (row.details === undefined) return 0;
+  try {
+    const parsed = JSON.parse(row.details) as { chimericModelCount?: unknown };
+    const n = parsed.chimericModelCount;
+    return typeof n === "number" && Number.isFinite(n) && n > 0 ? n : 0;
+  } catch {
+    return 0;
+  }
+}
+
 /** A single advisory multilingual flag from a model_health row. `undefined`
  *  means the key was absent or not a recognized value (omitted, no advisory). */
 type MultilingualFlag = boolean | "unknown" | undefined;
@@ -242,6 +255,18 @@ export function buildFindings(
         detail: `Ollama served context window below configured for ${latestCount} provider(s)`,
         count: latestCount,
         hint: "set OLLAMA_CONTEXT_LENGTH / Modelfile 'PARAMETER num_ctx' to the configured window (config-yaml served-window section); run `comis explain` on a served-bound session for the numbers",
+      });
+    }
+    // RESOLVE-01: dedicated chimeric-provider/model finding from the SAME latest
+    // posture row. A NATIVE provider (anthropic/openai/google) paired with a foreign
+    // model family resolves a phantom ModelProfile (incident ffe11736) — name it.
+    const chimeraCount = chimericModelFromRow(latest);
+    if (chimeraCount > 0) {
+      findings.push({
+        code: "config_posture:chimeric_model",
+        detail: `${chimeraCount} agent(s) configured with a native provider + a foreign model family (chimera — resolves a phantom capability profile)`,
+        count: chimeraCount,
+        hint: "align agents.<id>.provider with the model family (e.g. provider:anthropic ⇒ a claude model; for a qwen/llama model use an ollama/openrouter provider), or set the model id explicitly under the right provider",
       });
     }
   }

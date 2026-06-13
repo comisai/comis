@@ -168,7 +168,7 @@ import {
   type SessionTrackerRegistry,
 } from "@comis/agent";
 // createModelCatalog + resolveWorkspaceDir live in @comis/core.
-import { createModelCatalog, resolveWorkspaceDir } from "@comis/core";
+import { createModelCatalog, resolveWorkspaceDir, isProviderModelChimera } from "@comis/core";
 import {
   createFileStateTracker,
   createImageGenRateLimiter,
@@ -2862,7 +2862,13 @@ async function bootShutdown(
   const canaryFallbackActive = !boot.env.get("CANARY_SECRET");
   // KNOB-03: derived from the SAME boot comparisons the KNOB-01 WARN used (no second comparison).
   const servedBelowConfiguredCount = [...(boot.servedWindowComparisons?.values() ?? [])].filter((c) => c.belowConfigured).length;
-  buildConfigPostureRecord(boot.obsStore, { tlsOff, allowInsecureHttp, strandedFindings: posture.findings, canaryFallbackActive, servedBelowConfiguredCount }, boot.clock);
+  // RESOLVE-01: count agents whose NATIVE provider family disagrees with their model
+  // id's family (the ffe11736 chimera). Conservative: gateway/custom providers + an
+  // unknown model family never flag (see isProviderModelChimera). Count only, no ids.
+  const chimericModelCount = Object.values(container.config.agents).filter(
+    (a) => typeof a.provider === "string" && typeof a.model === "string" && isProviderModelChimera(a.provider, a.model),
+  ).length;
+  buildConfigPostureRecord(boot.obsStore, { tlsOff, allowInsecureHttp, strandedFindings: posture.findings, canaryFallbackActive, servedBelowConfiguredCount, chimericModelCount }, boot.clock);
 
   // Snapshot current config as last-known-good after successful startup.
   // Honor diagnostics.configAudit.enabled.

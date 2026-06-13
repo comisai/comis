@@ -62,6 +62,7 @@ describe("buildConfigPostureRecord", () => {
       stranded: [{ stranded: "encrypted:secrets", entryCount: 2 }],
       canaryFallbackActive: true,
       servedBelowConfiguredCount: 0,
+      chimericModelCount: 0, // RESOLVE-01: always present (0 default), count-only
     });
     // SECURITY: the stranded entry is a {label, count} — no value-bearing key.
     const strandedJson = JSON.stringify(details["stranded"]);
@@ -93,7 +94,29 @@ describe("buildConfigPostureRecord", () => {
       stranded: [],
       canaryFallbackActive: false,
       servedBelowConfiguredCount: 0,
+      chimericModelCount: 0,
     });
+  });
+
+  it("RESOLVE-01: flips severity to warning and carries the count when a chimeric provider/model is configured", () => {
+    const { obsStore, insertDiagnostic } = createSpiedObsStore();
+    const clock = createFakeClock(1);
+    buildConfigPostureRecord(
+      obsStore,
+      {
+        tlsOff: false,
+        allowInsecureHttp: false,
+        strandedFindings: [],
+        canaryFallbackActive: false,
+        servedBelowConfiguredCount: 0,
+        chimericModelCount: 2,
+      },
+      clock,
+    );
+    const row = insertDiagnostic.mock.calls[0]?.[0] as DiagnosticRow;
+    expect(row.severity).toBe("warning");
+    const details = JSON.parse(row.details ?? "{}") as { chimericModelCount?: number };
+    expect(details.chimericModelCount).toBe(2);
   });
 
   it("flips severity to warning when ANY single posture issue is present", () => {

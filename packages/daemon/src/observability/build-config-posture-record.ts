@@ -64,6 +64,15 @@ export interface ConfigPostureInputs {
    * WARN used (one comparison, two surfaces — no drift).
    */
   servedBelowConfiguredCount: number;
+  /**
+   * RESOLVE-01 (observability-excellence): number of configured agents whose
+   * NATIVE provider family disagrees with their model id's family (the `ffe11736`
+   * chimera — e.g. `provider: anthropic` + a qwen model → phantom profile). A
+   * COUNT, never agent ids or model names (the no-free-text contract). Computed in
+   * daemon.ts via `isProviderModelChimera` over the configured agents at boot.
+   * Optional (defaults to 0 in the record) so existing callers/tests need no change.
+   */
+  chimericModelCount?: number;
 }
 
 /**
@@ -81,11 +90,13 @@ export function buildConfigPostureRecord(
   inputs: ConfigPostureInputs,
   clock: ClockPort,
 ): void {
+  const chimericModelCount = inputs.chimericModelCount ?? 0;
   const hasIssue =
     inputs.tlsOff ||
     inputs.strandedFindings.length > 0 ||
     inputs.canaryFallbackActive ||
-    inputs.servedBelowConfiguredCount > 0;
+    inputs.servedBelowConfiguredCount > 0 ||
+    chimericModelCount > 0;
 
   obsStore?.insertDiagnostic({
     timestamp: clock.now(),
@@ -98,6 +109,9 @@ export function buildConfigPostureRecord(
       stranded: inputs.strandedFindings,
       canaryFallbackActive: inputs.canaryFallbackActive,
       servedBelowConfiguredCount: inputs.servedBelowConfiguredCount,
+      // RESOLVE-01: agents booted with a NATIVE provider + a foreign model family
+      // (the ffe11736 chimera). A COUNT, never agent ids/model names (no free text).
+      chimericModelCount,
     }),
   });
 }

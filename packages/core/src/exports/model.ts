@@ -10,3 +10,6 @@ export type {
   ModelCatalog,
   PerTokenCostRates,
 } from "../model/model-catalog.js";
+// RESOLVE-01: provider↔model chimera detector (observability-excellence).
+export { resolveModelFamily, isProviderModelChimera } from "../model/model-family.js";
+export type { ModelFamily } from "../model/model-family.js";

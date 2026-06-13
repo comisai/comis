@@ -575,6 +575,34 @@ describe("buildFindings — config_posture:served_below_configured (KNOB-03)", (
     expect(finding?.hint).toMatch(/num_ctx/);
   });
 
+  it("RESOLVE-01: emits config_posture:chimeric_model from the latest posture row's chimericModelCount (incident ffe11736)", async () => {
+    const now = systemNowMs();
+    const store = makeStore();
+    insertPostureRow(
+      store,
+      now - 1_000,
+      JSON.stringify({
+        tlsOff: false,
+        allowInsecureHttp: false,
+        stranded: [],
+        canaryFallbackActive: false,
+        servedBelowConfiguredCount: 0,
+        chimericModelCount: 1,
+      }),
+    );
+
+    const report = await assembleFleetHealthReport(
+      { obsStore: store, dataDir: emptyDataDir(), clock: createFakeClock(now) },
+      24,
+    );
+
+    const finding = report.findings.find((f) => f.code === "config_posture:chimeric_model");
+    expect(finding).toBeDefined();
+    expect(finding?.count).toBe(1);
+    expect(finding?.detail).toMatch(/native provider \+ a foreign model family|chimera/i);
+    expect(finding?.hint).toMatch(/provider/i);
+  });
+
   it("KNOB-03-4: reads the LATEST row only (standing state, not cumulative) — a newer 0 suppresses an older 3; a newer 1 emits count 1", async () => {
     const now = systemNowMs();
 
