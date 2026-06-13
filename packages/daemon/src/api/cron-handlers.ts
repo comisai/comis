@@ -234,9 +234,40 @@ export function createCronHandlers(deps: CronHandlerDeps): Record<string, RpcHan
 
     [CronListContract.method]: async (rawParams) => {
       const userParams = stripInternalFields(rawParams);
-      CronListContract.request.parse(userParams);
+      const params = CronListContract.request.parse(userParams);
 
-      const cronAgentId = (rawParams._agentId as string) ?? deps.defaultAgentId;
+      // Job → wire shape (each row carries its own agentId, so the "*" all-agents
+      // view is self-describing).
+      const mapJob = (j: ReturnType<ReturnType<CronHandlerDeps["getAgentCronScheduler"]>["getJobs"]>[number]) => ({
+        id: j.id,
+        name: j.name,
+        agentId: j.agentId,
+        enabled: j.enabled,
+        schedule: j.schedule,
+        payload: j.payload,
+        sessionTarget: j.sessionTarget,
+        nextRunAtMs: j.nextRunAtMs,
+        lastRunAtMs: j.lastRunAtMs,
+        consecutiveErrors: j.consecutiveErrors,
+        createdAtMs: j.createdAtMs,
+        deliveryTarget: j.deliveryTarget,
+      });
+
+      // TARGET-01: `agentId: "*"` → every agent's jobs (the admin inventory view I
+      // lacked when a non-default agent's crons were invisible).
+      if (params.agentId === "*") {
+        const jobs: Array<ReturnType<typeof mapJob>> = [];
+        for (const scheduler of deps.cronSchedulers.values()) {
+          jobs.push(...scheduler.getJobs().map(mapJob));
+        }
+        const result = { jobs: jobs as unknown as Array<Record<string, unknown>> };
+        if (IS_DEV) CronListContract.response.parse(result);
+        return result;
+      }
+
+      // Explicit `agentId` wins over the connection `_agentId`, then the default
+      // (preserves per-connection scoping for the un-targeted call).
+      const cronAgentId = params.agentId ?? (rawParams._agentId as string) ?? deps.defaultAgentId;
       const scheduler = deps.cronSchedulers.get(cronAgentId);
       if (!scheduler) {
         const result = { jobs: [] };
@@ -244,20 +275,7 @@ export function createCronHandlers(deps: CronHandlerDeps): Record<string, RpcHan
         return result;
       }
       const result = {
-        jobs: scheduler.getJobs().map((j) => ({
-          id: j.id,
-          name: j.name,
-          agentId: j.agentId,
-          enabled: j.enabled,
-          schedule: j.schedule,
-          payload: j.payload,
-          sessionTarget: j.sessionTarget,
-          nextRunAtMs: j.nextRunAtMs,
-          lastRunAtMs: j.lastRunAtMs,
-          consecutiveErrors: j.consecutiveErrors,
-          createdAtMs: j.createdAtMs,
-          deliveryTarget: j.deliveryTarget,
-        })) as unknown as Array<Record<string, unknown>>,
+        jobs: scheduler.getJobs().map(mapJob) as unknown as Array<Record<string, unknown>>,
       };
       if (IS_DEV) CronListContract.response.parse(result);
       return result;
@@ -324,13 +342,14 @@ export function createCronHandlers(deps: CronHandlerDeps): Record<string, RpcHan
 
     [CronStatusContract.method]: async (rawParams) => {
       const userParams = stripInternalFields(rawParams);
-      CronStatusContract.request.parse(userParams);
+      const params = CronStatusContract.request.parse(userParams);
 
-      const cronAgentId = (rawParams._agentId as string) ?? deps.defaultAgentId;
+      const cronAgentId = params.agentId ?? (rawParams._agentId as string) ?? deps.defaultAgentId; // TARGET-01
       const scheduler = deps.cronSchedulers.get(cronAgentId);
       const result = {
         running: scheduler !== undefined,
         jobCount: scheduler ? scheduler.getJobs().length : 0,
+        resolvedAgentId: cronAgentId,
       };
       if (IS_DEV) CronStatusContract.response.parse(result);
       return result;
@@ -340,7 +359,7 @@ export function createCronHandlers(deps: CronHandlerDeps): Record<string, RpcHan
       const userParams = stripInternalFields(rawParams);
       const params = CronRunsContract.request.parse(userParams);
 
-      const cronAgentId = (rawParams._agentId as string) ?? deps.defaultAgentId;
+      const cronAgentId = params.agentId ?? (rawParams._agentId as string) ?? deps.defaultAgentId; // TARGET-01
       const scheduler = deps.cronSchedulers.get(cronAgentId);
       const tracker = deps.executionTrackers.get(cronAgentId);
       if (!tracker || !scheduler) {
@@ -360,13 +379,16 @@ export function createCronHandlers(deps: CronHandlerDeps): Record<string, RpcHan
       const userParams = stripInternalFields(rawParams);
       const params = CronRunContract.request.parse(userParams);
 
-      const cronAgentId = (rawParams._agentId as string) ?? deps.defaultAgentId;
+      // TARGET-01: explicit request `agentId` wins over the connection `_agentId`,
+      // then the default — and we ALWAYS report the agent we resolved (I5: no silent
+      // default; the prior behavior triggered the wrong agent's cron 3× in live runs).
+      const cronAgentId = params.agentId ?? (rawParams._agentId as string) ?? deps.defaultAgentId;
       const agentScheduler = deps.getAgentCronScheduler(cronAgentId);
       const jobName = params.jobName;
       const mode = params.mode ?? "force";
       if (mode === "due") {
         await agentScheduler.runMissedJobs();
-        const result = { triggered: true, mode: "due" };
+        const result = { triggered: true, mode: "due", resolvedAgentId: cronAgentId };
         if (IS_DEV) CronRunContract.response.parse(result);
         return result;
       }
@@ -375,7 +397,7 @@ export function createCronHandlers(deps: CronHandlerDeps): Record<string, RpcHan
       const job = agentScheduler.getJobs().find((j) => j.id === matched.id);
       if (job) job.nextRunAtMs = 0;
       await agentScheduler.runMissedJobs();
-      const result = { triggered: true, mode: "force", jobName: matched.name };
+      const result = { triggered: true, mode: "force", jobName: matched.name, resolvedAgentId: cronAgentId };
       if (IS_DEV) CronRunContract.response.parse(result);
       return result;
     },

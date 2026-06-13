@@ -2582,7 +2582,11 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
     "request": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
-      "properties": {},
+      "properties": {
+        "agentId": {
+          "type": "string"
+        }
+      },
       "additionalProperties": false
     },
     "response": {
@@ -2654,6 +2658,9 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         },
         "mode": {
           "type": "string"
+        },
+        "agentId": {
+          "type": "string"
         }
       },
       "additionalProperties": false
@@ -2669,6 +2676,9 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
           "type": "string"
         },
         "jobName": {
+          "type": "string"
+        },
+        "resolvedAgentId": {
           "type": "string"
         }
       },
@@ -2692,6 +2702,9 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         },
         "limit": {
           "type": "number"
+        },
+        "agentId": {
+          "type": "string"
         }
       },
       "required": [
@@ -2727,7 +2740,11 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
     "request": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
-      "properties": {},
+      "properties": {
+        "agentId": {
+          "type": "string"
+        }
+      },
       "additionalProperties": false
     },
     "response": {
@@ -2739,6 +2756,9 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         },
         "jobCount": {
           "type": "number"
+        },
+        "resolvedAgentId": {
+          "type": "string"
         }
       },
       "required": [
@@ -9672,6 +9692,9 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         },
         "purge_derived": {
           "type": "boolean"
+        },
+        "agentId": {
+          "type": "string"
         }
       },
       "required": [
@@ -9694,6 +9717,9 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         },
         "memoriesDeleted": {
           "type": "number"
+        },
+        "resolvedAgentId": {
+          "type": "string"
         },
         "runtimeSessionDestroyed": {
           "type": "boolean"

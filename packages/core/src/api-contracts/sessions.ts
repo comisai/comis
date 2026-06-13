@@ -641,12 +641,19 @@ export const SessionResetConversationContract = defineContract({
     session_key: z.string(),
     memory: z.boolean().optional(),
     purge_derived: z.boolean().optional(),
+    // TARGET-01: admin-supplied agent scope. This is an ADMIN RPC, so the caller is
+    // trusted to name which agent's conversation to forget; absent, it falls back to
+    // the default. Live finding 2026-06-13: a non-default agent's reset returned
+    // lcdRowsDeleted:0 because the scope hardcoded the default agent (wrong scope).
+    agentId: z.string().optional(),
   }),
   response: z.object({
     sessionKey: z.string(),
     lcdRowsDeleted: z.number(),
     sessionMessagesCleared: z.number(),
     memoriesDeleted: z.number().optional(),
+    // TARGET-01: the agent the reset actually acted on (never a silent default).
+    resolvedAgentId: z.string().optional(),
     // Live finding 2026-06-11: without the runtime-layer destroy the next
     // turn re-ingested the surviving pi session JSONL and resurrected the
     // whole "forgotten" conversation (lcd-ingest epoch rebase). True when the

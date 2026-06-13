@@ -780,4 +780,85 @@ describe("createCronHandlers", () => {
       expect(result.source).toBe("scheduler");
     });
   });
+
+  // -------------------------------------------------------------------------
+  // TARGET-01 — explicit agentId targeting (kill the silent connection-default)
+  // Incident: cron.run/list silently acted on the default agent, so a non-default
+  // agent's job was un-triggerable AND un-observable (hit 3x: LTM + multilingual runs).
+  // -------------------------------------------------------------------------
+
+  describe("TARGET-01: explicit agentId targeting", () => {
+    function makeMultiAgentDeps(): CronHandlerDeps {
+      const schedA = makeMockScheduler();
+      const schedB = makeMockScheduler();
+      schedB._testJob.id = "job-b";
+      schedB._testJob.name = "test-job-b";
+      schedB._testJob.agentId = "agent-b";
+      schedB.getJobs = vi.fn(() => [schedB._testJob]);
+      const schedulers = new Map<string, unknown>([
+        ["default", schedA],
+        ["agent-b", schedB],
+      ]);
+      return {
+        defaultAgentId: "default",
+        getAgentCronScheduler: vi.fn((id: string) => (schedulers.get(id) ?? schedA) as never),
+        cronSchedulers: schedulers as never,
+        executionTrackers: new Map([
+          ["default", makeMockTracker()],
+          ["agent-b", makeMockTracker()],
+        ]) as never,
+        wakeCoalescer: { requestHeartbeatNow: vi.fn(), shutdown: vi.fn() } as never,
+      };
+    }
+
+    it("cron.run targets the agentId in the request, not the connection default", async () => {
+      const deps = makeMultiAgentDeps();
+      const handlers = createCronHandlers(deps);
+      const result = (await handlers["cron.run"]!({
+        jobName: "test-job-b",
+        agentId: "agent-b",
+      })) as { triggered: boolean; resolvedAgentId?: string };
+      expect(deps.getAgentCronScheduler).toHaveBeenCalledWith("agent-b");
+      expect(result.resolvedAgentId).toBe("agent-b");
+    });
+
+    it("cron.run with no agentId still resolves the default and states it in the response", async () => {
+      const deps = makeMultiAgentDeps();
+      const handlers = createCronHandlers(deps);
+      const result = (await handlers["cron.run"]!({
+        jobName: "test-job",
+      })) as { resolvedAgentId?: string };
+      expect(result.resolvedAgentId).toBe("default");
+    });
+
+    it("cron.list with agentId='*' returns every agent's jobs, each tagged by agentId", async () => {
+      const deps = makeMultiAgentDeps();
+      const handlers = createCronHandlers(deps);
+      const result = (await handlers["cron.list"]!({ agentId: "*" })) as { jobs: Array<{ agentId: string }> };
+      const agentIds = new Set(result.jobs.map((j) => j.agentId));
+      expect(agentIds.has("default")).toBe(true);
+      expect(agentIds.has("agent-b")).toBe(true);
+    });
+
+    it("cron.list with an explicit agentId returns only that agent's jobs", async () => {
+      const deps = makeMultiAgentDeps();
+      const handlers = createCronHandlers(deps);
+      const result = (await handlers["cron.list"]!({ agentId: "agent-b" })) as {
+        jobs: Array<{ agentId: string }>;
+      };
+      expect(result.jobs.length).toBeGreaterThan(0);
+      expect(result.jobs.every((j) => j.agentId === "agent-b")).toBe(true);
+    });
+
+    it("cron.status targets the requested agentId and states it", async () => {
+      const deps = makeMultiAgentDeps();
+      const handlers = createCronHandlers(deps);
+      const result = (await handlers["cron.status"]!({ agentId: "agent-b" })) as {
+        running: boolean;
+        resolvedAgentId?: string;
+      };
+      expect(result.running).toBe(true);
+      expect(result.resolvedAgentId).toBe("agent-b");
+    });
+  });
 });

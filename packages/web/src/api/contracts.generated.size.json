@@ -1,6 +1,6 @@
 {
-  "totalMinified": 122059,
-  "totalGzipped": 11893,
+  "totalMinified": 122273,
+  "totalGzipped": 11918,
   "budget": {
     "minified": 126000,
     "gzipped": 38912
@@ -57,11 +57,11 @@
     "context.conversations": 850,
     "context.tree": 945,
     "cron.add": 1225,
-    "cron.list": 367,
+    "cron.list": 394,
     "cron.remove": 377,
-    "cron.run": 405,
-    "cron.runs": 443,
-    "cron.status": 329,
+    "cron.run": 469,
+    "cron.runs": 471,
+    "cron.status": 392,
     "cron.update": 708,
     "daemon.setLogLevel": 611,
     "delivery.queue.status": 476,
@@ -178,7 +178,7 @@
     "session.history": 1449,
     "session.list": 834,
     "session.reset": 464,
-    "session.reset_conversation": 616,
+    "session.reset_conversation": 680,
     "session.run_status": 816,
     "session.search": 361,
     "session.send": 458,

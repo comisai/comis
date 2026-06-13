@@ -159,6 +159,37 @@ describe("session.reset_conversation handler", () => {
     ).rejects.toThrow(/Admin/i);
   });
 
+  it("TARGET-01: explicit agentId scopes the LCD delete to that agent, not the default", async () => {
+    // Live finding 2026-06-13: resetting a non-default agent's conversation returned
+    // lcdRowsDeleted:0 because the scope hardcoded deps.defaultAgentId — the delete
+    // looked under the wrong agent. An admin-supplied agentId selects the scope.
+    const lcdStore = makeLcdStore();
+    const deps = makeDeps({ lcdStore });
+    const handlers = bindSessionArchiveHandlers(deps);
+
+    const result = (await handlers["session.reset_conversation"]!({
+      session_key: SESSION_KEY,
+      agentId: "agent-b",
+      _trustLevel: "admin",
+    })) as { resolvedAgentId?: string };
+
+    const call = (lcdStore.deleteConversationLcd as ReturnType<typeof vi.fn>).mock.calls[0]![0] as {
+      agentId: string;
+    };
+    expect(call.agentId).toBe("agent-b");
+    expect(result.resolvedAgentId).toBe("agent-b");
+  });
+
+  it("TARGET-01: absent agentId falls back to the default and states it in the response", async () => {
+    const deps = makeDeps({ lcdStore: makeLcdStore() });
+    const handlers = bindSessionArchiveHandlers(deps);
+    const result = (await handlers["session.reset_conversation"]!({
+      session_key: SESSION_KEY,
+      _trustLevel: "admin",
+    })) as { resolvedAgentId?: string };
+    expect(result.resolvedAgentId).toBe("default");
+  });
+
   it("H2: missing session_key throws 'Missing required parameter: session_key'", async () => {
     const deps = makeDeps({ lcdStore: makeLcdStore() });
     const handlers = bindSessionArchiveHandlers(deps);
