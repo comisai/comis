@@ -177,6 +177,21 @@ function searchByTrigram(
  * exact-word non-Latin matches). The trigram rank list has the same
  * `{id, rank}[]` shape, so it flows into computeRRF / hydrateLane unchanged.
  *
+ * LTM short-token-drop limitation (WR-02): the 180-01 router DROPS any
+ * <3-codepoint normalized token from the trigram MATCH (a sub-floor token in an
+ * AND/OR group cannot form a trigram and would contribute nothing). For the LCD
+ * lane the dropped short token is preserved in `route.scanTokens` and the bounded
+ * scan floor recovers it — but LTM has NO scan machinery and IGNORES `scanTokens`,
+ * so in a MIXED non-Latin query (one ≥3-cp token + one <3-cp token, e.g. a
+ * ≥4-cp Cyrillic word plus a 2-cp Hebrew term) the short term is silently dropped
+ * with no floor to recover it. OR-join bounds the impact (the surviving ≥3-cp
+ * term still matches broadly, and most non-Latin content words are ≥3 cp); the
+ * all-short case routes to "scan" and falls through to the word body below
+ * (exact-word match only). This is a recall-completeness boundary, not a
+ * correctness/security gap. Surfacing the dropped-token count as a diagnosable
+ * signal belongs at the tool/agent logging boundary, NOT here — @comis/memory is
+ * deliberately logger-free (AGENTS.md §2.4).
+ *
  * Joins memory_fts with memories to return the UUID `id` column
  * (not the rowid). Results are ordered by BM25 rank (lower = better match).
  *
