@@ -17,7 +17,13 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect, expectTypeOf, vi } from "vitest";
 import { buildSessionEndMetadata, shouldStorePairedMemory, shouldRunLcdStorePasses, emitSessionSummary, END_REASON_MAP, promoteOutputStarved, promoteNarrationStall, unrecoveredFailedToolNames, type PostExecutionParams } from "./executor-post-execution.js";
-import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildDegradedReply } from "./degraded-reply.js";
+import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildDegradedReply } from "./degraded-reply.js";
+import { resolveReplyLanguage } from "./resolve-reply-language.js";
+import {
+  selectOutputStarvedAnnotation,
+  selectContextExhaustedReply,
+  selectLoopDetectedReply,
+} from "./degraded-reply-i18n.js";
 import { buildSessionHealthRollup, type SessionHealthRollup } from "./session-health-rollup.js";
 import { attributeRecallUsage } from "../rag/recall-attribution.js";
 // Learned-recall write side: the turn-end emit threads classifyIntent(msg.text).
@@ -2272,5 +2278,150 @@ describe("DET-02 tier-2 — userMdLanguage threads into PostExecutionParams", ()
     expect(stripped).toMatch(/const\s*\{[^}]*\buserLanguage\b[^}]*\}\s*=\s*promptResult/);
     // … and the postExecution({...}) call passes it as userMdLanguage.
     expect(stripped).toMatch(/userMdLanguage\s*:\s*userLanguage/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GEN-02 (Phase 181-03): the degraded-reply chokepoint resolves the reply
+// language ONCE (resolveReplyLanguage) and passes the tag to all three
+// builders, so a Hebrew turn yields a Hebrew degraded reply with the knob path
+// and incident ref verbatim. The en/Latin path stays byte-identical (I1).
+//
+// Strategy (the load-bearing mode here — postExecution has 30+ deps, see the
+// markRead/CWF-05 blocks above): a SOURCE-GREP locks the wiring invariants
+// (resolveReplyLanguage imported + called once in the degraded block; the tag
+// reaches each of the 3 builders); BEHAVIOR PROBES simulate exactly what the
+// chokepoint does — resolve the language from the same {msg.text, config, USER.md}
+// inputs and build the reply — asserting the localized/byte-identical outputs.
+// All probe assertions FAIL on pre-patch (the builders are called with no tag).
+// ---------------------------------------------------------------------------
+describe("GEN-02: degraded-reply chokepoint resolves language once + passes the tag", () => {
+  function readDegradedBlock(): string {
+    const src = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
+    const stripped = src
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("//"))
+      .join("\n");
+    // Scope to the CWF-05 degraded section (the 3 endReason gates).
+    const start = stripped.indexOf("CWF-05: degrade loudly");
+    const startPos = start >= 0 ? start : 0;
+    // End at the next major block marker after the loop_detected gate.
+    const endMarker = stripped.indexOf("resolveScaffoldDefaults", startPos);
+    return endMarker > startPos ? stripped.slice(startPos, endMarker) : stripped.slice(startPos);
+  }
+
+  // A predominantly-Hebrew inbound message → DET-02 tier-3 resolves "he"
+  // (Hebrew letters are non-neutral; ASCII punct/space are excluded from the
+  // share denominator, so the Hebrew share is a strict majority).
+  const HEBREW_INBOUND = "שלום, אני צריך עזרה עם הקוד שלי";
+
+  it("source-grep — executor-post-execution imports resolveReplyLanguage", () => {
+    const src = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
+    const stripped = src
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("//"))
+      .join("\n");
+    expect(stripped).toMatch(/import\s*\{[^}]*\bresolveReplyLanguage\b[^}]*\}\s*from\s*["']\.\/resolve-reply-language\.js["']/);
+  });
+
+  it("source-grep — resolveReplyLanguage is called exactly ONCE in the degraded block", () => {
+    const block = readDegradedBlock();
+    const calls = block.match(/resolveReplyLanguage\s*\(/g) ?? [];
+    expect(calls.length).toBe(1);
+  });
+
+  it("source-grep — the resolve call threads msg.text, config.language, and userMdLanguage", () => {
+    const block = readDegradedBlock();
+    // The three DET-02 tier inputs must all feed the single resolve call.
+    expect(block).toMatch(/inboundText\s*:/);
+    expect(block).toMatch(/configLanguage\s*:/);
+    expect(block).toMatch(/userMdLanguage\s*:/);
+    expect(block).toMatch(/params\.msg\.text/);
+    expect(block).toMatch(/params\.config\.language/);
+  });
+
+  it("source-grep — the resolved tag reaches all three builders (language passed in)", () => {
+    const block = readDegradedBlock();
+    // output_starved: buildOutputStarvedAnnotation(<tag>) — called with an argument.
+    expect(block).toMatch(/buildOutputStarvedAnnotation\(\s*[A-Za-z_$][\w$]*\s*\)/);
+    // context_exhausted + loop_detected: a `language:` field in the opts object.
+    const languageFields = block.match(/\blanguage\s*:/g) ?? [];
+    // At least the context_exhausted and loop_detected opts carry `language:`.
+    expect(languageFields.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("behavior probe — a Hebrew turn resolves 'he' and yields the Hebrew context-exhausted reply", () => {
+    // Exactly what the chokepoint computes: resolve once from the 3 inputs…
+    const replyLanguage = resolveReplyLanguage({
+      inboundText: HEBREW_INBOUND,
+      configLanguage: undefined,
+      userMdLanguage: undefined,
+    });
+    expect(replyLanguage).toBe("he");
+    // …then build the reply with the tag (the context_exhausted gate).
+    const reply = buildContextExhaustedReply({
+      capabilityClass: "small",
+      traceId: "tid-he",
+      cause: "oversized_input",
+      language: replyLanguage,
+    });
+    // Equals the he selector (the localized reply)…
+    expect(reply).toBe(
+      selectContextExhaustedReply("he", {
+        capabilityClass: "small",
+        traceId: "tid-he",
+        cause: "oversized_input",
+      }),
+    );
+    // …and carries the knob path + incident ref verbatim (I5).
+    expect(reply).toContain("contextEngine.budget.effectiveContextCapSmall");
+    expect(reply).toContain("(incident tid-he)");
+  });
+
+  it("behavior probe — config.language 'he' wins (tier-1) even with a Latin inbound message", () => {
+    const replyLanguage = resolveReplyLanguage({
+      inboundText: "please help me debug this",
+      configLanguage: "he",
+      userMdLanguage: undefined,
+    });
+    expect(replyLanguage).toBe("he");
+    expect(buildOutputStarvedAnnotation(replyLanguage)).toBe(selectOutputStarvedAnnotation("he"));
+  });
+
+  it("behavior probe — all three endReasons carry the resolved tag (he)", () => {
+    const replyLanguage = resolveReplyLanguage({
+      inboundText: HEBREW_INBOUND,
+      configLanguage: undefined,
+      userMdLanguage: undefined,
+    });
+    // output_starved
+    expect(buildOutputStarvedAnnotation(replyLanguage)).toBe(selectOutputStarvedAnnotation("he"));
+    // context_exhausted
+    expect(
+      buildContextExhaustedReply({ capabilityClass: "nano", language: replyLanguage }),
+    ).toBe(selectContextExhaustedReply("he", { capabilityClass: "nano" }));
+    // loop_detected
+    expect(buildLoopDetectedReply({ traceId: "z", language: replyLanguage })).toBe(
+      selectLoopDetectedReply("he", { traceId: "z" }),
+    );
+  });
+
+  it("behavior probe — I1 regression: no config.language + Latin inbound + no USER.md → English byte-identical", () => {
+    const replyLanguage = resolveReplyLanguage({
+      inboundText: "Here is the plan you requested.",
+      configLanguage: undefined,
+      userMdLanguage: undefined,
+    });
+    expect(replyLanguage).toBe("en");
+    // The three builders with the resolved "en" tag === the historical English replies.
+    expect(buildOutputStarvedAnnotation(replyLanguage)).toBe(buildOutputStarvedAnnotation());
+    expect(buildContextExhaustedReply({ capabilityClass: "small", language: replyLanguage })).toBe(
+      buildContextExhaustedReply({ capabilityClass: "small" }),
+    );
+    expect(buildLoopDetectedReply({ traceId: "q", language: replyLanguage })).toBe(
+      buildLoopDetectedReply({ traceId: "q" }),
+    );
   });
 });
