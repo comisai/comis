@@ -53,34 +53,14 @@
  */
 
 import type { IncidentSignals } from "@comis/core";
-
-// ---------------------------------------------------------------------------
-// Tunable thresholds (module-top constants per the naming contract).
-// ---------------------------------------------------------------------------
-
-/**
- * Minimum same-tool failures for the repeated-failure breaker path to fire when
- * no explicit breaker event / "DO NOT retry" line is present. Re-exported from
- * the signals module's `BREAKER_N` intent (kept literal here so the registry has
- * no runtime import cycle with the normalizer).
- */
-const BREAKER_N = 5;
-
-/** Minimum disk offloads for the context-bloat insurance signal. */
-const CONTEXT_BLOAT_MIN_OFFLOADS = 3;
-
-/**
- * A single large-result offload (chars) that, on its own, marks a token spike
- * for the context-bloat heuristic — one ~50 KB body offloaded is already a
- * working-set spike.
- */
-const TOKEN_SPIKE_CHARS = 32_000;
-
-/** Substrings that mark a missing-dependency exec failure (insurance code). */
-const MODULE_NOT_FOUND_MARKERS: readonly string[] = [
-  "ModuleNotFoundError",
-  "Cannot find module",
-];
+import {
+  BREAKER_N,
+  CONTEXT_BLOAT_MIN_OFFLOADS,
+  TOKEN_SPIKE_CHARS,
+  MODULE_NOT_FOUND_MARKERS,
+  breakerTool,
+  hasModuleNotFound,
+} from "./obs-explain-heuristics-helpers.js";
 
 // ---------------------------------------------------------------------------
 // Public shape: matches IncidentReport.likelyRootCause 1:1 (Plan 01).
@@ -94,31 +74,6 @@ export interface RootCause {
   code: string;
   detail: string;
   suggestedNextSteps: string[];
-}
-
-// ---------------------------------------------------------------------------
-// Rule helpers.
-// ---------------------------------------------------------------------------
-
-/**
- * The tool the breaker most plausibly opened on: the explicit breaker-opened
- * tool, else the most-failed tool, else the first tool with a repeated-failure
- * count. Returns `undefined` when no tool can be named.
- */
-function breakerTool(s: IncidentSignals): string | undefined {
-  if (s.breakerOpenedTool !== undefined) return s.breakerOpenedTool;
-  if (s.mostFailedTool !== undefined) return s.mostFailedTool;
-  for (const tool of Object.keys(s.repeatedFailureCount)) return tool;
-  return undefined;
-}
-
-/** Does any failure body carry a known module-not-found marker? */
-function hasModuleNotFound(s: IncidentSignals): boolean {
-  return s.failures.some(
-    (f) =>
-      f.errorKind === "dependency" &&
-      MODULE_NOT_FOUND_MARKERS.some((marker) => f.errorPreview.includes(marker)),
-  );
 }
 
 // ---------------------------------------------------------------------------
