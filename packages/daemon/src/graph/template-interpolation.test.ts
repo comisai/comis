@@ -493,6 +493,100 @@ describe("buildContextEnvelope", () => {
     expect(result).not.toContain("Your output is captured automatically");
   });
 
+  // --- language section tests (GEN-03 graph leg) ---
+
+  describe("buildContextEnvelope language section", () => {
+    it("emits the verbatim-preserving Language section for a non-en conversation language", () => {
+      const result = buildContextEnvelope({
+        graphLabel: "Test",
+        nodeId: "B",
+        task: "Summarize the findings",
+        originalTask: "Summarize the findings",
+        dependsOn: [],
+        nodeOutputs: new Map(),
+        totalNodeCount: 2,
+        language: "he",
+      });
+
+      expect(result).toContain("## Language");
+      // I7: the SAME sentence as the 181-04 sub-agent role section (single-source assertion).
+      expect(result).toContain(
+        "Produce all user-facing output in he (the conversation language). Code, identifiers, and file paths stay verbatim.",
+      );
+    });
+
+    it("places the Language section before the Your Task section", () => {
+      const result = buildContextEnvelope({
+        graphLabel: "Test",
+        nodeId: "B",
+        task: "Do the merge",
+        originalTask: "Do the merge",
+        dependsOn: [],
+        nodeOutputs: new Map(),
+        totalNodeCount: 2,
+        language: "ar",
+      });
+
+      expect(result.indexOf("## Language")).toBeLessThan(result.indexOf("## Your Task"));
+    });
+
+    it("interpolates the resolved language tag verbatim into the Language sentence", () => {
+      const result = buildContextEnvelope({
+        graphLabel: "Test",
+        nodeId: "B",
+        task: "Summarize",
+        originalTask: "Summarize",
+        dependsOn: [],
+        nodeOutputs: new Map(),
+        totalNodeCount: 2,
+        language: "ru",
+      });
+
+      expect(result).toContain(
+        "Produce all user-facing output in ru (the conversation language). Code, identifiers, and file paths stay verbatim.",
+      );
+    });
+
+    it("omits the Language section and stays byte-identical when language is en (I1)", () => {
+      const baseParams = {
+        graphLabel: "Test Graph",
+        nodeId: "root",
+        task: "Do the first thing",
+        originalTask: "Do the first thing",
+        dependsOn: [],
+        nodeOutputs: new Map<string, string | undefined>(),
+        totalNodeCount: 3,
+      } as const;
+
+      const withoutLanguage = buildContextEnvelope({ ...baseParams });
+      const withEn = buildContextEnvelope({ ...baseParams, language: "en" });
+
+      expect(withEn).not.toContain("## Language");
+      // en must be byte-identical to the no-language envelope (I1).
+      expect(withEn).toBe(withoutLanguage);
+    });
+
+    it("omits the Language section and stays byte-identical when language is undefined (I1)", () => {
+      const baseParams = {
+        graphLabel: "Pipeline",
+        nodeId: "B",
+        task: "Summarize the findings",
+        originalTask: "Summarize the findings",
+        dependsOn: ["A"],
+        nodeOutputs: new Map([["A", "Findings from node A"]]),
+        totalNodeCount: 2,
+        sharedDir: "/tmp/graph-runs/abc123",
+      } as const;
+
+      const withoutLanguage = buildContextEnvelope({ ...baseParams });
+      const withUndefined = buildContextEnvelope({ ...baseParams, language: undefined });
+
+      expect(withoutLanguage).not.toContain("## Language");
+      expect(withUndefined).not.toContain("## Language");
+      expect(withUndefined).toBe(withoutLanguage);
+    });
+  });
+
   // --- contextMode tests ---
 
   describe("buildContextEnvelope contextMode", () => {
