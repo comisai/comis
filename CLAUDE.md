@@ -116,6 +116,20 @@ Pino auto-redacts credentials (`apiKey`, `token`, `password`, `secret`, `authori
 
 ## Diagnosing a degraded session — or the whole daemon (fleet lens)
 
+**Production-troubleshooting decision tree (Claude Code: run these, in this order, before any `daemon.log` grep).** The CLI is not on PATH — prefix every command with `node packages/cli/dist/cli.js`.
+
+| Symptom / question | First command | What it answers |
+|---|---|---|
+| "Review the production logs" / daemon-wide health | `fleet --since <N>` | degraded rate, top errorKinds, breaker trips, cost, + the `health_signal`/`model_health`/`config_posture` findings (the worst session to drill into) |
+| One bad/degraded session (you have a sessionKey or traceId) | `explain "<sessionKey\|traceId>"` | deterministic `likelyRootCause` + outcome/cost/failures(+provenance)/breaker timeline/contextBudget/offloads |
+| "Which model/provider actually ran?" / a phantom capability profile | `fleet` → look for `config_posture:chimeric_model` | a NATIVE provider (anthropic/openai/google) paired with a foreign model family — the ffe11736 chimera, named in one look |
+| A **non-default** agent's cron/conversation (multi-agent daemon) | pass an explicit `agentId` (below) | which agent the op acted on (never a silent default) |
+| Recall surfaced the wrong/no memory, or "is this agent- or user-scoped recall?" | trajectory `memory.*` records + `~/.comis/memory.db` (the recall lens is the obs-excellence roadmap — see `.planning/design/observability-excellence.md`) | the ranked set / scope used |
+
+**Ground-truth read-order (never trust a surface reply alone):** surface reply → the session **trajectory** (`*.jsonl.trajectory.jsonl`, resolved via the `.trajectory-path.json` pointer) + `_session-metadata.json` rollup → offline `obs.explain` (`assembleIncidentReportFromSources`) → `comis fleet` → only then a raw `daemon.log` grep. A false success is the worst outcome — corroborate every claim against the db/trajectory.
+
+**Multi-agent targeting (TARGET-01).** `cron.run` / `cron.list` / `cron.runs` / `cron.status` / `session.reset_conversation` take an optional `agentId` — pass it to act on a NON-default agent (the default agent is otherwise resolved from the connection, silently). `cron.list` with `agentId: "*"` returns EVERY agent's jobs. Every response states the `resolvedAgentId` it acted on; a 0-row reset reports the scope rather than failing silently. (Without this, a cron triggered for `mldag` ran on `default`, and a reset returned `lcdRowsDeleted:0` — both diagnosed the hard way.)
+
 **Start with `obs.explain` — do NOT hand-join the logs.** v2.14 "Glass Box" exists so an agent (or you) root-causes a bad session in one call instead of grepping four files. The CLI is not on PATH:
 
 ```bash
@@ -130,7 +144,7 @@ It returns a bounded, digest-only `IncidentReport` (outcome, cost, per-tool `{ok
 node packages/cli/dist/cli.js fleet --since 24 [--format table|json]    # default window 24h
 ```
 
-Returns a bounded, admin-gated, deterministic `FleetHealthReport` — **counts + hints only, never raw WARN bodies or secrets** (so it is safe to paste into a review): cross-session degraded rate, top errorKinds, breaker trips, cost, plus the signals that used to be log-file-only — `health_signal` (LCD-divergence + MCP churn/reconnect/budget), `model_health` (embedding-provider / GGUF load / reranker presence at boot), `config_posture` (TLS-off / stranded-secret-**count** / canary-fallback). Same report via the `obs_query` `fleet_health` action + the permission-gated `obs_fleet_health` MCP tool + the `obs.fleet.health` RPC. Docs: `docs/reference/cli.mdx` (`comis fleet`) + `docs/reference/json-rpc.mdx` (`obs.fleet.health`).
+Returns a bounded, admin-gated, deterministic `FleetHealthReport` — **counts + hints only, never raw WARN bodies or secrets** (so it is safe to paste into a review): cross-session degraded rate, top errorKinds, breaker trips, cost, plus the signals that used to be log-file-only — `health_signal` (LCD-divergence + MCP churn/reconnect/budget), `model_health` (embedding-provider / GGUF load / reranker presence at boot), `config_posture` (TLS-off / stranded-secret-**count** / canary-fallback / `served_below_configured` / `chimeric_model` — a native-provider+foreign-model mismatch, RESOLVE-01). Same report via the `obs_query` `fleet_health` action + the permission-gated `obs_fleet_health` MCP tool + the `obs.fleet.health` RPC. Docs: `docs/reference/cli.mdx` (`comis fleet`) + `docs/reference/json-rpc.mdx` (`obs.fleet.health`).
 
 **Two-tier workflow for "troubleshoot the logs":** `comis fleet --since N` to surface the daemon-wide pattern (which signal recurs, how degraded, at what cost) → then `comis explain <sessionKey|traceId>` on the worst session it points at to root-cause that one. Only fall through to a raw `daemon.log` grep if the fleet lens itself looks wrong. **Data caveat:** the ingested `health_signal`/`model_health`/`config_posture` rows only populate once a daemon running the **v2.15+ build** has been up — on an older daemon you still get the session-rollup half (degraded/errors/breaker/cost) but the log-only half will be sparse; restart on the fresh `dist/` first (see the restart note below).
 
