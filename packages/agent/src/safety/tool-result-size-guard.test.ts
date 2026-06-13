@@ -661,3 +661,148 @@ describe("createToolResultSizeGuard", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// SAFE-01 — grapheme-safe truncation cuts (the head :239 / tail :240 cuts in
+// truncateText route through @comis/core adjustSliceBoundary).
+//
+// RED on pre-patch (raw text.slice at :239/:240): a head/tail boundary that
+// lands inside a surrogate pair or a combining run yields a lone surrogate /
+// orphaned mark. All non-ASCII fixtures are built from \u{...} escapes (the
+// boundary convention — never a pasted glyph carrying an invisible mark/joiner).
+// ---------------------------------------------------------------------------
+
+describe("createToolResultSizeGuard — SAFE-01 grapheme-safe truncation", () => {
+  /** Detects an isolated (unpaired) UTF-16 surrogate code unit. */
+  function hasLoneSurrogate(s: string): boolean {
+    for (let i = 0; i < s.length; i++) {
+      const c = s.charCodeAt(i);
+      if (c >= 0xd800 && c <= 0xdbff) {
+        const next = i + 1 < s.length ? s.charCodeAt(i + 1) : 0;
+        if (!(next >= 0xdc00 && next <= 0xdfff)) return true;
+        i++;
+      } else if (c >= 0xdc00 && c <= 0xdfff) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  const ASTRAL = "\u{20000}"; // 𠀀 — a single surrogate pair (2 code units)
+
+  it("does not leave a lone surrogate at the head cut when it lands mid-pair", () => {
+    // preserveHead 10: the head boundary target is index 10. Place an astral pair
+    // at code units 9 (high) / 10 (low) so the raw cut lands on the low surrogate.
+    const text = "ABCDEFGHI" + ASTRAL + "x".repeat(20); // 9 + 2 + 20 = 31
+    expect(text.charCodeAt(10)).toBeGreaterThanOrEqual(0xdc00); // low surrogate at the target
+    const guard = createToolResultSizeGuard({
+      preserveHeadChars: 10,
+      preserveTailChars: 6,
+      enableImportantTailDetection: false,
+    });
+    const result = guard.truncateIfNeeded([{ type: "text", text }], 16);
+    expect(result.truncated).toBe(true);
+    const out = result.content[0]!.text!;
+    const head = out.slice(0, out.indexOf("\n[..."));
+    // Pre-patch the head ends with a lone high surrogate; the helper backs off.
+    expect(hasLoneSurrogate(head)).toBe(false);
+  });
+
+  it("does not start the tail with a lone surrogate when the cut lands mid-pair", () => {
+    // preserveTail 6: tailStart = len - 6. Place an astral pair so the low half
+    // sits exactly at len - 6, so the raw tail slice starts on the low surrogate.
+    const text = "x".repeat(20) + ASTRAL + "ABCDE"; // 20 + 2 + 5 = 27; len-6 = 21 = low half
+    expect(text.charCodeAt(text.length - 6)).toBeGreaterThanOrEqual(0xdc00);
+    const guard = createToolResultSizeGuard({
+      preserveHeadChars: 4,
+      preserveTailChars: 6,
+      enableImportantTailDetection: false,
+    });
+    const result = guard.truncateIfNeeded([{ type: "text", text }], 10);
+    expect(result.truncated).toBe(true);
+    const out = result.content[0]!.text!;
+    const tail = out.slice(out.indexOf("]\n") + 2);
+    expect(hasLoneSurrogate(tail)).toBe(false);
+  });
+
+  it("does not orphan a combining mark at the head cut inside a niqqud run", () => {
+    // Hebrew word with niqqud, repeated; the head boundary lands inside a mark run.
+    // shin(05E9) qamats(05B8,Mn) shin-dot(05C1,Mn) lamed(05DC) vav(05D5) holam(05B9,Mn) mem(05DD)
+    const word = "\u{05E9}\u{05B8}\u{05C1}\u{05DC}\u{05D5}\u{05B9}\u{05DD}";
+    const text = word.repeat(20);
+    const guard = createToolResultSizeGuard({
+      preserveHeadChars: 9, // lands inside a niqqud run of a repeated word
+      preserveTailChars: 9,
+      enableImportantTailDetection: false,
+    });
+    const result = guard.truncateIfNeeded([{ type: "text", text }], 20);
+    expect(result.truncated).toBe(true);
+    const out = result.content[0]!.text!;
+    const head = out.slice(0, out.indexOf("\n[..."));
+    expect(/\p{M}$/u.test(head)).toBe(false);
+  });
+
+  it("keeps the truncation marker free of bidi-control codepoints with RTL payloads (I2)", () => {
+    // Forbidden bidi-control codepoints, defined as numeric escapes ONLY (never a
+    // pasted literal glyph): LRM/RLM/ALM, the embeddings/overrides, and isolates.
+    const FORBIDDEN = [
+      0x200e, 0x200f, 0x061c, 0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x2066, 0x2067, 0x2068,
+      0x2069,
+    ];
+    // RTL head AND tail: Hebrew + Arabic letters (no marks), built from escapes.
+    const heb = "\u{05E9}\u{05DC}\u{05D5}\u{05DD}"; // שלום
+    const ara = "\u{0633}\u{0644}\u{0627}\u{0645}"; // سلام
+    const text = (heb + ara).repeat(40);
+    const result = createToolResultSizeGuard({
+      preserveHeadChars: 20,
+      preserveTailChars: 20,
+    }).truncateIfNeeded([{ type: "text", text }], 50);
+    expect(result.truncated).toBe(true);
+    const full = result.content[0]!.text!;
+    // The marker stays plain English + newline-isolated; no bidi control is injected.
+    expect([...full].every((ch) => !FORBIDDEN.includes(ch.codePointAt(0)!))).toBe(true);
+  });
+
+  it("truncates pure-ASCII text byte-identically to the documented golden (I1)", () => {
+    // The helper is a no-op at ASCII boundaries: the output must equal the exact
+    // head + marker + tail an un-adjusted raw slice produces. Golden captured from
+    // the pre-patch implementation (head 4, tail 1, no important tail).
+    const text = "L".repeat(40);
+    const guard = createToolResultSizeGuard({
+      preserveHeadChars: 4,
+      preserveTailChars: 1,
+      enableImportantTailDetection: false,
+    });
+    const result = guard.truncateIfNeeded([{ type: "text", text }], 8);
+    expect(result.truncated).toBe(true);
+    const out = result.content[0]!.text!;
+    // head 4 'L's + marker + tail 1 'L' — no surrogate/mark math changes ASCII.
+    expect(out.startsWith("LLLL\n[...")).toBe(true);
+    expect(out.endsWith("]\nL")).toBe(true);
+  });
+
+  it("routes exactly the 2 content-length cuts through adjustSliceBoundary and excludes the 2 non-cut slices", async () => {
+    // Structural greppable invariant (Pitfall 1): read the SOURCE, drop comment
+    // lines first (so the module header prose cannot self-trigger), then assert
+    // exactly the 2 truncation cuts route the helper, and the inspection slice
+    // (text.slice(-500)) + the ASCII-hint slice (MAX_HINT_CHARS - 3) do NOT.
+    const { readFile } = await import("node:fs/promises");
+    const { fileURLToPath } = await import("node:url");
+    const srcPath = fileURLToPath(new URL("./tool-result-size-guard.ts", import.meta.url));
+    const source = await readFile(srcPath, "utf8");
+    const codeLines = source.split("\n").filter((line) => !/^\s*\/\//.test(line));
+    const code = codeLines.join("\n");
+
+    const adjustCount = (code.match(/adjustSliceBoundary\(/g) ?? []).length;
+    expect(adjustCount).toBe(2);
+
+    // The 2 excluded slices are still present and are NOT wrapped by the helper.
+    const inspectionLine = codeLines.find((l) => l.includes("text.slice(-500)"));
+    expect(inspectionLine).toBeDefined();
+    expect(inspectionLine).not.toContain("adjustSliceBoundary");
+
+    const hintLine = codeLines.find((l) => l.includes("MAX_HINT_CHARS - 3"));
+    expect(hintLine).toBeDefined();
+    expect(hintLine).not.toContain("adjustSliceBoundary");
+  });
+});

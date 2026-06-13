@@ -10,6 +10,8 @@
  * @module
  */
 
+import { adjustSliceBoundary } from "@comis/core";
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -97,7 +99,9 @@ export function interpolateTaskText(
       const suffix = sharedDir
         ? `... [truncated -- full output: ${sharedDir}/${nodeId}-output.md]`
         : "... [truncated]";
-      replacement = rawOutput.slice(0, maxResultLength) + suffix;
+      // SAFE-01: snap the content-length cut off a split surrogate pair / orphaned
+      // combining run so the injected upstream output is mojibake-free.
+      replacement = rawOutput.slice(0, adjustSliceBoundary(rawOutput, maxResultLength)) + suffix;
     } else {
       replacement = rawOutput;
     }
@@ -117,6 +121,9 @@ export function interpolateTaskText(
 
   let result = taskText;
   for (const m of matches) {
+    // SAFE-01 EXCLUDED: this splices on regex MATCH indices of the ASCII
+    // `{{nodeId.result}}` template pattern — not a content-length cut. Snapping
+    // these boundaries would corrupt the splice (m.start/m.end are pattern edges).
     result = result.slice(0, m.start) + m.replacement + result.slice(m.end);
   }
 
@@ -226,7 +233,9 @@ export function buildContextEnvelope(params: {
         const suffix = sharedDir
           ? `... [truncated -- full output: ${sharedDir}/${depId}-output.md]`
           : "... [truncated]";
-        lines.push(output.slice(0, effectiveMaxLen) + suffix);
+        // SAFE-01: snap the content-length cut off a split surrogate pair / orphaned
+        // combining run so the upstream-output section is mojibake-free.
+        lines.push(output.slice(0, adjustSliceBoundary(output, effectiveMaxLen)) + suffix);
       } else {
         lines.push(output);
       }
