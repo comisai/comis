@@ -9,6 +9,19 @@
  */
 
 /**
+ * GEN-01 (I7): the single language-preservation sentence shared by the dag depth
+ * templates AND the pipeline compaction instructions (`llm-compaction.ts`). Defined
+ * ONCE here and imported by the pipeline site so the two can never silently drift.
+ * Content-anchored — it sidesteps the DET-02 reply-language tag (no tag).
+ *
+ * The machine-parsed scaffolding (the dag `Files:`/`Expand for:`/`[SUPERSEDED]`
+ * tokens, the pipeline's nine `## Section` headings) stays verbatim-English; only
+ * the prose summary follows the source language.
+ */
+export const LANGUAGE_PRESERVATION_INSTRUCTION =
+  "Write the summary in the dominant language of the source content — if the conversation is in Hebrew, summarize in Hebrew; never translate. Keep code identifiers, file paths, tool names, and error strings verbatim.";
+
+/**
  * Build the depth-keyed summarization instructions for the leaf/condense passes.
  *
  * Depth mapping (per design/lcd-v3-unified-substrate.md §6.4):
@@ -29,7 +42,8 @@ export function buildDepthAwareInstructions(depth: number, aggressive: boolean):
       "Preserve concrete details: file paths, ids, decisions made, tool calls and " +
       "their outcomes (success/failure), and constraints. Include a 'Files:' line " +
       "if files were modified and an 'Expand for:' footer for important topics the " +
-      "reader may want to expand. Do NOT invent facts.";
+      "reader may want to expand. Do NOT invent facts. " +
+      LANGUAGE_PRESERVATION_INSTRUCTION;
     return aggressive ? base + " Be as terse as possible while keeping the load-bearing facts." : base;
   }
 
@@ -38,7 +52,8 @@ export function buildDepthAwareInstructions(depth: number, aggressive: boolean):
     const base =
       "Summarize the following sequence of conversation summaries as a chronological timeline. " +
       "Mark decisions that were later superseded (e.g. '[SUPERSEDED]'). Preserve all concrete " +
-      "outcomes, file paths, and open questions.";
+      "outcomes, file paths, and open questions. " +
+      LANGUAGE_PRESERVATION_INSTRUCTION;
     return aggressive ? base + " Be as terse as possible while keeping the load-bearing facts." : base;
   }
 
@@ -47,7 +62,8 @@ export function buildDepthAwareInstructions(depth: number, aggressive: boolean):
     const base =
       "Produce a trajectory summary: what was the overall goal, what key decisions were made, " +
       "what was the final state? Drop per-session minutiae (individual tool calls, retries). " +
-      "Focus on durable information a future session would need.";
+      "Focus on durable information a future session would need. " +
+      LANGUAGE_PRESERVATION_INSTRUCTION;
     return aggressive ? base + " Be as terse as possible while keeping the load-bearing facts." : base;
   }
 
@@ -55,6 +71,7 @@ export function buildDepthAwareInstructions(depth: number, aggressive: boolean):
   const base =
     "Distill the following into a durable memory node: milestones, architectural decisions, " +
     "and constraints that would still be relevant months from now. Omit transient details. " +
-    "Write as a dense, factual paragraph.";
+    "Write as a dense, factual paragraph. " +
+    LANGUAGE_PRESERVATION_INSTRUCTION;
   return aggressive ? base + " Be as terse as possible while keeping the load-bearing facts." : base;
 }
