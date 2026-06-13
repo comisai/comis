@@ -930,6 +930,41 @@ describe("lcd-fts (180-05) — the bounded normalized-scan floor (all-short / tr
     expect(result.lane).toBe("scan");
     expect(result.hits.map((h) => h.refId)).toContain("m1");
   });
+
+  it("a multi-part message hit returns a SINGLE representative part's metadata as the snippet, not every part concatenated (WR-03)", () => {
+    // WR-03 egress-parity pin: the scan-floor message branch used to return
+    // group_concat(p.metadata) — the metadata JSON of EVERY part of the message —
+    // as the snippet, diverging from searchViaLike (one matched part) and the FTS
+    // lane (the content column). The concatenated snippet egresses materially more
+    // raw content per hit (it flows to the model after taint-wrap + secret-scrub).
+    // The HAYSTACK must still aggregate every part (matchesAll needs the full text),
+    // but the SNIPPET must be bounded to one part for parity with the other lanes.
+    const db = lcdDbWithTwins();
+    // A message with TWO parts: part 0 (ordinal 0) carries the searchable token AND
+    // a marker; part 1 carries a DIFFERENT marker. The token (גם) lives in part 0.
+    db.prepare(
+      "INSERT INTO lcd_messages(id, conversation_id, tenant_id, agent_id, session_key, seq, role, token_count, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+    ).run("m-multi", "conv-a", "t", "agent-a", "s", 0, "user", 1, 0);
+    const part0Metadata = JSON.stringify({ raw: { type: "text", text: `${HE_SEFARIM} ${HE_GAM}` }, marker: "PART_ZERO_MARKER" });
+    const part1Metadata = JSON.stringify({ raw: { type: "text", text: "second part text" }, marker: "PART_ONE_MARKER" });
+    db.prepare(
+      "INSERT INTO lcd_message_parts(id, message_id, ordinal, kind, tool_call_id, tool_name, tool_input, tool_output, is_error, metadata) VALUES (?,?,?,?,?,?,?,?,?,?)",
+    ).run("m-multi-p0", "m-multi", 0, "text", null, null, null, null, null, part0Metadata);
+    db.prepare(
+      "INSERT INTO lcd_message_parts(id, message_id, ordinal, kind, tool_call_id, tool_name, tool_input, tool_output, is_error, metadata) VALUES (?,?,?,?,?,?,?,?,?,?)",
+    ).run("m-multi-p1", "m-multi", 1, "text", null, null, null, null, null, part1Metadata);
+
+    const result = searchLcdImpl(db, "conv-a", "agent-a", HE_GAM, { limit: 10, scope: "messages" });
+    expect(result.lane).toBe("scan");
+    const hit = result.hits.find((h) => h.refId === "m-multi");
+    expect(hit).toBeDefined();
+    // The snippet is ONE part's metadata (the first by ordinal — searchViaLike
+    // parity), so it carries exactly one part's marker, NOT both concatenated.
+    expect(hit!.snippet).toContain("PART_ZERO_MARKER");
+    expect(hit!.snippet).not.toContain("PART_ONE_MARKER");
+    // And it is the metadata of a single part verbatim, not a multi-part concat.
+    expect(hit!.snippet).toBe(part0Metadata);
+  });
 });
 
 describe("lcd-fts (180-05) — FTS5-absent host: Latin queries keep the LIKE floor (lane word)", () => {
