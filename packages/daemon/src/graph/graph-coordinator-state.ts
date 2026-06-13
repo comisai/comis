@@ -49,6 +49,8 @@ export interface GraphRunState {
   cumulativeTokens: number;
   cumulativeCost: number;
   cancelReason?: "timeout" | "budget" | "manual";
+  /** Reply language resolved once at graph submission (DET-02), carried to node envelopes. */
+  resolvedLanguage?: string;
   /** Shared directory path for inter-node data sharing. */
   sharedDir: string;
   /** Active driver states keyed by nodeId. */
