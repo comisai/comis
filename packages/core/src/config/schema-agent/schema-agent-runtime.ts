@@ -178,6 +178,10 @@ export const AgentConfigSchema = z.strictObject({
     promptTimeout: PromptTimeoutConfigSchema.default(() => PromptTimeoutConfigSchema.parse({})),
     /** Per-operation model override configuration (model tiering). */
     operationModels: OperationModelsSchema,
+    /** Reply language for deterministic degraded replies (DET-02). BCP-47 ("he")
+     *  or an English display name ("Hebrew"). Omit to auto-detect from the
+     *  USER.md preferred language, then the inbound message script (he/ar/ru only). */
+    language: z.string().optional(),
   });
 
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;
