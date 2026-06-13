@@ -40,7 +40,7 @@ const THREE_NAMES = ["ctx_search", "ctx_inspect", "ctx_expand"];
  * implemented (AGENTS.md §2.5 hand-built `as unknown as` double). `searchLcd`
  * is a vi.fn so we can assert it was invoked through the injected reference.
  */
-function makeStubStore(searchLcd = vi.fn((): LcdSearchResult => ({ hits: [], cjkZeroHit: false }))): ContextStorePort {
+function makeStubStore(searchLcd = vi.fn((): LcdSearchResult => ({ hits: [], cjkZeroHit: false, lane: "word" as const, matchErrored: false }))): ContextStorePort {
   return {
     searchLcd,
     getSummaries: vi.fn(() => []),
@@ -75,6 +75,8 @@ describe("wireContextTools — daemon composition root", () => {
     const searchLcd = vi.fn((): LcdSearchResult => ({
       hits: [{ kind: "summary", refId: "s1", snippet: "recovered" } as LcdSearchHit],
       cjkZeroHit: false,
+      lane: "word" as const,
+      matchErrored: false,
     }));
     const tools: ToolLike[] = [];
     wireContextTools(tools as never, makeStubStore(searchLcd), "agent-a", makeDeps());
