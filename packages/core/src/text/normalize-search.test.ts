@@ -127,7 +127,7 @@ describe("FTS-02 normalizeForSearch — Arabic folds", () => {
     expect(f(String.fromCodePoint(0x0671))).toBe(ALEF); // ٱ
   });
 
-  it("folds alef maksura ى → ي and ta marbuta ة → ه", () => {
+  it("maps alef maksura ى to ي and ta marbuta ة to ه", () => {
     expect(f(String.fromCodePoint(0x0649))).toBe(String.fromCodePoint(0x064a)); // ى → ي
     expect(f(String.fromCodePoint(0x0629))).toBe(String.fromCodePoint(0x0647)); // ة → ه
   });
@@ -151,7 +151,7 @@ describe("FTS-02 normalizeForSearch — Arabic folds", () => {
 });
 
 describe("FTS-02 normalizeForSearch — Cyrillic ё fold (and й preserved)", () => {
-  it("folds ё → е: f('ёлка') === f('елка')", () => {
+  it("maps ё to е so f('ёлка') matches f('елка')", () => {
     expect(f("ёлка")).toBe(f("елка"));
   });
 
@@ -159,7 +159,7 @@ describe("FTS-02 normalizeForSearch — Cyrillic ё fold (and й preserved)", ()
     expect(f("Ёлка")).toBe(f("ёлка"));
   });
 
-  it("does NOT fold й → и", () => {
+  it("keeps й and и distinct (does NOT fold й to и)", () => {
     // й (U+0439) stays й; и is U+0438.
     expect(f(String.fromCodePoint(0x0439))).toBe(String.fromCodePoint(0x0439));
     expect(f(String.fromCodePoint(0x0439))).not.toBe(String.fromCodePoint(0x0438));

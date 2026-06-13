@@ -45,7 +45,7 @@ describe("FTS-01 routeSearchQuery — lane routing", () => {
     expect(r.scanTokens).toBeUndefined();
   });
 
-  it("mixed Hebrew+Latin query rides the trigram lane whole", () => {
+  it("routes a mixed Hebrew and Latin query to the trigram lane whole", () => {
     const r = routeSearchQuery("ספר על docker", { join: "and" });
     expect(r.lane).toBe("tri");
     expect(r.match).toBeDefined();

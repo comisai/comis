@@ -170,25 +170,27 @@ export function normalizeForSearch(text: string): string {
     out.push(cp);
   }
 
-  // (3b) Contextual Hebrew-flanked acronym-quote deletion: a windowed pass over
-  //      the surviving codepoints. Delete a quote stand-in ONLY when the
-  //      immediately-preceding AND immediately-following codepoints are Hebrew
-  //      letters (finals already folded to medial, still in-range). A
+  // (3b) Contextual Hebrew-flanked acronym-quote deletion: a single sliding
+  //      window (prev / curr / next carried as locals — no variable array
+  //      indexing) over the surviving codepoints. Delete a quote stand-in ONLY
+  //      when the immediately-preceding AND immediately-following codepoints are
+  //      Hebrew letters (finals already folded to medial, still in-range). A
   //      non-flanked quote (leading/trailing, or beside a non-letter) survives.
   const result: number[] = [];
-  for (let i = 0; i < out.length; i++) {
-    const cp = out[i]!;
-    if (
-      isHebrewAcronymQuote(cp) &&
-      i > 0 &&
-      i + 1 < out.length &&
-      isHebrewLetter(out[i - 1]!) &&
-      isHebrewLetter(out[i + 1]!)
-    ) {
-      continue; // delete the flanked acronym quote
+  let prevCp = -1; // no preceding codepoint at the window's left edge
+  let currCp = -1; // not yet started
+  for (const nextCp of out) {
+    if (currCp !== -1) {
+      const flanked =
+        isHebrewAcronymQuote(currCp) && isHebrewLetter(prevCp) && isHebrewLetter(nextCp);
+      if (!flanked) result.push(currCp);
+      prevCp = currCp;
     }
-    result.push(cp);
+    currCp = nextCp;
   }
+  // Flush the last codepoint: it has no following neighbor, so it can never be
+  // a flanked acronym quote — always kept.
+  if (currCp !== -1) result.push(currCp);
 
   return String.fromCodePoint(...result);
 }

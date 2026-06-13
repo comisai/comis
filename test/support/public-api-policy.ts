@@ -1888,6 +1888,17 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "classifyCodepoint",
       "scriptShares",
       "dominantScript",
+      // ── search primitives (Phase 180) ───────────────────────────────
+      // normalizeForSearch (FTS-02) + routeSearchQuery/TrigramRoute/SearchLane
+      // (FTS-01) ship dark in plan 180-01; the production consumers land in
+      // plans 180-04..180-07 (memory twin writes, LCD/LTM routing, doctor
+      // backfill). Plan 180-08 sweeps these entries once the consumers exist.
+      // Baseline-orphan registration, NOT an architecture-allowlist growth
+      // (the 179-01 precedent); shrink each entry as a real caller lands.
+      "normalizeForSearch",
+      "routeSearchQuery",
+      "TrigramRoute",
+      "SearchLane",
     ])],
     // @comis/daemon: baseline orphans tracked here. All three
     // value-side root re-exports (createAnnouncementDeadLetterQueue,
