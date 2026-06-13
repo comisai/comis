@@ -30,7 +30,7 @@ const FTS5_OPERATORS = ["near", "and", "or", "not"];
 function makeCapturingStore(captured: { ftsQuery?: string }): ContextStorePort {
   const searchLcd = (_scope: unknown, query: string): LcdSearchResult => {
     captured.ftsQuery = query;
-    return { hits: [], cjkZeroHit: false }; // 0 hits → recency floor; we only need the query
+    return { hits: [], cjkZeroHit: false, lane: "word", matchErrored: false }; // 0 hits → recency floor; we only need the query
   };
   return { searchLcd } as unknown as ContextStorePort;
 }

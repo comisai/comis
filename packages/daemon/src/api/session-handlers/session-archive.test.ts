@@ -76,7 +76,7 @@ function makeLcdStore(deleteCount = 5): ContextStorePort {
     getSummaries: vi.fn().mockReturnValue([]),
     getSummaryChildren: vi.fn().mockReturnValue([]),
     getSummaryMessages: vi.fn().mockReturnValue([]),
-    searchLcd: vi.fn().mockReturnValue({ hits: [], cjkZeroHit: false }),
+    searchLcd: vi.fn().mockReturnValue({ hits: [], cjkZeroHit: false, lane: "word", matchErrored: false }),
     runOnConversation: vi.fn().mockImplementation(
       (_conversationId: string, fn: () => unknown) => Promise.resolve(fn()),
     ),

@@ -54,6 +54,7 @@ import {
   extendHeadForPairSafety,
   estimateRangeChars,
   clampFactorText,
+  emitSummaryLanguageMismatch,
 } from "./compaction-zone-helpers.js";
 
 // ---------------------------------------------------------------------------
@@ -574,6 +575,23 @@ export function createLlmCompactionLayer(
           summaryReserve,
           deps.logger,
         );
+
+        // OBS-01 (Phase 180): the small-model G4 detector at the PIPELINE site
+        // (depth -1). The summary is now final (post-validate inside
+        // compactWithFallback); when a non-Latin source span produced a Latin
+        // summary, emit context:summary_language_mismatch. Source = the SAME span
+        // handed to generateSummary (clampFactorText over spanToSummarize, never a
+        // re-read). Visibility only — guarded, content-free, never fails compaction.
+        if (deps.agentId && deps.sessionKey) {
+          emitSummaryLanguageMismatch(deps.eventBus, deps.logger, {
+            agentId: deps.agentId,
+            sessionKey: deps.sessionKey,
+            sourceText: spanToSummarize.map((m) => clampFactorText(m)).join(" "),
+            summaryText: compactionResult.summary,
+            depth: -1,
+            nowMs: systemNowMs(),
+          });
+        }
 
         // Build compaction summary message matching SDK format
         const discoveredTools = deps.getDiscoveredTools?.() ?? [];

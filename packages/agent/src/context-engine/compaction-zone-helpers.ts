@@ -15,6 +15,8 @@
  */
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { dominantScript } from "@comis/core";
+import type { TypedEventBus, ComisLogger, ErrorKind } from "@comis/core";
 import { estimateMessageChars } from "../safety/token-estimator.js";
 
 /**
@@ -107,4 +109,71 @@ export function clampFactorText(m: AgentMessage): string {
     }
   }
   return out;
+}
+
+/**
+ * OBS-01 (Phase 180): the small-model G4 detector. Compare the dominant script
+ * of a completed summary against its source chunk; when a NON-Latin source
+ * produced a Latin summary, emit `context:summary_language_mismatch` (a weak
+ * local summarizer silently writing English summaries of Hebrew chunks becomes
+ * a counted `comis fleet` finding with the `strongerSummarizerModel` remedy hint).
+ *
+ * VISIBILITY ONLY — no gating, no rejection, no behavior change to the summarize
+ * paths (design §8 REJECTs validation-gating: a mixed code-heavy chunk legitimately
+ * skews Latin via the 0.3 dominance threshold in `dominantScript`, so this is a
+ * count an operator reviews, not an error to block). The emit is strictly
+ * additive and GUARDED: a throwing subscriber NEVER fails the summarize/compaction
+ * pass (the `onCondensed` non-fatal contract). The payload carries the closed
+ * `ScriptClass` enums + a depth count + ids ONLY — NEVER the summary or source
+ * body (I8 / §2.7); `dominantScript` reads the text locally and nothing leaks.
+ *
+ * @param eventBus - the site's typed bus (absent ⇒ a silent no-op via the `?.`)
+ * @param logger   - structured logger for the guarded-emit failure WARN
+ * @param args.sourceText  - the summarizer INPUT text (the source chunk)
+ * @param args.summaryText - the completed summary text
+ * @param args.depth       - dag depth (0 = leaf, >0 = condense); -1 = pipeline
+ * @param args.nowMs       - the injected clock read for the event timestamp
+ */
+export function emitSummaryLanguageMismatch(
+  eventBus: TypedEventBus | undefined,
+  logger: Pick<ComisLogger, "warn">,
+  args: {
+    agentId: string;
+    sessionKey: string;
+    sourceText: string;
+    summaryText: string;
+    depth: number;
+    nowMs: number;
+  },
+): void {
+  // One O(n) dominantScript pass each (SCRIPT-01). Fire ONLY on the predictable
+  // small-summarizer failure: a non-Latin source whose summary came back Latin.
+  const sourceScript = dominantScript(args.sourceText);
+  if (sourceScript === "latin") return; // Latin (or code-heavy ⇒ latin) source — silent.
+  const summaryScript = dominantScript(args.summaryText);
+  if (summaryScript !== "latin") return; // summary preserved a non-Latin script — silent.
+
+  try {
+    eventBus?.emit("context:summary_language_mismatch", {
+      agentId: args.agentId,
+      sessionKey: args.sessionKey,
+      sourceScript,
+      summaryScript,
+      depth: args.depth,
+      timestamp: args.nowMs,
+    });
+  } catch (err) {
+    // Guarded-emit (the onCondensed isolation pattern): observability NEVER
+    // fails the summarize/compaction pass. Content-free WARN (§2.7).
+    logger.warn(
+      {
+        err: err instanceof Error ? err.message : String(err),
+        agentId: args.agentId,
+        sessionKey: args.sessionKey,
+        hint: "context:summary_language_mismatch subscriber threw; signal dropped, summarization unaffected — inspect the failing event subscriber (trajectory writer / health-signal sink)",
+        errorKind: "dependency" as ErrorKind,
+      },
+      "summary_language_mismatch emit failed (non-fatal)",
+    );
+  }
 }

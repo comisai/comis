@@ -1751,7 +1751,7 @@ describe("setupTools", () => {
     /** A no-op ContextStorePort double (only the wiring identity matters here). */
     function makeFakeLcdStore() {
       return {
-        searchLcd: vi.fn(() => ({ hits: [], cjkZeroHit: false })),
+        searchLcd: vi.fn(() => ({ hits: [], cjkZeroHit: false, lane: "word" as const, matchErrored: false })),
         getSummaries: vi.fn(() => []),
         getSummaryChildren: vi.fn(() => []),
         getSummaryMessages: vi.fn(() => []),

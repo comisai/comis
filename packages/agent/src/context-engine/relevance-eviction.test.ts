@@ -130,6 +130,8 @@ function fakeStoreRanking(rankedTexts: string[]): ContextStorePort {
       rank: -1 - i, // BM25 ranks are negative; best (most relevant) is the largest (closest to 0)
     })),
     cjkZeroHit: false,
+    lane: "word",
+    matchErrored: false,
   });
   return new Proxy(
     { searchLcd } as unknown as ContextStorePort,
@@ -144,7 +146,7 @@ function fakeStoreRanking(rankedTexts: string[]): ContextStorePort {
 
 /** A store whose searchLcd returns ZERO hits (degrade-to-recency floor). */
 function fakeStoreEmpty(): ContextStorePort {
-  return { searchLcd: () => ({ hits: [], cjkZeroHit: false }) } as unknown as ContextStorePort;
+  return { searchLcd: () => ({ hits: [], cjkZeroHit: false, lane: "word", matchErrored: false }) } as unknown as ContextStorePort;
 }
 
 /**
@@ -169,6 +171,8 @@ function fakeStoreRankingByIdFts(rankedIds: string[]): ContextStorePort {
       rank: -1 - i, // BM25 ranks negative; best (most relevant) closest to 0
     })),
     cjkZeroHit: false,
+    lane: "word",
+    matchErrored: false,
   });
   return new Proxy({ searchLcd } as unknown as ContextStorePort, {
     get(target, prop) {
@@ -199,6 +203,8 @@ function fakeStoreRankingByIdLike(rankedIds: string[]): ContextStorePort {
       rank: undefined, // LIKE fallback: no BM25 rank
     })),
     cjkZeroHit: false,
+    lane: "scan",
+    matchErrored: false,
   });
   return new Proxy({ searchLcd } as unknown as ContextStorePort, {
     get(target, prop) {
