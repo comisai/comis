@@ -101,7 +101,11 @@ export function captureRecallObservability(
       }),
     );
   } catch (e) {
-    deps.logger.debug(
+    // PROMOTE-01 (§2.7 / invariant I4): a failing recall-trace recorder silently
+    // BLINDS the recall lens (RECALL-02 reads this trace). It is a failure branch
+    // carrying hint+errorKind, so it belongs at WARN — diagnosable at the DEFAULT
+    // level, not contingent on logLevel:debug having been set before the incident.
+    deps.logger.warn(
       {
         agentId: ctx.agentId,
         err: e instanceof Error ? e : new Error(String(e)),
@@ -162,7 +166,10 @@ export function captureRecallObservability(
       });
     }
   } catch (e) {
-    deps.logger.debug(
+    // PROMOTE-01 (§2.7 / invariant I4): a failing memory:recalled/reranked emit blinds
+    // the trajectory + fleet recall signals (RECALL-01). Failure branch with hint+
+    // errorKind → WARN, visible at the default level.
+    deps.logger.warn(
       {
         agentId: ctx.agentId,
         err: e instanceof Error ? e : new Error(String(e)),

@@ -274,6 +274,44 @@ describe("createMemoryRecall — orchestrator composition", () => {
     expect(got.value.map((r) => r.entry.id)).not.toContain("c");
   });
 
+  it("PROMOTE-01: a failing recall-trace recorder logs at WARN (default-level visible), not DEBUG — the recall hot path is unaffected", async () => {
+    // Invariant I4: a silently-failing obs-substrate (the recall-trace recorder) blinds
+    // the recall lens (RECALL-02). It must be diagnosable at the DEFAULT log level, not
+    // contingent on logLevel:debug having been set before the incident. The recall result
+    // itself must still succeed (obs failures never fail the hot path).
+    const input = [makeResult("a", { base: 0.9, trustLevel: "learned", createdAt: NOW })];
+    const warn = vi.fn();
+    const debug = vi.fn();
+    const logger = { ...noopLogger, warn, debug } as unknown as ComisLogger;
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeMemoryPort(input),
+        clock: fixedClock,
+        logger,
+        recallTrace: {
+          recordRecall: () => {
+            throw new Error("recorder boom");
+          },
+        },
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig(),
+    );
+    const got = await recall.recall("q", SESSION_KEY, "default");
+    expect(got.ok).toBe(true); // obs-substrate failure NEVER fails the recall hot path
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorKind: "internal",
+        hint: expect.stringContaining("recall-trace recordRecall failed"),
+      }),
+      expect.stringContaining("recall-trace capture failed"),
+    );
+    // The load-bearing fix: it is NOT buried at DEBUG anymore.
+    expect(debug).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.stringContaining("recall-trace capture failed"),
+    );
+  });
+
   it("a weak top hit (adapter score < 0.7) stays below the inline gate on the default path (single-lane fuse pass-through, not rank-ramped to ≈1.0)", async () => {
     // Pre-fix, single-lane fuse rebuilt the score from rank → the top hit became
     // ≈1.0 and (after the default 0.2 recency / 0.1 trust boosts) sat WELL above the
