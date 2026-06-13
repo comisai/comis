@@ -648,6 +648,65 @@ export interface ExecutionPromptResult {
 export async function assembleExecutionPrompt(params: PromptAssemblyParams): Promise<ExecutionPromptResult> {
   const { config, deps, msg, sessionKey, agentId, mergedCustomTools, logger } = params;
 
+  // Consolidated lightContext flag: heartbeat implies light-context regardless
+  // of the explicit msg.metadata.lightContext flag. Callers that only set the
+  // metadata flag OR only set operationType="heartbeat" produce identical
+  // prompt output. Hoisted above the parent-cache reuse branch so BOTH paths
+  // share the same bootstrap filter dispatch (WR-01).
+  const effectiveLightContext =
+    msg.metadata?.lightContext === true || params.operationType === "heartbeat";
+
+  // SD6 (Phase 159): capability-gated bootstrap.maxChars.
+  // resolveScaffoldDefaults handles the === 20_000 sentinel check internally.
+  // Fail-closed: absent modelProfile → FAIL_CLOSED_PROFILE (nano) → 3_500 (conservative).
+  const { bootstrapMaxChars, bootstrapTotalMaxChars } = resolveScaffoldDefaults(
+    params.modelProfile ?? FAIL_CLOSED_PROFILE,
+    config,
+  );
+
+  // Snapshot-aware bootstrap load + per-turn filter dispatch + char-budget
+  // build. Shared by the full-assembly path AND the parent-cache reuse path so
+  // the reuse path can resolve DET-02 tier-2 (USER.md preferred language)
+  // without drifting from the full path's filtering (WR-01). The session
+  // snapshot keeps loadWorkspaceBootstrapFiles to once per session and keeps the
+  // system-prompt prefix stable across turns.
+  async function resolveBootstrapContextFiles(
+    mode: PromptMode,
+  ): Promise<{ bootstrapContextFiles: BootstrapContextFile[]; bootstrapFilesForReport: BootstrapFile[] }> {
+    if (mode === "none") {
+      return { bootstrapContextFiles: [], bootstrapFilesForReport: [] };
+    }
+    const bsSnapKey = formatSessionKey(sessionKey);
+    let bootstrapFiles = sessionBootstrapFileSnapshots.get(bsSnapKey);
+    if (!bootstrapFiles) {
+      bootstrapFiles = await loadWorkspaceBootstrapFiles(deps.workspaceDir);
+      sessionBootstrapFileSnapshots.set(bsSnapKey, bootstrapFiles);
+    }
+
+    // Bootstrap filter dispatch:
+    //  - effectiveLightContext (heartbeat / explicit flag) -> HEARTBEAT.md only
+    //  - operationType === "cron" -> SOUL.md + ROLE.md only
+    //  - group chat context -> strip USER.md for privacy
+    if (effectiveLightContext) {
+      bootstrapFiles = filterBootstrapFilesForLightContext(bootstrapFiles);
+    } else if (params.operationType === "cron") {
+      bootstrapFiles = filterBootstrapFilesForCron(bootstrapFiles);
+    } else if (
+      config.bootstrap?.groupChatFiltering !== false &&
+      isGroupContext(msg)
+    ) {
+      bootstrapFiles = filterBootstrapFilesForGroupChat(bootstrapFiles);
+    }
+
+    return {
+      bootstrapContextFiles: buildBootstrapContextFiles(bootstrapFiles, {
+        maxChars: bootstrapMaxChars,
+        totalMaxChars: bootstrapTotalMaxChars,
+      }),
+      bootstrapFilesForReport: bootstrapFiles,
+    };
+  }
+
   // Parent prefix reuse when model+provider match.
   // When a sub-agent has CacheSafeParams from its parent and the resolved model/provider
   // matches, skip the entire system prompt assembly (bootstrap loading, tool/bootstrap snapshots,
@@ -789,9 +848,25 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
       "Using parent cache prefix (model/provider match)",
     );
 
-    // userLanguage is not in scope on the parent-cache reuse path (computed
-    // later at the full-assembly site); keep the return type uniform.
-    return { systemPrompt: parentCache.frozenSystemPrompt, systemPromptBlocks: parentCache.frozenSystemPromptBlocks, dynamicPreamble, inlineMemory: undefined, recalledMemories: undefined, userLanguage: undefined };
+    // WR-01: resolve DET-02 tier-2 (USER.md preferred language) on the reuse
+    // path too. Pre-fix this hardcoded `undefined`, so a sub-agent that took the
+    // (dominant) cache-reuse path resolved its degraded reply WITHOUT tier-2 —
+    // silently falling through to tier-3 (inbound script). Compute promptMode
+    // (the same pure resolution as the full path) and load USER.md via the
+    // shared snapshot-aware helper so the filtering (incl. group-chat USER.md
+    // stripping) matches the full path. The system prompt itself is still the
+    // parent's frozen prefix — only the dynamic tier-2 signal is recovered.
+    const reuseBaseMode: PromptMode = (config.bootstrap?.promptMode as PromptMode) ?? "full";
+    const reusePromptMode: PromptMode = resolvePromptModeForProfile(
+      reuseBaseMode,
+      params.operationType,
+      params.modelProfile,
+      config.contextEngine?.compactPrompt,
+    );
+    const { bootstrapContextFiles: reuseBootstrapFiles } = await resolveBootstrapContextFiles(reusePromptMode);
+    const reuseUserLanguage = extractUserLanguage(reuseBootstrapFiles);
+
+    return { systemPrompt: parentCache.frozenSystemPrompt, systemPromptBlocks: parentCache.frozenSystemPromptBlocks, dynamicPreamble, inlineMemory: undefined, recalledMemories: undefined, userLanguage: reuseUserLanguage };
   }
 
   // 1. Resolve promptMode
@@ -830,63 +905,14 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
     }
   }
 
-  // Consolidated lightContext flag: heartbeat implies light-context regardless
-  // of the explicit msg.metadata.lightContext flag. Callers that only set the
-  // metadata flag OR only set operationType="heartbeat" produce identical
-  // prompt output.
-  const effectiveLightContext =
-    msg.metadata?.lightContext === true || params.operationType === "heartbeat";
-
-  // 2. Load workspace bootstrap files (skip for "none" mode)
-  let bootstrapContextFiles: BootstrapContextFile[] = [];
-  // Track the raw bootstrap-file shape (post-filter) so the
-  // SystemPromptReport can populate injectedWorkspaceFiles[] with
-  // missing/truncated/rawChars/injectedChars accounting.
-  let bootstrapFilesForReport: BootstrapFile[] = [];
-  // Capture the bootstrap budget for the report (and any truncation summary
-  // the system prompt assembler applies).
-  // SD6 (Phase 159): capability-gated bootstrap.maxChars.
-  // resolveScaffoldDefaults handles the === 20_000 sentinel check internally.
-  // Fail-closed: absent modelProfile → FAIL_CLOSED_PROFILE (nano) → 3_500 (conservative).
-  const { bootstrapMaxChars, bootstrapTotalMaxChars } = resolveScaffoldDefaults(
-    params.modelProfile ?? FAIL_CLOSED_PROFILE,
-    config,
-  );
-  if (promptMode !== "none") {
-    // Snapshot raw bootstrap files on first turn to keep system prompt stable.
-    // When the agent writes workspace files mid-session (e.g., IDENTITY.md during onboarding),
-    // the next disk read returns different content, changing the system prompt digest and
-    // invalidating the entire cache prefix. The snapshot ensures loadWorkspaceBootstrapFiles
-    // is only called once per session. Per-turn filtering (lightContext, groupChat) still
-    // applies on the snapshot since those depend on per-message metadata.
-    const bsSnapKey = formatSessionKey(sessionKey);
-    let bootstrapFiles = sessionBootstrapFileSnapshots.get(bsSnapKey);
-    if (!bootstrapFiles) {
-      bootstrapFiles = await loadWorkspaceBootstrapFiles(deps.workspaceDir);
-      sessionBootstrapFileSnapshots.set(bsSnapKey, bootstrapFiles);
-    }
-
-    // Bootstrap filter dispatch:
-    //  - effectiveLightContext (heartbeat / explicit flag) -> HEARTBEAT.md only
-    //  - operationType === "cron" -> SOUL.md + ROLE.md only
-    //  - group chat context -> strip USER.md for privacy
-    if (effectiveLightContext) {
-      bootstrapFiles = filterBootstrapFilesForLightContext(bootstrapFiles);
-    } else if (params.operationType === "cron") {
-      bootstrapFiles = filterBootstrapFilesForCron(bootstrapFiles);
-    } else if (
-      config.bootstrap?.groupChatFiltering !== false &&
-      isGroupContext(msg)
-    ) {
-      bootstrapFiles = filterBootstrapFilesForGroupChat(bootstrapFiles);
-    }
-
-    bootstrapContextFiles = buildBootstrapContextFiles(bootstrapFiles, {
-      maxChars: bootstrapMaxChars,
-      totalMaxChars: bootstrapTotalMaxChars,
-    });
-    bootstrapFilesForReport = bootstrapFiles;
-  }
+  // 2. Load workspace bootstrap files (skip for "none" mode) via the shared
+  // snapshot-aware helper. `bootstrapFilesForReport` tracks the raw post-filter
+  // shape so the SystemPromptReport can populate injectedWorkspaceFiles[] with
+  // missing/truncated/rawChars/injectedChars accounting. The same helper feeds
+  // the parent-cache reuse path's tier-2 resolution (WR-01), so the filter
+  // dispatch can never drift between the two paths.
+  const { bootstrapContextFiles, bootstrapFilesForReport } =
+    await resolveBootstrapContextFiles(promptMode);
 
   // 3. RAG recall via createMemoryRecall + hybrid memory injector (non-fatal).
   // `memorySections` = prompt content (retrieved sections + §7.3 guidance block when

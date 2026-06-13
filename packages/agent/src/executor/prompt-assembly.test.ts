@@ -4080,6 +4080,65 @@ describe("parent prefix reuse", () => {
     const matches = stripped.match(/language:\s*deps\.spawnPacket\.language/g) ?? [];
     expect(matches.length).toBe(2);
   });
+
+  // WR-01 (DET-02 tier-2): USER.md's "Preferred language" must reach the
+  // degraded-reply resolver on the cache-reuse path too. Pre-fix, the reuse
+  // path hardcoded `userLanguage: undefined`, silently dropping tier-2 — a user
+  // whose USER.md sets a preferred language but who sends a Latin-script message
+  // on a reuse turn would get an English degraded reply. The reuse path now
+  // computes userLanguage from the same snapshot-aware bootstrap load + filter
+  // dispatch as the full path.
+  it("WR-01: resolves USER.md preferred language (tier-2) on the parent-cache reuse path", async () => {
+    mockLoadWorkspaceBootstrapFiles.mockResolvedValue([
+      { name: "USER.md", content: "- **Preferred language:** Arabic" },
+    ]);
+    mockBuildBootstrapContextFiles.mockReturnValue([
+      { path: "USER.md", content: "- **Preferred language:** Arabic" },
+    ]);
+    const params = makeParams({
+      config: makeConfig({ model: "claude-3-opus", provider: "anthropic" }),
+      deps: {
+        workspaceDir: "/workspace",
+        spawnPacket: makeSpawnPacketWithCache(),
+      },
+      resolvedModelId: "claude-3-opus",
+      resolvedModelProvider: "anthropic",
+    });
+    const result = await assembleExecutionPrompt(params);
+
+    // Reuse path was taken.
+    expect(result.systemPrompt).toBe("parent-frozen-prompt");
+    expect(mockAssembleRichSystemPrompt).not.toHaveBeenCalled();
+    // Tier-2 is now carried on the reuse path (RED on pre-fix: undefined).
+    expect(result.userLanguage).toBe("Arabic");
+  });
+
+  // WR-01 / privacy: group-chat filtering strips USER.md, so tier-2 must be
+  // absent on a reuse turn in a group context (the resolver falls through to
+  // tier-3 inbound script) — matching the full path's group-chat behavior.
+  it("WR-01: omits tier-2 on the reuse path in a group chat (USER.md stripped)", async () => {
+    mockLoadWorkspaceBootstrapFiles.mockResolvedValue([
+      { name: "USER.md", content: "- **Preferred language:** Arabic" },
+    ]);
+    // The group-chat filter (mocked in beforeEach) strips USER.md; the build
+    // step then sees no USER.md, so extractUserLanguage returns undefined.
+    mockBuildBootstrapContextFiles.mockReturnValue([]);
+    const params = makeParams({
+      config: makeConfig({ model: "claude-3-opus", provider: "anthropic" }),
+      deps: {
+        workspaceDir: "/workspace",
+        spawnPacket: makeSpawnPacketWithCache(),
+      },
+      // Group context (Telegram group) → USER.md stripped for privacy.
+      msg: makeMsg({ metadata: { chatType: "group" }, isGroup: true }),
+      resolvedModelId: "claude-3-opus",
+      resolvedModelProvider: "anthropic",
+    });
+    const result = await assembleExecutionPrompt(params);
+
+    expect(result.systemPrompt).toBe("parent-frozen-prompt");
+    expect(result.userLanguage).toBeUndefined();
+  });
 });
 
 describe("SpawnPacket.cacheSafeParams post-build assignment", () => {
