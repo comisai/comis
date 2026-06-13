@@ -46,6 +46,19 @@ describe("resolveMultilingual (EMB-01 name heuristic)", () => {
     expect(resolveMultilingual(undefined, "multilingual-e5-large", EMBED_MULTILINGUAL)).toBe(true);
   });
 
+  it("classifies the English-only intfloat/e5-large-v2 as \"unknown\" — the bare-`e5` substring must NOT fire (WR-01: a false positive SUPPRESSES the embedder_not_multilingual advisory, the harmful direction)", () => {
+    expect(resolveMultilingual(undefined, "intfloat/e5-large-v2", EMBED_MULTILINGUAL)).toBe("unknown");
+  });
+
+  it("classifies the multilingual-E5 family intfloat/multilingual-e5-large as multilingual=true (WR-01: the genuine multilingual family must STAY true via the `multilingual` token)", () => {
+    expect(resolveMultilingual(undefined, "intfloat/multilingual-e5-large", EMBED_MULTILINGUAL)).toBe(true);
+  });
+
+  it("does not let an incidental `e5` substring (type5 / base5) false-positive an English embedder (WR-01)", () => {
+    expect(resolveMultilingual(undefined, "some-model-type5-v2", EMBED_MULTILINGUAL)).toBe("unknown");
+    expect(resolveMultilingual(undefined, "model-base5-embed", EMBED_MULTILINGUAL)).toBe("unknown");
+  });
+
   it("classifies a LaBSE embedder id as multilingual=true (case-insensitive)", () => {
     expect(resolveMultilingual(undefined, "LaBSE", EMBED_MULTILINGUAL)).toBe(true);
   });

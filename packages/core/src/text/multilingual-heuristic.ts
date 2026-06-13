@@ -12,10 +12,20 @@
  */
 
 /**
- * Embedder multilingual name pattern (the design literal — correct for the
- * embedder family: `bge-m3`, `multilingual-e5`/`e5`, `m3e`, `LaBSE`).
+ * Embedder multilingual name pattern (the genuinely-multilingual embedder
+ * family: `bge-m3`, `multilingual-e5` — matched via the `multilingual` token —
+ * `m3e`, `LaBSE`).
+ *
+ * WR-01 FIX: the design's bare `e5` alternation was unanchored and matched as a
+ * substring anywhere, so English-only E5 ids (`intfloat/e5-large-v2`) and
+ * incidental `type5`/`base5` slugs FALSE-POSITIVED to `true`. A false positive
+ * SUPPRESSES the `model_health:embedder_not_multilingual` advisory — the harmful
+ * direction, hiding the exact non-Latin degradation EMB-01 exists to surface. We
+ * drop the bare `e5` token and rely on `multilingual` (which already matches the
+ * `multilingual-e5-*` family); a false NEGATIVE degrades safely to `"unknown"`,
+ * which still fires the advisory.
  */
-export const EMBED_MULTILINGUAL = /multilingual|bge-m3|m3e|labse|e5/i;
+export const EMBED_MULTILINGUAL = /multilingual|bge-m3|m3e|labse/i;
 
 /**
  * Reranker multilingual name pattern. FIX for Pitfall 2: the shipped default
