@@ -725,6 +725,13 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
         workspaceDir: deps.spawnPacket.workspaceDir,
         parentSummary: deps.spawnPacket.parentSummary,
         agentWorkspaces: deps.spawnPacket.agentWorkspaces,
+        // GEN-03 (CR-01): the inherited conversation language was dropped on
+        // this cache-reuse path — the DOMINANT runtime path for same-model
+        // sub-agents — so a he/ar/ru sub-agent produced English output. Thread
+        // it so both role-section call sites are symmetric. en/undefined emits
+        // nothing (buildSubagentRoleSection guards on `language && !== "en"`),
+        // so the en path stays byte-identical (I1).
+        language: deps.spawnPacket.language,
       });
       if (roleLines.length > 0) dynamicPreambleParts.push(roleLines.join("\n"));
     }

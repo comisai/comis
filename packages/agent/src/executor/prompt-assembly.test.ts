@@ -123,6 +123,11 @@ vi.mock("node:os", async (importOriginal) => {
 
 import { assembleExecutionPrompt, extractUserLanguage, resolvePromptModeForProfile, clearSessionToolNameSnapshot, clearSessionBootstrapFileSnapshot, clearSessionPromptSkillsXmlSnapshot, clearWr02SenderTrustWarned, getCacheSafeParams, clearCacheSafeParams, buildRecallTrace, type PromptAssemblyParams, type CacheSafeParams } from "./prompt-assembly.js";
 import { resolveRecallTraceFilePath } from "@comis/observability";
+// node:fs (sync) is NOT mocked here (only node:fs/promises is) — safe for the
+// GEN-03 source-grep chokepoint below.
+import { readFileSync } from "node:fs";
+import { dirname, resolve as resolvePath } from "node:path";
+import { fileURLToPath } from "node:url";
 import * as nodeOs from "node:os";
 import { formatSessionKey, type SpawnPacket, type MemorySearchResult } from "@comis/core";
 // Real (un-mocked) §7.3 guidance formatter — prompt-assembly pushes its block into
@@ -3999,6 +4004,81 @@ describe("parent prefix reuse", () => {
     expect(hookRunner.runBeforeAgentStart).toHaveBeenCalledOnce();
     expect(result.dynamicPreamble).toContain("HOOK-DYNAMIC");
     expect(result.systemPrompt).toBe("parent-frozen-prompt");
+  });
+
+  // CR-01 (GEN-03): the sub-agent `### Language` directive must reach the role
+  // section on the parent-cache reuse path — the DOMINANT runtime path for
+  // same-model sub-agents. Before the fix, only the full-assembly call site
+  // threaded `language`; the reuse-path call at prompt-assembly.ts:718 dropped
+  // it, so a Hebrew/Arabic/Russian sub-agent produced English output on its
+  // primary path. The leaf-level context-sections.test.ts masks this because it
+  // exercises buildSubagentRoleSection directly. This probe goes through the
+  // real assembleExecutionPrompt reuse path and asserts the language reaches the
+  // role-section builder.
+  it("CR-01: threads spawnPacket.language into the role section on the parent-cache reuse path", async () => {
+    const spawnPacket = makeSpawnPacketWithCache();
+    spawnPacket.language = "he";
+    const params = makeParams({
+      config: makeConfig({ model: "claude-3-opus", provider: "anthropic" }),
+      deps: {
+        workspaceDir: "/workspace",
+        spawnPacket,
+      },
+      resolvedModelId: "claude-3-opus",
+      resolvedModelProvider: "anthropic",
+    });
+    const result = await assembleExecutionPrompt(params);
+
+    // Reuse path was taken (no full assembly).
+    expect(result.systemPrompt).toBe("parent-frozen-prompt");
+    expect(mockAssembleRichSystemPrompt).not.toHaveBeenCalled();
+
+    // The role-section builder must have received the inherited language so it
+    // can emit the `### Language` directive. RED on pre-fix code (the reuse-path
+    // call site omitted `language`).
+    expect(mockBuildSubagentRoleSection).toHaveBeenCalledWith(
+      expect.objectContaining({ language: "he" }),
+    );
+  });
+
+  // I1: the en/undefined language path on the reuse branch stays byte-identical
+  // — no `language` key is fabricated, so the packet shape is unchanged.
+  it("CR-01/I1: passes language=undefined on the reuse path for an en (unset) spawnPacket", async () => {
+    const params = makeParams({
+      config: makeConfig({ model: "claude-3-opus", provider: "anthropic" }),
+      deps: {
+        workspaceDir: "/workspace",
+        spawnPacket: makeSpawnPacketWithCache(), // no language set
+      },
+      resolvedModelId: "claude-3-opus",
+      resolvedModelProvider: "anthropic",
+    });
+    await assembleExecutionPrompt(params);
+
+    expect(mockBuildSubagentRoleSection).toHaveBeenCalledWith(
+      expect.objectContaining({ language: undefined }),
+    );
+  });
+
+  // CR-01 chokepoint (mirrors the GEN-02 source-grep at
+  // executor-post-execution.test.ts): BOTH role-section feeds in
+  // prompt-assembly.ts must thread `language: deps.spawnPacket.language`, so the
+  // two consumers (the cache-reuse inline call and the full-assembly
+  // subagentRole object) can never drift apart again. There are exactly two such
+  // feeds; both must carry the language.
+  it("CR-01: source-grep — BOTH sub-agent role-section feeds thread language: deps.spawnPacket.language", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const src = readFileSync(resolvePath(here, "prompt-assembly.ts"), "utf-8");
+    // Strip block + line comments so a comment mention cannot satisfy the gate.
+    const stripped = src
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("*"))
+      .join("\n");
+    // Two role-section feeds (reuse-path inline object + full-assembly
+    // subagentRole object) each thread the inherited language.
+    const matches = stripped.match(/language:\s*deps\.spawnPacket\.language/g) ?? [];
+    expect(matches.length).toBe(2);
   });
 });
 
