@@ -286,10 +286,12 @@ export class IcTopbar extends LitElement {
     this.dispatchEvent(new CustomEvent("logout"));
   }
 
-  /** Bell click → take the operator to the Security view's pending-approvals queue. */
+  /** Bell click → take the operator to the Security view's pending-approvals queue.
+   *  The `?tab=pending` deep-link is threaded through app.ts to the view's
+   *  `initialTab`; without it the bell lands on the default Security Events tab. */
   private _openNotifications(): void {
     this.dispatchEvent(
-      new CustomEvent<string>("navigate", { detail: "security", bubbles: true, composed: true }),
+      new CustomEvent<string>("navigate", { detail: "security?tab=pending", bubbles: true, composed: true }),
     );
   }
 
