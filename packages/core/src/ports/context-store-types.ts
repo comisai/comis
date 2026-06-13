@@ -23,6 +23,11 @@
  * @module
  */
 
+// Type-only import: OBS-01 widens LcdSearchResult.scriptZeroHit to the Phase 179
+// script enum (the trigram lane covers every non-Latin class). Zero-runtime
+// (the rule for core ports) — `import type` erases at build.
+import type { ScriptClass } from "../text/script-classes.js";
+
 /**
  * The block kind of an LCD message part.
  *
@@ -295,19 +300,33 @@ export interface LcdSearchHit {
 }
 
 /**
- * EFF-03: wrapper returned by {@link ContextStorePort.searchLcd} and
- * `searchLcdImpl` to carry the CJK zero-hit diagnostic flag alongside the hits.
+ * EFF-03 / OBS-01: wrapper returned by {@link ContextStorePort.searchLcd} and
+ * `searchLcdImpl` to carry the script-routing diagnostics alongside the hits.
  *
- * `cjkZeroHit` is the §14.4 instrumented trigger for the deferred CJK-trigram
- * FTS path: it is true ONLY when the query contained CJK codepoints AND the
- * search returned 0 hits. The flag is content-free (boolean only — never the
- * query text). The caller's logging boundary (skills/agent — NOT @comis/memory)
- * emits a DEBUG event when this flag is true.
+ * `cjkZeroHit` is kept as a DERIVED compatibility boolean (`scriptZeroHit ===
+ * "cjk"`); `scriptZeroHit` generalizes it to every non-Latin script (FTS-02's
+ * trigram lane covers he/ar/ru/CJK). All diagnostics are content-free —
+ * enums/booleans only, NEVER the query text (I8; mirror the `LcdSearchHit.snippet`
+ * "UNTRUSTED — never logged" contract at :291-292). The caller's logging boundary
+ * (skills/agent — NOT @comis/memory, which is logger-free per AGENTS.md §2.4)
+ * emits the `script_zero_hit` event when `scriptZeroHit` is set.
  */
 export interface LcdSearchResult {
   hits: LcdSearchHit[];
-  /** true iff the query had CJK codepoints AND hits.length === 0 */
+  /** Derived compatibility flag — true iff scriptZeroHit === "cjk". */
   cjkZeroHit: boolean;
+  /** Set iff the query's dominant script is non-Latin, the search executed CLEANLY
+   *  (matchErrored false), and hits.length === 0. Enum only — never query text. */
+  scriptZeroHit?: ScriptClass;
+  /** The lane that served the query. "word" covers the word FTS AND its LIKE floor.
+   *  REQUIRED, not optional-with-defaults — staleness must fail the compile, not hide. */
+  lane: "word" | "tri" | "scan";
+  /** True iff a MATCH threw and was degraded to [] — an errored zero-result is NOT
+   *  a lane gap (OBS-01 signal purity). REQUIRED — same staleness-fails-compile rationale. */
+  matchErrored: boolean;
+  /** lane === "scan" only: the bounded floor hit its row cap before exhausting the
+   *  conversation (the tool notes the cap to the model). */
+  scanCapped?: boolean;
 }
 
 /**

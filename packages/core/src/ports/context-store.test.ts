@@ -137,7 +137,7 @@ describe("ContextStorePort — Phase-131 E1 expansion-loop read surface", () => 
         _conversationId: string,
         _query: string,
         _opts: { limit: number; scope?: "messages" | "summaries" | "both" },
-      ): LcdSearchResult => ({ hits: [], cjkZeroHit: false }),
+      ): LcdSearchResult => ({ hits: [], cjkZeroHit: false, lane: "word", matchErrored: false }),
     };
 
     // The new methods are SYNCHRONOUS (return arrays directly, never Promises).
@@ -147,7 +147,7 @@ describe("ContextStorePort — Phase-131 E1 expansion-loop read surface", () => 
 
     expect(stub.getSummaryChildren("c", "p")).toEqual([]);
     expect(stub.getSummaryMessages("c", "s")).toEqual([]);
-    expect(stub.searchLcd("c", "q", { limit: 10 })).toEqual({ hits: [], cjkZeroHit: false });
+    expect(stub.searchLcd("c", "q", { limit: 10 })).toEqual({ hits: [], cjkZeroHit: false, lane: "word", matchErrored: false });
   });
 
   it("Test 2 (compile-time): a ContextStorePort impl missing searchLcd is NOT assignable", () => {
@@ -181,13 +181,13 @@ describe("ContextStorePort — Phase-131 E1 expansion-loop read surface", () => 
         _c: string,
         _q: string,
         _opts: { limit: number; scope?: "messages" | "summaries" | "both" },
-      ): LcdSearchResult => ({ hits: [], cjkZeroHit: false }),
+      ): LcdSearchResult => ({ hits: [], cjkZeroHit: false, lane: "word", matchErrored: false }),
     } as Pick<ContextStorePort, "searchLcd">;
     // limit-only (scope optional) and an explicit valid scope both type-check.
-    expect(stub.searchLcd("c", "q", { limit: 10 })).toEqual({ hits: [], cjkZeroHit: false });
-    expect(stub.searchLcd("c", "q", { limit: 10, scope: "both" })).toEqual({ hits: [], cjkZeroHit: false });
-    expect(stub.searchLcd("c", "q", { limit: 5, scope: "messages" })).toEqual({ hits: [], cjkZeroHit: false });
-    expect(stub.searchLcd("c", "q", { limit: 5, scope: "summaries" })).toEqual({ hits: [], cjkZeroHit: false });
+    expect(stub.searchLcd("c", "q", { limit: 10 })).toEqual({ hits: [], cjkZeroHit: false, lane: "word", matchErrored: false });
+    expect(stub.searchLcd("c", "q", { limit: 10, scope: "both" })).toEqual({ hits: [], cjkZeroHit: false, lane: "word", matchErrored: false });
+    expect(stub.searchLcd("c", "q", { limit: 5, scope: "messages" })).toEqual({ hits: [], cjkZeroHit: false, lane: "word", matchErrored: false });
+    expect(stub.searchLcd("c", "q", { limit: 5, scope: "summaries" })).toEqual({ hits: [], cjkZeroHit: false, lane: "word", matchErrored: false });
   });
 
   it("Test 3 (compile-time): searchLcd rejects an invalid scope literal", () => {
@@ -196,7 +196,7 @@ describe("ContextStorePort — Phase-131 E1 expansion-loop read surface", () => 
         _c: string,
         _q: string,
         _opts: { limit: number; scope?: "messages" | "summaries" | "both" },
-      ): LcdSearchResult => ({ hits: [], cjkZeroHit: false }),
+      ): LcdSearchResult => ({ hits: [], cjkZeroHit: false, lane: "word", matchErrored: false }),
     } as Pick<ContextStorePort, "searchLcd">;
     // @ts-expect-error scope is the closed "messages"|"summaries"|"both" union — "invalid" is rejected
     stub.searchLcd("c", "q", { limit: 10, scope: "invalid" });
@@ -208,7 +208,7 @@ describe("ContextStorePort — Phase-131 E1 expansion-loop read surface", () => 
         _c: string,
         _q: string,
         _opts: { limit: number; scope?: "messages" | "summaries" | "both" },
-      ): LcdSearchResult => ({ hits: [], cjkZeroHit: false }),
+      ): LcdSearchResult => ({ hits: [], cjkZeroHit: false, lane: "word", matchErrored: false }),
     } as Pick<ContextStorePort, "searchLcd">;
     // @ts-expect-error limit is REQUIRED on the opts param — an empty opts object is rejected
     stub.searchLcd("c", "q", {});
