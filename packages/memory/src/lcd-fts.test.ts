@@ -17,7 +17,7 @@ import Database from "better-sqlite3";
 import { describe, it, expect } from "vitest";
 import { normalizeForSearch, dominantScript } from "@comis/core";
 import { ensureLcdTables } from "./schema-lcd.js";
-import { renderMessageFtsText, searchLcdImpl, hasCjkCodepoints } from "./lcd-fts.js";
+import { renderMessageFtsText, searchLcdImpl } from "./lcd-fts.js";
 
 /**
  * Create a db with ONLY the base LCD tables (no FTS virtual tables). This is the
@@ -427,60 +427,15 @@ describe("lcd-fts — R4 cross-agent search isolation (WR-02)", () => {
 });
 
 // ───────────────────────────────────────────────────────────────────────────
-// EFF-03: CJK zero-hit counter in LCD FTS search path
+// EFF-03 → OBS-01: the zero-hit signal, generalized from CJK to every script
 // ───────────────────────────────────────────────────────────────────────────
-// searchLcdImpl must return an `LcdSearchResult` wrapper `{ hits, cjkZeroHit }`
-// instead of a bare `LcdSearchHit[]`. The `cjkZeroHit` flag is true when the
-// query contains CJK codepoints AND the search returned 0 hits — the §14.4
-// instrumented trigger for the deferred CJK-trigram path. Content-free: the
-// flag never carries the query string, only a boolean signal.
-//
-// Pre-patch: searchLcdImpl returns `LcdSearchHit[]` (no cjkZeroHit field) → RED.
-
-describe("EFF-03 — hasCjkCodepoints detects standard CJK Unicode blocks", () => {
-  it("returns true for CJK Unified Ideographs (Chinese characters)", () => {
-    expect(hasCjkCodepoints("你好")).toBe(true);
-  });
-
-  it("returns true for Hiragana (Japanese kana)", () => {
-    expect(hasCjkCodepoints("こんにちは")).toBe(true);
-  });
-
-  it("returns true for Katakana (Japanese kana)", () => {
-    expect(hasCjkCodepoints("カタカナ")).toBe(true);
-  });
-
-  it("returns true for Hangul Syllables (Korean)", () => {
-    expect(hasCjkCodepoints("안녕하세요")).toBe(true);
-  });
-
-  it("returns false for Latin-only text", () => {
-    expect(hasCjkCodepoints("hello world")).toBe(false);
-  });
-
-  it("returns false for accented Latin characters (not CJK)", () => {
-    expect(hasCjkCodepoints("café")).toBe(false);
-  });
-
-  it("returns false for an empty string", () => {
-    expect(hasCjkCodepoints("")).toBe(false);
-  });
-
-  // WR-01 boundary guard: the compat-ideograph range must be F900–FAFF, NOT the
-  // literal glyph 豈 (U+8C48), which compiled to U+8C48–U+FBFF and wrongly matched
-  // ~27k codepoints incl. Yi/Vai/Hangul-Jamo. These pin the corrected boundaries.
-  it("returns false for a Yi Syllable (U+A000) — NOT CJK (WR-01 over-match guard)", () => {
-    expect(hasCjkCodepoints(String.fromCodePoint(0xa000))).toBe(false);
-  });
-
-  it("returns false for a Hangul Jamo leading consonant (U+1100) — not a syllable block", () => {
-    expect(hasCjkCodepoints(String.fromCodePoint(0x1100))).toBe(false);
-  });
-
-  it("returns true for a CJK Compatibility Ideograph (U+F900) — the INTENDED compat range", () => {
-    expect(hasCjkCodepoints(String.fromCodePoint(0xf900))).toBe(true);
-  });
-});
+// searchLcdImpl returns the LcdSearchResult wrapper with cjkZeroHit DERIVED from
+// the new scriptZeroHit (= scriptZeroHit === "cjk"). The standalone
+// hasCjkCodepoints export is DELETED (Plan 180-05): its corpus now gates the
+// dominantScript-based detection — re-asserted in the "dominantScript preserves
+// the hasCjkCodepoints corpus verdicts" block below. The cjkZeroHit cases below
+// keep proving the derived boolean still fires for PURE-CJK queries; the mixed
+// Latin-dominant case moved BY DESIGN (any-codepoint → dominant-script).
 
 describe("EFF-03-T-1 — CJK query with zero FTS hits returns cjkZeroHit=true", () => {
   it("searchLcdImpl returns cjkZeroHit=true when query has CJK codepoints and hits is empty", () => {
@@ -553,14 +508,28 @@ describe("EFF-03-T-3 — Non-CJK query returns cjkZeroHit=false regardless of hi
   });
 });
 
-describe("EFF-03-T-4 — Mixed CJK+Latin query with zero hits returns cjkZeroHit=true", () => {
-  it("searchLcdImpl returns cjkZeroHit=true for a mixed query with no matches", () => {
-    // Empty db — no matches. Query contains both Latin and CJK codepoints.
+describe("EFF-03-T-4 — mixed-script zero-hit signals by DOMINANT script (the by-design change)", () => {
+  it("a LATIN-dominant mixed query does NOT fire cjkZeroHit (was any-codepoint, now dominant-script)", () => {
+    // BY DESIGN (Plan 180-05): detection moved from "any CJK codepoint" to
+    // dominantScript. "hello 你好" is 5 Latin / 2 CJK = CJK share 0.286 < the 0.30
+    // threshold → dominant latin → NOT a CJK lane gap. The old any-codepoint test
+    // asserted true here; the new semantics route/signal by the dominant script.
     const db = baseTablesOnlyDb();
-
     const result = searchLcdImpl(db, "conv-a", "a", "hello 你好", { limit: 10, scope: "summaries" });
     expect(result.hits).toHaveLength(0);
-    // Query contains CJK codepoints AND hits is empty → cjkZeroHit must be true.
+    expect(result.cjkZeroHit).toBe(false);
+    expect(result.scriptZeroHit).toBeUndefined(); // latin-dominant → no signal
+  });
+
+  it("a CJK-dominant mixed query DOES fire cjkZeroHit (the dominant script is cjk)", () => {
+    // 你好世界 (4 CJK) + " hi" (2 Latin) → CJK share 0.67 ≥ 0.30 → dominant cjk.
+    const db = lcdDbWithTwins();
+    const result = searchLcdImpl(db, "conv-a", "a", `${String.fromCodePoint(0x4f60, 0x597d, 0x4e16, 0x754c)} hi`, {
+      limit: 10,
+      scope: "messages",
+    });
+    expect(result.hits).toHaveLength(0);
+    expect(result.scriptZeroHit).toBe("cjk");
     expect(result.cjkZeroHit).toBe(true);
   });
 });
@@ -917,10 +886,13 @@ describe("lcd-fts (180-05) — the bounded normalized-scan floor (all-short / tr
     expect(b.hits.some((h) => h.refId === "s-a")).toBe(false);
   });
 
-  it("the scan floor sets scanCapped=true and bounds results when more than the cap rows match", () => {
+  it("the scan floor sets scanCapped=true when it exhausts its row cap before finding enough hits", () => {
     const db = lcdDbWithTwins();
-    // Seed more than SCAN_ROW_CAP (2000) matching summary rows so a branch exhausts
-    // its cap with rows still remaining → scanCapped true; results bounded by limit.
+    // The honest DoS scenario: seed MORE than SCAN_ROW_CAP (2000) rows that do NOT
+    // contain the query token, so the scan examines the full cap newest-first,
+    // finds 0 hits, and stops at the cap with rows still unexamined → scanCapped.
+    // (If the rows matched, the early-exit at `limit` would stop BEFORE the cap and
+    // scanCapped would correctly stay false — that is the non-capped path.)
     const insert = db.prepare(`
       INSERT INTO lcd_summaries
         (summary_id, conversation_id, tenant_id, agent_id, session_key, kind, depth,
@@ -928,13 +900,24 @@ describe("lcd-fts (180-05) — the bounded normalized-scan floor (all-short / tr
       VALUES (?, 'conv-a', 't', 'agent-a', 's', 'leaf', 0, 1, 1, 1, 1, ?, '[]', 0, 0, ?)
     `);
     const txn = db.transaction(() => {
-      for (let i = 0; i < 2100; i++) insert.run(`s${i}`, `${HE_SEFARIM} ${HE_GAM}`, i);
+      for (let i = 0; i < 2100; i++) insert.run(`s${i}`, `english filler row ${i}`, i); // no Hebrew token
     });
     txn();
     const result = searchLcdImpl(db, "conv-a", "agent-a", HE_GAM, { limit: 5, scope: "summaries" });
     expect(result.lane).toBe("scan");
     expect(result.hits.length).toBeLessThanOrEqual(5);
     expect(result.scanCapped).toBe(true);
+  });
+
+  it("the scan floor leaves scanCapped falsy when the conversation fits within the cap", () => {
+    // A small conversation (well under the cap) → the cursor exhausts naturally,
+    // never hits the cap → scanCapped must be undefined/false (no false alarm).
+    const db = lcdDbWithTwins();
+    seedBaseSummary(db, { id: "s1", content: `${HE_SEFARIM} ${HE_GAM}`, createdAt: 1 });
+    const result = searchLcdImpl(db, "conv-a", "agent-a", HE_GAM, { limit: 5, scope: "summaries" });
+    expect(result.lane).toBe("scan");
+    expect(result.hits.map((h) => h.refId)).toContain("s1");
+    expect(result.scanCapped ?? false).toBe(false);
   });
 
   it("a Hebrew query on a trigram-ABSENT host routes to the scan floor (probe verdicts false)", () => {
