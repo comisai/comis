@@ -605,7 +605,7 @@ async function runSessionLocked(
     resourceLoaderOptions, promptResult, cachedSystemTokensEstimate, cachedFreshTailPreambleTokens,
   } = toolAssembly;
   const currentDiscoveryTracker: DiscoveryTracker | undefined = toolAssembly.currentDiscoveryTracker;
-  const { systemPrompt, systemPromptBlocks, dynamicPreamble, inlineMemory, recalledMemories } = promptResult;
+  const { systemPrompt, systemPromptBlocks, dynamicPreamble, inlineMemory, recalledMemories, userLanguage } = promptResult;
 
   const resourceLoader = new DefaultResourceLoader(resourceLoaderOptions);
   await resourceLoader.reload();
@@ -1680,6 +1680,7 @@ async function runSessionLocked(
     await postExecution({
       result, session, sm, config, msg, sessionKey, formattedKey, resolverRegisterKey, agentId,
       recalledMemories,
+      userMdLanguage: userLanguage, // DET-02 tier-2 (consumed by the degraded-reply resolver, 181-03)
       executionStartMs, executionId, executionOverrides,
       bridge, unsubscribe,
       contextEngineRef, ceSetup, streamSetup,
