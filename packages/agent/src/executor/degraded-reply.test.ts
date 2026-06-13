@@ -16,8 +16,14 @@ import { describe, it, expect } from "vitest";
 import {
   buildOutputStarvedAnnotation,
   buildContextExhaustedReply,
+  buildLoopDetectedReply,
   buildDegradedReply,
 } from "./degraded-reply.js";
+import {
+  selectOutputStarvedAnnotation,
+  selectContextExhaustedReply,
+  selectLoopDetectedReply,
+} from "./degraded-reply-i18n.js";
 
 describe("buildDegradedReply — deterministic per endReason (CWF-05-D, CWF-05-E)", () => {
   it("output_starved → returns the annotation string (non-empty)", () => {
@@ -224,5 +230,70 @@ describe("buildContextExhaustedReply — knob naming + incident ref (W4)", () =>
     it("is deterministic (same endReason → byte-identical reply)", () => {
       expect(buildDegradedReply("loop_detected")).toBe(buildDegradedReply("loop_detected"));
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GEN-02 (Phase 181-03): the builders gain an optional `language` tag and
+// DELEGATE string selection to degraded-reply-i18n.ts. A he/ar/ru tag yields
+// the localized reply (deep-equal to the matching selector); NO language arg
+// stays English byte-identical (I1) — the existing pins above already lock the
+// English vocabulary/security invariants and must stay green.
+// ---------------------------------------------------------------------------
+describe("GEN-02 — builders consume the resolved language tag (delegate to i18n)", () => {
+  // The warning marker (U+26A0 U+FE0F) — referenced via codepoints, never pasted.
+  const WARNING_MARKER = String.fromCodePoint(0x26a0, 0xfe0f);
+
+  it("buildContextExhaustedReply with language:'he' equals the he selector output", () => {
+    const opts = { cause: "oversized_input", capabilityClass: "small", traceId: "t" } as const;
+    expect(buildContextExhaustedReply({ ...opts, language: "he" })).toBe(
+      selectContextExhaustedReply("he", opts),
+    );
+  });
+
+  it("buildOutputStarvedAnnotation('ar') equals the ar selector output and carries the warning marker", () => {
+    const ar = buildOutputStarvedAnnotation("ar");
+    expect(ar).toBe(selectOutputStarvedAnnotation("ar"));
+    expect(ar).toContain(WARNING_MARKER);
+  });
+
+  it("buildLoopDetectedReply with language:'ru' equals the ru selector output", () => {
+    expect(buildLoopDetectedReply({ language: "ru", traceId: "x" })).toBe(
+      selectLoopDetectedReply("ru", { traceId: "x" }),
+    );
+  });
+
+  it("a he context-exhausted reply still names the cap knob path + (0 = uncapped) verbatim (I5)", () => {
+    const reply = buildContextExhaustedReply({ capabilityClass: "small", language: "he" });
+    expect(reply).toContain("contextEngine.budget.effectiveContextCapSmall");
+    expect(reply).toContain("(0 = uncapped)");
+  });
+
+  it("no language arg returns the English string byte-identical (I1) — context_exhausted", () => {
+    // The historical English reply, pinned literally (the byte-identical guard).
+    expect(buildContextExhaustedReply()).toBe(
+      "I was unable to process your request — the context window was exhausted " +
+        "before the model could run. Try raising the agent's context engine settings " +
+        "or narrowing the ask.",
+    );
+    // …and equals the en selector (single-sourced).
+    expect(buildContextExhaustedReply()).toBe(selectContextExhaustedReply("en", {}));
+  });
+
+  it("no language arg returns the English string byte-identical (I1) — output_starved + loop_detected", () => {
+    expect(buildOutputStarvedAnnotation()).toBe(selectOutputStarvedAnnotation("en"));
+    expect(buildLoopDetectedReply()).toBe(selectLoopDetectedReply("en", {}));
+  });
+
+  it("buildDegradedReply forwards the language tag to all three endReasons", () => {
+    expect(buildDegradedReply("output_starved", { language: "he" })).toBe(
+      selectOutputStarvedAnnotation("he"),
+    );
+    expect(buildDegradedReply("context_exhausted", { language: "ar", capabilityClass: "nano" })).toBe(
+      selectContextExhaustedReply("ar", { capabilityClass: "nano" }),
+    );
+    expect(buildDegradedReply("loop_detected", { language: "ru", traceId: "z" })).toBe(
+      selectLoopDetectedReply("ru", { traceId: "z" }),
+    );
   });
 });
