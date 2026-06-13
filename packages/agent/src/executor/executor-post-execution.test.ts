@@ -15,8 +15,8 @@
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, it, expect, vi } from "vitest";
-import { buildSessionEndMetadata, shouldStorePairedMemory, shouldRunLcdStorePasses, emitSessionSummary, END_REASON_MAP, promoteOutputStarved, promoteNarrationStall, unrecoveredFailedToolNames } from "./executor-post-execution.js";
+import { describe, it, expect, expectTypeOf, vi } from "vitest";
+import { buildSessionEndMetadata, shouldStorePairedMemory, shouldRunLcdStorePasses, emitSessionSummary, END_REASON_MAP, promoteOutputStarved, promoteNarrationStall, unrecoveredFailedToolNames, type PostExecutionParams } from "./executor-post-execution.js";
 import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildDegradedReply } from "./degraded-reply.js";
 import { buildSessionHealthRollup, type SessionHealthRollup } from "./session-health-rollup.js";
 import { attributeRecallUsage } from "../rag/recall-attribution.js";
@@ -2218,5 +2218,59 @@ describe("W4 — onCondensed callback seam (built-not-wired guard for Phase 172-
       .join("\n");
     // The onCondensed param must be passed to runCondensePassAfterTurn
     expect(stripped).toMatch(/onCondensed\s*:/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DET-02 tier-2 plumbing: PostExecutionParams.userMdLanguage threads from
+// prompt assembly so the degraded-reply resolver (GEN-02, wired in 181-03) can
+// read the USER.md preferred language. THIS plan adds the param + the wiring
+// only — no resolver call here. The en/undefined path must stay byte-identical
+// (I1): the field is optional, so a config that never sets it is unchanged.
+//
+// RED proof: the type-level pin below references `userMdLanguage` as a key of
+// PostExecutionParams via Pick<>; on the pre-patch interface that key does not
+// exist, so the file FAILS to type-check (tsc -b packages/agent). The
+// source-grep wiring pins fail because the field is not threaded yet.
+// ---------------------------------------------------------------------------
+describe("DET-02 tier-2 — userMdLanguage threads into PostExecutionParams", () => {
+  it("PostExecutionParams declares userMdLanguage as an optional string (type contract)", () => {
+    // expectTypeOf is the repo's type-contract convention (see
+    // executor-tool-assembly-types.test.ts); enforced under vitest --typecheck.
+    expectTypeOf<PostExecutionParams["userMdLanguage"]>().toEqualTypeOf<string | undefined>();
+    expect(true).toBe(true);
+  });
+
+  it("source-grep — PostExecutionParams interface declares an optional userMdLanguage field", () => {
+    // The enforceable RED: the interface must carry `userMdLanguage?: string`.
+    // On the pre-patch interface this field is absent → fails.
+    const src = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
+    const ifaceBlock = src.match(/export interface PostExecutionParams \{[\s\S]*?\n\}/);
+    expect(ifaceBlock, "PostExecutionParams interface must exist").not.toBeNull();
+    expect(ifaceBlock![0]).toMatch(/userMdLanguage\?\s*:\s*string/);
+  });
+
+  it("source-grep — assembleExecutionPrompt returns userLanguage (so pi-executor can thread it)", () => {
+    const src = readFileSync(resolve(here, "prompt-assembly.ts"), "utf-8");
+    const stripped = src
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("//"))
+      .join("\n");
+    // The function's return object literal must carry userLanguage.
+    expect(stripped).toMatch(/return\s*\{[^}]*\buserLanguage\b/);
+  });
+
+  it("source-grep — pi-executor threads userLanguage into the postExecution call as userMdLanguage", () => {
+    const src = readFileSync(resolve(here, "pi-executor/pi-executor.ts"), "utf-8");
+    const stripped = src
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("//"))
+      .join("\n");
+    // promptResult destructure surfaces userLanguage …
+    expect(stripped).toMatch(/const\s*\{[^}]*\buserLanguage\b[^}]*\}\s*=\s*promptResult/);
+    // … and the postExecution({...}) call passes it as userMdLanguage.
+    expect(stripped).toMatch(/userMdLanguage\s*:\s*userLanguage/);
   });
 });
