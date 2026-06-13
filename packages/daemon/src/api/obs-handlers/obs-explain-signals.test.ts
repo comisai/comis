@@ -793,3 +793,77 @@ describe("promptTimeout derivation (LAT-04)", () => {
     expect(s.promptTimeout).toBeUndefined();
   });
 });
+
+describe("toIncidentSignals — RECALL-01 memory.recalled aggregation", () => {
+  function recall(
+    seq: number,
+    finalCount: number,
+    extra: Record<string, unknown> = {},
+  ): Record<string, unknown> {
+    return event("memory.recalled", seq, {
+      lanes: 3,
+      ftsCandidates: 8,
+      vectorCandidates: 5,
+      entityCandidates: 2,
+      finalCount,
+      rerankerAvailable: true,
+      durationMs: 12,
+      ...extra,
+    });
+  }
+
+  it("aggregates recall count, zero-hits, and the TERMINAL recall shape (last wins)", () => {
+    const s = toIncidentSignals([
+      recall(1, 4, { lanes: 2 }),
+      recall(2, 0, { lanes: 3 }),
+      recall(3, 7, { lanes: 4, rerankerAvailable: false }),
+    ]);
+    expect(s.recall).toEqual({
+      recalls: 3,
+      zeroHits: 1, // only seq=2 returned finalCount 0
+      lastLanes: 4, // seq=3 is terminal
+      lastFinalCount: 7,
+      rerankerAvailable: false,
+    });
+  });
+
+  it("counts every zero-hit recall (finalCount === 0 is a recall MISS)", () => {
+    const s = toIncidentSignals([recall(1, 0), recall(2, 0), recall(3, 0)]);
+    expect(s.recall?.recalls).toBe(3);
+    expect(s.recall?.zeroHits).toBe(3);
+    expect(s.recall?.lastFinalCount).toBe(0);
+  });
+
+  it("omits the recall section entirely when the trajectory has no recall records", () => {
+    const s = toIncidentSignals([event("session.started", 0, { channel: { type: "discord", id: "c1" } })]);
+    expect(s.recall).toBeUndefined();
+  });
+
+  it("treats a missing finalCount as a zero-hit (defensive — never trusts a partial row to be a hit)", () => {
+    const s = toIncidentSignals([event("memory.recalled", 1, { lanes: 2, rerankerAvailable: true })]);
+    expect(s.recall?.zeroHits).toBe(1);
+    expect(s.recall?.lastFinalCount).toBe(0);
+  });
+
+  it("carries only counts/booleans — never query text or memory bodies (content-free)", () => {
+    const s = toIncidentSignals([
+      event("memory.recalled", 1, {
+        lanes: 3,
+        finalCount: 2,
+        rerankerAvailable: true,
+        // A hostile/over-eager producer leaking text must not survive into signals.
+        query: "what is the user's home address",
+        memories: ["123 Main St"],
+      }),
+    ]);
+    expect(s.recall).toEqual({
+      recalls: 1,
+      zeroHits: 0,
+      lastLanes: 3,
+      lastFinalCount: 2,
+      rerankerAvailable: true,
+    });
+    expect(JSON.stringify(s.recall)).not.toContain("Main St");
+    expect(JSON.stringify(s.recall)).not.toContain("home address");
+  });
+});

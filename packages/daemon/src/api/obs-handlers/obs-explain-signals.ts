@@ -98,6 +98,11 @@ interface Acc {
    *  strip-retry self-heal outcome (one strip-retry per session means at most
    *  a handful; the terminal repair state explains the end). */
   toolSchemaUnsupported?: IncidentSignals["toolSchemaUnsupported"];
+  /** RECALL-01: aggregated over `memory.recalled` records — how many recalls ran,
+   *  how many returned zero injected memories, and the TERMINAL recall's shape. */
+  recallCount: number;
+  recallZeroHits: number;
+  lastRecall?: { lanes: number; finalCount: number; rerankerAvailable: boolean };
   /** W8: event-shape tool.result toolCallIds already counted (dedup — the same
    *  call must not count twice if its result event is duplicated across sources). */
   seenToolResultCallIds: Set<string>;
@@ -355,6 +360,20 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
       });
       return;
     }
+    case "memory.recalled": {
+      // RECALL-01: aggregate the per-recall outcome. finalCount === 0 is a recall
+      // MISS (no memories injected); the LAST recall is the terminal state. Counts
+      // only — the bridged record never carries query text or memory bodies.
+      acc.recallCount += 1;
+      const finalCount = asNumber(data.finalCount) ?? 0;
+      if (finalCount === 0) acc.recallZeroHits += 1;
+      acc.lastRecall = {
+        lanes: asNumber(data.lanes) ?? 0,
+        finalCount,
+        rerankerAvailable: data.rerankerAvailable === true,
+      };
+      return;
+    }
     case "execution.tool_schema_unsupported": {
       // GBNF-02 (Phase 175): the strip-retry self-heal record (Plan 05 bridge
       // mapping). LAST record wins — the terminal repair state explains the
@@ -404,6 +423,8 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     synthesizedBreakerTools: new Set(),
     misclassTokenByTool: new Map(),
     seenToolResultCallIds: new Set(),
+    recallCount: 0,
+    recallZeroHits: 0,
     sessionKey: "",
     seq: 0,
   };
@@ -488,6 +509,17 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     ...(acc.promptTimeout !== undefined ? { promptTimeout: acc.promptTimeout } : {}),
     ...(acc.toolSchemaUnsupported !== undefined
       ? { toolSchemaUnsupported: acc.toolSchemaUnsupported }
+      : {}),
+    ...(acc.recallCount > 0 && acc.lastRecall !== undefined
+      ? {
+          recall: {
+            recalls: acc.recallCount,
+            zeroHits: acc.recallZeroHits,
+            lastLanes: acc.lastRecall.lanes,
+            lastFinalCount: acc.lastRecall.finalCount,
+            rerankerAvailable: acc.lastRecall.rerankerAvailable,
+          },
+        }
       : {}),
     ...(acc.agentId !== undefined ? { agentId: acc.agentId } : {}),
     ...(acc.channel !== undefined ? { channel: acc.channel } : {}),

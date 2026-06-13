@@ -166,6 +166,22 @@ export const IncidentReportSchema = z.object({
    *  session's trajectory carries `context.budget` records; additive, schemaVersion
    *  stays 1). */
   contextBudget: IncidentContextBudgetSchema.optional(),
+  /** RECALL-01 (observability-excellence): memory-recall outcome aggregated over the
+   *  session's `memory.recalled` trajectory records (the #1 blind spot — recall was
+   *  invisible to obs.explain). Counts/booleans ONLY — never query text or memory bodies
+   *  (§2.7). Optional + additive (present only when the trajectory carries recall records). */
+  recall: z
+    .object({
+      /** Number of recall queries the session issued. */
+      recalls: z.number(),
+      /** How many returned ZERO injected memories (a recall miss). */
+      zeroHits: z.number(),
+      /** The terminal recall's lane count / final injected count / reranker availability. */
+      lastLanes: z.number(),
+      lastFinalCount: z.number(),
+      rerankerAvailable: z.boolean(),
+    })
+    .optional(),
   summary: z.string(),
   likelyRootCause: z
     .object({
@@ -320,6 +336,15 @@ export interface IncidentSignals {
    */
   endReason?: string;
   /**
+   * RECALL-01: the report's authoritative `outcome.degraded` flag (derived by the
+   * assembler from the closed HARD_FAILURE/DEGRADED end-reason sets), threaded by
+   * the handler alongside `endReason`. Lets the `recall_miss` heuristic gate on
+   * genuine degradation instead of re-deriving it from endReason strings (a
+   * zero-hit recall on a healthy turn is benign and must never name a cause).
+   * Absent ⇒ the rule does not fire.
+   */
+  degraded?: boolean;
+  /**
    * W3: the terminal per-call budget equation from the trajectory's
    * `context.budget` records (last wins). Lets the `context_exhausted`
    * heuristic produce a numbers-backed verdict naming the cap knob and the
@@ -335,6 +360,19 @@ export interface IncidentSignals {
    * knob suggestion when `endReason` is "timeout").
    */
   promptTimeout?: IncidentPromptTimeout;
+  /**
+   * RECALL-01: memory-recall outcome aggregated over the session's
+   * `memory.recalled` trajectory records. Lets the `recall_miss` heuristic name a
+   * zero-hit recall on a degraded session (the #1 blind spot). Counts/booleans
+   * only. Absent ⇒ no recall records in the trajectory (omitted from the report).
+   */
+  recall?: {
+    recalls: number;
+    zeroHits: number;
+    lastLanes: number;
+    lastFinalCount: number;
+    rerankerAvailable: boolean;
+  };
 }
 
 /**

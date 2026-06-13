@@ -7795,6 +7795,34 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
           ],
           "additionalProperties": false
         },
+        "recall": {
+          "type": "object",
+          "properties": {
+            "recalls": {
+              "type": "number"
+            },
+            "zeroHits": {
+              "type": "number"
+            },
+            "lastLanes": {
+              "type": "number"
+            },
+            "lastFinalCount": {
+              "type": "number"
+            },
+            "rerankerAvailable": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "recalls",
+            "zeroHits",
+            "lastLanes",
+            "lastFinalCount",
+            "rerankerAvailable"
+          ],
+          "additionalProperties": false
+        },
         "summary": {
           "type": "string"
         },
