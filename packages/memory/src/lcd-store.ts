@@ -58,7 +58,8 @@ import {
 } from "@comis/core";
 import type { LcdSearchResult } from "@comis/core";
 import { randomUUID } from "node:crypto";
-import { renderMessageFtsText, searchLcdImpl, isFtsAvailable } from "./lcd-fts.js";
+import { searchLcdImpl } from "./lcd-fts.js";
+import { createFtsPopulator } from "./lcd-store-fts-populate.js";
 import { createIngestSerializer } from "./lcd-ingest-serializer.js";
 import {
   buildAppendCondensedSummaryTxn,
@@ -76,7 +77,6 @@ import {
   ctxCountRowMapper,
   ctxMaxOrdinalRowMapper,
   summaryMessageIdRowMapper,
-  messageRowidRowMapper,
   cursorRowMapper,
   parseMetadata,
   parseJsonColumn,
@@ -208,17 +208,14 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
     ORDER BY m.seq
   `);
 
-  // Contentless lcd_messages_fts populate (gap #1): one row per appended message,
-  // rowid joinable to the lcd_messages rowid, content = rendered part-text. Only
-  // run when the FTS table exists (guarded at the call site so an FTS-less host's
-  // append never throws).
-  const insertMessageFts = db.prepare(
-    "INSERT INTO lcd_messages_fts(rowid, content, conversation_id, agent_id, message_id) VALUES (?, ?, ?, ?, ?)",
-  );
-
-  // The just-inserted message's rowid — keeps lcd_messages_fts.rowid joinable to
-  // lcd_messages.rowid. Bound by the message id.
-  const selectMessageRowid = db.prepare("SELECT rowid FROM lcd_messages WHERE id = ?");
+  // FTS populate (the index-write half of search) — extracted to
+  // ./lcd-store-fts-populate.ts so this adapter stays under the 800-line cap
+  // (mirrors the lcd-store-writes.ts / lcd-fts.ts extractions). Prepares the
+  // word-lane + trigram-twin statements ONCE here (the "prepare once" discipline
+  // is preserved) and exposes the gated populate methods appendTxn / the summary
+  // write transactions call. Normalization for the twins lives there (the I7
+  // single call site), so this file never folds search text itself.
+  const ftsPopulator = createFtsPopulator(db);
 
   // The covered run [start,end] (inclusive), ordinal-ascending — used to gather
   // the message refIds the new summary links + to count descendants. R4: the
@@ -496,45 +493,11 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
     );
 
     // E1 (gap #1): populate the CONTENTLESS lcd_messages_fts with the rendered
-    // part-text so ctx_search finds this message. lcd_messages has no content
-    // column (text is JSON in the parts), so the adapter — not a trigger — is the
-    // only place that can render + index it; keep the FTS rowid in step with the
-    // lcd_messages rowid (joinable).
-    //
-    // WR-03: GATE the populate on isFtsAvailable(db) (memoized per db). On an
-    // FTS5-uncompiled host the lcd_*_fts tables are absent, so this is a CLEAN
-    // CONDITIONAL SKIP — the EXPECTED degraded-host case no longer rides the
-    // exception path (the old bare `catch {}` swallowed it indistinguishably from
-    // a genuine fault, masking a real populate regression — search would silently
-    // degrade with no signal). The remaining narrow try/catch then covers ONLY a
-    // genuinely-exceptional populate failure (e.g. on-disk FTS corruption after a
-    // healthy boot). The swallow is RETAINED — and must be — because appendTxn is
-    // a db.transaction: re-throwing would roll back the message+parts write the
-    // contentless index is merely best-effort for (LOSSLESS-CLAW §4: the lossless
-    // base tables are authoritative; search is a recoverable derived index that
-    // the LIKE fallback also covers). @comis/memory is intentionally logger-free
-    // (AGENTS.md §2.4 — no getLogger import), so this content-free swallow is the
-    // floor; the agent-side boundary-observability line for FTS-populate health
-    // rides the injected-logger write path (Plan 128), not this layer.
-    if (isFtsAvailable(db)) {
-      try {
-        const parsedRowid = messageRowidRowMapper.parseOptionalRow(selectMessageRowid.get(messageId));
-        if (parsedRowid.ok && parsedRowid.value) {
-          insertMessageFts.run(
-            parsedRowid.value.rowid,
-            renderMessageFtsText(input.parts),
-            input.scope.conversationId,
-            input.scope.agentId, // R4: agent_id UNINDEXED so the FTS MATCH filters by agent (WR-02)
-            messageId,
-          );
-        }
-      } catch {
-        // FTS available at boot but the populate INSERT failed (genuinely
-        // exceptional — e.g. FTS index corruption). Best-effort: skip indexing
-        // THIS message rather than fail the authoritative base-table write
-        // (cannot re-throw inside the txn). The LIKE fallback still covers it.
-      }
-    }
+    // part-text so ctx_search finds this message (extracted to
+    // ./lcd-store-fts-populate.ts — byte-identical: same gate on isFtsAvailable,
+    // same rowid resolve + insert, same narrow swallow because appendTxn is a
+    // db.transaction and the contentless index is best-effort only).
+    ftsPopulator.populateMessageFts(messageId, input.parts, input.scope);
   });
 
   return {
