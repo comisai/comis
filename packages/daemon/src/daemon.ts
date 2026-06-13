@@ -96,6 +96,9 @@ import {
   writeMasterKeyIfAbsent,
   preReadStorageMode,
   systemNowMs,
+  resolveMultilingual,
+  EMBED_MULTILINGUAL,
+  RERANK_MULTILINGUAL,
   ObsExplainContract,
   ObsFleetHealthContract,
   type SecretStorePort,
@@ -1578,7 +1581,20 @@ async function bootFoundation(
 
   // I2: one-shot model_health boot snapshot — embedding/reranker load-level
   // signals as a queryable obs_diagnostics row (no-ops when persistence off).
-  recordModelHealth(obsStore, { embeddingAvailable: !!cachedPort, rerankerModelPresent, rerankerBuilt: rerankerPort !== undefined }, clock);
+  // EMB-01: resolve the embedder id PROVIDER-AWARE from the embedding block
+  // (mirror setup-memory.ts:308,316), NOT the legacy memory embedding-model field
+  // (Pitfall 3), plus the reranker default. Run the pure core heuristic, pass two
+  // advisory booleans. Advisory only — nothing gates recall (I4; FTS floor carries).
+  const embCfg = container.config.embedding;
+  const embedModelId = embCfg.provider === "openai" ? embCfg.openai.model : embCfg.local.modelUri;
+  const rerankerModelId = container.config.memory.rerankerModel;
+  recordModelHealth(obsStore, {
+    embeddingAvailable: !!cachedPort,
+    rerankerModelPresent,
+    rerankerBuilt: rerankerPort !== undefined,
+    embeddingMultilingual: resolveMultilingual(embCfg.multilingual, embedModelId, EMBED_MULTILINGUAL),
+    rerankerMultilingual: resolveMultilingual(undefined, rerankerModelId, RERANK_MULTILINGUAL),
+  }, clock);
 
   // Create daemon-level runtime registries
   const activeRunRegistry = createActiveRunRegistry();
