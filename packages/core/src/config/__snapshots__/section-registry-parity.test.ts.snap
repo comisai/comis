@@ -5556,6 +5556,11 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("embed
     "type": "string"
   },
   {
+    "immutable": false,
+    "path": "embedding.multilingual",
+    "type": "boolean"
+  },
+  {
     "default": {
       "dimensions": 1536,
       "model": "text-embedding-3-small"
@@ -11034,6 +11039,11 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "immutable": false,
     "path": "embedding.local.modelsDir",
     "type": "string"
+  },
+  {
+    "immutable": false,
+    "path": "embedding.multilingual",
+    "type": "boolean"
   },
   {
     "default": {
@@ -33090,6 +33100,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "contextSize"
           ],
           "type": "object"
+        },
+        "multilingual": {
+          "type": "boolean"
         },
         "openai": {
           "additionalProperties": false,
