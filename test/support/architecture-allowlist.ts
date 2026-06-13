@@ -1809,10 +1809,6 @@ export const coverageWaiver: readonly CoverageWaiverEntry[] = [
     reason: "Leaf injector from a split —Concern 4 (store flag for Responses API + storeCompletions) + isResponsesApiProvider helper. Behavior covered by factory.test.ts (store integration tests inside createRequestBodyInjector).",
   },
   {
-    file: "packages/agent/src/executor/stream-wrappers/request-body/token-estimation.ts",
-    reason: "Single-function leaf from a split(estimateBlockTokens). Behavior covered by factory.test.ts (TTL estimation cleanup).",
-  },
-  {
     file: "packages/agent/src/executor/stream-wrappers/request-body/tool-cache.ts",
     reason: "Factory phase from a split(rendered tool cache + per-tool memoization). Behavior covered by factory.test.ts (Rendered tool cache, all-deferred tool hash skip, per-tool content-addressed memoization).",
   },

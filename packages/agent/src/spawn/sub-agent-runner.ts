@@ -320,6 +320,9 @@ export interface SpawnParams {
   domainKnowledge?: string[];
   /** Tool group names for sub-agent tool filtering. */
   toolGroups?: string[];
+  /** Inherited reply language (DET-02 tag) from the parent ALS; persisted into child
+   *  session metadata as `language` so it survives the spawn round-trip (GEN-03). */
+  resolvedLanguage?: string;
   /** Optional list of tool names that must be reachable by the sub-agent.
    *  Validated at spawn time against the daemon-provided reachableToolNames set.
    *  If any tool is unreachable, spawn() throws RequiredToolsUnreachableError
@@ -1043,6 +1046,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           maxSpawnDepth: maxDepth,
           artifactRefs: params.artifactRefs ?? [],
           objective: params.objective ?? "",
+          language: params.resolvedLanguage,
           domainKnowledge: params.domainKnowledge ?? [],
           toolGroups: params.toolGroups ?? [],
           includeParentHistory: params.includeParentHistory ?? "none",
@@ -1076,6 +1080,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         maxSpawnDepth: maxDepth,
         artifactRefs: params.artifactRefs ?? [],
         objective: params.objective ?? "",
+        language: params.resolvedLanguage,
         domainKnowledge: params.domainKnowledge ?? [],
         toolGroups: params.toolGroups ?? [],
         includeParentHistory: params.includeParentHistory ?? "none",

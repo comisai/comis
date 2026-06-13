@@ -1875,6 +1875,44 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // Shrinks when the daemon wiring or a cross-package consumer imports them by name.
       "LcdProvenanceReadStore",
       "AppendProvenanceInput",
+      // ── script classification (Phase 179) ───────────────────────────
+      // SCRIPT_CLASSES + the classifier functions ship dark in 179. Phase 180's
+      // consumers landed (FTS routing + the OBS-01 event sites + the LcdSearchResult
+      // widening), so the symbols that gained a real cross-package consumer were
+      // SHRUNK from this list in plan 180-08:
+      //   - dominantScript → value-consumed by @comis/memory (lcd-fts.ts) AND
+      //     @comis/agent (compaction-zone-helpers.ts, the summary_language_mismatch
+      //     detector) — REMOVED.
+      //   - ScriptClass → type-consumed by @comis/memory (lcd-fts.ts LcdSearchResult
+      //     `scriptZeroHit`) — REMOVED.
+      // The following SURVIVE — their only consumers are core-internal (relative
+      // imports inside packages/core/src/text), which the cross-package AST walker
+      // does not count, so removing them would fail public-export-consumers:
+      //   - scriptShares: the expected Phase 181 DET-02 (reply-language resolver)
+      //     consumer; today used only inside dominantScript (script-classes.ts).
+      //   - classifyCodepoint: consumed only by core-internal token-factor.ts +
+      //     trigram-query.ts (relative imports) — no cross-package caller yet.
+      //   - SCRIPT_CLASSES / ScriptClassRow: the data table + its row type; consumed
+      //     only inside core (script-classes.ts / token-factor.ts) — Phase 181/182.
+      // Shrink each remaining entry as a real cross-package production caller lands.
+      "SCRIPT_CLASSES",
+      "ScriptClassRow",
+      "classifyCodepoint",
+      "scriptShares",
+      // ── search primitives (Phase 180) ───────────────────────────────
+      // normalizeForSearch (FTS-02) + routeSearchQuery/TrigramRoute/SearchLane
+      // (FTS-01) shipped dark in plan 180-01. Plan 180-08 swept these now that the
+      // memory/cli consumers (plans 180-04..180-07) exist:
+      //   - normalizeForSearch → value-consumed by @comis/memory (lcd-store-fts-populate,
+      //     row-mapper, sqlite-memory-consolidation-store, lcd-fts) AND @comis/cli
+      //     (doctor/repairs/repair-lcd) — REMOVED.
+      //   - routeSearchQuery → value-consumed by @comis/memory (lcd-fts, hybrid-search)
+      //     — REMOVED.
+      //   - SearchLane → type-consumed by @comis/memory (lcd-fts.ts) — REMOVED.
+      // TrigramRoute SURVIVES: routeSearchQuery returns it, but no cross-package file
+      // imports the type NAME (callers use it inline via the returned value), so the
+      // walker still counts it an orphan. Shrink when a consumer imports it by name.
+      "TrigramRoute",
     ])],
     // @comis/daemon: baseline orphans tracked here. All three
     // value-side root re-exports (createAnnouncementDeadLetterQueue,

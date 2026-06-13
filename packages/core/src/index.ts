@@ -18,4 +18,5 @@ export * from "./exports/runtime.js";
 export * from "./exports/oauth.js";
 export * from "./exports/model.js";
 export * from "./exports/workspace.js";
+export * from "./exports/text.js";
 export * from "./api-contracts/index.js";

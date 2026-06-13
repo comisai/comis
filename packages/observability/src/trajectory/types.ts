@@ -143,6 +143,9 @@ export const TRAJECTORY_EVENT_TYPES = [
   "context.overflow",
   "context.integrity",
   "context.rehydrated",
+  // OBS-01 (Phase 180): the two multilingual signals on the explain timeline.
+  "context.script_zero_hit",
+  "context.summary_language_mismatch",
 
   // Approval / human-in-the-loop
   "approval.requested",

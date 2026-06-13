@@ -219,7 +219,7 @@ import { setupSingleAgent } from "./wiring/setup-agents/index.js";
 import { buildDialecticWiring, dialecticWiringDepsFromBoot } from "./wiring/setup-dialectic.js";
 import { createConversationReset } from "./wiring/conversation-reset.js";
 import { setupSecretManager } from "./wiring/setup-secret-manager.js";
-import { restoreApprovalState, resolveGatewayTokens, setupChannelHealthMonitor } from "./wiring/main-helpers.js";
+import { restoreApprovalState, resolveGatewayTokens, setupChannelHealthMonitor, resolveModelHealthMultilingual } from "./wiring/main-helpers.js";
 import { createInboundMessageIdResolver, type InboundMessageIdResolver } from "./wiring/inbound-message-id-resolver.js";
 import { logOperationModelDryRun } from "./wiring/startup-dry-run.js";
 import { emitDockerRestartPolicyWarn } from "./setup-docker-restart-warn.js";
@@ -1578,7 +1578,12 @@ async function bootFoundation(
 
   // I2: one-shot model_health boot snapshot — embedding/reranker load-level
   // signals as a queryable obs_diagnostics row (no-ops when persistence off).
-  recordModelHealth(obsStore, { embeddingAvailable: !!cachedPort, rerankerModelPresent, rerankerBuilt: rerankerPort !== undefined }, clock);
+  // EMB-01 adds the two advisory multilingual booleans (provider-aware resolution
+  // in resolveModelHealthMultilingual; advisory only — no recall gated, I4).
+  recordModelHealth(obsStore, {
+    embeddingAvailable: !!cachedPort, rerankerModelPresent, rerankerBuilt: rerankerPort !== undefined,
+    ...resolveModelHealthMultilingual(container.config),
+  }, clock);
 
   // Create daemon-level runtime registries
   const activeRunRegistry = createActiveRunRegistry();

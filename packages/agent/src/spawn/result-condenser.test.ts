@@ -238,6 +238,47 @@ describe("ResultCondenser", () => {
     expect(generateSummary).not.toHaveBeenCalled();
   });
 
+  it("Level 3: dense-script (Hebrew) truncation respects maxResultTokens under the module's own factored measure (WR-02)", async () => {
+    const maxResultTokens = 500;
+    const deps = createTestDeps({ maxResultTokens });
+    const condenser = createResultCondenser(deps);
+
+    // Pure Hebrew letters + neutral spaces -> scriptTokenFactor 0.5. Pre-fix
+    // headTailTruncate's char budget stayed flat maxTokens*4 while its own
+    // estimateTokens became factored (TOK-01), so the truncated output
+    // measured ~2x maxResultTokens by the SAME measure that routed it to
+    // Level 3 -> RED. tokens->chars is the OUTPUT direction here: a flat
+    // budget over-emits, the inverse of the conservative reservation sites.
+    const he = "שלום עולם זה מבחן ארוך מאוד בעברית "; // 35 UTF-16 units
+    const fullResult = he.repeat(120); // 4200 chars >> any budget
+
+    const result = await condenser.condense(createTestParams({ fullResult })); // no model -> Level 3
+
+    expect(result.level).toBe(3);
+    // Only the omission-marker overhead (~30 ASCII chars, pre-existing) may
+    // ride above the cap: 10% slack. Pre-fix: ~1013 condensed tokens -> RED.
+    expect(result.condensedTokens).toBeLessThanOrEqual(Math.ceil(maxResultTokens * 1.1));
+  });
+
+  it("Level 3: pure-ASCII truncation budget stays byte-identical to flat maxTokens*4 (I1 pin, WR-02)", async () => {
+    const maxResultTokens = 100;
+    const deps = createTestDeps({ maxResultTokens });
+    const condenser = createResultCondenser(deps);
+
+    const fullResult = makeString(2000);
+    const result = await condenser.condense(createTestParams({ fullResult }));
+
+    expect(result.level).toBe(3);
+    // Recompute the EXACT flat-budget head/tail join the (mocked, byte=char)
+    // truncators produce: ASCII factor 1.0 must not change a single char.
+    const budget = maxResultTokens * CHARS_PER_TOKEN; // 400 — flat == factored for ASCII
+    const head = fullResult.slice(0, Math.floor(budget * 0.6));
+    const tail = fullResult.slice(-Math.floor(budget * 0.4));
+    const omitted = fullResult.length - head.length - tail.length;
+    const combined = `${head}\n\n[... ${omitted} chars omitted ...]\n\n${tail}`;
+    expect(result.condensedTokens).toBe(Math.ceil(combined.length / CHARS_PER_TOKEN));
+  });
+
   describe("Disk offload", () => {
     it("persists for Level 1", async () => {
       const deps = createTestDeps({ maxResultTokens: 1000 });

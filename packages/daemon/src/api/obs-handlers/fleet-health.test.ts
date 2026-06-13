@@ -642,6 +642,99 @@ describe("buildFindings — config_posture:served_below_configured (KNOB-03)", (
   });
 });
 
+// ---------------------------------------------------------------------------
+// OBS-01 / Phase 180 — the two dedicated multilingual fleet findings.
+// script_zero_hit rows group by (scriptClass, lane) into one finding per group
+// reading exactly "N non-Latin zero-hit searches (script=X, lane=Y)";
+// summary_language_mismatch rows roll up to one count whose hint names
+// contextEngine.compaction.strongerSummarizerModel. Both are dedicated branches
+// (the KNOB-03 precedent) — the generic `health_signal:<label>` loop must NOT
+// also emit a finding for these labels (no double-report). Counts/enums/hints
+// only — never raw WARN bodies (the v2.15 fleet rule).
+// RED: the dedicated branches do not exist yet, so today these surface only via
+// the generic `health_signal:script_zero_hit` rollup (wrong code + wrong detail
+// string + no named hint), failing every assertion below.
+// ---------------------------------------------------------------------------
+
+/** Insert one health_signal row at `ts` with the given details JSON. */
+function insertHealthSignal(store: ObservabilityStore, ts: number, details: string): void {
+  store.insertDiagnostic({
+    timestamp: ts,
+    category: "health_signal",
+    severity: "warning",
+    message: "context:script_zero_hit",
+    details,
+  });
+}
+
+describe("buildFindings — OBS-01 script_zero_hit dedicated finding", () => {
+  it("emits one finding per (scriptClass, lane) group with the exact detail string and the doctor-repair hint", async () => {
+    const now = systemNowMs();
+    const store = makeStore();
+    // Two hebrew/tri + one hebrew/word + one arabic/scan → 3 distinct groups.
+    insertHealthSignal(store, now - 1, JSON.stringify({ signal: "script_zero_hit", scriptClass: "hebrew", lane: "tri", conversationId: "c1" }));
+    insertHealthSignal(store, now - 2, JSON.stringify({ signal: "script_zero_hit", scriptClass: "hebrew", lane: "tri", conversationId: "c2" }));
+    insertHealthSignal(store, now - 3, JSON.stringify({ signal: "script_zero_hit", scriptClass: "hebrew", lane: "word", conversationId: "c3" }));
+    insertHealthSignal(store, now - 4, JSON.stringify({ signal: "script_zero_hit", scriptClass: "arabic", lane: "scan", conversationId: "c4" }));
+
+    const report = await assembleFleetHealthReport(
+      { obsStore: store, dataDir: emptyDataDir(), clock: createFakeClock(now) },
+      24,
+    );
+
+    const heTri = report.findings.find(
+      (f) => f.code === "script_zero_hit" && f.detail.includes("script=hebrew, lane=tri"),
+    );
+    expect(heTri).toBeDefined();
+    expect(heTri?.count).toBe(2);
+    expect(heTri?.detail).toBe("2 non-Latin zero-hit searches (script=hebrew, lane=tri)");
+    expect(heTri?.hint).toMatch(/comis doctor --repair/);
+
+    expect(
+      report.findings.some((f) => f.code === "script_zero_hit" && f.detail === "1 non-Latin zero-hit searches (script=hebrew, lane=word)"),
+    ).toBe(true);
+    expect(
+      report.findings.some((f) => f.code === "script_zero_hit" && f.detail === "1 non-Latin zero-hit searches (script=arabic, lane=scan)"),
+    ).toBe(true);
+
+    // No double-report: the generic health_signal:script_zero_hit rollup must NOT appear.
+    expect(report.findings.some((f) => f.code === "health_signal:script_zero_hit")).toBe(false);
+
+    // Bounded payload: no raw WARN body / query text in any finding detail.
+    for (const f of report.findings) {
+      expect(f.detail).not.toMatch(/conversationId|c1|c2|c3|c4/);
+    }
+  });
+});
+
+describe("buildFindings — OBS-01 summary_language_mismatch dedicated finding", () => {
+  it("rolls up to one count whose hint names contextEngine.compaction.strongerSummarizerModel", async () => {
+    const now = systemNowMs();
+    const store = makeStore();
+    for (let i = 0; i < 3; i += 1) {
+      store.insertDiagnostic({
+        timestamp: now - i,
+        category: "health_signal",
+        severity: "warning",
+        message: "context:summary_language_mismatch",
+        details: JSON.stringify({ signal: "summary_language_mismatch", sourceScript: "hebrew", summaryScript: "latin", depth: 1 }),
+      });
+    }
+
+    const report = await assembleFleetHealthReport(
+      { obsStore: store, dataDir: emptyDataDir(), clock: createFakeClock(now) },
+      24,
+    );
+
+    const finding = report.findings.find((f) => f.code === "summary_language_mismatch");
+    expect(finding).toBeDefined();
+    expect(finding?.count).toBe(3);
+    expect(finding?.hint).toMatch(/contextEngine\.compaction\.strongerSummarizerModel/);
+    // No double-report via the generic rollup.
+    expect(report.findings.some((f) => f.code === "health_signal:summary_language_mismatch")).toBe(false);
+  });
+});
+
 describe("bindFleetHealthHandlers (H1 — admin dual-layer gate)", () => {
   it("admin gate: missing _trustLevel:admin throws", async () => {
     const handlers = bindFleetHealthHandlers(makeDeps({ obsStore: makeStore(), clock: createFakeClock(systemNowMs()) }));

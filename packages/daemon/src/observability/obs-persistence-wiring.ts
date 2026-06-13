@@ -308,6 +308,71 @@ export function mcpReconnectFailedEventToRow(
   };
 }
 
+/**
+ * Map a `context:script_zero_hit` event payload (OBS-01, Phase 180 — a non-Latin
+ * search returned zero hits on a cleanly-executed lane) to a flat DiagnosticRow
+ * stored under `category:"health_signal"`. Severity is ALWAYS `"warning"`: this
+ * is a visibility-only signal with no gating, so — unlike `dagDegradedEventToRow`
+ * — it needs NO benign allow-set (`BENIGN_DAG_DEGRADED_REASONS`); every
+ * occurrence is a fleet-visible miss the operator may want to act on (rebuild the
+ * normalized twins via `comis doctor --repair`). The `details` JSON carries the
+ * closed `signal` label + the closed `scriptClass` enum + the closed `lane` union
+ * + the `conversationId` identifier ONLY — NEVER the query text or any tokens
+ * (§2.7; I8 the lossless store). `agentId`/`sessionKey` correlate the row to a
+ * conversation; `traceId` is absent on the payload. The fleet lens reads these
+ * rows so "Hebrew finds nothing" is queryable cross-session, not DEBUG-only.
+ */
+export function scriptZeroHitEventToRow(
+  payload: EventMap["context:script_zero_hit"],
+): DiagnosticRow {
+  return {
+    timestamp: payload.timestamp,
+    category: "health_signal",
+    severity: "warning",
+    agentId: payload.agentId,
+    sessionKey: payload.sessionKey,
+    message: "context:script_zero_hit",
+    details: JSON.stringify({
+      signal: "script_zero_hit",
+      scriptClass: payload.scriptClass,
+      lane: payload.lane,
+      conversationId: payload.conversationId,
+    }),
+    traceId: undefined,
+  };
+}
+
+/**
+ * Map a `context:summary_language_mismatch` event payload (OBS-01, Phase 180 — a
+ * summary whose dominant script diverged from its source chunk's) to a flat
+ * DiagnosticRow under `category:"health_signal"`, `severity:"warning"`. Like
+ * `scriptZeroHitEventToRow` this is visibility-only (no gating; a code-heavy
+ * chunk legitimately skews Latin via the 0.3 dominance threshold) so it carries
+ * NO benign allow-set — the operator reviews the COUNT, the fleet finding does
+ * not block anything. The `details` JSON carries the closed `signal` label + the
+ * closed `sourceScript`/`summaryScript` enums + the `depth` count ONLY — NEVER
+ * the summary or source body (§2.7).
+ */
+export function summaryLanguageMismatchEventToRow(
+  payload: EventMap["context:summary_language_mismatch"],
+): DiagnosticRow {
+  return {
+    timestamp: payload.timestamp,
+    category: "health_signal",
+    severity: "warning",
+    agentId: payload.agentId,
+    sessionKey: payload.sessionKey,
+    message: "context:summary_language_mismatch",
+    details: JSON.stringify({
+      signal: "summary_language_mismatch",
+      sourceScript: payload.sourceScript,
+      summaryScript: payload.summaryScript,
+      depth: payload.depth,
+    }),
+    traceId: undefined,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Factory types
 // ---------------------------------------------------------------------------
@@ -437,6 +502,15 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
   });
   eventBus.on("mcp:server:reconnect_failed", (payload) => {
     diagnosticBuffer.push(mcpReconnectFailedEventToRow(payload));
+  });
+  // OBS-01 (Phase 180): the two multilingual signals → health_signal rows (same
+  // diagnosticBuffer). Dark until the emit sites land (180-08); subscribed here
+  // so they reach the fleet lens the moment they fire.
+  eventBus.on("context:script_zero_hit", (payload) => {
+    diagnosticBuffer.push(scriptZeroHitEventToRow(payload));
+  });
+  eventBus.on("context:summary_language_mismatch", (payload) => {
+    diagnosticBuffer.push(summaryLanguageMismatchEventToRow(payload));
   });
 
   // c. Periodic channel snapshot timer

@@ -72,7 +72,7 @@ import type {
   ConsolidationFoldPlan,
   MemoryEntry,
 } from "@comis/core";
-import { systemNowMs } from "@comis/core";
+import { systemNowMs, normalizeForSearch } from "@comis/core";
 import { ok, err, type Result } from "@comis/shared";
 import { createRowMapper, rowToEntry, insertMemoryRow } from "./row-mapper.js";
 import { searchByVector } from "./hybrid-search.js";
@@ -199,13 +199,20 @@ export function createSqliteMemoryConsolidationStore(
   );
 
   // Grow the observation in place (partial-column UPDATE — NOT a full-row replace
-  // via the create-path insert helper). `content = COALESCE(?, content)` makes an
-  // omitted content a true no-op on the column → the `memories_au AFTER UPDATE OF
-  // content` FTS trigger does not re-index a proof-only fold (RESEARCH Pitfall 6,
-  // schema.ts:284). `trust_level = ?` writes plan.trustLevel VERBATIM — the
-  // adapter never recomputes/raises trust (the min ceiling is computed upstream;
-  // the adapter has no path to RAISE). Scoped on (tenant_id) +
-  // `proof_count IS NOT NULL` (defense-in-depth — the same predicate as the read).
+  // via the create-path insert helper). `content = COALESCE(?, content)` keeps an
+  // omitted content unchanged on the column. NOTE (probe-corrected 2026-06-13):
+  // an `AFTER UPDATE OF content` trigger DOES fire on the proof-only fold even
+  // though COALESCE(NULL, content) writes the same value — the trigger fires
+  // whenever the column is NAMED in SET, not only on a real change. For the word
+  // lane (`memories_au`) this is harmless (it delete+reinserts identical content
+  // into memory_fts). For the trigram twin lane the `memories_tri_au` trigger is
+  // guarded with `WHEN old.content IS NOT new.content`, so a proof-only fold does
+  // NOT de-index the twin; only a REAL rewrite de-indexes it, and the TS re-insert
+  // below restores the normalized twin row in that case (180-06).
+  // `trust_level = ?` writes plan.trustLevel VERBATIM — the adapter never
+  // recomputes/raises trust (the min ceiling is computed upstream; the adapter
+  // has no path to RAISE). Scoped on (tenant_id) + `proof_count IS NOT NULL`
+  // (defense-in-depth — the same predicate as the read).
   const growObservation = db.prepare(
     "UPDATE memories SET proof_count = ?, source_ids = ?, history = ?, confidence = ?, " +
       "occurred_at = ?, trust_level = ?, content = COALESCE(?, content), updated_at = ? " +
@@ -381,9 +388,12 @@ export function createSqliteMemoryConsolidationStore(
 
           // (c) Non-destructive history: append the prior content ONLY
           //     when the fold actually CHANGES content (a proof-only fold appends
-          //     nothing → no FTS churn, no history noise — Pitfall 6).
+          //     nothing → no FTS churn, no history noise — Pitfall 6). The same
+          //     predicate gates the trigram-twin re-insert in step (d').
+          const contentChanged =
+            plan.content !== undefined && plan.content !== target.content;
           const history = [...(target.history ?? [])];
-          if (plan.content !== undefined && plan.content !== target.content) {
+          if (contentChanged) {
             history.push({ previousContent: target.content, changedAt: plan.now });
           }
 
@@ -403,6 +413,29 @@ export function createSqliteMemoryConsolidationStore(
             plan.targetObservationId,
             plan.tenantId,
           );
+
+          // (d') FTS-01 (180-06): re-insert the NORMALIZED trigram twin row when
+          //      the fold REWROTE content. On a real change the 180-02
+          //      `memories_tri_au` trigger (WHEN old.content IS NOT new.content)
+          //      just DELETED the stale twin row, so without this re-insert the
+          //      grown observation would be de-indexed in the trigram lane. The
+          //      twin shares the base rowid (resolved by id select). A proof-only
+          //      fold (contentChanged === false) skips this — the WHEN guard left
+          //      the existing twin row intact (no churn). Same guarded shape as
+          //      the store-path twin write; never re-throw (would ROLLBACK the
+          //      authoritative grow). `plan.content!` is non-null here because
+          //      contentChanged requires plan.content !== undefined.
+          if (contentChanged) {
+            try {
+              db.prepare(
+                "INSERT INTO memory_fts_tri(rowid, content) VALUES ((SELECT rowid FROM memories WHERE id = ?), ?)",
+              ).run(plan.targetObservationId, normalizeForSearch(plan.content!));
+            } catch {
+              // Trigram twin absent on this host, or a genuinely-exceptional twin
+              // insert failure → leave the observation de-indexed in the trigram
+              // lane (fail-safe direction). The grow is authoritative and stands.
+            }
+          }
 
           // (e) Mark every NEW source consolidated_at — scoped, fail-closed,
           //     non-destructive (sets consolidated_at only; never deletes).

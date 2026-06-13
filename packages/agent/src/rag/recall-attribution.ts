@@ -58,14 +58,37 @@ const STOPWORDS: ReadonlySet<string> = new Set([
 const DEFAULT_MIN_OVERLAP = 0.15;
 
 /**
- * Lowercase, strip punctuation to spaces, and split into non-empty word tokens.
- * Deterministic and allocation-bounded by the input length.
+ * A token written entirely in Latin letters/digits. The STOPWORDS set is an
+ * English (Latin-script) function-word list; it must only ever drop Latin
+ * tokens. A non-Latin token whose lowercased form happens to transliterate near
+ * an English stopword — or any Hebrew/Arabic/Cyrillic/CJK token — is NEVER a
+ * stopword. Verbatim from `@comis/memory` buildFtsQuery (the proven in-repo
+ * Latin-gating pattern), kept inline so this file stays pure (no @comis/memory
+ * import; the agent↛memory build cut, architecture.test.ts "agent -> memory cut").
+ */
+const LATIN_TOKEN = /^[\p{Script=Latin}\p{N}]+$/u;
+
+/** True iff `t` is a Latin-script token that is in the English STOPWORDS set. */
+function isStopword(t: string): boolean {
+  return LATIN_TOKEN.test(t) && STOPWORDS.has(t);
+}
+
+/**
+ * Lowercase, split on any run of non-(letter|number) codepoints, and keep
+ * non-empty tokens. Unicode-aware: `\p{L}` matches Hebrew/Arabic/Cyrillic/CJK
+ * letters (not just `a-z`), so a non-Latin memory and an overlapping non-Latin
+ * response tokenize to real terms instead of collapsing to nothing (OBS-01
+ * de-Anglicization — the prior ASCII-only character class stripped every
+ * non-ASCII letter, forcing non-Latin attribution permanently to 0). Diacritic-Latin
+ * tokens (`café`) now survive whole — intentional; the I1 byte-identity pin is
+ * pure-ASCII, which this split leaves unchanged. Deterministic and
+ * allocation-bounded by the input length; a single split on a fixed char-class
+ * with the `u` flag — no nested quantifiers, no backtracking surface (no ReDoS).
  */
 function tokenize(text: string): string[] {
   return text
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, " ")
-    .split(" ")
+    .split(/[^\p{L}\p{N}]+/u)
     .filter((t) => t.length > 0);
 }
 
@@ -74,14 +97,17 @@ function tokenize(text: string): string[] {
  * (non-stopword) token. Pure-stopword bigrams (e.g. "of and") are dropped —
  * they carry no attribution signal and would reintroduce the very
  * "shared common word" false positive the bigram axis exists to cut. Empty for
- * <2 tokens or when every adjacent pair is stopword-only.
+ * <2 tokens or when every adjacent pair is stopword-only. The stopword test is
+ * Latin-gated (`isStopword`) so a non-Latin bigram is never dropped as
+ * "pure-stopword" — a two-word Hebrew/Arabic/Cyrillic phrase always yields a
+ * bigram (OBS-01).
  */
 function significantBigrams(tokens: readonly string[]): string[] {
   const out: string[] = [];
   for (let i = 0; i + 1 < tokens.length; i++) {
     const a = tokens[i]!;
     const b = tokens[i + 1]!;
-    if (STOPWORDS.has(a) && STOPWORDS.has(b)) continue;
+    if (isStopword(a) && isStopword(b)) continue;
     out.push(`${a} ${b}`);
   }
   return out;
@@ -113,8 +139,10 @@ export function attributeRecallUsage(
 
   for (const mem of recalled) {
     const memTokens = tokenize(mem.content);
-    // Significant unigrams: content words not in the stopword set.
-    const memSignificant = memTokens.filter((t) => !STOPWORDS.has(t));
+    // Significant unigrams: content words not in the stopword set. The stopword
+    // filter is Latin-gated (isStopword) — a non-Latin token is always
+    // significant (OBS-01: never dropped by the English STOPWORDS set).
+    const memSignificant = memTokens.filter((t) => !isStopword(t));
     const memSignificantSet = new Set(memSignificant);
     // Bigrams preserve phrase structure but drop pure-stopword pairs (so a
     // phrase like "of and" cannot manufacture a false "used"); a bigram with at

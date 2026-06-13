@@ -106,6 +106,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { shouldRunCritic, runVerificationCritic } from "./verification-gate.js";
 // CWF-05: deterministic user-facing reply for named degraded terminal causes.
 import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply } from "./degraded-reply.js";
+// GEN-02 (DET-02): resolve the degraded reply's language once at the chokepoint.
+import { resolveReplyLanguage } from "./resolve-reply-language.js";
 import { parseContextExhaustionCause } from "../context-engine/errors.js";
 import { buildSyntheticCriticDeps } from "./verification-gate-synth-deps.js";
 import { resolveScaffoldDefaults } from "./scaffold-defaults.js";
@@ -215,6 +217,9 @@ export interface PostExecutionParams {
   sm: { buildSessionContext(): unknown };
   config: PerAgentConfig;
   msg: NormalizedMessage;
+  /** USER.md preferred language (DET-02 tier-2), threaded from prompt assembly.
+   *  Consumed by the degraded-reply resolver (GEN-02, wired in 181-03). */
+  userMdLanguage?: string;
   sessionKey: SessionKey;
   formattedKey: string;
   /** Resolver-aligned key for activeRunRegistry.deregister. Must match the
@@ -1284,8 +1289,16 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // CWF-05: degrade loudly — deliver an honest user-facing reply for named degraded causes.
   // APPEND for output_starved (partial text exists); REPLACE for context_exhausted (no usable text).
   // Gate on effectiveFinishReason (NOT result.finishReason — output_starved is only set here).
+  // GEN-02 (DET-02): resolve the reply language ONCE (config > USER.md > inbound
+  // script he/ar/ru > en) and pass the tag to all three builders, so a Hebrew
+  // user reads the what/why/knob in Hebrew (en/"en" path stays byte-identical).
+  const replyLanguage = resolveReplyLanguage({
+    inboundText: params.msg.text ?? "",
+    configLanguage: params.config.language,
+    userMdLanguage: params.userMdLanguage,
+  });
   if (effectiveFinishReason === "output_starved") {
-    result.response = (result.response ?? "") + buildOutputStarvedAnnotation();
+    result.response = (result.response ?? "") + buildOutputStarvedAnnotation(replyLanguage);
     deps.logger.warn(
       { step: "degraded-reply", errorKind: "resource" as const, hint: "output_starved annotation appended" },
       "CWF-05: output_starved — annotated truncated reply",
@@ -1308,6 +1321,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       ...(capabilityClass !== undefined ? { capabilityClass } : {}),
       ...(incidentTraceId !== undefined ? { traceId: incidentTraceId } : {}),
       cause: exhaustionCause,
+      language: replyLanguage,
     });
     deps.logger.warn(
       { step: "degraded-reply", errorKind: "resource" as const, hint: "context_exhausted synthesized reply" },
@@ -1319,9 +1333,11 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     // failing/being blocked). APPEND an honest note when partial text exists,
     // REPLACE when the turn produced none (a pure tool-loop) — never a silent empty.
     const existing = (result.response ?? "").trim();
-    const loopReply = buildLoopDetectedReply(
-      tryGetContext()?.traceId !== undefined ? { traceId: tryGetContext()!.traceId } : undefined,
-    );
+    const loopTraceId = tryGetContext()?.traceId;
+    const loopReply = buildLoopDetectedReply({
+      ...(loopTraceId !== undefined ? { traceId: loopTraceId } : {}),
+      language: replyLanguage,
+    });
     result.response = existing.length > 0 ? `${existing}\n\n${loopReply}` : loopReply;
     deps.logger.warn(
       { step: "degraded-reply", errorKind: "resource" as const, hint: "loop_detected synthesized reply" },

@@ -16,6 +16,7 @@
 
 import type Database from "better-sqlite3";
 import { z } from "zod";
+import { routeSearchQuery } from "@comis/core";
 import { isVecAvailable } from "./schema.js";
 import { createRowMapper } from "./row-mapper.js";
 import { IdProjectionRowSchema } from "./row-schemas.js";
@@ -105,10 +106,91 @@ export function buildFtsQuery(raw: string): string | null {
   return meaningful.map((t) => `"${t}"`).join(" OR ");
 }
 
+// ── Trigram lane availability probe (FTS-01, plan 180-06) ────────────
+
+/**
+ * Probe-once-per-db cache for the `memory_fts_tri` trigram twin (mirrors the
+ * `isFtsAvailable` WeakMap pattern in lcd-fts.ts:101-120). The twin is absent on
+ * a host whose better-sqlite3 lacks the compiled trigram tokenizer
+ * (ensureTrigramTwins skipped it); a non-Latin query then falls through to the
+ * porter word lane (status quo). Keyed on the db handle so it GCs with the
+ * connection.
+ */
+const memoryTriAvailabilityCache = new WeakMap<Database.Database, boolean>();
+
+function isMemoryTriAvailable(db: Database.Database): boolean {
+  const cached = memoryTriAvailabilityCache.get(db);
+  if (cached !== undefined) return cached;
+  const available = ((): boolean => {
+    try {
+      db.prepare(
+        "SELECT rowid FROM memory_fts_tri WHERE memory_fts_tri MATCH ? LIMIT 1",
+      ).all("__memory_tri_probe__");
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+  memoryTriAvailabilityCache.set(db, available);
+  return available;
+}
+
+/**
+ * The trigram lane: MATCH the scope-free `memory_fts_tri` twin and resolve UUIDs
+ * via the SAME rowid-JOIN to `memories` the word lane uses, returning the
+ * identical `{id, rank}[]` shape. The MATCH string is built ONLY by the 180-01
+ * `routeSearchQuery` builder (static SQL, bound params; no interpolated
+ * identifiers) — T-180-06-02. R4 is the existing post-fusion (search) /
+ * hydration (searchLanes) tenant+agent filters, unchanged — A4, probe-verified.
+ */
+function searchByTrigram(
+  db: Database.Database,
+  match: string,
+  limit: number,
+): Array<{ id: string; rank: number }> {
+  const stmt = db.prepare(`
+    SELECT m.id, fts.rank
+    FROM memory_fts_tri fts
+    JOIN memories m ON m.rowid = fts.rowid
+    WHERE memory_fts_tri MATCH ?
+    ORDER BY fts.rank
+    LIMIT ?
+  `);
+  const parsed = ftsSearchMapper.parseRows(stmt.all(match, limit));
+  // Degrade-on-validation-error: identical discipline to the word lane.
+  const rows = parsed.ok ? parsed.value : [];
+  return rows.map((r) => ({ id: r.id, rank: r.rank }));
+}
+
 // ── FTS5 Text Search ─────────────────────────────────────────────────
 
 /**
  * Search memories using FTS5 BM25 ranking.
+ *
+ * The single LTM chokepoint for BOTH `search()` (via hybridSearch) and
+ * `searchLanes()` (via the adapter). Script routing (FTS-01, plan 180-06) wraps
+ * the existing porter word lane: an all-Latin query (and the all-short "scan"
+ * lane, which LTM has no machinery for) takes today's EXACT path — buildFtsQuery
+ * → memory_fts MATCH, byte-identical SQL (I1); a non-Latin query routes to the
+ * `memory_fts_tri` trigram twin when it is available, falling through to the
+ * word lane on a trigram-absent host (status quo — preserves pre-existing
+ * exact-word non-Latin matches). The trigram rank list has the same
+ * `{id, rank}[]` shape, so it flows into computeRRF / hydrateLane unchanged.
+ *
+ * LTM short-token-drop limitation (WR-02): the 180-01 router DROPS any
+ * <3-codepoint normalized token from the trigram MATCH (a sub-floor token in an
+ * AND/OR group cannot form a trigram and would contribute nothing). For the LCD
+ * lane the dropped short token is preserved in `route.scanTokens` and the bounded
+ * scan floor recovers it — but LTM has NO scan machinery and IGNORES `scanTokens`,
+ * so in a MIXED non-Latin query (one ≥3-cp token + one <3-cp token, e.g. a
+ * ≥4-cp Cyrillic word plus a 2-cp Hebrew term) the short term is silently dropped
+ * with no floor to recover it. OR-join bounds the impact (the surviving ≥3-cp
+ * term still matches broadly, and most non-Latin content words are ≥3 cp); the
+ * all-short case routes to "scan" and falls through to the word body below
+ * (exact-word match only). This is a recall-completeness boundary, not a
+ * correctness/security gap. Surfacing the dropped-token count as a diagnosable
+ * signal belongs at the tool/agent logging boundary, NOT here — @comis/memory is
+ * deliberately logger-free (AGENTS.md §2.4).
  *
  * Joins memory_fts with memories to return the UUID `id` column
  * (not the rowid). Results are ordered by BM25 rank (lower = better match).
@@ -120,6 +202,14 @@ export function searchByText(
   query: string,
   limit: number,
 ): Array<{ id: string; rank: number }> {
+  // LTM uses OR-join (buildFtsQuery parity — broad recall). Lane "word"/"scan"
+  // → today's word body below, untouched. Lane "tri" + twin available → the
+  // trigram lane; lane "tri" + twin absent → fall through to the word body.
+  const route = routeSearchQuery(query, { join: "or" });
+  if (route.lane === "tri" && route.match !== undefined && isMemoryTriAvailable(db)) {
+    return searchByTrigram(db, route.match, limit);
+  }
+
   const ftsQuery = buildFtsQuery(query);
   if (ftsQuery === null) return [];
 

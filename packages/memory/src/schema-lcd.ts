@@ -13,6 +13,8 @@
 
 import type Database from "better-sqlite3";
 
+import { ensureTrigramTwins } from "./schema-trigram.js";
+
 /**
  * Idempotently create the LCD (Lossless Context DAG) lossless message store
  * (Phase 127, F1): `lcd_messages` (one row per turn) + `lcd_message_parts` (one
@@ -247,13 +249,17 @@ export function ensureLcdTables(db: Database.Database): void {
   //       memory_fts over memories.content, schema.ts:531-565). Kept in sync by
   //       AFTER INSERT/DELETE triggers; the 'rebuild' idiom backfills pre-index
   //       history (A5).
-  //   - lcd_messages_fts  : CONTENTLESS — lcd_messages has NO content column
-  //       (message text is JSON in lcd_message_parts.tool_input/tool_output +
-  //       text parts). The createLcdStore adapter populates it on `append` with
-  //       rendered part-text (the contentless-FTS populate path, gap #1). There
-  //       is no external table to 'rebuild' from, so pre-index message history is
-  //       covered by searchLcd's LIKE fallback (and new appends populate it going
-  //       forward — a documented tradeoff).
+  //   - lcd_messages_fts  : SELF-CONTAINED — it stores its OWN content (no
+  //       `content=` option), because lcd_messages has NO content column (the
+  //       message text is JSON in lcd_message_parts.tool_input/tool_output + text
+  //       parts), so there is no external table to project from. The
+  //       createLcdStore adapter populates it on `append` with rendered part-text
+  //       (the self-contained-FTS populate path, gap #1). There is no external
+  //       table to 'rebuild' from, so pre-index message history is covered by
+  //       searchLcd's LIKE fallback (and new appends populate it going forward —
+  //       a documented tradeoff). (Storing its own content is also why orphaned
+  //       rows stay matchable until an explicit scoped DELETE — the G10 hole the
+  //       Phase-180 wipe-list close addresses.)
   //
   // The WHOLE section is wrapped in a try/catch so a host whose better-sqlite3
   // lacks compiled FTS5 still BOOTS (Pitfall 4 — initSchema must not throw):
@@ -307,4 +313,13 @@ export function ensureLcdTables(db: Database.Database): void {
     // FTS5 not compiled into this host's better-sqlite3 → boot WITHOUT the index.
     // searchLcd detects the missing table and uses a LIKE scan (never hard-fails).
   }
+
+  // ── Phase 180 (FTS-01): trigram twins for multilingual search ───────────────
+  // The self-contained trigram twins (lcd_messages_fts_tri / lcd_summaries_fts_tri
+  // / memory_fts_tri) + their base-table delete-mirror triggers. Created LAST, so
+  // the LCD/memories base tables exist by now; schema.ts:initSchema picks this up
+  // transitively (schema.ts is at the 800-line gate and is NOT touched). Each twin
+  // is per-block boot-safe (trigram-absent hosts skip it cleanly — see the
+  // schema-trigram.ts module doc).
+  ensureTrigramTwins(db);
 }

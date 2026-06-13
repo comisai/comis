@@ -69,6 +69,7 @@ import {
 import type { LeafSummarizerDeps } from "../context-engine/lcd-leaf-summarizer.js";
 import { resolveSummarizerWindowTokens } from "../context-engine/summarizer-window.js";
 import { SUMMARIZER_PROMPT_OVERHEAD_TOKENS } from "../context-engine/constants.js";
+import { emitSummaryLanguageMismatch } from "../context-engine/compaction-zone-helpers.js";
 import { resolveContext } from "./lcd-compaction-trigger.js";
 
 /**
@@ -350,6 +351,20 @@ export async function maybeRunCondensePass(
         "onCondensed hook error (non-fatal)",
       );
     }
+
+    // OBS-01 (Phase 180): the small-model G4 detector at the condense depth — a
+    // non-Latin run of children whose condensed summary came back Latin emits
+    // context:summary_language_mismatch (depth = this condense depth). Source =
+    // the children summaries' concatenated content (the SAME input the condense
+    // summarizer saw). Visibility only — guarded, content-free, never fails the pass.
+    emitSummaryLanguageMismatch(eventBus, logger, {
+      agentId: scope.agentId,
+      sessionKey: scope.sessionKey,
+      sourceText: effectiveRun.children.map((c) => c.content).join("\n\n"),
+      summaryText: result.content,
+      depth,
+      nowMs: now,
+    });
 
     // O1 (Phase 133): real pass-timing — a SECOND injected-clock read at emit
     // minus the pass-entry `passStart`. The injected clock is the only time

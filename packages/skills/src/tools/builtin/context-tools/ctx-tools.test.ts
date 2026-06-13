@@ -143,6 +143,9 @@ interface StoreStub {
   readScopes: ContextStoreScope[];
   searchLcdReturn: LcdSearchHit[];
   cjkZeroHit: boolean;
+  /** 180-05-widened LcdSearchResult fields the searchLcd stub returns (lane + matchErrored REQUIRED). */
+  lane: "word" | "tri" | "scan";
+  matchErrored: boolean;
   getSummariesReturn: LcdSummary[];
   getSummaryChildrenReturn: LcdSummary[];
   getSummaryMessagesReturn: string[];
@@ -157,6 +160,8 @@ function makeStore(over: Partial<StoreStub> = {}): { stub: StoreStub; store: Con
     readScopes: [],
     searchLcdReturn: [],
     cjkZeroHit: false,
+    lane: "word",
+    matchErrored: false,
     getSummariesReturn: [],
     getSummaryChildrenReturn: [],
     getSummaryMessagesReturn: [],
@@ -167,7 +172,7 @@ function makeStore(over: Partial<StoreStub> = {}): { stub: StoreStub; store: Con
   const store = {
     searchLcd(scope: ContextStoreScope, query: string, opts: unknown): LcdSearchResult {
       stub.searchLcdArgs.push({ scope, query, opts });
-      return { hits: stub.searchLcdReturn, cjkZeroHit: stub.cjkZeroHit };
+      return { hits: stub.searchLcdReturn, cjkZeroHit: stub.cjkZeroHit, lane: stub.lane, matchErrored: stub.matchErrored };
     },
     getSummaries(scope: ContextStoreScope): LcdSummary[] {
       stub.readScopes.push(scope);

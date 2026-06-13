@@ -671,3 +671,42 @@ describe("buildSubagentRoleSection (enriched fields)", () => {
     expect(artifactIdx).toBeLessThan(rulesIdx);
   });
 });
+
+// ---------------------------------------------------------------------------
+// buildSubagentRoleSection: Language section (GEN-03 — DET-02 reply language)
+// ---------------------------------------------------------------------------
+
+describe("buildSubagentRoleSection (Language section, GEN-03)", () => {
+  it("emits a Language section with the verbatim-preserving directive for a non-en language", () => {
+    const result = buildSubagentRoleSection({ task: "Summarize the thread", language: "he" });
+    const joined = result.join("\n");
+    expect(joined).toContain("### Language");
+    expect(joined).toContain(
+      "Produce all user-facing output in he (the conversation language). Code, identifiers, and file paths stay verbatim.",
+    );
+  });
+
+  it("places the Language section before the Rules block", () => {
+    const result = buildSubagentRoleSection({ task: "Task", language: "ar" });
+    const joined = result.join("\n");
+    const langIdx = joined.indexOf("### Language");
+    const rulesIdx = joined.indexOf("### Rules");
+    expect(langIdx).toBeGreaterThan(-1);
+    expect(langIdx).toBeLessThan(rulesIdx);
+  });
+
+  it("omits the Language section when language is undefined (en byte-identical to today's output)", () => {
+    const withoutLang = buildSubagentRoleSection({ task: "Identical task" });
+    const joined = withoutLang.join("\n");
+    expect(joined).not.toContain("### Language");
+  });
+
+  it("omits the Language section when language is en and is byte-identical to the no-language output", () => {
+    const params = { task: "Identical task", depth: 1, maxSpawnDepth: 3, objective: "Stay focused" } as const;
+    const withEn = buildSubagentRoleSection({ ...params, language: "en" });
+    const withoutLang = buildSubagentRoleSection({ ...params });
+    expect(withEn.join("\n")).not.toContain("### Language");
+    // I1: en produces byte-identical sections to omitting language entirely.
+    expect(withEn).toEqual(withoutLang);
+  });
+});

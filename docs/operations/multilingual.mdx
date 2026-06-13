@@ -1,0 +1,271 @@
+---
+title: "Multilingual"
+description: "Which scripts Comis serves (Hebrew · Arabic · Russian · CJK · general non-Latin), the search/token/degradation behavior per script, and the knobs + fleet checks that prove a multilingual stack works"
+icon: "language"
+---
+
+Comis is English-shaped in exactly five mechanical places — token arithmetic, search
+tokenization, generated-text language, deterministic reply strings, and per-script
+observability — and v2.22 fixes all five with one script-class data table, one pure
+normalization function, one trigram search lane, one shared prompt line, and one phrase
+table, with zero new runtime dependencies. The result: a Hebrew, Arabic, Russian, or CJK
+conversation gets honest token math, search that survives morphology, summaries and replies
+in its own language, and fleet-visible script health — while a **Latin-script deployment is
+byte-identical to before** (token factor 1.0, the same search SQL, the same English strings).
+
+This page tells an operator which scripts Comis serves, which knobs exist, and why. Comis
+**never translates** user content (see [Security stance](#security-stance)); search recall
+works with embeddings disabled (the FTS trigram floor carries it); and the non-Latin behavior
+that matters most for a constrained deployment lives in the dedicated
+[Local and small models](#local-and-small-models-non-latin) section, which cross-links the
+[Local Models](/operations/local-models) capacity playbook rather than restating it.
+
+Two-tier triage applies throughout: [`comis fleet`](/reference/cli#comis-fleet) surfaces the
+daemon-wide pattern (including the three multilingual signals below), then
+[`comis explain`](/reference/cli#comis-explain) root-causes the worst session it points at.
+
+## Script-support matrix
+
+The lexical search floor is FTS5 substring recall: it works with `embedding.enabled=false`
+(the vector lane lifts recall, never carries it). Latin-script text uses the existing word
+lane unchanged; non-Latin text uses a trigram lane that gives morphology-tolerant substring
+recall without a lemmatizer. The table below is what the floor covers per script.
+
+| Script | Search-floor coverage | Notes |
+|--------|-----------------------|-------|
+| Latin (English) | Word lane (porter unicode61), unchanged | Byte-identical to before — same SQL, same case-folding |
+| Latin with diacritics (Spanish, French, German, Portuguese…) | Word lane — **already served** | `unicode61` defaults to `remove_diacritics=1`, so `café` and `cafe` co-match; served at the floor before this milestone — only the token factor (mild) and reply-language strings are new |
+| Hebrew | Trigram lane + per-script normalization | Niqqud stripped, final forms folded, geresh/gershayim folded; `ספר` matches inside `הספרים` (attached particles) |
+| Arabic (incl. Persian, Urdu) | Trigram lane + per-script normalization | Harakat/tanween stripped, tatweel deleted, alef/yeh/teh-marbuta folded, Arabic-Indic digits folded to ASCII |
+| Russian / Cyrillic | Trigram lane + per-script normalization | `ё` folded to `е` (never `й`→`и`); `книга` matches `книги` (case/number suffixes) |
+| CJK (Chinese, Japanese, Korean) | Trigram lane | No word segmenter needed — trigram substring recall over unsegmented text; astral-plane ideographs (Extension B) handled |
+| Greek | Trigram lane + lowercasing | Full-Unicode lowercase makes the floor case-insensitive (SQLite's ASCII-only LIKE is not) |
+| Thai | Trigram lane | Vowel marks preserved (no blanket mark-strip — that would destroy Thai prose) |
+| Devanagari (Hindi…) | Trigram lane | Matras preserved (no blanket mark-strip) |
+| Other non-Latin | Trigram lane (no per-script fold) | Falls through to NFKC + lowercase only; conservative token factor applies |
+
+The trigram tokenizer ships with the bundled SQLite (3.34+); when it is absent the floor
+degrades to a bounded normalized scan (see the [Degradation matrix](#degradation-matrix)) —
+it never hard-fails on non-Latin input.
+
+## Search normalization and routing
+
+One pure function — `normalizeForSearch` — folds text the same way at index time and query
+time (symmetry is load-bearing; an index-side-only fold breaks every real query). The pipeline:
+
+1. **NFKC** — folds presentation forms (Hebrew FB1D+, Arabic FB50+), full-width forms (`Ａ`→`A`),
+   and ligatures. This is the same standard step the tool-output safety layer already applies.
+2. **Full-Unicode lowercase** — also makes the scan floor case-insensitive for Cyrillic and Greek.
+3. **Per-script folds** (data-table driven):
+   - **Hebrew** — strip cantillation + niqqud; fold final forms (`ך`→`כ`, `ם`→`מ`, `ן`→`נ`,
+     `ף`→`פ`, `ץ`→`צ`); fold geresh/gershayim and their smart-quote stand-ins when flanked by
+     Hebrew letters (so acronyms like `צה"ל` match `צהל`).
+   - **Arabic** — strip harakat/tanween + superscript alef; delete tatweel; fold `أ`/`إ`/`آ`/`ٱ`→`ا`,
+     `ى`→`ي`, `ة`→`ه`; fold Arabic-Indic digits to ASCII (dates and amounts cross-match Latin-stored text).
+   - **Cyrillic** — fold `ё`→`е` only (never `й`→`и`: a distinct letter; folding it would corrupt precision).
+   - **Devanagari and Thai** pass through fold-free (a blanket mark-strip would destroy their vowels).
+
+Routing is token-wise, never rank-merging (BM25 scores are not comparable across tokenizers):
+
+- **All tokens Latin** → the word lane, with the sanitized query passed through untouched (byte-identical SQL).
+- **Any token non-Latin** → the trigram lane, each token individually normalized and quoted.
+- **Tokens shorter than 3 codepoints** (after normalization) are dropped from the trigram MATCH
+  (they constrain nothing in AND/OR contexts, and Hebrew particles like `גם`/`לא` are core
+  vocabulary — rerouting whole queries on their presence would bypass the ranked lane).
+- **All tokens short** → a bounded normalized-scan floor on the conversation store (correct
+  hits, no ranking); long-term memory stays on its word + vector lanes.
+
+A `comis doctor` repair backfills the trigram twins with normalized text for conversation
+history that predates the lane (twins index new writes from day one; the backfill is operator-run).
+
+### Degradation matrix
+
+Every non-Latin capability has a working, visible, lower-fidelity floor — nothing hard-fails.
+
+| Capability absent or weak | Floor behavior |
+|---------------------------|----------------|
+| Trigram tokenizer missing in host SQLite | Probe fails closed → non-Latin conversation queries take the bounded normalized-scan floor; long-term memory stays on word + vector lanes; the Latin word lane is untouched everywhere |
+| Sub-3-char tokens in a non-Latin query | Dropped from the trigram MATCH; the query proceeds ranked on the remaining tokens |
+| All tokens shorter than 3 chars | Conversation store: bounded normalized-scan floor (recent-rows cap, noted in the result); long-term memory: status-quo lanes |
+| Trigram lane returns zero for a non-Latin query | `script_zero_hit` fleet signal (lane = `tri`); search degrades to empty as before, but *visibly* |
+| Embedding model not multilingual, or embeddings disabled | FTS trigram floor carries recall; the `embeddingMultilingual` advisory names the cause in `comis fleet` |
+| Summarizer model weak in the source language | dag mode: the extractive/deterministic floor preserves source spans verbatim; pipeline mode: the weak-class path skips summarization (passthrough — nothing mistranslated); distillation is already gated (see [Local and small models](#local-and-small-models-non-latin)) |
+| Small or local summarizer silently ignores the language instruction (Hebrew in → English out) | The recall hole would reopen invisibly → the `summary_language_mismatch` fleet signal makes it a count; the remedy is `strongerSummarizerModel` (language-capable), no gating |
+| No phrase-table entry for the resolved reply language | English degraded-reply strings (never throws) |
+| Ambiguous or mixed-script inbound for reply-language resolution | Config → USER.md → English; the script default fires only on a strict majority of non-neutral codepoints, and only for `he`/`ar`/`ru` |
+| Conversation history predating the trigram twins | Reachable via the word lane exactly as before; the `comis doctor` twin-backfill (normalized) makes it trigram-searchable, operator-run |
+| Conversation rows with pre-v2.22 token under-counts | The pre-flight is corrected immediately via the assembler's read-time `max(stored, factored-live)`; trigger sums self-heal as new rows dominate (a late condense is non-destructive) |
+| Trigram-lane snippets | Show the *normalized* stored text (niqqud-stripped, finals-folded) — cosmetic only, behavioral parity with the existing message-lane snippet SQL |
+| Distillation dedup under a non-multilingual embedder | Near-duplicate non-Latin memories may under-score and accumulate (bounded by the dedup cap); the `embeddingMultilingual` advisory names the cause; fixed by configuring a multilingual embedder, not by code |
+
+## Token-factor provenance
+
+Modern BPE tokenizers spend more tokens per character on dense scripts than on English, so an
+English-calibrated character-to-token ratio under-counts non-Latin text — which used to admit
+prompts that actually overflow the model window (silent truncation for non-Latin users) and
+arm the compaction triggers late. Comis applies a per-script multiplicative factor (always in
+the conservative direction — an estimate is never *lower* than the old English-calibrated one)
+so the window math is honest. Latin is exactly 1.0, so English math is unchanged.
+
+Every factor below is measured, not asserted. The values and dates are lifted verbatim from the
+provenance comments in the script-class table (`packages/core/src/text/script-classes.ts`); a
+factor is lowered in the same commit if a measured corpus violates it, and the conservativeness
+fixtures assert it offline forever.
+
+| Script class | Token factor | Provenance |
+|--------------|-------------|------------|
+| Latin | `1.0` | Locked — Latin byte-identity; English text produces today's exact numbers. Measured corpus 5.16 chars/token aggregate, worst entry implied 1.150 — 1.0 holds with margin (2026-06-12) |
+| Hebrew (letters) | `0.5` | Unpointed chat Hebrew measured 2.71 chars/token; lowered to 0.5 because a mixed Hebrew+Latin entry implied a 0.5016 letters bound through the harmonic blend (2026-06-12) |
+| Hebrew (marks: niqqud, cantillation) | `0.1` | Each mark ≈ 1 token; corpus held (2026-06-12) |
+| Arabic (letters; covers Persian, Urdu) | `0.55` | Measured 3.04 chars/token → implied max 0.760; conservative 0.55 (2026-06-12) |
+| Arabic (marks: harakat, tanween) | `0.1` | Same byte-level behavior as Hebrew niqqud; harakat entries measured 1.26 chars/token aggregate (2026-06-12) |
+| Cyrillic | `0.59` | Single-sentence probe 3.32 chars/token; lowered after the corpus measured 13 chat/mixed violations, worst implied 0.598 (2026-06-12) |
+| CJK | `0.3` | Chinese 1.73 / Japanese 1.36 chars/token → implied max 0.433 / 0.339; 0.3 covers both (2026-06-12) |
+| Thai | `0.4` | Measured 1.83 chars/token → implied max 0.458 (2026-06-12) |
+| Greek | `0.25` | Measured 1.12 chars/token → implied max 0.279 (2026-06-12) |
+| Devanagari | `0.25` | Measured 1.05 chars/token → implied max 0.261 (2026-06-12) |
+| Other (everything else) | `0.75` | The only unmeasured factor — structurally unmeasurable (no single corpus exists for "everything else"); ships the conservative 0.75 by design |
+
+Mixed-script text combines factors **harmonically** (per-class token shares sum), not by an
+arithmetic mean, so the estimate matches what the tokenizer actually does.
+
+**Old conversation rows self-heal at read time.** There is no data migration: a stored
+pre-v2.22 token count is corrected where it is load-bearing (at pre-flight budget-item
+construction) by taking `max(storedCount, factored-live-estimate)`. This is conservative, fixes
+the window guarantee for pre-existing non-Latin conversations immediately, and is a no-op for
+Latin rows (the same estimator over the same text yields `max = stored`).
+
+**Character-denominated knobs still count characters.** `maxContextChars` and `maxToolResultChars`
+remain character limits; for dense scripts a character carries roughly 2–3× the tokens of English,
+so the same character budget holds proportionally fewer tokens — size those knobs with the script
+in mind.
+
+## Configuration keys
+
+Two config keys carry the multilingual surface; both are documented in the
+[config reference](/reference/config-yaml).
+
+- **`agents.<id>.language`** — the reply language for the deterministic degraded replies (the
+  context-exhausted and output-starved notices). Accepts a BCP-47 tag (`"he"`) or an English
+  display name (`"Hebrew"`). When omitted, Comis resolves it from the USER.md preferred language,
+  then the inbound message script — **Hebrew, Arabic, and Russian/Cyrillic only**. It does **not**
+  affect the live agent reply, which always follows the user's language. See the
+  [`agents` reference](/reference/config-yaml#agents).
+- **`embedding.multilingual`** — an advisory boolean for the `comis fleet` model-health line
+  (see [Embedding and reranker](#embedding-and-reranker)). It does not gate search. See the
+  [`embedding` reference](/reference/config-yaml#embedding).
+
+**The Cyrillic-to-`ru` coarseness.** The script default maps Cyrillic to `ru` — coarse, because
+Ukrainian (and other Cyrillic-script languages) also exist. That coarseness is intentional: it is
+the floor of last resort, and the explicit `agents.<id>.language` key or the USER.md preferred
+language is how you pin a precise language above it. CJK deliberately maps to *nothing* for reply
+resolution (Chinese, Japanese, and Korean share Han codepoints, so guessing `zh` for a Japanese
+user is worse than falling back to English) — set `agents.<id>.language` explicitly for CJK.
+
+## Summarizer language capability
+
+Conversation summaries follow the source language: a shared instruction tells the summarizer to
+write the summary in the dominant language of the source content and never to translate (code
+identifiers, file paths, tool names, and error strings stay verbatim). This closes a recall hole
+— an English summary of a Hebrew conversation produces English memories that Hebrew queries can
+never match.
+
+The summarizer that must obey this is, on small and local deployments, whatever
+`contextEngine.compaction.strongerSummarizerModel` resolves to — and that model must itself be
+language-capable (a qwen-class model, not a weaker model that ignores the instruction). The same
+knob is the gate (GATE-6) for distillation on small and nano models: distillation does not run on
+those tiers *unless* `strongerSummarizerModel` is configured, so getting language-preserving
+distilled memories on a pure-local non-Latin deployment requires setting it to a language-capable
+model. A
+weak summarizer that silently ignores the language instruction is made visible (not gated) by the
+`summary_language_mismatch` fleet signal. See the
+[Local Models compaction section](/operations/local-models#compaction-on-small-models) for the
+full small-model compaction mechanics, which this page does not restate.
+
+## Embedding and reranker
+
+Semantic recall (the vector lane) and recall re-ranking (the local GGUF cross-encoder) are only
+as multilingual as the models you configure. An English-only embedder silently degrades non-Latin
+recall *coverage*; an English-only reranker silently degrades non-Latin recall *ordering*. Neither
+gates anything — the FTS trigram floor carries recall regardless — but Comis names the degradation
+in `comis fleet` so it is not silently absent.
+
+- **Embedder** — for non-Latin deployments, a multilingual embedding model: `bge-m3` or
+  `multilingual-e5`. Declare it explicitly with `embedding.multilingual: true`, or let the
+  advisory infer it from the model id (`bge-m3` / `multilingual-e5` / LaBSE / E5 read as
+  multilingual; otherwise `"unknown"`).
+- **Reranker** — `bge-reranker-v2-m3` is the multilingual cross-encoder; it is inferred from the
+  model id (no separate config flag).
+
+The `comis fleet` model-health line surfaces `embeddingMultilingual` and `rerankerMultilingual`
+beside `embeddingAvailable` — see [the three fleet checks](#local-and-small-models-non-latin).
+
+## Security stance
+
+The bidi-and-security boundary is decided and deliberately unchanged by this milestone. The two
+points an operator (and the next security review) needs to understand:
+
+**What is stripped, where — and why inbound user text is not.** Trojan-Source (CVE-2021-42574)
+weaponizes bidi *control* codepoints (embeddings and overrides, and the directional isolates) to
+make text render differently than it parses. Comis strips those from **machine-ingested untrusted
+content**: tool output, web fetches, skill bodies, and workspace files. It does **not** strip the
+**inbound user channel message** — the user is the trust anchor for their own text, and chat
+channels render right-to-left natively from script content. Adding inbound stripping would degrade
+legitimate Hebrew, Arabic, and Persian users for no security gain. Comis-composed output (degraded
+replies, truncation markers, summaries) is plain text authored without bidi controls — truncation
+markers sit on their own newline-isolated line (a paragraph break is itself a bidi isolation
+boundary), so no directional mark is ever injected.
+
+**The English-keyed injection-regex tier is an accepted asymmetry.** The pattern-matching
+injection tier (the "ignore previous instructions" and `System:` role-marker patterns, the
+external-content suspicion patterns, the typoglycemia word list) matches **English**, so a
+non-English-language injection sails past *this tier* by construction. This is accepted, not a bug
+to fix. That tier is defense-in-depth *scoring* layered on top of the load-bearing defenses, which
+are **structural and language-agnostic**: per-session random untrusted-content delimiters,
+sender-trust display, tool-policy gates, the GATE-7 memory-write firewall, and OutputGuard egress
+redaction — plus the model's own multilingual refusal behavior (measured at 100% injection
+resistance on the recommended local model). Translating regex patterns into N languages is a
+maintenance treadmill with near-zero marginal coverage. This stance is documented here so it is
+not rediscovered as a finding.
+
+**No-translation principle.** Comis never translates user content. Summaries, memories, and
+deterministic replies stay in the conversation's language, and code identifiers, file paths, tool
+names, configuration knob paths, and trace ids stay **verbatim in every language** — a Hebrew
+degraded reply still names `contextEngine.budget.effectiveContextCapSmall` and the trace id exactly.
+
+## Local and small models (non-Latin)
+
+Non-Latin scripts and small or local models compound: dense scripts consume an already-capped
+window faster, and the weakest models are also the worst at following a language instruction. This
+section is the multilingual companion to the [Local Models](/operations/local-models) capacity
+playbook — it names the levers and checks that bind for non-Latin and links the playbook for the
+mechanics, never duplicating them.
+
+**Capacity pressure roughly doubles.** A small-tier window holds about **0.55× the content** for
+Hebrew or Arabic at the same cap (the dense-script token weight), so the capacity levers bind
+roughly **2× sooner** than they do for English. The honest token math (above) makes the pre-flight
+fire the **degraded reply** instead of silently truncating — and the levers are the same ones the
+playbook documents:
+
+- `contextEngine.budget.effectiveContextCapSmall` (and `effectiveContextCapNano`) — the
+  unconditional class window caps. See the
+  [Local Models capacity knobs](/operations/local-models#capacity-knobs).
+- `num_ctx` / `OLLAMA_CONTEXT_LENGTH` — raise the window the model actually serves (with the VRAM
+  caveat the playbook documents).
+- Trim the tool surface — tool schemas dominate the input budget on small models.
+- For the full secure local configuration, see the
+  [Recommended Secure qwen3.6 Configuration](/reference/config-yaml#recommended-secure-qwen36-configuration).
+
+**The three fleet checks that prove a multilingual local stack works.** Run
+[`comis fleet`](/reference/cli#comis-fleet) and look for these — together they answer "is my
+local multilingual stack actually working?" without a log dive:
+
+| Fleet check | What it tells you | Remedy |
+|-------------|-------------------|--------|
+| `summary_language_mismatch` | The local summarizer is writing English summaries of non-Latin conversations (the recall hole reopening) | Set `contextEngine.compaction.strongerSummarizerModel` to a language-capable (qwen-class) model |
+| `script_zero_hit` | Non-Latin searches are returning zero hits (with the lane: `word` / `tri` / `scan`) — is the trigram lane carrying recall? | Verify the trigram tokenizer is present; run the `comis doctor` twin-backfill for old history |
+| `embeddingMultilingual` / `rerankerMultilingual` | The embedder or reranker is English-only (or unknown) — non-Latin semantic recall / ordering is degraded | Configure a multilingual embedder (`bge-m3` / `multilingual-e5`) and reranker (`bge-reranker-v2-m3`); recall still works on the FTS floor regardless |
+
+The FTS lane and normalization are pure SQLite plus pure TypeScript — zero model dependency,
+identical on a small VPS and a GPU box. Recall does **not** require any model on a local
+deployment; the embedder and reranker only lift it.

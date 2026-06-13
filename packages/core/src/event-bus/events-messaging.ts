@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { NormalizedMessage } from "../domain/normalized-message.js";
 import type { SessionKey } from "../domain/session-key.js";
+import type { ScriptClass } from "../text/script-classes.js";
 import type {
   SubAgentSpawnPreparedEvent,
   SubAgentSpawnRejectedEvent,
@@ -380,6 +381,45 @@ export interface MessagingEvents {
     outputHeadroom: number;
     /** Fit-check outcome (closed union — never an open string). */
     verdict: "fits" | "downshifted" | "exhausted";
+  };
+
+  /** A non-Latin search returned zero hits on a CLEANLY-executed lane (OBS-01,
+   *  Phase 180). The milestone's marquee failure mode — "Hebrew finds nothing" —
+   *  made fleet-visible instead of DEBUG-only (the prior `cjkZeroHit` DEBUG line
+   *  in ctx-search-tool.ts). Bridged to the trajectory as
+   *  `context.script_zero_hit` (the explain timeline) AND persisted as a
+   *  `health_signal` row (the fleet path); both paths are required (OBS-01).
+   *  Payload is a closed `ScriptClass` enum + a closed lane union + identifiers
+   *  ONLY — NEVER the query text or any tokens (I8; §2.7 the lossless store).
+   *  Fires only when the lane executed cleanly: a `safeAll`-swallowed FTS5 syntax
+   *  error is NOT a zero-hit and must not emit (signal purity, ROADMAP criterion 4). */
+  "context:script_zero_hit": {
+    conversationId: string;
+    agentId: string;
+    sessionKey: string;
+    /** Closed union — dominant script class of the query (non-latin by construction). */
+    scriptClass: ScriptClass;
+    /** Which lane returned zero: word FTS, trigram twins, or the bounded normalized scan floor. */
+    lane: "word" | "tri" | "scan";
+    timestamp: number;
+  };
+
+  /** A summary's dominant script diverged from its source chunk's (OBS-01, Phase
+   *  180): a non-Latin source produced a Latin summary. VISIBILITY ONLY — never
+   *  gated (I8; a mixed code-heavy chunk legitimately skews Latin via the 0.3
+   *  dominance threshold in `dominantScript`, so this is a count an operator
+   *  reviews, not an error to block). Bridged to the trajectory as
+   *  `context.summary_language_mismatch` AND persisted as a `health_signal` row;
+   *  both paths required (OBS-01). Payload is closed `ScriptClass` enums + a depth
+   *  count + identifiers ONLY — NEVER the summary or source body (§2.7). */
+  "context:summary_language_mismatch": {
+    agentId: string;
+    sessionKey: string;
+    sourceScript: ScriptClass;
+    summaryScript: ScriptClass;
+    /** dag depth (0 = leaf, >0 = condense); -1 = pipeline compaction (no depth concept). */
+    depth: number;
+    timestamp: number;
   };
 
   /** Context engine mode switched between pipeline and dag (one-time import cost).

@@ -18,6 +18,7 @@ import {
   SessionCompactContract,
   stripInternalFields,
   computeReachableToolNames,
+  tryGetContext,
 } from "@comis/core";
 import type { RpcHandler } from "../types.js";
 import { IS_DEV, type SessionHandlerDeps } from "./session-helpers.js";
@@ -156,6 +157,9 @@ export function bindSessionMutateHandlers(deps: SessionHandlerDeps): Record<stri
         requiredTools,
         includeParentHistory,
         reachableToolNames,
+        // GEN-03: ride the parent's resolved reply language into child session
+        // metadata (same channel as objective/toolGroups); read off the live ALS.
+        resolvedLanguage: tryGetContext()?.resolvedLanguage,
       });
       // Capture dedup signal from this spawn so the response carries
       // structured `deduped`/`existingRunId`/`dedupAgeMs` if the runner
