@@ -1359,6 +1359,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
       workspaceDir: deps.spawnPacket.workspaceDir,
       parentSummary: deps.spawnPacket.parentSummary,
       agentWorkspaces: deps.spawnPacket.agentWorkspaces,
+      language: deps.spawnPacket.language,
     };
   }
 

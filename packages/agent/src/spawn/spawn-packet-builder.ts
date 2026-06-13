@@ -35,6 +35,8 @@ export interface SpawnPacketBuildParams {
   toolGroups?: string[];
   includeParentHistory?: "none" | "summary";
   domainKnowledge?: string[];
+  /** Inherited conversation language (DET-02 tag); omitted from the packet when undefined. */
+  language?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -62,6 +64,7 @@ export function createSpawnPacketBuilder(deps: SpawnPacketBuilderDeps) {
         depth: deps.currentDepth,
         maxDepth: deps.maxSpawnDepth,
         agentWorkspaces: deps.agentWorkspaces,
+        ...(params.language !== undefined ? { language: params.language } : {}),
         // parentSummary intentionally left undefined; populated by executeSubAgent
       };
     },
