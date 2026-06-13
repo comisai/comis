@@ -9,6 +9,7 @@
  */
 
 import type { MemoryEntry } from "@comis/core";
+import { normalizeForSearch } from "@comis/core";
 import type Database from "better-sqlite3";
 import { z, type ZodType } from "zod";
 import type { Result } from "@comis/shared";
@@ -169,6 +170,26 @@ export function insertMemoryRow(
     entry.observationKind ?? null,
     entry.patternType ?? null,
   );
+
+  // FTS-01 (plan 180-06): write the NORMALIZED memory_fts_tri twin row beside
+  // the base insert (same transaction context as store() / the v1.7 import path
+  // — insertMemoryRow is the single insert chokepoint). The twin shares the base
+  // rowid (resolved by id select, never last_insert_rowid() — robust under any
+  // transaction shape). normalizeForSearch is imported from @comis/core (the
+  // systemNowMs cross-package value-import precedent) so the index side folds
+  // through the EXACT symbol the query side (searchByText routing) uses.
+  try {
+    db.prepare(
+      "INSERT INTO memory_fts_tri(rowid, content) VALUES ((SELECT rowid FROM memories WHERE id = ?), ?)",
+    ).run(entry.id, normalizeForSearch(entry.content));
+  } catch {
+    // The trigram twin is absent on this host (FTS5 present but the trigram
+    // tokenizer is not compiled in → ensureTrigramTwins skipped it), or a
+    // genuinely-exceptional twin insert failure. Skip indexing THIS memory in
+    // the trigram lane — the base `memories` write is authoritative and must
+    // NOT be rolled back; the fail-safe direction is de-indexed (never wrongly
+    // indexed). Recall degrades to the word + vector lanes (the LTM floors).
+  }
 }
 
 // ── Embedding Storage ────────────────────────────────────────────────

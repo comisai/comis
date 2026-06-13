@@ -1617,9 +1617,14 @@ describe("SqliteMemoryAdapter LTM trigram lane (I4 / twin / R4 / consolidation)"
     // fold in a Hebrew rewrite. After the rewrite the trigger deleted the old
     // twin row; the TS re-insert must restore a twin row with the NEW normalized
     // content (so HE_QUERY recalls it with embeddings disabled).
+    // store() writes the base row + its twin; promote it to an observation via a
+    // direct proof_count UPDATE (makeEntry does not carry observation fields).
+    // The UPDATE does NOT touch content, so the store-written twin survives.
     const obsId = crypto.randomUUID();
-    await adapter.store(
-      makeEntry({ id: obsId, content: "original english observation", proofCount: 1, sourceIds: ["s0"] }),
+    await adapter.store(makeEntry({ id: obsId, content: "original english observation" }));
+    db.prepare("UPDATE memories SET proof_count = 1, source_ids = ? WHERE id = ?").run(
+      JSON.stringify(["s0"]),
+      obsId,
     );
 
     const fold = await store.foldIntoExisting({
@@ -1652,10 +1657,14 @@ describe("SqliteMemoryAdapter LTM trigram lane (I4 / twin / R4 / consolidation)"
     const db = adapter.getDb();
     const store = createSqliteMemoryConsolidationStore({ db });
 
-    // Seed a Hebrew observation; store() wrote its normalized twin row.
+    // Seed a Hebrew observation; store() wrote its normalized twin row. Promote
+    // it to an observation via a direct proof_count UPDATE (content untouched →
+    // the store-written twin survives; makeEntry carries no observation fields).
     const obsId = crypto.randomUUID();
-    await adapter.store(
-      makeEntry({ id: obsId, content: HE_STORED, proofCount: 1, sourceIds: ["s0"] }),
+    await adapter.store(makeEntry({ id: obsId, content: HE_STORED }));
+    db.prepare("UPDATE memories SET proof_count = 1, source_ids = ? WHERE id = ?").run(
+      JSON.stringify(["s0"]),
+      obsId,
     );
     expect(twinContentOf(obsId)).toBe(HE_FOLDED);
 
