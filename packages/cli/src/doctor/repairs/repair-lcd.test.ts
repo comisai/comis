@@ -24,11 +24,20 @@ import {
 
 /**
  * Create a test DB that mirrors the REAL LCD schema:
- *  - lcd_messages_fts is CONTENTLESS (no content= clause) — matches schema-lcd.ts
+ *  - lcd_messages_fts is SELF-CONTAINED (stores its own content; no content=
+ *    clause) — matches schema-lcd.ts (180-02 corrected the stale "contentless"
+ *    vocabulary: the table holds its own re-rendered content, which is exactly
+ *    the G10 mechanism)
  *  - lcd_summaries_fts is EXTERNAL-CONTENT (content=lcd_summaries) — matches schema-lcd.ts
  *  - lcd_message_parts holds the structured parts that repairFtsDrift reads
+ *  - memories holds the LTM base rows that memory_fts_tri shadows (rowid + content)
+ *
+ * Pass `{ withTrigramTwins: true }` to also create the three FTS-02 trigram twins
+ * (lcd_messages_fts_tri / lcd_summaries_fts_tri / memory_fts_tri) using the exact
+ * DDL the real `ensureTrigramTwins` (schema-trigram.ts, plan 180-02) installs.
+ * Omitting it leaves the twins absent — the pre-180 / trigram-less host shape.
  */
-function createTestDb(): Db {
+function createTestDb(opts: { withTrigramTwins?: boolean } = {}): Db {
   const db = new Database(":memory:");
   db.exec(`
     CREATE TABLE lcd_messages (
@@ -48,11 +57,12 @@ function createTestDb(): Db {
       metadata   TEXT NOT NULL DEFAULT '{}'
     );
     CREATE TABLE lcd_summaries (
-      summary_id  TEXT PRIMARY KEY,
-      fallback    INTEGER NOT NULL DEFAULT 0,
-      tenant_id   TEXT NOT NULL,
-      agent_id    TEXT NOT NULL,
-      content     TEXT NOT NULL
+      summary_id      TEXT PRIMARY KEY,
+      conversation_id TEXT NOT NULL DEFAULT 'conv-1',  -- R4 scope col the twin carries UNINDEXED (matches real schema-lcd.ts)
+      fallback        INTEGER NOT NULL DEFAULT 0,
+      tenant_id       TEXT NOT NULL,
+      agent_id        TEXT NOT NULL,
+      content         TEXT NOT NULL
     );
     CREATE TABLE lcd_context_items (
       id              TEXT PRIMARY KEY,
@@ -60,8 +70,14 @@ function createTestDb(): Db {
       ref_id          TEXT NOT NULL,
       conversation_id TEXT NOT NULL
     );
-    -- CONTENTLESS FTS — matches real schema-lcd.ts lcd_messages_fts
-    -- (no content= clause; adapter-populated on append via renderMessageFtsText)
+    CREATE TABLE memories (
+      id        TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'default',
+      agent_id  TEXT NOT NULL DEFAULT 'default',
+      content   TEXT NOT NULL
+    );
+    -- SELF-CONTAINED FTS — matches real schema-lcd.ts lcd_messages_fts
+    -- (no content= clause; stores its own re-rendered content via renderMessageFtsText)
     CREATE VIRTUAL TABLE lcd_messages_fts USING fts5(
       content,
       conversation_id UNINDEXED,
@@ -76,7 +92,42 @@ function createTestDb(): Db {
       content_rowid='rowid'
     );
   `);
+  if (opts.withTrigramTwins) {
+    createTrigramTwins(db);
+  }
   return db;
+}
+
+/**
+ * Create the three SELF-CONTAINED FTS5 trigram twins exactly as the real
+ * `ensureTrigramTwins` (packages/memory/src/schema-trigram.ts, plan 180-02)
+ * installs them — same columns, same UNINDEXED scope columns, same trigram
+ * tokenizer. The twin backfill the doctor learns in this plan repopulates these.
+ * (Inlined rather than imported because `ensureTrigramTwins` is not on the
+ * @comis/memory barrel; the existing harness likewise hand-builds the word-lane
+ * FTS DDL.)
+ */
+function createTrigramTwins(db: Db): void {
+  db.exec(`
+    CREATE VIRTUAL TABLE lcd_messages_fts_tri USING fts5(
+      content,
+      conversation_id UNINDEXED,
+      agent_id UNINDEXED,
+      message_id UNINDEXED,
+      tokenize='trigram'
+    );
+    CREATE VIRTUAL TABLE lcd_summaries_fts_tri USING fts5(
+      content,
+      conversation_id UNINDEXED,
+      agent_id UNINDEXED,
+      summary_id UNINDEXED,
+      tokenize='trigram'
+    );
+    CREATE VIRTUAL TABLE memory_fts_tri USING fts5(
+      content,
+      tokenize='trigram'
+    );
+  `);
 }
 
 /** Return a simple row-count fingerprint for F1 assertions (lcd_messages never written by repair) */
@@ -110,7 +161,7 @@ describe("repairFtsDrift", () => {
 
   it("repairFtsDrift uses rebuild for external-content lcd_summaries_fts", async () => {
     db.prepare(
-      "INSERT INTO lcd_summaries VALUES ('sum-1', 0, 'tenant1', 'agent1', 'summary text')",
+      "INSERT INTO lcd_summaries(summary_id, fallback, tenant_id, agent_id, content) VALUES ('sum-1', 0, 'tenant1', 'agent1', 'summary text')",
     ).run();
     const result = await repairFtsDrift(db);
     expect(result.ok).toBe(true);
@@ -215,9 +266,9 @@ describe("repairContextItems", () => {
 
   it("repairContextItems leaves valid lcd_context_items refs untouched", async () => {
     // Valid summary ref
-    db.prepare("INSERT INTO lcd_summaries VALUES (?, 0, 'tenant1', 'agent1', 'summary text')").run(
-      "sum-real",
-    );
+    db.prepare(
+      "INSERT INTO lcd_summaries(summary_id, fallback, tenant_id, agent_id, content) VALUES (?, 0, 'tenant1', 'agent1', 'summary text')",
+    ).run("sum-real");
     db.prepare("INSERT INTO lcd_context_items VALUES (?, 'summary', ?, 'conv-1')").run(
       "ctx-valid",
       "sum-real",
@@ -280,6 +331,231 @@ describe("repairFtsDrift — contentless FTS guard (CR-02)", () => {
       .prepare("SELECT message_id FROM lcd_messages_fts")
       .all() as Array<{ message_id: string }>;
     expect(ftsRows.some((r) => r.message_id === "msg-cr02")).toBe(true);
+    db.close();
+  });
+});
+
+// ── repairFtsDrift FTS-02: normalized trigram twin backfill (Phase 180-07) ────
+//
+// RED-first (plan 180-07 Task 1): the doctor backfill is the designed path for
+// pre-existing history — rows written before Phase 180's TS twin writes landed.
+// `repairFtsDrift` must repopulate all THREE self-contained trigram twins from
+// the base rows with NORMALIZED text (`normalizeForSearch(...)`), so the repair
+// output indexes EXACTLY what the populate path indexes. These cases FAIL on the
+// pre-180-07 repair (it never touches the twins → they stay empty post-repair).
+//
+// Test text helpers are assembled from String.fromCodePoint so a literal ASCII
+// `"` glyph never appears inside a Hebrew acronym in source (the WR-01 boundary
+// discipline carried from 180-01); the Hebrew fixtures themselves are plain
+// string literals (no embedded ASCII quote), so they are inlined directly.
+
+describe("repairFtsDrift — normalized trigram twin backfill (FTS-02, 180-07)", () => {
+  /** Seed one Hebrew message (rendered from a part), one summary, one memory — the
+   *  pre-phase-180 deployment shape: base rows present, twins EMPTY. */
+  function seedHebrewBaseRows(db: Db): void {
+    // lcd_messages + part — the part text is rendered via renderMessageFtsText
+    db.prepare(
+      "INSERT INTO lcd_messages VALUES ('msg-he', 'conv-he', 'tenant1', 'agent-a', 0)",
+    ).run();
+    db.prepare(
+      "INSERT INTO lcd_message_parts(id, message_id, ordinal, metadata) VALUES (?, ?, 0, ?)",
+    ).run("part-he", "msg-he", JSON.stringify({ raw: { text: "הספרים על המדף" } }));
+    // lcd_summaries
+    db.prepare(
+      "INSERT INTO lcd_summaries(summary_id, conversation_id, fallback, tenant_id, agent_id, content) VALUES ('sum-he', 'conv-he', 0, 'tenant1', 'agent-a', ?)",
+    ).run("הספרים סוכמו");
+    // memories
+    db.prepare(
+      "INSERT INTO memories(id, tenant_id, agent_id, content) VALUES ('mem-he', 'tenant1', 'agent-a', ?)",
+    ).run("הספרים נשמרו בזיכרון");
+  }
+
+  it("backfills all three trigram twins from base rows at the base rowid with scope columns", async () => {
+    const db = createTestDb({ withTrigramTwins: true });
+    seedHebrewBaseRows(db);
+
+    const result = await repairFtsDrift(db);
+    expect(result.ok).toBe(true);
+
+    // lcd_messages_fts_tri: rendered+normalized content at the base rowid, scope copied
+    const msgBase = db
+      .prepare("SELECT rowid, conversation_id, agent_id, id FROM lcd_messages WHERE id='msg-he'")
+      .get() as { rowid: number; conversation_id: string; agent_id: string; id: string };
+    const msgTri = db
+      .prepare(
+        "SELECT rowid, conversation_id, agent_id, message_id FROM lcd_messages_fts_tri WHERE message_id='msg-he'",
+      )
+      .get() as
+      | { rowid: number; conversation_id: string; agent_id: string; message_id: string }
+      | undefined;
+    expect(msgTri).toBeDefined();
+    expect(msgTri?.rowid).toBe(msgBase.rowid);
+    expect(msgTri?.conversation_id).toBe(msgBase.conversation_id);
+    expect(msgTri?.agent_id).toBe(msgBase.agent_id);
+    expect(msgTri?.message_id).toBe(msgBase.id);
+
+    // lcd_summaries_fts_tri: normalized content at the base rowid, R4 scope copied
+    const sumBase = db
+      .prepare("SELECT rowid, conversation_id, agent_id, summary_id FROM lcd_summaries WHERE summary_id='sum-he'")
+      .get() as
+      | { rowid: number; conversation_id: string; agent_id: string; summary_id: string }
+      | undefined;
+    const sumTri = db
+      .prepare(
+        "SELECT rowid, conversation_id, agent_id, summary_id FROM lcd_summaries_fts_tri WHERE summary_id='sum-he'",
+      )
+      .get() as
+      | { rowid: number; conversation_id: string; agent_id: string; summary_id: string }
+      | undefined;
+    expect(sumTri).toBeDefined();
+    expect(sumTri?.rowid).toBe(sumBase?.rowid);
+    expect(sumTri?.conversation_id).toBe("conv-he");
+    expect(sumTri?.agent_id).toBe("agent-a");
+    expect(sumTri?.summary_id).toBe("sum-he");
+
+    // memory_fts_tri: normalized content at the memories rowid (rowid-only lane)
+    const memBase = db
+      .prepare("SELECT rowid FROM memories WHERE id='mem-he'")
+      .get() as { rowid: number };
+    const memTri = db
+      .prepare("SELECT rowid FROM memory_fts_tri WHERE rowid=?")
+      .get(memBase.rowid) as { rowid: number } | undefined;
+    expect(memTri).toBeDefined();
+    expect(memTri?.rowid).toBe(memBase.rowid);
+
+    db.close();
+  });
+
+  it("feeds NORMALIZED text so a folded Hebrew query matches the backfilled twin", async () => {
+    const db = createTestDb({ withTrigramTwins: true });
+    seedHebrewBaseRows(db);
+
+    await repairFtsDrift(db);
+
+    // Stored text 'הספרים' was normalized at backfill (final mem ם → מ folds);
+    // the query token 'ספרימ' (already folded) MATCHes only because the index
+    // holds normalized text, not the raw 'הספרים'. This is the I7 doctor leg.
+    const msgHit = db
+      .prepare(`SELECT message_id FROM lcd_messages_fts_tri WHERE lcd_messages_fts_tri MATCH '"ספרימ"'`)
+      .all() as Array<{ message_id: string }>;
+    expect(msgHit.some((r) => r.message_id === "msg-he")).toBe(true);
+
+    const sumHit = db
+      .prepare(`SELECT summary_id FROM lcd_summaries_fts_tri WHERE lcd_summaries_fts_tri MATCH '"ספרימ"'`)
+      .all() as Array<{ summary_id: string }>;
+    expect(sumHit.some((r) => r.summary_id === "sum-he")).toBe(true);
+
+    const memHit = db
+      .prepare(`SELECT rowid FROM memory_fts_tri WHERE memory_fts_tri MATCH '"ספרימ"'`)
+      .all() as Array<{ rowid: number }>;
+    expect(memHit.length).toBeGreaterThan(0);
+
+    db.close();
+  });
+
+  it("leaves the word-lane repair behavior unchanged (lcd_messages_fts + lcd_summaries_fts still repopulated)", async () => {
+    const db = createTestDb({ withTrigramTwins: true });
+    db.prepare("INSERT INTO lcd_messages VALUES ('msg-w', 'conv-1', 'tenant1', 'agent1', 0)").run();
+    db.prepare(
+      "INSERT INTO lcd_message_parts(id, message_id, ordinal, tool_name, metadata) VALUES (?, ?, 0, ?, ?)",
+    ).run("part-w", "msg-w", "search_tool", JSON.stringify({ raw: { text: "hello world" } }));
+    db.prepare(
+      "INSERT INTO lcd_summaries(summary_id, fallback, tenant_id, agent_id, content) VALUES ('sum-w', 0, 'tenant1', 'agent1', 'word lane summary')",
+    ).run();
+
+    const result = await repairFtsDrift(db);
+    expect(result.ok).toBe(true);
+
+    // Word lane lcd_messages_fts: re-rendered, contains the tool name (existing behavior)
+    const wordMsg = db
+      .prepare("SELECT content FROM lcd_messages_fts WHERE message_id='msg-w'")
+      .get() as { content: string } | undefined;
+    expect(wordMsg?.content).toContain("search_tool");
+
+    // Word lane lcd_summaries_fts: rebuilt, the summary is matchable (existing behavior)
+    const wordSum = db
+      .prepare(`SELECT rowid FROM lcd_summaries_fts WHERE lcd_summaries_fts MATCH 'word'`)
+      .all() as Array<{ rowid: number }>;
+    expect(wordSum.length).toBeGreaterThan(0);
+
+    // Both word-lane action strings still present
+    const joined = result.value!.join(" ");
+    expect(joined).toContain("lcd_messages_fts");
+    expect(joined).toContain("lcd_summaries_fts");
+
+    db.close();
+  });
+
+  it("skips twin backfill gracefully on a trigram-less host (no twins → no twin actions, no error)", async () => {
+    // No withTrigramTwins → the three twins are absent (the trigram-less host shape)
+    const db = createTestDb();
+    db.prepare("INSERT INTO lcd_messages VALUES ('msg-nt', 'conv-1', 'tenant1', 'agent1', 0)").run();
+    db.prepare(
+      "INSERT INTO lcd_message_parts(id, message_id, ordinal, metadata) VALUES (?, ?, 0, ?)",
+    ).run("part-nt", "msg-nt", JSON.stringify({ raw: { text: "hello" } }));
+    db.prepare(
+      "INSERT INTO lcd_summaries(summary_id, fallback, tenant_id, agent_id, content) VALUES ('sum-nt', 0, 'tenant1', 'agent1', 'summary')",
+    ).run();
+
+    const result = await repairFtsDrift(db);
+    expect(result.ok).toBe(true);
+
+    // Existing word-lane actions intact; NO twin action lines
+    const joined = result.value!.join(" ");
+    expect(joined).toContain("lcd_messages_fts");
+    expect(joined).toContain("lcd_summaries_fts");
+    expect(joined).not.toContain("fts_tri");
+
+    db.close();
+  });
+
+  it("returns a human-readable, counts-only action line for each backfilled twin", async () => {
+    const db = createTestDb({ withTrigramTwins: true });
+    seedHebrewBaseRows(db);
+
+    const result = await repairFtsDrift(db);
+    expect(result.ok).toBe(true);
+
+    const actions = result.value!;
+    expect(actions.some((a) => a.includes("lcd_messages_fts_tri"))).toBe(true);
+    expect(actions.some((a) => a.includes("lcd_summaries_fts_tri"))).toBe(true);
+    expect(actions.some((a) => a.includes("memory_fts_tri"))).toBe(true);
+    // Counts only, never indexed text (T-180-07-03): the Hebrew content must not
+    // appear in any action string.
+    const joined = actions.join(" ");
+    expect(joined).not.toContain("הספרים");
+    // Each twin line carries a numeric count
+    const triLines = actions.filter((a) => a.includes("fts_tri"));
+    for (const line of triLines) {
+      expect(line).toMatch(/\d+/);
+    }
+
+    db.close();
+  });
+
+  it("copies each base row's OWN scope columns — never mixes scopes across a two-agent fixture (R4)", async () => {
+    const db = createTestDb({ withTrigramTwins: true });
+    // Two agents, each with its own message in its own conversation
+    db.prepare("INSERT INTO lcd_messages VALUES ('msg-a', 'conv-a', 'tenant1', 'agent-a', 0)").run();
+    db.prepare(
+      "INSERT INTO lcd_message_parts(id, message_id, ordinal, metadata) VALUES (?, ?, 0, ?)",
+    ).run("part-a", "msg-a", JSON.stringify({ raw: { text: "alpha message" } }));
+    db.prepare("INSERT INTO lcd_messages VALUES ('msg-b', 'conv-b', 'tenant1', 'agent-b', 0)").run();
+    db.prepare(
+      "INSERT INTO lcd_message_parts(id, message_id, ordinal, metadata) VALUES (?, ?, 0, ?)",
+    ).run("part-b", "msg-b", JSON.stringify({ raw: { text: "bravo message" } }));
+
+    await repairFtsDrift(db);
+
+    const rowA = db
+      .prepare("SELECT conversation_id, agent_id FROM lcd_messages_fts_tri WHERE message_id='msg-a'")
+      .get() as { conversation_id: string; agent_id: string };
+    const rowB = db
+      .prepare("SELECT conversation_id, agent_id FROM lcd_messages_fts_tri WHERE message_id='msg-b'")
+      .get() as { conversation_id: string; agent_id: string };
+    expect(rowA).toEqual({ conversation_id: "conv-a", agent_id: "agent-a" });
+    expect(rowB).toEqual({ conversation_id: "conv-b", agent_id: "agent-b" });
+
     db.close();
   });
 });
