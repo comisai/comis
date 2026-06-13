@@ -9,21 +9,32 @@
  * (so the "prepare once" discipline is preserved — the statements are prepared
  * exactly once here, not per write).
  *
- * This commit (the 800-line-gate extraction) relocates the WORD-lane populate
- * block BYTE-IDENTICALLY: same SQL strings, same `messageRowidRowMapper`
- * parseOptionalRow guard, same `isFtsAvailable` gate, same narrow catch with the
- * same comment. NO behavior change. The normalized trigram-twin insert helpers
- * (`populateMessageTri` / `insertSummaryTri`) land in the next commit (plan
- * 180-04 Task 3) and flip live then.
+ * The WORD-lane populate (`populateMessageFts`) was relocated BYTE-IDENTICALLY
+ * (same SQL strings, same `messageRowidRowMapper` guard, same `isFtsAvailable`
+ * gate, same narrow catch). The normalized TRIGRAM-TWIN inserts
+ * (`populateMessageTri` / `insertSummaryTri`) are the index half of the FTS-01
+ * symmetry: they fold RAW content through `normalizeForSearch` HERE — the I7
+ * single call site — so the call sites in `lcd-store.ts` / `lcd-store-writes.ts`
+ * CANNOT forget the fold. The stored twin text is the SAME symbol the query side
+ * (plan 180-05) imports, which is the entire FTS-01 contract: query מלך finds
+ * stored מלכים because both fold identically.
+ *
+ * The twin statements are prepared inside a try/catch — `prepare()` THROWS on a
+ * trigram-less host (the twin tables are absent → "no such table"), so a failed
+ * prep sets the handles null and every twin method becomes a clean no-op. This
+ * mirrors the `isFtsAvailable` defensive posture without a second probe: if the
+ * twin statements compiled, the twin tables exist.
  *
  * `@comis/memory` is infra-free (AGENTS.md §2.4 — no logger): a degraded
- * populate skips the index row silently by design (WR-03).
+ * populate skips the index row silently by design (WR-03); a twin failure leaves
+ * the row DE-INDEXED (the fail-safe direction), never a rolled-back base write.
  *
  * @module
  */
 
 import type Database from "better-sqlite3";
 import type { LcdMessagePart } from "@comis/core";
+import { normalizeForSearch } from "@comis/core";
 import { renderMessageFtsText, isFtsAvailable } from "./lcd-fts.js";
 import { messageRowidRowMapper } from "./lcd-store-mappers.js";
 
@@ -40,6 +51,14 @@ export interface FtsPopulator {
    *  the self-contained `lcd_messages_fts` row at the base-table rowid. Gated on
    *  `isFtsAvailable`; the narrow catch swallows a post-boot INSERT failure. */
   populateMessageFts(messageId: string, parts: LcdMessagePart[], scope: FtsPopulateScope): void;
+  /** Trigram-twin populate: `normalizeForSearch(renderMessageFtsText(parts))`
+   *  into `lcd_messages_fts_tri` at the base rowid. Normalizes internally (I7).
+   *  No-op when the twins are absent (trigram-less host). */
+  populateMessageTri(messageId: string, parts: LcdMessagePart[], scope: FtsPopulateScope): void;
+  /** Trigram-twin populate for a summary: `normalizeForSearch(rawContent)` into
+   *  `lcd_summaries_fts_tri` at the summary's base rowid (resolved by summary_id).
+   *  Normalizes internally (I7). No-op when the twins are absent. */
+  insertSummaryTri(summaryId: string, rawContent: string, scope: FtsPopulateScope): void;
 }
 
 /**
@@ -102,5 +121,79 @@ export function createFtsPopulator(db: Database.Database): FtsPopulator {
     }
   }
 
-  return { populateMessageFts };
+  // ── Trigram twins (probe-gated via guarded prep) ────────────────────────────
+  // `prepare()` THROWS on a trigram-less host (the twin tables do not exist →
+  // "no such table"). A failed prep leaves the handles null and every twin method
+  // is a clean no-op — search degrades to the scan floors (plan 180-05), the
+  // append path is unaffected. If the statements compiled, the twin tables exist
+  // (so no second runtime probe is needed). The twin's rowid = the base rowid
+  // (the same linkage insertMessageFts uses) so the 180-02 AFTER DELETE triggers
+  // mirror twin deletes by `old.rowid`.
+  let insertMessageTri: Database.Statement | null = null;
+  let insertSummaryTriStmt: Database.Statement | null = null;
+  let selectSummaryRowid: Database.Statement | null = null;
+  try {
+    insertMessageTri = db.prepare(
+      "INSERT INTO lcd_messages_fts_tri(rowid, content, conversation_id, agent_id, message_id) VALUES (?, ?, ?, ?, ?)",
+    );
+    insertSummaryTriStmt = db.prepare(
+      "INSERT INTO lcd_summaries_fts_tri(rowid, content, conversation_id, agent_id, summary_id) VALUES (?, ?, ?, ?, ?)",
+    );
+    selectSummaryRowid = db.prepare("SELECT rowid FROM lcd_summaries WHERE summary_id = ?");
+  } catch {
+    // Trigram tokenizer not compiled into this host's better-sqlite3 (the twin
+    // tables are absent — ensureTrigramTwins skipped them). Boot WITHOUT the twin
+    // lane: the handles stay null and every twin method below is a clean no-op.
+    insertMessageTri = null;
+    insertSummaryTriStmt = null;
+    selectSummaryRowid = null;
+  }
+
+  function populateMessageTri(messageId: string, parts: LcdMessagePart[], scope: FtsPopulateScope): void {
+    // No-op on a trigram-less host (guarded prep set the handle null).
+    if (insertMessageTri === null) return;
+    try {
+      const parsedRowid = messageRowidRowMapper.parseOptionalRow(selectMessageRowid.get(messageId));
+      if (parsedRowid.ok && parsedRowid.value) {
+        insertMessageTri.run(
+          parsedRowid.value.rowid,
+          // I7: normalize RAW content HERE (the single call site) so the index
+          // side folds identically to the query side (plan 180-05 imports the
+          // same symbol). The folded text is what a script-routed MATCH reads.
+          normalizeForSearch(renderMessageFtsText(parts)),
+          scope.conversationId,
+          scope.agentId, // R4: agent_id UNINDEXED so the twin MATCH filters by agent (WR-02)
+          messageId,
+        );
+      }
+    } catch {
+      // Best-effort — skip indexing THIS row rather than fail the authoritative
+      // base-table write; cannot re-throw inside the txn; fail-safe = de-indexed
+      // (the scan floor still covers it; the doctor backfill repopulates).
+    }
+  }
+
+  function insertSummaryTri(summaryId: string, rawContent: string, scope: FtsPopulateScope): void {
+    // No-op on a trigram-less host (guarded prep set the handles null).
+    if (insertSummaryTriStmt === null || selectSummaryRowid === null) return;
+    try {
+      const parsedRowid = messageRowidRowMapper.parseOptionalRow(selectSummaryRowid.get(summaryId));
+      if (parsedRowid.ok && parsedRowid.value) {
+        insertSummaryTriStmt.run(
+          parsedRowid.value.rowid,
+          // I7: normalize RAW summary content HERE (the single call site).
+          normalizeForSearch(rawContent),
+          scope.conversationId,
+          scope.agentId, // R4: agent_id UNINDEXED so the twin MATCH filters by agent (WR-02)
+          summaryId,
+        );
+      }
+    } catch {
+      // Best-effort — skip indexing THIS row rather than fail the authoritative
+      // base-table write; cannot re-throw inside the txn; fail-safe = de-indexed
+      // (the scan floor still covers it; the doctor backfill repopulates).
+    }
+  }
+
+  return { populateMessageFts, populateMessageTri, insertSummaryTri };
 }

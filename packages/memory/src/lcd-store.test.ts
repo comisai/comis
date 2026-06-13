@@ -1394,10 +1394,19 @@ describe("createLcdStore — WR-03 FTS-populate guard", () => {
   /**
    * Wrap a full-schema db in a Proxy that (a) forces the FTS-availability probe
    * (`SELECT rowid FROM lcd_summaries_fts … MATCH`) to THROW so isFtsAvailable()
-   * caches `false`, and (b) records every attempted `INSERT INTO lcd_messages_fts`
-   * via a spy whose `.run()` is a no-op. Construction still uses the REAL prepares
-   * for every other statement, so createLcdStore builds normally. Returns the
-   * proxied db plus the populate-attempt counter.
+   * caches `false`, and (b) records every attempted WORD-LANE `INSERT INTO
+   * lcd_messages_fts(...)` via a spy whose `.run()` is a no-op. Construction still
+   * uses the REAL prepares for every other statement, so createLcdStore builds
+   * normally. Returns the proxied db plus the word-lane populate-attempt counter.
+   *
+   * NOTE (Phase 180): the WORD lane is gated on `isFtsAvailable`; the trigram
+   * TWIN lane (`lcd_messages_fts_tri`) is an INDEPENDENT lane gated on its OWN
+   * guarded prep (not on isFtsAvailable). The twins genuinely exist on this db, so
+   * the twin insert correctly fires here — that is NOT a word-lane-gate breach.
+   * The match below therefore anchors on the word-lane column-list open paren
+   * `lcd_messages_fts(` so it does NOT also catch `lcd_messages_fts_tri(...)` (the
+   * twin lane's own gate is covered by lcd-store-fts-populate.test.ts + the
+   * Phase-180 trigram-less / base-write-authority cases).
    */
   function ftsUnavailableProbeDb(): { db: Database.Database; ftsInsertAttempts: () => number } {
     const real = new Database(":memory:");
@@ -1414,9 +1423,10 @@ describe("createLcdStore — WR-03 FTS-populate guard", () => {
             if (/SELECT\s+rowid/i.test(sql) && /MATCH/i.test(sql)) {
               return { all: () => { throw new Error("no such module: fts5"); } };
             }
-            // The contentless-FTS populate INSERT: count + no-op so we can assert
-            // the gated path NEVER attempts it when FTS is reported unavailable.
-            if (/INSERT\s+INTO\s+lcd_messages_fts/i.test(sql)) {
+            // The WORD-LANE populate INSERT (anchored on the `(` so it does NOT
+            // catch the twin `lcd_messages_fts_tri(...)`): count + no-op so we can
+            // assert the gated path NEVER attempts it when FTS is unavailable.
+            if (/INSERT\s+INTO\s+lcd_messages_fts\s*\(/i.test(sql)) {
               return { run: () => { attempts++; return { changes: 0, lastInsertRowid: 0 }; } };
             }
             return target.prepare(sql);
