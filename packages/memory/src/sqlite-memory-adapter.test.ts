@@ -4,8 +4,10 @@ import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { chmodSync, existsSync } from "node:fs";
+import { normalizeForSearch } from "@comis/core";
 import { isVecAvailable } from "./schema.js";
 import { SqliteMemoryAdapter } from "./sqlite-memory-adapter.js";
+import { createSqliteMemoryConsolidationStore } from "./sqlite-memory-consolidation-store.js";
 
 /** Default test config using in-memory SQLite. */
 const testConfig: MemoryConfig = {
@@ -1431,5 +1433,258 @@ describe("SqliteMemoryAdapter — listPinned does not return expired pinned entr
     const ids = result.value.map((r) => r.entry.id);
     expect(ids).toContain(liveId);
     expect(ids).not.toContain(expiredId); // expired entries must NOT appear
+  });
+});
+
+// ── LTM trigram lane: I4 recall + twin writes + R4 + consolidation (180-06) ──
+//
+// End-to-end through the REAL adapter with NO embedding provider (I4 by
+// construction — `new SqliteMemoryAdapter(testConfig)` has no EmbeddingPort, so
+// the FTS floor alone must carry recall). RED proof on pre-patch code:
+//   - store() does NOT write a memory_fts_tri twin row (row-mapper writes only
+//     the base row) → the twin SELECT finds nothing;
+//   - searchByText routes ONLY the porter word lane → a non-Latin morphology
+//     query returns [] through BOTH search() and searchLanes();
+//   - foldIntoExisting() on a REAL content rewrite leaves NO normalized twin row
+//     (the 180-02 WHEN-guarded trigger deleted the old one; the TS re-insert is
+//     this plan's job) — while the proof-only fold must leave an existing twin
+//     row INTACT (the COALESCE(NULL, content) no-op + the WHEN guard).
+// All non-Latin glyphs are assembled from codepoints (WR-01).
+describe("SqliteMemoryAdapter LTM trigram lane (I4 / twin / R4 / consolidation)", () => {
+  // Stored / query pairs (codepoint-assembled).
+  const HE_STORED = String.fromCodePoint(0x5d4, 0x5e1, 0x5e4, 0x5e8, 0x5d9, 0x5dd); // הספרים
+  const HE_QUERY = String.fromCodePoint(0x5e1, 0x5e4, 0x5e8); // ספר
+  const HE_FOLDED = String.fromCodePoint(0x5d4, 0x5e1, 0x5e4, 0x5e8, 0x5d9, 0x5de); // הספרימ (final mem folded)
+  const AR_STORED = String.fromCodePoint(0x648, 0x627, 0x644, 0x643, 0x62a, 0x627, 0x628); // والكتاب
+  const AR_QUERY = String.fromCodePoint(0x643, 0x62a, 0x627, 0x628); // كتاب
+  const RU_STORED = String.fromCodePoint(0x43a, 0x43d, 0x438, 0x433, 0x438); // книги
+  const RU_QUERY = String.fromCodePoint(0x43a, 0x43d, 0x438, 0x433, 0x430); // книга
+  const CJK_STORED = "我喜欢读中文书籍";
+  const CJK_QUERY = "中文书";
+
+  let adapter: SqliteMemoryAdapter;
+
+  beforeEach(() => {
+    // NO embedding port → I4 (vector lane absent; FTS floor must carry recall).
+    adapter = new SqliteMemoryAdapter(testConfig);
+  });
+
+  afterEach(() => {
+    adapter.close();
+  });
+
+  /** Normalized content of the memory_fts_tri twin row for a memory id (the
+   *  twin shares the base rowid), or undefined when no twin row exists. */
+  function twinContentOf(id: string): string | undefined {
+    const db = adapter.getDb();
+    const row = db
+      .prepare(
+        "SELECT content FROM memory_fts_tri WHERE rowid = (SELECT rowid FROM memories WHERE id = ?)",
+      )
+      .get(id) as { content: string } | undefined;
+    return row?.content;
+  }
+
+  // ── twin writes ──────────────────────────────────────────────────
+
+  it("store() writes a NORMALIZED memory_fts_tri twin row (folded finals)", async () => {
+    const id = crypto.randomUUID();
+    await adapter.store(makeEntry({ id, content: HE_STORED }));
+    // הספרים → הספרימ (final mem folds in normalizeForSearch).
+    expect(twinContentOf(id)).toBe(HE_FOLDED);
+  });
+
+  it("every store() insert path writes a twin row (the insertMemoryRow chokepoint covers v1.7 import)", async () => {
+    // The portability/import path inserts through adapter.store() →
+    // insertMemoryRow (one chokepoint), so a stored row MUST carry a twin row.
+    const id = crypto.randomUUID();
+    await adapter.store(makeEntry({ id, content: "docker compose notes" }));
+    expect(twinContentOf(id)).toBe(normalizeForSearch("docker compose notes"));
+  });
+
+  // ── I4 recall through search() AND searchLanes() ─────────────────
+
+  it("search() recalls he/ar/ru/CJK memories with embeddings disabled (I4)", async () => {
+    const he = crypto.randomUUID();
+    const ar = crypto.randomUUID();
+    const ru = crypto.randomUUID();
+    const cjk = crypto.randomUUID();
+    await adapter.store(makeEntry({ id: he, content: HE_STORED }));
+    await adapter.store(makeEntry({ id: ar, content: AR_STORED }));
+    await adapter.store(makeEntry({ id: ru, content: RU_STORED }));
+    await adapter.store(makeEntry({ id: cjk, content: CJK_STORED }));
+
+    for (const [query, id] of [
+      [HE_QUERY, he],
+      [AR_QUERY, ar],
+      [RU_QUERY, ru],
+      [CJK_QUERY, cjk],
+    ] as const) {
+      const r = await adapter.search(testSessionKey, query, { limit: 10 });
+      expect(r.ok).toBe(true);
+      if (!r.ok) continue;
+      expect(r.value.map((m) => m.entry.id)).toContain(id);
+    }
+  });
+
+  it("searchLanes() returns he/ar/ru/CJK memories in the FTS lane with embeddings disabled (I4)", async () => {
+    const he = crypto.randomUUID();
+    const ru = crypto.randomUUID();
+    await adapter.store(makeEntry({ id: he, content: HE_STORED }));
+    await adapter.store(makeEntry({ id: ru, content: RU_STORED }));
+
+    const rHe = await adapter.searchLanes(testSessionKey, HE_QUERY, { limit: 10 });
+    expect(rHe.ok).toBe(true);
+    if (rHe.ok) expect(rHe.value.fts.map((m) => m.entry.id)).toContain(he);
+
+    const rRu = await adapter.searchLanes(testSessionKey, RU_QUERY, { limit: 10 });
+    expect(rRu.ok).toBe(true);
+    if (rRu.ok) expect(rRu.value.fts.map((m) => m.entry.id)).toContain(ru);
+  });
+
+  // ── R4 isolation on the trigram lane, both directions ────────────
+
+  it("R4: search() never returns another AGENT's Hebrew memory (both directions)", async () => {
+    const idA = crypto.randomUUID();
+    const idB = crypto.randomUUID();
+    await adapter.store(makeEntry({ id: idA, agentId: "agent-a", content: HE_STORED }));
+    await adapter.store(makeEntry({ id: idB, agentId: "agent-b", content: HE_STORED }));
+
+    const asA = await adapter.search(testSessionKey, HE_QUERY, { limit: 10, agentId: "agent-a" });
+    expect(asA.ok).toBe(true);
+    if (asA.ok) {
+      const ids = asA.value.map((m) => m.entry.id);
+      expect(ids).toContain(idA);
+      expect(ids).not.toContain(idB);
+    }
+
+    const asB = await adapter.search(testSessionKey, HE_QUERY, { limit: 10, agentId: "agent-b" });
+    expect(asB.ok).toBe(true);
+    if (asB.ok) {
+      const ids = asB.value.map((m) => m.entry.id);
+      expect(ids).toContain(idB);
+      expect(ids).not.toContain(idA);
+    }
+  });
+
+  it("R4: searchLanes() never returns another AGENT's Hebrew memory (hydration filter)", async () => {
+    const idA = crypto.randomUUID();
+    const idB = crypto.randomUUID();
+    await adapter.store(makeEntry({ id: idA, agentId: "agent-a", content: HE_STORED }));
+    await adapter.store(makeEntry({ id: idB, agentId: "agent-b", content: HE_STORED }));
+
+    const lanesA = await adapter.searchLanes(testSessionKey, HE_QUERY, { limit: 10, agentId: "agent-a" });
+    expect(lanesA.ok).toBe(true);
+    if (lanesA.ok) {
+      const ids = lanesA.value.fts.map((m) => m.entry.id);
+      expect(ids).toContain(idA);
+      expect(ids).not.toContain(idB);
+    }
+  });
+
+  it("R4: search() never returns another TENANT's Hebrew memory (both directions)", async () => {
+    const keyT1: SessionKey = { tenantId: "tenant-1", userId: "u", channelId: "c" };
+    const keyT2: SessionKey = { tenantId: "tenant-2", userId: "u", channelId: "c" };
+    const id1 = crypto.randomUUID();
+    const id2 = crypto.randomUUID();
+    await adapter.store(makeEntry({ id: id1, tenantId: "tenant-1", content: HE_STORED }));
+    await adapter.store(makeEntry({ id: id2, tenantId: "tenant-2", content: HE_STORED }));
+
+    const t1 = await adapter.search(keyT1, HE_QUERY, { limit: 10 });
+    expect(t1.ok).toBe(true);
+    if (t1.ok) {
+      const ids = t1.value.map((m) => m.entry.id);
+      expect(ids).toContain(id1);
+      expect(ids).not.toContain(id2);
+    }
+
+    const t2 = await adapter.search(keyT2, HE_QUERY, { limit: 10 });
+    expect(t2.ok).toBe(true);
+    if (t2.ok) {
+      const ids = t2.value.map((m) => m.entry.id);
+      expect(ids).toContain(id2);
+      expect(ids).not.toContain(id1);
+    }
+  });
+
+  // ── consolidation rewrite re-inserts the normalized twin ─────────
+
+  it("a REAL content rewrite via the consolidation store re-inserts a normalized twin row", async () => {
+    const db = adapter.getDb();
+    const store = createSqliteMemoryConsolidationStore({ db });
+
+    // Seed an OBSERVATION (proof_count IS NOT NULL) carrying Latin content, then
+    // fold in a Hebrew rewrite. After the rewrite the trigger deleted the old
+    // twin row; the TS re-insert must restore a twin row with the NEW normalized
+    // content (so HE_QUERY recalls it with embeddings disabled).
+    const obsId = crypto.randomUUID();
+    await adapter.store(
+      makeEntry({ id: obsId, content: "original english observation", proofCount: 1, sourceIds: ["s0"] }),
+    );
+
+    const fold = await store.foldIntoExisting({
+      targetObservationId: obsId,
+      newSourceIds: ["s1"],
+      trustLevel: "learned",
+      confidence: 1,
+      occurredAt: 2_000,
+      content: HE_STORED, // a REAL rewrite to Hebrew
+      tenantId: "default",
+      now: 3_000,
+    });
+    expect(fold.ok).toBe(true);
+
+    // The twin row exists again and holds the NEW normalized content.
+    const twin = db
+      .prepare(
+        "SELECT content FROM memory_fts_tri WHERE rowid = (SELECT rowid FROM memories WHERE id = ?)",
+      )
+      .get(obsId) as { content: string } | undefined;
+    expect(twin?.content).toBe(HE_FOLDED);
+
+    // And recall now bridges the morphology with embeddings disabled.
+    const r = await adapter.search(testSessionKey, HE_QUERY, { limit: 10 });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value.map((m) => m.entry.id)).toContain(obsId);
+  });
+
+  it("a proof-only fold (COALESCE(NULL, content) no-op) leaves the existing twin row INTACT", async () => {
+    const db = adapter.getDb();
+    const store = createSqliteMemoryConsolidationStore({ db });
+
+    // Seed a Hebrew observation; store() wrote its normalized twin row.
+    const obsId = crypto.randomUUID();
+    await adapter.store(
+      makeEntry({ id: obsId, content: HE_STORED, proofCount: 1, sourceIds: ["s0"] }),
+    );
+    expect(twinContentOf(obsId)).toBe(HE_FOLDED);
+
+    // A proof-only fold omits content → growObservation binds null →
+    // COALESCE(NULL, content) is a no-op → the WHEN-guarded trigger does NOT
+    // fire → the twin row must remain untouched (NOT de-indexed, NOT duplicated).
+    const fold = await store.foldIntoExisting({
+      targetObservationId: obsId,
+      newSourceIds: ["s1"],
+      trustLevel: "learned",
+      confidence: 1,
+      occurredAt: 2_000,
+      // content omitted — the proof-only fold
+      tenantId: "default",
+      now: 3_000,
+    });
+    expect(fold.ok).toBe(true);
+
+    // Exactly one twin row, still the original normalized content.
+    const rows = db
+      .prepare(
+        "SELECT content FROM memory_fts_tri WHERE rowid = (SELECT rowid FROM memories WHERE id = ?)",
+      )
+      .all(obsId) as Array<{ content: string }>;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.content).toBe(HE_FOLDED);
+    // Recall still works (the twin survived the proof-only fold).
+    const r = await adapter.search(testSessionKey, HE_QUERY, { limit: 10 });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value.map((m) => m.entry.id)).toContain(obsId);
   });
 });

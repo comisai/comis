@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import Database from "better-sqlite3";
 import { describe, it, expect, beforeEach } from "vitest";
+import { normalizeForSearch } from "@comis/core";
 import {
   buildFtsQuery,
   searchByText,
@@ -214,6 +215,96 @@ describe("searchByText", () => {
 
     const results = searchByText(db, "!@#$%", 10);
     expect(results).toHaveLength(0);
+  });
+});
+
+// ── searchByText script routing (FTS-01, plan 180-06) ────────────────
+//
+// RED proof (pre-patch `searchByText` runs ONLY the porter word lane via
+// buildFtsQuery → memory_fts MATCH): a non-Latin morphology query cannot bridge
+// the suffix/prefix even when a normalized memory_fts_tri twin row exists, so
+// every "tri-lane recall" case below returns [] until Task 2 routes the query
+// (routeSearchQuery) into the scope-free memory_fts_tri rowid-JOIN lane. The I1
+// all-Latin cases stay green on both sides (the word lane is untouched).
+//
+// These are UNIT fixtures: the memory row + a RAW normalized twin row are
+// inserted directly (the store()/insertMemoryRow twin-write path is exercised
+// end-to-end in sqlite-memory-adapter.test.ts). All non-Latin glyphs are built
+// from codepoints (WR-01 convention) so the source stays ASCII.
+describe("searchByText script routing (trigram lane)", () => {
+  let db: Database.Database;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    initSchema(db, 4);
+  });
+
+  /** Insert a memory row AND a RAW normalized memory_fts_tri twin row sharing
+   *  its rowid — the index state Task 2's store()-side twin write produces. */
+  function insertWithTwin(id: string, content: string): void {
+    insertMemory(db, id, content);
+    db.prepare(
+      "INSERT INTO memory_fts_tri(rowid, content) VALUES ((SELECT rowid FROM memories WHERE id = ?), ?)",
+    ).run(id, normalizeForSearch(content));
+  }
+
+  // Stored / query pairs, all assembled from codepoints.
+  const HE_STORED = String.fromCodePoint(0x5d4, 0x5e1, 0x5e4, 0x5e8, 0x5d9, 0x5dd); // הספרים
+  const HE_QUERY = String.fromCodePoint(0x5e1, 0x5e4, 0x5e8); // ספר
+  const AR_STORED = String.fromCodePoint(0x648, 0x627, 0x644, 0x643, 0x62a, 0x627, 0x628); // والكتاب
+  const AR_QUERY = String.fromCodePoint(0x643, 0x62a, 0x627, 0x628); // كتاب
+  // Russian: the Option-B pin — substring (whole-quoted) semantics FAIL книга→книги.
+  const RU_STORED = String.fromCodePoint(0x43a, 0x43d, 0x438, 0x433, 0x438); // книги
+  const RU_QUERY = String.fromCodePoint(0x43a, 0x43d, 0x438, 0x433, 0x430); // книга
+  const CJK_STORED = "我喜欢读中文书籍"; // 我喜欢读中文书籍
+  const CJK_QUERY = "中文书"; // 中文书
+
+  it("recalls a Hebrew memory by a morphologically-shorter query (SEFER finds HASFARIM)", () => {
+    insertWithTwin("he1", HE_STORED);
+    const results = searchByText(db, HE_QUERY, 10);
+    expect(results.map((r) => r.id)).toContain("he1");
+  });
+
+  it("recalls an Arabic memory across a prefixed form (KITAB finds WAL-KITAB)", () => {
+    insertWithTwin("ar1", AR_STORED);
+    const results = searchByText(db, AR_QUERY, 10);
+    expect(results.map((r) => r.id)).toContain("ar1");
+  });
+
+  it("recalls a Russian memory across suffix morphology (KNIGA finds KNIGI) — Option B", () => {
+    insertWithTwin("ru1", RU_STORED);
+    const results = searchByText(db, RU_QUERY, 10);
+    expect(results.map((r) => r.id)).toContain("ru1");
+  });
+
+  it("recalls a CJK memory by an embedded phrase substring", () => {
+    insertWithTwin("cjk1", CJK_STORED);
+    const results = searchByText(db, CJK_QUERY, 10);
+    expect(results.map((r) => r.id)).toContain("cjk1");
+  });
+
+  it("keeps all-Latin queries on the word lane: stopword-only query still returns [] (I1)", () => {
+    // buildFtsQuery drops Latin stopwords → null → []. If routing diverted the
+    // Latin lane this observable would change; pin that it does NOT.
+    insertWithTwin("lat1", "the quick brown fox");
+    expect(searchByText(db, "the and of", 10)).toHaveLength(0);
+  });
+
+  it("keeps all-Latin exact matches byte-identical to the word lane (I1)", () => {
+    insertWithTwin("lat2", "docker container logs");
+    const results = searchByText(db, "docker", 10);
+    expect(results.map((r) => r.id)).toContain("lat2");
+  });
+
+  it("falls back to the word lane on a trigram-absent host: a Hebrew EXACT-word query still matches", () => {
+    // Simulate a host whose better-sqlite3 lacks the trigram tokenizer: drop the
+    // twin table so the tri probe fails and routing must fall through to the
+    // porter word lane (status quo — no exact-word regression).
+    db.exec("DROP TABLE IF EXISTS memory_fts_tri");
+    insertMemory(db, "he2", HE_STORED); // word-lane only, no twin
+    // Exact stored word queried verbatim still matches via memory_fts (today's
+    // behavior — the floors for the LTM lane are the word + vector lanes).
+    expect(searchByText(db, HE_STORED, 10).map((r) => r.id)).toContain("he2");
   });
 });
 
