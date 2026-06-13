@@ -26,6 +26,9 @@ import type { AnnouncementBatcher } from "@comis/orchestrator";
  * Per-graph run state. Tracks all mutable data for a single graph execution:
  * node mapping, timers, outputs, concurrency counters, driver states, etc.
  */
+// @optional-field-count: per-run accumulator state — optional fields are genuinely per-run-conditional
+// (caller/announce/driver/cache/prewarm context), accreted across phases; GEN-03 (181-05) added
+// resolvedLanguage, the 13th, crossing the 12 threshold. Not bloat-by-negligence; co-located audit per the gate.
 export interface GraphRunState {
   graphId: string;
   /** Trace ID shared by all sub-agent spawns within this graph run. */
