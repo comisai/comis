@@ -215,6 +215,9 @@ export interface PostExecutionParams {
   sm: { buildSessionContext(): unknown };
   config: PerAgentConfig;
   msg: NormalizedMessage;
+  /** USER.md preferred language (DET-02 tier-2), threaded from prompt assembly.
+   *  Consumed by the degraded-reply resolver (GEN-02, wired in 181-03). */
+  userMdLanguage?: string;
   sessionKey: SessionKey;
   formattedKey: string;
   /** Resolver-aligned key for activeRunRegistry.deregister. Must match the

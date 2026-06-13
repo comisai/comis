@@ -639,6 +639,10 @@ export interface ExecutionPromptResult {
    *  logged/emitted — only the resulting ids cross the bus. Rides the RESULT object
    *  (like inlineMemory), NOT assemblerParams, so the cache-fence invariant holds. */
   recalledMemories?: ReadonlyArray<{ id: string; content: string }>;
+  /** USER.md preferred language (extractUserLanguage value, placeholder-filtered),
+   *  surfaced so the executor can thread it into PostExecutionParams.userMdLanguage
+   *  (DET-02 tier-2). Undefined on the parent-cache reuse path. */
+  userLanguage?: string;
 }
 
 export async function assembleExecutionPrompt(params: PromptAssemblyParams): Promise<ExecutionPromptResult> {
@@ -778,7 +782,9 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
       "Using parent cache prefix (model/provider match)",
     );
 
-    return { systemPrompt: parentCache.frozenSystemPrompt, systemPromptBlocks: parentCache.frozenSystemPromptBlocks, dynamicPreamble, inlineMemory: undefined, recalledMemories: undefined };
+    // userLanguage is not in scope on the parent-cache reuse path (computed
+    // later at the full-assembly site); keep the return type uniform.
+    return { systemPrompt: parentCache.frozenSystemPrompt, systemPromptBlocks: parentCache.frozenSystemPromptBlocks, dynamicPreamble, inlineMemory: undefined, recalledMemories: undefined, userLanguage: undefined };
   }
 
   // 1. Resolve promptMode
@@ -1812,5 +1818,5 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
     }
   }
 
-  return { systemPrompt, systemPromptBlocks, dynamicPreamble, inlineMemory, recalledMemories };
+  return { systemPrompt, systemPromptBlocks, dynamicPreamble, inlineMemory, recalledMemories, userLanguage };
 }
