@@ -27,6 +27,7 @@ import os from "node:os";
 import WebSocket from "ws";
 import type { z, ZodTypeAny } from "zod";
 import { loadEnvFile, systemClearTimeout, systemGetEnv, systemSetTimeout, type ApiContract } from "@comis/core";
+import { offlineSecretGet } from "../util/offline-secrets-store.js";
 
 /**
  * JSON-RPC client interface for making RPC calls to the daemon.
@@ -186,13 +187,29 @@ function resolveFromConfig(): { url: string; token: string | undefined; tls: boo
       }
     }
 
-    // Resolve ${VAR} references in the token (e.g. ${COMIS_GATEWAY_TOKEN})
+    // Resolve ${VAR} references in the token (e.g. ${COMIS_GATEWAY_TOKEN}).
     if (token && token.startsWith("${")) {
       ensureEnvFileLoaded();
-      token = resolveEnvRef(token);
-      // If still unresolved, treat as no token
-      if (token.startsWith("${")) {
-        token = undefined;
+      const fromEnv = resolveEnvRef(token);
+      if (!fromEnv.startsWith("${")) {
+        token = fromEnv;
+      } else {
+        // env / ~/.comis/.env did not define it. The install.sh wizard
+        // persists COMIS_GATEWAY_TOKEN into the ENCRYPTED secrets store
+        // (secrets.db), NOT into ~/.comis/.env — so a daemon-host CLI must
+        // read it from the store to authenticate, otherwise every authed
+        // command fails with WS close 4001. Mirrors the env→.env→store
+        // resolution chain doctor's config-resolve already uses. Off-host
+        // (no SECRETS_MASTER_KEY) offlineSecretGet fails and we fall through
+        // to no token (unchanged behavior).
+        const varName = token.slice(2, -1);
+        const dataDir = os.homedir() + "/.comis";
+        const fromStore = offlineSecretGet({
+          name: varName,
+          dataDir,
+          envFilePath: dataDir + "/.env",
+        });
+        token = fromStore.ok && fromStore.value ? fromStore.value : undefined;
       }
     }
 

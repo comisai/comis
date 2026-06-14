@@ -209,10 +209,24 @@ export function resolveModelProfile(
       : undefined;
 
   const providerCapabilities = resolveProviderCapabilities(resolvedModel.provider);
+  // `supportsPromptCache` here means "uses Anthropic-style cache_control
+  // breakpoints" (it gates the cache_control breakpoint machinery, factory.ts).
+  // The `cost.cacheRead > 0` catalog signal indicates NATIVE caching, but OpenAI
+  // (openai / openai-codex / azure-openai-responses — automatic prompt_cache_key)
+  // and Google (cachedContent) cache WITHOUT cache_control breakpoints, yet their
+  // catalog entries now carry cacheRead > 0 (e.g. gpt-5.5 cacheRead 0.5). Letting
+  // the signal fire for them runs the cache_control machinery on their request
+  // body and strips the responses-API tool `type:"function"` → the backend 400
+  // "Unsupported tool type: None" / silent turn abort (fresh VPS 2026-06-14).
+  // So the cacheRead signal is Anthropic-cache_control-only — scope it out of the
+  // automatic-caching families (#1 anthropic + #2 anthropic-compat still win).
+  const usesCacheControlCaching =
+    providerCapabilities.providerFamily !== "openai" &&
+    providerCapabilities.providerFamily !== "google";
   const supportsPromptCache =
     providerCapabilities.providerFamily === "anthropic" ||
     compatCacheFormat === "anthropic" ||
-    (resolvedModel.cost?.cacheRead ?? 0) > 0;
+    (usesCacheControlCaching && (resolvedModel.cost?.cacheRead ?? 0) > 0);
 
   return {
     contextWindow,

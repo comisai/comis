@@ -60,6 +60,9 @@ describe("setupShutdown", () => {
 
   afterEach(() => {
     processOnSpy.mockRestore();
+    // The exit-code tests below set process.exitCode on the real (vitest) process;
+    // reset so a SIGUSR2-shutdown test can't make the worker exit 42.
+    process.exitCode = 0;
   });
 
   // Lazy import so spies are in place
@@ -341,6 +344,39 @@ describe("setupShutdown", () => {
     expect(deps.daemonLogger.info).toHaveBeenCalledWith("SIGUSR2 received, initiating restart");
     expect(triggerSpy).toHaveBeenCalledWith("SIGUSR2");
   });
+
+  // 8b. Exit code is set EARLY so it survives an event-loop drain during teardown.
+  // FULL INCIDENT (UC-29 daemon-down regression, fresh-VPS run 2026-06-14): a SIGUSR2
+  // config-change restart (triggered by `comis config apply` / token mutations) shut
+  // down gracefully, but the event loop emptied during the (unref'd-timer) flush wait
+  // BEFORE the explicit exitFnLocal() at the end ran — so the process exited NATURALLY
+  // with code 0 instead of 42. systemd's RestartForceExitStatus=42 therefore never
+  // fired and the daemon stayed DOWN after every config apply. Setting process.exitCode
+  // up front (right after the re-entry guard) makes a natural drain-exit carry the right
+  // code regardless of which exit path wins the race. A SIGUSR2 restart must exit 42
+  // (→ systemd respawns); an operator SIGTERM must exit 0 (no respawn); the error/timeout
+  // paths still call exitFnLocal(1), and an explicit process.exit(code) overrides exitCode.
+  it("SIGUSR2 shutdown sets process.exitCode=42 (restart) so a drained exit still respawns", async () => {
+    const deps = createMinimalDeps();
+    const setupShutdown = await getSetupShutdown();
+    const result = setupShutdown(deps);
+
+    await result.shutdownHandle.trigger("SIGUSR2");
+
+    expect(process.exitCode).toBe(42);
+    expect(deps.exitFn).toHaveBeenCalledWith(42);
+  }, 15_000);
+
+  it("SIGTERM shutdown sets process.exitCode=0 (operator stop, no respawn)", async () => {
+    const deps = createMinimalDeps();
+    const setupShutdown = await getSetupShutdown();
+    const result = setupShutdown(deps);
+
+    await result.shutdownHandle.trigger("SIGTERM");
+
+    expect(process.exitCode).toBe(0);
+    expect(deps.exitFn).toHaveBeenCalledWith(0);
+  }, 15_000);
 
   // -------------------------------------------------------------------------
   // 9. unhandledRejection handler

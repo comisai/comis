@@ -168,11 +168,22 @@ function blockToPart(block: unknown): LcdMessagePart {
  * `toolCallId`).
  */
 function blockFromPart(part: LcdMessagePart): unknown {
-  if (part.metadata.raw !== undefined) {
-    return part.metadata.raw;
+  // Return the verbatim block ONLY when it is a well-formed content block (an
+  // object carrying a string `type`). A null / undefined / malformed `raw` must
+  // NEVER become a content block: a sparse block crashes every downstream
+  // `.type` consumer (token estimator, transcript-repair) inside the LCD
+  // assembler's transformContext — BEFORE the LLM call — aborting the whole turn
+  // and surfacing to the user as a silent "AI didn't produce a response"
+  // (LCD-codec regression 2026-06-14: openai-codex on a fresh install).
+  const raw = part.metadata.raw;
+  if (raw != null && typeof raw === "object" && typeof (raw as { type?: unknown }).type === "string") {
+    return raw;
   }
 
-  // Backfill (raw absent): reconstruct from the typed columns.
+  // Backfill (raw absent/malformed): reconstruct from the typed columns. A
+  // text/file part's verbatim data lived only in `raw` and is unrecoverable, so
+  // emit a valid (possibly empty) block rather than a sparse one — never
+  // undefined.
   switch (part.kind) {
     case "tool_use":
       return {
@@ -181,8 +192,10 @@ function blockFromPart(part: LcdMessagePart): unknown {
         name: part.toolName,
         arguments: part.toolInput ?? {},
       };
+    case "reasoning":
+      return { type: "thinking", thinking: "" };
     default:
-      return part.metadata.raw;
+      return { type: "text", text: "" };
   }
 }
 

@@ -685,13 +685,13 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
       }
   };
 
-  // shutdown(signal): guard re-entry, arm 30s hard-timeout, run inner
-  // ordered cleanup (processMonitor.stop → onShutdown → container.shutdown),
-  // flush logger, dispatch exit code (SIGUSR2 ⇒ 42, SIGTERM/SIGINT ⇒ 0,
-  // error ⇒ 1).
+  // shutdown(signal): re-entry guard, hard-timeout, ordered cleanup, flush, exit dispatch.
+  // exitCode set EARLY so a graceful SIGUSR2 restart still exits 42 even if the loop drains during the awaited flush before exitFnLocal() runs (drain bug 2026-06-14; full incident in setup-shutdown.test.ts). SIGUSR2 ⇒ 42; else 0; error/timeout still exitFnLocal(1), which overrides exitCode.
   async function shutdown(signal: string): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
+
+    process.exitCode = signal === "SIGUSR2" ? 42 : 0;
 
     logger.info({ signal }, "Graceful shutdown initiated");
     const shutdownStartMs = systemNowMs();
@@ -723,8 +723,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
 
     logger.info({ shutdownDurationMs: systemNowMs() - shutdownStartMs, signal }, "Graceful shutdown complete");
 
-    // Defense-in-depth flush before exit. `flush` is a pino runtime feature
-    // not on the structural ComisLogger type — narrow via a local shape.
+    // Defense-in-depth flush before exit (pino runtime feature; narrow via local shape).
     const flushable = logger as unknown as { flush?: (cb?: () => void) => void };
     if (typeof flushable.flush === "function") {
       await new Promise<void>((resolve) => {

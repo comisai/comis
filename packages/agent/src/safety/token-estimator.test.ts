@@ -284,6 +284,36 @@ describe("estimateMessageTokens", () => {
 // estimateContextTokens (content-aware estimation)
 // ---------------------------------------------------------------------------
 
+describe("malformed content blocks (defensive — LCD/codex turn-abort regression 2026-06-14)", () => {
+  // A malformed/undefined content block must NEVER throw out of token/char
+  // estimation. The LCD context-engine assembler calls these inside
+  // transformContext BEFORE the LLM call, so a throw aborts the entire turn
+  // and surfaces to the user as a silent "AI didn't produce a response"
+  // (root cause of the openai-codex turn failures on a fresh VPS install:
+  // computeMessageTokens did `block.type` / `block.text.length` on an
+  // undefined block).
+  const malformed = [
+    undefined,
+    null,
+    { type: "text" }, // text block missing .text -> reading 'length'
+    { type: "text", text: "ok" },
+    { type: "thinking" }, // thinking block missing .thinking
+    {}, // block with no .type -> reading 'type'
+  ] as unknown as AssistantMessage["content"];
+
+  it("estimateMessageChars tolerates malformed/undefined blocks", () => {
+    const msg = assistantMsg(malformed);
+    expect(() => estimateMessageChars(msg)).not.toThrow();
+    expect(estimateMessageChars(msg)).toBeGreaterThan(0);
+  });
+
+  it("estimateMessageTokens tolerates malformed/undefined blocks", () => {
+    const msg = assistantMsg(malformed);
+    expect(() => estimateMessageTokens(msg)).not.toThrow();
+    expect(estimateMessageTokens(msg)).toBeGreaterThan(0);
+  });
+});
+
 describe("estimateContextTokens", () => {
   it("sums content-aware tokens across messages", () => {
     const messages: Message[] = [

@@ -289,6 +289,13 @@ export function maybePromoteBreakpoints(
   // Monotonicity guard: cannot promote to 1h if tools/system use 5m
   if (resolvedRetention !== "long") return 0;
 
+  // Non-Anthropic body guard (codex turn-abort regression 2026-06-14): the
+  // OpenAI responses / openai-codex request body has `input`, not a `messages`
+  // array, so `messages` is undefined here. cache_control breakpoint promotion
+  // is Anthropic-only — no-op rather than throw `reading 'length'`, which the
+  // provider's onPayload hook would surface as a silent whole-turn failure.
+  if (!Array.isArray(messages)) return 0;
+
   let promoted = 0;
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i] as Record<string, unknown>;

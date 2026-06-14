@@ -54,6 +54,13 @@ class MockWebSocket extends EventEmitter {
 vi.mock("ws", () => ({ default: MockWebSocket }));
 vi.mock("node:fs", () => ({ existsSync: vi.fn(), readFileSync: vi.fn() }));
 vi.mock("node:os", () => ({ default: { homedir: vi.fn(() => "/fake/home") } }));
+// F-CLI-AUTH: the CLI must be able to resolve a ${VAR} gateway token from the
+// encrypted secrets store when it's absent from env/.env (the install.sh wizard
+// persists COMIS_GATEWAY_TOKEN into secrets.db, not ~/.comis/.env). Default to a
+// store-miss so token tests using literal secrets are unaffected.
+vi.mock("../util/offline-secrets-store.js", () => ({
+  offlineSecretGet: vi.fn(() => ({ ok: false as const, error: new Error("no store") })),
+}));
 
 function getLastWs(): MockWebSocket {
   return MockWebSocket.instances[MockWebSocket.instances.length - 1]!;
@@ -61,6 +68,7 @@ function getLastWs(): MockWebSocket {
 
 // Dynamic import after mock is registered
 const { createRpcClient, withClient, checkTransportSecurity, InsecureTransportError, isGatewayAuthRejection } = await import("./rpc-client.js");
+const { offlineSecretGet } = await import("../util/offline-secrets-store.js");
 
 /**
  * Schedule the mock WebSocket 'open' event to fire once the WebSocket is constructed.
@@ -766,6 +774,40 @@ describe("withClient", () => {
       const ws = getLastWs();
       expect(ws.options.headers!["authorization"]).toBe(
         "Bearer env-token-override",
+      );
+    });
+
+    it("resolves ${COMIS_GATEWAY_TOKEN} from the encrypted store when absent from env/.env (F-CLI-AUTH)", async () => {
+      // Fresh install.sh + wizard flow: config references ${COMIS_GATEWAY_TOKEN}
+      // but the wizard persists the token into the encrypted secrets.db, NOT
+      // ~/.comis/.env. The daemon-host CLI must read it from the store to
+      // authenticate — otherwise every authed command fails with WS close 4001.
+      mockedExistsSync.mockReturnValue(true);
+      mockedReadFileSync.mockReturnValue(
+        [
+          "gateway:",
+          "  host: localhost",
+          "  port: 4766",
+          "  tokens:",
+          "    - id: default",
+          "      secret: ${COMIS_GATEWAY_TOKEN}",
+        ].join("\n"),
+      );
+      // COMIS_GATEWAY_TOKEN deliberately absent from env/.env (beforeEach clears it).
+      vi.mocked(offlineSecretGet).mockReturnValue({
+        ok: true,
+        value: "store-resolved-token-xyz",
+      });
+
+      connectLastWsAsync();
+      await withClient(async () => "done");
+
+      const ws = getLastWs();
+      expect(ws.options.headers!["authorization"]).toBe(
+        "Bearer store-resolved-token-xyz",
+      );
+      expect(vi.mocked(offlineSecretGet)).toHaveBeenCalledWith(
+        expect.objectContaining({ name: "COMIS_GATEWAY_TOKEN" }),
       );
     });
 
