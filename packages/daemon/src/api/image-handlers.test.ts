@@ -8,6 +8,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createImageHandlers, type ImageHandlerDeps } from "./image-handlers.js";
+import { ImageGenError } from "./pi-image-adapter.js";
 import { ok, err } from "@comis/shared";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 
@@ -66,6 +67,7 @@ function createMockDeps(overrides: Partial<ImageHandlerDeps> = {}): ImageHandler
     },
     logger: createMockLogger() as any,
     getChannelAdapter: vi.fn().mockReturnValue(undefined),
+    resolveAgentMainProvider: vi.fn().mockReturnValue({ providerId: "openrouter" }),
     ...overrides,
   };
 }
@@ -231,5 +233,84 @@ describe("createImageHandlers", () => {
     expect(result.mimeType).toBe("image/png");
     // Should not attempt to get adapter
     expect(deps.getChannelAdapter).not.toHaveBeenCalled();
+  });
+
+  // ─── RES-01 keystone: the handler is no longer provider-blind ──────────────
+
+  it("resolves the agent main provider with the default agentId when none provided", async () => {
+    const deps = createMockDeps();
+    const handlers = createImageHandlers(deps);
+    const result = await handlers["image.generate"]!({
+      prompt: "a cat",
+      // no _agentId → defaults to "default"
+    });
+
+    // RES-01: the handler calls deps.resolveAgentMainProvider with the resolved agentId.
+    expect(deps.resolveAgentMainProvider).toHaveBeenCalledWith("default");
+    // The existing happy-path delivery still works (provider mock returns ok).
+    expect((result as any).success).toBe(true);
+  });
+
+  it("resolves the agent main provider with the supplied agentId for RES-01 lockstep", async () => {
+    const deps = createMockDeps();
+    const handlers = createImageHandlers(deps);
+    await handlers["image.generate"]!({
+      _agentId: "agent-x",
+      prompt: "a fox",
+    });
+
+    // RES-01: the resolved id flows from the dispatcher-injected _agentId.
+    expect(deps.resolveAgentMainProvider).toHaveBeenCalledWith("agent-x");
+  });
+
+  // ─── RES-03 honest-unavailable surfaced THROUGH the handler with the hint ──
+
+  it("surfaces the RES-03 unavailable hint naming the provider config knob", async () => {
+    const knobHint =
+      'Set integrations.media.imageGeneration.provider to an image-capable provider (e.g. "openrouter").';
+    const deps = createMockDeps({
+      provider: {
+        id: "unavailable",
+        isAvailable: () => false,
+        execute: vi.fn().mockResolvedValue(
+          err(
+            new ImageGenError("The selected provider cannot generate images.", {
+              imageErrorKind: "unsupported_provider",
+              hint: knobHint,
+            }),
+          ),
+        ),
+      },
+    });
+    const handlers = createImageHandlers(deps);
+    const result = (await handlers["image.generate"]!({
+      _agentId: "agent-anthropic",
+      prompt: "a landscape",
+    })) as { success: boolean; error: string; hint?: string };
+
+    // The handler surfaces the typed error's message AND its knob-naming hint.
+    expect(result.success).toBe(false);
+    expect(result.error).toBe("The selected provider cannot generate images.");
+    expect(result.hint).toBeDefined();
+    expect(result.hint).toContain("integrations.media.imageGeneration.provider");
+  });
+
+  it("omits the hint field when the provider error carries no hint", async () => {
+    const deps = createMockDeps({
+      provider: {
+        id: "test-provider",
+        isAvailable: () => true,
+        execute: vi.fn().mockResolvedValue(err(new Error("Provider error: content blocked"))),
+      },
+    });
+    const handlers = createImageHandlers(deps);
+    const result = (await handlers["image.generate"]!({
+      _agentId: "agent-1",
+      prompt: "test prompt",
+    })) as { success: boolean; error: string; hint?: string };
+
+    // A plain Error has no .hint → the handler returns the legacy shape (no hint key).
+    expect(result).toEqual({ success: false, error: "Provider error: content blocked" });
+    expect("hint" in result).toBe(false);
   });
 });
