@@ -2,9 +2,9 @@
 /**
  * Image-provider SELECTION (RES-02/RES-03/CRED-01).
  *
- * `createImageProviderSelector` returns a lazy getter (read-on-use, rotation-
- * safe — mirrors `createImageGenProviderFactory` in setup-media.ts) that, per
- * the resolved config + the agent's main provider, decides between:
+ * `createImageProviderSelector` returns a lazy getter (read-on-use at boot —
+ * mirrors `createImageGenProviderFactory` in setup-media.ts) that, per the
+ * resolved config + the agent's main provider, decides between:
  *   - the Plan-03 pi-image-adapter (provider:"auto" / pi-ai-backed providers),
  *     following the main provider via the Plan-01 `resolveImageProvider` and
  *     resolving the key from the SAME `SecretManager` the main provider uses
@@ -69,11 +69,14 @@ export function makeUnavailableImagePort(
 }
 
 /**
- * Build the lazy image-provider selector. Returns a getter that re-reads
- * `secretManager` on each call (rotation-safe). Returns `undefined` only when
- * image generation is unconfigured (`imageGenConfig` absent) — an image-
- * incapable main yields an unavailable PORT (RES-03), never `undefined`, so the
- * handler is still constructed and surfaces the hint.
+ * Build the lazy image-provider selector. Returns a getter that reads the
+ * config + `secretManager` on use; in practice the daemon invokes it ONCE at
+ * boot (`daemon.ts` `getImageGenProvider()`), and the handler then holds that
+ * boot-built adapter instance — so key rotation requires a daemon restart to
+ * take effect (NOT live per-request; IN-01 183-REVIEW). Returns `undefined`
+ * only when image generation is unconfigured (`imageGenConfig` absent) — an
+ * image-incapable main yields an unavailable PORT (RES-03), never `undefined`,
+ * so the handler is still constructed and surfaces the hint.
  */
 export function createImageProviderSelector(deps: {
   imageGenConfig: ImageGenerationConfig | undefined;

@@ -2217,9 +2217,13 @@ async function bootChannels(boot: BootContext): Promise<void> {
   // provider, key via SecretManager), keeps explicit fal/openai on the legacy
   // skills adapter (additive), and returns an honest-unavailable port (with the
   // knob hint) for an image-incapable main (RES-03) — never a misroute. The
-  // lazy getter re-reads secretManager on each call so key rotation is live.
-  // Per-call per-agent re-selection is a 186/multi-agent refinement; Phase 183
-  // resolves the common case (the default agent's main provider) at boot.
+  // getter reads the config + secretManager on use, but is invoked ONCE here at
+  // boot (getImageGenProvider() below) and the handler holds that boot-built
+  // adapter instance — so key rotation requires a daemon restart to take effect
+  // (NOT live per-request; IN-01 183-REVIEW — parity with the pre-existing
+  // fal/openai one-shot probe). Per-call per-agent re-selection (and live
+  // rotation) is a 186/multi-agent refinement; Phase 183 resolves the common
+  // case (the default agent's main provider) at boot.
   const imageGenConfig = container.config.integrations.media.imageGeneration;
   registerComisImageProviders(); // PI-02 — once at boot, before any generateImages().
   const defaultAgentCfg =
