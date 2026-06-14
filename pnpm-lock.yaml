@@ -90,6 +90,9 @@ importers:
       madge:
         specifier: 8.0.0
         version: 8.0.0(typescript@5.9.3)
+      node-llama-cpp:
+        specifier: 3.18.1
+        version: 3.18.1(typescript@5.9.3)
       nodemailer:
         specifier: '>=8.0.5'
         version: 8.0.10

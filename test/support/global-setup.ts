@@ -25,6 +25,7 @@ import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
+import { ensureSharedModelCache } from "./model-cache.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -180,8 +181,12 @@ function cleanTestArtifacts(): void {
  * Called before test workers are created.
  * Cleans stale artifacts from previous runs (crash recovery).
  */
-export function setup(): void {
+export async function setup(): Promise<void> {
   cleanTestArtifacts();
+  // Pre-seed the shared embedding-model cache ONCE so per-fork daemon boots
+  // hard-link it (via seedModelCache) instead of each downloading the ~146 MB
+  // GGUF in parallel — the cause of the chronic CI "Hook timed out" failures.
+  await ensureSharedModelCache();
 }
 
 /**
