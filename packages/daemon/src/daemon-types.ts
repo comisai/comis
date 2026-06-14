@@ -627,6 +627,16 @@ export interface BootContext {
   imageGenProvider?: ReturnType<typeof createImageGenProvider> extends import("@comis/shared").Result<infer P, unknown> ? P | undefined : never;
   imageGenRateLimiter?: ImageGenRateLimiter;
   imageGenConfig?: BootContext["container"]["config"]["integrations"]["media"]["imageGeneration"];
+  /** DEL-01 (186): per-agent persist getter from buildImageGenBundle — persists
+   *  the generated image to the agent's confined workspace (`~/.comis/workspace/
+   *  media/photos/`) via MediaPersistenceService. Folded onto imageHandlerDeps
+   *  (daemon.ts:932) as the `persist` dep; the handler hands the returned
+   *  filePath to sendAttachment (no more tmpdir write+delete). */
+  persistImage?: (
+    agentId: string,
+    buffer: Buffer,
+    opts: { mediaKind: "image"; mimeType: string },
+  ) => Promise<import("@comis/shared").Result<import("@comis/skills/tools").PersistedFile, Error>>;
   // Tools (assembler + preprocessor)
   assembleToolsForAgent?: ReturnType<typeof setupTools>["assembleToolsForAgent"];
   preprocessMessageText?: ReturnType<typeof setupTools>["preprocessMessageText"];

@@ -569,6 +569,19 @@ export interface MediaApiDeps {
      *  caller's agent dir (safePath confinement). Mirror MediaApiDeps:572-573. */
     workspaceDirs: Map<string, string>;
     defaultWorkspaceDir: string;
+    /** DEL-01 (186): the per-agent persistence getter. Persists the generated
+     *  image buffer to the agent's confined workspace (`~/.comis/workspace/media/
+     *  photos/`) via MediaPersistenceService — replacing the ephemeral tmpdir
+     *  write+delete. The agentId resolves the workspace inside the getter
+     *  (mirrors the screenshot precedent at setup-tools.ts:305). Never throws —
+     *  returns `err` on a persistence failure so the handler falls through to the
+     *  base64 fallback. `PersistedFile` is on the `@comis/skills/tools` subpath
+     *  (NOT the bare barrel — the proven import path, setup-tools.ts:69). */
+    persist: (
+      agentId: string,
+      buffer: Buffer,
+      opts: { mediaKind: "image"; mimeType: string },
+    ) => Promise<import("@comis/shared").Result<import("@comis/skills/tools").PersistedFile, Error>>;
   };
   /** media-handlers reads deps.workspaceDirs / deps.defaultWorkspaceDir
    *  / deps.defaultAgentId for STT / vision / link-processing file paths.

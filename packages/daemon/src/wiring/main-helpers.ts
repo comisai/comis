@@ -18,6 +18,10 @@ import {
 import type { ImageGenerationPort, OAuthTokenManager } from "@comis/core";
 import { createChannelHealthMonitor } from "@comis/channels";
 import { createImageGenRateLimiter } from "@comis/skills";
+// DEL-01 (186): the per-agent media persistence getter mirrors the screenshot
+// precedent (setup-tools.ts:69,305). Sibling-direct on the `@comis/skills/tools`
+// subpath (the proven path), NOT the bare `@comis/skills` barrel.
+import { createMediaPersistenceService, type MediaPersistenceService } from "@comis/skills/tools";
 import type { LoggingResult } from "./setup-logging.js";
 import type { BootContext } from "../daemon-types.js";
 // Sibling-direct imports (not via the wiring barrel) to keep main-helpers free
@@ -258,12 +262,26 @@ export function buildImageGenBundle(deps: {
    * agent has no OAuth config → codex is honest-unavailable (never a crash).
    */
   oauthManager?: OAuthTokenManager;
+  /**
+   * DEL-01 (186): the per-agent workspace dirs + default, threaded from
+   * `c.workspaceDirs`/`c.defaultWorkspaceDir` at the call site. The per-agent
+   * `persistImage` getter (below) resolves the agent's confined workspace from
+   * these (mirrors the screenshot getter at setup-tools.ts:305-316).
+   */
+  workspaceDirs: Map<string, string>;
+  defaultWorkspaceDir: string;
 }): {
   imageGenConfig: BootContext["container"]["config"]["integrations"]["media"]["imageGeneration"];
   imageGenProvider: ImageGenerationPort | undefined;
   imageGenRateLimiter: ReturnType<typeof createImageGenRateLimiter> | undefined;
+  /** DEL-01 (186): per-agent persist getter → MediaPersistenceService.persist. */
+  persistImage: (
+    agentId: string,
+    buffer: Buffer,
+    opts: { mediaKind: "image"; mimeType: string },
+  ) => ReturnType<MediaPersistenceService["persist"]>;
 } {
-  const { container, defaultAgentId, skillsLogger, oauthManager } = deps;
+  const { container, defaultAgentId, skillsLogger, oauthManager, workspaceDirs, defaultWorkspaceDir } = deps;
   const imageGenConfig = container.config.integrations.media.imageGeneration;
   registerComisImageProviders(); // PI-02 — once at boot, before any generateImages().
   // defaultAgentId is tried FIRST; the literal "default" is only a redundant
@@ -291,6 +309,28 @@ export function buildImageGenBundle(deps: {
   const imageGenRateLimiter = imageGenProvider
     ? createImageGenRateLimiter({ maxPerHour: imageGenConfig.maxPerHour })
     : undefined;
+  // DEL-01 (186): per-agent MediaPersistenceService getter — the EXACT shape of
+  // the screenshot precedent (setup-tools.ts:305-316). Lazily built per agent,
+  // keyed on agentId, writing to the agent's confined workspace
+  // (`~/.comis/workspace/media/photos/` via KIND_TO_SUBDIR["image"]). Replaces
+  // the handler's ephemeral tmpdir write+delete. `persist` never throws (returns
+  // `err`), so the handler falls through to base64 on a persistence failure.
+  const imagePersistenceServices = new Map<string, MediaPersistenceService>();
+  const persistImage = (
+    agentId: string,
+    buffer: Buffer,
+    opts: { mediaKind: "image"; mimeType: string },
+  ): ReturnType<MediaPersistenceService["persist"]> => {
+    let svc = imagePersistenceServices.get(agentId);
+    if (!svc) {
+      svc = createMediaPersistenceService({
+        workspaceDir: workspaceDirs.get(agentId) ?? defaultWorkspaceDir,
+        logger: skillsLogger,
+      });
+      imagePersistenceServices.set(agentId, svc);
+    }
+    return svc.persist(buffer, opts);
+  };
   if (imageGenProvider) {
     skillsLogger.info(
       { provider: imageGenConfig.provider, mainProvider: defaultMain },
@@ -299,5 +339,5 @@ export function buildImageGenBundle(deps: {
   } else {
     skillsLogger.debug("Image generation disabled: API key not configured or provider unknown");
   }
-  return { imageGenConfig, imageGenProvider, imageGenRateLimiter };
+  return { imageGenConfig, imageGenProvider, imageGenRateLimiter, persistImage };
 }
