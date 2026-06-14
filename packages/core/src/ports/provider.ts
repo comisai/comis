@@ -11,6 +11,10 @@ export interface ImageGenInput {
   size?: string;
   /** Whether to run safety checker on output (default: true) */
   safetyChecker?: boolean;
+  /** IN-01: optional reference image (edit/img2img) — base64 + mime, resolved by the handler. */
+  referenceImage?: { data: string; mimeType: string };
+  /** IN-02/CFG-02: optional model override (validated by the handler against the provider's list). */
+  model?: string;
 }
 
 /**
