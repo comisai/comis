@@ -46,6 +46,8 @@ import {
   type ImageGenInput,
   type ImageGenOutput,
   type ImageGenerationPort,
+  systemSetTimeout,
+  systemClearTimeout,
 } from "@comis/core";
 import { fromPromise, type Result } from "@comis/shared";
 import type { ComisLogger } from "@comis/infra";
@@ -83,7 +85,11 @@ export const CODEX_IMAGE_MODEL: ImagesModel<"openai-codex-images"> = {
  * @param opts.oauthProfiles - The agent's `Record<provider, profileId>` map,
  *   passed to `getApiKey` for per-agent profile preference.
  * @param opts.model         - Optional override of {@link CODEX_IMAGE_MODEL}.
- * @param opts.timeoutMs     - Optional HTTP timeout forwarded to the transport.
+ * @param opts.timeoutMs     - Optional HTTP timeout (ms). WR-02 (184-REVIEW):
+ *   the custom codex transport does NOT honor `ImagesOptions.timeoutMs` (only
+ *   pi-ai's openrouter builtin does), so the adapter enforces it here by
+ *   aborting the request's `AbortSignal` after `timeoutMs` — a hung SSE stream
+ *   surfaces as `imageErrorKind:"timeout"` instead of blocking forever.
  * @param opts.logger        - Logger for the `toImageGenOutput` WARN path.
  */
 export function createCodexImageAdapter(opts: {
@@ -116,24 +122,42 @@ export function createCodexImageAdapter(opts: {
             });
           }
           const bearer = tok.value;
-          // CDX-02: headers from the SAME freshly-resolved JWT (one JWT → its
-          // own account-id; cannot diverge — T-184-05). The bearer rides
-          // options.apiKey; the headers ride options.headers. Neither is logged.
-          const options: ProviderImagesOptions = {
-            apiKey: bearer,
-            headers: buildCodexImageHeaders(bearer),
-            timeoutMs: opts.timeoutMs,
-            maxRetries: 1,
-          };
-          // ── THE ONE generateImages call site (I1) ─────────────────────────
-          const res = await generateImages(
-            opts.model ?? CODEX_IMAGE_MODEL,
-            { input: [{ type: "text", text: input.prompt }] },
-            options,
-          );
-          // REUSE the shipped mapper/classifier (base64→buffer; classify a
-          // non-stop outcome to an ImageErrorKind + WARN; throw ImageGenError).
-          return toImageGenOutput(res, opts.logger);
+          // WR-02 (184-REVIEW): the custom codex transport never reads
+          // `options.timeoutMs` (it is only honored by pi-ai's openrouter
+          // builtin), so a hung SSE stream would block `reader.read()` — and
+          // this image RPC + a rate-limiter slot — forever. Enforce the timeout
+          // HERE by aborting the request's signal after `timeoutMs`. The
+          // transport already maps `signal.aborted → stopReason:"aborted" →
+          // timeout`, so the abort surfaces as `imageErrorKind:"timeout"`.
+          const ac = new AbortController();
+          const timer =
+            opts.timeoutMs && opts.timeoutMs > 0
+              ? systemSetTimeout(() => ac.abort(), opts.timeoutMs)
+              : undefined;
+          try {
+            // CDX-02: headers from the SAME freshly-resolved JWT (one JWT → its
+            // own account-id; cannot diverge — T-184-05). The bearer rides
+            // options.apiKey; the headers ride options.headers. Neither is
+            // logged. WR-03 (184-REVIEW): no `maxRetries` — the custom codex
+            // transport is single-shot (it has no retry loop and never reads
+            // `options.maxRetries`), so the option would be a lie.
+            const options: ProviderImagesOptions = {
+              apiKey: bearer,
+              headers: buildCodexImageHeaders(bearer),
+              signal: ac.signal,
+            };
+            // ── THE ONE generateImages call site (I1) ───────────────────────
+            const res = await generateImages(
+              opts.model ?? CODEX_IMAGE_MODEL,
+              { input: [{ type: "text", text: input.prompt }] },
+              options,
+            );
+            // REUSE the shipped mapper/classifier (base64→buffer; classify a
+            // non-stop outcome to an ImageErrorKind + WARN; throw ImageGenError).
+            return toImageGenOutput(res, opts.logger);
+          } finally {
+            if (timer) systemClearTimeout(timer);
+          }
         })(),
       );
     },

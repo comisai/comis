@@ -230,6 +230,81 @@ describe("createCodexImageAdapter — result mapping", () => {
 });
 
 // ---------------------------------------------------------------------------
+// WR-02 (184-REVIEW): timeoutMs must wire a real AbortSignal — a hung stream
+// must time out, not block forever.
+// ---------------------------------------------------------------------------
+
+describe("createCodexImageAdapter — timeout (WR-02)", () => {
+  it("aborts a hung transport after timeoutMs and maps it to timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      // A transport that NEVER completes until its abort signal fires — the
+      // hung-stream failure mode WR-02 describes. It resolves only when the
+      // adapter's timeout AbortController aborts the passed signal.
+      registerImagesApiProvider({
+        api: "openai-codex-images",
+        generateImages: (model, _context, options?: ProviderImagesOptions) =>
+          new Promise<AssistantImages>((resolve) => {
+            const signal = options?.signal;
+            const onAbort = () =>
+              resolve({
+                api: model.api,
+                provider: model.provider,
+                model: model.id,
+                output: [],
+                // Mirrors the real transport: an aborted signal → "aborted".
+                stopReason: "aborted",
+                timestamp: Date.now(),
+              });
+            if (signal?.aborted) onAbort();
+            else signal?.addEventListener("abort", onAbort);
+          }),
+      });
+      const { manager } = mockOauth(async () => ok(VALID_BEARER));
+      const adapter = createCodexImageAdapter({
+        oauthManager: manager,
+        timeoutMs: 50,
+        logger: logger as never,
+      });
+
+      const resultPromise = adapter.execute({ prompt: "x" });
+      // Let the per-call getApiKey microtask + the generateImages dispatch run,
+      // THEN advance past the 50ms timeout so the AbortController fires.
+      await vi.advanceTimersByTimeAsync(60);
+      const result = await resultPromise;
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect((result.error as { imageErrorKind?: string }).imageErrorKind).toBe("timeout");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("clears the timeout timer on the success path (no dangling timer)", async () => {
+    vi.useFakeTimers();
+    try {
+      const { manager } = mockOauth(async () => ok(VALID_BEARER));
+      // Default fake transport resolves immediately with a PNG.
+      const adapter = createCodexImageAdapter({
+        oauthManager: manager,
+        timeoutMs: 10_000,
+        logger: logger as never,
+      });
+
+      const result = await adapter.execute({ prompt: "x" });
+
+      expect(result.ok).toBe(true);
+      // The success path must have cleared the pending timeout — otherwise a
+      // 10s timer would keep the loop alive.
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Task 2 — isAvailable + the hand-built model
 // ---------------------------------------------------------------------------
 
