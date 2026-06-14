@@ -285,6 +285,51 @@ describe("parts-codec — F1 verbatim raw-block capture", () => {
   });
 });
 
+describe("parts-codec — blockFromPart never yields a sparse block (LCD-codec turn-abort regression 2026-06-14)", () => {
+  // A stored part whose `metadata.raw` is absent/null (and whose kind has no
+  // typed-column reconstruction) MUST NOT decode to an `undefined`/`null`
+  // content block. A sparse block crashes every downstream `.type` consumer
+  // (token estimator, transcript-repair) inside the LCD assembler's
+  // transformContext — BEFORE the LLM call — aborting the whole turn and
+  // surfacing to the user as a silent "AI didn't produce a response" (the
+  // openai-codex failure on a fresh VPS install). Reconstruct from typed
+  // columns, or emit a valid empty block.
+  it("decodes a raw-ABSENT text part to a valid block (not undefined)", () => {
+    const part = { kind: "text", metadata: {} } as unknown as LcdMessagePart;
+    const msg = partsToMessage(rowFromParts("assistant", [part]));
+    const blocks = msg.content as unknown[];
+    expect(Array.isArray(blocks)).toBe(true);
+    for (const b of blocks) {
+      expect(b == null).toBe(false);
+      expect(typeof (b as { type?: unknown }).type).toBe("string");
+    }
+  });
+
+  it("decodes a raw-NULL part to a valid block (not null)", () => {
+    const part = { kind: "text", metadata: { raw: null } } as unknown as LcdMessagePart;
+    const msg = partsToMessage(rowFromParts("assistant", [part]));
+    for (const b of msg.content as unknown[]) {
+      expect(b != null && typeof (b as { type?: unknown }).type === "string").toBe(true);
+    }
+  });
+
+  it("backfills a raw-absent tool_use part from its typed columns", () => {
+    const part = {
+      kind: "tool_use",
+      toolCallId: "tc_x",
+      toolName: "do_it",
+      toolInput: { a: 1 },
+      metadata: {},
+    } as unknown as LcdMessagePart;
+    const msg = partsToMessage(rowFromParts("assistant", [part]));
+    const tc = (msg.content as Array<{ type: string; id?: string; name?: string }>).find(
+      (b) => b.type === "toolCall",
+    );
+    expect(tc?.id).toBe("tc_x");
+    expect(tc?.name).toBe("do_it");
+  });
+});
+
 describe("parts-codec — O2 stable-id pairing (inline invariant)", () => {
   it("keeps reconstructed toolCall.id === paired ToolResultMessage.toolCallId (no orphan, no drift)", () => {
     // Reconstruct the full anthropic multi-step turn and assert pairing inline
