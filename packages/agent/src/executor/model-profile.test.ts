@@ -62,6 +62,52 @@ describe("resolveModelProfile — K2 boundary invariants", () => {
   // K2 invariant: contextWindow is DECOUPLED from capabilityClass
   // A 256K window must NOT force frontier or mid class
   // ---------------------------------------------------------------------------
+  describe("supportsPromptCache — cache_control is Anthropic-only (codex turn-abort regression 2026-06-14)", () => {
+    // The catalog `cost.cacheRead > 0` signal must NOT imply Anthropic-style
+    // cache_control breakpoints for OpenAI/Google providers — they cache
+    // automatically (prompt_cache_key / cachedContent), NOT via cache_control.
+    // A false-positive ran the cache_control breakpoint machinery on the
+    // openai-codex (responses API) body and stripped tool `type:"function"`,
+    // yielding a 400 "Unsupported tool type: None" and a silent turn abort
+    // ("AI didn't produce a response") on a fresh VPS install.
+    type ModelArg = Parameters<typeof resolveModelProfile>[0];
+    it("openai-codex with cacheRead>0 → supportsPromptCache=false", () => {
+      const profile = resolveModelProfile({
+        id: "gpt-5.5",
+        provider: "openai-codex",
+        contextWindow: 272_000,
+        reasoning: true,
+        input: ["text", "image"],
+        cost: { input: 5, output: 30, cacheRead: 0.5, cacheWrite: 0 },
+      } as unknown as ModelArg);
+      expect(profile.supportsPromptCache).toBe(false);
+    });
+
+    it("openai (chat) with cacheRead>0 → supportsPromptCache=false", () => {
+      const profile = resolveModelProfile({
+        id: "gpt-5.1",
+        provider: "openai",
+        contextWindow: 400_000,
+        reasoning: true,
+        input: ["text"],
+        cost: { cacheRead: 0.25 },
+      } as unknown as ModelArg);
+      expect(profile.supportsPromptCache).toBe(false);
+    });
+
+    it("anthropic with cacheRead>0 → supportsPromptCache=true (unchanged)", () => {
+      const profile = resolveModelProfile({
+        id: "claude-sonnet-4",
+        provider: "anthropic",
+        contextWindow: 200_000,
+        reasoning: false,
+        input: ["text"],
+        cost: { cacheRead: 0.3 },
+      } as unknown as ModelArg);
+      expect(profile.supportsPromptCache).toBe(true);
+    });
+  });
+
   describe("K2 invariant: capabilityClass is independent of contextWindow", () => {
     it("qwen3.6:27b (ollama, 256K) resolves capabilityClass to small or nano — NOT frontier or mid", () => {
       const profile = resolveModelProfile({
