@@ -29,7 +29,7 @@
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { writeFile, unlink } from "node:fs/promises";
-import { ImageGenerateContract, safePath, stripInternalFields, systemGetEnv } from "@comis/core";
+import { ImageGenerateContract, safePath, stripInternalFields, systemGetEnv, systemNowMs } from "@comis/core";
 import { suppressError } from "@comis/shared";
 import type { AttachmentPayload } from "@comis/core";
 import type { MediaApiDeps, RpcHandler } from "./types.js";
@@ -73,6 +73,9 @@ export function createImageHandlers(
 ): Record<string, RpcHandler> {
   return {
     [ImageGenerateContract.method]: async (rawParams) => {
+      // WR-03 (§2.7): capture entry time for the success-path durationMs.
+      // systemNowMs (not Date.now() — the globals gate forbids it).
+      const startMs = systemNowMs();
       const agentId = (rawParams._agentId as string) ?? "default";
       // RES-01 keystone — the handler is no longer provider-blind. Resolve the
       // agent's main provider in lockstep with the completion path (I4). This
@@ -168,6 +171,18 @@ export function createImageHandlers(
               if (systemGetEnv("NODE_ENV") !== "production") {
                 ImageGenerateContract.response.parse(deliveredResult);
               }
+              // WR-03 (§2.7): INFO completion line on the channel-delivered path.
+              deps.logger.info(
+                {
+                  agentId,
+                  mainProvider: main.providerId,
+                  delivered: true,
+                  mimeType: result.value.mimeType,
+                  durationMs: systemNowMs() - startMs,
+                  step: "image_complete",
+                },
+                "Image generation completed",
+              );
               return deliveredResult;
             }
           } finally {
@@ -186,6 +201,19 @@ export function createImageHandlers(
       if (systemGetEnv("NODE_ENV") !== "production") {
         ImageGenerateContract.response.parse(fallbackResult);
       }
+      // WR-03 (§2.7): INFO completion line on the base64-fallback path
+      // (no channel adapter, or delivery failed and fell through).
+      deps.logger.info(
+        {
+          agentId,
+          mainProvider: main.providerId,
+          delivered: false,
+          mimeType: result.value.mimeType,
+          durationMs: systemNowMs() - startMs,
+          step: "image_complete",
+        },
+        "Image generation completed",
+      );
       return fallbackResult;
     },
   };
