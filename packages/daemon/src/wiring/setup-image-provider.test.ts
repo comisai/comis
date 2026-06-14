@@ -186,16 +186,38 @@ describe("createImageProviderSelector", () => {
 describe("RES-01 keystone is wired into the LIVE daemon.ts composition root", () => {
   const here = dirname(fileURLToPath(import.meta.url));
   const daemonSrc = readFileSync(resolve(here, "../daemon.ts"), "utf8");
+  const toolingSrc = readFileSync(
+    resolve(here, "./setup-agents/setup-agents-tooling.ts"),
+    "utf8",
+  );
 
-  it("defines resolveAgentMainProvider delegating to the I4 resolveAgentModel", () => {
-    expect(daemonSrc).toMatch(/const resolveAgentMainProvider\s*=/);
-    // The accessor body calls resolveAgentModel — the EXACT completion-path fn.
+  it("delegates the handler accessor to the pure resolveAgentMainProvider helper, threading the configurable defaultAgentId (WR-01)", () => {
+    // The accessor is a thin local closure that delegates to the extracted,
+    // unit-tested resolveAgentMainProvider helper — passing c.defaultAgentId
+    // (the operator-configurable default), NOT a literal "default" fallback.
+    expect(daemonSrc).toMatch(/const resolveAgentMainProviderFor\s*=/);
     const accessor = daemonSrc.slice(
-      daemonSrc.indexOf("const resolveAgentMainProvider ="),
-      daemonSrc.indexOf("const resolveAgentMainProvider =") + 400,
+      daemonSrc.indexOf("const resolveAgentMainProviderFor ="),
+      daemonSrc.indexOf("const resolveAgentMainProviderFor =") + 260,
     );
-    expect(accessor).toContain("resolveAgentModel(");
-    expect(accessor).toContain("providerId");
+    expect(accessor).toContain("resolveAgentMainProvider(");
+    expect(accessor).toContain("c.defaultAgentId");
+    // WR-01 regression guard: the broken literal-"default" fallback is gone.
+    expect(accessor).not.toContain('agents["default"]');
+  });
+
+  it("keeps the I4 lockstep: resolveAgentMainProvider delegates to the EXACT completion-path resolveAgentModel", () => {
+    // The lockstep MECHANISM now lives in the helper (co-located with
+    // resolveAgentModel), not inlined in daemon.ts. It must still call the
+    // EXACT completion-path resolver so the image path can never disagree.
+    const helper = toolingSrc.slice(
+      toolingSrc.indexOf("export function resolveAgentMainProvider("),
+      toolingSrc.indexOf("export function resolveAgentMainProvider(") + 600,
+    );
+    expect(helper).toContain("resolveAgentModel(");
+    expect(helper).toContain("providerId");
+    // Fallback keys off defaultAgentId, not the literal "default".
+    expect(helper).toContain("agents[defaultAgentId]");
   });
 
   it("threads resolveAgentMainProvider INTO the live imageHandlerDeps object literal", () => {

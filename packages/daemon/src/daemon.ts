@@ -169,11 +169,14 @@ import {
   type SessionTrackerRegistry,
 } from "@comis/agent";
 // resolveAgentModel is the EXACT completion-path provider resolver (I4); the
-// image accessor delegates to it so the image path can never disagree with the
-// completion path (RES-01 lockstep). Imported from the same module
-// setup-agents-runtime uses — not via a barrel — to avoid widening the wiring
-// barrel surface.
-import { resolveAgentModel } from "./wiring/setup-agents/setup-agents-tooling.js";
+// image accessor (resolveAgentMainProvider) delegates to it so the image path
+// can never disagree with the completion path (RES-01 lockstep). Both are
+// imported from the same module setup-agents-runtime uses — not via a barrel —
+// to avoid widening the wiring barrel surface.
+import {
+  resolveAgentMainProvider,
+  resolveAgentModel,
+} from "./wiring/setup-agents/setup-agents-tooling.js";
 // registerComisImageProviders is the once-at-boot pi-ai image registration hook (PI-02).
 import { registerComisImageProviders } from "./api/pi-image-adapter.js";
 // createModelCatalog + resolveWorkspaceDir live in @comis/core.
@@ -920,16 +923,16 @@ function buildRpcDispatchDeps(deps: {
 }): import("./api/rpc-dispatch.js").ApiDispatchDeps {
   const { channels: c, gateway: g, startupStartMs, defaultConfigPaths } = deps;
   // RES-01 keystone (I4 lockstep): resolve the agent's main provider via the
-  // EXACT completion-path resolver (resolveAgentModel). Defaults to the
-  // "default" agent when the agentId is unmatched. By the time imageHandlerDeps
-  // is built, config.agents[agentId].provider is already concrete (setup-agents
-  // back-writes it), so this is idempotent. NO modelRegistry, NO second source
-  // of truth — the same fn the completion runner calls.
-  const resolveAgentMainProvider = (agentId: string): { providerId: string } => {
-    const cfg = c.container.config.agents[agentId] ?? c.container.config.agents["default"];
-    const { provider } = resolveAgentModel(cfg, c.container.config.models);
-    return { providerId: provider };
-  };
+  // EXACT completion-path resolver (resolveAgentModel). Falls back to the
+  // operator-configurable defaultAgentId (NOT the literal "default" — a renamed
+  // default agent would miss it and throw; WR-01 183-REVIEW) when the agentId
+  // is unmatched, and yields an honest non-throwing sentinel when neither is in
+  // the map. By the time imageHandlerDeps is built, config.agents[agentId]
+  // .provider is already concrete (setup-agents back-writes it), so this is
+  // idempotent. NO modelRegistry, NO second source of truth — the same fn the
+  // completion runner calls.
+  const resolveAgentMainProviderFor = (agentId: string): { providerId: string } =>
+    resolveAgentMainProvider(c.container.config.agents, c.container.config.models, agentId, c.defaultAgentId);
   // Inlined buildImageHandlerDeps: undefined when image generation is disabled.
   const imageHandlerDeps: import("./api/rpc-dispatch.js").ApiDispatchDeps["imageHandlerDeps"] =
     (!c.imageGenProvider || !c.imageGenRateLimiter)
@@ -940,7 +943,7 @@ function buildRpcDispatchDeps(deps: {
           config: c.imageGenConfig,
           logger: c.skillsLogger,
           getChannelAdapter: (channelType: string) => c.adaptersByType.get(channelType),
-          resolveAgentMainProvider, // RES-01
+          resolveAgentMainProvider: resolveAgentMainProviderFor, // RES-01
         };
   // Inlined buildTokenStoreMutators.
   const addToTokenStore: import("./api/rpc-dispatch.js").ApiDispatchDeps["addToTokenStore"] = (entry) => { g.runtimeTokens.push({ id: entry.id, secretBuf: Buffer.from(entry.secret, "utf-8"), scopes: entry.scopes }); };
