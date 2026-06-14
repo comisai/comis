@@ -75,6 +75,7 @@ import {
   buildReadResult,
   createSessionEmulator,
   diffSnapshot,
+  perceptionScreen,
   readSnapshotParams,
   type ReadResult,
   type SessionEmulator,
@@ -560,7 +561,7 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
    * throw `invalid_value` → dispatch's catch returns ok:false with NOTHING written
    * (the write is AFTER the encode — the keystroke-injection guard).
    */
-  function handleSendKey(frame: TerminalRequestFrame): SendResult {
+  async function handleSendKey(frame: TerminalRequestFrame): Promise<SendResult> {
     const startedAt = nowMs();
     const sessionId = String(frame.params["sessionId"] ?? frame.sessionId);
     const state = sessions.get(sessionId);
@@ -573,7 +574,8 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     writeToBackend(state, bytes);
 
     logInteraction(sessionId, "send_key", startedAt, { keyCount: keys.length });
-    return { screen: state.ring, cursor: { x: 0, y: 0 } };
+    await state.writeFlush; // perceive the SETTLED grid (like read), not a mid-parse snapshot
+    return perceptionScreen(state.emu?.snapshot(), state.ring);
   }
 
   /**
@@ -609,7 +611,8 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
       bracketedPaste,
       bytes: payload.length,
     });
-    return { screen: state.ring, cursor: { x: 0, y: 0 } };
+    await state.writeFlush; // perceive the SETTLED grid, not a mid-parse snapshot
+    return perceptionScreen(state.emu?.snapshot(), state.ring);
   }
 
   /**
@@ -660,12 +663,12 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     const r = await settleSession(state, params);
 
     logInteraction(sessionId, "wait", startedAt, { reason: r.reason, isComplete: r.isComplete });
+    await state.writeFlush; // perceive the SETTLED grid, not a mid-parse snapshot
     return {
       matched: r.matched,
       isComplete: r.isComplete, // VERBATIM from runSettle — false on timeout.
       reason: r.reason,
-      screen: state.ring,
-      cursor: { x: 0, y: 0 },
+      ...perceptionScreen(state.emu?.snapshot(), state.ring),
     };
   }
 
@@ -694,7 +697,7 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
           result = await handleRead(frame); // awaits the pending emulator write-parse
           break;
         case "send_key":
-          result = handleSendKey(frame);
+          result = await handleSendKey(frame);
           break;
         case "send_text":
           result = await handleSendText(frame); // awaits the text↔submit settle

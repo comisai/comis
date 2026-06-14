@@ -1194,15 +1194,36 @@ describe("createTerminalWorker — send_key (named-key grammar -> exact bytes)",
     await worker.handle(
       createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }),
     );
-    rec.emit("prompt$ "); // seed the ring so the post-action snapshot is non-empty
+    rec.emit("prompt$ "); // seed output so the post-action snapshot is non-empty
 
     const reply = await worker.handle(sendKeyFrame(["C-c"]));
 
     expect(reply.ok).toBe(true);
     expect(rec.writes).toEqual(["\x03"]); // exactly one write of Ctrl-C
     const result = reply.result as { screen: string; cursor: { x: number; y: number } };
-    expect(result.screen).toBe("prompt$ "); // the post-action ring view
-    expect(result.cursor).toEqual({ x: 0, y: 0 });
+    // The post-action perception is the PLAIN grid snapshot (not the raw ANSI ring):
+    // the prompt is present and the REAL emulator cursor (on its row), not a {0,0} stub.
+    expect(result.screen).toContain("prompt$");
+    expect(result.cursor.y).toBe(0);
+  });
+
+  it("returns the PLAIN grid snapshot, NOT the raw ANSI ring (a driving agent must not be blinded by an offloaded byte-log)", async () => {
+    // Regression for the live Rust-build failure: send_key/send_text/wait used to
+    // return the raw `state.ring` (the accumulating ANSI byte-log), which for a
+    // full-screen TUI exceeds the 100K tool-result offload cap → the result is
+    // offloaded → the driving agent loses the CLI's state and flails. The fix:
+    // return the emulator's plain grid snapshot (ANSI-free + bounded), like `read`.
+    const rec = makeRecordingBackend();
+    const worker = createTerminalWorker(baseDeps({ loadPty: () => ({ spawn: rec.spawn }) }));
+    await worker.handle(createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }));
+    rec.emit("\x1b[31m\x1b[1mHELLO-ANSI\x1b[0m"); // heavily SGR-styled output (red, bold)
+
+    const reply = await worker.handle(sendKeyFrame(["Enter"]));
+    const screen = (reply.result as { screen: string }).screen;
+
+    expect(screen).toContain("HELLO-ANSI"); // the rendered TEXT is perceived
+    expect(screen).not.toContain("\x1b"); // but NO raw ANSI escapes (pre-fix returned state.ring)
+    expect(screen.length).toBeLessThan(8192); // bounded — never the unbounded raw byte-log
   });
 
   it("writes the joined chord bytes for [Up, Enter] -> \\x1b[A\\r", async () => {
@@ -1524,8 +1545,8 @@ describe("createTerminalWorker — wait (settle -> {matched,isComplete,reason,sc
       cursor: { x: number; y: number };
     };
     expect(r).toMatchObject({ matched: true, isComplete: true, reason: "idle" });
-    expect(r.screen).toBe("boot\n");
-    expect(r.cursor).toEqual({ x: 0, y: 0 });
+    expect(r.screen).toContain("boot"); // the post-action plain grid snapshot (not the raw ANSI ring)
+    expect(r.cursor).toEqual({ x: expect.any(Number), y: expect.any(Number) });
   });
 
   it("wait TEXT: a ring append carrying forText resolves reason:'text' WITHOUT waiting the full idle window", async () => {

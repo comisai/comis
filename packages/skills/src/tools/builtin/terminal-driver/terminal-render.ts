@@ -421,3 +421,27 @@ export function buildReadResult(
     alive: ctx.alive,
   };
 }
+
+/** Bound for the raw-ring fallback when no emulator snapshot exists (degraded pipe backend). */
+const PERCEPTION_RING_TAIL = 8192;
+
+/**
+ * The post-action perception screen for `send_key`/`send_text`/`wait` results: the
+ * emulator's PLAIN grid snapshot (ANSI-free viewport + real cursor) — NEVER the raw,
+ * accumulating ANSI `ring`. The raw ring routinely exceeds the 100K tool-result
+ * offload cap (a full-screen TUI's byte-log), which offloads the result and BLINDS a
+ * driving agent to the settled grid (`read` already uses the snapshot via
+ * {@link buildReadResult}; these three handlers wrongly returned the ring). When the
+ * emulator is absent (the degraded pipe backend) it falls back to the bounded TAIL of
+ * the ring, so the result still never offloads.
+ */
+export function perceptionScreen(
+  snap: EmulatorSnapshot | undefined,
+  ring: string,
+): { screen: string; cursor: { x: number; y: number } } {
+  if (snap !== undefined) return { screen: snap.screen, cursor: snap.cursor };
+  return {
+    screen: ring.length > PERCEPTION_RING_TAIL ? ring.slice(-PERCEPTION_RING_TAIL) : ring,
+    cursor: { x: 0, y: 0 },
+  };
+}
