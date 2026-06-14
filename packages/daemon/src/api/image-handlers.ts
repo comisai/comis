@@ -241,7 +241,7 @@ export function createImageHandlers(
       }
 
       // IN-02 model validation (BEFORE any reference resolution / outbound
-      // call — T-185-11): reject an unknown `model` for the resolved provider
+      // call — T-185-11): reject an unknown `model` for the EXECUTING provider
       // with a hint LISTING the valid models. Strict validation runs ONLY for
       // providers WITH a non-empty Comis-side list (IMAGE_MODELS_BY_PROVIDER) —
       // a provider with no list (e.g. openrouter, whose catalog is pi-ai's, not
@@ -249,13 +249,24 @@ export function createImageHandlers(
       // openrouter ids). The agent-supplied model then flows to the provider,
       // which decides. pi-ai's getImageModels is openrouter-only (Pitfall 4),
       // so the openai/google native lists are the IN-02 source of truth.
+      //
+      // WR-05 (185-REVIEW): validate against `deps.provider.id` — the provider
+      // that will ACTUALLY execute (the boot-selected DEFAULT agent's port) —
+      // NOT the per-request caller's `main.providerId`. In a multi-agent daemon
+      // they can differ (the documented Phase-186 divergence the WARN above
+      // surfaces); validating against the caller would PASS a model valid for
+      // the caller but then fail LATE at the executing SDK (a confusing
+      // late error). Validating against the executor makes the early reject's
+      // reason match reality. Sentinels ("unavailable") + listless providers
+      // (openrouter) have an empty list → no strict reject (Test 8 unchanged).
       if (params.model) {
-        const known = listImageModels(main.providerId);
-        if (known.length > 0 && !isValidImageModel(main.providerId, params.model)) {
+        const executingProvider = deps.provider.id;
+        const known = listImageModels(executingProvider);
+        if (known.length > 0 && !isValidImageModel(executingProvider, params.model)) {
           return {
             success: false,
-            error: `Unknown model "${params.model}" for provider "${main.providerId}"`,
-            hint: `Valid models for ${main.providerId}: ${known.join(", ")}`,
+            error: `Unknown model "${params.model}" for provider "${executingProvider}"`,
+            hint: `Valid models for ${executingProvider}: ${known.join(", ")}`,
           };
         }
       }

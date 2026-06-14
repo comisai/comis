@@ -828,4 +828,52 @@ describe("createImageHandlers IN-02 model validation", () => {
       expect.objectContaining({ model: "black-forest-labs/flux.2-pro" }),
     );
   });
+
+  // ─── WR-05: validate against the provider that ACTUALLY executes ───────────
+  // In a multi-agent daemon the boot-selected port (deps.provider) belongs to
+  // the DEFAULT agent; a non-default caller may resolve a DIFFERENT main
+  // provider. The model must be validated against the EXECUTING provider (the
+  // port that will run it), not the caller's — else a model valid for the
+  // caller passes Comis-side validation then fails late at the executing SDK.
+
+  it("WR-05: rejects a model valid for the CALLER but invalid for the EXECUTING (default) provider", async () => {
+    const execute = vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("x"), mimeType: "image/png" }));
+    const deps = createMockDeps({
+      // Boot-selected port = the DEFAULT agent's (google).
+      provider: { id: "google", isAvailable: () => true, execute },
+      // The CALLER resolves to openai (gpt-image-1 is valid for openai).
+      resolveAgentMainProvider: vi.fn().mockReturnValue({ providerId: "openai" }),
+    });
+    const handlers = createImageHandlers(deps);
+
+    const result = (await handlers["image.generate"]!({
+      _agentId: "agent-openai",
+      prompt: "a fox",
+      model: "gpt-image-1", // valid for openai, NOT for the executing google port
+    })) as { success: boolean; error?: string; hint?: string };
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("gpt-image-1");
+    // The reject names the EXECUTING provider + lists ITS models (reality).
+    expect(result.error).toContain("google");
+    expect(result.hint).toContain("gemini-2.5-flash-image");
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("WR-05: accepts a model valid for the EXECUTING (default) provider even when the caller differs", async () => {
+    const execute = vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("x"), mimeType: "image/png" }));
+    const deps = createMockDeps({
+      provider: { id: "google", isAvailable: () => true, execute },
+      resolveAgentMainProvider: vi.fn().mockReturnValue({ providerId: "openai" }),
+    });
+    const handlers = createImageHandlers(deps);
+
+    await handlers["image.generate"]!({
+      _agentId: "agent-openai",
+      prompt: "a fox",
+      model: "gemini-2.5-flash-image", // valid for the executing google port
+    });
+
+    expect(execute).toHaveBeenCalledWith(expect.objectContaining({ model: "gemini-2.5-flash-image" }));
+  });
 });
