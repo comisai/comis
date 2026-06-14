@@ -99,7 +99,14 @@ export function createImageProviderSelector(deps: {
       cfg,
       deps.mainProviderId,
       (imagesApi) => resolveImageApiKey(imagesApi, deps.secretManager) !== undefined,
-      (reason) => deps.logger.debug({ reason, step: "image_fallback_skip" }, "Image fallback entry skipped"),
+      // WR-04 (183-REVIEW): the once-per-resolution follow-main skip is the
+      // load-bearing "why did images go unavailable" evidence — promote it to
+      // INFO so it is visible at the default log level (§2.7). Per-fallback-
+      // entry skips stay DEBUG (they only matter when a chain is configured).
+      (reason) =>
+        reason.startsWith("follow-main skipped:")
+          ? deps.logger.info({ reason, step: "image_follow_main_skip" }, "Image follow-main resolution skipped")
+          : deps.logger.debug({ reason, step: "image_fallback_skip" }, "Image fallback entry skipped"),
     );
 
     if (!sel.ok) {
