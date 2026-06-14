@@ -28,6 +28,7 @@
 
 import { readFile } from "node:fs/promises";
 import {
+  IMAGE_ERR_TO_LOG,
   ImageGenerateContract,
   isValidImageModel,
   listImageModels,
@@ -271,8 +272,20 @@ export function createImageHandlers(
           "Image generation cost ceiling reached for this hour; raise " +
           "integrations.media.imageGeneration.maxCostPerHourUsd or wait for the " +
           "hour window to reset.";
+        // The Pino `errorKind` LOG field is the CLOSED 10-member union (the
+        // log-payload arch gate enforces it) — the domain `quota_exceeded` maps
+        // to `resource` via IMAGE_ERR_TO_LOG (the single vocabularies-meet point,
+        // mirroring pi-image-adapter.ts:153). The domain kind rides the separate
+        // `imageErrorKind` field. The trajectory image.failed below uses the
+        // domain kind directly (it is a content-free event payload, not a log).
         deps.logger.warn(
-          { agentId, step: "image_cost_ceiling", errorKind: "quota_exceeded" as const, hint },
+          {
+            agentId,
+            step: "image_cost_ceiling",
+            errorKind: IMAGE_ERR_TO_LOG.quota_exceeded,
+            imageErrorKind: "quota_exceeded" as const,
+            hint,
+          },
           "Image generation blocked: per-hour cost ceiling reached",
         );
         emit("image.failed", { errorKind: "quota_exceeded", provider: deps.provider.id });

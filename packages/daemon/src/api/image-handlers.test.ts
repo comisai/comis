@@ -1416,13 +1416,19 @@ describe("createImageHandlers — SEC-02 cost ceiling", () => {
     // The ceiling was consulted for THIS agent.
     expect(costLimiter.canSpend).toHaveBeenCalledWith("agent-1");
 
-    // OBS-02: a WARN logs errorKind:quota_exceeded + the hint.
+    // OBS-02: a WARN logs the quota ceiling. The Pino `errorKind` LOG field is
+    // the CLOSED union, so the domain `quota_exceeded` maps to `resource`
+    // (IMAGE_ERR_TO_LOG); the domain kind rides the separate `imageErrorKind`.
     const calls = (deps.logger.warn as ReturnType<typeof vi.fn>).mock.calls;
-    const warn = calls.find((c) => (c[0] as { errorKind?: string }).errorKind === "quota_exceeded");
+    const warn = calls.find(
+      (c) => (c[0] as { imageErrorKind?: string }).imageErrorKind === "quota_exceeded",
+    );
     expect(warn).toBeDefined();
+    expect((warn![0] as { errorKind?: string }).errorKind).toBe("resource"); // closed-union log kind
     expect((warn![0] as { hint?: string }).hint).toMatch(/maxCostPerHourUsd/);
 
-    // OBS-04 continuity: image.failed{quota_exceeded} is recorded.
+    // OBS-04 continuity: image.failed{quota_exceeded} is recorded (the domain
+    // kind — the trajectory event payload is not a closed-union log field).
     const failed = recordEvent.mock.calls.find((c) => c[0] === "image.failed");
     expect(failed).toBeDefined();
     expect((failed![1] as { errorKind?: string }).errorKind).toBe("quota_exceeded");
