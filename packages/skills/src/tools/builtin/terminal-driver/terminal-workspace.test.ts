@@ -30,6 +30,7 @@ import {
   cleanupSessionWorkspace,
   prepareAgentTerminalWorkspace,
   AGENT_TERMINAL_SUBDIR,
+  resolveCreateWorkspace,
 } from "./terminal-workspace.js";
 import {
   createTerminalSessionRegistry,
@@ -154,6 +155,34 @@ describe("prepareAgentTerminalWorkspace — the PERSISTENT, agent-scoped workspa
     } finally {
       rmSync(base, { recursive: true, force: true });
     }
+  });
+});
+
+describe("resolveCreateWorkspace — cwd ~ expansion + clamp-to-workspace", () => {
+  const WS = "/home/u/.comis/workspace/terminal";
+  const allocate = () => WS;
+
+  it("clamps a literal-tilde cwd that resolves OUTSIDE the workspace to the workspace", () => {
+    // The agent's `~/.comis/workspace` expands to the PARENT of the session workspace
+    // → not within → clamped (it would otherwise break bwrap --chdir / escape the jail).
+    const r = resolveCreateWorkspace({ cwd: "~/.comis/workspace" }, allocate, "s1", "/home/u");
+    expect(r.workspace).toBe(WS);
+    expect(r.cwd).toBe(WS);
+  });
+
+  it("honors a cwd that (after ~ expansion) is WITHIN the workspace", () => {
+    const r = resolveCreateWorkspace({ cwd: "~/.comis/workspace/terminal/proj" }, allocate, "s1", "/home/u");
+    expect(r.cwd).toBe(`${WS}/proj`);
+  });
+
+  it("clamps a ../ escape attempt back to the workspace", () => {
+    const r = resolveCreateWorkspace({ cwd: `${WS}/../../../etc` }, allocate, "s1", "/home/u");
+    expect(r.cwd).toBe(WS);
+  });
+
+  it("defaults cwd to the workspace when none is supplied", () => {
+    const r = resolveCreateWorkspace({}, allocate, "s1", "/home/u");
+    expect(r.cwd).toBe(WS);
   });
 });
 

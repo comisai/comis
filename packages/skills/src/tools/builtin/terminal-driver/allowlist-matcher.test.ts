@@ -272,3 +272,38 @@ describe("AllowEntryLike.scope — the scope contract carried verbatim (no-mutat
     });
   });
 });
+
+// A bare command name (no "/") is matched against each entry's canonical-path
+// BASENAME — the operator-pinned directories are the ONLY ones consulted, so
+// there is NO $PATH lookup (the deliberate no-$PATH-attack-surface property is
+// preserved). This lets an agent that invokes `claude` (the natural name) hit
+// the entry pinned at `/home/u/.local/bin/claude` without supplying the absolute
+// path, while a content/realpath/hash pin still gates the eventual spawn.
+describe("matchAllowEntry — bare command name (entry-basename match, no $PATH)", () => {
+  it("matches a bare name against the entry whose pinned-path basename equals it (spawns the canonical realpath)", () => {
+    // entry().match.path = CANONICAL_BASH (basename "bash"); the agent invokes bare "bash".
+    const matched = matchAllowEntry("bash", [entry()]);
+    expect(matched).toBeDefined();
+    expect(matched?.entry.id).toBe("bash");
+    expect(matched?.requestedReal).toBe(CANONICAL_BASH); // the pinned canonical realpath, not a $PATH guess
+  });
+
+  it("does NOT match a bare name whose basename differs from every entry", () => {
+    // entry basename is "bash"; a bare "claude" matches nothing here.
+    expect(matchAllowEntry("claude", [entry()])).toBeUndefined();
+  });
+
+  it("a bare name never consults $PATH — only operator-pinned entries are searched", () => {
+    // "ls" is a real binary on PATH, but the only entry is pinned at bash → no match.
+    expect(matchAllowEntry("ls", [entry()])).toBeUndefined();
+  });
+
+  it("a bare-name match still enforces the sha256 hash pin (content swap rejected)", () => {
+    const file = join(work, "tool"); // basename "tool"
+    writeFileSync(file, "real\n");
+    const wrongHash = createHash("sha256").update("SWAPPED\n").digest("hex");
+    const e: AllowEntryLike = { id: "tool", match: { path: realpathSync(file), hash: wrongHash }, scope: DEFAULT_SCOPE };
+    // Bare "tool" basename-matches the entry, but the hash pin must still reject the swap.
+    expect(matchAllowEntry("tool", [e])).toBeUndefined();
+  });
+});

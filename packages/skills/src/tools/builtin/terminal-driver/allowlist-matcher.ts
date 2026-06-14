@@ -15,11 +15,17 @@
  *     binary is spawned as `spawn(bin, argv)`, never wrapped in a shell
  *     interpreter, so there is no shell metacharacter / PATH-hijack surface.
  *
- * Pure JS — `node:fs` + `node:crypto` only. `buildDirectSpawn` is the SOLE
- * canonicalization site for a spawn: the bin it returns is always the
- * `realpath`, never the agent-supplied path. PATH resolution of a bare command
- * name is deliberately NOT performed here — the agent supplies an absolute or
- * relative path, removing the `$PATH`-lookup attack surface entirely.
+ * Pure JS — `node:fs` + `node:path` + `node:crypto` only. `buildDirectSpawn` is
+ * the SOLE canonicalization site for a spawn: the bin it returns is always the
+ * `realpath`, never the agent-supplied path. A `$PATH` lookup is still NOT
+ * performed — that would let an env/`$PATH`-controlled binary be selected. A
+ * BARE command name (no `/`) is instead matched against each entry's
+ * canonical-path BASENAME, so only the OPERATOR-PINNED directories are ever
+ * consulted (an agent that invokes `claude` hits the entry pinned at
+ * `/home/u/.local/bin/claude` without supplying the absolute path). The spawn is
+ * still the entry's `realpath` (hash-pin enforced) — a bare name can never select
+ * an unpinned binary. A path-bearing request keeps the strict realpath-equality
+ * gate unchanged.
  *
  * The daemon-side tool maps a parsed `TerminalAllowEntry` config entry
  * onto {@link AllowEntryLike}; this module intentionally does NOT import the
@@ -29,6 +35,7 @@
  */
 
 import { realpathSync, readFileSync } from "node:fs";
+import { basename } from "node:path";
 import { createHash } from "node:crypto";
 
 /** The canonical-binary clause of an allow entry (a structural subset of the config). */
@@ -160,11 +167,17 @@ export function matchAllowEntry(
   requestedCommand: string,
   entries: AllowEntryLike[],
 ): AllowMatchResult | undefined {
-  let requestedReal: string;
-  try {
-    requestedReal = canonicalize(requestedCommand);
-  } catch {
-    return undefined; // unresolvable request → never matches
+  // A BARE name (no `/`) is matched by the entry's canonical-path basename (no
+  // realpath of the request — there is nothing to resolve). A path-bearing request
+  // is realpath-resolved ONCE and compared by realpath equality (unchanged).
+  const isBare = !requestedCommand.includes("/");
+  let requestedReal: string | undefined;
+  if (!isBare) {
+    try {
+      requestedReal = canonicalize(requestedCommand);
+    } catch {
+      return undefined; // unresolvable request → never matches
+    }
   }
 
   for (const entry of entries) {
@@ -174,18 +187,26 @@ export function matchAllowEntry(
     } catch {
       continue; // an unresolvable pinned path cannot match
     }
-    if (pinnedReal !== requestedReal) continue;
+    if (isBare) {
+      // Only the operator-pinned path's basename is consulted — no $PATH.
+      if (basename(entry.match.path) !== requestedCommand) continue;
+    } else if (pinnedReal !== requestedReal) {
+      continue;
+    }
+    // The spawn target is ALWAYS the entry's verified realpath (a bare name can
+    // never select an unpinned binary); the hash pin gates that exact inode.
+    const real = isBare ? pinnedReal : (requestedReal as string);
 
     if (entry.match.hash !== undefined) {
       let actualHash: string;
       try {
-        actualHash = sha256File(requestedReal);
+        actualHash = sha256File(real);
       } catch {
         continue; // unreadable file cannot satisfy a hash pin
       }
       if (actualHash !== entry.match.hash) continue; // content swap → reject
     }
-    return { entry, requestedReal };
+    return { entry, requestedReal: real };
   }
   return undefined;
 }

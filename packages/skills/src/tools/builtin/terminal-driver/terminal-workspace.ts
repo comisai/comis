@@ -32,8 +32,8 @@
  */
 
 import { mkdtempSync, chmodSync, rmSync, mkdirSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { tmpdir, homedir } from "node:os";
+import { join, resolve } from "node:path";
 
 /**
  * The per-session workspace permission bits. World-rwx so the jailed child (uid
@@ -84,20 +84,47 @@ export interface ResolvedCreateWorkspace {
   ownedWorkspace?: string;
 }
 
+/** Expand a leading `~`/`~/` to `home` (the jail cannot --chdir to a literal tilde). */
+function expandHome(p: string, home: string): string {
+  if (p === "~") return home;
+  if (p.startsWith("~/")) return join(home, p.slice(2));
+  return p;
+}
+
+/** True when `child` is `parent` or nested under it (segment-aware; inputs are pre-`resolve`d). */
+function isWithinDir(child: string, parent: string): boolean {
+  if (child === parent) return true;
+  const withSep = parent.endsWith("/") ? parent : `${parent}/`;
+  return child.startsWith(withSep);
+}
+
 /**
  * Resolve the jail workspace+cwd for one create (gap 2): honor a caller-supplied
  * `workspace`/`cwd` (an injected daemon/test override) if present, else `allocate` a
  * fresh per-session dir. Returns `ownedWorkspace` set ONLY when the registry allocated
  * it, so the registry rm's exactly what it owns on kill (never a caller's dir).
+ *
+ * `cwd` defaults to the workspace. An explicit `req.cwd` is honored ONLY after a
+ * leading `~` is expanded AND only if it `resolve`s to a path WITHIN the workspace
+ * tree — otherwise it is CLAMPED to the workspace. This makes an agent-supplied
+ * literal-tilde path (`"~/.comis/workspace"`, which bwrap cannot --chdir to), a
+ * parent/out-of-tree path, or a `../` escape harmless: the session always opens in
+ * the writable, re-bound workspace instead of failing the spawn or escaping the jail.
  */
 export function resolveCreateWorkspace(
   req: { workspace?: string; cwd?: string },
   allocate: (sessionId: string) => string,
   sessionId: string,
+  home: string = homedir(),
 ): ResolvedCreateWorkspace {
   const allocated = req.workspace === undefined;
   const workspace = req.workspace ?? allocate(sessionId);
-  return { workspace, cwd: req.cwd ?? workspace, ownedWorkspace: allocated ? workspace : undefined };
+  let cwd = workspace;
+  if (req.cwd !== undefined) {
+    const candidate = resolve(expandHome(req.cwd, home));
+    if (isWithinDir(candidate, resolve(workspace))) cwd = candidate;
+  }
+  return { workspace, cwd, ownedWorkspace: allocated ? workspace : undefined };
 }
 
 /**
