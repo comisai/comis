@@ -419,8 +419,8 @@ At least one provider key is required. Each provider is detected at startup; mis
 | Variable | Provider | Reference |
 |----------|----------|-----------|
 | `ANTHROPIC_API_KEY` | Anthropic (Claude family) | `sk-ant-...` |
-| `OPENAI_API_KEY` | OpenAI (GPT family, Whisper, DALL-E, embeddings) | `sk-...` |
-| `GOOGLE_API_KEY` | Google AI Studio (Gemini family) | `AIza...` |
+| `OPENAI_API_KEY` | OpenAI (GPT family, Whisper, embeddings; also native `image_generate` via the OpenAI Images API for an `openai` main) | `sk-...` |
+| `GOOGLE_API_KEY` | Google AI Studio (Gemini family; also native `image_generate` via Gemini for a `google` main) | `AIza...` |
 | `GROQ_API_KEY` | Groq (Llama, Whisper) | `gsk_...` |
 | `MISTRAL_API_KEY` | Mistral AI | -- |
 | `DEEPSEEK_API_KEY` | DeepSeek | `sk-...` |
@@ -435,9 +435,9 @@ ANTHROPIC_API_KEY=sk-ant-...
 OPENAI_API_KEY=sk-...
 ```
 
-Some providers reuse a parent key for sub-services: OpenAI Whisper STT and DALL-E image-gen use `OPENAI_API_KEY`; Groq Whisper uses `GROQ_API_KEY`; Grok search uses `XAI_API_KEY`. See [Models](/agents/models) for the wired catalog.
+Some providers reuse a parent key for sub-services: OpenAI Whisper STT and native `image_generate` (OpenAI Images API, default `gpt-image-1`) use `OPENAI_API_KEY`; a `google` main's native `image_generate` (Gemini, default `gemini-2.5-flash-image`) uses `GOOGLE_API_KEY`; Groq Whisper uses `GROQ_API_KEY`; Grok search uses `XAI_API_KEY`. See [Models](/agents/models) for the wired catalog.
 
-**Image generation reuses the main provider's key.** With the default `integrations.media.imageGeneration.provider: auto`, the `image_generate` tool follows the agent's main provider and reuses **its** credentials — so in the common case **no image-specific key is needed**. To opt in to OpenRouter for image generation, set `provider: openrouter` and supply `OPENROUTER_API_KEY`; `FAL_KEY` is still used for the explicit `provider: fal` path.
+**Image generation reuses the main provider's key.** With the default `integrations.media.imageGeneration.provider: auto`, the `image_generate` tool follows the agent's main provider and reuses **its** credentials — so in the common case **no image-specific key is needed**. A key-auth **`openai`** main generates via the OpenAI Images API with `OPENAI_API_KEY`; a **`google`** main generates via Gemini with `GOOGLE_API_KEY` (the same key the completion path and vision use — **not** `GEMINI_API_KEY`). To opt in to OpenRouter for image generation, set `provider: openrouter` and supply `OPENROUTER_API_KEY`; `FAL_KEY` is still used for the explicit `provider: fal` path.
 
 With a **Codex (ChatGPT-login) main provider** and `provider: auto` (or explicit `provider: openai-codex`), `image_generate` reuses the agent's **OAuth bearer** — bootstrapped from [`OAUTH_OPENAI_CODEX`](#oauth-openai-codex) or `comis auth login --provider openai-codex` — so **no image-specific key** is needed; the token refreshes automatically per call. The bearer is an OAuth credential, never an `OPENAI_API_KEY`.
 

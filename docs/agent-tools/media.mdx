@@ -162,14 +162,29 @@ For per-provider setup, model defaults, and configuration, see the [Media & Voic
 
     By default (`integrations.media.imageGeneration.provider: auto`) image generation **follows the agent's main provider and reuses its credentials** -- no image-specific key is needed when the main provider can generate images. If the agent's main provider cannot generate images (e.g. Anthropic) and no explicit `provider` is set, the tool returns an honest "unavailable" with a hint to set `integrations.media.imageGeneration.provider` -- it never silently routes to a different paid provider. To opt in to OpenRouter, set `provider: openrouter` and supply `OPENROUTER_API_KEY`.
 
-    **Codex (ChatGPT-login) agents generate images with no API key.** When the agent's main provider is `openai-codex` (`provider: auto`), or you set `provider: openai-codex` explicitly, `image_generate` **reuses the agent's existing ChatGPT/Codex OAuth credentials** -- there is no image-specific API key to set. The OAuth bearer is resolved per call, so an expired token refreshes automatically; if the agent is not logged in, the tool returns an honest "unavailable" with a `comis auth login --provider openai-codex` hint (it never silently routes elsewhere). The native OpenAI and Google image-API paths (key-auth) arrive in a later phase.
+    **Codex (ChatGPT-login) agents generate images with no API key.** When the agent's main provider is `openai-codex` (`provider: auto`), or you set `provider: openai-codex` explicitly, `image_generate` **reuses the agent's existing ChatGPT/Codex OAuth credentials** -- there is no image-specific API key to set. The OAuth bearer is resolved per call, so an expired token refreshes automatically; if the agent is not logged in, the tool returns an honest "unavailable" with a `comis auth login --provider openai-codex` hint (it never silently routes elsewhere).
+
+    **Native OpenAI and Google (key-auth) follow-main paths are wired.** A key-auth `openai` main (with `OPENAI_API_KEY`) generates via the **OpenAI Images API** (default `gpt-image-1`), and a `google` main (with `GOOGLE_API_KEY`) generates via **Gemini** (default `gemini-2.5-flash-image`) -- both under `provider: auto`, reusing the same key the main provider uses (no image-specific key). You can also pin them explicitly with `provider: openai` / `provider: google`.
+
+    | Provider (resolved main) | Images path | `provider` value | Default model | Credential |
+    |--------------------------|-------------|------------------|---------------|------------|
+    | `openai` | OpenAI Images API | `auto` or `openai` | `gpt-image-1` | `OPENAI_API_KEY` |
+    | `openai-codex` | ChatGPT/Codex (Responses) | `auto` or `openai-codex` | `gpt-image-1` | ChatGPT/Codex OAuth (no key) |
+    | `google` / `google-vertex` | Gemini (`generateContent`) | `auto` or `google` | `gemini-2.5-flash-image` | `GOOGLE_API_KEY` |
+    | `openrouter` | OpenRouter (built-in) | `auto` or `openrouter` | `black-forest-labs/flux.2-pro` | `OPENROUTER_API_KEY` |
+    | _(explicit legacy)_ | fal.ai | `fal` | provider preset | `FAL_KEY` |
+    | `anthropic` and other image-incapable mains | — | — | — | honest "unavailable" (never a silent reroute) |
 
     | Parameter | Type | Required | Description |
     |-----------|------|----------|-------------|
     | `prompt` | string | Yes | Text description of the image to generate |
     | `size` | string | No | Provider-specific size. fal.ai uses presets (`square_hd`, `landscape_16_9`); OpenAI uses pixel dimensions (`1024x1024`, `1792x1024`). Omit for the provider default. |
+    | `model` | string | No | Override the provider's default image model (e.g. `gpt-image-1`, `gemini-2.5-flash-image`). Rejected with an actionable hint listing the valid models if it is not valid for the active provider. Omit to use the default. |
+    | `reference_image` | string | No | A workspace file path, URL, or data-URI of a reference image for edit/img2img. The OpenAI path routes it to `images.edit`; the Google path adds it as an `inlineData` part. Omit for text-to-image. |
 
-    The daemon-side handler applies rate limiting, safety checking, and provider execution before delivering the generated image to the current channel.
+    A `reference_image` is resolved safely: a workspace **file path** is confined to the agent's workspace (path-traversal blocked), a **URL** passes an SSRF guard before any fetch (and is size-capped), and a **data-URI/base64** is decoded in place.
+
+    The daemon-side handler applies rate limiting, safety checking, model validation, and provider execution before delivering the generated image to the current channel.
 
     <Note>
     When following a Codex main provider, Comis identifies itself to the ChatGPT backend as the official Codex client -- it sends the same first-party client headers (`originator: codex_cli_rs`, a Codex-shaped `User-Agent`, a `ChatGPT-Account-ID` decoded from your token, and per-request `session-id`/`x-client-request-id` identifiers) that the official Codex CLI sends. This is a **first-party-client compatibility shim** using **your own** ChatGPT/Codex OAuth credentials against the **same endpoint** the official Codex CLI uses -- so Cloudflare does not 403 requests from non-residential IPs. It is authorized reuse of your own credentials, **not detection evasion**. If a future change to the ChatGPT backend rejects this image path, set `integrations.media.imageGeneration.provider: openrouter` (with `OPENROUTER_API_KEY`) as the explicit fallback.
@@ -195,7 +210,7 @@ Media tools route to providers based on the credentials present in your secret s
 | Vision (`image_analyze`, `describe_video`) | OpenAI (gpt-4o), Anthropic (claude-sonnet-4.5), Google Gemini | OpenAI -> Anthropic -> Google (first available) | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY` (at least one) |
 | TTS (`tts_synthesize`) | OpenAI TTS, ElevenLabs, Edge | Configured order; `auto-tts` heuristic decides when to use voice | `OPENAI_API_KEY`, `ELEVENLABS_API_KEY` (Edge is free) |
 | STT (`transcribe_audio`) | OpenAI Whisper (gpt-4o-mini-transcribe), Groq Whisper, Deepgram nova-3 | Fallback chain in declared order | `OPENAI_API_KEY`, `GROQ_API_KEY`, `DEEPGRAM_API_KEY` (at least one) |
-| Image generation (`image_generate`) | Follows the agent's main provider (`auto`); explicit `openrouter` / `openai-codex` / `fal` / `openai` | `auto` = the agent's main provider (reuses its key, or OAuth bearer for a Codex main); else the explicit `provider` | None in the `auto` case (reuses the main provider's key); a Codex (ChatGPT-login) main reuses its **OAuth bearer** -- no image key; `OPENROUTER_API_KEY` for the OpenRouter opt-in; `FAL_KEY` for explicit `fal`. Honest "unavailable" (not silent) if the main provider can't generate images and no `provider` is set. |
+| Image generation (`image_generate`) | Follows the agent's main provider (`auto`): native **OpenAI** (`gpt-image-1`), **Google Gemini** (`gemini-2.5-flash-image`), **Codex** (ChatGPT-login), and **OpenRouter**; explicit `openrouter` / `openai-codex` / `openai` / `google` / `fal` | `auto` = the agent's main provider (reuses its key, or OAuth bearer for a Codex main); else the explicit `provider` | None in the `auto` case (reuses the main provider's key): `OPENAI_API_KEY` for an `openai` main, `GOOGLE_API_KEY` for a `google` main, the **OAuth bearer** for a Codex main (no image key). `OPENROUTER_API_KEY` for the OpenRouter opt-in; `FAL_KEY` for explicit `fal`. Honest "unavailable" (not silent) if the main provider can't generate images and no `provider` is set. |
 | Document extraction (`extract_document`) | Local pdf.js + CSV / text decoders | n/a | None (uses FFmpeg for some audio metadata) |
 
 ### Cost notes

@@ -1748,7 +1748,14 @@ Controls the `image_generate` tool. By default (`provider: auto`) image generati
 | `fallbackChain` | `enum[]` | `[]` | Ordered providers consulted **only after** follow-main fails (same value set as `provider`). Each skipped entry is logged with a reason. |
 | `maxCostPerHourUsd` | `number` | _(unset)_ | Optional per-agent hourly cost ceiling. The field is accepted now; **enforcement lands in a later phase** — `maxPerHour` is the active cost control today. |
 
-In the common `auto` case, two follow-main image paths are wired: the built-in **OpenRouter** path (a main on the OpenRouter proxy, or explicit `provider: openrouter` + `OPENROUTER_API_KEY`) and the **Codex (ChatGPT-login)** path. When the agent's main provider is `openai-codex` (or you set `provider: openai-codex`), `image_generate` reuses the agent's **ChatGPT/Codex OAuth credentials** — there is **no image-specific API key** to set; the OAuth bearer is resolved per call and refreshes automatically (bootstrapped from `OAUTH_OPENAI_CODEX` or `comis auth login --provider openai-codex`). If the agent is not logged in, the tool returns an honest "unavailable" with a `comis auth login --provider openai-codex` hint. The native OpenAI and Google image-API paths (key-auth) arrive in a later phase.
+In the common `auto` case, four follow-main image paths are wired, each reusing the agent main provider's own credentials:
+
+- **OpenAI** (key-auth) — a key-auth `openai` main (with `OPENAI_API_KEY`) generates via the OpenAI Images API, default `gpt-image-1`. Pin explicitly with `provider: openai`.
+- **Google Gemini** (key-auth) — a `google` (or `google-vertex`) main (with `GOOGLE_API_KEY`) generates via Gemini (`generateContent`), default `gemini-2.5-flash-image`. Pin explicitly with `provider: google`. (The key is `GOOGLE_API_KEY` — the same key the completion path and vision use, **not** `GEMINI_API_KEY`.)
+- **OpenRouter** — a main on the OpenRouter proxy, or explicit `provider: openrouter` + `OPENROUTER_API_KEY`.
+- **Codex (ChatGPT-login)** — when the main provider is `openai-codex` (or you set `provider: openai-codex`), `image_generate` reuses the agent's **ChatGPT/Codex OAuth credentials** — there is **no image-specific API key** to set; the OAuth bearer is resolved per call and refreshes automatically (bootstrapped from `OAUTH_OPENAI_CODEX` or `comis auth login --provider openai-codex`). If the agent is not logged in, the tool returns an honest "unavailable" with a `comis auth login --provider openai-codex` hint.
+
+Two optional `image_generate` tool params ride these paths: `model` (override the provider's default image model — rejected with a hint listing the valid models if it is not valid for the active provider) and `reference_image` (a workspace file path, URL, or data-URI for edit/img2img — path-traversal- and SSRF-guarded). An image-incapable main (e.g. Anthropic) with no explicit `provider` stays honest-"unavailable" rather than silently routing to a paid provider.
 
 ```yaml
 integrations:
