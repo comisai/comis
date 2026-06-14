@@ -50,7 +50,7 @@ import {
   type OAuthProfile,
 } from "@comis/core";
 import { homedir } from "node:os";
-import { callTyped, withClient } from "../../client/rpc-client.js";
+import { callTyped, withClient, isGatewayAuthRejection } from "../../client/rpc-client.js";
 import { DAEMON_PROBE_TIMEOUT_MS } from "../../util/daemon-required.js";
 import { isDaemonRunning } from "../../sync-tooling/daemon-guard.js";
 import { offlineOAuthProfileSet } from "../../util/offline-secrets-store.js";
@@ -540,13 +540,37 @@ async function handleCodexOAuth(
   }
 
   // Encrypted mode: probe the daemon BEFORE the OAuth flow so the persistence
-  // route (daemon RPC vs. offline encrypted write) is decided up front. During
-  // `comis init` the daemon is not yet running — there is no config.yaml — so
-  // we seal the profile directly into secrets.db via offlineOAuthProfileSet.
-  // When the daemon IS running it is the sole writer, so we route through the
-  // auth.set RPC instead (single-writer invariant).
+  // route (daemon RPC vs. offline encrypted write) is decided up front. When
+  // the daemon is down we seal the profile directly into secrets.db via
+  // offlineOAuthProfileSet. When the daemon IS running it is normally the sole
+  // writer, so we route through the auth.set RPC (single-writer invariant) —
+  // BUT on a fresh install the installer's systemd unit starts the daemon
+  // before `comis init` has written any config.yaml, so the gateway has zero
+  // configured tokens and rejects the CLI's connection (WS close 4001). In that
+  // case the RPC is unreachable and we fall back to the same offline encrypted
+  // write (see the auth-rejection branch below).
   if (wizardStorage === "encrypted") {
     const daemonUp = await isDaemonRunning(DAEMON_PROBE_TIMEOUT_MS);
+    // Seal an OAuth profile straight into the encrypted secrets.db (no daemon).
+    // Returns true on success; logs the failure and returns false otherwise.
+    // Shared by the daemon-down branch and the daemon-up-but-auth-rejected
+    // fallback so both produce an identical encrypted-at-rest write.
+    const sealOAuthProfileOffline = async (
+      oauthProfile: OAuthProfile,
+    ): Promise<boolean> => {
+      const res = await offlineOAuthProfileSet({
+        profile: oauthProfile,
+        dataDir: safePath(homedir(), ".comis"),
+        envFilePath: safePath(homedir(), ".comis", ".env"),
+      });
+      if (!res.ok) {
+        prompter.log.error(
+          `Failed to persist OAuth profile: ${res.error.message}`,
+        );
+        return false;
+      }
+      return true;
+    };
     // Run the OAuth flow locally (browser/device-code — user's interactive
     // machine).
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
@@ -579,24 +603,37 @@ async function handleCodexOAuth(
               callTyped(client, AuthSetContract, profile),
             );
           } catch (rpcErr) {
-            prompter.log.error(
-              `Failed to persist OAuth profile via daemon: ${rpcErr instanceof Error ? rpcErr.message : String(rpcErr)}`,
-            );
-            if (attempt === maxRetries) return state;
-            continue;
+            if (isGatewayAuthRejection(rpcErr)) {
+              // The gateway rejected our token (WS close 4001): the daemon is
+              // up but has no gateway.tokens entry the CLI can match — the
+              // fresh-install case where the installer started the service
+              // before `comis init` wrote any config. The auth.set RPC is
+              // permanently unreachable here, so route around it and seal the
+              // profile straight into the encrypted secrets.db, then tell the
+              // user to restart the daemon (encrypted-store hot-reload is
+              // disabled, so a restart is required for any credential change
+              // to take effect regardless of the write path).
+              if (!(await sealOAuthProfileOffline(profile))) {
+                if (attempt === maxRetries) return state;
+                continue;
+              }
+              prompter.log.warn(
+                "Daemon is running but rejected the CLI's gateway token (no gateway.tokens entry matched). " +
+                  "Sealed the OAuth profile into the encrypted secrets store directly — " +
+                  "restart the daemon (e.g. `sudo systemctl restart comis`) for it to take effect.",
+              );
+            } else {
+              prompter.log.error(
+                `Failed to persist OAuth profile via daemon: ${rpcErr instanceof Error ? rpcErr.message : String(rpcErr)}`,
+              );
+              if (attempt === maxRetries) return state;
+              continue;
+            }
           }
         } else {
           // Daemon down (e.g. during `comis init`) → seal the profile directly
           // into the encrypted secrets.db. NEVER touches the plaintext file store.
-          const res = await offlineOAuthProfileSet({
-            profile,
-            dataDir: safePath(homedir(), ".comis"),
-            envFilePath: safePath(homedir(), ".comis", ".env"),
-          });
-          if (!res.ok) {
-            prompter.log.error(
-              `Failed to persist OAuth profile: ${res.error.message}`,
-            );
+          if (!(await sealOAuthProfileOffline(profile))) {
             if (attempt === maxRetries) return state;
             continue;
           }

@@ -81,6 +81,10 @@ vi.mock("@comis/core", async (importOriginal) => {
 vi.mock("../../client/rpc-client.js", () => ({
   withClient: vi.fn(async (fn: (c: unknown) => unknown) => fn({})),
   callTyped: vi.fn(async () => ({ profileId: "openai-codex:test@example.com", stored: true })),
+  // Mirrors the real impl (rpc-client.ts) so the 4001-auth-rejection fallback
+  // test is faithful: true iff the error message carries the rejection prefix.
+  isGatewayAuthRejection: (e: unknown) =>
+    e instanceof Error && e.message.startsWith("Gateway rejected the token"),
 }));
 
 // Mock requireDaemonOrExit + DAEMON_PROBE_TIMEOUT_MS. requireDaemonOrExit is
@@ -1243,6 +1247,76 @@ describe("credentialsStep — storage mode branching (encrypted/env)", () => {
     const callTypedArgs = vi.mocked(callTyped).mock.calls[0]!;
     expect((callTypedArgs[1] as { method: string }).method).toBe("auth.set");
     expect(offlineOAuthProfileSet).not.toHaveBeenCalled();
+  });
+
+  it("encrypted + daemon UP but gateway rejects token (4001): falls back to offline encrypted write", async () => {
+    // Fresh-install regression (live VPS, 2026-06-14): the installer starts
+    // comis.service BEFORE `comis init` writes any config.yaml, so the gateway
+    // has ZERO configured tokens and rejects every client with WS close 4001.
+    // No CLI token can authenticate, so the auth.set RPC is unreachable. The
+    // wizard must NOT dead-end — it must seal the OAuth profile into the
+    // encrypted secrets.db (offline write) so credentials still land
+    // encrypted-at-rest, then tell the user to restart the daemon.
+    vi.mocked(loadConfigFile).mockReturnValue({
+      ok: true,
+      value: { security: { storage: "encrypted" } },
+    });
+    vi.mocked(isDaemonRunning).mockResolvedValue(true); // daemon UP
+    // withClient rejects with the gateway auth-rejection error (WS close 4001).
+    vi.mocked(withClient).mockRejectedValue(
+      new Error(
+        "Gateway rejected the token (WS close 4001 Unauthorized) — the daemon IS running and listening.",
+      ),
+    );
+
+    const expiresAt = Date.now() + 3_600_000;
+    vi.mocked(loginOpenAICodexOAuth).mockResolvedValue({
+      ok: true,
+      value: {
+        access: "tok_4001",
+        refresh: "ref_4001",
+        expires: expiresAt,
+        accountId: "acct_4001",
+        email: "four@example.com",
+        displayName: "Four Oh One",
+        profileId: "openai-codex:four@example.com",
+      },
+    });
+
+    const prompter = createMockPrompter();
+    vi.mocked(prompter.select).mockResolvedValueOnce("browser-auto");
+
+    const startState: WizardState = {
+      ...INITIAL_STATE,
+      provider: { id: "openai-codex" } as ProviderConfig,
+    };
+
+    const result = await credentialsStep.execute(startState, prompter);
+
+    // Fell back to the offline encrypted write (NOT a dead-end).
+    expect(offlineOAuthProfileSet).toHaveBeenCalledTimes(1);
+    const arg = vi.mocked(offlineOAuthProfileSet).mock.calls[0]![0] as {
+      profile: Record<string, unknown>;
+      dataDir: string;
+      envFilePath: string;
+    };
+    expect(arg.profile).toMatchObject({
+      provider: "openai-codex",
+      profileId: "openai-codex:four@example.com",
+      access: "tok_4001",
+      version: 1,
+    });
+    expect(arg.dataDir.endsWith("/.comis")).toBe(true);
+    expect(arg.envFilePath.endsWith("/.comis/.env")).toBe(true);
+
+    // Profile persisted → state advances to validated (no skip, no dead-end).
+    expect(result.provider?.validated).toBe(true);
+    expect(result.provider?.oauthProfileId).toBe("openai-codex:four@example.com");
+    expect(result.provider?.apiKey).toBeUndefined();
+
+    // User told to restart the daemon (encrypted-store hot-reload is disabled).
+    const warnCalls = vi.mocked(prompter.log.warn).mock.calls.map(([m]) => String(m));
+    expect(warnCalls.some((m) => /restart/i.test(m))).toBe(true);
   });
 
   it("env mode: wizard credential step surfaces actionable rejection containing 'env' and 'read-only'", async () => {
