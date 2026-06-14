@@ -317,6 +317,96 @@ describe("createImageHandlers", () => {
     expect(deps.getChannelAdapter).not.toHaveBeenCalled();
   });
 
+  // ─── DEL-01: durable persistence replaces the tmpdir write+delete ──────────
+
+  it("DEL-01: persists the image and hands sendAttachment the PERSISTED filePath (not a tmpdir path)", async () => {
+    const mockSendAttachment = vi.fn().mockResolvedValue(ok("msg-del01"));
+    const persist = vi.fn().mockResolvedValue(ok(PERSISTED_OK));
+    const deps = createMockDeps({
+      getChannelAdapter: vi.fn().mockReturnValue({ sendAttachment: mockSendAttachment }),
+      persist,
+    });
+    const handlers = createImageHandlers(deps);
+    const result = await handlers["image.generate"]!({
+      _agentId: "agent-del01",
+      prompt: "a durable landscape",
+      _callerChannelType: "telegram",
+      _callerChannelId: "chat-del01",
+    });
+
+    // The handler persists the generated buffer via the per-agent getter,
+    // scoped to the caller's agentId with mediaKind:"image" (T-186-01 — the
+    // service routes to the agent's confined `photos/` subdir).
+    expect(persist).toHaveBeenCalledTimes(1);
+    expect(persist).toHaveBeenCalledWith(
+      "agent-del01",
+      expect.any(Buffer),
+      expect.objectContaining({ mediaKind: "image", mimeType: "image/png" }),
+    );
+    // sendAttachment receives the PERSISTED durable path — NOT an OS-tmpdir
+    // `comis-img-*` path (the whole point of DEL-01).
+    const attachment = mockSendAttachment.mock.calls[0]?.[1] as { url: string };
+    expect(attachment.url).toBe(PERSISTED_OK.filePath);
+    expect(attachment.url).not.toMatch(/tmpdir|comis-img-|\/tmp\//);
+    expect(result).toEqual({ success: true, delivered: true, mimeType: "image/png" });
+  });
+
+  it("DEL-01: a persistence failure WARNs and falls through to base64 (no crash, no sendAttachment)", async () => {
+    const mockSendAttachment = vi.fn().mockResolvedValue(ok("should-not-be-called"));
+    const persist = vi.fn().mockResolvedValue(err(new Error("disk full")));
+    const deps = createMockDeps({
+      getChannelAdapter: vi.fn().mockReturnValue({ sendAttachment: mockSendAttachment }),
+      persist,
+    });
+    const handlers = createImageHandlers(deps);
+    const result = (await handlers["image.generate"]!({
+      _agentId: "agent-del01b",
+      prompt: "a doomed render",
+      _callerChannelType: "telegram",
+      _callerChannelId: "chat-del01b",
+    })) as { success: boolean; imageBase64?: string; mimeType: string };
+
+    // Persist failed → base64 fallback, delivery skipped, no crash.
+    expect(persist).toHaveBeenCalledTimes(1);
+    expect(mockSendAttachment).not.toHaveBeenCalled();
+    expect(result.success).toBe(true);
+    expect(result.imageBase64).toBeDefined();
+    expect(result.mimeType).toBe("image/png");
+    // OBS-02: the persist-failure branch carries errorKind + a hint (§2.7).
+    expect(deps.logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorKind: "network",
+        hint: expect.stringContaining("persist"),
+        step: "image_persist",
+      }),
+      expect.any(String),
+    );
+  });
+
+  // ─── DEL-02 (regression-guard): capability-driven, NEVER a channel-name list ─
+
+  it("DEL-02: an adapter present but LACKING sendAttachment degrades to base64 (no undefined-method call)", async () => {
+    // The adapter object has NO sendAttachment property (today only IRC). The
+    // capability gate (typeof adapter.sendAttachment === "function") must skip
+    // delivery and fall through to base64 — never call an undefined method.
+    const persist = vi.fn().mockResolvedValue(ok(PERSISTED_OK));
+    const deps = createMockDeps({
+      getChannelAdapter: vi.fn().mockReturnValue({ /* no sendAttachment */ }),
+      persist,
+    });
+    const handlers = createImageHandlers(deps);
+    const result = (await handlers["image.generate"]!({
+      _agentId: "agent-del02",
+      prompt: "an IRC-bound image",
+      _callerChannelType: "irc",
+      _callerChannelId: "#chan",
+    })) as { success: boolean; imageBase64?: string; mimeType: string };
+
+    expect(result.success).toBe(true);
+    expect(result.imageBase64).toBeDefined();
+    expect(result.mimeType).toBe("image/png");
+  });
+
   // ─── RES-01 keystone: the handler is no longer provider-blind ──────────────
 
   it("resolves the agent main provider with the default agentId when none provided", async () => {
