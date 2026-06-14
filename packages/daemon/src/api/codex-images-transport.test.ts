@@ -21,6 +21,7 @@ import {
   generateImagesCodex,
   buildCodexImageHeaders,
   CODEX_UA_VERSION,
+  CODEX_SSE_MAX_BUFFER_BYTES,
 } from "./codex-images-transport.js";
 
 // ---------------------------------------------------------------------------
@@ -279,6 +280,33 @@ describe("generateImagesCodex — empty/failed stream (CDX-03)", () => {
 
     expect(res.stopReason).toBe("error");
     expect(res.errorMessage).toContain("empty_response");
+  });
+
+  // IN-01 (184-REVIEW): a hostile/huge no-newline stream must not grow the SSE
+  // line buffer without bound. Past CODEX_SSE_MAX_BUFFER_BYTES the parser bails
+  // to empty_response (honest degrade) instead of OOMing.
+  it("caps the SSE line buffer and bails to empty_response on an unbounded no-newline stream", async () => {
+    // Stream chunks with NO newline so the line buffer never drains, just past
+    // the cap — without materializing one giant string in the test.
+    const chunk = "A".repeat(64 * 1024); // 64 KiB, no newline
+    const chunks = Math.ceil(CODEX_SSE_MAX_BUFFER_BYTES / chunk.length) + 2;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const enc = new TextEncoder();
+        for (let i = 0; i < chunks; i++) controller.enqueue(enc.encode(chunk));
+        controller.close();
+      },
+    });
+    stubFetch({ body });
+
+    const res = await generateImagesCodex(codexModel(), textContext("x"), opts());
+
+    expect(res.stopReason).toBe("error");
+    expect(res.errorMessage).toContain("empty_response");
+  });
+
+  it("exposes a sane positive SSE buffer cap constant", () => {
+    expect(CODEX_SSE_MAX_BUFFER_BYTES).toBeGreaterThan(1_000_000);
   });
 });
 

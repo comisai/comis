@@ -69,6 +69,16 @@ export const CODEX_UA_VERSION = "0.0.1";
 const CODEX_AUTH_CLAIM = "https://api.openai.com/auth";
 
 /**
+ * IN-01 (184-REVIEW): cap the SSE line buffer so a hostile/huge no-newline
+ * stream cannot grow memory without bound. A complete `response.completed`
+ * event can legitimately carry a multi-MB base64 image inline, so the ceiling
+ * is generous (32 MiB); past it the parser bails to `empty_response` (honest
+ * degrade) instead of OOMing. The endpoint is a trusted first-party (ChatGPT),
+ * so this is cheap defense-in-depth, not a hot path.
+ */
+export const CODEX_SSE_MAX_BUFFER_BYTES = 32 * 1024 * 1024;
+
+/**
  * Build the first-party Codex Cloudflare/request headers from the freshly-
  * resolved access-token JWT (CDX-02), reconciled against the SDK's proven codex
  * Responses path (`openai-codex-responses.js` `buildSSEHeaders`) — WR-01.
@@ -219,6 +229,9 @@ async function parseCodexImageSse(
     }
   };
 
+  // IN-01: set when the un-drained buffer exceeds the cap — bail to a miss
+  // (empty_response) rather than grow without bound on a no-newline stream.
+  let oversized = false;
   try {
     while (!signal?.aborted) {
       const { value, done } = await reader.read();
@@ -232,9 +245,17 @@ async function parseCodexImageSse(
         if (line !== "" && !line.startsWith(":")) consumeEvent(line);
         lineEnd = buffer.indexOf("\n");
       }
+      // IN-01: after draining every complete line, the residue is one
+      // unterminated line. If it alone exceeds the cap, the stream is sending
+      // an unbounded no-newline body — stop reading and degrade honestly.
+      if (buffer.length > CODEX_SSE_MAX_BUFFER_BYTES) {
+        oversized = true;
+        break;
+      }
     }
     // Flush any trailing buffered line (stream may end without a final newline).
-    if (buffer !== "" && !buffer.startsWith(":")) consumeEvent(buffer);
+    // Skip the flush when we bailed on an oversized buffer.
+    if (!oversized && buffer !== "" && !buffer.startsWith(":")) consumeEvent(buffer);
   } finally {
     reader.releaseLock();
   }
