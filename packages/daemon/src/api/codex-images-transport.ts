@@ -34,7 +34,7 @@
  * @module
  */
 import { type AssistantImages, type ImagesApiFunction } from "@earendil-works/pi-ai";
-import { decodeCodexJwtPayload } from "@comis/core";
+import { decodeCodexJwtPayload, systemNowMs } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import os from "node:os";
 
@@ -207,7 +207,9 @@ export const generateImagesCodex: ImagesApiFunction = async (
     model: model.id,
     output: [],
     stopReason: "stop",
-    timestamp: Date.now(),
+    // systemNowMs (the globals-gate-sanctioned wall-clock read) — NOT Date.now,
+    // which the production globals gate forbids outside bootstrap/adapter paths.
+    timestamp: systemNowMs(),
   };
 
   try {
