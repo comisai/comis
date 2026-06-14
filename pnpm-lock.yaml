@@ -729,6 +729,9 @@ importers:
       reflect-metadata:
         specifier: 0.2.2
         version: 0.2.2
+      undici:
+        specifier: '>=7.24.0'
+        version: 8.3.0
       yaml:
         specifier: 2.9.0
         version: 2.9.0
