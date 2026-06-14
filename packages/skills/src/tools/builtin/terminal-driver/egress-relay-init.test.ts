@@ -27,7 +27,7 @@
 
 import { describe, it, expect } from "vitest";
 
-import { dropPrivileges, type RelayInitAudit } from "./egress-relay-init.js";
+import { dropPrivileges, buildRelayChildEnv, type RelayInitAudit } from "./egress-relay-init.js";
 
 describe("egress-relay-init dropPrivileges — best-effort under the unmapped userns-root", () => {
   it("does NOT throw when setuid throws the not-mapped EPERM/EINVAL (the VPS root-worker reality)", () => {
@@ -108,5 +108,23 @@ describe("egress-relay-init dropPrivileges — best-effort under the unmapped us
     dropPrivileges(undefined, undefined, { setgid, setuid, audit: (rec) => audit.push(rec) });
     expect(called).toBe(false);
     expect(audit.length).toBe(0);
+  });
+});
+
+describe("egress-relay-init buildRelayChildEnv — points the driven child at the in-jail relay", () => {
+  it("sets HTTPS_PROXY/HTTP_PROXY (+ lowercase) to http://127.0.0.1:<relayPort> so the child egresses through the allowlist", () => {
+    // The bug this guards (live VPS 2026-06-14): the relay materialized + bound the
+    // loopback relay, but execChild spawned the driven CLI with NO proxy env, so
+    // curl/claude tried a DIRECT connection that --unshare-net blocks ("could not
+    // resolve host" / claude hangs). The relay-init KNOWS the bound port, so it must
+    // authoritatively set the proxy env on the child (independent of bwrap env-forwarding).
+    const env = buildRelayChildEnv({ PATH: "/usr/bin", HOME: "/home/comis" }, 41234);
+    expect(env.HTTPS_PROXY).toBe("http://127.0.0.1:41234");
+    expect(env.HTTP_PROXY).toBe("http://127.0.0.1:41234");
+    expect(env.https_proxy).toBe("http://127.0.0.1:41234");
+    expect(env.http_proxy).toBe("http://127.0.0.1:41234");
+    // Inherited env is preserved (the scrubbed env + the bound paths still reach the child).
+    expect(env.PATH).toBe("/usr/bin");
+    expect(env.HOME).toBe("/home/comis");
   });
 });

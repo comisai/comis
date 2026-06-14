@@ -251,13 +251,34 @@ function auditDropFailure(
  * its code — the relay is torn down when the jail dies with the parent worker via
  * `--die-with-parent`). `process.exit` carries the child's status out of the jail.
  */
-function execChild(child: string[]): never {
+/**
+ * Build the driven child's env: the inherited (scrubbed) env PLUS the proxy vars
+ * pointing at the in-jail loopback relay (`http://127.0.0.1:<relayPort>`). The
+ * relay-init binds the relay on `relayPort`, so it is the AUTHORITATIVE source of
+ * this value — set here, NOT relied upon via bwrap env-forwarding (which does not
+ * survive the relay-init→child `spawnSync` boundary, live VPS 2026-06-14). Without
+ * it a proxy-aware child attempts a DIRECT connect that `--unshare-net` blocks
+ * ("could not resolve host"). Both upper- and lower-case forms cover the common
+ * clients (curl reads lower; most others honor upper).
+ */
+export function buildRelayChildEnv(parentEnv: NodeJS.ProcessEnv, relayPort: number): NodeJS.ProcessEnv {
+  const proxyUrl = `http://127.0.0.1:${relayPort}`;
+  return {
+    ...parentEnv,
+    HTTPS_PROXY: proxyUrl,
+    HTTP_PROXY: proxyUrl,
+    https_proxy: proxyUrl,
+    http_proxy: proxyUrl,
+  };
+}
+
+function execChild(child: string[], relayPort: number): never {
   if (child.length === 0) {
     process.stderr.write("egress-relay-init: no child command after `--`\n");
     process.exit(2);
   }
   const [bin, ...rest] = child;
-  const r = spawnSync(bin, rest, { stdio: "inherit" });
+  const r = spawnSync(bin, rest, { stdio: "inherit", env: buildRelayChildEnv(process.env, relayPort) });
   if (typeof r.status === "number") {
     process.exit(r.status);
   }
@@ -276,7 +297,7 @@ async function main(): Promise<void> {
   // mapped in the bwrap single-uid userns, so the drop is refused; dropPrivileges
   // logs the audit posture and continues rather than crash the relay-init PID-1.
   dropPrivileges(args.setuid, args.setgid);
-  execChild(args.child);
+  execChild(args.child, args.port);
 }
 
 /**
