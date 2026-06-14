@@ -197,11 +197,26 @@ export function createPiImageAdapter(opts: {
           // transports) — mirrors the cost/model deferral in `toImageGenOutput`
           // above. Until then an operator/agent-supplied `size` has no effect
           // on the openrouter built-in (a feature gap, not a misroute/crash).
-          const res = await generateImages(
-            opts.model,
-            { input: [{ type: "text", text: input.prompt }] },
-            options,
-          );
+          //
+          // IN-01 (185): append the resolved reference image as a SECOND
+          // ImageContent element ONLY when present (edit/img2img). The
+          // openai-images transport routes it to images.edit, the
+          // google-images transport to an inlineData part. Absence keeps the
+          // array EXACTLY [{type:"text"}] — byte-identical to the text-only
+          // path so the SHARED openrouter built-in + codex transports cannot
+          // regress (Pitfall 3). `input.model` is consumed at the SELECTOR
+          // (sel.model → the model literal id, Plan 02), NOT re-read here.
+          const inputContent: Array<
+            { type: "text"; text: string } | { type: "image"; data: string; mimeType: string }
+          > = [{ type: "text", text: input.prompt }];
+          if (input.referenceImage) {
+            inputContent.push({
+              type: "image",
+              data: input.referenceImage.data,
+              mimeType: input.referenceImage.mimeType,
+            });
+          }
+          const res = await generateImages(opts.model, { input: inputContent }, options);
           return toImageGenOutput(res, opts.logger);
         })(),
       );
@@ -257,7 +272,7 @@ export function registerComisImageProviders(): void {
   // — the registry is a Map keyed by api, so re-registration is a harmless set.
   registerImagesApiProvider({ api: "openai-codex-images", generateImages: generateImagesCodex });
   // 185 (PRV-01/02): the two SDK transports, dispatched by model.api through the
-  // ONE generateImages() call site. Registered here so the selector's
+  // ONE generateImages call site. Registered here so the selector's
   // createPiImageAdapter path can reach them (the built-but-not-wired guard).
   registerImagesApiProvider({ api: "openai-images", generateImages: generateImagesOpenAI });
   registerImagesApiProvider({ api: "google-images", generateImages: generateImagesGoogle });
