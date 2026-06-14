@@ -247,6 +247,28 @@ describe("registerComisImageProviders", () => {
     // No regression: the built-in openrouter-images is still reachable.
     expect(getImagesApiProvider("openrouter-images")).toBeDefined();
   });
+
+  // 185 Test B — the built-but-not-wired guard: the two genuinely-new SDK
+  // transports must be REGISTERED (not just written) so generateImages()
+  // dispatches to them by model.api. This is the milestone's recurring
+  // failure-class defense (a transport file that exists but is never wired).
+  it("registers the openai-images + google-images transports so both round-trip (185)", () => {
+    registerComisImageProviders();
+
+    const openai = getImagesApiProvider("openai-images");
+    expect(openai).toBeDefined();
+    expect(openai!.api).toBe("openai-images");
+    expect(typeof openai!.generateImages).toBe("function");
+
+    const google = getImagesApiProvider("google-images");
+    expect(google).toBeDefined();
+    expect(google!.api).toBe("google-images");
+    expect(typeof google!.generateImages).toBe("function");
+
+    // No regression: the 183/184 registrations stay reachable.
+    expect(getImagesApiProvider("openrouter-images")).toBeDefined();
+    expect(getImagesApiProvider("openai-codex-images")).toBeDefined();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -345,6 +367,36 @@ describe("createPiImageAdapter openrouter path (PI-04 + CRED-01)", () => {
   it("resolveImageApiKey returns undefined for an unknown imagesApi (no image-specific store)", () => {
     const secretManager = { get: vi.fn(() => undefined) };
     expect(resolveImageApiKey("does-not-exist-images", secretManager)).toBeUndefined();
+  });
+
+  // 185 Test A — CRED-01 lockstep fix: google-images must resolve GOOGLE_API_KEY
+  // (the SAME key the completion path / vision registry / env-vars docs use),
+  // NOT GEMINI_API_KEY. Before the fix a GOOGLE_API_KEY-only google agent was
+  // reported image-unavailable (the resolver read the wrong env var).
+  it("resolveImageApiKey('google-images') reads GOOGLE_API_KEY (CRED-01 lockstep)", () => {
+    const secretManager = {
+      get: vi.fn((key: string) => (key === "GOOGLE_API_KEY" ? "gk" : undefined)),
+    };
+    expect(resolveImageApiKey("google-images", secretManager)).toBe("gk");
+    expect(secretManager.get).toHaveBeenCalledWith("GOOGLE_API_KEY");
+  });
+
+  it("resolveImageApiKey('google-images') no longer reads GEMINI_API_KEY", () => {
+    // With ONLY GEMINI_API_KEY set, the resolver returns undefined (it reads
+    // GOOGLE_API_KEY now). Pins that the bug key is gone.
+    const secretManager = {
+      get: vi.fn((key: string) => (key === "GEMINI_API_KEY" ? "old-gemini" : undefined)),
+    };
+    expect(resolveImageApiKey("google-images", secretManager)).toBeUndefined();
+    expect(secretManager.get).not.toHaveBeenCalledWith("GEMINI_API_KEY");
+  });
+
+  it("resolveImageApiKey('openai-images') reads OPENAI_API_KEY (unchanged, still correct)", () => {
+    const secretManager = {
+      get: vi.fn((key: string) => (key === "OPENAI_API_KEY" ? "sk" : undefined)),
+    };
+    expect(resolveImageApiKey("openai-images", secretManager)).toBe("sk");
+    expect(secretManager.get).toHaveBeenCalledWith("OPENAI_API_KEY");
   });
 
   // PI-04 LIVE opt-in: hits the REAL built-in openrouter-images transport when a
