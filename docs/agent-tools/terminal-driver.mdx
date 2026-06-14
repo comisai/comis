@@ -1,0 +1,141 @@
+---
+title: "Interactive Terminal Driver"
+description: "Drive interactive terminal programs -- shells, REPLs, full-screen TUIs, and AI coding CLIs -- through a real PTY, governed like an MCP server"
+icon: "terminal"
+---
+
+**What it does:** Spawns an allowlisted command in a daemon-supervised, sandboxed worker process, attaches it to a real PTY rendered into a headless terminal emulator, and lets the agent perceive a stable character grid and act via keystrokes. Sessions are long-lived background resources -- one agent (or a subagent) can drive a full-screen AI coding CLI (Claude Code, Codex) across many event-woken turns.
+
+**Who it's for:** Operators who want an agent to drive an interactive CLI that has no API -- a coding assistant, an installer wizard, a REPL, `vim`/`htop`. It is the platform's **most privileged** capability, so it is **off by default** and gated by an operator allowlist, exactly like installing a capable MCP server.
+
+<Warning>
+The terminal driver runs a real program with the scope you grant it. Treat each allowlist entry as a trust decision: the **defaults are least-privilege**, you dial scope up explicitly, and a prompt-injectable agent can never widen it. `~/.comis` (the daemon's secrets) is **always** denied to every driven child, even at `filesystem: full`.
+</Warning>
+
+## The nine tools
+
+All nine are `mcpExportPolicy: "never-export"` (never exposed to external MCP) and **non-blocking** (act, return the current settled snapshot, never hold a turn open, never kill the session on turn-abort).
+
+| Tool | What it does |
+|------|-------------|
+| `terminal_session_create` | Start a session for an allowlisted command. Rejected unless the canonical binary matches an allow entry. Returns a stable `sessionId`. |
+| `terminal_session_list` | List the caller's sessions (owner-scoped). |
+| `terminal_session_read` | Read the rendered screen + cursor (`text`/`ansi`/`html`, scrollback). Output is redacted and wrapped as untrusted content. |
+| `terminal_session_send_text` | Type text; optional submit + settle. |
+| `terminal_session_send_key` | Send named keys/chords (`C-c`, `Up`, `Enter`, `S-Tab`). |
+| `terminal_session_wait` | Short bounded in-turn settle on idle/text/exit. |
+| `terminal_session_status` | Classifier state (`working`/`awaiting-input`/`exited`/`stuck`), cursor, interaction count. |
+| `terminal_session_resize` | Resize the PTY + emulator. |
+| `terminal_session_kill` | Terminate a session. |
+
+## Prerequisites
+
+| Requirement | Why | Check |
+|-------------|-----|-------|
+| **bwrap** (bubblewrap) + unprivileged user namespaces | The driven child runs in a bwrap jail; without it `create` fails closed (never an unsandboxed child). | `bwrap --version`; `cat /proc/sys/user/max_user_namespaces` (> 0) |
+| **node-pty** built | The real-PTY backend (full-screen TUIs). Absent ⇒ a degraded pipe backend (no TUI). | shipped + built by the installer |
+| **tmux** (optional) | The long-run backend (`backend: "tmux"`): a session survives a worker restart and is re-attachable. Absent ⇒ `tmux` requests fall back to the PTY backend. | `tmux -V` |
+| The driven CLI installed **and authenticated for the daemon's user** | Comis is credential-agnostic -- the CLI authenticates itself (e.g. `claude` reads its own `~/.claude.json`). | run it once as the `comis` user |
+
+## Configuration
+
+The terminal driver is configured **per agent**, under `agents.<id>.skills.terminal`.
+
+<Warning>
+There is **no top-level `skills:` key** -- a top-level `skills:` block fails config validation and the daemon will not start. Always nest under a specific agent: `agents.default.skills.terminal`.
+</Warning>
+
+```yaml
+agents:
+  default:
+    provider: openai-codex
+    model: gpt-5.5
+    skills:
+      terminal:
+        enabled: true
+        worker:
+          maxSessions: 4
+          idleTtlMs: 1800000          # reap idle sessions after 30 min
+          ringBytes: 1048576          # per-session output ring (1 MiB)
+          stuckMs: 60000              # no-progress > 60s ⇒ "stuck" ⇒ escalate
+          maxConcurrentAttentionTurns: 2
+        defaults: { cols: 120, rows: 40, scrollback: 5000 }
+        allow:
+          # A no-network shell, locked down (least-privilege).
+          - id: bash
+            match: { path: /usr/bin/bash }     # canonical binary (realpath/hash-pinned)
+            scope:
+              filesystem: workspace            # only the session workspace is writable
+              network: none                    # deny-all egress
+              credentialHome: exclude
+              uid: dedicated                   # run as a throwaway uid, not the daemon
+            autoAnswer: safe-only
+            consent: { acknowledgedRisk: true, acknowledgedAt: "2026-06-14T00:00:00Z" }
+
+          # Drive Claude Code (the flagship). It needs network + to read its own
+          # ~/.claude.json, so this entry dials scope UP -- an explicit operator choice.
+          - id: claude
+            match: { path: /home/comis/.local/bin/claude }
+            scope:
+              filesystem: home                 # ~/.claude + the project dir (~/.comis still denied)
+              network: full                    # reach the model API
+              credentialHome: exclude          # Comis never reads the CLI's credential
+              uid: daemon                      # run as the daemon user so it can read its own auth
+            autoAnswer: safe-only
+            consent: { acknowledgedRisk: true, acknowledgedAt: "2026-06-14T00:00:00Z" }
+            limits: { wallClockMs: 7200000, maxInteractions: 800 }
+        redactSecrets: true
+        audit: { enabled: true }
+```
+
+The agent then drives it: `terminal_session_create({ allowId: "claude", command: "/home/comis/.local/bin/claude", args: ["--permission-mode", "bypassPermissions"] })` -> wait -> `terminal_session_send_text(...)` -> `terminal_session_read(...)`.
+
+### Allow-entry fields
+
+| Field | Meaning |
+|-------|---------|
+| `id` | The stable `allowId` the agent passes to `terminal_session_create`. |
+| `match.path` | The canonical absolute binary path (resolved via `realpath`; optional `hash` pin). Spawned as direct argv -- never via a shell. |
+| `match.argsPrefix` | Optional pinned argv prefix the agent's `args` must start with. |
+| `scope` | The sandbox the child runs in (below). Sourced **only** from this entry -- the agent cannot supply or widen scope. |
+| `autoAnswer` | `none` / `safe-only` (default) / `all`. `safe-only` auto-answers only prompts matching `hintPatterns`; everything else (destructive, approval, auth/login) escalates. |
+| `consent` | Required informed-consent record (`acknowledgedRisk: true` + a timestamp). |
+| `limits` | Optional per-session caps: `wallClockMs`, `maxInteractions`, `maxRequestsPerSession`, `maxSessions`. |
+| `approveOnCreate` | Require the approval gate at `session_create`. |
+| `backend` | `spawn` (default) or `tmux` (long-run survival). |
+
+## Security model
+
+Every driven session runs in a bwrap jail materializing the entry's `scope`:
+
+| Scope dimension | Values | Default |
+|-----------------|--------|---------|
+| `filesystem` | `workspace` / `listed-paths` / `home` / `full` | `workspace` |
+| `network` | `none` / `listed-hosts` / `full` | `none` |
+| `credentialHome` | `exclude` / `include` | `exclude` |
+| `uid` | `dedicated` / `daemon` | `dedicated` |
+
+- **`~/.comis` carve-out (non-dialable):** the daemon data dir (master key, secret store) is masked with a tmpfs in **every** jail, even at `filesystem: full`. A driven child can never read Comis's secrets.
+- **Fail-closed:** if the declared scope cannot be materialized (no bwrap), `session_create` is rejected -- never degraded to an unsandboxed child.
+- **Env-scrub:** interpreter-control vars (`NODE_OPTIONS`, `BASH_ENV`, `PYTHONSTARTUP`, function-export) and nested-CLI markers (`CLAUDE_CODE_*`, `CLAUDECODE`) are stripped.
+- **Untrusted output:** `terminal_session_read` redacts secrets and wraps the screen as untrusted external content -- a driven AI CLI can render attacker text, so the screen is treated as a prompt-injection vector, not trusted input.
+- **Audit:** every `send_text`/`send_key` is audited (`sessionId` + redacted payload); a run is reconstructable from logs + events.
+
+### Network modes
+
+- **`none`** -- deny-all egress. Best for shells/tools that don't need the network.
+- **`full`** -- unrestricted egress. The bwrap jail + the `~/.comis` carve-out + env-scrub are still the boundary. **This is the mode for driving a full-screen AI CLI** (e.g. Claude Code), whose HTTP client reaches the model API directly.
+- **`listed-hosts`** -- a no-secret host-allowlist CONNECT proxy bounds the child to named `hosts`. It works for clients that honor `HTTPS_PROXY`. Driving a CLI whose HTTP client ignores `HTTPS_PROXY` through `listed-hosts` is still being hardened (a transparent-egress path) -- use `full` for those today.
+
+## Long runs and recovery
+
+- **Session lifetime is decoupled from a turn.** `session_create` returns immediately; the PTY lives in the worker across turns. Aborting the spawning turn does **not** kill the session.
+- **The agent is woken by attention events**, never polling: the worker classifies each session and emits a `terminal:*` event on a state transition; a short woken turn does `status -> read -> decide -> send -> ends`.
+- **Worker crash isolation:** the worker is a separate supervised process -- a PTY/emulator crash restarts the worker, not the daemon. For milestone-length runs use `backend: "tmux"` so the session survives a worker restart and a human can `tmux attach` to take over.
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Tool Policy" icon="shield-halved" href="/skills/tool-policy">Control which tools each agent can use</Card>
+  <Card title="Built-in Tools" icon="puzzle-piece" href="/skills/built-in-tools">The full built-in tool surface</Card>
+</CardGroup>
