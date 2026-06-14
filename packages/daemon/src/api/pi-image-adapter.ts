@@ -178,6 +178,15 @@ export function createPiImageAdapter(opts: {
       return fromPromise(
         (async () => {
           // ── THE ONE generateImages call site (I1) ─────────────────────────
+          // IN-04 (183-REVIEW): only `input.prompt` is forwarded. `input.size`
+          // and `input.safetyChecker` (passed by the handler) are NOT yet
+          // mapped for the pi path — pi-ai's `ImagesContext` exposes only
+          // `input`, and `ImagesOptions` has no `size`/`safetyChecker` field,
+          // so forwarding them needs a provider-specific payload mapping
+          // (e.g. via `onPayload`/`metadata`). Deferred to Phase 185 (custom
+          // transports) — mirrors the cost/model deferral in `toImageGenOutput`
+          // above. Until then an operator/agent-supplied `size` has no effect
+          // on the openrouter built-in (a feature gap, not a misroute/crash).
           const res = await generateImages(
             opts.model,
             { input: [{ type: "text", text: input.prompt }] },
