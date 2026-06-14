@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createMediaHandlers } from "./media-handlers.js";
 import type { MediaHandlerDeps } from "./media-handlers.js";
+import { validateUrl } from "@comis/core";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 
 // ---------------------------------------------------------------------------
@@ -22,6 +23,27 @@ vi.mock("node:fs/promises", () => ({
 vi.mock("node:crypto", () => ({
   randomUUID: () => "test-uuid-1234",
 }));
+
+// CR-01: the image.analyze `url` branch now routes through the shared
+// DNS-pinned SSRF fetcher (ssrf-image-fetch.ts → undici Agent + fetch). Mock
+// `undici` so Agent is a real class (constructor args captured) and `fetch`
+// delegates to globalThis.fetch — NEVER the real network.
+const { undiciAgentCtor, undiciAgentClose } = vi.hoisted(() => {
+  const undiciAgentCtor = vi.fn();
+  const undiciAgentClose = vi.fn().mockResolvedValue(undefined);
+  return { undiciAgentCtor, undiciAgentClose };
+});
+
+vi.mock("undici", () => {
+  class MockAgent {
+    close = undiciAgentClose;
+    constructor(args: unknown) {
+      undiciAgentCtor(args);
+    }
+  }
+  const fetch = (...args: Parameters<typeof globalThis.fetch>) => globalThis.fetch(...args);
+  return { Agent: MockAgent, fetch };
+});
 
 // Mock daemon-utils mime helpers (pure functions, stable returns)
 vi.mock("../wiring/daemon-utils.js", () => ({
@@ -53,7 +75,12 @@ vi.mock("@comis/core", async (importOriginal) => {
   return {
     ...actual,
     safePath: (...segments: string[]) => segments.join("/"),
-    validateUrl: vi.fn(async () => ({ ok: true })),
+    // ok WITH a resolved value (hostname/ip/url) so the CR-01 url branch can pin
+    // DNS to the validated IP; SSRF-reject tests override per-call.
+    validateUrl: vi.fn(async () => ({
+      ok: true,
+      value: { hostname: "example.com", ip: "93.184.216.34", url: new URL("https://example.com/i.jpg") },
+    })),
   };
 });
 
@@ -213,6 +240,71 @@ describe("createMediaHandlers", () => {
       })) as { description: string };
 
       expect(result.description).toBe("Vision analysis not available for this context.");
+    });
+
+    // ─── CR-01: the `url` source MUST route through the DNS-pinned SSRF ───────
+    // fetcher (shared with image-handlers), not a bare fetch that re-resolves
+    // DNS. This closes the rebinding TOCTOU gap for image.analyze too.
+
+    it("CR-01: a url source is fetched with a DNS-pinned dispatcher (no rebind window)", async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        headers: new Headers({ "content-type": "image/jpeg" }),
+        body: new ReadableStream<Uint8Array>({
+          start(c) {
+            c.enqueue(new Uint8Array([9, 9, 9]));
+            c.close();
+          },
+        }),
+      } as unknown as Response);
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+      undiciAgentCtor.mockClear();
+      try {
+        const deps = makeDeps();
+        const handlers = createMediaHandlers(deps);
+
+        const result = (await handlers["image.analyze"]!({
+          source_type: "url",
+          source: "https://example.com/i.jpg",
+          prompt: "Describe this",
+        })) as { description: string };
+
+        expect(validateUrl).toHaveBeenCalledWith("https://example.com/i.jpg");
+        // The pinned Agent (dispatcher) was constructed → DNS pinning enforced.
+        expect(undiciAgentCtor).toHaveBeenCalledTimes(1);
+        const [url, init] = fetchMock.mock.calls[0]! as [string, { redirect?: string; dispatcher?: unknown }];
+        expect(url).toBe("https://example.com/i.jpg");
+        expect(init.redirect).toBe("error");
+        expect(init.dispatcher).toBeDefined();
+        expect(result.description).toBe("A beautiful image");
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("CR-01: a url source that fails SSRF validation throws before any fetch", async () => {
+      (validateUrl as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        ok: false,
+        error: new Error("blocked private IP"),
+      });
+      const fetchMock = vi.fn();
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+      try {
+        const deps = makeDeps();
+        const handlers = createMediaHandlers(deps);
+
+        await expect(
+          handlers["image.analyze"]!({
+            source_type: "url",
+            source: "http://169.254.169.254/latest/meta-data",
+          }),
+        ).rejects.toThrow(/SSRF blocked/);
+        expect(fetchMock).not.toHaveBeenCalled();
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
     });
   });
 

@@ -50,7 +50,6 @@ import {
   MediaProvidersContract,
   safePath,
   stripInternalFields,
-  validateUrl,
   systemGetEnv,
   systemNowMs,
 } from "@comis/core";
@@ -62,6 +61,7 @@ import {
   parseTtsDirective,
 } from "@comis/skills";
 import { guessMimeFromExtension, detectMimeFromMagicBytes, mimeToExtension } from "../wiring/daemon-utils.js";
+import { fetchImageBytesSsrfSafe } from "./ssrf-image-fetch.js";
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
 
@@ -136,24 +136,16 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
           break;
         }
         case "url": {
-          // Validate URL through SSRF guard before fetching
-          const urlCheck = await validateUrl(source);
-          if (!urlCheck.ok) {
-            throw new Error(`SSRF blocked: ${urlCheck.error.message}`);
-          }
-          const response = await fetch(source, { redirect: "error" });
-          if (!response.ok) {
-            throw new Error(`Failed to fetch image: HTTP ${response.status}`);
-          }
-          // Content-Length check before downloading
-          const contentLength = response.headers.get("content-length");
+          // CR-01: route through the shared DNS-pinned SSRF fetcher — it
+          // validates the host BEFORE connecting, pins DNS to the validated IP
+          // (no rebinding TOCTOU window — a bare `fetch` would re-resolve DNS
+          // and could be rebound to an internal/metadata IP), refuses redirects,
+          // and bounds the download to maxBytes. The post-switch size check
+          // below stays as defense-in-depth.
           const maxBytes = deps.mediaConfig.imageAnalysis.maxFileSizeMb * 1024 * 1024;
-          if (contentLength && parseInt(contentLength, 10) > maxBytes) {
-            throw new Error(`Image file size exceeds limit of ${deps.mediaConfig.imageAnalysis.maxFileSizeMb}MB`);
-          }
-          const arrayBuffer = await response.arrayBuffer();
-          buffer = Buffer.from(arrayBuffer);
-          mimeType = response.headers.get("content-type") ?? "image/jpeg";
+          const fetched = await fetchImageBytesSsrfSafe(source, maxBytes);
+          buffer = fetched.buffer;
+          mimeType = fetched.mimeType ?? "image/jpeg";
           break;
         }
         case "base64": {
