@@ -125,8 +125,6 @@ import {
   setupChannels,
   createInteractiveCallbackWiring,
   setupMedia,
-  createImageGenGetter,
-  createImageProviderSelector,
   setupCrossSession,
   setupTools,
   setupMonitoring,
@@ -168,22 +166,14 @@ import {
   type ServedWindowComparison,
   type SessionTrackerRegistry,
 } from "@comis/agent";
-// resolveAgentModel is the EXACT completion-path provider resolver (I4); the
-// image accessor (resolveAgentMainProvider) delegates to it so the image path
-// can never disagree with the completion path (RES-01 lockstep). Both are
-// imported from the same module setup-agents-runtime uses — not via a barrel —
-// to avoid widening the wiring barrel surface.
-import {
-  resolveAgentMainProvider,
-  resolveAgentModel,
-} from "./wiring/setup-agents/setup-agents-tooling.js";
-// registerComisImageProviders is the once-at-boot pi-ai image registration hook (PI-02).
-import { registerComisImageProviders } from "./api/pi-image-adapter.js";
+// resolveAgentMainProvider is the handler-side accessor that delegates to the
+// EXACT completion-path resolveAgentModel (I4 lockstep / RES-01). Imported
+// directly (not via the wiring barrel) to avoid widening the barrel surface.
+import { resolveAgentMainProvider } from "./wiring/setup-agents/setup-agents-tooling.js";
 // createModelCatalog + resolveWorkspaceDir live in @comis/core.
 import { createModelCatalog, resolveWorkspaceDir } from "@comis/core";
 import {
   createFileStateTracker,
-  createImageGenRateLimiter,
   detectSandboxProvider,
 } from "@comis/skills";
 // The single process-singleton activity circuit breaker is constructed
@@ -231,7 +221,7 @@ import { setupSingleAgent } from "./wiring/setup-agents/index.js";
 import { buildDialecticWiring, dialecticWiringDepsFromBoot } from "./wiring/setup-dialectic.js";
 import { createConversationReset } from "./wiring/conversation-reset.js";
 import { setupSecretManager } from "./wiring/setup-secret-manager.js";
-import { restoreApprovalState, resolveGatewayTokens, setupChannelHealthMonitor, resolveModelHealthMultilingual } from "./wiring/main-helpers.js";
+import { restoreApprovalState, resolveGatewayTokens, setupChannelHealthMonitor, resolveModelHealthMultilingual, buildImageGenBundle } from "./wiring/main-helpers.js";
 import { createInboundMessageIdResolver, type InboundMessageIdResolver } from "./wiring/inbound-message-id-resolver.js";
 import { logOperationModelDryRun } from "./wiring/startup-dry-run.js";
 import { emitDockerRestartPolicyWarn } from "./setup-docker-restart-warn.js";
@@ -922,15 +912,10 @@ function buildRpcDispatchDeps(deps: {
   defaultConfigPaths: string[];
 }): import("./api/rpc-dispatch.js").ApiDispatchDeps {
   const { channels: c, gateway: g, startupStartMs, defaultConfigPaths } = deps;
-  // RES-01 keystone (I4 lockstep): resolve the agent's main provider via the
-  // EXACT completion-path resolver (resolveAgentModel). Falls back to the
-  // operator-configurable defaultAgentId (NOT the literal "default" — a renamed
-  // default agent would miss it and throw; WR-01 183-REVIEW) when the agentId
-  // is unmatched, and yields an honest non-throwing sentinel when neither is in
-  // the map. By the time imageHandlerDeps is built, config.agents[agentId]
-  // .provider is already concrete (setup-agents back-writes it), so this is
-  // idempotent. NO modelRegistry, NO second source of truth — the same fn the
-  // completion runner calls.
+  // RES-01 keystone (I4 lockstep): the agent's main provider via the EXACT
+  // completion-path resolver, falling back to the configurable defaultAgentId
+  // (NOT literal "default"; WR-01 183-REVIEW). See resolveAgentMainProvider in
+  // setup-agents-tooling.ts for the fallback + honest-sentinel semantics.
   const resolveAgentMainProviderFor = (agentId: string): { providerId: string } =>
     resolveAgentMainProvider(c.container.config.agents, c.container.config.models, agentId, c.defaultAgentId);
   // Inlined buildImageHandlerDeps: undefined when image generation is disabled.
@@ -2211,45 +2196,9 @@ async function bootChannels(boot: BootContext): Promise<void> {
   // because setupTools consumes both as direct inputs).
   const sandboxProvider = detectSandboxProvider(skillsLogger);
   if (sandboxProvider) skillsLogger.info({ provider: sandboxProvider.name }, "Exec sandbox provider detected");
-  // Inlined buildImageGenBundle: image-generation provider (lazy getter) + rate limiter + config.
-  // RES-02/CRED-01: the selector routes provider:"auto"/pi-ai-backed providers
-  // to the Plan-03 pi-image-adapter (following the DEFAULT agent's resolved main
-  // provider, key via SecretManager), keeps explicit fal/openai on the legacy
-  // skills adapter (additive), and returns an honest-unavailable port (with the
-  // knob hint) for an image-incapable main (RES-03) — never a misroute. The
-  // getter reads the config + secretManager on use, but is invoked ONCE here at
-  // boot (getImageGenProvider() below) and the handler holds that boot-built
-  // adapter instance — so key rotation requires a daemon restart to take effect
-  // (NOT live per-request; IN-01 183-REVIEW — parity with the pre-existing
-  // fal/openai one-shot probe). Per-call per-agent re-selection (and live
-  // rotation) is a 186/multi-agent refinement; Phase 183 resolves the common
-  // case (the default agent's main provider) at boot.
-  const imageGenConfig = container.config.integrations.media.imageGeneration;
-  registerComisImageProviders(); // PI-02 — once at boot, before any generateImages().
-  const defaultAgentCfg =
-    container.config.agents[defaultAgentId] ?? container.config.agents["default"];
-  const defaultMain = defaultAgentCfg
-    ? resolveAgentModel(defaultAgentCfg, container.config.models).provider
-    : "default";
-  const getImageGenProvider = createImageProviderSelector({
-    imageGenConfig,
-    secretManager: container.secretManager,
-    mainProviderId: defaultMain,
-    legacyGetter: createImageGenGetter(imageGenConfig, container.secretManager),
-    logger: skillsLogger,
-  });
-  const imageGenProvider = getImageGenProvider(); // boot-time probe for rate-limiter + logging
-  const imageGenRateLimiter = imageGenProvider
-    ? createImageGenRateLimiter({ maxPerHour: imageGenConfig.maxPerHour })
-    : undefined;
-  if (imageGenProvider) {
-    skillsLogger.info(
-      { provider: imageGenConfig.provider, mainProvider: defaultMain },
-      "Image generation provider initialized",
-    );
-  } else {
-    skillsLogger.debug("Image generation disabled: API key not configured or provider unknown");
-  }
+  // Image-generation bundle — see buildImageGenBundle in wiring/main-helpers.ts.
+  const { imageGenConfig, imageGenProvider, imageGenRateLimiter } =
+    buildImageGenBundle({ container, defaultAgentId, skillsLogger });
 
   // 6.6.8.5. Tools + message preprocessing — HOISTED above setupChannels.
   // assembleToolsForAgent is now passed directly into

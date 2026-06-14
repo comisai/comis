@@ -296,6 +296,11 @@ describe("RES-01 keystone is wired into the LIVE daemon.ts composition root", ()
     resolve(here, "./setup-agents/setup-agents-tooling.ts"),
     "utf8",
   );
+  // The image-gen boot wiring (selector + registerComisImageProviders) was
+  // extracted from daemon.ts into wiring/main-helpers.ts (buildImageGenBundle)
+  // to keep the composition root under its architecture line cap; daemon.ts
+  // calls the helper.
+  const helpersSrc = readFileSync(resolve(here, "./main-helpers.ts"), "utf8");
 
   it("delegates the handler accessor to the pure resolveAgentMainProvider helper, threading the configurable defaultAgentId (WR-01)", () => {
     // The accessor is a thin local closure that delegates to the extracted,
@@ -336,10 +341,13 @@ describe("RES-01 keystone is wired into the LIVE daemon.ts composition root", ()
     expect(region).toContain("resolveAgentMainProvider");
   });
 
-  it("wires the selector + registerComisImageProviders at the boot probe", () => {
-    expect(daemonSrc).toContain("createImageProviderSelector({");
-    expect(daemonSrc).toContain("registerComisImageProviders()");
-    // The selector follows the DEFAULT agent's resolved main provider.
-    expect(daemonSrc).toMatch(/mainProviderId:\s*defaultMain/);
+  it("wires the selector + registerComisImageProviders at the boot probe (in buildImageGenBundle)", () => {
+    // daemon.ts delegates the boot probe to the extracted helper …
+    expect(daemonSrc).toContain("buildImageGenBundle({");
+    // … and the helper does the actual selector + registration wiring,
+    // following the DEFAULT agent's resolved main provider.
+    expect(helpersSrc).toContain("createImageProviderSelector({");
+    expect(helpersSrc).toContain("registerComisImageProviders()");
+    expect(helpersSrc).toMatch(/mainProviderId:\s*defaultMain/);
   });
 });

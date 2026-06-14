@@ -15,9 +15,17 @@ import {
   EMBED_MULTILINGUAL,
   RERANK_MULTILINGUAL,
 } from "@comis/core";
+import type { ImageGenerationPort } from "@comis/core";
 import { createChannelHealthMonitor } from "@comis/channels";
+import { createImageGenRateLimiter } from "@comis/skills";
 import type { LoggingResult } from "./setup-logging.js";
 import type { BootContext } from "../daemon-types.js";
+// Sibling-direct imports (not via the wiring barrel) to keep main-helpers free
+// of a barrel import edge — these are the image-gen bundle's collaborators.
+import { createImageGenGetter } from "./setup-media.js";
+import { createImageProviderSelector } from "./setup-image-provider.js";
+import { resolveAgentModel } from "./setup-agents/setup-agents-tooling.js";
+import { registerComisImageProviders } from "../api/pi-image-adapter.js";
 
 /**
  * Restore approval pending requests and cache from disk at startup.
@@ -219,4 +227,64 @@ export function resolveModelHealthMultilingual(
     embeddingMultilingual: resolveMultilingual(emb.multilingual, embedModelId, EMBED_MULTILINGUAL),
     rerankerMultilingual: resolveMultilingual(undefined, rerankerModelId, RERANK_MULTILINGUAL),
   };
+}
+
+/**
+ * Build the image-generation bundle (lazy getter + boot probe + rate limiter +
+ * config). Extracted from `daemon.ts` to keep the composition root under its
+ * architecture line cap.
+ *
+ * RES-02/CRED-01: the selector routes provider:"auto"/pi-ai-backed providers to
+ * the Plan-03 pi-image-adapter (following the DEFAULT agent's resolved main
+ * provider, key via SecretManager), keeps explicit fal/openai on the legacy
+ * skills adapter (additive), and returns an honest-unavailable port (with the
+ * knob hint) for an image-incapable main (RES-03) — never a misroute. The
+ * getter reads the config + secretManager on use, but is invoked ONCE here at
+ * boot and the handler holds that boot-built adapter instance — so key rotation
+ * requires a daemon restart to take effect (NOT live per-request; IN-01
+ * 183-REVIEW — parity with the pre-existing fal/openai one-shot probe).
+ * Per-call per-agent re-selection (and live rotation) is a 186/multi-agent
+ * refinement; Phase 183 resolves the common case (the default agent's main
+ * provider) at boot.
+ */
+export function buildImageGenBundle(deps: {
+  container: BootContext["container"];
+  defaultAgentId: string;
+  skillsLogger: BootContext["skillsLogger"];
+}): {
+  imageGenConfig: BootContext["container"]["config"]["integrations"]["media"]["imageGeneration"];
+  imageGenProvider: ImageGenerationPort | undefined;
+  imageGenRateLimiter: ReturnType<typeof createImageGenRateLimiter> | undefined;
+} {
+  const { container, defaultAgentId, skillsLogger } = deps;
+  const imageGenConfig = container.config.integrations.media.imageGeneration;
+  registerComisImageProviders(); // PI-02 — once at boot, before any generateImages().
+  // defaultAgentId is tried FIRST; the literal "default" is only a redundant
+  // secondary guard for the agents-omitted case (WR-01's fix aligns the HANDLER
+  // accessor with this boot selector — defaultAgentId-first).
+  const defaultAgentCfg =
+    container.config.agents[defaultAgentId] ?? container.config.agents["default"];
+  const defaultMain = defaultAgentCfg
+    ? resolveAgentModel(defaultAgentCfg, container.config.models).provider
+    : "default";
+  const getImageGenProvider = createImageProviderSelector({
+    imageGenConfig,
+    secretManager: container.secretManager,
+    mainProviderId: defaultMain,
+    legacyGetter: createImageGenGetter(imageGenConfig, container.secretManager),
+    logger: skillsLogger,
+  });
+  const imageGenProvider = getImageGenProvider(); // boot-time probe for rate-limiter + logging
+  const imageGenRateLimiter = imageGenProvider
+    ? createImageGenRateLimiter({ maxPerHour: imageGenConfig.maxPerHour })
+    : undefined;
+  if (imageGenProvider) {
+    skillsLogger.info(
+      { provider: imageGenConfig.provider, mainProvider: defaultMain },
+      "Image generation provider initialized",
+    );
+  } else {
+    skillsLogger.debug("Image generation disabled: API key not configured or provider unknown");
+  }
+  return { imageGenConfig, imageGenProvider, imageGenRateLimiter };
 }
