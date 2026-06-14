@@ -7,10 +7,11 @@
  * `generateImages()` call site (I1) is exercised through `createPiImageAdapter`.
  * @module
  */
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   registerImagesApiProvider,
   getImagesApiProvider,
+  getImageModel,
   type AssistantImages,
   type ImagesContext,
   type ImagesModel,
@@ -218,5 +219,158 @@ describe("createPiImageAdapter execute()", () => {
     expect((payload.hint as string).length).toBeGreaterThan(0);
     // SEC: the resolved key / raw provider errorMessage must not leak into the log payload
     expect(JSON.stringify(payload)).not.toContain("No API key for provider");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 2 — PI-02: registerComisImageProviders + registry round-trip
+// ---------------------------------------------------------------------------
+
+describe("registerComisImageProviders", () => {
+  it("makes the built-in openrouter-images provider reachable and is idempotent", () => {
+    // The built-in is auto-registered on pi-ai import; the boot hook must be
+    // callable once-at-boot AND safe to call twice without throwing (PI-02).
+    expect(() => registerComisImageProviders()).not.toThrow();
+    expect(() => registerComisImageProviders()).not.toThrow();
+    expect(getImagesApiProvider("openrouter-images")).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 2 — PI-03: full ImagesOptions passthrough (the load-bearing assertion)
+// ---------------------------------------------------------------------------
+
+describe("createPiImageAdapter ImagesOptions passthrough (PI-03)", () => {
+  it("forwards apiKey, headers, signal, timeoutMs, and maxRetries to generateImages", async () => {
+    let captured: ImagesOptions | undefined;
+    let capturedCtx: ImagesContext | undefined;
+    registerImagesApiProvider({
+      api: TEST_API,
+      generateImages: async (_model, ctx, options) => {
+        captured = options;
+        capturedCtx = ctx;
+        return imagesResult({
+          stopReason: "stop",
+          output: [{ type: "image", data: PNG_B64, mimeType: "image/png" }],
+        });
+      },
+    });
+
+    const signal = new AbortController().signal;
+    const adapter = createPiImageAdapter({
+      model: makeTestModel(),
+      apiKey: "sk-test",
+      headers: { "X-Test": "1" },
+      timeoutMs: 12345,
+      maxRetries: 3,
+      signal,
+      logger: makeMockLogger(),
+    });
+
+    const result = await adapter.execute({ prompt: "x" });
+    expect(result.ok).toBe(true);
+
+    expect(captured).toBeDefined();
+    expect(captured!.apiKey).toBe("sk-test");
+    expect(captured!.headers).toEqual({ "X-Test": "1" });
+    expect(captured!.timeoutMs).toBe(12345);
+    expect(captured!.maxRetries).toBe(3);
+    expect(captured!.signal).toBe(signal);
+    // ImagesContext carries the prompt as a single text input.
+    expect(capturedCtx!.input).toEqual([{ type: "text", text: "x" }]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 2 — PI-04: built-in openrouter-images path end-to-end (MOCKED in CI)
+// + CRED-01 resolution half (key via SecretManager, no image-specific secret)
+// ---------------------------------------------------------------------------
+
+describe("createPiImageAdapter openrouter path (PI-04 + CRED-01)", () => {
+  it("drives getImageModel(openrouter) end-to-end with a mocked transport and a SecretManager key", async () => {
+    // Register a fake OVER the built-in openrouter-images transport so the path
+    // is deterministic with no network (RESEARCH recommendation b). Capture the
+    // apiKey to prove it came from the resolved SecretManager key.
+    let seenKey: string | undefined;
+    registerImagesApiProvider({
+      api: "openrouter-images",
+      generateImages: async (_model, _ctx, options) => {
+        seenKey = options?.apiKey;
+        return {
+          api: "openrouter-images",
+          provider: "openrouter",
+          model: "black-forest-labs/flux.2-pro",
+          output: [{ type: "image", data: PNG_B64, mimeType: "image/png" }],
+          stopReason: "stop",
+          timestamp: Date.now(),
+        } satisfies AssistantImages;
+      },
+    });
+
+    // CRED-01: a SecretManager that has ONLY OPENROUTER_API_KEY — no FAL_KEY,
+    // no OPENAI_API_KEY. The image key comes from the SAME store the main
+    // provider uses, with no image-specific secret configured.
+    const secretManager = {
+      get: vi.fn((key: string) => (key === "OPENROUTER_API_KEY" ? "or-key-123" : undefined)),
+    };
+    const apiKey = resolveImageApiKey("openrouter-images", secretManager);
+    expect(apiKey).toBe("or-key-123");
+    expect(secretManager.get).toHaveBeenCalledWith("OPENROUTER_API_KEY");
+
+    const model = getImageModel("openrouter", "black-forest-labs/flux.2-pro");
+    const adapter = createPiImageAdapter({ model, apiKey, logger: makeMockLogger() });
+
+    const result = await adapter.execute({ prompt: "a watercolor fox" });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.buffer.length).toBeGreaterThan(0);
+    expect(result.value.mimeType).toMatch(/^image\//);
+    expect(seenKey).toBe("or-key-123");
+  });
+
+  it("resolveImageApiKey returns undefined for an unknown imagesApi (no image-specific store)", () => {
+    const secretManager = { get: vi.fn(() => undefined) };
+    expect(resolveImageApiKey("does-not-exist-images", secretManager)).toBeUndefined();
+  });
+
+  // PI-04 LIVE opt-in: hits the REAL built-in openrouter-images transport when a
+  // key is present. Operator UAT only — CI is NOT gated on OPENROUTER_API_KEY.
+  // Env reads are allowed in *.test.ts (the gate test exempts test files);
+  // production source resolves creds via SecretManager only.
+  it.skipIf(!process.env.OPENROUTER_API_KEY)(
+    "LIVE: generates a real image via the built-in openrouter-images path (operator opt-in)",
+    async () => {
+      // Re-import is unnecessary; the built-in is auto-registered. But a prior
+      // test in this file may have registered a fake over openrouter-images, so
+      // this LIVE case is best run in isolation. Skipped without a key.
+      const model = getImageModel("openrouter", "black-forest-labs/flux.2-pro");
+      const adapter = createPiImageAdapter({
+        model,
+        apiKey: process.env.OPENROUTER_API_KEY,
+        logger: makeMockLogger(),
+      });
+      const result = await adapter.execute({ prompt: "a small red cube on a white background" });
+      expect(result.ok).toBe(true);
+    },
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Task 2 — PI-02 register-before-call guard (RESEARCH Pitfall 5)
+// ---------------------------------------------------------------------------
+
+describe("createPiImageAdapter unregistered api (register-before-call guard)", () => {
+  it("surfaces a Result err (not an uncaught throw) for an unregistered api", async () => {
+    // pi-ai's generateImages throws `No API provider registered for api: X` for
+    // an unregistered api; fromPromise must convert it to a Result err.
+    const adapter = createPiImageAdapter({
+      model: makeTestModel("comis-unregistered-images"),
+      logger: makeMockLogger(),
+    });
+
+    const result = await adapter.execute({ prompt: "x" });
+
+    expect(result.ok).toBe(false);
   });
 });
