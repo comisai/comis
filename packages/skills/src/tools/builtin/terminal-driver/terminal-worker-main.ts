@@ -50,6 +50,7 @@ import type { TmuxBackendLike } from "./terminal-worker-types.js";
  * the home fallback is for a direct (non-daemon) launch.
  */
 function durableDir(): string {
+  // eslint-disable-next-line no-restricted-syntax -- worker PROCESS entry: the daemon threads the (non-secret) data dir via env when forking; not a SecretManager value.
   const dataDir = process.env.COMIS_TERMINAL_DATA_DIR ?? pathResolve(homedir(), ".comis");
   return pathResolve(dataDir, "terminal-worker");
 }
@@ -79,6 +80,7 @@ function createFileLogger(logPath: string) {
 
 /** Parse the operator stuck threshold (`worker.stuckMs`) the daemon threads via env. */
 function parseStuckMs(): number | undefined {
+  // eslint-disable-next-line no-restricted-syntax -- worker PROCESS entry: the daemon threads the (non-secret) stuck-threshold via env; not a SecretManager value.
   const raw = process.env.COMIS_TERMINAL_STUCK_MS;
   if (raw === undefined) return undefined;
   const n = Number.parseInt(raw, 10);

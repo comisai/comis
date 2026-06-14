@@ -28,7 +28,6 @@
  * @module
  */
 
-import { resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 import type { ComisLogger } from "@comis/infra";
 // The daemon does not depend on the pi SDK directly — it references the tool
