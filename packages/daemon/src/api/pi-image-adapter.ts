@@ -114,7 +114,14 @@ function classifyImageError(res: AssistantImages): ImageErrorKind {
  * hint }` on every failure branch (§2.7 — never the key, never the raw
  * provider message).
  */
-function toImageGenOutput(res: AssistantImages, logger: ComisLogger): ImageGenOutput {
+// Exported for INTRA-PACKAGE reuse (`codex-image-adapter.ts` imports it via
+// `./pi-image-adapter.js`) — deliberately NOT added to the daemon barrel: the
+// public-export-consumers gate (commit `e8a5e3bd` dropped dead barrel exports)
+// requires an in-repo barrel consumer, and there is none. A file-to-file import
+// is the in-package consumer and does not trip that gate.
+// classifyImageError/SAFE_MESSAGE/ERROR_HINT stay private — toImageGenOutput
+// already encapsulates them.
+export function toImageGenOutput(res: AssistantImages, logger: ComisLogger): ImageGenOutput {
   if (res.stopReason === "stop") {
     const img = res.output.find((o): o is ImageContent => o.type === "image");
     if (img) {
