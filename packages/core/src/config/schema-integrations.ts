@@ -472,12 +472,23 @@ export const MediaPersistenceConfigSchema = z.strictObject({
   });
 
 /**
+ * The operator-configurable image-generation provider vocabulary (CFG-01).
+ *
+ * NOTE: this is a DIFFERENT vocabulary from the IMAGE_CAPABILITY keys (resolved-provider ids
+ * in `@comis/core/media`). "auto" = follow the agent's main provider (the new default, I2);
+ * "fal" = explicit legacy backend. Keeping "fal"/"openai" preserves every existing config
+ * (the additive guarantee). `fallbackChain` entries validate against this same closed set, so
+ * an injected/typo'd provider fails at parse rather than reaching a transport (T-183-05).
+ */
+const IMAGE_PROVIDER_VALUES = ["auto", "fal", "openai", "openai-codex", "google", "openrouter"] as const;
+
+/**
  * Image generation service configuration.
  */
 export const ImageGenerationConfigSchema = z.strictObject({
-    /** Image generation provider (default: "fal") */
-    provider: z.enum(["fal", "openai"]).default("fal"),
-    /** Provider-specific model ID (e.g., "fal-ai/flux/dev", "gpt-image-1") */
+    /** Image generation provider (default: "auto" — follows the agent's main provider; I2). */
+    provider: z.enum(IMAGE_PROVIDER_VALUES).default("auto"),
+    /** Provider-specific model ID (e.g., "fal-ai/flux/dev", "gpt-image-1"); overrides the per-provider default. */
     model: z.string().optional(),
     /** Enable safety checker on generated images (default: true) */
     safetyChecker: z.boolean().default(true),
@@ -487,6 +498,10 @@ export const ImageGenerationConfigSchema = z.strictObject({
     defaultSize: z.string().default("1024x1024"),
     /** Generation timeout in milliseconds (default: 60000) */
     timeoutMs: z.number().int().positive().default(60_000),
+    /** Providers consulted in order ONLY after the follow-main path fails (RES-04). Default empty. */
+    fallbackChain: z.array(z.enum(IMAGE_PROVIDER_VALUES)).default([]),
+    /** Optional per-agent/hour USD cost ceiling (consumed in Phase 186 SEC-02; lands additively now). */
+    maxCostPerHourUsd: z.number().positive().optional(),
   });
 
 /**
