@@ -158,6 +158,54 @@ describe("createImageProviderSelector", () => {
     expect(result.ok).toBe(true);
   });
 
+  it("WARNs (naming the model + knob + errorKind) when the configured model is not in the openrouter catalog (WR-02)", async () => {
+    const logger = createMockLogger();
+    const selector = createImageProviderSelector({
+      // A model id guaranteed NOT to exist in the openrouter image catalog.
+      imageGenConfig: makeConfig({ provider: "auto", model: "totally-not-a-real-image-model" }),
+      secretManager: mockSecretManager({ OPENROUTER_API_KEY: "sk-or-123" }),
+      mainProviderId: "openrouter",
+      legacyGetter: () => legacyAdapter(),
+      logger: logger as never,
+    });
+
+    const provider = selector();
+    expect(provider).toBeDefined();
+    // The operator's explicit (typo'd / future) model choice was silently
+    // discarded pre-fix; now a WARN names the unresolved id, the fallback, the
+    // binding knob, and an errorKind so the substitution is not silent.
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestedModel: "totally-not-a-real-image-model",
+        errorKind: "config",
+        hint: expect.stringContaining("integrations.media.imageGeneration.model"),
+      }),
+      expect.stringContaining("not found in catalog"),
+    );
+    // The adapter still works (falls back to the first catalog model).
+    const result = await provider!.execute({ prompt: "a cat" });
+    expect(result.ok).toBe(true);
+  });
+
+  it("does NOT WARN about model substitution when the configured model IS in the catalog (WR-02)", () => {
+    const logger = createMockLogger();
+    const selector = createImageProviderSelector({
+      // No explicit model → sel.defaultModel (the per-provider default, which
+      // IS in the catalog) is used; no substitution, no WARN.
+      imageGenConfig: makeConfig({ provider: "auto" }),
+      secretManager: mockSecretManager({ OPENROUTER_API_KEY: "sk-or-123" }),
+      mainProviderId: "openrouter",
+      legacyGetter: () => legacyAdapter(),
+      logger: logger as never,
+    });
+
+    selector();
+    const warnedSubstitution = (logger.warn as ReturnType<typeof vi.fn>).mock.calls.some(
+      ([, msg]) => typeof msg === "string" && msg.includes("not found in catalog"),
+    );
+    expect(warnedSubstitution).toBe(false);
+  });
+
   it("returns undefined when image generation config is absent", () => {
     const selector = createImageProviderSelector({
       imageGenConfig: undefined,
