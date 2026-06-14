@@ -20,6 +20,27 @@
  *   2. AFTER a successful generation — `record(agentId, costUsd)` to accumulate
  *      the actual cost into the agent's bucket for the rest of the window.
  *
+ * SOFT CAP — concurrency caveat (WR-01, 186-REVIEW). The two steps straddle the
+ * `await provider.execute`, and `canSpend` is a read-only pre-check with NO
+ * reservation. So N concurrent `image.generate` calls for the SAME agent all
+ * evaluate `canSpend()` BEFORE any `record()` runs: when the accumulated spend is
+ * just under the ceiling, all N pass, all N execute, and all N charge — the
+ * bucket can finish OVER the ceiling by up to (concurrency − 1) × per-call cost.
+ * This is UNLIKE the count rate limiter, whose `tryAcquire` is an atomic
+ * synchronous check-and-increment that claims the slot before the await and so
+ * cannot be raced. This is therefore a BEST-EFFORT per-hour ceiling, not a hard
+ * guarantee. The overshoot is BOUNDED, not unbounded: the count rate limit
+ * (`maxPerHour`, checked FIRST in image-handlers.ts) caps the concurrent in-flight
+ * generations per agent, so the worst-case spend within one window is
+ * ~`maxPerHour × maxCostPerGeneration` rather than infinity, and `agentId` is
+ * dispatcher-injected from the agent scope (not attacker-controllable). Operators
+ * who need a hard ceiling should set `maxPerHour` conservatively alongside
+ * `maxCostPerHourUsd`. A near-hard variant would require an in-flight reservation
+ * (reserve an estimate at the pre-check, reconcile to the real costUsd at record)
+ * — deliberately NOT added here: it introduces a reservation-leak failure class
+ * (a thrown execute must always release) for a bound the count limit already
+ * provides.
+ *
  * The count rate limiter (`maxPerHour`) is RETAINED and orthogonal; this ADDS
  * a USD ceiling. When `maxCostPerHourUsd` is unset the limiter is not
  * constructed at all (the dep is `undefined` and the ceiling is skipped) — no
@@ -31,7 +52,15 @@ import { systemNowMs } from "@comis/core";
 
 /** Per-agent hourly USD cost ceiling for image generation (SEC-02). */
 export interface ImageCostLimiter {
-  /** True if the agent is still UNDER the ceiling for the current window. */
+  /**
+   * True if the agent is still UNDER the ceiling for the current window.
+   *
+   * BEST-EFFORT under concurrency (WR-01): this is a read-only pre-check with no
+   * reservation, so concurrent same-agent calls can each pass before any records,
+   * overshooting the ceiling by up to (concurrency − 1) × per-call cost. The
+   * overshoot is bounded by the count rate limit (`maxPerHour`, checked first) —
+   * see the module header. Not a hard guarantee.
+   */
   canSpend(agentId: string): boolean;
   /**
    * Accumulate `costUsd` into the agent's current-window bucket after a
