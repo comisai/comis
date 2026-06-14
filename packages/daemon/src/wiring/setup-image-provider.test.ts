@@ -382,8 +382,8 @@ describe("createImageProviderSelector codex routing (CDX-01 wiring + CRED-01)", 
     // provider:"google" → IMAGE_CAPABILITY["google"].imagesApi === "google-images",
     // which 185 WIRES — the not-yet-wired guard no longer fires; the selector
     // builds a createPiImageAdapter over GOOGLE_IMAGE_MODEL with the env key.
-    // The key is GOOGLE_API_KEY (the Plan-01 CRED-01 resolver fix — was
-    // GEMINI_API_KEY), so a GOOGLE_API_KEY-only google main resolves AVAILABLE.
+    // The key is GOOGLE_API_KEY (the Plan-01 CRED-01 resolver fix), so a
+    // GOOGLE_API_KEY-only google main resolves AVAILABLE.
     const selector = createImageProviderSelector({
       imageGenConfig: makeConfig({ provider: "google" }),
       secretManager: mockSecretManager({ GOOGLE_API_KEY: "g-123" }), // CRED-01 fixed key

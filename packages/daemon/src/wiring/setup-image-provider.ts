@@ -43,6 +43,8 @@ import {
   ImageGenError,
 } from "../api/pi-image-adapter.js";
 import { createCodexImageAdapter, CODEX_IMAGE_MODEL } from "../api/codex-image-adapter.js";
+import { OPENAI_IMAGE_MODEL } from "../api/openai-images-transport.js";
+import { GOOGLE_IMAGE_MODEL } from "../api/google-images-transport.js";
 
 /**
  * A port whose `execute()` always returns a classified `ImageGenError` Result
@@ -164,9 +166,31 @@ export function createImageProviderSelector(deps: {
       });
     }
 
-    // Phase 183 wires ONLY the built-in openrouter catalog. The remaining custom
-    // transports (openai / google) land in Phase 185 — until then, surface an
-    // honest-unavailable naming the opt-in path (not a misroute).
+    // 185 (PRV-01/02 — the WIRING KEYSTONE): the openai / google native
+    // transports (registered in registerComisImageProviders()). UNLIKE codex,
+    // their credential is a STATIC env key (OPENAI_API_KEY / GOOGLE_API_KEY via
+    // the FIXED resolveImageApiKey — CRED-01), resolved once at boot — so the
+    // generic createPiImageAdapter (which does the generateImages dispatch +
+    // mapping) is the right adapter, NOT a per-call-bearer one. The hand-built
+    // ImagesModel literal carries the api/provider/default-id; sel.model (the
+    // tool/config override) wins over the default when present (IN-02). Keyed
+    // EXACTLY on these two apis — every other api still falls through to the
+    // honest-unavailable guard below (no misroute).
+    if (sel.imagesApi === "openai-images" || sel.imagesApi === "google-images") {
+      const apiKey = resolveImageApiKey(sel.imagesApi, deps.secretManager);
+      const model = sel.imagesApi === "openai-images" ? OPENAI_IMAGE_MODEL : GOOGLE_IMAGE_MODEL;
+      return createPiImageAdapter({
+        model: sel.model ? { ...model, id: sel.model } : model,
+        apiKey,
+        timeoutMs: cfg.timeoutMs,
+        logger: deps.logger,
+      });
+    }
+
+    // Phase 183 wires the built-in openrouter catalog; 184/185 wired
+    // codex/openai/google above. Any REMAINING custom transport lands in a later
+    // phase — until then, surface an honest-unavailable naming the opt-in path
+    // (not a misroute).
     if (sel.imagesApi !== "openrouter-images") {
       return makeUnavailableImagePort(
         "unsupported_provider",
