@@ -26,9 +26,11 @@
  * is [VERIFIED] in the installed pi-ai 0.79.3 catalog and is the entry
  * exercised end-to-end in Phase 183 (PI-04). The `gpt-image-1` (openai /
  * openai-codex) and `gemini-2.5-flash-image` (google / google-vertex) default
- * ids are [ASSUMED] — they are only exercised when their custom transports land
- * in Phase 185, and are overridable by config/tool model; re-verify those ids
- * at Phase 185 plan time.
+ * ids are now [VERIFIED] too: `gpt-image-1` is a member of the installed
+ * `openai@6.39.1` `ImageModel` union (images.d.ts:310) and
+ * `gemini-2.5-flash-image` is a member of the installed `@google/genai@1.52.0`
+ * `Model_2` union (genai.d.ts:8082) — confirmed at Phase 185 plan time when
+ * their SDK transports landed. Both remain overridable by config/tool model.
  *
  * @module
  */

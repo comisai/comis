@@ -44,6 +44,8 @@ import {
 import type { ComisLogger } from "@comis/infra";
 import { fromPromise, type Result } from "@comis/shared";
 import { generateImagesCodex } from "./codex-images-transport.js";
+import { generateImagesOpenAI } from "./openai-images-transport.js";
+import { generateImagesGoogle } from "./google-images-transport.js";
 
 /**
  * Typed error carrying the domain `ImageErrorKind` + an operator-facing hint.
@@ -226,7 +228,12 @@ export function resolveImageApiKey(
     case "openai-images":
       return secretManager.get("OPENAI_API_KEY");
     case "google-images":
-      return secretManager.get("GEMINI_API_KEY");
+      // CRED-01 lockstep (185): GOOGLE_API_KEY — the SAME key the completion
+      // path (DEFAULT_PROVIDER_KEYS.google), the vision provider registry, and
+      // the env-vars docs all use for the `google` provider. (Was GEMINI_API_KEY
+      // — a speculative 183 stub that would have reported a GOOGLE_API_KEY-only
+      // agent image-unavailable.)
+      return secretManager.get("GOOGLE_API_KEY");
     // "openai-codex-images" → OAuthTokenManager.getApiKey("openai-codex") in Phase 184.
     default:
       return undefined;
@@ -240,15 +247,20 @@ export function resolveImageApiKey(
  * Idempotent and safe to call repeatedly (the registry is a Map keyed by api).
  * The built-in `openrouter-images` is auto-registered by pi-ai on import; this
  * is the single place where Comis's CUSTOM transports land. Phase 184 registers
- * the Codex Responses transport (`openai-codex-images`); Phase 185 will register
- * `openai-images` + `google-images` here.
+ * the Codex Responses transport (`openai-codex-images`); Phase 185 registers the
+ * two genuinely-new SDK transports (`openai-images` + `google-images`).
  */
 export function registerComisImageProviders(): void {
   // 184: the custom Codex Responses image transport (CDX-02/03). The built-in
   // openrouter-images provider is auto-registered on pi-ai import
-  // (register-builtins.ts); this adds the one transport pi-ai lacks. Idempotent
+  // (register-builtins.ts); this adds the transports pi-ai lacks. Idempotent
   // — the registry is a Map keyed by api, so re-registration is a harmless set.
   registerImagesApiProvider({ api: "openai-codex-images", generateImages: generateImagesCodex });
+  // 185 (PRV-01/02): the two SDK transports, dispatched by model.api through the
+  // ONE generateImages() call site. Registered here so the selector's
+  // createPiImageAdapter path can reach them (the built-but-not-wired guard).
+  registerImagesApiProvider({ api: "openai-images", generateImages: generateImagesOpenAI });
+  registerImagesApiProvider({ api: "google-images", generateImages: generateImagesGoogle });
   // getImagesApiProvider is the round-trip read side (used by callers + tests);
   // touched here so the once-at-boot import surface stays honest.
   void getImagesApiProvider;
