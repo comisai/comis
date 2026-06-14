@@ -234,6 +234,19 @@ describe("registerComisImageProviders", () => {
     expect(() => registerComisImageProviders()).not.toThrow();
     expect(getImagesApiProvider("openrouter-images")).toBeDefined();
   });
+
+  it("registers the codex transport so openai-codex-images round-trips (184)", () => {
+    // Phase 184 wiring keystone: registerComisImageProviders() must register the
+    // custom Codex Responses transport under the "openai-codex-images" api so
+    // pi-ai's generateImages() can dispatch to it. Round-trip via
+    // getImagesApiProvider (mirrors the PI-02 openrouter round-trip above).
+    registerComisImageProviders();
+    const codex = getImagesApiProvider("openai-codex-images");
+    expect(codex).toBeDefined();
+    expect(codex!.api).toBe("openai-codex-images");
+    // No regression: the built-in openrouter-images is still reachable.
+    expect(getImagesApiProvider("openrouter-images")).toBeDefined();
+  });
 });
 
 // ---------------------------------------------------------------------------
