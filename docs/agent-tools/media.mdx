@@ -172,7 +172,7 @@ For per-provider setup, model defaults, and configuration, see the [Media & Voic
     The daemon-side handler applies rate limiting, safety checking, and provider execution before delivering the generated image to the current channel.
 
     <Note>
-    When following a Codex main provider, Comis identifies itself to the ChatGPT backend as the official Codex client -- it sends the same first-party client headers (`originator: codex_cli_rs`, a Codex-shaped `User-Agent`, and a `ChatGPT-Account-ID` decoded from your token) that the official Codex CLI sends. This is a **first-party-client compatibility shim** using **your own** ChatGPT/Codex OAuth credentials against the **same endpoint** the official Codex CLI uses -- so Cloudflare does not 403 requests from non-residential IPs. It is authorized reuse of your own credentials, **not detection evasion**.
+    When following a Codex main provider, Comis identifies itself to the ChatGPT backend as the official Codex client -- it sends the same first-party client headers (`originator: codex_cli_rs`, a Codex-shaped `User-Agent`, a `ChatGPT-Account-ID` decoded from your token, and per-request `session-id`/`x-client-request-id` identifiers) that the official Codex CLI sends. This is a **first-party-client compatibility shim** using **your own** ChatGPT/Codex OAuth credentials against the **same endpoint** the official Codex CLI uses -- so Cloudflare does not 403 requests from non-residential IPs. It is authorized reuse of your own credentials, **not detection evasion**. If a future change to the ChatGPT backend rejects this image path, set `integrations.media.imageGeneration.provider: openrouter` (with `OPENROUTER_API_KEY`) as the explicit fallback.
     </Note>
   </Accordion>
 </AccordionGroup>

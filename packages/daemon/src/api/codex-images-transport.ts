@@ -2,14 +2,22 @@
 /**
  * Custom Codex Responses image transport (CDX-02 + CDX-03).
  *
- * pi-ai ships only the built-in `openrouter-images` transport. The Codex
- * (ChatGPT-login) image path is genuinely custom: it POSTs the Responses-API
- * hosted `image_generation` tool to the ChatGPT-backend Codex endpoint
- * (`https://chatgpt.com/backend-api/codex/responses`), sends the first-party
- * Cloudflare headers the official Codex CLI uses, and parses the image SSE to
- * base64. It is registered into pi-ai's module-level registry (PI-02 seam,
- * Plan 02) under the `openai-codex-images` api and dispatched through the ONE
+ * pi-ai's IMAGES registry ships only the built-in `openrouter-images`
+ * transport, so the Codex (ChatGPT-login) IMAGE path is custom: it POSTs the
+ * Responses-API hosted `image_generation` tool to the ChatGPT-backend Codex
+ * endpoint (`https://chatgpt.com/backend-api/codex/responses`), sends the
+ * first-party Cloudflare request identity, and parses the image SSE to base64.
+ * It is registered into pi-ai's module-level registry (PI-02 seam, Plan 02)
+ * under the `openai-codex-images` api and dispatched through the ONE
  * `generateImages()` call site.
+ *
+ * In-repo analog (WR-01 / IN-02, 184-REVIEW): pi-ai ALSO ships a Codex
+ * *Responses* TEXT transport — `@earendil-works/pi-ai/.../openai-codex-responses.js`
+ * (`buildBaseCodexHeaders`/`buildSSEHeaders`/`extractAccountId`) — against the
+ * SAME endpoint. It is not an image transport (it parses message SSE, not
+ * `image_generation_call` frames), but it IS the authority for the
+ * header/JWT-account-id half of this file. The header set below is reconciled
+ * against it (see `buildCodexImageHeaders`).
  *
  * Design boundaries:
  *   - `generateImagesCodex` is an `ImagesApiFunction` (pi-ai contract). It
@@ -18,18 +26,27 @@
  *   - It NEVER throws out of the transport: any miss (no bearer, non-2xx, empty
  *     SSE, malformed body, thrown fetch) returns `stopReason:"error"` (or
  *     `"aborted"`) with an `errorMessage` the SHIPPED `classifyImageError`
- *     (`pi-image-adapter.ts`) maps (`401|403|auth` → `auth_required`, else
+ *     (`pi-image-adapter.ts`) maps (`401|403|auth` → `auth_required`,
+ *     content/quota → `content_blocked`/`quota_exceeded` via WR-04, else
  *     → `empty_response`). So this file needs NO `@allow-throw`.
  *   - SEC-03 (Pitfall 3): NEVER log the `headers` object, the bearer, or the
  *     `ChatGPT-Account-ID` (the account-id is NOT in the redaction set). If a
  *     logger is threaded for diagnostics, log only `{ step, errorKind }`.
  *
- * The header VALUES are the load-bearing compatibility shim (CONTEXT
- * §security-framing): `originator: "codex_cli_rs"` is the first-party
- * whitelist value (pi-ai's `originator:"pi"` 403s — pi-mono #1828; Comis's own
- * login-flow `ORIGINATOR="comis"` is a different concern). This is authorized
- * reuse of the operator's OWN ChatGPT/Codex OAuth credentials against the SAME
- * endpoint the official client uses — NOT detection evasion.
+ * The header VALUES are an authorized compatibility shim (CONTEXT
+ * §security-framing): they reproduce the OFFICIAL `openai/codex` (codex-rs)
+ * first-party CLI's wire identity using the operator's OWN ChatGPT/Codex OAuth
+ * credentials against the SAME endpoint that client uses — NOT detection
+ * evasion. `originator: "codex_cli_rs"` is the official codex-rs originator
+ * (pi-mono #1828 documents that pi-ai's `originator:"pi"` is Cloudflare-403'd;
+ * Comis's own login-flow `ORIGINATOR="comis"` is a different concern).
+ *
+ * LIVE-UNVERIFIED (Assumption A1, 184-RESEARCH): the EXACT header set + values
+ * for the codex-backend IMAGE round-trip can only be confirmed by an operator
+ * UAT with a real ChatGPT login — the fetch-boundary mocks here cannot prove
+ * Cloudflare accepts them. The values match the SDK's proven codex TEXT path
+ * (`buildSSEHeaders`) and #1828's originator, but if a live UAT 403s, the
+ * documented escape hatch is `provider:"openrouter"` (design Risk).
  *
  * @module
  */
@@ -37,11 +54,14 @@ import { type AssistantImages, type ImagesApiFunction } from "@earendil-works/pi
 import { decodeCodexJwtPayload, systemNowMs } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import os from "node:os";
+import { randomUUID } from "node:crypto";
 
 /**
- * Cosmetic version string in the codex `User-Agent`. Cloudflare gates on the
- * `codex_cli_rs` PREFIX, not the exact version (pi-mono #1828), so this is a
- * stable constant; bump only if a future gate tightens on the UA version.
+ * Cosmetic version string in the codex `User-Agent`. pi-mono #1828 indicates
+ * Cloudflare gates on the `codex_cli_rs` originator/prefix; the exact UA
+ * version is BELIEVED cosmetic (Assumption A3, 184-RESEARCH — live-unverified),
+ * so this is a stable constant. Bump only if a future gate tightens on the UA
+ * version.
  */
 export const CODEX_UA_VERSION = "0.0.1";
 
@@ -49,27 +69,44 @@ export const CODEX_UA_VERSION = "0.0.1";
 const CODEX_AUTH_CLAIM = "https://api.openai.com/auth";
 
 /**
- * Build the first-party Codex Cloudflare headers from the freshly-resolved
- * access-token JWT (CDX-02).
+ * Build the first-party Codex Cloudflare/request headers from the freshly-
+ * resolved access-token JWT (CDX-02), reconciled against the SDK's proven codex
+ * Responses path (`openai-codex-responses.js` `buildSSEHeaders`) — WR-01.
  *
  * The account-id is decoded from the SAME bearer used for the request (one JWT
  * → its own `chatgpt_account_id`, so the identity can never diverge from the
  * credential — T-184-05). The `Authorization: Bearer <token>` header is set by
  * the transport from `options.apiKey`; it is deliberately NOT set here.
  *
+ * Header values (LIVE-UNVERIFIED — Assumption A1, see the module docstring):
+ *   - `originator: "codex_cli_rs"` — the OFFICIAL `openai/codex` (codex-rs)
+ *     originator (pi-mono #1828: the SDK's `originator:"pi"` is Cloudflare-
+ *     403'd). NOT "comis" (that is Comis's OAuth login-flow originator).
+ *   - `ChatGPT-Account-ID` — the casing is COSMETIC: HTTP header names are
+ *     case-insensitive (RFC 7230 §3.2), and `fetch`/`new Headers()` lower-case
+ *     them on the wire, so PascalCase vs lowercase is identical to Cloudflare.
+ *     We use the PascalCase the codex-rs CLI emits purely for readability; the
+ *     SDK uses lowercase `chatgpt-account-id` to the same effect. Omitted (not
+ *     empty) when the JWT carries no account claim.
+ *   - `session-id` + `x-client-request-id` — the SDK's `buildSSEHeaders` sends
+ *     BOTH (equal) as part of the first-party SSE request identity; this
+ *     transport previously sent NEITHER (WR-01). One fresh UUID per request
+ *     (mirrors the SDK's `createCodexRequestId()` → both headers).
+ *
  * @param bearer - The Codex OAuth access token (a JWT). Never logged.
- * @returns The CF header map (the adapter passes it via `ImagesOptions.headers`).
+ * @returns The header map (the adapter passes it via `ImagesOptions.headers`).
  */
 export function buildCodexImageHeaders(bearer: string): Record<string, string> {
   const payload = decodeCodexJwtPayload(bearer); // REUSE @comis/core — do not hand-roll
   const auth = payload?.[CODEX_AUTH_CLAIM] as { chatgpt_account_id?: string } | undefined;
+  // One id per request, set on BOTH headers (SDK buildSSEHeaders parity).
+  const requestId = randomUUID();
   const headers: Record<string, string> = {
-    // FIRST-PARTY whitelist value — NOT "pi" (403s, #1828), NOT "comis" (login flow).
     originator: "codex_cli_rs",
     "User-Agent": `codex_cli_rs/${CODEX_UA_VERSION} (${os.platform()} ${os.release()}; ${os.arch()})`,
+    "session-id": requestId,
+    "x-client-request-id": requestId,
   };
-  // PascalCase per codex-rs; critical for 401/403 avoidance. Omitted (not empty)
-  // when the JWT carries no account claim.
   if (auth?.chatgpt_account_id) headers["ChatGPT-Account-ID"] = auth.chatgpt_account_id;
   return headers;
 }

@@ -351,6 +351,9 @@ describe("generateImagesCodex — headers (CDX-02)", () => {
     expect(h.originator).toBe("codex_cli_rs");
     expect(h["ChatGPT-Account-ID"]).toBe(ACCOUNT_ID);
     expect(h["User-Agent"]).toMatch(/^codex_cli_rs\//);
+    // WR-01: the first-party SSE session headers ride options.headers through too.
+    expect(h["session-id"]).toBe(cfHeaders["session-id"]);
+    expect(h["x-client-request-id"]).toBe(cfHeaders["session-id"]);
   });
 });
 
@@ -368,6 +371,25 @@ describe("buildCodexImageHeaders (CDX-02)", () => {
     );
     // Authorization is NOT set here — it rides ImagesOptions.apiKey.
     expect(h.Authorization).toBeUndefined();
+  });
+
+  // WR-01 (184-REVIEW): the SDK's proven Codex Responses SSE path sends
+  // session-id + x-client-request-id (openai-codex-responses.js buildSSEHeaders)
+  // as part of the first-party request identity; the transport previously sent
+  // NEITHER. Match the SDK: both present, equal, and a valid UUID.
+  it("sets matching session-id + x-client-request-id (first-party SSE identity)", () => {
+    const h = buildCodexImageHeaders(BEARER);
+    const sessionId = h["session-id"];
+    expect(sessionId).toBeDefined();
+    expect(h["x-client-request-id"]).toBe(sessionId);
+    // A v4-ish UUID (the SDK uses crypto.randomUUID()).
+    expect(sessionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+  });
+
+  it("generates a fresh session-id per call (not a shared constant)", () => {
+    const a = buildCodexImageHeaders(BEARER)["session-id"];
+    const b = buildCodexImageHeaders(BEARER)["session-id"];
+    expect(a).not.toBe(b);
   });
 
   it("omits ChatGPT-Account-ID when the JWT has no account claim", () => {
