@@ -32,6 +32,28 @@ vi.mock("node:os", async (importOriginal) => {
   };
 });
 
+// CR-01: the reference_image URL branch now routes through the shared
+// DNS-pinned SSRF fetcher (ssrf-image-fetch.ts → undici Agent + fetch). Mock
+// `undici` so Agent is a real class (constructor args captured) and `fetch`
+// delegates to globalThis.fetch — NEVER the real network. Mirrors the
+// ssrf-fetcher.test.ts seam.
+const { undiciAgentCtor, undiciAgentClose } = vi.hoisted(() => {
+  const undiciAgentCtor = vi.fn();
+  const undiciAgentClose = vi.fn().mockResolvedValue(undefined);
+  return { undiciAgentCtor, undiciAgentClose };
+});
+
+vi.mock("undici", () => {
+  class MockAgent {
+    close = undiciAgentClose;
+    constructor(args: unknown) {
+      undiciAgentCtor(args);
+    }
+  }
+  const fetch = (...args: Parameters<typeof globalThis.fetch>) => globalThis.fetch(...args);
+  return { Agent: MockAgent, fetch };
+});
+
 // Preserve the contract registry exports + stripInternalFields helper that
 // the refactored handler now imports from @comis/core.
 vi.mock("@comis/core", async (importOriginal) => {
@@ -43,8 +65,13 @@ vi.mock("@comis/core", async (importOriginal) => {
     // path THROUGH safePath (confinement under the workspace), mirroring the
     // media-handlers.test.ts convention.
     safePath: (...segments: string[]) => segments.join("/"),
-    // validateUrl defaults to ok; the SSRF test overrides it to reject.
-    validateUrl: vi.fn(async () => ({ ok: true })),
+    // validateUrl defaults to ok WITH a resolved value (hostname/ip/url) so the
+    // CR-01 URL branch can pin DNS to the validated IP; the SSRF test overrides
+    // it to reject.
+    validateUrl: vi.fn(async () => ({
+      ok: true,
+      value: { hostname: "example.com", ip: "93.184.216.34", url: new URL("https://example.com/ref.png") },
+    })),
     // isValidImageModel / listImageModels come through `...actual` (the real
     // IN-02 enumeration) so the reject hint lists the genuine model lists.
   };
@@ -471,7 +498,10 @@ describe("createImageHandlers IN-01 reference_image resolution", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     // Reset validateUrl to the default ok between tests (the SSRF case overrides).
-    (validateUrl as unknown as ReturnType<typeof vi.fn>).mockImplementation(async () => ({ ok: true }));
+    (validateUrl as unknown as ReturnType<typeof vi.fn>).mockImplementation(async () => ({
+      ok: true,
+      value: { hostname: "example.com", ip: "93.184.216.34", url: new URL("https://example.com/ref.png") },
+    }));
   });
 
   const REF_B64 = Buffer.from("PNGBYTES").toString("base64");
@@ -590,12 +620,152 @@ describe("createImageHandlers IN-01 reference_image resolution", () => {
     expect(arg.referenceImage).toBeUndefined();
     expect(readFile).not.toHaveBeenCalled();
   });
+
+  // ─── CR-01: the URL branch MUST route through the DNS-pinned SSRF fetcher ───
+  // (not a bare fetch that re-resolves DNS), closing the DNS-rebinding TOCTOU
+  // window. A successful fetch must (a) validate the host, (b) pin the undici
+  // Agent dispatcher to the validated IP, (c) refuse redirects.
+
+  it("CR-01: a reference_image URL is fetched with a DNS-pinned dispatcher (no rebind window)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: new Headers({ "content-type": "image/png" }),
+      body: new ReadableStream<Uint8Array>({
+        start(c) {
+          c.enqueue(new Uint8Array([1, 2, 3]));
+          c.close();
+        },
+      }),
+    } as unknown as Response);
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+    undiciAgentCtor.mockClear();
+    try {
+      const execute = vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("x"), mimeType: "image/png" }));
+      const deps = createMockDeps({ provider: { id: "openrouter", isAvailable: () => true, execute } });
+      const handlers = createImageHandlers(deps);
+
+      await handlers["image.generate"]!({
+        _agentId: "agent-1",
+        prompt: "edit this",
+        reference_image: "https://example.com/ref.png",
+      });
+
+      // The host was SSRF-validated, the pinned Agent was constructed (dispatcher),
+      // and fetch refused redirects + carried the pinned dispatcher.
+      expect(validateUrl).toHaveBeenCalledWith("https://example.com/ref.png");
+      expect(undiciAgentCtor).toHaveBeenCalledTimes(1);
+      const [url, init] = fetchMock.mock.calls[0]! as [string, { redirect?: string; dispatcher?: unknown }];
+      expect(url).toBe("https://example.com/ref.png");
+      expect(init.redirect).toBe("error");
+      expect(init.dispatcher).toBeDefined();
+      // The decoded bytes are threaded to execute().
+      expect(execute).toHaveBeenCalledWith(
+        expect.objectContaining({
+          referenceImage: expect.objectContaining({
+            data: Buffer.from([1, 2, 3]).toString("base64"),
+            mimeType: "image/png",
+          }),
+        }),
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  // ─── WR-01: data-uri decode is size-capped (resource exhaustion) ───────────
+
+  it("WR-01: an oversized data-uri reference_image is rejected before threading to execute()", async () => {
+    // 21 MB of base64 'A' decodes to > 20 MB (MAX_REFERENCE_BYTES). Must reject.
+    const oversized = "A".repeat(28 * 1024 * 1024);
+    const execute = vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("x"), mimeType: "image/png" }));
+    const deps = createMockDeps({ provider: { id: "openrouter", isAvailable: () => true, execute } });
+    const handlers = createImageHandlers(deps);
+
+    await expect(
+      handlers["image.generate"]!({
+        _agentId: "agent-1",
+        prompt: "edit this",
+        reference_image: `data:image/png;base64,${oversized}`,
+      }),
+    ).rejects.toThrow(/exceeds the size limit/);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  // ─── WR-02: workspace-file read is size-capped ─────────────────────────────
+
+  it("WR-02: an oversized workspace-file reference_image is rejected before threading to execute()", async () => {
+    (readFile as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      Buffer.alloc(21 * 1024 * 1024, 1),
+    );
+    const execute = vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("x"), mimeType: "image/png" }));
+    const deps = createMockDeps({
+      provider: { id: "openrouter", isAvailable: () => true, execute },
+      workspaceDirs: new Map([["agent-1", "/ws/agent-1"]]),
+    });
+    const handlers = createImageHandlers(deps);
+
+    await expect(
+      handlers["image.generate"]!({
+        _agentId: "agent-1",
+        prompt: "edit this",
+        reference_image: "big.png",
+      }),
+    ).rejects.toThrow(/exceeds the size limit/);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  // ─── WR-03: charset-parameterized data-URIs accepted; non-base64 not decoded ─
+
+  it("WR-03: a charset-parameterized base64 data-URI is accepted (mime stripped of params)", async () => {
+    const payload = Buffer.from("PNGBYTES").toString("base64");
+    const execute = vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("x"), mimeType: "image/png" }));
+    const deps = createMockDeps({ provider: { id: "openrouter", isAvailable: () => true, execute } });
+    const handlers = createImageHandlers(deps);
+
+    await handlers["image.generate"]!({
+      _agentId: "agent-1",
+      prompt: "edit this",
+      // A parameterized media type before ;base64 must still match + decode.
+      reference_image: `data:image/png;charset=utf-8;base64,${payload}`,
+    });
+
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        // mime is the bare media type (params stripped), payload base64-decoded.
+        referenceImage: expect.objectContaining({ data: payload, mimeType: "image/png" }),
+      }),
+    );
+  });
+
+  it("WR-03: a non-base64 (URL-encoded) data-URI is NOT base64-decoded into garbage", async () => {
+    const execute = vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("x"), mimeType: "image/png" }));
+    const deps = createMockDeps({ provider: { id: "openrouter", isAvailable: () => true, execute } });
+    const handlers = createImageHandlers(deps);
+
+    // RFC 2397: no `;base64` token → the payload is URL-encoded text, NOT base64.
+    // The handler must URL-decode it (not mis-decode it as base64 garbage).
+    await handlers["image.generate"]!({
+      _agentId: "agent-1",
+      prompt: "edit this",
+      reference_image: "data:text/plain,Hello%20World",
+    });
+
+    const arg = execute.mock.calls[0]![0] as { referenceImage?: { data: string; mimeType: string } };
+    // The decoded bytes must equal the URL-decoded "Hello World", NOT
+    // Buffer.from("Hello%20World","base64") garbage.
+    expect(arg.referenceImage?.data).toBe(Buffer.from("Hello World", "utf-8").toString("base64"));
+    expect(arg.referenceImage?.mimeType).toBe("text/plain");
+  });
 });
 
 describe("createImageHandlers IN-02 model validation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    (validateUrl as unknown as ReturnType<typeof vi.fn>).mockImplementation(async () => ({ ok: true }));
+    (validateUrl as unknown as ReturnType<typeof vi.fn>).mockImplementation(async () => ({
+      ok: true,
+      value: { hostname: "example.com", ip: "93.184.216.34", url: new URL("https://example.com/ref.png") },
+    }));
   });
 
   it("Test 6: an unknown model for the resolved provider is rejected with a hint LISTING valid models (no execute)", async () => {
