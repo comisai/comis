@@ -594,5 +594,12 @@ export async function setupSingleAgent(
     skillRegistry,
     toolCapabilityPort,
     executionPlanPort: executionPlanHolder, // SAME ref as PiExecutorDeps + AcpServerDeps (Pitfall 1).
+    // 184: the SAME per-agent OAuthTokenManager already consumed at :439 for the
+    // executor's OAuth resolution — surfaced (not a second instance) so the
+    // registry can collect it into oauthManagers and the image path can resolve
+    // the Codex bearer through the agent's exact manager (its getAgentOauthProfiles
+    // tracks per-agent profiles). `OAuthTokenManager | undefined` (absent when the
+    // agent has no OAuth config).
+    oauth: authProvider.oauth,
   };
 }

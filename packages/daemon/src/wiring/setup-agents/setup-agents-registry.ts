@@ -13,7 +13,7 @@
  * @module
  */
 
-import { safePath, type AppContainer, type InjectionRateLimiter, type OAuthCredentialStorePort, type SecretsCrypto, type ToolCapabilityPort } from "@comis/core";
+import { safePath, type AppContainer, type InjectionRateLimiter, type OAuthCredentialStorePort, type OAuthTokenManager, type SecretsCrypto, type ToolCapabilityPort } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type Database from "better-sqlite3";
 import type { SqliteMemoryAdapter, createSessionStore } from "@comis/memory";
@@ -118,6 +118,15 @@ export interface AgentsResult {
    * via has().
    */
   oauthCredentialStore: OAuthCredentialStorePort;
+  /**
+   * Per-agent OAuthTokenManager instances keyed by agentId (184). The SAME
+   * managers the per-agent executors use (no second instance) — surfaced so
+   * daemon.ts can thread the DEFAULT agent's manager into buildImageGenBundle →
+   * the image selector, where the Codex image path resolves its OAuth bearer
+   * (CDX-01). Mirrors the executors/costTrackers map pattern. Only agents with
+   * an OAuth config appear (setupSingleAgent's `oauth` is undefined otherwise).
+   */
+  oauthManagers: Map<string, OAuthTokenManager>;
   /**
    * Session-scoped trajectory recorder registry. Daemon shutdown MUST
    * call `closeAll()` to flush every open per-session recorder.
@@ -341,6 +350,10 @@ export async function setupAgents(deps: {
   // into ChannelsDeps.executionPlanPort. Same reference across ACP + chat
   // (Pitfall 1 single-shared-holder invariant).
   const executionPlanPorts = new Map<string, import("@comis/core").ExecutionPlanPort>();
+  // Per-agent OAuthTokenManager map (184). Populated from setupSingleAgent's
+  // `oauth` and surfaced on AgentsResult so the image path threads the DEFAULT
+  // agent's manager (the agent's exact instance) into the Codex image adapter.
+  const oauthManagers = new Map<string, OAuthTokenManager>();
 
   // Resolve sub-agent tool names from config for delegation awareness
   const subAgentToolGroups = container.config.security?.agentToAgent?.subAgentToolGroups ?? [];
@@ -518,6 +531,10 @@ export async function setupAgents(deps: {
     skillRegistries.set(agentId, result.skillRegistry);
     toolCapabilityPorts.set(agentId, result.toolCapabilityPort);
     executionPlanPorts.set(agentId, result.executionPlanPort);
+    // 184: collect the per-agent OAuth manager (only when the agent has one) so
+    // the image path can resolve the Codex bearer through the agent's exact
+    // instance — mirrors the executors/costTrackers .set above.
+    if (result.oauth) oauthManagers.set(agentId, result.oauth);
   }
 
   const defaultAgentId = routingConfig.defaultAgentId;
@@ -583,6 +600,9 @@ export async function setupAgents(deps: {
     // daemon threads the DEFAULT agent's holder into ChannelsDeps so the
     // chat plan-stream reads from the SAME object SEP publishes into.
     executionPlanPorts,
+    // Per-agent OAuthTokenManager map (184). daemon.ts threads the DEFAULT
+    // agent's manager into buildImageGenBundle → the Codex image adapter.
+    oauthManagers,
   };
 }
 

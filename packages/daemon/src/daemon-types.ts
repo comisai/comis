@@ -526,6 +526,11 @@ export interface BootContext {
    * agent's reference into ChannelsDeps.executionPlanPort. Same object the
    * createAcpWiring path already shares (the single-shared-holder invariant). */
   executionPlanPorts?: Awaited<ReturnType<typeof setupAgents>>["executionPlanPorts"];
+  /** Per-agent OAuthTokenManager map (184). The DEFAULT agent's manager is
+   * threaded into buildImageGenBundle → the Codex image adapter so the image
+   * path resolves its OAuth bearer (CDX-01/CRED-01). Populated by bootAgents'
+   * setupAgents Object.assign; read by bootChannels' image bundle. */
+  oauthManagers?: Awaited<ReturnType<typeof setupAgents>>["oauthManagers"];
   mcpClientManager?: Awaited<ReturnType<typeof setupMcp>>["mcpClientManager"];
   /**
    * The ONE mode-selected MCP OAuth token store (selectMcpTokenStore),

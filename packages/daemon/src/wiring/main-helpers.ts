@@ -15,7 +15,7 @@ import {
   EMBED_MULTILINGUAL,
   RERANK_MULTILINGUAL,
 } from "@comis/core";
-import type { ImageGenerationPort } from "@comis/core";
+import type { ImageGenerationPort, OAuthTokenManager } from "@comis/core";
 import { createChannelHealthMonitor } from "@comis/channels";
 import { createImageGenRateLimiter } from "@comis/skills";
 import type { LoggingResult } from "./setup-logging.js";
@@ -251,12 +251,19 @@ export function buildImageGenBundle(deps: {
   container: BootContext["container"];
   defaultAgentId: string;
   skillsLogger: BootContext["skillsLogger"];
+  /**
+   * The DEFAULT agent's OAuthTokenManager (184), surfaced from setupAgents
+   * (AgentsResult.oauthManagers). Threaded into the selector so the Codex image
+   * path resolves its OAuth bearer (CDX-01/CRED-01). Undefined when the default
+   * agent has no OAuth config → codex is honest-unavailable (never a crash).
+   */
+  oauthManager?: OAuthTokenManager;
 }): {
   imageGenConfig: BootContext["container"]["config"]["integrations"]["media"]["imageGeneration"];
   imageGenProvider: ImageGenerationPort | undefined;
   imageGenRateLimiter: ReturnType<typeof createImageGenRateLimiter> | undefined;
 } {
-  const { container, defaultAgentId, skillsLogger } = deps;
+  const { container, defaultAgentId, skillsLogger, oauthManager } = deps;
   const imageGenConfig = container.config.integrations.media.imageGeneration;
   registerComisImageProviders(); // PI-02 — once at boot, before any generateImages().
   // defaultAgentId is tried FIRST; the literal "default" is only a redundant
@@ -273,6 +280,12 @@ export function buildImageGenBundle(deps: {
     mainProviderId: defaultMain,
     legacyGetter: createImageGenGetter(imageGenConfig, container.secretManager),
     logger: skillsLogger,
+    // 184: the DEFAULT agent's OAuth manager + its per-agent oauthProfiles map.
+    // The Codex image path resolves its bearer through this exact manager
+    // (CDX-01/CRED-01). defaultAgentCfg is the same defaultAgentId-first lookup
+    // used for defaultMain above (the agents-omitted "default" guard).
+    oauthManager,
+    oauthProfiles: defaultAgentCfg?.oauthProfiles,
   });
   const imageGenProvider = getImageGenProvider(); // boot-time probe for rate-limiter + logging
   const imageGenRateLimiter = imageGenProvider

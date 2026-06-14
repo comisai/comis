@@ -1922,7 +1922,7 @@ async function bootAgents(
     // per-agent shared ExecutionPlanHolder reference map.
     // Threaded through buildChannelManagerDeps so the chat plan-stream reads
     // from the SAME object SEP publishes into (Pitfall 1).
-    executionPlanPorts,
+    executionPlanPorts, oauthManagers, // oauthManagers (184): DEFAULT agent's → buildImageGenBundle (CDX-01)
   } = await setupAgents({
     container, memoryAdapter, sessionStore, agentLogger, rerankerPort, rerankerModelPresent, entityStore, lcdStore, provenanceStore, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, pinnedStore: memoryAdapter, userRepresentationStore, relationshipStore, tunedAlphaStore, summarizerSpendBreaker, outboundMediaEnabled: true,
     autonomousMediaEnabled: !container.config.integrations.media.transcription.autoTranscribe
@@ -2104,7 +2104,7 @@ async function bootAgents(
     transcriber, ssrfFetcher, fileExtractor,
     rpcCall, wireDispatch, approvalGate, interactiveCallbackWiring,
     channelAdaptersRef, deliveryQueue, drainAndStartDeliveryPrune, shutdownDeliveryQueue,
-    cronWakeCallbackRef, trajectoryRegistry, executionPlanPorts, servedWindowComparisons, agentBootWindowInfo,
+    cronWakeCallbackRef, trajectoryRegistry, executionPlanPorts, oauthManagers, servedWindowComparisons, agentBootWindowInfo,
   });
 }
 
@@ -2160,7 +2160,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     | "mcpClientManager" | "singleAgentDeps" | "providerHealth"
     | "channelAdaptersRef" | "deliveryQueue" | "drainAndStartDeliveryPrune"
     | "shutdownDeliveryQueue" | "cronWakeCallbackRef" | "trajectoryRegistry"
-    | "executionPlanPorts"
+    | "executionPlanPorts" | "oauthManagers"
   >>;
   // Names consumed by bootChannels body itself; helper functions
   // re-destructure from `handle` directly so closure deps are explicit.
@@ -2196,9 +2196,9 @@ async function bootChannels(boot: BootContext): Promise<void> {
   // because setupTools consumes both as direct inputs).
   const sandboxProvider = detectSandboxProvider(skillsLogger);
   if (sandboxProvider) skillsLogger.info({ provider: sandboxProvider.name }, "Exec sandbox provider detected");
-  // Image-generation bundle — see buildImageGenBundle in wiring/main-helpers.ts.
+  // Image-generation bundle (see buildImageGenBundle in wiring/main-helpers.ts). 184: oauthManager threads the DEFAULT agent's OAuth manager for the Codex image path (CDX-01).
   const { imageGenConfig, imageGenProvider, imageGenRateLimiter } =
-    buildImageGenBundle({ container, defaultAgentId, skillsLogger });
+    buildImageGenBundle({ container, defaultAgentId, skillsLogger, oauthManager: handle.oauthManagers.get(defaultAgentId) });
 
   // 6.6.8.5. Tools + message preprocessing — HOISTED above setupChannels.
   // assembleToolsForAgent is now passed directly into

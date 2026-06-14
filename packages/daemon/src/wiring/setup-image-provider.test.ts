@@ -510,4 +510,33 @@ describe("RES-01 keystone is wired into the LIVE daemon.ts composition root", ()
     expect(helpersSrc).toContain("registerComisImageProviders()");
     expect(helpersSrc).toMatch(/mainProviderId:\s*defaultMain/);
   });
+
+  it("threads the DEFAULT agent's oauthManager into the LIVE buildImageGenBundle call (184 — built-but-not-wired guard)", () => {
+    // The composition-root threading gap: the per-agent OAuthTokenManager must
+    // reach the image selector through the LIVE daemon.ts wiring — not just be
+    // defined where a test imports it. A parallel copy / a stranded manager
+    // would fail this (the milestone's #1 recurring blocker; 183-04 precedent).
+    // (1) daemon.ts surfaces oauthManagers from setupAgents …
+    expect(daemonSrc).toContain("oauthManagers");
+    // (2) … and threads the DEFAULT agent's manager into the LIVE bundle call.
+    const callStart = daemonSrc.indexOf("buildImageGenBundle({");
+    expect(callStart).toBeGreaterThan(-1);
+    const callRegion = daemonSrc.slice(callStart, callStart + 200);
+    expect(callRegion).toMatch(/oauthManager:\s*[\w.]*oauthManagers\.get\(defaultAgentId\)/);
+  });
+
+  it("buildImageGenBundle threads oauthManager + oauthProfiles into the LIVE selector call (184)", () => {
+    // main-helpers.ts must pass the manager + the DEFAULT agent's profiles into
+    // createImageProviderSelector — else the codex credsAvailable/adapter never
+    // sees a manager and a Codex agent boots honest-unavailable despite login.
+    const selStart = helpersSrc.indexOf("createImageProviderSelector({");
+    expect(selStart).toBeGreaterThan(-1);
+    // Span to the call's closing `});` so inline comments inside the object
+    // literal cannot push the asserted fields out of the captured region.
+    const selEnd = helpersSrc.indexOf("});", selStart);
+    expect(selEnd).toBeGreaterThan(selStart);
+    const selRegion = helpersSrc.slice(selStart, selEnd);
+    expect(selRegion).toContain("oauthManager");
+    expect(selRegion).toMatch(/oauthProfiles:\s*[\w.?]*oauthProfiles/);
+  });
 });
