@@ -205,6 +205,10 @@ export const IncidentReportSchema = z.object({
       errorKind: z.string().optional(),
       /** Whether the image was delivered to a channel (image.delivered fired). */
       delivered: z.boolean(),
+      /** WR-02 (186): false when the generation SUCCEEDED + was delivered (base64)
+       *  but the durable persist FAILED — a degraded delivery, still outcome:"ok"
+       *  and still charged. Absent ⇒ persisted (or pre-WR-02 record). */
+      persisted: z.boolean().optional(),
     })
     .optional(),
   summary: z.string(),
@@ -421,6 +425,9 @@ export interface IncidentSignals {
     outcome: "ok" | "failed";
     errorKind?: string;
     delivered: boolean;
+    /** WR-02 (186): false on a persist-failed-but-delivered generation (degraded
+     *  delivery, still outcome:"ok", still charged). Absent ⇒ persisted. */
+    persisted?: boolean;
   };
 }
 

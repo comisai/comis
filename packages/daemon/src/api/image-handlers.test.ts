@@ -402,9 +402,11 @@ describe("createImageHandlers", () => {
     expect(result.imageBase64).toBeDefined();
     expect(result.mimeType).toBe("image/png");
     // OBS-02: the persist-failure branch carries errorKind + a hint (§2.7).
+    // IN-02 (186): a persist failure (disk full / size cap) is `resource`
+    // exhaustion, not `network` — the WARN names the accurate log ErrorKind.
     expect(deps.logger.warn).toHaveBeenCalledWith(
       expect.objectContaining({
-        errorKind: "network",
+        errorKind: "resource",
         hint: expect.stringContaining("persist"),
         step: "image_persist",
       }),
@@ -1297,10 +1299,26 @@ describe("createImageHandlers — OBS-04 trajectory direct-emit", () => {
     expect(JSON.stringify(failed)).not.toContain("Image generation blocked");
   });
 
-  it("records image.failed on a persist failure (still returns the base64 fallback)", async () => {
+  // WR-02 (186-REVIEW): a generation that SUCCEEDS but whose persist FAILS is a
+  // delivered, charged image (the base64 fallback IS the delivery — the agent
+  // receives the bytes). The terminal trajectory record must reflect that
+  // delivery as image.generated{outcome:"ok"} (with `persisted:false` to surface
+  // the degraded artifact) — NOT image.failed, which would mis-report a real,
+  // charged delivery as a failed generation and (via accumulateImageRecord's
+  // "terminal failed wins") reconstruct the turn as failed in `comis explain`.
+  // image.failed is reserved for an ACTUAL generation failure (!result.ok).
+  it("WR-02: a persist failure records image.generated{outcome:ok, persisted:false} (delivered, not failed)", async () => {
     const { trajectoryRegistry, recordEvent } = makeMockTrajectoryRegistry();
     const deps = createMockDeps({
       trajectoryRegistry,
+      provider: {
+        id: "openai",
+        isAvailable: () => true,
+        execute: vi.fn().mockResolvedValue(
+          ok({ buffer: Buffer.from("img-bytes"), mimeType: "image/png", model: "gpt-image-1", costUsd: 0.04 }),
+        ),
+      },
+      resolveAgentMainProvider: vi.fn().mockReturnValue({ providerId: "openai" }),
       persist: vi.fn().mockResolvedValue(err(new Error("disk full"))),
     });
     const handlers = createImageHandlers(deps);
@@ -1311,15 +1329,131 @@ describe("createImageHandlers — OBS-04 trajectory direct-emit", () => {
       prompt: "a fox",
     });
 
-    // Persist failure → base64 fallback (no crash).
+    // Persist failure → base64 fallback (the agent IS delivered the image).
     expect((result as { success: boolean; imageBase64?: string }).success).toBe(true);
     expect((result as { imageBase64?: string }).imageBase64).toBeDefined();
 
+    // The terminal record is image.generated (a delivered, charged success), NOT
+    // image.failed. The persist-failed degradation rides `persisted:false`.
     const types = recordEvent.mock.calls.map((c) => c[0]);
-    expect(types).toContain("image.failed");
-    expect(types).not.toContain("image.generated");
-    const failed = recordEvent.mock.calls.find((c) => c[0] === "image.failed")![1] as Record<string, unknown>;
-    expect(JSON.stringify(failed)).not.toContain("disk full");
+    expect(types).toContain("image.generated");
+    expect(types).not.toContain("image.failed");
+    const generated = recordEvent.mock.calls.find((c) => c[0] === "image.generated")![1] as Record<string, unknown>;
+    expect(generated.outcome).toBe("ok");
+    expect(generated.persisted).toBe(false);
+    expect(generated.costUsd).toBe(0.04);
+    // sizeBytes on the persist-failed path is the raw buffer length (no PersistedFile).
+    expect(generated.sizeBytes).toBe(Buffer.from("img-bytes").byteLength);
+    // Content-free: the WARN error body never reaches the trajectory payload.
+    expect(JSON.stringify(generated)).not.toContain("disk full");
+  });
+
+  // WR-02 (186-REVIEW): the synthetic `observability:token_usage` billing emit
+  // must fire on EVERY charged generation, regardless of persist outcome — the
+  // image cost reaches sharedCostTracker + the token_usage table + billing even
+  // when persistence fails and the image is delivered as base64. Previously this
+  // emit lived inside the `else` (persisted-ok) branch, so a persist failure
+  // charged the cost-limiter but under-billed (three accounting views disagreed).
+  it("WR-02: bills observability:token_usage on a persist-failure-but-delivered generation", async () => {
+    const { trajectoryRegistry } = makeMockTrajectoryRegistry();
+    const eventBus = { emit: vi.fn() } as unknown as NonNullable<ImageHandlerDeps["eventBus"]>;
+    const deps = createMockDeps({
+      trajectoryRegistry,
+      eventBus,
+      provider: {
+        id: "openai",
+        isAvailable: () => true,
+        execute: vi.fn().mockResolvedValue(
+          ok({ buffer: Buffer.from("img"), mimeType: "image/png", model: "gpt-image-1", costUsd: 0.04, provider: "openai" }),
+        ),
+      },
+      resolveAgentMainProvider: vi.fn().mockReturnValue({ providerId: "openai" }),
+      persist: vi.fn().mockResolvedValue(err(new Error("disk full"))),
+    });
+    const handlers = createImageHandlers(deps);
+
+    await handlers["image.generate"]!({
+      _agentId: "agent-bill",
+      _callerSessionKey: SESSION_KEY,
+      _callerChannelId: "c1",
+      prompt: "a fox",
+    });
+
+    // The billing emit fired despite the persist failure (cost.total = costUsd).
+    const billed = (eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c) => c[0] === "observability:token_usage",
+    );
+    expect(billed).toBeDefined();
+    const payload = billed![1] as { agentId: string; cost: { total: number }; tokens: { total: number } };
+    expect(payload.agentId).toBe("agent-bill");
+    expect(payload.cost.total).toBe(0.04);
+    expect(payload.tokens.total).toBe(0);
+  });
+
+  // WR-02 non-regression: the billing emit STILL fires on the persisted-ok path
+  // (the hoist must not drop the existing delivered-path billing).
+  it("WR-02: still bills observability:token_usage on the persisted-ok delivered path", async () => {
+    const { trajectoryRegistry } = makeMockTrajectoryRegistry();
+    const eventBus = { emit: vi.fn() } as unknown as NonNullable<ImageHandlerDeps["eventBus"]>;
+    const mockSendAttachment = vi.fn().mockResolvedValue(ok("msg-1"));
+    const deps = createMockDeps({
+      trajectoryRegistry,
+      eventBus,
+      provider: {
+        id: "openai",
+        isAvailable: () => true,
+        execute: vi.fn().mockResolvedValue(
+          ok({ buffer: Buffer.from("img"), mimeType: "image/png", model: "gpt-image-1", costUsd: 0.04, provider: "openai" }),
+        ),
+      },
+      resolveAgentMainProvider: vi.fn().mockReturnValue({ providerId: "openai" }),
+      getChannelAdapter: vi.fn().mockReturnValue({ sendAttachment: mockSendAttachment }),
+    });
+    const handlers = createImageHandlers(deps);
+
+    await handlers["image.generate"]!({
+      _agentId: "agent-bill-ok",
+      _callerSessionKey: SESSION_KEY,
+      _callerChannelType: "telegram",
+      _callerChannelId: "c1",
+      prompt: "a fox",
+    });
+
+    const billed = (eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (c) => c[0] === "observability:token_usage",
+    );
+    // Fires exactly once (the hoist must not double-emit).
+    expect(billed.length).toBe(1);
+    expect((billed[0]![1] as { cost: { total: number } }).cost.total).toBe(0.04);
+  });
+
+  // WR-02: a zero-cost generation does NOT bill (the `> 0` guard is preserved).
+  it("WR-02: a zero-cost generation does not emit a billing token_usage on either path", async () => {
+    const { trajectoryRegistry } = makeMockTrajectoryRegistry();
+    const eventBus = { emit: vi.fn() } as unknown as NonNullable<ImageHandlerDeps["eventBus"]>;
+    const deps = createMockDeps({
+      trajectoryRegistry,
+      eventBus,
+      // No costUsd → 0 → no billing emit.
+      provider: {
+        id: "openrouter",
+        isAvailable: () => true,
+        execute: vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("img"), mimeType: "image/png" })),
+      },
+      persist: vi.fn().mockResolvedValue(err(new Error("disk full"))),
+    });
+    const handlers = createImageHandlers(deps);
+
+    await handlers["image.generate"]!({
+      _agentId: "agent-zero",
+      _callerSessionKey: SESSION_KEY,
+      prompt: "a fox",
+    });
+
+    const billed = (eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (c) => c[0] === "observability:token_usage",
+    );
+    expect(billed.length).toBe(0);
   });
 
   it("getRecorder returning null does not throw and still returns the generation", async () => {

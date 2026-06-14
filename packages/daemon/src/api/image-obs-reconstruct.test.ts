@@ -114,6 +114,31 @@ describe("OBS-03 offline reconstruction — comis explain surfaces an image turn
     expect(report.image?.costUsd).toBeUndefined();
   });
 
+  it("WR-02: a persist-failure-but-delivered turn reconstructs outcome=ok with costUsd (not failed)", async () => {
+    // The handler emits image.generated{outcome:ok, persisted:false, costUsd} on
+    // the persist-failure-but-base64-delivered path (WR-02). `comis explain` must
+    // reconstruct that turn as a charged, delivered success — NOT outcome:failed
+    // (the accounting-truth bar: cost-limiter charged, billing billed, obs ok).
+    const reader = makeImageFixtureReader([
+      trajectoryRecord("image.requested", { provider: "openai", mainProvider: "openai" }, 1),
+      trajectoryRecord(
+        "image.generated",
+        { provider: "openai", model: "gpt-image-1", costUsd: 0.04, sizeBytes: 4242, outcome: "ok", persisted: false },
+        2,
+      ),
+    ]);
+
+    const report = (await assembleIncidentReportFromSources(reader, DATA_DIR, {
+      sessionKey: SESSION_KEY,
+      depth: "summary",
+    })) as IncidentReport;
+
+    expect(report.image).toBeDefined();
+    expect(report.image?.outcome).toBe("ok");
+    expect(report.image?.costUsd).toBeCloseTo(0.04, 4);
+    expect(report.image?.errorKind).toBeUndefined();
+  });
+
   it("non-regression: a session WITHOUT image records reconstructs no image block", async () => {
     // A plain tool turn — no image.* records. The report must NOT invent an
     // image block (additive, presence-conditional like recall).

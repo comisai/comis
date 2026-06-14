@@ -388,6 +388,38 @@ export function createImageHandlers(
       // adapters without the widened ImageGenOutput simply contribute nothing.
       deps.costLimiter?.record(agentId, result.value.costUsd ?? 0);
 
+      // WR-02 (186-REVIEW) / OBS-03: emit the synthetic `observability:token_usage`
+      // billing event HERE — after the cost is charged to the limiter, BEFORE the
+      // persist branch — so it fires on EVERY charged generation regardless of
+      // persist outcome (delivered, persist-ok, OR persist-failure base64). It
+      // previously lived inside the persisted-ok `else`, so a persist failure
+      // charged the limiter but UNDER-BILLED (cost-limiter, billing, and the obs
+      // outcome disagreed for the same turn). Tokens are all 0 (no LLM tokens for
+      // an image RPC); every token_usage subscriber SUMS cost.total / tokens.total
+      // (token-tracker.ts:191 guards `> 0`), so a 0-token event is safe (A3 /
+      // T-186-10). Emitted only on a non-zero costUsd.
+      if (deps.eventBus && (result.value.costUsd ?? 0) > 0) {
+        deps.eventBus.emit("observability:token_usage", {
+          timestamp: systemNowMs(),
+          traceId: sessionKey ?? "",
+          agentId,
+          channelId: (rawParams._callerChannelId as string | undefined) ?? "",
+          executionId: "",
+          provider: result.value.provider ?? deps.provider.id,
+          model: result.value.model ?? "",
+          tokens: { prompt: 0, completion: 0, total: 0 },
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: result.value.costUsd ?? 0 },
+          latencyMs: systemNowMs() - startMs,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          sessionKey: sessionKey ?? "",
+          savedVsUncached: 0,
+          cacheEligible: false,
+          warmupTurn: false,
+          pendingCacheInvestmentUsd: 0,
+        });
+      }
+
       // DEL-01: persist the generated image to the agent's confined workspace
       // (`~/.comis/workspace/media/photos/`) via MediaPersistenceService BEFORE
       // any delivery decision — replacing the ephemeral OS temp-file plumbing. The
@@ -407,58 +439,45 @@ export function createImageHandlers(
           {
             agentId,
             err: persisted.error,
-            errorKind: "network" as const,
+            errorKind: "resource" as const,
             hint: "Image generated but persistence failed; returning base64 fallback",
             step: "image_persist",
           },
           "Image persistence failed",
         );
-        // OBS-04: the persist failure is a classified handler failure — record
-        // image.failed (errorKind only, never the error body). No image.generated
-        // (no durable artifact); the handler falls through to the base64 fallback.
-        emit("image.failed", { errorKind: "network", provider: deps.provider.id });
-        // Fall through to the base64 fallback below (no delivery).
+        // WR-02 (186-REVIEW): a persist failure here is a DEGRADED DELIVERY, not a
+        // generation failure. The generation SUCCEEDED, the cost was charged (and
+        // billed above), and the agent IS delivered the image as base64 below — so
+        // the terminal trajectory record is image.generated{outcome:"ok"} carrying
+        // costUsd (OBS-03 Route a), NOT image.failed (which would mis-report a
+        // charged, delivered image as failed and reconstruct the turn as failed in
+        // `comis explain`). `persisted:false` surfaces the missing durable artifact
+        // as a content-free degradation signal. sizeBytes is the raw buffer length
+        // (no PersistedFile). image.failed stays reserved for `!result.ok`.
+        emit("image.generated", {
+          provider: deps.provider.id,
+          outcome: "ok",
+          persisted: false,
+          ...(result.value.model !== undefined ? { model: result.value.model } : {}),
+          ...(result.value.costUsd !== undefined ? { costUsd: result.value.costUsd } : {}),
+          sizeBytes: result.value.buffer.byteLength,
+        });
+        // Fall through to the base64 fallback below (delivered as base64).
       } else {
         // OBS-04: the image was generated AND durably persisted — record
         // image.generated carrying costUsd (OBS-03 Route a — the binding cost the
         // comis-explain reconstruction reads), model, the durable sizeBytes, and
-        // the ok outcome. Optional fields ride the widened ImageGenOutput (186-02)
-        // and are omitted when absent (no undefined keys).
+        // the ok outcome. `persisted:true` distinguishes it from the WR-02
+        // degraded-delivery branch above. Optional fields ride the widened
+        // ImageGenOutput (186-02) and are omitted when absent (no undefined keys).
         emit("image.generated", {
           provider: deps.provider.id,
           outcome: "ok",
+          persisted: true,
           ...(result.value.model !== undefined ? { model: result.value.model } : {}),
           ...(result.value.costUsd !== undefined ? { costUsd: result.value.costUsd } : {}),
           sizeBytes: persisted.value.sizeBytes,
         });
-        // OBS-03 (optional secondary): a synthetic observability:token_usage so
-        // the image cost reaches sharedCostTracker + the token_usage SQLite table
-        // + billing (the BINDING cost is the trajectory image.generated above —
-        // Route a). tokens are all 0 (no LLM tokens for an image RPC); every
-        // token_usage subscriber SUMS cost.total / tokens.total (verified: no
-        // divide-by-tokens — token-tracker.ts:191 guards `> 0`), so a 0-token
-        // event is safe (A3 / T-186-10). Emitted only on a non-zero costUsd.
-        if (deps.eventBus && (result.value.costUsd ?? 0) > 0) {
-          deps.eventBus.emit("observability:token_usage", {
-            timestamp: systemNowMs(),
-            traceId: sessionKey ?? "",
-            agentId,
-            channelId: (rawParams._callerChannelId as string | undefined) ?? "",
-            executionId: "",
-            provider: result.value.provider ?? deps.provider.id,
-            model: result.value.model ?? "",
-            tokens: { prompt: 0, completion: 0, total: 0 },
-            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: result.value.costUsd ?? 0 },
-            latencyMs: systemNowMs() - startMs,
-            cacheReadTokens: 0,
-            cacheWriteTokens: 0,
-            sessionKey: sessionKey ?? "",
-            savedVsUncached: 0,
-            cacheEligible: false,
-            warmupTurn: false,
-            pendingCacheInvestmentUsd: 0,
-          });
-        }
         // Direct channel delivery via adapter.sendAttachment, using the PERSISTED
         // durable path (DEL-01 — no OS temp-file write, no delete, no cleanup).
         const channelType = rawParams._callerChannelType as string | undefined;

@@ -132,6 +132,9 @@ export function accumulateImageRecord(
         delivered: prev?.delivered ?? false,
         ...(asString(data.model) !== undefined ? { model: asString(data.model) } : {}),
         ...(asNumber(data.costUsd) !== undefined ? { costUsd: asNumber(data.costUsd) } : {}),
+        // WR-02 (186): carry the degraded-delivery flag (false on a persist-failed
+        // but base64-delivered generation — still a charged outcome:"ok" turn).
+        ...(typeof data.persisted === "boolean" ? { persisted: data.persisted } : {}),
       };
     case "image.delivered": {
       const next: IncidentImageSignal = prev ?? { provider: "", outcome: "ok", delivered: false };
