@@ -11,8 +11,21 @@ import { createImageHandlers, type ImageHandlerDeps } from "./image-handlers.js"
 import { ImageGenError } from "./pi-image-adapter.js";
 import { ok, err } from "@comis/shared";
 import { validateUrl } from "@comis/core";
+import type { PersistedFile } from "@comis/skills/tools";
 import { readFile } from "node:fs/promises";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
+
+/** DEL-01: a successful PersistedFile the per-agent persist getter returns. The
+ *  filePath is what sendAttachment receives (the PERSISTED path, NOT a tmpdir
+ *  path) and sizeBytes is the OBS-01 field (Plan 02 consumes it). */
+const PERSISTED_OK: PersistedFile = {
+  filePath: "/tmp/test-workspace/photos/abc123.png",
+  relativePath: "photos/abc123.png",
+  mimeType: "image/png",
+  sizeBytes: 4242,
+  mediaKind: "image",
+  savedAt: 0,
+};
 
 // Mock node:fs/promises and node:os to avoid real filesystem I/O
 vi.mock("node:fs/promises", () => ({
@@ -114,9 +127,32 @@ function createMockDeps(overrides: Partial<ImageHandlerDeps> = {}): ImageHandler
     // imageHandlerDeps this plan).
     workspaceDirs: new Map<string, string>(),
     defaultWorkspaceDir: "/tmp/test-workspace",
+    // DEL-01 (186): the per-agent persist getter (MediaPersistenceService.persist
+    // bound to the agent's workspace). Defaults to a successful PersistedFile so
+    // the existing handler tests still construct valid deps after the type grows.
+    persist: vi.fn().mockResolvedValue(ok(PERSISTED_OK)),
     ...overrides,
   };
 }
+
+describe("ImageHandlerDeps.persist type (DEL-01)", () => {
+  it("exposes a per-agent persist getter returning Result<PersistedFile, Error>", () => {
+    // Type-level proof that the dep exists with the (agentId, buffer, opts)
+    // signature. The assignment fails to compile if types.ts lacks the field
+    // (the RED state before the GREEN type widen) or if the shape diverges.
+    const persist: ImageHandlerDeps["persist"] = async (
+      agentId: string,
+      buffer: Buffer,
+      opts: { mediaKind: "image"; mimeType: string },
+    ) => {
+      void agentId;
+      void buffer;
+      void opts;
+      return ok(PERSISTED_OK);
+    };
+    expect(typeof persist).toBe("function");
+  });
+});
 
 describe("createImageHandlers", () => {
   beforeEach(() => {
