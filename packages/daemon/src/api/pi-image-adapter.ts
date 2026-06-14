@@ -193,7 +193,7 @@ export function createPiImageAdapter(opts: {
 /**
  * Map an image `ImagesApi` to the env-key name its credential lives under, then
  * read it from the SAME `SecretManager` the main provider uses (CRED-01
- * resolution half) — never `process.env`.
+ * resolution half) — never the raw environment.
  *
  * For Phase 183 only the built-in `openrouter-images` path is exercised
  * (`OPENROUTER_API_KEY`). The codex transport (`openai-codex-images`) resolves
