@@ -14,6 +14,9 @@ import { validateUrl } from "@comis/core";
 import type { PersistedFile } from "@comis/skills/tools";
 import { readFile } from "node:fs/promises";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
+// SEC-03: the credential KEY-NAME set that drives Pino's redact.paths. The
+// assertion below checks no credential VALUE leaks into any image log line.
+import { CREDENTIAL_KEYS } from "@comis/observability";
 
 /** DEL-01: a successful PersistedFile the per-agent persist getter returns. The
  *  filePath is what sendAttachment receives (the PERSISTED path, NOT a tmpdir
@@ -1494,5 +1497,180 @@ describe("createImageHandlers — SEC-02 cost ceiling", () => {
     // The cost ceiling was NOT reached (count check returned first).
     expect(costLimiter.canSpend).not.toHaveBeenCalled();
     expect(deps.provider.execute).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SEC-03: no credential value leaks into ANY image log line, at any level.
+//
+// The image handler must log only ids/labels/step/errorKind/hint/counts — never
+// the raw provider message, headers, a bearer, an API key, or a ChatGPT
+// account id (the codex OAuth identity). Pino's redact.paths + CREDENTIAL_KEYS
+// auto-redact credential-NAMED keys, but the firmer guarantee asserted here is
+// that the handler never even constructs a log payload carrying a secret VALUE
+// (so redaction is a safety net, not the only defence — T-186-14).
+//
+// This is a regression-guard: green today (the handler discards the raw
+// provider message at classification — pi-image-adapter.ts:109 — and logs only
+// labels), and turns RED if a future change starts logging a credential-bearing
+// field (e.g. `err: result.error` with a bearer in its message, or the raw
+// provider response headers).
+// ---------------------------------------------------------------------------
+describe("createImageHandlers — SEC-03 no secret in any log line", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // Distinct secret values planted in provider errors / fields. NONE of these
+  // may appear in any captured log payload or message.
+  const BEARER = "Bearer sk-test-SECRET-9f8e7d6c5b4a3210";
+  const SK_KEY = "sk-proj-DEADBEEFcafef00dDEADBEEFcafef00d";
+  const ACCOUNT_ID = "ChatGPT-Account-Id: acct-SECRET-1234567890";
+  const SECRET_VALUES = [BEARER, SK_KEY, ACCOUNT_ID, "sk-test-SECRET-9f8e7d6c5b4a3210", "acct-SECRET-1234567890"];
+
+  /** Every captured log call (all 4 levels), as a list of stringified blobs. */
+  function allCapturedLogText(deps: ImageHandlerDeps): string[] {
+    const levels = ["debug", "info", "warn", "error"] as const;
+    const blobs: string[] = [];
+    for (const level of levels) {
+      const spy = deps.logger[level] as ReturnType<typeof vi.fn>;
+      for (const call of spy.mock.calls) {
+        // Stringify the structured payload (arg 0) AND the message (arg 1). The
+        // payload is the leak risk; the message is asserted too for completeness.
+        blobs.push(JSON.stringify(call[0] ?? {}));
+        if (typeof call[1] === "string") blobs.push(call[1]);
+      }
+    }
+    return blobs;
+  }
+
+  /** Assert no secret value / Bearer / sk- token appears in any captured line. */
+  function assertNoSecretLeak(deps: ImageHandlerDeps): void {
+    const blobs = allCapturedLogText(deps);
+    // Sanity: the handler actually logged something (else this passes vacuously).
+    expect(blobs.length).toBeGreaterThan(0);
+    for (const blob of blobs) {
+      for (const secret of SECRET_VALUES) {
+        expect(blob).not.toContain(secret);
+      }
+      // No raw bearer/key token shape anywhere, regardless of the planted values.
+      // The `sk-` shape tolerates intra-token hyphens (sk-proj-..., sk-test-...).
+      expect(blob).not.toMatch(/Bearer\s+\S/i);
+      expect(blob).not.toMatch(/sk-[A-Za-z0-9-]{8,}/);
+    }
+    // CREDENTIAL_KEYS is the redaction set Pino keys on. None of its key NAMES
+    // should appear as a populated field carrying our secret — assert the names
+    // are at least the canonical ones (the assertion above covers the values).
+    expect(CREDENTIAL_KEYS.has("authorization")).toBe(true);
+    expect(CREDENTIAL_KEYS.has("apiKey")).toBe(true);
+  }
+
+  it("a provider error carrying a bearer does not leak it into any log line", async () => {
+    const deps = createMockDeps({
+      logger: createMockLogger(),
+      provider: {
+        id: "openai",
+        isAvailable: () => true,
+        // The raw error message embeds a bearer + a ChatGPT account id — the
+        // exact shape a leaking upstream SDK error would carry.
+        execute: vi
+          .fn()
+          .mockResolvedValue(
+            err(new Error(`Upstream 401: invalid credentials ${BEARER} ${ACCOUNT_ID}`)),
+          ),
+      },
+      resolveAgentMainProvider: vi.fn().mockReturnValue({ providerId: "openai" }),
+    });
+    const handlers = createImageHandlers(deps);
+
+    const result = await handlers["image.generate"]!({
+      _agentId: "agent-sec03",
+      _callerSessionKey: "default:u1:telegram:c1",
+      prompt: "a cat",
+    });
+
+    // The provider error path returns success:false. (The error MESSAGE may be
+    // returned to the CALLER — that is the contract — but it must not be LOGGED.)
+    expect((result as { success: boolean }).success).toBe(false);
+    assertNoSecretLeak(deps);
+  });
+
+  it("a typed ImageGenError with a credential-bearing message does not leak via the WARN/hint", async () => {
+    const deps = createMockDeps({
+      logger: createMockLogger(),
+      provider: {
+        id: "openai",
+        isAvailable: () => true,
+        execute: vi.fn().mockResolvedValue(
+          err(
+            new ImageGenError(`auth failed ${SK_KEY}`, {
+              imageErrorKind: "auth_required",
+              // Even the hint must not echo a secret — the handler forwards it.
+              hint: "Re-authenticate the provider; the OAuth token expired.",
+            }),
+          ),
+        ),
+      },
+      resolveAgentMainProvider: vi.fn().mockReturnValue({ providerId: "openai" }),
+    });
+    const handlers = createImageHandlers(deps);
+
+    await handlers["image.generate"]!({
+      _agentId: "agent-sec03",
+      _callerSessionKey: "default:u1:telegram:c1",
+      prompt: "a cat",
+    });
+
+    assertNoSecretLeak(deps);
+  });
+
+  it("a persist failure whose Error carries a secret does not leak it (err is serialized)", async () => {
+    // The persist-failure WARN logs `err: persisted.error`. A leaking storage
+    // layer could put a connection string / token in that Error. Pino redacts
+    // credential-named keys, but the handler must also not stuff a secret into
+    // a NON-credential-named field. Here the secret is in the Error message.
+    const deps = createMockDeps({
+      logger: createMockLogger(),
+      persist: vi.fn().mockResolvedValue(err(new Error(`disk backend rejected token ${SK_KEY}`))),
+    });
+    const handlers = createImageHandlers(deps);
+
+    const result = await handlers["image.generate"]!({
+      _agentId: "agent-sec03",
+      prompt: "a cat",
+    });
+
+    // Persist failure → base64 fallback (success). The WARN must not leak.
+    expect((result as { success: boolean }).success).toBe(true);
+    assertNoSecretLeak(deps);
+  });
+
+  it("the happy/delivered path logs only ids/labels (no secret even if the provider id were one)", async () => {
+    const mockSendAttachment = vi.fn().mockResolvedValue(ok("msg-sec03"));
+    const deps = createMockDeps({
+      logger: createMockLogger(),
+      provider: {
+        id: "openai",
+        isAvailable: () => true,
+        execute: vi
+          .fn()
+          .mockResolvedValue(ok({ buffer: Buffer.from("img"), mimeType: "image/png", model: "gpt-image-1", costUsd: 0.04 })),
+      },
+      getChannelAdapter: vi.fn().mockReturnValue({ sendAttachment: mockSendAttachment }),
+    });
+    const handlers = createImageHandlers(deps);
+
+    const result = await handlers["image.generate"]!({
+      _agentId: "agent-sec03",
+      prompt: "a cat",
+      _callerChannelType: "telegram",
+      _callerChannelId: "chat-sec03",
+    });
+
+    expect((result as { success: boolean }).success).toBe(true);
+    // The success path emits an INFO completion line — assert it carries no
+    // secret-shaped token (the values were never planted here, but the
+    // Bearer/sk- shape guards against an accidental credential in a label).
+    assertNoSecretLeak(deps);
   });
 });
