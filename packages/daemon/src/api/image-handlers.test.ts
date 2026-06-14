@@ -19,7 +19,11 @@ import { createMockLogger } from "../../../../test/support/mock-logger.js";
  *  filePath is what sendAttachment receives (the PERSISTED path, NOT a tmpdir
  *  path) and sizeBytes is the OBS-01 field (Plan 02 consumes it). */
 const PERSISTED_OK: PersistedFile = {
-  filePath: "/tmp/test-workspace/photos/abc123.png",
+  // A durable workspace path under ~/.comis/workspace/media/photos/ — what
+  // MediaPersistenceService returns. Deliberately NOT under an OS temp dir and
+  // NOT a `comis-img-*` ephemeral filename (the pre-DEL-01 signature the
+  // delivery assertion rejects).
+  filePath: "/home/agent/.comis/workspace/media/photos/abc123.png",
   relativePath: "photos/abc123.png",
   mimeType: "image/png",
   sizeBytes: 4242,
@@ -344,10 +348,12 @@ describe("createImageHandlers", () => {
       expect.objectContaining({ mediaKind: "image", mimeType: "image/png" }),
     );
     // sendAttachment receives the PERSISTED durable path — NOT an OS-tmpdir
-    // `comis-img-*` path (the whole point of DEL-01).
+    // `comis-img-*` ephemeral path (the whole point of DEL-01). It lives under
+    // the agent workspace media dir.
     const attachment = mockSendAttachment.mock.calls[0]?.[1] as { url: string };
     expect(attachment.url).toBe(PERSISTED_OK.filePath);
-    expect(attachment.url).not.toMatch(/tmpdir|comis-img-|\/tmp\//);
+    expect(attachment.url).not.toMatch(/comis-img-/);
+    expect(attachment.url).toContain("workspace/media/photos/");
     expect(result).toEqual({ success: true, delivered: true, mimeType: "image/png" });
   });
 

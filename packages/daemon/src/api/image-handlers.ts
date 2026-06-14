@@ -26,9 +26,7 @@
  * @module
  */
 
-import { tmpdir } from "node:os";
-import { randomUUID } from "node:crypto";
-import { writeFile, unlink, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import {
   ImageGenerateContract,
   isValidImageModel,
@@ -38,7 +36,6 @@ import {
   systemGetEnv,
   systemNowMs,
 } from "@comis/core";
-import { suppressError } from "@comis/shared";
 import { guessMimeFromExtension, detectMimeFromMagicBytes } from "../wiring/daemon-utils.js";
 import { fetchImageBytesSsrfSafe } from "./ssrf-image-fetch.js";
 import type { AttachmentPayload } from "@comis/core";
@@ -308,32 +305,55 @@ export function createImageHandlers(
           : { success: false, error: result.error.message };
       }
 
-      // Direct channel delivery via adapter.sendAttachment
-      const channelType = rawParams._callerChannelType as string | undefined;
-      const channelId = rawParams._callerChannelId as string | undefined;
+      // DEL-01: persist the generated image to the agent's confined workspace
+      // (`~/.comis/workspace/media/photos/`) via MediaPersistenceService BEFORE
+      // any delivery decision — replacing the ephemeral OS temp-file plumbing. The
+      // service detects the MIME, assigns a UUID filename, routes to `photos/`,
+      // enforces the size cap, and confines the path with safePath internally;
+      // the handler hands it only a buffer + mediaKind (T-186-01 — it never
+      // builds a raw path). `persist` NEVER throws — on a failure (e.g. over the
+      // size cap, disk full) it returns `err`, and the handler WARNs and falls
+      // through to the bounded base64 RPC fallback (it does NOT crash and does
+      // NOT attempt channel delivery with a missing file).
+      const persisted = await deps.persist(agentId, result.value.buffer, {
+        mediaKind: "image",
+        mimeType: result.value.mimeType,
+      });
+      if (!persisted.ok) {
+        deps.logger.warn(
+          {
+            agentId,
+            err: persisted.error,
+            errorKind: "network" as const,
+            hint: "Image generated but persistence failed; returning base64 fallback",
+            step: "image_persist",
+          },
+          "Image persistence failed",
+        );
+        // Fall through to the base64 fallback below (no delivery).
+      } else {
+        // Direct channel delivery via adapter.sendAttachment, using the PERSISTED
+        // durable path (DEL-01 — no OS temp-file write, no delete, no cleanup).
+        const channelType = rawParams._callerChannelType as string | undefined;
+        const channelId = rawParams._callerChannelId as string | undefined;
 
-      if (channelType && channelId) {
-        const adapter = deps.getChannelAdapter(channelType);
-        // sendAttachment is now optional on ChannelPort. When the
-        // adapter omits it (e.g., IRC), skip direct delivery and fall through
-        // to the base64 fallback. This is a Class B call site (no capability
-        // gate runs before image-handlers reaches the adapter).
-        if (adapter && typeof adapter.sendAttachment === "function") {
-          const sendAttachment = adapter.sendAttachment.bind(adapter);
-          // Write buffer to temp file for sendAttachment (which takes a URL/path)
-          const ext = result.value.mimeType === "image/png" ? ".png" : ".jpg";
-          const tempPath = safePath(tmpdir(), `comis-img-${randomUUID()}${ext}`);
-          // fs-safe-allowed: ephemeral OS-tmpdir file for channel-adapter attachment plumbing; not under ~/.comis/
-          await writeFile(tempPath, result.value.buffer);
+        if (channelType && channelId) {
+          const adapter = deps.getChannelAdapter(channelType);
+          // DEL-02 (capability-driven, NEVER a channel-name list): sendAttachment
+          // is optional on ChannelPort. When the adapter omits it (today only
+          // IRC), skip direct delivery and fall through to the base64 fallback —
+          // never call an undefined method. This is a Class B call site (no
+          // capability gate runs before image-handlers reaches the adapter).
+          if (adapter && typeof adapter.sendAttachment === "function") {
+            const sendAttachment = adapter.sendAttachment.bind(adapter);
+            const ext = result.value.mimeType === "image/png" ? ".png" : ".jpg";
+            const attachment: AttachmentPayload = {
+              type: "image",
+              url: persisted.value.filePath,
+              mimeType: result.value.mimeType,
+              fileName: `generated-image${ext}`,
+            };
 
-          const attachment: AttachmentPayload = {
-            type: "image",
-            url: tempPath,
-            mimeType: result.value.mimeType,
-            fileName: `generated-image${ext}`,
-          };
-
-          try {
             const sendResult = await sendAttachment(channelId, attachment);
             if (!sendResult.ok) {
               deps.logger.warn(
@@ -348,8 +368,6 @@ export function createImageHandlers(
               );
               // Fall through to base64 fallback
             } else {
-              // Cleanup temp file after successful send
-              suppressError(unlink(tempPath), "cleanup temp image file");
               const deliveredResult = { success: true, delivered: true, mimeType: result.value.mimeType };
               if (systemGetEnv("NODE_ENV") !== "production") {
                 ImageGenerateContract.response.parse(deliveredResult);
@@ -368,14 +386,12 @@ export function createImageHandlers(
               );
               return deliveredResult;
             }
-          } finally {
-            // Best-effort cleanup if not already done
-            suppressError(unlink(tempPath), "cleanup temp image file");
           }
         }
       }
 
-      // Fallback: return base64 when no channel adapter available or delivery failed
+      // Fallback: return base64 when persistence failed, no channel adapter is
+      // available, the adapter cannot attach (DEL-02), or delivery failed.
       const fallbackResult = {
         success: true,
         imageBase64: result.value.buffer.toString("base64"),
