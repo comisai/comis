@@ -18,7 +18,13 @@ import {
   registerImagesApiProvider,
   type AssistantImages,
 } from "@earendil-works/pi-ai";
-import type { ImageGenerationConfig, ImageGenerationPort, SecretManager } from "@comis/core";
+import type {
+  ImageGenerationConfig,
+  ImageGenerationPort,
+  OAuthTokenManager,
+  SecretManager,
+} from "@comis/core";
+import { ok } from "@comis/shared";
 import { createImageProviderSelector } from "./setup-image-provider.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 
@@ -52,6 +58,23 @@ function makeConfig(overrides: Partial<ImageGenerationConfig> = {}): ImageGenera
 /** A legacy (fal/openai) skills adapter stand-in. */
 function legacyAdapter(): ImageGenerationPort {
   return { id: "fal", isAvailable: () => true, execute: vi.fn() };
+}
+
+/**
+ * A mock OAuthTokenManager exposing only the two methods the codex selector
+ * touches: `hasCredentials` (the codex-aware credsAvailable seam) and
+ * `getApiKey` (the per-call bearer the codex adapter would resolve on execute).
+ * Defaults: logged-in (hasCredentials → true, getApiKey → a fake bearer). The
+ * codex routing assertions only need `hasCredentials`; `getApiKey` is provided
+ * so a downstream `execute()` would not throw on an absent method.
+ */
+function mockOauthManager(
+  over: { hasCredentials?: ReturnType<typeof vi.fn>; getApiKey?: ReturnType<typeof vi.fn> } = {},
+): OAuthTokenManager {
+  return {
+    hasCredentials: over.hasCredentials ?? vi.fn().mockReturnValue(true),
+    getApiKey: over.getApiKey ?? vi.fn().mockResolvedValue(ok("fake.bearer.jwt")),
+  } as unknown as OAuthTokenManager;
 }
 
 beforeEach(() => {
@@ -274,6 +297,143 @@ describe("createImageProviderSelector", () => {
     });
 
     expect(selector()).toBeUndefined();
+  });
+});
+
+/**
+ * Phase 184 — codex routing + codex-aware credsAvailable (CRED-01).
+ *
+ * The selector must flip the 183 not-yet-wired guard for the codex api:
+ *  - a resolved `openai-codex` provider builds the per-call-bearer codex
+ *    adapter (id "openai-codex"), NOT an honest-unavailable port; and
+ *  - codex availability consults `oauthManager.hasCredentials("openai-codex")`,
+ *    NOT `resolveImageApiKey`'s SecretManager (the bearer is OAuth, not an env
+ *    key) — so a Codex-only agent with NO FAL_KEY/OPENAI_API_KEY/OPENROUTER_API_KEY
+ *    resolves available (CRED-01).
+ * `openai-images`/`google-images` STAY honest-unavailable (they land in 185).
+ */
+describe("createImageProviderSelector codex routing (CDX-01 wiring + CRED-01)", () => {
+  it("Test A: routes a Codex-only agent (provider:auto, main openai-codex, no env keys) to the codex adapter", () => {
+    const hasCredentials = vi.fn().mockReturnValue(true);
+    const selector = createImageProviderSelector({
+      imageGenConfig: makeConfig({ provider: "auto" }),
+      // CRED-01: NO FAL_KEY / OPENAI_API_KEY / OPENROUTER_API_KEY — the only
+      // credential is the OAuth profile (via the manager below).
+      secretManager: mockSecretManager({}),
+      mainProviderId: "openai-codex",
+      legacyGetter: () => legacyAdapter(),
+      logger: createMockLogger() as never,
+      oauthManager: mockOauthManager({ hasCredentials }),
+      oauthProfiles: { "openai-codex": "default" },
+    });
+
+    const provider = selector();
+    expect(provider).toBeDefined();
+    // The codex adapter id is "openai-codex" — NOT "unavailable", NOT "fal".
+    expect(provider!.id).toBe("openai-codex");
+    // The codex-aware credsAvailable consulted the OAuth manager (CRED-01),
+    // keyed on the OAuth provider id "openai-codex" (NOT the images api).
+    expect(hasCredentials).toHaveBeenCalledWith("openai-codex");
+  });
+
+  it("Test B: a logged-out Codex agent (hasCredentials → false) returns honest-unavailable, not the adapter", async () => {
+    const selector = createImageProviderSelector({
+      imageGenConfig: makeConfig({ provider: "auto" }),
+      secretManager: mockSecretManager({}),
+      mainProviderId: "openai-codex",
+      legacyGetter: () => legacyAdapter(),
+      logger: createMockLogger() as never,
+      oauthManager: mockOauthManager({ hasCredentials: vi.fn().mockReturnValue(false) }),
+      oauthProfiles: {},
+    });
+
+    const provider = selector();
+    expect(provider).toBeDefined();
+    // NOT the codex adapter — an honest-unavailable port.
+    expect(provider!.id).not.toBe("openai-codex");
+    expect(provider!.isAvailable()).toBe(false);
+    const result = await provider!.execute({ prompt: "x" });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      const hint = (result.error as { hint?: string }).hint;
+      expect(hint).toContain("integrations.media.imageGeneration.provider");
+    }
+  });
+
+  it("Test C: an explicit openai-codex override wins over an image-incapable main", () => {
+    const selector = createImageProviderSelector({
+      imageGenConfig: makeConfig({ provider: "openai-codex" }),
+      secretManager: mockSecretManager({}),
+      mainProviderId: "anthropic", // image-incapable, but explicit codex wins
+      legacyGetter: () => legacyAdapter(),
+      logger: createMockLogger() as never,
+      oauthManager: mockOauthManager({ hasCredentials: vi.fn().mockReturnValue(true) }),
+      oauthProfiles: { "openai-codex": "work" },
+    });
+
+    const provider = selector();
+    expect(provider).toBeDefined();
+    expect(provider!.id).toBe("openai-codex");
+  });
+
+  it("Test D: a resolved google provider STAYS honest-unavailable (no scope creep into 185)", async () => {
+    // provider:"google" → IMAGE_CAPABILITY["google"].imagesApi === "google-images",
+    // which is NOT wired in 184 — the not-yet-wired guard must still fire (the
+    // codex branch is keyed EXACTLY on "openai-codex-images").
+    const selector = createImageProviderSelector({
+      imageGenConfig: makeConfig({ provider: "google" }),
+      secretManager: mockSecretManager({ GEMINI_API_KEY: "g-123" }), // creds present
+      mainProviderId: "openai-codex",
+      legacyGetter: () => legacyAdapter(),
+      logger: createMockLogger() as never,
+      // A manager is present, but it must NOT route google to the codex adapter.
+      oauthManager: mockOauthManager({ hasCredentials: vi.fn().mockReturnValue(true) }),
+      oauthProfiles: {},
+    });
+
+    const provider = selector();
+    expect(provider).toBeDefined();
+    expect(provider!.id).not.toBe("openai-codex");
+    expect(provider!.isAvailable()).toBe(false);
+    const result = await provider!.execute({ prompt: "x" });
+    expect(result.ok).toBe(false);
+  });
+
+  it("Test E: no oauthManager (undefined) → codex credsAvailable is false → honest-unavailable, never a crash", async () => {
+    const selector = createImageProviderSelector({
+      imageGenConfig: makeConfig({ provider: "auto" }),
+      secretManager: mockSecretManager({}),
+      mainProviderId: "openai-codex",
+      legacyGetter: () => legacyAdapter(),
+      logger: createMockLogger() as never,
+      // oauthManager intentionally omitted (undefined).
+    });
+
+    const provider = selector();
+    expect(provider).toBeDefined();
+    // credsAvailable("openai-codex-images") === (undefined?.hasCredentials ?? false)
+    // → false → resolver reports unavailable → honest-unavailable port (no throw).
+    expect(provider!.id).not.toBe("openai-codex");
+    expect(provider!.isAvailable()).toBe(false);
+    const result = await provider!.execute({ prompt: "x" });
+    expect(result.ok).toBe(false);
+  });
+
+  it("Test F: no regression — openrouter follow-main still routes to the openrouter pi-adapter (codex branch must not intercept it)", () => {
+    const selector = createImageProviderSelector({
+      imageGenConfig: makeConfig({ provider: "auto" }),
+      secretManager: mockSecretManager({ OPENROUTER_API_KEY: "sk-or-789" }),
+      mainProviderId: "openrouter",
+      legacyGetter: () => legacyAdapter(),
+      logger: createMockLogger() as never,
+      // A codex manager present but the openrouter path must be untouched.
+      oauthManager: mockOauthManager(),
+      oauthProfiles: {},
+    });
+
+    const provider = selector();
+    expect(provider).toBeDefined();
+    expect(provider!.id).toBe("openrouter");
   });
 });
 
