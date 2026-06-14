@@ -49,6 +49,21 @@ import type { MediaApiDeps, RpcHandler } from "./types.js";
 export type ImageHandlerDeps = NonNullable<MediaApiDeps["imageHandlerDeps"]>;
 
 /**
+ * Read an operator-facing `hint` off a provider error if it carries one.
+ *
+ * The pi-image-adapter surfaces failures as a typed `ImageGenError` carrying a
+ * knob-naming `hint` (the RES-03 honest-unavailable carrier — see
+ * `pi-image-adapter.ts`). This is a narrow duck-type guard (not an `instanceof`)
+ * so the handler does not import the adapter module — it only forwards a
+ * `string` hint when present. A plain `Error` has no `hint`, so the legacy
+ * `{ success: false, error }` shape is preserved for those paths.
+ */
+function extractImageHint(error: Error): string | undefined {
+  const hint = (error as { hint?: unknown }).hint;
+  return typeof hint === "string" && hint.length > 0 ? hint : undefined;
+}
+
+/**
  * Create image generation RPC handlers.
  * @param deps - Image generation service dependencies
  * @returns Record mapping "image.generate" to its handler function
@@ -59,6 +74,17 @@ export function createImageHandlers(
   return {
     [ImageGenerateContract.method]: async (rawParams) => {
       const agentId = (rawParams._agentId as string) ?? "default";
+      // RES-01 keystone — the handler is no longer provider-blind. Resolve the
+      // agent's main provider in lockstep with the completion path (I4). This
+      // is informational here (obs + lockstep proof); the provider INSTANCE was
+      // already selected at wiring time (setup-image-provider.ts) — do NOT
+      // re-derive selection here (a second source of truth is the v2.20
+      // keyless-summarizer failure class).
+      const main = deps.resolveAgentMainProvider(agentId);
+      deps.logger.debug(
+        { agentId, mainProvider: main.providerId, step: "image_resolve" },
+        "Image request resolved main provider",
+      );
       const userParams = stripInternalFields(rawParams);
       const params = ImageGenerateContract.request.parse(userParams);
       const prompt = params.prompt;
@@ -85,7 +111,15 @@ export function createImageHandlers(
       });
 
       if (!result.ok) {
-        return { success: false, error: result.error.message };
+        // RES-03 honest-unavailable: forward the typed error's knob-naming hint
+        // when present (e.g. an image-incapable main provider). The provider
+        // selector (setup-image-provider.ts) returns a port whose execute()
+        // yields an ImageGenError carrying { imageErrorKind, hint } — surface
+        // the hint so the agent gets a remedy, not silence.
+        const hint = extractImageHint(result.error);
+        return hint
+          ? { success: false, error: result.error.message, hint }
+          : { success: false, error: result.error.message };
       }
 
       // Direct channel delivery via adapter.sendAttachment

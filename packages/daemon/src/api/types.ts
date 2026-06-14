@@ -559,6 +559,12 @@ export interface MediaApiDeps {
     logger: ComisLogger;
     /** Direct channel delivery -- resolve adapter by channel type. */
     getChannelAdapter: (channelType: string) => Pick<import("@comis/core").ChannelPort, "sendAttachment"> | undefined;
+    /** RES-01: resolve the agent's main provider in lockstep with the
+     *  completion path (I4 — delegates to the same resolveAgentModel). The
+     *  handler uses this only for observability + lockstep verification; the
+     *  provider INSTANCE is selected at wiring time (setup-image-provider.ts),
+     *  never re-derived here (no second source of truth). */
+    resolveAgentMainProvider: (agentId: string) => { providerId: string };
   };
   /** media-handlers reads deps.workspaceDirs / deps.defaultWorkspaceDir
    *  / deps.defaultAgentId for STT / vision / link-processing file paths.
