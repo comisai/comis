@@ -69,6 +69,12 @@ export class ImageGenError extends Error {
   }
 }
 
+/** Providers whose transport maps `input.size` to a real SDK size param (WR-04).
+ *  OpenAI's images.generate/edit takes `size`; google generateContent + the
+ *  openrouter built-in do not, so a `size` on those paths is dropped (and the
+ *  drop is WARNed). Extend as later transports gain size support (Phase 186). */
+const PROVIDERS_HONORING_SIZE: ReadonlySet<string> = new Set(["openai"]);
+
 /** User-safe message per domain error kind (no provider internals, no secrets). */
 const SAFE_MESSAGE: Record<ImageErrorKind, string> = {
   content_blocked: "Image request was blocked by the provider's safety system.",
@@ -185,18 +191,46 @@ export function createPiImageAdapter(opts: {
         timeoutMs: opts.timeoutMs,
         maxRetries: opts.maxRetries ?? 1,
       };
+      // WR-04: thread an agent/operator-supplied `size` to the transport via the
+      // pi-ai-sanctioned `metadata` passthrough (ImagesContext has no `size`
+      // field; ImagesOptions.metadata is "providers extract what they understand
+      // and ignore the rest"). The openai transport maps it to the SDK's `size`;
+      // providers that CANNOT honor a pixel size (google generateContent has no
+      // size param; the openrouter built-in ignores it — the IN-04 183 deferral)
+      // would otherwise drop it SILENTLY — a confident no-op (the §2.7
+      // anti-silent-misroute class). Make the drop OBSERVABLE with a once-per-call
+      // WARN naming the requested size + provider, mirroring resolveOpenRouterModel's
+      // WARN-on-silent-substitution precedent (setup-image-provider.ts).
+      if (input.size) {
+        options.metadata = { ...(options.metadata ?? {}), size: input.size };
+        if (!PROVIDERS_HONORING_SIZE.has(opts.model.provider)) {
+          opts.logger.warn(
+            {
+              requestedSize: input.size,
+              provider: opts.model.provider,
+              model: opts.model.id,
+              errorKind: "config" as const,
+              step: "image_size_unsupported",
+              hint:
+                `The ${opts.model.provider} image path does not honor an explicit size; the ` +
+                `requested "${input.size}" is ignored. Use provider:"openai" for pixel-size ` +
+                `control, or omit size. (Per-provider size mapping is Phase 186.)`,
+            },
+            "Requested image size is not supported by the executing provider (ignored)",
+          );
+        }
+      }
       return fromPromise(
         (async () => {
           // ── THE ONE generateImages call site (I1) ─────────────────────────
-          // IN-04 (183-REVIEW): only `input.prompt` is forwarded. `input.size`
-          // and `input.safetyChecker` (passed by the handler) are NOT yet
-          // mapped for the pi path — pi-ai's `ImagesContext` exposes only
-          // `input`, and `ImagesOptions` has no `size`/`safetyChecker` field,
-          // so forwarding them needs a provider-specific payload mapping
-          // (e.g. via `onPayload`/`metadata`). Deferred to Phase 185 (custom
-          // transports) — mirrors the cost/model deferral in `toImageGenOutput`
-          // above. Until then an operator/agent-supplied `size` has no effect
-          // on the openrouter built-in (a feature gap, not a misroute/crash).
+          // WR-04 (185-REVIEW): `input.size` IS now forwarded — via
+          // `options.metadata.size` above (pi-ai's `ImagesContext` exposes only
+          // `input`, so `metadata` is the sanctioned passthrough). The openai
+          // transport maps it to the SDK `size`; non-honoring providers (google
+          // generateContent / openrouter built-in) WARN the drop rather than
+          // silently swallowing it. `input.safetyChecker` is still NOT mapped
+          // for the pi path (no ImagesOptions field; OpenAI/Google enforce
+          // safety server-side) — a documented feature gap, not a misroute/crash.
           //
           // IN-01 (185): append the resolved reference image as a SECOND
           // ImageContent element ONLY when present (edit/img2img). The

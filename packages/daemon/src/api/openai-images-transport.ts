@@ -97,6 +97,13 @@ export const generateImagesOpenAI: ImagesApiFunction = async (model, context, op
     const ref = context.input.find(
       (c): c is { type: "image"; data: string; mimeType: string } => c.type === "image",
     );
+    // WR-04: honor an agent/operator-supplied size threaded through
+    // options.metadata.size (the pi-ai passthrough the adapter sets). OpenAI's
+    // images.generate/edit accept `size` (e.g. "1024x1024", "1792x1024").
+    // Default to the square preset when unset. Coerced to string; a non-string
+    // metadata value falls back to the default.
+    const requestedSize = (options.metadata as { size?: unknown } | undefined)?.size;
+    const size = typeof requestedSize === "string" && requestedSize.length > 0 ? requestedSize : "1024x1024";
     // generate vs edit (IN-01) keyed on the presence of a reference image.
     // DO NOT set response_format — GPT image models always return base64.
     const resp = ref
@@ -105,13 +112,13 @@ export const generateImagesOpenAI: ImagesApiFunction = async (model, context, op
           prompt,
           model: model.id,
           n: 1,
-          size: "1024x1024",
+          size,
         })
       : await client.images.generate({
           model: model.id,
           prompt,
           n: 1,
-          size: "1024x1024",
+          size,
         });
     const b64 = resp.data?.[0]?.b64_json;
     if (!b64) {

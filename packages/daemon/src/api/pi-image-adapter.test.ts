@@ -314,6 +314,91 @@ describe("createPiImageAdapter ImagesOptions passthrough (PI-03)", () => {
     // ImagesContext carries the prompt as a single text input.
     expect(capturedCtx!.input).toEqual([{ type: "text", text: "x" }]);
   });
+
+  // ─── WR-04: thread input.size to the transport (via options.metadata.size) ──
+  // and make a non-honoring drop OBSERVABLE (the openai transport honors size;
+  // google/openrouter cannot, so an agent-supplied size must not vanish silently).
+
+  it("WR-04: forwards input.size to the transport via options.metadata.size", async () => {
+    let captured: ImagesOptions | undefined;
+    registerImagesApiProvider({
+      api: TEST_API,
+      generateImages: async (_model, _ctx, options) => {
+        captured = options;
+        return imagesResult({
+          stopReason: "stop",
+          output: [{ type: "image", data: PNG_B64, mimeType: "image/png" }],
+        });
+      },
+    });
+    const adapter = createPiImageAdapter({ model: makeTestModel(), logger: makeMockLogger() });
+
+    const result = await adapter.execute({ prompt: "x", size: "1792x1024" });
+    expect(result.ok).toBe(true);
+    expect(captured!.metadata).toMatchObject({ size: "1792x1024" });
+  });
+
+  it("WR-04: WARNs (once) when size is set but the provider cannot honor it (google/openrouter)", async () => {
+    const logger = makeMockLogger();
+    registerImagesApiProvider({
+      api: TEST_API,
+      generateImages: async () =>
+        imagesResult({ stopReason: "stop", output: [{ type: "image", data: PNG_B64, mimeType: "image/png" }] }),
+    });
+    // makeTestModel().provider === "comis-test" → NOT an openai-honoring path.
+    const adapter = createPiImageAdapter({ model: makeTestModel(), logger });
+
+    await adapter.execute({ prompt: "x", size: "1792x1024" });
+
+    const warned = (logger.warn as ReturnType<typeof vi.fn>).mock.calls.find(
+      ([payload]) => (payload as { step?: string }).step === "image_size_unsupported",
+    );
+    expect(warned).toBeDefined();
+    const [payload] = warned as [Record<string, unknown>, string];
+    expect(payload.requestedSize).toBe("1792x1024");
+    expect(payload.provider).toBe("comis-test");
+    expect(payload.errorKind).toBe("config");
+    expect(payload.hint).toBeDefined();
+  });
+
+  it("WR-04: does NOT WARN about size on the openai path (it honors size)", async () => {
+    const logger = makeMockLogger();
+    registerImagesApiProvider({
+      api: TEST_API,
+      generateImages: async () =>
+        imagesResult({ stopReason: "stop", output: [{ type: "image", data: PNG_B64, mimeType: "image/png" }] }),
+    });
+    // An openai-provider model → the transport honors size → no drop WARN.
+    const adapter = createPiImageAdapter({ model: { ...makeTestModel(), provider: "openai" }, logger });
+
+    await adapter.execute({ prompt: "x", size: "1792x1024" });
+
+    const warned = (logger.warn as ReturnType<typeof vi.fn>).mock.calls.find(
+      ([payload]) => (payload as { step?: string }).step === "image_size_unsupported",
+    );
+    expect(warned).toBeUndefined();
+  });
+
+  it("WR-04: does NOT WARN or set metadata.size when no size is supplied", async () => {
+    const logger = makeMockLogger();
+    let captured: ImagesOptions | undefined;
+    registerImagesApiProvider({
+      api: TEST_API,
+      generateImages: async (_m, _c, options) => {
+        captured = options;
+        return imagesResult({ stopReason: "stop", output: [{ type: "image", data: PNG_B64, mimeType: "image/png" }] });
+      },
+    });
+    const adapter = createPiImageAdapter({ model: makeTestModel(), logger });
+
+    await adapter.execute({ prompt: "x" });
+
+    expect((captured!.metadata as { size?: string } | undefined)?.size).toBeUndefined();
+    const warned = (logger.warn as ReturnType<typeof vi.fn>).mock.calls.find(
+      ([payload]) => (payload as { step?: string }).step === "image_size_unsupported",
+    );
+    expect(warned).toBeUndefined();
+  });
 });
 
 // ---------------------------------------------------------------------------

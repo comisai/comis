@@ -109,6 +109,39 @@ describe("generateImagesOpenAI — generate (PRV-01)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// WR-04 — size threading: options.metadata.size → images.generate/edit size
+// ---------------------------------------------------------------------------
+
+describe("generateImagesOpenAI — size threading (WR-04)", () => {
+  it("forwards options.metadata.size to images.generate (text->image)", async () => {
+    generate.mockResolvedValue({ data: [{ b64_json: PNG_B64 }] });
+
+    await generateImagesOpenAI(openaiModel(), textContext("a fox"), opts({ metadata: { size: "1792x1024" } }));
+
+    const args = generate.mock.calls[0]![0] as Record<string, unknown>;
+    expect(args.size).toBe("1792x1024");
+  });
+
+  it("forwards options.metadata.size to images.edit (reference->image)", async () => {
+    edit.mockResolvedValue({ data: [{ b64_json: PNG_B64 }] });
+
+    await generateImagesOpenAI(openaiModel(), editContext("make it night"), opts({ metadata: { size: "1024x1792" } }));
+
+    const args = edit.mock.calls[0]![0] as Record<string, unknown>;
+    expect(args.size).toBe("1024x1792");
+  });
+
+  it("defaults size to 1024x1024 when no metadata.size is supplied", async () => {
+    generate.mockResolvedValue({ data: [{ b64_json: PNG_B64 }] });
+
+    await generateImagesOpenAI(openaiModel(), textContext("a fox"), opts());
+
+    const args = generate.mock.calls[0]![0] as Record<string, unknown>;
+    expect(args.size).toBe("1024x1024");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Test 2 — edit (reference->image, IN-01 branch)
 // ---------------------------------------------------------------------------
 
