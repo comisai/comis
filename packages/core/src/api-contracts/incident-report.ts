@@ -182,6 +182,31 @@ export const IncidentReportSchema = z.object({
       rerankerAvailable: z.boolean(),
     })
     .optional(),
+  /** OBS-03/OBS-04 (Phase 186): the image-generation turn reconstructed from the
+   *  session's `image.*` trajectory records (the terminal image record wins).
+   *  The image cost (`costUsd`) rides HERE — `comis explain` shows it from the
+   *  trajectory (Route a) — NOT `cost.costUsd`, which reads the executor-emitted
+   *  `sessionEnd` rollup (a different code path; the image RPC runs in the daemon
+   *  context — Pitfall 2). Content-free: ids/labels/costUsd/outcome ONLY (never
+   *  the prompt, image bytes, or a raw provider message). Optional + additive
+   *  (present only when the trajectory carries image records; schemaVersion stays
+   *  1) — pre-existing constructors omit it (the `recall` precedent). */
+  image: z
+    .object({
+      /** The executing image provider id (e.g. "openai"). */
+      provider: z.string(),
+      /** The image model the provider used (e.g. "gpt-image-1"). Absent on a failed/early turn. */
+      model: z.string().optional(),
+      /** The generation cost in USD — the OBS-03 reconstruction (Route a). Absent on a failed turn. */
+      costUsd: z.number().optional(),
+      /** The terminal outcome of the image turn. */
+      outcome: z.enum(["ok", "failed"]),
+      /** The classified failure kind when `outcome === "failed"`. Absent on success. */
+      errorKind: z.string().optional(),
+      /** Whether the image was delivered to a channel (image.delivered fired). */
+      delivered: z.boolean(),
+    })
+    .optional(),
   summary: z.string(),
   likelyRootCause: z
     .object({
@@ -372,6 +397,22 @@ export interface IncidentSignals {
     lastLanes: number;
     lastFinalCount: number;
     rerankerAvailable: boolean;
+  };
+  /**
+   * OBS-03/OBS-04 (Phase 186): the image-generation turn reconstructed from the
+   * session's `image.*` trajectory records (the terminal image.generated /
+   * image.failed record wins; `delivered` set when image.delivered fired). The
+   * cost (`costUsd`) rides HERE so `comis explain` shows it from the trajectory
+   * (Route a) — NOT `cost.costUsd` (the executor `sessionEnd`, a different path —
+   * Pitfall 2). Content-free. Absent ⇒ no image records in the trajectory.
+   */
+  image?: {
+    provider: string;
+    model?: string;
+    costUsd?: number;
+    outcome: "ok" | "failed";
+    errorKind?: string;
+    delivered: boolean;
   };
 }
 
