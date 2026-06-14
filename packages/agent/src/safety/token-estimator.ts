@@ -70,9 +70,19 @@ export function estimateMessageChars(
     chars = msg.content.length;
   } else if (Array.isArray(msg.content)) {
     for (const block of msg.content) {
+      // Defensive (LCD/codex turn-abort regression 2026-06-14): a malformed or
+      // undefined content block must NEVER throw out of estimation. The LCD
+      // context-engine assembler runs this inside transformContext BEFORE the
+      // LLM call, so a throw aborts the whole turn and surfaces to the user as a
+      // silent "AI didn't produce a response". Flat-penalty anything that isn't
+      // an object with a string `type`.
+      if (block == null || typeof block !== "object" || typeof (block as { type?: unknown }).type !== "string") {
+        chars += UNKNOWN_BLOCK_CHARS;
+        continue;
+      }
       switch (block.type) {
         case "text":
-          chars += (block as { text: string }).text.length;
+          chars += ((block as { text?: string }).text ?? "").length;
           break;
 
         case "image":
@@ -80,7 +90,7 @@ export function estimateMessageChars(
           break;
 
         case "thinking":
-          chars += (block as { thinking: string }).thinking.length;
+          chars += ((block as { thinking?: string }).thinking ?? "").length;
           break;
 
         case "toolCall": {
@@ -233,9 +243,20 @@ function computeMessageTokens(msg: Message): number {
   const isStructured = msg.role === "toolResult";
 
   for (const block of msg.content) {
+    // Defensive (LCD/codex turn-abort regression 2026-06-14): a malformed or
+    // undefined content block must NEVER throw out of estimation. The LCD
+    // context-engine assembler runs this inside transformContext BEFORE the LLM
+    // call, so a throw aborts the whole turn and surfaces to the user as a
+    // silent "AI didn't produce a response". Flat-penalty anything that isn't an
+    // object with a string `type`.
+    if (block == null || typeof block !== "object" || typeof (block as { type?: unknown }).type !== "string") {
+      // flat-by-design: a malformed/undefined block carries no source text to language-factor — UNKNOWN_BLOCK_CHARS is a fixed structural penalty, not derived from any string (TOK-01).
+      tokens += Math.ceil(UNKNOWN_BLOCK_CHARS / CHARS_PER_TOKEN);
+      continue;
+    }
     switch (block.type) {
       case "text": {
-        const text = (block as { text: string }).text;
+        const text = (block as { text?: string }).text ?? "";
         tokens += Math.ceil(
           text.length /
             ((isStructured ? CHARS_PER_TOKEN_STRUCTURED : CHARS_PER_TOKEN) * scriptTokenFactor(text)),
@@ -248,7 +269,7 @@ function computeMessageTokens(msg: Message): number {
         break;
 
       case "thinking": {
-        const thinking = (block as { thinking: string }).thinking;
+        const thinking = (block as { thinking?: string }).thinking ?? "";
         tokens += Math.ceil(thinking.length / (CHARS_PER_TOKEN * scriptTokenFactor(thinking)));
         break;
       }
