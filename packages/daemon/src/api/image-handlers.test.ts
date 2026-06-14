@@ -379,4 +379,66 @@ describe("createImageHandlers", () => {
     expect(result).toEqual({ success: false, error: "Provider error: content blocked" });
     expect("hint" in result).toBe(false);
   });
+
+  // ─── WR-05 (184-REVIEW): multi-agent credential-misroute is a DOCUMENTED ────
+  // deferral (Phase 186). The boot-selected `provider` port is the DEFAULT
+  // agent's; a non-default agent whose resolved main provider DIFFERS runs the
+  // default agent's port/credentials. Until 186 re-selects per-request, the
+  // handler must at least make the divergence OBSERVABLE (not silent), so triage
+  // is not misled by the per-request obs line that names the caller's provider
+  // while execution uses the default's port.
+
+  it("WARNs when the caller's resolved provider diverges from the boot-selected port (misroute risk)", async () => {
+    const logger = createMockLogger() as unknown as ReturnType<typeof createMockLogger> & {
+      warn: ReturnType<typeof vi.fn>;
+    };
+    const deps = createMockDeps({
+      // Boot-selected port = the DEFAULT agent's (openrouter).
+      provider: {
+        id: "openrouter",
+        isAvailable: () => true,
+        execute: vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("x"), mimeType: "image/png" })),
+      },
+      // The CALLER (non-default agent) resolves to a DIFFERENT provider (codex).
+      resolveAgentMainProvider: vi.fn().mockReturnValue({ providerId: "openai-codex" }),
+      logger: logger as never,
+    });
+    const handlers = createImageHandlers(deps);
+
+    await handlers["image.generate"]!({ _agentId: "agent-codex", prompt: "a fox" });
+
+    const warned = logger.warn.mock.calls.find(
+      ([payload]) => (payload as { step?: string }).step === "image_provider_divergence",
+    );
+    expect(warned).toBeDefined();
+    const [payload] = warned as [Record<string, unknown>, string];
+    expect(payload.agentId).toBe("agent-codex");
+    expect(payload.callerProvider).toBe("openai-codex");
+    expect(payload.executedProvider).toBe("openrouter");
+    expect(payload.errorKind).toBe("precondition");
+    expect(payload.hint).toContain("186");
+  });
+
+  it("does NOT WARN when the caller's provider matches the boot-selected port (shared-provider agents)", async () => {
+    const logger = createMockLogger() as unknown as ReturnType<typeof createMockLogger> & {
+      warn: ReturnType<typeof vi.fn>;
+    };
+    const deps = createMockDeps({
+      provider: {
+        id: "openrouter",
+        isAvailable: () => true,
+        execute: vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("x"), mimeType: "image/png" })),
+      },
+      resolveAgentMainProvider: vi.fn().mockReturnValue({ providerId: "openrouter" }),
+      logger: logger as never,
+    });
+    const handlers = createImageHandlers(deps);
+
+    await handlers["image.generate"]!({ _agentId: "agent-2", prompt: "a fox" });
+
+    const warned = logger.warn.mock.calls.find(
+      ([payload]) => (payload as { step?: string }).step === "image_provider_divergence",
+    );
+    expect(warned).toBeUndefined();
+  });
 });

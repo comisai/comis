@@ -88,6 +88,43 @@ export function createImageHandlers(
         { agentId, mainProvider: main.providerId, step: "image_resolve" },
         "Image request resolved main provider",
       );
+      // WR-05 (184-REVIEW): `main.providerId` is the CALLER's provider, resolved
+      // PER-REQUEST for obs/lockstep only. But `deps.provider` is a SINGLE
+      // boot-time-selected port built from the DEFAULT agent's OAuth manager +
+      // profiles (main-helpers.ts buildImageGenBundle <- daemon.ts
+      // oauthManagers.get(defaultAgentId)). So a NON-default agent whose main
+      // provider DIFFERS runs the DEFAULT agent's port/credentials — a known,
+      // DOCUMENTED scope boundary (per-agent re-selection + live rotation is the
+      // Phase 186 / multi-agent refinement; see main-helpers.ts IN-01 +
+      // setup-image-provider.ts). Until 186 closes it, make the divergence
+      // OBSERVABLE rather than silent: the per-request obs line names the
+      // caller's provider while execution uses the default's port, which would
+      // otherwise mislead triage. Agents that share the default's provider
+      // (matching ids) are unaffected — the common multi-agent case still works.
+      if (
+        main.providerId !== deps.provider.id &&
+        // "auto"/"unavailable" are selector sentinels, not real provider ids —
+        // a mismatch against them is not a credential misroute.
+        deps.provider.id !== "unavailable" &&
+        main.providerId !== "auto" &&
+        main.providerId.length > 0
+      ) {
+        deps.logger.warn(
+          {
+            agentId,
+            callerProvider: main.providerId,
+            executedProvider: deps.provider.id,
+            step: "image_provider_divergence",
+            errorKind: "precondition" as const,
+            hint:
+              "This non-default agent's image request runs the DEFAULT agent's " +
+              "boot-selected provider/credentials. Per-agent re-selection lands " +
+              "in Phase 186; until then set integrations.media.imageGeneration." +
+              "provider explicitly, or run the image-capable agent as the default.",
+          },
+          "Image request provider diverges from the boot-selected port (multi-agent misroute risk)",
+        );
+      }
       const userParams = stripInternalFields(rawParams);
       const params = ImageGenerateContract.request.parse(userParams);
       const prompt = params.prompt;
