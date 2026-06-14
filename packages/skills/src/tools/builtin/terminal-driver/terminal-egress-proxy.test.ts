@@ -66,6 +66,16 @@ describe("createTerminalEgressProxy — host-side no-secret allowlist CONNECT pr
     }
   });
 
+  it("materialize() with the DEFAULT genId + socketDir produces a unique per-session socket under the OS temp dir", async () => {
+    // Exercises the production defaults (randomUUID id + tmpdir) — the other
+    // cases inject genId/socketDir for determinism, leaving the defaults uncovered.
+    const proxy = createTerminalEgressProxy({ logger: silentLogger() });
+    const m = await proxy.materialize(["api.anthropic.com"]);
+    live.push(m);
+    expect(m.socketPath).toMatch(/comis-egress-[0-9a-f-]+\.sock$/);
+    expect(m.socketPath.startsWith(tmpdir())).toBe(true);
+  });
+
   it("materialize() returns a socketPath under the injected temp dir", async () => {
     const dial = vi.fn();
     const proxy = createTerminalEgressProxy({

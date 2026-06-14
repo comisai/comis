@@ -36,6 +36,7 @@ import { writeSync, mkdirSync, appendFileSync } from "node:fs";
 import { resolve as pathResolve } from "node:path";
 import { homedir } from "node:os";
 import { spawn as childSpawn, execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 import { createTerminalWorker, defaultLoadPty } from "./terminal-worker-entry.js";
 import { createStdioPump } from "./terminal-worker-stdio-pump.js";
@@ -49,7 +50,7 @@ import type { TmuxBackendLike } from "./terminal-worker-types.js";
  * `COMIS_TERMINAL_DATA_DIR=<dataDir>` so this matches the write scope exactly;
  * the home fallback is for a direct (non-daemon) launch.
  */
-function durableDir(): string {
+export function durableDir(): string {
   // eslint-disable-next-line no-restricted-syntax -- worker PROCESS entry: the daemon threads the (non-secret) data dir via env when forking; not a SecretManager value.
   const dataDir = process.env.COMIS_TERMINAL_DATA_DIR ?? pathResolve(homedir(), ".comis");
   return pathResolve(dataDir, "terminal-worker");
@@ -60,7 +61,7 @@ function durableDir(): string {
  * NEVER throw out of the worker. Writing to stderr is avoided on purpose (the
  * supervisor does not drain fd2 → a full pipe would wedge the worker).
  */
-function createFileLogger(logPath: string) {
+export function createFileLogger(logPath: string) {
   const write = (level: string, obj: Record<string, unknown>, msg?: string): void => {
     try {
       appendFileSync(logPath, `${JSON.stringify({ level, msg: msg ?? "", ...obj, t: Date.now() })}\n`);
@@ -79,7 +80,7 @@ function createFileLogger(logPath: string) {
 }
 
 /** Parse the operator stuck threshold (`worker.stuckMs`) the daemon threads via env. */
-function parseStuckMs(): number | undefined {
+export function parseStuckMs(): number | undefined {
   // eslint-disable-next-line no-restricted-syntax -- worker PROCESS entry: the daemon threads the (non-secret) stuck-threshold via env; not a SecretManager value.
   const raw = process.env.COMIS_TERMINAL_STUCK_MS;
   if (raw === undefined) return undefined;
@@ -88,7 +89,7 @@ function parseStuckMs(): number | undefined {
 }
 
 /** Resolve the tmux binary; undefined ⇒ a `backend:"tmux"` request falls back to pty/pipe. */
-function resolveTmuxPath(): string | undefined {
+export function resolveTmuxPath(): string | undefined {
   try {
     return execFileSync("which", ["tmux"], { encoding: "utf8" }).trim() || undefined;
   } catch {
@@ -102,7 +103,7 @@ function resolveTmuxPath(): string | undefined {
  * survival decision via `has-session`; `runTmux` wraps `child_process.spawn` (a
  * ChildProcess structurally satisfies {@link TmuxChild}). Used ONLY for `backend:"tmux"`.
  */
-function buildLoadTmux(tmuxPath: string): TmuxBackendLike {
+export function buildLoadTmux(tmuxPath: string): TmuxBackendLike {
   return {
     spawn: (a) =>
       createTmuxBackend({
@@ -190,4 +191,23 @@ function main(): void {
   logger.info({ pid: process.pid, durableDir: dir }, "terminal worker started");
 }
 
-main();
+/**
+ * Run `main()` ONLY when this module is the executed entry script (the production
+ * fork: `node terminal-worker-main.js`). Guarding the side effect lets the unit
+ * test import the pure helpers (parseStuckMs / durableDir / buildLoadTmux / …)
+ * WITHOUT spawning a worker / attaching stdin listeners — the same pattern as
+ * egress-relay-init.ts.
+ */
+function isEntryScript(): boolean {
+  const entry = process.argv[1];
+  if (typeof entry !== "string" || entry.length === 0) return false;
+  try {
+    return fileURLToPath(import.meta.url) === entry;
+  } catch {
+    return false;
+  }
+}
+
+if (isEntryScript()) {
+  main();
+}

@@ -31,6 +31,12 @@ export default defineConfig({
         "**/*.generated.ts",
         "packages/web/src/**/*.css.ts",
         "packages/web/src/api/contracts.generated.ts",
+        // Forked PROCESS entry (`node terminal-worker-main.js`): main() wires real
+        // process stdin/stdout/fd3/exit, which cannot be unit-tested in-process
+        // (attaching to the runner's stdin / calling process.exit would corrupt it).
+        // Its pure helpers ARE unit-tested (terminal-worker-main.test.ts) and the real
+        // fork is exercised by terminal-worker-fork.linux.test.ts on Linux/the VPS.
+        "packages/skills/src/tools/builtin/terminal-driver/terminal-worker-main.ts",
       ],
       // Monotonic ramp protocol: per-package floors are derived from a
       // measured baseline and ramp each floor toward the final
