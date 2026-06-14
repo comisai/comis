@@ -693,6 +693,18 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
     if (shuttingDown) return;
     shuttingDown = true;
 
+    // Set the intended exit code EARLY so it is honored even if the event loop
+    // drains during the awaited teardown/flush below BEFORE the explicit
+    // exitFnLocal() at the end runs. Production drain bug (2026-06-14): a
+    // SIGUSR2 config-change restart shut down gracefully but the loop emptied
+    // during the (unref'd-timer) flush wait, so the process exited NATURALLY
+    // with code 0 instead of 42 → systemd's RestartForceExitStatus=42 never
+    // fired → the daemon stayed DOWN after `comis config apply` / token
+    // mutations. SIGUSR2 ⇒ 42 (restart hint); SIGTERM/SIGINT ⇒ 0 (operator
+    // stop). The error/timeout paths below still call exitFnLocal(1), and an
+    // explicit process.exit(code) overrides process.exitCode on that path.
+    process.exitCode = signal === "SIGUSR2" ? 42 : 0;
+
     logger.info({ signal }, "Graceful shutdown initiated");
     const shutdownStartMs = systemNowMs();
 
