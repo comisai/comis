@@ -23,6 +23,20 @@ describe("TRAJECTORY_EVENT_TYPES contains lifecycle envelope types", () => {
   });
 });
 
+// OBS-04 (Phase 186): the four image-generation lifecycle types are appended
+// to the closed tuple so the daemon image RPC handler can `recordEvent(...)`
+// them via the per-session recorder (recordEvent REJECTS a type absent from
+// TRAJECTORY_EVENT_TYPES — Pitfall 4). Direct-emitted (no bus bridge in the
+// daemon RPC context), but still declared here for type closure.
+describe("TRAJECTORY_EVENT_TYPES contains the image-generation lifecycle (OBS-04)", () => {
+  it.each(["image.requested", "image.generated", "image.delivered", "image.failed"])(
+    "includes %s",
+    (literal) => {
+      expect((TRAJECTORY_EVENT_TYPES as readonly string[]).includes(literal)).toBe(true);
+    },
+  );
+});
+
 describe("TrajectoryEvent forward-declared optional fields", () => {
   it("carries optional sourceSeq?: number", () => {
     expectTypeOf<TrajectoryEvent["sourceSeq"]>().toEqualTypeOf<number | undefined>();

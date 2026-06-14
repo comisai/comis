@@ -546,6 +546,120 @@ describe("attachTrajectoryToEventBus -- delivery events", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// OBS-04 (Phase 186): image-generation lifecycle bridge tests.
+//
+// The 4 image:* events are DIRECT-emitted by the daemon image RPC handler
+// (the daemon context has no bus bridge), but they MUST be declared in
+// EventMap + TRAJECTORY_BRIDGE_MAPPING + TRAJECTORY_EVENT_TYPES + a translator
+// for arch-closure (Pitfall 4). The translator forwards ONLY content-free
+// ids/labels/numbers/booleans (provider/model/costUsd/sizeBytes/outcome/
+// channelType/errorKind/delivered/mainProvider) — never the prompt, image
+// bytes, a key, or a raw provider message (T-186-08).
+// ---------------------------------------------------------------------------
+describe("attachTrajectoryToEventBus -- image generation (OBS-04)", () => {
+  it("image_requested_maps_to_image.requested with provider/mainProvider; correlation keys stripped", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("image:requested", {
+      provider: "openai",
+      mainProvider: "openai",
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      traceId: "trace-img",
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("image.requested");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.provider).toBe("openai");
+    expect(data.mainProvider).toBe("openai");
+    // Envelope-only correlation keys — must NOT appear in data.
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.traceId).toBeUndefined();
+  });
+
+  it("image_generated_maps_to_image.generated carrying costUsd/model/provider/sizeBytes/outcome (OBS-03 cost-carry)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("image:generated", {
+      provider: "openai",
+      model: "gpt-image-1",
+      costUsd: 0.04,
+      sizeBytes: 4242,
+      outcome: "ok",
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("image.generated");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.provider).toBe("openai");
+    expect(data.model).toBe("gpt-image-1");
+    // The OBS-03 binding field — the cost rides the trajectory record so
+    // `comis explain` reconstructs it (Route a).
+    expect(data.costUsd).toBe(0.04);
+    expect(data.sizeBytes).toBe(4242);
+    expect(data.outcome).toBe("ok");
+  });
+
+  it("image_delivered_maps_to_image.delivered with channelType/delivered", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("image:delivered", {
+      channelType: "telegram",
+      delivered: true,
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("image.delivered");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.channelType).toBe("telegram");
+    expect(data.delivered).toBe(true);
+  });
+
+  it("image_failed_maps_to_image.failed with errorKind/provider (no raw message)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("image:failed", {
+      errorKind: "content_blocked",
+      provider: "openai",
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("image.failed");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.errorKind).toBe("content_blocked");
+    expect(data.provider).toBe("openai");
+  });
+
+  it("image events are all trajectory-mapped (arch closure)", () => {
+    expect(TRAJECTORY_BRIDGE_MAPPING["image:requested"]).toBe("image.requested");
+    expect(TRAJECTORY_BRIDGE_MAPPING["image:generated"]).toBe("image.generated");
+    expect(TRAJECTORY_BRIDGE_MAPPING["image:delivered"]).toBe("image.delivered");
+    expect(TRAJECTORY_BRIDGE_MAPPING["image:failed"]).toBe("image.failed");
+    expect((TRAJECTORY_EVENT_TYPES as readonly string[]).includes("image.generated")).toBe(true);
+  });
+});
+
 describe("attachTrajectoryToEventBus -- unsubscribe + filter", () => {
   it("unsubscribe_stops_recording after the returned function is called", () => {
     const bus = makeBus();
@@ -1079,6 +1193,31 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       kind: "network",
       count: 100,
       windowMs: 60000,
+      timestamp: 0,
+    },
+    // OBS-04 (Phase 186): image-generation lifecycle — the envelope-only
+    // correlation invariant must hold for them too (no agentId/sessionKey leak).
+    "image:requested": {
+      provider: "openai",
+      mainProvider: "openai",
+      timestamp: 0,
+    },
+    "image:generated": {
+      provider: "openai",
+      model: "gpt-image-1",
+      costUsd: 0.04,
+      sizeBytes: 4242,
+      outcome: "ok",
+      timestamp: 0,
+    },
+    "image:delivered": {
+      channelType: "telegram",
+      delivered: true,
+      timestamp: 0,
+    },
+    "image:failed": {
+      errorKind: "content_blocked",
+      provider: "openai",
       timestamp: 0,
     },
   };
