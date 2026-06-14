@@ -61,6 +61,16 @@ export {
   WORKER_PERMISSION_ARGS,
 } from "./terminal-worker-launch.js";
 
+// The no-secret host-allowlist egress proxy (EgressControlPort impl, spec §3.5),
+// moved here from @comis/daemon so the standalone worker process can construct
+// its OWN egress for `network: listed-hosts` (the worker runs outside the jail
+// and has network; the daemon also constructs one for the in-process test path).
+export {
+  createTerminalEgressProxy,
+  type TerminalEgressProxyDeps,
+  type EgressProxyLogger,
+} from "./terminal-egress-proxy.js";
+
 // The per-session usage-cap primitive (closure-local counters + injected
 // clock). The tool layer consumes createSessionCaps to REJECT on
 // maxRequestsPerSession and EVICT on maxInteractions/wallClockMs.

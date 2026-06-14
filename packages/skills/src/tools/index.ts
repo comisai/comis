@@ -68,6 +68,7 @@ export {
   createTerminalSessionRegistry,
   buildProductionSpawnWorker,
   resolveWorkerMainPath,
+  createTerminalEgressProxy,
   matchAllowEntry,
   buildDirectSpawn,
   // The per-session caps factory — the daemon constructs ONE shared

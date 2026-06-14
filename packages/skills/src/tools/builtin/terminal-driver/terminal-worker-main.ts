@@ -35,10 +35,13 @@
 import { writeSync, mkdirSync, appendFileSync } from "node:fs";
 import { resolve as pathResolve } from "node:path";
 import { homedir } from "node:os";
+import { spawn as childSpawn, execFileSync } from "node:child_process";
 
 import { createTerminalWorker, defaultLoadPty } from "./terminal-worker-entry.js";
-import type { WorkerLogger } from "./terminal-worker-types.js";
 import { createStdioPump } from "./terminal-worker-stdio-pump.js";
+import { createTerminalEgressProxy } from "./terminal-egress-proxy.js";
+import { createTmuxBackend, type TmuxChild } from "./terminal-tmux-backend.js";
+import type { TmuxBackendLike } from "./terminal-worker-types.js";
 
 /**
  * The durable-state dir the daemon scopes `--allow-fs-write` to
@@ -56,19 +59,21 @@ function durableDir(): string {
  * NEVER throw out of the worker. Writing to stderr is avoided on purpose (the
  * supervisor does not drain fd2 → a full pipe would wedge the worker).
  */
-function createFileLogger(logPath: string): WorkerLogger {
-  const write = (level: string, obj: Record<string, unknown>, msg: string): void => {
+function createFileLogger(logPath: string) {
+  const write = (level: string, obj: Record<string, unknown>, msg?: string): void => {
     try {
-      appendFileSync(logPath, `${JSON.stringify({ level, msg, ...obj, t: Date.now() })}\n`);
+      appendFileSync(logPath, `${JSON.stringify({ level, msg: msg ?? "", ...obj, t: Date.now() })}\n`);
     } catch {
       /* logging is best-effort — never crash the worker on a log failure */
     }
   };
+  // Optional `msg` so the one logger satisfies BOTH WorkerLogger (createTerminalWorker)
+  // AND EgressProxyLogger (createTerminalEgressProxy).
   return {
-    debug: (obj, msg) => write("debug", obj, msg),
-    info: (obj, msg) => write("info", obj, msg),
-    warn: (obj, msg) => write("warn", obj, msg),
-    error: (obj, msg) => write("error", obj, msg),
+    debug: (obj: Record<string, unknown>, msg?: string) => write("debug", obj, msg),
+    info: (obj: Record<string, unknown>, msg?: string) => write("info", obj, msg),
+    warn: (obj: Record<string, unknown>, msg?: string) => write("warn", obj, msg),
+    error: (obj: Record<string, unknown>, msg?: string) => write("error", obj, msg),
   };
 }
 
@@ -80,6 +85,45 @@ function parseStuckMs(): number | undefined {
   return Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
+/** Resolve the tmux binary; undefined ⇒ a `backend:"tmux"` request falls back to pty/pipe. */
+function resolveTmuxPath(): string | undefined {
+  try {
+    return execFileSync("which", ["tmux"], { encoding: "utf8" }).trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The tmux long-run backend (OPS-05): a named tmux session outlives the worker, so a
+ * milestone survives a worker crash + is re-attachable. `createTmuxBackend` makes the
+ * survival decision via `has-session`; `runTmux` wraps `child_process.spawn` (a
+ * ChildProcess structurally satisfies {@link TmuxChild}). Used ONLY for `backend:"tmux"`.
+ */
+function buildLoadTmux(tmuxPath: string): TmuxBackendLike {
+  return {
+    spawn: (a) =>
+      createTmuxBackend({
+        sessionId: a.sessionId,
+        bin: a.bin,
+        argv: a.argv,
+        cols: a.cols,
+        rows: a.rows,
+        env: a.env,
+        tmuxPath,
+        hasSession: (name) => {
+          try {
+            execFileSync(tmuxPath, ["has-session", "-t", name], { stdio: "ignore" });
+            return true;
+          } catch {
+            return false;
+          }
+        },
+        runTmux: (argv) => childSpawn(argv[0]!, argv.slice(1), { env: a.env }) as unknown as TmuxChild,
+      }),
+  };
+}
+
 function main(): void {
   const dir = durableDir();
   try {
@@ -89,12 +133,26 @@ function main(): void {
   }
   const logger = createFileLogger(pathResolve(dir, "worker.log"));
 
+  // The no-secret host-allowlist egress proxy for `network: listed-hosts`. The
+  // worker runs OUTSIDE the jail (it has host network), so it owns its own proxy:
+  // materialize(hosts) stands up a /tmp unix socket the jailed child bind-mounts +
+  // relays through (the daemon needn't coordinate — the proxy injects no secret).
+  // Untouched for network none/full.
+  const egressControl = createTerminalEgressProxy({ logger });
+
+  // Long-run tmux backend (OPS-05) — present only if tmux is installed; absent ⇒
+  // a backend:"tmux" request degrades to pty/pipe (never an error).
+  const tmuxPath = resolveTmuxPath();
+  const loadTmux = tmuxPath ? buildLoadTmux(tmuxPath) : undefined;
+
   const worker = createTerminalWorker({
     // The guarded node-pty loader (createRequire in a try → pipe fallback on a
     // no-prebuild host). Required dep; the factory does not auto-default it.
     loadPty: defaultLoadPty,
     logger,
     stuckMs: parseStuckMs(),
+    egressControl,
+    ...(loadTmux ? { loadTmux } : {}),
     // The fd3 push channel — the worker is forked with fd3 reserved (4-fd stdio).
     writeFd3: (b) => {
       try {

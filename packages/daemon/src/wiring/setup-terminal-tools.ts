@@ -31,7 +31,6 @@
 import { resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 import type { ComisLogger } from "@comis/infra";
-import { createTerminalEgressProxy } from "./terminal-egress-proxy.js";
 // The daemon does not depend on the pi SDK directly — it references the tool
 // array type via @comis/skills' PlatformToolProvider (= () => AgentTool[]), the
 // same way setup-tools.ts types its `tools` array.
@@ -65,6 +64,7 @@ import {
   createTerminalSessionRegistry,
   buildProductionSpawnWorker,
   resolveWorkerMainPath,
+  createTerminalEgressProxy,
   createTerminalSessionCreateTool,
   createTerminalSessionReadTool,
   createTerminalSessionListTool,
