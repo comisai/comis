@@ -31,7 +31,7 @@ Here's everything Comis keeps on disk — and why.
 ├── logs/
 │   └── daemon.N.log         # structured JSON log (pino-roll; live file = newest N)
 ├── traces/                  # per-session JSONL execution traces
-├── workspace/               # default agent workspace (files, git, skills)
+├── workspace/               # default agent workspace (files, git, skills, terminal/)
 ├── workspace-<agentId>/     # named-agent workspaces (one per extra agent)
 ├── agents/                  # per-agent RPC state (subagent results, etc.)
 ├── background-tasks/        # background task state files
@@ -200,6 +200,7 @@ Each agent gets a dedicated workspace directory. The default agent uses `workspa
 - Agent identity files (`AGENTS.md`, `SOUL.md`, `USER.md`, `IDENTITY.md`)
 - A `.scheduler/` subdirectory with `cron-jobs.json` and execution logs
 - A `skills/` subdirectory for agent-specific prompt skills
+- A `terminal/` subdirectory — the persistent working directory for [terminal-driver](/agent-tools/terminal-driver) sessions (present only if the agent uses that tool). A driven session's work lands here and survives the session; it is the only part of `~/.comis` re-exposed read-write inside the session's bwrap jail.
 - Subdirectories seeded by Comis: `projects/`, `scripts/`, `documents/`, `media/`, `data/`, `output/`
 
 **Written by:** the daemon on first startup for each agent.

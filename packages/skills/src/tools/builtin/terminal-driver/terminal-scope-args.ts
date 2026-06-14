@@ -159,12 +159,23 @@ function pushNetwork(args: string[], input: ScopeArgsInput): void {
 }
 
 /**
+ * True when `child` is a STRICT subpath of `parent` (segment-aware via a trailing
+ * separator, so `/a/.comis-evil` is NOT under `/a/.comis`). Deliberately false when
+ * `child === parent`: re-binding the data dir onto ITSELF would re-expose the
+ * secrets the carve-out exists to mask, so only a NESTED workspace is re-exposed.
+ */
+function isUnderDir(child: string, parent: string): boolean {
+  const withSep = parent.endsWith("/") ? parent : `${parent}/`;
+  return child.startsWith(withSep);
+}
+
+/**
  * Build the bwrap argv for a {@link TerminalScope}, in the canonical order:
  *
  *   [bwrapPath, ...systemRO(--ro-bind p p), --proc, --dev, --dev-bind /dev/pts,
  *    --tmpfs /tmp, <FS binds>, <credentialHome ro-bind>, <uid>,
  *    --unshare-all, <network>, --die-with-parent, --new-session, --chdir <cwd>,
- *    <CARVE-OUT --tmpfs <dataDir>>, --]
+ *    <CARVE-OUT --tmpfs <dataDir>>, <workspace re-bind if under dataDir>, --]
  *
  * `--unshare-all` already supplies `--unshare-pid` + `--unshare-user` + ipc/uts/
  * cgroup — no separate `--unshare-pid`. `--new-session` is emitted
@@ -223,6 +234,21 @@ export function buildScopeArgs(input: ScopeArgsInput): string[] {
   //    shadowed by this tmpfs, so the master key / secret store / runtime is denied
   //    to EVERY driven child regardless of scope (non-configurable, not a scope field).
   args.push("--tmpfs", input.dataDir);
+
+  // -- Agent-workspace persistence -- the carve-out above masks ALL of <dataDir>,
+  //    which also shadows the session workspace when it IS the agent's OWN workspace
+  //    (the default `<dataDir>/workspace/<agent>`, the same dir the agent's read/
+  //    write/exec tools operate on). Re-bind ONLY that subpath RW on top of the
+  //    tmpfs so the workspace is writable + PERSISTENT in the jail (a driven GSD
+  //    milestone's work survives), while the secrets at sibling <dataDir> paths
+  //    (secret.db / .env / config.yaml / memory.db) stay shadowed. A workspace
+  //    OUTSIDE <dataDir> (e.g. an operator-relocated dir) needs no re-bind — its
+  //    earlier `pushFilesystemBinds` mount is never masked. `isUnderDir` is strict
+  //    (workspace === dataDir is NOT re-exposed → re-binding ~/.comis onto itself
+  //    would defeat the carve-out).
+  if (isUnderDir(input.workspace, input.dataDir)) {
+    args.push("--bind", input.workspace, input.workspace);
+  }
 
   // The caller appends `bin, ...argv` after the terminator.
   args.push("--");

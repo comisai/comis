@@ -142,8 +142,10 @@ export interface TerminalSessionRegistryDeps extends ReaperCaps {
   bwrapPath?: string;
   /** Daemon-injected no-secret egress port — the daemon->worker-main seam for `listed-hosts`; a live `net` server, so (unlike bwrapPath) NOT frame-serialized. Type-only from @comis/core. */
   egressControl?: EgressControlPort;
-  /** Allocate a real per-session jail workspace dir (gap 2); default {@link allocateSessionWorkspace} (world-rwx mkdtemp under os.tmpdir()). `create` threads it onto the frame as workspace+cwd so the jail binds RW + --chdirs in (else it defaults to HOME, which uid 65534 cannot use). Injectable for a data-dir-rooted daemon allocator; cleanup is the paired {@link cleanupSessionWorkspace}. */
+  /** Allocate a real per-session jail workspace dir (gap 2); default {@link allocateSessionWorkspace} (world-rwx mkdtemp under os.tmpdir()). `create` threads it onto the frame as workspace+cwd so the jail binds RW + --chdirs in (else it defaults to HOME, which uid 65534 cannot use). Injectable for a data-dir-rooted daemon allocator; cleanup is the paired {@link cleanupWorkspace}. */
   allocateWorkspace?: (sessionId: string) => string;
+  /** Teardown paired with {@link allocateWorkspace}; default {@link cleanupSessionWorkspace} (`rm -rf` the throwaway mkdtemp dir on kill/evict/reap). A daemon rooting the workspace in the agent's OWN persistent workspace MUST inject a NO-OP so the agent's workspace (skills/memory/milestone work) is NOT deleted on session end. */
+  cleanupWorkspace?: (workspace: string) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -319,6 +321,11 @@ export function createTerminalSessionRegistry(
     deps.clearTimer ?? ((handle: unknown) => systemClearTimeout(handle as SystemTimeoutHandle));
   // gap 2: per-session jail workspace allocator (default = the real mkdtemp helper).
   const allocateWorkspace = deps.allocateWorkspace ?? ((id: string) => allocateSessionWorkspace(id).workspace);
+  // The paired teardown for `allocateWorkspace`. Default = the `rm -rf` of the
+  // throwaway mkdtemp dir. A daemon that roots the workspace in the agent's OWN
+  // (persistent) workspace MUST inject a no-op here — else the kill/evict/reap path
+  // would delete the agent's workspace (skills, memory, a milestone's work) wholesale.
+  const cleanupWorkspace = deps.cleanupWorkspace ?? ((workspace: string) => cleanupSessionWorkspace(workspace));
 
   /**
    * Split a `${sessionId}:${requestId}` pending key. Both halves are UUIDs (no
@@ -740,7 +747,7 @@ export function createTerminalSessionRegistry(
       send(sessionId, "kill", { sessionId });
     }
     sessions.delete(sessionId);
-    if (handle.workspace !== undefined) cleanupSessionWorkspace(handle.workspace);
+    if (handle.workspace !== undefined) cleanupWorkspace(handle.workspace);
     logger.info({ sessionId }, "terminal session killed");
   }
 

@@ -69,6 +69,7 @@ export {
   buildProductionSpawnWorker,
   resolveWorkerMainPath,
   createTerminalEgressProxy,
+  prepareAgentTerminalWorkspace,
   matchAllowEntry,
   buildDirectSpawn,
   // The per-session caps factory — the daemon constructs ONE shared

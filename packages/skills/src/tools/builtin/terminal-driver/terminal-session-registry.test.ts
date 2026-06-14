@@ -1516,6 +1516,31 @@ describe("createTerminalSessionRegistry — reaper composition", () => {
     expect(onEvict).not.toHaveBeenCalled();
     expect(onCapForget).not.toHaveBeenCalled();
   });
+
+  // The teardown paired with `allocateWorkspace`: kill/evict/reap must route the
+  // workspace removal through the INJECTABLE `cleanupWorkspace`, not a hard-coded
+  // `rm -rf`. This is the seam a data-dir-rooted daemon uses to PERSIST the agent's
+  // own workspace — it injects a no-op so a driven milestone's work survives the
+  // session end. RED on the pre-patch registry: line 743 called `cleanupSessionWorkspace`
+  // directly, so an injected hook was dead and the agent workspace would be deleted.
+  it("Test C3 — injectable cleanupWorkspace: kill routes teardown through the injected hook with the session workspace (the persist-the-agent-workspace seam)", async () => {
+    const fake = makeIsolatingWorker();
+    const cleanupWorkspace = vi.fn<(workspace: string) => void>();
+    const agentWorkspace = "/home/u/.comis/workspace/agent-a";
+    const { deps } = reaperDeps(() => fake.child, {
+      maxSessions: 10,
+      allocateWorkspace: () => agentWorkspace,
+      cleanupWorkspace,
+    });
+    const reg = createTerminalSessionRegistry(deps);
+
+    const s = await reg.create(bashReq, subA);
+    await reg.kill(s.sessionId, subA);
+
+    // The injected teardown ran with the agent's workspace — a daemon passes a
+    // NO-OP here so the persistent workspace is NOT rm -rf'd on session end.
+    expect(cleanupWorkspace).toHaveBeenCalledWith(agentWorkspace);
+  });
 });
 
 // ===========================================================================

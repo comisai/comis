@@ -64,6 +64,7 @@ import {
   buildProductionSpawnWorker,
   resolveWorkerMainPath,
   createTerminalEgressProxy,
+  prepareAgentTerminalWorkspace,
   createTerminalSessionCreateTool,
   createTerminalSessionReadTool,
   createTerminalSessionListTool,
@@ -134,6 +135,14 @@ export interface TerminalWiringDeps {
    * EXPLICIT here — do not leave bwrapPath implicit.
    */
   readonly bwrapPath?: string;
+  /**
+   * The resolved per-agent workspace dir (see {@link TerminalWiringBaseDeps.agentWorkspaceDir}).
+   * Present ⇒ the per-agent registry roots sessions in `<agentWorkspaceDir>/terminal`
+   * (persistent, agent-scoped) with a no-op cleanup; absent ⇒ the throwaway `/tmp`
+   * default. The injected workspace is re-bound RW after the `~/.comis` carve-out by
+   * `buildScopeArgs`, so it is writable in the jail while secrets stay masked.
+   */
+  readonly agentWorkspaceDir?: string;
   /**
    * Reaper caps — the closed `worker.{maxSessions,idleTtlMs,
    * stuckMs}` (schema-skills.ts) + the per-entry `limits.wallClockMs` (default 0
@@ -353,6 +362,9 @@ function getOrCreateTerminalRegistry(
     // Thread the SHARED per-agent caps instance into the reaper hooks so onCapForget
     // forgets the SAME cap-state map the tool deps consume (one instance for both).
     const reaperHooks = buildTerminalReaperHooks(agentId, { ...deps, caps });
+    // The agent's OWN workspace, captured for the allocator closure (const ⇒ TS narrows
+    // it to string inside the arrow). Present ⇒ sessions are PERSISTENT + agent-scoped.
+    const agentWs = deps.agentWorkspaceDir;
     registry = createTerminalSessionRegistry({
       spawnWorker: buildProductionSpawnWorker(resolveWorkerJsPath(deps.dataDir), deps.dataDir),
       logger: deps.skillsLogger,
@@ -363,6 +375,21 @@ function getOrCreateTerminalRegistry(
       // host ⇒ the worker fail-closes (no unjailed spawn).
       bwrapPath: deps.bwrapPath,
       egressControl: deps.egressControl,
+      // Agent-workspace persistence: root each session in the agent's OWN workspace
+      // (`<agentWorkspaceDir>/terminal`) with a NO-OP cleanup, so a driven session's
+      // work (e.g. a full GSD milestone's app) survives the session end and the agent
+      // sees it under its workspace — instead of a throwaway /tmp dir rm'd on kill.
+      // `buildScopeArgs` re-binds ONLY this subtree RW after the ~/.comis carve-out,
+      // so the agent's secrets + its other workspace files stay masked in the jail.
+      // Absent agentWorkspaceDir (test paths) ⇒ the ephemeral mkdtemp default stands.
+      ...(agentWs
+        ? {
+            allocateWorkspace: () => prepareAgentTerminalWorkspace(agentWs),
+            cleanupWorkspace: () => {
+              /* persistent: never rm the agent's own workspace on session end */
+            },
+          }
+        : {}),
       // Turn a worker backend-spawn failure (an `ok:false` create
       // reply, which the registry uses to flip the session to `lost`) into the
       // `terminal:spawn_failed` bus event. The registry already logged the WARN +
@@ -464,6 +491,14 @@ export interface TerminalWiringBaseDeps {
   readonly bwrapPath?: string;
   /** The daemon's injected TimerPort (drives the reaper sweep). */
   readonly timers?: TimerPort;
+  /**
+   * The resolved per-agent workspace dir (`workspaceDirs.get(agentId) ?? default`,
+   * the same dir the agent's read/write/exec tools use). When present, the registry
+   * roots each session in `<agentWorkspaceDir>/terminal` (PERSISTENT, no-op cleanup)
+   * instead of a throwaway `/tmp` dir — so a driven milestone's work survives the
+   * session and the agent can see it. Absent ⇒ the ephemeral default (test paths).
+   */
+  readonly agentWorkspaceDir?: string;
 }
 
 /**
@@ -501,6 +536,7 @@ export function buildTerminalWiringDeps(
     ...(base.egressControl ? { egressControl: base.egressControl } : {}),
     ...(base.bwrapPath ? { bwrapPath: base.bwrapPath } : {}),
     ...(base.timers ? { timers: base.timers } : {}),
+    ...(base.agentWorkspaceDir ? { agentWorkspaceDir: base.agentWorkspaceDir } : {}),
     ...(workerCaps ? { workerCaps } : {}),
     ...(config ? { config } : {}),
   };

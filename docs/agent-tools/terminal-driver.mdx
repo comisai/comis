@@ -121,6 +121,15 @@ Every driven session runs in a bwrap jail materializing the entry's `scope`:
 - **Untrusted output:** `terminal_session_read` redacts secrets and wraps the screen as untrusted external content -- a driven AI CLI can render attacker text, so the screen is treated as a prompt-injection vector, not trusted input.
 - **Audit:** every `send_text`/`send_key` is audited (`sessionId` + redacted payload); a run is reconstructable from logs + events.
 
+### Workspace and persistence
+
+A driven session runs in the **agent's own workspace**, not a throwaway temp dir, so its work **persists** across the session (and across worker restarts):
+
+- The session working directory is `<agent-workspace>/terminal` — `~/.comis/workspace/terminal` for the default agent, `~/.comis/workspace-<agentId>/terminal` for a named agent. A full, milestone-length run (e.g. driving Claude Code to build a project) leaves its output there after the session ends.
+- Because it lives **inside the agent's workspace**, the agent's other tools (`read`/`write`/`apply_patch`/`exec`, which operate on the same workspace) can see and continue the driven session's work.
+- The `~/.comis` carve-out still masks everything else under the data dir — the secret store, config, and the agent's *other* workspace files (identity, skills, memory). Only the `terminal` subtree is re-bound read-write inside the jail, so the driven child is confined to it (least-privilege) and can never reach Comis's secrets.
+- `filesystem: workspace` (the default) binds exactly this directory. The directory is created on first use and is world-writable so a jailed child running as a net-new uid (`uid: dedicated`) can write it; at `uid: daemon` the child owns it directly.
+
 ### Network modes
 
 - **`none`** -- deny-all egress. Best for shells/tools that don't need the network.

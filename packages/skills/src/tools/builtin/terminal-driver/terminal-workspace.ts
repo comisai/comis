@@ -31,7 +31,7 @@
  * @module
  */
 
-import { mkdtempSync, chmodSync, rmSync } from "node:fs";
+import { mkdtempSync, chmodSync, rmSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -61,6 +61,8 @@ export interface WorkspaceDeps {
   chmod?: (path: string, mode: number) => void;
   /** `rmSync(path,{recursive,force})` (default). Injected for unit tests. */
   rm?: (path: string) => void;
+  /** `mkdirSync(path,{recursive})` (default). Injected for unit tests; used by the durable agent-workspace allocator. */
+  mkdir?: (path: string) => void;
 }
 
 /** The allocated workspace + its derived cwd (the jail `--chdir` target). */
@@ -124,6 +126,33 @@ export function allocateSessionWorkspace(
   // would deny it). Safe: throwaway, isolated, per-session, removed on teardown.
   chmod(workspace, WORKSPACE_MODE);
   return { workspace };
+}
+
+/** The stable per-agent terminal-workspace subdir, under the agent's OWN workspace dir. */
+export const AGENT_TERMINAL_SUBDIR = "terminal";
+
+/**
+ * Prepare the PERSISTENT, agent-scoped terminal workspace: `<agentWorkspaceDir>/terminal`
+ * (a stable subdir of the agent's OWN workspace — the same dir the agent's read/write/exec
+ * tools operate on). Unlike {@link allocateSessionWorkspace} (a throwaway `mkdtemp` removed
+ * on kill), the daemon injects THIS as `allocateWorkspace` together with a NO-OP
+ * `cleanupWorkspace`, so a driven session's work (e.g. a full GSD milestone's TODO app)
+ * PERSISTS across session end and the agent can see it under its workspace.
+ *
+ * Created idempotently (recursive) so reuse across the agent's sessions is safe, and still
+ * world-rwx ({@link WORKSPACE_MODE}) so a jailed child running as a net-new uid (the
+ * `dedicated` default) is not denied write to the daemon-owned dir. Security rests on the
+ * jail, not the dir mode: `buildScopeArgs` re-binds ONLY this subtree RW after the
+ * `~/.comis` carve-out, so the agent's secrets + its other workspace files (skills/memory)
+ * stay masked — the child is confined to its terminal subtree (least-privilege).
+ */
+export function prepareAgentTerminalWorkspace(agentWorkspaceDir: string, deps: WorkspaceDeps = {}): string {
+  const mkdir = deps.mkdir ?? ((p: string) => void mkdirSync(p, { recursive: true }));
+  const chmod = deps.chmod ?? chmodSync;
+  const workspace = join(agentWorkspaceDir, AGENT_TERMINAL_SUBDIR);
+  mkdir(workspace);
+  chmod(workspace, WORKSPACE_MODE);
+  return workspace;
 }
 
 /**
