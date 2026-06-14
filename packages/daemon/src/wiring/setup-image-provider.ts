@@ -136,7 +136,8 @@ export function createImageProviderSelector(deps: {
       model,
       apiKey,
       timeoutMs: cfg.timeoutMs,
-      maxRetries: 1,
+      // maxRetries omitted — the adapter's `maxRetries ?? 1` default is the
+      // single source of truth (IN-02 183-REVIEW: avoid a duplicated magic 1).
       logger: deps.logger,
     });
   };
