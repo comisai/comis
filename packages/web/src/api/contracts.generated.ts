@@ -4110,6 +4110,12 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         },
         "size": {
           "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "reference_image": {
+          "type": "string"
         }
       },
       "additionalProperties": false

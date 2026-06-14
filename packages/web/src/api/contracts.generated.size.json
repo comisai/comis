@@ -1,6 +1,6 @@
 {
-  "totalMinified": 122555,
-  "totalGzipped": 11978,
+  "totalMinified": 122609,
+  "totalGzipped": 11991,
   "budget": {
     "minified": 126000,
     "gzipped": 38912
@@ -87,7 +87,7 @@
     "heartbeat.trigger": 358,
     "heartbeat.update": 1066,
     "image.analyze": 501,
-    "image.generate": 304,
+    "image.generate": 366,
     "link.process": 455,
     "mcp.connect": 1706,
     "mcp.disconnect": 519,
