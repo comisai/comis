@@ -16,6 +16,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   registerImagesApiProvider,
+  getImagesApiProvider,
   type AssistantImages,
 } from "@earendil-works/pi-ai";
 import type {
@@ -26,6 +27,7 @@ import type {
 } from "@comis/core";
 import { ok } from "@comis/shared";
 import { createImageProviderSelector } from "./setup-image-provider.js";
+import { registerComisImageProviders } from "../api/pi-image-adapter.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 
 /** A SecretManager exposing only the supplied keys. */
@@ -376,14 +378,16 @@ describe("createImageProviderSelector codex routing (CDX-01 wiring + CRED-01)", 
     expect(provider!.id).toBe("openai-codex");
   });
 
-  it("Test D: a resolved google provider STAYS honest-unavailable (no scope creep into 185)", async () => {
+  it("Test D (185 INVERTED): a resolved google provider now ROUTES to the pi-adapter (id \"google\", available)", () => {
     // provider:"google" → IMAGE_CAPABILITY["google"].imagesApi === "google-images",
-    // which is NOT wired in 184 — the not-yet-wired guard must still fire (the
-    // codex branch is keyed EXACTLY on "openai-codex-images").
+    // which 185 WIRES — the not-yet-wired guard no longer fires; the selector
+    // builds a createPiImageAdapter over GOOGLE_IMAGE_MODEL with the env key.
+    // The key is GOOGLE_API_KEY (the Plan-01 CRED-01 resolver fix — was
+    // GEMINI_API_KEY), so a GOOGLE_API_KEY-only google main resolves AVAILABLE.
     const selector = createImageProviderSelector({
       imageGenConfig: makeConfig({ provider: "google" }),
-      secretManager: mockSecretManager({ GEMINI_API_KEY: "g-123" }), // creds present
-      mainProviderId: "openai-codex",
+      secretManager: mockSecretManager({ GOOGLE_API_KEY: "g-123" }), // CRED-01 fixed key
+      mainProviderId: "google",
       legacyGetter: () => legacyAdapter(),
       logger: createMockLogger() as never,
       // A manager is present, but it must NOT route google to the codex adapter.
@@ -393,10 +397,10 @@ describe("createImageProviderSelector codex routing (CDX-01 wiring + CRED-01)", 
 
     const provider = selector();
     expect(provider).toBeDefined();
-    expect(provider!.id).not.toBe("openai-codex");
-    expect(provider!.isAvailable()).toBe(false);
-    const result = await provider!.execute({ prompt: "x" });
-    expect(result.ok).toBe(false);
+    // The pi-adapter id is the resolved provider "google" — NOT "openai-codex",
+    // NOT "unavailable", NOT "fal".
+    expect(provider!.id).toBe("google");
+    expect(provider!.isAvailable()).toBe(true);
   });
 
   it("Test E: no oauthManager (undefined) → codex credsAvailable is false → honest-unavailable, never a crash", async () => {
@@ -434,6 +438,119 @@ describe("createImageProviderSelector codex routing (CDX-01 wiring + CRED-01)", 
     const provider = selector();
     expect(provider).toBeDefined();
     expect(provider!.id).toBe("openrouter");
+  });
+});
+
+/**
+ * Phase 185 — openai-images / google-images selector wiring (PRV-01/02).
+ *
+ * The 185 keystone: the selector flips the 183/184 not-yet-wired guard for the
+ * two new apis so a resolved `openai`/`google` main builds a `createPiImageAdapter`
+ * (env-key creds via the FIXED `resolveImageApiKey`), NOT an honest-unavailable
+ * port. Distinct from codex (which needs the per-call OAuth bearer): openai/google
+ * use a static env key resolved once at boot. Pitfall 2 — key-auth `openai`
+ * (`openai-images`) and `openai-codex` (`openai-codex-images`) are DISTINCT
+ * transports and must not collide.
+ */
+describe("createImageProviderSelector openai/google routing (PRV-01/02 wiring keystone)", () => {
+  it("Test E: an openai main (OPENAI_API_KEY) routes to the pi-adapter (id \"openai\", available)", () => {
+    const selector = createImageProviderSelector({
+      imageGenConfig: makeConfig({ provider: "auto" }),
+      secretManager: mockSecretManager({ OPENAI_API_KEY: "sk-openai-123" }),
+      mainProviderId: "openai",
+      legacyGetter: () => legacyAdapter(),
+      logger: createMockLogger() as never,
+    });
+
+    const provider = selector();
+    expect(provider).toBeDefined();
+    // The pi-adapter id is OPENAI_IMAGE_MODEL.provider === "openai" — NOT the
+    // not-yet-wired "unavailable" guard, NOT "fal", NOT "openai-codex".
+    expect(provider!.id).toBe("openai");
+    expect(provider!.isAvailable()).toBe(true);
+  });
+
+  it("Test E2: an explicit openai-images / google-images model override is threaded onto the adapter (sel.model wins)", () => {
+    // The selector threads sel.model (the tool/config override) onto the
+    // hand-built model literal; the adapter id stays the provider (openai).
+    const selector = createImageProviderSelector({
+      imageGenConfig: makeConfig({ provider: "auto", model: "gpt-image-1.5" }),
+      secretManager: mockSecretManager({ OPENAI_API_KEY: "sk-openai-123" }),
+      mainProviderId: "openai",
+      legacyGetter: () => legacyAdapter(),
+      logger: createMockLogger() as never,
+    });
+
+    const provider = selector();
+    expect(provider).toBeDefined();
+    expect(provider!.id).toBe("openai");
+    expect(provider!.isAvailable()).toBe(true);
+  });
+
+  it("Test F (source guard): registerComisImageProviders registers BOTH new apis AND the selector builds the adapter (not the guard)", () => {
+    // Built-but-not-wired guard (the milestone's #1 recurring blocker): the two
+    // transports are only DONE when (1) getImagesApiProvider(api) round-trips
+    // after registerComisImageProviders() AND (2) the LIVE selector builds the
+    // adapter for each (NOT makeUnavailableImagePort).
+    registerComisImageProviders();
+    expect(getImagesApiProvider("openai-images")).toBeDefined();
+    expect(getImagesApiProvider("google-images")).toBeDefined();
+
+    // (2) the selector routes each to a built adapter whose id is the provider
+    // (NOT "unavailable").
+    const openai = createImageProviderSelector({
+      imageGenConfig: makeConfig({ provider: "openai" }),
+      secretManager: mockSecretManager({ OPENAI_API_KEY: "sk-openai-123" }),
+      mainProviderId: "openai",
+      legacyGetter: () => legacyAdapter(),
+      logger: createMockLogger() as never,
+    })();
+    expect(openai!.id).toBe("openai");
+    expect(openai!.id).not.toBe("unavailable");
+
+    const google = createImageProviderSelector({
+      imageGenConfig: makeConfig({ provider: "google" }),
+      secretManager: mockSecretManager({ GOOGLE_API_KEY: "g-123" }),
+      mainProviderId: "google",
+      legacyGetter: () => legacyAdapter(),
+      logger: createMockLogger() as never,
+    })();
+    expect(google!.id).toBe("google");
+    expect(google!.id).not.toBe("unavailable");
+  });
+
+  it("Test G (Pitfall 2): key-auth openai and openai-codex resolve DISTINCT transports — no collision", () => {
+    // An `openai` main resolves the env-key openai-images path and NEVER
+    // consults the OAuth manager …
+    const oauthHasCreds = vi.fn().mockReturnValue(true);
+    const openaiKeyAuth = createImageProviderSelector({
+      imageGenConfig: makeConfig({ provider: "auto" }),
+      secretManager: mockSecretManager({ OPENAI_API_KEY: "sk-openai-123" }),
+      mainProviderId: "openai",
+      legacyGetter: () => legacyAdapter(),
+      logger: createMockLogger() as never,
+      oauthManager: mockOauthManager({ hasCredentials: oauthHasCreds }),
+      oauthProfiles: { "openai-codex": "default" },
+    })();
+    expect(openaiKeyAuth!.id).toBe("openai");
+    // The env-key openai path must NOT trigger the codex hasCredentials seam.
+    expect(oauthHasCreds).not.toHaveBeenCalledWith("openai-codex");
+
+    // … and an `openai-codex` main resolves the OAuth codex path (id
+    // "openai-codex") with NO OPENAI_API_KEY in the SecretManager — proving the
+    // two are distinct (the codex bearer is OAuth, not the env key).
+    const codexHasCreds = vi.fn().mockReturnValue(true);
+    const codexAuth = createImageProviderSelector({
+      imageGenConfig: makeConfig({ provider: "auto" }),
+      secretManager: mockSecretManager({}), // NO OPENAI_API_KEY
+      mainProviderId: "openai-codex",
+      legacyGetter: () => legacyAdapter(),
+      logger: createMockLogger() as never,
+      oauthManager: mockOauthManager({ hasCredentials: codexHasCreds }),
+      oauthProfiles: { "openai-codex": "default" },
+    })();
+    expect(codexAuth!.id).toBe("openai-codex");
+    expect(codexHasCreds).toHaveBeenCalledWith("openai-codex");
   });
 });
 
