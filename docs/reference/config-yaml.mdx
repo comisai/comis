@@ -1733,6 +1733,41 @@ External service integrations for search, MCP servers, media processing, and aut
 |-----|------|---------|-------------|
 | `maxFileSizeMb` | `number` | `20` | Max image file size in MB |
 
+**Image Generation (integrations.media.imageGeneration)**
+
+Controls the `image_generate` tool. By default (`provider: auto`) image generation **follows the agent's main provider and reuses its credentials** — no image-specific key is needed when the main provider can generate images (e.g. an OpenRouter agent uses its `OPENROUTER_API_KEY`). When the main provider cannot generate images (e.g. Anthropic), the tool returns an honest "unavailable" with a hint to set `provider` explicitly — it never silently routes to a different paid provider.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `provider` | `enum` | `"auto"` | `auto` (follow the agent's main provider, reuse its credentials), or an explicit provider: `openrouter`, `openai-codex`, `openai`, `google`, `fal`. Explicit overrides follow-main. `fal`/`openai` are retained for existing configs. |
+| `model` | `string` | _(unset)_ | Provider-specific model ID; overrides the per-provider default (e.g. `black-forest-labs/flux.2-pro`). |
+| `safetyChecker` | `boolean` | `true` | Run the provider safety checker on generated images (only affects fal.ai's `enable_safety_checker`; OpenAI enforces server-side). |
+| `maxPerHour` | `number` | `10` | Max image generations per hour per agent (rate limit). |
+| `defaultSize` | `string` | `"1024x1024"` | Default image size when the tool call omits `size`. |
+| `timeoutMs` | `number` | `60000` | Generation timeout in ms. |
+| `fallbackChain` | `enum[]` | `[]` | Ordered providers consulted **only after** follow-main fails (same value set as `provider`). Each skipped entry is logged with a reason. |
+| `maxCostPerHourUsd` | `number` | _(unset)_ | Optional per-agent hourly cost ceiling. The field is accepted now; **enforcement lands in a later phase** — `maxPerHour` is the active cost control today. |
+
+In the common `auto` case Comis 183 currently wires the built-in **OpenRouter** image path (`provider: openrouter` + `OPENROUTER_API_KEY`); native Codex / OpenAI / Google image paths arrive in later phases.
+
+```yaml
+integrations:
+  media:
+    imageGeneration:
+      provider: auto        # follow the agent's main provider + reuse its credentials
+      maxPerHour: 10
+```
+
+```yaml
+integrations:
+  media:
+    imageGeneration:
+      provider: openrouter           # explicit — opt in to OpenRouter (needs OPENROUTER_API_KEY)
+      model: black-forest-labs/flux.2-pro
+      fallbackChain: [openrouter]    # consulted only if follow-main fails
+      maxCostPerHourUsd: 5           # accepted now; enforced in a later phase
+```
+
 **Vision (integrations.media.vision)**
 
 | Key | Type | Default | Description |

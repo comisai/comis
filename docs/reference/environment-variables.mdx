@@ -427,7 +427,7 @@ At least one provider key is required. Each provider is detected at startup; mis
 | `XAI_API_KEY` | xAI (Grok, search) | `xai-...` |
 | `TOGETHER_API_KEY` | Together AI | -- |
 | `CEREBRAS_API_KEY` | Cerebras | `csk-...` |
-| `OPENROUTER_API_KEY` | OpenRouter (multi-provider proxy) | `sk-or-...` |
+| `OPENROUTER_API_KEY` | OpenRouter (multi-provider proxy; also the `image_generate` opt-in path) | `sk-or-...` |
 
 ```bash
 # .env example: pick the providers you actually use
@@ -436,6 +436,8 @@ OPENAI_API_KEY=sk-...
 ```
 
 Some providers reuse a parent key for sub-services: OpenAI Whisper STT and DALL-E image-gen use `OPENAI_API_KEY`; Groq Whisper uses `GROQ_API_KEY`; Grok search uses `XAI_API_KEY`. See [Models](/agents/models) for the wired catalog.
+
+**Image generation reuses the main provider's key.** With the default `integrations.media.imageGeneration.provider: auto`, the `image_generate` tool follows the agent's main provider and reuses **its** credentials — so in the common case **no image-specific key is needed**. To opt in to OpenRouter for image generation, set `provider: openrouter` and supply `OPENROUTER_API_KEY`; `FAL_KEY` is still used for the explicit `provider: fal` path.
 
 ## Voice and Media
 

@@ -13,7 +13,7 @@ icon: "photo-film"
 | Tool | What It Does | Provider Categories |
 |------|--------------|--------------------|
 | `image_analyze` | Analyze images using AI vision (file, URL, base64, or attachment URL) | Vision (Anthropic, OpenAI, Google) |
-| `image_generate` | Generate an image from a text prompt and deliver it to the current channel | Image gen (FAL, OpenAI DALL-E) |
+| `image_generate` | Generate an image from a text prompt and deliver it to the current channel | Image gen (follows the agent's main provider by default; OpenRouter / fal opt-in) |
 | `tts_synthesize` | Generate spoken audio from text -- returns a workspace file path | TTS (OpenAI, ElevenLabs, Edge) |
 | `transcribe_audio` | Convert speech to text | STT (OpenAI Whisper, Groq, Deepgram) |
 | `describe_video` | Extract key frames and describe video content using vision | Vision (frame-by-frame) |
@@ -158,7 +158,9 @@ For per-provider setup, model defaults, and configuration, see the [Media & Voic
   </Accordion>
 
   <Accordion title="image_generate -- Generate images from text prompts" icon="image">
-    Use `image_generate` to create images from text descriptions. Available only when an image generation provider is configured (API key present). The generated image is delivered directly to the current channel via the daemon.
+    Use `image_generate` to create images from text descriptions. The generated image is delivered directly to the current channel via the daemon.
+
+    By default (`integrations.media.imageGeneration.provider: auto`) image generation **follows the agent's main provider and reuses its credentials** -- no image-specific key is needed when the main provider can generate images. If the agent's main provider cannot generate images (e.g. Anthropic) and no explicit `provider` is set, the tool returns an honest "unavailable" with a hint to set `integrations.media.imageGeneration.provider` -- it never silently routes to a different paid provider. To opt in to OpenRouter, set `provider: openrouter` and supply `OPENROUTER_API_KEY`. Native Codex / OpenAI / Google image paths arrive in later phases.
 
     | Parameter | Type | Required | Description |
     |-----------|------|----------|-------------|
@@ -187,7 +189,7 @@ Media tools route to providers based on the credentials present in your secret s
 | Vision (`image_analyze`, `describe_video`) | OpenAI (gpt-4o), Anthropic (claude-sonnet-4.5), Google Gemini | OpenAI -> Anthropic -> Google (first available) | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY` (at least one) |
 | TTS (`tts_synthesize`) | OpenAI TTS, ElevenLabs, Edge | Configured order; `auto-tts` heuristic decides when to use voice | `OPENAI_API_KEY`, `ELEVENLABS_API_KEY` (Edge is free) |
 | STT (`transcribe_audio`) | OpenAI Whisper (gpt-4o-mini-transcribe), Groq Whisper, Deepgram nova-3 | Fallback chain in declared order | `OPENAI_API_KEY`, `GROQ_API_KEY`, `DEEPGRAM_API_KEY` (at least one) |
-| Image generation (`image_generate`) | FAL (flux-pro), OpenAI DALL-E 3 | First with credentials present | `FAL_KEY`, `OPENAI_API_KEY` (optional -- feature disabled silently if missing) |
+| Image generation (`image_generate`) | Follows the agent's main provider (`auto`); explicit `openrouter` / `fal` / `openai` | `auto` = the agent's main provider (reuses its key); else the explicit `provider` | None in the `auto` case (reuses the main provider's key); `OPENROUTER_API_KEY` for the OpenRouter opt-in; `FAL_KEY` for explicit `fal`. Honest "unavailable" (not silent) if the main provider can't generate images and no `provider` is set. |
 | Document extraction (`extract_document`) | Local pdf.js + CSV / text decoders | n/a | None (uses FFmpeg for some audio metadata) |
 
 ### Cost notes
