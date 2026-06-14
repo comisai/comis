@@ -20,15 +20,30 @@ import type { ImagesModel, ProviderImagesOptions } from "@earendil-works/pi-ai";
 // ---------------------------------------------------------------------------
 // Mock the openai MODULE — no real key, no network. The default export is the
 // OpenAI client constructor; `toFile` is a named export from the package root.
-// `generate`/`edit` are controllable vi.fn()s captured per test.
+// `generate`/`edit` are controllable vi.fn()s captured per test. The mocks are
+// declared via vi.hoisted() so the (hoisted) vi.mock factory can close over
+// them — a plain top-level const would be a TDZ ReferenceError at hoist time.
 // ---------------------------------------------------------------------------
-const generate = vi.fn();
-const edit = vi.fn();
-const ctor = vi.fn(() => ({ images: { generate, edit } }));
-const toFile = vi.fn().mockResolvedValue({ __isFile: true });
+const { generate, edit, ctor, toFile, MockOpenAI } = vi.hoisted(() => {
+  const generate = vi.fn();
+  const edit = vi.fn();
+  // `ctor` records the constructor args (asserted: constructed with the apiKey).
+  const ctor = vi.fn();
+  // A class default export (mirrors the in-repo @google/genai mock in
+  // gemini-cache-manager.test.ts) so `new OpenAI(...)` constructs cleanly under
+  // vitest's ESM default-interop.
+  class MockOpenAI {
+    images = { generate, edit };
+    constructor(args: unknown) {
+      ctor(args);
+    }
+  }
+  const toFile = vi.fn();
+  return { generate, edit, ctor, toFile, MockOpenAI };
+});
 
 vi.mock("openai", () => ({
-  default: ctor,
+  default: MockOpenAI,
   toFile,
 }));
 
