@@ -317,6 +317,62 @@ describe("createPiImageAdapter ImagesOptions passthrough (PI-03)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Task 1 (185-03) — IN-01: referenceImage → ImagesContext.input append
+// ---------------------------------------------------------------------------
+
+describe("createPiImageAdapter ImagesContext.input (IN-01 reference append)", () => {
+  it("appends the reference ImageContent SECOND when input.referenceImage is present (Test H)", async () => {
+    let capturedCtx: ImagesContext | undefined;
+    registerImagesApiProvider({
+      api: TEST_API,
+      generateImages: async (_model, ctx) => {
+        capturedCtx = ctx;
+        return imagesResult({
+          stopReason: "stop",
+          output: [{ type: "image", data: PNG_B64, mimeType: "image/png" }],
+        });
+      },
+    });
+    const adapter = createPiImageAdapter({ model: makeTestModel(), logger: makeMockLogger() });
+
+    const result = await adapter.execute({
+      prompt: "a fox",
+      referenceImage: { data: PNG_B64, mimeType: "image/png" },
+    });
+
+    expect(result.ok).toBe(true);
+    // The text element is FIRST, the reference image SECOND (edit/img2img order).
+    expect(capturedCtx!.input).toEqual([
+      { type: "text", text: "a fox" },
+      { type: "image", data: PNG_B64, mimeType: "image/png" },
+    ]);
+  });
+
+  it("keeps input EXACTLY [{type:text}] when no referenceImage (no-regression — Pitfall 3, Test I)", async () => {
+    // The ImagesContext.input build is SHARED with the openrouter built-in +
+    // codex transports. A text-only request must stay byte-identical to today
+    // so those paths cannot regress.
+    let capturedCtx: ImagesContext | undefined;
+    registerImagesApiProvider({
+      api: TEST_API,
+      generateImages: async (_model, ctx) => {
+        capturedCtx = ctx;
+        return imagesResult({
+          stopReason: "stop",
+          output: [{ type: "image", data: PNG_B64, mimeType: "image/png" }],
+        });
+      },
+    });
+    const adapter = createPiImageAdapter({ model: makeTestModel(), logger: makeMockLogger() });
+
+    const result = await adapter.execute({ prompt: "a fox" });
+
+    expect(result.ok).toBe(true);
+    expect(capturedCtx!.input).toEqual([{ type: "text", text: "a fox" }]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Task 2 — PI-04: built-in openrouter-images path end-to-end (MOCKED in CI)
 // + CRED-01 resolution half (key via SecretManager, no image-specific secret)
 // ---------------------------------------------------------------------------
