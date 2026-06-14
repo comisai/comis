@@ -1265,6 +1265,57 @@ describe("createImageHandlers — OBS-04 trajectory direct-emit", () => {
     }
   });
 
+  // WR-03 (186-REVIEW): the count rate-limit early-return previously emitted NO
+  // terminal image.* record and no WARN — leaving only an orphan image.requested
+  // that accumulateImageRecord seeds as outcome:"failed" with NO errorKind
+  // (indistinguishable from a generic abort), while the structurally-identical
+  // cost-ceiling block DOES emit image.failed{quota_exceeded} + a WARN. Make them
+  // consistent: the rate-limit block emits a terminal image.failed + a WARN
+  // carrying errorKind + a hint naming the maxPerHour knob (§2.7).
+  it("WR-03: the rate-limit early-return emits image.failed{quota_exceeded} + a WARN with a hint", async () => {
+    const { trajectoryRegistry, recordEvent } = makeMockTrajectoryRegistry();
+    const deps = createMockDeps({
+      trajectoryRegistry,
+      rateLimiter: { tryAcquire: vi.fn().mockReturnValue(false), reset: vi.fn() },
+      provider: {
+        id: "openai",
+        isAvailable: () => true,
+        execute: vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("img"), mimeType: "image/png" })),
+      },
+      resolveAgentMainProvider: vi.fn().mockReturnValue({ providerId: "openai" }),
+    });
+    const handlers = createImageHandlers(deps);
+
+    const result = await handlers["image.generate"]!({
+      _agentId: "agent-rl",
+      _callerSessionKey: SESSION_KEY,
+      prompt: "a fox",
+    });
+
+    expect((result as { success: boolean }).success).toBe(false);
+    expect(deps.provider.execute).not.toHaveBeenCalled();
+
+    // A terminal image.failed is recorded (no orphan requested-only turn).
+    const types = recordEvent.mock.calls.map((c) => c[0]);
+    expect(types).toContain("image.requested");
+    expect(types).toContain("image.failed");
+    const failed = recordEvent.mock.calls.find((c) => c[0] === "image.failed")![1] as Record<string, unknown>;
+    // The rate-limit block speaks the same domain vocabulary as the cost-ceiling
+    // block (a quota-style block) — quota_exceeded on the trajectory event.
+    expect(failed.errorKind).toBe("quota_exceeded");
+    expect(failed.provider).toBe("openai");
+
+    // OBS-02: a WARN logs the rate limit with the closed-union log errorKind +
+    // a hint naming the maxPerHour knob (mirrors the cost-ceiling block).
+    const warn = (deps.logger.warn as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c) => (c[0] as { step?: string }).step === "image_rate_limit",
+    );
+    expect(warn).toBeDefined();
+    expect((warn![0] as { errorKind?: string }).errorKind).toBe("resource");
+    expect((warn![0] as { imageErrorKind?: string }).imageErrorKind).toBe("quota_exceeded");
+    expect((warn![0] as { hint?: string }).hint).toMatch(/maxPerHour/);
+  });
+
   it("records image.failed with errorKind on a provider error", async () => {
     const { trajectoryRegistry, recordEvent } = makeMockTrajectoryRegistry();
     const deps = createMockDeps({

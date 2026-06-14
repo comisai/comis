@@ -251,8 +251,30 @@ export function createImageHandlers(
         return { success: false, error: "Missing required parameter: prompt" };
       }
 
-      // Rate limit check
+      // Rate limit check. WR-03 (186-REVIEW): mirror the cost-ceiling block below
+      // — a count rate-limit block is a quota-style guard, so it must be just as
+      // diagnosable. Emit a WARN (closed-union log errorKind + the domain
+      // imageErrorKind + a hint naming maxPerHour) AND a terminal
+      // image.failed{quota_exceeded} before returning, so no classified failure
+      // returns without a logged errorKind + a diagnosable obs record (§2.7), and
+      // the reconstruction never shows an orphan requested-only turn whose
+      // failed-by-default outcome is an artifact rather than a real classification.
       if (!deps.rateLimiter.tryAcquire(agentId)) {
+        const hint =
+          `Image generation rate limit reached (max ${deps.config.maxPerHour} ` +
+          "per hour); raise integrations.media.imageGeneration.maxPerHour or wait " +
+          "for the hour window to reset.";
+        deps.logger.warn(
+          {
+            agentId,
+            step: "image_rate_limit",
+            errorKind: IMAGE_ERR_TO_LOG.quota_exceeded,
+            imageErrorKind: "quota_exceeded" as const,
+            hint,
+          },
+          "Image generation blocked: per-hour count rate limit reached",
+        );
+        emit("image.failed", { errorKind: "quota_exceeded", provider: deps.provider.id });
         return {
           success: false,
           error: `Rate limit exceeded: max ${deps.config.maxPerHour} images per hour`,
