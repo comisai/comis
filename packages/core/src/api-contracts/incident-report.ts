@@ -304,6 +304,14 @@ export interface IncidentFailure {
  * misclassification signal + offending tool/token). Derived from the heuristic
  * predicates in 153-PATTERNS.md ("678 / 503 heuristic derivation").
  */
+// @optional-field-count: 13 — this is the obs.explain signal accumulator, the
+// single shared contract every Glass-Box heuristic (Phase 153/175/177/180/186)
+// reads. Each optional field is a presence-conditional signal aggregated from a
+// distinct trajectory record class (contextBudget / promptTimeout /
+// toolSchemaUnsupported / recall / image / channel / agentId / …) — absent when
+// that record class did not occur. Clustering them would couple unrelated
+// heuristics; the read sites already key on each independently. Grows by one
+// per Glass-Box signal class (image added in 186 — OBS-03/OBS-04).
 export interface IncidentSignals {
   sessionKey: string;
   /** W8: agentId from the trajectory record envelopes (first seen). Fallback for

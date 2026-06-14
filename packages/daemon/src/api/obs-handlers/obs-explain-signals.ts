@@ -37,6 +37,8 @@ import {
   asStringArray,
   relativizeDiskPath,
   previewAndDigest,
+  accumulateImageRecord,
+  type IncidentImageSignal,
 } from "./obs-explain-signals-fields.js";
 
 // ---------------------------------------------------------------------------
@@ -89,18 +91,11 @@ interface Acc {
   recallZeroHits: number;
   lastRecall?: { lanes: number; finalCount: number; rerankerAvailable: boolean };
   /** OBS-03/OBS-04 (186): the image-generation turn reconstructed from the
-   *  session's image.* records. The terminal image.generated / image.failed
-   *  record sets `outcome` + cost/model/errorKind; image.delivered flips
-   *  `delivered`. Provider comes from the first image record that carries one.
-   *  Undefined until an image.* record is seen (presence-conditional output). */
-  image?: {
-    provider: string;
-    model?: string;
-    costUsd?: number;
-    outcome: "ok" | "failed";
-    errorKind?: string;
-    delivered: boolean;
-  };
+   *  session's image.* records (folded by `accumulateImageRecord`). The terminal
+   *  image.generated / image.failed record sets `outcome` + cost/model/errorKind;
+   *  image.delivered flips `delivered`. Undefined until an image.* record is seen
+   *  (presence-conditional output). */
+  image?: IncidentImageSignal;
   /** W8: event-shape tool.result toolCallIds already counted (dedup — the same
    *  call must not count twice if its result event is duplicated across sources). */
   seenToolResultCallIds: Set<string>;
@@ -333,54 +328,16 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
       return;
     }
     // OBS-03/OBS-04 (186): the image-generation lifecycle. The handler direct-
-    // emits these content-free records; the assembler reconstructs the image
-    // turn so `comis explain` surfaces provider/model/costUsd/outcome (Route a —
-    // the cost rides image.generated, NOT the executor sessionEnd cost). The
-    // terminal generated/failed record sets `outcome`; image.delivered flips
-    // `delivered`. ids/labels/numbers only — the payloads carry no body.
-    case "image.requested": {
-      const provider = asString(data.provider);
-      // Seed the image block on the FIRST image record (so a turn that fails
-      // before generated/failed still surfaces an image block with the
-      // requested provider). Outcome stays "failed" as the conservative default
-      // until image.generated upgrades it (a turn with only `requested` ended
-      // without a success record — degraded/aborted mid-flight).
-      acc.image ??= { provider: provider ?? "", outcome: "failed", delivered: false };
-      if (provider !== undefined && acc.image.provider.length === 0) acc.image.provider = provider;
+    // emits these content-free records; `accumulateImageRecord` folds each into
+    // the reconstructed image turn so `comis explain` surfaces provider/model/
+    // costUsd/outcome (Route a — the cost rides image.generated, NOT the executor
+    // sessionEnd cost). ids/labels/numbers only — the payloads carry no body.
+    case "image.requested":
+    case "image.generated":
+    case "image.delivered":
+    case "image.failed":
+      acc.image = accumulateImageRecord(acc.image, type, data);
       return;
-    }
-    case "image.generated": {
-      const provider = asString(data.provider);
-      const prev = acc.image;
-      acc.image = {
-        provider: provider ?? prev?.provider ?? "",
-        outcome: "ok",
-        delivered: prev?.delivered ?? false,
-        ...(asString(data.model) !== undefined ? { model: asString(data.model) } : {}),
-        ...(asNumber(data.costUsd) !== undefined ? { costUsd: asNumber(data.costUsd) } : {}),
-      };
-      return;
-    }
-    case "image.delivered": {
-      acc.image ??= { provider: "", outcome: "ok", delivered: false };
-      acc.image.delivered = data.delivered === true;
-      return;
-    }
-    case "image.failed": {
-      const provider = asString(data.provider);
-      const errorKind = asString(data.errorKind);
-      const prev = acc.image;
-      // A failure record is terminal for the turn's outcome. Preserve a prior
-      // delivered flag (defensive — delivery precedes a late failure only in
-      // pathological orderings; the common path is failed-then-nothing).
-      acc.image = {
-        provider: provider ?? prev?.provider ?? "",
-        outcome: "failed",
-        delivered: prev?.delivered ?? false,
-        ...(errorKind !== undefined ? { errorKind } : {}),
-      };
-      return;
-    }
     default:
       // Unknown event type — ignore (forward-compatible).
       return;

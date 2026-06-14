@@ -17,6 +17,11 @@
  */
 
 import { fingerprint, sanitizeLogString } from "@comis/core";
+import type { IncidentSignals } from "@comis/core";
+
+/** The reconstructed image-generation turn (the non-optional shape of
+ *  `IncidentSignals["image"]`). */
+export type IncidentImageSignal = NonNullable<IncidentSignals["image"]>;
 
 /** Hard cap on every `errorPreview` — the long body is never carried whole. */
 const MAX_ERROR_PREVIEW = 200;
@@ -95,4 +100,54 @@ export function previewAndDigest(errorText: string | undefined): {
     ? "[redacted:untrusted-content digest:" + resultDigest + "]"
     : capped;
   return { errorPreview, resultDigest, resultBytes };
+}
+
+/**
+ * OBS-03/OBS-04 (186): fold one `image.*` trajectory record into the
+ * reconstructed image-generation turn (extracted from `toIncidentSignals` to
+ * keep that module ≤500). Pure: takes the prior image state + the record's
+ * `type`/`data` and returns the new state. The terminal `image.generated` /
+ * `image.failed` record sets `outcome` (+ cost/model on success, errorKind on
+ * failure — the cost rides image.generated, Route a); `image.delivered` flips
+ * `delivered`; `image.requested` seeds a conservative `outcome:"failed"` block
+ * so a turn aborting before a terminal record still surfaces. Returns `prev`
+ * unchanged for a non-image type. Content-free reads (ids/labels/numbers only).
+ */
+export function accumulateImageRecord(
+  prev: IncidentImageSignal | undefined,
+  type: string,
+  data: Record<string, unknown>,
+): IncidentImageSignal | undefined {
+  switch (type) {
+    case "image.requested": {
+      const provider = asString(data.provider);
+      const next: IncidentImageSignal = prev ?? { provider: provider ?? "", outcome: "failed", delivered: false };
+      if (provider !== undefined && next.provider.length === 0) next.provider = provider;
+      return next;
+    }
+    case "image.generated":
+      return {
+        provider: asString(data.provider) ?? prev?.provider ?? "",
+        outcome: "ok",
+        delivered: prev?.delivered ?? false,
+        ...(asString(data.model) !== undefined ? { model: asString(data.model) } : {}),
+        ...(asNumber(data.costUsd) !== undefined ? { costUsd: asNumber(data.costUsd) } : {}),
+      };
+    case "image.delivered": {
+      const next: IncidentImageSignal = prev ?? { provider: "", outcome: "ok", delivered: false };
+      next.delivered = data.delivered === true;
+      return next;
+    }
+    case "image.failed": {
+      const errorKind = asString(data.errorKind);
+      return {
+        provider: asString(data.provider) ?? prev?.provider ?? "",
+        outcome: "failed",
+        delivered: prev?.delivered ?? false,
+        ...(errorKind !== undefined ? { errorKind } : {}),
+      };
+    }
+    default:
+      return prev;
+  }
 }
