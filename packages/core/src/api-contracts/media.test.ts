@@ -507,6 +507,36 @@ describe("media + image domain contracts", () => {
     ).not.toThrow();
   });
 
+  it("image.generate: request accepts optional model + reference_image, surviving typed (CFG-02, Pitfall 5)", () => {
+    // The handler does `ImageGenerateContract.request.parse(userParams)`; without
+    // growing the request, params.model/params.reference_image are typed
+    // `undefined` to the handler even though Zod passes the keys at runtime. This
+    // pins that the two new fields are part of the contract AND survive parsing.
+    const parsed = ImageGenerateContract.request.parse({
+      prompt: "a fox",
+      model: "gpt-image-1",
+      reference_image: "ws/ref.png",
+    });
+    expect(parsed.model).toBe("gpt-image-1");
+    expect(parsed.reference_image).toBe("ws/ref.png");
+  });
+
+  it("image.generate: request is additive — prompt-only leaves model/reference_image undefined", () => {
+    // Existing callers (no model / no reference_image) are unaffected.
+    const parsed = ImageGenerateContract.request.parse({ prompt: "a fox" });
+    expect(parsed.model).toBeUndefined();
+    expect(parsed.reference_image).toBeUndefined();
+  });
+
+  it("image.generate: model + reference_image accept only strings", () => {
+    expect(() =>
+      ImageGenerateContract.request.parse({ model: 123 }),
+    ).toThrow();
+    expect(() =>
+      ImageGenerateContract.request.parse({ reference_image: 123 }),
+    ).toThrow();
+  });
+
   it("image.generate: response is a loose record (3 delivery variants)", () => {
     // failure variant
     expect(() =>
