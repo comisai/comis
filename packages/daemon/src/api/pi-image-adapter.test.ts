@@ -223,6 +223,73 @@ describe("createPiImageAdapter execute()", () => {
 });
 
 // ---------------------------------------------------------------------------
+// OBS-03 (Phase 186) — toImageGenOutput fills the cost seam:
+// costUsd ← AssistantImages.usage.cost.total, model ← res.model,
+// provider ← res.provider (additive ImageGenOutput fields). Absent usage must
+// NOT throw (usage? is optional on AssistantImages) — costUsd is undefined.
+// ---------------------------------------------------------------------------
+
+describe("createPiImageAdapter OBS-03 cost mapping", () => {
+  it("maps usage.cost.total → costUsd, res.model → model, res.provider → provider", async () => {
+    registerImagesApiProvider({
+      api: TEST_API,
+      generateImages: async () => ({
+        api: TEST_API,
+        provider: "openai",
+        model: "gpt-image-1",
+        output: [{ type: "image", data: PNG_B64, mimeType: "image/png" }],
+        stopReason: "stop",
+        timestamp: Date.now(),
+        usage: {
+          input: 0,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 0,
+          cost: { input: 0, output: 0.04, cacheRead: 0, cacheWrite: 0, total: 0.04 },
+        },
+      } satisfies AssistantImages),
+    });
+    const adapter = createPiImageAdapter({ model: makeTestModel(), logger: makeMockLogger() });
+
+    const result = await adapter.execute({ prompt: "a cat" });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.costUsd).toBe(0.04);
+    expect(result.value.model).toBe("gpt-image-1");
+    expect(result.value.provider).toBe("openai");
+    // The buffer/mimeType mapping is unchanged (additive widen).
+    expect(result.value.mimeType).toBe("image/png");
+    expect(result.value.buffer.toString()).toBe("PNGDATA");
+  });
+
+  it("leaves costUsd undefined (no throw) when usage is absent", async () => {
+    // AssistantImages.usage is optional — a provider that reports no usage must
+    // map to costUsd:undefined, never throw on `res.usage?.cost.total`.
+    registerFakeReturning(
+      imagesResult({
+        provider: "google",
+        model: "gemini-2.5-flash-image",
+        stopReason: "stop",
+        output: [{ type: "image", data: PNG_B64, mimeType: "image/png" }],
+        // usage deliberately omitted (imagesResult does not set it).
+      }),
+    );
+    const adapter = createPiImageAdapter({ model: makeTestModel(), logger: makeMockLogger() });
+
+    const result = await adapter.execute({ prompt: "a cat" });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.costUsd).toBeUndefined();
+    // model/provider still ride through from AssistantImages (always present).
+    expect(result.value.model).toBe("gemini-2.5-flash-image");
+    expect(result.value.provider).toBe("google");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Task 2 — PI-02: registerComisImageProviders + registry round-trip
 // ---------------------------------------------------------------------------
 
