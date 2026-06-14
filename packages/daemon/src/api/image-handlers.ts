@@ -39,6 +39,7 @@ import {
 import { guessMimeFromExtension, detectMimeFromMagicBytes } from "../wiring/daemon-utils.js";
 import { fetchImageBytesSsrfSafe } from "./ssrf-image-fetch.js";
 import type { AttachmentPayload } from "@comis/core";
+import type { TrajectoryEventType } from "@comis/observability";
 import type { MediaApiDeps, RpcHandler } from "./types.js";
 
 /** Dependencies required by image generation RPC handlers.
@@ -183,6 +184,26 @@ export function createImageHandlers(
         { agentId, mainProvider: main.providerId, step: "image_resolve" },
         "Image request resolved main provider",
       );
+
+      // OBS-04 (§2.7): direct-emit the image.* lifecycle to the per-session
+      // trajectory recorder (the daemon RPC context has NO eventBus bridge — the
+      // comis-session-manager.ts:298 precedent). Resolve the recorder by the
+      // dispatcher-injected `_callerSessionKey`. `getRecorder?.()` no-ops to a
+      // non-crash when the registry is absent (a boot mode without one) or
+      // returns null/undefined (env-disabled session) — A1: the recorder is OPEN
+      // during the tool call (the executor turn is awaiting this result). `emit`
+      // records ONLY when a non-null recorder resolved. Payloads are content-free
+      // (ids/labels/costUsd/sizeBytes/outcome/errorKind — never the prompt, the
+      // image bytes, a key, or a raw provider message; T-186-08).
+      const sessionKey = rawParams._callerSessionKey as string | undefined;
+      const recorder =
+        sessionKey && deps.trajectoryRegistry
+          ? deps.trajectoryRegistry.getRecorder?.(sessionKey)
+          : undefined;
+      const emit = (type: TrajectoryEventType, data: Record<string, unknown>): void => {
+        if (recorder != null) recorder.recordEvent(type, data);
+      };
+      emit("image.requested", { provider: deps.provider.id, mainProvider: main.providerId });
       // WR-05 (184-REVIEW): `main.providerId` is the CALLER's provider, resolved
       // PER-REQUEST for obs/lockstep only. But `deps.provider` is a SINGLE
       // boot-time-selected port built from the DEFAULT agent's OAuth manager +
@@ -304,6 +325,15 @@ export function createImageHandlers(
       });
 
       if (!result.ok) {
+        // OBS-04: record the provider-error failure (errorKind + provider only —
+        // NEVER the raw provider message; T-186-08). The typed ImageGenError
+        // carries `imageErrorKind`; a plain Error has none → "error" fallback.
+        const imageErrorKind =
+          (result.error as { imageErrorKind?: unknown }).imageErrorKind;
+        emit("image.failed", {
+          errorKind: typeof imageErrorKind === "string" ? imageErrorKind : "error",
+          provider: deps.provider.id,
+        });
         // RES-03 honest-unavailable: forward the typed error's knob-naming hint
         // when present (e.g. an image-incapable main provider). The provider
         // selector (setup-image-provider.ts) returns a port whose execute()
@@ -340,8 +370,52 @@ export function createImageHandlers(
           },
           "Image persistence failed",
         );
+        // OBS-04: the persist failure is a classified handler failure — record
+        // image.failed (errorKind only, never the error body). No image.generated
+        // (no durable artifact); the handler falls through to the base64 fallback.
+        emit("image.failed", { errorKind: "network", provider: deps.provider.id });
         // Fall through to the base64 fallback below (no delivery).
       } else {
+        // OBS-04: the image was generated AND durably persisted — record
+        // image.generated carrying costUsd (OBS-03 Route a — the binding cost the
+        // comis-explain reconstruction reads), model, the durable sizeBytes, and
+        // the ok outcome. Optional fields ride the widened ImageGenOutput (186-02)
+        // and are omitted when absent (no undefined keys).
+        emit("image.generated", {
+          provider: deps.provider.id,
+          outcome: "ok",
+          ...(result.value.model !== undefined ? { model: result.value.model } : {}),
+          ...(result.value.costUsd !== undefined ? { costUsd: result.value.costUsd } : {}),
+          sizeBytes: persisted.value.sizeBytes,
+        });
+        // OBS-03 (optional secondary): a synthetic observability:token_usage so
+        // the image cost reaches sharedCostTracker + the token_usage SQLite table
+        // + billing (the BINDING cost is the trajectory image.generated above —
+        // Route a). tokens are all 0 (no LLM tokens for an image RPC); every
+        // token_usage subscriber SUMS cost.total / tokens.total (verified: no
+        // divide-by-tokens — token-tracker.ts:191 guards `> 0`), so a 0-token
+        // event is safe (A3 / T-186-10). Emitted only on a non-zero costUsd.
+        if (deps.eventBus && (result.value.costUsd ?? 0) > 0) {
+          deps.eventBus.emit("observability:token_usage", {
+            timestamp: systemNowMs(),
+            traceId: sessionKey ?? "",
+            agentId,
+            channelId: (rawParams._callerChannelId as string | undefined) ?? "",
+            executionId: "",
+            provider: result.value.provider ?? deps.provider.id,
+            model: result.value.model ?? "",
+            tokens: { prompt: 0, completion: 0, total: 0 },
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: result.value.costUsd ?? 0 },
+            latencyMs: systemNowMs() - startMs,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+            sessionKey: sessionKey ?? "",
+            savedVsUncached: 0,
+            cacheEligible: false,
+            warmupTurn: false,
+            pendingCacheInvestmentUsd: 0,
+          });
+        }
         // Direct channel delivery via adapter.sendAttachment, using the PERSISTED
         // durable path (DEL-01 — no OS temp-file write, no delete, no cleanup).
         const channelType = rawParams._callerChannelType as string | undefined;
@@ -382,6 +456,9 @@ export function createImageHandlers(
               if (systemGetEnv("NODE_ENV") !== "production") {
                 ImageGenerateContract.response.parse(deliveredResult);
               }
+              // OBS-04: the image reached the channel — record image.delivered
+              // (channel TYPE + delivered boolean only, never the channel id).
+              emit("image.delivered", { channelType, delivered: true });
               // OBS-01 (§2.7): the FULL completion field set on the
               // channel-delivered path. imageProvider = the EXECUTING port
               // (deps.provider.id); model/costUsd ride the widened ImageGenOutput

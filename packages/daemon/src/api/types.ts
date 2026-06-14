@@ -582,6 +582,22 @@ export interface MediaApiDeps {
       buffer: Buffer,
       opts: { mediaKind: "image"; mimeType: string },
     ) => Promise<import("@comis/shared").Result<import("@comis/skills/tools").PersistedFile, Error>>;
+    /** OBS-04 (186): the per-session trajectory recorder registry. The handler
+     *  resolves the recorder by `_callerSessionKey` and direct-emits the 4
+     *  image.* lifecycle events via `getRecorder(sessionKey)?.recordEvent(...)`
+     *  (the comis-session-manager.ts:298 precedent — the daemon RPC context has
+     *  NO eventBus bridge). Optional: `getRecorder?.()` no-ops to a non-crash on
+     *  a boot mode without a registry, and a null recorder is skipped. Read off
+     *  the BootContext `c.trajectoryRegistry` (already a field). */
+    trajectoryRegistry?: import("@comis/observability").SessionTrajectoryHandleRegistry;
+    /** OBS-03 (186, optional secondary): the typed event bus. After a successful
+     *  generation with a non-zero costUsd the handler emits a synthetic
+     *  `observability:token_usage` (tokens all 0, cost.total = costUsd) so the
+     *  image cost reaches sharedCostTracker + the token_usage SQLite table +
+     *  billing — the BINDING OBS-03 assertion is the trajectory `image.generated`
+     *  cost-carry (Route a), this is the secondary. Same shape as the
+     *  MemoryApiDeps / WorkspaceApiDeps eventBus so the slices unify. */
+    eventBus?: AppContainer["eventBus"];
   };
   /** media-handlers reads deps.workspaceDirs / deps.defaultWorkspaceDir
    *  / deps.defaultAgentId for STT / vision / link-processing file paths.

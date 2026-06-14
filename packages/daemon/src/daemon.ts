@@ -929,7 +929,7 @@ function buildRpcDispatchDeps(deps: {
           logger: c.skillsLogger,
           getChannelAdapter: (channelType: string) => c.adaptersByType.get(channelType),
           resolveAgentMainProvider: resolveAgentMainProviderFor, // RES-01
-          workspaceDirs: c.workspaceDirs, defaultWorkspaceDir: c.defaultWorkspaceDir, persist: c.persistImage, // IN-01 (185): reference_image file-path resolution; DEL-01 (186): durable persist getter
+          workspaceDirs: c.workspaceDirs, defaultWorkspaceDir: c.defaultWorkspaceDir, persist: c.persistImage, trajectoryRegistry: c.trajectoryRegistry, eventBus: c.container.eventBus, // IN-01 (185): reference_image path; DEL-01 (186): persist getter; OBS-04 (186): trajectory direct-emit; OBS-03 (186): synthetic cost
         };
   // Inlined buildTokenStoreMutators.
   const addToTokenStore: import("./api/rpc-dispatch.js").ApiDispatchDeps["addToTokenStore"] = (entry) => { g.runtimeTokens.push({ id: entry.id, secretBuf: Buffer.from(entry.secret, "utf-8"), scopes: entry.scopes }); };
