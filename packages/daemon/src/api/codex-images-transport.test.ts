@@ -234,6 +234,52 @@ describe("generateImagesCodex — empty/failed stream (CDX-03)", () => {
 
     expect(res.stopReason).toBe("error");
   });
+
+  // WR-04 (184-REVIEW): a response.failed event carries the REAL cause in
+  // response.error.message (quota / content policy / auth). The transport must
+  // surface that message (NOT discard it to the generic empty_response
+  // fallback) so the shipped classifyImageError can map it to the right
+  // ImageErrorKind. (The transport never LOGS the message — classifyImageError
+  // only scans it.)
+  it("surfaces the response.failed error.message for classification (not empty_response)", async () => {
+    stubFetch({
+      body: sseStream(
+        'data: {"type":"response.failed","response":{"error":{"message":"Your prompt was rejected by the content policy"}}}\n\ndata: [DONE]\n\n',
+      ),
+    });
+
+    const res = await generateImagesCodex(codexModel(), textContext("x"), opts());
+
+    expect(res.stopReason).toBe("error");
+    expect(res.errorMessage).toBe("Your prompt was rejected by the content policy");
+    expect(res.errorMessage).not.toContain("empty_response");
+  });
+
+  it("prefers a real image over a later response.failed (completed wins)", async () => {
+    stubFetch({
+      body: sseStream(
+        'data: {"type":"response.image_generation_call.completed","b64_json":"WFla"}\n\n' +
+          'data: {"type":"response.failed","response":{"error":{"message":"late error"}}}\n\n' +
+          "data: [DONE]\n\n",
+      ),
+    });
+
+    const res = await generateImagesCodex(codexModel(), textContext("x"), opts());
+
+    expect(res.stopReason).toBe("stop");
+    expect(res.output).toEqual([{ type: "image", data: "WFla", mimeType: "image/png" }]);
+  });
+
+  it("falls back to empty_response when failed carries no message", async () => {
+    stubFetch({
+      body: sseStream('data: {"type":"response.failed","response":{}}\n\ndata: [DONE]\n\n'),
+    });
+
+    const res = await generateImagesCodex(codexModel(), textContext("x"), opts());
+
+    expect(res.stopReason).toBe("error");
+    expect(res.errorMessage).toContain("empty_response");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -363,5 +409,26 @@ describe("generateImagesCodex — secret-logging discipline (SEC-03 subset)", ()
 
     const serialized = JSON.stringify(logger._calls());
     expect(serialized).not.toContain(BEARER);
+  });
+
+  // WR-04 surfaces response.failed.error.message as errorMessage for the
+  // classifier — but that raw provider message must NOT appear in any log
+  // payload (it could in principle echo request content). The DEBUG line on the
+  // failed branch carries only a static errorKind literal.
+  it("never logs the raw response.failed message (only a static errorKind)", async () => {
+    const SECRET_ISH = "raw-provider-detail-should-not-be-logged";
+    stubFetch({
+      body: sseStream(
+        `data: {"type":"response.failed","response":{"error":{"message":"${SECRET_ISH}"}}}\n\ndata: [DONE]\n\n`,
+      ),
+    });
+
+    const res = await generateImagesCodex(codexModel(), textContext("x"), opts(), logger as never);
+
+    // Surfaced on the result for classification…
+    expect(res.errorMessage).toBe(SECRET_ISH);
+    // …but never in a log payload.
+    const serialized = JSON.stringify(logger._calls());
+    expect(serialized).not.toContain(SECRET_ISH);
   });
 });

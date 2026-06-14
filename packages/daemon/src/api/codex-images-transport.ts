@@ -104,13 +104,24 @@ function buildRequestBody(modelId: string, prompt: string): string {
  *   - terminal `response.completed` whose `response.output[]` carries an
  *     `image_generation_call` item with `result`/`b64_json` — also tolerated.
  *
- * @returns The completed b64 if seen, else the highest-index partial, else
- *   `undefined` (no image bytes → the caller maps to `empty_response`).
+ * @returns A result carrying the completed b64 (else the highest-index
+ *   partial, else `undefined`) plus any terminal `response.failed` cause
+ *   message. WR-04 (184-REVIEW): the `failedMessage` lets the caller surface
+ *   the REAL failure cause (quota / content policy / auth) to the shipped
+ *   `classifyImageError` instead of collapsing everything to `empty_response`.
+ *   It is NEVER logged — `classifyImageError` only scans it.
  */
+interface CodexSseResult {
+  /** The decoded image bytes (completed preferred, else highest-index partial). */
+  b64?: string;
+  /** The terminal `response.failed` cause message, if one arrived. */
+  failedMessage?: string;
+}
+
 async function parseCodexImageSse(
   body: ReadableStream<Uint8Array>,
   signal?: AbortSignal,
-): Promise<string | undefined> {
+): Promise<CodexSseResult> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
@@ -119,6 +130,8 @@ async function parseCodexImageSse(
   // (out-of-order) does not clobber a better one.
   let bestPartialIndex = -1;
   let bestPartial: string | undefined;
+  // WR-04: capture the terminal failure cause so the caller can classify it.
+  let failedMessage: string | undefined;
 
   const consumeEvent = (raw: string): void => {
     const data = raw.startsWith("data:") ? raw.slice("data:".length).trim() : raw.trim();
@@ -155,6 +168,17 @@ async function parseCodexImageSse(
           if (typeof b64 === "string" && b64.length > 0) completed = b64;
         }
       }
+      return;
+    }
+    if (type === "response.failed") {
+      // WR-04: the Codex Responses API emits the real cause (quota / content
+      // policy / auth / server error) in response.error.message. Capture it so
+      // the caller surfaces it to classifyImageError (quota_exceeded /
+      // content_blocked / auth_required) instead of the generic empty_response.
+      // Never logged here — only the caller's classifier scans it.
+      const response = event.response as { error?: { message?: unknown } } | undefined;
+      const message = response?.error?.message;
+      if (typeof message === "string" && message.length > 0) failedMessage = message;
     }
   };
 
@@ -178,7 +202,7 @@ async function parseCodexImageSse(
     reader.releaseLock();
   }
 
-  return completed ?? bestPartial;
+  return { b64: completed ?? bestPartial, failedMessage };
 }
 
 /**
@@ -245,11 +269,19 @@ export const generateImagesCodex: ImagesApiFunction = async (
       return out;
     }
 
-    const b64 = await parseCodexImageSse(resp.body, options?.signal);
+    const { b64, failedMessage } = await parseCodexImageSse(resp.body, options?.signal);
     if (!b64) {
       out.stopReason = "error";
-      out.errorMessage = "empty_response: no image in stream";
-      logger?.debug({ step: "codex_image_transport", errorKind: "empty_response" }, "codex image stream had no image");
+      // WR-04: prefer the terminal response.failed cause (quota / content /
+      // auth) so the shipped classifier maps the RIGHT kind; only a genuinely
+      // empty/unparseable stream falls back to empty_response. The raw cause is
+      // surfaced for classification but never logged (the DEBUG line carries
+      // only a static errorKind literal, never the message).
+      out.errorMessage = failedMessage ?? "empty_response: no image in stream";
+      logger?.debug(
+        { step: "codex_image_transport", errorKind: failedMessage ? "failed" : "empty_response" },
+        "codex image stream returned no image",
+      );
       return out;
     }
 

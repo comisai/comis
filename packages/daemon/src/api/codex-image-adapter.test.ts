@@ -227,6 +227,30 @@ describe("createCodexImageAdapter — result mapping", () => {
     if (result.ok) return;
     expect((result.error as { imageErrorKind?: string }).imageErrorKind).toBe("empty_response");
   });
+
+  // WR-04 (184-REVIEW): a response.failed message surfaced by the transport must
+  // classify to the CAUSE-specific ImageErrorKind via the shipped
+  // classifyImageError — NOT a generic empty_response. These assert the full
+  // chain (transport errorMessage -> toImageGenOutput -> classifyImageError).
+  const failureCases: { label: string; message: string; kind: string }[] = [
+    { label: "content policy block", message: "Your request was rejected by the content policy", kind: "content_blocked" },
+    { label: "quota / rate limit", message: "You exceeded your current quota, please check your plan", kind: "quota_exceeded" },
+    { label: "auth / 401", message: "401 Unauthorized: invalid bearer", kind: "auth_required" },
+  ];
+  for (const { label, message, kind } of failureCases) {
+    it(`maps a response.failed "${label}" message to ImageGenError(${kind})`, async () => {
+      const { manager } = mockOauth(async () => ok(VALID_BEARER));
+      // The transport surfaces response.error.message verbatim as errorMessage.
+      registerFakeTransport({ stopReason: "error", errorMessage: message, output: [] }, captured);
+      const adapter = createCodexImageAdapter({ oauthManager: manager, logger: logger as never });
+
+      const result = await adapter.execute({ prompt: "x" });
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect((result.error as { imageErrorKind?: string }).imageErrorKind).toBe(kind);
+    });
+  }
 });
 
 // ---------------------------------------------------------------------------
