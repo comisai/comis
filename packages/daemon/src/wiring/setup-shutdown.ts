@@ -685,24 +685,12 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
       }
   };
 
-  // shutdown(signal): guard re-entry, arm 30s hard-timeout, run inner
-  // ordered cleanup (processMonitor.stop → onShutdown → container.shutdown),
-  // flush logger, dispatch exit code (SIGUSR2 ⇒ 42, SIGTERM/SIGINT ⇒ 0,
-  // error ⇒ 1).
+  // shutdown(signal): re-entry guard, hard-timeout, ordered cleanup, flush, exit dispatch.
+  // exitCode set EARLY so a graceful SIGUSR2 restart still exits 42 even if the loop drains during the awaited flush before exitFnLocal() runs (drain bug 2026-06-14; full incident in setup-shutdown.test.ts). SIGUSR2 ⇒ 42; else 0; error/timeout still exitFnLocal(1), which overrides exitCode.
   async function shutdown(signal: string): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
 
-    // Set the intended exit code EARLY so it is honored even if the event loop
-    // drains during the awaited teardown/flush below BEFORE the explicit
-    // exitFnLocal() at the end runs. Production drain bug (2026-06-14): a
-    // SIGUSR2 config-change restart shut down gracefully but the loop emptied
-    // during the (unref'd-timer) flush wait, so the process exited NATURALLY
-    // with code 0 instead of 42 → systemd's RestartForceExitStatus=42 never
-    // fired → the daemon stayed DOWN after `comis config apply` / token
-    // mutations. SIGUSR2 ⇒ 42 (restart hint); SIGTERM/SIGINT ⇒ 0 (operator
-    // stop). The error/timeout paths below still call exitFnLocal(1), and an
-    // explicit process.exit(code) overrides process.exitCode on that path.
     process.exitCode = signal === "SIGUSR2" ? 42 : 0;
 
     logger.info({ signal }, "Graceful shutdown initiated");
@@ -735,8 +723,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
 
     logger.info({ shutdownDurationMs: systemNowMs() - shutdownStartMs, signal }, "Graceful shutdown complete");
 
-    // Defense-in-depth flush before exit. `flush` is a pino runtime feature
-    // not on the structural ComisLogger type — narrow via a local shape.
+    // Defense-in-depth flush before exit (pino runtime feature; narrow via local shape).
     const flushable = logger as unknown as { flush?: (cb?: () => void) => void };
     if (typeof flushable.flush === "function") {
       await new Promise<void>((resolve) => {

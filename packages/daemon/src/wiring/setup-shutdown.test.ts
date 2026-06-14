@@ -345,11 +345,17 @@ describe("setupShutdown", () => {
     expect(triggerSpy).toHaveBeenCalledWith("SIGUSR2");
   });
 
-  // 8b. Exit code is set EARLY so it survives an event-loop drain during
-  // teardown (UC-29 daemon-down regression 2026-06-14): a SIGUSR2 config-change
-  // restart must exit 42 (→ systemd RestartForceExitStatus=42 respawns), and an
-  // operator SIGTERM must exit 0. The early `process.exitCode` set is what makes
-  // a natural drain-exit carry the right code instead of a clean 0.
+  // 8b. Exit code is set EARLY so it survives an event-loop drain during teardown.
+  // FULL INCIDENT (UC-29 daemon-down regression, fresh-VPS run 2026-06-14): a SIGUSR2
+  // config-change restart (triggered by `comis config apply` / token mutations) shut
+  // down gracefully, but the event loop emptied during the (unref'd-timer) flush wait
+  // BEFORE the explicit exitFnLocal() at the end ran — so the process exited NATURALLY
+  // with code 0 instead of 42. systemd's RestartForceExitStatus=42 therefore never
+  // fired and the daemon stayed DOWN after every config apply. Setting process.exitCode
+  // up front (right after the re-entry guard) makes a natural drain-exit carry the right
+  // code regardless of which exit path wins the race. A SIGUSR2 restart must exit 42
+  // (→ systemd respawns); an operator SIGTERM must exit 0 (no respawn); the error/timeout
+  // paths still call exitFnLocal(1), and an explicit process.exit(code) overrides exitCode.
   it("SIGUSR2 shutdown sets process.exitCode=42 (restart) so a drained exit still respawns", async () => {
     const deps = createMinimalDeps();
     const setupShutdown = await getSetupShutdown();
