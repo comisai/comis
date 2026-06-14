@@ -142,6 +142,16 @@ export function canonicalize(path: string): string {
   return realpathSync(path);
 }
 
+/**
+ * The allowed command NAMES for a permission-denied hint — each entry's
+ * canonical-path basename (e.g. `claude`, `bash`). A driving agent that guessed a
+ * wrong command (`npx`, an absolute path, …) can read these back and self-correct
+ * to a bare name the matcher accepts. Names only — no paths/secrets leaked.
+ */
+export function allowedCommandNames(entries: AllowEntryLike[]): string[] {
+  return entries.map((e) => basename(e.match.path));
+}
+
 /** Compute the sha256 (hex) of a file's contents for the optional `hash` pin. */
 function sha256File(path: string): string {
   return createHash("sha256").update(readFileSync(path)).digest("hex");

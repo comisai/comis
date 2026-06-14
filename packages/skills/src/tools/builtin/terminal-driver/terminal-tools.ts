@@ -64,7 +64,7 @@ export type {
   TerminalEscalatedEvent,
   TerminalAutoAnsweredEvent,
 } from "./terminal-events-attention.js";
-import { matchAllowEntry, buildDirectSpawn, type AllowEntryLike } from "./allowlist-matcher.js";
+import { matchAllowEntry, buildDirectSpawn, allowedCommandNames, type AllowEntryLike } from "./allowlist-matcher.js";
 import type { SessionCaps } from "./terminal-caps.js";
 import { enforceSendCapsThenAudit, readDimension } from "./terminal-send-guards.js";
 import type { SandboxProvider } from "../sandbox/types.js";
@@ -364,7 +364,7 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
       const matched = matchAllowEntry(command, deps.allowEntries);
       if (matched === undefined) {
         throwToolError("permission_denied", `command not allowlisted: ${command}`, {
-          hint: "the requested binary does not match any operator allowlist entry's canonical path",
+          validValues: allowedCommandNames(deps.allowEntries),
         });
       }
 

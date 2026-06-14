@@ -344,6 +344,18 @@ describe("terminal-tools — create gate + canonicalization + observability", ()
     expect(registry.createCalls).toHaveLength(0);
   });
 
+  it("the not-allowlisted error names the ALLOWED commands so the agent self-corrects (no more guessing)", async () => {
+    const registry = makeFakeRegistry();
+    const tool = createTerminalSessionCreateTool(baseDeps(registry)); // allowEntries → allows "bash"
+    // A rejection must tell the agent WHAT is allowed (the entry basenames), not only
+    // what it tried — otherwise it keeps guessing (npx, absolute paths, …). Here it
+    // tried `npx`; the error must surface the allowed basename `bash`.
+    await expect(
+      tool.execute("call-1", { allowId: "x", command: "npx" }),
+    ).rejects.toThrow(/\[permission_denied\][\s\S]*\bbash\b/);
+    expect(registry.createCalls).toHaveLength(0);
+  });
+
   it("fails closed when no sandbox provider is available", async () => {
     const registry = makeFakeRegistry();
     const deps = baseDeps(registry, { detectProvider: () => undefined });
