@@ -105,8 +105,12 @@ export function createImageProviderSelector(deps: {
     const cfg = deps.imageGenConfig;
     if (!cfg) return undefined;
 
-    // Explicit fal/openai → the relegated skills adapter (additive legacy path).
-    if (cfg.provider === "fal" || cfg.provider === "openai") {
+    // Explicit fal → the relegated skills adapter (additive legacy path,
+    // CFG-01 back-compat). 185 FOLD: `openai` is NO LONGER a legacy provider —
+    // it now resolves via the resolver path below (IMAGE_CAPABILITY["openai"] =
+    // "openai-images") → the Task-2 selector branch (the registered transport),
+    // eliminating the second parallel openai surface (design §5).
+    if (cfg.provider === "fal") {
       return deps.legacyGetter();
     }
 

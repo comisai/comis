@@ -2,7 +2,7 @@
 // @allow-throw: integration/SDK boundary. `toImageGenOutput` throws a classified
 // `ImageGenError` internally; every throw is caught by `fromPromise` at the
 // `execute()` boundary and converted to a `Result` err — no throw escapes the
-// port (matches the openai-adapter.ts precedent in @comis/skills).
+// port (the same boundary-throw discipline the relegated skills fal-adapter used).
 /**
  * The single pi-ai image shim (I1 keystone).
  *
