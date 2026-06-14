@@ -44,11 +44,42 @@
 export const SETTLE_DEFAULT_IDLE_MS = 120;
 
 /**
- * The hard upper bound on the overall settle (spec §5 cap). `runSettle` clamps
- * any requested `timeoutMs` to this — an agent cannot request an unbounded /
- * huge in-turn wait that holds the worker's single-threaded frame loop (DoS).
+ * The default overall settle timeout when the caller omits `timeoutMs` — the
+ * post-action send_text/send_key quiesce + any bare wait. A small bound (a shell
+ * settles fast); the explicit `wait` tool opts into a longer budget via `timeoutMs`.
  */
-export const SETTLE_MAX_TIMEOUT_MS = 15_000;
+export const SETTLE_DEFAULT_TIMEOUT_MS = 15_000;
+
+/**
+ * The hard upper bound on the overall settle (spec §5 cap). `runSettle` clamps any
+ * requested `timeoutMs` to this. Sized for INTERACTIVE AI-CLI DRIVING (the v2.11 use
+ * case): a driven `claude`/`codex` task routinely runs 60-90s+ (model latency +
+ * multi-file writes), so the prior 15s cap made the headline use case impossible —
+ * `wait` always timed out before the CLI finished, stranding the agent with a
+ * not-complete result. The idle debounce (`forIdleMs`) still returns the instant the
+ * CLI goes quiet, so this is only the worst-case ceiling for a never-idle stream, not
+ * the common wait length. (The settle is timer-driven and does NOT block the worker's
+ * frame loop — other sessions' reads/writes interleave while one wait pends.)
+ */
+export const SETTLE_MAX_TIMEOUT_MS = 600_000;
+
+/**
+ * Margin added to the settle budget when sizing the daemon→worker IPC reply timeout
+ * for a `wait` (terminal-session-registry): the worker replies only once the settle
+ * resolves, so the reply timeout must exceed the settle's own cap by enough for the
+ * reply frame to travel back — else the IPC pre-empts a legitimate long settle.
+ */
+export const WAIT_REPLY_MARGIN_MS = 10_000;
+
+/**
+ * The daemon→worker IPC reply timeout for a `wait` round-trip: the clamped settle
+ * budget plus {@link WAIT_REPLY_MARGIN_MS}. Fast methods (read/write/resize/status)
+ * keep the generic short reply timeout (fast wedge detection); only `wait` needs one
+ * scaled to its settle duration, else a 60-90s AI-CLI settle is cut off at ~10s.
+ */
+export function waitReplyTimeoutMs(timeoutMs?: number): number {
+  return Math.min(timeoutMs ?? SETTLE_DEFAULT_TIMEOUT_MS, SETTLE_MAX_TIMEOUT_MS) + WAIT_REPLY_MARGIN_MS;
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -136,7 +167,7 @@ export interface SettleResult {
  * @returns A promise resolving the `{matched,isComplete,reason}` core.
  */
 export function runSettle(deps: SettleDeps, params: SettleParams): Promise<SettleResult> {
-  const cap = Math.min(params.timeoutMs ?? SETTLE_MAX_TIMEOUT_MS, SETTLE_MAX_TIMEOUT_MS);
+  const cap = Math.min(params.timeoutMs ?? SETTLE_DEFAULT_TIMEOUT_MS, SETTLE_MAX_TIMEOUT_MS);
   const idleMs = params.forIdleMs ?? SETTLE_DEFAULT_IDLE_MS;
   // N CONSECUTIVE quiet idle windows before idle resolves (spec §4.3). Floored at
   // 1 (the single-window 120-02 default); a non-finite/<1 request collapses to 1.

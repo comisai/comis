@@ -23,7 +23,7 @@ All nine are `mcpExportPolicy: "never-export"` (never exposed to external MCP) a
 | `terminal_session_read` | Read the rendered screen + cursor (`text`/`ansi`/`html`, scrollback). Output is redacted and wrapped as untrusted content. |
 | `terminal_session_send_text` | Type text; optional submit + settle. |
 | `terminal_session_send_key` | Send named keys/chords (`C-c`, `Up`, `Enter`, `S-Tab`). |
-| `terminal_session_wait` | Short bounded in-turn settle on idle/text/exit. |
+| `terminal_session_wait` | Bounded settle on idle/text/exit/timeout. `timeoutMs` is generous (default 15s, cap 600s) so a **slow AI CLI** (e.g. `claude` taking 60-90s+) can be driven — pass a large `timeoutMs` with `forIdleMs` and the wait returns the instant the CLI goes idle; a long wait auto-backgrounds so the turn never blocks. |
 | `terminal_session_status` | Classifier state (`working`/`awaiting-input`/`exited`/`stuck`), cursor, interaction count. |
 | `terminal_session_resize` | Resize the PTY + emulator. |
 | `terminal_session_kill` | Terminate a session. |
@@ -89,6 +89,8 @@ agents:
 ```
 
 The agent then drives it: `terminal_session_create({ allowId: "claude", command: "/home/comis/.local/bin/claude", args: ["--permission-mode", "bypassPermissions"] })` -> wait -> `terminal_session_send_text(...)` -> `terminal_session_read(...)`.
+
+**Driving a slow interactive AI CLI** (e.g. `claude`/`codex`): the model's reply takes tens of seconds, so pass a generous `terminal_session_wait({ forIdleMs: 20000, timeoutMs: 300000 })` — the settle returns the instant the CLI goes quiet (not at the timeout), and a long wait auto-backgrounds so the turn never blocks (the completion then arrives as a follow-up, e.g. a Telegram message). The CLI's **first-run startup gates** persist once accepted in the credential home, so accept them once before the first drive: Claude Code shows a "trust this folder" prompt and — under `--permission-mode bypassPermissions` — a "Bypass Permissions" warning whose default highlight is **"No, exit"**, so a reflexive Enter quits the CLI. Once accepted (and with `credentialHome` mapped so `~/.claude.json` is readable in the jail), later drives open straight to the prompt.
 
 ### Allow-entry fields
 

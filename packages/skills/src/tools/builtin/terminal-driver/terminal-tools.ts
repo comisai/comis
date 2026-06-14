@@ -258,7 +258,7 @@ const WaitParams = Type.Object({
   forIdleMs: Type.Optional(Type.Integer({ description: "Settle when idle for this many ms" })),
   forText: Type.Optional(Type.String({ description: "Settle when this text appears on screen" })),
   forExit: Type.Optional(Type.Boolean({ description: "Settle when the session exits" })),
-  timeoutMs: Type.Optional(Type.Integer({ description: "Bounded in-turn settle timeout (default 15000, capped)" })),
+  timeoutMs: Type.Optional(Type.Integer({ description: "Max in-turn settle timeout in ms (default 15000; capped at 600000). Driving a slow AI CLI (e.g. claude) that takes 60-90s+? Pass a large value (e.g. 120000) WITH forIdleMs — the wait returns the instant the CLI goes idle, not at the timeout." })),
 });
 
 const ResizeParams = Type.Object({

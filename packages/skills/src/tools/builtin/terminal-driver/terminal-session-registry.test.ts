@@ -40,6 +40,7 @@ import {
   type TerminalReplyFrame,
   type TerminalEventFrame,
 } from "./terminal-ipc.js";
+import { waitReplyTimeoutMs } from "./terminal-settle.js";
 
 /** A no-op structural logger. */
 function makeLogger() {
@@ -738,6 +739,43 @@ describe("createTerminalSessionRegistry — request() reply timeout (wedged work
     const view = await readPromise;
     expect(view.alive).toBe(false);
     expect(view.screen).toBe("");
+  });
+
+  it("wait() sizes its reply timeout to the settle budget, NOT the generic short timeout (slow AI-CLI settle is not pre-empted)", async () => {
+    // Regression: `wait`'s IPC reply lands only when the in-worker settle resolves
+    // (60-90s+ for a driven `claude`). Pre-patch EVERY round-trip used the generic
+    // ~10s requestTimeoutMs, so the IPC pre-empted the settle at ~10s and returned a
+    // not-complete result while the CLI was still working — stranding the agent.
+    const fake = makeFakeWorker(); // never replies → the request reply-timer is what fires
+    let firedCb: (() => void) | undefined;
+    let scheduledMs: number | undefined;
+    const setTimer = vi.fn((cb: () => void, ms: number) => {
+      firedCb = cb;
+      scheduledMs = ms;
+      return { id: 1 } as unknown;
+    });
+    const registry = createTerminalSessionRegistry(
+      baseDeps(() => fake.child, {
+        requestTimeoutMs: 1234,
+        setTimer: setTimer as never,
+        clearTimer: vi.fn() as never,
+      }),
+    );
+    const { sessionId } = await registry.create(
+      { allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24 },
+      OWNER,
+    );
+
+    const waitPromise = registry.wait(sessionId, OWNER, { forIdleMs: 30_000, timeoutMs: 120_000 });
+    // The wait scheduled its reply timeout at the settle budget + margin — NOT the
+    // generic 1234ms requestTimeoutMs that read/write/resize use.
+    expect(scheduledMs).toBe(waitReplyTimeoutMs(120_000));
+    expect(scheduledMs).not.toBe(1234);
+
+    // Fire the (long) reply timeout → the wait degrades to the honest not-complete shape.
+    firedCb?.();
+    const result = await waitPromise;
+    expect(result.isComplete).toBe(false);
   });
 
   it("a normal reply cancels the pending timeout (clearTimer is called, no spurious timeout fire)", async () => {

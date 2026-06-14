@@ -54,6 +54,7 @@ import type { TerminalScope } from "./allowlist-matcher.js";
 import { allocateSessionWorkspace, cleanupSessionWorkspace, resolveCreateWorkspace } from "./terminal-workspace.js";
 import { sameOwner, type SessionOwner } from "./terminal-session-owner.js";
 import { wireRegistryReaper, type EvictReason, type ReaperCaps } from "./terminal-reaper.js";
+import { waitReplyTimeoutMs } from "./terminal-settle.js";
 import { wireWorkerSupervision } from "./terminal-worker-supervisor.js";
 // The registry's shared structural contracts the BODY references (deps/handle/worker)
 // type-imported from the neutral leaf terminal-session-types.ts (124-01 cycle break).
@@ -443,21 +444,24 @@ export function createTerminalSessionRegistry(
     sessionId: string,
     method: string,
     params: Record<string, unknown>,
+    replyTimeoutMs?: number,
   ): Promise<TerminalReplyFrame> {
     const child = ensureWorker();
     const frame = buildRequestFrame(sessionId, method, params);
     const key = `${sessionId}:${frame.requestId}`;
+    // `wait` overrides this — its reply lands only when the in-worker settle resolves (60-90s+ for an AI CLI); the generic short timeout would pre-empt it.
+    const effectiveTimeoutMs = replyTimeoutMs ?? requestTimeoutMs;
     return new Promise<TerminalReplyFrame>((resolve) => {
       const timer = setTimer(() => {
         // Expired with no reply — drop the waiter and settle a typed timeout.
         if (pending.delete(key)) {
           logger.warn(
-            { sessionId, method, durationMs: requestTimeoutMs, hint: "worker reply timed out; degrading request", errorKind: "timeout" as const },
+            { sessionId, method, durationMs: effectiveTimeoutMs, hint: "worker reply timed out; degrading request", errorKind: "timeout" as const },
             "terminal worker reply timeout",
           );
           resolve({ sessionId, requestId: frame.requestId, ok: false, error: "worker timeout" });
         }
-      }, requestTimeoutMs);
+      }, effectiveTimeoutMs);
       // Wrap the resolver so a correlated reply cancels the pending timeout.
       pending.set(key, (f) => {
         clearTimer(timer);
@@ -691,7 +695,7 @@ export function createTerminalSessionRegistry(
     if (handle === undefined || handle.status !== "running") {
       return degradedWait();
     }
-    const reply = await request(sessionId, "wait", { sessionId, ...args });
+    const reply = await request(sessionId, "wait", { sessionId, ...args }, waitReplyTimeoutMs(args.timeoutMs));
     if (!reply.ok || reply.result === undefined) {
       // A wedged worker (the reply timeout) → the honest not-complete shape.
       return degradedWait();
