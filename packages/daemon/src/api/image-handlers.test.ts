@@ -539,6 +539,155 @@ describe("createImageHandlers", () => {
     expect(completionInfo).toBe(false);
   });
 
+  // ─── OBS-01 (§2.7): the FULL INFO completion field set on both paths ────────
+  // The WR-03 line (above) carries agentId/mainProvider/delivered/mimeType/
+  // durationMs/step. OBS-01 ADDS imageProvider/model/costUsd/sizeBytes so a
+  // generation is provider-, model-, cost-, and size-visible in one line.
+
+  /** Find the captured image_complete INFO payload (or undefined). */
+  function completionPayload(deps: ImageHandlerDeps): Record<string, unknown> | undefined {
+    const call = (deps.logger.info as ReturnType<typeof vi.fn>).mock.calls.find(
+      ([payload]) => (payload as { step?: string })?.step === "image_complete",
+    );
+    return call?.[0] as Record<string, unknown> | undefined;
+  }
+
+  it("OBS-01: the channel-delivered INFO line carries imageProvider/model/costUsd/sizeBytes", async () => {
+    const mockSendAttachment = vi.fn().mockResolvedValue(ok("msg-obs01"));
+    const deps = createMockDeps({
+      provider: {
+        id: "openai",
+        isAvailable: () => true,
+        // The widened ImageGenOutput (Task 1) carries model/costUsd through.
+        execute: vi
+          .fn()
+          .mockResolvedValue(
+            ok({ buffer: Buffer.from("img"), mimeType: "image/png", model: "gpt-image-1", costUsd: 0.04 }),
+          ),
+      },
+      getChannelAdapter: vi.fn().mockReturnValue({ sendAttachment: mockSendAttachment }),
+      // PERSISTED_OK.sizeBytes (4242) is the delivered-path sizeBytes source.
+      persist: vi.fn().mockResolvedValue(ok(PERSISTED_OK)),
+    });
+    const handlers = createImageHandlers(deps);
+    await handlers["image.generate"]!({
+      _agentId: "agent-obs01",
+      prompt: "a sunset",
+      _callerChannelType: "telegram",
+      _callerChannelId: "chat-obs01",
+    });
+
+    const payload = completionPayload(deps);
+    expect(payload).toBeDefined();
+    expect(payload).toMatchObject({
+      agentId: "agent-obs01",
+      imageProvider: "openai", // = deps.provider.id (the EXECUTING provider)
+      mainProvider: "openrouter",
+      model: "gpt-image-1",
+      costUsd: 0.04,
+      sizeBytes: 4242, // from the PersistedFile (DEL-01) on the delivered path
+      mimeType: "image/png",
+      delivered: true,
+      step: "image_complete",
+    });
+    // traceId rides the Pino ALS mixin (CLAUDE.md) — NOT a payload field. The
+    // RPC producer (createAgentRpcCall) injects _agentId/_callerSessionKey, never
+    // _traceId. Pin that the handler does not invent a traceId payload field.
+    expect(payload).not.toHaveProperty("traceId");
+  });
+
+  it("OBS-01: the base64-fallback INFO line carries imageProvider/model/costUsd/sizeBytes (buffer length)", async () => {
+    const buffer = Buffer.from("a-larger-image-buffer");
+    const deps = createMockDeps({
+      provider: {
+        id: "google",
+        isAvailable: () => true,
+        execute: vi
+          .fn()
+          .mockResolvedValue(ok({ buffer, mimeType: "image/png", model: "gemini-2.5-flash-image", costUsd: 0.01 })),
+      },
+      getChannelAdapter: vi.fn().mockReturnValue(undefined),
+    });
+    const handlers = createImageHandlers(deps);
+    await handlers["image.generate"]!({ _agentId: "agent-obs01b", prompt: "a dog" });
+
+    const payload = completionPayload(deps);
+    expect(payload).toBeDefined();
+    expect(payload).toMatchObject({
+      agentId: "agent-obs01b",
+      imageProvider: "google",
+      model: "gemini-2.5-flash-image",
+      costUsd: 0.01,
+      // base64 path: sizeBytes is the actual buffer length (no PersistedFile).
+      sizeBytes: buffer.byteLength,
+      delivered: false,
+      step: "image_complete",
+    });
+    expect(payload).not.toHaveProperty("traceId");
+  });
+
+  it("OBS-01 non-regression: an undefined costUsd/model is logged as undefined, never a crash (legacy path)", async () => {
+    // A legacy/text-only adapter returns only { buffer, mimeType } (Task 1
+    // non-regression). The INFO line must still emit, with costUsd/model unset.
+    const deps = createMockDeps({
+      provider: {
+        id: "openrouter",
+        isAvailable: () => true,
+        execute: vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("x"), mimeType: "image/png" })),
+      },
+      getChannelAdapter: vi.fn().mockReturnValue(undefined),
+    });
+    const handlers = createImageHandlers(deps);
+    const result = (await handlers["image.generate"]!({ _agentId: "agent-legacy", prompt: "a cat" })) as {
+      success: boolean;
+    };
+
+    expect(result.success).toBe(true);
+    const payload = completionPayload(deps);
+    expect(payload).toBeDefined();
+    expect(payload).toMatchObject({ imageProvider: "openrouter", delivered: false, step: "image_complete" });
+    expect(payload!.costUsd).toBeUndefined();
+    expect(payload!.model).toBeUndefined();
+    // sizeBytes is still the buffer length even on the legacy path.
+    expect(payload!.sizeBytes).toBe(1);
+  });
+
+  // ─── OBS-02 (§2.7): every handler failure branch logs errorKind + hint ──────
+  // The provider-error and persist-failure branches already do (above). The
+  // model-reject branch (IN-02) returned { success:false } with NO log — OBS-02
+  // adds a WARN naming errorKind + the listing hint BEFORE the return.
+
+  it("OBS-02: the model-reject branch WARNs errorKind:precondition + the listing hint before returning", async () => {
+    const execute = vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("x"), mimeType: "image/png" }));
+    const deps = createMockDeps({
+      provider: { id: "openai", isAvailable: () => true, execute },
+      resolveAgentMainProvider: vi.fn().mockReturnValue({ providerId: "openai" }),
+    });
+    const handlers = createImageHandlers(deps);
+
+    const result = (await handlers["image.generate"]!({
+      _agentId: "agent-reject",
+      prompt: "a fox",
+      model: "bogus-model",
+    })) as { success: boolean };
+
+    expect(result.success).toBe(false);
+    expect(execute).not.toHaveBeenCalled();
+    // The model-reject branch now emits a classified WARN (no failure path is
+    // undiagnosable — the §2.7 litmus). errorKind + a model-listing hint + step.
+    const warned = (deps.logger.warn as ReturnType<typeof vi.fn>).mock.calls.find(
+      ([payload]) => (payload as { step?: string })?.step === "image_model_reject",
+    );
+    expect(warned).toBeDefined();
+    const [payload] = warned as [Record<string, unknown>, string];
+    expect(payload.errorKind).toBe("precondition");
+    expect(payload.agentId).toBe("agent-reject");
+    expect(typeof payload.hint).toBe("string");
+    // The hint lists the valid models for the executing provider (openai).
+    expect(payload.hint as string).toContain("gpt-image-1");
+    // SEC: the WARN carries no raw provider message / model echo beyond the hint.
+  });
+
   it("omits the hint field when the provider error carries no hint", async () => {
     const deps = createMockDeps({
       provider: {
