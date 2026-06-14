@@ -11,6 +11,9 @@
  * @module
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   registerImagesApiProvider,
   type AssistantImages,
@@ -165,5 +168,50 @@ describe("createImageProviderSelector", () => {
     });
 
     expect(selector()).toBeUndefined();
+  });
+});
+
+/**
+ * Built-but-not-wired guard (the milestone's #1 recurring blocker).
+ *
+ * Asserts the RES-01 keystone is wired into the LIVE daemon.ts composition
+ * root — NOT merely defined where a test imports it. Reads daemon.ts source and
+ * proves (1) the accessor delegates to resolveAgentModel (I4 lockstep), and
+ * (2) `resolveAgentMainProvider` appears INSIDE the LIVE `imageHandlerDeps`
+ * object literal region, and (3) the boot probe wires the selector +
+ * registerComisImageProviders. A parallel copy / a stranded accessor would
+ * fail this. (The daemon build is the type-level twin: the now-required field
+ * forces the literal to supply it.)
+ */
+describe("RES-01 keystone is wired into the LIVE daemon.ts composition root", () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const daemonSrc = readFileSync(resolve(here, "../daemon.ts"), "utf8");
+
+  it("defines resolveAgentMainProvider delegating to the I4 resolveAgentModel", () => {
+    expect(daemonSrc).toMatch(/const resolveAgentMainProvider\s*=/);
+    // The accessor body calls resolveAgentModel — the EXACT completion-path fn.
+    const accessor = daemonSrc.slice(
+      daemonSrc.indexOf("const resolveAgentMainProvider ="),
+      daemonSrc.indexOf("const resolveAgentMainProvider =") + 400,
+    );
+    expect(accessor).toContain("resolveAgentModel(");
+    expect(accessor).toContain("providerId");
+  });
+
+  it("threads resolveAgentMainProvider INTO the live imageHandlerDeps object literal", () => {
+    // Locate the imageHandlerDeps construction region and assert the field is
+    // inside it (not just somewhere in the file).
+    const start = daemonSrc.indexOf("const imageHandlerDeps");
+    expect(start).toBeGreaterThan(-1);
+    const region = daemonSrc.slice(start, start + 900);
+    expect(region).toContain("getChannelAdapter");
+    expect(region).toContain("resolveAgentMainProvider");
+  });
+
+  it("wires the selector + registerComisImageProviders at the boot probe", () => {
+    expect(daemonSrc).toContain("createImageProviderSelector({");
+    expect(daemonSrc).toContain("registerComisImageProviders()");
+    // The selector follows the DEFAULT agent's resolved main provider.
+    expect(daemonSrc).toMatch(/mainProviderId:\s*defaultMain/);
   });
 });
