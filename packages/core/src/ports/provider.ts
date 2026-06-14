@@ -19,12 +19,25 @@ export interface ImageGenInput {
 
 /**
  * Output from image generation providers.
+ *
+ * `costUsd`/`model`/`provider` are OPTIONAL and ADDITIVE (OBS-01/03, Phase 186):
+ * the pi-ai adapter (`toImageGenOutput`) maps them from `AssistantImages`
+ * (`usage.cost.total`/`model`/`provider`), but the legacy fal/openai skills
+ * adapters that also implement `ImageGenerationPort` simply leave them unset —
+ * a text-only/legacy return `{ buffer, mimeType }` is still valid.
  */
 export interface ImageGenOutput {
   /** Raw image bytes */
   buffer: Buffer;
   /** MIME type of the image (e.g., "image/png") */
   mimeType: string;
+  /** OBS-03 — generation cost in USD (pi-ai `Usage.cost.total`); unset when the
+   *  provider reports no usage or a legacy adapter does not map it. */
+  costUsd?: number;
+  /** OBS-01/03 — the model id that produced the image (e.g. "gpt-image-1"). */
+  model?: string;
+  /** OBS-01/03 — the executing provider id (e.g. "openai", "google"). */
+  provider?: string;
 }
 
 /**

@@ -17,7 +17,7 @@ import {
   type ImagesModel,
   type ImagesOptions,
 } from "@earendil-works/pi-ai";
-import type { ImageErrorKind } from "@comis/core";
+import type { ImageErrorKind, ImageGenOutput } from "@comis/core";
 import { makeMockLogger } from "../../../../test/support/mock-logger.js";
 import {
   createPiImageAdapter,
@@ -286,6 +286,17 @@ describe("createPiImageAdapter OBS-03 cost mapping", () => {
     // model/provider still ride through from AssistantImages (always present).
     expect(result.value.model).toBe("gemini-2.5-flash-image");
     expect(result.value.provider).toBe("google");
+  });
+
+  it("non-regression: a legacy { buffer, mimeType } return still satisfies ImageGenOutput (additive)", () => {
+    // The new fields are OPTIONAL — the relegated fal/openai skills adapters
+    // (which also implement ImageGenerationPort) return only buffer+mimeType and
+    // MUST stay valid. This is a type-level proof: the assignment compiles iff
+    // costUsd/model/provider are optional.
+    const legacy: ImageGenOutput = { buffer: Buffer.from("x"), mimeType: "image/png" };
+    expect(legacy.costUsd).toBeUndefined();
+    expect(legacy.model).toBeUndefined();
+    expect(legacy.provider).toBeUndefined();
   });
 });
 

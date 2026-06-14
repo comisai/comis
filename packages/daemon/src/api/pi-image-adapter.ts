@@ -134,9 +134,18 @@ export function toImageGenOutput(res: AssistantImages, logger: ComisLogger): Ima
   if (res.stopReason === "stop") {
     const img = res.output.find((o): o is ImageContent => o.type === "image");
     if (img) {
-      // 186: also map costUsd from res.usage?.cost.total, model from res.model,
-      // provider from res.provider (additive ImageGenOutput change, deferred).
-      return { buffer: Buffer.from(img.data, "base64"), mimeType: img.mimeType };
+      // OBS-03 (186): carry the generation cost + executing model/provider on the
+      // output (additive ImageGenOutput fields). `usage` is optional on
+      // AssistantImages, so `res.usage?.cost.total` is undefined when the provider
+      // reports no usage — never a throw. The handler logs costUsd on the INFO
+      // completion line (OBS-01) and the trajectory event (OBS-04, Plan 03).
+      return {
+        buffer: Buffer.from(img.data, "base64"),
+        mimeType: img.mimeType,
+        costUsd: res.usage?.cost.total,
+        model: res.model,
+        provider: res.provider,
+      };
     }
     // stop but no image content → empty response.
     const kind: ImageErrorKind = "empty_response";
