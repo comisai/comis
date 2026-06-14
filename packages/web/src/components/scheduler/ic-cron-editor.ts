@@ -129,17 +129,51 @@ export function computeNextCronRuns(
   const maxMs = 366 * 24 * 60 * 60 * 1000;
   const endTime = from.getTime() + maxMs;
 
+  // Cron fields are matched against the wall-clock time **in `tz`** (not the
+  // host's local time) so the preview agrees with the daemon, which fires jobs
+  // in the job's configured timezone (schedule.tz). The formatter is built once
+  // for the whole scan. When `tz` is absent or unknown we fall back to local
+  // time rather than throwing inside a preview.
+  let tzFmt: Intl.DateTimeFormat | null = null;
+  if (tz) {
+    try {
+      tzFmt = new Intl.DateTimeFormat("en-US", {
+        timeZone: tz,
+        hour12: false,
+        weekday: "short",
+        month: "numeric",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+    } catch {
+      tzFmt = null;
+    }
+  }
+  const DOW_MAP: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+
   // Start one minute past `from`
   const cursor = systemDateFrom(from);
   cursor.setSeconds(0, 0);
   cursor.setTime(cursor.getTime() + 60_000);
 
   while (cursor.getTime() <= endTime && results.length < count) {
-    const m = cursor.getMinutes();
-    const h = cursor.getHours();
-    const dom = cursor.getDate();
-    const mon = cursor.getMonth() + 1;
-    const dow = cursor.getDay();
+    let m: number, h: number, dom: number, mon: number, dow: number;
+    if (tzFmt) {
+      const parts = tzFmt.formatToParts(cursor);
+      const get = (t: string): string => parts.find((p) => p.type === t)?.value ?? "";
+      m = parseInt(get("minute"), 10);
+      h = parseInt(get("hour"), 10) % 24; // hour12:false can emit "24" at midnight
+      dom = parseInt(get("day"), 10);
+      mon = parseInt(get("month"), 10);
+      dow = DOW_MAP[get("weekday")] ?? 0;
+    } else {
+      m = cursor.getMinutes();
+      h = cursor.getHours();
+      dom = cursor.getDate();
+      mon = cursor.getMonth() + 1;
+      dow = cursor.getDay();
+    }
 
     if (minuteSet.has(m) && hourSet.has(h) && domSet.has(dom) && monthSet.has(mon) && dowSet.has(dow)) {
       results.push(systemDateFrom(cursor));

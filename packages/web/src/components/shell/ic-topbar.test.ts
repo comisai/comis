@@ -101,9 +101,11 @@ describe("IcTopbar", () => {
     expect(handler).toHaveBeenCalledOnce();
   });
 
-  it("navigates to the security (pending approvals) view when the bell is clicked (P7)", async () => {
+  it("navigates to the security pending-approvals queue when the bell is clicked (P7)", async () => {
     // P7: the notification bell was a dead button (no handler). It must take the
-    // operator to where pending approvals are actioned (the Security view).
+    // operator to where pending approvals are actioned — the Security view's
+    // *pending-approvals* tab, not the default Security Events tab. The bell's
+    // badge counts pending approvals, so the deep-link must select that tab.
     const el = await createElement<IcTopbar>("ic-topbar", { notificationCount: 3 });
     const handler = vi.fn();
     el.addEventListener("navigate", handler as EventListener);
@@ -113,7 +115,7 @@ describe("IcTopbar", () => {
     bell.click();
 
     expect(handler).toHaveBeenCalledOnce();
-    expect((handler.mock.calls[0]![0] as CustomEvent<string>).detail).toBe("security");
+    expect((handler.mock.calls[0]![0] as CustomEvent<string>).detail).toBe("security?tab=pending");
   });
 
   it("dispatches 'logout' event from user menu logout action", async () => {

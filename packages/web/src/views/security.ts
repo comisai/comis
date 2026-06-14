@@ -269,6 +269,10 @@ export class IcSecurityView extends LitElement {
   @property({ attribute: false }) apiClient: ApiClient | null = null;
   @property({ attribute: false }) eventDispatcher: EventDispatcher | null = null;
 
+  /** Tab to open on mount, e.g. "pending" when deep-linked from the
+   *  notification bell (`#/security?tab=pending`). Mirrors observe-view. */
+  @property() initialTab = "events";
+
   private _sse: SseController | null = null;
 
   @state() private _loadState: LoadState = "loading";
@@ -299,7 +303,18 @@ export class IcSecurityView extends LitElement {
 
   override connectedCallback(): void {
     super.connectedCallback();
+    this._activeTab = this.initialTab;
     this._initSse();
+  }
+
+  override willUpdate(changedProperties: Map<string, unknown>): void {
+    // Re-sync the active tab when the deep-link target changes *after* mount
+    // (e.g. the operator clicks the bell again while already on the Security
+    // view). The first update is handled by connectedCallback; the hasUpdated
+    // guard keeps that initial render from clobbering a directly-set _activeTab.
+    if (this.hasUpdated && changedProperties.has("initialTab")) {
+      this._activeTab = this.initialTab;
+    }
   }
 
   override disconnectedCallback(): void {

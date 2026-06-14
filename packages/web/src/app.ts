@@ -254,6 +254,9 @@ export class IcApp extends LitElement implements AppHost {
   @state() _currentView = "ic-dashboard";
   @state() _currentRoute = "dashboard";
   @state() _routeParams: Record<string, string> = {};
+  // Query string parsed by the router (e.g. #/security?tab=pending). Threaded
+  // to views that deep-link sub-state; previously parsed but never delivered.
+  @state() _routeQuery: Record<string, string> = {};
   // Mirrored from globalState snapshot
   @state() _connectionStatus: ConnectionStatus = "disconnected";
   @state() _pendingApprovals = 0;
@@ -326,6 +329,7 @@ export class IcApp extends LitElement implements AppHost {
           this._currentView = match.view;
           this._currentRoute = match.route;
           this._routeParams = match.params;
+          this._routeQuery = match.query;
         },
       });
     }
@@ -566,7 +570,7 @@ export class IcApp extends LitElement implements AppHost {
       case "ic-subagents-view":
         return html`<ic-subagents-view .rpcClient=${this._rpcClient} .apiClient=${this._apiClient} .eventDispatcher=${this._eventDispatcher}></ic-subagents-view>`;
       case "ic-security-view":
-        return html`<ic-security-view .rpcClient=${this._rpcClient} .apiClient=${this._apiClient} .eventDispatcher=${this._eventDispatcher}></ic-security-view>`;
+        return html`<ic-security-view .rpcClient=${this._rpcClient} .apiClient=${this._apiClient} .eventDispatcher=${this._eventDispatcher} .initialTab=${this._routeQuery["tab"] ?? "events"}></ic-security-view>`;
       case "ic-config-editor":
         return html`<ic-config-editor .rpcClient=${this._rpcClient}></ic-config-editor>`;
       case "ic-setup-wizard":

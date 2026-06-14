@@ -201,6 +201,17 @@ describe("IcSecurityView", () => {
     expect(priv(el)._activeTab).toBe("events");
   });
 
+  it("honors initialTab so the bell can deep-link the pending-approvals queue", async () => {
+    // The topbar notification bell navigates to `security?tab=pending`; app.ts
+    // threads that query value in as `initialTab`. The view must open on that
+    // tab instead of the default "events" tab.
+    const rpc = createSecurityMockRpcClient();
+    const el = await createElement({ rpcClient: rpc, initialTab: "pending" });
+    await flush(el);
+
+    expect(priv(el)._activeTab).toBe("pending");
+  });
+
   it("tab switching updates content", async () => {
     const rpc = createSecurityMockRpcClient();
     const el = await createElement({ rpcClient: rpc });

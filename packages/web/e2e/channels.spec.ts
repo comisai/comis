@@ -10,8 +10,10 @@ import type { Page } from "@playwright/test";
  * Provides 3 channels: 2 enabled (discord, telegram), 1 disabled (slack).
  */
 const CHANNEL_LIST_CHANNELS = [
-  { type: "discord", name: "#general", enabled: true, status: "connected" },
-  { type: "telegram", name: "bot-chat", enabled: true, status: "connected" },
+  // Canonical health states (the legacy "connected" alias was removed — the
+  // backend emits healthy/idle/stale/disconnected/etc.; see health-status.ts).
+  { type: "discord", name: "#general", enabled: true, status: "healthy" },
+  { type: "telegram", name: "bot-chat", enabled: true, status: "healthy" },
   { type: "slack", name: "#ops", enabled: false, status: "disconnected" },
 ];
 
@@ -135,8 +137,8 @@ test.describe("Channel list view", () => {
     const channelList = page.locator("ic-channel-list");
 
     // ic-channel-card renders a status pill with the health-label derived
-    // from the channel's status (e.g. "connected" -> "Healthy"). Scope the
-    // assertion to the ic-channel-card element so the status text inside
+    // from the channel's canonical status (e.g. "healthy" -> "Healthy"). Scope
+    // the assertion to the ic-channel-card element so the status text inside
     // the shadow root is queried.
     const discordCard = channelList.locator("ic-channel-card").filter({ hasText: "Discord" });
     await expect(discordCard.locator(".status-text")).toHaveText("Healthy");

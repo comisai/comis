@@ -288,6 +288,25 @@ describe("computeNextCronRuns", () => {
     const minutes = runs.map((d) => d.getMinutes());
     expect(minutes).toEqual([30, 0, 30, 0]);
   });
+
+  it("honors the supplied timezone, not the host's local time, when computing next runs", () => {
+    // Regression: the matcher used cursor.getHours()/getMinutes() (the host's
+    // local wall clock) and ignored `tz`, so a job whose expression is "15:30"
+    // with tz=UTC previewed 3h off on a UTC+3 host — and disagreed with what the
+    // daemon (which stores schedule.tz) actually runs. The fire instant must be
+    // the moment whose wall-clock time *in tz* matches the expression. Two
+    // offset-distinct zones keep this assertion independent of the host the
+    // test happens to run on (a single local time cannot satisfy both).
+    const from = new Date("2026-06-14T00:00:00Z");
+
+    const tokyo = computeNextCronRuns("30 15 * * *", "Asia/Tokyo", 1, from);
+    // 15:30 in Asia/Tokyo (UTC+9, no DST) is 06:30 UTC.
+    expect(tokyo[0]?.toISOString()).toBe("2026-06-14T06:30:00.000Z");
+
+    const ny = computeNextCronRuns("30 15 * * *", "America/New_York", 1, from);
+    // 15:30 in America/New_York (EDT, UTC-4 in June) is 19:30 UTC.
+    expect(ny[0]?.toISOString()).toBe("2026-06-14T19:30:00.000Z");
+  });
 });
 
 describe("computeNextEveryRuns", () => {
