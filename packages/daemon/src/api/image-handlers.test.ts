@@ -9,6 +9,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createImageHandlers, type ImageHandlerDeps } from "./image-handlers.js";
 import { ImageGenError } from "./pi-image-adapter.js";
+import { ValidationError } from "./errors.js";
 import { ok, err } from "@comis/shared";
 import { validateUrl } from "@comis/core";
 import type { PersistedFile } from "@comis/skills/tools";
@@ -979,6 +980,55 @@ describe("createImageHandlers IN-01 reference_image resolution", () => {
     }
   });
 
+  // ─── IN-03 (186): reference-image rejections throw a TYPED error with an ───
+  // actionable, knob-naming message (§2.7). A bare `throw new Error(msg)`
+  // classified as internal/error (operator-alerting) and carried no remediation;
+  // a ValidationError classifies as validation/warn AND the message names the
+  // 20 MB cap / the raster-image remedy so the JSON-RPC error is self-actionable.
+
+  it("IN-03: an oversized data-uri reject is a ValidationError whose message names the 20 MB cap", async () => {
+    const oversized = "A".repeat(28 * 1024 * 1024);
+    const execute = vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("x"), mimeType: "image/png" }));
+    const deps = createMockDeps({ provider: { id: "openrouter", isAvailable: () => true, execute } });
+    const handlers = createImageHandlers(deps);
+
+    const thrown = await handlers["image.generate"]!({
+      _agentId: "agent-1",
+      prompt: "edit this",
+      reference_image: `data:image/png;base64,${oversized}`,
+    }).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+
+    expect(thrown).toBeInstanceOf(ValidationError);
+    // The message is actionable: it names the 20 MB cap (so the RPC error alone
+    // tells the caller how to remediate). Preserves the /size limit/ substring.
+    expect((thrown as Error).message).toMatch(/20 MB|20MB/);
+    expect((thrown as Error).message).toMatch(/size limit|exceeds/i);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("IN-03: an SVG reference_image reject is a ValidationError naming the raster-image remedy", async () => {
+    const execute = vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("x"), mimeType: "image/png" }));
+    const deps = createMockDeps({ provider: { id: "openrouter", isAvailable: () => true, execute } });
+    const handlers = createImageHandlers(deps);
+
+    const svg = Buffer.from("<svg></svg>").toString("base64");
+    const thrown = await handlers["image.generate"]!({
+      _agentId: "agent-1",
+      prompt: "edit this",
+      reference_image: `data:image/svg+xml;base64,${svg}`,
+    }).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+
+    expect(thrown).toBeInstanceOf(ValidationError);
+    expect((thrown as Error).message).toMatch(/raster|PNG|JPEG|WebP/i);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   // ─── WR-01: data-uri decode is size-capped (resource exhaustion) ───────────
 
   it("WR-01: an oversized data-uri reference_image is rejected before threading to execute()", async () => {
@@ -1348,6 +1398,38 @@ describe("createImageHandlers — OBS-04 trajectory direct-emit", () => {
     expect(failed.provider).toBe("openai");
     // Never the raw provider message.
     expect(JSON.stringify(failed)).not.toContain("Image generation blocked");
+  });
+
+  // IN-02 (186-REVIEW): every image.failed trajectory record speaks ONE
+  // vocabulary — the domain ImageErrorKind family. An UNTYPED provider Error
+  // (no imageErrorKind) must fall back to a DOMAIN kind (empty_response — a
+  // non-classified, non-image provider failure), NOT the bare log-ish "error"
+  // literal that is not a member of the ImageErrorKind union. (The closed-union
+  // log ErrorKind mapping stays confined to the Pino line via IMAGE_ERR_TO_LOG.)
+  it("IN-02: an untyped provider Error records image.failed with a DOMAIN errorKind (not the 'error' literal)", async () => {
+    const { trajectoryRegistry, recordEvent } = makeMockTrajectoryRegistry();
+    const deps = createMockDeps({
+      trajectoryRegistry,
+      provider: {
+        id: "openai",
+        isAvailable: () => true,
+        // A plain Error (no imageErrorKind) — the legacy/untyped provider path.
+        execute: vi.fn().mockResolvedValue(err(new Error("Provider error: something broke"))),
+      },
+      resolveAgentMainProvider: vi.fn().mockReturnValue({ providerId: "openai" }),
+    });
+    const handlers = createImageHandlers(deps);
+
+    await handlers["image.generate"]!({
+      _agentId: "default",
+      _callerSessionKey: SESSION_KEY,
+      prompt: "a fox",
+    });
+
+    const failed = recordEvent.mock.calls.find((c) => c[0] === "image.failed")![1] as Record<string, unknown>;
+    // A domain-family kind, never the bare "error" literal.
+    expect(failed.errorKind).toBe("empty_response");
+    expect(failed.errorKind).not.toBe("error");
   });
 
   // WR-02 (186-REVIEW): a generation that SUCCEEDS but whose persist FAILS is a

@@ -39,6 +39,7 @@ import {
 } from "@comis/core";
 import { guessMimeFromExtension, detectMimeFromMagicBytes } from "../wiring/daemon-utils.js";
 import { fetchImageBytesSsrfSafe } from "./ssrf-image-fetch.js";
+import { ValidationError } from "./errors.js";
 import type { AttachmentPayload } from "@comis/core";
 import type { TrajectoryEventType } from "@comis/observability";
 import type { MediaApiDeps, RpcHandler } from "./types.js";
@@ -86,7 +87,11 @@ const MAX_REFERENCE_BYTES = 20 * 1024 * 1024;
 function assertSafeReferenceMime(mediaType: string): void {
   const bare = (mediaType.split(";")[0] ?? "").trim().toLowerCase();
   if (bare === "image/svg+xml" || bare === "image/svg") {
-    throw new Error(
+    // IN-03 (186): ValidationError → classifies as validation/warn (not
+    // internal/error) at the RPC boundary, and the message names the remedy so
+    // the JSON-RPC error alone is actionable (the message is what reaches the
+    // caller; classifyRpcError's hint only rides the daemon log line).
+    throw new ValidationError(
       "SVG reference images are not supported (script/XSS vector); supply a raster image (PNG/JPEG/WebP).",
     );
   }
@@ -111,6 +116,10 @@ function assertSafeReferenceMime(mediaType: string): void {
  *
  * Throws on any failure (SSRF block, oversized, unsafe mime, fetch error) —
  * caught by the RPC handler's `@allow-throw` boundary (→ JSON-RPC error).
+ * IN-03 (186): the caller-input rejections (unsafe mime, oversized) throw a
+ * typed `ValidationError` carrying an actionable message (the 20 MB cap / the
+ * raster-image remedy) so the boundary classifies them validation/warn and the
+ * JSON-RPC error alone is self-actionable.
  */
 async function resolveReferenceImage(
   source: string,
@@ -133,7 +142,9 @@ async function resolveReferenceImage(
       ? Buffer.from(payload, "base64")
       : Buffer.from(decodeURIComponent(payload), "utf-8");
     if (buffer.byteLength > MAX_REFERENCE_BYTES) {
-      throw new Error("Reference image exceeds the size limit");
+      throw new ValidationError(
+        "Reference image exceeds the size limit of 20 MB; supply a smaller raster image.",
+      );
     }
     return { data: buffer.toString("base64"), mimeType };
   }
@@ -383,11 +394,17 @@ export function createImageHandlers(
       if (!result.ok) {
         // OBS-04: record the provider-error failure (errorKind + provider only —
         // NEVER the raw provider message; T-186-08). The typed ImageGenError
-        // carries `imageErrorKind`; a plain Error has none → "error" fallback.
+        // carries the domain `imageErrorKind`; an UNTYPED plain Error has none.
+        // IN-02 (186): the trajectory `errorKind` field speaks ONE vocabulary —
+        // the domain ImageErrorKind family — so the untyped fallback is the
+        // domain `empty_response` (a non-classified, non-image provider failure),
+        // NOT a bare "error" literal outside the ImageErrorKind union. (The closed
+        // 10-member log ErrorKind stays confined to the Pino line via
+        // IMAGE_ERR_TO_LOG; the trajectory event payload is not a log field.)
         const imageErrorKind =
           (result.error as { imageErrorKind?: unknown }).imageErrorKind;
         emit("image.failed", {
-          errorKind: typeof imageErrorKind === "string" ? imageErrorKind : "error",
+          errorKind: typeof imageErrorKind === "string" ? imageErrorKind : ("empty_response" as const),
           provider: deps.provider.id,
         });
         // RES-03 honest-unavailable: forward the typed error's knob-naming hint

@@ -96,6 +96,10 @@ interface Acc {
    *  image.delivered flips `delivered`. Undefined until an image.* record is seen
    *  (presence-conditional output). */
   image?: IncidentImageSignal;
+  /** IN-04 (186): the `seq` at which the image `outcome` was last set, so the
+   *  fold is seq-aware (a stale lower-seq terminal never overwrites a newer one)
+   *  rather than relying on record-array order. */
+  imageOutcomeSeq: number;
   /** W8: event-shape tool.result toolCallIds already counted (dedup — the same
    *  call must not count twice if its result event is duplicated across sources). */
   seenToolResultCallIds: Set<string>;
@@ -335,9 +339,21 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
     case "image.requested":
     case "image.generated":
     case "image.delivered":
-    case "image.failed":
-      acc.image = accumulateImageRecord(acc.image, type, data);
+    case "image.failed": {
+      // IN-04 (186): drive the fold by the record's `seq` (not array order) so a
+      // stale lower-seq terminal never overwrites a newer outcome. Records lacking
+      // an explicit seq fall back to the running counter (monotonic by arrival).
+      const recSeq = asNumber(rec.seq) ?? acc.seq++;
+      const folded = accumulateImageRecord(
+        { signal: acc.image, outcomeSeq: acc.imageOutcomeSeq },
+        type,
+        data,
+        recSeq,
+      );
+      acc.image = folded.signal;
+      acc.imageOutcomeSeq = folded.outcomeSeq;
       return;
+    }
     default:
       // Unknown event type — ignore (forward-compatible).
       return;
@@ -370,6 +386,9 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     recallZeroHits: 0,
     sessionKey: "",
     seq: 0,
+    // IN-04: -1 so the FIRST real terminal record (seq ≥ 0) always sets outcome
+    // (the image.requested seed does not advance it).
+    imageOutcomeSeq: -1,
   };
 
   for (const rec of records) {

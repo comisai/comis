@@ -139,6 +139,36 @@ describe("OBS-03 offline reconstruction — comis explain surfaces an image turn
     expect(report.image?.errorKind).toBeUndefined();
   });
 
+  it("IN-04: out-of-order image records fold by seq — a lower-seq failed does not flip a higher-seq generated", async () => {
+    // The fold previously relied on ARRAY (file) order: an image.failed appearing
+    // AFTER image.generated in the array unconditionally flipped outcome to
+    // "failed". IN-04 makes the fold seq-aware so only a record with a HIGHER seq
+    // can overwrite the terminal outcome. Here the array order is reversed vs the
+    // lifecycle seq: the terminal image.generated (seq 3, the real outcome)
+    // precedes an earlier transient image.failed (seq 2) in the record array.
+    const reader = makeImageFixtureReader([
+      trajectoryRecord("image.requested", { provider: "openai", mainProvider: "openai" }, 1),
+      // Deliberately out of array order: the higher-seq terminal success first…
+      trajectoryRecord(
+        "image.generated",
+        { provider: "openai", model: "gpt-image-1", costUsd: 0.04, sizeBytes: 4242, outcome: "ok", persisted: true },
+        3,
+      ),
+      // …then a LOWER-seq failed that must NOT overwrite the seq-3 outcome.
+      trajectoryRecord("image.failed", { errorKind: "content_blocked", provider: "openai" }, 2),
+    ]);
+
+    const report = (await assembleIncidentReportFromSources(reader, DATA_DIR, {
+      sessionKey: SESSION_KEY,
+      depth: "summary",
+    })) as IncidentReport;
+
+    expect(report.image).toBeDefined();
+    // The seq-3 terminal success wins over the seq-2 failed (seq-aware fold).
+    expect(report.image?.outcome).toBe("ok");
+    expect(report.image?.costUsd).toBeCloseTo(0.04, 4);
+  });
+
   it("non-regression: a session WITHOUT image records reconstructs no image block", async () => {
     // A plain tool turn — no image.* records. The report must NOT invent an
     // image block (additive, presence-conditional like recall).

@@ -102,52 +102,85 @@ export function previewAndDigest(errorText: string | undefined): {
   return { errorPreview, resultDigest, resultBytes };
 }
 
+/** The seq-aware fold state: the reconstructed image turn + the `seq` of the
+ *  record that last SET `outcome` (the terminal record). IN-04 (186): the fold
+ *  is driven by the record stream's `seq`, NOT array order, so only a record
+ *  with a `seq` ≥ the last outcome-setting record can overwrite `outcome`. */
+export interface ImageFoldState {
+  signal: IncidentImageSignal | undefined;
+  /** The seq at which `outcome` was last set (a terminal generated/failed). */
+  outcomeSeq: number;
+}
+
 /**
  * OBS-03/OBS-04 (186): fold one `image.*` trajectory record into the
  * reconstructed image-generation turn (extracted from `toIncidentSignals` to
- * keep that module ≤500). Pure: takes the prior image state + the record's
- * `type`/`data` and returns the new state. The terminal `image.generated` /
- * `image.failed` record sets `outcome` (+ cost/model on success, errorKind on
+ * keep that module ≤500). Pure: takes the prior fold state + the record's
+ * `type`/`data`/`seq` and returns the new state. The terminal `image.generated`
+ * / `image.failed` record sets `outcome` (+ cost/model on success, errorKind on
  * failure — the cost rides image.generated, Route a); `image.delivered` flips
  * `delivered`; `image.requested` seeds a conservative `outcome:"failed"` block
  * so a turn aborting before a terminal record still surfaces. Returns `prev`
  * unchanged for a non-image type. Content-free reads (ids/labels/numbers only).
+ *
+ * IN-04 (186): the fold is SEQ-AWARE — a terminal `image.generated`/`image.failed`
+ * only overwrites `outcome` when its `seq` is ≥ the seq of the last
+ * outcome-setting record. Today the handler always emits in lifecycle order and
+ * the recorder appends in emit order (file order == lifecycle order), so this is
+ * a robustness guard against any future reordering: a lower-seq transient
+ * `image.failed` arriving after a higher-seq terminal `image.generated` no longer
+ * flips a delivered success to failed. `image.requested` (the seed) does not set
+ * `outcomeSeq`, so the first real terminal record always wins.
  */
 export function accumulateImageRecord(
-  prev: IncidentImageSignal | undefined,
+  prev: ImageFoldState,
   type: string,
   data: Record<string, unknown>,
-): IncidentImageSignal | undefined {
+  seq: number,
+): ImageFoldState {
+  const signal = prev.signal;
   switch (type) {
     case "image.requested": {
       const provider = asString(data.provider);
-      const next: IncidentImageSignal = prev ?? { provider: provider ?? "", outcome: "failed", delivered: false };
+      const next: IncidentImageSignal = signal ?? { provider: provider ?? "", outcome: "failed", delivered: false };
       if (provider !== undefined && next.provider.length === 0) next.provider = provider;
-      return next;
+      return { signal: next, outcomeSeq: prev.outcomeSeq };
     }
-    case "image.generated":
+    case "image.generated": {
+      // Seq-aware terminal: a stale (lower-seq) record never overwrites a newer
+      // outcome. The carried `delivered` is preserved regardless of seq (it is a
+      // monotonic latch set by image.delivered, not a terminal outcome).
+      if (signal !== undefined && seq < prev.outcomeSeq) return prev;
       return {
-        provider: asString(data.provider) ?? prev?.provider ?? "",
-        outcome: "ok",
-        delivered: prev?.delivered ?? false,
-        ...(asString(data.model) !== undefined ? { model: asString(data.model) } : {}),
-        ...(asNumber(data.costUsd) !== undefined ? { costUsd: asNumber(data.costUsd) } : {}),
-        // WR-02 (186): carry the degraded-delivery flag (false on a persist-failed
-        // but base64-delivered generation — still a charged outcome:"ok" turn).
-        ...(typeof data.persisted === "boolean" ? { persisted: data.persisted } : {}),
+        signal: {
+          provider: asString(data.provider) ?? signal?.provider ?? "",
+          outcome: "ok",
+          delivered: signal?.delivered ?? false,
+          ...(asString(data.model) !== undefined ? { model: asString(data.model) } : {}),
+          ...(asNumber(data.costUsd) !== undefined ? { costUsd: asNumber(data.costUsd) } : {}),
+          // WR-02 (186): carry the degraded-delivery flag (false on a persist-
+          // failed but base64-delivered generation — still a charged outcome:"ok").
+          ...(typeof data.persisted === "boolean" ? { persisted: data.persisted } : {}),
+        },
+        outcomeSeq: seq,
       };
+    }
     case "image.delivered": {
-      const next: IncidentImageSignal = prev ?? { provider: "", outcome: "ok", delivered: false };
+      const next: IncidentImageSignal = signal ?? { provider: "", outcome: "ok", delivered: false };
       next.delivered = data.delivered === true;
-      return next;
+      return { signal: next, outcomeSeq: prev.outcomeSeq };
     }
     case "image.failed": {
+      if (signal !== undefined && seq < prev.outcomeSeq) return prev;
       const errorKind = asString(data.errorKind);
       return {
-        provider: asString(data.provider) ?? prev?.provider ?? "",
-        outcome: "failed",
-        delivered: prev?.delivered ?? false,
-        ...(errorKind !== undefined ? { errorKind } : {}),
+        signal: {
+          provider: asString(data.provider) ?? signal?.provider ?? "",
+          outcome: "failed",
+          delivered: signal?.delivered ?? false,
+          ...(errorKind !== undefined ? { errorKind } : {}),
+        },
+        outcomeSeq: seq,
       };
     }
     default:
