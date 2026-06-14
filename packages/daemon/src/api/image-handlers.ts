@@ -258,6 +258,27 @@ export function createImageHandlers(
         };
       }
 
+      // SEC-02 cost-ceiling PRE-check — placed AFTER the count limit (which is
+      // RETAINED), BEFORE provider.execute (the cost is only known after, so the
+      // gate is a pre-check on the ALREADY-accumulated spend + a post-hoc
+      // record below). Optional: undefined when `maxCostPerHourUsd` is unset →
+      // the ceiling is skipped (count-only, no regression). Exceeding the
+      // ceiling blocks with quota_exceeded (OBS-02: a WARN + hint naming the
+      // knob; OBS-04: image.failed{quota_exceeded} so the blocked turn is
+      // diagnosable via `comis explain`), and provider.execute is NOT called.
+      if (deps.costLimiter && !deps.costLimiter.canSpend(agentId)) {
+        const hint =
+          "Image generation cost ceiling reached for this hour; raise " +
+          "integrations.media.imageGeneration.maxCostPerHourUsd or wait for the " +
+          "hour window to reset.";
+        deps.logger.warn(
+          { agentId, step: "image_cost_ceiling", errorKind: "quota_exceeded" as const, hint },
+          "Image generation blocked: per-hour cost ceiling reached",
+        );
+        emit("image.failed", { errorKind: "quota_exceeded", provider: deps.provider.id });
+        return { success: false, error: "Image generation cost ceiling exceeded", hint };
+      }
+
       // IN-02 model validation (BEFORE any reference resolution / outbound
       // call — T-185-11): reject an unknown `model` for the EXECUTING provider
       // with a hint LISTING the valid models. Strict validation runs ONLY for
@@ -344,6 +365,15 @@ export function createImageHandlers(
           ? { success: false, error: result.error.message, hint }
           : { success: false, error: result.error.message };
       }
+
+      // SEC-02: accumulate the actual cost into the per-agent/hour bucket on a
+      // successful generation (the pre-check above gates the NEXT request). This
+      // fires exactly once per success — placed after the `!result.ok` guard and
+      // before the persist/delivery branches so EVERY success path (delivered,
+      // base64-after-persist, persist-failure base64) accounts the cost the same.
+      // An undefined costUsd records 0 (the limiter clamps it; no crash) — legacy
+      // adapters without the widened ImageGenOutput simply contribute nothing.
+      deps.costLimiter?.record(agentId, result.value.costUsd ?? 0);
 
       // DEL-01: persist the generated image to the agent's confined workspace
       // (`~/.comis/workspace/media/photos/`) via MediaPersistenceService BEFORE

@@ -814,7 +814,7 @@ type PostChannelsBootContext = BootContext & Required<Pick<BootContext,
   | "memoryApi" | "memoryAdapter" | "embeddingQueue" | "continuationTracker"
   | "ttsAdapter" | "visionRegistry" | "linkRunner" | "transcriber" | "fileExtractor"
   | "resolveAttachment" | "deliveryQueue"
-  | "imageGenProvider" | "imageGenRateLimiter" | "imageGenConfig" | "persistImage"
+  | "imageGenProvider" | "imageGenRateLimiter" | "imageGenConfig" | "persistImage" | "imageGenCostLimiter"
 >>;
 
 /**
@@ -929,7 +929,7 @@ function buildRpcDispatchDeps(deps: {
           logger: c.skillsLogger,
           getChannelAdapter: (channelType: string) => c.adaptersByType.get(channelType),
           resolveAgentMainProvider: resolveAgentMainProviderFor, // RES-01
-          workspaceDirs: c.workspaceDirs, defaultWorkspaceDir: c.defaultWorkspaceDir, persist: c.persistImage, trajectoryRegistry: c.trajectoryRegistry, eventBus: c.container.eventBus, // IN-01 (185): reference_image path; DEL-01 (186): persist getter; OBS-04 (186): trajectory direct-emit; OBS-03 (186): synthetic cost
+          workspaceDirs: c.workspaceDirs, defaultWorkspaceDir: c.defaultWorkspaceDir, persist: c.persistImage, trajectoryRegistry: c.trajectoryRegistry, eventBus: c.container.eventBus, costLimiter: c.imageGenCostLimiter, // IN-01 (185): reference_image path; DEL-01 (186): persist getter; OBS-04 (186): trajectory direct-emit; OBS-03 (186): synthetic cost; SEC-02 (186): USD cost ceiling
         };
   // Inlined buildTokenStoreMutators.
   const addToTokenStore: import("./api/rpc-dispatch.js").ApiDispatchDeps["addToTokenStore"] = (entry) => { g.runtimeTokens.push({ id: entry.id, secretBuf: Buffer.from(entry.secret, "utf-8"), scopes: entry.scopes }); };
@@ -2198,7 +2198,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
   const sandboxProvider = detectSandboxProvider(skillsLogger);
   if (sandboxProvider) skillsLogger.info({ provider: sandboxProvider.name }, "Exec sandbox provider detected");
   // Image-generation bundle (see buildImageGenBundle in wiring/main-helpers.ts). 184: oauthManager threads the DEFAULT agent's OAuth manager for the Codex image path (CDX-01).
-  const { imageGenConfig, imageGenProvider, imageGenRateLimiter, persistImage } =
+  const { imageGenConfig, imageGenProvider, imageGenRateLimiter, persistImage, imageGenCostLimiter } =
     buildImageGenBundle({ container, defaultAgentId, skillsLogger, oauthManager: handle.oauthManagers.get(defaultAgentId), workspaceDirs, defaultWorkspaceDir });
 
   // 6.6.8.5. Tools + message preprocessing — HOISTED above setupChannels.
@@ -2415,7 +2415,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     notificationContext, bgCompletionRunnerContext, terminalWakeContext,
     crossSessionSender, subAgentRunner, sendToChannel, announceToParent,
     deadLetterQueue, announcementBatcher, gatewaySendRef,
-    sandboxProvider, imageGenProvider, imageGenRateLimiter, imageGenConfig, persistImage,
+    sandboxProvider, imageGenProvider, imageGenRateLimiter, imageGenConfig, persistImage, imageGenCostLimiter,
     assembleToolsForAgent, preprocessMessageText, getCapabilityPortForAgent,
     heartbeatRunner, duplicateDetector, perAgentRunner, wakeCoalescer,
     nodeTypeRegistry, graphCoordinator, namedGraphStore,
@@ -2688,7 +2688,7 @@ async function bootShutdown(
     | "memoryApi" | "memoryAdapter" | "embeddingQueue" | "continuationTracker"
     | "ttsAdapter" | "visionRegistry" | "linkRunner" | "transcriber" | "fileExtractor"
     | "resolveAttachment" | "deliveryQueue" | "deadLetterQueue"
-    | "imageGenProvider" | "imageGenRateLimiter" | "imageGenConfig" | "persistImage"
+    | "imageGenProvider" | "imageGenRateLimiter" | "imageGenConfig" | "persistImage" | "imageGenCostLimiter"
     | "getExecutor" | "rpcCall" | "wireDispatch"
     | "assembleToolsForAgent" | "preprocessMessageText"
     | "gatewaySendRef" | "channelAdaptersRef" | "cronWakeCallbackRef"

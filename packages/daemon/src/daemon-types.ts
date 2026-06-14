@@ -637,6 +637,10 @@ export interface BootContext {
     buffer: Buffer,
     opts: { mediaKind: "image"; mimeType: string },
   ) => Promise<import("@comis/shared").Result<import("@comis/skills/tools").PersistedFile, Error>>;
+  /** SEC-02 (186): per-agent/hour USD cost ceiling from buildImageGenBundle.
+   *  Undefined when `maxCostPerHourUsd` is unset (ceiling skipped, count-only).
+   *  Folded onto imageHandlerDeps (daemon.ts:932) as the `costLimiter` dep. */
+  imageGenCostLimiter?: import("./api/image-cost-limiter.js").ImageCostLimiter;
   // Tools (assembler + preprocessor)
   assembleToolsForAgent?: ReturnType<typeof setupTools>["assembleToolsForAgent"];
   preprocessMessageText?: ReturnType<typeof setupTools>["preprocessMessageText"];

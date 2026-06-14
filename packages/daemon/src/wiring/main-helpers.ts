@@ -22,6 +22,9 @@ import { createImageGenRateLimiter } from "@comis/skills";
 // precedent (setup-tools.ts:69,305). Sibling-direct on the `@comis/skills/tools`
 // subpath (the proven path), NOT the bare `@comis/skills` barrel.
 import { createMediaPersistenceService, type MediaPersistenceService } from "@comis/skills/tools";
+// SEC-02 (186): the per-agent/hour USD cost ceiling, a daemon-side accumulator
+// (sibling api/ module) constructed beside the count rate limiter below.
+import { createImageCostLimiter, type ImageCostLimiter } from "../api/image-cost-limiter.js";
 import type { LoggingResult } from "./setup-logging.js";
 import type { BootContext } from "../daemon-types.js";
 // Sibling-direct imports (not via the wiring barrel) to keep main-helpers free
@@ -280,6 +283,9 @@ export function buildImageGenBundle(deps: {
     buffer: Buffer,
     opts: { mediaKind: "image"; mimeType: string },
   ) => ReturnType<MediaPersistenceService["persist"]>;
+  /** SEC-02 (186): per-agent/hour USD cost ceiling. Undefined when
+   *  `maxCostPerHourUsd` is unset (ceiling skipped — count limit still applies). */
+  imageGenCostLimiter: ImageCostLimiter | undefined;
 } {
   const { container, defaultAgentId, skillsLogger, oauthManager, workspaceDirs, defaultWorkspaceDir } = deps;
   const imageGenConfig = container.config.integrations.media.imageGeneration;
@@ -309,6 +315,14 @@ export function buildImageGenBundle(deps: {
   const imageGenRateLimiter = imageGenProvider
     ? createImageGenRateLimiter({ maxPerHour: imageGenConfig.maxPerHour })
     : undefined;
+  // SEC-02 (186): the USD cost ceiling is wired BESIDE the count rate limiter
+  // (which is retained). Constructed ONLY when `maxCostPerHourUsd` is set AND a
+  // provider exists — otherwise undefined, and the handler skips the ceiling
+  // (count-only, no regression). Mirrors the createImageGenRateLimiter guard.
+  const imageGenCostLimiter =
+    imageGenProvider && imageGenConfig.maxCostPerHourUsd
+      ? createImageCostLimiter({ maxCostPerHourUsd: imageGenConfig.maxCostPerHourUsd })
+      : undefined;
   // DEL-01 (186): per-agent MediaPersistenceService getter — the EXACT shape of
   // the screenshot precedent (setup-tools.ts:305-316). Lazily built per agent,
   // keyed on agentId, writing to the agent's confined workspace
@@ -339,5 +353,5 @@ export function buildImageGenBundle(deps: {
   } else {
     skillsLogger.debug("Image generation disabled: API key not configured or provider unknown");
   }
-  return { imageGenConfig, imageGenProvider, imageGenRateLimiter, persistImage };
+  return { imageGenConfig, imageGenProvider, imageGenRateLimiter, persistImage, imageGenCostLimiter };
 }
