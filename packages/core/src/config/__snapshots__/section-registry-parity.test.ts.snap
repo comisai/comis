@@ -5957,8 +5957,9 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("integ
       },
       "imageGeneration": {
         "defaultSize": "1024x1024",
+        "fallbackChain": [],
         "maxPerHour": 10,
-        "provider": "fal",
+        "provider": "auto",
         "safetyChecker": true,
         "timeoutMs": 60000
       },
@@ -6140,8 +6141,9 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("integ
   {
     "default": {
       "defaultSize": "1024x1024",
+      "fallbackChain": [],
       "maxPerHour": 10,
-      "provider": "fal",
+      "provider": "auto",
       "safetyChecker": true,
       "timeoutMs": 60000
     },
@@ -6156,6 +6158,17 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("integ
     "type": "string"
   },
   {
+    "default": [],
+    "immutable": true,
+    "path": "integrations.media.imageGeneration.fallbackChain",
+    "type": "array"
+  },
+  {
+    "immutable": true,
+    "path": "integrations.media.imageGeneration.maxCostPerHourUsd",
+    "type": "number"
+  },
+  {
     "default": 10,
     "immutable": true,
     "path": "integrations.media.imageGeneration.maxPerHour",
@@ -6167,7 +6180,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("integ
     "type": "string"
   },
   {
-    "default": "fal",
+    "default": "auto",
     "immutable": true,
     "path": "integrations.media.imageGeneration.provider",
     "type": "string"
@@ -11372,8 +11385,9 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
         },
         "imageGeneration": {
           "defaultSize": "1024x1024",
+          "fallbackChain": [],
           "maxPerHour": 10,
-          "provider": "fal",
+          "provider": "auto",
           "safetyChecker": true,
           "timeoutMs": 60000
         },
@@ -11616,8 +11630,9 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
       },
       "imageGeneration": {
         "defaultSize": "1024x1024",
+        "fallbackChain": [],
         "maxPerHour": 10,
-        "provider": "fal",
+        "provider": "auto",
         "safetyChecker": true,
         "timeoutMs": 60000
       },
@@ -11799,8 +11814,9 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
   {
     "default": {
       "defaultSize": "1024x1024",
+      "fallbackChain": [],
       "maxPerHour": 10,
-      "provider": "fal",
+      "provider": "auto",
       "safetyChecker": true,
       "timeoutMs": 60000
     },
@@ -11815,6 +11831,17 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "type": "string"
   },
   {
+    "default": [],
+    "immutable": true,
+    "path": "integrations.media.imageGeneration.fallbackChain",
+    "type": "array"
+  },
+  {
+    "immutable": true,
+    "path": "integrations.media.imageGeneration.maxCostPerHourUsd",
+    "type": "number"
+  },
+  {
     "default": 10,
     "immutable": true,
     "path": "integrations.media.imageGeneration.maxPerHour",
@@ -11826,7 +11853,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "type": "string"
   },
   {
-    "default": "fal",
+    "default": "auto",
     "immutable": true,
     "path": "integrations.media.imageGeneration.provider",
     "type": "string"
@@ -22534,8 +22561,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("int
         },
         "imageGeneration": {
           "defaultSize": "1024x1024",
+          "fallbackChain": [],
           "maxPerHour": 10,
-          "provider": "fal",
+          "provider": "auto",
           "safetyChecker": true,
           "timeoutMs": 60000
         },
@@ -22727,8 +22755,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("int
           "additionalProperties": false,
           "default": {
             "defaultSize": "1024x1024",
+            "fallbackChain": [],
             "maxPerHour": 10,
-            "provider": "fal",
+            "provider": "auto",
             "safetyChecker": true,
             "timeoutMs": 60000
           },
@@ -22736,6 +22765,25 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("int
             "defaultSize": {
               "default": "1024x1024",
               "type": "string"
+            },
+            "fallbackChain": {
+              "default": [],
+              "items": {
+                "enum": [
+                  "auto",
+                  "fal",
+                  "openai",
+                  "openai-codex",
+                  "google",
+                  "openrouter"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "maxCostPerHourUsd": {
+              "exclusiveMinimum": 0,
+              "type": "number"
             },
             "maxPerHour": {
               "default": 10,
@@ -22747,10 +22795,14 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("int
               "type": "string"
             },
             "provider": {
-              "default": "fal",
+              "default": "auto",
               "enum": [
+                "auto",
                 "fal",
-                "openai"
+                "openai",
+                "openai-codex",
+                "google",
+                "openrouter"
               ],
               "type": "string"
             },
@@ -22770,7 +22822,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("int
             "safetyChecker",
             "maxPerHour",
             "defaultSize",
-            "timeoutMs"
+            "timeoutMs",
+            "fallbackChain"
           ],
           "type": "object"
         },
@@ -33812,8 +33865,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           },
           "imageGeneration": {
             "defaultSize": "1024x1024",
+            "fallbackChain": [],
             "maxPerHour": 10,
-            "provider": "fal",
+            "provider": "auto",
             "safetyChecker": true,
             "timeoutMs": 60000
           },
@@ -34125,8 +34179,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             },
             "imageGeneration": {
               "defaultSize": "1024x1024",
+              "fallbackChain": [],
               "maxPerHour": 10,
-              "provider": "fal",
+              "provider": "auto",
               "safetyChecker": true,
               "timeoutMs": 60000
             },
@@ -34318,8 +34373,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "additionalProperties": false,
               "default": {
                 "defaultSize": "1024x1024",
+                "fallbackChain": [],
                 "maxPerHour": 10,
-                "provider": "fal",
+                "provider": "auto",
                 "safetyChecker": true,
                 "timeoutMs": 60000
               },
@@ -34327,6 +34383,25 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "defaultSize": {
                   "default": "1024x1024",
                   "type": "string"
+                },
+                "fallbackChain": {
+                  "default": [],
+                  "items": {
+                    "enum": [
+                      "auto",
+                      "fal",
+                      "openai",
+                      "openai-codex",
+                      "google",
+                      "openrouter"
+                    ],
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "maxCostPerHourUsd": {
+                  "exclusiveMinimum": 0,
+                  "type": "number"
                 },
                 "maxPerHour": {
                   "default": 10,
@@ -34338,10 +34413,14 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                   "type": "string"
                 },
                 "provider": {
-                  "default": "fal",
+                  "default": "auto",
                   "enum": [
+                    "auto",
                     "fal",
-                    "openai"
+                    "openai",
+                    "openai-codex",
+                    "google",
+                    "openrouter"
                   ],
                   "type": "string"
                 },
@@ -34361,7 +34440,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "safetyChecker",
                 "maxPerHour",
                 "defaultSize",
-                "timeoutMs"
+                "timeoutMs",
+                "fallbackChain"
               ],
               "type": "object"
             },
