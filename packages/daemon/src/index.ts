@@ -146,15 +146,10 @@ export type { IncidentSourceReader } from "./api/obs-handlers/obs-explain-reader
 // Consumer: test/live/scenarios/prove/fleet-reprove.test.ts
 export { assembleFleetHealthReport } from "./api/obs-handlers/fleet-health.js";
 
-// pi-ai image shim (Phase 183, I1 keystone) — the single `generateImages()`
-// adapter + its boot registration hook + the SecretManager cred resolver + the
-// typed cross-plan error class. Surfaced on the top-level barrel so the image
-// wiring (and future-phase transports) import from "@comis/daemon" rather than
-// a deep api/ subpath. `ImageGenError` is the cross-plan error-shape contract
-// the handler's hint-surfacing depends on.
-export {
-  createPiImageAdapter,
-  registerComisImageProviders,
-  resolveImageApiKey,
-  ImageGenError,
-} from "./api/pi-image-adapter.js";
+// pi-ai image shim (Phase 183, I1 keystone): `createPiImageAdapter` +
+// `registerComisImageProviders` + `resolveImageApiKey` + the typed cross-plan
+// `ImageGenError` live in `./api/pi-image-adapter.js`. They are daemon-internal
+// — consumed via relative imports (`wiring/setup-image-provider`,
+// `wiring/main-helpers`) — and intentionally NOT on the public barrel until a
+// cross-package consumer exists (public-export-consumers gate). A future-phase
+// transport that genuinely needs one cross-package re-exports it here then.
