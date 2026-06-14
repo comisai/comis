@@ -1,0 +1,292 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * Tests for the per-call-bearer Codex image adapter (codex-image-adapter.ts).
+ *
+ * The adapter is an `ImageGenerationPort` that resolves the OAuth bearer PER
+ * `execute()` via `oauthManager.getApiKey("openai-codex", {oauthProfiles})`
+ * (so an expired token refreshes inside getApiKey — CDX-01), builds the CF
+ * headers from that same freshly-resolved JWT (CDX-02), and drives the ONE
+ * `generateImages()` call site.
+ *
+ * Determinism: the `OAuthTokenManager` is a `vi.fn()` mock (that IS the refresh
+ * seam — refresh internals are tested in oauth-token-manager.test.ts). A FAKE
+ * `openai-codex-images` transport is registered in `beforeEach` (capturing its
+ * `options.{apiKey,headers}`) so `generateImages` dispatches to it WITHOUT a
+ * network call (183-03 fake-provider precedent; Pitfall 6). NEVER the network,
+ * NEVER a real ChatGPT login.
+ * @module
+ */
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import {
+  registerImagesApiProvider,
+  type AssistantImages,
+  type ProviderImagesOptions,
+} from "@earendil-works/pi-ai";
+import type { OAuthError, OAuthTokenManager } from "@comis/core";
+import { ok, err, type Result } from "@comis/shared";
+import { makeMockLogger } from "../../../../test/support/mock-logger.js";
+import { createCodexImageAdapter, CODEX_IMAGE_MODEL } from "./codex-image-adapter.js";
+
+// ---------------------------------------------------------------------------
+// Test helpers
+// ---------------------------------------------------------------------------
+
+const ACCOUNT_ID = "acct_123";
+
+/** A codex JWT carrying `chatgpt_account_id: "acct_123"`. */
+const VALID_BEARER = (() => {
+  const b64url = (o: unknown): string => Buffer.from(JSON.stringify(o)).toString("base64url");
+  const header = b64url({ alg: "none", typ: "JWT" });
+  const body = b64url({ "https://api.openai.com/auth": { chatgpt_account_id: ACCOUNT_ID } });
+  return `${header}.${body}.sig`;
+})();
+
+/** Base64 of "PNG" — proves the buffer round-trip through toImageGenOutput. */
+const PNG_B64 = Buffer.from("PNG").toString("base64");
+
+/** Captured options from the fake transport (the round-trip assertion seam). */
+interface CapturedTransport {
+  apiKey?: string;
+  headers?: Record<string, string>;
+}
+
+/**
+ * Register a fake `openai-codex-images` transport returning `result`, capturing
+ * the `{apiKey,headers}` the adapter forwarded. Re-registering overwrites the
+ * prior entry (registry is a Map keyed by api).
+ */
+function registerFakeTransport(
+  result: Partial<AssistantImages>,
+  captured: CapturedTransport,
+): void {
+  registerImagesApiProvider({
+    api: "openai-codex-images",
+    generateImages: async (model, _context, options?: ProviderImagesOptions) => {
+      captured.apiKey = options?.apiKey;
+      captured.headers = options?.headers;
+      return {
+        api: model.api,
+        provider: model.provider,
+        model: model.id,
+        output: [],
+        stopReason: "stop",
+        timestamp: Date.now(),
+        ...result,
+      } as AssistantImages;
+    },
+  });
+}
+
+/** Build a mock OAuthTokenManager whose getApiKey is a vi.fn() (the refresh seam). */
+function mockOauth(
+  getApiKeyImpl: () => Promise<Result<string, OAuthError>>,
+  hasCreds = true,
+): { manager: OAuthTokenManager; getApiKey: ReturnType<typeof vi.fn> } {
+  const getApiKey = vi.fn(getApiKeyImpl);
+  const manager = {
+    getApiKey,
+    hasCredentials: () => hasCreds,
+  } as unknown as OAuthTokenManager;
+  return { manager, getApiKey };
+}
+
+let captured: CapturedTransport;
+let logger: ReturnType<typeof makeMockLogger>;
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  captured = {};
+  logger = makeMockLogger();
+  // Default fake: a successful PNG. Individual tests re-register as needed.
+  registerFakeTransport(
+    { stopReason: "stop", output: [{ type: "image", data: PNG_B64, mimeType: "image/png" }] },
+    captured,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Task 2 — CDX-01: per-call getApiKey + refresh seam
+// ---------------------------------------------------------------------------
+
+describe("createCodexImageAdapter — per-call bearer (CDX-01)", () => {
+  it("resolves the bearer per execute() via getApiKey('openai-codex', {oauthProfiles})", async () => {
+    const { manager, getApiKey } = mockOauth(async () => ok(VALID_BEARER));
+    const adapter = createCodexImageAdapter({
+      oauthManager: manager,
+      oauthProfiles: { "openai-codex": "default" },
+      logger: logger as never,
+    });
+
+    await adapter.execute({ prompt: "x" });
+
+    expect(getApiKey).toHaveBeenCalledWith("openai-codex", {
+      oauthProfiles: { "openai-codex": "default" },
+    });
+    // The refreshed bearer reached the transport (proves the await ordering).
+    expect(captured.apiKey).toBe(VALID_BEARER);
+  });
+
+  it("threads a refreshed bearer through to the transport", async () => {
+    const refreshed = (() => {
+      const b64url = (o: unknown): string => Buffer.from(JSON.stringify(o)).toString("base64url");
+      return `${b64url({ alg: "none" })}.${b64url({ "https://api.openai.com/auth": { chatgpt_account_id: "acct_refreshed" } })}.sig`;
+    })();
+    const { manager } = mockOauth(async () => ok(refreshed));
+    const adapter = createCodexImageAdapter({ oauthManager: manager, logger: logger as never });
+
+    const result = await adapter.execute({ prompt: "x" });
+
+    expect(result.ok).toBe(true);
+    expect(captured.apiKey).toBe(refreshed);
+    expect(captured.headers?.["ChatGPT-Account-ID"]).toBe("acct_refreshed");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 2 — 401 / no-cred → auth_required + hint
+// ---------------------------------------------------------------------------
+
+describe("createCodexImageAdapter — auth failures (success-criterion 3)", () => {
+  const codes: OAuthError["code"][] = [
+    "REFRESH_FAILED",
+    "NO_CREDENTIALS",
+    "PROFILE_NOT_FOUND",
+    "NO_PROVIDER",
+    "STORE_FAILED",
+  ];
+
+  for (const code of codes) {
+    it(`maps a getApiKey err(${code}) to ImageGenError(auth_required) with a 'comis auth login' hint`, async () => {
+      const { manager } = mockOauth(async () =>
+        err({ code, message: "nope", providerId: "openai-codex" }),
+      );
+      const adapter = createCodexImageAdapter({ oauthManager: manager, logger: logger as never });
+
+      const result = await adapter.execute({ prompt: "x" });
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.name).toBe("ImageGenError");
+      expect((result.error as { imageErrorKind?: string }).imageErrorKind).toBe("auth_required");
+      expect((result.error as { hint?: string }).hint).toContain("comis auth login");
+      // No transport call when auth fails.
+      expect(captured.apiKey).toBeUndefined();
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Task 2 — CDX-02: CF headers reach the transport from the resolved JWT
+// ---------------------------------------------------------------------------
+
+describe("createCodexImageAdapter — CF headers (CDX-02)", () => {
+  it("forwards originator + ChatGPT-Account-ID + codex User-Agent built from the bearer JWT", async () => {
+    const { manager } = mockOauth(async () => ok(VALID_BEARER));
+    const adapter = createCodexImageAdapter({ oauthManager: manager, logger: logger as never });
+
+    await adapter.execute({ prompt: "x" });
+
+    expect(captured.headers?.originator).toBe("codex_cli_rs");
+    expect(captured.headers?.["ChatGPT-Account-ID"]).toBe(ACCOUNT_ID);
+    expect(captured.headers?.["User-Agent"]).toMatch(/^codex_cli_rs\//);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 2 — success / empty mapping (reuses the shipped toImageGenOutput)
+// ---------------------------------------------------------------------------
+
+describe("createCodexImageAdapter — result mapping", () => {
+  it("maps a successful image to {buffer, mimeType} via the reused toImageGenOutput", async () => {
+    const { manager } = mockOauth(async () => ok(VALID_BEARER));
+    registerFakeTransport(
+      { stopReason: "stop", output: [{ type: "image", data: PNG_B64, mimeType: "image/png" }] },
+      captured,
+    );
+    const adapter = createCodexImageAdapter({ oauthManager: manager, logger: logger as never });
+
+    const result = await adapter.execute({ prompt: "x" });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.mimeType).toBe("image/png");
+    expect(result.value.buffer.toString()).toBe("PNG");
+  });
+
+  it("maps an empty_response transport result to ImageGenError(empty_response)", async () => {
+    const { manager } = mockOauth(async () => ok(VALID_BEARER));
+    registerFakeTransport(
+      { stopReason: "error", errorMessage: "empty_response: no image in stream", output: [] },
+      captured,
+    );
+    const adapter = createCodexImageAdapter({ oauthManager: manager, logger: logger as never });
+
+    const result = await adapter.execute({ prompt: "x" });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect((result.error as { imageErrorKind?: string }).imageErrorKind).toBe("empty_response");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 2 — isAvailable + the hand-built model
+// ---------------------------------------------------------------------------
+
+describe("createCodexImageAdapter — isAvailable + model", () => {
+  it("returns oauthManager.hasCredentials('openai-codex') from isAvailable", () => {
+    const present = createCodexImageAdapter({
+      oauthManager: mockOauth(async () => ok(VALID_BEARER), true).manager,
+      logger: logger as never,
+    });
+    const absent = createCodexImageAdapter({
+      oauthManager: mockOauth(async () => ok(VALID_BEARER), false).manager,
+      logger: logger as never,
+    });
+    expect(present.isAvailable()).toBe(true);
+    expect(absent.isAvailable()).toBe(false);
+    expect(present.id).toBe("openai-codex");
+  });
+
+  it("exports a hand-built codex ImagesModel pointing at the ChatGPT backend", () => {
+    expect(CODEX_IMAGE_MODEL.api).toBe("openai-codex-images");
+    expect(CODEX_IMAGE_MODEL.provider).toBe("openai-codex");
+    expect(CODEX_IMAGE_MODEL.baseUrl).toBe("https://chatgpt.com/backend-api");
+    expect(CODEX_IMAGE_MODEL.id).toBe("gpt-image-1");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 2 — SEC-03 subset: no secret in any log payload
+// ---------------------------------------------------------------------------
+
+describe("createCodexImageAdapter — secret-logging discipline (SEC-03 subset)", () => {
+  it("never logs the bearer / account-id / headers object on the auth failure path", async () => {
+    const { manager } = mockOauth(async () =>
+      err({ code: "REFRESH_FAILED", message: "x", providerId: "openai-codex" }),
+    );
+    const adapter = createCodexImageAdapter({ oauthManager: manager, logger: logger as never });
+
+    await adapter.execute({ prompt: "x" });
+
+    const serialized = JSON.stringify(logger._calls());
+    expect(serialized).not.toContain(VALID_BEARER);
+    expect(serialized).not.toContain(ACCOUNT_ID);
+    expect(serialized).not.toContain("Bearer ");
+  });
+
+  it("never logs the bearer / account-id on a generic (empty_response) failure", async () => {
+    const { manager } = mockOauth(async () => ok(VALID_BEARER));
+    registerFakeTransport(
+      { stopReason: "error", errorMessage: "empty_response: no image in stream", output: [] },
+      captured,
+    );
+    const adapter = createCodexImageAdapter({ oauthManager: manager, logger: logger as never });
+
+    await adapter.execute({ prompt: "x" });
+
+    const serialized = JSON.stringify(logger._calls());
+    expect(serialized).not.toContain(VALID_BEARER);
+    expect(serialized).not.toContain(ACCOUNT_ID);
+  });
+});
