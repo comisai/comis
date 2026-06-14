@@ -121,7 +121,7 @@ export function createImageProviderSelector(deps: {
     }
 
     const apiKey = resolveImageApiKey(sel.imagesApi, deps.secretManager);
-    const model = resolveOpenRouterModel(sel.model ?? sel.defaultModel);
+    const model = resolveOpenRouterModel(sel.model ?? sel.defaultModel, deps.logger);
     return createPiImageAdapter({
       model,
       apiKey,
@@ -140,10 +140,31 @@ export function createImageProviderSelector(deps: {
  * the catalog (`getImageModels`) and fall back to the first catalog model when
  * the requested id is not present. The built-in openrouter catalog always has
  * at least one model (Phase 183 default `black-forest-labs/flux.2-pro`).
+ *
+ * WR-02 (183-REVIEW): when the configured/tool model is NOT in the catalog the
+ * fallback would otherwise be a SILENT misroute — the operator's explicit
+ * choice discarded with no signal. Emit a WARN naming the unresolved id, the
+ * fallback, the binding knob, and an `errorKind` so the substitution is
+ * observable at the default log level (§2.7 anti-silent-misroute).
  */
-function resolveOpenRouterModel(modelId: string): ReturnType<typeof getImageModel> {
+function resolveOpenRouterModel(
+  modelId: string,
+  logger: ComisLogger,
+): ReturnType<typeof getImageModel> {
   const models = getImageModels("openrouter");
   const match = models.find((m) => m.id === modelId);
+  if (!match) {
+    logger.warn(
+      {
+        requestedModel: modelId,
+        fallbackModel: models[0]?.id,
+        errorKind: "config" as const,
+        hint: "Set integrations.media.imageGeneration.model to a model in the openrouter image catalog.",
+        step: "image_model_substituted",
+      },
+      "Configured image model not found in catalog; falling back to first catalog model",
+    );
+  }
   // `as` narrows the union element to the concrete return type; both are an
   // ImagesModel over the openrouter image apis — assignable at the call site.
   return (match ?? models[0]) as ReturnType<typeof getImageModel>;
