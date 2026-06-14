@@ -32,6 +32,7 @@ import {
   type ImageErrorKind,
   type ImageGenerationConfig,
   type ImageGenerationPort,
+  type OAuthTokenManager,
   type SecretManager,
 } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
@@ -41,6 +42,7 @@ import {
   resolveImageApiKey,
   ImageGenError,
 } from "../api/pi-image-adapter.js";
+import { createCodexImageAdapter, CODEX_IMAGE_MODEL } from "../api/codex-image-adapter.js";
 
 /**
  * A port whose `execute()` always returns a classified `ImageGenError` Result
@@ -86,6 +88,16 @@ export function createImageProviderSelector(deps: {
   /** The existing skills fal/openai getter (createImageGenGetter). */
   legacyGetter: () => ImageGenerationPort | undefined;
   logger: ComisLogger;
+  /**
+   * The DEFAULT agent's OAuthTokenManager (184). The codex credential is OAuth,
+   * not a SecretManager env key — so codex availability + the per-call bearer
+   * resolve through this manager, NOT `resolveImageApiKey`. Surfaced from
+   * setupAgents → buildImageGenBundle (the composition-root threading gap).
+   * Absent (undefined) → codex is honest-unavailable (never a crash).
+   */
+  oauthManager?: OAuthTokenManager;
+  /** The DEFAULT agent's `Record<provider, profileId>` map (for getApiKey). */
+  oauthProfiles?: Record<string, string>;
 }): () => ImageGenerationPort | undefined {
   return () => {
     const cfg = deps.imageGenConfig;
@@ -101,7 +113,16 @@ export function createImageProviderSelector(deps: {
     const sel = resolveImageProvider(
       cfg,
       deps.mainProviderId,
-      (imagesApi) => resolveImageApiKey(imagesApi, deps.secretManager) !== undefined,
+      // CRED-01: codex availability is the OAuth manager (the bearer is OAuth,
+      // not a SecretManager env key) — so a Codex-only agent with NO
+      // FAL_KEY/OPENAI_API_KEY resolves available. `hasCredentials` is keyed on
+      // the OAuth provider id "openai-codex" (NOT the images api). Absent
+      // manager → false (honest-unavailable, never a crash). Every other api
+      // stays the 183 SecretManager env-key check.
+      (imagesApi) =>
+        imagesApi === "openai-codex-images"
+          ? (deps.oauthManager?.hasCredentials("openai-codex") ?? false)
+          : resolveImageApiKey(imagesApi, deps.secretManager) !== undefined,
       // WR-04 (183-REVIEW): the once-per-resolution follow-main skip is the
       // load-bearing "why did images go unavailable" evidence — promote it to
       // INFO so it is visible at the default log level (§2.7). Per-fallback-
@@ -117,9 +138,35 @@ export function createImageProviderSelector(deps: {
       return makeUnavailableImagePort(sel.errorKind, sel.hint, deps.logger);
     }
 
-    // Phase 183 wires ONLY the built-in openrouter catalog. Custom transports
-    // (openai-codex / openai / google) land in Phases 184/185 — until then,
-    // surface an honest-unavailable naming the opt-in path (not a misroute).
+    // 184: the Codex (ChatGPT-login) per-call-bearer adapter. Keyed EXACTLY on
+    // the codex images api — `openai-images`/`google-images` fall through to the
+    // not-yet-wired guard below (they land in 185, no scope creep).
+    if (sel.imagesApi === "openai-codex-images") {
+      // By construction `sel.imagesApi === "openai-codex-images"` is `ok` only
+      // when credsAvailable returned true, which requires a present manager
+      // (hasCredentials === true). The defensive guard makes that explicit (and
+      // keeps the adapter's required `oauthManager` honest) rather than a `!`.
+      if (!deps.oauthManager) {
+        return makeUnavailableImagePort(
+          "auth_required",
+          `Codex image generation requires a logged-in "openai-codex" OAuth ` +
+            `profile. Run "comis auth login --provider openai-codex", or set ` +
+            `integrations.media.imageGeneration.provider.`,
+          deps.logger,
+        );
+      }
+      return createCodexImageAdapter({
+        oauthManager: deps.oauthManager,
+        oauthProfiles: deps.oauthProfiles,
+        model: CODEX_IMAGE_MODEL,
+        timeoutMs: cfg.timeoutMs,
+        logger: deps.logger,
+      });
+    }
+
+    // Phase 183 wires ONLY the built-in openrouter catalog. The remaining custom
+    // transports (openai / google) land in Phase 185 — until then, surface an
+    // honest-unavailable naming the opt-in path (not a misroute).
     if (sel.imagesApi !== "openrouter-images") {
       return makeUnavailableImagePort(
         "unsupported_provider",
