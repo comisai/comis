@@ -10,9 +10,10 @@
 // (relative imports) today, so they stay off the public barrel until a
 // cross-package consumer exists. A later phase re-exports them here if needed.
 export { IMAGE_ERR_TO_LOG, resolveImageProvider } from "../media/index.js";
-export {
-  IMAGE_MODELS_BY_PROVIDER,
-  isValidImageModel,
-  listImageModels,
-} from "../media/index.js";
+// IN-02 (Phase 185): only the two validators are surfaced — they are consumed
+// cross-package by the daemon image-handlers. The backing `IMAGE_MODELS_BY_PROVIDER`
+// const stays off the public barrel (no cross-package consumer; the validators
+// encapsulate it — same policy as `IMAGE_CAPABILITY` above). It is importable
+// intra-`@comis/core/media` via a relative path for the unit test.
+export { isValidImageModel, listImageModels } from "../media/index.js";
 export type { ImageErrorKind } from "../media/index.js";

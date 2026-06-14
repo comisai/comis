@@ -28,9 +28,19 @@
 
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import { writeFile, unlink } from "node:fs/promises";
-import { ImageGenerateContract, safePath, stripInternalFields, systemGetEnv, systemNowMs } from "@comis/core";
+import { writeFile, unlink, readFile } from "node:fs/promises";
+import {
+  ImageGenerateContract,
+  isValidImageModel,
+  listImageModels,
+  safePath,
+  stripInternalFields,
+  systemGetEnv,
+  systemNowMs,
+  validateUrl,
+} from "@comis/core";
 import { suppressError } from "@comis/shared";
+import { guessMimeFromExtension, detectMimeFromMagicBytes } from "../wiring/daemon-utils.js";
 import type { AttachmentPayload } from "@comis/core";
 import type { MediaApiDeps, RpcHandler } from "./types.js";
 
@@ -61,6 +71,68 @@ export type ImageHandlerDeps = NonNullable<MediaApiDeps["imageHandlerDeps"]>;
 function extractImageHint(error: Error): string | undefined {
   const hint = (error as { hint?: unknown }).hint;
   return typeof hint === "string" && hint.length > 0 ? hint : undefined;
+}
+
+/** Max bytes for a fetched reference-image URL (DoS cap — T-185-13). The
+ *  data-uri/base64 path is a bounded decode of the agent-supplied string. A
+ *  dedicated per-reference limit beyond this URL cap is Phase 186 hardening. */
+const MAX_REFERENCE_BYTES = 20 * 1024 * 1024;
+
+/**
+ * Resolve an agent-supplied `reference_image` (IN-01) to `{ data(base64),
+ * mimeType }` for edit/img2img. Mirrors `media-handlers.ts:130-163` VERBATIM —
+ * the SSRF + path-traversal guards are the T-185-09/T-185-10 security floor and
+ * are NOT weakened here:
+ *   - data-uri / raw base64 → `Buffer.from(...,"base64")` (bounded decode);
+ *   - `http(s)://` URL       → `validateUrl` (SSRF) BEFORE any fetch, then
+ *                              `fetch(...,{redirect:"error"})` + content-length cap;
+ *   - workspace file path    → `safePath(agentDir, source)` confinement + readFile.
+ *
+ * Throws on any failure (SSRF block, oversized, fetch error) — caught by the
+ * RPC handler's `@allow-throw` boundary (→ JSON-RPC error).
+ */
+async function resolveReferenceImage(
+  source: string,
+  deps: { workspaceDirs: Map<string, string>; defaultWorkspaceDir: string },
+  callerAgentId: string | undefined,
+): Promise<{ data: string; mimeType: string }> {
+  // data-uri (data:<mime>;base64,<payload>) — decode the payload, read the mime
+  // from the header (the canonical agent-supplied base64 form).
+  const dataUri = /^data:([^;,]+)(;base64)?,(.*)$/s.exec(source);
+  if (dataUri) {
+    const mimeType = dataUri[1] || "image/png";
+    const buffer = Buffer.from(dataUri[3] ?? "", "base64");
+    return { data: buffer.toString("base64"), mimeType };
+  }
+  // http(s) URL — SSRF-guard BEFORE fetch (T-185-10), then bounded download.
+  if (/^https?:\/\//i.test(source)) {
+    const urlCheck = await validateUrl(source);
+    if (!urlCheck.ok) {
+      throw new Error(`SSRF blocked: ${urlCheck.error.message}`);
+    }
+    const response = await fetch(source, { redirect: "error" });
+    if (!response.ok) {
+      throw new Error(`Failed to fetch reference image: HTTP ${response.status}`);
+    }
+    const contentLength = response.headers.get("content-length");
+    if (contentLength && parseInt(contentLength, 10) > MAX_REFERENCE_BYTES) {
+      throw new Error("Reference image exceeds the size limit");
+    }
+    const arrayBuffer = await response.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    if (buffer.byteLength > MAX_REFERENCE_BYTES) {
+      throw new Error("Reference image exceeds the size limit");
+    }
+    const mimeType = response.headers.get("content-type") ?? detectMimeFromMagicBytes(buffer) ?? "image/png";
+    return { data: buffer.toString("base64"), mimeType };
+  }
+  // Workspace file path — safePath confines it under the agent workspace dir
+  // (T-185-09 path-traversal floor). agentDir resolves from the caller's
+  // workspace, falling back to the default workspace dir.
+  const agentDir = (callerAgentId && deps.workspaceDirs.get(callerAgentId)) ?? deps.defaultWorkspaceDir;
+  const filePath = safePath(agentDir, source);
+  const buffer = await readFile(filePath);
+  return { data: buffer.toString("base64"), mimeType: guessMimeFromExtension(filePath) };
 }
 
 /**
@@ -142,12 +214,49 @@ export function createImageHandlers(
         };
       }
 
+      // IN-02 model validation (BEFORE any reference resolution / outbound
+      // call — T-185-11): reject an unknown `model` for the resolved provider
+      // with a hint LISTING the valid models. Strict validation runs ONLY for
+      // providers WITH a non-empty Comis-side list (IMAGE_MODELS_BY_PROVIDER) —
+      // a provider with no list (e.g. openrouter, whose catalog is pi-ai's, not
+      // Comis's) does NOT reject every model (it would otherwise reject valid
+      // openrouter ids). The agent-supplied model then flows to the provider,
+      // which decides. pi-ai's getImageModels is openrouter-only (Pitfall 4),
+      // so the openai/google native lists are the IN-02 source of truth.
+      if (params.model) {
+        const known = listImageModels(main.providerId);
+        if (known.length > 0 && !isValidImageModel(main.providerId, params.model)) {
+          return {
+            success: false,
+            error: `Unknown model "${params.model}" for provider "${main.providerId}"`,
+            hint: `Valid models for ${main.providerId}: ${known.join(", ")}`,
+          };
+        }
+      }
+
+      // IN-01 reference-image resolution (edit/img2img). Resolve ONLY when a
+      // `reference_image` is supplied; absence keeps the request text-only (no
+      // `referenceImage` field → no openrouter/codex regression). The resolution
+      // reuses the media-handlers SSRF + path-traversal guards (T-185-09/10).
+      let referenceImage: { data: string; mimeType: string } | undefined;
+      if (params.reference_image) {
+        referenceImage = await resolveReferenceImage(
+          params.reference_image,
+          { workspaceDirs: deps.workspaceDirs, defaultWorkspaceDir: deps.defaultWorkspaceDir },
+          rawParams._agentId as string | undefined,
+        );
+      }
+
       // Pass safetyChecker from config.
-      // OpenAI enforces safety server-side; safetyChecker config only affects fal.ai's enable_safety_checker param
+      // OpenAI enforces safety server-side; safetyChecker config only affects fal.ai's enable_safety_checker param.
+      // IN-01/IN-02: forward the resolved reference image + the validated model
+      // when present (absence → omitted, so the text-only path is unchanged).
       const result = await deps.provider.execute({
         prompt,
         size: params.size ?? deps.config.defaultSize,
         safetyChecker: deps.config.safetyChecker,
+        ...(referenceImage ? { referenceImage } : {}),
+        ...(params.model ? { model: params.model } : {}),
       });
 
       if (!result.ok) {

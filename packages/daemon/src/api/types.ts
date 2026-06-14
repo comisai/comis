@@ -565,6 +565,10 @@ export interface MediaApiDeps {
      *  provider INSTANCE is selected at wiring time (setup-image-provider.ts),
      *  never re-derived here (no second source of truth). */
     resolveAgentMainProvider: (agentId: string) => { providerId: string };
+    /** IN-01 (185): resolve a `reference_image` workspace file path under the
+     *  caller's agent dir (safePath confinement). Mirror MediaApiDeps:572-573. */
+    workspaceDirs: Map<string, string>;
+    defaultWorkspaceDir: string;
   };
   /** media-handlers reads deps.workspaceDirs / deps.defaultWorkspaceDir
    *  / deps.defaultAgentId for STT / vision / link-processing file paths.

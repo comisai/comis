@@ -558,16 +558,20 @@ describe("createImageHandlers IN-01 reference_image resolution", () => {
     });
     const handlers = createImageHandlers(deps);
 
-    const result = (await handlers["image.generate"]!({
-      _agentId: "agent-1",
-      prompt: "edit this",
-      reference_image: "http://169.254.169.254/latest/meta-data",
-    })) as { success: boolean; error?: string };
+    // The handler is @allow-throw — an SSRF-blocked reference throws (caught by
+    // rpc-dispatch → JSON-RPC error in production), exactly like the
+    // media-handlers SSRF path. The security floor is: no fetch to the internal
+    // endpoint, and no provider.execute.
+    await expect(
+      handlers["image.generate"]!({
+        _agentId: "agent-1",
+        prompt: "edit this",
+        reference_image: "http://169.254.169.254/latest/meta-data",
+      }),
+    ).rejects.toThrow(/SSRF blocked/);
 
     expect(validateUrl).toHaveBeenCalledWith("http://169.254.169.254/latest/meta-data");
-    // No fetch to the internal endpoint; the handler fails safe (no execute).
     expect(fetchSpy).not.toHaveBeenCalled();
-    expect(result.success).toBe(false);
     expect(execute).not.toHaveBeenCalled();
     fetchSpy.mockRestore();
   });
