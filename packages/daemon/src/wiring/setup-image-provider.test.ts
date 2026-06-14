@@ -124,6 +124,64 @@ describe("createImageProviderSelector", () => {
     }
   });
 
+  it("emits a once-per-resolution INFO follow-main skip summary at the default log level (WR-04)", () => {
+    const logger = createMockLogger();
+    const selector = createImageProviderSelector({
+      imageGenConfig: makeConfig({ provider: "auto", fallbackChain: [] }),
+      secretManager: mockSecretManager({}), // no creds for the (incapable) main
+      mainProviderId: "anthropic", // image-incapable main
+      legacyGetter: () => legacyAdapter(),
+      logger: logger as never,
+    });
+
+    selector();
+    // The follow-main skip narrative must be visible WITHOUT logLevel:debug —
+    // an operator reading default-level logs sees why the resolution went
+    // unavailable (§2.7 "load-bearing evidence was DEBUG-only").
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reason: expect.stringContaining("follow-main skipped"),
+        step: "image_follow_main_skip",
+      }),
+      expect.any(String),
+    );
+  });
+
+  it("keeps per-fallback-entry skips at DEBUG (only the follow-main summary is promoted) (WR-04)", () => {
+    const logger = createMockLogger();
+    const selector = createImageProviderSelector({
+      // A fallback chain whose entries cannot serve → per-entry DEBUG skips,
+      // then exhausted → honest-unavailable.
+      imageGenConfig: makeConfig({ provider: "auto", fallbackChain: ["openrouter"] }),
+      secretManager: mockSecretManager({}), // no creds anywhere
+      mainProviderId: "anthropic",
+      legacyGetter: () => legacyAdapter(),
+      logger: logger as never,
+    });
+
+    selector();
+    // The follow-main summary is INFO …
+    const infoFollowMain = (logger.info as ReturnType<typeof vi.fn>).mock.calls.some(
+      ([payload]) =>
+        typeof (payload as { reason?: string })?.reason === "string" &&
+        (payload as { reason: string }).reason.includes("follow-main skipped"),
+    );
+    expect(infoFollowMain).toBe(true);
+    // … but a per-fallback-entry skip stays DEBUG (not promoted to INFO).
+    const infoFallbackEntry = (logger.info as ReturnType<typeof vi.fn>).mock.calls.some(
+      ([payload]) =>
+        typeof (payload as { reason?: string })?.reason === "string" &&
+        (payload as { reason: string }).reason.includes('fallback "openrouter" skipped'),
+    );
+    expect(infoFallbackEntry).toBe(false);
+    const debugFallbackEntry = (logger.debug as ReturnType<typeof vi.fn>).mock.calls.some(
+      ([payload]) =>
+        typeof (payload as { reason?: string })?.reason === "string" &&
+        (payload as { reason: string }).reason.includes('fallback "openrouter" skipped'),
+    );
+    expect(debugFallbackEntry).toBe(true);
+  });
+
   it("returns the legacy skills adapter for an explicit fal provider", () => {
     const legacy = legacyAdapter();
     const selector = createImageProviderSelector({
