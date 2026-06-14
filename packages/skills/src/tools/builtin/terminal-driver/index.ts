@@ -57,6 +57,7 @@ export {
 // under the 800-line cap; re-exported here so the package surface is unchanged).
 export {
   buildProductionSpawnWorker,
+  resolveWorkerMainPath,
   WORKER_PERMISSION_ARGS,
 } from "./terminal-worker-launch.js";
 

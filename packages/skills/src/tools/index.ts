@@ -67,6 +67,7 @@ export {
   createTerminalSessionResizeTool,
   createTerminalSessionRegistry,
   buildProductionSpawnWorker,
+  resolveWorkerMainPath,
   matchAllowEntry,
   buildDirectSpawn,
   // The per-session caps factory — the daemon constructs ONE shared

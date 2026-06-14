@@ -64,6 +64,7 @@ const ESCALATION_REASONS = new Set<string>([
 import {
   createTerminalSessionRegistry,
   buildProductionSpawnWorker,
+  resolveWorkerMainPath,
   createTerminalSessionCreateTool,
   createTerminalSessionReadTool,
   createTerminalSessionListTool,
@@ -199,18 +200,17 @@ export function mapAllowEntry(entry: TerminalAllowEntry): AllowEntryLike {
 }
 
 /**
- * Resolve the worker entry's runtime JS path (the dist sibling of the
- * `terminal-worker-entry` source). The production worker-spawn posture forks
- * `node <permission-args> <workerJs>`; this is never invoked while the allow-set
- * is empty (the gate rejects every create first), but the registry is
- * constructed with the correct posture so a later phase only has to populate the
- * allow-set + ship the worker main.
+ * Resolve the standalone worker process entry (`terminal-worker-main.js`) that
+ * the production worker-spawn posture forks (`node <permission-args> <workerJs>`).
+ * Delegates to `@comis/skills`'s own dist-location resolver
+ * ({@link resolveWorkerMainPath}) — the entry ships INSIDE the skills package, so
+ * its path is computed from that module's URL, correct across install locations
+ * (global npm prefix / bundled tarball / dev dist) and NEVER a data-dir
+ * placeholder. The worker mkdir's its durable-state dir under `<dataDir>` itself
+ * (the daemon injects `COMIS_TERMINAL_DATA_DIR` + scopes `--allow-fs-write` there).
  */
-function resolveWorkerJsPath(dataDir: string): string {
-  // Placeholder under the data dir until the standalone worker main lands
-  // (the worker is currently an in-process factory; the separate-process entry
-  // is wired in a later step). Never spawned while the allow-set is empty.
-  return resolve(dataDir, "terminal-worker", "worker-main.js");
+function resolveWorkerJsPath(_dataDir: string): string {
+  return resolveWorkerMainPath();
 }
 
 /**

@@ -89,6 +89,13 @@ const BOOTSTRAP_PATH_PATTERNS: readonly RegExp[] = [
   /packages\/(core|infra)\/src\/runtime\//,
   /packages\/core\/src\/load-env\.ts$/,
   /packages\/core\/src\/config\/env-layer\.ts$/,
+  // The supervised Terminal Worker PROCESS entry (spec §1.1/§2.1): the daemon
+  // forks `node terminal-worker-main.js`, so this file OWNS the process boundary
+  // — it adapts process.stdin (the §2.3 IPC), process.env (config the daemon
+  // threads), and process.exit (lifecycle on parent-stdin-close) into the worker.
+  // Exactly the daemon.ts/cli.ts bootstrap role; the worker LOGIC stays port-based
+  // (createTerminalWorker takes injected clock/env/fs).
+  /packages\/skills\/src\/tools\/builtin\/terminal-driver\/terminal-worker-main\.ts$/,
   /packages\/[^/]+\/src\/__tests__\//,
   /test\//,
 ] as const;
