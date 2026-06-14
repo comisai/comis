@@ -169,6 +169,18 @@ export const TRAJECTORY_EVENT_TYPES = [
   // verbatim in data.entryType so downstream consumers can branch on it.
   // One literal covers all SDK entry types.
   "session.transcript.entry",
+
+  // OBS-04 (Phase 186): image-generation lifecycle on the explain timeline.
+  // Direct-emitted by the daemon image RPC handler via the per-session recorder
+  // (the daemon RPC context has NO EventBus bridge — direct-emit is the
+  // sanctioned path, the comis-session-manager.ts:298 precedent). Content-free:
+  // ids/labels/counts/costUsd/booleans ONLY — never the prompt, image bytes, a
+  // key, or a raw provider message (T-186-08). `image.generated` carries
+  // `costUsd` so `comis explain` reconstructs the image turn's cost (OBS-03).
+  "image.requested",
+  "image.generated",
+  "image.delivered",
+  "image.failed",
 ] as const;
 
 /** Closed union of trajectory event type strings. */

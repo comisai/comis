@@ -706,6 +706,44 @@ export function translatePayload(
         windowMs: payload.windowMs,
       };
 
+    // ---- Image generation (OBS-04, Phase 186) ----
+    // CONTENT-FREE (T-186-08): ids/labels/numbers/booleans ONLY — NEVER the
+    // prompt, the generated image bytes, a credential, or a raw provider
+    // message. `costUsd` rides image.generated so `comis explain` reconstructs
+    // the image turn's cost (OBS-03 Route a — the cost-carry precedent is the
+    // observability:token_usage → model.completed translator above). agentId +
+    // sessionKey + timestamp are envelope-only and stripped (the
+    // context:script_zero_hit precedent). Optional fields (model/costUsd/
+    // sizeBytes) spread presence-conditionally so absent values never appear as
+    // undefined keys (the tool:executed provenance convention).
+
+    case "image:requested":
+      return {
+        provider: payload.provider,
+        mainProvider: payload.mainProvider,
+      };
+
+    case "image:generated":
+      return {
+        provider: payload.provider,
+        outcome: payload.outcome,
+        ...(payload.model !== undefined ? { model: payload.model } : {}),
+        ...(payload.costUsd !== undefined ? { costUsd: payload.costUsd } : {}),
+        ...(payload.sizeBytes !== undefined ? { sizeBytes: payload.sizeBytes } : {}),
+      };
+
+    case "image:delivered":
+      return {
+        channelType: payload.channelType,
+        delivered: payload.delivered,
+      };
+
+    case "image:failed":
+      return {
+        errorKind: payload.errorKind,
+        provider: payload.provider,
+      };
+
     default: {
       // Exhaustiveness — switch covers every TrajectoryBridgedEventName.
       // If a new bridge entry is added without a translator, TypeScript

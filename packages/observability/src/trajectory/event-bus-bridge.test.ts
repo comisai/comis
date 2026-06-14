@@ -2835,14 +2835,15 @@ describe("attachTrajectoryToEventBus -- dedup events", () => {
 // ---------------------------------------------------------------------------
 
 describe("health:budget_exceeded entry (bridge entry count guard)", () => {
-  it("bridge entry count is exactly 66 (+2 D3 breaker + 1 D7 offload Phase 151; +1 session:summary Phase 152; +1 context:budget_computed W2; +1 execution:tool_schema_unsupported Phase 175; +2 OBS-01 script signals Phase 180; +2 RECALL-01 memory:recalled/reranked; +1 GENQ-01 memory:generation_quality)", () => {
+  it("bridge entry count is exactly 70 (+2 D3 breaker + 1 D7 offload Phase 151; +1 session:summary Phase 152; +1 context:budget_computed W2; +1 execution:tool_schema_unsupported Phase 175; +2 OBS-01 script signals Phase 180; +2 RECALL-01 memory:recalled/reranked; +1 GENQ-01 memory:generation_quality; +4 OBS-04 image:* Phase 186)", () => {
     // 55 + tool:breaker_opened + tool:breaker_reset (D3) + tool:result_offloaded (D7)
     // + session:summary (F2/D5, Phase 152)
     // + execution:tool_schema_unsupported (GBNF-02, Phase 175 Plan 05)
     // + context:script_zero_hit + context:summary_language_mismatch (OBS-01, Phase 180 Plan 03)
     // + memory:recalled + memory:reranked (RECALL-01, observability-excellence)
-    // + memory:generation_quality (GENQ-01, observability-excellence).
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(66);
+    // + memory:generation_quality (GENQ-01, observability-excellence)
+    // + image:requested/generated/delivered/failed (OBS-04, Phase 186 Plan 03).
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(70);
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {

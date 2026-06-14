@@ -198,6 +198,20 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // Health budget exceeded (events-infra.ts; emitter packages/observability/health-aggregator)
   // timestamp is envelope-only — stripped from data.
   "health:budget_exceeded": "health.budget_exceeded",
+
+  // ---- Image generation (OBS-04, Phase 186; events-media.ts) ----
+  // DIRECT-emitted by the daemon image RPC handler via the per-session recorder
+  // (the daemon RPC context has NO bus bridge — the comis-session-manager.ts:298
+  // precedent), NOT through an eventBus.emit in packages/agent/orchestrator. The
+  // mapping is declared here for trajectory-type ARCH closure (the arch test
+  // enumerates it) and so a future bus emitter is wired. The `observability:
+  // token_usage → model.completed` cost-carry precedent (:69) is mirrored here:
+  // image.generated carries `costUsd` (OBS-03 Route a). Content-free translators
+  // (translate-payload.ts) forward only ids/labels/numbers/booleans.
+  "image:requested": "image.requested",
+  "image:generated": "image.generated",
+  "image:delivered": "image.delivered",
+  "image:failed": "image.failed",
 } as const satisfies Record<string, TrajectoryEventType>;
 
 /**
