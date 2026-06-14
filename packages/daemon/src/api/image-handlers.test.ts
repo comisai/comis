@@ -139,6 +139,26 @@ function createMockDeps(overrides: Partial<ImageHandlerDeps> = {}): ImageHandler
   };
 }
 
+/** OBS-04 (186): a mock trajectoryRegistry whose getRecorder returns a recorder
+ *  with a `recordEvent` spy — the direct-emit seam the handler records the 4
+ *  image.* events through. Returns BOTH the registry (for createMockDeps) and the
+ *  spy (so a test can assert the recorded events). `getRecorder` is a spy too so a
+ *  test can assert the session-key it was (or was not) resolved with. */
+function makeMockTrajectoryRegistry(): {
+  trajectoryRegistry: NonNullable<ImageHandlerDeps["trajectoryRegistry"]>;
+  recordEvent: ReturnType<typeof vi.fn>;
+  getRecorder: ReturnType<typeof vi.fn>;
+} {
+  const recordEvent = vi.fn().mockReturnValue("queued");
+  const getRecorder = vi.fn().mockReturnValue({ recordEvent });
+  // Only getRecorder is read by the handler (the direct-emit precedent) — the
+  // other registry methods are unused here, so a partial cast is sufficient.
+  const trajectoryRegistry = { getRecorder } as unknown as NonNullable<
+    ImageHandlerDeps["trajectoryRegistry"]
+  >;
+  return { trajectoryRegistry, recordEvent, getRecorder };
+}
+
 describe("ImageHandlerDeps.persist type (DEL-01)", () => {
   it("exposes a per-agent persist getter returning Result<PersistedFile, Error>", () => {
     // Type-level proof that the dep exists with the (agentId, buffer, opts)
@@ -1156,5 +1176,195 @@ describe("createImageHandlers IN-02 model validation", () => {
     });
 
     expect(execute).toHaveBeenCalledWith(expect.objectContaining({ model: "gemini-2.5-flash-image" }));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// OBS-04 (186): direct-emit the image.* lifecycle to the per-session
+// trajectory recorder. The daemon RPC context has NO eventBus bridge, so the
+// handler resolves the recorder by `_callerSessionKey` and records directly
+// (the comis-session-manager.ts:298 precedent). image.generated carries costUsd
+// (OBS-03 Route a). A null recorder / absent _callerSessionKey must no-op
+// without crashing. Payloads are content-free (no prompt / bytes / secret).
+// ---------------------------------------------------------------------------
+describe("createImageHandlers — OBS-04 trajectory direct-emit", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const SESSION_KEY = "default:u1:telegram:c1";
+
+  it("happy path records image.requested then image.generated (with costUsd) then image.delivered", async () => {
+    const mockSendAttachment = vi.fn().mockResolvedValue(ok("msg-1"));
+    const { trajectoryRegistry, recordEvent, getRecorder } = makeMockTrajectoryRegistry();
+    const deps = createMockDeps({
+      trajectoryRegistry,
+      // The widened ImageGenOutput carries model + costUsd (186-02).
+      provider: {
+        id: "openai",
+        isAvailable: () => true,
+        execute: vi.fn().mockResolvedValue(
+          ok({
+            buffer: Buffer.from("img"),
+            mimeType: "image/png",
+            model: "gpt-image-1",
+            costUsd: 0.04,
+            provider: "openai",
+          }),
+        ),
+      },
+      resolveAgentMainProvider: vi.fn().mockReturnValue({ providerId: "openai" }),
+      getChannelAdapter: vi.fn().mockReturnValue({ sendAttachment: mockSendAttachment }),
+    });
+    const handlers = createImageHandlers(deps);
+
+    const result = await handlers["image.generate"]!({
+      _agentId: "default",
+      _callerSessionKey: SESSION_KEY,
+      _callerChannelType: "telegram",
+      _callerChannelId: "c1",
+      prompt: "a fox",
+    });
+
+    expect(result).toEqual({ success: true, delivered: true, mimeType: "image/png" });
+    // The recorder was resolved by the injected session key.
+    expect(getRecorder).toHaveBeenCalledWith(SESSION_KEY);
+
+    // The 3 success-path events fired, in order.
+    const types = recordEvent.mock.calls.map((c) => c[0]);
+    expect(types).toEqual(["image.requested", "image.generated", "image.delivered"]);
+
+    // image.requested: provider labels only (content-free).
+    const requested = recordEvent.mock.calls[0]![1] as Record<string, unknown>;
+    expect(requested.provider).toBe("openai");
+    expect(requested.mainProvider).toBe("openai");
+
+    // image.generated carries costUsd (OBS-03 Route a) + model + sizeBytes + outcome.
+    const generated = recordEvent.mock.calls[1]![1] as Record<string, unknown>;
+    expect(generated.provider).toBe("openai");
+    expect(generated.model).toBe("gpt-image-1");
+    expect(generated.costUsd).toBe(0.04);
+    expect(generated.sizeBytes).toBe(PERSISTED_OK.sizeBytes);
+    expect(generated.outcome).toBe("ok");
+
+    // image.delivered: channel TYPE + delivered boolean (never the channel id).
+    const delivered = recordEvent.mock.calls[2]![1] as Record<string, unknown>;
+    expect(delivered.channelType).toBe("telegram");
+    expect(delivered.delivered).toBe(true);
+
+    // Content-free: no event payload carries the prompt / image bytes / a key.
+    for (const call of recordEvent.mock.calls) {
+      const data = JSON.stringify(call[1] ?? {});
+      expect(data).not.toContain("a fox");
+      expect(data).not.toContain("img");
+    }
+  });
+
+  it("records image.failed with errorKind on a provider error", async () => {
+    const { trajectoryRegistry, recordEvent } = makeMockTrajectoryRegistry();
+    const deps = createMockDeps({
+      trajectoryRegistry,
+      provider: {
+        id: "openai",
+        isAvailable: () => true,
+        execute: vi.fn().mockResolvedValue(
+          err(Object.assign(new Error("Image generation blocked"), { imageErrorKind: "content_blocked" })),
+        ),
+      },
+      resolveAgentMainProvider: vi.fn().mockReturnValue({ providerId: "openai" }),
+    });
+    const handlers = createImageHandlers(deps);
+
+    const result = await handlers["image.generate"]!({
+      _agentId: "default",
+      _callerSessionKey: SESSION_KEY,
+      prompt: "blocked content",
+    });
+
+    expect((result as { success: boolean }).success).toBe(false);
+    const types = recordEvent.mock.calls.map((c) => c[0]);
+    expect(types).toContain("image.requested");
+    expect(types).toContain("image.failed");
+    expect(types).not.toContain("image.generated");
+
+    const failed = recordEvent.mock.calls.find((c) => c[0] === "image.failed")![1] as Record<string, unknown>;
+    expect(failed.errorKind).toBeDefined();
+    expect(failed.provider).toBe("openai");
+    // Never the raw provider message.
+    expect(JSON.stringify(failed)).not.toContain("Image generation blocked");
+  });
+
+  it("records image.failed on a persist failure (still returns the base64 fallback)", async () => {
+    const { trajectoryRegistry, recordEvent } = makeMockTrajectoryRegistry();
+    const deps = createMockDeps({
+      trajectoryRegistry,
+      persist: vi.fn().mockResolvedValue(err(new Error("disk full"))),
+    });
+    const handlers = createImageHandlers(deps);
+
+    const result = await handlers["image.generate"]!({
+      _agentId: "default",
+      _callerSessionKey: SESSION_KEY,
+      prompt: "a fox",
+    });
+
+    // Persist failure → base64 fallback (no crash).
+    expect((result as { success: boolean; imageBase64?: string }).success).toBe(true);
+    expect((result as { imageBase64?: string }).imageBase64).toBeDefined();
+
+    const types = recordEvent.mock.calls.map((c) => c[0]);
+    expect(types).toContain("image.failed");
+    expect(types).not.toContain("image.generated");
+    const failed = recordEvent.mock.calls.find((c) => c[0] === "image.failed")![1] as Record<string, unknown>;
+    expect(JSON.stringify(failed)).not.toContain("disk full");
+  });
+
+  it("getRecorder returning null does not throw and still returns the generation", async () => {
+    const getRecorder = vi.fn().mockReturnValue(null);
+    const trajectoryRegistry = { getRecorder } as unknown as NonNullable<
+      ImageHandlerDeps["trajectoryRegistry"]
+    >;
+    const deps = createMockDeps({ trajectoryRegistry });
+    const handlers = createImageHandlers(deps);
+
+    const result = await handlers["image.generate"]!({
+      _agentId: "default",
+      _callerSessionKey: SESSION_KEY,
+      prompt: "a fox",
+    });
+
+    // The recorder was looked up but null — no crash, the generation still returns.
+    expect(getRecorder).toHaveBeenCalledWith(SESSION_KEY);
+    expect((result as { success: boolean }).success).toBe(true);
+  });
+
+  it("no _callerSessionKey means getRecorder is never called and the handler returns normally", async () => {
+    const { trajectoryRegistry, getRecorder, recordEvent } = makeMockTrajectoryRegistry();
+    const deps = createMockDeps({ trajectoryRegistry });
+    const handlers = createImageHandlers(deps);
+
+    const result = await handlers["image.generate"]!({
+      _agentId: "default",
+      // no _callerSessionKey
+      prompt: "a fox",
+    });
+
+    expect(getRecorder).not.toHaveBeenCalled();
+    expect(recordEvent).not.toHaveBeenCalled();
+    expect((result as { success: boolean }).success).toBe(true);
+  });
+
+  it("absent trajectoryRegistry (boot mode without one) does not throw", async () => {
+    // No trajectoryRegistry dep at all — the optional dep is undefined.
+    const deps = createMockDeps({ trajectoryRegistry: undefined });
+    const handlers = createImageHandlers(deps);
+
+    const result = await handlers["image.generate"]!({
+      _agentId: "default",
+      _callerSessionKey: SESSION_KEY,
+      prompt: "a fox",
+    });
+
+    expect((result as { success: boolean }).success).toBe(true);
   });
 });
