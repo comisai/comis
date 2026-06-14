@@ -43,6 +43,7 @@ import {
 } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import { fromPromise, type Result } from "@comis/shared";
+import { generateImagesCodex } from "./codex-images-transport.js";
 
 /**
  * Typed error carrying the domain `ImageErrorKind` + an operator-facing hint.
@@ -237,16 +238,18 @@ export function resolveImageApiKey(
  * registry — ONCE at daemon boot, BEFORE any `generateImages` call (PI-02).
  *
  * Idempotent and safe to call repeatedly (the registry is a Map keyed by api).
- * For Phase 183 the built-in `openrouter-images` is already auto-registered by
- * pi-ai on import, so this asserts that built-in is reachable and otherwise does
- * nothing. FORWARD SEAM: this is the single place where the custom transports
- * land — Phase 184 registers `openai-codex-images`, Phase 185 registers
- * `openai-images` + `google-images` here via `registerImagesApiProvider`.
+ * The built-in `openrouter-images` is auto-registered by pi-ai on import; this
+ * is the single place where Comis's CUSTOM transports land. Phase 184 registers
+ * the Codex Responses transport (`openai-codex-images`); Phase 185 will register
+ * `openai-images` + `google-images` here.
  */
 export function registerComisImageProviders(): void {
-  // The built-in openrouter-images provider is auto-registered on pi-ai import
-  // (register-builtins.ts). Touch the registry to assert it is reachable; this
-  // keeps the once-at-boot contract honest even before custom transports exist.
+  // 184: the custom Codex Responses image transport (CDX-02/03). The built-in
+  // openrouter-images provider is auto-registered on pi-ai import
+  // (register-builtins.ts); this adds the one transport pi-ai lacks. Idempotent
+  // — the registry is a Map keyed by api, so re-registration is a harmless set.
+  registerImagesApiProvider({ api: "openai-codex-images", generateImages: generateImagesCodex });
+  // getImagesApiProvider is the round-trip read side (used by callers + tests);
+  // touched here so the once-at-boot import surface stays honest.
   void getImagesApiProvider;
-  void registerImagesApiProvider;
 }
