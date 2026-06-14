@@ -260,10 +260,20 @@ export function createImageHandlers(
         const executingProvider = deps.provider.id;
         const known = listImageModels(executingProvider);
         if (known.length > 0 && !isValidImageModel(executingProvider, params.model)) {
+          const hint = `Valid models for ${executingProvider}: ${known.join(", ")}`;
+          // OBS-02 (§2.7): no classified failure returns without a logged
+          // errorKind + hint. The model-reject is a caller-precondition failure;
+          // WARN it (with the listing hint) so the rejected turn is diagnosable
+          // via `comis explain`. The raw model echo stays out of the payload
+          // (only the safe `error`/`hint` strings carry it back to the caller).
+          deps.logger.warn(
+            { agentId, errorKind: "precondition" as const, step: "image_model_reject", hint },
+            "Image generation rejected: unknown model for the executing provider",
+          );
           return {
             success: false,
             error: `Unknown model "${params.model}" for provider "${executingProvider}"`,
-            hint: `Valid models for ${executingProvider}: ${known.join(", ")}`,
+            hint,
           };
         }
       }
@@ -372,11 +382,20 @@ export function createImageHandlers(
               if (systemGetEnv("NODE_ENV") !== "production") {
                 ImageGenerateContract.response.parse(deliveredResult);
               }
-              // WR-03 (§2.7): INFO completion line on the channel-delivered path.
+              // OBS-01 (§2.7): the FULL completion field set on the
+              // channel-delivered path. imageProvider = the EXECUTING port
+              // (deps.provider.id); model/costUsd ride the widened ImageGenOutput
+              // (OBS-03, Task 1); sizeBytes is the durable PersistedFile size
+              // (DEL-01). traceId is NOT a payload field — it rides the Pino ALS
+              // mixin (CLAUDE.md); the RPC producer injects no _traceId.
               deps.logger.info(
                 {
                   agentId,
+                  imageProvider: deps.provider.id,
                   mainProvider: main.providerId,
+                  model: result.value.model,
+                  costUsd: result.value.costUsd,
+                  sizeBytes: persisted.value.sizeBytes,
                   delivered: true,
                   mimeType: result.value.mimeType,
                   durationMs: systemNowMs() - startMs,
@@ -400,12 +419,18 @@ export function createImageHandlers(
       if (systemGetEnv("NODE_ENV") !== "production") {
         ImageGenerateContract.response.parse(fallbackResult);
       }
-      // WR-03 (§2.7): INFO completion line on the base64-fallback path
-      // (no channel adapter, or delivery failed and fell through).
+      // OBS-01 (§2.7): the FULL completion field set on the base64-fallback path
+      // (persist failed, no channel adapter, the adapter cannot attach, or
+      // delivery failed and fell through). No PersistedFile here, so sizeBytes is
+      // the raw buffer length. traceId rides the ALS mixin (NOT a payload field).
       deps.logger.info(
         {
           agentId,
+          imageProvider: deps.provider.id,
           mainProvider: main.providerId,
+          model: result.value.model,
+          costUsd: result.value.costUsd,
+          sizeBytes: result.value.buffer.byteLength,
           delivered: false,
           mimeType: result.value.mimeType,
           durationMs: systemNowMs() - startMs,
