@@ -590,6 +590,15 @@ export interface MediaApiDeps {
      *  a boot mode without a registry, and a null recorder is skipped. Read off
      *  the BootContext `c.trajectoryRegistry` (already a field). */
     trajectoryRegistry?: import("@comis/observability").SessionTrajectoryHandleRegistry;
+    /** SEC-02 (186): the per-agent/hour USD cost ceiling. Optional — undefined
+     *  when `integrations.media.imageGeneration.maxCostPerHourUsd` is unset, in
+     *  which case the ceiling check is skipped and only the count rate limit
+     *  applies (no regression). When present, the handler pre-checks
+     *  `canSpend(agentId)` BEFORE provider.execute (block with quota_exceeded)
+     *  and `record(agentId, costUsd)` AFTER a successful generation. The count
+     *  rate limiter (maxPerHour) is RETAINED and orthogonal. Constructed in
+     *  buildImageGenBundle (main-helpers.ts), gated on maxCostPerHourUsd. */
+    costLimiter?: import("./image-cost-limiter.js").ImageCostLimiter;
     /** OBS-03 (186, optional secondary): the typed event bus. After a successful
      *  generation with a non-zero costUsd the handler emits a synthetic
      *  `observability:token_usage` (tokens all 0, cost.total = costUsd) so the

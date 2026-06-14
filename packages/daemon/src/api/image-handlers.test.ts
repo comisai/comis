@@ -1368,3 +1368,131 @@ describe("createImageHandlers — OBS-04 trajectory direct-emit", () => {
     expect((result as { success: boolean }).success).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// SEC-02: the maxCostPerHourUsd cost ceiling. A new daemon-side per-agent USD
+// accumulator (image-cost-limiter.ts) is wired BESIDE the count rate limiter
+// (which is RETAINED). The handler pre-checks canSpend(agentId) BEFORE
+// provider.execute (block with quota_exceeded + a hint naming
+// maxCostPerHourUsd, and emit image.failed{quota_exceeded} for OBS-04
+// continuity), and records the actual costUsd AFTER a successful generation.
+// When the limiter dep is undefined (maxCostPerHourUsd unset) the ceiling is
+// skipped — count-only, no regression.
+// ---------------------------------------------------------------------------
+describe("createImageHandlers — SEC-02 cost ceiling", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  /** A mock ImageCostLimiter with canSpend/record/reset spies. */
+  function makeMockCostLimiter(canSpend: boolean): NonNullable<ImageHandlerDeps["costLimiter"]> {
+    return {
+      canSpend: vi.fn().mockReturnValue(canSpend),
+      record: vi.fn(),
+      reset: vi.fn(),
+    };
+  }
+
+  it("blocks with quota_exceeded BEFORE provider.execute when the ceiling is reached", async () => {
+    const { trajectoryRegistry, recordEvent } = makeMockTrajectoryRegistry();
+    const costLimiter = makeMockCostLimiter(false); // already over the ceiling
+    const deps = createMockDeps({ costLimiter, trajectoryRegistry });
+    const handlers = createImageHandlers(deps);
+
+    const result = await handlers["image.generate"]!({
+      _agentId: "agent-1",
+      _callerSessionKey: "default:u1:telegram:c1",
+      prompt: "a cat",
+    });
+
+    // Blocked: success:false with a hint NAMING the maxCostPerHourUsd knob.
+    expect((result as { success: boolean }).success).toBe(false);
+    expect((result as { hint?: string }).hint).toMatch(/maxCostPerHourUsd/);
+    // The expensive provider call is NOT made (the whole point — pre-check).
+    expect(deps.provider.execute).not.toHaveBeenCalled();
+    // The ceiling was consulted for THIS agent.
+    expect(costLimiter.canSpend).toHaveBeenCalledWith("agent-1");
+
+    // OBS-02: a WARN logs errorKind:quota_exceeded + the hint.
+    const calls = (deps.logger.warn as ReturnType<typeof vi.fn>).mock.calls;
+    const warn = calls.find((c) => (c[0] as { errorKind?: string }).errorKind === "quota_exceeded");
+    expect(warn).toBeDefined();
+    expect((warn![0] as { hint?: string }).hint).toMatch(/maxCostPerHourUsd/);
+
+    // OBS-04 continuity: image.failed{quota_exceeded} is recorded.
+    const failed = recordEvent.mock.calls.find((c) => c[0] === "image.failed");
+    expect(failed).toBeDefined();
+    expect((failed![1] as { errorKind?: string }).errorKind).toBe("quota_exceeded");
+  });
+
+  it("skips the ceiling entirely when costLimiter is undefined (count-only, no regression)", async () => {
+    const deps = createMockDeps({ costLimiter: undefined });
+    const handlers = createImageHandlers(deps);
+
+    const result = await handlers["image.generate"]!({
+      _agentId: "agent-1",
+      prompt: "a cat",
+    });
+
+    // No ceiling configured → the generation proceeds (provider.execute IS called).
+    expect(deps.provider.execute).toHaveBeenCalled();
+    expect((result as { success: boolean }).success).toBe(true);
+  });
+
+  it("records the actual costUsd after a successful generation", async () => {
+    const costLimiter = makeMockCostLimiter(true); // under the ceiling
+    const deps = createMockDeps({
+      costLimiter,
+      provider: {
+        id: "openai",
+        isAvailable: () => true,
+        execute: vi.fn().mockResolvedValue(
+          ok({ buffer: Buffer.from("img"), mimeType: "image/png", model: "gpt-image-1", costUsd: 0.04 }),
+        ),
+      },
+    });
+    const handlers = createImageHandlers(deps);
+
+    await handlers["image.generate"]!({ _agentId: "agent-1", prompt: "a fox" });
+
+    // The post-hoc accumulate fired ONCE with the agent + the result's costUsd.
+    expect(costLimiter.record).toHaveBeenCalledTimes(1);
+    expect(costLimiter.record).toHaveBeenCalledWith("agent-1", 0.04);
+  });
+
+  it("records 0 (no crash) when a successful generation has no costUsd", async () => {
+    const costLimiter = makeMockCostLimiter(true);
+    const deps = createMockDeps({
+      costLimiter,
+      // No costUsd on the output (legacy adapter) → record(agentId, 0).
+      provider: {
+        id: "test-provider",
+        isAvailable: () => true,
+        execute: vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("img"), mimeType: "image/png" })),
+      },
+    });
+    const handlers = createImageHandlers(deps);
+
+    const result = await handlers["image.generate"]!({ _agentId: "agent-1", prompt: "a fox" });
+
+    expect((result as { success: boolean }).success).toBe(true);
+    expect(costLimiter.record).toHaveBeenCalledWith("agent-1", 0);
+  });
+
+  it("the count limit (maxPerHour) is still enforced FIRST — cost ceiling not consulted", async () => {
+    const costLimiter = makeMockCostLimiter(true);
+    const deps = createMockDeps({
+      costLimiter,
+      rateLimiter: { tryAcquire: vi.fn().mockReturnValue(false), reset: vi.fn() },
+    });
+    const handlers = createImageHandlers(deps);
+
+    const result = await handlers["image.generate"]!({ _agentId: "agent-1", prompt: "a cat" });
+
+    // The count limit short-circuits first (its existing error message is unchanged).
+    expect(result).toEqual({ success: false, error: "Rate limit exceeded: max 10 images per hour" });
+    // The cost ceiling was NOT reached (count check returned first).
+    expect(costLimiter.canSpend).not.toHaveBeenCalled();
+    expect(deps.provider.execute).not.toHaveBeenCalled();
+  });
+});
