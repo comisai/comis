@@ -22,6 +22,30 @@ import {
   resolveCacheRetention,
   sortToolsForCacheStability,
 } from "./index.js";
+import { maybePromoteBreakpoints } from "./cache-breakpoints.js";
+
+describe("maybePromoteBreakpoints — non-Anthropic body (codex turn-abort regression 2026-06-14)", () => {
+  // The openai-codex (OpenAI responses) request body has `input`, not a
+  // `messages` array, so result.messages is undefined at the call site
+  // (factory.ts: the maybePromoteBreakpoints call lacked the Array.isArray
+  // guard the sibling cache ops have). Promotion of cache_control breakpoints is
+  // Anthropic-only, so this must no-op rather than throw `reading 'length'` in
+  // the provider's onPayload hook — which aborts the whole turn ("AI didn't
+  // produce a response").
+  it("returns 0 without throwing when messages is undefined", () => {
+    type Args = Parameters<typeof maybePromoteBreakpoints>;
+    const call = () =>
+      maybePromoteBreakpoints(
+        undefined as unknown as Args[0],
+        undefined as unknown as Args[1],
+        "sk",
+        3,
+        "long",
+      );
+    expect(call).not.toThrow();
+    expect(call()).toBe(0);
+  });
+});
 
 describe("getMinCacheableTokens", () => {
   it("resolves known model prefixes correctly", () => {
