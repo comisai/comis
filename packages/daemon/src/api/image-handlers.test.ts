@@ -295,6 +295,72 @@ describe("createImageHandlers", () => {
     expect(result.hint).toContain("integrations.media.imageGeneration.provider");
   });
 
+  // ─── WR-03 (§2.7): INFO completion line with durationMs on success ─────────
+
+  it("emits an INFO completion line with durationMs on the channel-delivered success path (WR-03)", async () => {
+    const mockSendAttachment = vi.fn().mockResolvedValue(ok("msg-789"));
+    const deps = createMockDeps({
+      getChannelAdapter: vi.fn().mockReturnValue({ sendAttachment: mockSendAttachment }),
+    });
+    const handlers = createImageHandlers(deps);
+    await handlers["image.generate"]!({
+      _agentId: "agent-1",
+      prompt: "a sunset",
+      _callerChannelType: "telegram",
+      _callerChannelId: "chat-7",
+    });
+
+    expect(deps.logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentId: "agent-1",
+        mainProvider: "openrouter",
+        delivered: true,
+        mimeType: "image/png",
+        durationMs: expect.any(Number),
+        step: "image_complete",
+      }),
+      expect.stringContaining("Image generation completed"),
+    );
+  });
+
+  it("emits an INFO completion line with durationMs on the base64-fallback success path (WR-03)", async () => {
+    const deps = createMockDeps({ getChannelAdapter: vi.fn().mockReturnValue(undefined) });
+    const handlers = createImageHandlers(deps);
+    await handlers["image.generate"]!({
+      _agentId: "agent-2",
+      prompt: "a dog",
+    });
+
+    expect(deps.logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentId: "agent-2",
+        mainProvider: "openrouter",
+        delivered: false,
+        mimeType: "image/png",
+        durationMs: expect.any(Number),
+        step: "image_complete",
+      }),
+      expect.stringContaining("Image generation completed"),
+    );
+  });
+
+  it("does NOT emit a completion INFO line on the failure path (WR-03)", async () => {
+    const deps = createMockDeps({
+      provider: {
+        id: "test-provider",
+        isAvailable: () => true,
+        execute: vi.fn().mockResolvedValue(err(new Error("Provider error: content blocked"))),
+      },
+    });
+    const handlers = createImageHandlers(deps);
+    await handlers["image.generate"]!({ _agentId: "agent-1", prompt: "x" });
+
+    const completionInfo = (deps.logger.info as ReturnType<typeof vi.fn>).mock.calls.some(
+      ([payload]) => (payload as { step?: string })?.step === "image_complete",
+    );
+    expect(completionInfo).toBe(false);
+  });
+
   it("omits the hint field when the provider error carries no hint", async () => {
     const deps = createMockDeps({
       provider: {
