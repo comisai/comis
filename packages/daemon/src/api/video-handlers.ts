@@ -275,6 +275,29 @@ export function createVideoHandlers(
         );
         return { success: false, error: `${mode} is not supported by provider "${deps.provider.id}"`, hint };
       }
+      // WR-02 (CAP-02): the matrix declares `maxReferenceImages` on every cell —
+      // ENFORCE it. An i2v request (image present) resolving to a cell that
+      // accepts no reference image (e.g. `veo-2.0-generate-001` with
+      // `maxReferenceImages: 0`) returns a NON-undefined caps object, so the
+      // `if (!caps)` mode-reject above does NOT fire; without this guard the image
+      // ships to a model the matrix itself says cannot take one → a guaranteed
+      // provider 4xx (the exact class IN-02 exists to close). Reject pre-submit
+      // with a hint pointing the agent at text-to-video (drop image_url).
+      if (mode === "i2v" && caps.maxReferenceImages < 1) {
+        const modelLabel = activeModel ? ` (${activeModel})` : "";
+        const hint =
+          `${deps.provider.id}${modelLabel} does not accept a reference image for ` +
+          `image-to-video. Omit image_url for text-to-video, or select a model that supports it.`;
+        deps.logger.warn(
+          { agentId, step: "video_reference_image_reject", errorKind: "precondition" as const, hint },
+          "Video generation rejected: the resolved model accepts no reference image (i2v unsupported)",
+        );
+        return {
+          success: false,
+          error: `image-to-video is not supported by the resolved model for "${deps.provider.id}"`,
+          hint,
+        };
+      }
       if (resolvedResolution && !caps.resolutions.includes(resolvedResolution)) {
         const hint = `${deps.provider.id} supports resolutions: ${caps.resolutions.join(", ")}.`;
         deps.logger.warn(
