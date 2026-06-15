@@ -85,8 +85,14 @@ const DEFAULT_GROK_MODEL = "grok-imagine-video";
  * The ASSUMED SuperGrok OAuth provider id (A1 — UNVERIFIED/forward-looking). No
  * xai OAuth provider is registered in the codebase today; this id is used only by
  * the defensive OAuth branch and activates when/if pi-ai adds one.
+ *
+ * IN-02 (Phase 190): EXPORTED as the single source of truth — the boot selector
+ * (setup-video-provider.ts) gates `oauthManager.hasCredentials(...)` on this SAME
+ * constant rather than a bare `"xai"` literal, so the selector's credsAvailable
+ * gate can never drift from what the adapter actually resolves if a future xai
+ * OAuth provider registers under a different id.
  */
-const XAI_OAUTH_PROVIDER_ID = "xai";
+export const XAI_OAUTH_PROVIDER_ID = "xai";
 
 /**
  * WR-01: hard fallback timeout for the result download when the caller threads no

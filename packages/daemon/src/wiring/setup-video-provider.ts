@@ -42,7 +42,7 @@ import {
 import type { ComisLogger } from "@comis/infra";
 import { err, type Result } from "@comis/shared";
 import { createVeoVideoAdapter } from "../api/veo-adapter.js";
-import { createGrokVideoAdapter } from "../api/grok-adapter.js";
+import { createGrokVideoAdapter, XAI_OAUTH_PROVIDER_ID } from "../api/grok-adapter.js";
 
 /**
  * A port whose every method returns a classified `VideoGenError` Result err —
@@ -129,7 +129,9 @@ export function createVideoProviderSelector(deps: {
         if (videoApi === "grok")
           return (
             deps.secretManager.get("XAI_API_KEY") !== undefined ||
-            (deps.oauthManager?.hasCredentials("xai") ?? false)
+            // IN-02: gate on the adapter's exported provider-id constant (single
+            // source of truth) — never a bare "xai" literal that could drift.
+            (deps.oauthManager?.hasCredentials(XAI_OAUTH_PROVIDER_ID) ?? false)
           );
         return deps.secretManager.get("FAL_KEY") !== undefined;
       },
@@ -187,8 +189,9 @@ export function createVideoProviderSelector(deps: {
           logger: deps.logger,
         });
       }
-      if (deps.oauthManager?.hasCredentials("xai")) {
+      if (deps.oauthManager?.hasCredentials(XAI_OAUTH_PROVIDER_ID)) {
         // Forward-looking (A1) — activates if/when an xAI OAuth provider exists.
+        // IN-02: same exported constant as the adapter resolves (no literal drift).
         return createGrokVideoAdapter({
           oauthManager: deps.oauthManager,
           oauthProfiles: deps.oauthProfiles,
