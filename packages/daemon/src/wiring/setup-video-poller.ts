@@ -65,6 +65,7 @@ import {
   systemClearInterval,
   createPollDeadline,
   pollUntilDone,
+  sanitizeLogString,
   VIDEO_ERR_TO_LOG,
   type VideoGenerationPort,
   type VideoGenerationConfig,
@@ -80,6 +81,8 @@ import type { ComisLogger } from "@comis/infra";
 import type { SessionTrajectoryHandleRegistry, TrajectoryEventType } from "@comis/observability";
 import type { AppContainer } from "@comis/core";
 import { resolveVideoSizeLimit, buildOversizedDegradeMessage } from "./video-delivery-limits.js";
+// SEC-03 (Phase 192): scrub a raw provider/channel error before it rides a log line.
+import { redactErr } from "./video-log-redaction.js";
 
 // ---------------------------------------------------------------------------
 // Public contract
@@ -327,7 +330,8 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
         channelType: record.channelType,
         attempts,
         maxDeliveryAttempts,
-        err: cause,
+        // SEC-03: a channel delivery error can echo a token/URL — scrub it.
+        ...redactErr(cause),
         errorKind: "network" as const,
         hint:
           "Video persisted but channel delivery failed; the job stays pending and " +
@@ -359,7 +363,7 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
     const persisted = await persist(record.agentId, out.buffer, { mediaKind: "video", mimeType });
     if (!persisted.ok) {
       logger.warn(
-        { traceId: record.traceId, jobId: record.jobId, agentId: record.agentId, err: persisted.error, errorKind: "resource" as const, hint: "Video rendered but persistence failed; the job is marked failed (no durable artifact to announce)", step: "video_poll_persist" },
+        { traceId: record.traceId, jobId: record.jobId, agentId: record.agentId, ...redactErr(persisted.error), errorKind: "resource" as const, hint: "Video rendered but persistence failed; the job is marked failed (no durable artifact to announce)", step: "video_poll_persist" },
         "Video poller: persistence failed",
       );
       await markFailed(record, "empty_response");
@@ -431,7 +435,8 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
               traceId: record.traceId,
               jobId: record.jobId,
               channelType: record.channelType,
-              err: noticeResult.error,
+              // SEC-03: a channel send error can echo a token/URL — scrub it.
+              ...redactErr(noticeResult.error),
               errorKind: "platform" as const,
               hint:
                 "Oversized-degrade notice send failed; the clip is saved to the " +
@@ -480,7 +485,7 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
     });
     if (!done.ok) {
       logger.warn(
-        { traceId: record.traceId, jobId: record.jobId, err: done.error, errorKind: "internal" as const, hint: "Delivered but markDone failed; the row stays pending and a later sweep may re-deliver once (bounded duplicate)", step: "video_poll_markdone" },
+        { traceId: record.traceId, jobId: record.jobId, ...redactErr(done.error), errorKind: "internal" as const, hint: "Delivered but markDone failed; the row stays pending and a later sweep may re-deliver once (bounded duplicate)", step: "video_poll_markdone" },
         "Video poller: markDone failed after delivery",
       );
       return;
@@ -494,16 +499,12 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
     costLimiter?.record(record.agentId, reconciledCostUsd);
 
     // OBS-03 (Phase 192): the off-turn synthetic `observability:token_usage` cost
-    // route — the reconciled cost flows into the per-session rollup / fleet via
-    // the SAME route images use (image-handlers.ts:342). Emitted RIGHT AFTER the
-    // reconcile, EXACTLY ONCE per render (markDone already flipped the row out of
-    // pending → the done branch can't repeat — Pitfall 3), gated on `> 0`. The
-    // routing is read from the persisted ROW (traceId/agentId/channelId/sessionKey)
-    // — NOT ALS (there is no ALS frame off-turn, MUST-DIFFER 3 / WARNING-3). Tokens
-    // are all 0 (no LLM tokens for a video render); every token_usage subscriber
-    // SUMS cost.total (token-tracker guards `> 0`), so a 0-token event is safe (A3
-    // / T-192-05). FAL/Veo carry no per-call actual → `?? estimate` (Pitfall 4), so
-    // the rollup and the IncidentSignals.videoGenerated reconstruction agree.
+    // route (the SAME route images use, image-handlers.ts:342) — emitted RIGHT
+    // AFTER the reconcile, EXACTLY ONCE per render (markDone already flipped the
+    // row out of pending → can't repeat, Pitfall 3), gated `> 0`. Routing is read
+    // from the persisted ROW not ALS (no off-turn ALS frame — MUST-DIFFER 3); 0
+    // tokens (subscribers SUM cost.total, token-tracker guards `> 0` — A3/T-192-05);
+    // FAL/Veo `?? estimate` (Pitfall 4) so the rollup + the reconstruction agree.
     if (deps.eventBus && reconciledCostUsd > 0) {
       deps.eventBus.emit("observability:token_usage", {
         timestamp: systemNowMs(),
@@ -603,7 +604,7 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
           traceId: record.traceId,
           jobId: record.jobId,
           agentId: record.agentId,
-          err: failed.error,
+          ...redactErr(failed.error),
           errorKind: "internal" as const,
           hint:
             "markFailed write failed; the row stays pending and a later sweep " +
@@ -621,8 +622,10 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
         videoProvider: record.provider,
         errorKind: VIDEO_ERR_TO_LOG[kind],
         videoErrorKind: kind,
-        hint,
-        ...(cause ? { err: cause } : {}),
+        hint: sanitizeLogString(hint),
+        // SEC-03: `cause` is the RAW provider error (fetchResult/delivery) whose
+        // message can echo a key/bearer/the Veo keyed-download-URL — scrub it.
+        ...(cause ? redactErr(cause) : {}),
         step: "video_poll_failed",
       },
       "Video poller: render failed",
@@ -755,7 +758,7 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
     const pending = await store.listPending();
     if (!pending.ok) {
       logger.warn(
-        { err: pending.error, errorKind: "internal" as const, hint: "Could not load pending video jobs on boot; they resume on the next sweep", step: "video_poll_resume" },
+        { ...redactErr(pending.error), errorKind: "internal" as const, hint: "Could not load pending video jobs on boot; they resume on the next sweep", step: "video_poll_resume" },
         "Video poller: listPending failed on resume",
       );
     } else if (pending.value.length > 0) {

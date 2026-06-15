@@ -49,6 +49,7 @@ import {
   VideoGenerateContract,
   estimateVideoCostUsd,
   listVideoModelCaps,
+  sanitizeLogString,
   snapDuration,
   stripInternalFields,
   supportedModes,
@@ -421,7 +422,11 @@ export function createVideoHandlers(
             step: "video_submit",
             errorKind: VIDEO_ERR_TO_LOG[domainKind] ?? "dependency",
             videoErrorKind: domainKind,
-            ...(hint ? { hint } : {}),
+            // SEC-03 (defense-in-depth): the hint is a knob-naming carrier the
+            // adapter builds to be secret-free, but a provider that wrongly echoes
+            // a key/bearer/keyed-URL into it must still not leak into the log —
+            // scrub the LOGGED hint (the caller-facing return keeps the contract).
+            ...(hint ? { hint: sanitizeLogString(hint) } : {}),
           },
           "Video generation submit failed",
         );
