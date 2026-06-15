@@ -15,9 +15,14 @@ import {
   EMBED_MULTILINGUAL,
   RERANK_MULTILINGUAL,
 } from "@comis/core";
-import type { ImageGenerationPort, OAuthTokenManager, ClockPort } from "@comis/core";
+import type { ImageGenerationPort, OAuthTokenManager, ClockPort, VideoGenerationPort } from "@comis/core";
 import { createChannelHealthMonitor } from "@comis/channels";
 import { createImageGenRateLimiter } from "@comis/skills";
+// Video generation (Phase 188 / Plan 04): the FAL queue factory + per-agent rate
+// limiter, imported from the bare @comis/skills barrel exactly like the image
+// route (the adapter + @fal-ai/client dep stay in @comis/skills — no daemon
+// phantom dep).
+import { createVideoGenProvider, createVideoGenRateLimiter } from "@comis/skills";
 // DEL-01 (186): the per-agent media persistence getter mirrors the screenshot
 // precedent (setup-tools.ts:69,305). Sibling-direct on the `@comis/skills/tools`
 // subpath (the proven path), NOT the bare `@comis/skills` barrel.
@@ -25,12 +30,16 @@ import { createMediaPersistenceService, type MediaPersistenceService } from "@co
 // SEC-02 (186): the per-agent/hour USD cost ceiling, a daemon-side accumulator
 // (sibling api/ module) constructed beside the count rate limiter below.
 import { createImageCostLimiter, type ImageCostLimiter } from "../api/image-cost-limiter.js";
+// SEC-02 (188 / DIVERGENCE 3): the per-agent/hour video USD cost ceiling, gated
+// PRE-submit against a worst-case estimate (sibling api/ module).
+import { createVideoCostLimiter, type VideoCostLimiter } from "../api/video-cost-limiter.js";
 import type { LoggingResult } from "./setup-logging.js";
 import type { BootContext } from "../daemon-types.js";
 // Sibling-direct imports (not via the wiring barrel) to keep main-helpers free
 // of a barrel import edge — these are the image-gen bundle's collaborators.
 import { createImageGenGetter } from "./setup-media.js";
 import { createImageProviderSelector } from "./setup-image-provider.js";
+import { createVideoProviderSelector } from "./setup-video-provider.js";
 import { resolveAgentModel } from "./setup-agents/setup-agents-tooling.js";
 import { registerComisImageProviders } from "../api/pi-image-adapter.js";
 // VIS-01 (187): the provider-following vision bridge (Plan 01) — the bundle
@@ -401,6 +410,143 @@ export function buildImageHandlerDeps(
     trajectoryRegistry: c.trajectoryRegistry, // OBS-04 (186): trajectory direct-emit
     eventBus: c.container.eventBus, // OBS-03 (186): synthetic cost
     costLimiter: c.imageGenCostLimiter, // SEC-02 (186): USD cost ceiling
+  };
+}
+
+/** Raised persistence cap for video (DEL-01) — clips are far larger than images,
+ *  so override the 50 MB media-persistence default. 200 MB comfortably holds a
+ *  multi-minute 1080p mp4 while still bounding a runaway download. */
+const VIDEO_PERSIST_MAX_BYTES = 200 * 1024 * 1024;
+
+/**
+ * Build the video-generation bundle (lazy boot selector + boot probe + rate
+ * limiter + cost limiter + per-agent persist getter + config). Mirrors
+ * `buildImageGenBundle`. Extracted from `daemon.ts` to keep the composition root
+ * under its 3000-line architecture cap — daemon.ts gains only the two call sites
+ * (Plan 04 / Phase 188).
+ *
+ * RES-02/CRED-01: the selector routes explicit `fal` to the skills FAL adapter,
+ * follows the DEFAULT agent's resolved main provider for `auto` (veo/grok
+ * selection, live adapters land Phase 190 → honest-unavailable here), and returns
+ * an honest-unavailable port (with the knob hint) for a video-incapable main
+ * (RES-03) — never a misroute. The getter reads the config + secretManager on
+ * use, but is invoked ONCE here at boot and the handler holds that boot-built
+ * port — key rotation requires a daemon restart (parity with the image bundle).
+ */
+export function buildVideoGenBundle(deps: {
+  container: BootContext["container"];
+  defaultAgentId: string;
+  skillsLogger: BootContext["skillsLogger"];
+  /** DEL-01: per-agent workspace dirs + default, threaded from the call site;
+   *  the per-agent `persistVideo` getter resolves the agent's confined workspace
+   *  from these. */
+  workspaceDirs: Map<string, string>;
+  defaultWorkspaceDir: string;
+}): {
+  videoGenConfig: BootContext["container"]["config"]["integrations"]["media"]["videoGeneration"];
+  videoGenProvider: VideoGenerationPort | undefined;
+  videoGenRateLimiter: ReturnType<typeof createVideoGenRateLimiter> | undefined;
+  /** DEL-01: per-agent persist getter → MediaPersistenceService.persist (videos/). */
+  persistVideo: (
+    agentId: string,
+    buffer: Buffer,
+    opts: { mediaKind: "video"; mimeType: string },
+  ) => ReturnType<MediaPersistenceService["persist"]>;
+  /** SEC-02 (DIVERGENCE 3): per-agent/hour USD cost ceiling, gated PRE-submit.
+   *  Undefined when `maxCostPerHourUsd` is unset (ceiling skipped, count-only). */
+  videoGenCostLimiter: VideoCostLimiter | undefined;
+} {
+  const { container, defaultAgentId, skillsLogger, workspaceDirs, defaultWorkspaceDir } = deps;
+  const videoGenConfig = container.config.integrations.media.videoGeneration;
+  const defaultAgentCfg =
+    container.config.agents[defaultAgentId] ?? container.config.agents["default"];
+  const defaultMain = defaultAgentCfg
+    ? resolveAgentModel(defaultAgentCfg, container.config.models).provider
+    : "default";
+  const getVideoGenProvider = createVideoProviderSelector({
+    videoGenConfig,
+    secretManager: container.secretManager,
+    mainProviderId: defaultMain,
+    // The skills FAL factory getter (explicit `provider:"fal"`). createVideoGenProvider
+    // returns ok(undefined) when FAL_KEY is absent, else the adapter; unwrap to
+    // the port|undefined the selector's legacyGetter expects.
+    legacyGetter: () => {
+      const r = createVideoGenProvider(videoGenConfig, container.secretManager);
+      return r.ok ? r.value : undefined;
+    },
+    logger: skillsLogger,
+  });
+  const videoGenProvider = getVideoGenProvider(); // boot-time probe
+  const videoGenRateLimiter = videoGenProvider
+    ? createVideoGenRateLimiter({ maxPerHour: videoGenConfig.maxPerHour })
+    : undefined;
+  // SEC-02 (DIVERGENCE 3): the USD cost ceiling, constructed ONLY when
+  // `maxCostPerHourUsd` is set AND a provider exists — otherwise undefined and
+  // the handler skips the ceiling (count-only, no regression).
+  const videoGenCostLimiter =
+    videoGenProvider && videoGenConfig.maxCostPerHourUsd
+      ? createVideoCostLimiter({ maxCostPerHourUsd: videoGenConfig.maxCostPerHourUsd })
+      : undefined;
+  // DEL-01: per-agent MediaPersistenceService getter (mirrors persistImage) with
+  // a RAISED maxBytes for video. Writes to `~/.comis/workspace/media/videos/`.
+  const videoPersistenceServices = new Map<string, MediaPersistenceService>();
+  const persistVideo = (
+    agentId: string,
+    buffer: Buffer,
+    opts: { mediaKind: "video"; mimeType: string },
+  ): ReturnType<MediaPersistenceService["persist"]> => {
+    let svc = videoPersistenceServices.get(agentId);
+    if (!svc) {
+      svc = createMediaPersistenceService({
+        workspaceDir: workspaceDirs.get(agentId) ?? defaultWorkspaceDir,
+        logger: skillsLogger,
+        maxBytes: VIDEO_PERSIST_MAX_BYTES,
+      });
+      videoPersistenceServices.set(agentId, svc);
+    }
+    return svc.persist(buffer, opts);
+  };
+  if (videoGenProvider) {
+    skillsLogger.info(
+      { provider: videoGenConfig.provider, mainProvider: defaultMain },
+      "Video generation provider initialized",
+    );
+  } else {
+    skillsLogger.debug("Video generation disabled: API key not configured or provider unknown");
+  }
+  return { videoGenConfig, videoGenProvider, videoGenRateLimiter, persistVideo, videoGenCostLimiter };
+}
+
+/**
+ * The post-channels boot-context fields `buildVideoHandlerDeps` reads (mirrors
+ * `ImageHandlerBootSlice`).
+ */
+type VideoHandlerBootSlice = Pick<BootContext, "videoGenProvider" | "videoGenRateLimiter" | "videoGenCostLimiter" | "skillsLogger" | "container"> &
+  Required<Pick<BootContext, "videoGenConfig" | "adaptersByType" | "workspaceDirs" | "defaultWorkspaceDir" | "persistVideo">>;
+
+/**
+ * Build the `videoHandlerDeps` slice of `ApiDispatchDeps` — `undefined` when
+ * video generation is disabled (no provider or no rate limiter), else the dep
+ * object the video.generate RPC handler consumes. Mirrors
+ * `buildImageHandlerDeps`. OBSERVABILITY SCOPE (Phase 188 = logger-only): NO
+ * trajectoryRegistry/eventBus is wired (OBS-04 / Phase 192 adds them).
+ */
+export function buildVideoHandlerDeps(
+  c: VideoHandlerBootSlice,
+  resolveAgentMainProvider: (agentId: string) => { providerId: string },
+): import("../api/rpc-dispatch.js").ApiDispatchDeps["videoHandlerDeps"] {
+  if (!c.videoGenProvider || !c.videoGenRateLimiter) return undefined;
+  return {
+    provider: c.videoGenProvider,
+    rateLimiter: c.videoGenRateLimiter,
+    config: c.videoGenConfig,
+    logger: c.skillsLogger,
+    getChannelAdapter: (channelType: string) => c.adaptersByType.get(channelType),
+    resolveAgentMainProvider, // RES-01 (obs/lockstep only)
+    workspaceDirs: c.workspaceDirs, // SEC-03: image_url path confinement
+    defaultWorkspaceDir: c.defaultWorkspaceDir,
+    persist: c.persistVideo, // DEL-01: persist getter (videos/)
+    costLimiter: c.videoGenCostLimiter, // SEC-02 (DIVERGENCE 3): pre-submit ceiling
   };
 }
 
