@@ -2324,10 +2324,17 @@ describe("createTerminalWorker — 124-06 status frame (classifier single-homed 
       cursorParked: boolean;
       screenDiffEmpty: boolean;
       interactions: number;
+      confidence: string;
+      reason: string;
     };
     expect(view.state).toBe("awaiting-input");
     expect(view.cursorParked).toBe(true);
     expect(view.screenDiffEmpty).toBe(true);
+    // 163-03 (CLASS-02): the classifier confidence + reason ride the worker reply
+    // end-to-end (statusReplyFromState -> the `status` frame result). A cursor-parked
+    // prompt is the high-confidence structural certainty.
+    expect(view.confidence).toBe("high");
+    expect(view.reason).toBe("settled_cursor_parked");
     // Redaction-safe: the status reply carries NO raw screen text (structural only).
     expect(reply.result).not.toHaveProperty("screen");
     expect(typeof view.interactions).toBe("number");
@@ -2349,6 +2356,25 @@ describe("createTerminalWorker — 124-06 status frame (classifier single-homed 
     const view = reply.result as { state: string; exitCode?: number };
     expect(view.state).toBe("exited");
     expect(view.exitCode).toBe(7);
+  });
+
+  it("an ABSENT session → status degrades to the safe total default (state:'exited', confidence:'high', reason:'exited') — the 5th plumbing seam (163-03)", async () => {
+    // handleStatus has its OWN absent-session degrade (separate from statusReplyFromState):
+    // a `status` frame for an unknown session id is gone → `exited`. The widened
+    // WorkerStatusPerception must stay total here too — confidence/reason cannot be
+    // undefined (the field-plumbing bug class: a missed seam reads undefined downstream).
+    const sched = makeFakeScheduler();
+    const rec = makeRecordingBackend();
+    const worker = createTerminalWorker(
+      baseDeps({ loadPty: () => ({ spawn: rec.spawn }), setTimer: sched.setTimer, clearTimer: sched.clearTimer }),
+    );
+    // No create — the session id "s1" the statusFrame() references does not exist.
+    const reply = await worker.handle(statusFrame());
+    expect(reply.ok).toBe(true);
+    const view = reply.result as { state: string; confidence: string; reason: string };
+    expect(view.state).toBe("exited");
+    expect(view.confidence).toBe("high");
+    expect(view.reason).toBe("exited");
   });
 
   it("interactions counts the session's send/read/wait/resize interactions", async () => {
