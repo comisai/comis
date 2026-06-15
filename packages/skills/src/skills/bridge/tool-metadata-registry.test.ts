@@ -40,8 +40,12 @@ function createMockTool(name: string, executeFn?: (...args: any[]) => Promise<an
 // ===========================================================================
 
 describe("tool-metadata-registry -- registry count", () => {
-  it("registers exactly 61 unique tools (registry count assertion)", () => {
-    // 61 = 60 prior + obs_fleet_health (Phase 161-02 — the slim, READ-ONLY
+  it("registers exactly 63 unique tools (registry count assertion)", () => {
+    // 63 = 61 prior + video_generate + video_status (Phase 188-02 SEC-01 —
+    // both EXPLICITLY registered never-export; video_status is reserved, its
+    // tool lands Phase 189). NOTE: image_generate is NOT registered here (it
+    // rides the default-deny safety net) — video IS, for the SEC-01 annotation.
+    // The 61 prior = 60 + obs_fleet_health (Phase 161-02 — the slim, READ-ONLY
     // permission-gated MCP tool surfacing the obs.fleet.health FleetHealthReport,
     // the cross-session sibling of obs_explain).
     // The 60 prior = 59 + obs_explain (Phase 154-03 — the slim, READ-ONLY
@@ -51,7 +55,7 @@ describe("tool-metadata-registry -- registry count", () => {
     // DAG read tools were deleted in Phase 126; these 3 are the governed TOOL
     // surface over the LCD store.
     const all = getAllToolMetadata();
-    expect(all.size).toBe(61);
+    expect(all.size).toBe(63);
   });
 });
 
@@ -109,6 +113,27 @@ describe("tool-metadata-registry -- terminal driver never-export", () => {
     const all = getAllToolMetadata();
     const terminalNames = [...all.keys()].filter((k) => k.startsWith("terminal_session_"));
     expect(terminalNames.sort()).toEqual([...TERMINAL_TOOLS].sort());
+  });
+});
+
+// ===========================================================================
+// Video synthesis — video_generate + video_status never-export (SEC-01, 188-02)
+// ===========================================================================
+
+describe("tool-metadata-registry -- video synthesis never-export (SEC-01)", () => {
+  // Both cost-bearing/outbound video tools MUST be never-export: a generated
+  // video is delivered to a channel and bills the agent's provider, so it must
+  // never reach the MCP-exported set. video_status is reserved here (its tool
+  // lands Phase 189) so its policy is pinned before the tool exists. The
+  // mcp-export-policy.test.ts AST gate additionally requires every registered
+  // name to carry an explicit policy. This block is mutation-proven RED: flip
+  // either registration to "permission-gated"/"public" and it fails.
+  const VIDEO_TOOLS = ["video_generate", "video_status"] as const;
+
+  it.each(VIDEO_TOOLS)("%s resolves to mcpExportPolicy 'never-export'", (name) => {
+    const meta = getToolMetadata(name);
+    expect(meta, `${name} must be registered`).toBeDefined();
+    expect(meta!.mcpExportPolicy).toBe("never-export");
   });
 });
 
