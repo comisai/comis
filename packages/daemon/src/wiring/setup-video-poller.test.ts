@@ -140,6 +140,8 @@ interface MockPollerDeps {
   persist: ReturnType<typeof vi.fn>;
   costLimiter: { record: ReturnType<typeof vi.fn> };
   sendAttachment: ReturnType<typeof vi.fn>;
+  /** DEL-03 (Phase 192): the link/notice degrade path sends via sendMessage. */
+  sendMessage: ReturnType<typeof vi.fn>;
   getChannelAdapter: ReturnType<typeof vi.fn>;
   logger: ReturnType<typeof createMockLogger>;
   timers: ReturnType<typeof createFakeTimers>;
@@ -178,6 +180,8 @@ function tokenUsageEmits(deps: MockPollerDeps): TokenUsageEvent[] {
 function makePoller(opts: {
   provider?: MockProvider;
   sendAttachment?: ReturnType<typeof vi.fn>;
+  /** DEL-03 (Phase 192): the link/notice degrade send spy (defaults to ok). */
+  sendMessage?: ReturnType<typeof vi.fn>;
   adapterHasSend?: boolean; // false → IRC-style adapter without sendAttachment
   persist?: ReturnType<typeof vi.fn>;
   config?: VideoGenerationConfig;
@@ -185,6 +189,9 @@ function makePoller(opts: {
   // OBS-04 (Phase 192): an optional trajectory registry — when provided the
   // poller best-effort live-emits video.* off-turn via getRecorder(sessionKey).
   trajectoryRegistry?: { getRecorder: ReturnType<typeof vi.fn> };
+  // DEL-03 (Phase 192): an optional video-size override (the media-compressor
+  // maxVideoBytes knob). A small value forces the default fixture oversized.
+  maxVideoBytes?: number;
 } = {}): { poller: VideoPoller; deps: MockPollerDeps; db: Database.Database } {
   const db = new Database(":memory:");
   ensureVideoJobTable(db);
@@ -216,7 +223,11 @@ function makePoller(opts: {
 
   const provider = opts.provider ?? makeProvider();
   const sendAttachment = opts.sendAttachment ?? vi.fn().mockResolvedValue(ok("msg-1"));
-  const adapter = opts.adapterHasSend === false ? {} : { sendAttachment };
+  const sendMessage = opts.sendMessage ?? vi.fn().mockResolvedValue(ok("notice-1"));
+  // DEL-03: the link/notice degrade calls sendMessage (a REQUIRED ChannelPort
+  // method, present on every adapter). An IRC-style adapter (adapterHasSend:false)
+  // still exposes sendMessage — it just lacks sendAttachment (the capability gate).
+  const adapter = opts.adapterHasSend === false ? { sendMessage } : { sendAttachment, sendMessage };
   const getChannelAdapter = vi.fn().mockReturnValue(adapter);
   const persist = opts.persist ?? vi.fn().mockResolvedValue(ok(PERSISTED_OK));
   const costLimiter = { record: vi.fn() };
@@ -228,7 +239,7 @@ function makePoller(opts: {
   const nowMs = () => clock; // never advances on its own → deadline only via explicit jumps
 
   const deps: MockPollerDeps = {
-    store, provider, persist, costLimiter, sendAttachment, getChannelAdapter, logger, timers, sleep, nowMs, eventBus,
+    store, provider, persist, costLimiter, sendAttachment, sendMessage, getChannelAdapter, logger, timers, sleep, nowMs, eventBus,
   };
 
   const poller = createVideoPoller({
@@ -244,6 +255,7 @@ function makePoller(opts: {
     nowMs,
     eventBus: eventBus as never,
     ...(opts.trajectoryRegistry ? { trajectoryRegistry: opts.trajectoryRegistry as never } : {}),
+    ...(opts.maxVideoBytes !== undefined ? { maxVideoBytes: opts.maxVideoBytes } : {}),
   });
   void clock;
   return { poller, deps, db };
@@ -696,6 +708,116 @@ describe("createVideoPoller", () => {
     poller.track(makeRecord());
     await flush();
     // No throw; the clip IS persisted so the at-least-once contract still marks done.
+    expect(deps.persist).toHaveBeenCalledTimes(1);
+    expect(markDoneSpy).toHaveBeenCalledTimes(1);
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // DEL-03 (BLOCKER): oversized-video graceful degrade at the DELIVERY site.
+  // A clip over the channel's video-size limit is NEVER silently dropped: a
+  // link (where the channel renders URLs) or a notice (+ the persisted path) is
+  // sent via sendMessage, NEVER routed through compressAttachments (the v2.23
+  // silent-drop). markDone holds in every branch (the clip IS persisted).
+  // ─────────────────────────────────────────────────────────────────────────
+
+  // DEL-03 Test 1 (under-limit, non-regression): a clip BELOW the limit delivers
+  // via sendAttachment exactly as today — NO sendMessage, NO degrade.
+  it("DEL-03: a clip UNDER the channel limit delivers via sendAttachment unchanged (no degrade, no sendMessage)", async () => {
+    // PERSISTED_OK.sizeBytes = 42_424 (~41 KB) is far under Telegram's ~50MB limit.
+    const { poller, deps } = makePoller({ seedRows: [{ jobId: "fal-req-abc123" }] });
+    const markDoneSpy = deps.store.markDoneSpy;
+    poller.track(makeRecord());
+    await flush();
+
+    expect(deps.sendAttachment).toHaveBeenCalledTimes(1);
+    expect(deps.sendMessage).not.toHaveBeenCalled(); // no degrade path taken
+    expect(markDoneSpy).toHaveBeenCalledTimes(1);
+  });
+
+  // DEL-03 Test 2 (over-limit, link-capable channel): an over-limit clip on a
+  // link-rendering channel (telegram) does NOT call sendAttachment; it calls
+  // sendMessage with a link/notice whose text does NOT contain the silent-drop
+  // marker. markDone still holds (at-least-once: the clip IS persisted).
+  it("DEL-03: an OVER-limit clip on a link channel degrades to sendMessage (NOT sendAttachment, NOT '[Attachment too large]'); markDone holds", async () => {
+    // Force oversized: a tiny maxVideoBytes override makes the 42 KB fixture
+    // exceed the limit on telegram (a link-rendering channel).
+    const { poller, deps } = makePoller({
+      seedRows: [{ jobId: "fal-req-abc123", channelType: "telegram", channelId: "ch-recorded" }],
+      maxVideoBytes: 1000,
+    });
+    const markDoneSpy = deps.store.markDoneSpy;
+    poller.track(makeRecord({ channelType: "telegram", channelId: "ch-recorded" }));
+    await flush();
+
+    // The attachment send is SKIPPED; the degrade goes out via sendMessage.
+    expect(deps.sendAttachment).not.toHaveBeenCalled();
+    expect(deps.sendMessage).toHaveBeenCalledTimes(1);
+    // Targets the RECORDED channel only (T-192-09 — never a default/broadcast).
+    expect(deps.sendMessage.mock.calls[0]![0]).toBe("ch-recorded");
+    const text = deps.sendMessage.mock.calls[0]![1] as string;
+    // NEVER the v2.23 silent-drop marker (the RED crux — P5).
+    expect(text).not.toContain("[Attachment too large");
+    // The persisted workspace path rides the degrade message (recoverable).
+    expect(text).toContain(PERSISTED_OK.filePath);
+    // markDone STILL holds — a degraded delivery is a completed job (at-least-once).
+    expect(markDoneSpy).toHaveBeenCalledTimes(1);
+    // An INFO names the degrade (content-free canonical fields).
+    const info = (deps.logger.info as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c) => (c[0] as { step?: string }).step === "video_poll_oversized_degrade",
+    );
+    expect(info).toBeTruthy();
+    expect((info![0] as { traceId?: string }).traceId).toBe("trace-seed");
+    expect((info![0] as { sizeBytes?: number }).sizeBytes).toBe(PERSISTED_OK.sizeBytes);
+    expect(typeof (info![0] as { limit?: number }).limit).toBe("number");
+    expect(typeof (info![0] as { hint?: string }).hint).toBe("string");
+  });
+
+  // DEL-03 Test 3 (over-limit, notice-only channel): an over-limit clip on a
+  // non-link channel sends a NOTICE ("video too large for <channel>; saved to
+  // <path>") via sendMessage + markDone; never throws, never silently drops.
+  it("DEL-03: an OVER-limit clip on a notice-only channel sends a notice (+ persisted path) via sendMessage; markDone holds", async () => {
+    // A channel that has sendAttachment but does NOT render links (an unknown
+    // channelType → channelRendersVideoLink === false → the notice policy).
+    const { poller, deps } = makePoller({
+      seedRows: [{ jobId: "fal-req-abc123", channelType: "matrix", channelId: "ch-notice" }],
+      maxVideoBytes: 1000,
+    });
+    const markDoneSpy = deps.store.markDoneSpy;
+    poller.track(makeRecord({ channelType: "matrix", channelId: "ch-notice" }));
+    await flush();
+
+    expect(deps.sendAttachment).not.toHaveBeenCalled();
+    expect(deps.sendMessage).toHaveBeenCalledTimes(1);
+    expect(deps.sendMessage.mock.calls[0]![0]).toBe("ch-notice");
+    const text = deps.sendMessage.mock.calls[0]![1] as string;
+    expect(text).not.toContain("[Attachment too large");
+    expect(text).toContain(PERSISTED_OK.filePath); // the saved workspace path
+    expect(text.toLowerCase()).toContain("too large"); // the notice phrasing
+    expect(markDoneSpy).toHaveBeenCalledTimes(1);
+  });
+
+  // DEL-03 Test 4 (IRC over-limit): IRC has NO sendAttachment, so an over-limit
+  // clip falls through the existing DEL-02 capability gate (a persisted-only
+  // notice), never an undefined-method call; markDone still holds.
+  it("DEL-03: an OVER-limit clip on IRC (no sendAttachment) takes the DEL-02 persisted-only notice path; no undefined-method, markDone holds", async () => {
+    const { poller, deps } = makePoller({
+      adapterHasSend: false, // IRC-style: no sendAttachment
+      seedRows: [{ jobId: "fal-req-abc123", channelType: "irc", channelId: "#room" }],
+      maxVideoBytes: 1000, // over-limit, but IRC degrades via the capability gate first
+    });
+    const markDoneSpy = deps.store.markDoneSpy;
+    poller.track(makeRecord({ channelType: "irc", channelId: "#room" }));
+    await flush();
+
+    // No throw, no sendAttachment (it does not exist on the adapter).
+    expect(deps.sendAttachment).not.toHaveBeenCalled();
+    // The DEL-02 persisted-only notice INFO fired (not the oversized-degrade
+    // branch — the capability gate handles IRC before the size check matters).
+    const skipped = (deps.logger.info as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c) => (c[0] as { step?: string }).step === "video_poll_deliver_skipped",
+    );
+    expect(skipped).toBeTruthy();
+    // at-least-once: the clip is persisted → the turn completes.
     expect(deps.persist).toHaveBeenCalledTimes(1);
     expect(markDoneSpy).toHaveBeenCalledTimes(1);
   });
