@@ -129,3 +129,49 @@ export function formatVideoBytes(bytes: number): string {
   if (bytes < 1024 * MB) return `${(bytes / MB).toFixed(1)} MB`;
   return `${(bytes / (1024 * MB)).toFixed(1)} GB`;
 }
+
+/** The DEL-03 degrade policy: `link` where the channel renders a URL and one is
+ *  available; otherwise `notice` (the local workspace path). */
+export type VideoDegradePolicy = "link" | "notice";
+
+/** The oversized-degrade message + its chosen policy. */
+export interface OversizedDegradeMessage {
+  text: string;
+  policy: VideoDegradePolicy;
+}
+
+/**
+ * Build the DEL-03 oversized-video degrade message for the delivery site. Where
+ * the channel renders links AND a retained provider URL is available, the `link`
+ * policy shares that URL; otherwise the `notice` policy carries the local
+ * workspace path. EITHER WAY the persisted `filePath` is included so the clip is
+ * recoverable, and the text NEVER contains the v2.23 `[Attachment too large]`
+ * silent-drop marker (this is the visible-degrade replacement for it).
+ */
+export function buildOversizedDegradeMessage(args: {
+  channelType: string;
+  sizeBytes: number;
+  limit: number;
+  filePath: string;
+  sourceUrl?: string;
+}): OversizedDegradeMessage {
+  const { channelType, sizeBytes, limit, filePath, sourceUrl } = args;
+  const sizeStr = formatVideoBytes(sizeBytes);
+  const limitStr = formatVideoBytes(limit);
+  const link =
+    channelRendersVideoLink(channelType) && typeof sourceUrl === "string" && sourceUrl.length > 0
+      ? sourceUrl
+      : undefined;
+  if (link !== undefined) {
+    return {
+      policy: "link",
+      text:
+        `Your video (${sizeStr}) exceeds ${channelType}'s ${limitStr} upload limit, ` +
+        `so it is shared as a link: ${link}\nSaved to ${filePath}`,
+    };
+  }
+  return {
+    policy: "notice",
+    text: `Video too large for ${channelType} (${sizeStr} > ${limitStr}); saved to ${filePath}`,
+  };
+}

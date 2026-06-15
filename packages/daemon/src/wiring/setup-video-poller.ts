@@ -79,6 +79,7 @@ import type { PersistedFile } from "@comis/skills/tools";
 import type { ComisLogger } from "@comis/infra";
 import type { SessionTrajectoryHandleRegistry, TrajectoryEventType } from "@comis/observability";
 import type { AppContainer } from "@comis/core";
+import { resolveVideoSizeLimit, buildOversizedDegradeMessage } from "./video-delivery-limits.js";
 
 // ---------------------------------------------------------------------------
 // Public contract
@@ -123,8 +124,15 @@ export interface VideoPollerDeps {
   persist: PersistVideo;
   /** SEC-02 reconcile: record the actual cost on done. Optional (count-only). */
   costLimiter?: { record(agentId: string, cost: number): void };
-  /** The announce path — resolve a channel adapter by type (live reference). */
-  getChannelAdapter: (channelType: string) => Pick<ChannelPort, "sendAttachment"> | undefined;
+  /** The announce path — resolve a channel adapter by type (live reference).
+   *  DEL-03: widened to also expose `sendMessage` (a REQUIRED ChannelPort method,
+   *  present on every adapter) so the oversized-degrade link/notice can be sent
+   *  without an attachment. The runtime objects ARE full ChannelPorts (the
+   *  main-helpers `resolveAttachmentAdapter` runtime-narrow note); `sendAttachment`
+   *  stays optional (IRC omits it — the DEL-02 capability gate). */
+  getChannelAdapter: (
+    channelType: string,
+  ) => Pick<ChannelPort, "sendAttachment" | "sendMessage"> | undefined;
   config: VideoGenerationConfig;
   logger: ComisLogger;
   /** Injectable timer for the outer sweeper (default: a `systemSetInterval`
@@ -147,6 +155,14 @@ export interface VideoPollerDeps {
    *  poller's done branch — Plan 02 adds the emit). Threaded here now so the
    *  wiring lands in one place. Optional → no-op when absent. */
   eventBus?: AppContainer["eventBus"];
+  /** DEL-03 (Phase 192): optional operator override for the per-channelType video
+   *  upload limit (the media-compressor `maxVideoBytes` knob). When set it WINS
+   *  over the per-channel constant in `resolveVideoSizeLimit`; when absent each
+   *  channel's documented limit applies (the honest default). Not a field on the
+   *  strictObject `VideoGenerationConfig` (it belongs to the channels-package
+   *  MediaCompressionConfig); injected here so a future config wire-up threads it
+   *  in one place without a schema change. */
+  maxVideoBytes?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -359,7 +375,75 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
     let delivered = false;
     if (record.channelType && record.channelId) {
       const adapter = getChannelAdapter(record.channelType);
-      if (adapter && typeof adapter.sendAttachment === "function") {
+      // DEL-03: per-channelType upload-size check at the DELIVERY site. A clip
+      // over the channel's documented limit is NEVER silently dropped and is
+      // NEVER routed through the media-compressor `compressAttachments` (the
+      // v2.23 silent-drop anti-pattern — Pitfall 5). The limit is per-channelType
+      // (resolveVideoSizeLimit), overridable via deps.maxVideoBytes. `oversized`
+      // is only meaningful when the persisted size is known.
+      const limit = resolveVideoSizeLimit(record.channelType, deps.maxVideoBytes);
+      const oversized =
+        persisted.value.sizeBytes !== undefined && persisted.value.sizeBytes > limit;
+      if (adapter && typeof adapter.sendAttachment === "function" && oversized) {
+        // DEL-03 oversized-degrade: do NOT call sendAttachment. Send a link/notice
+        // via sendMessage (a REQUIRED ChannelPort method on every adapter). The
+        // clip IS persisted, so markDone still holds below (at-least-once parity
+        // with the IRC branch). delivered stays false — the off-turn
+        // video.delivered record carries the honest flag. The message builder owns
+        // the link-vs-notice choice + the (never-`[Attachment too large]`) text.
+        const degrade = buildOversizedDegradeMessage({
+          channelType: record.channelType,
+          sizeBytes: persisted.value.sizeBytes ?? 0,
+          limit,
+          filePath: persisted.value.filePath,
+          ...(out.sourceUrl !== undefined ? { sourceUrl: out.sourceUrl } : {}),
+        });
+        const sendMessage = adapter.sendMessage.bind(adapter);
+        const noticeResult = await sendMessage(record.channelId, degrade.text);
+        // OBS-01 / §2.7: a content-free INFO names the degrade (ids/labels/counts
+        // only — never the bytes, a credential, or the keyed-download-URL). The
+        // policy (link|notice) is recorded so DOC-01 + the fleet lens can see it.
+        logger.info(
+          {
+            traceId: record.traceId,
+            jobId: record.jobId,
+            agentId: record.agentId,
+            channelType: record.channelType,
+            sizeBytes: persisted.value.sizeBytes,
+            limit,
+            policy: degrade.policy,
+            mediaPath: persisted.value.filePath,
+            ...(noticeResult.ok ? {} : { sent: false }),
+            hint:
+              "Video exceeded the channel's upload limit; delivered a link/notice " +
+              "with the saved workspace path instead of the attachment (never dropped).",
+            step: "video_poll_oversized_degrade",
+          },
+          "Video poller: oversized clip degraded to a link/notice",
+        );
+        if (!noticeResult.ok) {
+          // A failed degrade-message is logged at WARN (errorKind + hint), but the
+          // row STILL markDone below — the clip is persisted (recoverable from the
+          // workspace) and the at-least-once contract is "the clip exists", not
+          // "the channel acknowledged". Re-driving would only re-send the notice.
+          logger.warn(
+            {
+              traceId: record.traceId,
+              jobId: record.jobId,
+              channelType: record.channelType,
+              err: noticeResult.error,
+              errorKind: "platform" as const,
+              hint:
+                "Oversized-degrade notice send failed; the clip is saved to the " +
+                "workspace (recoverable). The job is still marked done — re-driving " +
+                "would only re-send the notice.",
+              step: "video_poll_oversized_degrade",
+            },
+            "Video poller: oversized-degrade notice send failed",
+          );
+        }
+        // delivered stays false (a degrade is not an attachment delivery).
+      } else if (adapter && typeof adapter.sendAttachment === "function") {
         const sendAttachment = adapter.sendAttachment.bind(adapter);
         const sendResult = await sendAttachment(record.channelId, {
           type: "video",

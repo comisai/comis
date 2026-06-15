@@ -21,6 +21,7 @@ import {
   resolveVideoSizeLimit,
   channelRendersVideoLink,
   formatVideoBytes,
+  buildOversizedDegradeMessage,
   VIDEO_SIZE_LIMITS,
 } from "./video-delivery-limits.js";
 
@@ -86,5 +87,50 @@ describe("video-delivery-limits — per-channelType limit table + resolver (DEL-
     expect(formatVideoBytes(2 * 1024)).toBe("2.0 KB");
     expect(formatVideoBytes(50 * MB)).toBe("50.0 MB");
     expect(formatVideoBytes(2 * 1024 * MB)).toBe("2.0 GB");
+  });
+
+  // ─── buildOversizedDegradeMessage — the link/notice text + policy ───
+  describe("buildOversizedDegradeMessage", () => {
+    const FILE_PATH = "/home/agent/.comis/workspace/media/videos/abc123.mp4";
+
+    it("link policy: a link-rendering channel with a retained sourceUrl shares the URL (+ saved path), never the silent-drop marker", () => {
+      const msg = buildOversizedDegradeMessage({
+        channelType: "telegram",
+        sizeBytes: 60 * MB,
+        limit: 50 * MB,
+        filePath: FILE_PATH,
+        sourceUrl: "https://provider.example/video/xyz?token=abc",
+      });
+      expect(msg.policy).toBe("link");
+      expect(msg.text).toContain("https://provider.example/video/xyz?token=abc");
+      expect(msg.text).toContain(FILE_PATH); // saved path always present (recoverable)
+      expect(msg.text).not.toContain("[Attachment too large"); // never the v2.23 marker
+    });
+
+    it("notice policy: a notice-only channel (or no sourceUrl) carries the saved workspace path, never a link", () => {
+      // notice-only channel (unknown → channelRendersVideoLink false), even WITH a url.
+      const noticeChannel = buildOversizedDegradeMessage({
+        channelType: "matrix",
+        sizeBytes: 60 * MB,
+        limit: 25 * MB,
+        filePath: FILE_PATH,
+        sourceUrl: "https://provider.example/v/xyz",
+      });
+      expect(noticeChannel.policy).toBe("notice");
+      expect(noticeChannel.text.toLowerCase()).toContain("too large");
+      expect(noticeChannel.text).toContain(FILE_PATH);
+      expect(noticeChannel.text).not.toContain("https://provider.example"); // no link on a notice-only channel
+
+      // link-rendering channel but NO sourceUrl → notice (the workspace path is the fallback).
+      const noUrl = buildOversizedDegradeMessage({
+        channelType: "telegram",
+        sizeBytes: 60 * MB,
+        limit: 50 * MB,
+        filePath: FILE_PATH,
+      });
+      expect(noUrl.policy).toBe("notice");
+      expect(noUrl.text).toContain(FILE_PATH);
+      expect(noUrl.text).not.toContain("[Attachment too large");
+    });
   });
 });

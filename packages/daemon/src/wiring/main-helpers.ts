@@ -426,23 +426,24 @@ export function buildImageHandlerDeps(
 const VIDEO_PERSIST_MAX_BYTES = 200 * 1024 * 1024;
 
 /**
- * WR-06: narrow a live channel adapter to its attachment-send capability at
- * RUNTIME. `channelAdaptersRef` is typed `Map<string, DeliveryAdapter>` (the
- * delivery queue needs only `sendMessage`), but the runtime entries are the FULL
- * channel adapters — some expose `sendAttachment`, some (IRC) do not. A runtime
- * `typeof sendAttachment === "function"` check (not a blind double-cast) surfaces
- * `undefined` for a non-attaching adapter, so the poller's IRC-degrade branch
- * triggers on a typed `undefined`. The single `as` is sound — the predicate
- * proves the method exists.
+ * WR-06: narrow a live channel adapter to its capabilities at RUNTIME.
+ * `channelAdaptersRef` is typed `Map<string, DeliveryAdapter>` (the delivery queue
+ * needs only `sendMessage`), but the runtime entries are the FULL channel adapters
+ * — some expose `sendAttachment`, some (IRC) do not. A `typeof sendAttachment ===
+ * "function"` check (not a blind double-cast) returns `undefined` for a
+ * non-attaching adapter, so the poller's IRC-degrade branch triggers on a typed
+ * `undefined`. DEL-03: the return type also exposes `sendMessage` (a REQUIRED
+ * ChannelPort + DeliveryAdapter method) for the oversized-degrade link/notice; the
+ * cast stays sound — an adapter passing the typeof check is a full ChannelPort.
  */
 function resolveAttachmentAdapter(
   adapter: DeliveryAdapter | undefined,
-): Pick<ChannelPort, "sendAttachment"> | undefined {
+): Pick<ChannelPort, "sendAttachment" | "sendMessage"> | undefined {
   if (
     adapter &&
     typeof (adapter as { sendAttachment?: unknown }).sendAttachment === "function"
   ) {
-    return adapter as Pick<ChannelPort, "sendAttachment">;
+    return adapter as unknown as Pick<ChannelPort, "sendAttachment" | "sendMessage">;
   }
   return undefined;
 }
@@ -577,14 +578,11 @@ export function buildVideoGenBundle(deps: {
       ...(videoGenCostLimiter ? { costLimiter: videoGenCostLimiter } : {}),
       // The poller resolves a LIVE adapter at delivery time from the early
       // channelAdaptersRef (populated by reference post-setupChannels) — the
-      // delivery-queue mechanism, retyped for an attachment send. WR-06: the map
-      // is typed `Map<string, DeliveryAdapter>` for the delivery queue (which only
-      // needs sendMessage), but the runtime objects are the FULL channel adapters.
-      // Narrow at RUNTIME (a `typeof sendAttachment === "function"` check) rather
-      // than a blind `as unknown as` double-cast: a channel that cannot attach
-      // (e.g. IRC) is reported as undefined, so the poller's IRC-degrade branch
-      // is exercised by the type, not just defensively at the call site.
-      getChannelAdapter: (channelType: string): Pick<ChannelPort, "sendAttachment"> | undefined =>
+      // delivery-queue mechanism retyped for an attachment send. Runtime-narrowed
+      // by resolveAttachmentAdapter (WR-06 / DEL-03 — see its doc).
+      getChannelAdapter: (
+        channelType: string,
+      ): Pick<ChannelPort, "sendAttachment" | "sendMessage"> | undefined =>
         resolveAttachmentAdapter(channelAdaptersRef.get(channelType)),
       config: videoGenConfig,
       logger: skillsLogger,
