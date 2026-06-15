@@ -7906,6 +7906,48 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
           ],
           "additionalProperties": false
         },
+        "videoGenerated": {
+          "type": "object",
+          "properties": {
+            "provider": {
+              "type": "string"
+            },
+            "model": {
+              "type": "string"
+            },
+            "jobId": {
+              "type": "string"
+            },
+            "costUsd": {
+              "type": "number"
+            },
+            "estimatedCostUsd": {
+              "type": "number"
+            },
+            "durationSecs": {
+              "type": "number"
+            },
+            "outcome": {
+              "type": "string",
+              "enum": [
+                "ok",
+                "failed"
+              ]
+            },
+            "errorKind": {
+              "type": "string"
+            },
+            "delivered": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "provider",
+            "outcome",
+            "delivered"
+          ],
+          "additionalProperties": false
+        },
         "summary": {
           "type": "string"
         },

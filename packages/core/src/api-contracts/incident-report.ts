@@ -239,6 +239,42 @@ export const IncidentReportSchema = z.object({
       errorKind: z.string().optional(),
     })
     .optional(),
+  /** OBS-03/OBS-04 (Phase 192): the VIDEO-generation turn reconstructed from the
+   *  session's `video.*` trajectory records (the terminal `video.generated` /
+   *  `video.failed` record wins; `delivered` set when `video.delivered` fired).
+   *  Unlike image/vision (wholly in-turn), a video job completes in the off-turn
+   *  background poller — the `video.requested`/`video.submitted` records reach the
+   *  persisted trajectory in-turn (recorder alive) and the offline assembler
+   *  stitches the later completion via `traceId`/`jobId` on one `sessionKey`. The
+   *  reconciled cost (`costUsd ?? estimatedCostUsd`) rides HERE (Route a — NOT
+   *  `cost.costUsd`, the executor `sessionEnd`; Pitfall 2). Per-backend cost
+   *  provenance: FAL/Veo=estimate, Grok=actual. Content-free: ids/labels/cost/
+   *  outcome ONLY (never the prompt, the video bytes, the Veo keyed-download-URL,
+   *  or a raw provider message). Optional + additive (present only when the
+   *  trajectory carries `video.*` records; schemaVersion stays 1) — pre-existing
+   *  constructors omit it (the `image`/`vision`/`recall` precedent). */
+  videoGenerated: z
+    .object({
+      /** The executing video provider id (e.g. "veo", "fal", "grok"). */
+      provider: z.string(),
+      /** The video model the provider used. Absent on a failed/early turn or a backend that omits it. */
+      model: z.string().optional(),
+      /** The async job handle — ties the off-turn completion back to its originating turn (OBS-04). */
+      jobId: z.string().optional(),
+      /** The reconciled actual cost in USD (Grok actual; absent for FAL/Veo, which estimate). */
+      costUsd: z.number().optional(),
+      /** The pre-submit worst-case estimate (the SEC-02 ceiling input; the FAL/Veo cost provenance). */
+      estimatedCostUsd: z.number().optional(),
+      /** The rendered clip duration in seconds (DEL/OBS field). */
+      durationSecs: z.number().optional(),
+      /** The terminal outcome of the video turn. */
+      outcome: z.enum(["ok", "failed"]),
+      /** The classified failure kind when `outcome === "failed"` (the closed VideoErrorKind union). Absent on success. */
+      errorKind: z.string().optional(),
+      /** Whether the clip was delivered to a channel (video.delivered fired with delivered:true). */
+      delivered: z.boolean(),
+    })
+    .optional(),
   summary: z.string(),
   likelyRootCause: z
     .object({
@@ -336,15 +372,16 @@ export interface IncidentFailure {
  * misclassification signal + offending tool/token). Derived from the heuristic
  * predicates in 153-PATTERNS.md ("678 / 503 heuristic derivation").
  */
-// @optional-field-count: 14 — this is the obs.explain signal accumulator, the
-// single shared contract every Glass-Box heuristic (Phase 153/175/177/180/186/187)
+// @optional-field-count: 15 — this is the obs.explain signal accumulator, the
+// single shared contract every Glass-Box heuristic (Phase 153/175/177/180/186/187/192)
 // reads. Each optional field is a presence-conditional signal aggregated from a
 // distinct trajectory record class (contextBudget / promptTimeout /
-// toolSchemaUnsupported / recall / image / vision / channel / agentId / …) —
-// absent when that record class did not occur. Clustering them would couple
-// unrelated heuristics; the read sites already key on each independently. Grows
-// by one per Glass-Box signal class (image added in 186 — OBS-03/OBS-04; vision
-// added in 187 — VIS-04).
+// toolSchemaUnsupported / recall / image / vision / videoGenerated / channel /
+// agentId / …) — absent when that record class did not occur. Clustering them
+// would couple unrelated heuristics; the read sites already key on each
+// independently. Grows by one per Glass-Box signal class (image added in 186 —
+// OBS-03/OBS-04; vision added in 187 — VIS-04; videoGenerated added in 192 —
+// OBS-03/OBS-04 video).
 export interface IncidentSignals {
   sessionKey: string;
   /** W8: agentId from the trajectory record envelopes (first seen). Fallback for
@@ -474,6 +511,28 @@ export interface IncidentSignals {
     path?: "main-vision" | "registry" | "gemini-video" | "unavailable";
     outcome: "ok" | "failed";
     errorKind?: string;
+  };
+  /**
+   * OBS-03/OBS-04 (Phase 192): the VIDEO-generation turn reconstructed from the
+   * session's `video.*` trajectory records (the terminal `video.generated` /
+   * `video.failed` record wins; `delivered` set when `video.delivered` fired,
+   * `jobId` carried from `video.submitted`). The cost rides HERE so `comis
+   * explain` shows it from the trajectory (Route a — NOT `cost.costUsd`,
+   * Pitfall 2). A background-completed job's later completion stitches to its
+   * originating turn via `traceId`/`jobId` on one `sessionKey` (the offline
+   * assembler is the binding oracle). Content-free. Absent ⇒ no `video.*`
+   * records in the trajectory.
+   */
+  videoGenerated?: {
+    provider: string;
+    model?: string;
+    jobId?: string;
+    costUsd?: number;
+    estimatedCostUsd?: number;
+    durationSecs?: number;
+    outcome: "ok" | "failed";
+    errorKind?: string;
+    delivered: boolean;
   };
 }
 
