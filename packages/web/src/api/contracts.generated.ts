@@ -7853,6 +7853,9 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
             },
             "delivered": {
               "type": "boolean"
+            },
+            "persisted": {
+              "type": "boolean"
             }
           },
           "required": [

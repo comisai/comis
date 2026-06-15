@@ -7731,6 +7731,9 @@
             },
             "delivered": {
               "type": "boolean"
+            },
+            "persisted": {
+              "type": "boolean"
             }
           },
           "required": [
