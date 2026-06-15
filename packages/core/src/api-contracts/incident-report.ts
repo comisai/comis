@@ -252,7 +252,18 @@ export const IncidentReportSchema = z.object({
    *  outcome ONLY (never the prompt, the video bytes, the Veo keyed-download-URL,
    *  or a raw provider message). Optional + additive (present only when the
    *  trajectory carries `video.*` records; schemaVersion stays 1) — pre-existing
-   *  constructors omit it (the `image`/`vision`/`recall` precedent). */
+   *  constructors omit it (the `image`/`vision`/`recall` precedent).
+   *
+   *  WR-04 (Phase 192) — SINGLE-TURN by design: this is ONE signal per session
+   *  (the LAST/terminal video turn — the highest-seq `video.generated`/`video.failed`
+   *  wins, not keyed by `jobId`), exactly matching the `image`/`vision` single-signal
+   *  convention. A session that renders MULTIPLE videos reconstructs only the terminal
+   *  one here, and `costUsd`/`estimatedCostUsd` reflect that single turn — NOT the
+   *  session total. The per-hour cost ceiling (`costLimiter`) and the synthetic
+   *  `observability:token_usage` rollup ARE per-render-correct; only this trajectory
+   *  reconstruction collapses to the last turn. (Consumers needing every video turn
+   *  read the raw `video.*` trajectory records, not this rollup.) Diverging to a
+   *  multi-signal array is deferred to keep parity with image/vision. */
   videoGenerated: z
     .object({
       /** The executing video provider id (e.g. "veo", "fal", "grok"). */
