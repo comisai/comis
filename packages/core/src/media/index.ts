@@ -28,3 +28,10 @@ export type {
   VideoGenSelectionConfig,
 } from "./resolve-video-provider.js";
 export { estimateVideoCostUsd, VIDEO_PRICING } from "./video-pricing.js";
+// CAP-02 per-model capability matrix — export the ACCESSORS + types only; the
+// raw VIDEO_MODELS const stays intra-core (public-export-consumers gate). Plan
+// 02 (handler) / Plan 03 (tool) import these from @comis/core (the package-root
+// barrel — there is no ./media subpath); the cross-package consumers land in
+// Wave 2, so the dead-export gate goes green at the Wave-2/phase gate.
+export { listVideoModelCaps, supportedModes, snapDuration } from "./video-models.js";
+export type { VideoModelCaps, VideoDurations } from "./video-models.js";
