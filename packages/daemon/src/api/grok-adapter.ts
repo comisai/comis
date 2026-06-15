@@ -196,6 +196,60 @@ export function createGrokVideoAdapter(opts: {
     return new VideoGenError(c.hint, c);
   };
 
+  /** GET the status payload (`GET /videos/{id}`). poll() and the standalone
+   *  fetchResult() each do one of these; execute() reuses its terminal read. */
+  const getStatus = async (jobId: string): Promise<GrokVideoStatus> => {
+    const bearer = await resolveBearer();
+    const res = await doFetch(`${XAI_VIDEO_BASE}/videos/${encodeURIComponent(jobId)}`, {
+      headers: { Authorization: `Bearer ${bearer}` },
+    });
+    if (!res.ok) {
+      throw new Error(`xai: poll HTTP ${res.status}`);
+    }
+    return (await res.json()) as GrokVideoStatus;
+  };
+
+  /**
+   * WR-04: build the `VideoGenOutput` from an ALREADY-FETCHED terminal status body
+   * — the single source of the download decision. `fetchResult` GETs the status
+   * once then calls this; `execute()` passes the terminal body its poll loop
+   * ALREADY read, so it makes ONE status GET instead of two (the old code re-GET
+   * the status inside fetchResult). The submit POST + the CDN download are separate.
+   */
+  const buildGrokOutput = async (
+    job: VideoGenJob,
+    body: GrokVideoStatus,
+    fetchOpts?: VideoFetchResultOpts,
+  ): Promise<VideoGenOutput> => {
+    if (body.status === "failed" || body.status === "expired") {
+      throw classifiedError(body); // -> classified failed/expired
+    }
+    const url = body.video?.url;
+    if (!url) {
+      throw mapEmpty(); // -> empty_response (done-but-no-video.url)
+    }
+    // DEL-01: download the expiring CDN URL to a Buffer BEFORE returning. The
+    // download leg uses the SAME injected `doFetch` as submit/poll, so the
+    // adapter is deterministically testable without mutating globals.
+    const { buffer, contentType } = await downloadVideoBytes(url, doFetch, fetchOpts);
+    // GROK-02: reconcile the ACTUAL cost from cost_in_usd_ticks, GUARDED against a
+    // spoofed negative/NaN (never a cost-ceiling bypass).
+    const costUsd = reconcileTicksToUsd(body.usage?.cost_in_usd_ticks);
+    // WR-03: the output model reflects what actually rendered — `job.model` (set
+    // at submit from `input.model ?? construction model`; round-tripped through
+    // the persisted row to the off-turn poller) when present, else the default.
+    const outModel = job.model || model;
+    opts.logger?.debug({ model: outModel, jobId: job.jobId, step: "video.fetch" }, "grok: downloaded result");
+    return {
+      buffer,
+      mimeType: deriveVideoMime(contentType, url),
+      sourceUrl: url,
+      model: outModel,
+      provider: "grok",
+      ...(costUsd !== undefined ? { costUsd } : {}),
+    } satisfies VideoGenOutput;
+  };
+
   return {
     id: "grok",
     // CRED-01: availability is a present key OR the (forward-looking) OAuth
@@ -242,14 +296,7 @@ export function createGrokVideoAdapter(opts: {
     poll(job: VideoGenJob): Promise<Result<VideoJobStatus, Error>> {
       return fromPromise(
         (async () => {
-          const bearer = await resolveBearer();
-          const res = await doFetch(`${XAI_VIDEO_BASE}/videos/${encodeURIComponent(job.jobId)}`, {
-            headers: { Authorization: `Bearer ${bearer}` },
-          });
-          if (!res.ok) {
-            throw new Error(`xai: poll HTTP ${res.status}`);
-          }
-          const body = (await res.json()) as GrokVideoStatus;
+          const body = await getStatus(job.jobId);
           // The status union DIFFERS from FAL/Veo: failed+expired are terminal
           // failures (both → "failed"); anything not done/failed/expired is pending.
           const state: VideoJobStatus["state"] =
@@ -272,42 +319,11 @@ export function createGrokVideoAdapter(opts: {
     fetchResult(job: VideoGenJob, fetchOpts?: VideoFetchResultOpts): Promise<Result<VideoGenOutput, Error>> {
       return fromPromise(
         (async () => {
-          const bearer = await resolveBearer();
-          const res = await doFetch(`${XAI_VIDEO_BASE}/videos/${encodeURIComponent(job.jobId)}`, {
-            headers: { Authorization: `Bearer ${bearer}` },
-          });
-          if (!res.ok) {
-            throw new Error(`xai: fetchResult HTTP ${res.status}`);
-          }
-          const body = (await res.json()) as GrokVideoStatus;
-          if (body.status === "failed" || body.status === "expired") {
-            throw classifiedError(body); // -> classified failed/expired
-          }
-          const url = body.video?.url;
-          if (!url) {
-            throw mapEmpty(); // -> empty_response (done-but-no-video.url)
-          }
-          // DEL-01: download the expiring CDN URL to a Buffer BEFORE returning.
-          // The download leg uses the SAME injected `doFetch` as submit/poll, so
-          // the adapter is deterministically testable without mutating globals.
-          const { buffer, contentType } = await downloadVideoBytes(url, doFetch, fetchOpts);
-          // GROK-02: reconcile the ACTUAL cost from cost_in_usd_ticks, GUARDED
-          // against a spoofed negative/NaN (never a cost-ceiling bypass).
-          const costUsd = reconcileTicksToUsd(body.usage?.cost_in_usd_ticks);
-          // WR-03: the output model reflects what actually rendered — `job.model`
-          // (set at submit from `input.model ?? construction model`; round-tripped
-          // through the persisted row to the off-turn poller) when present, else
-          // the construction default.
-          const outModel = job.model || model;
-          opts.logger?.debug({ model: outModel, jobId: job.jobId, step: "video.fetch" }, "grok: downloaded result");
-          return {
-            buffer,
-            mimeType: deriveVideoMime(contentType, url),
-            sourceUrl: url,
-            model: outModel,
-            provider: "grok",
-            ...(costUsd !== undefined ? { costUsd } : {}),
-          } satisfies VideoGenOutput;
+          // Standalone path (the Phase-189 off-turn poller calls poll() then
+          // fetchResult() with NO terminal snapshot): GET the status ONCE here,
+          // then build the output from it.
+          const body = await getStatus(job.jobId);
+          return buildGrokOutput(job, body, fetchOpts);
         })(),
       );
     },
@@ -322,21 +338,37 @@ export function createGrokVideoAdapter(opts: {
 
       const deadline = createPollDeadline(runOpts.timeoutMs);
       let lastErr: Error | undefined;
+      // WR-04: capture the TERMINAL status body the poll loop reads so fetchResult
+      // does not re-GET it. The poll callback GETs the status DIRECTLY (once per
+      // iteration) and derives the state, instead of calling this.poll() (which
+      // would discard the body) + a separate re-GET of the status on the failed
+      // branch — collapsing the old 2–3 GETs to one GET per iteration.
+      let doneBody: GrokVideoStatus | undefined;
       const outcome = await pollUntilDone<VideoJobStatus>({
         poll: async () => {
-          const p = await this.poll(job);
-          if (!p.ok) {
-            // A thrown HTTP error from the poll GET — capture it for
+          let body: GrokVideoStatus;
+          try {
+            body = await getStatus(job.jobId);
+          } catch (e) {
+            // A thrown HTTP error from the status GET — capture it for
             // classification, then signal `failed` so the loop short-circuits.
-            lastErr = p.error;
+            lastErr = e instanceof Error ? e : new Error(String(e));
             return { jobId: job.jobId, state: "failed" };
           }
-          if (p.value.state === "failed") {
-            // A terminal failed/expired status — re-read the status payload so the
-            // loop's failed branch yields the classified kind+hint (not "job failed").
-            lastErr = await readStatusError(job, resolveBearer, doFetch);
+          const state: VideoJobStatus["state"] =
+            body.status === "done"
+              ? "done"
+              : body.status === "failed" || body.status === "expired"
+                ? "failed"
+                : "pending";
+          if (state === "failed") {
+            // Classify directly from THIS read (no re-GET) — same kind+hint the
+            // standalone path produces.
+            lastErr = classifiedError(body);
+          } else if (state === "done") {
+            doneBody = body; // hand the terminal status to buildGrokOutput below
           }
-          return p.value;
+          return { jobId: job.jobId, state };
         },
         isDone: (s) => s.state === "done",
         isFailed: (s) => s.state === "failed",
@@ -353,7 +385,11 @@ export function createGrokVideoAdapter(opts: {
         return mapThrownToErr(lastErr ?? new Error("grok: job failed"));
       }
 
-      const fetched = await this.fetchResult(job, runOpts.signal ? { signal: runOpts.signal } : undefined);
+      // WR-04: build from the terminal status the loop already read — no second
+      // status GET. `doneBody` is set whenever the loop reached `done`.
+      const fetched = await fromPromise(
+        buildGrokOutput(job, doneBody ?? (await getStatus(job.jobId)), runOpts.signal ? { signal: runOpts.signal } : undefined),
+      );
       if (!fetched.ok) {
         return mapThrownToErr(fetched.error);
       }
@@ -365,31 +401,6 @@ export function createGrokVideoAdapter(opts: {
       return fetched;
     },
   };
-}
-
-/**
- * Re-read the status payload of a terminal failed/expired Grok job and turn it
- * into a classified `VideoGenError`. The poll loop's `failed` branch maps this so
- * the caller gets the auth/content/quota/expired kind + hint (not a generic
- * "job failed"). A throw here (a network error on the re-read) is returned as-is.
- */
-async function readStatusError(
-  job: VideoGenJob,
-  resolveBearer: () => Promise<string>,
-  doFetch: typeof fetch,
-): Promise<Error> {
-  try {
-    const bearer = await resolveBearer();
-    const res = await doFetch(`${XAI_VIDEO_BASE}/videos/${encodeURIComponent(job.jobId)}`, {
-      headers: { Authorization: `Bearer ${bearer}` },
-    });
-    if (!res.ok) return new Error(`xai: poll HTTP ${res.status}`);
-    const body = (await res.json()) as GrokVideoStatus;
-    const c = classifyGrokVideoError(body.error, { status: body.status as "failed" | "expired" });
-    return new VideoGenError(c.hint, c);
-  } catch (e) {
-    return e instanceof Error ? e : new Error(String(e));
-  }
 }
 
 /**

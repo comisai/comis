@@ -98,6 +98,62 @@ export function createVeoVideoAdapter(opts: {
   const getOperation = (jobId: string): Promise<GenerateVideosOperation> =>
     ai.operations.getVideosOperation({ operation: { name: jobId } as GenerateVideosOperation });
 
+  /**
+   * WR-04: build the `VideoGenOutput` from an ALREADY-FETCHED terminal operation
+   * — the single source of the download decision. `fetchResult` polls once then
+   * calls this; `execute()` passes the terminal operation its poll loop ALREADY
+   * read, so it makes ONE getVideosOperation round-trip instead of two (the old
+   * code re-read the operation inside fetchResult). The download fetch is separate.
+   */
+  const buildVeoOutput = async (
+    job: VideoGenJob,
+    cur: GenerateVideosOperation,
+    fetchOpts?: VideoFetchResultOpts,
+  ): Promise<VideoGenOutput> => {
+    if (cur.error) {
+      const c = classifyVeoVideoError(cur.error);
+      throw new VideoGenError(c.hint, c); // -> classified failure
+    }
+    const video = cur.response?.generatedVideos?.[0]?.video;
+    if (!video) {
+      const c = classifyVeoVideoError(null, { emptyResult: true });
+      throw new VideoGenError(c.hint, c); // -> empty_response
+    }
+
+    let buffer: Buffer;
+    let mimeType: string;
+    if (video.videoBytes) {
+      // Inline base64 — no fetch (Pitfall 2).
+      buffer = Buffer.from(video.videoBytes, "base64");
+      mimeType = video.mimeType ?? "video/mp4";
+    } else if (video.uri) {
+      // Dev API requires the key as a query param (A5). SEC: this keyed URL is
+      // NEVER logged. deriveVideoMime reads the UN-keyed video.uri.
+      const url = `${video.uri}&key=${opts.apiKey}`;
+      const { buffer: dl, contentType } = await downloadVideoBytes(url, fetchOpts);
+      buffer = dl;
+      mimeType = deriveVideoMime(contentType, video.uri);
+    } else {
+      const c = classifyVeoVideoError(null, { emptyResult: true });
+      throw new VideoGenError(c.hint, c);
+    }
+
+    // WR-03: the output model reflects what actually rendered — `job.model` (set
+    // at submit from `input.model ?? construction model`; round-tripped through
+    // the persisted row to the off-turn poller) when present, else the default.
+    const outModel = job.model || model;
+    opts.logger?.debug({ model: outModel, jobId: job.jobId, step: "video.fetch" }, "veo: downloaded result");
+    // NO costUsd (A4): GenerateVideosResponse has no usage/cost field; the
+    // handler's estimate is the actual. Do NOT invent a cost field.
+    return {
+      buffer,
+      mimeType,
+      sourceUrl: video.uri,
+      model: outModel,
+      provider: "veo",
+    } satisfies VideoGenOutput;
+  };
+
   return {
     id: "veo",
     isAvailable: () => true,
@@ -164,51 +220,11 @@ export function createVeoVideoAdapter(opts: {
     fetchResult(job: VideoGenJob, fetchOpts?: VideoFetchResultOpts): Promise<Result<VideoGenOutput, Error>> {
       return fromPromise(
         (async () => {
-          // Re-poll: the operation is the source of the download uri/bytes.
+          // Standalone path (the Phase-189 off-turn poller calls poll() then
+          // fetchResult() with NO terminal snapshot): read the operation ONCE here
+          // — it is the source of the download uri/bytes — then build the output.
           const cur = await getOperation(job.jobId);
-          if (cur.error) {
-            const c = classifyVeoVideoError(cur.error);
-            throw new VideoGenError(c.hint, c); // -> classified failure
-          }
-          const video = cur.response?.generatedVideos?.[0]?.video;
-          if (!video) {
-            const c = classifyVeoVideoError(null, { emptyResult: true });
-            throw new VideoGenError(c.hint, c); // -> empty_response
-          }
-
-          let buffer: Buffer;
-          let mimeType: string;
-          if (video.videoBytes) {
-            // Inline base64 — no fetch (Pitfall 2).
-            buffer = Buffer.from(video.videoBytes, "base64");
-            mimeType = video.mimeType ?? "video/mp4";
-          } else if (video.uri) {
-            // Dev API requires the key as a query param (A5). SEC: this keyed URL
-            // is NEVER logged. deriveVideoMime reads the UN-keyed video.uri.
-            const url = `${video.uri}&key=${opts.apiKey}`;
-            const { buffer: dl, contentType } = await downloadVideoBytes(url, fetchOpts);
-            buffer = dl;
-            mimeType = deriveVideoMime(contentType, video.uri);
-          } else {
-            const c = classifyVeoVideoError(null, { emptyResult: true });
-            throw new VideoGenError(c.hint, c);
-          }
-
-          // WR-03: the output model reflects what actually rendered — `job.model`
-          // (set at submit from `input.model ?? construction model`; round-tripped
-          // through the persisted row to the off-turn poller) when present, else
-          // the construction default.
-          const outModel = job.model || model;
-          opts.logger?.debug({ model: outModel, jobId: job.jobId, step: "video.fetch" }, "veo: downloaded result");
-          // NO costUsd (A4): GenerateVideosResponse has no usage/cost field; the
-          // handler's estimate is the actual. Do NOT invent a cost field.
-          return {
-            buffer,
-            mimeType,
-            sourceUrl: video.uri,
-            model: outModel,
-            provider: "veo",
-          } satisfies VideoGenOutput;
+          return buildVeoOutput(job, cur, fetchOpts);
         })(),
       );
     },
@@ -223,19 +239,31 @@ export function createVeoVideoAdapter(opts: {
 
       const deadline = createPollDeadline(runOpts.timeoutMs);
       let lastErr: Error | undefined;
+      // WR-04: capture the TERMINAL operation the poll loop reads so fetchResult
+      // does not re-read it. The poll callback reads the operation DIRECTLY (once
+      // per iteration) and derives the state, instead of calling this.poll() (which
+      // would discard the operation) + a separate re-read of operation.error on the
+      // failed branch — collapsing the old 2–3 reads to one read per iteration.
+      let doneOp: GenerateVideosOperation | undefined;
       const outcome = await pollUntilDone<VideoJobStatus>({
         poll: async () => {
-          const p = await this.poll(job);
-          if (!p.ok) {
-            lastErr = p.error;
+          let cur: GenerateVideosOperation;
+          try {
+            cur = await getOperation(job.jobId);
+          } catch (e) {
+            lastErr = e instanceof Error ? e : new Error(String(e));
             return { jobId: job.jobId, state: "failed" };
           }
-          if (p.value.state === "failed") {
-            // A .done operation with an error — surface the classified failure by
-            // re-reading the operation so the loop's failed branch maps it.
-            lastErr = await readOperationError(getOperation, job.jobId);
+          const state: VideoJobStatus["state"] = !cur.done ? "pending" : cur.error ? "failed" : "done";
+          if (state === "failed") {
+            // Classify directly from THIS read (no re-poll) — same kind+hint the
+            // standalone path produces.
+            const c = classifyVeoVideoError(cur.error ?? new Error("veo: job failed"));
+            lastErr = new VideoGenError(c.hint, c);
+          } else if (state === "done") {
+            doneOp = cur; // hand the terminal operation to buildVeoOutput below
           }
-          return p.value;
+          return { jobId: job.jobId, state };
         },
         isDone: (s) => s.state === "done",
         isFailed: (s) => s.state === "failed",
@@ -252,7 +280,11 @@ export function createVeoVideoAdapter(opts: {
         return mapThrownToErr(lastErr ?? new Error("veo: job failed"));
       }
 
-      const fetched = await this.fetchResult(job, runOpts.signal ? { signal: runOpts.signal } : undefined);
+      // WR-04: build from the terminal operation the loop already read — no second
+      // getVideosOperation. `doneOp` is set whenever the loop reached `done`.
+      const fetched = await fromPromise(
+        buildVeoOutput(job, doneOp ?? (await getOperation(job.jobId)), runOpts.signal ? { signal: runOpts.signal } : undefined),
+      );
       if (!fetched.ok) {
         return mapThrownToErr(fetched.error);
       }
@@ -264,24 +296,6 @@ export function createVeoVideoAdapter(opts: {
       return fetched;
     },
   };
-}
-
-/**
- * Read the `operation.error` of a failed Veo operation and turn it into a
- * classified `VideoGenError`. The poll loop's `failed` branch maps this so the
- * caller gets the auth/content/quota kind + hint (not a generic "job failed").
- */
-async function readOperationError(
-  getOperation: (jobId: string) => Promise<GenerateVideosOperation>,
-  jobId: string,
-): Promise<Error> {
-  try {
-    const cur = await getOperation(jobId);
-    const c = classifyVeoVideoError(cur.error ?? new Error("veo: job failed"));
-    return new VideoGenError(c.hint, c);
-  } catch (e) {
-    return e instanceof Error ? e : new Error(String(e));
-  }
 }
 
 /**
