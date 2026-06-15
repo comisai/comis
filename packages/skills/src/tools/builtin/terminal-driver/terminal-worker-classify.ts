@@ -136,6 +136,11 @@ export interface StatusReplyArgs {
  * query must never perturb the transition detection. A degraded ring-only session
  * (no emulator) reports `working` with an empty diff (the safe direction). Never throws.
  *
+ * 163-03 (CLASS-02): the reply also carries the classifier's `confidence` + `reason`
+ * (the classification's own fields in the classified branch; a `high` liveness verdict
+ * in the no-emulator branch) — content-free structural signals (an enum + a machine
+ * tag, never screen text) that `composeStatusView` folds onto the status view.
+ *
  * @param args - The session record + the settle verdict + the injected clock + stuckMs.
  */
 export async function statusReplyFromState(args: StatusReplyArgs): Promise<WorkerStatusPerception> {
@@ -152,6 +157,10 @@ export async function statusReplyFromState(args: StatusReplyArgs): Promise<Worke
       cursorParked: false,
       screenDiffEmpty: true,
       interactions: state.interactions,
+      // No grid to classify ⇒ the verdict is pure liveness, a structural certainty:
+      // confidence `high`, reason mirrors the alive/exited split (the safe direction).
+      confidence: "high" as const,
+      reason: state.alive ? "working" : "exited",
       ...(state.exitCode !== undefined ? { exitCode: state.exitCode } : {}),
     };
   }
@@ -175,6 +184,11 @@ export async function statusReplyFromState(args: StatusReplyArgs): Promise<Worke
     cursorParked,
     screenDiffEmpty,
     interactions: state.interactions,
+    // CLASS-02: surface the classifier's own confidence + reason (computed above at
+    // `classification`) — never a hardcoded constant; this is the WHY/HOW-SURE the
+    // status tool + the autonomous policy (164-166) read.
+    confidence: classification.confidence,
+    reason: classification.reason,
     ...(state.exitCode !== undefined ? { exitCode: state.exitCode } : {}),
   };
 }
