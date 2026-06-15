@@ -30,10 +30,12 @@ vi.mock("@fal-ai/client", () => ({ fal: falMock }));
 
 import { createFalVideoAdapter } from "./fal-adapter.js";
 
-function stubFetch(bytes: Buffer): () => void {
+function stubFetch(bytes: Buffer, headers: Record<string, string> = {}): () => void {
   const original = globalThis.fetch;
   globalThis.fetch = vi.fn().mockResolvedValue({
     ok: true,
+    status: 200,
+    headers: new Headers(headers),
     arrayBuffer: () => Promise.resolve(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)),
   }) as unknown as typeof fetch;
   return () => {
@@ -148,6 +150,48 @@ describe("fetchResult", () => {
 
     expect(res.ok).toBe(false);
   });
+
+  // CR-01: a non-ok HTTP status on the result download (an expired/4xx FAL CDN
+  // URL) must become a FAILURE — NEVER a success carrying the error body as the
+  // "video" buffer. The sibling image adapter has this check; this one dropped
+  // it. (fetchResult itself returns the raw thrown Error; execute() classifies
+  // it — see the execute-level CR-01 test below for the typed errorKind.)
+  it("CR-01: a non-ok (403) download is rejected (failure, NOT a success with the error body)", async () => {
+    falMock.queue.result.mockResolvedValueOnce({
+      data: { video: { url: "https://cdn.fal.ai/expired.mp4" } },
+      requestId: "req-403",
+    });
+    const original = globalThis.fetch;
+    const errorBody = Buffer.from("<html>403 Forbidden</html>");
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 403,
+      headers: new Headers(),
+      arrayBuffer: () => Promise.resolve(errorBody.buffer.slice(0)),
+    }) as unknown as typeof fetch;
+
+    const adapter = createFalVideoAdapter({ apiKey: "k" });
+    const res = await adapter.fetchResult({ jobId: "req-403", provider: "fal", model: "m" });
+    globalThis.fetch = original;
+
+    // Must be a failure, not a success delivering the 403 page as the buffer.
+    expect(res.ok).toBe(false);
+  });
+
+  // CR-01 corollary: an OK response with an EMPTY body is not a valid video.
+  it("CR-01: an ok response with an empty body is rejected (not a zero-byte success)", async () => {
+    falMock.queue.result.mockResolvedValueOnce({
+      data: { video: { url: "https://cdn.fal.ai/empty.mp4" } },
+      requestId: "req-empty",
+    });
+    const restore = stubFetch(Buffer.alloc(0));
+    const adapter = createFalVideoAdapter({ apiKey: "k" });
+
+    const res = await adapter.fetchResult({ jobId: "req-empty", provider: "fal", model: "m" });
+    restore();
+
+    expect(res.ok).toBe(false);
+  });
 });
 
 describe("execute — the inline submit -> poll -> download loop", () => {
@@ -234,6 +278,35 @@ describe("execute — the inline submit -> poll -> download loop", () => {
       const e = res.error as { videoErrorKind?: string; hint?: string };
       expect(e.videoErrorKind).toBe("job_timeout");
       expect(e.hint).toMatch(/req-timeout-77/);
+    }
+  });
+
+  it("CR-01: a non-ok (403) download through execute() surfaces a CLASSIFIED VideoGenError, not a fake success", async () => {
+    falMock.queue.submit.mockResolvedValueOnce({ request_id: "req-dl-403" });
+    falMock.queue.status.mockResolvedValueOnce({ status: "COMPLETED" });
+    falMock.queue.result.mockResolvedValueOnce({
+      data: { video: { url: "https://cdn.fal.ai/expired.mp4" } },
+      requestId: "req-dl-403",
+    });
+    const original = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 403,
+      headers: new Headers(),
+      arrayBuffer: () => Promise.resolve(Buffer.from("<html>403</html>").buffer.slice(0)),
+    }) as unknown as typeof fetch;
+
+    const adapter = createFalVideoAdapter({ apiKey: "k" });
+    const res = await adapter.execute({ prompt: "p" }, { timeoutMs: 5_000, pollIntervalMs: 1 });
+    globalThis.fetch = original;
+
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      const e = res.error as { videoErrorKind?: string; hint?: string };
+      // classifyFalVideoError maps the thrown "HTTP 403" download error to a
+      // typed domain kind (a string) — an honest failure, never a corrupt mp4.
+      expect(typeof e.videoErrorKind).toBe("string");
+      expect(e.hint && e.hint.length).toBeGreaterThan(0);
     }
   });
 

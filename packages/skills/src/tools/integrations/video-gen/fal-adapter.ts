@@ -80,7 +80,21 @@ export function createFalVideoAdapter(opts: { apiKey: string; model?: string }):
             throw new Error("fal: COMPLETED with no video.url"); // -> empty_response (FAL-02)
           }
           const response = await fetch(url);
+          // CR-01: reject a non-2xx status BEFORE reading the body. FAL video.url
+          // values are short-lived signed CDN URLs; an expired/4xx/5xx response
+          // resolves with `ok:false` and `arrayBuffer()` returns the ERROR body
+          // (an HTML/JSON 403 page, or empty). Without this guard that garbage
+          // flows out as a "successful" mp4, is persisted, and is delivered as
+          // success — the exact orphan-on-expiry class DEL-01 claims to close.
+          // The throw is caught by `fromPromise` and mapped by
+          // `classifyFalVideoError` to a typed VideoGenError (honest failure).
+          if (!response.ok) {
+            throw new Error(`fal: failed to download video.url: HTTP ${response.status}`);
+          }
           const buffer = Buffer.from(await response.arrayBuffer());
+          if (buffer.byteLength === 0) {
+            throw new Error("fal: video.url returned an empty body");
+          }
           return {
             buffer,
             mimeType: "video/mp4",
