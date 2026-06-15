@@ -150,6 +150,30 @@ export interface SettleResult {
   matched: boolean;
   isComplete: boolean;
   reason: "idle" | "text" | "exit" | "timeout";
+  /**
+   * Diagnostic for a `reason:"timeout"` (not-complete) settle: was the screen STILL
+   * changing within the last idle window when the budget elapsed? `true` ⇒ the driven
+   * program was actively producing output (it has NOT finished — keep waiting); `false`
+   * ⇒ the screen was idle with no match (maybe done, awaiting input, or stuck). Absent
+   * for the complete reasons (idle/text/exit), whose `isComplete:true` is unambiguous.
+   * (T1.1: the live friction was a wait returning not-complete with no "why".)
+   */
+  producing?: boolean;
+}
+
+/**
+ * The actionable hint for a settle RESULT — branched by failure class so a caller (or a
+ * driving agent) reads a not-complete timeout correctly instead of mistaking it for a
+ * failure/empty result. Returns a string ONLY for `reason:"timeout"` (the ambiguous,
+ * not-complete case): `producing:true` ⇒ keep waiting; `producing:false` ⇒ inspect the
+ * screen/status. The complete reasons (idle/text/exit) carry `isComplete:true` and need
+ * no hint. Pure + total — no clock, no I/O.
+ */
+export function settleHint(result: SettleResult): string | undefined {
+  if (result.reason !== "timeout") return undefined;
+  return result.producing === true
+    ? "The program was STILL producing output when the wait budget elapsed — it has NOT finished. Call wait again (optionally with a larger timeoutMs) to keep waiting; do not treat this as a failure or an empty result."
+    : "The screen was idle at the wait timeout with no match — the program may be done (read the screen), waiting for input, or stuck. Check terminal_session_status before retrying.";
 }
 
 // ---------------------------------------------------------------------------
@@ -195,6 +219,10 @@ export function runSettle(deps: SettleDeps, params: SettleParams): Promise<Settl
     // on any ring change (the windows must be CONSECUTIVE). Idle resolves only when
     // it reaches `stableWindows`.
     let stableCount = 0;
+    // T1.1 diagnostic: did the ring change within the last (unfinished) idle window?
+    // Set on every ring change, CLEARED when a full quiet window elapses — so at the
+    // overall-timeout it tells whether the program was still producing output.
+    let sawChange = false;
     // eslint-disable-next-line prefer-const -- read by settle() on the fast-path early-returns (forText/dead-session) BEFORE its single conditional assignment at the timeout schedule below; `const` would TDZ-throw on those paths.
     let overallTimer: unknown;
     const unsubs: Array<() => void> = [];
@@ -241,6 +269,7 @@ export function runSettle(deps: SettleDeps, params: SettleParams): Promise<Settl
           restartIdle(); // content below the fold ⇒ keep waiting, don't settle idle
           return;
         }
+        sawChange = false; // a full quiet idle window elapsed with no ring change (T1.1)
         stableCount += 1;
         if (stableCount >= stableWindows) {
           settle({ matched: true, isComplete: true, reason: "idle" });
@@ -263,7 +292,7 @@ export function runSettle(deps: SettleDeps, params: SettleParams): Promise<Settl
 
     // Overall timeout (the DoS-bounded cap): the load-bearing isComplete:false.
     overallTimer = deps.setTimer(() => {
-      settle({ matched: false, isComplete: false, reason: "timeout" });
+      settle({ matched: false, isComplete: false, reason: "timeout", producing: sawChange });
     }, cap);
 
     // Ring-change: a forText hit resolves text immediately; otherwise RESET the
@@ -271,6 +300,7 @@ export function runSettle(deps: SettleDeps, params: SettleParams): Promise<Settl
     // (re)start the idle debounce so quiet for idleMs resolves idle.
     unsubs.push(
       deps.onRingChange(() => {
+        sawChange = true; // output is arriving — the program is producing (T1.1 diagnostic)
         if (forText !== undefined && deps.getRing().includes(forText)) {
           settle({ matched: true, isComplete: true, reason: "text" });
           return;

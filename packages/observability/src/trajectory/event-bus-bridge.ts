@@ -95,6 +95,16 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // enums + booleans — H1); the source/generated body never crosses the bus.
   "memory:generation_quality": "memory.generation_quality",
 
+  // ---- Background task lifecycle (T2.2 / F9) ----
+  // The promote/complete/fail transitions of a long-running tool detached past the
+  // execute() boundary — previously emitted but UNMAPPED (invisible to comis explain; a
+  // backgrounded wait's lifecycle could only be inferred from a rollup counter). Content-
+  // free: closed ids (taskId/toolName) + durationMs ONLY — never a result/error body;
+  // agentId/origin are envelope correlation ids (§2.7 / H1).
+  "background_task:promoted": "background_task.promoted",
+  "background_task:completed": "background_task.completed",
+  "background_task:failed": "background_task.failed",
+
   // ---- Delivery lifecycle ----
   "delivery:enqueued": "delivery.queued",
   "delivery:complete": "delivery.dispatched",

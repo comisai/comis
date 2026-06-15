@@ -55,6 +55,7 @@ import { allocateSessionWorkspace, cleanupSessionWorkspace, resolveCreateWorkspa
 import { sameOwner, type SessionOwner } from "./terminal-session-owner.js";
 import { wireRegistryReaper, type EvictReason, type ReaperCaps } from "./terminal-reaper.js";
 import { waitReplyTimeoutMs } from "./terminal-settle.js";
+import { mapWaitReply, degradedWaitResult, type WaitResult } from "./terminal-wait-reply.js";
 import { wireWorkerSupervision } from "./terminal-worker-supervisor.js";
 // The registry's shared structural contracts the BODY references (deps/handle/worker)
 // type-imported from the neutral leaf terminal-session-types.ts (124-01 cycle break).
@@ -219,14 +220,9 @@ export interface SendResult {
 // above) so the registry's public surface is unchanged.
 export type { TerminalStatusView };
 
-/** The settle snapshot returned by `wait` (spec §5) — `{matched,isComplete,reason}` + the view subset. */
-export interface WaitResult {
-  matched: boolean;
-  isComplete: boolean;
-  reason: string;
-  screen: string;
-  cursor: { x: number; y: number };
-}
+// The wait reply shape + its defensive worker→daemon mapping live in terminal-wait-reply
+// (extracted to keep this file under the 800-line cap + make the mapping a tested unit).
+export type { WaitResult };
 
 /** A `list` row — the create-time + liveness summary. */
 export interface SessionListing {
@@ -677,15 +673,6 @@ export function createTerminalSessionRegistry(
     return { ok: true };
   }
 
-  /**
-   * The honest not-complete settle shape for a wedged/absent worker — NEVER
-   * `isComplete:true` (a false `true` would strand the agent: the attention
-   * model would finalize a live session). Used on the reply-timeout `ok:false` path.
-   */
-  function degradedWait(): WaitResult {
-    return { matched: false, isComplete: false, reason: "timeout", screen: "", cursor: { x: 0, y: 0 } };
-  }
-
   async function wait(
     sessionId: string,
     owner: SessionOwner,
@@ -693,33 +680,16 @@ export function createTerminalSessionRegistry(
   ): Promise<WaitResult> {
     const handle = ownedHandle(sessionId, owner);
     if (handle === undefined || handle.status !== "running") {
-      return degradedWait();
+      return degradedWaitResult();
     }
     const reply = await request(sessionId, "wait", { sessionId, ...args }, waitReplyTimeoutMs(args.timeoutMs));
     if (!reply.ok || reply.result === undefined) {
-      // A wedged worker (the reply timeout) → the honest not-complete shape.
-      return degradedWait();
+      // A wedged worker (the reply timeout) → the honest not-complete shape (with hint).
+      return degradedWaitResult();
     }
-    // Defensively map the worker's settle result: preserve isComplete VERBATIM,
-    // but DEFAULT a missing/odd value to false — never true.
-    const r = reply.result as {
-      matched?: unknown;
-      isComplete?: unknown;
-      reason?: unknown;
-      screen?: unknown;
-      cursor?: { x?: unknown; y?: unknown };
-    };
     handle.lastActivity = nowMs();
-    return {
-      matched: r.matched === true,
-      isComplete: r.isComplete === true,
-      reason: typeof r.reason === "string" ? r.reason : "timeout",
-      screen: typeof r.screen === "string" ? r.screen : "",
-      cursor: {
-        x: typeof r.cursor?.x === "number" ? r.cursor.x : 0,
-        y: typeof r.cursor?.y === "number" ? r.cursor.y : 0,
-      },
-    };
+    // Defensive worker→daemon map (preserves isComplete verbatim; passes T1.1 producing/hint).
+    return mapWaitReply(reply.result);
   }
 
   function get(sessionId: string, owner: SessionOwner): SessionHandle | undefined {

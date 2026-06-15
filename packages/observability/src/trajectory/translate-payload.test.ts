@@ -49,3 +49,43 @@ describe("translatePayload — OBS-01 script signals (envelope stripping)", () =
     expect(data.timestamp).toBeUndefined();
   });
 });
+
+describe("translatePayload — T2.2 background_task lifecycle (F9: now visible on the trajectory)", () => {
+  it("promoted: keeps taskId/toolName, strips the envelope agentId/timestamp", () => {
+    const data = translatePayload("background_task:promoted", {
+      agentId: "a1",
+      taskId: "t-1",
+      toolName: "terminal_session_wait",
+      timestamp: 100,
+    });
+    expect(data).toEqual({ taskId: "t-1", toolName: "terminal_session_wait" });
+    expect(data.agentId).toBeUndefined();
+  });
+
+  it("completed: keeps taskId/toolName/durationMs, strips agentId/origin/timestamp", () => {
+    const data = translatePayload("background_task:completed", {
+      agentId: "a1",
+      taskId: "t-1",
+      toolName: "terminal_session_wait",
+      durationMs: 4200,
+      origin: { agentId: "a1", sessionKey: "k" },
+      timestamp: 200,
+    });
+    expect(data).toEqual({ taskId: "t-1", toolName: "terminal_session_wait", durationMs: 4200 });
+    expect(data.origin).toBeUndefined();
+  });
+
+  it("failed: omits the error body (H1) — only ids + duration cross the bus", () => {
+    const data = translatePayload("background_task:failed", {
+      agentId: "a1",
+      taskId: "t-1",
+      toolName: "exec",
+      error: "secret-looking stack trace",
+      durationMs: 9,
+      origin: { agentId: "a1", sessionKey: "k" },
+      timestamp: 300,
+    });
+    expect(data).toEqual({ taskId: "t-1", toolName: "exec", durationMs: 9 });
+    expect(JSON.stringify(data)).not.toMatch(/secret-looking stack trace/);
+  });
+});

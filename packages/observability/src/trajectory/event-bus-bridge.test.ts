@@ -720,6 +720,29 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       formatViolation: false,
       timestamp: 1000,
     },
+    "background_task:promoted": {
+      agentId: "default",
+      taskId: "t-1",
+      toolName: "terminal_session_wait",
+      timestamp: 1000,
+    },
+    "background_task:completed": {
+      agentId: "default",
+      taskId: "t-1",
+      toolName: "terminal_session_wait",
+      durationMs: 4200,
+      origin: { agentId: "default", sessionKey: "k" },
+      timestamp: 1000,
+    },
+    "background_task:failed": {
+      agentId: "default",
+      taskId: "t-1",
+      toolName: "exec",
+      error: "boom",
+      durationMs: 9,
+      origin: { agentId: "default", sessionKey: "k" },
+      timestamp: 1000,
+    },
     "delivery:enqueued": {
       entryId: "e",
       channelType: "telegram",
@@ -2696,14 +2719,14 @@ describe("attachTrajectoryToEventBus -- dedup events", () => {
 // ---------------------------------------------------------------------------
 
 describe("health:budget_exceeded entry (bridge entry count guard)", () => {
-  it("bridge entry count is exactly 66 (+2 D3 breaker + 1 D7 offload Phase 151; +1 session:summary Phase 152; +1 context:budget_computed W2; +1 execution:tool_schema_unsupported Phase 175; +2 OBS-01 script signals Phase 180; +2 RECALL-01 memory:recalled/reranked; +1 GENQ-01 memory:generation_quality)", () => {
+  it("bridge entry count is exactly 69 (+3 T2.2 background_task promoted/completed/failed; +2 D3 breaker + 1 D7 offload Phase 151; +1 session:summary Phase 152; +1 context:budget_computed W2; +1 execution:tool_schema_unsupported Phase 175; +2 OBS-01 script signals Phase 180; +2 RECALL-01 memory:recalled/reranked; +1 GENQ-01 memory:generation_quality)", () => {
     // 55 + tool:breaker_opened + tool:breaker_reset (D3) + tool:result_offloaded (D7)
     // + session:summary (F2/D5, Phase 152)
     // + execution:tool_schema_unsupported (GBNF-02, Phase 175 Plan 05)
     // + context:script_zero_hit + context:summary_language_mismatch (OBS-01, Phase 180 Plan 03)
     // + memory:recalled + memory:reranked (RECALL-01, observability-excellence)
     // + memory:generation_quality (GENQ-01, observability-excellence).
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(66);
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(69);
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {

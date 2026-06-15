@@ -22,6 +22,7 @@ import { describe, it, expect } from "vitest";
 
 import {
   runSettle,
+  settleHint,
   SETTLE_DEFAULT_IDLE_MS,
   SETTLE_DEFAULT_TIMEOUT_MS,
   SETTLE_MAX_TIMEOUT_MS,
@@ -356,7 +357,7 @@ describe("runSettle — TIMEOUT (load-bearing isComplete:false)", () => {
 
     const result = await p;
     expect(threw).toBe(false);
-    expect(result).toEqual({ matched: false, isComplete: false, reason: "timeout" });
+    expect(result).toMatchObject({ matched: false, isComplete: false, reason: "timeout" });
     // EXPLICIT: a false `true` here would strand the agent (the attention model finalizes a live session).
     expect(result?.isComplete).toBe(false);
   });
@@ -419,6 +420,43 @@ describe("runSettle — CAP (DoS bound)", () => {
     expect(waitReplyTimeoutMs(120_000)).toBe(120_000 + WAIT_REPLY_MARGIN_MS);
     expect(waitReplyTimeoutMs(undefined)).toBe(SETTLE_DEFAULT_TIMEOUT_MS + WAIT_REPLY_MARGIN_MS);
     expect(waitReplyTimeoutMs(SETTLE_MAX_TIMEOUT_MS + 1_000_000)).toBe(SETTLE_MAX_TIMEOUT_MS + WAIT_REPLY_MARGIN_MS);
+  });
+});
+
+describe("runSettle — producing diagnostic (T1.1: a not-complete timeout explains itself)", () => {
+  it("reports producing:true when output changed within the last window before the timeout", async () => {
+    // The live friction: a wait returned not-complete with no signal that the driven
+    // CLI was STILL WORKING. `producing` distinguishes "keep waiting" from "idle/stuck".
+    const sched = makeScheduler();
+    const source = makeSource("");
+    const p = runSettle(makeDeps(sched, source), { forIdleMs: 20000, timeoutMs: 30000 });
+    sched.advance(15000);
+    source.write("...the CLI is still generating..."); // ring change re-arms idle to 35000
+    sched.advance(16000); // t=31000 → timeout (30000) fires before the re-armed idle (35000)
+    const r = await p;
+    expect(r.reason).toBe("timeout");
+    expect(r.isComplete).toBe(false);
+    expect(r.producing).toBe(true);
+  });
+
+  it("reports producing:false on a quiet timeout (no output near the deadline)", async () => {
+    const sched = makeScheduler();
+    const source = makeSource("idle prompt$ ");
+    const p = runSettle(makeDeps(sched, source), { forIdleMs: 20000, timeoutMs: 15000 });
+    sched.advance(16000); // timeout at 15000; no writes ⇒ never produced near the deadline
+    const r = await p;
+    expect(r.reason).toBe("timeout");
+    expect(r.producing).toBe(false);
+  });
+
+  it("settleHint disambiguates a not-complete timeout and is silent for the complete reasons", () => {
+    expect(settleHint({ matched: false, isComplete: false, reason: "timeout", producing: true }))
+      .toMatch(/still producing|call wait again|not finished/i);
+    expect(settleHint({ matched: false, isComplete: false, reason: "timeout", producing: false }))
+      .toMatch(/idle|status|stuck|may be done/i);
+    expect(settleHint({ matched: true, isComplete: true, reason: "idle" })).toBeUndefined();
+    expect(settleHint({ matched: true, isComplete: true, reason: "text" })).toBeUndefined();
+    expect(settleHint({ matched: true, isComplete: true, reason: "exit" })).toBeUndefined();
   });
 });
 
@@ -639,7 +677,7 @@ describe("runSettle — adaptive N-stable-window debounce (stableWindows, spec �
 
     const result = await p;
     expect(threw).toBe(false);
-    expect(result).toEqual({ matched: false, isComplete: false, reason: "timeout" });
+    expect(result).toMatchObject({ matched: false, isComplete: false, reason: "timeout" });
     expect(result?.isComplete).toBe(false);
   });
 

@@ -1168,7 +1168,7 @@ describe("createTerminalSessionRegistry — wait forwarding", () => {
     const p = registry.wait(sessionId, OWNER, { forIdleMs: 120 });
     firedCb?.(); // simulate the reply-timeout expiry → ok:false
     const out = await p;
-    expect(out).toEqual({
+    expect(out).toMatchObject({
       matched: false,
       isComplete: false,
       reason: "timeout",
@@ -1176,6 +1176,8 @@ describe("createTerminalSessionRegistry — wait forwarding", () => {
       cursor: { x: 0, y: 0 },
     });
     expect(out.isComplete).toBe(false);
+    // T1.1: the degraded shape now carries a worker-wedged hint (not an empty result).
+    expect(out.hint).toMatch(/did not reply|wedged|status/i);
   });
 
   it("defaults a missing/odd isComplete to false (never coerces to true) on a malformed reply", async () => {

@@ -202,6 +202,7 @@ describe("buildSessionEndMetadata", () => {
     totalTokens: 567,
     executionId: "exec-Y",
     traceId: "trace-X",
+    sessionKey: "default:test-tenant:test-channel",
     clock: { now: () => Date.now(), nowDate: () => new Date() },
     rollup: cleanRollup,
   };
@@ -212,6 +213,16 @@ describe("buildSessionEndMetadata", () => {
     expect(result.runId).toBe("exec-Y");
     // The two fields are not aliased onto the same UUID.
     expect(result.traceId).not.toBe(result.runId);
+  });
+
+  it("stores the formatted sessionKey so the metadata can drive `comis explain` (T1.4 / F5)", () => {
+    const result = buildSessionEndMetadata(baseArgs);
+    expect(result.sessionKey).toBe("default:test-tenant:test-channel");
+  });
+
+  it("omits sessionKey when empty (the conditional spread, mirroring traceId)", () => {
+    const result = buildSessionEndMetadata({ ...baseArgs, sessionKey: "" });
+    expect(result.sessionKey).toBeUndefined();
   });
 
   it("omits traceId when context is missing (undefined input)", () => {

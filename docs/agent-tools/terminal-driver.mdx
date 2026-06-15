@@ -23,7 +23,7 @@ All nine are `mcpExportPolicy: "never-export"` (never exposed to external MCP) a
 | `terminal_session_read` | Read the rendered screen + cursor (`text`/`ansi`/`html`, scrollback). Output is redacted and wrapped as untrusted content. |
 | `terminal_session_send_text` | Type text; optional submit + settle. |
 | `terminal_session_send_key` | Send named keys/chords (`C-c`, `Up`, `Enter`, `S-Tab`). |
-| `terminal_session_wait` | Bounded settle on idle/text/exit/timeout. `timeoutMs` is generous (default 15s, cap 600s) so a **slow AI CLI** (e.g. `claude` taking 60-90s+) can be driven — pass a large `timeoutMs` with `forIdleMs` and the wait returns the instant the CLI goes idle; a long wait auto-backgrounds so the turn never blocks. |
+| `terminal_session_wait` | Bounded settle on idle/text/exit/timeout. `timeoutMs` is generous (default 15s, cap 600s) so a **slow AI CLI** (e.g. `claude` taking 60-90s+) can be driven — pass a large `timeoutMs` with `forIdleMs` and the wait returns the instant the CLI goes idle; a long wait auto-backgrounds so the turn never blocks. A not-complete **timeout** returns `producing` (was output still arriving — `true` ⇒ keep waiting, `false` ⇒ idle/inspect status) plus a branched `hint`, so a slow-but-working CLI is not misread as a failure. |
 | `terminal_session_status` | Classifier state (`working`/`awaiting-input`/`exited`/`stuck`), cursor, interaction count. |
 | `terminal_session_resize` | Resize the PTY + emulator. |
 | `terminal_session_kill` | Terminate a session. |

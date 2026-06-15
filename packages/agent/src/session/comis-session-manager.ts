@@ -123,6 +123,12 @@ export interface SessionMetadata {
   traceId?: string;
   /** Executor-scope run ID; keys cost-tracker / token_usage rows. */
   runId?: string;
+  /**
+   * T1.4 (F5): the formatted session key (the SAME value `comis explain` prints as
+   * `Session:`), stored so the metadata file is self-describing — an operator can drive
+   * `comis explain '<sessionKey>'` straight from it instead of falling back to the traceId.
+   */
+  sessionKey?: string;
   /** Session end marker with completion details */
   sessionEnd?: {
     type: "session_end";

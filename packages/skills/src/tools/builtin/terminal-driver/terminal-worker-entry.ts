@@ -82,6 +82,7 @@ import {
 } from "./terminal-render.js";
 import {
   runSettle,
+  settleHint,
   SETTLE_DEFAULT_IDLE_MS,
   type SettleDeps,
   type SettleParams,
@@ -639,11 +640,10 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
   }
 
   /**
-   * Handle a `wait` frame — the explicit parameterized settle. Runs the
-   * bounded {@link runSettle} and replies `{matched,isComplete,reason,screen,cursor}`;
-   * an absent session is gone (reason `exit`, not-complete). CRITICAL: `isComplete`
-   * passes through from runSettle VERBATIM — `false` on timeout (the worker never
-   * holds the frame open; the attention model resumes the turn), NEVER hard-coded true.
+   * Handle a `wait` frame — the explicit parameterized settle. Runs {@link runSettle} and
+   * replies `{matched,isComplete,reason,producing,hint,screen,cursor}` (T1.1 adds producing/hint);
+   * an absent session is gone (reason `exit`, not-complete). CRITICAL: `isComplete` passes from
+   * runSettle VERBATIM — `false` on timeout (attention model resumes the turn), NEVER hard-coded true.
    */
   async function handleWait(frame: TerminalRequestFrame): Promise<WaitResult> {
     const startedAt = nowMs();
@@ -668,6 +668,8 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
       matched: r.matched,
       isComplete: r.isComplete, // VERBATIM from runSettle — false on timeout.
       reason: r.reason,
+      producing: r.producing, // T1.1: was output still arriving at a not-complete timeout?
+      hint: settleHint(r), // T1.1: branched, actionable not-complete-timeout hint
       ...perceptionScreen(state.emu?.snapshot(), state.ring),
     };
   }
