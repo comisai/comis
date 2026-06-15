@@ -61,8 +61,6 @@
 
 import {
   systemNowMs,
-  systemSetInterval,
-  systemClearInterval,
   createPollDeadline,
   pollUntilDone,
   sanitizeLogString,
@@ -82,7 +80,8 @@ import type { SessionTrajectoryHandleRegistry, TrajectoryEventType } from "@comi
 import type { AppContainer } from "@comis/core";
 import { resolveVideoSizeLimit, buildOversizedDegradeMessage } from "./video-delivery-limits.js";
 // SEC-03 (Phase 192): scrub a raw provider/channel error before it rides a log line.
-import { redactErr } from "./video-log-redaction.js";
+import { makeRedactErr } from "./video-log-redaction.js";
+import { defaultVideoPollerTimerPort } from "./setup-video-poller-timer.js";
 
 // ---------------------------------------------------------------------------
 // Public contract
@@ -166,6 +165,11 @@ export interface VideoPollerDeps {
    *  MediaCompressionConfig); injected here so a future config wire-up threads it
    *  in one place without a schema change. */
   maxVideoBytes?: number;
+  /** SEC-03 (Phase 192 / CR-01): the RESOLVED video creds (GOOGLE_API_KEY /
+   *  XAI_API_KEY / FAL_KEY / Grok bearer), bound for EXACT-MATCH scrub of every
+   *  off-turn log surface (the v2.20 knownSecrets precedent — catches the FAL
+   *  `uuid:hex` shape + any future shape). Absent → pattern scrub only (no crash). */
+  videoSecrets?: readonly string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -191,45 +195,18 @@ function extForMime(mimeType: string): string {
   return ".mp4";
 }
 
-/**
- * Default TimerPort over the sanctioned `systemSetInterval`/`systemClearInterval`
- * (the daemon composition root is a sanctioned globals-gate root). Used when no
- * `TimerPort` is injected. Only `setInterval` is exercised by the poller; the
- * `setTimeout` member is provided for interface completeness.
- */
-function defaultTimerPort(): TimerPort {
-  const wrap = (h: ReturnType<typeof setInterval>): TimerHandle => {
-    let cancelled = false;
-    return {
-      get cancelled() {
-        return cancelled;
-      },
-      cancel() {
-        if (cancelled) return;
-        cancelled = true;
-        systemClearInterval(h);
-      },
-      unref() {
-        h.unref();
-      },
-    };
-  };
-  return {
-    setInterval: (cb, ms) => wrap(systemSetInterval(cb, ms)),
-    setTimeout: (cb, ms) => wrap(systemSetInterval(cb, ms)), // unused by the poller
-  };
-}
-
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
 
 export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
   const { store, provider, persist, costLimiter, getChannelAdapter, config, logger } = deps;
-  const timers = deps.timers ?? defaultTimerPort();
+  const timers = deps.timers ?? defaultVideoPollerTimerPort();
   const sleep = deps.sleep;
   const nowMs = deps.nowMs ?? systemNowMs;
   const trajectoryRegistry = deps.trajectoryRegistry;
+  // SEC-03 (CR-01): bind resolved video secrets ONCE; every off-turn redactErr below scrubs them.
+  const redactErr = makeRedactErr(deps.videoSecrets ?? []);
 
   /**
    * OBS-04 (Phase 192): BEST-EFFORT off-turn trajectory record. Resolves the
@@ -297,14 +274,18 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
     const attempts = attempt.ok ? attempt.value : 0;
     // attempts > 0 means a real persisted row; >= max → dead-letter (terminal).
     if (attempts > 0 && attempts >= maxDeliveryAttempts) {
-      // WR-02: persist the delivery dead-letter hint as last_error (not the bare
-      // kind) so `video.status` explains a delivery failure, not a render failure.
+      // WR-02 (Phase 192): the render SUCCEEDED; only off-turn channel delivery
+      // exhausted its retries. Dead-letter with the DELIVERY-specific
+      // `delivery_failed` kind (NOT the render kind `empty_response`) so the
+      // trajectory `video.failed` → `IncidentReport.videoGenerated.errorKind` and
+      // `comis explain` point at the CHANNEL, not the provider/prompt. The hint
+      // (persisted as last_error) names delivery; the log ErrorKind rides VIDEO_ERR_TO_LOG.
       const deadLetterHint =
         "Video delivery failed repeatedly and was dead-lettered to `failed` " +
         "(no further retries). Check the channel's attachment support / size " +
         "limits / credentials, or raise integrations.media.videoGeneration." +
         "maxDeliveryAttempts.";
-      await markFailed(record, "empty_response", cause, deadLetterHint);
+      await markFailed(record, "delivery_failed", cause, deadLetterHint);
       logger.warn(
         {
           traceId: record.traceId,
@@ -313,8 +294,8 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
           agentId: record.agentId,
           attempts,
           maxDeliveryAttempts,
-          errorKind: "network" as const,
-          videoErrorKind: "empty_response" as const,
+          errorKind: VIDEO_ERR_TO_LOG.delivery_failed,
+          videoErrorKind: "delivery_failed" as const,
           hint: deadLetterHint,
           step: "video_poll_deadletter",
         },

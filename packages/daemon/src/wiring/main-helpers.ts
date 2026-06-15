@@ -30,6 +30,7 @@ import { createVideoGenProvider, createVideoGenRateLimiter } from "@comis/skills
 // the wiring guard pins) so a future refactor cannot regress the path to unwired.
 import { createVideoJobStore } from "@comis/memory";
 import { createVideoPoller, type VideoPoller } from "./setup-video-poller.js";
+import { resolveVideoSecretsForRedaction } from "./video-log-redaction.js";
 import type { DeliveryAdapter, TimerPort, ChannelPort } from "@comis/core";
 // DEL-01 (186): the per-agent media persistence getter mirrors the screenshot
 // precedent (setup-tools.ts:69,305). Sibling-direct on the `@comis/skills/tools`
@@ -575,6 +576,7 @@ export function buildVideoGenBundle(deps: {
       store: videoJobStore,
       provider: videoGenProvider,
       persist: persistVideo,
+      videoSecrets: resolveVideoSecretsForRedaction(container.secretManager), // SEC-03 (CR-01) exact-match log scrub
       ...(videoGenCostLimiter ? { costLimiter: videoGenCostLimiter } : {}),
       // The poller resolves a LIVE adapter at delivery time from the early
       // channelAdaptersRef (populated by reference post-setupChannels) — the
