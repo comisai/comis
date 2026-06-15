@@ -427,6 +427,31 @@ export function buildImageHandlerDeps(
 const VIDEO_PERSIST_MAX_BYTES = 200 * 1024 * 1024;
 
 /**
+ * WR-06: narrow a live channel adapter to its attachment-send capability at
+ * RUNTIME. `channelAdaptersRef` is typed `Map<string, DeliveryAdapter>` (the
+ * delivery queue only needs `sendMessage`), but the runtime entries are the FULL
+ * channel adapters — some of which expose `sendAttachment`, some of which (IRC)
+ * do not. Rather than a blind `as unknown as Pick<ChannelPort,"sendAttachment">`
+ * double-cast (which asserts a capability the static type can't see and silently
+ * passes a non-attaching adapter to the poller), check `sendAttachment` is a
+ * function and surface `undefined` otherwise. The poller's IRC-degrade branch
+ * then triggers on a typed `undefined`, not just a defensive call-site guard.
+ * The single `as` is the runtime-verified narrowing of the structural-superset
+ * channel adapter; it is sound because the predicate proves the method exists.
+ */
+function resolveAttachmentAdapter(
+  adapter: DeliveryAdapter | undefined,
+): Pick<ChannelPort, "sendAttachment"> | undefined {
+  if (
+    adapter &&
+    typeof (adapter as { sendAttachment?: unknown }).sendAttachment === "function"
+  ) {
+    return adapter as Pick<ChannelPort, "sendAttachment">;
+  }
+  return undefined;
+}
+
+/**
  * Build the video-generation bundle (lazy boot selector + boot probe + rate
  * limiter + cost limiter + per-agent persist getter + config). Mirrors
  * `buildImageGenBundle`. Extracted from `daemon.ts` to keep the composition root
@@ -549,9 +574,15 @@ export function buildVideoGenBundle(deps: {
       ...(videoGenCostLimiter ? { costLimiter: videoGenCostLimiter } : {}),
       // The poller resolves a LIVE adapter at delivery time from the early
       // channelAdaptersRef (populated by reference post-setupChannels) — the
-      // delivery-queue mechanism, retyped for an attachment send.
+      // delivery-queue mechanism, retyped for an attachment send. WR-06: the map
+      // is typed `Map<string, DeliveryAdapter>` for the delivery queue (which only
+      // needs sendMessage), but the runtime objects are the FULL channel adapters.
+      // Narrow at RUNTIME (a `typeof sendAttachment === "function"` check) rather
+      // than a blind `as unknown as` double-cast: a channel that cannot attach
+      // (e.g. IRC) is reported as undefined, so the poller's IRC-degrade branch
+      // is exercised by the type, not just defensively at the call site.
       getChannelAdapter: (channelType: string): Pick<ChannelPort, "sendAttachment"> | undefined =>
-        channelAdaptersRef.get(channelType) as unknown as Pick<ChannelPort, "sendAttachment"> | undefined,
+        resolveAttachmentAdapter(channelAdaptersRef.get(channelType)),
       config: videoGenConfig,
       logger: skillsLogger,
       timers,

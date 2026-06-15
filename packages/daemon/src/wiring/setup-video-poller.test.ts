@@ -27,8 +27,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import Database from "better-sqlite3";
 import { ok, err } from "@comis/shared";
 import { ensureVideoJobTable, createVideoJobStore } from "@comis/memory";
-import type { VideoJobStore } from "@comis/memory";
-import type { VideoGenJob, VideoGenerationConfig } from "@comis/core";
+import type { VideoJobStore, VideoJobRecord } from "@comis/memory";
+import type { VideoGenerationConfig } from "@comis/core";
 import { createFakeTimers } from "../../../../test/support/fake-timers.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import { createVideoPoller, type VideoPoller } from "./setup-video-poller.js";
@@ -63,9 +63,25 @@ function makeConfig(overrides: Partial<VideoGenerationConfig> = {}): VideoGenera
   } as unknown as VideoGenerationConfig;
 }
 
-/** A tracked job the handler would hand to `track()`. */
-function makeJob(overrides: Partial<VideoGenJob> = {}): VideoGenJob {
-  return { jobId: "fal-req-abc123", provider: "fal", model: "fal-ai/veo3.1/fast", ...overrides };
+/** The in-memory VideoJobRecord the handler hands to `track()` (WR-02/WR-06: the
+ *  poller no longer re-reads it from listPending — the handler already has the
+ *  routing in scope at submit). Defaults match the seeded `fal-req-abc123` row. */
+function makeRecord(overrides: Partial<VideoJobRecord> = {}): VideoJobRecord {
+  return {
+    jobId: "fal-req-abc123",
+    provider: "fal",
+    model: "fal-ai/veo3.1/fast",
+    agentId: "alpha",
+    channelType: "telegram",
+    channelId: "ch-recorded",
+    traceId: "trace-seed",
+    state: "pending",
+    estimatedCostUsd: 2.4,
+    deliverAttempts: 0,
+    submittedAtMs: 1_700_000_000_000,
+    updatedAtMs: 1_700_000_000_000,
+    ...overrides,
+  };
 }
 
 interface MockProvider {
@@ -97,9 +113,13 @@ function makeProvider(overrides: Partial<MockProvider> = {}): MockProvider {
 function spyStore(real: VideoJobStore): VideoJobStore & {
   markDoneSpy: ReturnType<typeof vi.fn>;
   markFailedSpy: ReturnType<typeof vi.fn>;
+  incrementSpy: ReturnType<typeof vi.fn>;
 } {
   const markDoneSpy = vi.fn((...args: Parameters<VideoJobStore["markDone"]>) => real.markDone(...args));
   const markFailedSpy = vi.fn((...args: Parameters<VideoJobStore["markFailed"]>) => real.markFailed(...args));
+  const incrementSpy = vi.fn((...args: Parameters<VideoJobStore["incrementDeliveryAttempt"]>) =>
+    real.incrementDeliveryAttempt(...args),
+  );
   return {
     insert: (...a) => real.insert(...a),
     listPending: () => real.listPending(),
@@ -107,8 +127,10 @@ function spyStore(real: VideoJobStore): VideoJobStore & {
     markDone: markDoneSpy as unknown as VideoJobStore["markDone"],
     markFailed: markFailedSpy as unknown as VideoJobStore["markFailed"],
     updateProgress: (...a) => real.updateProgress(...a),
+    incrementDeliveryAttempt: incrementSpy as unknown as VideoJobStore["incrementDeliveryAttempt"],
     markDoneSpy,
     markFailedSpy,
+    incrementSpy,
   };
 }
 
@@ -143,9 +165,11 @@ function makePoller(opts: {
   const real = createVideoJobStore(db);
   const store = spyStore(real);
 
-  // Seed pending rows. Default: ONE row matching makeJob()'s jobId so a bare
-  // `track(makeJob())` has a row to read its routing from (the handler inserts
-  // the row at submit, then calls track). Tests override via `seedRows`.
+  // Seed pending rows. Default: ONE row matching makeRecord()'s jobId so the
+  // store's markDone/markFailed/incrementDeliveryAttempt writes land on a real
+  // DB row (the handler inserts the row at submit, then calls track with the
+  // in-memory record). The sweeper/startAndResume rebuild records FROM these
+  // rows. Tests override via `seedRows`.
   const rows = opts.seedRows ?? [{ jobId: "fal-req-abc123" }];
   for (const row of rows) {
     void real.insert({
@@ -197,8 +221,8 @@ function makePoller(opts: {
 }
 
 /** Flush the microtask queue so fire-and-forget runJob loops settle. The full
- *  chain is loadRecord→poll→fetchResult→persist→sendAttachment→markDone→info —
- *  each an await — so the default count is generous. */
+ *  chain is poll→fetchResult→persist→sendAttachment→markDone→info — each an
+ *  await — so the default count is generous. */
 async function flush(times = 30): Promise<void> {
   for (let i = 0; i < times; i++) await Promise.resolve();
 }
@@ -212,7 +236,7 @@ describe("createVideoPoller", () => {
   it("drives a tracked job to completion: persist once, deliver via sendAttachment, record actual cost, markDone", async () => {
     const { poller, deps } = makePoller();
     const markDoneSpy = deps.store.markDoneSpy;
-    poller.track(makeJob());
+    poller.track(makeRecord());
     await flush();
 
     expect(deps.provider.poll).toHaveBeenCalled();
@@ -233,15 +257,15 @@ describe("createVideoPoller", () => {
     expect((markDoneSpy.mock.calls[0]![1] as { mediaPath: string }).mediaPath).toBe(PERSISTED_OK.filePath);
   });
 
-  // The job the handler tracks must carry routing for the announce. Since
-  // VideoGenJob is {jobId,provider,model} only, the poller reads the channel +
-  // agent from the persisted row (inserted at submit). track() is given the row.
-  it("delivers to the RECORDED channel/agent read from the persisted job row", async () => {
-    // Seed a row whose channel differs from any default, then track its job.
+  // The record the handler tracks carries the routing for the announce directly
+  // (WR-02/WR-06: the poller no longer re-reads it from listPending — the handler
+  // already has agentId/channelType/channelId/traceId in scope at submit).
+  it("delivers to the RECORDED channel/agent carried on the tracked record", async () => {
+    // Seed a row whose channel differs from any default, then track its record.
     const { poller, deps } = makePoller({
       seedRows: [{ jobId: "fal-req-abc123", agentId: "beta", channelType: "discord", channelId: "ch-beta" }],
     });
-    poller.track(makeJob());
+    poller.track(makeRecord({ agentId: "beta", channelType: "discord", channelId: "ch-beta" }));
     await flush();
     expect(deps.getChannelAdapter).toHaveBeenCalledWith("discord");
     expect(deps.sendAttachment.mock.calls[0]![0]).toBe("ch-beta");
@@ -256,7 +280,7 @@ describe("createVideoPoller", () => {
     const { poller, deps } = makePoller({ provider, seedRows: [{ jobId: "fal-req-abc123" }] });
     const markFailedSpy = deps.store.markFailedSpy;
     const markDoneSpy = deps.store.markDoneSpy;
-    poller.track(makeJob());
+    poller.track(makeRecord());
     await flush();
 
     expect(markFailedSpy).toHaveBeenCalledTimes(1);
@@ -298,7 +322,9 @@ describe("createVideoPoller", () => {
       config: makeConfig({ timeoutMs: 120_000, pollIntervalMs: 10_000 } as Partial<VideoGenerationConfig>),
       logger, timers: createFakeTimers(), sleep, nowMs: () => clock,
     });
-    poller.track(makeJob());
+    poller.track(
+      makeRecord({ model: "m", channelId: "ch", submittedAtMs: 0, updatedAtMs: 0 }),
+    );
     await flush(40);
 
     expect(markFailedSpy).toHaveBeenCalledTimes(1);
@@ -314,7 +340,7 @@ describe("createVideoPoller", () => {
   // ─── I8 obs floor: done branch INFO line carries traceId from the row ───
   it("emits an INFO completion line with jobId + traceId (from the row) + costUsd + durationMs", async () => {
     const { poller, deps } = makePoller({ seedRows: [{ jobId: "fal-req-abc123", traceId: "trace-seed" }] });
-    poller.track(makeJob());
+    poller.track(makeRecord({ traceId: "trace-seed" }));
     await flush();
     const info = (deps.logger.info as ReturnType<typeof vi.fn>).mock.calls.find(
       (c) => (c[0] as { step?: string }).step === "video_poll_complete",
@@ -412,10 +438,195 @@ describe("createVideoPoller", () => {
       seedRows: [{ jobId: "fal-req-abc123" }],
     });
     const markDoneSpy = deps.store.markDoneSpy;
-    poller.track(makeJob());
+    poller.track(makeRecord());
     await flush();
     // No throw; the clip IS persisted so the at-least-once contract still marks done.
     expect(deps.persist).toHaveBeenCalledTimes(1);
     expect(markDoneSpy).toHaveBeenCalledTimes(1);
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // CR-01 (BLOCKER): bounded redelivery + dead-letter + cost-exactly-once.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  // CR-01 #1: a persistent delivery failure must converge to markFailed after
+  // maxDeliveryAttempts and STOP re-downloading — not re-poll + re-fetchResult +
+  // re-persist + re-sendAttachment every sweep forever.
+  it("CR-01: a delivery that always fails dead-letters to markFailed after maxDeliveryAttempts and stops re-downloading", async () => {
+    const sendAttachment = vi.fn().mockResolvedValue(err(new Error("channel down")));
+    const { poller, deps } = makePoller({
+      sendAttachment,
+      config: makeConfig({ maxDeliveryAttempts: 3 } as Partial<VideoGenerationConfig>),
+      seedRows: [{ jobId: "fal-req-abc123" }],
+    });
+    const markDoneSpy = deps.store.markDoneSpy;
+    const markFailedSpy = deps.store.markFailedSpy;
+
+    // startAndResume drives the seeded pending row AND arms the sweeper. On
+    // pre-fix code each subsequent sweep re-downloads (fetchResult/persist) +
+    // re-sends with NO bound, so the counts grow unboundedly past
+    // maxDeliveryAttempts and the row never converges.
+    await poller.startAndResume();
+    await flush();
+    for (let i = 0; i < 8; i++) {
+      deps.timers.advance(makeConfig().pollIntervalMs);
+      await flush();
+    }
+    poller.shutdown();
+
+    // BOUNDED: the per-job work happens at most maxDeliveryAttempts times.
+    expect(sendAttachment.mock.calls.length).toBeLessThanOrEqual(3);
+    expect(deps.provider.fetchResult.mock.calls.length).toBeLessThanOrEqual(3);
+    expect(deps.persist.mock.calls.length).toBeLessThanOrEqual(3);
+    // CONVERGED: the row is dead-lettered to failed (out of `pending`), never markDone.
+    expect(markFailedSpy).toHaveBeenCalled();
+    expect(markFailedSpy.mock.calls[0]![0]).toBe("fal-req-abc123");
+    expect(markDoneSpy).not.toHaveBeenCalled();
+    // A dead-letter WARN names the bound (errorKind + hint).
+    const w = (deps.logger.warn as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c) => (c[0] as { step?: string }).step === "video_poll_deadletter",
+    );
+    expect(w).toBeTruthy();
+    expect((w![0] as { errorKind?: string }).errorKind).toBeTruthy();
+    expect((w![0] as { hint?: string }).hint).toBeTruthy();
+    expect((w![0] as { jobId?: string }).jobId).toBe("fal-req-abc123");
+  });
+
+  // CR-01 #2: cost is recorded EXACTLY ONCE — a delivery that fails once then
+  // succeeds on the next sweep must not double-charge the limiter.
+  it("CR-01: a job that fails delivery once then succeeds records cost EXACTLY ONCE (no double-count)", async () => {
+    const sendAttachment = vi
+      .fn()
+      .mockResolvedValueOnce(err(new Error("transient channel error")))
+      .mockResolvedValue(ok("msg-1"));
+    const { poller, deps } = makePoller({
+      sendAttachment,
+      config: makeConfig({ maxDeliveryAttempts: 5 } as Partial<VideoGenerationConfig>),
+      seedRows: [{ jobId: "fal-req-abc123" }],
+    });
+    const markDoneSpy = deps.store.markDoneSpy;
+
+    // startAndResume drives the seeded pending row (first delivery fails → stays
+    // pending) and arms the sweeper. Advance one sweep → the retry succeeds.
+    await poller.startAndResume();
+    await flush();
+    deps.timers.advance(makeConfig().pollIntervalMs);
+    await flush();
+    poller.shutdown();
+
+    expect(sendAttachment.mock.calls.length).toBe(2); // one fail, one success
+    expect(markDoneSpy).toHaveBeenCalledTimes(1);
+    // The crux: cost recorded ONCE (the successful terminal delivery), not on the
+    // failed first attempt and not twice.
+    expect(deps.costLimiter.record).toHaveBeenCalledTimes(1);
+    expect(deps.costLimiter.record).toHaveBeenCalledWith("alpha", 0.8);
+  });
+
+  // CR-01 / WR-03: a persist failure marks the job failed but must NOT record
+  // cost (it never reached the terminal markDone — the cost record rides markDone).
+  it("CR-01/WR-03: a persist failure marks failed and does NOT record cost (cost rides the terminal markDone)", async () => {
+    const persist = vi.fn().mockResolvedValue(err(new Error("disk full")));
+    const { poller, deps } = makePoller({ persist, seedRows: [{ jobId: "fal-req-abc123" }] });
+    const markFailedSpy = deps.store.markFailedSpy;
+    const markDoneSpy = deps.store.markDoneSpy;
+
+    poller.track(makeRecord());
+    await flush();
+
+    expect(markFailedSpy).toHaveBeenCalledTimes(1);
+    expect(markDoneSpy).not.toHaveBeenCalled();
+    // No artifact was delivered → the limiter is not charged.
+    expect(deps.costLimiter.record).not.toHaveBeenCalled();
+  });
+
+  // CR-01 #3: the poller's markFailed must CHECK the store Result; a failing
+  // terminal write is logged at ERROR (not silently discarded).
+  it("CR-01: a failing markFailed store write is logged at ERROR (Result not discarded)", async () => {
+    const provider = makeProvider({
+      poll: vi.fn().mockResolvedValue(ok({ jobId: "fal-req-abc123", state: "failed" })),
+    });
+    const { poller, deps } = makePoller({ provider, seedRows: [{ jobId: "fal-req-abc123" }] });
+    // Force the terminal markFailed write to fail.
+    deps.store.markFailedSpy.mockResolvedValue(err(new Error("sqlite busy")));
+
+    poller.track(makeRecord());
+    await flush();
+
+    const e = (deps.logger.error as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c) => (c[0] as { step?: string }).step === "video_poll_markfailed",
+    );
+    expect(e).toBeTruthy();
+    expect((e![0] as { errorKind?: string }).errorKind).toBeTruthy();
+    expect((e![0] as { hint?: string }).hint).toBeTruthy();
+    expect((e![0] as { jobId?: string }).jobId).toBe("fal-req-abc123");
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // WR-01: off-turn suppressed errors route to the Pino logger, not console.*
+  // ─────────────────────────────────────────────────────────────────────────
+  it("WR-01: a throw escaping the per-job loop is routed to the Pino logger (no console.debug)", async () => {
+    // Make pollUntilDone's poll throw synchronously so runJob rejects and the
+    // suppressError wrapper fires. On pre-fix code suppressError gets no logger
+    // and writes to console.debug (invisible to daemon.log).
+    const consoleDebug = vi.spyOn(console, "debug").mockImplementation(() => {});
+    const provider = makeProvider({
+      poll: vi.fn().mockRejectedValue(new Error("unexpected provider throw")),
+    });
+    const { poller, deps } = makePoller({ provider, seedRows: [{ jobId: "fal-req-abc123" }] });
+    poller.track(makeRecord());
+    await flush();
+
+    // The suppressed rejection reached the Pino logger (a debug line with the
+    // suppressed step), NOT console.debug.
+    const suppressed = (deps.logger.debug as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c) => (c[0] as { step?: string }).step === "video_poll_suppressed",
+    );
+    expect(suppressed).toBeTruthy();
+    expect(consoleDebug).not.toHaveBeenCalled();
+    consoleDebug.mockRestore();
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // WR-02: the handler's insert-failure path tracks an in-memory record; the
+  // poller must drive it from that record WITHOUT a listPending read (so it is
+  // genuinely delivered, not orphaned). Modeled by tracking a record whose row
+  // is NOT in the store (insert failed) — delivery still happens.
+  // ─────────────────────────────────────────────────────────────────────────
+  it("WR-02/WR-06: track() drives delivery from the in-memory record even when the row is not in listPending", async () => {
+    // No seeded rows at all → listPending() returns []. On pre-fix code, track→
+    // loadRecord→listPending().find() is undefined → the job is NEVER delivered
+    // (the orphan bug). With the record passed directly, it IS delivered.
+    const { poller, deps } = makePoller({ seedRows: [] });
+    // listPending must not be the source of the routing for track().
+    poller.track(makeRecord());
+    await flush();
+
+    expect(deps.provider.fetchResult).toHaveBeenCalledTimes(1);
+    expect(deps.sendAttachment).toHaveBeenCalledTimes(1);
+    expect(deps.sendAttachment.mock.calls[0]![0]).toBe("ch-recorded");
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // WR-04: lost-update window. The sweeper re-discovers a row that was `pending`
+  // in the listPending snapshot, but a concurrent path already transitioned it to
+  // terminal. startJob must re-read the row state and short-circuit (no re-fetch /
+  // re-deliver) when it is no longer pending. Modeled by a store whose
+  // listPending() returns the row but whose get() reports `done` (the divergence).
+  // ─────────────────────────────────────────────────────────────────────────
+  it("WR-04: a row pending in the listPending snapshot but already done on re-read short-circuits (no re-fetch)", async () => {
+    const { poller, deps } = makePoller({ seedRows: [{ jobId: "fal-req-abc123" }] });
+    // The row is still pending in listPending() (the snapshot), but get() — the
+    // authoritative re-read in startJob — reports it already done.
+    deps.store.get = vi.fn().mockResolvedValue(
+      ok({ ...makeRecord(), state: "done", deliverAttempts: 0 }),
+    ) as unknown as VideoJobStore["get"];
+
+    // Drive via the sweeper (the path that rebuilds records from a stale snapshot).
+    await poller.startAndResume();
+    await flush();
+
+    expect(deps.provider.fetchResult).not.toHaveBeenCalled();
+    expect(deps.sendAttachment).not.toHaveBeenCalled();
+    poller.shutdown();
   });
 });

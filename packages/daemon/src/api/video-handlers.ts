@@ -13,10 +13,12 @@
  * blocking inline `port.execute()` + persist/deliver/base64 tail (which held the
  * agent turn for the full 30 s–5 min render). It now `port.submit()`s, persists a
  * `pending` `VideoJobStore` row (the durable spine the background poller resumes
- * against across the turn AND a daemon restart), hands the job to the poller via
- * `videoPoller.track(job)`, and returns `{jobId, state:"submitted",
+ * against across the turn AND a daemon restart), hands the FULL in-memory record
+ * to the poller via `videoPoller.track(record)` (WR-02/WR-06 — so the poller
+ * drives delivery from in-memory routing and an insert-failure is delivered
+ * in-memory rather than orphaned), and returns `{jobId, state:"submitted",
  * estimatedCostUsd}` PROMPTLY. The completion tail (poll→fetchResult→persist→
- * deliver→record(actualCost)→markDone) lives in `setup-video-poller.ts`.
+ * deliver→markDone→record(actualCost)) lives in `setup-video-poller.ts`.
  *
  * WARNING-3 / I8 (Pitfall 5): the row carries a `traceId` captured HERE from the
  * in-turn ALS context (`tryGetContext()`) — the media-tool RPC producer injects
@@ -52,6 +54,7 @@ import {
 } from "@comis/core";
 import { resolveReferenceImage } from "./media-reference-resolver.js";
 import type { VideoGenInput } from "@comis/core";
+import type { VideoJobRecord } from "@comis/memory";
 import type { MediaApiDeps, RpcHandler } from "./types.js";
 
 /** Dependencies required by the video generation RPC handler.
@@ -303,12 +306,16 @@ export function createVideoHandlers(
       // nullable and the field is always threaded.
       const traceId = tryGetContext()?.traceId;
 
-      // JOB-01 (189): persist the `pending` row — the durable spine the poller
-      // resumes against across the turn AND a daemon restart. The routing is the
-      // SAME source the 188 deliver path read (`_callerChannel*`); a NON-default
-      // agent's job is recorded under its own agentId (T-189-06 — the poller
-      // delivers only to the recorded channel/agent, never a silent default).
-      const insertResult = await deps.videoJobStore.insert({
+      // JOB-01 (189): build the durable `pending` record ONCE — it is both the
+      // row persisted to the store (the spine the poller resumes against across
+      // the turn AND a daemon restart) AND the in-memory record handed to
+      // `track()` (WR-02/WR-06: the poller drives delivery from this record
+      // directly, with no listPending scan). The routing is the SAME source the
+      // 188 deliver path read (`_callerChannel*`); a NON-default agent's job is
+      // recorded under its own agentId (T-189-06 — the poller delivers only to
+      // the recorded channel/agent, never a silent default).
+      const nowSubmitMs = systemNowMs();
+      const record: VideoJobRecord = {
         jobId: job.jobId,
         provider: deps.provider.id,
         ...(job.model ?? params.model ? { model: job.model ?? params.model } : {}),
@@ -321,30 +328,42 @@ export function createVideoHandlers(
         traceId,
         state: "pending",
         ...(estimatedCostUsd !== undefined ? { estimatedCostUsd } : {}),
-        submittedAtMs: systemNowMs(),
-        updatedAtMs: systemNowMs(),
-      });
+        // CR-01: a freshly-submitted job starts at zero delivery attempts.
+        deliverAttempts: 0,
+        submittedAtMs: nowSubmitMs,
+        updatedAtMs: nowSubmitMs,
+      };
+      const insertResult = await deps.videoJobStore.insert(record);
       if (!insertResult.ok) {
-        // The job IS submitted (rendering) but we could not persist the row — it
-        // will NOT survive a restart and the poller will not resume it. Surface
-        // honestly (the render still completes in-process via track below, but the
-        // durability guarantee is degraded for this one job).
+        // WR-02: the job IS submitted (rendering) but the row could not be
+        // persisted, so it will NOT survive a daemon restart — the boot-resume
+        // scan has no row to find. It is NOT orphaned, though: `track(record)`
+        // below drives the completion tail (poll→fetch→persist→deliver) IN-MEMORY
+        // from this record, so the rendered clip is still delivered to the
+        // recorded channel during this daemon's lifetime. Only the
+        // restart-durability guarantee is degraded for this one job.
         deps.logger.warn(
           {
             agentId,
             jobId: job.jobId,
             err: insertResult.error,
             errorKind: "internal" as const,
-            hint: "Video submitted but the job row could not be persisted; it will not survive a daemon restart",
+            hint:
+              "Video submitted but the job row could not be persisted; it will be " +
+              "delivered in-memory by the poller but will NOT resume if the daemon " +
+              "restarts before delivery. Check the SQLite db health (~/.comis/memory.db).",
             step: "video_persist_row",
           },
-          "Video job row persistence failed (submitted, restart-durability degraded)",
+          "Video job row persistence failed (submitted, delivered in-memory, restart-durability degraded)",
         );
       }
 
-      // JOB-02 (189): hand the job to the background poller, which drives the
-      // completion tail off-turn (kicks a `pollUntilDone` per job).
-      deps.videoPoller.track(job);
+      // JOB-02 (189): hand the FULL record to the background poller, which drives
+      // the completion tail off-turn (kicks a `pollUntilDone` per job). WR-02/
+      // WR-06: passing the record (not the bare job) means the poller delivers
+      // from in-memory routing — no listPending scan, and the insert-failure path
+      // above is genuinely delivered rather than silently orphaned.
+      deps.videoPoller.track(record);
 
       // §2.7 I8: the submit completion line. traceId rides the Pino ALS mixin
       // in-turn (it is also persisted above for the off-turn poller).

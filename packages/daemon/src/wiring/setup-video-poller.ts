@@ -11,13 +11,25 @@
  *
  * LIFECYCLE (the two-phase contract, mirroring the delivery queue):
  *   1. `createVideoPoller(...)` returns `{ track, startAndResume, shutdown }`
- *      IMMEDIATELY — before `setupChannels` exists. `track(job)` may be called
- *      from the handler once a job is submitted.
+ *      IMMEDIATELY — before `setupChannels` exists. `track(record)` may be called
+ *      from the handler once a job is submitted; it takes the FULL in-memory
+ *      `VideoJobRecord` the handler already has (WR-02/WR-06 — no `listPending`
+ *      scan, and the insert-failure path still delivers in-memory, never orphans).
  *   2. `startAndResume()` is called AFTER `setupChannels` populates the channel
  *      registry (so `sendAttachment` works outside a turn): it reloads
  *      `store.listPending()` and resumes each, then arms the low-frequency outer
  *      sweeper (single-tick gate + `.unref()`).
- *   3. `shutdown()` clears the sweeper interval + stops in-flight per-job loops.
+ *   3. `shutdown()` aborts in-flight loops/downloads (WR-05) + clears the sweeper.
+ *
+ * REDELIVERY BOUND (CR-01): a row whose channel delivery keeps failing is
+ * re-driven by the sweeper every `pollIntervalMs`; without a bound that re-poll +
+ * re-download (up to 200 MB) + re-send repeats forever, and the cost was being
+ * re-recorded each pass. The poller now (a) bumps the persisted `deliver_attempts`
+ * on each delivery failure and dead-letters the row to `failed` once it exceeds
+ * `config.maxDeliveryAttempts`, (b) records the cost EXACTLY ONCE — on the
+ * terminal `markDone`, never before the delivery decision and never on a retry,
+ * and (c) checks the `markFailed` Result (a failed terminal write is logged at
+ * ERROR, with the attempt bound as the backstop).
  *
  * THE PER-JOB POLL IS THE SHIPPED `pollUntilDone` (I5) — `@comis/core` authored
  * it in 188 EXPRESSLY for this reuse; this file does NOT re-author a second loop
@@ -54,7 +66,6 @@ import {
   createPollDeadline,
   pollUntilDone,
   VIDEO_ERR_TO_LOG,
-  type VideoGenJob,
   type VideoGenerationPort,
   type VideoGenerationConfig,
   type ChannelPort,
@@ -73,8 +84,19 @@ import type { ComisLogger } from "@comis/infra";
 
 /** The two-phase background poller (mirrors `DeliveryQueueResult`). */
 export interface VideoPoller {
-  /** Hand a freshly-submitted job to the poller (the row was already inserted). */
-  track(job: VideoGenJob): void;
+  /**
+   * Hand a freshly-submitted job to the poller. WR-02/WR-06: the caller passes
+   * the FULL in-memory `VideoJobRecord` it already has at submit (jobId +
+   * routing + traceId + estimate), so the poller starts the loop directly WITHOUT
+   * an `O(pending)` `listPending()` scan and WITHOUT depending on the row being
+   * observably `pending` at that instant. This also makes the handler's
+   * insert-failure path honest: a job whose row could not be persisted is still
+   * driven to delivery in-memory (no silent orphan) — the persisted-row
+   * machinery (markDone/markFailed/incrementDeliveryAttempt) simply no-ops on the
+   * missing row, which is naturally bounded (the sweeper never re-discovers a row
+   * that does not exist).
+   */
+  track(record: VideoJobRecord): void;
   /**
    * RESTART RESUME (JOB-03): reload `listPending()` + resume each, then arm the
    * outer sweeper. Call AFTER `setupChannels` (the channel registry is now
@@ -170,9 +192,23 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
       ? config.maxConcurrentJobs
       : undefined;
 
+  // CR-01: the redelivery bound. A row whose delivery keeps failing is dead-
+  // lettered to `failed` once `deliver_attempts` exceeds this, so the sweeper
+  // stops re-polling + re-downloading it every pollIntervalMs forever. Defaulted
+  // defensively (the config schema defaults it to 5, but a hand-built test config
+  // may omit it).
+  const maxDeliveryAttempts =
+    typeof config.maxDeliveryAttempts === "number" && config.maxDeliveryAttempts > 0
+      ? config.maxDeliveryAttempts
+      : 5;
+
   let sweepInterval: TimerHandle | undefined;
   let sweeping: Promise<void> | null = null;
   let stopped = false;
+  // WR-05: a shutdown abort so an in-flight fetchResult download (up to the
+  // adapter's 120s timeout) aborts promptly on SIGTERM rather than racing
+  // db.close() with a late markDone/markFailed write.
+  const shutdownAbort = new AbortController();
 
   /** Map a `pollUntilDone` failed/timeout outcome to a domain errorKind. */
   function classifyOutcome(kind: "failed" | "timeout"): VideoErrorKind {
@@ -180,28 +216,65 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
   }
 
   /**
-   * Resolve the durable routing for a job from its persisted row. The poller
-   * delivers ONLY to the recorded channel/agent (T-189-06). `listPending()` is
-   * the agent-agnostic scan (the store's `get` requires an agentId we don't have
-   * at `track` time); a freshly-inserted row is `pending`, so it is present.
+   * Handle a channel delivery failure under the CR-01 redelivery bound. The row
+   * stays `pending` (at-least-once retry) UNLESS the bumped `deliver_attempts`
+   * reaches `maxDeliveryAttempts`, at which point the job is dead-lettered to
+   * `failed` so the sweeper stops re-polling + re-downloading it forever. A
+   * non-persisted row (the handler's insert-failure in-memory job → increment
+   * returns 0) is already bounded — the sweeper never re-discovers it — so it
+   * just WARNs once and stops.
    */
-  async function loadRecord(jobId: string): Promise<VideoJobRecord | undefined> {
-    const pending = await store.listPending();
-    if (!pending.ok) {
+  async function handleDeliveryFailure(record: VideoJobRecord, cause: Error): Promise<void> {
+    const attempt = await store.incrementDeliveryAttempt(record.jobId);
+    const attempts = attempt.ok ? attempt.value : 0;
+    // attempts > 0 means a real persisted row; >= max → dead-letter (terminal).
+    if (attempts > 0 && attempts >= maxDeliveryAttempts) {
+      await markFailed(record, "empty_response", cause);
       logger.warn(
-        { jobId, err: pending.error, errorKind: "internal" as const, hint: "Could not load pending video jobs; the row may resume on the next sweep", step: "video_poll_load" },
-        "Video poller: listPending failed",
+        {
+          traceId: record.traceId,
+          jobId: record.jobId,
+          channelType: record.channelType,
+          agentId: record.agentId,
+          attempts,
+          maxDeliveryAttempts,
+          errorKind: "network" as const,
+          videoErrorKind: "empty_response" as const,
+          hint:
+            "Video delivery failed repeatedly and was dead-lettered to `failed` " +
+            "(no further retries). Check the channel's attachment support / size " +
+            "limits / credentials, or raise integrations.media.videoGeneration." +
+            "maxDeliveryAttempts.",
+          step: "video_poll_deadletter",
+        },
+        "Video poller: delivery dead-lettered after max attempts",
       );
-      return undefined;
+      return;
     }
-    return pending.value.find((r) => r.jobId === jobId);
+    // Still pending, but now BOUNDED by maxDeliveryAttempts (the sweeper re-drives).
+    logger.warn(
+      {
+        traceId: record.traceId,
+        jobId: record.jobId,
+        channelType: record.channelType,
+        attempts,
+        maxDeliveryAttempts,
+        err: cause,
+        errorKind: "network" as const,
+        hint:
+          "Video persisted but channel delivery failed; the job stays pending and " +
+          "the next sweep retries (bounded by maxDeliveryAttempts).",
+        step: "video_poll_deliver",
+      },
+      "Video poller: channel delivery failed (will retry)",
+    );
   }
 
-  /** The completion tail (moved verbatim from the 188 handler :306-394). */
+  /** The completion tail (moved from the 188 handler :306-394, hardened by CR-01). */
   async function completeJob(record: VideoJobRecord, startMs: number): Promise<void> {
     const fetched = await provider.fetchResult(
       { jobId: record.jobId, provider: record.provider, model: record.model ?? "" },
-      { signal: undefined },
+      { signal: shutdownAbort.signal },
     );
     if (!fetched.ok) {
       await markFailed(record, "empty_response", fetched.error);
@@ -211,10 +284,10 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
     const mimeType = out.mimeType;
     const ext = extForMime(mimeType);
 
-    // SEC-02 reconcile to the ACTUAL cost (never under-account).
-    costLimiter?.record(record.agentId, out.costUsd ?? record.estimatedCostUsd ?? 0);
-
     // DEL-01 persist BEFORE any delivery decision (the fetch already happened).
+    // CR-01/WR-03: cost is NOT recorded here — it rides the terminal markDone, so
+    // a persist failure (no deliverable artifact) never charges the limiter and a
+    // retried completeJob never double-counts.
     const persisted = await persist(record.agentId, out.buffer, { mediaKind: "video", mimeType });
     if (!persisted.ok) {
       logger.warn(
@@ -240,12 +313,9 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
           ...(out.durationSecs !== undefined ? { durationSecs: out.durationSecs } : {}),
         });
         if (!sendResult.ok) {
-          // Delivery failed — leave the row pending so a later sweep re-delivers
-          // (at-least-once). Do NOT markDone (MUST-DIFFER 4).
-          logger.warn(
-            { traceId: record.traceId, jobId: record.jobId, channelType: record.channelType, err: sendResult.error, errorKind: "network" as const, hint: "Video persisted but channel delivery failed; the job stays pending and the next sweep retries", step: "video_poll_deliver" },
-            "Video poller: channel delivery failed (will retry)",
-          );
+          // CR-01: bound the redelivery. Do NOT markDone (MUST-DIFFER 4); either
+          // stay pending (bounded retry) or dead-letter to `failed`.
+          await handleDeliveryFailure(record, sendResult.error);
           return;
         }
       } else {
@@ -275,6 +345,12 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
       return;
     }
 
+    // SEC-02 reconcile to the ACTUAL cost — recorded EXACTLY ONCE, here, only on
+    // the terminal successful delivery (CR-01/WR-03). markDone flipped the row out
+    // of `pending`, so a retried completeJob can never reach this line twice for
+    // one render → no phantom per-hour USD inflation.
+    costLimiter?.record(record.agentId, out.costUsd ?? record.estimatedCostUsd ?? 0);
+
     // I8 obs floor: the INFO completion line. MUST-DIFFER 3 — traceId is read
     // from the row and put ON the object (the bg ctx has no ALS frame).
     logger.info(
@@ -295,7 +371,28 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
 
   /** markFailed + a §2.7 WARN with errorKind + hint + the off-turn traceId. */
   async function markFailed(record: VideoJobRecord, kind: VideoErrorKind, cause?: Error): Promise<void> {
-    await store.markFailed(record.jobId, kind);
+    // CR-01: do NOT discard the store Result. A failed terminal write leaves the
+    // row `pending`; the sweeper will retry it, but the redelivery bound
+    // (deliver_attempts / maxDeliveryAttempts) is the backstop so even a
+    // persistent markFailed-write failure converges. Log it at ERROR so the
+    // stranded row is diagnosable from daemon.log by jobId/traceId.
+    const failed = await store.markFailed(record.jobId, kind);
+    if (!failed.ok) {
+      logger.error(
+        {
+          traceId: record.traceId,
+          jobId: record.jobId,
+          agentId: record.agentId,
+          err: failed.error,
+          errorKind: "internal" as const,
+          hint:
+            "markFailed write failed; the row stays pending and a later sweep " +
+            "retries (bounded by maxDeliveryAttempts). Check the SQLite db health.",
+          step: "video_poll_markfailed",
+        },
+        "Video poller: markFailed store write failed",
+      );
+    }
     const hint =
       kind === "job_timeout"
         ? "The render exceeded integrations.media.videoGeneration.timeoutMs; raise it or retry."
@@ -324,6 +421,23 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
   async function runJob(record: VideoJobRecord): Promise<void> {
     const startMs = nowMs();
     try {
+      // WR-04: lost-update guard. The in-memory `inFlight` set dedups within this
+      // process, but the sweeper rebuilds records from a `listPending()` SNAPSHOT,
+      // so a row that was transitioned to terminal between the snapshot and now
+      // (a racing completion, or — defensively — a second daemon on the shared db)
+      // must not be re-fetched + re-delivered. Re-read the authoritative row
+      // state: bail if it EXISTS and is no longer `pending`. A NOT-FOUND row
+      // (`ok(undefined)`) is the handler's insert-failure in-memory job — proceed
+      // and drive it from the in-memory `record` (WR-02), never re-read again.
+      const current = await store.get(record.jobId, record.agentId);
+      if (current.ok && current.value && current.value.state !== "pending") {
+        logger.debug(
+          { traceId: record.traceId, jobId: record.jobId, state: current.value.state, step: "video_poll_terminal_skip" },
+          "Video poller: job already terminal on re-read; skipping",
+        );
+        return;
+      }
+      if (stopped) return; // shutdown raced the re-read — do not deliver
       const outcome = await pollUntilDone<{ state: string }>({
         poll: () =>
           provider
@@ -333,6 +447,10 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
         isFailed: (s) => s.state === "failed",
         deadline: createPollDeadline(config.timeoutMs, nowMs),
         pollIntervalMs: config.pollIntervalMs,
+        // WR-05: a shutdown aborts the poll loop promptly (pollUntilDone returns
+        // `timeout` on `signal.aborted`); the `stopped` guard below then bails
+        // before any delivery.
+        signal: shutdownAbort.signal,
         ...(sleep ? { sleep } : {}),
       });
       if (stopped) return; // shutdown raced the loop — do not deliver
@@ -355,17 +473,25 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
       return;
     }
     inFlight.add(record.jobId);
-    suppressError(runJob(record), "video poller per-job loop");
+    // WR-01: route the suppressed rejection through the Pino logger (off-turn, no
+    // ALS frame), NOT console.debug — so a throw escaping runJob is reconstructable
+    // from daemon.log / `comis fleet` / `comis explain` (I8 / §2.7).
+    suppressError(runJob(record), "video poller per-job loop", (m) =>
+      logger.debug({ step: "video_poll_suppressed" }, m),
+    );
   }
 
-  /** `track(job)`: resolve the freshly-inserted row, then start its loop. */
-  function track(job: VideoGenJob): void {
-    suppressError(
-      loadRecord(job.jobId).then((record) => {
-        if (record) startJob(record);
-      }),
-      "video poller track",
-    );
+  /**
+   * `track(record)`: start the per-job loop DIRECTLY from the in-memory record
+   * the handler already has (WR-02/WR-06 — no `listPending()` scan, no dependence
+   * on the row being observably `pending` at this instant). The handler calls this
+   * on a successful submit; on an insert-FAILURE it still calls it so the rendered
+   * clip is delivered in-memory rather than silently orphaned (the persisted-row
+   * writes then no-op on the missing row, which is bounded — the sweeper never
+   * re-discovers a non-existent row).
+   */
+  function track(record: VideoJobRecord): void {
+    startJob(record);
   }
 
   /**
@@ -405,13 +531,21 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
       sweeping = runOneSweep().finally(() => {
         sweeping = null;
       });
-      suppressError(sweeping, "video poller sweep tick");
+      // WR-01: Pino-route the suppressed sweep-tick rejection (off-turn).
+      suppressError(sweeping, "video poller sweep tick", (m) =>
+        logger.debug({ step: "video_poll_suppressed" }, m),
+      );
     }, config.pollIntervalMs);
     sweepInterval.unref(); // NEVER keep the daemon alive for polling
   }
 
   function shutdown(): void {
     stopped = true;
+    // WR-05: abort any in-flight poll loop + fetchResult download so a mid-render
+    // job stops promptly on SIGTERM rather than landing a markDone/markFailed
+    // write after db.close(). The `stopped` guard prevents a post-shutdown
+    // delivery; the abort just makes the in-flight download return faster.
+    shutdownAbort.abort();
     if (sweepInterval) {
       sweepInterval.cancel();
       sweepInterval = undefined;

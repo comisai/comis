@@ -119,6 +119,7 @@ function createMockDeps(overrides: Partial<VideoHandlerDeps> = {}): VideoHandler
       markDone: vi.fn().mockResolvedValue(ok(undefined)),
       markFailed: vi.fn().mockResolvedValue(ok(undefined)),
       updateProgress: vi.fn().mockResolvedValue(ok(undefined)),
+      incrementDeliveryAttempt: vi.fn().mockResolvedValue(ok(0)),
     } as unknown as VideoHandlerDeps["videoJobStore"],
     videoPoller: { track: vi.fn() },
     ...overrides,
@@ -183,6 +184,63 @@ describe("createVideoHandlers (Phase 189 — inline→submit)", () => {
     // the handler does NOT persist or deliver inline (the poller does).
     expect(deps.persist).not.toHaveBeenCalled();
     expect(sendAttachment).not.toHaveBeenCalled();
+  });
+
+  // ─── WR-02: track() receives the FULL routing record (not the bare job) ───
+  it("WR-02/WR-06: tracks the job with a record carrying the routing (agentId/channelType/channelId)", async () => {
+    const deps = createMockDeps();
+    const handlers = createVideoHandlers(deps);
+    await handlers["video.generate"]!({
+      _agentId: "agent-1",
+      prompt: "a comet",
+      _callerChannelType: "telegram",
+      _callerChannelId: "chat-1",
+    });
+    // The poller now drives the job from the in-memory record (WR-02/WR-06: no
+    // listPending scan), so track MUST receive the routing — not the bare
+    // {jobId,provider,model} job, which would orphan the insert-failure path.
+    const tracked = trackMock(deps).mock.calls[0]![0] as Record<string, unknown>;
+    expect(tracked.jobId).toBe("fal-req-abc123");
+    expect(tracked.agentId).toBe("agent-1");
+    expect(tracked.channelType).toBe("telegram");
+    expect(tracked.channelId).toBe("chat-1");
+    expect(tracked.state).toBe("pending");
+  });
+
+  // ─── WR-02: an insert failure does NOT silently orphan — track still drives it ───
+  it("WR-02: on a store insert failure the job is still tracked WITH routing (in-memory delivery, not orphaned)", async () => {
+    const deps = createMockDeps({
+      videoJobStore: {
+        insert: vi.fn().mockResolvedValue(err(new Error("sqlite disk I/O error"))),
+        listPending: vi.fn().mockResolvedValue(ok([])),
+        get: vi.fn().mockResolvedValue(ok(undefined)),
+        markDone: vi.fn().mockResolvedValue(ok(undefined)),
+        markFailed: vi.fn().mockResolvedValue(ok(undefined)),
+        updateProgress: vi.fn().mockResolvedValue(ok(undefined)),
+        incrementDeliveryAttempt: vi.fn().mockResolvedValue(ok(0)),
+      } as unknown as VideoHandlerDeps["videoJobStore"],
+    });
+    const handlers = createVideoHandlers(deps);
+    const result = (await handlers["video.generate"]!({
+      _agentId: "agent-1",
+      prompt: "a comet",
+      _callerChannelType: "telegram",
+      _callerChannelId: "chat-1",
+    })) as { success: boolean };
+    // The insert failed, but track is STILL called with the routing record, so the
+    // rendered clip is delivered in-memory (the orphan bug is gone). On pre-fix
+    // code track received the bare job (no routing → loadRecord→listPending found
+    // nothing → never delivered).
+    expect(trackMock(deps)).toHaveBeenCalledTimes(1);
+    const tracked = trackMock(deps).mock.calls[0]![0] as Record<string, unknown>;
+    expect(tracked.channelType).toBe("telegram");
+    expect(tracked.channelId).toBe("chat-1");
+    expect(tracked.agentId).toBe("agent-1");
+    // The submit still succeeded (the render is in flight); the WARN names the
+    // degraded restart-durability.
+    expect(result.success).toBe(true);
+    const w = warnCalls(deps).find((c) => (c[0] as { step?: string }).step === "video_persist_row");
+    expect(w).toBeTruthy();
   });
 
   // ─── WARNING-3: the inserted row carries a traceId so the off-turn poller can stitch ───

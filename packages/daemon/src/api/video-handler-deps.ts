@@ -68,9 +68,12 @@ export interface VideoHandlerDepsShape {
    *  background poller resumes it across the agent turn AND a daemon restart. */
   videoJobStore: import("@comis/memory").VideoJobStore;
   /** JOB-02 (189): hand the submitted job to the background poller, which drives
-   *  poll→done→fetchResult→persist→deliver→record→markDone off-turn. Narrow shape
-   *  (only `track`) so the deps stay honest about what the handler uses. */
-  videoPoller: { track(job: import("@comis/core").VideoGenJob): void };
+   *  poll→done→fetchResult→persist→deliver→record→markDone off-turn. WR-02/WR-06:
+   *  `track` takes the FULL in-memory `VideoJobRecord` the handler built (jobId +
+   *  routing + traceId + estimate) so the poller drives delivery WITHOUT a
+   *  listPending scan and the insert-failure path is delivered in-memory rather
+   *  than orphaned. Narrow shape (only `track`) so the deps stay honest. */
+  videoPoller: { track(record: import("@comis/memory").VideoJobRecord): void };
 }
 
 /** Dependencies the `video.status` RPC handler consumes (Phase 189 Plan 03 /
