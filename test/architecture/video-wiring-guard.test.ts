@@ -23,6 +23,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(here, "../..");
 const DAEMON_TS = resolve(REPO_ROOT, "packages/daemon/src/daemon.ts");
 const RPC_DISPATCH_TS = resolve(REPO_ROOT, "packages/daemon/src/api/rpc-dispatch.ts");
+const MAIN_HELPERS_TS = resolve(REPO_ROOT, "packages/daemon/src/wiring/main-helpers.ts");
 
 /** Strip line + block comments so a token inside a comment cannot satisfy a
  *  wiring assertion (a comment naming buildVideoGenBundle is NOT the wiring). */
@@ -80,5 +81,63 @@ describe("video-generation built-but-not-wired source guard", () => {
     const code = stripComments(content);
     // The conditional spread: ...(deps.videoHandlerDeps ? createVideoHandlers(...) : {})
     expect(code).toMatch(/deps\.videoHandlerDeps\s*\?[\s\S]*?createVideoHandlers\s*\(\s*deps\.videoHandlerDeps\s*\)/);
+  });
+
+  // ─── Phase 189 (JOB-02/JOB-03): the background poller + store wiring ───
+  // The keystone anti-built-but-not-wired assertions. The store + poller are
+  // constructed in buildVideoGenBundle (main-helpers), STARTED after setupChannels
+  // (wirePostChannelsLifecycle), and SHUT DOWN via setupShutdown. A regression to
+  // unwired turns these red.
+
+  it("main-helpers.ts imports + CALLS createVideoJobStore and createVideoPoller (the boot construction)", () => {
+    const content = readFileSync(MAIN_HELPERS_TS, "utf8");
+    expect(content).toMatch(
+      /import\s*\{[^}]*createVideoJobStore[^}]*\}\s*from\s*["']@comis\/memory["']/,
+    );
+    expect(content).toMatch(
+      /import\s*\{[^}]*createVideoPoller[^}]*\}\s*from\s*["']\.\/setup-video-poller\.js["']/,
+    );
+    const code = stripComments(content);
+    // Both must be CALLED (not just imported) — the construction, not a comment.
+    expect(code).toMatch(/createVideoJobStore\s*\(/);
+    expect(code).toMatch(/createVideoPoller\s*\(/);
+  });
+
+  it("buildVideoGenBundle returns videoJobStore + videoPoller (threaded to the handler deps + boot)", () => {
+    const code = stripComments(readFileSync(MAIN_HELPERS_TS, "utf8"));
+    // buildVideoGenBundle must surface both so daemon.ts can Object.assign them
+    // onto the boot context and buildVideoHandlerDeps can fold them onto the deps.
+    expect(code).toMatch(/\bvideoJobStore\b/);
+    expect(code).toMatch(/\bvideoPoller\b/);
+    // buildVideoHandlerDeps threads the store + poller onto the handler deps.
+    expect(code).toMatch(/videoJobStore:\s*c\.videoJobStore/);
+    expect(code).toMatch(/videoPoller:\s*c\.videoPoller/);
+  });
+
+  it("daemon.ts destructures videoPoller from buildVideoGenBundle and passes db into it", () => {
+    const code = stripComments(readFileSync(DAEMON_TS, "utf8"));
+    // The bundle now takes db (the shared memory.db handle the store needs) and
+    // yields the poller. Assert both the destructure and the db argument.
+    expect(code).toMatch(/buildVideoGenBundle\s*\(/);
+    expect(code).toMatch(/\bvideoPoller\b/);
+    expect(code).toMatch(/\bvideoJobStore\b/);
+  });
+
+  it("daemon.ts STARTS the poller after setupChannels (via wirePostChannelsLifecycle)", () => {
+    const code = stripComments(readFileSync(DAEMON_TS, "utf8"));
+    // startAndResume must flow through wirePostChannelsLifecycle (the hook that
+    // runs AFTER setupChannels populates the channel registry, so sendAttachment
+    // reaches a live adapter outside a turn). Assert the threaded start fn name
+    // appears in the wirePostChannelsLifecycle deps wiring.
+    expect(code).toMatch(/startAndResumeVideoPoller/);
+    // and the poller's startAndResume is actually invoked in the lifecycle body.
+    expect(code).toMatch(/startAndResume/);
+  });
+
+  it("daemon.ts threads the poller shutdown into setupShutdown (beside shutdownDeliveryQueue)", () => {
+    const code = stripComments(readFileSync(DAEMON_TS, "utf8"));
+    // The poller shutdown must be registered with setupShutdown so SIGTERM clears
+    // the sweeper interval — the same path shutdownDeliveryQueue takes.
+    expect(code).toMatch(/shutdownVideoPoller/);
   });
 });
