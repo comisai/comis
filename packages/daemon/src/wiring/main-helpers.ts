@@ -607,15 +607,13 @@ export function buildVideoGenBundle(deps: {
  * The post-channels boot-context fields `buildVideoHandlerDeps` reads (mirrors
  * `ImageHandlerBootSlice`).
  */
-type VideoHandlerBootSlice = Pick<BootContext, "videoGenProvider" | "videoGenRateLimiter" | "videoGenCostLimiter" | "videoJobStore" | "videoPoller" | "skillsLogger" | "container"> &
+type VideoHandlerBootSlice = Pick<BootContext, "videoGenProvider" | "videoGenRateLimiter" | "videoGenCostLimiter" | "videoJobStore" | "videoPoller" | "trajectoryRegistry" | "skillsLogger" | "container"> &
   Required<Pick<BootContext, "videoGenConfig" | "adaptersByType" | "workspaceDirs" | "defaultWorkspaceDir" | "persistVideo">>;
 
 /**
  * Build the `videoHandlerDeps` slice of `ApiDispatchDeps` — `undefined` when
- * video generation is disabled (no provider or no rate limiter), else the dep
- * object the video.generate RPC handler consumes. Mirrors
- * `buildImageHandlerDeps`. OBSERVABILITY SCOPE (Phase 188 = logger-only): NO
- * trajectoryRegistry/eventBus is wired (OBS-04 / Phase 192 adds them).
+ * video disabled. Mirrors `buildImageHandlerDeps`. OBS-04 (192): threads
+ * `trajectoryRegistry` (in-turn video.* direct-emit) + `eventBus` off `c`.
  */
 export function buildVideoHandlerDeps(
   c: VideoHandlerBootSlice,
@@ -638,6 +636,8 @@ export function buildVideoHandlerDeps(
     costLimiter: c.videoGenCostLimiter, // SEC-02 (DIVERGENCE 3): pre-submit ceiling
     videoJobStore: c.videoJobStore, // JOB-01: handler inserts a pending row on submit
     videoPoller: c.videoPoller, // JOB-02: hand the job to the background poller
+    trajectoryRegistry: c.trajectoryRegistry, // OBS-04 (192): in-turn video.* direct-emit
+    eventBus: c.container.eventBus, // OBS-03 (192): parity (off-turn cost route = poller)
   };
 }
 

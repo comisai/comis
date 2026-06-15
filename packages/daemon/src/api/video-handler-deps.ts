@@ -8,19 +8,19 @@
  * `api/` handler graph imports it back, so it adds no madge cycle (same reasoning
  * the inline image shape cites; the video shape simply lives here instead).
  *
- * OBSERVABILITY SCOPE (Phase 188 = logger-only): this shape deliberately carries
- * NO `trajectoryRegistry`/`eventBus` field. The video handler's only
- * observability in Phase 188 is structured Pino logger lines (an INFO completion
- * line + an ERROR/WARN with errorKind+hint on every failure branch); it emits NO
- * `video.*` trajectory events and adds NO synthetic `observability:token_usage`
- * row. The eventBus→trajectory→`comis explain` bridge and the synthetic cost
- * route are OBS-04 / OBS-03 — Phase 192, which ADDS the trajectory/eventBus
- * fields here. Omitting them now keeps the deps honest about what the handler
- * uses.
+ * OBSERVABILITY SCOPE: Phase 188 was logger-only; Phase 192 (OBS-04) ADDS the
+ * `trajectoryRegistry` + `eventBus` fields below. The handler's §2.7 logger floor
+ * (an INFO completion line + an ERROR/WARN with errorKind+hint on every failure
+ * branch) is RETAINED; the new fields let it ALSO direct-emit the in-turn
+ * `video.requested`/`video.submitted`/`video.failed` trajectory records (so
+ * `comis explain` reconstructs the turn) and — via the off-turn poller (the
+ * synthetic `observability:token_usage` cost route is OBS-03, Plan 02) — the
+ * cost rollup. Both fields are OPTIONAL (the handler is logger-only when absent).
  *
  * @module
  */
 import type { ComisLogger } from "@comis/infra";
+import type { AppContainer } from "@comis/core";
 
 /** Dependencies the `video.generate` RPC handler consumes. Mirrors the inline
  *  image `imageHandlerDeps` shape, retyped for video, with the DIVERGENCE-3 cost
@@ -74,6 +74,20 @@ export interface VideoHandlerDepsShape {
    *  listPending scan and the insert-failure path is delivered in-memory rather
    *  than orphaned. Narrow shape (only `track`) so the deps stay honest. */
   videoPoller: { track(record: import("@comis/memory").VideoJobRecord): void };
+  /** OBS-04 (Phase 192): the per-session trajectory recorder registry. The
+   *  handler resolves the recorder by `_callerSessionKey` (createVideoObsEmitter)
+   *  and DIRECT-emits the in-turn `video.requested`/`video.submitted`/
+   *  `video.failed` lifecycle records (the image-handlers.ts:210 precedent — no
+   *  eventBus bridge in the daemon RPC context). Optional: `getRecorder?.()`
+   *  no-ops on a boot mode without a registry; a null recorder is skipped (the
+   *  §2.7 logger floor still fires). Read off the BootContext `c.trajectoryRegistry`. */
+  trajectoryRegistry?: import("@comis/observability").SessionTrajectoryHandleRegistry;
+  /** OBS-03 (Phase 192, secondary): the typed event bus. The handler does NOT
+   *  emit the synthetic `observability:token_usage` cost row in-turn (the cost is
+   *  unknown at submit — estimate only); the off-turn POLLER emits it on the
+   *  terminal `done` branch (Plan 02). Threaded here for parity with the image
+   *  handler deps + so the poller wiring reads the same instance. Optional. */
+  eventBus?: AppContainer["eventBus"];
 }
 
 /** Dependencies the `video.status` RPC handler consumes (Phase 189 Plan 03 /

@@ -56,6 +56,7 @@ import {
   tryGetContext,
 } from "@comis/core";
 import { resolveReferenceImage } from "./media-reference-resolver.js";
+import { createVideoObsEmitter } from "./video-obs-emit.js";
 import type { VideoGenInput } from "@comis/core";
 import type { VideoJobRecord } from "@comis/memory";
 import type { MediaApiDeps, RpcHandler } from "./types.js";
@@ -103,7 +104,22 @@ export function createVideoHandlers(
         { agentId, mainProvider: main.providerId, step: "video_resolve" },
         "Video request resolved main provider",
       );
-      // OBS-04 (Phase 192): emit video.requested here.
+      // OBS-04 (Phase 192): construct the trajectory emitter — this fires the
+      // `video.requested` entry record onto the per-session trajectory (resolved
+      // by the dispatcher-injected `_callerSessionKey`). It is trajectory-only +
+      // null-safe: a boot mode without a registry / no session key no-ops (the
+      // §2.7 logger floor below still fires). The off-turn poller emits the
+      // generated/delivered records; the OFFLINE assembler (Plan 02) is the
+      // binding reconstruction oracle. `sessionKey` is also persisted on the row
+      // below so the off-turn poller can resolve the recorder for the completion.
+      const callerSessionKey =
+        typeof rawParams._callerSessionKey === "string" ? rawParams._callerSessionKey : undefined;
+      const obs = createVideoObsEmitter({
+        sessionKey: callerSessionKey,
+        trajectoryRegistry: deps.trajectoryRegistry,
+        agentId,
+        requested: { provider: deps.provider.id, mainProvider: main.providerId },
+      });
 
       // WR-05 precedent: `main.providerId` is the CALLER's provider, resolved
       // per-request for obs/lockstep only; `deps.provider` is the boot-selected
@@ -196,7 +212,10 @@ export function createVideoHandlers(
           },
           "Video generation blocked: per-hour cost ceiling reached",
         );
-        // OBS-04 (Phase 192): emit video.failed{quota_exceeded} here.
+        // OBS-04 (Phase 192): record video.failed{quota_exceeded} on the
+        // trajectory BESIDE the WARN above (the emitter is trajectory-only — the
+        // WARN is the single §2.7 line; no double-log, SEC-02 step unchanged).
+        obs.failed({ errorKind: "quota_exceeded", provider: deps.provider.id });
         return { success: false, error: "Video generation cost ceiling exceeded", hint };
       }
 
@@ -221,7 +240,9 @@ export function createVideoHandlers(
           },
           "Video generation blocked: per-hour count rate limit reached",
         );
-        // OBS-04 (Phase 192): emit video.failed{quota_exceeded} here.
+        // OBS-04 (Phase 192): record video.failed{quota_exceeded} beside the WARN
+        // (trajectory-only — the WARN is the single §2.7 line).
+        obs.failed({ errorKind: "quota_exceeded", provider: deps.provider.id });
         return {
           success: false,
           error: `Rate limit exceeded: max ${deps.config.maxPerHour} videos per hour`,
@@ -404,7 +425,10 @@ export function createVideoHandlers(
           },
           "Video generation submit failed",
         );
-        // OBS-04 (Phase 192): emit video.failed{domainKind} here.
+        // OBS-04 (Phase 192): record video.failed{domainKind} beside the WARN
+        // (trajectory-only — the WARN is the single §2.7 line; the raw provider
+        // message never rides the trajectory payload, only the typed kind).
+        obs.failed({ errorKind: domainKind, provider: deps.provider.id });
         return hint
           ? { success: false, error: submitted.error.message, hint }
           : { success: false, error: submitted.error.message };
@@ -442,6 +466,13 @@ export function createVideoHandlers(
         // scope) so the off-turn poller's stitching contract is explicit (the
         // store maps `?? null`). WARNING-3 / I8 / Pitfall 5.
         traceId,
+        // OBS-04 (Phase 192): persist the formatted session key (the
+        // dispatcher-injected `_callerSessionKey`, captured in-turn at entry) so
+        // the OFF-TURN poller resolves the per-session trajectory recorder
+        // (getRecorder(record.sessionKey)) to stitch the background completion to
+        // this turn. Threaded only when present (the column is nullable — a
+        // unit-test call or a no-session context leaves it NULL → offline-only).
+        ...(callerSessionKey !== undefined ? { sessionKey: callerSessionKey } : {}),
         state: "pending",
         ...(estimatedCostUsd !== undefined ? { estimatedCostUsd } : {}),
         // CR-01: a freshly-submitted job starts at zero delivery attempts.
@@ -495,7 +526,12 @@ export function createVideoHandlers(
         },
         "Video generation submitted (async)",
       );
-      // OBS-04 (Phase 192): emit video.requested here.
+      // OBS-04 (Phase 192): record video.submitted{provider, jobId} on the
+      // trajectory AFTER the row persist + track() + the §2.7 INFO line above
+      // (trajectory-only — the INFO is the §2.7 line). With the entry
+      // video.requested (fired at construction), this is the in-turn record pair
+      // the OFFLINE assembler reads to reconstruct a background-completed turn.
+      obs.submitted({ provider: deps.provider.id, jobId: job.jobId });
 
       // The job handle. A3: validates against the EXISTING loose-record
       // VideoGenerateContract.response (`z.record(z.string(), z.unknown())`) — no
