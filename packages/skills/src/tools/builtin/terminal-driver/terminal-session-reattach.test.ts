@@ -32,6 +32,7 @@ import {
   type SessionDescriptorStorePort,
 } from "./terminal-session-reattach.js";
 import type { SessionDescriptor } from "./terminal-reattach-match.js";
+import * as terminalBarrel from "./index.js";
 
 const DESC: SessionDescriptor = {
   sessionId: "abc",
@@ -158,5 +159,19 @@ describe("rehydrateHandleFromDescriptor — rebuild a running handle (I5 verbati
     const other: SessionDescriptor = { ...DESC, owner: { agentId: "other", sessionKey: "k" } };
     const handle = rehydrateHandleFromDescriptor(other, 0);
     expect(handle.owner).toEqual({ agentId: "other", sessionKey: "k" });
+  });
+});
+
+describe("barrel exports (skills→daemon surface for 165-07)", () => {
+  it("re-exports the DUR-01 re-attach decision + the recover-on-boot seam from index.ts", () => {
+    // The daemon (165-07) consumes reattachDecision/SessionDescriptor + the descriptor-store
+    // port + the recover/persist helpers through the package barrel. RED on pre-patch (index.ts
+    // does not yet re-export terminal-reattach-match.js / terminal-session-reattach.js).
+    expect(typeof (terminalBarrel as Record<string, unknown>).reattachDecision).toBe("function");
+    expect(typeof (terminalBarrel as Record<string, unknown>).serializeDescriptor).toBe("function");
+    expect(typeof (terminalBarrel as Record<string, unknown>).deserializeDescriptor).toBe("function");
+    expect(typeof (terminalBarrel as Record<string, unknown>).recoverSessionDescriptors).toBe("function");
+    expect(typeof (terminalBarrel as Record<string, unknown>).rehydrateHandleFromDescriptor).toBe("function");
+    expect(typeof (terminalBarrel as Record<string, unknown>).buildSessionDescriptor).toBe("function");
   });
 });

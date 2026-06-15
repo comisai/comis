@@ -656,3 +656,103 @@ describe("TerminalEvents — DRIVE-02 promotion signal (terminal:drive_promoted)
     expect(block, "no command field").not.toMatch(/^\s*command[?]?:/m);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 165 DUR-01 (v2.24) — the autonomous-drive RE-ATTACH signal:
+// terminal:drive_reattached.
+//
+// The ONE net-new typed bus event DUR-01 needs (165-06). On a daemon restart the
+// session registry recovers a persisted descriptor whose detached tmux server
+// SURVIVED and re-attaches it as `running` (NOT `lost`) WITHOUT a second create
+// frame (I10); the daemon binds the registry's `onReattached` hook to emit this
+// CONTENT-FREE event so a 40h drive's restart/re-attach is reconstructable via
+// `comis explain` (design §9). It MIRRORS terminal:drive_promoted's shape (the
+// 164 precedent): sessionId/agentId/a typed `reason` enum/timestamp.
+//
+// CRITICAL — the genuinely-gone path does NOT get a new event: it REUSES the
+// EXISTING terminal:session_state(state:"lost") + a content-free unrecoverable
+// reason on the structured log. There is NO `state:"failed"` member (the union is
+// created|running|exited|lost); the user-facing `failed` OUTCOME is Phase-166
+// NOTIFY-01's job. This block ALSO pins that the session_state union is UNCHANGED.
+//
+// CONTENT-FREE BY CONSTRUCTION (I3): sessionId / agentId / `reason:"tmux_alive"` /
+// timestamp ONLY. RED on pre-patch: events-terminal.ts does not declare the key, so
+// the source-introspection layer (esbuild strips bare type annotations) does not find it.
+// ---------------------------------------------------------------------------
+describe("TerminalEvents — DUR-01 re-attach signal (terminal:drive_reattached)", () => {
+  it("declares terminal:drive_reattached on TerminalEvents (source RED on pre-patch)", () => {
+    const src = readFileSync(resolve(here, "./events-terminal.ts"), "utf8");
+    expect(src, "terminal:drive_reattached key must be declared").toMatch(/"terminal:drive_reattached":/);
+  });
+
+  it("the module-doc event list mentions terminal:drive_reattached (source RED on pre-patch)", () => {
+    const src = readFileSync(resolve(here, "./events-terminal.ts"), "utf8");
+    const header = src.slice(0, src.indexOf("export interface TerminalEvents"));
+    expect(header, "the module-doc must mention terminal:drive_reattached").toMatch(/drive_reattached/);
+  });
+
+  it("terminal:drive_reattached delivers sessionId/agentId/reason/timestamp — the re-attach signal (DUR-01)", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["terminal:drive_reattached"] = {
+      sessionId: "sess-9",
+      agentId: "agent-1",
+      reason: "tmux_alive",
+      timestamp: 9,
+    };
+
+    bus.on("terminal:drive_reattached", handler);
+    bus.emit("terminal:drive_reattached", payload);
+
+    expect(handler).toHaveBeenCalledWith(payload);
+    const received = handler.mock.calls[0]![0] as EventMap["terminal:drive_reattached"];
+    expect(received.sessionId).toBe("sess-9");
+    expect(received.agentId).toBe("agent-1");
+    expect(received.reason).toBe("tmux_alive");
+  });
+
+  it("terminal:drive_reattached carries ONLY a content-free key-set — no screen/text/keystroke/payload/command field (I3)", () => {
+    const reattached: EventMap["terminal:drive_reattached"] = {
+      sessionId: "s",
+      agentId: "a",
+      reason: "tmux_alive",
+      timestamp: 0,
+    };
+    expect(Object.keys(reattached).sort()).toEqual(["agentId", "reason", "sessionId", "timestamp"]);
+
+    // Source-block guard (the counts/ids/enums-only pattern). RED on pre-patch (block absent).
+    const src = readFileSync(resolve(here, "./events-terminal.ts"), "utf8");
+    const match = src.match(/"terminal:drive_reattached":\s*\{[\s\S]*?\n\s*\};/);
+    expect(match, "terminal:drive_reattached event block must exist").toBeTruthy();
+    const block = match![0];
+    expect(block, "no screen field").not.toMatch(/^\s*screen[?]?:/m);
+    expect(block, "no raw text field").not.toMatch(/^\s*text[?]?:/m);
+    expect(block, "no raw keystroke field").not.toMatch(/^\s*keystroke[?]?:/m);
+    expect(block, "no raw keys field").not.toMatch(/^\s*keys[?]?:/m);
+    expect(block, "no payload field").not.toMatch(/^\s*payload[?]?:/m);
+    expect(block, "no command field").not.toMatch(/^\s*command[?]?:/m);
+  });
+
+  it("the genuinely-gone path adds NO state:'failed' — the session_state union stays created|running|exited|lost (the type-pin)", () => {
+    // DUR-01 emits the EXISTING state:"lost" for a genuine death, NOT a new union member.
+    // The user-facing `failed` OUTCOME is Phase-166 NOTIFY-01's, derived downstream.
+    const src = readFileSync(resolve(here, "./events-terminal.ts"), "utf8");
+    const match = src.match(/"terminal:session_state":\s*\{[\s\S]*?\n\s*\};/);
+    expect(match, "terminal:session_state block must exist").toBeTruthy();
+    const block = match![0];
+    expect(block, "the state union must NOT gain a 'failed' member").not.toMatch(/"failed"/);
+    expect(block, "the state union is exactly created|running|exited|lost").toMatch(
+      /state:\s*"created"\s*\|\s*"running"\s*\|\s*"exited"\s*\|\s*"lost"/,
+    );
+
+    // The closed TypedEventBus union still rejects an off-union state at the TYPE level —
+    // a bare runtime emit of a valid member proves the union compiles unchanged.
+    const bus = new TypedEventBus();
+    const seen: string[] = [];
+    bus.on("terminal:session_state", (p) => seen.push(p.state));
+    for (const state of ["created", "running", "exited", "lost"] as const) {
+      bus.emit("terminal:session_state", { sessionId: "s", agentId: "a", state, durationMs: 0, timestamp: 0 });
+    }
+    expect(seen).toEqual(["created", "running", "exited", "lost"]);
+  });
+});

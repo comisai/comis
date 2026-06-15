@@ -8,7 +8,7 @@
  * @module
  */
 
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
@@ -18,6 +18,7 @@ import {
   durableDir,
   buildLoadTmux,
   createFileLogger,
+  warnIfDurableTmuxUnavailable,
 } from "./terminal-worker-main.js";
 
 const origData = process.env.COMIS_TERMINAL_DATA_DIR;
@@ -67,5 +68,44 @@ describe("terminal-worker-main helpers", () => {
     expect(typeof loadTmux.spawn).toBe("function");
     // Not invoked here: spawn() would run tmux has-session / new-session (a real
     // server). The construction + shape is what's under test.
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DUR-01 (165-06) §7.1.5 — the durable-vs-fallback WARN. tmux availability is a
+// RUNTIME property (not a config-validation hard-require, the LOCKED decision): a
+// `drive.durable:true` drive on a host with no tmux DEGRADES to a non-durable drive +
+// a logged WARN, and a restart then ends the session `lost` (with the journal
+// preserved — the user-facing `failed` OUTCOME is Phase-166's). The worker logs this
+// at boot when tmux cannot be resolved, so an operator sees WHY a durable drive will
+// not survive a restart. RED on pre-patch: warnIfDurableTmuxUnavailable is not exported.
+// ---------------------------------------------------------------------------
+describe("warnIfDurableTmuxUnavailable — the §7.1.5 durable-vs-fallback WARN (DUR-01)", () => {
+  function makeSpyLogger() {
+    return { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+  }
+
+  it("logs ONE WARN (errorKind:'precondition', step:'tmux_resolve') when tmux is unavailable (tmuxPath undefined)", () => {
+    const logger = makeSpyLogger();
+    warnIfDurableTmuxUnavailable(undefined, logger);
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    const [obj] = logger.warn.mock.calls[0]!;
+    expect((obj as { errorKind?: string }).errorKind).toBe("precondition");
+    expect((obj as { step?: string }).step).toBe("tmux_resolve");
+    // The hint names the degradation: durable→non-durable fallback + a restart ends it `lost`.
+    expect((obj as { hint?: string }).hint, "the hint must explain the fallback").toMatch(
+      /durable|tmux|fallback|lost/i,
+    );
+  });
+
+  it("is SILENT when tmux IS available (a resolved tmuxPath) — no spurious WARN", () => {
+    const logger = makeSpyLogger();
+    warnIfDurableTmuxUnavailable("/usr/bin/tmux", logger);
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it("is content-free + never throws on a degenerate logger", () => {
+    // Best-effort: the WARN must never crash the worker boot.
+    expect(() => warnIfDurableTmuxUnavailable(undefined, { warn: () => { throw new Error("x"); } } as never)).not.toThrow();
   });
 });
