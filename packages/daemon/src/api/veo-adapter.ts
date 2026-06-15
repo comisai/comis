@@ -105,8 +105,14 @@ export function createVeoVideoAdapter(opts: {
     submit(input: VideoGenInput): Promise<Result<VideoGenJob, Error>> {
       return fromPromise(
         (async () => {
+          // WR-03: the PER-REQUEST `input.model` (what the IN-02 handler validated
+          // against, `params.model ?? config.model`) wins over the construction
+          // default so validation and execution AGREE. poll()/fetchResult() key on
+          // the operation NAME (not the model), so the effective model only matters
+          // here at submit + on `job.model` (obs + the persisted row).
+          const effectiveModel = input.model ?? model;
           const op = await ai.models.generateVideos({
-            model,
+            model: effectiveModel,
             prompt: input.prompt,
             // IN-01 (A4): the first-frame image is a TOP-LEVEL generateVideos arg
             // (the SDK Image_2 raw-bytes shape { imageBytes, mimeType }), NOT a
@@ -125,9 +131,12 @@ export function createVeoVideoAdapter(opts: {
           const job: VideoGenJob = {
             jobId: op.name, // op.name is the durable, secret-free jobId (VPORT-03)
             provider: "veo",
-            model,
+            model: effectiveModel, // WR-03: the model that actually rendered
           };
-          opts.logger?.debug({ model, jobId: job.jobId, step: "video.submit" }, "veo: submitted render");
+          opts.logger?.debug(
+            { model: effectiveModel, jobId: job.jobId, step: "video.submit" },
+            "veo: submitted render",
+          );
           return job;
         })(),
       );
@@ -185,14 +194,19 @@ export function createVeoVideoAdapter(opts: {
             throw new VideoGenError(c.hint, c);
           }
 
-          opts.logger?.debug({ model, jobId: job.jobId, step: "video.fetch" }, "veo: downloaded result");
+          // WR-03: the output model reflects what actually rendered — `job.model`
+          // (set at submit from `input.model ?? construction model`; round-tripped
+          // through the persisted row to the off-turn poller) when present, else
+          // the construction default.
+          const outModel = job.model || model;
+          opts.logger?.debug({ model: outModel, jobId: job.jobId, step: "video.fetch" }, "veo: downloaded result");
           // NO costUsd (A4): GenerateVideosResponse has no usage/cost field; the
           // handler's estimate is the actual. Do NOT invent a cost field.
           return {
             buffer,
             mimeType,
             sourceUrl: video.uri,
-            model,
+            model: outModel,
             provider: "veo",
           } satisfies VideoGenOutput;
         })(),

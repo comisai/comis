@@ -206,11 +206,17 @@ export function createGrokVideoAdapter(opts: {
     submit(input: VideoGenInput): Promise<Result<VideoGenJob, Error>> {
       return fromPromise(
         (async () => {
+          // WR-03: the PER-REQUEST `input.model` (what the IN-02 handler validated
+          // against, `params.model ?? config.model`) wins over the construction
+          // default so validation and execution AGREE. poll()/fetchResult() key on
+          // the request_id URL (not the model), so the effective model only matters
+          // here at submit + on `job.model` (obs + the persisted row).
+          const effectiveModel = input.model ?? model;
           const bearer = await resolveBearer();
           const res = await doFetch(`${XAI_VIDEO_BASE}/videos/generations`, {
             method: "POST",
             headers: { "Content-Type": "application/json", Authorization: `Bearer ${bearer}` },
-            body: JSON.stringify(buildGrokBody(input, model)),
+            body: JSON.stringify(buildGrokBody(input, effectiveModel)),
           });
           if (!res.ok) {
             throw new Error(`xai: submit HTTP ${res.status}`); // -> classifyGrokVideoError
@@ -222,9 +228,12 @@ export function createGrokVideoAdapter(opts: {
           const job: VideoGenJob = {
             jobId: request_id, // opaque, secret-free, stable across poll() (VPORT-03)
             provider: "grok",
-            model,
+            model: effectiveModel, // WR-03: the model that actually rendered
           };
-          opts.logger?.debug({ model, jobId: job.jobId, step: "video.submit" }, "grok: submitted render");
+          opts.logger?.debug(
+            { model: effectiveModel, jobId: job.jobId, step: "video.submit" },
+            "grok: submitted render",
+          );
           return job;
         })(),
       );
@@ -285,12 +294,17 @@ export function createGrokVideoAdapter(opts: {
           // GROK-02: reconcile the ACTUAL cost from cost_in_usd_ticks, GUARDED
           // against a spoofed negative/NaN (never a cost-ceiling bypass).
           const costUsd = reconcileTicksToUsd(body.usage?.cost_in_usd_ticks);
-          opts.logger?.debug({ model, jobId: job.jobId, step: "video.fetch" }, "grok: downloaded result");
+          // WR-03: the output model reflects what actually rendered — `job.model`
+          // (set at submit from `input.model ?? construction model`; round-tripped
+          // through the persisted row to the off-turn poller) when present, else
+          // the construction default.
+          const outModel = job.model || model;
+          opts.logger?.debug({ model: outModel, jobId: job.jobId, step: "video.fetch" }, "grok: downloaded result");
           return {
             buffer,
             mimeType: deriveVideoMime(contentType, url),
             sourceUrl: url,
-            model,
+            model: outModel,
             provider: "grok",
             ...(costUsd !== undefined ? { costUsd } : {}),
           } satisfies VideoGenOutput;

@@ -85,15 +85,18 @@ export function createFalVideoAdapter(opts: { apiKey: string; model?: string }):
     submit(input: VideoGenInput): Promise<Result<VideoGenJob, Error>> {
       return fromPromise(
         (async () => {
-          // IN-01 variant-select (Pitfall 4): an explicit opts.model wins (the
-          // operator-named endpoint is authoritative); otherwise a first-frame
+          // IN-01 variant-select (Pitfall 4) + WR-03 model precedence: an explicit
+          // model wins (the operator-named endpoint is authoritative, no swap) —
+          // the PER-REQUEST `input.model` (what the IN-02 handler validated against,
+          // `params.model ?? config.model`) takes priority over the construction
+          // `opts.model` so validation and execution AGREE; otherwise a first-frame
           // referenceImage SWAPS the t2v default to its distinct /image-to-video
           // endpoint, and the absence keeps text-to-video. The chosen endpoint is
           // stored on job.model so poll()/fetchResult() target the SAME endpoint
           // per job (the swap round-trips — the off-turn poller only has the job).
           const isI2V = !!input.referenceImage;
           const endpoint =
-            opts.model ?? (isI2V ? deriveI2VEndpoint(DEFAULT_VIDEO_ENDPOINT) : DEFAULT_VIDEO_ENDPOINT);
+            input.model ?? opts.model ?? (isI2V ? deriveI2VEndpoint(DEFAULT_VIDEO_ENDPOINT) : DEFAULT_VIDEO_ENDPOINT);
           const submitted = await fal.queue.submit(endpoint, { input: buildFalInput(input) });
           const job: VideoGenJob = {
             jobId: submitted.request_id, // opaque, secret-free, stable across poll() (VPORT-03)
