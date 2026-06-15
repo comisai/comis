@@ -260,12 +260,18 @@ export function buildSessionDescriptor(i: DurableCreateInputs): SessionDescripto
 }
 
 /**
- * The recover-on-boot seams the registry hands {@link applyRecoveredSessions} — the
- * registry deps subset it reads (so the registry's call is a single delegated line, not
- * an inlined object literal). `descriptorStore`/`isTmuxAlive` are optional exactly as on
- * the registry deps: ABSENT `descriptorStore` ⇒ a no-op (today's empty-Map-on-boot, I1).
+ * The DUR-01 durability seams the registry bundles as one nested `durability?` dep (so the
+ * registry stays under the optional-field-bloat cap) + hands to {@link applyRecoveredSessions}
+ * (so its recover-on-boot is a single delegated call). All optional: ABSENT `descriptorStore`
+ * ⇒ a no-op (today's empty-Map-on-boot, I1). The hooks are injected (NOT a value-imported bus)
+ * so the registry stays infra-decoupled; the fs-safe descriptor write lives in the daemon impl.
+ *   - `descriptorStore` — persist-at-create + recover-on-boot (165-07's fs impl).
+ *   - `isTmuxAlive` — the `has-session` probe the recover decision + the durable-aware lost gate use.
+ *   - `onReattached` — fired ONCE per re-attach → the daemon's content-free `terminal:drive_reattached`.
+ *   - `onUnrecoverable` — fired per genuinely-gone session → the daemon's EXISTING
+ *     `terminal:session_state(state:"lost")` + a content-free reason (NO `failed` member, Phase-166).
  */
-export interface ApplyRecoveredDeps {
+export interface TerminalDurabilityDeps {
   descriptorStore?: SessionDescriptorStorePort;
   isTmuxAlive?: (name: string) => boolean;
   onReattached?: (info: { sessionId: string; agentId: string }) => void;
@@ -282,12 +288,12 @@ export interface ApplyRecoveredDeps {
  * `descriptorStore`-absent case is a no-op (I1). The BULK lives here (not the registry) to
  * protect the 800-line cap (Pitfall 5); the registry's recover-on-boot is ONE call.
  *
- * @param deps - The registry deps subset (descriptorStore + isTmuxAlive + the two hooks).
+ * @param deps - The durability seams (descriptorStore + isTmuxAlive + the two hooks).
  * @param sessions - The registry's live session map (a recovered live session is set here).
  * @param nowMs - The registry's injected clock (stamps the rehydrated handle's lastActivity).
  */
 export function applyRecoveredSessions(
-  deps: ApplyRecoveredDeps,
+  deps: TerminalDurabilityDeps,
   sessions: Map<string, SessionHandle>,
   nowMs: () => number,
 ): void {

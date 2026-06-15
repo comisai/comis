@@ -60,6 +60,7 @@ import {
   markRunningSessionsLost as durableMarkLost,
   staysRecoverable as durableStaysRecoverable,
   type SessionDescriptorStorePort,
+  type TerminalDurabilityDeps,
 } from "./terminal-session-reattach.js";
 import { waitReplyTimeoutMs } from "./terminal-settle.js";
 import { mapWaitReply, degradedWaitResult, type WaitResult } from "./terminal-wait-reply.js";
@@ -155,14 +156,13 @@ export interface TerminalSessionRegistryDeps extends ReaperCaps {
   allocateWorkspace?: (sessionId: string) => string;
   /** Teardown paired with {@link allocateWorkspace}; default {@link cleanupSessionWorkspace} (`rm -rf` the throwaway mkdtemp dir on kill/evict/reap). A daemon rooting the workspace in the agent's OWN persistent workspace MUST inject a NO-OP so the agent's workspace (skills/memory/milestone work) is NOT deleted on session end. */
   cleanupWorkspace?: (workspace: string) => void;
-  /** DUR-01 (165-06): the durable descriptor store (daemon-injected) — present ⇒ recover-on-boot + persist-at-create; ABSENT ⇒ today's wiring (I1). The fs-safe write lives in the daemon impl. */
-  descriptorStore?: SessionDescriptorStorePort;
-  /** DUR-01 (165-06): the `has-session` liveness probe the recover decision + durable-aware lost gate consult. ABSENT/falsy ⇒ the lost flip (safe default, I1). */
-  isTmuxAlive?: (name: string) => boolean;
-  /** DUR-01 (165-06): fired ONCE per recover re-attach → the daemon's content-free `terminal:drive_reattached` (ids only, I3). Injected (infra-decoupled). */
-  onReattached?: (info: { sessionId: string; agentId: string }) => void;
-  /** DUR-01 (165-06): fired per genuinely-gone durable session on recover → the daemon's EXISTING `terminal:session_state(state:"lost")` + this content-free reason (§2.7 `errorKind`); NO `failed` member (Phase-166's outcome); the journal is preserved (not removed here). */
-  onUnrecoverable?: (info: { sessionId: string; agentId: string; reason: string; errorKind: string }) => void;
+  /**
+   * DUR-01 (165-06): the durability seams (descriptor store + `has-session` probe + the two
+   * content-free obs hooks), bundled as ONE nested object so the registry deps stay under the
+   * optional-field-bloat cap + the DUR-01 wiring is cohesive. ABSENT (or absent `descriptorStore`)
+   * ⇒ today's wiring (no recover/persist — byte-identical, I1). See {@link TerminalDurabilityDeps}.
+   */
+  durability?: TerminalDurabilityDeps;
 }
 
 // ---------------------------------------------------------------------------
@@ -372,9 +372,8 @@ export function createTerminalSessionRegistry(
     }
   }
 
-  // DUR-01 / Q4 — bind the sibling's durable-lost gate (used at BOTH lost sites: the worker-close
-  // flip + the crash-flushed create waiter) to the probe (SAFE default "lost" if unconfirmable, I1).
-  const isTmuxAliveOrDead = deps.isTmuxAlive ?? ((): boolean => false);
+  // DUR-01 / Q4 — bind the sibling's durable-lost gate (BOTH lost sites: the worker-close flip + the crash-flushed create waiter) to the probe (SAFE default "lost" if unconfirmable, I1).
+  const isTmuxAliveOrDead = deps.durability?.isTmuxAlive ?? ((): boolean => false);
   const staysRecoverable = (handle: SessionHandle): boolean => durableStaysRecoverable(handle, isTmuxAliveOrDead);
   const markRunningSessionsLost = (): void => durableMarkLost(sessions, isTmuxAliveOrDead);
 
@@ -508,8 +507,8 @@ export function createTerminalSessionRegistry(
     sessions.set(sessionId, handle);
 
     // DUR-01: persist the durable descriptor at CREATE-time, BEFORE the create frame (Pitfall 6 — no orphan window); non-durable persists nothing (I1).
-    if (req.durable && deps.descriptorStore !== undefined) {
-      deps.descriptorStore.persist(
+    if (req.durable && deps.durability?.descriptorStore !== undefined) {
+      deps.durability.descriptorStore.persist(
         buildSessionDescriptor({ sessionId, tmuxName: req.tmuxName, allowId: req.allowId, owner, cols: req.cols, rows: req.rows, createdAt, scope: req.scope }),
       );
     }
@@ -540,9 +539,9 @@ export function createTerminalSessionRegistry(
     pending.set(`${sessionId}:${createFrame.requestId}`, (reply) => {
       if (reply.ok) return; // backend spawned — leave the session running.
       const h = sessions.get(sessionId);
-      // DUR-01 / Q4: a worker CRASH flushes this waiter with a synthetic `ok:false`. A durable
-      // session whose tmux is STILL alive is NOT a spawn failure → stays recoverable (I10); a
-      // real spawn failure leaves tmux dead ⇒ probe false ⇒ DO flip + fire onSpawnFailed.
+      // DUR-01 / Q4: a worker CRASH flushes this waiter with a synthetic `ok:false`; a durable session
+      // whose tmux is STILL alive is NOT a spawn failure → stays recoverable (I10). A real spawn
+      // failure leaves tmux dead ⇒ probe false ⇒ DO flip + fire onSpawnFailed.
       if (h !== undefined && h.status === "running" && staysRecoverable(h)) return;
       if (h !== undefined && h.status === "running") {
         h.status = "lost";
@@ -794,7 +793,7 @@ export function createTerminalSessionRegistry(
   }
 
   // DUR-01 recover-on-boot: re-attach durable sessions whose tmux survived a restart (sibling-owned; no-op without a store, I1).
-  applyRecoveredSessions(deps, sessions, nowMs);
+  if (deps.durability !== undefined) applyRecoveredSessions(deps.durability, sessions, nowMs);
 
   return { create, read, status, sendText, sendKey, resize, wait, get, list, kill, evict, size, cleanup };
 }

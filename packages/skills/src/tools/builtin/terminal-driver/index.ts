@@ -246,7 +246,7 @@ export {
   type SessionDescriptorStorePort,
   type RecoveredAction,
   type DurableCreateInputs,
-  type ApplyRecoveredDeps,
+  type TerminalDurabilityDeps,
 } from "./terminal-session-reattach.js";
 
 // P5 124-05 (spec §2.3, TR-11): the transition-only in-worker attention emitter — the

@@ -121,7 +121,7 @@ export function warnIfDurableTmuxUnavailable(tmuxPath: string | undefined, logge
   try {
     logger.warn(
       {
-        errorKind: "precondition",
+        errorKind: "precondition" as const,
         step: "tmux_resolve",
         hint: "durable requested but tmux unavailable; falling back non-durable; a restart then ends the session `lost` with the journal preserved (the user-facing `failed` outcome is derived in Phase 166)",
       },

@@ -2081,7 +2081,7 @@ describe("createTerminalSessionRegistry — DUR-01 recover-on-boot re-attach", (
     const fake = makeFakeWorker();
     const store = fakeDescriptorStore([durableDescriptor()]);
     const registry = createTerminalSessionRegistry(
-      baseDeps(() => fake.child, { descriptorStore: store, isTmuxAlive: (n) => n === "comis-old-sess" }),
+      baseDeps(() => fake.child, { durability: { descriptorStore: store, isTmuxAlive: (n) => n === "comis-old-sess" } }),
     );
 
     // The recovered session is visible + running under its ORIGINAL owner (identity verbatim, I5).
@@ -2104,9 +2104,11 @@ describe("createTerminalSessionRegistry — DUR-01 recover-on-boot re-attach", (
     const onUnrecoverable = vi.fn();
     const registry = createTerminalSessionRegistry(
       baseDeps(() => fake.child, {
-        descriptorStore: store,
-        isTmuxAlive: () => false, // the tmux session did NOT survive — genuinely gone
-        onUnrecoverable,
+        durability: {
+          descriptorStore: store,
+          isTmuxAlive: () => false, // the tmux session did NOT survive — genuinely gone
+          onUnrecoverable,
+        },
       }),
     );
 
@@ -2141,9 +2143,7 @@ describe("createTerminalSessionRegistry — DUR-01 recover-on-boot re-attach", (
     const onReattached = vi.fn();
     createTerminalSessionRegistry(
       baseDeps(() => fake.child, {
-        descriptorStore: store,
-        isTmuxAlive: () => true,
-        onReattached,
+        durability: { descriptorStore: store, isTmuxAlive: () => true, onReattached },
       }),
     );
 
@@ -2161,7 +2161,7 @@ describe("createTerminalSessionRegistry — DUR-01 recover-on-boot re-attach", (
     const onReattached = vi.fn();
     const onUnrecoverable = vi.fn();
     const registry = createTerminalSessionRegistry(
-      baseDeps(() => fake.child, { descriptorStore: store, isTmuxAlive: () => true, onReattached, onUnrecoverable }),
+      baseDeps(() => fake.child, { durability: { descriptorStore: store, isTmuxAlive: () => true, onReattached, onUnrecoverable } }),
     );
     expect(registry.get("nd", DURABLE_OWNER)).toBeUndefined();
     expect(onReattached).not.toHaveBeenCalled();
@@ -2179,7 +2179,7 @@ describe("createTerminalSessionRegistry — DUR-01 recover-on-boot re-attach", (
     const fake = makeFakeWorker();
     const store = fakeDescriptorStore();
     const registry = createTerminalSessionRegistry(
-      baseDeps(() => fake.child, { descriptorStore: store }),
+      baseDeps(() => fake.child, { durability: { descriptorStore: store } }),
     );
 
     await registry.create(
@@ -2199,7 +2199,7 @@ describe("createTerminalSessionRegistry — DUR-01 recover-on-boot re-attach", (
   it("I1: create does NOT persist a descriptor for a NON-durable session (today's spawn floor unchanged)", async () => {
     const fake = makeFakeWorker();
     const store = fakeDescriptorStore();
-    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, { descriptorStore: store }));
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, { durability: { descriptorStore: store } }));
     await registry.create({ allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }, OWNER);
     expect(store.persist).not.toHaveBeenCalled();
   });
@@ -2210,7 +2210,7 @@ describe("createTerminalSessionRegistry — DUR-01 durable-aware markRunningSess
     const fake = makeFakeWorker();
     const store = fakeDescriptorStore();
     const registry = createTerminalSessionRegistry(
-      baseDeps(() => fake.child, { descriptorStore: store, isTmuxAlive: (n) => n === "comis-x" }),
+      baseDeps(() => fake.child, { durability: { descriptorStore: store, isTmuxAlive: (n) => n === "comis-x" } }),
     );
     const { sessionId } = await registry.create(
       { allowId: "claude-drive", bin: "/usr/bin/claude", argv: [], cols: 80, rows: 24, durable: true, tmuxName: "comis-x" },
@@ -2227,7 +2227,7 @@ describe("createTerminalSessionRegistry — DUR-01 durable-aware markRunningSess
     const fake = makeFakeWorker();
     const store = fakeDescriptorStore();
     const registry = createTerminalSessionRegistry(
-      baseDeps(() => fake.child, { descriptorStore: store, isTmuxAlive: () => false }),
+      baseDeps(() => fake.child, { durability: { descriptorStore: store, isTmuxAlive: () => false } }),
     );
     const { sessionId } = await registry.create(
       { allowId: "claude-drive", bin: "/usr/bin/claude", argv: [], cols: 80, rows: 24, durable: true, tmuxName: "comis-gone" },
@@ -2242,7 +2242,7 @@ describe("createTerminalSessionRegistry — DUR-01 durable-aware markRunningSess
   it("a NON-durable spawn session keeps today's 'lost' flip on a worker close (I1 — floor unchanged)", async () => {
     const fake = makeFakeWorker();
     const registry = createTerminalSessionRegistry(
-      baseDeps(() => fake.child, { isTmuxAlive: () => true }), // even with a live probe, a non-durable session is lost
+      baseDeps(() => fake.child, { durability: { isTmuxAlive: () => true } }), // even with a live probe, a non-durable session is lost
     );
     const { sessionId } = await registry.create({ allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }, OWNER);
 
