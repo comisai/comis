@@ -123,6 +123,40 @@ describe("VideoJobStore", () => {
   });
 
   // -----------------------------------------------------------------------
+  // session_key column (OBS-04 / Phase 192) — the off-turn recorder fold key
+  // -----------------------------------------------------------------------
+
+  describe("sessionKey column (OBS-04)", () => {
+    it("round-trips a sessionKey through insert/get/listPending (the off-turn recorder key)", async () => {
+      const ins = await store.insert(
+        makeRecord({ jobId: "job-sk", agentId: "alpha", sessionKey: "default:u1:telegram:c1" }),
+      );
+      expect(ins.ok).toBe(true);
+
+      const got = await store.get("job-sk", "alpha");
+      expect(got.ok).toBe(true);
+      if (!got.ok || !got.value) return;
+      expect(got.value.sessionKey).toBe("default:u1:telegram:c1");
+
+      // Also visible on the poller's boot-resume scan (listPending) so the
+      // off-turn poller can resolve getRecorder(record.sessionKey).
+      const pending = await store.listPending();
+      expect(pending.ok).toBe(true);
+      if (!pending.ok) return;
+      const row = pending.value.find((j) => j.jobId === "job-sk");
+      expect(row?.sessionKey).toBe("default:u1:telegram:c1");
+    });
+
+    it("round-trips an absent sessionKey as undefined (nullable column; old rows are NULL)", async () => {
+      await store.insert(makeRecord({ jobId: "job-no-sk", agentId: "alpha", sessionKey: undefined }));
+      const got = await store.get("job-no-sk", "alpha");
+      expect(got.ok).toBe(true);
+      if (!got.ok || !got.value) return;
+      expect(got.value.sessionKey).toBeUndefined();
+    });
+  });
+
+  // -----------------------------------------------------------------------
   // markDone (JOB-02)
   // -----------------------------------------------------------------------
 
@@ -354,6 +388,45 @@ describe("ensureVideoJobTable (video_jobs DDL)", () => {
     const names = indexes.map((i) => i.name);
     expect(names).toContain("idx_video_jobs_pending");
     expect(names).toContain("idx_video_jobs_agent");
+  });
+
+  // OBS-04 (Phase 192): the new session_key column. A fresh db gets it in the
+  // CREATE; a db that ran a PRIOR v2.24 build (table without session_key) gets it
+  // via the idempotent, PRAGMA-guarded ALTER. Both converge, re-run-safe.
+  it("includes a session_key column on a fresh db (OBS-04)", () => {
+    ensureVideoJobTable(db);
+    const cols = db.prepare("PRAGMA table_info(video_jobs)").all() as Array<{ name: string }>;
+    expect(cols.map((c) => c.name)).toContain("session_key");
+  });
+
+  it("ADDs session_key to a prior-build table that lacks it (the idempotent forward-only migration)", () => {
+    // Simulate a daemon that ran a prior v2.24 build: a video_jobs table WITHOUT
+    // the session_key column (the 189 shape).
+    db.exec(`
+      CREATE TABLE video_jobs (
+        job_id TEXT PRIMARY KEY, provider TEXT NOT NULL, model TEXT, agent_id TEXT NOT NULL,
+        channel_type TEXT, channel_id TEXT, trace_id TEXT, state TEXT NOT NULL,
+        estimated_cost_usd REAL, actual_cost_usd REAL, media_path TEXT, progress REAL,
+        last_error TEXT, deliver_attempts INTEGER NOT NULL DEFAULT 0,
+        submitted_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL
+      )
+    `);
+    const before = (db.prepare("PRAGMA table_info(video_jobs)").all() as Array<{ name: string }>).map((c) => c.name);
+    expect(before).not.toContain("session_key");
+
+    // The migration adds the column (CREATE TABLE IF NOT EXISTS is a no-op on the
+    // existing table, so only the ALTER closes the gap).
+    ensureVideoJobTable(db);
+    const after = (db.prepare("PRAGMA table_info(video_jobs)").all() as Array<{ name: string }>).map((c) => c.name);
+    expect(after).toContain("session_key");
+
+    // Idempotent: re-running does not throw and does not add the column twice
+    // (the PRAGMA guard skips the ALTER once the column is present).
+    expect(() => ensureVideoJobTable(db)).not.toThrow();
+    const afterTwice = (db.prepare("PRAGMA table_info(video_jobs)").all() as Array<{ name: string }>).filter(
+      (c) => c.name === "session_key",
+    );
+    expect(afterTwice).toHaveLength(1);
   });
 
   it("initSchema wires the video_jobs table on the boot path", () => {

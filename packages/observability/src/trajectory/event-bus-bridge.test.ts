@@ -769,6 +769,34 @@ describe("attachTrajectoryToEventBus -- vision analysis (VIS-04, append-only)", 
     // The SemVer-frozen image.* mapping is STILL present (not renamed by the append).
     expect(TRAJECTORY_BRIDGE_MAPPING["image:generated"]).toBe("image.generated");
   });
+
+  // OBS-04 (Phase 192): video-generation lifecycle bridge mapping. The daemon
+  // video RPC handler + the off-turn background poller DIRECT-emit these via the
+  // per-session recorder (no bus bridge in the daemon RPC/poller context — the
+  // image.*/media.vision.* precedent); the mapping is declared for arch-closure +
+  // a future bus emitter. APPEND-ONLY beside image.*/media.vision.* (Pitfall 8 —
+  // never a rename, which would trip the bridge-entry-count guard + web codegen).
+  it("OBS-04: all five video:* events are trajectory-mapped (arch closure); the +5 rows are exactly these", () => {
+    expect(TRAJECTORY_BRIDGE_MAPPING["video:requested"]).toBe("video.requested");
+    expect(TRAJECTORY_BRIDGE_MAPPING["video:submitted"]).toBe("video.submitted");
+    expect(TRAJECTORY_BRIDGE_MAPPING["video:generated"]).toBe("video.generated");
+    expect(TRAJECTORY_BRIDGE_MAPPING["video:delivered"]).toBe("video.delivered");
+    expect(TRAJECTORY_BRIDGE_MAPPING["video:failed"]).toBe("video.failed");
+    // The 5 trajectory-type literals are present in the closed tuple (append-only).
+    for (const t of [
+      "video.requested",
+      "video.submitted",
+      "video.generated",
+      "video.delivered",
+      "video.failed",
+    ]) {
+      expect((TRAJECTORY_EVENT_TYPES as readonly string[]).includes(t)).toBe(true);
+    }
+    // The SemVer-frozen image.*/media.vision.* mappings are STILL present (the
+    // video append renamed nothing — Pitfall 8).
+    expect(TRAJECTORY_BRIDGE_MAPPING["image:generated"]).toBe("image.generated");
+    expect(TRAJECTORY_BRIDGE_MAPPING["media.vision:completed"]).toBe("media.vision.completed");
+  });
 });
 
 describe("attachTrajectoryToEventBus -- unsubscribe + filter", () => {
@@ -1352,6 +1380,37 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       path: "main-vision",
       provider: "anthropic",
       mainProvider: "anthropic",
+      timestamp: 0,
+    },
+    // OBS-04 (Phase 192): video-generation lifecycle — the envelope-only
+    // correlation invariant must hold for them too (no agentId/sessionKey leak).
+    "video:requested": {
+      provider: "veo",
+      mainProvider: "google",
+      timestamp: 0,
+    },
+    "video:submitted": {
+      provider: "veo",
+      jobId: "veo-op-123",
+      timestamp: 0,
+    },
+    "video:generated": {
+      provider: "veo",
+      model: "veo-3.1",
+      costUsd: 1.2,
+      sizeBytes: 9_000_000,
+      durationSecs: 8,
+      outcome: "ok",
+      timestamp: 0,
+    },
+    "video:delivered": {
+      channelType: "telegram",
+      delivered: true,
+      timestamp: 0,
+    },
+    "video:failed": {
+      errorKind: "content_blocked",
+      provider: "veo",
       timestamp: 0,
     },
   };
@@ -2969,7 +3028,7 @@ describe("attachTrajectoryToEventBus -- dedup events", () => {
 // ---------------------------------------------------------------------------
 
 describe("health:budget_exceeded entry (bridge entry count guard)", () => {
-  it("bridge entry count is exactly 73 (+2 D3 breaker + 1 D7 offload Phase 151; +1 session:summary Phase 152; +1 context:budget_computed W2; +1 execution:tool_schema_unsupported Phase 175; +2 OBS-01 script signals Phase 180; +2 RECALL-01 memory:recalled/reranked; +1 GENQ-01 memory:generation_quality; +4 OBS-04 image:* Phase 186; +3 media.vision:* VIS-04 Phase 187)", () => {
+  it("bridge entry count is exactly 78 (+2 D3 breaker + 1 D7 offload Phase 151; +1 session:summary Phase 152; +1 context:budget_computed W2; +1 execution:tool_schema_unsupported Phase 175; +2 OBS-01 script signals Phase 180; +2 RECALL-01 memory:recalled/reranked; +1 GENQ-01 memory:generation_quality; +4 OBS-04 image:* Phase 186; +3 media.vision:* VIS-04 Phase 187; +5 video:* OBS-04 Phase 192)", () => {
     // 55 + tool:breaker_opened + tool:breaker_reset (D3) + tool:result_offloaded (D7)
     // + session:summary (F2/D5, Phase 152)
     // + execution:tool_schema_unsupported (GBNF-02, Phase 175 Plan 05)
@@ -2979,7 +3038,9 @@ describe("health:budget_exceeded entry (bridge entry count guard)", () => {
     // + image:requested/generated/delivered/failed (OBS-04, Phase 186 Plan 03)
     // + media.vision:requested/completed/failed (VIS-04, Phase 187 Plan 03 —
     //   APPEND-ONLY, the image.* tuple is untouched; Pitfall 5).
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(73);
+    // + video:requested/submitted/generated/delivered/failed (OBS-04, Phase 192
+    //   Plan 01 — APPEND-ONLY beside image.*/media.vision.*; Pitfall 8).
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(78);
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {
