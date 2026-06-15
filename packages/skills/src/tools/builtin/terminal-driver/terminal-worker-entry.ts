@@ -682,8 +682,8 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
    */
   async function handleStatus(frame: TerminalRequestFrame): Promise<WorkerStatusPerception> {
     const state = sessions.get(String(frame.params["sessionId"] ?? frame.sessionId));
-    // Absent session → gone (`exited`, the safe direction). Else classify the live grid.
-    if (state === undefined) return { state: "exited", cursorParked: false, screenDiffEmpty: true, interactions: 0 };
+    // Absent session → gone (`exited`, the safe direction). CLASS-02 confidence+reason stay TOTAL here too (an absent session IS exited; mirrors notFoundStatus — never an undefined field). Else classify the live grid.
+    if (state === undefined) return { state: "exited", cursorParked: false, screenDiffEmpty: true, interactions: 0, confidence: "high", reason: "exited" };
     return statusReplyFromState({ state, settled: true, nowMs, stuckMs });
   }
 
