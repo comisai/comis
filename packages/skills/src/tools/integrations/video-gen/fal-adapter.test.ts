@@ -223,6 +223,43 @@ describe("fetchResult", () => {
     expect(arrayBuffer).not.toHaveBeenCalled();
   });
 
+  // WR-06: the delivered mimeType must reflect the actual CDN content-type, not
+  // a hard-coded video/mp4, so non-mp4 outputs are not mislabeled.
+  it("WR-06: a video/webm content-type yields a video/webm mimeType", async () => {
+    falMock.queue.result.mockResolvedValueOnce({
+      data: { video: { url: "https://cdn.fal.ai/out.webm" } },
+      requestId: "req-webm",
+    });
+    const restore = stubFetch(Buffer.from("webm-bytes"), { "content-type": "video/webm" });
+    const adapter = createFalVideoAdapter({ apiKey: "k" });
+
+    const res = await adapter.fetchResult({ jobId: "req-webm", provider: "fal", model: "m" });
+    restore();
+
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.value.mimeType).toBe("video/webm");
+    }
+  });
+
+  // WR-06: with no content-type header the mimeType falls back to video/mp4.
+  it("WR-06: falls back to video/mp4 when no content-type header is present", async () => {
+    falMock.queue.result.mockResolvedValueOnce({
+      data: { video: { url: "https://cdn.fal.ai/out.mp4" } },
+      requestId: "req-nomime",
+    });
+    const restore = stubFetch(Buffer.from("mp4-bytes")); // no headers
+    const adapter = createFalVideoAdapter({ apiKey: "k" });
+
+    const res = await adapter.fetchResult({ jobId: "req-nomime", provider: "fal", model: "m" });
+    restore();
+
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.value.mimeType).toBe("video/mp4");
+    }
+  });
+
   // WR-01: an already-aborted signal must reject the download (respect the
   // operator deadline on a hung CDN), threaded from execute()'s runOpts.signal.
   it("WR-01: an aborted signal rejects the download", async () => {

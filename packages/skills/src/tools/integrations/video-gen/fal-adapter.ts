@@ -103,10 +103,14 @@ export function createFalVideoAdapter(opts: { apiKey: string; model?: string }):
           if (!url) {
             throw new Error("fal: COMPLETED with no video.url"); // -> empty_response (FAL-02)
           }
-          const buffer = await downloadVideoBytes(url, fetchOpts);
+          const { buffer, contentType } = await downloadVideoBytes(url, fetchOpts);
           return {
             buffer,
-            mimeType: "video/mp4",
+            // WR-06: derive the MIME from the CDN content-type (or the URL
+            // extension), falling back to mp4 — do NOT hard-code video/mp4 (a
+            // webm/mov output would otherwise be mislabeled, and extForMime in
+            // the handler would pick the wrong filename extension).
+            mimeType: deriveVideoMime(contentType, url),
             sourceUrl: url,
             model: endpoint,
             provider: "fal",
@@ -177,11 +181,15 @@ export function createFalVideoAdapter(opts: { apiKey: string; model?: string }):
  * streamed byte cap. Phase 190's Veo/Grok adapters each fetch their own provider
  * URL — they should follow this same bounded-download shape.
  *
+ * @returns the downloaded bytes plus the CDN `content-type` (for WR-06 MIME).
  * @throws on a non-2xx status (CR-01), an empty body, an over-cap body (WR-01),
  *   or an aborted signal — all caught by `fromPromise` at the call site and
  *   classified by `classifyFalVideoError` into a typed `VideoGenError`.
  */
-async function downloadVideoBytes(url: string, opts?: VideoFetchResultOpts): Promise<Buffer> {
+async function downloadVideoBytes(
+  url: string,
+  opts?: VideoFetchResultOpts,
+): Promise<{ buffer: Buffer; contentType: string | null }> {
   const maxBytes = opts?.maxBytes ?? DEFAULT_DOWNLOAD_MAX_BYTES;
   // WR-01: honor the caller's deadline signal; else a hard fallback timeout so a
   // hung CDN cannot block forever.
@@ -237,7 +245,32 @@ async function downloadVideoBytes(url: string, opts?: VideoFetchResultOpts): Pro
   if (buffer.byteLength === 0) {
     throw new Error("fal: video.url returned an empty body");
   }
-  return buffer;
+  return { buffer, contentType: response.headers.get("content-type") };
+}
+
+/** Known video MIME types for the URL-extension fallback (WR-06). */
+const VIDEO_EXT_MIME: Record<string, string> = {
+  mp4: "video/mp4",
+  webm: "video/webm",
+  mov: "video/quicktime",
+};
+
+/**
+ * WR-06: derive the output MIME from the CDN `content-type` header when it is a
+ * `video/*` type, else from the URL path extension, else fall back to mp4. A
+ * non-video content-type (e.g. `application/octet-stream`) is ignored in favor
+ * of the extension/default so a generic CDN type does not mislabel the bytes.
+ */
+function deriveVideoMime(contentType: string | null, url: string): string {
+  const ct = contentType?.split(";")[0]?.trim().toLowerCase();
+  if (ct && ct.startsWith("video/")) return ct;
+  try {
+    const ext = new URL(url).pathname.split(".").pop()?.toLowerCase();
+    if (ext && VIDEO_EXT_MIME[ext]) return VIDEO_EXT_MIME[ext];
+  } catch {
+    // Malformed URL — fall through to the default.
+  }
+  return "video/mp4";
 }
 
 /** Map a thrown error to a typed `VideoGenError` Result via `classifyFalVideoError`. */
