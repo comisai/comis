@@ -229,8 +229,22 @@ For per-provider setup, model defaults, and configuration, see the [Media & Voic
     | `audio` | boolean | No | Generate audio when the backend supports it (raises the cost estimate) |
     | `negative_prompt` | string | No | What to avoid (provider-dependent) |
     | `seed` | number | No | Deterministic seed (provider-dependent) |
-    | `image_url` | string | No | A workspace file path, URL, or data-URI of a reference image for image-to-video. SSRF-guarded + workspace-confined (full image-to-video variant selection lands in a later phase; the security floor is enforced now). |
+    | `image_url` | string | No | A workspace file path, URL, or data-URI of a source image for **image-to-video**. When present, the tool renders an image-to-video clip on backends that support it -- **FAL** swaps to its image-to-video endpoint, and **Veo**/**Grok** add the source image to the same model. SSRF-guarded + workspace-confined. Omit for text-to-video. |
     | `model` | string | No | Override the backend's default video model/endpoint (e.g. `fal-ai/veo3.1/fast`). Omit to use the default. |
+
+    **Per-backend options (validated against the active backend).** The clip-shape params are validated against the **active backend's capability matrix** *before* the render is submitted: an unsupported value (a resolution the backend cannot produce, a duration outside its range, or `image_url` on a text-to-video-only model) is rejected up front with a hint listing the valid set for the current backend -- it is never silently routed to a wrong value or surfaced as a provider error. The concrete per-backend options today are:
+
+    | Backend | Durations | Resolutions | Audio | Image-to-video |
+    |---------|-----------|-------------|-------|----------------|
+    | **FAL** (`fal-ai/veo3.1/fast`) | `4` / `6` / `8` s (snapped to the nearest) | `720p` / `1080p` / `4k` | yes | yes (swaps to the FAL image-to-video endpoint) |
+    | **Veo** (`veo-3.0-fast-generate-001`) | `4` / `6` / `8` s (snapped) | `720p` / `1080p` / `4k` (`1080p`/`4k` require an `8` s duration) | yes | yes |
+    | **Grok** (`grok-imagine-video`) | `1`-`15` s (clamped) | `480p` / `720p` only | no | yes |
+
+    Because the active backend follows the agent's main provider (or `integrations.media.videoGeneration.provider`), the `video_generate` tool **description the agent sees is built at daemon startup from the active backend's real options** -- so the agent is told the active provider's durations/resolutions/aspect ratios and whether image-to-video is supported up front, rather than a static superset. Changing `provider` therefore needs a daemon restart for the description to refresh (the same boot-bound contract as provider/credential selection).
+
+    <Note>
+    Image-to-video currently takes a **single** source image (`image_url`). Supplying multiple reference images (e.g. distinct first-frame / last-frame / style-reference roles) is a planned follow-up and is not yet available.
+    </Note>
 
     **Cost ceiling (estimate-first).** Video is dollars-per-clip and is **already rendering once submitted**, so unlike image generation the per-agent **USD** ceiling, `integrations.media.videoGeneration.maxCostPerHourUsd`, is gated on a **worst-case pre-submit estimate** (duration x per-second rate, with audio/4k as the upper bound): if the estimate would push the agent's accumulated hourly spend over the ceiling, the request is blocked with `errorKind: quota_exceeded` (and a hint naming the key) **before** the provider is called. The `maxPerHour` count limit is retained and orthogonal. Unset means no cost ceiling.
 
