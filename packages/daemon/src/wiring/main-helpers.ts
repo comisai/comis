@@ -421,23 +421,19 @@ export function buildImageHandlerDeps(
   };
 }
 
-/** Raised persistence cap for video (DEL-01) — clips are far larger than images,
- *  so override the 50 MB media-persistence default. 200 MB comfortably holds a
- *  multi-minute 1080p mp4 while still bounding a runaway download. */
+/** Raised persistence cap for video (DEL-01): 200 MB (vs the 50 MB image
+ *  default) holds a multi-minute 1080p mp4 while bounding a runaway download. */
 const VIDEO_PERSIST_MAX_BYTES = 200 * 1024 * 1024;
 
 /**
  * WR-06: narrow a live channel adapter to its attachment-send capability at
  * RUNTIME. `channelAdaptersRef` is typed `Map<string, DeliveryAdapter>` (the
- * delivery queue only needs `sendMessage`), but the runtime entries are the FULL
- * channel adapters — some of which expose `sendAttachment`, some of which (IRC)
- * do not. Rather than a blind `as unknown as Pick<ChannelPort,"sendAttachment">`
- * double-cast (which asserts a capability the static type can't see and silently
- * passes a non-attaching adapter to the poller), check `sendAttachment` is a
- * function and surface `undefined` otherwise. The poller's IRC-degrade branch
- * then triggers on a typed `undefined`, not just a defensive call-site guard.
- * The single `as` is the runtime-verified narrowing of the structural-superset
- * channel adapter; it is sound because the predicate proves the method exists.
+ * delivery queue needs only `sendMessage`), but the runtime entries are the FULL
+ * channel adapters — some expose `sendAttachment`, some (IRC) do not. A runtime
+ * `typeof sendAttachment === "function"` check (not a blind double-cast) surfaces
+ * `undefined` for a non-attaching adapter, so the poller's IRC-degrade branch
+ * triggers on a typed `undefined`. The single `as` is sound — the predicate
+ * proves the method exists.
  */
 function resolveAttachmentAdapter(
   adapter: DeliveryAdapter | undefined,
@@ -454,9 +450,7 @@ function resolveAttachmentAdapter(
 /**
  * Build the video-generation bundle (lazy boot selector + boot probe + rate
  * limiter + cost limiter + per-agent persist getter + config). Mirrors
- * `buildImageGenBundle`. Extracted from `daemon.ts` to keep the composition root
- * under its 3000-line architecture cap — daemon.ts gains only the two call sites
- * (Plan 04 / Phase 188).
+ * `buildImageGenBundle`; extracted from `daemon.ts` to hold its 3000-line cap.
  *
  * RES-02/CRED-01: the selector routes explicit `fal` to the skills FAL adapter,
  * follows the DEFAULT agent's resolved main provider for `auto` (veo/grok
@@ -489,6 +483,9 @@ export function buildVideoGenBundle(deps: {
   timers: TimerPort;
   /** DEFAULT agent's OAuthTokenManager — threaded to the selector for the Grok-video OAuth path (190 / CRED-01). @see buildImageGenBundle. */
   oauthManager?: OAuthTokenManager;
+  /** OBS-04/OBS-03 (192): trajectory registry + event bus → createVideoPoller (off-turn video.* live emit by record.sessionKey + the cost route). Optional. */
+  trajectoryRegistry?: import("@comis/observability").SessionTrajectoryHandleRegistry;
+  eventBus?: BootContext["container"]["eventBus"];
 }): {
   videoGenConfig: BootContext["container"]["config"]["integrations"]["media"]["videoGeneration"];
   videoGenProvider: VideoGenerationPort | undefined;
@@ -507,7 +504,7 @@ export function buildVideoGenBundle(deps: {
   /** JOB-02 (189): the two-phase background poller (undefined when video disabled). */
   videoPoller: VideoPoller | undefined;
 } {
-  const { container, defaultAgentId, skillsLogger, workspaceDirs, defaultWorkspaceDir, db, channelAdaptersRef, timers, oauthManager } = deps;
+  const { container, defaultAgentId, skillsLogger, workspaceDirs, defaultWorkspaceDir, db, channelAdaptersRef, timers, oauthManager, trajectoryRegistry, eventBus } = deps;
   const videoGenConfig = container.config.integrations.media.videoGeneration;
   const defaultAgentCfg =
     container.config.agents[defaultAgentId] ?? container.config.agents["default"];
@@ -592,6 +589,9 @@ export function buildVideoGenBundle(deps: {
       config: videoGenConfig,
       logger: skillsLogger,
       timers,
+      // OBS-04/OBS-03 (192): off-turn video.* live emit + the cost route (optional).
+      ...(trajectoryRegistry ? { trajectoryRegistry } : {}),
+      ...(eventBus ? { eventBus } : {}),
     });
     skillsLogger.info(
       { provider: videoGenConfig.provider, mainProvider: defaultMain },

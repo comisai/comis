@@ -77,6 +77,8 @@ import { suppressError } from "@comis/shared";
 import type { VideoJobStore, VideoJobRecord } from "@comis/memory";
 import type { PersistedFile } from "@comis/skills/tools";
 import type { ComisLogger } from "@comis/infra";
+import type { SessionTrajectoryHandleRegistry, TrajectoryEventType } from "@comis/observability";
+import type { AppContainer } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Public contract
@@ -132,6 +134,19 @@ export interface VideoPollerDeps {
   sleep?: (ms: number) => Promise<void>;
   /** Injectable clock for the per-job deadline (default: `systemNowMs`). */
   nowMs?: () => number;
+  /** OBS-04 (Phase 192): the per-session trajectory recorder registry. On the
+   *  terminal done/fail branches the poller BEST-EFFORT live-emits
+   *  video.generated/delivered/failed via getRecorder(record.sessionKey) — the
+   *  OFF-TURN key read from the ROW (the poller tick has NO ALS frame; MUST-DIFFER
+   *  3). Optional + no-op when absent OR when the recorder is gone (session
+   *  closed / daemon restarted) — the OFFLINE assembler (Plan 02) is the binding
+   *  reconstruction oracle; the live emit captures the common fast-render case. */
+  trajectoryRegistry?: SessionTrajectoryHandleRegistry;
+  /** OBS-03 (Phase 192): the typed event bus for the off-turn synthetic
+   *  `observability:token_usage` cost route (the cost rollup is emitted from the
+   *  poller's done branch — Plan 02 adds the emit). Threaded here now so the
+   *  wiring lands in one place. Optional → no-op when absent. */
+  eventBus?: AppContainer["eventBus"];
 }
 
 // ---------------------------------------------------------------------------
@@ -195,6 +210,26 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
   const timers = deps.timers ?? defaultTimerPort();
   const sleep = deps.sleep;
   const nowMs = deps.nowMs ?? systemNowMs;
+  const trajectoryRegistry = deps.trajectoryRegistry;
+
+  /**
+   * OBS-04 (Phase 192): BEST-EFFORT off-turn trajectory record. Resolves the
+   * per-session recorder by the ROW's `sessionKey` (the off-turn key — there is
+   * NO ALS frame in the poller tick; MUST-DIFFER 3) and records a content-free
+   * video.* event. NO-OP when there is no sessionKey (a pre-192 / in-flight row),
+   * no registry (a boot mode without one), or no recorder (the session closed or
+   * the daemon restarted — the common off-turn case). The §2.7 log lines fire
+   * regardless; the OFFLINE assembler (Plan 02) is the BINDING reconstruction
+   * oracle, so a no-op here is correct, never a crash. Content-free (T-192-01):
+   * ids/labels/counts/costUsd/outcome/errorKind/booleans ONLY — never the bytes,
+   * a credential, the keyed-download-URL, or a raw provider message.
+   */
+  function emitTrajectory(record: VideoJobRecord, type: TrajectoryEventType, data: Record<string, unknown>): void {
+    const sessionKey = record.sessionKey;
+    if (sessionKey == null || sessionKey.length === 0 || trajectoryRegistry == null) return;
+    const recorder = trajectoryRegistry.getRecorder?.(sessionKey);
+    if (recorder != null) recorder.recordEvent(type, data);
+  }
 
   // In-flight jobIds (bounded by config.maxConcurrentJobs when set). A row that
   // would exceed the bound is left `pending` for the sweeper to pick up later.
@@ -318,6 +353,10 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
     // DEL-02 capability-gated direct delivery to the RECORDED channel only
     // (T-189-06; never a channel-name list — sendAttachment is optional on
     // ChannelPort, omitted by IRC). MUST-DIFFER 2: the attachment send, not text.
+    // OBS-04 (Phase 192): track whether the clip was actually attached so the
+    // off-turn video.delivered record below carries an honest `delivered` flag
+    // (false on the IRC persisted-only degrade or when no channel was recorded).
+    let delivered = false;
     if (record.channelType && record.channelId) {
       const adapter = getChannelAdapter(record.channelType);
       if (adapter && typeof adapter.sendAttachment === "function") {
@@ -335,6 +374,7 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
           await handleDeliveryFailure(record, sendResult.error);
           return;
         }
+        delivered = true;
       } else {
         // DEL-02 IRC degrade: the adapter cannot attach. The clip IS persisted,
         // so the at-least-once contract still marks done (parity with the 188
@@ -367,6 +407,25 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
     // of `pending`, so a retried completeJob can never reach this line twice for
     // one render → no phantom per-hour USD inflation.
     costLimiter?.record(record.agentId, out.costUsd ?? record.estimatedCostUsd ?? 0);
+
+    // OBS-04 (Phase 192): BEST-EFFORT off-turn live emit — video.generated (the
+    // cost-carry: costUsd ?? estimate, FAL has no actual — Pitfall 4) THEN
+    // video.delivered. Resolved by the ROW's sessionKey (off-turn, no ALS); a
+    // no-op when the recorder is gone (the OFFLINE assembler in Plan 02 is the
+    // binding oracle). After markDone so it never fires for a non-terminal pass.
+    emitTrajectory(record, "video.generated", {
+      provider: record.provider,
+      outcome: "ok",
+      ...(out.model ?? record.model ? { model: out.model ?? record.model } : {}),
+      ...((out.costUsd ?? record.estimatedCostUsd) !== undefined
+        ? { costUsd: out.costUsd ?? record.estimatedCostUsd }
+        : {}),
+      ...(persisted.value.sizeBytes !== undefined ? { sizeBytes: persisted.value.sizeBytes } : {}),
+      ...(out.durationSecs !== undefined ? { durationSecs: out.durationSecs } : {}),
+    });
+    if (record.channelType) {
+      emitTrajectory(record, "video.delivered", { channelType: record.channelType, delivered });
+    }
 
     // I8 obs floor: the INFO completion line. MUST-DIFFER 3 — traceId is read
     // from the row and put ON the object (the bg ctx has no ALS frame).
@@ -444,6 +503,13 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
       },
       "Video poller: render failed",
     );
+    // OBS-04 (Phase 192): BEST-EFFORT off-turn live emit of video.failed beside
+    // the WARN (trajectory-only — the WARN is the §2.7 line). The DOMAIN kind
+    // rides the trajectory payload; the closed log union (VIDEO_ERR_TO_LOG) +
+    // the hint/cause ride the WARN, never the trajectory. No-op when the recorder
+    // is gone (the OFFLINE assembler is the binding oracle). SEC-03: no secret —
+    // only the typed kind + the provider id.
+    emitTrajectory(record, "video.failed", { errorKind: kind, provider: record.provider });
   }
 
   /**

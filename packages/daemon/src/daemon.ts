@@ -2176,7 +2176,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
   // for the Grok-video key-or-OAuth path (mirrors the image call below + :2169).
   // Destructure videoJobStore + videoPoller for the boot context + the handler deps.
   const { videoGenConfig, videoGenProvider, videoGenRateLimiter, persistVideo, videoGenCostLimiter, videoJobStore, videoPoller } =
-    buildVideoGenBundle({ container, defaultAgentId, skillsLogger, oauthManager: handle.oauthManagers.get(defaultAgentId), workspaceDirs, defaultWorkspaceDir, db, channelAdaptersRef: handle.channelAdaptersRef, timers: handle.timers });
+    buildVideoGenBundle({ container, defaultAgentId, skillsLogger, oauthManager: handle.oauthManagers.get(defaultAgentId), workspaceDirs, defaultWorkspaceDir, db, channelAdaptersRef: handle.channelAdaptersRef, timers: handle.timers, trajectoryRegistry: handle.trajectoryRegistry, eventBus: container.eventBus });
   // VIS-01 (187): the provider-following vision bundle — same construction site, reusing the DEFAULT agent's OAuth manager (codex bearer) + the boot clock (the bridge's per-message timestamp). See buildMediaVisionBundle in wiring/main-helpers.ts.
   const mediaVisionBundle = buildMediaVisionBundle({ container, defaultAgentId, skillsLogger, clock: handle.clock, oauthManager: handle.oauthManagers.get(defaultAgentId) });
 
