@@ -73,6 +73,41 @@ export interface WireWorkerSupervisionArgs {
 export function wireWorkerSupervision(args: WireWorkerSupervisionArgs): void {
   const { child, pending, sessions, logger, markRunningSessionsLost, clearWorker, onTerminalEvent } = args;
 
+  // MR-02: the worker-crash paths (error / close / a corrupt-frame decode fault) flip this
+  // worker's still-`running` sessions to `lost`/`exited` IN MEMORY, but pre-patch they emitted
+  // NO lifecycle signal — so the daemon's per-session reclaimers (onSessionGone →
+  // promotedSessions / driveJournals / driveStartedAtMs / the loop-guard ring / the FSM state /
+  // the wake-state file) never fired and a promoted drive whose worker crashed leaked its
+  // drive-state for the daemon's lifetime. This re-publishes a CONTENT-FREE
+  // terminal:session_state frame (sessionId + a `state` enum ONLY — no screen/keys/payload, I3)
+  // per affected session through the SAME injected onTerminalEvent seam the PTY-exit path uses
+  // (buildTerminalEventHook re-publishes it onto the bus → onSessionGone reclaims). Snapshot the
+  // running ids BEFORE the caller flips them (the flip clears `status === "running"`), then emit.
+  //
+  // Wrapped never-throw: onTerminalEvent runs inside a stream 'data' / 'error' / 'close'
+  // listener, so a hook fault must NEVER become an uncaughtException that takes the daemon down
+  // (the OPS-01 guarantee this whole module upholds). A null sink (no daemon hook) is a no-op.
+  const runningSessionIds = (): string[] => {
+    const ids: string[] = [];
+    for (const handle of sessions.values()) {
+      if (handle.status === "running") ids.push(handle.sessionId);
+    }
+    return ids;
+  };
+  const publishCrashLifecycle = (sessionIds: readonly string[], state: "lost" | "exited"): void => {
+    if (onTerminalEvent === undefined) return;
+    for (const sessionId of sessionIds) {
+      try {
+        onTerminalEvent({ sessionId, event: "terminal:session_state", payload: { state } });
+      } catch (err) {
+        logger.warn(
+          { err, sessionId, hint: "worker-crash lifecycle re-publish failed; the daemon may briefly retain this session's drive-state until the next reaper sweep", errorKind: "internal" as const },
+          "terminal worker-crash lifecycle emit failed",
+        );
+      }
+    }
+  };
+
   // Decode reply frames off the worker's stdout and correlate them to waiters.
   //
   // HR-02 (OPS-01 guarantee): decode/correlate is wrapped in try/catch so a
@@ -99,7 +134,10 @@ export function wireWorkerSupervision(args: WireWorkerSupervisionArgs): void {
       // errorKind:"validation" — the inbound frame failed structural decode
       // (the closest closed-union member for a corrupt/malformed wire frame).
       logger.warn({ err, hint, errorKind: "validation" as const }, "terminal worker frame decode failed");
+      // MR-02: snapshot the running ids BEFORE the flip, then emit the lost-lifecycle signal.
+      const lostIds = runningSessionIds();
       markRunningSessionsLost();
+      publishCrashLifecycle(lostIds, "lost");
       clearWorker();
       return;
     }
@@ -133,7 +171,10 @@ export function wireWorkerSupervision(args: WireWorkerSupervisionArgs): void {
           ? "oversized worker event frame length (corrupt/hostile prefix); dropping worker"
           : "corrupt worker event frame on fd3; dropping worker";
       logger.warn({ err, hint, errorKind: "validation" as const }, "terminal worker event frame decode failed");
+      // MR-02: snapshot the running ids BEFORE the flip, then emit the lost-lifecycle signal.
+      const lostIds = runningSessionIds();
       markRunningSessionsLost();
+      publishCrashLifecycle(lostIds, "lost");
       clearWorker();
       return;
     }
@@ -148,7 +189,11 @@ export function wireWorkerSupervision(args: WireWorkerSupervisionArgs): void {
       { err, hint: "terminal worker error; sessions lost, worker will re-spawn", errorKind: "dependency" as const },
       "terminal worker error",
     );
+    // MR-02: snapshot the running ids BEFORE the flip, then emit the lost-lifecycle signal so
+    // the daemon reclaims the per-session drive-state (no leak across a worker crash).
+    const lostIds = runningSessionIds();
     markRunningSessionsLost();
+    publishCrashLifecycle(lostIds, "lost");
     clearWorker();
   });
 
@@ -159,12 +204,16 @@ export function wireWorkerSupervision(args: WireWorkerSupervisionArgs): void {
       { exitCode, hint: "terminal worker closed; sessions exited, worker will re-spawn", errorKind: "dependency" as const },
       "terminal worker closed",
     );
+    // MR-02: snapshot the running ids BEFORE the flip, then emit the exited-lifecycle signal so
+    // the daemon reclaims the per-session drive-state (no leak across a worker close/crash).
+    const exitedIds = runningSessionIds();
     for (const handle of sessions.values()) {
       if (handle.status === "running") {
         handle.status = "exited";
         if (exitCode !== null) handle.exitCode = exitCode;
       }
     }
+    publishCrashLifecycle(exitedIds, "exited");
     clearWorker();
   });
 }

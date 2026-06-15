@@ -170,6 +170,96 @@ describe("createTerminalSessionRegistry — crash isolation", () => {
   });
 });
 
+// ===========================================================================
+// MR-02: a worker CRASH must emit a per-session lifecycle signal so the daemon's
+// per-session reclaimers (onSessionGone → promotedSessions / driveJournals /
+// driveStartedAtMs / loop-guard / FSM-state / wake-file) fire. Pre-patch, the
+// crash handlers only mutated the in-memory handle status (markRunningSessionsLost
+// / the close flip) and emitted NOTHING — so a promoted session whose worker
+// crashes leaked its drive-state for the daemon's lifetime. The fix re-publishes
+// a terminal:session_state frame per affected session through the SAME injected
+// onTerminalEvent seam the PTY-exit path uses (buildTerminalEventHook → the bus →
+// onSessionGone).
+// ===========================================================================
+
+describe("createTerminalSessionRegistry — MR-02: worker-crash emits a per-session lifecycle event", () => {
+  /** Collect the TerminalEventFrames the registry dispatches to onTerminalEvent. */
+  function makeEventSink() {
+    const frames: TerminalEventFrame[] = [];
+    return { onTerminalEvent: (f: TerminalEventFrame) => frames.push(f), frames };
+  }
+
+  it("a child 'error' (worker crash) emits terminal:session_state{state:'lost'} for each running session", async () => {
+    const fake = makeFakeWorker();
+    const sink = makeEventSink();
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, { onTerminalEvent: sink.onTerminalEvent }));
+
+    const a = await registry.create({ allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }, OWNER);
+    const b = await registry.create({ allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }, OWNER);
+
+    fake.emitError();
+
+    // One lost-lifecycle frame per running session (the daemon re-publishes each onto the bus
+    // → onSessionGone reclaims the per-session drive-state — no leak).
+    const lost = sink.frames.filter((f) => f.event === "terminal:session_state");
+    const lostIds = lost.map((f) => f.sessionId).sort();
+    expect(lostIds).toEqual([a.sessionId, b.sessionId].sort());
+    for (const f of lost) {
+      expect((f.payload as { state?: string }).state, "the crash lifecycle state is 'lost'").toBe("lost");
+    }
+  });
+
+  it("a child 'close(code)' emits terminal:session_state{state:'exited'} for each running session", async () => {
+    const fake = makeFakeWorker();
+    const sink = makeEventSink();
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, { onTerminalEvent: sink.onTerminalEvent }));
+
+    const a = await registry.create({ allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }, OWNER);
+
+    fake.emitClose(1);
+
+    const exited = sink.frames.filter((f) => f.event === "terminal:session_state");
+    expect(exited.map((f) => f.sessionId)).toEqual([a.sessionId]);
+    expect((exited[0]!.payload as { state?: string }).state).toBe("exited");
+  });
+
+  it("the per-session lifecycle frame is content-free (sessionId + a state enum only — no screen/payload bytes, I3)", async () => {
+    const fake = makeFakeWorker();
+    const sink = makeEventSink();
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, { onTerminalEvent: sink.onTerminalEvent }));
+
+    await registry.create({ allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }, OWNER);
+    fake.emitError();
+
+    const frame = sink.frames.find((f) => f.event === "terminal:session_state")!;
+    expect(frame, "a crash must emit a session_state frame").toBeDefined();
+    // Content-free: the payload carries the lifecycle state ONLY (no screen/text/keys field).
+    const payloadKeys = Object.keys((frame.payload ?? {}) as Record<string, unknown>);
+    expect(payloadKeys).toEqual(["state"]);
+  });
+
+  it("a crash with NO still-running sessions emits no lifecycle frame (nothing to reclaim)", async () => {
+    const fake = makeFakeWorker();
+    const sink = makeEventSink();
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, { onTerminalEvent: sink.onTerminalEvent }));
+    // Create then KILL the only session — it is no longer `running` when the worker crashes,
+    // so the crash has nothing to reclaim and emits no lifecycle frame.
+    const { sessionId } = await registry.create({ allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }, OWNER);
+    await registry.kill(sessionId, OWNER);
+    fake.emitError();
+    expect(sink.frames.filter((f) => f.event === "terminal:session_state")).toHaveLength(0);
+  });
+
+  it("a crash without an onTerminalEvent sink still flips the handle + never throws (the seam is optional)", async () => {
+    const fake = makeFakeWorker();
+    // No onTerminalEvent dep — the emit is best-effort; the crash isolation still works.
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child));
+    const { sessionId } = await registry.create({ allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }, OWNER);
+    expect(() => fake.emitError()).not.toThrow();
+    expect(registry.get(sessionId, OWNER)?.status).toBe("lost");
+  });
+});
+
 describe("createTerminalSessionRegistry — lazy re-spawn", () => {
   it("spawns the worker once for the first create (single live worker per registry)", async () => {
     const spawnWorker = vi.fn(() => makeFakeWorker().child);
@@ -1681,13 +1771,27 @@ describe("createTerminalSessionRegistry — 124-05 fd3 events-push reader (TR-11
     expect(() => fake.emitFd3(Buffer.concat([prefix, garbage]))).not.toThrow();
 
     // The corrupt worker is dropped (running session → lost), a WARN with the closed-
-    // union errorKind 'validation' was logged, and the hook was never called with junk.
+    // union errorKind 'validation' was logged, and the hook was never called with the JUNK
+    // frame — but MR-02: the crash path now re-publishes a CLEAN content-free
+    // terminal:session_state{lost} lifecycle frame so the daemon reclaims this session's
+    // drive-state. So the hook IS called, with exactly that lifecycle frame (never the junk).
     expect(registry.get(sessionId, OWNER)?.status).toBe("lost");
     const warn = logger.warn.mock.calls.find(
       ([obj]) => (obj as { errorKind?: string }).errorKind === "validation",
     );
     expect(warn).toBeDefined();
-    expect(onTerminalEvent).not.toHaveBeenCalled();
+    // The junk event-shaped frame never reached the hook.
+    const forwardedJunk = onTerminalEvent.mock.calls.find(
+      ([f]) => (f as TerminalEventFrame).event !== "terminal:session_state",
+    );
+    expect(forwardedJunk, "the corrupt frame must NOT be forwarded as an event").toBeUndefined();
+    // The MR-02 crash-lifecycle frame IS emitted for the (now-lost) running session.
+    const lifecycle = onTerminalEvent.mock.calls.find(
+      ([f]) => (f as TerminalEventFrame).event === "terminal:session_state",
+    );
+    expect(lifecycle, "the crash path must re-publish a lost-lifecycle frame (MR-02)").toBeDefined();
+    expect((lifecycle![0] as TerminalEventFrame).sessionId).toBe(sessionId);
+    expect(((lifecycle![0] as TerminalEventFrame).payload as { state?: string }).state).toBe("lost");
   });
 
   it("an oversized HR-01 length prefix on fd3 is caught (FrameTooLargeError), not rethrown — daemon survives", async () => {

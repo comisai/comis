@@ -507,6 +507,20 @@ describe("buildTerminalEventHook — re-publish the fd3 frame onto the TypedEven
     expect(ev!.payload).toMatchObject({ sessionId: "s-3", agentId: "agent-a", state: "exited" });
   });
 
+  it("MR-02: a worker-crash session_state(lost) frame re-publishes onto the bus → drives onSessionGone reclaim", () => {
+    // The supervisor's crash path (terminal-worker-supervisor.ts) emits exactly this frame
+    // shape per running session; this hook re-publishes it onto the bus, where onSessionGone
+    // (setup-terminal-wake.ts) reclaims the per-session drive-state. Closes the MR-02 chain.
+    const { deps, emitted } = makeEventDeps();
+    const hook = buildTerminalEventHook("agent-a", deps as never);
+
+    hook.onTerminalEvent({ sessionId: "s-crash", event: "terminal:session_state", payload: { state: "lost" } });
+
+    const ev = emitted.find((e) => e.event === "terminal:session_state");
+    expect(ev).toBeDefined();
+    expect(ev!.payload).toMatchObject({ sessionId: "s-crash", agentId: "agent-a", state: "lost" });
+  });
+
   it("escalated frame → emit('terminal:escalated', {reason, ...}) + a WARN (hint + errorKind)", () => {
     const { deps, emitted, skillsLogger } = makeEventDeps();
     const hook = buildTerminalEventHook("agent-a", deps as never);
