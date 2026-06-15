@@ -505,6 +505,52 @@ export const ImageGenerationConfigSchema = z.strictObject({
   });
 
 /**
+ * The operator-configurable video-generation provider vocabulary (CFG-01).
+ *
+ * NOTE: this is a DIFFERENT vocabulary from the VIDEO_CAPABILITY keys (resolved
+ * main-provider ids in `@comis/core/media`). "auto" = follow the agent's main
+ * provider when it has a video API (I4); "fal" = explicit FAL backend (the
+ * loop-prover this milestone); "google"/"xai" select the Veo/Grok backends
+ * (live adapters land Phase 190). `fallbackChain` entries validate against this
+ * same closed set, so an injected/typo'd provider fails at parse rather than
+ * reaching a transport (T-188-...).
+ */
+const VIDEO_PROVIDER_VALUES = ["auto", "fal", "google", "xai"] as const;
+
+/**
+ * Video generation service configuration (CFG-01) — additive sibling of
+ * `imageGeneration`. The cost ceiling is enforced PRE-submit against a
+ * worst-case estimate (SEC-02, I6); the rate limit + poll cadence bound a
+ * dollars-per-clip async backend.
+ */
+export const VideoGenerationConfigSchema = z.strictObject({
+    /** Video generation provider (default: "auto" — follows the agent's main provider; I4). */
+    provider: z.enum(VIDEO_PROVIDER_VALUES).default("auto"),
+    /** Provider-specific model/endpoint ID (e.g., "fal-ai/veo3.1/fast"); overrides the per-provider default. */
+    model: z.string().optional(),
+    /** Default clip length in seconds (provider-validated; default: 8). */
+    defaultDurationSecs: z.number().int().positive().default(8),
+    /** Default aspect ratio (default: "16:9"). */
+    defaultAspectRatio: z.string().default("16:9"),
+    /** Default resolution (default: "720p"). */
+    defaultResolution: z.string().default("720p"),
+    /** Generate audio when the backend supports it (provider-dependent; omit for provider default). */
+    generateAudio: z.boolean().optional(),
+    /** Maximum video generations per hour per agent (default: 5). */
+    maxPerHour: z.number().int().positive().default(5),
+    /** Inline execute() poll-loop timeout in milliseconds (default: 300000). */
+    timeoutMs: z.number().int().positive().default(300_000),
+    /** Poll cadence in milliseconds while awaiting a terminal job state (default: 10000). */
+    pollIntervalMs: z.number().int().positive().default(10_000),
+    /** Optional cap on concurrent in-flight jobs (consumed by the Phase 189 background poller). */
+    maxConcurrentJobs: z.number().int().positive().optional(),
+    /** Providers consulted in order ONLY after the follow-main path fails (RES-04). Default empty. */
+    fallbackChain: z.array(z.enum(VIDEO_PROVIDER_VALUES)).default([]),
+    /** Optional per-agent/hour USD cost ceiling, gated PRE-submit (SEC-02, I6; enforcement Plan 04). */
+    maxCostPerHourUsd: z.number().positive().optional(),
+  });
+
+/**
  * Media processing configuration (transcription, TTS, image analysis, vision, link understanding, infrastructure, persistence).
  */
 export const MediaConfigSchema = z.strictObject({
@@ -531,6 +577,10 @@ export const MediaConfigSchema = z.strictObject({
     /** Image generation settings */
     imageGeneration: ImageGenerationConfigSchema.default(
       () => ImageGenerationConfigSchema.parse({}),
+    ),
+    /** Video generation settings (CFG-01) */
+    videoGeneration: VideoGenerationConfigSchema.default(
+      () => VideoGenerationConfigSchema.parse({}),
     ),
   });
 
@@ -597,3 +647,4 @@ export type AutoReplyConfig = z.infer<typeof AutoReplyConfigSchema>;
 export type FileExtractionConfig = z.infer<typeof FileExtractionConfigSchema>;
 export type MediaPersistenceConfig = z.infer<typeof MediaPersistenceConfigSchema>;
 export type ImageGenerationConfig = z.infer<typeof ImageGenerationConfigSchema>;
+export type VideoGenerationConfig = z.infer<typeof VideoGenerationConfigSchema>;

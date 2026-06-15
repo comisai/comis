@@ -623,16 +623,62 @@ export const ImageGenerateContract = defineContract({
   scopes: ["rpc"] as const,
 });
 
+// ---------------------------------------------------------------------------
+// video.generate
+// ---------------------------------------------------------------------------
+
+/**
+ * `video.generate` — generate a video via the agent's main provider's video
+ * backend (or explicit FAL), through one `VideoGenerationPort` whose inline
+ * `execute()` does submit→poll→download. Applies a per-agent rate limit + a
+ * PRE-submit worst-case cost ceiling (SEC-02, I6) + direct channel delivery
+ * (via `adapter.sendAttachment` with `AttachmentPayload.type:"video"`) OR a
+ * size-capped base64 fallback when no channel context is present (DEL-04).
+ *
+ * Request: `prompt` plus the optional fields `duration` / `aspect_ratio` /
+ * `resolution` / `audio` / `negative_prompt` / `seed` / `image_url`
+ * (SSRF-guarded workspace path / url / data-uri for image-to-video) / `model`
+ * (a provider-default endpoint override). The fields are additive (prompt-only
+ * callers are unaffected) and exist on the parsed request so the handler
+ * (Plan 04) sees them typed. Only the allowlisted request shapes
+ * (z.string()/z.number()/z.boolean()/.optional()) are used — NO `.url()` /
+ * `.regex()` refinements (the 12-shape contract allowlist; the handler enforces
+ * SSRF on `image_url`).
+ *
+ * Response: loose-record — forward-compat the delivered / base64 / failure
+ * variants across daemon-restarts (the ImageGenerateContract precedent).
+ */
+export const VideoGenerateContract = defineContract({
+  method: "video.generate",
+  request: z.object({
+    prompt: z.string().optional(),
+    duration: z.number().optional(),
+    aspect_ratio: z.string().optional(),
+    resolution: z.string().optional(),
+    audio: z.boolean().optional(),
+    negative_prompt: z.string().optional(),
+    seed: z.number().optional(),
+    image_url: z.string().optional(),
+    model: z.string().optional(),
+  }),
+  response: z.record(z.string(), z.unknown()),
+  scopes: ["rpc"] as const,
+});
+
 // ===========================================================================
 // Domain array — appended to API_CONTRACTS_ORDERED in index.ts.
 // ===========================================================================
 
 /**
- * 16 contracts spanning the media + image umbrella (15 from
- * media-handlers.ts + 1 from image-handlers.ts), grouped by handler file
- * in handler-factory PropertyAssignment order. The order within this
- * array is documentation-only; the bidirectional 1:1 architecture test
- * treats `MEDIA_CONTRACTS` as an unordered set.
+ * 17 contracts spanning the media + image + video umbrella (15 from
+ * media-handlers.ts + 1 from image-handlers.ts + 1 from video-handlers.ts),
+ * grouped by handler file in handler-factory PropertyAssignment order. The
+ * order within this array is documentation-only; the bidirectional 1:1
+ * architecture test treats `MEDIA_CONTRACTS` as an unordered set.
+ *
+ * NOTE: `video.generate`'s daemon handler lands in Phase 188 Plan 04; the
+ * contract is declared here in Plan 02 so the bidirectional handler-parity
+ * gate (and the web codegen drift gate) see it from the same wave.
  */
 export const MEDIA_CONTRACTS = [
   // media-handlers.ts (15)
@@ -653,4 +699,6 @@ export const MEDIA_CONTRACTS = [
   MediaProvidersContract,
   // image-handlers.ts (1)
   ImageGenerateContract,
+  // video-handlers.ts (1) — handler lands Plan 04; contract declared here (Plan 02)
+  VideoGenerateContract,
 ] as const;

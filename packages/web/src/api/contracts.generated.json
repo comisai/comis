@@ -10828,6 +10828,53 @@
       "rpc"
     ]
   },
+  "video.generate": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "prompt": {
+          "type": "string"
+        },
+        "duration": {
+          "type": "number"
+        },
+        "aspect_ratio": {
+          "type": "string"
+        },
+        "resolution": {
+          "type": "string"
+        },
+        "audio": {
+          "type": "boolean"
+        },
+        "negative_prompt": {
+          "type": "string"
+        },
+        "seed": {
+          "type": "number"
+        },
+        "image_url": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {}
+    },
+    "scopes": [
+      "rpc"
+    ]
+  },
   "whatsapp.action": {
     "request": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
