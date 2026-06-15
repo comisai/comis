@@ -630,6 +630,128 @@ describe("createMediaHandlers", () => {
         expect(failed!.data.path).toBe("unavailable");
       });
 
+      it("WR-03: when main-vision fails AND no registry can serve, the TERMINAL unavailable record carries the bridge's specific errorKind (not generic unsupported_provider)", async () => {
+        // main-vision is the chosen path (sel.ok === true) and the bridge fails
+        // with a SPECIFIC kind (auth_required — the main provider's key is
+        // missing). With no registry provider, control reaches the honest-
+        // unavailable terminal. The terminal record (path:"unavailable") and the
+        // thrown error MUST preserve auth_required, not collapse to the generic
+        // unsupported_provider (the `sel.ok === false ? …` ternary is always
+        // false on the main-vision path).
+        visionState.capable = true;
+        const failingBridge = {
+          describeImage: vi.fn(async () => ({
+            ok: false as const,
+            error: Object.assign(new Error("no key"), { errorKind: "auth_required" }),
+          })),
+        };
+        const rec = makeRecorderMock();
+        const deps = makeDeps({
+          mainProviderVision: failingBridge as never,
+          visionRegistry: new Map(), // no registry fallback
+          trajectoryRegistry: rec.trajectoryRegistry,
+        });
+        const handlers = createMediaHandlers(deps);
+
+        await expect(
+          handlers["image.analyze"]!({
+            source_type: "base64",
+            source: "abc",
+            _agentId: "default",
+            _callerSessionKey: "default:u1:telegram:c1",
+          }),
+        ).rejects.toThrow(/vision provider available/i);
+
+        const failedRecords = rec.records.filter((r) => r.type === "media.vision.failed");
+        // Two failed records: the main-vision attempt + the terminal unavailable.
+        const terminal = failedRecords.find((r) => r.data.path === "unavailable");
+        expect(terminal).toBeDefined();
+        // WR-03: the terminal preserves the bridge's specific kind.
+        expect(terminal!.data.errorKind).toBe("auth_required");
+        // The §2.7 WARN for the terminal also carries the specific domain kind.
+        const warnTerminal = (deps.logger.warn as ReturnType<typeof vi.fn>).mock.calls
+          .map((c) => c[0] as Record<string, unknown>)
+          .find((f) => f && f.path === "unavailable");
+        expect(warnTerminal).toBeDefined();
+        expect(warnTerminal!.imageErrorKind).toBe("auth_required");
+      });
+
+      it("WR-03: the resolver-skip path (sel.ok === false) still uses the resolver's own errorKind at the terminal", async () => {
+        // Regression guard: when the resolver itself returns !ok (e.g. a
+        // mediaKind/capability combination it refuses), the terminal must keep
+        // honoring sel.errorKind — the WR-03 fix preserves the bridge kind ONLY
+        // when there was a bridge failure, never overriding a real resolver kind.
+        visionState.capable = false; // not vision-capable → registry path, no bridge attempt
+        const rec = makeRecorderMock();
+        const deps = makeDeps({ visionRegistry: new Map(), trajectoryRegistry: rec.trajectoryRegistry });
+        const handlers = createMediaHandlers(deps);
+
+        await expect(
+          handlers["image.analyze"]!({
+            source_type: "base64",
+            source: "abc",
+            _agentId: "default",
+            _callerSessionKey: "default:u1:telegram:c1",
+          }),
+        ).rejects.toThrow(/vision provider available/i);
+
+        const terminal = rec.records.find(
+          (r) => r.type === "media.vision.failed" && r.data.path === "unavailable",
+        );
+        expect(terminal).toBeDefined();
+        // No bridge ran → the terminal kind is the resolver/handler default,
+        // NOT a stale lastBridgeKind.
+        expect(typeof terminal!.data.errorKind).toBe("string");
+        expect(terminal!.data.errorKind).not.toBe("auth_required");
+      });
+
+      it("WR-01: a registry-tier provider failure emits media.vision.failed{path:'registry'} + a §2.7 WARN before throwing", async () => {
+        // §2.7: errorKind+hint on EVERY vision failure branch + the path label.
+        // The registry provider returns !ok → the handler must record
+        // media.vision.failed{path:"registry"} AND fire a content-free WARN
+        // (path:"registry") carrying the classified errorKind BEFORE re-throwing.
+        visionState.capable = false; // → registry path
+        const failingProvider = {
+          describeImage: vi.fn(async () => ({
+            ok: false as const,
+            error: Object.assign(new Error("registry boom"), { errorKind: "quota_exceeded" }),
+          })),
+          describeVideo: vi.fn(),
+        };
+        const rec = makeRecorderMock();
+        const deps = makeDeps({
+          visionRegistry: new Map([["gemini", failingProvider as never]]),
+          trajectoryRegistry: rec.trajectoryRegistry,
+        });
+        const handlers = createMediaHandlers(deps);
+
+        await expect(
+          handlers["image.analyze"]!({
+            source_type: "base64",
+            source: "abc",
+            prompt: "p",
+            _agentId: "default",
+            _callerSessionKey: "default:u1:telegram:c1",
+          }),
+        ).rejects.toThrow();
+
+        const failed = rec.records.find(
+          (r) => r.type === "media.vision.failed" && r.data.path === "registry",
+        );
+        expect(failed).toBeDefined();
+        expect(failed!.data.errorKind).toBe("quota_exceeded");
+        const warn = (deps.logger.warn as ReturnType<typeof vi.fn>).mock.calls
+          .map((c) => c[0] as Record<string, unknown>)
+          .find((f) => f && f.path === "registry");
+        expect(warn).toBeDefined();
+        expect(warn!.imageErrorKind).toBe("quota_exceeded");
+        expect(warn!.hint).toBeTruthy();
+        // CONTENT-FREE: neither the prompt nor the base64 source in the records.
+        const blob = JSON.stringify(rec.records);
+        expect(blob).not.toContain("\"p\"");
+        expect(blob).not.toContain("abc");
+      });
+
       it("a main-vision RUNTIME failure records media.vision.failed for the bridge attempt, then media.vision.completed for the registry fallback", async () => {
         visionState.capable = true;
         const failingBridge = {
@@ -946,6 +1068,52 @@ describe("createMediaHandlers", () => {
       await expect(
         handlers["media.describe_video"]!({ attachment_url: "tg-file://vid", _agentId: "default" }),
       ).rejects.toThrow(/video-capable vision provider/i);
+    });
+
+    it("WR-01: a gemini-video provider failure emits media.vision.failed{path:'gemini-video'} + a §2.7 WARN before throwing", async () => {
+      // §2.7: errorKind+hint on EVERY vision failure branch + the path label.
+      // describeVideo returns !ok → the handler must record
+      // media.vision.failed{path:"gemini-video"} AND fire a content-free WARN
+      // (path:"gemini-video") with the classified errorKind BEFORE re-throwing.
+      const { selectVisionProvider } = await import("@comis/skills");
+      const failingVideoProvider = {
+        describeImage: vi.fn(),
+        describeVideo: vi.fn(async () => ({
+          ok: false as const,
+          error: Object.assign(new Error("video boom"), { errorKind: "timeout" }),
+        })),
+      };
+      (selectVisionProvider as ReturnType<typeof vi.fn>).mockReturnValue(failingVideoProvider);
+      const records: Array<{ type: string; data: Record<string, unknown> }> = [];
+      const recordEvent = vi.fn((type: string, data: Record<string, unknown>) => {
+        records.push({ type, data });
+      });
+      const trajectoryRegistry = { getRecorder: vi.fn(() => ({ recordEvent })) } as never;
+      const deps = makeDeps({ trajectoryRegistry });
+      const handlers = createMediaHandlers(deps);
+
+      await expect(
+        handlers["media.describe_video"]!({
+          attachment_url: "tg-file://vid",
+          prompt: "secret-video-prompt",
+          _agentId: "default",
+          _callerSessionKey: "default:u1:telegram:c1",
+        }),
+      ).rejects.toThrow();
+
+      const failed = records.find(
+        (r) => r.type === "media.vision.failed" && r.data.path === "gemini-video",
+      );
+      expect(failed).toBeDefined();
+      expect(failed!.data.errorKind).toBe("timeout");
+      const warn = (deps.logger.warn as ReturnType<typeof vi.fn>).mock.calls
+        .map((c) => c[0] as Record<string, unknown>)
+        .find((f) => f && f.path === "gemini-video");
+      expect(warn).toBeDefined();
+      expect(warn!.imageErrorKind).toBe("timeout");
+      expect(warn!.hint).toBeTruthy();
+      // CONTENT-FREE: the prompt never enters the records.
+      expect(JSON.stringify(records)).not.toContain("secret-video-prompt");
     });
   });
 

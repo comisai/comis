@@ -43,6 +43,31 @@ import type { ComisLogger, ImageErrorKind } from "@comis/core";
  *  `@comis/core` barrel surface. `unavailable` is failure-only. */
 type VisionPath = "main-vision" | "registry" | "gemini-video" | "unavailable";
 
+/** The `resolveVisionPath` outcome, structurally typed to avoid the barrel. */
+type VisionSelection =
+  | { ok: true }
+  | { ok: false; errorKind: ImageErrorKind; hint: string };
+
+/**
+ * WR-03: resolve the honest-unavailable terminal's `{ errorKind, hint }`. A
+ * resolver refusal (`sel.ok === false`) is authoritative and wins. Otherwise
+ * (a chosen path that then could not serve — e.g. main-vision ran and failed,
+ * or a registry/video provider was absent) the caller-supplied `fallbackKind`/
+ * `fallbackHint` are used: the image handler passes the LAST bridge failure
+ * kind/hint so the terminal keeps the specific reason (auth_required/timeout)
+ * instead of the generic `unsupported_provider`; the video handler passes its
+ * own generic kind/message (no bridge runs for video — Pitfall 3).
+ */
+export function resolveTerminalUnavailable(
+  sel: VisionSelection,
+  fallbackKind: ImageErrorKind,
+  fallbackHint: string,
+): { errorKind: ImageErrorKind; hint: string } {
+  return sel.ok === false
+    ? { errorKind: sel.errorKind, hint: sel.hint }
+    : { errorKind: fallbackKind, hint: fallbackHint };
+}
+
 /** A bound vision-trajectory + §2.7-log emitter. Returned by
  *  `createVisionObsEmitter` (which fires `media.vision.requested` at
  *  construction); the handler calls `succeeded`/`failed` on the tier branches it
@@ -73,6 +98,16 @@ export interface VisionObsEmitter {
     hint: string;
     message: string;
   }): void;
+  /**
+   * WR-01 convenience: read the domain `errorKind` off a Result error (a
+   * `VisionUnavailable` or any Error) — `?? "dependency"` when absent — then
+   * delegate to {@link failed}. Lets each tier-failure branch instrument in ONE
+   * line (the registry / gemini-video throw sites) without re-deriving the cast.
+   */
+  failedFrom(
+    error: unknown,
+    args: { path: VisionPath; provider: string; mainProvider: string; hint: string; message: string },
+  ): void;
 }
 
 /**
@@ -127,6 +162,10 @@ export function createVisionObsEmitter(
         { agentId, path, errorKind: logErrorKind, imageErrorKind: errorKind === "dependency" ? undefined : errorKind, hint, durationMs: now() - startMs, step: "vision_complete" },
         message,
       );
+    },
+    failedFrom(error, { path, provider, mainProvider, hint, message }) {
+      const kind = (error as { errorKind?: ImageErrorKind }).errorKind ?? "dependency";
+      this.failed({ errorKind: kind, path, provider, mainProvider, hint, message });
     },
   };
 }
