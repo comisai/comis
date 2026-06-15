@@ -13,3 +13,8 @@ export type {
   ImageProviderSelection,
   ImageGenSelectionConfig,
 } from "./resolve-image-provider.js";
+export { resolveVisionPath } from "./resolve-vision-path.js";
+export type {
+  VisionPathSelection,
+  VisionPathInput,
+} from "./resolve-vision-path.js";
