@@ -17,3 +17,13 @@ export { IMAGE_ERR_TO_LOG, resolveImageProvider } from "../media/index.js";
 // intra-`@comis/core/media` via a relative path for the unit test.
 export { isValidImageModel, listImageModels } from "../media/index.js";
 export type { ImageErrorKind } from "../media/index.js";
+// VIS-02/03 (Phase 187): the pure vision-path resolver is consumed CROSS-PACKAGE
+// by the daemon media-handlers ladder (the two seams call `resolveVisionPath` and
+// switch on the returned `path`). Surfaced here on the public barrel so the
+// daemon imports it from `@comis/core` (mirrors `resolveImageProvider` above;
+// 187-01 added it to ../media/index.js but only the intra-core media barrel
+// re-exported it — this is the missing cross-package surface the handler needs).
+// The `VisionPathSelection`/`VisionPathInput` types stay OFF the public barrel
+// (the handler consumes the return STRUCTURALLY, no named type import) — the same
+// policy as `ImageProviderSelection`, which stays intra-`@comis/core/media`.
+export { resolveVisionPath } from "../media/index.js";

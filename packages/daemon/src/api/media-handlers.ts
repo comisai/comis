@@ -52,7 +52,10 @@ import {
   stripInternalFields,
   systemGetEnv,
   systemNowMs,
+  resolveVisionPath,
+  IMAGE_ERR_TO_LOG,
 } from "@comis/core";
+import type { ImageErrorKind } from "@comis/core";
 import {
   selectVisionProvider,
   resolveVisionScope,
@@ -60,6 +63,11 @@ import {
   resolveOutputFormat,
   parseTtsDirective,
 } from "@comis/skills";
+// VIS-01 (187): the daemon-side vision gate — `isVisionCapable(getModel(...))`,
+// the SAME dance setup-channels-media.ts:135 runs. @comis/agent + pi-ai are
+// already daemon deps (graph-coordinator.ts:16, setup-channels-media.ts:35).
+import { isVisionCapable } from "@comis/agent";
+import { getModel } from "@earendil-works/pi-ai";
 import { guessMimeFromExtension, detectMimeFromMagicBytes, mimeToExtension } from "../wiring/daemon-utils.js";
 import { fetchImageBytesSsrfSafe } from "./ssrf-image-fetch.js";
 import { randomUUID } from "node:crypto";
@@ -85,7 +93,13 @@ export type { MediaHandlerDeps };
 export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcHandler> {
   return {
     [ImageAnalyzeContract.method]: async (rawParams) => {
-      if (!deps.visionRegistry || deps.visionRegistry.size === 0) {
+      // VIS-01 (187): the registry is no longer the ONLY vision path — a
+      // vision-capable MAIN provider serves image.analyze with no separate
+      // vision key (deps.mainProviderVision). Short-circuit ONLY when NEITHER a
+      // registry NOR a main-vision bridge is wired (the ladder's honest-
+      // unavailable tier handles the no-capable-tier case with an errorKind).
+      const hasRegistry = !!deps.visionRegistry && deps.visionRegistry.size > 0;
+      if (!hasRegistry && !deps.mainProviderVision) {
         throw new Error("No vision provider available for image analysis.");
       }
       const userParams = stripInternalFields(rawParams);
@@ -176,27 +190,85 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
         throw new Error(`Image size ${fileSizeMb.toFixed(1)}MB exceeds limit of ${deps.mediaConfig.imageAnalysis.maxFileSizeMb}MB`);
       }
 
-      // Use vision provider registry for provider auto-selection
+      // VIS-01/02/03 (187): the provider-following vision ladder. The handler is
+      // a CONSUMER of resolveVisionPath + deps.mainProviderVision — it NEVER
+      // re-derives provider selection (the 183 second-source-of-truth firewall).
+      // Tiers: main-vision (the agent's MAIN model, reusing its creds) → registry
+      // (selectVisionProvider, byte-identical to pre-187 when the main lacks
+      // vision) → honest-unavailable. The buffer + scope + size guards above ran
+      // FIRST (the V4/V5 security floor) and are untouched.
+      const agentId = (rawParams._agentId as string | undefined) ?? deps.defaultAgentId;
       const preferredProvider = deps.mediaConfig.vision.defaultProvider;
-      const provider = selectVisionProvider(deps.visionRegistry, "image", preferredProvider);
-      if (!provider) {
-        throw new Error("No vision provider available for image analysis.");
+      const main = deps.resolveAgentMainProvider?.(agentId) ?? { providerId: "unknown" };
+      // The daemon-side vision gate (setup-channels-media.ts:135 dance): resolve
+      // the main model id from the SINGLE source (deps.mainModelIdFor, backed by
+      // the same resolveAgentModel as the bridge) and ask pi-ai if it sees
+      // images. A resolution failure is conservative (not vision-capable).
+      let visionCapable = false;
+      if (deps.mainProviderVision && deps.mainModelIdFor) {
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi-ai getModel requires KnownProvider/KnownModel; config stores flexible strings (the proven setup-channels-media.ts cast).
+          const resolvedModel = getModel(main.providerId as any, deps.mainModelIdFor(agentId) as any);
+          if (resolvedModel) visionCapable = isVisionCapable(resolvedModel);
+        } catch { /* model resolution failed → not vision-capable, use the registry */ }
       }
-      const visionResult = await provider.describeImage({
-        image: buffer,
-        prompt,
-        mimeType,
-      });
-      if (!visionResult.ok) throw visionResult.error;
-      const result = {
-        description: visionResult.value.text,
-        provider: visionResult.value.provider,
-        model: visionResult.value.model,
-      };
-      if (systemGetEnv("NODE_ENV") !== "production") {
-        ImageAnalyzeContract.response.parse(result);
+      const visionRegistry = deps.visionRegistry;
+      const registryAvailable = !!visionRegistry && !!selectVisionProvider(visionRegistry, "image", preferredProvider);
+      const sel = resolveVisionPath(
+        {
+          mediaKind: "image",
+          mainProviderId: main.providerId,
+          visionCapable,
+          // The bridge owns the actual cred resolution; the gate only asks
+          // "could the main serve?" — visionCapable implies a wired bridge here.
+          mainCredsAvailable: visionCapable && deps.mainProviderVision != null,
+          registryAvailable,
+          ...(preferredProvider ? { explicitDefaultProvider: preferredProvider } : {}),
+        },
+        (reason) => deps.logger.debug({ agentId, hint: reason, step: "vision_resolve" }, "vision path skip"),
+      );
+
+      // main-vision FIRST. On a RUNTIME failure, fall back to the registry (its
+      // OWN keys) — never throw the bridge err out (the registry is the safety
+      // net; T-187-08: never silently retries on a different provider's creds).
+      if (sel.ok && sel.path === "main-vision" && deps.mainProviderVision) {
+        const r = await deps.mainProviderVision.describeImage(buffer, prompt, mimeType, agentId);
+        if (r.ok) {
+          deps.logger.info({ agentId, path: "main-vision", visionProvider: r.value.provider, model: r.value.model, costUsd: r.value.costUsd, step: "vision_complete" }, "Image analysis completed");
+          const result = { description: r.value.text, provider: r.value.provider, model: r.value.model };
+          if (systemGetEnv("NODE_ENV") !== "production") ImageAnalyzeContract.response.parse(result);
+          return result;
+        }
+        // bridge runtime failure → registry fallback (content-free log). The
+        // domain ImageErrorKind maps onto the CLOSED log ErrorKind via
+        // IMAGE_ERR_TO_LOG; the domain value rides imageErrorKind (the §2.7
+        // convention — never leak the domain vocab into the closed log union).
+        const bridgeKind = (r.error as { errorKind?: ImageErrorKind }).errorKind;
+        deps.logger.warn({ agentId, path: "main-vision", errorKind: bridgeKind ? IMAGE_ERR_TO_LOG[bridgeKind] : ("dependency" as const), imageErrorKind: bridgeKind, hint: "main-vision failed; falling back to the vision registry", step: "vision_complete" }, "Main-provider vision failed, trying the registry");
       }
-      return result;
+
+      // registry SECOND (the EXISTING path, verbatim — VIS-02 byte-identical when
+      // the main lacks vision or an explicit defaultProvider is set), OR the
+      // main-vision runtime fallback lands here.
+      if ((sel.ok && (sel.path === "registry" || sel.path === "main-vision"))) {
+        const provider = visionRegistry ? selectVisionProvider(visionRegistry, "image", preferredProvider) : undefined;
+        if (provider) {
+          const visionResult = await provider.describeImage({ image: buffer, prompt, mimeType });
+          if (!visionResult.ok) throw visionResult.error;
+          deps.logger.info({ agentId, path: "registry", visionProvider: visionResult.value.provider, model: visionResult.value.model, step: "vision_complete" }, "Image analysis completed");
+          const result = { description: visionResult.value.text, provider: visionResult.value.provider, model: visionResult.value.model };
+          if (systemGetEnv("NODE_ENV") !== "production") ImageAnalyzeContract.response.parse(result);
+          return result;
+        }
+        // main-vision failed AND no registry provider → honest-unavailable below.
+      }
+
+      // honest-unavailable LAST — an errorKind-bearing error, never a crash. The
+      // domain ImageErrorKind maps onto the CLOSED log union via IMAGE_ERR_TO_LOG.
+      const imageErrorKind: ImageErrorKind = sel.ok === false ? sel.errorKind : "unsupported_provider";
+      const hint = sel.ok === false ? sel.hint : "No vision provider available for image analysis.";
+      deps.logger.warn({ agentId, path: "unavailable", errorKind: IMAGE_ERR_TO_LOG[imageErrorKind], imageErrorKind, hint, step: "vision_complete" }, "Image analysis unavailable");
+      throw new Error("No vision provider available for image analysis.");
     },
 
     [TtsSynthesizeContract.method]: async (rawParams) => {
@@ -413,14 +485,32 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
 
       const mimeType = detectMimeFromMagicBytes(buffer) ?? "video/mp4";
 
+      // VIS-03 (187): raw video → the gemini-video tier ONLY (Pitfall 3 — pi-ai
+      // has no video content type, so main-vision is N/A for video). The handler
+      // consumes resolveVisionPath (mediaKind:"video" → "gemini-video" |
+      // "unavailable"); the describeVideo logic below is UNCHANGED. The
+      // mainProviderVision bridge is NEVER called for video.
+      const agentId = (rawParams._agentId as string | undefined) ?? deps.defaultAgentId;
+      const main = deps.resolveAgentMainProvider?.(agentId) ?? { providerId: "unknown" };
       const videoProvider = selectVisionProvider(deps.visionRegistry, "video", deps.mediaConfig.vision.defaultProvider);
-      if (!videoProvider?.describeVideo) {
+      const registryAvailable = !!videoProvider?.describeVideo;
+      const sel = resolveVisionPath(
+        { mediaKind: "video", mainProviderId: main.providerId, visionCapable: false, mainCredsAvailable: false, registryAvailable },
+        (reason) => deps.logger.debug({ agentId, hint: reason, step: "vision_resolve" }, "vision path skip"),
+      );
+      if (sel.ok === false || !videoProvider?.describeVideo) {
+        // honest-unavailable (errorKind-bearing) — NOT an undefined-method call.
+        // Domain ImageErrorKind → closed log union via IMAGE_ERR_TO_LOG.
+        const imageErrorKind: ImageErrorKind = sel.ok === false ? sel.errorKind : "unsupported_provider";
+        const hint = sel.ok === false ? sel.hint : "No video-capable vision provider available (requires Gemini or compatible provider).";
+        deps.logger.warn({ agentId, path: "unavailable", errorKind: IMAGE_ERR_TO_LOG[imageErrorKind], imageErrorKind, hint, step: "vision_complete" }, "Video description unavailable");
         throw new Error("No video-capable vision provider available (requires Gemini or compatible provider).");
       }
 
       const videoResult = await videoProvider.describeVideo({ video: buffer, prompt, mimeType });
       if (!videoResult.ok) throw videoResult.error;
 
+      deps.logger.info({ agentId, path: "gemini-video", visionProvider: videoResult.value.provider, model: videoResult.value.model, step: "vision_complete" }, "Video description completed");
       const result = {
         description: videoResult.value.text,
         provider: videoResult.value.provider,
