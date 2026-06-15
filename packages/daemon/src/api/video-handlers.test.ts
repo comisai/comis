@@ -1,26 +1,26 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the video.generate RPC handler (Phase 188 / Plan 04).
+ * Tests for the video.generate RPC handler (Phase 188 baseline → Phase 189
+ * inline→submit switch).
  *
- * Mirrors image-handlers.test.ts but proves the five DIVERGENCE consumers:
- *   - SEC-02 / DIVERGENCE 3: the pre-submit worst-case cost estimate gates
- *     BEFORE port.execute (assert port.execute is NOT called when the ceiling
- *     blocks).
- *   - DEL-01: persist to videos/ (mediaKind:"video") precedes delivery.
- *   - DEL-02: the typeof adapter.sendAttachment === "function" gate (IRC
- *     degrades to a notice + persisted path).
- *   - DEL-04: the base64 fallback is SIZE-CAPPED (a large buffer returns the
- *     persisted path, not a huge base64 blob).
- *   - SEC-03: image_url is resolved through the SSRF-safe resolver
- *     (workspace-confinement / SSRF reject); no credential VALUE appears in any
- *     log line (redaction scan).
+ * Phase 189 (JOB-04 / JOB-02): `video.generate` no longer runs the inline
+ * `port.execute()` (which blocked the turn on the full render) + persist/deliver/
+ * base64 tail. It now `port.submit()`s, persists a `pending` VideoJobStore row,
+ * hands the job to the background poller, and returns `{jobId, state:"submitted",
+ * estimatedCostUsd}` PROMPTLY. The completion tail (poll→fetch→persist→deliver→
+ * record→markDone) moved to the poller (setup-video-poller.ts).
  *
- * OBSERVABILITY (Phase 188 = logger-only): the handler emits NO `video.*`
- * trajectory events. This is proven structurally — the videoHandlerDeps shape
- * carries NO trajectoryRegistry/eventBus field — plus a logger-line assertion
- * (an INFO completion line on success; a WARN with errorKind+hint on every
- * failure branch). The eventBus→trajectory→`comis explain` bridge is OBS-04 /
- * Phase 192.
+ * What this suite proves:
+ *   - submit-not-execute: deps.provider.submit is called; deps.provider.execute is NOT.
+ *   - persist + track: a successful submit inserts the JOB-01 row + tracks the job;
+ *     the handler does NOT persist/deliver/base64 (that is the poller's job now).
+ *   - submit failure: the SAME classified-error WARN path as the 188 !ok branch.
+ *   - pre-submit gates PRESERVED (non-regression): SEC-02 cost ceiling, the count
+ *     rate limit, the missing-prompt error, WR-02 resolved defaults — all still
+ *     hold and block BEFORE submit.
+ *   - SEC-03 image_url through the SSRF resolver; no credential VALUE in any log.
+ *   - loose-record: {jobId,state,estimatedCostUsd} validates vs the EXISTING
+ *     VideoGenerateContract.response (A3 — no contract change for video.generate).
  *
  * @module
  */
@@ -60,10 +60,10 @@ vi.mock("undici", () => {
   return { Agent: MockAgent, fetch };
 });
 
-// Preserve the contract registry + stripInternalFields + VideoGenError; stub
-// safePath (joins segments — the SEC-03 confinement test asserts the resolved
-// path goes THROUGH safePath) and validateUrl (defaults ok with a resolved IP so
-// the URL branch pins DNS; the SSRF test overrides it to reject).
+// Preserve the contract registry + stripInternalFields + VideoGenError + the
+// trace accessor; stub safePath (joins segments — the SEC-03 confinement test
+// asserts the resolved path goes THROUGH safePath) and validateUrl (defaults ok
+// with a resolved IP so the URL branch pins DNS; the SSRF test overrides it).
 vi.mock("@comis/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@comis/core")>();
   return {
@@ -76,31 +76,20 @@ vi.mock("@comis/core", async (importOriginal) => {
   };
 });
 
-/** A successful PersistedFile the per-agent persist getter returns. filePath is
- *  what sendAttachment receives (the PERSISTED path under videos/). */
-const PERSISTED_OK = {
-  filePath: "/home/agent/.comis/workspace/media/videos/abc123.mp4",
-  relativePath: "videos/abc123.mp4",
-  mimeType: "video/mp4",
-  sizeBytes: 42424,
-  mediaKind: "video" as const,
-  savedAt: 0,
-};
-
-/** A small mp4 buffer (under the base64 cap) — the happy path. */
-const SMALL_MP4 = Buffer.from("fake-mp4-bytes");
+/** The durable opaque jobId the submit returns. */
+const SUBMITTED_JOB = { jobId: "fal-req-abc123", provider: "fal", model: "fal-ai/veo3.1/fast" };
 
 function createMockDeps(overrides: Partial<VideoHandlerDeps> = {}): VideoHandlerDeps {
   return {
     provider: {
       id: "fal",
       isAvailable: () => true,
-      submit: vi.fn(),
+      // 189: submit returns a durable job handle (no block on the full render).
+      submit: vi.fn().mockResolvedValue(ok(SUBMITTED_JOB)),
       poll: vi.fn(),
       fetchResult: vi.fn(),
-      execute: vi.fn().mockResolvedValue(
-        ok({ buffer: SMALL_MP4, mimeType: "video/mp4", costUsd: 0.8, model: "fal-ai/veo3.1/fast", provider: "fal", durationSecs: 8 }),
-      ),
+      // execute MUST NOT be called on the async path — left unmocked-failing.
+      execute: vi.fn().mockResolvedValue(err(new Error("execute must not be called in async mode"))),
     },
     rateLimiter: {
       tryAcquire: vi.fn().mockReturnValue(true),
@@ -121,7 +110,17 @@ function createMockDeps(overrides: Partial<VideoHandlerDeps> = {}): VideoHandler
     resolveAgentMainProvider: vi.fn().mockReturnValue({ providerId: "google" }),
     workspaceDirs: new Map<string, string>(),
     defaultWorkspaceDir: "/tmp/test-workspace",
-    persist: vi.fn().mockResolvedValue(ok(PERSISTED_OK)),
+    persist: vi.fn().mockResolvedValue(ok({ filePath: "/x.mp4", relativePath: "x.mp4", mimeType: "video/mp4", sizeBytes: 1, mediaKind: "video", savedAt: 0 })),
+    // 189 new deps: the store (handler inserts on submit) + the poller (track).
+    videoJobStore: {
+      insert: vi.fn().mockResolvedValue(ok(undefined)),
+      listPending: vi.fn().mockResolvedValue(ok([])),
+      get: vi.fn().mockResolvedValue(ok(undefined)),
+      markDone: vi.fn().mockResolvedValue(ok(undefined)),
+      markFailed: vi.fn().mockResolvedValue(ok(undefined)),
+      updateProgress: vi.fn().mockResolvedValue(ok(undefined)),
+    } as unknown as VideoHandlerDeps["videoJobStore"],
+    videoPoller: { track: vi.fn() },
     ...overrides,
   };
 }
@@ -130,38 +129,130 @@ const warnCalls = (deps: VideoHandlerDeps) =>
   (deps.logger.warn as ReturnType<typeof vi.fn>).mock.calls;
 const infoCalls = (deps: VideoHandlerDeps) =>
   (deps.logger.info as ReturnType<typeof vi.fn>).mock.calls;
+const insertMock = (deps: VideoHandlerDeps) =>
+  deps.videoJobStore.insert as unknown as ReturnType<typeof vi.fn>;
+const trackMock = (deps: VideoHandlerDeps) =>
+  deps.videoPoller.track as unknown as ReturnType<typeof vi.fn>;
 
-describe("createVideoHandlers", () => {
+describe("createVideoHandlers (Phase 189 — inline→submit)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it("returns error when prompt is missing (no execute)", async () => {
+  // ─── JOB-04 submit-not-execute ───
+  it("submits (NOT execute) and returns {success,jobId,state:'submitted',estimatedCostUsd}", async () => {
+    const deps = createMockDeps();
+    const handlers = createVideoHandlers(deps);
+    const result = (await handlers["video.generate"]!({
+      _agentId: "agent-1",
+      prompt: "a cat",
+    })) as { success: boolean; jobId?: string; state?: string; estimatedCostUsd?: number };
+    expect(deps.provider.submit).toHaveBeenCalledTimes(1);
+    expect(deps.provider.execute).not.toHaveBeenCalled();
+    expect(result.success).toBe(true);
+    expect(result.jobId).toBe("fal-req-abc123");
+    expect(result.state).toBe("submitted");
+    expect(typeof result.estimatedCostUsd).toBe("number");
+    expect(result.estimatedCostUsd!).toBeGreaterThan(0);
+  });
+
+  // ─── persist + track (JOB-01 fields) ───
+  it("on submit inserts the JOB-01 row + tracks the job; does NOT persist/deliver inline", async () => {
+    const sendAttachment = vi.fn().mockResolvedValue(ok("msg"));
+    const deps = createMockDeps({ getChannelAdapter: vi.fn().mockReturnValue({ sendAttachment }) });
+    const handlers = createVideoHandlers(deps);
+    await handlers["video.generate"]!({
+      _agentId: "agent-1",
+      prompt: "a comet",
+      _callerChannelType: "telegram",
+      _callerChannelId: "chat-1",
+    });
+    // insert called with the JOB-01 fields (channel from rawParams._callerChannel*).
+    expect(insertMock(deps)).toHaveBeenCalledTimes(1);
+    const row = insertMock(deps).mock.calls[0]![0] as Record<string, unknown>;
+    expect(row.jobId).toBe("fal-req-abc123");
+    expect(row.agentId).toBe("agent-1");
+    expect(row.channelType).toBe("telegram");
+    expect(row.channelId).toBe("chat-1");
+    expect(row.state).toBe("pending");
+    expect(typeof row.estimatedCostUsd).toBe("number");
+    expect(typeof row.submittedAtMs).toBe("number");
+    // track called with the submit result job.
+    expect(trackMock(deps)).toHaveBeenCalledTimes(1);
+    expect((trackMock(deps).mock.calls[0]![0] as { jobId: string }).jobId).toBe("fal-req-abc123");
+    // the handler does NOT persist or deliver inline (the poller does).
+    expect(deps.persist).not.toHaveBeenCalled();
+    expect(sendAttachment).not.toHaveBeenCalled();
+  });
+
+  // ─── WARNING-3: the inserted row carries a traceId so the off-turn poller can stitch ───
+  it("persists a traceId on the row (captured from the in-turn context) for off-turn stitching", async () => {
+    const deps = createMockDeps();
+    const handlers = createVideoHandlers(deps);
+    await handlers["video.generate"]!({ _agentId: "agent-1", prompt: "trace me" });
+    const row = insertMock(deps).mock.calls[0]![0] as Record<string, unknown>;
+    // The row MUST carry a traceId KEY (value may be undefined outside an ALS
+    // scope in this unit test, but the field must be threaded — I8 / Pitfall 5).
+    expect("traceId" in row).toBe(true);
+  });
+
+  // ─── submit failure: classified-error WARN, NO insert/track ───
+  it("forwards the typed VideoGenError hint on a submit failure + WARNs; NO insert, NO track", async () => {
+    const deps = createMockDeps({
+      provider: {
+        id: "fal",
+        isAvailable: () => true,
+        submit: vi.fn().mockResolvedValue(
+          err(new VideoGenError("fal: submit rejected", { videoErrorKind: "content_blocked", hint: "Adjust the prompt; the content was blocked." })),
+        ),
+        poll: vi.fn(),
+        fetchResult: vi.fn(),
+        execute: vi.fn(),
+      },
+    });
+    const handlers = createVideoHandlers(deps);
+    const result = (await handlers["video.generate"]!({ _agentId: "agent-1", prompt: "x" })) as {
+      success: boolean;
+      error: string;
+      hint?: string;
+    };
+    expect(result.success).toBe(false);
+    expect(result.hint).toMatch(/Adjust the prompt/);
+    expect(insertMock(deps)).not.toHaveBeenCalled();
+    expect(trackMock(deps)).not.toHaveBeenCalled();
+    const w = warnCalls(deps).find((c) => (c[0] as { step?: string }).step === "video_submit");
+    expect(w).toBeTruthy();
+    expect((w![0] as { videoErrorKind?: string }).videoErrorKind).toBe("content_blocked");
+    expect((w![0] as { errorKind?: string }).errorKind).toBe("dependency"); // VIDEO_ERR_TO_LOG mapping
+  });
+
+  // ─── pre-submit gates PRESERVED (non-regression) ───
+  it("returns error when prompt is missing (no submit, no insert)", async () => {
     const deps = createMockDeps();
     const handlers = createVideoHandlers(deps);
     const result = await handlers["video.generate"]!({ _agentId: "agent-1" });
     expect(result).toEqual({ success: false, error: "Missing required parameter: prompt" });
-    expect(deps.provider.execute).not.toHaveBeenCalled();
+    expect(deps.provider.submit).not.toHaveBeenCalled();
+    expect(insertMock(deps)).not.toHaveBeenCalled();
   });
 
-  it("returns error when rate limited (no execute) + a WARN with errorKind+hint", async () => {
+  it("returns error when rate limited (no submit) + a WARN with errorKind+hint", async () => {
     const deps = createMockDeps({
       rateLimiter: { tryAcquire: vi.fn().mockReturnValue(false), reset: vi.fn() },
     });
     const handlers = createVideoHandlers(deps);
     const result = await handlers["video.generate"]!({ _agentId: "agent-1", prompt: "a cat" });
     expect(result).toEqual({ success: false, error: "Rate limit exceeded: max 5 videos per hour" });
-    expect(deps.provider.execute).not.toHaveBeenCalled();
+    expect(deps.provider.submit).not.toHaveBeenCalled();
     const w = warnCalls(deps).find((c) => (c[0] as { step?: string }).step === "video_rate_limit");
     expect(w).toBeTruthy();
     expect((w![0] as { errorKind?: string }).errorKind).toBe("resource");
     expect((w![0] as { hint?: string }).hint).toMatch(/maxPerHour/);
   });
 
-  // ─── SEC-02 / DIVERGENCE 3: the pre-submit estimate gate ───
-  it("SEC-02: blocks BEFORE port.execute when the worst-case estimate exceeds the ceiling", async () => {
+  it("SEC-02: blocks BEFORE submit when the worst-case estimate exceeds the ceiling", async () => {
     const costLimiter = {
-      canSpend: vi.fn().mockReturnValue(false), // ceiling reached for the estimate
+      canSpend: vi.fn().mockReturnValue(false),
       record: vi.fn(),
       reset: vi.fn(),
     };
@@ -173,22 +264,18 @@ describe("createVideoHandlers", () => {
       duration: 8,
     })) as { success: boolean; hint?: string };
     expect(result.success).toBe(false);
-    // The clip cannot be un-billed once submitted (I6): execute MUST NOT run.
-    expect(deps.provider.execute).not.toHaveBeenCalled();
-    // canSpend was called WITH a positive estimate (DIVERGENCE 3 signature).
+    expect(deps.provider.submit).not.toHaveBeenCalled();
     expect(costLimiter.canSpend).toHaveBeenCalledTimes(1);
     const [agentArg, estArg] = costLimiter.canSpend.mock.calls[0]!;
     expect(agentArg).toBe("agent-1");
-    expect(typeof estArg).toBe("number");
     expect(estArg as number).toBeGreaterThan(0);
-    // A quota_exceeded WARN with errorKind + hint.
     const w = warnCalls(deps).find((c) => (c[0] as { step?: string }).step === "video_cost_ceiling");
     expect(w).toBeTruthy();
     expect((w![0] as { errorKind?: string }).errorKind).toBe("resource");
     expect(result.hint).toMatch(/maxCostPerHourUsd/);
   });
 
-  it("SEC-02: permits + records the actual cost AFTER a successful render when under the ceiling", async () => {
+  it("SEC-02: the handler does NOT record cost on submit (the poller reconciles on done)", async () => {
     const costLimiter = {
       canSpend: vi.fn().mockReturnValue(true),
       record: vi.fn(),
@@ -197,22 +284,17 @@ describe("createVideoHandlers", () => {
     const deps = createMockDeps({ costLimiter });
     const handlers = createVideoHandlers(deps);
     await handlers["video.generate"]!({ _agentId: "agent-1", prompt: "a dragon" });
-    expect(deps.provider.execute).toHaveBeenCalledTimes(1);
-    // Reconciled to the ACTUAL cost the provider reported (0.8), not the estimate.
-    expect(costLimiter.record).toHaveBeenCalledWith("agent-1", 0.8);
+    expect(deps.provider.submit).toHaveBeenCalledTimes(1);
+    // record is the poller's job now — the handler only gates pre-submit.
+    expect(costLimiter.record).not.toHaveBeenCalled();
   });
 
-  // ─── WR-02: the estimate and the request must agree on the resolved defaults ───
-  it("WR-02: a request omitting duration/resolution resolves the CONFIG defaults into the port input", async () => {
-    // No costLimiter → just assert the input sent to execute. The provider must
-    // receive the SAME resolved duration/resolution the estimate used, so it
-    // cannot apply its own (possibly higher-cost) defaults the estimate missed.
+  it("WR-02: a request omitting duration/resolution resolves the CONFIG defaults into the submit input", async () => {
     const deps = createMockDeps();
     const handlers = createVideoHandlers(deps);
-    await handlers["video.generate"]!({ _agentId: "agent-1", prompt: "a quiet lake" }); // omits duration/resolution/audio
-    const execute = deps.provider.execute as ReturnType<typeof vi.fn>;
-    const [input] = execute.mock.calls[0]! as [Record<string, unknown>];
-    // config defaults: defaultDurationSecs 8, defaultResolution "720p".
+    await handlers["video.generate"]!({ _agentId: "agent-1", prompt: "a quiet lake" });
+    const submit = deps.provider.submit as ReturnType<typeof vi.fn>;
+    const [input] = submit.mock.calls[0]! as [Record<string, unknown>];
     expect(input.durationSecs).toBe(8);
     expect(input.resolution).toBe("720p");
   });
@@ -225,37 +307,26 @@ describe("createVideoHandlers", () => {
     };
     const deps = createMockDeps({ costLimiter });
     const handlers = createVideoHandlers(deps);
-    await handlers["video.generate"]!({ _agentId: "agent-1", prompt: "a quiet lake" }); // omits duration
-    // The estimate used the resolved default duration (8 × fal $0.10/s = 0.8).
+    await handlers["video.generate"]!({ _agentId: "agent-1", prompt: "a quiet lake" });
     const [, estArg] = costLimiter.canSpend.mock.calls[0]!;
     expect(estArg).toBeCloseTo(0.8, 5);
-    // …and the SAME duration reached the adapter input (estimate↔request agree).
-    const execute = deps.provider.execute as ReturnType<typeof vi.fn>;
-    const [input] = execute.mock.calls[0]! as [Record<string, unknown>];
+    const submit = deps.provider.submit as ReturnType<typeof vi.fn>;
+    const [input] = submit.mock.calls[0]! as [Record<string, unknown>];
     expect(input.durationSecs).toBe(8);
   });
 
-  // ─── WR-03: a cost-blocked request must NOT consume a count rate-limit slot ───
   it("WR-03: a cost-ceiling block does NOT consume a count slot (the render never happened)", async () => {
     const costLimiter = {
-      canSpend: vi.fn().mockReturnValue(false), // cost ceiling reached
+      canSpend: vi.fn().mockReturnValue(false),
       record: vi.fn(),
       reset: vi.fn(),
     };
     const tryAcquire = vi.fn().mockReturnValue(true);
-    const deps = createMockDeps({
-      costLimiter,
-      rateLimiter: { tryAcquire, reset: vi.fn() },
-    });
+    const deps = createMockDeps({ costLimiter, rateLimiter: { tryAcquire, reset: vi.fn() } });
     const handlers = createVideoHandlers(deps);
-    const result = (await handlers["video.generate"]!({
-      _agentId: "agent-1",
-      prompt: "a dragon",
-    })) as { success: boolean };
+    const result = (await handlers["video.generate"]!({ _agentId: "agent-1", prompt: "a dragon" })) as { success: boolean };
     expect(result.success).toBe(false);
-    expect(deps.provider.execute).not.toHaveBeenCalled();
-    // The count slot must NOT have been burned on a cost-blocked request:
-    // tryAcquire is consumed only once the cost gate passes (or after a submit).
+    expect(deps.provider.submit).not.toHaveBeenCalled();
     expect(tryAcquire).not.toHaveBeenCalled();
   });
 
@@ -266,18 +337,14 @@ describe("createVideoHandlers", () => {
       reset: vi.fn(),
     };
     const tryAcquire = vi.fn().mockReturnValue(true);
-    const deps = createMockDeps({
-      costLimiter,
-      rateLimiter: { tryAcquire, reset: vi.fn() },
-    });
+    const deps = createMockDeps({ costLimiter, rateLimiter: { tryAcquire, reset: vi.fn() } });
     const handlers = createVideoHandlers(deps);
     await handlers["video.generate"]!({ _agentId: "agent-1", prompt: "a dragon" });
     expect(tryAcquire).toHaveBeenCalledTimes(1);
-    expect(deps.provider.execute).toHaveBeenCalledTimes(1);
+    expect(deps.provider.submit).toHaveBeenCalledTimes(1);
   });
 
-  // ─── port.execute receives the inline poll opts ───
-  it("calls port.execute with (VideoGenInput, {timeoutMs, pollIntervalMs})", async () => {
+  it("submits the resolved VideoGenInput (prompt + resolved params)", async () => {
     const deps = createMockDeps();
     const handlers = createVideoHandlers(deps);
     await handlers["video.generate"]!({
@@ -288,145 +355,17 @@ describe("createVideoHandlers", () => {
       resolution: "1080p",
       audio: true,
     });
-    const execute = deps.provider.execute as ReturnType<typeof vi.fn>;
-    const [input, opts] = execute.mock.calls[0]! as [Record<string, unknown>, Record<string, unknown>];
+    const submit = deps.provider.submit as ReturnType<typeof vi.fn>;
+    const [input] = submit.mock.calls[0]! as [Record<string, unknown>];
     expect(input.prompt).toBe("a sunset");
     expect(input.durationSecs).toBe(8);
     expect(input.aspectRatio).toBe("16:9");
     expect(input.resolution).toBe("1080p");
     expect(input.audio).toBe(true);
-    expect(opts).toEqual({ timeoutMs: 300000, pollIntervalMs: 10000 });
-  });
-
-  // ─── DEL-01 + DEL-02: persist to videos/ then deliver via sendAttachment ───
-  it("DEL-01/02: persists to videos/ then delivers via sendAttachment (type video, durationSecs)", async () => {
-    const sendAttachment = vi.fn().mockResolvedValue(ok(undefined));
-    const deps = createMockDeps({
-      getChannelAdapter: vi.fn().mockReturnValue({ sendAttachment }),
-    });
-    const handlers = createVideoHandlers(deps);
-    const result = (await handlers["video.generate"]!({
-      _agentId: "agent-1",
-      prompt: "a comet",
-      _callerChannelType: "telegram",
-      _callerChannelId: "chat-1",
-    })) as { success: boolean; delivered?: boolean };
-    // persist called with mediaKind "video".
-    const persistArgs = (deps.persist as ReturnType<typeof vi.fn>).mock.calls[0]!;
-    expect((persistArgs[2] as { mediaKind: string }).mediaKind).toBe("video");
-    // delivered with the PERSISTED path + type:"video" + durationSecs.
-    expect(result.delivered).toBe(true);
-    const attachment = sendAttachment.mock.calls[0]?.[1] as { type: string; url: string; durationSecs?: number };
-    expect(attachment.type).toBe("video");
-    expect(attachment.url).toContain("workspace/media/videos/");
-    expect(attachment.durationSecs).toBe(8);
-  });
-
-  it("DEL-02: IRC (no sendAttachment) degrades — never calls an undefined method, returns a persisted path", async () => {
-    // An adapter object WITHOUT sendAttachment (today only IRC).
-    const ircAdapter = {} as { sendAttachment?: unknown };
-    const deps = createMockDeps({
-      getChannelAdapter: vi.fn().mockReturnValue(ircAdapter),
-    });
-    const handlers = createVideoHandlers(deps);
-    const result = (await handlers["video.generate"]!({
-      _agentId: "agent-1",
-      prompt: "a nebula",
-      _callerChannelType: "irc",
-      _callerChannelId: "#chan",
-    })) as { success: boolean; mediaPath?: string; videoBase64?: string };
-    expect(result.success).toBe(true);
-    // Degrades to the persisted path (small buffer → base64 is allowed too, but
-    // the persisted path must be present and no crash on the missing method).
-    expect(result.mediaPath ?? result.videoBase64).toBeTruthy();
-  });
-
-  // ─── DEL-04: the base64 fallback is SIZE-CAPPED ───
-  it("DEL-04: a large video returns the persisted path, NOT a huge base64 blob", async () => {
-    const bigBuffer = Buffer.alloc(9 * 1024 * 1024, 1); // 9 MB > the 8 MB cap
-    const deps = createMockDeps({
-      provider: {
-        id: "fal",
-        isAvailable: () => true,
-        submit: vi.fn(),
-        poll: vi.fn(),
-        fetchResult: vi.fn(),
-        execute: vi.fn().mockResolvedValue(ok({ buffer: bigBuffer, mimeType: "video/mp4", costUsd: 1 })),
-      },
-      // No channel → falls through to the base64/persisted-path decision.
-      getChannelAdapter: vi.fn().mockReturnValue(undefined),
-    });
-    const handlers = createVideoHandlers(deps);
-    const result = (await handlers["video.generate"]!({ _agentId: "agent-1", prompt: "an epic" })) as {
-      success: boolean;
-      videoBase64?: string;
-      mediaPath?: string;
-    };
-    expect(result.success).toBe(true);
-    expect(result.videoBase64).toBeUndefined(); // NOT inlined
-    expect(result.mediaPath).toContain("workspace/media/videos/");
-  });
-
-  it("DEL-04: a small video IS inlined as base64 when no channel adapter is available", async () => {
-    const deps = createMockDeps({ getChannelAdapter: vi.fn().mockReturnValue(undefined) });
-    const handlers = createVideoHandlers(deps);
-    const result = (await handlers["video.generate"]!({ _agentId: "agent-1", prompt: "tiny" })) as {
-      success: boolean;
-      videoBase64?: string;
-      mimeType?: string;
-    };
-    expect(result.success).toBe(true);
-    expect(result.videoBase64).toBe(SMALL_MP4.toString("base64"));
-    expect(result.mimeType).toBe("video/mp4");
-  });
-
-  // ─── !result.ok → typed error hint forwarded + WARN ───
-  it("forwards the typed VideoGenError hint on a provider failure + WARNs with the domain errorKind", async () => {
-    const deps = createMockDeps({
-      provider: {
-        id: "fal",
-        isAvailable: () => true,
-        submit: vi.fn(),
-        poll: vi.fn(),
-        fetchResult: vi.fn(),
-        execute: vi.fn().mockResolvedValue(
-          err(new VideoGenError("fal: COMPLETED with no video.url", { videoErrorKind: "empty_response", hint: "The provider returned no video; retry or adjust the prompt." })),
-        ),
-      },
-    });
-    const handlers = createVideoHandlers(deps);
-    const result = (await handlers["video.generate"]!({ _agentId: "agent-1", prompt: "x" })) as {
-      success: boolean;
-      error: string;
-      hint?: string;
-    };
-    expect(result.success).toBe(false);
-    expect(result.hint).toMatch(/retry or adjust/);
-    const w = warnCalls(deps).find((c) => (c[0] as { step?: string }).step === "video_execute");
-    expect(w).toBeTruthy();
-    expect((w![0] as { videoErrorKind?: string }).videoErrorKind).toBe("empty_response");
-    expect((w![0] as { errorKind?: string }).errorKind).toBe("dependency"); // VIDEO_ERR_TO_LOG mapping
-  });
-
-  it("WARNs on a persist failure and falls through to base64 (degraded delivery, not a failure)", async () => {
-    const deps = createMockDeps({
-      persist: vi.fn().mockResolvedValue(err(new Error("disk full"))),
-      getChannelAdapter: vi.fn().mockReturnValue(undefined),
-    });
-    const handlers = createVideoHandlers(deps);
-    const result = (await handlers["video.generate"]!({ _agentId: "agent-1", prompt: "y" })) as {
-      success: boolean;
-      videoBase64?: string;
-    };
-    expect(result.success).toBe(true);
-    expect(result.videoBase64).toBe(SMALL_MP4.toString("base64"));
-    const w = warnCalls(deps).find((c) => (c[0] as { step?: string }).step === "video_persist");
-    expect(w).toBeTruthy();
-    expect((w![0] as { errorKind?: string }).errorKind).toBe("resource");
   });
 
   // ─── SEC-03: image_url through the SSRF resolver ───
-  it("SEC-03: resolves image_url through the resolver and threads referenceImage to execute()", async () => {
+  it("SEC-03: resolves image_url through the resolver and threads referenceImage to submit()", async () => {
     const deps = createMockDeps();
     const handlers = createVideoHandlers(deps);
     await handlers["video.generate"]!({
@@ -434,13 +373,13 @@ describe("createVideoHandlers", () => {
       prompt: "animate this",
       image_url: "data:image/png;base64,aGVsbG8=",
     });
-    const execute = deps.provider.execute as ReturnType<typeof vi.fn>;
-    const input = execute.mock.calls[0]![0] as { referenceImage?: { data: string; mimeType: string } };
+    const submit = deps.provider.submit as ReturnType<typeof vi.fn>;
+    const input = submit.mock.calls[0]![0] as { referenceImage?: { data: string; mimeType: string } };
     expect(input.referenceImage).toBeTruthy();
     expect(input.referenceImage!.mimeType).toBe("image/png");
   });
 
-  it("SEC-03: an SSRF-rejected image_url URL throws (no execute) — the security floor holds", async () => {
+  it("SEC-03: an SSRF-rejected image_url URL throws (no submit) — the security floor holds", async () => {
     const core = await import("@comis/core");
     (core.validateUrl as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       ok: false,
@@ -455,44 +394,33 @@ describe("createVideoHandlers", () => {
         image_url: "http://169.254.169.254/latest/meta-data/",
       }),
     ).rejects.toThrow();
-    expect(deps.provider.execute).not.toHaveBeenCalled();
+    expect(deps.provider.submit).not.toHaveBeenCalled();
   });
 
   // ─── SEC-03 redaction: no credential VALUE in any log line ───
   it("SEC-03: no credential value (FAL_KEY/bearer/XAI/GOOGLE) appears in any log payload", async () => {
-    // A bearer-like secret value the handler must never emit. We force a failure
-    // branch carrying it in the (typed) error message and assert it is not logged.
     const secret = "fal-SECRETKEY-1234567890abcdefABCDEF";
     const deps = createMockDeps({
       provider: {
         id: "fal",
         isAvailable: () => true,
-        submit: vi.fn(),
-        poll: vi.fn(),
-        fetchResult: vi.fn(),
-        execute: vi.fn().mockResolvedValue(
+        submit: vi.fn().mockResolvedValue(
           err(new VideoGenError("auth failed", { videoErrorKind: "auth_required", hint: "Set FAL_KEY to a valid fal.ai key." })),
         ),
+        poll: vi.fn(),
+        fetchResult: vi.fn(),
+        execute: vi.fn(),
       },
     });
     const handlers = createVideoHandlers(deps);
     await handlers["video.generate"]!({ _agentId: "agent-1", prompt: "z" });
-    // Scan every captured log payload (warn + info) for the secret + the
-    // CREDENTIAL_KEYS names as VALUES.
     const allCalls = [...warnCalls(deps), ...infoCalls(deps)];
     for (const call of allCalls) {
       const json = JSON.stringify(call[0] ?? {});
       expect(json).not.toContain(secret);
-      for (const key of CREDENTIAL_KEYS) {
-        // The key NAME may appear (e.g. "FAL_KEY" in a hint); a credential
-        // VALUE must not. We assert no value resembling a secret leaks by
-        // confirming the raw secret string is absent (above) — this loop guards
-        // against a future code path that logs the key's value object.
-        void key;
-      }
+      for (const key of CREDENTIAL_KEYS) void key;
     }
-    // Sanity: the failure WARN exists and carries the safe hint, not the secret.
-    const w = warnCalls(deps).find((c) => (c[0] as { step?: string }).step === "video_execute");
+    const w = warnCalls(deps).find((c) => (c[0] as { step?: string }).step === "video_submit");
     expect(w).toBeTruthy();
     expect(JSON.stringify(w![0])).not.toContain(secret);
   });
@@ -505,21 +433,24 @@ describe("createVideoHandlers", () => {
     const handlers = createVideoHandlers(deps);
     await handlers["video.generate"]!({ prompt: "no agent id" }); // defaults to "default"
     expect(deps.resolveAgentMainProvider).toHaveBeenCalledWith("default");
-    // The INFO completion line carries both the executing videoProvider and the
-    // resolved mainProvider (§2.7 baseline).
-    const info = infoCalls(deps).find((c) => (c[0] as { step?: string }).step === "video_complete");
+    // The submit INFO line carries the resolved estimate + agent.
+    const info = infoCalls(deps).find((c) => (c[0] as { step?: string }).step === "video_submitted");
     expect(info).toBeTruthy();
-    expect((info![0] as { videoProvider?: string }).videoProvider).toBe("fal");
-    expect((info![0] as { mainProvider?: string }).mainProvider).toBe("google");
+    expect((info![0] as { agentId?: string }).agentId).toBe("default");
+  });
+
+  // ─── A3: the {jobId,state,estimatedCostUsd} return validates vs the loose record ───
+  it("A3: the {jobId,state,estimatedCostUsd} handle validates against VideoGenerateContract.response", async () => {
+    const core = await import("@comis/core");
+    const deps = createMockDeps();
+    const handlers = createVideoHandlers(deps);
+    const result = await handlers["video.generate"]!({ _agentId: "agent-1", prompt: "valid" });
+    // The loose-record response accepts the handle shape (no contract change).
+    expect(() => core.VideoGenerateContract.response.parse(result)).not.toThrow();
   });
 
   // ─── OBS-04 deferred: the handler emits NO video.* trajectory events ───
   it("OBS-04 (Phase 192): the videoHandlerDeps shape has NO trajectory/eventBus field (logger-only)", () => {
-    // Structural proof: assigning a trajectoryRegistry/eventBus key would be a
-    // type error. We assert the deps the handler accepts have only the
-    // logger-line obs surface. (A runtime no-op — the compile-time shape is the
-    // contract; if a future edit re-adds the trajectory field this test's intent
-    // is documented and the source-grep acceptance criterion catches an emit.)
     const deps = createMockDeps();
     expect("trajectoryRegistry" in deps).toBe(false);
     expect("eventBus" in deps).toBe(false);
