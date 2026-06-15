@@ -384,6 +384,10 @@ export function assembleIncidentReport(
     // The cost rides here so `comis explain` shows it (Route a — NOT cost.costUsd,
     // which reads the executor sessionEnd, a different path; Pitfall 2).
     ...(signals.image !== undefined ? { image: signals.image } : {}),
+    // VIS-04 (187): the vision turn reconstructed from the trajectory's
+    // media.vision.* records (absent when the session ran no vision). The vision
+    // cost rides here too (Route a) — the image/vision folds are independent.
+    ...(signals.vision !== undefined ? { vision: signals.vision } : {}),
     summary,
     // Plan 05 fills likelyRootCause; Plan 04 fills truncations; Plan 05 fills
     // the report-level suggestedNextSteps.

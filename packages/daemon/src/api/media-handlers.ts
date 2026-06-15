@@ -202,8 +202,7 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
       const agentId = (rawParams._agentId as string | undefined) ?? deps.defaultAgentId;
       const preferredProvider = deps.mediaConfig.vision.defaultProvider;
       const main = deps.resolveAgentMainProvider?.(agentId) ?? { providerId: "unknown" };
-      // VIS-04: §2.7 clock (systemNowMs, never Date.now()) + the content-free
-      // trajectory/§2.7-log emitter (fires media.vision.requested at construction).
+      // VIS-04: §2.7 clock (systemNowMs, never Date.now()) + the trajectory/§2.7-log emitter (fires media.vision.requested at construction).
       const visionStartMs = systemNowMs();
       const obs = createVisionObsEmitter(rawParams._callerSessionKey as string | undefined, deps.trajectoryRegistry, deps.logger, agentId, visionStartMs, systemNowMs, { provider: main.providerId, mainProvider: main.providerId });
       // The daemon-side vision gate (setup-channels-media.ts:135 dance): resolve

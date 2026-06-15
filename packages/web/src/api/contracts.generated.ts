@@ -7865,6 +7865,47 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
           ],
           "additionalProperties": false
         },
+        "vision": {
+          "type": "object",
+          "properties": {
+            "provider": {
+              "type": "string"
+            },
+            "mainProvider": {
+              "type": "string"
+            },
+            "model": {
+              "type": "string"
+            },
+            "costUsd": {
+              "type": "number"
+            },
+            "path": {
+              "type": "string",
+              "enum": [
+                "main-vision",
+                "registry",
+                "gemini-video",
+                "unavailable"
+              ]
+            },
+            "outcome": {
+              "type": "string",
+              "enum": [
+                "ok",
+                "failed"
+              ]
+            },
+            "errorKind": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "provider",
+            "outcome"
+          ],
+          "additionalProperties": false
+        },
         "summary": {
           "type": "string"
         },
