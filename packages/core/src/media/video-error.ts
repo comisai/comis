@@ -7,11 +7,15 @@
  * NOT be added to it. This mirrors `ImageErrorKind` (image-error.ts), where the
  * domain classification is its own type, separate from the log union.
  *
- * DIVERGENCE 2 from the image union: video adds a 7th member, `job_timeout`,
- * for the bounded poll-loop deadline of `execute()` (VPORT-02) — distinct from
- * `timeout` (a single provider HTTP call timing out). It is the video-only
- * addition and is mapped — like `timeout` — onto the EXISTING closed log
- * `"timeout"`. The closed log union is never extended.
+ * DIVERGENCE 2 from the image union: video adds `job_timeout` for the bounded
+ * poll-loop deadline of `execute()` (VPORT-02) — distinct from `timeout` (a single
+ * provider HTTP call timing out) — and (WR-02, Phase 192) `delivery_failed` for a
+ * render that SUCCEEDED but whose off-turn channel delivery exhausted its retries.
+ * These are video-only additions; each is mapped onto an EXISTING closed log
+ * `ErrorKind` (the closed log union is never extended). `delivery_failed` keeps the
+ * explain timeline honest — a delivery failure must not masquerade as the render
+ * kind `empty_response` (which would point an operator at the provider/prompt
+ * instead of the channel's attachment support / size / credentials).
  *
  * `VIDEO_ERR_TO_LOG` is the only bridge between the two: at log time a domain
  * `VideoErrorKind` is mapped onto exactly one of the closed log `ErrorKind`
@@ -31,7 +35,8 @@ export type VideoErrorKind =
   | "timeout"
   | "job_timeout"
   | "unsupported_provider"
-  | "empty_response";
+  | "empty_response"
+  | "delivery_failed";
 
 /**
  * Maps each domain `VideoErrorKind` onto one of the CLOSED 10-member log
@@ -47,6 +52,9 @@ export const VIDEO_ERR_TO_LOG: Record<VideoErrorKind, ErrorKind> = {
   job_timeout: "timeout",
   empty_response: "dependency",
   content_blocked: "dependency",
+  // WR-02: a delivery exhaustion is a channel/transport (platform-side) failure,
+  // NOT a provider dependency failure — keep it distinct from empty_response.
+  delivery_failed: "platform",
 };
 
 /**

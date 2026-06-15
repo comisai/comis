@@ -8,12 +8,14 @@ import type { VideoErrorKind } from "./video-error.js";
  * 10-member log ErrorKind union. VIDEO_ERR_TO_LOG is the only bridge: every
  * domain kind maps onto exactly one closed log ErrorKind at log time.
  *
- * DIVERGENCE 2 from the image union: video adds a 7th member `job_timeout`
- * (the bounded-poll deadline of VPORT-02), mapped — like `timeout` — onto the
- * existing closed log "timeout". The closed log ErrorKind is NEVER extended.
+ * DIVERGENCE 2 from the image union: video adds `job_timeout` (the bounded-poll
+ * deadline of VPORT-02) and (WR-02, Phase 192) `delivery_failed` (a render that
+ * succeeded but whose off-turn channel delivery exhausted its retries) — each
+ * mapped onto an existing closed log ErrorKind. The closed log ErrorKind is NEVER
+ * extended.
  */
 
-// The 7 video error kinds, as a literal array (exhaustiveness driver).
+// The 8 video error kinds, as a literal array (exhaustiveness driver).
 const ALL_VIDEO_ERROR_KINDS: readonly VideoErrorKind[] = [
   "content_blocked",
   "auth_required",
@@ -22,6 +24,7 @@ const ALL_VIDEO_ERROR_KINDS: readonly VideoErrorKind[] = [
   "job_timeout",
   "unsupported_provider",
   "empty_response",
+  "delivery_failed",
 ];
 
 // The closed 10-member log ErrorKind union (log-fields.ts) as a literal set.
@@ -39,17 +42,22 @@ const CLOSED_LOG_ERROR_KINDS = new Set<string>([
 ]);
 
 describe("VIDEO_ERR_TO_LOG", () => {
-  it("has exactly 7 members including the video-only job_timeout (DIVERGENCE 2)", () => {
-    expect(ALL_VIDEO_ERROR_KINDS).toHaveLength(7);
+  it("has exactly 8 members including the video-only job_timeout + delivery_failed (DIVERGENCE 2 / WR-02)", () => {
+    expect(ALL_VIDEO_ERROR_KINDS).toHaveLength(8);
     expect(ALL_VIDEO_ERROR_KINDS).toContain("job_timeout");
+    expect(ALL_VIDEO_ERROR_KINDS).toContain("delivery_failed");
   });
 
   it("contains a mapping for every member of the VideoErrorKind union", () => {
     for (const kind of ALL_VIDEO_ERROR_KINDS) {
       expect(VIDEO_ERR_TO_LOG[kind]).toBeDefined();
     }
-    // No extra keys beyond the 7 domain kinds.
+    // No extra keys beyond the 8 domain kinds.
     expect(Object.keys(VIDEO_ERR_TO_LOG).sort()).toEqual([...ALL_VIDEO_ERROR_KINDS].sort());
+  });
+
+  it("maps delivery_failed onto the closed log platform kind (WR-02 — a channel/transport failure, not a provider dependency)", () => {
+    expect(VIDEO_ERR_TO_LOG.delivery_failed).toBe("platform");
   });
 
   it("maps every value onto one of the closed log ErrorKind literals", () => {
