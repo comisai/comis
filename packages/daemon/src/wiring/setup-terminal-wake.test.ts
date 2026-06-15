@@ -764,4 +764,220 @@ describe("setupTerminalWake — the keystone subscribe + woken-turn driver (124-
     // The re-attach signal is the registry's content-free terminal:drive_reattached.
     expect(src, "the holder must consume terminal:drive_reattached for resume").toMatch(/terminal:drive_reattached/);
   });
+
+  // -------------------------------------------------------------------------
+  // LIVE-01 (165-07 Task 2): the coarse liveness BACKSTOP timer. It rides UNDER the
+  // event-driven wake purely as a safety net: a deps.timers.setInterval(...).unref()
+  // that, per tick, for each PROMOTED session, fires ONE liveness check ONLY in the
+  // ABSENCE of a wake within the heartbeat window (I2 — no per-tick screen read), then
+  //   - busyOrHung → "busy"  ⇒ refreshLastActivity (the ENDURE-01 reaper unify, I9) + continue
+  //   - busyOrHung → "hung"  ⇒ synth state:"stuck" via the EXISTING terminal:input_needed seam
+  // A normally-progressing drive (a transition inside heartbeatMs every tick) NEVER triggers it.
+  // RED on pre-patch: no backstop exists — deps.timers is never armed, so a silent+hung
+  // drive synthesizes NO stuck (the silent-worker hole stays open) and a silent+busy drive
+  // never refreshes lastActivity.
+  // -------------------------------------------------------------------------
+
+  /** A fake TimerPort that CAPTURES the interval callback so a test can tick it manually. */
+  function makeFakeTimers() {
+    const intervals: Array<{ cb: () => void; intervalMs: number; handle: { cancelled: boolean; cancel(): void; unref(): void; unrefCalls: number; cancelCalls: number } }> = [];
+    const timers = {
+      setInterval(cb: () => void, intervalMs: number) {
+        const handle = {
+          cancelled: false,
+          unrefCalls: 0,
+          cancelCalls: 0,
+          cancel() {
+            this.cancelled = true;
+            this.cancelCalls += 1;
+          },
+          unref() {
+            this.unrefCalls += 1;
+          },
+        };
+        intervals.push({ cb, intervalMs, handle });
+        return handle;
+      },
+      setTimeout: (cb: () => void, _ms: number) => ({ cancelled: false, cancel() {}, unref() {} }),
+    };
+    return {
+      timers,
+      intervals,
+      /** Fire every armed interval's callback once (the heartbeat tick). */
+      tick() {
+        for (const i of intervals) i.cb();
+      },
+    };
+  }
+
+  /**
+   * Build with the LIVE-01 backstop wired: a fake TimerPort, a controllable clock, an
+   * injected checkLiveness probe (has-session + noProgressMs + stuckMs — NO screen), and a
+   * refreshLastActivity spy. `liveness` maps a sessionId → its BusySignal-shaped probe.
+   */
+  function buildBackstop(
+    dataDir: string,
+    opts: {
+      screen: string;
+      heartbeatMs?: number;
+      liveness: Record<string, { alive: boolean; noProgressMs: number; stuckMs: number } | undefined>;
+    },
+  ): Built & {
+    fake: ReturnType<typeof makeFakeTimers>;
+    clock: { now: number };
+    refreshCalls: string[];
+    checkLiveness: ReturnType<typeof vi.fn>;
+  } {
+    const bus = makeBus();
+    const registry = makeRegistry({ screen: opts.screen });
+    const logger = makeLogger();
+    const notify = vi.fn(async () => undefined);
+    const fake = makeFakeTimers();
+    const clock = { now: 100_000 };
+    const refreshCalls: string[] = [];
+    const checkLiveness = vi.fn((sessionId: string) => opts.liveness[sessionId]);
+    const registries = new Map<string, ReturnType<typeof makeRegistry>>([["a", registry]]);
+    const deps = {
+      eventBus: bus as unknown as SetupTerminalWakeDeps["eventBus"],
+      registries: registries as unknown as SetupTerminalWakeDeps["registries"],
+      getTerminalAttentionConfig: () => ({ autoAnswer: "safe-only" as const, hintPatterns: ["press enter to continue"], maxHops: 5, maxConcurrentAttentionTurns: 2 }),
+      notify,
+      dataDir,
+      nowMs: () => clock.now,
+      logger: logger as unknown as SetupTerminalWakeDeps["logger"],
+      timers: fake.timers,
+      heartbeatMs: opts.heartbeatMs ?? 90_000,
+      checkLiveness,
+      refreshLastActivity: (sessionId: string) => refreshCalls.push(sessionId),
+    } as unknown as SetupTerminalWakeDeps;
+    const handle = setupTerminalWake(deps);
+    return { bus, registry, logger, notify, handle, fake, clock, refreshCalls, checkLiveness };
+  }
+
+  /** The synth-stuck wakes the backstop emits through the existing terminal:input_needed seam. */
+  function synthStuckEmits(b: Built): Array<Record<string, unknown>> {
+    return b.bus.emitted.filter((e) => e.event === "terminal:input_needed" && e.payload.state === "stuck").map((e) => e.payload);
+  }
+
+  it("LIVE-01: the backstop arms a deps.timers.setInterval at heartbeatMs and .unref()'s the handle (mirrors the reaper)", () => {
+    built = buildBackstop(dataDir, { screen: "Building…", heartbeatMs: 45_000, liveness: {} });
+    const { fake } = built as ReturnType<typeof buildBackstop>;
+    expect(fake.intervals, "the backstop must arm exactly one interval").toHaveLength(1);
+    expect(fake.intervals[0]!.intervalMs, "the interval cadence is heartbeatMs").toBe(45_000);
+    expect(fake.intervals[0]!.handle.unrefCalls, "the backstop handle must be .unref()'d (never holds the loop open on SIGTERM)").toBeGreaterThanOrEqual(1);
+  });
+
+  it("LIVE-01 / I2: a normally-progressing drive (a transition INSIDE heartbeatMs) triggers 0 synth-stuck + reads NO screen (Pitfall 7)", async () => {
+    const b = buildBackstop(dataDir, { screen: "Building…", heartbeatMs: 90_000, liveness: { "s-live": { alive: true, noProgressMs: 999_999, stuckMs: 600_000 } } });
+    built = b;
+    // Promote, then a wake lands (the transition stamps lastTransitionMs = now).
+    b.bus.fireDrivePromoted("s-live", "a", "producing");
+    await flush();
+    b.registry.read.mockClear();
+    b.checkLiveness.mockClear();
+    // The tick fires WITHIN the heartbeat window of the last wake → the backstop SKIPS it.
+    b.clock.now += 10_000; // < heartbeatMs since the wake
+    b.fake.tick();
+    await flush();
+
+    // I2: a wake intervened → no liveness check, no synth-stuck, NO screen read this tick.
+    expect(synthStuckEmits(b), "a normally-progressing drive must NOT be declared stuck").toHaveLength(0);
+    expect(b.checkLiveness, "a wake intervened → the backstop must skip the liveness check").not.toHaveBeenCalled();
+    expect(b.registry.read, "the backstop must NEVER read the screen per tick (I2)").not.toHaveBeenCalled();
+  });
+
+  it("LIVE-01: a SILENT + HUNG drive (no transition past heartbeatMs, busyOrHung→hung) synthesizes EXACTLY ONE stuck through the existing terminal:input_needed seam (no 600s wait)", async () => {
+    const b = buildBackstop(dataDir, { screen: "$ ", heartbeatMs: 90_000, liveness: { "s-hung": { alive: true, noProgressMs: 999_999, stuckMs: 600_000 } } });
+    built = b;
+    b.bus.fireDrivePromoted("s-hung", "a", "producing");
+    await flush();
+    b.registry.read.mockClear();
+    // The clock advances PAST the heartbeat window with no intervening wake → the backstop fires.
+    b.clock.now += 120_000; // > heartbeatMs since the promotion
+    b.fake.tick();
+    await flush();
+
+    const stuck = synthStuckEmits(b);
+    expect(stuck, "a silent+hung drive must synthesize exactly ONE stuck").toHaveLength(1);
+    expect(stuck[0]).toMatchObject({ sessionId: "s-hung", agentId: "a", state: "stuck" });
+    // The synth went through the EXISTING terminal:input_needed/stuck seam (NOT a new event).
+    expect(b.checkLiveness, "the backstop performed the injected liveness check (has-session + noProgressMs)").toHaveBeenCalledWith("s-hung");
+    expect(b.registry.read, "the liveness check reads NO screen (I2)").not.toHaveBeenCalled();
+    // A WARN with the §2.7 hint+errorKind+step surfaces the synthesized stuck.
+    const warn = b.logger.warn.mock.calls.find((c) => (c[0] as { step?: string })?.step === "liveness_backstop");
+    expect(warn, "a synthesized stuck must WARN with step:liveness_backstop").toBeDefined();
+    expect((warn![0] as { errorKind?: string }).errorKind).toBe("timeout");
+    expect(typeof (warn![0] as { hint?: string }).hint).toBe("string");
+  });
+
+  it("LIVE-01 / ENDURE-01 unify (I9): a SILENT + BUSY drive (a quiet compile) synthesizes 0 stuck + REFRESHES lastActivity", async () => {
+    const b = buildBackstop(dataDir, { screen: "Compiling…", heartbeatMs: 90_000, liveness: { "s-busy": { alive: true, noProgressMs: 1_000, stuckMs: 600_000 } } });
+    built = b;
+    b.bus.fireDrivePromoted("s-busy", "a", "producing");
+    await flush();
+    // Past the heartbeat window with no wake → the backstop fires its one check.
+    b.clock.now += 120_000;
+    b.fake.tick();
+    await flush();
+
+    // busyOrHung → "busy": NOT stuck, and the busy verdict REFRESHES lastActivity so the
+    // ENDURE-01 idle reaper never evicts a quiet-but-busy compile (the documented pitfall).
+    expect(synthStuckEmits(b), "a busy compile must NOT be declared stuck").toHaveLength(0);
+    expect(b.refreshCalls, "a busy verdict must refresh lastActivity (the ENDURE-01 unify, I9)").toContain("s-busy");
+  });
+
+  it("LIVE-01: a DEAD backend (alive:false) is hung → synth stuck (busyOrHung biases dead→hung regardless of timing)", async () => {
+    const b = buildBackstop(dataDir, { screen: "$ ", heartbeatMs: 90_000, liveness: { "s-dead": { alive: false, noProgressMs: 0, stuckMs: 600_000 } } });
+    built = b;
+    b.bus.fireDrivePromoted("s-dead", "a", "producing");
+    await flush();
+    b.clock.now += 120_000;
+    b.fake.tick();
+    await flush();
+    expect(synthStuckEmits(b), "a dead backend is hung → synth stuck").toHaveLength(1);
+  });
+
+  it("LIVE-01 / I1: an UNPROMOTED session is NOT checked by the backstop (the backstop only guards promoted drives)", async () => {
+    const b = buildBackstop(dataDir, { screen: "$ ", heartbeatMs: 90_000, liveness: { "s-plain": { alive: false, noProgressMs: 999_999, stuckMs: 600_000 } } });
+    built = b;
+    // No promotion — a plain terminal_session. The backstop must not check or synth-stuck it.
+    b.clock.now += 120_000;
+    b.fake.tick();
+    await flush();
+    expect(b.checkLiveness, "an unpromoted session must NOT be liveness-checked (I1)").not.toHaveBeenCalled();
+    expect(synthStuckEmits(b), "an unpromoted session must NOT be synth-stuck (I1)").toHaveLength(0);
+  });
+
+  it("LIVE-01: the synth-stuck fires AT MOST ONCE per silent stretch — a second tick still inside the same no-wake stretch does NOT re-synth", async () => {
+    const b = buildBackstop(dataDir, { screen: "$ ", heartbeatMs: 90_000, liveness: { "s-hung": { alive: true, noProgressMs: 999_999, stuckMs: 600_000 } } });
+    built = b;
+    b.bus.fireDrivePromoted("s-hung", "a", "producing");
+    await flush();
+    b.clock.now += 120_000;
+    b.fake.tick(); // fires ONE synth-stuck
+    await flush();
+    b.clock.now += 30_000; // a second tick still in the same silent stretch (no new wake)
+    b.fake.tick();
+    await flush();
+    // The backstop is a one-check-per-silent-stretch backstop, not a per-tick re-synth — the
+    // synthesized stuck itself counts as the "transition" so it does not re-fire every tick.
+    expect(synthStuckEmits(b), "the backstop synthesizes stuck at most once per silent stretch").toHaveLength(1);
+  });
+
+  it("LIVE-01: the backstop interval handle is cancelled on shutdown (no leaked timer)", async () => {
+    const b = buildBackstop(dataDir, { screen: "$ ", liveness: {} });
+    built = b;
+    await b.handle.shutdown();
+    built = undefined; // already shut down
+    expect(b.fake.intervals[0]!.handle.cancelCalls, "shutdown must cancel the backstop interval").toBeGreaterThanOrEqual(1);
+  });
+
+  it("LIVE-01 wiring (source guard): the backstop arms timers.setInterval(...).unref() + consumes busyOrHung + never reads the screen per tick", () => {
+    const src = readFileSync(fileURLToPath(new URL("./setup-terminal-wake.ts", import.meta.url)), "utf8");
+    expect(src, "the backstop must arm an interval off the injected TimerPort").toMatch(/timers\??\.setInterval\(/);
+    expect(src, "the backstop handle must be .unref()'d").toMatch(/\.unref\(\)/);
+    expect(src, "the backstop must consume the busy-vs-hung predicate").toMatch(/busyOrHung/);
+    expect(src, "the backstop must gate on the per-session last-transition (I2)").toMatch(/lastTransition/);
+    expect(src, "the backstop must read heartbeatMs").toMatch(/heartbeatMs/);
+  });
 });
