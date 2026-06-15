@@ -7,6 +7,10 @@ import {
   McpConfigSchema,
   McpServerEntrySchema,
 } from "./schema-integrations.js";
+import {
+  VideoGenerateContract,
+  MEDIA_CONTRACTS,
+} from "../api-contracts/media.js";
 
 describe("DOCUMENT_MIME_WHITELIST", () => {
   it("contains exactly 14 MIME types", () => {
@@ -177,6 +181,97 @@ describe("MediaConfigSchema - documentExtraction nesting", () => {
         imageGeneration: { provider: "auto", maxCostPerHourUsd: -1 },
       }),
     ).toThrow();
+  });
+
+  // ─── CFG-01 (188): videoGeneration additive sibling of imageGeneration ──────
+
+  it("includes videoGeneration with defaults from empty input (CFG-01)", () => {
+    const result = MediaConfigSchema.parse({});
+    expect(result.videoGeneration).toBeDefined();
+    // CFG-01: provider-following default is "auto" (follows the agent's main provider, I2).
+    expect(result.videoGeneration.provider).toBe("auto");
+    expect(result.videoGeneration.defaultDurationSecs).toBe(8);
+    expect(result.videoGeneration.defaultAspectRatio).toBe("16:9");
+    expect(result.videoGeneration.defaultResolution).toBe("720p");
+    expect(result.videoGeneration.maxPerHour).toBe(5);
+    expect(result.videoGeneration.timeoutMs).toBe(300_000);
+    expect(result.videoGeneration.pollIntervalMs).toBe(10_000);
+    // CFG-01: fallbackChain defaults empty; the optional knobs are omitted.
+    expect(result.videoGeneration.fallbackChain).toEqual([]);
+    expect(result.videoGeneration.generateAudio).toBeUndefined();
+    expect(result.videoGeneration.maxConcurrentJobs).toBeUndefined();
+    expect(result.videoGeneration.maxCostPerHourUsd).toBeUndefined();
+  });
+
+  it("validates an existing image-only media config unchanged (CFG-01 non-regression)", () => {
+    // CFG-01 non-regression: a deployed config with an image block and NO
+    // videoGeneration key must still parse — videoGeneration fills from defaults
+    // and the image block is byte-identical to a parse WITHOUT video present.
+    const existing = MediaConfigSchema.parse({
+      imageGeneration: { provider: "fal", maxPerHour: 3 },
+    });
+    expect(existing.imageGeneration.provider).toBe("fal");
+    expect(existing.imageGeneration.maxPerHour).toBe(3);
+    // videoGeneration was absent → filled by the .default() wrapper, parses fine.
+    expect(existing.videoGeneration.provider).toBe("auto");
+  });
+
+  it("accepts the fal / google / xai video provider enum values (CFG-01)", () => {
+    for (const provider of ["fal", "google", "xai"] as const) {
+      const result = MediaConfigSchema.parse({ videoGeneration: { provider } });
+      expect(result.videoGeneration.provider).toBe(provider);
+    }
+  });
+
+  it("rejects an unknown video provider value at parse (closed enum)", () => {
+    // T-188-... config-injection backstop — an unknown/typo'd provider fails at parse.
+    expect(() =>
+      MediaConfigSchema.parse({ videoGeneration: { provider: "sora" } }),
+    ).toThrow();
+  });
+
+  it("rejects an unknown videoGeneration key in strict mode", () => {
+    // strictObject — an injected unknown key never reaches a transport.
+    expect(() =>
+      MediaConfigSchema.parse({ videoGeneration: { provider: "auto", bogusKey: 1 } }),
+    ).toThrow();
+  });
+
+  it("parses a video fallbackChain of valid provider enum values (CFG-01 / RES-04)", () => {
+    const result = MediaConfigSchema.parse({
+      videoGeneration: { provider: "auto", fallbackChain: ["fal"] },
+    });
+    expect(result.videoGeneration.fallbackChain).toEqual(["fal"]);
+  });
+
+  it("rejects a video fallbackChain entry outside the provider enum", () => {
+    expect(() =>
+      MediaConfigSchema.parse({
+        videoGeneration: { provider: "auto", fallbackChain: ["bogus"] },
+      }),
+    ).toThrow();
+  });
+
+  it("parses an optional positive video maxCostPerHourUsd ceiling (CFG-01)", () => {
+    const result = MediaConfigSchema.parse({
+      videoGeneration: { provider: "auto", maxCostPerHourUsd: 5 },
+    });
+    expect(result.videoGeneration.maxCostPerHourUsd).toBe(5);
+  });
+
+  it("rejects a non-positive video maxCostPerHourUsd value", () => {
+    expect(() =>
+      MediaConfigSchema.parse({
+        videoGeneration: { provider: "auto", maxCostPerHourUsd: -1 },
+      }),
+    ).toThrow();
+  });
+
+  it("does not edit the image config when video defaults are applied (CFG-01 no-image-edit)", () => {
+    // The image block must be byte-identical whether or not videoGeneration is present.
+    const withVideo = MediaConfigSchema.parse({ videoGeneration: { provider: "fal" } });
+    const imageOnly = MediaConfigSchema.parse({});
+    expect(withVideo.imageGeneration).toEqual(imageOnly.imageGeneration);
   });
 
   it("accepts explicit documentExtraction overrides", () => {
@@ -691,5 +786,37 @@ describe("McpServerEntrySchema — bundle provenance + archive", () => {
         _bundleSource: 123,
       }),
     ).toThrow();
+  });
+});
+
+// ===========================================================================
+// VideoGenerateContract (188 CFG-01 / VideoGenerateContract in MEDIA_CONTRACTS)
+// ===========================================================================
+
+describe("VideoGenerateContract", () => {
+  it("declares method 'video.generate' and is a member of MEDIA_CONTRACTS", () => {
+    expect(VideoGenerateContract.method).toBe("video.generate");
+    expect(MEDIA_CONTRACTS).toContain(VideoGenerateContract);
+  });
+
+  it("parses a full request shape (prompt + all optional fields)", () => {
+    const parsed = VideoGenerateContract.request.parse({
+      prompt: "x",
+      duration: 8,
+      aspect_ratio: "16:9",
+      resolution: "720p",
+      audio: true,
+      negative_prompt: "y",
+      seed: 1,
+      image_url: "workspace/a.png",
+      model: "m",
+    });
+    expect(parsed.prompt).toBe("x");
+    expect(parsed.duration).toBe(8);
+    expect(parsed.image_url).toBe("workspace/a.png");
+  });
+
+  it("scopes the contract to rpc", () => {
+    expect(VideoGenerateContract.scopes).toEqual(["rpc"]);
   });
 });
