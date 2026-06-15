@@ -260,16 +260,13 @@ export function translatePayload(
         formatViolation: payload.formatViolation,
       };
 
+    // T2.2 (F9): closed ids + durationMs ONLY — agentId/origin are envelope ids; no result/
+    // error body crosses the bus (§2.7 / H1); the record TYPE conveys promoted/completed/failed.
     case "background_task:promoted":
-      // T2.2 (F9): closed ids only — taskId/toolName. agentId/origin are envelope
-      // correlation ids; no result/error body crosses the bus (§2.7 / H1).
       return { taskId: payload.taskId, toolName: payload.toolName };
-
     case "background_task:completed":
       return { taskId: payload.taskId, toolName: payload.toolName, durationMs: payload.durationMs };
-
     case "background_task:failed":
-      // The trajectory record TYPE conveys "failed"; the error STRING is a body — omitted (H1).
       return { taskId: payload.taskId, toolName: payload.toolName, durationMs: payload.durationMs };
 
     case "delivery:enqueued":
