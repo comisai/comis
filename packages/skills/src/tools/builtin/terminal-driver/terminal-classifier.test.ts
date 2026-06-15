@@ -185,6 +185,69 @@ describe("classifyFrame — stuck (settled, no affordance, no progress > stuckMs
   });
 });
 
+describe("classifyFrame — CLASS-01: a full-screen dialog is awaiting-input (dialog_detected), NOT stuck", () => {
+  // The would-be-stuck history: settled + diff∅ but no progress past the stuck window.
+  // Pre-patch this falls through to `stuck`; the new dialog branch intercepts it.
+  const wouldBeStuck: FrameHistory = { noProgressMs: 30_000, stuckMs: 5_000 };
+
+  it("RED→GREEN: a boxed permission dialog with the cursor on a blank input line below it → awaiting-input/medium/dialog_detected", () => {
+    // The documented claude-2.1.x misread shape: a boxed permission prompt ABOVE,
+    // the cursor parked on an EMPTY row well below the last non-blank row (so
+    // isCursorParked correctly returns false). Pre-patch: this is `stuck`. The dialog
+    // branch must read it as awaiting-input (confidence medium, reason dialog_detected).
+    const lines = [
+      "╭────────────────────────────────────────╮",
+      "│ Claude needs your permission to run:     │",
+      "│   $ rm build/                            │",
+      "│ ❯ 1. Yes   2. No                         │",
+      "╰────────────────────────────────────────╯",
+      ...Array.from({ length: 18 }, () => ""),
+    ];
+    const snapshot = snap(lines, { x: 0, y: 23 }); // cursor on the empty bottom grid row
+    const c = classifyFrame(frame({ settled: true, diffEmpty: true, snapshot }), wouldBeStuck);
+    expect(c.state).toBe("awaiting-input");
+    expect(c.confidence).toBe("medium");
+    expect(c.reason).toBe("dialog_detected");
+  });
+
+  it("control (I9): a genuinely hung frame with NO dialog structure stays stuck (the dialog branch must not steal it)", () => {
+    // Frozen prose, cursor mid-screen above content, no box/menu/selector → still stuck.
+    const lines = ["frozen output line", "", "trailing content below the cursor"];
+    const snapshot = snap(lines, { x: 5, y: 0 });
+    const c = classifyFrame(frame({ settled: true, diffEmpty: true, snapshot }), wouldBeStuck);
+    expect(c.state).toBe("stuck");
+    expect(c.reason).toBe("no_progress");
+  });
+
+  it("control (the #1 de-risk): a thinking-pause generation frame stays working, never awaiting-input", () => {
+    // Settled + diff∅ but the cursor is mid-screen in the generation region with content
+    // below it, and there is NO dialog structure → working (the dialog branch must not
+    // fire on prose). Uses a non-stuck history so the working fallthrough is exercised.
+    const lines = [
+      "● Thinking about the request…",
+      "  Let me analyze the codebase structure",
+      "",
+      "  …and here is content rendered BELOW the cursor",
+      "  more generated output",
+    ];
+    const snapshot = snap(lines, { x: 4, y: 1 });
+    const c = classifyFrame(frame({ settled: true, diffEmpty: true, snapshot }), noStuck);
+    expect(c.state).toBe("working");
+    expect(c.reason).toBe("settled_cursor_unparked");
+  });
+
+  it("a real prompt with the cursor parked at the bottom stays awaiting-input/high (the high-confidence path is unchanged)", () => {
+    // The dialog branch only fires when `parked` already returned false; a genuinely
+    // parked prompt keeps the high-confidence settled_cursor_parked verdict.
+    const lines = ["Build finished.", "All checks passed.", "Continue? (y/n) "];
+    const snapshot = snap(lines, { x: 16, y: 2 });
+    const c = classifyFrame(frame({ settled: true, diffEmpty: true, snapshot }), wouldBeStuck);
+    expect(c.state).toBe("awaiting-input");
+    expect(c.confidence).toBe("high");
+    expect(c.reason).toBe("settled_cursor_parked");
+  });
+});
+
 describe("classifyFrame — never throws (typed result, pure)", () => {
   it("returns a typed Classification for a degenerate empty-screen frame", () => {
     const snapshot = snap([""], { x: 0, y: 0 });
