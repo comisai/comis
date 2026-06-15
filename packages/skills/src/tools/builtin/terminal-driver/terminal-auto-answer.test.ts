@@ -131,6 +131,61 @@ describe("decideAutoAnswer — operator-only signature (Test 6)", () => {
   });
 });
 
+describe("decideAutoAnswer — CLASS-01 I4 no-bypass: a dialog_detected frame still escalates (SEC-12 wins)", () => {
+  // CLASS-01 makes a full-screen dialog classify `awaiting-input`/`dialog_detected`
+  // instead of `stuck`. Classification and the answer-decision are ORTHOGONAL: the
+  // classifier says "this is a prompt"; SEC-12 says "a human must answer THIS one".
+  // These pin that the dialog-detection change cannot bypass escalate-always (I4) —
+  // a dialog screen carrying an auth/destructive cue still escalates BEFORE any
+  // hintPattern auto-answer. The dialog frame flows through this SAME decideAutoAnswer
+  // the wake-turn already calls (terminal-wake-turn.ts) — no new wiring.
+
+  it("a boxed permission DIALOG with an auth-login cue escalates auth_login even though it is dialog_detected", () => {
+    // The exact dialog SHAPE the classifier now reads as dialog_detected: a box-drawing
+    // permission prompt with a selector — but the prompt text is a login, so SEC-12
+    // escalate-always wins over the operator's allowlisted (y/n) cue.
+    const dialogScreen = [
+      "╭──────────────────────────────────────────╮",
+      "│ Your session expired — please log in.      │",
+      "│ ❯ 1. Sign in   2. Cancel   (y/n)            │",
+      "╰──────────────────────────────────────────╯",
+    ].join("\n");
+    const decision = decideAutoAnswer("safe-only", dialogScreen, ["(y/n)", "❯"]);
+
+    expect(decision).toEqual<AutoAnswerDecision>({ action: "escalate", reason: "auth_login" });
+  });
+
+  it("a boxed DIALOG with a destructive cue escalates destructive even though it is dialog_detected", () => {
+    const dialogScreen = [
+      "╭──────────────────────────────────────────╮",
+      "│ This will permanently delete build/.        │",
+      "│ ❯ 1. Yes, proceed   2. No   (y/n)           │",
+      "╰──────────────────────────────────────────╯",
+    ].join("\n");
+    const decision = decideAutoAnswer("safe-only", dialogScreen, ["(y/n)", "❯"]);
+
+    expect(decision).toEqual<AutoAnswerDecision>({ action: "escalate", reason: "destructive" });
+  });
+
+  it("regression: a benign DIALOG matching ONLY an operator hintPattern still answers (the gate is not weakened)", () => {
+    // A dialog-shaped screen (a box + a selector) with NO auth/destructive/approval cue,
+    // matching only the operator's allowlisted safe pattern → answer (unchanged routing).
+    // The dialog branch changes the CLASSIFIER reason, never the auto-answer decision.
+    const dialogScreen = [
+      "╭──────────────────────────────────────────╮",
+      "│ Press enter to continue                     │",
+      "│ ❯ continue                                  │",
+      "╰──────────────────────────────────────────╯",
+    ].join("\n");
+    const decision = decideAutoAnswer("safe-only", dialogScreen, ["Press enter to continue"]);
+
+    expect(decision.action).toBe("answer");
+    if (decision.action === "answer") {
+      expect(decision.matchedPatternIndex).toBe(0);
+    }
+  });
+});
+
 describe("decideAutoAnswer — mode all still escalate-always (trusted-input only)", () => {
   it("escalates auth/destructive even in mode all (all is documented trusted-input only)", () => {
     const login = decideAutoAnswer("all", "Please sign in (y/n)", ["(y/n)"]);
