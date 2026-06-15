@@ -332,4 +332,67 @@ describe("TerminalDriverConfigSchema -- additive strict drive{} block (DRIVE-02/
     });
     expect(result.success).toBe(false);
   });
+
+  // -------------------------------------------------------------------------
+  // Phase 165 (165-05, DUR-01/LIVE-01/ENDURE-01): the SAME additive strict
+  // drive{} block gains three endurance/durability fields —
+  //   durable     (bool,        default false)  — DUR-01: detached tmux + re-attach
+  //   heartbeatMs (int>0,       default 90_000) — LIVE-01: internal liveness backstop interval
+  //   maxCostUsd  (number|null, default null)   — ENDURE-01: per-drive spend ceiling
+  // All three default to INERT (I1): a config with no drive block, or an empty
+  // drive block, is byte-identical to today (durable:false, heartbeatMs:90000,
+  // maxCostUsd:null). The block stays a closed strictObject (a typo'd key still
+  // rejects). §7.1.5 LOCKED: drive.durable:true is ACCEPTED at config-validation —
+  // tmux availability is a RUNTIME property (degrade + WARN at runtime), NOT a
+  // config-time hard-require; a RED test pins durable:true parses with NO tmux check.
+  it("round-trips durable/heartbeatMs/maxCostUsd (the three Phase-165 fields parse to the supplied values)", () => {
+    const parsed = TerminalDriverConfigSchema.parse({
+      ...baseCfg,
+      drive: { durable: true, heartbeatMs: 90_000, maxCostUsd: 5 },
+    });
+    expect(parsed.drive?.durable).toBe(true);
+    expect(parsed.drive?.heartbeatMs).toBe(90_000);
+    expect(parsed.drive?.maxCostUsd).toBe(5);
+  });
+
+  it("fills the Phase-165 defaults on an EMPTY drive block (durable:false, heartbeatMs:90000, maxCostUsd:null — I1 inert)", () => {
+    const parsed = TerminalDriverConfigSchema.parse({ ...baseCfg, drive: {} });
+    expect(parsed.drive?.durable).toBe(false);
+    expect(parsed.drive?.heartbeatMs).toBe(90_000);
+    expect(parsed.drive?.maxCostUsd).toBeNull();
+  });
+
+  it("ACCEPTS drive.durable:true with NO config-time tmux check (§7.1.5 LOCKED — tmux is a runtime property; the OTHER fields still default)", () => {
+    // The locked decision: config-validation ACCEPTS durable:true even on a
+    // tmux-less host; the drive degrades to non-durable + a WARN at RUNTIME.
+    // Do NOT hard-require tmux here (that would fail a whole config on a
+    // tmux-less host — T-165-15). Assert it parses and the others default.
+    const parsed = TerminalDriverConfigSchema.parse({ ...baseCfg, drive: { durable: true } });
+    expect(parsed.drive?.durable).toBe(true);
+    expect(parsed.drive?.heartbeatMs).toBe(90_000);
+    expect(parsed.drive?.maxCostUsd).toBeNull();
+  });
+
+  it("REJECTS heartbeatMs <= 0 (int>0 — .positive(); zero, negative, and a float all reject)", () => {
+    expect(TerminalDriverConfigSchema.safeParse({ ...baseCfg, drive: { heartbeatMs: 0 } }).success).toBe(false);
+    expect(TerminalDriverConfigSchema.safeParse({ ...baseCfg, drive: { heartbeatMs: -1 } }).success).toBe(false);
+    expect(TerminalDriverConfigSchema.safeParse({ ...baseCfg, drive: { heartbeatMs: 1.5 } }).success).toBe(false);
+  });
+
+  it("maxCostUsd accepts a number OR null but REJECTS a string (number|null)", () => {
+    expect(TerminalDriverConfigSchema.parse({ ...baseCfg, drive: { maxCostUsd: 12.5 } }).drive?.maxCostUsd).toBe(12.5);
+    expect(TerminalDriverConfigSchema.parse({ ...baseCfg, drive: { maxCostUsd: null } }).drive?.maxCostUsd).toBeNull();
+    expect(TerminalDriverConfigSchema.safeParse({ ...baseCfg, drive: { maxCostUsd: "5" } }).success).toBe(false);
+  });
+
+  it("REJECTS a typo'd Phase-165 drive key (the block stays a closed strictObject after the additions, T-165-14)", () => {
+    const result = TerminalDriverConfigSchema.safeParse({
+      ...baseCfg,
+      drive: { durable: true, hartbeatMs: 90_000 }, // typo: hartbeatMs
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.some((i) => i.path.includes("drive"))).toBe(true);
+    }
+  });
 });
