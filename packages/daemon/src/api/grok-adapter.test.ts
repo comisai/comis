@@ -163,6 +163,47 @@ describe("createGrokVideoAdapter", () => {
     expect(r.ok && r.value.state).toBe("failed");
   });
 
+  // WR-01 (Phase 190): the off-turn poller drives poll() (NOT execute()); poll()
+  // must carry the CLASSIFIED kind+hint on a terminal failed/expired status so the
+  // poller persists the right errorKind/hint instead of collapsing to
+  // empty_response. RED on pre-fix code: poll() returned `{ state:"failed" }` only.
+  it("WR-01 poll: a status:failed with a moderation error carries the classified errorKind + hint on the snapshot", async () => {
+    const job = { jobId: "req_123", provider: "grok", model: "grok-imagine-video" };
+
+    // status:failed + a moderation error payload → content_blocked.
+    let adapter = createGrokVideoAdapter({
+      apiKey: API_KEY,
+      fetchImpl: vi.fn().mockResolvedValue(
+        jsonResponse({ status: "failed", error: { code: "x", message: "blocked by moderation" } }),
+      ),
+    });
+    let r = await adapter.poll(job);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value.state).toBe("failed");
+    expect(r.value.errorKind).toBe("content_blocked");
+    expect(r.value.hint?.toLowerCase()).toContain("moderation");
+
+    // status:expired (no error payload) → empty_response with an "expired" hint.
+    adapter = createGrokVideoAdapter({
+      apiKey: API_KEY,
+      fetchImpl: vi.fn().mockResolvedValue(jsonResponse({ status: "expired" })),
+    });
+    r = await adapter.poll(job);
+    expect(r.ok && r.value.errorKind).toBe("empty_response");
+    expect(r.ok && r.value.hint?.toLowerCase()).toContain("expired");
+
+    // A pending/done poll carries NO errorKind/hint (additive — undefined).
+    adapter = createGrokVideoAdapter({
+      apiKey: API_KEY,
+      fetchImpl: vi.fn().mockResolvedValue(jsonResponse({ status: "pending" })),
+    });
+    r = await adapter.poll(job);
+    expect(r.ok && r.value.state).toBe("pending");
+    expect(r.ok && r.value.errorKind).toBeUndefined();
+    expect(r.ok && r.value.hint).toBeUndefined();
+  });
+
   it("GROK-01 poll: GETs /videos/{request_id} with the Bearer", async () => {
     const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ status: "pending" }));
     const adapter = createGrokVideoAdapter({ apiKey: API_KEY, fetchImpl });

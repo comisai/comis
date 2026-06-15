@@ -607,6 +607,105 @@ describe("createVideoPoller", () => {
   });
 
   // ─────────────────────────────────────────────────────────────────────────
+  // WR-01/WR-02 (Phase 190): the off-turn poller must NOT collapse a classified
+  // terminal failure to the generic `empty_response`. The adapters classify a
+  // Veo `operation.error` / Grok `status:"failed"|"expired"` into the right
+  // `VideoErrorKind` + actionable hint on the `poll()` snapshot; the poller must
+  // thread that SPECIFIC kind onto the WARN line + persist the HINT (not the bare
+  // enum token) as `last_error` so `video.status` returns an actionable string.
+  //
+  // RED on pre-fix code: `runJob` mapped poll() → `{ state }` only and ran the
+  // failed branch through `classifyOutcome`, which returns ONLY job_timeout /
+  // empty_response — so a content-policy block surfaced as `empty_response` with a
+  // generic "retry or adjust the prompt" hint, and `last_error` held the bare enum
+  // token. After the fix the poller reads the classified kind+hint off the snapshot.
+  // ─────────────────────────────────────────────────────────────────────────
+  it("WR-01: a classified Veo terminal failure (content_blocked) on the poll snapshot is preserved — NOT collapsed to empty_response", async () => {
+    // The Veo adapter's poll() now carries the classified kind+hint on a failed
+    // operation.error (e.g. a responsible-AI/content-policy block).
+    const provider = makeProvider({
+      poll: vi.fn().mockResolvedValue(
+        ok({
+          jobId: "fal-req-abc123",
+          state: "failed",
+          errorKind: "content_blocked",
+          hint: "Veo blocked the prompt by safety/responsible-AI policy. Revise the prompt and retry.",
+        }),
+      ),
+    });
+    const { poller, deps } = makePoller({ provider, seedRows: [{ jobId: "fal-req-abc123" }] });
+    const markFailedSpy = deps.store.markFailedSpy;
+    poller.track(makeRecord());
+    await flush();
+
+    // The off-turn WARN carries the SPECIFIC videoErrorKind (not empty_response).
+    const w = (deps.logger.warn as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c) => (c[0] as { step?: string }).step === "video_poll_failed",
+    );
+    expect(w).toBeTruthy();
+    expect((w![0] as { videoErrorKind?: string }).videoErrorKind).toBe("content_blocked");
+    expect((w![0] as { videoErrorKind?: string }).videoErrorKind).not.toBe("empty_response");
+    // §2.7: the off-turn line still sets traceId explicitly + an actionable hint.
+    expect((w![0] as { traceId?: string }).traceId).toBe("trace-seed");
+    expect((w![0] as { hint?: string }).hint).toContain("safety");
+    // WR-02: last_error persists the ACTIONABLE HINT, not the bare enum token.
+    expect(markFailedSpy).toHaveBeenCalledTimes(1);
+    const persistedLastError = markFailedSpy.mock.calls[0]![2] as string;
+    expect(persistedLastError).toContain("safety");
+    expect(persistedLastError).not.toBe("content_blocked");
+    expect(persistedLastError).not.toBe("empty_response");
+  });
+
+  it("WR-01: a classified Grok terminal failure (quota_exceeded) on the poll snapshot is preserved — NOT collapsed to empty_response", async () => {
+    const provider = makeProvider({
+      poll: vi.fn().mockResolvedValue(
+        ok({
+          jobId: "fal-req-abc123",
+          state: "failed",
+          errorKind: "quota_exceeded",
+          hint: "xAI reported a quota/rate/credits limit. Reduce frequency or check billing, then retry.",
+        }),
+      ),
+    });
+    const { poller, deps } = makePoller({ provider, seedRows: [{ jobId: "fal-req-abc123" }] });
+    const markFailedSpy = deps.store.markFailedSpy;
+    poller.track(makeRecord());
+    await flush();
+
+    const w = (deps.logger.warn as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c) => (c[0] as { step?: string }).step === "video_poll_failed",
+    );
+    expect(w).toBeTruthy();
+    expect((w![0] as { videoErrorKind?: string }).videoErrorKind).toBe("quota_exceeded");
+    expect((w![0] as { errorKind?: string }).errorKind).toBe("resource"); // VIDEO_ERR_TO_LOG mapping
+    // WR-02: the persisted last_error is the actionable hint.
+    const persistedLastError = markFailedSpy.mock.calls[0]![2] as string;
+    expect(persistedLastError).toContain("quota");
+    expect(persistedLastError).not.toBe("quota_exceeded");
+  });
+
+  it("WR-01/WR-02: an unclassified failed poll (no errorKind on the snapshot) still falls back to empty_response (FAL parity)", async () => {
+    // The FAL adapter's poll() carries no errorKind on a failed status — the
+    // poller's existing classifyOutcome fallback (empty_response) must still apply.
+    const provider = makeProvider({
+      poll: vi.fn().mockResolvedValue(ok({ jobId: "fal-req-abc123", state: "failed" })),
+    });
+    const { poller, deps } = makePoller({ provider, seedRows: [{ jobId: "fal-req-abc123" }] });
+    const markFailedSpy = deps.store.markFailedSpy;
+    poller.track(makeRecord());
+    await flush();
+
+    const w = (deps.logger.warn as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c) => (c[0] as { step?: string }).step === "video_poll_failed",
+    );
+    expect((w![0] as { videoErrorKind?: string }).videoErrorKind).toBe("empty_response");
+    // With no classified hint, the generic fallback hint is persisted (still
+    // actionable text, never undefined).
+    expect(markFailedSpy.mock.calls[0]![1]).toBe("empty_response");
+    expect(typeof markFailedSpy.mock.calls[0]![2]).toBe("string");
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
   // WR-04: lost-update window. The sweeper re-discovers a row that was `pending`
   // in the listPending snapshot, but a concurrent path already transitioned it to
   // terminal. startJob must re-read the row state and short-circuit (no re-fetch /

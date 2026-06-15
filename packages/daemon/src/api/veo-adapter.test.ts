@@ -129,6 +129,40 @@ describe("createVeoVideoAdapter", () => {
     expect(getOp).toHaveBeenLastCalledWith({ operation: { name: "operations/abc" } });
   });
 
+  // WR-01 (Phase 190): the off-turn poller drives poll() (NOT execute()); poll()
+  // must carry the CLASSIFIED kind+hint on a terminal operation.error so the
+  // poller persists the right errorKind/hint instead of collapsing to
+  // empty_response. RED on pre-fix code: poll() returned `{ state:"failed" }` only.
+  it("WR-01 poll: a terminal operation.error carries the classified errorKind + hint on the snapshot", async () => {
+    const adapter = makeAdapter();
+    const job = { jobId: "operations/blocked", provider: "veo", model: "m" };
+
+    // A responsible-AI / content-policy block.
+    getOp.mockResolvedValueOnce({
+      done: true,
+      error: { code: 9, message: "blocked by responsible AI safety policy" },
+    });
+    let r = await adapter.poll(job);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value.state).toBe("failed");
+    expect(r.value.errorKind).toBe("content_blocked");
+    expect(r.value.hint).toContain("safety");
+
+    // A permission-denied → auth_required (a FIXED hint, never the raw message).
+    getOp.mockResolvedValueOnce({ done: true, error: { code: 7, message: "permission denied" } });
+    r = await adapter.poll(job);
+    expect(r.ok && r.value.errorKind).toBe("auth_required");
+    expect(r.ok && r.value.hint).toContain("GOOGLE_API_KEY");
+
+    // A successful/pending poll carries NO errorKind/hint (additive — undefined).
+    getOp.mockResolvedValueOnce({ done: false });
+    r = await adapter.poll(job);
+    expect(r.ok && r.value.state).toBe("pending");
+    expect(r.ok && r.value.errorKind).toBeUndefined();
+    expect(r.ok && r.value.hint).toBeUndefined();
+  });
+
   it("VEO-01 fetchResult (uri path): downloads via fetch(uri + &key=) with redirect:error", async () => {
     const bytes = Buffer.from("VIDEOBYTES");
     getOp.mockResolvedValue({

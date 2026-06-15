@@ -161,6 +161,26 @@ describe("VideoJobStore", () => {
       expect(got.value.state).toBe("failed");
       expect(got.value.lastError).toBe("job_timeout");
     });
+
+    // WR-02 (Phase 190): when an actionable hint is supplied it is persisted to
+    // last_error INSTEAD of the bare enum token, so `video.status` returns an
+    // operator-facing string (not "empty_response"). RED on pre-fix code: the
+    // 3rd arg did not exist and last_error always held the kind.
+    it("WR-02: persists the supplied lastError hint (not the bare kind) when provided", async () => {
+      await store.insert(makeRecord({ jobId: "job-hint", agentId: "alpha" }));
+
+      const hint = "Veo blocked the prompt by safety/responsible-AI policy. Revise the prompt and retry.";
+      const failed = await store.markFailed("job-hint", "content_blocked", hint);
+      expect(failed.ok).toBe(true);
+
+      const got = await store.get("job-hint", "alpha");
+      expect(got.ok).toBe(true);
+      if (!got.ok || !got.value) return;
+      expect(got.value.state).toBe("failed");
+      // The actionable hint is persisted, not the enum token.
+      expect(got.value.lastError).toBe(hint);
+      expect(got.value.lastError).not.toBe("content_blocked");
+    });
   });
 
   // -----------------------------------------------------------------------
