@@ -26,20 +26,19 @@
  * @module
  */
 
-import { readFile } from "node:fs/promises";
 import {
   IMAGE_ERR_TO_LOG,
   ImageGenerateContract,
   isValidImageModel,
   listImageModels,
-  safePath,
   stripInternalFields,
   systemGetEnv,
   systemNowMs,
 } from "@comis/core";
-import { guessMimeFromExtension, detectMimeFromMagicBytes } from "../wiring/daemon-utils.js";
-import { fetchImageBytesSsrfSafe } from "./ssrf-image-fetch.js";
-import { ValidationError } from "./errors.js";
+// IN-01 reference-image resolution (SSRF + path-traversal + size floor) is now a
+// SHARED module reused by video-handlers' SEC-03 `image_url` — extracted verbatim
+// from this file so both handlers resolve through the same guard.
+import { resolveReferenceImage } from "./media-reference-resolver.js";
 import type { AttachmentPayload } from "@comis/core";
 import type { TrajectoryEventType } from "@comis/observability";
 import type { MediaApiDeps, RpcHandler } from "./types.js";
@@ -71,104 +70,6 @@ export type ImageHandlerDeps = NonNullable<MediaApiDeps["imageHandlerDeps"]>;
 function extractImageHint(error: Error): string | undefined {
   const hint = (error as { hint?: unknown }).hint;
   return typeof hint === "string" && hint.length > 0 ? hint : undefined;
-}
-
-/** Max bytes for a resolved reference-image (DoS cap — T-185-13). Enforced on
- *  ALL three source branches (URL download, data-uri decode, workspace-file
- *  read) so the bound is uniform regardless of how the agent supplies it. */
-const MAX_REFERENCE_BYTES = 20 * 1024 * 1024;
-
-/**
- * Strip an attacker-influenced/declared mime down to its bare media type and
- * reject obviously-dangerous types for generation INPUT. SVG is an XSS/script
- * vector (it can carry `<script>`), so it is refused here with an honest hint
- * rather than forwarded to a provider that might render it (WR-03 / IN-03).
- */
-function assertSafeReferenceMime(mediaType: string): void {
-  const bare = (mediaType.split(";")[0] ?? "").trim().toLowerCase();
-  if (bare === "image/svg+xml" || bare === "image/svg") {
-    // IN-03 (186): ValidationError → classifies as validation/warn (not
-    // internal/error) at the RPC boundary, and the message names the remedy so
-    // the JSON-RPC error alone is actionable (the message is what reaches the
-    // caller; classifyRpcError's hint only rides the daemon log line).
-    throw new ValidationError(
-      "SVG reference images are not supported (script/XSS vector); supply a raster image (PNG/JPEG/WebP).",
-    );
-  }
-}
-
-/**
- * Resolve an agent-supplied `reference_image` (IN-01) to `{ data(base64),
- * mimeType }` for edit/img2img. Adapts the SSRF + path-traversal guards from
- * `media-handlers.ts` — the T-185-09/T-185-10 security floor — and applies the
- * SAME `MAX_REFERENCE_BYTES` cap to EVERY branch (this resolver is genuinely
- * new code with a data-uri branch media-handlers lacks; it is NOT a verbatim
- * mirror):
- *   - data-uri (`data:<mime>[;params][;base64],<payload>`) → decode base64 only
- *     when the `;base64` flag is present, else URL-decode per RFC 2397 (WR-03);
- *     size-capped after decode (WR-01);
- *   - `http(s)://` URL → the shared DNS-pinned SSRF fetcher (CR-01:
- *     `fetchImageBytesSsrfSafe` validates → pins DNS to the validated IP →
- *     refuses redirects → bounded download — closing the rebinding TOCTOU gap a
- *     bare `fetch` left open);
- *   - workspace file path → `safePath(agentDir, source)` confinement + readFile,
- *     size-capped after read (WR-02).
- *
- * Throws on any failure (SSRF block, oversized, unsafe mime, fetch error) —
- * caught by the RPC handler's `@allow-throw` boundary (→ JSON-RPC error).
- * IN-03 (186): the caller-input rejections (unsafe mime, oversized) throw a
- * typed `ValidationError` carrying an actionable message (the 20 MB cap / the
- * raster-image remedy) so the boundary classifies them validation/warn and the
- * JSON-RPC error alone is self-actionable.
- */
-async function resolveReferenceImage(
-  source: string,
-  deps: { workspaceDirs: Map<string, string>; defaultWorkspaceDir: string },
-  callerAgentId: string | undefined,
-): Promise<{ data: string; mimeType: string }> {
-  // data-uri (data:<mediatype>[;params][;base64],<payload>). The mediatype may
-  // carry parameters (e.g. `;charset=utf-8`) BEFORE the optional `;base64` flag
-  // — `[^,]*?` (lazy, up to the comma) tolerates them; `(;base64)?` then matches
-  // the flag if present (WR-03 fix vs the old `[^;,]+` which missed params).
-  const dataUri = /^data:([^,]*?)(;base64)?,(.*)$/s.exec(source);
-  if (dataUri) {
-    const mediaType = dataUri[1] || "image/png";
-    assertSafeReferenceMime(mediaType);
-    const mimeType = (mediaType.split(";")[0] || "image/png").trim(); // strip charset/params
-    const payload = dataUri[3] ?? "";
-    // RFC 2397: base64 ONLY when the `;base64` token is present; otherwise the
-    // payload is URL-encoded text (WR-03 — do NOT base64-decode it to garbage).
-    const buffer = dataUri[2]
-      ? Buffer.from(payload, "base64")
-      : Buffer.from(decodeURIComponent(payload), "utf-8");
-    if (buffer.byteLength > MAX_REFERENCE_BYTES) {
-      throw new ValidationError(
-        "Reference image exceeds the size limit of 20 MB; supply a smaller raster image.",
-      );
-    }
-    return { data: buffer.toString("base64"), mimeType };
-  }
-  // http(s) URL — route through the shared DNS-pinned SSRF fetcher (CR-01): it
-  // SSRF-validates BEFORE connecting, pins DNS to the validated IP (no rebind
-  // window), refuses redirects, and bounds the download to MAX_REFERENCE_BYTES.
-  if (/^https?:\/\//i.test(source)) {
-    const fetched = await fetchImageBytesSsrfSafe(source, MAX_REFERENCE_BYTES);
-    const mediaType = fetched.mimeType ?? detectMimeFromMagicBytes(fetched.buffer) ?? "image/png";
-    assertSafeReferenceMime(mediaType);
-    const mimeType = (mediaType.split(";")[0] || "image/png").trim();
-    return { data: fetched.buffer.toString("base64"), mimeType };
-  }
-  // Workspace file path — safePath confines it under the agent workspace dir
-  // (T-185-09 path-traversal floor). agentDir resolves from the caller's
-  // workspace, falling back to the default workspace dir. Size-capped after
-  // read (WR-02) — an agent can write a large file into its own workspace.
-  const agentDir = (callerAgentId && deps.workspaceDirs.get(callerAgentId)) ?? deps.defaultWorkspaceDir;
-  const filePath = safePath(agentDir, source);
-  const buffer = await readFile(filePath);
-  if (buffer.byteLength > MAX_REFERENCE_BYTES) {
-    throw new Error("Reference image exceeds the size limit");
-  }
-  return { data: buffer.toString("base64"), mimeType: guessMimeFromExtension(filePath) };
 }
 
 /**
