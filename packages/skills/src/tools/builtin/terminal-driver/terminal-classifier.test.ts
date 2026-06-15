@@ -509,6 +509,26 @@ const CORPUS: readonly CorpusCase[] = [
     cli: "claude",
     why: "the RED misread family: a full-screen enumerated menu ABOVE + cursor on a blank line BELOW ⇒ awaiting-input/medium/dialog_detected",
   },
+  {
+    // THE NEGATIVE-SPACE REGRESSION LOCK (MR-01 / LR-02): a *completed* response that
+    // ends in a MARKDOWN TABLE is generation OUTPUT, NOT a dialog. The frame is
+    // settled+diff∅ with the cursor MID-SCREEN (the table + trailing prose rendered
+    // BELOW it, so isCursorParked is false) — the EXACT gate that reaches the dialog
+    // branch. The over-broad pre-fix ASCII_BORDER read every `| col | col |` row as
+    // dialog chrome → a spurious awaiting-input wake (a false escalation that erodes the
+    // very wake signal phases 164-166 depend on). The tightened predicate requires a
+    // real `+---+` border (or predominantly-border `|` fill), so a markdown table is
+    // NOT a dialog ⇒ this falls through to working. A future loosening that re-admits
+    // the table fails HERE, not in a production drive (the corpus-as-lock thesis applied
+    // to the predicate's negative space).
+    stream: "claude-completion-table.stream.txt",
+    settled: true,
+    diffEmpty: true,
+    expected: "working",
+    expectedConfidence: "medium",
+    cli: "claude",
+    why: "MR-01/LR-02 negative lock: a completion ending in a markdown table, cursor mid-screen ⇒ working (NOT a dialog) — a markdown table is generation output, not dialog chrome (settled_cursor_unparked ⇒ medium)",
+  },
 
   // --- codex: the six states (TUI SHAPE reference; synthetic content-free chrome) ---
   {

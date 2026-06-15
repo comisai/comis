@@ -1,0 +1,8 @@
+[2J[1;1HHere is a comparison of the options:
+
+| Option | Cost | Notes              |
+| Fast   | low  | fewer guarantees   |
+| Slow   | high | fully verified     |
+
+Let me know which one you would prefer.
+[1;37H

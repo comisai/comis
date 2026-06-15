@@ -272,3 +272,87 @@ describe("detectsFullScreenDialog — Test 7: hintPatterns reinforce a borderlin
     expect(detectsFullScreenDialog(snapshot, ["proceed?"])).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Test 8 — THE MR-01 NEGATIVE SPACE: generation OUTPUT that structurally resembles a
+// dialog but is NOT one (a markdown table, a single pipe-bounded line, a numbered prose
+// list, a `(y/n)`/`[y/n]` token buried mid-sentence). A coding CLI routinely renders
+// these in a *completed* response; the over-broad pre-fix predicate fired `true` on
+// them (`| col | col |` matched ASCII_BORDER, an unanchored `(y/n)` matched SELECTOR
+// anywhere on the line). The tightened predicate must read them as PROSE (false) — a
+// `|`-bounded row is a border ONLY when it is predominantly border-fill (a real
+// `+---+`/`| --- |` box), a `(y/n)`/`[y/n]` token is a selector ONLY as a STANDALONE
+// end-of-line affordance, and a numbered list is a menu ONLY when the options are the
+// trailing structure (no prose continues below the last option).
+// ---------------------------------------------------------------------------
+
+describe("detectsFullScreenDialog — Test 8: generation output that resembles a dialog is NOT one (MR-01 negative space)", () => {
+  it("does NOT fire on a MARKDOWN TABLE in generation prose (| col | col | is output, not dialog chrome)", () => {
+    // A markdown table's pipe rows have NO `+---+` border and carry PROSE between the
+    // pipes — not predominantly-border fill — so the tightened ASCII_BORDER must reject
+    // it. Pre-fix: `/^\s*\|.*\|\s*$/` matched any pipe-bounded row ⇒ a spurious dialog.
+    const lines = [
+      "Here is a comparison of the options:",
+      "| Option | Cost | Notes            |",
+      "| Fast   | low  | fewer guarantees |",
+      "| Slow   | high | fully verified   |",
+      "Let me know which one you would prefer.",
+    ];
+    const snapshot = snap(lines, { x: 0, y: 0 });
+    expect(detectsFullScreenDialog(snapshot)).toBe(false);
+  });
+
+  it("does NOT fire on a single pipe-bounded ascii-art / diagram line in prose", () => {
+    // A lone `|  A --> B  |` is a diagram drawn in generation output, not a box edge.
+    const lines = [
+      "The data flows through the pipeline like this:",
+      "|  ingest --> normalize --> store  |",
+      "and the rest of the explanation continues below this line",
+    ];
+    const snapshot = snap(lines, { x: 0, y: 0 });
+    expect(detectsFullScreenDialog(snapshot)).toBe(false);
+  });
+
+  it("does NOT fire on a NUMBERED PROSE LIST that continues with prose below the last item", () => {
+    // `1. … 2. … 3. …` is a completion-output ordered list, not a menu, when prose
+    // flows past the last item (a real menu's options are the trailing structure). The
+    // ≥2-enumerator cue alone must NOT satisfy structure here.
+    const lines = [
+      "Here are the steps I followed:",
+      "1. read the failing test",
+      "2. edit the production function",
+      "3. re-run the suite to confirm green",
+      "and that completes the change end to end",
+    ];
+    const snapshot = snap(lines, { x: 0, y: 0 });
+    expect(detectsFullScreenDialog(snapshot)).toBe(false);
+  });
+
+  it("does NOT fire on a (yes/no) token buried mid-sentence in prose", () => {
+    // A `(yes/no)` substring inside a flowing sentence is NOT a prompt affordance — the
+    // tightened SELECTOR requires it to be a STANDALONE end-of-line affordance.
+    const lines = [
+      "Deciding whether to proceed (yes/no) is the crux of the trade-off here,",
+      "and I will keep generating more analysis below this line without a prompt",
+    ];
+    const snapshot = snap(lines, { x: 0, y: 1 });
+    expect(detectsFullScreenDialog(snapshot)).toBe(false);
+  });
+
+  it("does NOT fire on a [y/n] token buried mid-prose", () => {
+    const lines = [
+      "the documented [y/n] flag in the config controls this defaulting behavior",
+      "and there is still more prose rendered below the cursor on the next row",
+    ];
+    const snapshot = snap(lines, { x: 0, y: 1 });
+    expect(detectsFullScreenDialog(snapshot)).toBe(false);
+  });
+
+  it("STILL fires on a REAL (y/n) prompt as a standalone end-of-line affordance (the fix must not over-tighten)", () => {
+    // The companion positive: a genuine confirmation prompt ending in `(y/n)` must
+    // remain a dialog (guards against the tightening swinging too far).
+    const lines = ["Overwrite the existing build artifacts? (y/n)", ""];
+    const snapshot = snap(lines, { x: 0, y: 1 });
+    expect(detectsFullScreenDialog(snapshot)).toBe(true);
+  });
+});

@@ -489,6 +489,38 @@ function corpusAiderHung() {
   return s;
 }
 
+// --- the NEGATIVE-SPACE regression lock (MR-01 / LR-02): generation OUTPUT that
+//     STRUCTURALLY resembles a dialog but is NOT one — must classify working/stuck,
+//     NEVER awaiting-input. A coding CLI routinely ends a *completed* response with a
+//     markdown table or a numbered list; the over-broad pre-fix predicate read those
+//     as `dialog_detected` → a spurious wake. The frame is settled+diff∅ with the
+//     cursor MID-SCREEN (output rendered BELOW it, so isCursorParked is false) — the
+//     exact gate that reaches the dialog branch. CONTENT-FREE chrome only (I3). ---
+
+/**
+ * Claude completion ending in a MARKDOWN TABLE (the MR-01 false-positive shape): a
+ * `| col | col |` table is generation output, NOT dialog chrome. The table's pipe rows
+ * have NO `+---+` border, so the tightened ASCII_BORDER must not fire; the cursor is
+ * moved UP into the prose region with the table rendered BELOW it (NOT parked), so the
+ * frame reaches the dialog branch and must fall through to `working` (no real
+ * structure). The corpus row uses a no-stuck history ⇒ working.
+ */
+function corpusClaudeCompletionTable() {
+  let s = clearHome;
+  s += "Here is a comparison of the options:\r\n"; // row 1 (lead-in prose)
+  s += "\r\n"; // row 2
+  s += "| Option | Cost | Notes              |\r\n"; // row 3 (markdown table — NOT a border)
+  s += "| Fast   | low  | fewer guarantees   |\r\n"; // row 4
+  s += "| Slow   | high | fully verified     |\r\n"; // row 5
+  s += "\r\n"; // row 6
+  s += "Let me know which one you would prefer.\r\n"; // row 7 (prose CONTINUES below)
+  // Move the cursor UP into the prose region (row 1) with the table + trailing prose
+  // rendered BELOW it — the mid-screen-cursor shape (NOT parked) that reaches the dialog
+  // branch. A markdown table is NOT a dialog ⇒ working, NEVER awaiting-input.
+  s += cup(1, 37);
+  return s;
+}
+
 const SYNTHETIC = {
   spinner: syntheticSpinner,
   altscreen: syntheticAltScreen,
@@ -517,6 +549,9 @@ const SYNTHETIC = {
   "aider-permission-dialog": corpusAiderPermissionDialog,
   "aider-completed": corpusAiderCompleted,
   "aider-hung": corpusAiderHung,
+  // The MR-01 / LR-02 negative-space regression lock — generation output (a markdown
+  // table) that structurally resembles a dialog but is NOT one (must be working).
+  "claude-completion-table": corpusClaudeCompletionTable,
 };
 
 // ---------------------------------------------------------------------------
