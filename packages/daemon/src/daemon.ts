@@ -716,6 +716,10 @@ async function wirePostChannelsLifecycle(deps: {
   channelAdaptersRef: NonNullable<BootContext["channelAdaptersRef"]>;
   drainAndStartDeliveryPrune: NonNullable<BootContext["drainAndStartDeliveryPrune"]>;
   shutdownDeliveryQueue: NonNullable<BootContext["shutdownDeliveryQueue"]>;
+  /** JOB-03 (189): start + resume the background video poller. Runs AFTER the
+   *  channelAdaptersRef.set loop below — the channel registry is now populated, so
+   *  the poller's announce-on-complete reaches a LIVE adapter outside a turn. */
+  startAndResumeVideoPoller?: () => Promise<void>;
   startMirrorPrune: BootContext["startMirrorPrune"];
   shutdownMirror: BootContext["shutdownMirror"];
   daemonLogger: ReturnType<typeof setupLogging>["daemonLogger"];
@@ -724,10 +728,15 @@ async function wirePostChannelsLifecycle(deps: {
   outputRetentionConfig: BootContext["container"]["config"]["outputRetention"];
 }): Promise<{ outputRetentionHandle?: SetupOutputRetentionHandle }> {
   const { adaptersByType, channelAdaptersRef, drainAndStartDeliveryPrune,
-    startMirrorPrune, daemonLogger, container, defaultWorkspaceDir,
+    startAndResumeVideoPoller, startMirrorPrune, daemonLogger, container, defaultWorkspaceDir,
     outputRetentionConfig } = deps;
   for (const [type, adapter] of adaptersByType) channelAdaptersRef.set(type, adapter);
   await drainAndStartDeliveryPrune();
+  // JOB-03 (189): the channel registry is now populated (channelAdaptersRef was
+  // just filled by reference) — start + resume the video poller so a pending
+  // render's finished clip announces to the recorded channel outside any turn,
+  // exactly like the delivery queue's drainAndStart above.
+  await startAndResumeVideoPoller?.();
   // eventBus.on("system:shutdown", ...) subscribers deleted —
   // shutdownDeliveryQueue, shutdownMirror, and outputRetentionHandle.shutdown
   // are surfaced through BootContext / wirePostChannelsLifecycle return
@@ -2154,9 +2163,14 @@ async function bootChannels(boot: BootContext): Promise<void> {
   // Image-generation bundle (see buildImageGenBundle in wiring/main-helpers.ts). 184: oauthManager threads the DEFAULT agent's OAuth manager for the Codex image path (CDX-01).
   const { imageGenConfig, imageGenProvider, imageGenRateLimiter, persistImage, imageGenCostLimiter } =
     buildImageGenBundle({ container, defaultAgentId, skillsLogger, oauthManager: handle.oauthManagers.get(defaultAgentId), workspaceDirs, defaultWorkspaceDir });
-  // Video-generation bundle (Phase 188 — see buildVideoGenBundle in wiring/main-helpers.ts).
-  const { videoGenConfig, videoGenProvider, videoGenRateLimiter, persistVideo, videoGenCostLimiter } =
-    buildVideoGenBundle({ container, defaultAgentId, skillsLogger, workspaceDirs, defaultWorkspaceDir });
+  // Video-generation bundle (Phase 188 baseline + 189 async — see
+  // buildVideoGenBundle in wiring/main-helpers.ts). 189: pass the shared memory.db
+  // handle (the VideoJobStore binds it), the EARLY channelAdaptersRef (WARNING-1 —
+  // the poller resolves a LIVE adapter from it after wirePostChannelsLifecycle
+  // populates it), and the daemon TimerPort (the poller's sweeper). Destructure
+  // videoJobStore + videoPoller for the boot context + the handler deps.
+  const { videoGenConfig, videoGenProvider, videoGenRateLimiter, persistVideo, videoGenCostLimiter, videoJobStore, videoPoller } =
+    buildVideoGenBundle({ container, defaultAgentId, skillsLogger, workspaceDirs, defaultWorkspaceDir, db, channelAdaptersRef: handle.channelAdaptersRef, timers: handle.timers });
   // VIS-01 (187): the provider-following vision bundle — same construction site, reusing the DEFAULT agent's OAuth manager (codex bearer) + the boot clock (the bridge's per-message timestamp). See buildMediaVisionBundle in wiring/main-helpers.ts.
   const mediaVisionBundle = buildMediaVisionBundle({ container, defaultAgentId, skillsLogger, clock: handle.clock, oauthManager: handle.oauthManagers.get(defaultAgentId) });
 
@@ -2264,6 +2278,10 @@ async function bootChannels(boot: BootContext): Promise<void> {
     channelAdaptersRef: handle.channelAdaptersRef,
     drainAndStartDeliveryPrune: handle.drainAndStartDeliveryPrune,
     shutdownDeliveryQueue: handle.shutdownDeliveryQueue,
+    // JOB-03 (189): start + resume the background video poller after the channel
+    // registry is populated (the local videoPoller from buildVideoGenBundle above;
+    // undefined when video is disabled → the optional call no-ops).
+    ...(videoPoller ? { startAndResumeVideoPoller: () => videoPoller.startAndResume() } : {}),
     startMirrorPrune: handle.startMirrorPrune,
     shutdownMirror: handle.shutdownMirror,
     daemonLogger, container, defaultWorkspaceDir,
@@ -2375,7 +2393,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     crossSessionSender, subAgentRunner, sendToChannel, announceToParent,
     deadLetterQueue, announcementBatcher, gatewaySendRef,
     sandboxProvider, imageGenProvider, imageGenRateLimiter, imageGenConfig, persistImage, imageGenCostLimiter, mediaVisionBundle,
-    videoGenProvider, videoGenRateLimiter, videoGenConfig, persistVideo, videoGenCostLimiter,
+    videoGenProvider, videoGenRateLimiter, videoGenConfig, persistVideo, videoGenCostLimiter, videoJobStore, videoPoller,
     assembleToolsForAgent, preprocessMessageText, getCapabilityPortForAgent,
     heartbeatRunner, duplicateDetector, perAgentRunner, wakeCoalescer,
     nodeTypeRegistry, graphCoordinator, namedGraphStore,
@@ -2697,6 +2715,9 @@ async function bootShutdown(
     shutdownBackgroundProcesses, proxyTypingCleanup,
     outputRetentionHandle, shutdownDeliveryQueue, shutdownMirror,
     bgCompletionRunnerContext, terminalWakeContext, stopChannelHealthMonitor, mcpClientManager,
+    // Phase 189: the background video poller (undefined when video disabled) —
+    // its shutdown is threaded into setupShutdown below.
+    videoPoller,
   } = gateway;
   void _execs; void _suspended;
   // Override-derived locals -- only consumed by setupShutdown below.
@@ -2743,6 +2764,9 @@ async function bootShutdown(
     terminalWakeShutdown: terminalWakeContext ? () => terminalWakeContext.shutdown() : undefined,
     proxyTypingCleanup,
     shutdownDeliveryQueue,
+    // Phase 189: SIGTERM clears the poller's sweeper interval + stops in-flight
+    // per-job loops (no-op when video is disabled / poller undefined).
+    ...(videoPoller ? { shutdownVideoPoller: () => videoPoller.shutdown() } : {}),
     shutdownDeliveryMirror: shutdownMirror,
     outputRetentionShutdown: outputRetentionHandle ? () => outputRetentionHandle.shutdown() : undefined,
     stopChannelHealthMonitor: stopChannelHealthMonitor ?? undefined,

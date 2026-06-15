@@ -2575,19 +2575,16 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // non-test value consumer of each lands.
       "reduceFleetWindow",
       "FleetWindowRollup",
-      // Video job store (v2.24 Phase 189 Plan 01, JOB-01). The durable async
-      // VideoJobStore + its idempotent DDL are barrel-exported in Wave 1, but
-      // their in-repo consumers land in LATER waves of this same phase: the
-      // background poller (Plan 02) constructs createVideoJobStore + reads
-      // listPending on boot, and the video_status handler (Plan 03) calls the
-      // agent-scoped get. No production module name-imports them yet, so the
-      // walker (which excludes *.test.ts + self-imports) surfaces them as
-      // orphans now. Cross-wave planned-orphans — same pattern + precedent as
-      // VideoGenerateContract / PollDeadline above (188-02/03). Remove each when
-      // its Plan-02/Plan-03 in-repo value consumer lands.
-      "createVideoJobStore",
-      "VideoJobStore",
-      "VideoJobRecord",
+      // Video job store (v2.24 Phase 189, JOB-01). SHRUNK at Plan 02 (the async
+      // poller wave): `createVideoJobStore` (constructed in main-helpers
+      // buildVideoGenBundle), `VideoJobStore` + `VideoJobRecord` (the poller +
+      // handler-deps name-import them) now have real in-repo consumers — removed.
+      // STILL ORPHAN (kept — Plan 03 video_status handler / offline path):
+      //   - VideoJobInsert / VideoJobDoneInput / VideoJobState: domain types the
+      //     store API uses internally; no separate cross-package name-import yet.
+      //   - ensureVideoJobTable: wired into initSchema (intra-@comis/memory) +
+      //     used only by tests + the offline path; no other-package consumer.
+      // Remove each remaining entry when its Plan-03 in-repo value consumer lands.
       "VideoJobState",
       "VideoJobInsert",
       "VideoJobDoneInput",

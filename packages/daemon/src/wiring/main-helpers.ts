@@ -23,6 +23,14 @@ import { createImageGenRateLimiter } from "@comis/skills";
 // route (the adapter + @fal-ai/client dep stay in @comis/skills — no daemon
 // phantom dep).
 import { createVideoGenProvider, createVideoGenRateLimiter } from "@comis/skills";
+// JOB-01/JOB-02 (189): the durable async job store (shared memory.db) + the
+// two-phase background poller. createVideoJobStore is from @comis/memory (the
+// store lives beside the delivery queue); createVideoPoller is the sibling daemon
+// wiring. Both are CONSTRUCTED here in buildVideoGenBundle (the construction site
+// the wiring guard pins) so a future refactor cannot regress the path to unwired.
+import { createVideoJobStore } from "@comis/memory";
+import { createVideoPoller, type VideoPoller } from "./setup-video-poller.js";
+import type { DeliveryAdapter, TimerPort, ChannelPort } from "@comis/core";
 // DEL-01 (186): the per-agent media persistence getter mirrors the screenshot
 // precedent (setup-tools.ts:69,305). Sibling-direct on the `@comis/skills/tools`
 // subpath (the proven path), NOT the bare `@comis/skills` barrel.
@@ -442,6 +450,18 @@ export function buildVideoGenBundle(deps: {
    *  from these. */
   workspaceDirs: Map<string, string>;
   defaultWorkspaceDir: string;
+  /** JOB-01 (189): the shared better-sqlite3 memory.db handle the VideoJobStore
+   *  binds (the SAME handle setupDeliveryQueue takes — typed `unknown` to avoid a
+   *  cross-package better-sqlite3 type dep, exactly like setupDeliveryQueue). */
+  db: unknown;
+  /** JOB-03 (189) — WARNING-1: the EARLY-created channel-adapter registry the
+   *  delivery queue closes over. It is populated BY REFERENCE in
+   *  wirePostChannelsLifecycle (after setupChannels), so the poller resolves a
+   *  LIVE adapter at delivery time — NOT the late `adaptersByType` (which is not
+   *  in scope at this call site). Mirrors `setupDeliveryQueue({ channelAdapters })`. */
+  channelAdaptersRef: Map<string, DeliveryAdapter>;
+  /** The daemon TimerPort drives the poller's outer sweeper (sanctioned, unref'd). */
+  timers: TimerPort;
 }): {
   videoGenConfig: BootContext["container"]["config"]["integrations"]["media"]["videoGeneration"];
   videoGenProvider: VideoGenerationPort | undefined;
@@ -455,8 +475,12 @@ export function buildVideoGenBundle(deps: {
   /** SEC-02 (DIVERGENCE 3): per-agent/hour USD cost ceiling, gated PRE-submit.
    *  Undefined when `maxCostPerHourUsd` is unset (ceiling skipped, count-only). */
   videoGenCostLimiter: VideoCostLimiter | undefined;
+  /** JOB-01 (189): the durable async job store (undefined when video disabled). */
+  videoJobStore: ReturnType<typeof createVideoJobStore> | undefined;
+  /** JOB-02 (189): the two-phase background poller (undefined when video disabled). */
+  videoPoller: VideoPoller | undefined;
 } {
-  const { container, defaultAgentId, skillsLogger, workspaceDirs, defaultWorkspaceDir } = deps;
+  const { container, defaultAgentId, skillsLogger, workspaceDirs, defaultWorkspaceDir, db, channelAdaptersRef, timers } = deps;
   const videoGenConfig = container.config.integrations.media.videoGeneration;
   const defaultAgentCfg =
     container.config.agents[defaultAgentId] ?? container.config.agents["default"];
@@ -506,7 +530,32 @@ export function buildVideoGenBundle(deps: {
     }
     return svc.persist(buffer, opts);
   };
+  // JOB-01/JOB-02 (189): construct the durable store + background poller ONLY when
+  // a provider exists (else they are undefined and the boot wiring + handler-deps
+  // builder short-circuit on `!videoGenProvider`). The store binds the SHARED
+  // memory.db handle (Q1/O3 LOCKED). The poller closes over `channelAdaptersRef`
+  // (WARNING-1: the EARLY registry the delivery queue uses, populated by reference
+  // after setupChannels) so announce-on-complete reaches a LIVE adapter outside a
+  // turn — never the late `adaptersByType` (not in scope here).
+  let videoJobStore: ReturnType<typeof createVideoJobStore> | undefined;
+  let videoPoller: VideoPoller | undefined;
   if (videoGenProvider) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- db is better-sqlite3 Database; typed unknown to avoid a cross-package type dep (mirrors setupDeliveryQueue).
+    videoJobStore = createVideoJobStore(db as any);
+    videoPoller = createVideoPoller({
+      store: videoJobStore,
+      provider: videoGenProvider,
+      persist: persistVideo,
+      ...(videoGenCostLimiter ? { costLimiter: videoGenCostLimiter } : {}),
+      // The poller resolves a LIVE adapter at delivery time from the early
+      // channelAdaptersRef (populated by reference post-setupChannels) — the
+      // delivery-queue mechanism, retyped for an attachment send.
+      getChannelAdapter: (channelType: string): Pick<ChannelPort, "sendAttachment"> | undefined =>
+        channelAdaptersRef.get(channelType) as unknown as Pick<ChannelPort, "sendAttachment"> | undefined,
+      config: videoGenConfig,
+      logger: skillsLogger,
+      timers,
+    });
     skillsLogger.info(
       { provider: videoGenConfig.provider, mainProvider: defaultMain },
       "Video generation provider initialized",
@@ -514,7 +563,7 @@ export function buildVideoGenBundle(deps: {
   } else {
     skillsLogger.debug("Video generation disabled: API key not configured or provider unknown");
   }
-  return { videoGenConfig, videoGenProvider, videoGenRateLimiter, persistVideo, videoGenCostLimiter };
+  return { videoGenConfig, videoGenProvider, videoGenRateLimiter, persistVideo, videoGenCostLimiter, videoJobStore, videoPoller };
 }
 
 /**
