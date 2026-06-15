@@ -618,6 +618,10 @@ export function buildTerminalSharedDeps(
     // block is OPTIONAL (schema-skills.ts, plan 05); `?? "auto"` is the schema default + the
     // safe pre-`drive`-block posture (an absent block only promotes a genuinely-long drive, I1).
     driveMode: deps.config?.drive?.mode ?? "auto",
+    // READ-01 (164-06): the operator-resolved read mode for the read tool's bounded digest.
+    // Same layer-purity posture as driveMode; `?? "digest"` is the schema default (plan 05's
+    // drive.readMode) + the safe pre-block posture (the bounded current screen).
+    readMode: deps.config?.drive?.readMode ?? "digest",
     // The operator approval gate — consulted only when a matched entry sets
     // approveOnCreate (else the create path is unchanged); a demanding entry with no
     // gate fail-closes in the tool.

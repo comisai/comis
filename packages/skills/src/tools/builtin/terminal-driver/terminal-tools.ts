@@ -1,24 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * The eight implemented terminal-driver AgentTool factories (spec §5):
- * `terminal_session_create` / `_read` / `_list` / `_kill` + the four interaction tools
- * `_send_text` / `_send_key` / `_resize` / `_wait`. (`terminal_session_status` is the lone
- * remaining stub → `terminal-tools-stubs.ts`.)
+ * `terminal_session_create` / `_read` / `_list` / `_kill` + `_send_text` / `_send_key` /
+ * `_resize` / `_wait`. (`terminal_session_status` is the lone stub → `terminal-tools-stubs.ts`.)
  *
- * `create` is the gate that composes the whole substrate: (1) ALLOWLIST GATE (`matchAllowEntry`
- * rejects a non-matching binary `permission_denied`, never reaching the registry; realpath +
- * optional hash pin); (2) FAIL-CLOSED (a `undefined` `detectProvider()` rejects rather than spawn
- * unsandboxed); (3) CANONICALIZE end-to-end (`buildDirectSpawn` is the SOLE realpath + `argsPrefix`
- * site; the registry gets `{bin,argv}`, not the raw command); (4) OBSERVABILITY (success → INFO +
- * `terminal:session_state`; spawn failure → WARN + `hint`/`errorKind` + `terminal:spawn_failed`).
+ * `create` is the gate composing the whole substrate: (1) ALLOWLIST GATE (`matchAllowEntry`
+ * rejects a non-matching binary `permission_denied`; realpath + optional hash pin); (2)
+ * FAIL-CLOSED (a `undefined` `detectProvider()` rejects rather than spawn unsandboxed); (3)
+ * CANONICALIZE end-to-end (`buildDirectSpawn` is the SOLE realpath + `argsPrefix` site); (4)
+ * OBSERVABILITY (success → INFO + `terminal:session_state`; failure → WARN + `terminal:spawn_failed`).
  *
  * `read`/`list`/`kill` + the four interaction tools are thin delegations to the injected,
- * ALREADY-GATED registry (no re-run of the allowlist gate, never touch `detectProvider`);
- * `wait`'s `isComplete:false` survives verbatim, and on a qualifying wait it emits ONE content-free
- * `terminal:drive_promoted` via the pure `shouldPromoteDrive` predicate (DRIVE-02, 164-04) — `out`
- * is unchanged; the daemon dispatcher dedupes to one notify. Architecture: daemon-side but in
- * `@comis/skills`, so it takes an INJECTED structural logger + event bus (never `getLogger` from
- * `@comis/infra` — the registry mirrors this) + an injected `nowMs` clock; the daemon passes the reals.
+ * ALREADY-GATED registry. `read` bounds the screen to a digest (READ-01, 164-06) before the
+ * redact+wrap; `wait`'s `isComplete:false` survives verbatim and emits ONE content-free
+ * `terminal:drive_promoted` on a qualifying wait (DRIVE-02, 164-04 — `out` unchanged; the daemon
+ * dedupes to one notify). Architecture: daemon-side but in `@comis/skills`, so it takes an INJECTED
+ * structural logger + event bus (never `getLogger` from `@comis/infra`) + an injected `nowMs` clock.
  *
  * @module
  */
@@ -50,6 +47,7 @@ export type {
   TerminalDrivePromotedEvent,
 } from "./terminal-events-attention.js";
 import { shouldPromoteDrive, emitDrivePromoted, type DriveMode } from "./terminal-drive-promote.js";
+import { boundedReadDigest, READ_DIGEST_BYTE_CAP, type DriveReadMode } from "./terminal-read-digest.js";
 import { matchAllowEntry, buildDirectSpawn, allowedCommandNames, type AllowEntryLike } from "./allowlist-matcher.js";
 import type { SessionCaps } from "./terminal-caps.js";
 import { enforceSendCapsThenAudit, readDimension } from "./terminal-send-guards.js";
@@ -166,10 +164,15 @@ export interface TerminalToolDeps {
   /**
    * DRIVE-02 (164-04): the operator-resolved promotion policy (`drive.mode`), supplied by the
    * daemon (`buildTerminalSharedDeps` reads `config.drive.mode`); the skills layer never reads
-   * config itself (layer purity). The wait tool feeds it to `shouldPromoteDrive`. Optional,
-   * defaulting to `"auto"` (the schema default; an absent block only promotes a long drive — I1).
+   * config (layer purity). The wait tool feeds it to `shouldPromoteDrive`. Default `"auto"`.
    */
   readonly driveMode?: DriveMode;
+  /**
+   * READ-01 (164-06): the operator-resolved read mode (`drive.readMode`), supplied by the
+   * daemon like {@link driveMode}. The read tool feeds it to `boundedReadDigest`. Default
+   * `"digest"` (the bounded current screen) — `diff`/`full` honored when supplied.
+   */
+  readonly readMode?: DriveReadMode;
   /**
    * The per-session usage caps — a SHARED per-agent instance the daemon builds from the
    * matched entry's `limits` AND threads into the registry's `onCapForget` (eviction forgets
@@ -498,11 +501,11 @@ export function createTerminalSessionReadTool(deps: TerminalToolDeps): AgentTool
   return {
     name: "terminal_session_read",
     label: "Terminal: read session",
-    description: "Read the current settled screen + cursor of a terminal session.",
+    description:
+      "Read a BOUNDED DIGEST of the current settled screen + cursor by default (readMode: digest|diff|full); an over-cap read is flagged (truncated), never silently trimmed.",
     parameters: ReadParams,
 
-    // 4-arg execute: observe the turn signal (read is read-only — it never
-    // kills; the owner-scoped read is the load-bearing change).
+    // 4-arg execute: read is read-only (owner-scoped); the digest bounds the result.
     async execute(
       _id: string,
       params: Record<string, unknown>,
@@ -510,11 +513,8 @@ export function createTerminalSessionReadTool(deps: TerminalToolDeps): AgentTool
       _onUpdate?: AgentToolUpdateCallback,
     ): Promise<AgentToolResult<unknown>> {
       const sessionId = readString(params, "sessionId") ?? "";
-      // Forward the render params to the worker (closing a prior
-      // schema-only gap — these were declared but never forwarded). Spec §5
-      // defaults: format=text, scrollback=0, includeAltBuffer=true. The schema
-      // (TypeBox closed Union) already validated `format`; the worker's render
-      // dispatch defaults any unrecognized value to text as a 2nd guard.
+      // Forward the render params to the worker (spec §5 defaults: format=text, scrollback=0,
+      // includeAltBuffer=true; the TypeBox closed Union already validated `format`).
       const format = (readString(params, "format") as "text" | "ansi" | "html" | undefined) ?? "text";
       const scrollback = readInt(params, "scrollback", 0);
       const includeAltBuffer = readBool(params, "includeAltBuffer") ?? true;
@@ -524,20 +524,20 @@ export function createTerminalSessionReadTool(deps: TerminalToolDeps): AgentTool
         scrollback,
         includeAltBuffer,
       });
-      // §3.6: the driven CLI's screen is a PROMPT-INJECTION vector — it can
-      // render attacker-controlled text (a file/web the CLI read) and echo secrets.
-      // REDACT secret-shaped values FIRST (so a leaked token never reaches the agent
-      // or the wrap), THEN wrap as untrusted external content (random delimiter +
-      // injection warning + marker-sanitization) so a hijacked agent sees framed,
-      // un-actionable text — never a bare injection payload. Only `screen` is
-      // transformed; cursor/cols/rows/alt/alive/diff pass through unchanged.
-      const { text: redacted, redactions } = scrubSecretsFromText(view.screen);
+      // READ-01: bound the screen to a digest (current screen / changed rows / full) BEFORE
+      // the redact+wrap — an over-cap read is clipped with a truncations breadcrumb, never a
+      // silent trim (I7). digest.screen (not view.screen) flows into the §3.6 defense below.
+      const digest = boundedReadDigest(view, deps.readMode ?? "digest", READ_DIGEST_BYTE_CAP);
+      // §3.6: the screen is a PROMPT-INJECTION vector. REDACT secret-shaped values FIRST (a
+      // leaked token never reaches the agent/the wrap), THEN wrap as untrusted external content.
+      const { text: redacted, redactions } = scrubSecretsFromText(digest.screen);
       const wrappedScreen = wrapExternalContent(redacted, { source: "unknown" });
       deps.logger.debug(
-        { toolName: "terminal_session_read", sessionId, format, scrollback, redactions, step: "read" },
+        { toolName: "terminal_session_read", sessionId, format, scrollback, redactions, truncated: digest.truncated, step: "read" },
         "terminal session read",
       );
-      return jsonResult({ ...view, screen: wrappedScreen });
+      const breadcrumb = digest.truncations !== undefined ? { truncated: digest.truncated, truncations: digest.truncations } : { truncated: digest.truncated };
+      return jsonResult({ ...view, screen: wrappedScreen, ...breadcrumb });
     },
   };
 }
