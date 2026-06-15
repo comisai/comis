@@ -15,15 +15,20 @@
  * CLI-AGNOSTIC by design (§7.1.3): it is a STRUCTURAL test, NOT a per-CLI pattern
  * table (that brittleness is exactly what the CLASS-02 fixture corpus guards against).
  * It fires `true` when ANY ONE strong structural cue is present over the rows:
- *   - a box-drawing run (`╭╮╰╯│─…` or an ASCII `+--+` / `|` border), OR
+ *   - a box-drawing run (`╭╮╰╯│─…`, an ASCII `+--+` corner/edge, or a PREDOMINANTLY
+ *     border-fill `|----|` row — NOT an arbitrary `| prose | prose |` markdown row), OR
  *   - a ≥2-item enumerated option list (`1.` / `2)` / `[1]` / `(a)`, optionally
- *     `❯`/`>`-prefixed), OR
- *   - a genuine selector affordance (`❯` / `(y/n)` / `[Y/n]`).
+ *     `❯`/`>`-prefixed) that is the TRAILING structure (no prose continues below the
+ *     last option — else it is a numbered prose list, not a menu), OR
+ *   - a genuine selector affordance: a `❯` caret, or a `(y/n)`/`[Y/n]` confirmation
+ *     token that is a STANDALONE END-OF-LINE affordance (not a substring mid-prose).
  *
- * TIGHT by design (RESEARCH Pitfall 2 / T-163-02 — the severity-HIGH failure): mere
- * indentation, bullets (`●`/`⎿`), or a stray `>` quote in generation prose must NOT
- * match — else a thinking-pause would be read as a dialog and wake a SPURIOUS keystroke
- * into a still-generating CLI. A single lone enumerated line is not a menu (≥2 required).
+ * TIGHT by design (RESEARCH Pitfall 2 / T-163-02 — the severity-HIGH failure; MR-01):
+ * mere indentation, bullets (`●`/`⎿`), a stray `>` quote, a markdown table row
+ * (`| col | col |`), a numbered prose list that keeps generating, or a `(y/n)` token
+ * buried mid-sentence in generation prose must NOT match — else a completed/thinking
+ * frame would be read as a dialog and wake a SPURIOUS keystroke into a still-generating
+ * CLI. A single lone enumerated line is not a menu (≥2 required).
  *
  * `hintPatterns` (the operator-configured cues, NEVER model/screen-derived) REINFORCE a
  * BORDERLINE selector match only — a hintPattern present on prose with no structural cue
@@ -58,28 +63,46 @@ import type { EmulatorSnapshot } from "./terminal-render.js";
 // ---------------------------------------------------------------------------
 
 /**
- * A bordered/boxed region: any Unicode box-drawing glyph OR an ASCII border row
- * (`+---+` corners/edges, or a line bounded by `|` pipes). A box around content is
- * an unmistakable dialog chrome; prose never renders one.
+ * A bordered/boxed region: any Unicode box-drawing glyph OR an ASCII border row. A box
+ * around content is unmistakable dialog chrome; prose never renders one.
  */
 const BOX_DRAWING = /[╭╮╰╯│─└┌┐┘├┤┬┴┼]/;
-/** An ASCII border row: a `+` with `-` runs (`+----+`), or a `|`-bounded box line. */
-const ASCII_BORDER = /(?:\+[-=]{2,}\+)|(?:^\s*\|.*\|\s*$)/;
+/**
+ * An ASCII border row: a `+` with `-`/`=` runs (`+----+` corners/edges), OR a `|`-bounded
+ * row that is PREDOMINANTLY BORDER FILL — only border glyphs (`-`/`=`/`+`/`|`) and spaces
+ * between the outer pipes (a `|------|` rule or a blank `|      |` box edge). The second
+ * alternative is INTENTIONALLY NOT `^\s*\|.*\|\s*$` (MR-01): that earlier form matched
+ * EVERY pipe-bounded row — so a markdown table row (`| Option | Cost |`) or a single
+ * pipe-bounded ascii-art line (`|  A --> B  |`) in generation output was misread as
+ * dialog chrome. A real box's `+---+` top/bottom border still fires on the first
+ * alternative, so requiring border-fill on the `|`-row alternative loses no genuine box.
+ */
+const ASCII_BORDER = /(?:\+[-=]{2,}\+)|(?:^\s*\|[-=+|\s]*\|\s*$)/;
 
 /**
  * A leading enumerator on its own row: `1.` / `2)` / `[1]` / `(a)`, optionally prefixed
  * by a `❯`/`>` selector caret, and followed by at least one non-space option token.
  * Anchored at line start (after optional indent) so a `step 1.` mid-sentence in prose
- * does NOT match — only a genuine list item.
+ * does NOT match — only a genuine list item. The caller requires ≥2 such rows AND that
+ * they be the TRAILING structure (no prose below the last option) before treating them
+ * as a menu — a numbered prose list that continues with a sentence is NOT a menu (MR-01).
  */
+// eslint-disable-next-line security/detect-unsafe-regex -- linear; no nested/overlapping quantifier (single anchored `\s*` + an unambiguous alternation + a lone `\s+\S`; verified <0.2ms on 100k pathological input — not ReDoS).
 const ENUMERATOR = /^\s*(?:[❯>]\s*)?(?:\d+[.)]|\[\d+\]|\([a-z]\))\s+\S/;
 
 /**
- * A genuine selector affordance: a `❯` caret anywhere, or a `(y/n)` / `[y/n]` / `[Y/n]`
- * confirmation token. Word-boundary-ish anchored so it is a real affordance, not a
- * substring inside prose.
+ * A genuine selector affordance: a `❯` caret at a word boundary (`(?:^|\s)❯`), OR a
+ * `(y/n)`/`(yes/no)`/`[y/n]`/`[Y/n]` confirmation token that is a STANDALONE END-OF-LINE
+ * affordance (the token, then only an optional trailing prompt char `?`/`:`/`>` and
+ * whitespace, then end-of-line). The end-of-line anchor is load-bearing (MR-01/MR-02):
+ * the earlier alternatives had NO position anchor, so a `(yes/no)` / `[y/n]` token buried
+ * mid-sentence in generation prose matched anywhere on the line and was misread as a
+ * prompt. A real confirmation prompt always carries the token as the trailing affordance
+ * (`Overwrite? (y/n)`), so anchoring it to end-of-line keeps every genuine prompt while
+ * rejecting the in-prose substring.
  */
-const SELECTOR = /(?:(?:^|\s)❯)|(?:\((?:y\/n|yes\/no)\))|(?:\[(?:y\/n|Y\/n|y\/N)\])/i;
+const SELECTOR =
+  /(?:(?:^|\s)❯)|(?:(?:\((?:y\/n|yes\/no)\)|\[(?:y\/n|Y\/n|y\/N)\])\s*[?:>]?\s*$)/i;
 
 /**
  * A short prompt line whose CONTENT is short enough to be an affordance, not a wall of
@@ -135,24 +158,33 @@ export function detectsFullScreenDialog(
   const lines = snapshot.screen.split("\n");
 
   let enumeratorRows = 0;
+  // The rows AFTER the most recent enumerator row — captured by slicing on each
+  // enumerator hit (a `for...of` walk, no array-index sink). The trailing-structure
+  // test below reads only this tail.
+  let rowsAfterLastEnumerator: readonly string[] = [];
+  let lineIndex = 0;
   let sawSelector = false;
   let sawHintAffordance = false;
 
   for (const raw of lines) {
     const line = raw ?? "";
     const trimmed = line.trim();
+    lineIndex++;
     if (trimmed.length === 0) continue;
 
     // A box-drawing OR ASCII-border row is an immediate, unambiguous dialog cue.
     if (BOX_DRAWING.test(line) || ASCII_BORDER.test(line)) return true;
 
-    // A genuine selector affordance (`❯` / `(y/n)` / `[Y/n]`) is an immediate cue.
+    // A genuine selector affordance (`❯` / a STANDALONE end-of-line `(y/n)`/`[Y/n]`) is
+    // an immediate cue.
     if (SELECTOR.test(line)) sawSelector = true;
 
-    // Count enumerated option rows — a single one is prose ("step 1."), ≥2 is a menu.
+    // Count enumerated option rows (a single one is prose, "step 1."). The ≥2 check +
+    // the trailing-structure test below are what promote them to a menu (MR-01). Capture
+    // the tail after each hit so the last enumerator's tail is what survives the loop.
     if (ENUMERATOR.test(line)) {
       enumeratorRows++;
-      if (enumeratorRows >= 2) return true;
+      rowsAfterLastEnumerator = lines.slice(lineIndex);
     }
 
     // hintPatterns REINFORCE only — and ONLY as a borderline selector affordance, never
@@ -166,8 +198,37 @@ export function detectsFullScreenDialog(
     }
   }
 
+  // ≥2 line-start enumerators are a MENU only when the options are the TRAILING
+  // structure — i.e. nothing but blank rows, more enumerators, or border rows appear
+  // BELOW the last option (MR-01). A *completed* response that ends in a NUMBERED PROSE
+  // LIST keeps generating prose after the items ("…and that completes it"), so a
+  // non-enumerator prose line below the last enumerated row demotes it back to prose.
+  // (A boxed menu already returned `true` above on its `+---+` border, so this only
+  // governs the bare-enumerated case.)
+  const enumeratedMenu = enumeratorRows >= 2 && isTrailingStructure(rowsAfterLastEnumerator);
+
   // A genuine selector affordance is a strong cue on its own. A reinforcing hintPattern
   // counts as a borderline selector (so a lone allowlisted-cue affordance row fires),
   // but only because the cue matched an actual rendered line — never bare prose.
-  return sawSelector || sawHintAffordance;
+  return enumeratedMenu || sawSelector || sawHintAffordance;
+}
+
+/**
+ * Are `rowsBelow` (the rows strictly AFTER the last enumerated option) all non-prose —
+ * i.e. blank, another enumerator, or a box/ASCII border? `true` means the enumerated
+ * options are the TRAILING structure of the frame (a real menu); `false` means
+ * generation prose continues past the last option (a numbered prose list, NOT a menu —
+ * MR-01). Pure; never throws (an empty tail — the options ARE the last rows — yields
+ * `true`).
+ */
+function isTrailingStructure(rowsBelow: readonly string[]): boolean {
+  for (const raw of rowsBelow) {
+    const line = raw ?? "";
+    const trimmed = line.trim();
+    if (trimmed.length === 0) continue; // blanks are fine below the options
+    if (ENUMERATOR.test(line)) continue; // another option row is fine
+    if (BOX_DRAWING.test(line) || ASCII_BORDER.test(line)) continue; // a closing border is fine
+    return false; // a prose line below the last option ⇒ a prose list, not a menu
+  }
+  return true;
 }
