@@ -632,7 +632,7 @@ export function registerAllToolMetadata(): void {
   registerToolMetadata("extract_document", { mcpExportPolicy: "permission-gated" });
   registerToolMetadata("transcribe_audio", { mcpExportPolicy: "permission-gated" });
 
-  // --- never-export (28) — admin / mutation / outbound / secrets / cost ---
+  // --- never-export (30) — admin / mutation / outbound / secrets / cost ---
   // Filesystem mutation (3).
   registerToolMetadata("write",       { mcpExportPolicy: "never-export" });
   registerToolMetadata("edit",        { mcpExportPolicy: "never-export" });
@@ -667,8 +667,12 @@ export function registerAllToolMetadata(): void {
   registerToolMetadata("discord_action",  { mcpExportPolicy: "never-export" });
   registerToolMetadata("telegram_action", { mcpExportPolicy: "never-export" });
   registerToolMetadata("slack_action",    { mcpExportPolicy: "never-export" });
-  // Cost-bearing synthesis (1).
+  // Cost-bearing synthesis (3).
   registerToolMetadata("tts_synthesize", { mcpExportPolicy: "never-export" });
+  // Video generation (188-02 SEC-01) — cost-bearing + outbound delivery; never
+  // MCP-exported. video_status is reserved (its tool lands Phase 189).
+  registerToolMetadata("video_generate", { mcpExportPolicy: "never-export" });
+  registerToolMetadata("video_status",   { mcpExportPolicy: "never-export" });
   // Terminal driver (9) — never-export; inside Comis's trust boundary, NOT an MCP-exported surface.
   registerToolMetadata("terminal_session_create",    { mcpExportPolicy: "never-export" });
   registerToolMetadata("terminal_session_list",      { mcpExportPolicy: "never-export" });
