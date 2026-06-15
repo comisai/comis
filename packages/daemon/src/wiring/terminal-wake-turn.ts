@@ -26,9 +26,19 @@
  */
 
 import { scrubSecretsFromText, type ComisLogger } from "@comis/core";
-import { decideAutoAnswer, type LoopGuard, type TerminalSessionRegistry } from "@comis/skills/tools";
+import {
+  decideAutoAnswer,
+  emptyJournal,
+  appendStep,
+  updateJournal,
+  screenDigestLine,
+  type LoopGuard,
+  type TerminalSessionRegistry,
+  type DriveJournal,
+} from "@comis/skills/tools";
 
 import type { PersistedWakeOwner } from "./terminal-wake-persistence.js";
+import { registryOwnerFor, DRIVE_SCOPE_PREFIX } from "./terminal-drive-scope.js";
 
 /** The per-entry attention config the woken turn reads (operator-dialable; NEVER agent-dialable). */
 export interface TerminalAttentionConfig {
@@ -78,6 +88,20 @@ export type WokenTurnNotify = (opts: {
   origin: "background_task";
 }) => Promise<unknown>;
 
+/**
+ * The minimal per-session journal store the woken-turn driver reads+updates for a PROMOTED
+ * drive (DRIVE-01 / 164-06). A thin wrapper over the daemon-side closure-local
+ * `Map<sessionId, DriveJournal>` holder (setupTerminalWake), keyed by the BARE sessionId.
+ * Injected so the driver stays unit-testable with a fake; the daemon owns the holder
+ * (the in-memory state + its onSessionGone reclaim).
+ */
+export interface DriveJournalStore {
+  /** The current journal for a session, or `undefined` on the first wake (init-on-read). */
+  get(sessionId: string): DriveJournal | undefined;
+  /** Write the updated journal back for a session. */
+  set(sessionId: string, journal: DriveJournal): void;
+}
+
 /** The injected dependencies for the woken-turn driver. */
 export interface WokenTurnDriverDeps {
   /** Per-agent registry resolver (the P4 owner-scoped registry). */
@@ -90,6 +114,12 @@ export interface WokenTurnDriverDeps {
   eventBus: WokenTurnBus;
   /** The human-escalation NotifyFn (§4.7). Optional. */
   notify?: WokenTurnNotify;
+  /**
+   * DRIVE-01 (164-06): the bounded content-free journal store — the PROMOTED drive's
+   * cross-wake memory. Optional; absent ⇒ no journal (the today's-path/unpromoted behavior is
+   * byte-identical, I1). The driver engages it ONLY when the wake owner is drive-scoped.
+   */
+  journal?: DriveJournalStore;
   /** Injected clock (no raw global). */
   nowMs: () => number;
   logger: ComisLogger;
@@ -133,7 +163,16 @@ export function buildWokenTurnDriver(
       );
       return;
     }
-    const ownerObj = { agentId: owner.agentId, sessionKey: owner.sessionKey };
+    // DRIVE-01 (164-06) — the registry-owner STRIP (the load-bearing fix). The registry
+    // resolves a session by its STAMPED owner (`sessionKey:""` for the forcing case); a
+    // promoted drive's wake owner carries `drive:<id>` (the FSM/journal/conversation
+    // attribution key, from setup-terminal-wake.ts). registryOwnerFor strips that scope back
+    // so `status`/`read`/`sendText` resolve the LIVE session (the same allowId/scope/jail —
+    // I5: WHERE not WHAT), never the not-found `alive:false` view (the I9-class strand,
+    // T-164-19/T-164-23). The drive: scope is used ONLY for the journal keying + the
+    // promoted-gate below — never as the registry-authorization owner.
+    const ownerObj = registryOwnerFor(owner);
+    const promoted = owner.sessionKey.startsWith(DRIVE_SCOPE_PREFIX);
 
     // (1) session_status — the §4.4 turn start (owner-scoped; the classifier perception).
     const status = await registry.status(sessionId, ownerObj);
@@ -143,10 +182,40 @@ export function buildWokenTurnDriver(
     const view = await registry.read(sessionId, ownerObj, { format: "text" });
     const screen = view.screen ?? "";
 
+    // DRIVE-01 (164-06): the bounded content-free journal — the PROMOTED drive's cross-wake
+    // memory. recordJournal reads-or-inits the per-session journal, sets the redacted
+    // lastScreenDigest (I3) + lastClassification, bumps interactions, and appends a
+    // content-free step tag for the action taken (never a keystroke). Gated on `promoted`
+    // (an unpromoted turn touches no journal — I1) + a present store. Wrapped never-throw:
+    // a journal fault logs (step:journal_update) + the turn still completes (the FSM contract).
+    const recordJournal = (stepTag: "answered" | "escalated" | "waited" | "loop"): void => {
+      if (!promoted || !deps.journal) return;
+      try {
+        const current = deps.journal.get(sessionId) ?? emptyJournal(sessionId);
+        // The digest line is content-free by construction (counts/coords + a SHORT excerpt);
+        // run the excerpt through the canonical redactor before it lands on the journal (I3).
+        const { text: redactedDigest } = scrubSecretsFromText(
+          screenDigestLine({ screen, cols: view.cols, rows: view.rows, cursor: view.cursor, diff: view.diff }),
+        );
+        const updated = updateJournal(current, {
+          lastClassification: status.state,
+          lastScreenDigest: redactedDigest,
+          interactions: current.interactions + 1,
+        });
+        deps.journal.set(sessionId, appendStep(updated, stepTag));
+      } catch (err) {
+        log.warn(
+          { sessionId, agentId: owner.agentId, err, hint: "drive journal update failed; the woken turn still completed (the journal is best-effort cross-wake memory)", errorKind: "resource" as const, step: "journal_update" },
+          "terminal woken turn: journal update failed",
+        );
+      }
+    };
+
     // (3) decide — safe-only allowlist (escalate-always gate WINS over any hintPattern).
     const cfg = deps.getTerminalAttentionConfig(owner.agentId);
     if (!cfg) {
       // No operator attention config for this agent ⇒ never auto-answer (the SAFE default).
+      recordJournal("escalated");
       await escalate(sessionId, owner, "no_safe_match");
       return;
     }
@@ -155,6 +224,7 @@ export function buildWokenTurnDriver(
     if (decision.action === "escalate") {
       // A destructive/approval/auth-login prompt OR a non-match — send NOTHING, escalate.
       // (the auto-answer reason is a subset of the bus union; pass it through verbatim).
+      recordJournal("escalated");
       await escalate(sessionId, owner, decision.reason);
       log.debug(
         { sessionId, agentId: owner.agentId, state: status.state, durationMs: deps.nowMs() - startMs, step: "wake_turn_escalated" },
@@ -167,6 +237,7 @@ export function buildWokenTurnDriver(
     //     loop_detected BEFORE answering, so a tight auto-answer loop can never run.
     const loop = deps.loopGuard.observe(sessionId, screen);
     if (loop.repeat) {
+      recordJournal("loop");
       await escalate(sessionId, owner, "loop_detected");
       log.debug(
         { sessionId, agentId: owner.agentId, durationMs: deps.nowMs() - startMs, step: "wake_turn_loop" },
@@ -185,6 +256,9 @@ export function buildWokenTurnDriver(
     // a successful answer (§2.7: the failure is reconstructable from logs+events alone).
     const delivered = sent.delivered === true;
     auditAnswer(deps, sessionId, owner.agentId, text, decision.matchedPatternIndex, decision.keys.length, delivered);
+    // DRIVE-01 (164-06): record the cross-wake-memory step — `answered` on a delivered safe
+    // auto-answer, `waited` when the send did not land (the FSM will re-wake on a fresh frame).
+    recordJournal(delivered ? "answered" : "waited");
     if (delivered) {
       log.info(
         { sessionId, agentId: owner.agentId, matchedPatternIndex: decision.matchedPatternIndex, keystrokeCount: decision.keys.length, durationMs: deps.nowMs() - startMs, step: "wake_turn_answered" },

@@ -76,6 +76,21 @@ export {
   // instance per agent (from the matched entry's limits) feeding both the tool deps
   // (consume*) and the registry onCapForget (caps.forget).
   createSessionCaps,
+  // 164-01/03: the daemon woken-turn driver (164-06) consumes the pure drive-state journal
+  // (cross-wake memory) + the bounded digest/diff read selector + the content-free screen
+  // digest line — DRIVE-01 / READ-01. The read tool (164-06) delegates to boundedReadDigest.
+  emptyJournal,
+  appendAnswered,
+  appendStep,
+  updateJournal,
+  serializeJournal,
+  deserializeJournal,
+  boundedReadDigest,
+  screenDigestLine,
+  READ_DIGEST_BYTE_CAP,
+  type DriveJournal,
+  type DriveReadMode,
+  type ReadDigest,
   // 124-09: the woken-turn driver (daemon-side) consumes the safe-only auto-answer policy
   // (124-04) + the normalized loop-guard (124-04) — the SEC-12/SEC-11 governance modules.
   decideAutoAnswer,

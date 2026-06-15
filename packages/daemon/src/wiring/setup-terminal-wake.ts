@@ -40,7 +40,7 @@
  */
 
 import { systemNowMs, type TypedEventBus, type ComisLogger } from "@comis/core";
-import { createLoopGuard, type TerminalSessionRegistry } from "@comis/skills/tools";
+import { createLoopGuard, type TerminalSessionRegistry, type DriveJournal } from "@comis/skills/tools";
 
 import {
   createTerminalWakeDispatcher,
@@ -118,6 +118,15 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
   // call (the I5 anchor), so the drive scope never changes which jail/allow-entry resolves.
   const driveScopeKey = (sessionId: string): string => driveScopeKeyFor(sessionId, promotedSessions.has(sessionId));
 
+  // DRIVE-01 (164-06): the closure-local per-session journal holder — a PROMOTED drive's
+  // bounded content-free cross-wake memory. Mirrors the loopGuard lifecycle EXACTLY:
+  // closure-local, keyed by the bare sessionId, reclaimed in onSessionGone (so a recycled
+  // sessionId never inherits a stale journal), bounded over a milestone-length daemon (the
+  // journal itself is per-session capped, terminal-drive-journal.ts). The journal SHAPE +
+  // pure (de)serialize/cap is the skills sibling (164-01); the daemon owns this holder. This
+  // is Phase 165 DUR-02's single durable-persistence point.
+  const driveJournals = new Map<string, DriveJournal>();
+
   // The §4.4 woken-turn driver the FSM calls.
   const wakeOneTurn = buildWokenTurnDriver({
     registries: deps.registries,
@@ -125,6 +134,14 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
     loopGuard,
     eventBus: deps.eventBus,
     ...(deps.notify ? { notify: deps.notify } : {}),
+    // DRIVE-01: a thin store wrapper over the closure-local Map (the driver engages it ONLY
+    // for a promoted, drive-scoped wake; an unpromoted turn touches nothing — I1).
+    journal: {
+      get: (sessionId: string): DriveJournal | undefined => driveJournals.get(sessionId),
+      set: (sessionId: string, j: DriveJournal): void => {
+        driveJournals.set(sessionId, j);
+      },
+    },
     nowMs,
     logger: deps.logger,
   });
@@ -228,6 +245,9 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
     // DRIVE-02 (164-04): reclaim the promoted-state so a recycled sessionId never inherits a
     // stale promotion (mirrors loopGuard.forget — wired to the SAME end-of-life signals below).
     promotedSessions.delete(sessionId);
+    // DRIVE-01 (164-06): reclaim the per-session journal too (no per-session memory leak over
+    // a milestone-length daemon; a recycled sessionId starts with a fresh journal).
+    driveJournals.delete(sessionId);
     // removeWakeStateFile re-raises a non-ENOENT fs fault (@allow-throw) — wrap it so a
     // cleanup failure inside this bus listener can NEVER become an uncaughtException that
     // crashes the daemon (IN-04). Surface the fault to the log with an actionable hint.

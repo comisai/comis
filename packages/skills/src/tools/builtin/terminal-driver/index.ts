@@ -188,6 +188,35 @@ export {
   type LoopGuardDeps,
 } from "./terminal-loop-guard.js";
 
+// 164-01 (DRIVE-01, design §7.1.6): the pure bounded content-free drive-state journal —
+// a promoted drive's CROSS-WAKE MEMORY. The daemon woken-turn driver (164-06) reads+updates
+// it per wake via the closure-local Map<sessionId, DriveJournal> holder in setupTerminalWake.
+// Pure shape + (de)serialize/append/oldest-trim; content-free (I3), bounded (I7).
+export {
+  emptyJournal,
+  appendAnswered,
+  appendStep,
+  updateJournal,
+  serializeJournal,
+  deserializeJournal,
+  CAP_ANSWERED,
+  CAP_STEPS,
+  type DriveJournal,
+} from "./terminal-drive-journal.js";
+
+// 164-03 (READ-01, design §7.1 OD-3): the pure bounded digest/diff read selector + the
+// content-free one-line screen digest. The daemon woken-turn read (164-06) applies
+// boundedReadDigest to the returned view + threads screenDigestLine into the journal's
+// lastScreenDigest (run through scrubSecretsFromText); the read tool delegates to
+// boundedReadDigest (digest default). Pure, byte-capped (I7), never throws.
+export {
+  boundedReadDigest,
+  screenDigestLine,
+  READ_DIGEST_BYTE_CAP,
+  type DriveReadMode,
+  type ReadDigest,
+} from "./terminal-read-digest.js";
+
 // P5 124-05 (spec §2.3, TR-11): the transition-only in-worker attention emitter — the
 // WORKER half of the no-poll mechanism. The worker (124-05 Task 2) calls observe() with
 // each settled frame's classification; the emitter writes a redaction-safe
