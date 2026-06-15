@@ -1792,8 +1792,8 @@ A Codex main provider's image request identifies itself to the ChatGPT backend a
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `enabled` | `boolean` | `true` | Enable vision analysis |
-| `providers` | `enum[]` | `["openai", "anthropic", "google"]` | Ordered vision providers |
-| `defaultProvider` | `string` | _(unset)_ | Preferred default provider |
+| `providers` | `enum[]` | `["openai", "anthropic", "google"]` | Ordered vision-registry providers (the fallback chain) |
+| `defaultProvider` | `string` | _(unset)_ | Explicit vision provider. When set (non-empty), it **overrides** the follow-main behavior and the registry serves this provider directly. When unset, `image_analyze` follows the agent's main vision-capable model first (see the precedence Note below). |
 | `videoMaxBase64Bytes` | `number` | `70000000` | Max base64 video size (70MB) |
 | `videoMaxRawBytes` | `number` | `50000000` | Max raw video file size (50MB) |
 | `videoTimeoutMs` | `number` | `120000` | Video description timeout in ms |
@@ -1801,6 +1801,17 @@ A Codex main provider's image request identifies itself to the ChatGPT backend a
 | `imageMaxFileSizeMb` | `number` | `20` | Max image file size in MB |
 | `scopeRules` | `VisionScopeRule[]` | `[]` | Scope rules (first match wins) |
 | `defaultScopeAction` | `enum` | `"allow"` | Default when no rule matches: `allow` or `deny` |
+
+<Note>
+**Vision provider precedence (`image_analyze`).** Resolution order, highest first:
+
+1. **Explicit `defaultProvider`** -- when set (non-empty), the vision registry serves that provider; this wins over everything.
+2. **Follow the agent's main provider** (the default when `defaultProvider` is unset) -- when the agent's main model accepts image input (Claude / GPT-4o / Gemini and other vision-capable models), `image_analyze` routes through that main model, **reusing the agent's existing credentials**. No new vision config key and **no separate vision API key** are required for this -- it is automatic.
+3. **The vision registry chain** (`providers`, default `openai -> anthropic -> google`, first with a configured key) -- when the main model is not vision-capable, or as the fallback if a main-vision attempt fails at runtime.
+4. **Honest "unavailable"** -- when no tier can serve, with an error kind and a hint naming the knob to set.
+
+`describe_video` (raw video) is **Gemini-only** and does not follow the main provider -- it routes straight to the registry's Google provider (no frame extraction this release). The existing `providers` / `defaultProvider` / `scopeRules` keys are unchanged; the follow-main behavior adds no new vision config key.
+</Note>
 
 **Vision Scope Rule (integrations.media.vision.scopeRules[])**
 

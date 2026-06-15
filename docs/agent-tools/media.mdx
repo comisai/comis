@@ -12,11 +12,11 @@ icon: "photo-film"
 
 | Tool | What It Does | Provider Categories |
 |------|--------------|--------------------|
-| `image_analyze` | Analyze images using AI vision (file, URL, base64, or attachment URL) | Vision (Anthropic, OpenAI, Google) |
+| `image_analyze` | Analyze images using AI vision (file, URL, base64, or attachment URL) | Vision (follows the agent's main vision-capable model -- no separate key needed; else the Anthropic / OpenAI / Google registry) |
 | `image_generate` | Generate an image from a text prompt and deliver it to the current channel | Image gen (follows the agent's main provider by default; a Codex/ChatGPT-login main needs no image key; OpenRouter / fal opt-in) |
 | `tts_synthesize` | Generate spoken audio from text -- returns a workspace file path | TTS (OpenAI, ElevenLabs, Edge) |
 | `transcribe_audio` | Convert speech to text | STT (OpenAI Whisper, Groq, Deepgram) |
-| `describe_video` | Extract key frames and describe video content using vision | Vision (frame-by-frame) |
+| `describe_video` | Describe raw video content using vision | Vision (Gemini-only raw video) |
 | `extract_document` | Extract text from PDFs, CSVs, and other documents | None (local extraction) |
 
 For per-provider setup, model defaults, and configuration, see the [Media & Voice](/media/index) section.
@@ -56,6 +56,16 @@ For per-provider setup, model defaults, and configuration, see the [Media & Voic
     <Tip>
     Use the `prompt` parameter to ask specific questions about images. Without a prompt, the agent generates a general description. With a prompt like "What error message is shown?", the agent focuses on extracting that specific information.
     </Tip>
+
+    **Vision follows the agent's main provider.** When the agent's main model is itself vision-capable (Claude, GPT-4o, Gemini, and other models that accept image input), `image_analyze` routes the image through **that main model**, reusing the agent's existing credentials -- so **no separate vision key is required** in that case. The model that reasons for the agent is the model that "sees" the image, over one completion call.
+
+    The resolver tries the tiers in this locked order and logs which tier served (the `path` field on the completion log):
+
+    1. **main-vision** -- the agent's main model, when it accepts image input (reuses the main provider's key / Codex OAuth profile). No separate vision key needed.
+    2. **registry** -- the independent vision registry's own OpenAI -> Anthropic -> Google chain (its own configured keys; unchanged for current setups). Used when the main model is not vision-capable, when an explicit `defaultProvider` is set (see below), or as the fallback if a main-vision attempt fails at runtime.
+    3. **honest "unavailable"** -- when no tier can serve, the tool reports an unavailable result with an error kind and a hint naming the knob to set, never a crash or a misroute to the wrong provider.
+
+    An explicit `integrations.media.vision.defaultProvider` in `config.yaml` **overrides** main-first (explicit operator config wins) -- the registry tier serves that provider directly.
   </Accordion>
 
   <Accordion title="tts_synthesize -- Generate spoken audio from text" icon="volume-high">
@@ -112,13 +122,14 @@ For per-provider setup, model defaults, and configuration, see the [Media & Voic
     | `attachment_url` | string | Yes | The URL of the video to describe (e.g., `tg-file://...`, `discord://...`) |
     | `prompt` | string | No | Custom analysis prompt to guide the description (defaults to a generic description prompt) |
 
-    The tool extracts representative frames from the video, analyzes each frame with AI vision, and returns a coherent description of the video content. This is useful for understanding short clips, tutorials, or screen recordings shared in chat.
+    The tool sends the raw video to a video-capable vision model and returns a coherent description of the content. This is useful for understanding short clips, tutorials, or screen recordings shared in chat.
 
     **How it works:**
-    1. The video is downloaded from the provided URL
-    2. Key frames are extracted at intervals throughout the video
-    3. Each frame is analyzed using AI vision
-    4. The individual frame descriptions are combined into a coherent narrative
+    1. The video is downloaded from the provided URL.
+    2. The raw video buffer is sent to a **video-capable** vision provider for analysis.
+    3. The provider returns a description of the video content.
+
+    **Raw video is Gemini-only.** Unlike `image_analyze`, `describe_video` does **not** route through an arbitrary main model -- only Gemini accepts the raw video buffer (there is no frame extraction in this release). So `describe_video` goes straight to the **gemini-video** tier (via the vision registry's Google provider); if no video-capable provider is configured, the tool reports an honest "unavailable" result with a hint to configure Gemini, never a crash. A non-Gemini main model does not change this -- the main-provider vision path applies to `image_analyze`, not raw video.
 
     **Example usage:**
     When a user shares a video clip, the agent can describe what is happening:
@@ -213,7 +224,8 @@ Media tools route to providers based on the credentials present in your secret s
 
 | Capability | Available providers | Auto-selection order | Required env keys |
 |------------|--------------------|--------------------|-------------------|
-| Vision (`image_analyze`, `describe_video`) | OpenAI (gpt-4o), Anthropic (claude-sonnet-4.5), Google Gemini | OpenAI -> Anthropic -> Google (first available) | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY` (at least one) |
+| Vision -- `image_analyze` | **Follows the agent's main provider** when it is vision-capable (Claude / GPT-4o / Gemini and other image-accepting models), reusing its key; else the independent vision registry (OpenAI / Anthropic / Google) | main-vision -> registry (OpenAI -> Anthropic -> Google, first available) -> honest unavailable; an explicit `defaultProvider` overrides main-first | **None in the main-vision case** (reuses the main provider's key / Codex OAuth profile). The registry fallback uses `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY` (at least one). |
+| Vision -- `describe_video` (raw video) | **Gemini only** (raw video buffer; no frame extraction this release) | gemini-video -> honest unavailable | `GOOGLE_API_KEY` (the vision registry's Google provider) |
 | TTS (`tts_synthesize`) | OpenAI TTS, ElevenLabs, Edge | Configured order; `auto-tts` heuristic decides when to use voice | `OPENAI_API_KEY`, `ELEVENLABS_API_KEY` (Edge is free) |
 | STT (`transcribe_audio`) | OpenAI Whisper (gpt-4o-mini-transcribe), Groq Whisper, Deepgram nova-3 | Fallback chain in declared order | `OPENAI_API_KEY`, `GROQ_API_KEY`, `DEEPGRAM_API_KEY` (at least one) |
 | Image generation (`image_generate`) | Follows the agent's main provider (`auto`): native **OpenAI** (`gpt-image-1`), **Google Gemini** (`gemini-2.5-flash-image`), **Codex** (ChatGPT-login), and **OpenRouter**; explicit `openrouter` / `openai-codex` / `openai` / `google` / `fal` | `auto` = the agent's main provider (reuses its key, or OAuth bearer for a Codex main); else the explicit `provider` | None in the `auto` case (reuses the main provider's key): `OPENAI_API_KEY` for an `openai` main, `GOOGLE_API_KEY` for a `google` main, the **OAuth bearer** for a Codex main (no image key). `OPENROUTER_API_KEY` for the OpenRouter opt-in; `FAL_KEY` for explicit `fal`. Honest "unavailable" (not silent) if the main provider can't generate images and no `provider` is set. |
@@ -228,7 +240,7 @@ Media calls bill against your model providers, not Comis itself. Rough rules of 
 - **TTS** is priced per character. ElevenLabs is the priciest tier; Edge TTS is free but voice quality is more limited.
 - **Image generation** has the highest per-call cost. The image-gen rate limiter is conservative by default (~1 req/min on OpenAI, ~1 req/sec on FAL), and you can additionally cap **spend** per agent/hour with `integrations.media.imageGeneration.maxCostPerHourUsd` (requests over the ceiling are blocked with `quota_exceeded`). Each generation's `costUsd` is recorded in the session trajectory (`comis explain`) and the cost rollups (`comis fleet`).
 
-Comis applies graceful degradation: if no credentials are configured for a capability, the corresponding tool is omitted from the agent's tool catalog rather than failing at call time. Vision falls back to Anthropic by default since most setups already have an Anthropic key for the agent runtime itself.
+Comis applies graceful degradation: if no credentials are configured for a capability, the corresponding tool is omitted from the agent's tool catalog rather than failing at call time. For `image_analyze`, vision follows the agent's main provider first (reusing its key when the main model is vision-capable -- no separate vision key needed), then the independent vision registry, then an honest "unavailable" result; an explicit `integrations.media.vision.defaultProvider` overrides main-first.
 
 See the [Media & Voice](/media/index) section for detailed provider setup, the [Vision](/media/vision) page for image flow details, and [Voice](/media/voice) for TTS/STT options.
 
