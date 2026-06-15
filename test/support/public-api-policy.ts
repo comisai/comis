@@ -2575,6 +2575,23 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // non-test value consumer of each lands.
       "reduceFleetWindow",
       "FleetWindowRollup",
+      // Video job store (v2.24 Phase 189 Plan 01, JOB-01). The durable async
+      // VideoJobStore + its idempotent DDL are barrel-exported in Wave 1, but
+      // their in-repo consumers land in LATER waves of this same phase: the
+      // background poller (Plan 02) constructs createVideoJobStore + reads
+      // listPending on boot, and the video_status handler (Plan 03) calls the
+      // agent-scoped get. No production module name-imports them yet, so the
+      // walker (which excludes *.test.ts + self-imports) surfaces them as
+      // orphans now. Cross-wave planned-orphans — same pattern + precedent as
+      // VideoGenerateContract / PollDeadline above (188-02/03). Remove each when
+      // its Plan-02/Plan-03 in-repo value consumer lands.
+      "createVideoJobStore",
+      "VideoJobStore",
+      "VideoJobRecord",
+      "VideoJobState",
+      "VideoJobInsert",
+      "VideoJobDoneInput",
+      "ensureVideoJobTable",
     ])],
     // @comis/scheduler: baseline orphans tracked here.
     ["@comis/scheduler", new Set<string>([
