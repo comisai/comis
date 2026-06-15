@@ -1026,26 +1026,21 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "estimateVideoCostUsd",
       "VIDEO_PRICING",
       "VideoGenerateContract",
-      // CAP-02 per-model capability-matrix accessors (v2.24 Phase 191 Plan 01).
-      // Surfaced on the @comis/core barrel (exports/media.ts) in Wave 1 so the
-      // LATER-wave consumers can import them from @comis/core: Plan 02 (Wave 2,
-      // @comis/daemon video-handlers) name-imports listVideoModelCaps +
-      // supportedModes + snapDuration for the IN-02 validator; Plan 03 (Wave 2,
-      // @comis/skills video-generate-tool) name-imports listVideoModelCaps for
-      // the IN-03 dynamic description; the VideoModelCaps / VideoDurations TYPES
-      // are consumed by both. These are the ahead-of-consumer planned-orphans
-      // (the Phase-188 video-foundation block above + the SessionStorePort /
-      // ContextStorePort "listed so the gate is green before the consumer lands"
-      // precedent — over-listing a soon-consumed symbol is the documented
-      // pattern, NOT a shrink-only architecture-allowlist entry). Each SHRINKS
-      // out of this baseline when its real cross-package consumer lands (Plan 02
-      // Task 4 / Plan 03 Task 4 re-run public-export-consumers green). The raw
-      // VIDEO_MODELS const is NOT listed — it stays intra-`@comis/core/media`
-      // (the VIDEO_CAPABILITY / IMAGE_MODELS_BY_PROVIDER policy), never on the
-      // public barrel.
-      "listVideoModelCaps",
-      "supportedModes",
-      "snapDuration",
+      // CAP-02 per-model capability-matrix TYPES (v2.24 Phase 191 Plan 01).
+      // Surfaced on the @comis/core barrel (exports/media.ts) in Wave 1. The
+      // ACCESSORS listVideoModelCaps / supportedModes / snapDuration were tracked
+      // here as ahead-of-consumer planned-orphans; REMOVED in Plan 02 (Wave 2):
+      // the @comis/daemon video-handlers now name-imports all three from
+      // @comis/core for the IN-02 validator (a real cross-package consumer), so
+      // they are no longer orphans (Plan 03's video-generate-tool adds a second
+      // consumer of listVideoModelCaps for the IN-03 dynamic description). The
+      // VideoModelCaps / VideoDurations TYPES STAY listed — they are surfaced on
+      // the barrel but have no NAME-import consumer yet (the handler reads them
+      // via inference off listVideoModelCaps's return type, not a named import),
+      // so they remain ahead-of-consumer planned-orphans until a future phase
+      // name-imports the type. The raw VIDEO_MODELS const is NOT listed — it
+      // stays intra-`@comis/core/media` (the VIDEO_CAPABILITY /
+      // IMAGE_MODELS_BY_PROVIDER policy), never on the public barrel.
       "VideoModelCaps",
       "VideoDurations",
       // Shared bounded-poll helper (Plan 03, DIVERGENCE 5). createPollDeadline /
