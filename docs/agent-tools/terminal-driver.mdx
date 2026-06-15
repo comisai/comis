@@ -73,16 +73,19 @@ agents:
             consent: { acknowledgedRisk: true, acknowledgedAt: "2026-06-14T00:00:00Z" }
 
           # Drive an interactive AI CLI (Claude Code here, but the driver is TOOL-AGNOSTIC).
-          # It needs network + its own credentials/folder-trust, exposed via credentialPaths
-          # (RO) instead of binding the whole home -- an explicit operator choice. For other
-          # CLIs just list their cred dir: Codex -> ["~/.codex"]; Gemini -> ["~/.gemini"].
+          # filesystem: home because (a) the claude binary is home-installed
+          # (~/.local/bin/claude -> ~/.local/share/...), which filesystem: workspace cannot
+          # reach -- the jail only execs a binary its filesystem scope binds; and (b) claude
+          # WRITES ~/.claude (session state + OAuth token refresh), which a read-only
+          # credentialPaths bind would block. credentialPaths (RO) instead suits a CLI that is
+          # system-installed AND only reads its creds -- see the credentialPaths note below.
           - id: claude
             match: { path: /home/comis/.local/bin/claude }
             scope:
-              filesystem: workspace            # only the session workspace is writable
+              filesystem: home                 # binds the home-installed binary + RW ~/.claude state
               network: full                    # reach the model API
-              credentialPaths: ["~/.claude", "~/.claude.json"]   # RO: creds + folder-trust; ~ expands to home
-              uid: daemon                      # run as the daemon user so it can READ its own (comis-owned) creds
+              credentialPaths: []              # not needed -- filesystem: home already exposes ~/.claude (RW)
+              uid: daemon                      # run as the daemon user so it owns its (comis-owned) creds
             autoAnswer: safe-only
             consent: { acknowledgedRisk: true, acknowledgedAt: "2026-06-14T00:00:00Z" }
             limits: { wallClockMs: 7200000, maxInteractions: 800 }
@@ -92,7 +95,7 @@ agents:
 
 The agent then drives it: `terminal_session_create({ allowId: "claude", command: "/home/comis/.local/bin/claude", args: ["--permission-mode", "bypassPermissions"] })` -> wait -> `terminal_session_send_text(...)` -> `terminal_session_read(...)`.
 
-**Driving a slow interactive AI CLI** (e.g. `claude`/`codex`): the model's reply takes tens of seconds, so pass a generous `terminal_session_wait({ forIdleMs: 20000, timeoutMs: 300000 })` — the settle returns the instant the CLI goes quiet (not at the timeout), and a long wait auto-backgrounds so the turn never blocks (the completion then arrives as a follow-up, e.g. a Telegram message). The CLI's **first-run startup gates** persist once accepted (recorded in the CLI's credential file), so accept them once **outside the jail** before the first drive: Claude Code shows a "trust this folder" prompt and — under `--permission-mode bypassPermissions` — a "Bypass Permissions" warning whose default highlight is **"No, exit"**, so a reflexive Enter quits the CLI. Once accepted (and with `credentialPaths` binding `~/.claude.json` RO into the jail), later drives open straight to the prompt. `credentialPaths` is RO, so pre-accept the gates outside the jail rather than relying on the driven CLI to persist them.
+**Driving a slow interactive AI CLI** (e.g. `claude`/`codex`): the model's reply takes tens of seconds, so pass a generous `terminal_session_wait({ forIdleMs: 20000, timeoutMs: 300000 })` — the settle returns the instant the CLI goes quiet (not at the timeout), and a long wait auto-backgrounds so the turn never blocks (the completion then arrives as a follow-up, e.g. a Telegram message). The CLI's **first-run startup gates** persist once accepted (recorded in the CLI's credential file), so accept them once **outside the jail** before the first drive: Claude Code shows a "trust this folder" prompt and — under `--permission-mode bypassPermissions` — a "Bypass Permissions" warning whose default highlight is **"No, exit"**, so a reflexive Enter quits the CLI. Once accepted, the trust is recorded in `~/.claude.json`: under `filesystem: home` that file is bound **read-write**, so claude persists the acceptance itself and later drives open straight to the prompt. (If you expose creds via `credentialPaths`, which is **read-only**, the CLI cannot persist the gate state — pre-accepting outside the jail is then mandatory, not just convenient.)
 
 ### Allow-entry fields
 
@@ -116,11 +119,12 @@ Every driven session runs in a bwrap jail materializing the entry's `scope`:
 |-----------------|--------|---------|
 | `filesystem` | `workspace` / `listed-paths` / `home` / `full` | `workspace` |
 | `network` | `none` / `listed-hosts` / `full` | `none` |
-| `credentialPaths` | `string[]` — credential paths RO-bound into the jail (`~` expands to home), e.g. `["~/.claude", "~/.claude.json"]` (Claude) or `["~/.codex"]` (Codex) | `[]` |
+| `credentialPaths` | `string[]` — credential paths **RO**-bound into the jail (`~` expands to home). For a CLI that is **system-installed** (binary under `/usr`, so reachable at `filesystem: workspace`) **and** only **reads** its creds. A CLI that writes its cred/state dir (claude, codex) needs `filesystem: home` or `listed-paths` instead. | `[]` |
 | `uid` | `dedicated` / `daemon` | `dedicated` |
 
 - **`~/.comis` carve-out (non-dialable):** the daemon data dir (master key, secret store) is masked with a tmpfs in **every** jail, even at `filesystem: full`. A driven child can never read Comis's secrets.
 - **Fail-closed:** if the declared scope cannot be materialized (no bwrap), `session_create` is rejected -- never degraded to an unsandboxed child.
+- **The binary must be in scope:** the jail can only exec a `match.path` that its `filesystem` scope binds. A binary under `/usr` rides the system RO base; a **home-installed** binary (e.g. `~/.local/bin/claude`, the standard install) is reachable only at `filesystem: home` (or `listed-paths` including its dir) — `filesystem: workspace` cannot exec it.
 - **Env-scrub:** interpreter-control vars (`NODE_OPTIONS`, `BASH_ENV`, `PYTHONSTARTUP`, function-export) and nested-CLI markers (`CLAUDE_CODE_*`, `CLAUDECODE`) are stripped.
 - **Untrusted output:** `terminal_session_read` redacts secrets and wraps the screen as untrusted external content -- a driven AI CLI can render attacker text, so the screen is treated as a prompt-injection vector, not trusted input.
 - **Audit:** every `send_text`/`send_key` is audited (`sessionId` + redacted payload); a run is reconstructable from logs + events.
