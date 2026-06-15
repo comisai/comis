@@ -34,6 +34,12 @@ export interface TerminalInputNeededEvent {
   state: "awaiting-input" | "stuck";
   /** A short structural classification tag (e.g. "settled_cursor_parked") — NEVER screen text. */
   reason: string;
+  /**
+   * Classifier confidence (CLASS-02) — `high` for the structural certainties,
+   * `medium` for the heuristics. A 2-value enum, content-free. Mirrors the core
+   * `TerminalEvents["terminal:input_needed"]` field one-for-one.
+   */
+  confidence: "high" | "medium";
   timestamp: number;
 }
 
@@ -46,6 +52,14 @@ export interface TerminalStuckEvent {
   agentId: string;
   /** Elapsed no-progress window in ms (settled, no affordance) — a duration, not content. */
   noProgressMs: number;
+  /**
+   * The classifier's structural reason tag (e.g. "no_progress") — surface-only for
+   * observability symmetry (CLASS-02). A machine tag, NEVER screen text. Mirrors the
+   * core `TerminalEvents["terminal:stuck"]` field one-for-one.
+   */
+  reason: string;
+  /** Classifier confidence (CLASS-02) — a 2-value enum, content-free (see input_needed). */
+  confidence: "high" | "medium";
   timestamp: number;
 }
 

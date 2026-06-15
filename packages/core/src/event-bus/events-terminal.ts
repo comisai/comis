@@ -107,6 +107,13 @@ export interface TerminalEvents {
     state: "awaiting-input" | "stuck";
     /** A short structural classification tag (e.g. "settled_cursor_parked") — NEVER screen text. */
     reason: string;
+    /**
+     * Classifier confidence (CLASS-02) — `high` for the structural certainties
+     * (cursor parked at a prompt), `medium` for the heuristics (e.g. `dialog_detected`).
+     * A 2-value enum, content-free: it rides the wake event for the autonomous policy
+     * (164–166) + a future `comis explain`. The screen that drove it rides the LOG.
+     */
+    confidence: "high" | "medium";
     timestamp: number;
   };
 
@@ -121,6 +128,14 @@ export interface TerminalEvents {
     agentId: string;
     /** Elapsed no-progress window in ms (settled, no affordance) — a duration, not content. */
     noProgressMs: number;
+    /**
+     * The classifier's structural reason tag (e.g. "no_progress") — surface-only for
+     * observability symmetry with `terminal:input_needed` (CLASS-02; RESEARCH Open Q3).
+     * A machine tag, NEVER screen text; the FSM does NOT branch on it in 163.
+     */
+    reason: string;
+    /** Classifier confidence (CLASS-02) — a 2-value enum, content-free (see input_needed). */
+    confidence: "high" | "medium";
     timestamp: number;
   };
 
