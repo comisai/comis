@@ -18,11 +18,10 @@
  * daemon-canonical `{bin,argv}` VERBATIM (the SOLE canonicalization site).
  * No `@comis/infra` value-import (the daemon passes the real logger).
  *
- * Reaper composition: when the daemon threads the reaper caps + `TimerPort` +
- * eviction hooks, the registry composes a `terminal-reaper.ts` sweep (idle +
- * wall-clock) + a per-create overflow check; `evict` is the single audited
- * eviction site (drop + cleanup + `onCapForget` + `onEvict` + a WARN) that the
- * sweep and the max_interactions path both drive.
+ * Reaper composition: when the daemon threads the reaper caps + `TimerPort` + eviction
+ * hooks, the registry composes a `terminal-reaper.ts` sweep (idle + wall-clock) + a
+ * per-create overflow check; `evict` is the single audited eviction site (drop + cleanup
+ * + `onCapForget` + `onEvict` + a WARN) the sweep + the max_interactions path both drive.
  *
  * @module
  */
@@ -54,6 +53,14 @@ import type { TerminalScope } from "./allowlist-matcher.js";
 import { allocateSessionWorkspace, cleanupSessionWorkspace, resolveCreateWorkspace } from "./terminal-workspace.js";
 import { sameOwner, type SessionOwner } from "./terminal-session-owner.js";
 import { wireRegistryReaper, type EvictReason, type ReaperCaps } from "./terminal-reaper.js";
+import {
+  // DUR-01 (165-06): recover-on-boot scan + rehydrate + durable-lost gate (sibling-owned, cap headroom — Pitfall 5).
+  applyRecoveredSessions,
+  buildSessionDescriptor,
+  markRunningSessionsLost as durableMarkLost,
+  staysRecoverable as durableStaysRecoverable,
+  type SessionDescriptorStorePort,
+} from "./terminal-session-reattach.js";
 import { waitReplyTimeoutMs } from "./terminal-settle.js";
 import { mapWaitReply, degradedWaitResult, type WaitResult } from "./terminal-wait-reply.js";
 import { wireWorkerSupervision } from "./terminal-worker-supervisor.js";
@@ -148,6 +155,14 @@ export interface TerminalSessionRegistryDeps extends ReaperCaps {
   allocateWorkspace?: (sessionId: string) => string;
   /** Teardown paired with {@link allocateWorkspace}; default {@link cleanupSessionWorkspace} (`rm -rf` the throwaway mkdtemp dir on kill/evict/reap). A daemon rooting the workspace in the agent's OWN persistent workspace MUST inject a NO-OP so the agent's workspace (skills/memory/milestone work) is NOT deleted on session end. */
   cleanupWorkspace?: (workspace: string) => void;
+  /** DUR-01 (165-06): the durable descriptor store (daemon-injected) — present ⇒ recover-on-boot + persist-at-create; ABSENT ⇒ today's wiring (I1). The fs-safe write lives in the daemon impl. */
+  descriptorStore?: SessionDescriptorStorePort;
+  /** DUR-01 (165-06): the `has-session` liveness probe the recover decision + durable-aware lost gate consult. ABSENT/falsy ⇒ the lost flip (safe default, I1). */
+  isTmuxAlive?: (name: string) => boolean;
+  /** DUR-01 (165-06): fired ONCE per recover re-attach → the daemon's content-free `terminal:drive_reattached` (ids only, I3). Injected (infra-decoupled). */
+  onReattached?: (info: { sessionId: string; agentId: string }) => void;
+  /** DUR-01 (165-06): fired per genuinely-gone durable session on recover → the daemon's EXISTING `terminal:session_state(state:"lost")` + this content-free reason (§2.7 `errorKind`); NO `failed` member (Phase-166's outcome); the journal is preserved (not removed here). */
+  onUnrecoverable?: (info: { sessionId: string; agentId: string; reason: string; errorKind: string }) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -178,6 +193,10 @@ export interface CreateRequest {
   workspace?: string;
   /** Session working directory — `scope`'s companion for the jail `--chdir`. */
   cwd?: string;
+  /** DUR-01 (165-06): `true` for a `drive.durable:true` session — persist a descriptor at create-time (Pitfall 6) + stamp the handle `durable` so the durable-aware {@link markRunningSessionsLost} keeps it recoverable while its tmux is alive (Q4). Absent ⇒ today's spawn session (I1). */
+  durable?: boolean;
+  /** DUR-01 (165-06): the deterministic `comis-<sessionId>` tmux name — the re-attach key persisted in the descriptor + stamped on the handle for the liveness probe (the daemon supplies it with `durable:true`). */
+  tmuxName?: string;
 }
 
 /** The `create` result handed back to the tool layer. */
@@ -318,10 +337,8 @@ export function createTerminalSessionRegistry(
     deps.clearTimer ?? ((handle: unknown) => systemClearTimeout(handle as SystemTimeoutHandle));
   // gap 2: per-session jail workspace allocator (default = the real mkdtemp helper).
   const allocateWorkspace = deps.allocateWorkspace ?? ((id: string) => allocateSessionWorkspace(id).workspace);
-  // The paired teardown for `allocateWorkspace`. Default = the `rm -rf` of the
-  // throwaway mkdtemp dir. A daemon that roots the workspace in the agent's OWN
-  // (persistent) workspace MUST inject a no-op here — else the kill/evict/reap path
-  // would delete the agent's workspace (skills, memory, a milestone's work) wholesale.
+  // The paired teardown for `allocateWorkspace` (default = `rm -rf` the throwaway mkdtemp).
+  // A daemon rooting the workspace in the agent's OWN persistent dir MUST inject a no-op here.
   const cleanupWorkspace = deps.cleanupWorkspace ?? ((workspace: string) => cleanupSessionWorkspace(workspace));
 
   /**
@@ -355,12 +372,11 @@ export function createTerminalSessionRegistry(
     }
   }
 
-  /** Flip every still-`running` session of the current worker to `lost`. */
-  function markRunningSessionsLost(): void {
-    for (const handle of sessions.values()) {
-      if (handle.status === "running") handle.status = "lost";
-    }
-  }
+  // DUR-01 / Q4 — bind the sibling's durable-lost gate (used at BOTH lost sites: the worker-close
+  // flip + the crash-flushed create waiter) to the probe (SAFE default "lost" if unconfirmable, I1).
+  const isTmuxAliveOrDead = deps.isTmuxAlive ?? ((): boolean => false);
+  const staysRecoverable = (handle: SessionHandle): boolean => durableStaysRecoverable(handle, isTmuxAliveOrDead);
+  const markRunningSessionsLost = (): void => durableMarkLost(sessions, isTmuxAliveOrDead);
 
   /**
    * Ensure a live worker handle, spawning + supervising one if absent. The
@@ -374,13 +390,9 @@ export function createTerminalSessionRegistry(
     const child = deps.spawnWorker();
     worker = child;
 
-    // OPS-01 crash-isolation listeners (the HR-02-guarded stdout decoder + error + close)
-    // moved to terminal-worker-supervisor.ts (124-01) so this file keeps headroom under the
-    // 800-line cap. 124-05 (TR-11): the supervisor ALSO installs the guarded fd3 events-push
-    // reader on child.stdio?.[3], dispatching each decoded TerminalEventFrame to the daemon-
-    // injected onTerminalEvent hook (the no-poll attention seam). The closure locals + the
-    // hook ride in as explicit params; the stdout HR-02 try/catch (corrupt frame never
-    // crashes the daemon) is byte-for-byte identical and the fd3 reader copies it.
+    // OPS-01 crash-isolation listeners (HR-02-guarded stdout decoder + error + close) + the
+    // 124-05/TR-11 guarded fd3 events-push reader live in terminal-worker-supervisor.ts (cap
+    // headroom); the closure locals + the onTerminalEvent hook ride in as explicit params.
     wireWorkerSupervision({
       child,
       pending,
@@ -490,8 +502,17 @@ export function createTerminalSessionRegistry(
       // Stamp the origin (owner-scoped list/read/get/kill/send*). The owner rides
       // the HANDLE only — NEVER the worker frame (the worker is owner-agnostic).
       owner,
+      // DUR-01: stamp the durable marker + re-attach key (the durable-aware lost gate, Q4); absent for a spawn session (I1).
+      ...(req.durable ? { durable: true, tmuxName: req.tmuxName } : {}),
     };
     sessions.set(sessionId, handle);
+
+    // DUR-01: persist the durable descriptor at CREATE-time, BEFORE the create frame (Pitfall 6 — no orphan window); non-durable persists nothing (I1).
+    if (req.durable && deps.descriptorStore !== undefined) {
+      deps.descriptorStore.persist(
+        buildSessionDescriptor({ sessionId, tmuxName: req.tmuxName, allowId: req.allowId, owner, cols: req.cols, rows: req.rows, createdAt, scope: req.scope }),
+      );
+    }
 
     // Forward the daemon-canonical {bin,argv} VERBATIM (buildDirectSpawn, the SOLE
     // canonicalization site; argsPrefix preserved end-to-end). Fired WITHOUT
@@ -519,6 +540,10 @@ export function createTerminalSessionRegistry(
     pending.set(`${sessionId}:${createFrame.requestId}`, (reply) => {
       if (reply.ok) return; // backend spawned — leave the session running.
       const h = sessions.get(sessionId);
+      // DUR-01 / Q4: a worker CRASH flushes this waiter with a synthetic `ok:false`. A durable
+      // session whose tmux is STILL alive is NOT a spawn failure → stays recoverable (I10); a
+      // real spawn failure leaves tmux dead ⇒ probe false ⇒ DO flip + fire onSpawnFailed.
+      if (h !== undefined && h.status === "running" && staysRecoverable(h)) return;
       if (h !== undefined && h.status === "running") {
         h.status = "lost";
         h.lastActivity = nowMs();
@@ -767,6 +792,9 @@ export function createTerminalSessionRegistry(
       clearWorker();
     }
   }
+
+  // DUR-01 recover-on-boot: re-attach durable sessions whose tmux survived a restart (sibling-owned; no-op without a store, I1).
+  applyRecoveredSessions(deps, sessions, nowMs);
 
   return { create, read, status, sendText, sendKey, resize, wait, get, list, kill, evict, size, cleanup };
 }

@@ -67,10 +67,14 @@ describe("recoverSessionDescriptors — the recover-on-boot scan (DUR-01)", () =
     }
   });
 
-  it("a gone tmux name → a failed action with the content-free tmux_session_gone reason (journal kept by the caller)", () => {
+  it("a gone tmux name → a failed action with the owner + content-free tmux_session_gone reason (journal kept by the caller)", () => {
     const store = fakeStore([DESC]);
     const results = recoverSessionDescriptors({ store, isTmuxAlive: () => false });
-    expect(results).toEqual([{ action: "failed", sessionId: "abc", reason: "tmux_session_gone" }]);
+    // The failed arm carries the descriptor's owner (the agentId the registry's
+    // content-free unrecoverable hook needs) + the reason — never the journal touch.
+    expect(results).toEqual([
+      { action: "failed", sessionId: "abc", owner: { agentId: "default", sessionKey: "" }, reason: "tmux_session_gone" },
+    ]);
     // The scan NEVER removes the journal — that is the registry's preserve-on-gone contract.
     expect(store.remove).not.toHaveBeenCalled();
   });
@@ -94,7 +98,7 @@ describe("recoverSessionDescriptors — the recover-on-boot scan (DUR-01)", () =
     const results = recoverSessionDescriptors({ store, isTmuxAlive: (n) => n === "comis-live" });
     expect(results).toEqual([
       { action: "reattach", descriptor: live },
-      { action: "failed", sessionId: "gone", reason: "tmux_session_gone" },
+      { action: "failed", sessionId: "gone", owner: gone.owner, reason: "tmux_session_gone" },
     ]);
   });
 
@@ -109,7 +113,7 @@ describe("recoverSessionDescriptors — the recover-on-boot scan (DUR-01)", () =
     const results = recoverSessionDescriptors({ store, isTmuxAlive: probe });
     // a → failed (the SAFE direction on a throwing probe, never reattach); b → reattach.
     expect(results).toEqual([
-      { action: "failed", sessionId: "a", reason: "tmux_session_gone" },
+      { action: "failed", sessionId: "a", owner: a.owner, reason: "tmux_session_gone" },
       { action: "reattach", descriptor: b },
     ]);
   });

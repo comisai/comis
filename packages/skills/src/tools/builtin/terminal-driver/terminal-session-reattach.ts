@@ -52,6 +52,7 @@
  */
 
 import { reattachDecision, type SessionDescriptor } from "./terminal-reattach-match.js";
+import type { SessionOwner } from "./terminal-session-owner.js";
 import type { SessionHandle } from "./terminal-session-types.js";
 
 /**
@@ -83,10 +84,15 @@ export interface SessionDescriptorStorePort {
  * on. The `fallback_nondurable` arm of {@link reattachDecision} is NOT surfaced here:
  * a non-durable session is filtered out of the scan result (the registry's existing
  * lost floor handles it, I1), so the registry only ever sees `reattach`/`failed`.
+ *
+ * The `failed` arm carries the `owner` (NOT just the sessionId from 165-01's decision)
+ * so the registry can fire its content-free unrecoverable hook with the `agentId`
+ * (§2.7 — a failure branch is reconstructable per-agent from the bus alone) WITHOUT a
+ * second descriptor lookup. The owner is the persisted I5 identity, never widened.
  */
 export type RecoveredAction =
   | { action: "reattach"; descriptor: SessionDescriptor }
-  | { action: "failed"; sessionId: string; reason: "tmux_session_gone" };
+  | { action: "failed"; sessionId: string; owner: SessionOwner; reason: "tmux_session_gone" };
 
 /** Dependencies for {@link recoverSessionDescriptors} — the injected store + liveness probe. */
 export interface RecoverSessionDescriptorsDeps {
@@ -135,7 +141,9 @@ export function recoverSessionDescriptors(deps: RecoverSessionDescriptorsDeps): 
     if (decision.action === "reattach") {
       out.push({ action: "reattach", descriptor: decision.descriptor });
     } else if (decision.action === "failed") {
-      out.push({ action: "failed", sessionId: decision.sessionId, reason: decision.reason });
+      // Carry the descriptor's owner (the persisted I5 identity) so the registry's
+      // content-free unrecoverable hook gets the agentId without a second lookup.
+      out.push({ action: "failed", sessionId: decision.sessionId, owner: descriptor.owner, reason: decision.reason });
     }
     // fallback_nondurable → skip (the registry's existing lost floor handles it, I1).
   }
@@ -183,4 +191,114 @@ export function rehydrateHandleFromDescriptor(d: SessionDescriptor, nowMs: numbe
     durable: true,
     tmuxName: d.tmuxName,
   };
+}
+
+/**
+ * DUR-01 / Q4 — the durable-aware lost gate (pure). `true` iff `handle` must NOT be
+ * flipped `lost` on a worker close/crash: a DURABLE drive whose detached tmux server is
+ * still alive outlives the worker (the lazy respawn re-attaches the surviving pane, I10).
+ * The `isTmuxAlive(name)===true` gate is the SAFE direction — non-durable / no `tmuxName`
+ * / falsy probe ⇒ `false`, falling through to today's lost flip (the documented floor,
+ * I1). The registry consults it at BOTH lost sites (the worker-close flip + the
+ * crash-flushed create-reply waiter), so a crash cannot re-flip a live durable session.
+ */
+export function staysRecoverable(
+  handle: Pick<SessionHandle, "durable" | "tmuxName">,
+  isTmuxAlive: (name: string) => boolean,
+): boolean {
+  return handle.durable === true && handle.tmuxName !== undefined && isTmuxAlive(handle.tmuxName) === true;
+}
+
+/**
+ * Flip every still-`running` session in `sessions` to `lost` on a worker close/crash —
+ * EXCEPT a durable session whose tmux is still alive ({@link staysRecoverable}, DUR-01 /
+ * Q4 — its detached server outlives the worker; the lazy respawn re-attaches the surviving
+ * pane on the next read, I10). The registry passes its map + injected probe; the loop body
+ * lives here (cap headroom — Pitfall 5). The non-durable / no-probe case keeps today's
+ * blanket lost flip (I1).
+ */
+export function markRunningSessionsLost(
+  sessions: Map<string, SessionHandle>,
+  isTmuxAlive: (name: string) => boolean,
+): void {
+  for (const handle of sessions.values()) {
+    if (handle.status === "running" && !staysRecoverable(handle, isTmuxAlive)) handle.status = "lost";
+  }
+}
+
+/** The inputs the registry's `create` has for a durable session (the descriptor source). */
+export interface DurableCreateInputs {
+  sessionId: string;
+  tmuxName?: string;
+  allowId: string;
+  owner: SessionOwner;
+  cols: number;
+  rows: number;
+  createdAt: number;
+  scope?: SessionDescriptor["scope"];
+}
+
+/**
+ * Build the durable {@link SessionDescriptor} the registry persists at create-time
+ * (Pitfall 6 — persist BEFORE the create frame so a SIGKILL mid-create cannot orphan
+ * tmux without a record). The tmux name defaults to the deterministic `comis-<id>` the
+ * worker derives. Pure; the registry calls `store.persist(buildSessionDescriptor(...))`.
+ */
+export function buildSessionDescriptor(i: DurableCreateInputs): SessionDescriptor {
+  const descriptor: SessionDescriptor = {
+    sessionId: i.sessionId,
+    tmuxName: i.tmuxName ?? `comis-${i.sessionId}`,
+    allowId: i.allowId,
+    owner: i.owner,
+    cols: i.cols,
+    rows: i.rows,
+    durable: true,
+    createdAt: i.createdAt,
+  };
+  if (i.scope !== undefined) descriptor.scope = i.scope;
+  return descriptor;
+}
+
+/**
+ * The recover-on-boot seams the registry hands {@link applyRecoveredSessions} — the
+ * registry deps subset it reads (so the registry's call is a single delegated line, not
+ * an inlined object literal). `descriptorStore`/`isTmuxAlive` are optional exactly as on
+ * the registry deps: ABSENT `descriptorStore` ⇒ a no-op (today's empty-Map-on-boot, I1).
+ */
+export interface ApplyRecoveredDeps {
+  descriptorStore?: SessionDescriptorStorePort;
+  isTmuxAlive?: (name: string) => boolean;
+  onReattached?: (info: { sessionId: string; agentId: string }) => void;
+  onUnrecoverable?: (info: { sessionId: string; agentId: string; reason: string; errorKind: string }) => void;
+}
+
+/**
+ * The DUR-01 recover-on-boot APPLICATION: scan the persisted descriptors and, for each,
+ * either rehydrate a `running` handle into the registry's `sessions` map (a live tmux,
+ * NO create frame — I10) firing the content-free re-attach signal, or fire the
+ * content-free unrecoverable hook (a genuinely-gone session — the daemon maps it to the
+ * EXISTING `terminal:session_state(state:"lost")` + the reason; the journal is PRESERVED,
+ * nothing removed here). A non-durable descriptor is skipped (today's lost floor, I1). The
+ * `descriptorStore`-absent case is a no-op (I1). The BULK lives here (not the registry) to
+ * protect the 800-line cap (Pitfall 5); the registry's recover-on-boot is ONE call.
+ *
+ * @param deps - The registry deps subset (descriptorStore + isTmuxAlive + the two hooks).
+ * @param sessions - The registry's live session map (a recovered live session is set here).
+ * @param nowMs - The registry's injected clock (stamps the rehydrated handle's lastActivity).
+ */
+export function applyRecoveredSessions(
+  deps: ApplyRecoveredDeps,
+  sessions: Map<string, SessionHandle>,
+  nowMs: () => number,
+): void {
+  if (deps.descriptorStore === undefined) return; // today's wiring — no recover (I1).
+  const isTmuxAlive = deps.isTmuxAlive ?? ((): boolean => false);
+  for (const r of recoverSessionDescriptors({ store: deps.descriptorStore, isTmuxAlive })) {
+    if (r.action === "reattach") {
+      sessions.set(r.descriptor.sessionId, rehydrateHandleFromDescriptor(r.descriptor, nowMs()));
+      deps.onReattached?.({ sessionId: r.descriptor.sessionId, agentId: r.descriptor.owner.agentId });
+    } else {
+      deps.onUnrecoverable?.({ sessionId: r.sessionId, agentId: r.owner.agentId, reason: r.reason, errorKind: "dependency" });
+    }
+  }
 }
