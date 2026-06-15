@@ -248,3 +248,88 @@ describe("TerminalDriverConfigSchema -- worker.tasksMax cgroup ceiling (OPS-05)"
     }
   });
 });
+
+/**
+ * v2.24 (164-05, DRIVE-02/READ-01): the additive strict `drive{}` block on the
+ * CLOSED `TerminalDriverConfig` schema. This phase introduces `drive.mode`
+ * (`auto` default — auto-promote a genuinely-long drive; `attached` = today's
+ * inline behavior; `detached` = promote at the first wait) and `drive.readMode`
+ * (`digest` default — a bounded digest of the current screen; `diff` — only
+ * changed rows; `full` — the whole screen, bounded). The block is OPTIONAL +
+ * `z.strictObject`, so:
+ *   - I1: a config with NO `drive` block parses byte-identical to today
+ *     (`parsed.drive` is `undefined` — no behavior change for an unconfigured operator).
+ *   - The per-field defaults preserve today's effective behavior (`mode:"auto"`
+ *     only promotes a genuinely-long drive; `readMode:"digest"` is already the
+ *     tool's effective default).
+ *   - OPS-02: an unknown/typo'd `drive.*` key REJECTS at config load (a
+ *     restriction the operator believes is in effect must actually be parsed).
+ * Phases 165/166 extend this SAME block (durable/notify/heartbeat/maxCostUsd);
+ * the optional-block + per-field-default discipline lets each phase's additions
+ * be independent. Changing/adding a default regenerates the section-registry-parity
+ * snapshot (a validate-only gate).
+ */
+describe("TerminalDriverConfigSchema -- additive strict drive{} block (DRIVE-02/READ-01)", () => {
+  // The minimal-but-valid base config the drive tests vary.
+  const baseCfg = {
+    enabled: true,
+    worker: {
+      maxSessions: 8,
+      idleTtlMs: 900_000,
+      ringBytes: 262_144,
+      stuckMs: 30_000,
+      maxConcurrentAttentionTurns: 2,
+    },
+    defaults: { cols: 120, rows: 40, scrollback: 1000 },
+    redactSecrets: true,
+    audit: { enabled: true },
+  };
+
+  it("round-trips an explicit drive block (mode + readMode parse to the supplied values)", () => {
+    const parsed = TerminalDriverConfigSchema.parse({
+      ...baseCfg,
+      drive: { mode: "detached", readMode: "diff" },
+    });
+    expect(parsed.drive?.mode).toBe("detached");
+    expect(parsed.drive?.readMode).toBe("diff");
+  });
+
+  it("fills the per-field defaults on an EMPTY drive block (mode:auto, readMode:digest)", () => {
+    const parsed = TerminalDriverConfigSchema.parse({ ...baseCfg, drive: {} });
+    expect(parsed.drive?.mode).toBe("auto");
+    expect(parsed.drive?.readMode).toBe("digest");
+  });
+
+  it("parses with the drive block ABSENT (I1 — byte-identical to today; parsed.drive is undefined)", () => {
+    const parsed = TerminalDriverConfigSchema.parse(baseCfg);
+    expect(parsed.drive).toBeUndefined();
+  });
+
+  it("REJECTS an unknown drive.* key (the block is a closed strictObject, OPS-02)", () => {
+    const result = TerminalDriverConfigSchema.safeParse({
+      ...baseCfg,
+      drive: { mode: "auto", bogusDriveKnob: 1 },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      // The unrecognized key is reported under the drive path (strictObject closed).
+      expect(result.error.issues.some((i) => i.path.includes("drive"))).toBe(true);
+    }
+  });
+
+  it("REJECTS an out-of-enum drive.mode (only auto/attached/detached are valid)", () => {
+    const result = TerminalDriverConfigSchema.safeParse({
+      ...baseCfg,
+      drive: { mode: "sideways" },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("REJECTS an out-of-enum drive.readMode (only digest/diff/full are valid)", () => {
+    const result = TerminalDriverConfigSchema.safeParse({
+      ...baseCfg,
+      drive: { readMode: "verbose" },
+    });
+    expect(result.success).toBe(false);
+  });
+});
