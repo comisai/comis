@@ -36,8 +36,8 @@ describe("media + image domain contracts", () => {
   // Aggregator sanity
   // -------------------------------------------------------------------------
 
-  it("MEDIA_CONTRACTS has exactly 17 entries (15 media + 1 image + 1 video)", () => {
-    expect(MEDIA_CONTRACTS.length).toBe(17);
+  it("MEDIA_CONTRACTS has exactly 18 entries (15 media + 1 image + 2 video)", () => {
+    expect(MEDIA_CONTRACTS.length).toBe(18);
   });
 
   it("MEDIA_CONTRACTS method names cover every handler-factory method", () => {
