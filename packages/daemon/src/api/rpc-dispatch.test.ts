@@ -538,4 +538,70 @@ describe("createRpcDispatch", () => {
     expect(logSerialized).not.toContain(ACCESS_SENTINEL);
     expect(logSerialized).not.toContain(REFRESH_SENTINEL);
   });
+
+  // -----------------------------------------------------------------------
+  // WR-04: image.analyze (and other base64-bearing media methods) MUST NOT
+  // log the raw base64 source/image/video bytes on a throw branch.
+  // -----------------------------------------------------------------------
+
+  it("WR-04: image.analyze handler error — dispatcher must NOT emit the raw base64 source in the log payload", async () => {
+    // The dispatcher logs `params` on every thrown handler error. For
+    // image.analyze with source_type:"base64", params.source is the raw base64
+    // image — Pino key-name redaction (apiKey/token/…) does NOT cover `source`,
+    // so the whole image used to land in the daemon log. The dispatcher must
+    // strip large binary payload fields for media methods before logging.
+    const BASE64_SENTINEL = "QkFTRTY0LUlNQUdFLVdSMDQtU0VOVElORUwtYmFzZTY0LWJvZHk=";
+
+    const { createMediaHandlers } = await import("./media-handlers.js");
+    (createMediaHandlers as ReturnType<typeof vi.fn>).mockReturnValueOnce({
+      "image.analyze": vi.fn(async () => {
+        throw new Error("No vision provider available for image analysis.");
+      }),
+    });
+
+    const { createRpcDispatch } = await import("./rpc-dispatch.js");
+    const dispatch = createRpcDispatch(mockDeps);
+
+    await expect(
+      dispatch("image.analyze", {
+        source_type: "base64",
+        source: BASE64_SENTINEL,
+        prompt: "describe this",
+      }),
+    ).rejects.toThrow(/vision provider available/i);
+
+    // The dispatcher logged a warn or error — find whichever fired.
+    const logCall =
+      mockLogger.error.mock.calls[0] ?? mockLogger.warn.mock.calls[0];
+    expect(logCall).toBeDefined();
+    const logSerialized = JSON.stringify(logCall![0]);
+    // WR-04: the base64 bytes must be absent from the log payload.
+    expect(logSerialized).not.toContain(BASE64_SENTINEL);
+    // The method + a non-binary param (prompt is small; kept) still aid triage,
+    // but the load-bearing assertion is that the bytes are gone.
+    expect(logSerialized).toContain("image.analyze");
+  });
+
+  it("WR-04: a NON-media method still logs its params (the strip is scoped, not global)", async () => {
+    // Regression guard: the binary-strip must not eat ordinary RPC params —
+    // only the known base64-bearing media methods are projected.
+    const ID_SENTINEL = "cron-job-id-WR04-still-logged";
+    const { createCronHandlers } = await import("./cron-handlers.js");
+    (createCronHandlers as ReturnType<typeof vi.fn>).mockReturnValueOnce({
+      "cron.add": vi.fn(async () => {
+        throw new Error("boom");
+      }),
+    });
+
+    const { createRpcDispatch } = await import("./rpc-dispatch.js");
+    const dispatch = createRpcDispatch(mockDeps);
+
+    await expect(dispatch("cron.add", { id: ID_SENTINEL })).rejects.toThrow("boom");
+
+    const logCall = mockLogger.error.mock.calls[0] ?? mockLogger.warn.mock.calls[0];
+    expect(logCall).toBeDefined();
+    const logSerialized = JSON.stringify(logCall![0]);
+    // A non-media method's ordinary param IS still on the log line (diagnostic).
+    expect(logSerialized).toContain(ID_SENTINEL);
+  });
 });
