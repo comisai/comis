@@ -1,0 +1,7 @@
+[2J[1;1H+------------------------------------------+
+| Claude needs your permission to run a    |
+| command. Do you want to proceed?         |
+|   1. Yes, allow this command             |
+|   2. No, and tell Claude what to do      |
++------------------------------------------+
+[24;1H

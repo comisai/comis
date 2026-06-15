@@ -1,0 +1,4 @@
+[2J[1;1HSending the request to the model.
+
+  waiting for a response from the model
+[1;34H
