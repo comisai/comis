@@ -5,7 +5,7 @@ import type { TrajectoryEvents } from "./events-trajectory.js";
 import type { ChannelEvents } from "./events-channel.js";
 import type { InfraEvents } from "./events-infra.js";
 import type { TerminalEvents } from "./events-terminal.js";
-import type { MediaGenerationEvents } from "./events-media.js";
+import type { MediaGenerationEvents, MediaVisionEvents } from "./events-media.js";
 
 /**
  * EventMap: Central type registry for all system events.
@@ -18,6 +18,7 @@ import type { MediaGenerationEvents } from "./events-media.js";
  * - InfraEvents: config, plugin, hook, browser, auth, device, diagnostic, media, scheduler, system, metrics
  * - TerminalEvents: interactive terminal-driver session lifecycle (session_state, spawn_failed)
  * - MediaGenerationEvents: image-generation lifecycle (image:requested/generated/delivered/failed — OBS-04)
+ * - MediaVisionEvents: vision-analysis lifecycle (media.vision:requested/completed/failed — VIS-04)
  */
 export interface EventMap
   extends MessagingEvents,
@@ -26,4 +27,5 @@ export interface EventMap
     ChannelEvents,
     InfraEvents,
     TerminalEvents,
-    MediaGenerationEvents {}
+    MediaGenerationEvents,
+    MediaVisionEvents {}

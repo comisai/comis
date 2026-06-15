@@ -212,6 +212,19 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   "image:generated": "image.generated",
   "image:delivered": "image.delivered",
   "image:failed": "image.failed",
+
+  // ---- Vision analysis (VIS-04, Phase 187; events-media.ts) ----
+  // APPEND-ONLY alongside the image:* section above — never a rename (Pitfall 5;
+  // the v2.17-merge gate cascade). Like image.*, these are DIRECT-emitted by the
+  // daemon vision RPC handler (image.analyze / media.describe_video) via the
+  // per-session recorder (NO bus bridge in the daemon RPC context); declared here
+  // for trajectory-type ARCH closure + a future bus emitter. media.vision.completed
+  // carries `costUsd` (VIS-04 Route a — optional, absent on registry/gemini-video).
+  // Content-free translators (translate-payload.ts) forward only the
+  // ids/labels/path/numbers/outcome/errorKind.
+  "media.vision:requested": "media.vision.requested",
+  "media.vision:completed": "media.vision.completed",
+  "media.vision:failed": "media.vision.failed",
 } as const satisfies Record<string, TrajectoryEventType>;
 
 /**

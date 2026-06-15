@@ -53,7 +53,6 @@ import {
   systemGetEnv,
   systemNowMs,
   resolveVisionPath,
-  IMAGE_ERR_TO_LOG,
 } from "@comis/core";
 import type { ImageErrorKind } from "@comis/core";
 import {
@@ -69,6 +68,9 @@ import {
 import { isVisionCapable } from "@comis/agent";
 import { getModel } from "@earendil-works/pi-ai";
 import { guessMimeFromExtension, detectMimeFromMagicBytes, mimeToExtension } from "../wiring/daemon-utils.js";
+// VIS-04 (187): the vision-turn trajectory direct-emit helper (extracted to a
+// sibling to keep this file ≤800 — the emits would otherwise push it over).
+import { createVisionObsEmitter } from "./vision-obs-emit.js";
 import { fetchImageBytesSsrfSafe } from "./ssrf-image-fetch.js";
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
@@ -200,6 +202,10 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
       const agentId = (rawParams._agentId as string | undefined) ?? deps.defaultAgentId;
       const preferredProvider = deps.mediaConfig.vision.defaultProvider;
       const main = deps.resolveAgentMainProvider?.(agentId) ?? { providerId: "unknown" };
+      // VIS-04: §2.7 clock (systemNowMs, never Date.now()) + the content-free
+      // trajectory/§2.7-log emitter (fires media.vision.requested at construction).
+      const visionStartMs = systemNowMs();
+      const obs = createVisionObsEmitter(rawParams._callerSessionKey as string | undefined, deps.trajectoryRegistry, deps.logger, agentId, visionStartMs, systemNowMs, { provider: main.providerId, mainProvider: main.providerId });
       // The daemon-side vision gate (setup-channels-media.ts:135 dance): resolve
       // the main model id from the SINGLE source (deps.mainModelIdFor, backed by
       // the same resolveAgentModel as the bridge) and ask pi-ai if it sees
@@ -234,17 +240,16 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
       if (sel.ok && sel.path === "main-vision" && deps.mainProviderVision) {
         const r = await deps.mainProviderVision.describeImage(buffer, prompt, mimeType, agentId);
         if (r.ok) {
-          deps.logger.info({ agentId, path: "main-vision", visionProvider: r.value.provider, model: r.value.model, costUsd: r.value.costUsd, step: "vision_complete" }, "Image analysis completed");
+          // VIS-04: media.vision.completed (path main-vision; costUsd from the
+          // bridge) + the §2.7 INFO completion line (one call).
+          obs.succeeded({ provider: r.value.provider, mainProvider: main.providerId, path: "main-vision", model: r.value.model, costUsd: r.value.costUsd });
           const result = { description: r.value.text, provider: r.value.provider, model: r.value.model };
           if (systemGetEnv("NODE_ENV") !== "production") ImageAnalyzeContract.response.parse(result);
           return result;
         }
-        // bridge runtime failure → registry fallback (content-free log). The
-        // domain ImageErrorKind maps onto the CLOSED log ErrorKind via
-        // IMAGE_ERR_TO_LOG; the domain value rides imageErrorKind (the §2.7
-        // convention — never leak the domain vocab into the closed log union).
+        // bridge runtime failure → registry fallback (media.vision.failed + §2.7 WARN).
         const bridgeKind = (r.error as { errorKind?: ImageErrorKind }).errorKind;
-        deps.logger.warn({ agentId, path: "main-vision", errorKind: bridgeKind ? IMAGE_ERR_TO_LOG[bridgeKind] : ("dependency" as const), imageErrorKind: bridgeKind, hint: "main-vision failed; falling back to the vision registry", step: "vision_complete" }, "Main-provider vision failed, trying the registry");
+        obs.failed({ errorKind: bridgeKind ?? "dependency", path: "main-vision", provider: main.providerId, mainProvider: main.providerId, hint: "main-vision failed; falling back to the vision registry", message: "Main-provider vision failed, trying the registry" });
       }
 
       // registry SECOND (the EXISTING path, verbatim — VIS-02 byte-identical when
@@ -255,7 +260,8 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
         if (provider) {
           const visionResult = await provider.describeImage({ image: buffer, prompt, mimeType });
           if (!visionResult.ok) throw visionResult.error;
-          deps.logger.info({ agentId, path: "registry", visionProvider: visionResult.value.provider, model: visionResult.value.model, step: "vision_complete" }, "Image analysis completed");
+          // VIS-04: media.vision.completed (path registry; NO costUsd, Pitfall 4) + INFO line.
+          obs.succeeded({ provider: visionResult.value.provider, mainProvider: main.providerId, path: "registry", model: visionResult.value.model });
           const result = { description: visionResult.value.text, provider: visionResult.value.provider, model: visionResult.value.model };
           if (systemGetEnv("NODE_ENV") !== "production") ImageAnalyzeContract.response.parse(result);
           return result;
@@ -263,11 +269,10 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
         // main-vision failed AND no registry provider → honest-unavailable below.
       }
 
-      // honest-unavailable LAST — an errorKind-bearing error, never a crash. The
-      // domain ImageErrorKind maps onto the CLOSED log union via IMAGE_ERR_TO_LOG.
+      // honest-unavailable LAST — media.vision.failed + §2.7 WARN, never a crash.
       const imageErrorKind: ImageErrorKind = sel.ok === false ? sel.errorKind : "unsupported_provider";
       const hint = sel.ok === false ? sel.hint : "No vision provider available for image analysis.";
-      deps.logger.warn({ agentId, path: "unavailable", errorKind: IMAGE_ERR_TO_LOG[imageErrorKind], imageErrorKind, hint, step: "vision_complete" }, "Image analysis unavailable");
+      obs.failed({ errorKind: imageErrorKind, path: "unavailable", provider: main.providerId, mainProvider: main.providerId, hint, message: "Vision analysis unavailable" });
       throw new Error("No vision provider available for image analysis.");
     },
 
@@ -492,6 +497,10 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
       // mainProviderVision bridge is NEVER called for video.
       const agentId = (rawParams._agentId as string | undefined) ?? deps.defaultAgentId;
       const main = deps.resolveAgentMainProvider?.(agentId) ?? { providerId: "unknown" };
+      // VIS-04: clock + the trajectory/§2.7-log emitter (fires
+      // media.vision.requested at construction). Bridge N/A for video (Pitfall 3).
+      const visionStartMs = systemNowMs();
+      const obs = createVisionObsEmitter(rawParams._callerSessionKey as string | undefined, deps.trajectoryRegistry, deps.logger, agentId, visionStartMs, systemNowMs, { provider: main.providerId, mainProvider: main.providerId });
       const videoProvider = selectVisionProvider(deps.visionRegistry, "video", deps.mediaConfig.vision.defaultProvider);
       const registryAvailable = !!videoProvider?.describeVideo;
       const sel = resolveVisionPath(
@@ -499,18 +508,18 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
         (reason) => deps.logger.debug({ agentId, hint: reason, step: "vision_resolve" }, "vision path skip"),
       );
       if (sel.ok === false || !videoProvider?.describeVideo) {
-        // honest-unavailable (errorKind-bearing) — NOT an undefined-method call.
-        // Domain ImageErrorKind → closed log union via IMAGE_ERR_TO_LOG.
+        // honest-unavailable — media.vision.failed + §2.7 WARN, NOT an undefined-method call.
         const imageErrorKind: ImageErrorKind = sel.ok === false ? sel.errorKind : "unsupported_provider";
         const hint = sel.ok === false ? sel.hint : "No video-capable vision provider available (requires Gemini or compatible provider).";
-        deps.logger.warn({ agentId, path: "unavailable", errorKind: IMAGE_ERR_TO_LOG[imageErrorKind], imageErrorKind, hint, step: "vision_complete" }, "Video description unavailable");
+        obs.failed({ errorKind: imageErrorKind, path: "unavailable", provider: main.providerId, mainProvider: main.providerId, hint, message: "Video description unavailable" });
         throw new Error("No video-capable vision provider available (requires Gemini or compatible provider).");
       }
 
       const videoResult = await videoProvider.describeVideo({ video: buffer, prompt, mimeType });
       if (!videoResult.ok) throw videoResult.error;
 
-      deps.logger.info({ agentId, path: "gemini-video", visionProvider: videoResult.value.provider, model: videoResult.value.model, step: "vision_complete" }, "Video description completed");
+      // VIS-04: media.vision.completed (path gemini-video; NO costUsd, Pitfall 4) + INFO line.
+      obs.succeeded({ provider: videoResult.value.provider, mainProvider: main.providerId, path: "gemini-video", model: videoResult.value.model });
       const result = {
         description: videoResult.value.text,
         provider: videoResult.value.provider,

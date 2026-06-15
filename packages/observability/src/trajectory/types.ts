@@ -181,6 +181,21 @@ export const TRAJECTORY_EVENT_TYPES = [
   "image.generated",
   "image.delivered",
   "image.failed",
+
+  // VIS-04 (Phase 187): vision-analysis lifecycle on the explain timeline.
+  // Direct-emitted by the daemon vision RPC handler (image.analyze /
+  // media.describe_video) via the per-session recorder (the daemon RPC context
+  // has NO EventBus bridge — direct-emit is the sanctioned path, the
+  // image-handlers.ts:210 precedent). APPEND-ONLY alongside the SemVer-frozen
+  // image.* tuple above — never a rename (Pitfall 5). Content-free:
+  // ids/labels/path/costUsd/outcome/errorKind ONLY — never the image bytes, the
+  // analysis prompt, the model answer, or a key (T-187-12). The `path` label is
+  // VIS-03's "which path" signal; `media.vision.completed` carries `costUsd`
+  // (optional — absent on the registry/gemini-video tiers) so `comis explain`
+  // reconstructs the vision turn's cost (Route a).
+  "media.vision.requested",
+  "media.vision.completed",
+  "media.vision.failed",
 ] as const;
 
 /** Closed union of trajectory event type strings. */
