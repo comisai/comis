@@ -1840,4 +1840,85 @@ describe("163-03 — composeStatusView/notFoundStatus thread confidence + reason
     expect(STATUS_VIEW_SRC).toMatch(/perception\.confidence/);
     expect(STATUS_VIEW_SRC).toMatch(/perception\.reason/);
   });
+
+  // ---------------------------------------------------------------------------
+  // LR-03: composeStatusView is TOTAL against a malformed / version-skewed worker
+  // reply. `registry.status` casts the cross-process IPC `reply.result` with
+  // `as WorkerStatusPerception` (an UNCHECKED cast of untrusted bytes); if the worker
+  // ever omits / mis-types `confidence`/`reason` (a version skew, a corrupt frame),
+  // the cast would propagate `undefined`/a non-enum straight onto the status surface
+  // the autonomous policy reads. Every OTHER untrusted-boundary reader in this phase is
+  // defensively coded (setup-terminal-tools republish narrows p.confidence/p.reason,
+  // T-163-11; makeWakeAdapterBus validates shape, WR-03) — composeStatusView must match,
+  // coalescing an out-of-enum confidence to "medium" and a non-string reason to a safe
+  // tag. RED on pre-patch: the pure pass-through fold copies the bad value verbatim.
+  // ---------------------------------------------------------------------------
+  it("LR-03: composeStatusView coalesces a MISSING confidence/reason to safe defaults (medium / a string tag)", () => {
+    // A version-skewed worker reply that predates CLASS-02: neither field present. The
+    // registry casts reply.result `as WorkerStatusPerception`, so this models the
+    // post-cast runtime value. The fold must NOT surface undefined.
+    const malformed = {
+      state: "awaiting-input",
+      cursorParked: false,
+      screenDiffEmpty: true,
+      interactions: 2,
+    } as unknown as WorkerStatusPerception;
+    const view = composeStatusView(malformed, { lastActivity: 7 });
+    expect(view.confidence).toBe("medium");
+    expect(typeof view.reason).toBe("string");
+    expect(view.reason.length).toBeGreaterThan(0);
+    expect(view.reason).not.toMatch(/[\r\n]/);
+    // The well-formed fields still fold through unchanged.
+    expect(view.state).toBe("awaiting-input");
+    expect(view.interactions).toBe(2);
+  });
+
+  it("LR-03: composeStatusView coalesces an OUT-OF-ENUM confidence + a non-string reason to safe defaults", () => {
+    // A corrupt frame: confidence is a foreign string, reason is a number. The narrow
+    // must reject both (only "high"/"medium" pass for confidence; only a string for
+    // reason) so the status surface is never a type-breaking value.
+    const corrupt = {
+      state: "stuck",
+      cursorParked: false,
+      screenDiffEmpty: true,
+      interactions: 0,
+      confidence: "extreme",
+      reason: 42,
+    } as unknown as WorkerStatusPerception;
+    const view = composeStatusView(corrupt, { lastActivity: 1 });
+    expect(view.confidence).toBe("medium");
+    expect(typeof view.reason).toBe("string");
+    expect(view.reason).not.toMatch(/[\r\n]/);
+  });
+
+  it("LR-03: a WELL-FORMED perception is folded VERBATIM (the narrow only rescues malformed input)", () => {
+    // The defensive narrow must not perturb the happy path — a valid {high, ...} or
+    // {medium, dialog_detected} perception passes through exactly (regression guard so
+    // the coalesce does not silently rewrite good values).
+    const ok: WorkerStatusPerception = {
+      state: "awaiting-input",
+      cursorParked: false,
+      screenDiffEmpty: true,
+      interactions: 1,
+      confidence: "medium",
+      reason: "dialog_detected",
+    };
+    const view = composeStatusView(ok, { lastActivity: 5 });
+    expect(view.confidence).toBe("medium");
+    expect(view.reason).toBe("dialog_detected");
+    const ok2 = composeStatusView(
+      { ...ok, confidence: "high", reason: "settled_cursor_parked" },
+      { lastActivity: 5 },
+    );
+    expect(ok2.confidence).toBe("high");
+    expect(ok2.reason).toBe("settled_cursor_parked");
+  });
+
+  it("LR-03 source-introspection: composeStatusView narrows confidence/reason (esbuild strips the type, so pin the runtime guard)", () => {
+    // The coalesce is a runtime narrow (the cast is `as WorkerStatusPerception`, erased
+    // at build) — assert the source carries the defensive check so a future edit cannot
+    // silently revert to a bare pass-through.
+    expect(STATUS_VIEW_SRC).toMatch(/perception\.confidence === "high" \|\| perception\.confidence === "medium"/);
+    expect(STATUS_VIEW_SRC).toMatch(/typeof perception\.reason === "string"/);
+  });
 });
