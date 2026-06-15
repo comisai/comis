@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { AppConfigSchema } from "@comis/core";
-import { resolveModelHealthMultilingual } from "./main-helpers.js";
+import { resolveModelHealthMultilingual, buildImageHandlerDeps } from "./main-helpers.js";
 import type { BootContext } from "../daemon-types.js";
 
 // ---------------------------------------------------------------------------
@@ -60,5 +60,69 @@ describe("resolveModelHealthMultilingual (EMB-01 provider-aware boot helper)", (
       configWith({ memory: { rerankerModel: "hf:org/some-english-reranker.gguf" } }),
     );
     expect(result.rerankerMultilingual).toBe("unknown");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WR-04 (186) — buildImageHandlerDeps: the imageHandlerDeps slice extracted from
+// daemon.ts (relieves the composition-root line cap). Characterization test for
+// the disabled-image gate + the 1:1 field mapping (behavior-neutral extraction).
+// ---------------------------------------------------------------------------
+
+/** A minimal post-channels boot slice for buildImageHandlerDeps. The image-gen
+ *  pair is overridable to drive the disabled gate; the rest are stub instances
+ *  the helper only forwards (it never calls into them). */
+function imageBootSlice(
+  overrides: Partial<Parameters<typeof buildImageHandlerDeps>[0]> = {},
+): Parameters<typeof buildImageHandlerDeps>[0] {
+  const provider = { id: "openai", isAvailable: () => true, execute: vi.fn() };
+  const adapter = { sendAttachment: vi.fn() };
+  const slice = {
+    imageGenProvider: provider,
+    imageGenRateLimiter: { tryAcquire: vi.fn(), reset: vi.fn() },
+    imageGenConfig: { provider: "openai", maxPerHour: 10, defaultSize: "1024x1024", safetyChecker: true },
+    skillsLogger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    adaptersByType: new Map([["telegram", adapter]]),
+    workspaceDirs: new Map([["a1", "/ws/a1"]]),
+    defaultWorkspaceDir: "/ws/default",
+    persistImage: vi.fn(),
+    trajectoryRegistry: { getRecorder: vi.fn() },
+    container: { eventBus: { emit: vi.fn() } },
+    imageGenCostLimiter: { canSpend: vi.fn(), record: vi.fn(), reset: vi.fn() },
+    ...overrides,
+  };
+  return slice as unknown as Parameters<typeof buildImageHandlerDeps>[0];
+}
+
+describe("buildImageHandlerDeps (WR-04 extracted imageHandlerDeps slice)", () => {
+  const resolver = (agentId: string): { providerId: string } => ({ providerId: `main-${agentId}` });
+
+  it("returns undefined when the image provider is absent (disabled-image gate)", () => {
+    const deps = buildImageHandlerDeps(imageBootSlice({ imageGenProvider: undefined }), resolver);
+    expect(deps).toBeUndefined();
+  });
+
+  it("returns undefined when the rate limiter is absent (disabled-image gate)", () => {
+    const deps = buildImageHandlerDeps(imageBootSlice({ imageGenRateLimiter: undefined }), resolver);
+    expect(deps).toBeUndefined();
+  });
+
+  it("maps every boot field onto the handler deps 1:1 when image generation is enabled", () => {
+    const slice = imageBootSlice();
+    const deps = buildImageHandlerDeps(slice, resolver);
+    expect(deps).toBeDefined();
+    expect(deps!.provider).toBe(slice.imageGenProvider);
+    expect(deps!.rateLimiter).toBe(slice.imageGenRateLimiter);
+    expect(deps!.config).toBe(slice.imageGenConfig);
+    expect(deps!.persist).toBe(slice.persistImage);
+    expect(deps!.trajectoryRegistry).toBe(slice.trajectoryRegistry);
+    expect(deps!.costLimiter).toBe(slice.imageGenCostLimiter);
+    expect(deps!.eventBus).toBe(slice.container.eventBus);
+    expect(deps!.workspaceDirs).toBe(slice.workspaceDirs);
+    expect(deps!.defaultWorkspaceDir).toBe("/ws/default");
+    // RES-01: the resolver is forwarded; getChannelAdapter resolves by type.
+    expect(deps!.resolveAgentMainProvider).toBe(resolver);
+    expect(deps!.getChannelAdapter("telegram")).toBe(slice.adaptersByType.get("telegram"));
+    expect(deps!.getChannelAdapter("irc")).toBeUndefined();
   });
 });

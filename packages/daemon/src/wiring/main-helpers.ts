@@ -355,3 +355,48 @@ export function buildImageGenBundle(deps: {
   }
   return { imageGenConfig, imageGenProvider, imageGenRateLimiter, persistImage, imageGenCostLimiter };
 }
+
+/**
+ * The post-channels boot-context fields `buildImageHandlerDeps` reads. The
+ * image-gen bundle outputs (`buildImageGenBundle`) plus the channel/workspace
+ * slots the boot sequence guarantees present by the time `buildRpcDispatchDeps`
+ * runs (mirrors daemon.ts's local `PostChannelsBootContext` narrowing — typed
+ * here off `BootContext` so the helper does not depend on the daemon-local alias).
+ */
+type ImageHandlerBootSlice = Pick<BootContext, "imageGenProvider" | "imageGenRateLimiter" | "trajectoryRegistry" | "imageGenCostLimiter" | "skillsLogger" | "container"> &
+  Required<Pick<BootContext, "imageGenConfig" | "adaptersByType" | "workspaceDirs" | "defaultWorkspaceDir" | "persistImage">>;
+
+/**
+ * Build the `imageHandlerDeps` slice of `ApiDispatchDeps` — `undefined` when
+ * image generation is disabled (no provider or no rate limiter), else the dep
+ * object the image.generate RPC handler consumes.
+ *
+ * WR-04 (186-REVIEW): extracted from `daemon.ts` (buildRpcDispatchDeps) to keep
+ * the composition root under its 3000-line architecture cap. The original site
+ * folded six concerns (workspaceDirs / defaultWorkspaceDir / persist /
+ * trajectoryRegistry / eventBus / costLimiter) onto one >300-char line to stay
+ * under the cap; this helper restores that headroom and gives each field its own
+ * line. Behavior-neutral — a 1:1 move of the literal. Fields are read off the
+ * post-channels boot context `c` (all guaranteed present by the boot sequence at
+ * the call site); the image-gen pair is the disabled-image gate.
+ */
+export function buildImageHandlerDeps(
+  c: ImageHandlerBootSlice,
+  resolveAgentMainProvider: (agentId: string) => { providerId: string },
+): import("../api/rpc-dispatch.js").ApiDispatchDeps["imageHandlerDeps"] {
+  if (!c.imageGenProvider || !c.imageGenRateLimiter) return undefined;
+  return {
+    provider: c.imageGenProvider,
+    rateLimiter: c.imageGenRateLimiter,
+    config: c.imageGenConfig,
+    logger: c.skillsLogger,
+    getChannelAdapter: (channelType: string) => c.adaptersByType.get(channelType),
+    resolveAgentMainProvider, // RES-01
+    workspaceDirs: c.workspaceDirs, // IN-01 (185): reference_image path
+    defaultWorkspaceDir: c.defaultWorkspaceDir,
+    persist: c.persistImage, // DEL-01 (186): persist getter
+    trajectoryRegistry: c.trajectoryRegistry, // OBS-04 (186): trajectory direct-emit
+    eventBus: c.container.eventBus, // OBS-03 (186): synthetic cost
+    costLimiter: c.imageGenCostLimiter, // SEC-02 (186): USD cost ceiling
+  };
+}

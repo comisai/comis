@@ -221,7 +221,7 @@ import { setupSingleAgent } from "./wiring/setup-agents/index.js";
 import { buildDialecticWiring, dialecticWiringDepsFromBoot } from "./wiring/setup-dialectic.js";
 import { createConversationReset } from "./wiring/conversation-reset.js";
 import { setupSecretManager } from "./wiring/setup-secret-manager.js";
-import { restoreApprovalState, resolveGatewayTokens, setupChannelHealthMonitor, resolveModelHealthMultilingual, buildImageGenBundle } from "./wiring/main-helpers.js";
+import { restoreApprovalState, resolveGatewayTokens, setupChannelHealthMonitor, resolveModelHealthMultilingual, buildImageGenBundle, buildImageHandlerDeps } from "./wiring/main-helpers.js";
 import { createInboundMessageIdResolver, type InboundMessageIdResolver } from "./wiring/inbound-message-id-resolver.js";
 import { logOperationModelDryRun } from "./wiring/startup-dry-run.js";
 import { emitDockerRestartPolicyWarn } from "./setup-docker-restart-warn.js";
@@ -918,19 +918,11 @@ function buildRpcDispatchDeps(deps: {
   // setup-agents-tooling.ts for the fallback + honest-sentinel semantics.
   const resolveAgentMainProviderFor = (agentId: string): { providerId: string } =>
     resolveAgentMainProvider(c.container.config.agents, c.container.config.models, agentId, c.defaultAgentId);
-  // Inlined buildImageHandlerDeps: undefined when image generation is disabled.
-  const imageHandlerDeps: import("./api/rpc-dispatch.js").ApiDispatchDeps["imageHandlerDeps"] =
-    (!c.imageGenProvider || !c.imageGenRateLimiter)
-      ? undefined
-      : {
-          provider: c.imageGenProvider,
-          rateLimiter: c.imageGenRateLimiter,
-          config: c.imageGenConfig,
-          logger: c.skillsLogger,
-          getChannelAdapter: (channelType: string) => c.adaptersByType.get(channelType),
-          resolveAgentMainProvider: resolveAgentMainProviderFor, // RES-01
-          workspaceDirs: c.workspaceDirs, defaultWorkspaceDir: c.defaultWorkspaceDir, persist: c.persistImage, trajectoryRegistry: c.trajectoryRegistry, eventBus: c.container.eventBus, costLimiter: c.imageGenCostLimiter, // IN-01 (185): reference_image path; DEL-01 (186): persist getter; OBS-04 (186): trajectory direct-emit; OBS-03 (186): synthetic cost; SEC-02 (186): USD cost ceiling
-        };
+  // WR-04 (186-REVIEW): extracted to buildImageHandlerDeps (wiring/main-helpers.ts)
+  // to keep this composition root under its 3000-line architecture cap — the
+  // literal previously crammed six concerns onto one line to fit. Undefined when
+  // image generation is disabled (no provider / rate limiter).
+  const imageHandlerDeps = buildImageHandlerDeps(c, resolveAgentMainProviderFor);
   // Inlined buildTokenStoreMutators.
   const addToTokenStore: import("./api/rpc-dispatch.js").ApiDispatchDeps["addToTokenStore"] = (entry) => { g.runtimeTokens.push({ id: entry.id, secretBuf: Buffer.from(entry.secret, "utf-8"), scopes: entry.scopes }); };
   const removeFromTokenStore: import("./api/rpc-dispatch.js").ApiDispatchDeps["removeFromTokenStore"] = (id) => {
