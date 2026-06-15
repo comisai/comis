@@ -665,20 +665,56 @@ export const VideoGenerateContract = defineContract({
   scopes: ["rpc"] as const,
 });
 
+/**
+ * `video.status` — read the status/progress/result of a video-generation job
+ * by its opaque job handle (the `jobId` `video.generate` returned at submit),
+ * SCOPED to the calling agent. The Phase-189 async lifecycle: `video.generate`
+ * submits + returns a handle; the background poller drives the render to
+ * completion off-turn; `video.status{job_id}` reports the durable terminal state.
+ *
+ * AGENT-SCOPED (JOB-04 / TARGET-01): the handler resolves the agent explicitly
+ * and reads `videoJobStore.get(job_id, agentId)` — a job belonging to ANOTHER
+ * agent returns not-found (`{state:"failed", error:"No video job <id> for this
+ * agent"}`), NEVER the other agent's mediaPath/cost (threat T-189-10).
+ *
+ * Request: `job_id` (the opaque, secret-free provider request id — T-189-12;
+ * echoing an unknown id in the not-found error leaks nothing).
+ *
+ * Response: `state` is a CLOSED `z.enum(["pending","done","failed"])` (O4 — the
+ * enum tightens the contract over the loose-record `video.generate` handle);
+ * `progress` / `mediaPath` / `costUsd` / `error` are present per terminal state.
+ * Only the allowlisted request/response shapes are used (z.string()/z.number()/
+ * z.enum/.optional()) — NO `.url()`/`.regex()` refinements (the 12-shape allowlist).
+ */
+export const VideoStatusContract = defineContract({
+  method: "video.status",
+  request: z.object({ job_id: z.string() }),
+  response: z.object({
+    state: z.enum(["pending", "done", "failed"]),
+    progress: z.number().optional(),
+    mediaPath: z.string().optional(),
+    costUsd: z.number().optional(),
+    error: z.string().optional(),
+  }),
+  scopes: ["rpc"] as const,
+});
+
 // ===========================================================================
 // Domain array — appended to API_CONTRACTS_ORDERED in index.ts.
 // ===========================================================================
 
 /**
- * 17 contracts spanning the media + image + video umbrella (15 from
- * media-handlers.ts + 1 from image-handlers.ts + 1 from video-handlers.ts),
- * grouped by handler file in handler-factory PropertyAssignment order. The
- * order within this array is documentation-only; the bidirectional 1:1
- * architecture test treats `MEDIA_CONTRACTS` as an unordered set.
+ * 18 contracts spanning the media + image + video umbrella (15 from
+ * media-handlers.ts + 1 from image-handlers.ts + 2 from video-handlers.ts +
+ * video-status-handlers.ts), grouped by handler file in handler-factory
+ * PropertyAssignment order. The order within this array is documentation-only;
+ * the bidirectional 1:1 architecture test treats `MEDIA_CONTRACTS` as an
+ * unordered set.
  *
- * NOTE: `video.generate`'s daemon handler lands in Phase 188 Plan 04; the
- * contract is declared here in Plan 02 so the bidirectional handler-parity
- * gate (and the web codegen drift gate) see it from the same wave.
+ * NOTE: `video.status`'s daemon handler (`createVideoStatusHandlers`) lands in
+ * Phase 189 Plan 03 in the SAME wave the contract is declared, so the
+ * bidirectional handler-parity gate and the web codegen drift gate both see it
+ * closed within this plan (no cross-wave strand — the 188 BLOCKER-1 class).
  */
 export const MEDIA_CONTRACTS = [
   // media-handlers.ts (15)
@@ -699,6 +735,7 @@ export const MEDIA_CONTRACTS = [
   MediaProvidersContract,
   // image-handlers.ts (1)
   ImageGenerateContract,
-  // video-handlers.ts (1) — handler lands Plan 04; contract declared here (Plan 02)
+  // video-handlers.ts (1) + video-status-handlers.ts (1)
   VideoGenerateContract,
+  VideoStatusContract,
 ] as const;

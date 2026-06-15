@@ -1,6 +1,6 @@
 {
-  "totalMinified": 123765,
-  "totalGzipped": 12150,
+  "totalMinified": 124244,
+  "totalGzipped": 12204,
   "budget": {
     "minified": 126000,
     "gzipped": 38912
@@ -203,6 +203,7 @@
     "tts.auto_check": 508,
     "tts.synthesize": 469,
     "video.generate": 516,
+    "video.status": 480,
     "whatsapp.action": 268,
     "workspace.deleteFile": 420,
     "workspace.git.commit": 529,

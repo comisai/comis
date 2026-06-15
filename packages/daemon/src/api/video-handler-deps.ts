@@ -72,3 +72,17 @@ export interface VideoHandlerDepsShape {
    *  (only `track`) so the deps stay honest about what the handler uses. */
   videoPoller: { track(job: import("@comis/core").VideoGenJob): void };
 }
+
+/** Dependencies the `video.status` RPC handler consumes (Phase 189 Plan 03 /
+ *  JOB-04). The READ side needs ONLY the agent-scoped store + a logger — far
+ *  narrower than the `video.generate` deps (no provider / persist / deliver /
+ *  cost / poller). Kept here beside `VideoHandlerDepsShape` so dispatch +
+ *  main-helpers thread it from the SAME boot context. */
+export interface VideoStatusHandlerDepsShape {
+  /** JOB-01/JOB-04: the durable async job store. The handler reads
+   *  `get(job_id, agentId)` — agent-scoped (filters BOTH columns), so a
+   *  cross-agent jobId returns not-found, never the other agent's data
+   *  (T-189-10). The SAME store instance the poller writes (single source). */
+  videoJobStore: import("@comis/memory").VideoJobStore;
+  logger: ComisLogger;
+}

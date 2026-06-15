@@ -10997,6 +10997,54 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "rpc"
     ]
   },
+  "video.status": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "job_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "job_id"
+      ],
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "done",
+            "failed"
+          ]
+        },
+        "progress": {
+          "type": "number"
+        },
+        "mediaPath": {
+          "type": "string"
+        },
+        "costUsd": {
+          "type": "number"
+        },
+        "error": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "scopes": [
+      "rpc"
+    ]
+  },
   "whatsapp.action": {
     "request": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
