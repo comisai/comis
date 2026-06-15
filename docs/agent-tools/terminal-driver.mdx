@@ -24,7 +24,7 @@ All nine are `mcpExportPolicy: "never-export"` (never exposed to external MCP) a
 | `terminal_session_send_text` | Type text; optional submit + settle. |
 | `terminal_session_send_key` | Send named keys/chords (`C-c`, `Up`, `Enter`, `S-Tab`). |
 | `terminal_session_wait` | Bounded settle on idle/text/exit/timeout. `timeoutMs` is generous (default 15s, cap 600s) so a **slow AI CLI** (e.g. `claude` taking 60-90s+) can be driven — pass a large `timeoutMs` with `forIdleMs` and the wait returns the instant the CLI goes idle; a long wait auto-backgrounds so the turn never blocks. A not-complete **timeout** returns `producing` (was output still arriving — `true` ⇒ keep waiting, `false` ⇒ idle/inspect status) plus a branched `hint`, so a slow-but-working CLI is not misread as a failure. |
-| `terminal_session_status` | Classifier state (`working`/`awaiting-input`/`exited`/`stuck`), cursor, interaction count. |
+| `terminal_session_status` | Classifier state (`working`/`awaiting-input`/`exited`/`stuck`) plus its `confidence` (`high`/`medium`) and a machine-readable `reason` (e.g. `settled_cursor_parked`, `dialog_detected`, `no_progress`), cursor, interaction count. |
 | `terminal_session_resize` | Resize the PTY + emulator. |
 | `terminal_session_kill` | Terminate a session. |
 
@@ -147,8 +147,14 @@ A driven session runs in the **agent's own workspace**, not a throwaway temp dir
 ## Long runs and recovery
 
 - **Session lifetime is decoupled from a turn.** `session_create` returns immediately; the PTY lives in the worker across turns. Aborting the spawning turn does **not** kill the session.
-- **The agent is woken by attention events**, never polling: the worker classifies each session and emits a `terminal:*` event on a state transition; a short woken turn does `status -> read -> decide -> send -> ends`.
+- **The agent is woken by attention events**, never polling: the worker classifies each session and emits a `terminal:*` event on a state transition; a short woken turn does `status -> read -> decide -> send -> ends`. The `terminal:input_needed` and `terminal:stuck` wake events carry the classification `confidence` and `reason` alongside the state (consumed by the autonomous-drive policy and surfaced in a `comis explain` of a drive) -- both are redaction-safe machine tags, never raw screen bytes.
 - **Worker crash isolation:** the worker is a separate supervised process -- a PTY/emulator crash restarts the worker, not the daemon. For milestone-length runs use `backend: "tmux"` so the session survives a worker restart and a human can `tmux attach` to take over.
+
+### Classifier reliability
+
+The classifier distinguishes `awaiting-input` (a prompt is waiting for you) from `stuck` (no progress) **structurally**, not by a per-CLI pattern table. A settled, unchanged frame is read as `awaiting-input` when its structure is unmistakably an interactive dialog -- a bordered region, an enumerated option list (`1.` / `2.`), an arrow/`(y/n)` selector, or an empty input line beneath a non-empty prompt block. This closes the documented misread where a full-screen permission/menu dialog (the prompt rendered above, the cursor parked on a blank input line below) was mistaken for a hung session. A genuinely hung frame -- no box, no menu, no selector, no progress past the `stuckMs` threshold -- still classifies `stuck`. The actual answer is always gated downstream by the auto-answer policy (`safe-only` escalates anything destructive/approval/auth), so a structurally-detected dialog never bypasses an escalation.
+
+**Locking the classifier against a CLI upgrade:** the `awaiting-input`-vs-`stuck` call is pinned by a **versioned fixture corpus** -- content-free synthetic frames for `claude`/`codex`/`aider` across each state (idle-working, awaiting-text-input, full-screen menu, permission dialog, completed, hung) replayed through the real emulator and asserted for both state and confidence. When a `claude`, `codex`, or `aider` release reshapes its TUI (moving where the cursor parks or changing the dialog chrome), the fix is to **add or refresh a fixture** in `packages/skills/src/tools/builtin/terminal-driver/fixtures/` and re-run the corpus suite -- a drift surfaces there as a failing test, **not** as a misread discovered mid-drive in production. See the [classifier corpus README](https://github.com/comisai/comis/blob/main/packages/skills/src/tools/builtin/terminal-driver/fixtures/README.md) for how to author a fixture (synthetic, via `record-fixture.mjs` -- never hand-edited bytes) and bump the pinned CLI versions.
 
 ## Related
 
