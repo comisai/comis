@@ -48,7 +48,10 @@ import {
   VIDEO_ERR_TO_LOG,
   VideoGenerateContract,
   estimateVideoCostUsd,
+  listVideoModelCaps,
+  snapDuration,
   stripInternalFields,
+  supportedModes,
   systemNowMs,
   tryGetContext,
 } from "@comis/core";
@@ -239,6 +242,90 @@ export function createVideoHandlers(
           rawParams._agentId as string | undefined,
         );
       }
+      // (reference_images[] multi-ref resolution is the LOCKED deferral — the
+      // handler resolves ONLY the singular image_url above; Plan 03 adds no array
+      // tool param either, so there is no params.reference_images to read.)
+
+      // IN-02 validation (I3 honest, BEFORE submit — mirrors image-handlers.ts:249-268):
+      // validate the resolved params against the ACTIVE model's VIDEO_MODELS caps
+      // and reject an unsupported value with a hint LISTING the valid set + a
+      // precondition WARN, rather than letting it surface as an opaque provider 4xx.
+      //
+      // WR-05 / multi-agent anti-pattern: validate against the EXECUTING
+      // `deps.provider.id` (the boot-selected DEFAULT agent's port), NEVER the
+      // caller's `main.providerId` — they can differ (the divergence WARN above);
+      // validating against the caller would PASS a value the caller's main allows
+      // but the executor then rejects LATE at the provider. The model passed to
+      // the accessor is untrusted but SEC-04-guarded inside listVideoModelCaps
+      // (isBlockedObjectKey precedes the index) — no raw VIDEO_MODELS index here.
+      const mode = referenceImage ? "i2v" : "t2v";
+      const activeModel = params.model ?? deps.config.model;
+      const caps = listVideoModelCaps(deps.provider.id, mode, activeModel);
+      if (!caps) {
+        // CAP-02 (b): the requested mode is unsupported by this backend (e.g. i2v
+        // on a t2v-only model). List the supported modes; for an i2v miss, point
+        // the agent at text-to-video (drop image_url).
+        const modes = supportedModes(deps.provider.id);
+        const hint =
+          `Supported modes for ${deps.provider.id}: ${modes.join(", ") || "(none)"}.` +
+          (mode === "i2v" ? " Omit image_url for text-to-video." : "");
+        deps.logger.warn(
+          { agentId, step: "video_mode_reject", errorKind: "precondition" as const, hint },
+          "Video generation rejected: mode unsupported for the executing provider",
+        );
+        return { success: false, error: `${mode} is not supported by provider "${deps.provider.id}"`, hint };
+      }
+      if (resolvedResolution && !caps.resolutions.includes(resolvedResolution)) {
+        const hint = `${deps.provider.id} supports resolutions: ${caps.resolutions.join(", ")}.`;
+        deps.logger.warn(
+          { agentId, step: "video_resolution_reject", errorKind: "precondition" as const, hint },
+          "Video generation rejected: unsupported resolution",
+        );
+        return {
+          success: false,
+          error: `Unsupported resolution "${resolvedResolution}" for "${deps.provider.id}"`,
+          hint,
+        };
+      }
+      if (resolvedAspectRatio && caps.aspectRatios.length > 0 && !caps.aspectRatios.includes(resolvedAspectRatio)) {
+        const hint = `${deps.provider.id} supports aspect ratios: ${caps.aspectRatios.join(", ")}.`;
+        deps.logger.warn(
+          { agentId, step: "video_aspect_reject", errorKind: "precondition" as const, hint },
+          "Video generation rejected: unsupported aspect ratio",
+        );
+        return {
+          success: false,
+          error: `Unsupported aspect ratio "${resolvedAspectRatio}" for "${deps.provider.id}"`,
+          hint,
+        };
+      }
+      // Pitfall 2 (Veo cross-field): 1080p/4k REQUIRE duration 8 — honest reject
+      // over a provider 4xx the matrix exists to prevent.
+      if (
+        caps.requires8sFor &&
+        resolvedResolution &&
+        caps.requires8sFor.includes(resolvedResolution) &&
+        resolvedDurationSecs !== 8
+      ) {
+        const hint = `${deps.provider.id} requires duration 8 for ${resolvedResolution} (and reference images); set duration: 8.`;
+        deps.logger.warn(
+          { agentId, step: "video_duration_constraint_reject", errorKind: "precondition" as const, hint },
+          "Video generation rejected: resolution requires 8s",
+        );
+        return {
+          success: false,
+          error: `${resolvedResolution} requires duration 8 on "${deps.provider.id}"`,
+          hint,
+        };
+      }
+      // Pitfall 3: SNAP (enum) / CLAMP (range) the resolved duration via the matrix
+      // so the wire value is in-enum (an out-of-enum raw duration reaching FAL/Veo
+      // would otherwise be a provider error). Round-half-up on enum ties (Plan 01).
+      // NOTE: the cost estimate above stays on the PRE-snap resolvedDurationSecs —
+      // snapping only lowers-or-equals (never raises) the duration, so the estimate
+      // remains a conservative worst-case ceiling; do NOT re-order it after the snap.
+      const snappedDurationSecs =
+        resolvedDurationSecs !== undefined ? snapDuration(caps, resolvedDurationSecs) : resolvedDurationSecs;
 
       // WR-02: build the port input with the RESOLVED duration/resolution/
       // aspectRatio (param OR config default) — the same values the estimate
@@ -248,7 +335,7 @@ export function createVideoHandlers(
       // the estimate used no audio surcharge, so estimate↔request still agree).
       const input: VideoGenInput = {
         prompt,
-        durationSecs: resolvedDurationSecs,
+        durationSecs: snappedDurationSecs,
         aspectRatio: resolvedAspectRatio,
         resolution: resolvedResolution,
         ...(resolvedAudio !== undefined ? { audio: resolvedAudio } : {}),

@@ -143,8 +143,18 @@ const trackMock = (deps: VideoHandlerDeps) =>
   deps.videoPoller.track as unknown as ReturnType<typeof vi.fn>;
 
 describe("createVideoHandlers (Phase 189 — inline→submit)", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
+    // Re-establish the matrix-accessor delegation after clearAllMocks: a per-test
+    // mockImplementation (the i2v-on-t2v-only reject) PERSISTS across clearAllMocks
+    // (which resets calls, not the implementation), so restore the real-delegating
+    // default here — every test starts on the genuine VIDEO_MODELS matrix.
+    const core = await import("@comis/core");
+    const realCore = await vi.importActual<typeof import("@comis/core")>("@comis/core");
+    (core.listVideoModelCaps as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      realCore.listVideoModelCaps,
+    );
+    (core.supportedModes as unknown as ReturnType<typeof vi.fn>).mockImplementation(realCore.supportedModes);
   });
 
   // ─── JOB-04 submit-not-execute ───
