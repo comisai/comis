@@ -93,6 +93,10 @@ describe("platform-tool registry parity", () => {
       "tokens_manage",
       "transcribe_audio",
       "tts",
+      // The video-generation tool (188-02). Registered as a CONDITIONAL
+      // descriptor (gated on ctx.videoGenProvider, mirroring image_generate's
+      // imageGenProvider gate) — the daemon populates the signal in Plan 04.
+      "video_generate",
       "whatsapp_action",
     ]);
   });
