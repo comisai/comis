@@ -2167,14 +2167,16 @@ async function bootChannels(boot: BootContext): Promise<void> {
   // Image-generation bundle (see buildImageGenBundle in wiring/main-helpers.ts). 184: oauthManager threads the DEFAULT agent's OAuth manager for the Codex image path (CDX-01).
   const { imageGenConfig, imageGenProvider, imageGenRateLimiter, persistImage, imageGenCostLimiter } =
     buildImageGenBundle({ container, defaultAgentId, skillsLogger, oauthManager: handle.oauthManagers.get(defaultAgentId), workspaceDirs, defaultWorkspaceDir });
-  // Video-generation bundle (Phase 188 baseline + 189 async — see
-  // buildVideoGenBundle in wiring/main-helpers.ts). 189: pass the shared memory.db
-  // handle (the VideoJobStore binds it), the EARLY channelAdaptersRef (WARNING-1 —
-  // the poller resolves a LIVE adapter from it after wirePostChannelsLifecycle
-  // populates it), and the daemon TimerPort (the poller's sweeper). Destructure
-  // videoJobStore + videoPoller for the boot context + the handler deps.
+  // Video-generation bundle (Phase 188 baseline + 189 async + 190 live adapters —
+  // see buildVideoGenBundle in wiring/main-helpers.ts). 189: pass the shared
+  // memory.db handle (the VideoJobStore binds it), the EARLY channelAdaptersRef
+  // (WARNING-1 — the poller resolves a LIVE adapter from it after
+  // wirePostChannelsLifecycle populates it), and the daemon TimerPort (the poller's
+  // sweeper). 190 (CRED-01): oauthManager threads the DEFAULT agent's OAuth manager
+  // for the Grok-video key-or-OAuth path (mirrors the image call below + :2169).
+  // Destructure videoJobStore + videoPoller for the boot context + the handler deps.
   const { videoGenConfig, videoGenProvider, videoGenRateLimiter, persistVideo, videoGenCostLimiter, videoJobStore, videoPoller } =
-    buildVideoGenBundle({ container, defaultAgentId, skillsLogger, workspaceDirs, defaultWorkspaceDir, db, channelAdaptersRef: handle.channelAdaptersRef, timers: handle.timers });
+    buildVideoGenBundle({ container, defaultAgentId, skillsLogger, oauthManager: handle.oauthManagers.get(defaultAgentId), workspaceDirs, defaultWorkspaceDir, db, channelAdaptersRef: handle.channelAdaptersRef, timers: handle.timers });
   // VIS-01 (187): the provider-following vision bundle — same construction site, reusing the DEFAULT agent's OAuth manager (codex bearer) + the boot clock (the bridge's per-message timestamp). See buildMediaVisionBundle in wiring/main-helpers.ts.
   const mediaVisionBundle = buildMediaVisionBundle({ container, defaultAgentId, skillsLogger, clock: handle.clock, oauthManager: handle.oauthManagers.get(defaultAgentId) });
 

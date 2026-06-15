@@ -487,6 +487,8 @@ export function buildVideoGenBundle(deps: {
   channelAdaptersRef: Map<string, DeliveryAdapter>;
   /** The daemon TimerPort drives the poller's outer sweeper (sanctioned, unref'd). */
   timers: TimerPort;
+  /** DEFAULT agent's OAuthTokenManager — threaded to the selector for the Grok-video OAuth path (190 / CRED-01). @see buildImageGenBundle. */
+  oauthManager?: OAuthTokenManager;
 }): {
   videoGenConfig: BootContext["container"]["config"]["integrations"]["media"]["videoGeneration"];
   videoGenProvider: VideoGenerationPort | undefined;
@@ -505,7 +507,7 @@ export function buildVideoGenBundle(deps: {
   /** JOB-02 (189): the two-phase background poller (undefined when video disabled). */
   videoPoller: VideoPoller | undefined;
 } {
-  const { container, defaultAgentId, skillsLogger, workspaceDirs, defaultWorkspaceDir, db, channelAdaptersRef, timers } = deps;
+  const { container, defaultAgentId, skillsLogger, workspaceDirs, defaultWorkspaceDir, db, channelAdaptersRef, timers, oauthManager } = deps;
   const videoGenConfig = container.config.integrations.media.videoGeneration;
   const defaultAgentCfg =
     container.config.agents[defaultAgentId] ?? container.config.agents["default"];
@@ -524,6 +526,10 @@ export function buildVideoGenBundle(deps: {
       return r.ok ? r.value : undefined;
     },
     logger: skillsLogger,
+    // 190 (CRED-01): the DEFAULT agent's OAuth manager + oauthProfiles for the
+    // Grok-video key-or-OAuth path (mirrors buildImageGenBundle:331-332).
+    oauthManager,
+    oauthProfiles: defaultAgentCfg?.oauthProfiles,
   });
   const videoGenProvider = getVideoGenProvider(); // boot-time probe
   const videoGenRateLimiter = videoGenProvider
