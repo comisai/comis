@@ -98,6 +98,17 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
   // instance across woken turns so a re-rendered prompt is caught across frames.
   const loopGuard = createLoopGuard({ nowMs });
 
+  // DRIVE-02 (164-04): the closure-local promoted-session set — the daemon owns the
+  // promotion STATE (the skills wait tool only EMITS the content-free terminal:drive_promoted;
+  // it never reaches into daemon state — the layer-inversion the arch gate forbids). Mirrors
+  // the loopGuard lifecycle exactly: closure-local, reclaimed in onSessionGone (so a recycled
+  // sessionId never inherits a stale promotion), bounded over a milestone-length daemon. It is
+  // the promote-once dedupe: the skills tool emits per-qualifying-wait, this Set collapses
+  // repeated emits for one session to ONE drive-started notify. A plain Set suffices for this
+  // plan (record + notify-once); plan 06 reads promotedSessions here to flip the drive-scope
+  // sessionKey for a promoted session's woken turns (the routing is DEFERRED to plan 06).
+  const promotedSessions = new Set<string>();
+
   // The §4.4 woken-turn driver the FSM calls.
   const wakeOneTurn = buildWokenTurnDriver({
     registries: deps.registries,
@@ -136,6 +147,49 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
     }
   };
 
+  // DRIVE-02 (164-04): consume the skills wait tool's content-free terminal:drive_promoted.
+  // The skills layer emits per-qualifying-wait; the daemon collapses to ONE "drive started
+  // (backgrounded)" notify per session (promote-once via the promotedSessions Set). This is a
+  // PROMOTION, not an escalation — it uses the WokenTurnNotify chain (origin:background_task),
+  // NOT escalate(). WR-03/T-164-12: defensively validate the structural fields the Set keys on
+  // (sessionId/agentId) and DROP a malformed payload with a WARN — never key state on garbage.
+  const onDrivePromoted = (e: { sessionId?: unknown; agentId?: unknown; reason?: unknown }): void => {
+    if (typeof e.sessionId !== "string" || typeof e.agentId !== "string") {
+      log.warn(
+        { hint: "malformed terminal:drive_promoted payload (missing sessionId/agentId); promotion dropped", errorKind: "validation" as const, step: "drive_promoted_dropped" },
+        "terminal drive-promotion dropped a malformed frame",
+      );
+      return;
+    }
+    const { sessionId, agentId } = e;
+    const reason = e.reason === "mode_detached" ? "mode_detached" : "producing";
+    if (promotedSessions.has(sessionId)) return; // promote-once — the daemon dedupe.
+    promotedSessions.add(sessionId);
+    log.info(
+      { sessionId, agentId, reason, step: "drive_promoted" },
+      "terminal drive promoted to a backgrounded drive-owner",
+    );
+    if (deps.notify) {
+      // Fire-and-forget on this synchronous bus listener; a notify fault must never become an
+      // uncaughtException that crashes the daemon. The message is STRUCTURAL only (session id +
+      // "background") — no screen text/secrets (I3).
+      void deps
+        .notify({
+          agentId,
+          message: `Terminal drive for session ${sessionId} is now running in the background.`,
+          priority: "normal",
+          origin: "background_task",
+        })
+        .catch((err: unknown) => {
+          log.warn(
+            { sessionId, agentId, err, hint: "drive-started notification failed; the drive continues (bus-only)", errorKind: "resource" as const, step: "drive_promoted_notify_failed" },
+            "terminal drive-started notification failed",
+          );
+        });
+    }
+  };
+  deps.eventBus.on("terminal:drive_promoted", onDrivePromoted);
+
   const dispatcher: TerminalWakeDispatcher = createTerminalWakeDispatcher({
     eventBus: makeWakeAdapterBus(deps.eventBus, log),
     isSessionActive,
@@ -156,6 +210,9 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
     // Both total/never-throw.
     loopGuard.forget(sessionId);
     dispatcher.forgetSession(sessionId);
+    // DRIVE-02 (164-04): reclaim the promoted-state so a recycled sessionId never inherits a
+    // stale promotion (mirrors loopGuard.forget — wired to the SAME end-of-life signals below).
+    promotedSessions.delete(sessionId);
     // removeWakeStateFile re-raises a non-ENOENT fs fault (@allow-throw) — wrap it so a
     // cleanup failure inside this bus listener can NEVER become an uncaughtException that
     // crashes the daemon (IN-04). Surface the fault to the log with an actionable hint.
@@ -181,6 +238,9 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
     async shutdown(): Promise<void> {
       deps.eventBus.off("terminal:session_evicted", onEvicted);
       deps.eventBus.off("terminal:session_state", onStateChange);
+      // DRIVE-02 (164-04): unsubscribe the promotion consumer (no leaked listener; a
+      // post-shutdown emit drives no notify).
+      deps.eventBus.off("terminal:drive_promoted", onDrivePromoted);
       await dispatcher.shutdown();
     },
   };
