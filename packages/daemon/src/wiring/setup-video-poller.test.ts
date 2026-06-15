@@ -192,6 +192,8 @@ function makePoller(opts: {
   // DEL-03 (Phase 192): an optional video-size override (the media-compressor
   // maxVideoBytes knob). A small value forces the default fixture oversized.
   maxVideoBytes?: number;
+  // CR-01 (Phase 192): the resolved video secrets bound for exact-match scrub.
+  videoSecrets?: readonly string[];
 } = {}): { poller: VideoPoller; deps: MockPollerDeps; db: Database.Database } {
   const db = new Database(":memory:");
   ensureVideoJobTable(db);
@@ -256,6 +258,7 @@ function makePoller(opts: {
     eventBus: eventBus as never,
     ...(opts.trajectoryRegistry ? { trajectoryRegistry: opts.trajectoryRegistry as never } : {}),
     ...(opts.maxVideoBytes !== undefined ? { maxVideoBytes: opts.maxVideoBytes } : {}),
+    ...(opts.videoSecrets !== undefined ? { videoSecrets: opts.videoSecrets } : {}),
   });
   void clock;
   return { poller, deps, db };
@@ -869,6 +872,49 @@ describe("createVideoPoller", () => {
     expect((w![0] as { jobId?: string }).jobId).toBe("fal-req-abc123");
   });
 
+  // WR-02 (Phase 192): a delivery dead-letter must NOT mislabel its trajectory
+  // errorKind as `empty_response` (a RENDER failure kind). The render SUCCEEDED;
+  // delivery exhausted retries. `comis explain` must point at the channel, not the
+  // provider/prompt. The persisted last_error + the trajectory kind must say delivery.
+  it("WR-02: a delivery dead-letter records a delivery-specific errorKind on the trajectory, NOT empty_response", async () => {
+    const sendAttachment = vi.fn().mockResolvedValue(err(new Error("channel down")));
+    const reg = captureRegistry();
+    const { poller, deps } = makePoller({
+      sendAttachment,
+      config: makeConfig({ maxDeliveryAttempts: 2 } as Partial<VideoGenerationConfig>),
+      seedRows: [{ jobId: "fal-req-abc123", sessionKey: "default:u1:telegram:c1" }],
+      trajectoryRegistry: reg,
+    });
+    const markFailedSpy = deps.store.markFailedSpy;
+
+    await poller.startAndResume();
+    await flush();
+    for (let i = 0; i < 4; i++) {
+      deps.timers.advance(makeConfig().pollIntervalMs);
+      await flush();
+    }
+    poller.shutdown();
+
+    // The dead-letter fired (markFailed was called).
+    expect(markFailedSpy).toHaveBeenCalled();
+    // The store markFailed kind is delivery-specific, NOT the render `empty_response`.
+    const failedKind = markFailedSpy.mock.calls[0]![1] as string;
+    expect(failedKind).not.toBe("empty_response");
+    expect(failedKind).toBe("delivery_failed");
+    // The trajectory video.failed record carries the delivery-specific kind too —
+    // so the reconstructed IncidentReport.videoGenerated.errorKind is honest.
+    const failedEvent = reg.calls.find((c) => c.type === "video.failed");
+    expect(failedEvent).toBeTruthy();
+    expect((failedEvent!.data as { errorKind?: string }).errorKind).toBe("delivery_failed");
+    // The WARN/last_error hint explicitly names DELIVERY (not render/prompt).
+    const w = (deps.logger.warn as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c) => (c[0] as { step?: string }).step === "video_poll_deadletter",
+    );
+    expect((w![0] as { hint?: string }).hint?.toLowerCase()).toContain("delivery");
+    // last_error persisted via markFailed's hint arg also names delivery.
+    expect((markFailedSpy.mock.calls[0]![2] as string).toLowerCase()).toContain("delivery");
+  });
+
   // CR-01 #2: cost is recorded EXACTLY ONCE — a delivery that fails once then
   // succeeds on the next sweep must not double-charge the limiter.
   it("CR-01: a job that fails delivery once then succeeds records cost EXACTLY ONCE (no double-count)", async () => {
@@ -1123,6 +1169,10 @@ describe("createVideoPoller", () => {
   const GOOGLE_SECRET = "AIzaSyAbCdEfGhIjKlMnOpQrStUvWxYz0123456";
   const BEARER_SECRET = "Bearer sk-grok-9f8e7d6c5b4a32100123456789ab";
   const SK_SECRET = "sk-proj-DEADBEEFcafef00dDEADBEEFcafef00dXY";
+  // CR-01 de-mask: a FAL FAL_KEY is shaped `<uuid>:<32hex>` — caught by NEITHER
+  // sanitizeLogString's prior patterns NOR the transport backstop. The robust fix
+  // (exact-match bound secrets) + the new uuid:hex pattern must scrub it.
+  const FAL_SECRET = "b1946ac9-2c7f-4d3e-8a1b-9f8e7d6c5b4a:9f8e7d6c5b4a32109f8e7d6c5b4a3210";
   const VEO_KEYED_URL =
     `https://generativelanguage.googleapis.com/v1beta/files/abc:download?alt=media&key=${GOOGLE_SECRET}`;
   const SECRET_VALUES = [
@@ -1130,26 +1180,32 @@ describe("createVideoPoller", () => {
     BEARER_SECRET,
     SK_SECRET,
     "sk-grok-9f8e7d6c5b4a32100123456789ab",
+    FAL_SECRET,
+    "9f8e7d6c5b4a32109f8e7d6c5b4a3210", // the bare FAL hex tail
     VEO_KEYED_URL,
   ];
 
-  /** Every poller log call (all 4 levels) + nested `err.message`/stack (a raw
+  /** Every poller log call (all 4 levels) + nested `err.message`/stack/CAUSE (a raw
    *  provider Error rides `err: cause`; Error.message is non-enumerable so a
-   *  plain JSON.stringify drops it — the production Pino serializer emits it). */
+   *  plain JSON.stringify drops it — the production Pino serializer emits it).
+   *  CR-01 de-mask: ALSO walk `err.cause` — undici "fetch failed" carries the
+   *  keyed-URL detail there, the exact field the prior helper never inspected. */
   function allPollerLogText(logger: ReturnType<typeof createMockLogger>): string[] {
     const levels = ["debug", "info", "warn", "error"] as const;
     const blobs: string[] = [];
+    const pushErr = (e: unknown, depth: number): void => {
+      if (depth > 6 || !(e instanceof Error)) return;
+      blobs.push(e.message);
+      if (typeof e.stack === "string") blobs.push(e.stack);
+      pushErr((e as { cause?: unknown }).cause, depth + 1);
+    };
     for (const level of levels) {
       const spy = logger[level] as ReturnType<typeof vi.fn>;
       for (const call of spy.mock.calls) {
         const payload = (call[0] ?? {}) as Record<string, unknown>;
         blobs.push(JSON.stringify(payload));
         if (typeof call[1] === "string") blobs.push(call[1]);
-        const errField = payload.err;
-        if (errField instanceof Error) {
-          blobs.push(errField.message);
-          if (typeof errField.stack === "string") blobs.push(errField.stack);
-        }
+        pushErr(payload.err, 0);
       }
     }
     return blobs;
@@ -1259,5 +1315,69 @@ describe("createVideoPoller", () => {
       ),
     ).toBe(true);
     assertNoPollerSecretLeak(deps.logger);
+  });
+
+  // ─── CR-01 de-mask: the THREE real leaks the prior poller-SEC tests missed ───
+
+  it("CR-01: a fetchResult error whose KEYED URL lives in err.cause (undici 'fetch failed') does not leak + keeps the failure class", async () => {
+    // The realistic undici shape: TypeError("fetch failed") with the keyed-URL +
+    // network detail in `.cause`. The prior redactErr read only the top message →
+    // the cause (and any secret in it) was dropped (a §2.7 regression) and, where a
+    // secret rode the cause, the de-masked helper now SURFACES it as a leak.
+    const cause = new Error(`getaddrinfo ENOTFOUND fetch ${VEO_KEYED_URL}`);
+    const provider = makeProvider({
+      poll: vi.fn().mockResolvedValue(ok({ jobId: "fal-req-abc123", state: "done" })),
+      fetchResult: vi.fn().mockResolvedValue(err(new Error("fetch failed", { cause }))),
+    });
+    const { poller, deps } = makePoller({ provider, seedRows: [{ jobId: "fal-req-abc123" }] });
+    poller.track(makeRecord());
+    await flush();
+
+    assertNoPollerSecretLeak(deps.logger);
+    // WR-01 / §2.7: the cause's failure CLASS must survive redaction on the WARN.
+    const w = (deps.logger.warn as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c) => (c[0] as { step?: string }).step === "video_poll_failed",
+    );
+    expect(w).toBeTruthy();
+    expect((w![0] as { errMessage?: string }).errMessage).toContain("ENOTFOUND");
+  });
+
+  it("CR-01: a FAL key (uuid:hex shape) echoed in a fetchResult error is scrubbed (pattern + bound)", async () => {
+    // FAL's uuid:hex key is caught by NO prior pattern. With the secret BOUND
+    // (exact-match) AND the new uuid:hex pattern, it must never reach the log.
+    const provider = makeProvider({
+      poll: vi.fn().mockResolvedValue(ok({ jobId: "fal-req-abc123", state: "done" })),
+      fetchResult: vi
+        .fn()
+        .mockResolvedValue(err(new Error(`FAL queue rejected request with key=${FAL_SECRET}`))),
+    });
+    const { poller, deps } = makePoller({
+      provider,
+      seedRows: [{ jobId: "fal-req-abc123" }],
+      videoSecrets: [FAL_SECRET],
+    });
+    poller.track(makeRecord());
+    await flush();
+    assertNoPollerSecretLeak(deps.logger);
+  });
+
+  it("CR-01: a BOUND video secret echoed verbatim by the provider is exact-match scrubbed from the WARN", async () => {
+    // The robust shape-independent guard (the v2.20 knownSecrets precedent): the
+    // resolved secret bound at the wiring site is scrubbed by exact match even
+    // when it has no recognizable prefix/shape.
+    const opaque = "zZ9-opaque-provider-token-no-recognizable-prefix-123456";
+    const provider = makeProvider({
+      poll: vi.fn().mockResolvedValue(ok({ jobId: "fal-req-abc123", state: "done" })),
+      fetchResult: vi.fn().mockResolvedValue(err(new Error(`upstream said: ${opaque}`))),
+    });
+    const { poller, deps } = makePoller({
+      provider,
+      seedRows: [{ jobId: "fal-req-abc123" }],
+      videoSecrets: [opaque],
+    });
+    poller.track(makeRecord());
+    await flush();
+    const blobs = allPollerLogText(deps.logger);
+    for (const blob of blobs) expect(blob).not.toContain(opaque);
   });
 });

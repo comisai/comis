@@ -132,5 +132,51 @@ describe("video-delivery-limits — per-channelType limit table + resolver (DEL-
       expect(noUrl.text).toContain(FILE_PATH);
       expect(noUrl.text).not.toContain("[Attachment too large");
     });
+
+    // ─── WR-03 (Phase 192): a keyed/private provider URL is NOT a shareable link ───
+    it("WR-03: a Veo keyed-download host degrades to notice+path, NEVER a (dead/key-needing) link", () => {
+      // Veo's out.sourceUrl is the UN-keyed video.uri on the Google
+      // generativelanguage download host: it 403s without the &key= the adapter
+      // withholds. Sharing it as a `link` hands the user a DEAD url (and a keyed
+      // variant would LEAK the secret). It must fall back to notice + workspace path.
+      const veo = buildOversizedDegradeMessage({
+        channelType: "telegram", // a link-rendering channel
+        sizeBytes: 60 * MB,
+        limit: 50 * MB,
+        filePath: FILE_PATH,
+        sourceUrl: "https://generativelanguage.googleapis.com/v1beta/files/abc:download?alt=media",
+      });
+      expect(veo.policy).toBe("notice");
+      expect(veo.text).toContain(FILE_PATH);
+      expect(veo.text).not.toContain("generativelanguage.googleapis.com");
+    });
+
+    it("WR-03: the xAI/Grok private download host also degrades to notice+path, not a link", () => {
+      const grok = buildOversizedDegradeMessage({
+        channelType: "discord",
+        sizeBytes: 60 * MB,
+        limit: 25 * MB,
+        filePath: FILE_PATH,
+        sourceUrl: "https://api.x.ai/v1/video/download/abc123",
+      });
+      expect(grok.policy).toBe("notice");
+      expect(grok.text).toContain(FILE_PATH);
+      expect(grok.text).not.toContain("api.x.ai");
+    });
+
+    it("WR-03: a publicly-fetchable FAL CDN URL is STILL shared as a link (regression guard)", () => {
+      // FAL renders to a public CDN (fal.media / v3.fal.media) needing no secret —
+      // that link IS shareable and must remain the `link` policy (don't over-degrade).
+      const fal = buildOversizedDegradeMessage({
+        channelType: "telegram",
+        sizeBytes: 60 * MB,
+        limit: 50 * MB,
+        filePath: FILE_PATH,
+        sourceUrl: "https://v3.fal.media/files/zebra/abc123_output.mp4",
+      });
+      expect(fal.policy).toBe("link");
+      expect(fal.text).toContain("https://v3.fal.media/files/zebra/abc123_output.mp4");
+      expect(fal.text).toContain(FILE_PATH);
+    });
   });
 });
