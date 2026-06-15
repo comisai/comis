@@ -872,4 +872,103 @@ describe("createVideoHandlers (Phase 189 — inline→submit)", () => {
       expect(input.referenceImage!.data).toBe(Buffer.from("REF-FILE-BYTES").toString("base64"));
     });
   });
+
+  // ─── OBS-04 (Phase 192): the in-turn trajectory emits + sessionKey persist ───
+  describe("OBS-04 in-turn trajectory emits + sessionKey persist", () => {
+    /** A capture recorder + a registry resolving it by sessionKey. */
+    function captureRegistry() {
+      const calls: Array<{ type: string; data: Record<string, unknown> }> = [];
+      const recorder = {
+        recordEvent: vi.fn((type: string, data: Record<string, unknown>) => {
+          calls.push({ type, data });
+        }),
+      };
+      return { calls, getRecorder: vi.fn(() => recorder) };
+    }
+
+    it("a successful submit emits video.requested (entry) THEN video.submitted (after persist+track) via the recorder", async () => {
+      const reg = captureRegistry();
+      const deps = createMockDeps({
+        trajectoryRegistry: reg as unknown as VideoHandlerDeps["trajectoryRegistry"],
+      });
+      const handlers = createVideoHandlers(deps);
+      await handlers["video.generate"]!({
+        _agentId: "agent-1",
+        prompt: "a cat",
+        _callerSessionKey: "default:u1:telegram:c1",
+      });
+      // The recorder was resolved by the dispatcher-injected sessionKey.
+      expect(reg.getRecorder).toHaveBeenCalledWith("default:u1:telegram:c1");
+      const types = reg.calls.map((c) => c.type);
+      // Both in-turn lifecycle records reached the persisted trajectory, in order.
+      expect(types).toEqual(["video.requested", "video.submitted"]);
+      // Content-free: the requested record carries ONLY provider + mainProvider.
+      expect(reg.calls[0]!.data).toEqual({ provider: "fal", mainProvider: "google" });
+      // The submitted record carries provider + the durable jobId.
+      expect(reg.calls[1]!.data).toEqual({ provider: "fal", jobId: "fal-req-abc123" });
+    });
+
+    it("persists sessionKey onto the VideoJobRecord from _callerSessionKey (the off-turn recorder key)", async () => {
+      const deps = createMockDeps();
+      const handlers = createVideoHandlers(deps);
+      await handlers["video.generate"]!({
+        _agentId: "agent-1",
+        prompt: "a comet",
+        _callerSessionKey: "default:u1:telegram:c1",
+        _callerChannelType: "telegram",
+        _callerChannelId: "chat-1",
+      });
+      const row = insertMock(deps).mock.calls[0]![0] as Record<string, unknown>;
+      expect(row.sessionKey).toBe("default:u1:telegram:c1");
+    });
+
+    it("omits sessionKey from the row when _callerSessionKey is absent (nullable column)", async () => {
+      const deps = createMockDeps();
+      const handlers = createVideoHandlers(deps);
+      await handlers["video.generate"]!({ _agentId: "agent-1", prompt: "a comet" });
+      const row = insertMock(deps).mock.calls[0]![0] as Record<string, unknown>;
+      expect(row.sessionKey).toBeUndefined();
+    });
+
+    it("on a quota_exceeded pre-submit block emits video.failed (trajectory) BESIDE the existing video_cost_ceiling WARN (no double-log)", async () => {
+      const reg = captureRegistry();
+      const costLimiter = { canSpend: vi.fn().mockReturnValue(false), record: vi.fn(), reset: vi.fn() };
+      const deps = createMockDeps({
+        costLimiter,
+        trajectoryRegistry: reg as unknown as VideoHandlerDeps["trajectoryRegistry"],
+      });
+      const handlers = createVideoHandlers(deps);
+      await handlers["video.generate"]!({
+        _agentId: "agent-1",
+        prompt: "a dragon",
+        duration: 8,
+        _callerSessionKey: "s",
+      });
+      // The trajectory failure record fired (video.requested at entry + video.failed).
+      const failed = reg.calls.find((c) => c.type === "video.failed");
+      expect(failed).toBeDefined();
+      expect(failed!.data).toEqual({ errorKind: "quota_exceeded", provider: "fal" });
+      // SEC-02 NON-REGRESSION: the existing WARN with the pinned step survives,
+      // and there is EXACTLY ONE cost-ceiling WARN (no emitter double-log).
+      const ceilingWarns = warnCalls(deps).filter(
+        (c) => (c[0] as { step?: string }).step === "video_cost_ceiling",
+      );
+      expect(ceilingWarns).toHaveLength(1);
+      expect((ceilingWarns[0]![0] as { errorKind?: string }).errorKind).toBe("resource");
+    });
+
+    it("off-turn safety: with no trajectoryRegistry the in-turn submit still succeeds (the logger floor survives)", async () => {
+      // No trajectoryRegistry (a boot mode without one) → the emits no-op, the
+      // handler still submits + persists + logs the §2.7 line.
+      const deps = createMockDeps();
+      const handlers = createVideoHandlers(deps);
+      const result = (await handlers["video.generate"]!({
+        _agentId: "agent-1",
+        prompt: "a cat",
+        _callerSessionKey: "s",
+      })) as { success: boolean };
+      expect(result.success).toBe(true);
+      expect(infoCalls(deps).some((c) => (c[0] as { step?: string }).step === "video_submitted")).toBe(true);
+    });
+  });
 });
