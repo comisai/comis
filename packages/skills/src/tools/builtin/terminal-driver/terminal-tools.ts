@@ -40,9 +40,8 @@ import type {
   TerminalAutoAnsweredEvent,
   TerminalDrivePromotedEvent,
 } from "./terminal-events-attention.js";
-// Re-export the P5 attention/audit event payloads + the DRIVE-02 promotion payload
-// (164-04) so consumers (and the daemon emit hooks, 124-09 / 164-04) reach them via
-// the tool module alongside TerminalEventBus.
+// Re-export the P5 attention/audit event payloads + the DRIVE-02 promotion payload (164-04)
+// so consumers (the daemon emit hooks, 124-09 / 164-04) reach them via the tool module.
 export type {
   TerminalInputNeededEvent,
   TerminalStuckEvent,
