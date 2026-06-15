@@ -24,6 +24,8 @@ const REPO_ROOT = resolve(here, "../..");
 const DAEMON_TS = resolve(REPO_ROOT, "packages/daemon/src/daemon.ts");
 const RPC_DISPATCH_TS = resolve(REPO_ROOT, "packages/daemon/src/api/rpc-dispatch.ts");
 const MAIN_HELPERS_TS = resolve(REPO_ROOT, "packages/daemon/src/wiring/main-helpers.ts");
+const SETUP_TOOLS_TS = resolve(REPO_ROOT, "packages/daemon/src/wiring/setup-tools.ts");
+const REGISTRY_TS = resolve(REPO_ROOT, "packages/skills/src/platform-tools/registry.ts");
 
 /** Strip line + block comments so a token inside a comment cannot satisfy a
  *  wiring assertion (a comment naming buildVideoGenBundle is NOT the wiring). */
@@ -139,5 +141,47 @@ describe("video-generation built-but-not-wired source guard", () => {
     // The poller shutdown must be registered with setupShutdown so SIGTERM clears
     // the sweeper interval — the same path shutdownDeliveryQueue takes.
     expect(code).toMatch(/shutdownVideoPoller/);
+  });
+
+  // ─── Phase 189 Plan 03 (JOB-04): the video.status query surface wiring ───
+  // The read side of the async lifecycle. The contract↔handler parity gate
+  // covers the dispatch registration structurally; these source-guard
+  // assertions pin the LIVE tool + boot-signal + dispatch-deps threading so a
+  // refactor cannot regress video_status to built-but-not-wired.
+
+  it("rpc-dispatch.ts imports createVideoStatusHandlers and spreads it conditionally on videoStatusHandlerDeps", () => {
+    const content = readFileSync(RPC_DISPATCH_TS, "utf8");
+    expect(content).toMatch(
+      /import\s*\{[^}]*createVideoStatusHandlers[^}]*\}\s*from\s*["']\.\/video-status-handlers\.js["']/,
+    );
+    const code = stripComments(content);
+    // The conditional spread: ...(deps.videoStatusHandlerDeps ? createVideoStatusHandlers(...) : {})
+    expect(code).toMatch(
+      /deps\.videoStatusHandlerDeps\s*\?[\s\S]*?createVideoStatusHandlers\s*\(\s*deps\.videoStatusHandlerDeps\s*\)/,
+    );
+  });
+
+  it("registry.ts registers a video_status descriptor built from createVideoStatusTool", () => {
+    const code = stripComments(readFileSync(REGISTRY_TS, "utf8"));
+    // The tool factory must be imported + wired by the descriptor (not in a comment).
+    expect(code).toMatch(/createVideoStatusTool/);
+    // The descriptor's name string + the videoStatusEnabled gate signal.
+    expect(code).toMatch(/["']video_status["']/);
+    expect(code).toMatch(/videoStatusEnabled/);
+  });
+
+  it("daemon.ts threads videoStatusHandlerDeps into the dispatch deps (the read handler wiring)", () => {
+    const code = stripComments(readFileSync(DAEMON_TS, "utf8"));
+    // buildVideoStatusHandlerDeps result must be spread into the ApiDispatchDeps literal.
+    expect(code).toMatch(/\bvideoStatusHandlerDeps\b/);
+  });
+
+  it("daemon.ts threads the videoStatusEnabled signal into setupTools (activates the video_status tool)", () => {
+    const daemonCode = stripComments(readFileSync(DAEMON_TS, "utf8"));
+    // daemon.ts must pass videoStatusEnabled to setupTools, and setupTools must
+    // forward it into the registry BuildContext (gating the video_status descriptor).
+    expect(daemonCode).toMatch(/videoStatusEnabled/);
+    const toolsCode = stripComments(readFileSync(SETUP_TOOLS_TS, "utf8"));
+    expect(toolsCode).toMatch(/videoStatusEnabled/);
   });
 });
