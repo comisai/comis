@@ -609,11 +609,22 @@ describe("RES-01 keystone is wired into the LIVE daemon.ts composition root", ()
   });
 
   it("threads resolveAgentMainProvider INTO the live imageHandlerDeps object literal", () => {
-    // Locate the imageHandlerDeps construction region and assert the field is
-    // inside it (not just somewhere in the file).
-    const start = daemonSrc.indexOf("const imageHandlerDeps");
-    expect(start).toBeGreaterThan(-1);
-    const region = daemonSrc.slice(start, start + 900);
+    // WR-04 (186): the imageHandlerDeps construction moved from daemon.ts into
+    // buildImageHandlerDeps (main-helpers.ts) to relieve the line cap. The
+    // RES-01 keystone must still be threaded INTO the live composition root:
+    //   (a) daemon.ts passes the per-request resolver into the helper call, and
+    //   (b) the helper's returned literal threads it as resolveAgentMainProvider
+    //       alongside getChannelAdapter.
+    // daemon.ts side: the resolver is the argument to the extracted helper.
+    const callStart = daemonSrc.indexOf("const imageHandlerDeps");
+    expect(callStart).toBeGreaterThan(-1);
+    const callRegion = daemonSrc.slice(callStart, callStart + 120);
+    expect(callRegion).toContain("buildImageHandlerDeps(c, resolveAgentMainProviderFor)");
+
+    // helper side: the literal threads resolveAgentMainProvider + getChannelAdapter.
+    const litStart = helpersSrc.indexOf("export function buildImageHandlerDeps");
+    expect(litStart).toBeGreaterThan(-1);
+    const region = helpersSrc.slice(litStart, litStart + 1400);
     expect(region).toContain("getChannelAdapter");
     expect(region).toContain("resolveAgentMainProvider");
   });
