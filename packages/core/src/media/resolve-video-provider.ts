@@ -159,6 +159,12 @@ function tryFallbackChain(
   followMainSkipReason: string,
 ): VideoProviderSelection | undefined {
   const chain = cfg.fallbackChain ?? [];
+  // WR-04: when there is no fallback to try (the schema-default empty chain),
+  // the follow-main-skip line is pure log noise — there was no fallback
+  // consultation to narrate, and the caller emits its own honest-unavailable
+  // hint. Only report the skip when a chain actually exists (then it IS the
+  // load-bearing "why did video fall through to a fallback" evidence at INFO).
+  if (chain.length === 0) return undefined;
   // Report that follow-main was tried first (it is the reason we are here).
   onSkip?.(`follow-main skipped: ${followMainSkipReason}`);
   for (const p of chain) {

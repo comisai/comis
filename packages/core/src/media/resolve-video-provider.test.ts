@@ -90,6 +90,37 @@ describe("resolveVideoProvider", () => {
     expect(onSkip.mock.calls[0]?.[0]).toContain("openai");
   });
 
+  it("WR-04: does NOT emit a follow-main skip when the fallback chain is empty (no log noise)", () => {
+    const onSkip = vi.fn();
+    // Empty fallbackChain (the schema default) + a video-incapable main: there
+    // is no fallback to try, so the follow-main-skip INFO line is pure noise.
+    const sel = resolveVideoProvider({ provider: "auto", fallbackChain: [] }, "openai", ALL_CREDS, onSkip);
+    expect(sel.ok).toBe(false);
+    expect(onSkip).not.toHaveBeenCalled();
+  });
+
+  it("WR-04: does NOT emit a follow-main skip on a no-creds main with an empty chain", () => {
+    const onSkip = vi.fn();
+    // google is video-capable (veo) but creds are absent, and the chain is empty.
+    const sel = resolveVideoProvider({ provider: "auto", fallbackChain: [] }, "google", NO_CREDS, onSkip);
+    expect(sel.ok).toBe(false);
+    expect(onSkip).not.toHaveBeenCalled();
+  });
+
+  it("WR-04: STILL emits the follow-main skip when a non-empty chain is consulted (load-bearing)", () => {
+    const onSkip = vi.fn();
+    const sel = resolveVideoProvider(
+      { provider: "auto", fallbackChain: ["google"] },
+      "openai",
+      (api) => api === "veo",
+      onSkip,
+    );
+    expect(sel).toMatchObject({ ok: true, source: "fallback" });
+    // The skip line remains evidence on the path where a fallback WAS tried.
+    const reasons = onSkip.mock.calls.map((c) => String(c[0]));
+    expect(reasons.some((r) => r.includes("follow-main skipped"))).toBe(true);
+  });
+
   it("reports each skipped fallback entry with a reason before succeeding (RES-04)", () => {
     const onSkip = vi.fn();
     const sel = resolveVideoProvider(
