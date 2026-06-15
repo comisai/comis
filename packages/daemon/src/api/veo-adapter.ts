@@ -129,6 +129,15 @@ export function createVeoVideoAdapter(opts: {
         (async () => {
           const cur = await getOperation(job.jobId);
           const state: VideoJobStatus["state"] = !cur.done ? "pending" : cur.error ? "failed" : "done";
+          // WR-01: on a terminal failure, thread the SAME classified kind+hint the
+          // execute() path emits onto the snapshot (reusing the existing classifier,
+          // not a third one) so the off-turn poller persists the specific kind +
+          // actionable hint instead of collapsing to empty_response. The hint is a
+          // FIXED auth/quota/content string — never the raw operation.error.
+          if (state === "failed") {
+            const c = classifyVeoVideoError(cur.error);
+            return { jobId: job.jobId, state, errorKind: c.videoErrorKind, hint: c.hint } satisfies VideoJobStatus;
+          }
           return { jobId: job.jobId, state } satisfies VideoJobStatus;
         })(),
       );

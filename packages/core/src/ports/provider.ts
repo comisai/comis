@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Result } from "@comis/shared";
+import type { VideoErrorKind } from "../media/video-error.js";
 
 /**
  * Input for image generation providers.
@@ -105,10 +106,27 @@ export interface VideoGenJob {
 /**
  * A `poll()` snapshot. `state` is the normalized lifecycle; `done` is the only
  * terminal-success state (`failed` short-circuits the poll loop in Plan 03).
+ *
+ * `errorKind`/`hint` are OPTIONAL and ADDITIVE (Phase 190 WR-01): when an adapter
+ * can classify a terminal `failed` state at poll time (a Veo `operation.error`, a
+ * Grok `status:"failed"|"expired"`), it threads the SAME classified
+ * `{ videoErrorKind, hint }` it produces on the in-turn `execute()` path onto the
+ * snapshot — so the off-turn background poller (which drives `poll()`, never
+ * `execute()`) can persist the specific kind + the actionable hint instead of
+ * collapsing every terminal failure to a generic `empty_response`. They are
+ * absent on `pending`/`done` and on adapters (e.g. FAL) that signal a failure as
+ * a throw rather than a terminal poll status — those keep their existing behavior
+ * (the poller falls back to its generic classification). The `hint` names the
+ * knob/action, never a secret (the classifiers emit FIXED auth/quota/content
+ * hints, never the raw provider message).
  */
 export interface VideoJobStatus {
   jobId: string;
   state: "pending" | "done" | "failed";
+  /** WR-01 — the classified domain error kind on a terminal `failed` snapshot. */
+  errorKind?: VideoErrorKind;
+  /** WR-01 — the actionable, secret-free operator hint paired with `errorKind`. */
+  hint?: string;
 }
 
 /**

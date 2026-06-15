@@ -108,8 +108,15 @@ export interface VideoJobStore {
   get(jobId: string, agentId: string): Promise<Result<VideoJobRecord | undefined, Error>>;
   /** Transition to 'done' + record the delivered path + actual cost (JOB-02). */
   markDone(jobId: string, input: VideoJobDoneInput): Promise<Result<void, Error>>;
-  /** Transition to 'failed' + record the errorKind (JOB-02). */
-  markFailed(jobId: string, errorKind: string): Promise<Result<void, Error>>;
+  /**
+   * Transition to 'failed' + record `last_error` (JOB-02).
+   *
+   * WR-02 (Phase 190): pass the optional `lastError` to persist an ACTIONABLE
+   * operator hint (what `video.status` returns as `error`) instead of the bare
+   * `errorKind` enum token. When omitted, `errorKind` is written verbatim (the
+   * pre-190 behavior — preserved for callers/tests that pass only the kind).
+   */
+  markFailed(jobId: string, errorKind: string, lastError?: string): Promise<Result<void, Error>>;
   /** Update the optional progress fraction (JOB-02). */
   updateProgress(jobId: string, progress: number): Promise<Result<void, Error>>;
   /**
@@ -279,9 +286,10 @@ export function createVideoJobStore(db: Database.Database): VideoJobStore {
       }
     },
 
-    markFailed(jobId: string, errorKind: string): Promise<Result<void, Error>> {
+    markFailed(jobId: string, errorKind: string, lastError?: string): Promise<Result<void, Error>> {
       try {
-        markFailedStmt.run(errorKind, systemNowMs(), jobId);
+        // WR-02: persist the actionable hint when supplied; else the bare kind.
+        markFailedStmt.run(lastError ?? errorKind, systemNowMs(), jobId);
         return Promise.resolve(ok(undefined));
       } catch (e) {
         return Promise.resolve(err(e instanceof Error ? e : new Error(String(e))));

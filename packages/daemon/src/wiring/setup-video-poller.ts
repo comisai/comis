@@ -138,6 +138,18 @@ export interface VideoPollerDeps {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * The per-job `pollUntilDone` snapshot. `state` drives the loop; `errorKind`/`hint`
+ * are the WR-01 classified failure detail an adapter threads onto the terminal
+ * `failed` snapshot (absent for FAL / a thrown poll). Carried through the loop so
+ * the failed branch persists/logs the specific kind+hint, not empty_response.
+ */
+interface PollSnapshot {
+  state: string;
+  errorKind?: VideoErrorKind;
+  hint?: string;
+}
+
 /** A `.mp4` default; the buffer is the durable artifact regardless. */
 function extForMime(mimeType: string): string {
   if (mimeType === "video/webm") return ".webm";
@@ -210,7 +222,9 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
   // db.close() with a late markDone/markFailed write.
   const shutdownAbort = new AbortController();
 
-  /** Map a `pollUntilDone` failed/timeout outcome to a domain errorKind. */
+  /** Map a `pollUntilDone` failed/timeout outcome to a domain errorKind. The
+   *  failed→empty_response fallback applies ONLY when the adapter did not classify
+   *  the failure on the poll snapshot (WR-01 carries the specific kind otherwise). */
   function classifyOutcome(kind: "failed" | "timeout"): VideoErrorKind {
     return kind === "timeout" ? "job_timeout" : "empty_response";
   }
@@ -229,7 +243,14 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
     const attempts = attempt.ok ? attempt.value : 0;
     // attempts > 0 means a real persisted row; >= max → dead-letter (terminal).
     if (attempts > 0 && attempts >= maxDeliveryAttempts) {
-      await markFailed(record, "empty_response", cause);
+      // WR-02: persist the delivery dead-letter hint as last_error (not the bare
+      // kind) so `video.status` explains a delivery failure, not a render failure.
+      const deadLetterHint =
+        "Video delivery failed repeatedly and was dead-lettered to `failed` " +
+        "(no further retries). Check the channel's attachment support / size " +
+        "limits / credentials, or raise integrations.media.videoGeneration." +
+        "maxDeliveryAttempts.";
+      await markFailed(record, "empty_response", cause, deadLetterHint);
       logger.warn(
         {
           traceId: record.traceId,
@@ -240,11 +261,7 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
           maxDeliveryAttempts,
           errorKind: "network" as const,
           videoErrorKind: "empty_response" as const,
-          hint:
-            "Video delivery failed repeatedly and was dead-lettered to `failed` " +
-            "(no further retries). Check the channel's attachment support / size " +
-            "limits / credentials, or raise integrations.media.videoGeneration." +
-            "maxDeliveryAttempts.",
+          hint: deadLetterHint,
           step: "video_poll_deadletter",
         },
         "Video poller: delivery dead-lettered after max attempts",
@@ -369,14 +386,34 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
     );
   }
 
-  /** markFailed + a §2.7 WARN with errorKind + hint + the off-turn traceId. */
-  async function markFailed(record: VideoJobRecord, kind: VideoErrorKind, cause?: Error): Promise<void> {
+  /**
+   * markFailed + a §2.7 WARN with errorKind + hint + the off-turn traceId.
+   *
+   * WR-02: `classifiedHint` is the adapter's actionable hint when the failure was
+   * classified at poll time (WR-01); when present it is BOTH logged AND persisted
+   * to `last_error` (so `video.status` returns the actionable string, not the bare
+   * enum token). When absent, a generic kind-based hint is computed and persisted —
+   * still actionable text, never the raw kind token. The hint never carries a
+   * secret (the classifiers emit FIXED auth/quota/content strings).
+   */
+  async function markFailed(
+    record: VideoJobRecord,
+    kind: VideoErrorKind,
+    cause?: Error,
+    classifiedHint?: string,
+  ): Promise<void> {
+    const hint =
+      classifiedHint ??
+      (kind === "job_timeout"
+        ? "The render exceeded integrations.media.videoGeneration.timeoutMs; raise it or retry."
+        : "The provider returned no usable result; retry or adjust the prompt.");
     // CR-01: do NOT discard the store Result. A failed terminal write leaves the
     // row `pending`; the sweeper will retry it, but the redelivery bound
     // (deliver_attempts / maxDeliveryAttempts) is the backstop so even a
     // persistent markFailed-write failure converges. Log it at ERROR so the
-    // stranded row is diagnosable from daemon.log by jobId/traceId.
-    const failed = await store.markFailed(record.jobId, kind);
+    // stranded row is diagnosable from daemon.log by jobId/traceId. WR-02: persist
+    // the actionable `hint` as last_error (not the bare `kind`).
+    const failed = await store.markFailed(record.jobId, kind, hint);
     if (!failed.ok) {
       logger.error(
         {
@@ -393,10 +430,6 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
         "Video poller: markFailed store write failed",
       );
     }
-    const hint =
-      kind === "job_timeout"
-        ? "The render exceeded integrations.media.videoGeneration.timeoutMs; raise it or retry."
-        : "The provider returned no usable result; retry or adjust the prompt.";
     logger.warn(
       {
         traceId: record.traceId,
@@ -438,11 +471,24 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
         return;
       }
       if (stopped) return; // shutdown raced the re-read — do not deliver
-      const outcome = await pollUntilDone<{ state: string }>({
+      // WR-01: carry the adapter's classified errorKind+hint off the poll snapshot
+      // (a Veo operation.error / Grok status:failed|expired classifies at poll time)
+      // so a terminal failure is persisted/logged with its SPECIFIC kind, not the
+      // generic empty_response. A failed poll Result (a thrown HTTP error) carries
+      // neither — the generic classifyOutcome fallback then applies (FAL parity).
+      const outcome = await pollUntilDone<PollSnapshot>({
         poll: () =>
           provider
             .poll({ jobId: record.jobId, provider: record.provider, model: record.model ?? "" })
-            .then((r) => (r.ok ? { state: r.value.state } : { state: "failed" })),
+            .then((r) =>
+              r.ok
+                ? {
+                    state: r.value.state,
+                    ...(r.value.errorKind !== undefined ? { errorKind: r.value.errorKind } : {}),
+                    ...(r.value.hint !== undefined ? { hint: r.value.hint } : {}),
+                  }
+                : { state: "failed" },
+            ),
         isDone: (s) => s.state === "done",
         isFailed: (s) => s.state === "failed",
         deadline: createPollDeadline(config.timeoutMs, nowMs),
@@ -456,6 +502,10 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
       if (stopped) return; // shutdown raced the loop — do not deliver
       if (outcome.kind === "done") {
         await completeJob(record, startMs);
+      } else if (outcome.kind === "failed" && outcome.status.errorKind !== undefined) {
+        // WR-01/WR-02: the adapter classified this terminal failure — persist its
+        // specific kind + actionable hint (not the generic empty_response).
+        await markFailed(record, outcome.status.errorKind, undefined, outcome.status.hint);
       } else {
         await markFailed(record, classifyOutcome(outcome.kind));
       }

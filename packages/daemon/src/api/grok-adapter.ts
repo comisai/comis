@@ -230,6 +230,16 @@ export function createGrokVideoAdapter(opts: {
           // failures (both → "failed"); anything not done/failed/expired is pending.
           const state: VideoJobStatus["state"] =
             body.status === "done" ? "done" : body.status === "failed" || body.status === "expired" ? "failed" : "pending";
+          // WR-01: on a terminal failed/expired, thread the SAME classified
+          // kind+hint the execute() path emits onto the snapshot (reusing the
+          // existing classifier — `body.status` is the failed|expired discriminant
+          // here) so the off-turn poller persists the specific kind + actionable
+          // hint instead of collapsing to empty_response. The hint is a FIXED
+          // auth/quota/content string — never the raw error message/bearer.
+          if (state === "failed") {
+            const c = classifyGrokVideoError(body.error, { status: body.status as "failed" | "expired" });
+            return { jobId: job.jobId, state, errorKind: c.videoErrorKind, hint: c.hint } satisfies VideoJobStatus;
+          }
           return { jobId: job.jobId, state } satisfies VideoJobStatus;
         })(),
       );
