@@ -59,7 +59,6 @@ import {
   buildSessionDescriptor,
   markRunningSessionsLost as durableMarkLost,
   staysRecoverable as durableStaysRecoverable,
-  type SessionDescriptorStorePort,
   type TerminalDurabilityDeps,
 } from "./terminal-session-reattach.js";
 import { waitReplyTimeoutMs } from "./terminal-settle.js";
