@@ -33,6 +33,7 @@ import {
   appendAnswered,
   updateJournal,
   screenDigestLine,
+  checkSpendCeiling,
   type LoopGuard,
   type TerminalSessionRegistry,
   type DriveJournal,
@@ -132,6 +133,16 @@ export interface WokenTurnDriverDeps {
    * as-yet-unstamped session (the driver then falls back to the turn's own start).
    */
   driveStartMs?: (sessionId: string) => number | undefined;
+  /**
+   * ENDURE-01 (165-07): the operator per-drive spend ceiling (`drive.maxCostUsd`), or `null`
+   * for uncapped (the default — preserves today's behavior, I1). On each PROMOTED turn the
+   * driver runs the pure `checkSpendCeiling(journal.costUsd, maxCostUsd)` over the journal's
+   * HONEST run-total cost (I6 — never a fabricated cost) and, on a breach, escalates with the
+   * figure + STOPS the turn (never a silent overspend). The daemon (165-07 Task 4) threads
+   * `config.drive?.maxCostUsd ?? null`; absent/`null` ⇒ no spend check (I1). An unpromoted
+   * turn has no drive journal so the ceiling is inert there regardless.
+   */
+  maxCostUsd?: number | null;
   /** Injected clock (no raw global). */
   nowMs: () => number;
   logger: ComisLogger;
@@ -146,6 +157,16 @@ export function buildWokenTurnDriver(
   deps: WokenTurnDriverDeps,
 ): (sessionId: string, owner: PersistedWakeOwner) => Promise<void> {
   const log = deps.logger.child({ submodule: "terminal-wake-turn" });
+
+  // DUR-02 / I10 (165-07): the closure-local "first turn this daemon LIFE" marker — the
+  // discriminator for the resume-no-re-answer guard. The driver is built once per daemon life
+  // (setupTerminalWake); this Set resets on restart (a new daemon = a new closure). A session
+  // NOT yet in this Set is on its FIRST turn this life: if its journal came back from disk
+  // with prior answeredPrompts (a RESUMED drive — the in-memory loop-guard ring is cold
+  // post-restart), an already-answered matched pattern is SKIPPED rather than re-sent (resume,
+  // don't re-answer). After the first turn the session is "seen" and the LIVE path governs
+  // repeats via the loop-guard (SEC-11) — so the live MR-01 accumulation is unchanged (I1).
+  const resumedFirstTurnSeen = new Set<string>();
 
   /** Emit the escalation audit + route the NotifyFn chain (§4.7). Never the prompt text. */
   async function escalate(sessionId: string, owner: PersistedWakeOwner, reason: WokenTurnEscalationReason): Promise<void> {
@@ -188,6 +209,30 @@ export function buildWokenTurnDriver(
     // (isDriveScoped), not a raw `owner.sessionKey.startsWith(...)` — uniform defensiveness
     // (a degenerate owner narrows to unpromoted, never a TypeError that strands the turn).
     const promoted = isDriveScoped(owner);
+
+    // ENDURE-01 (165-07): the SPEND CEILING — checked FIRST on a promoted turn so a breach
+    // pre-empts any further work (no status/read/answer). Reads the journal's HONEST run-total
+    // costUsd (I6 — never a fabricated cost; it is 0 at the canned-keystroke seam today) and
+    // runs the pure checkSpendCeiling over the operator ceiling. On a breach: escalate with the
+    // figure + a §2.7 WARN + STOP the turn (return) — never a silent overspend. A null/absent
+    // ceiling or an unpromoted turn (no drive journal) is a no-op (I1, byte-identical to today).
+    if (promoted && deps.journal) {
+      const costUsd = deps.journal.get(sessionId)?.costUsd ?? 0;
+      const breach = checkSpendCeiling(costUsd, deps.maxCostUsd ?? null);
+      if (breach) {
+        // The structural escalation (event + NotifyFn chain) reuses the existing escalate()
+        // path; `no_safe_match` is the closest reason in the SHIPPED terminal:escalated enum
+        // (widening that enum is a core-schema change out of this plan's scope) — the SPEND
+        // specifics (the figure + the cap) live on the dedicated §2.7 WARN below, which is the
+        // authoritative spend record an operator reconstructs the breach from (logs+events).
+        await escalate(sessionId, owner, "no_safe_match");
+        log.warn(
+          { sessionId, agentId: owner.agentId, costUsd, maxCostUsd: deps.maxCostUsd, hint: `terminal drive spend ceiling reached ($${costUsd} > $${deps.maxCostUsd}); the drive is stopped + escalated to a human (never a silent overspend)`, errorKind: "resource" as const, step: "spend_ceiling" },
+          "terminal drive spend ceiling breached; stopping the drive",
+        );
+        return; // STOP — do not status/read/answer (never a silent overspend).
+      }
+    }
 
     // (1) session_status — the §4.4 turn start (owner-scoped; the classifier perception).
     const status = await registry.status(sessionId, ownerObj);
@@ -291,6 +336,30 @@ export function buildWokenTurnDriver(
         "terminal woken turn ended (loop detected)",
       );
       return;
+    }
+
+    // (4.5) DUR-02 / I10 (165-07): the RESUME-no-re-answer guard. On the FIRST turn this
+    // daemon life for a promoted session, if its journal came back from disk having ALREADY
+    // answered this matched pattern (the loop-guard ring is cold post-restart, so step 4 cannot
+    // catch it), SKIP the re-send — a resumed drive must not re-answer a prompt it answered
+    // before the crash (resume, don't re-answer). Pattern-specific (a different answered pattern
+    // does not block the current one) + content-free (a `pattern:<idx>` id, never the text, I3).
+    // A LIVE drive (journal accumulated THIS life) is governed by the loop-guard above, NOT this
+    // guard — so its repeat-answer accumulation is unchanged (I1). The "seen" mark flips AFTER
+    // this check so the guard fires at most once per session per life (the resume moment only).
+    const firstTurnThisLife = promoted && !resumedFirstTurnSeen.has(sessionId);
+    if (promoted) resumedFirstTurnSeen.add(sessionId);
+    if (firstTurnThisLife && deps.journal) {
+      const resumedJournal = deps.journal.get(sessionId);
+      if (resumedJournal?.answeredPrompts.includes(`pattern:${decision.matchedPatternIndex}`)) {
+        // Already answered in a prior life → record a content-free waited step + do NOT re-send.
+        recordJournal("waited");
+        log.info(
+          { sessionId, agentId: owner.agentId, matchedPatternIndex: decision.matchedPatternIndex, durationMs: deps.nowMs() - startMs, step: "wake_turn_resume_skip" },
+          "terminal woken turn skipped re-answering an already-answered prompt (resume, I10)",
+        );
+        return;
+      }
     }
 
     // (5) answer — send the canned keystroke via the registry send path + AUDIT every send.
