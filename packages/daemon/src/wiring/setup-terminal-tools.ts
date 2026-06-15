@@ -288,9 +288,13 @@ export function buildTerminalEventHook(
           // classifier's structural tag (e.g. "settled_cursor_parked") — never screen text.
           const state = p.state === "stuck" ? "stuck" : "awaiting-input";
           const reason = typeof p.reason === "string" ? p.reason : "input_needed";
-          deps.eventBus.emit("terminal:input_needed", { sessionId: frame.sessionId, agentId, state, reason, timestamp });
+          // CLASS-02: the classifier confidence rides the wake event (for the autonomous
+          // policy 164–166 + a future `comis explain`). Read DEFENSIVELY off the untrusted
+          // frame (T-163-11) — an out-of-enum value falls back to "medium", never raw.
+          const confidence = p.confidence === "high" || p.confidence === "medium" ? p.confidence : "medium";
+          deps.eventBus.emit("terminal:input_needed", { sessionId: frame.sessionId, agentId, state, reason, confidence, timestamp });
           deps.skillsLogger.info(
-            { sessionId: frame.sessionId, agentId, state, reason, step: "terminal_input_needed" },
+            { sessionId: frame.sessionId, agentId, state, reason, confidence, step: "terminal_input_needed" },
             "terminal session needs input (re-published from fd3)",
           );
           break;
@@ -298,9 +302,14 @@ export function buildTerminalEventHook(
         case "terminal:stuck": {
           // Settled, no affordance, no progress past stuckMs (OPS-04) — a duration signal.
           const noProgressMs = typeof p.noProgressMs === "number" ? p.noProgressMs : 0;
-          deps.eventBus.emit("terminal:stuck", { sessionId: frame.sessionId, agentId, noProgressMs, timestamp });
+          // CLASS-02: stuck now carries the classifier reason + confidence (observability
+          // symmetry with input_needed). Both read DEFENSIVELY off the untrusted frame
+          // (T-163-11), mirroring the existing noProgressMs narrow — never a raw value.
+          const reason = typeof p.reason === "string" ? p.reason : "no_progress";
+          const confidence = p.confidence === "high" || p.confidence === "medium" ? p.confidence : "medium";
+          deps.eventBus.emit("terminal:stuck", { sessionId: frame.sessionId, agentId, noProgressMs, reason, confidence, timestamp });
           deps.skillsLogger.info(
-            { sessionId: frame.sessionId, agentId, noProgressMs, step: "terminal_stuck" },
+            { sessionId: frame.sessionId, agentId, noProgressMs, reason, confidence, step: "terminal_stuck" },
             "terminal session stuck (re-published from fd3)",
           );
           break;
