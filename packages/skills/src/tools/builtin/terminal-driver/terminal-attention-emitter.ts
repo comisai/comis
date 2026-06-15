@@ -19,8 +19,8 @@
  *
  * State → event-frame mapping (the worker-known fields ONLY; the daemon adds
  * `agentId`/`timestamp` on re-publish — the worker is owner-agnostic):
- *   - `awaiting-input` → `terminal:input_needed`, payload `{ state, reason }`
- *   - `stuck`          → `terminal:stuck`,        payload `{ noProgressMs }`
+ *   - `awaiting-input` → `terminal:input_needed`, payload `{ state, reason, confidence }`
+ *   - `stuck`          → `terminal:stuck`,        payload `{ noProgressMs, reason, confidence }`
  *   - `exited`         → `terminal:session_state`, payload `{ state: "exited" }`
  *                        (a per-session exit; the worker hosts OTHER sessions, so the
  *                        worker-process close is NOT a per-session signal — this is)
@@ -96,12 +96,22 @@ function frameForState(
 ): TerminalEventFrame | undefined {
   switch (c.state) {
     case "awaiting-input":
-      // The attention wake — a real prompt the agent must answer (TR-11).
-      return { sessionId, event: "terminal:input_needed", payload: { state: "awaiting-input", reason: c.reason } };
+      // The attention wake — a real prompt the agent must answer (TR-11). Carries the
+      // classifier verdict's confidence (CLASS-02) — a content-free enum, not screen text.
+      return {
+        sessionId,
+        event: "terminal:input_needed",
+        payload: { state: "awaiting-input", reason: c.reason, confidence: c.confidence },
+      };
     case "stuck":
       // Settled, no affordance, no progress past the stuck window (OPS-04) — a
-      // duration signal, never screen content.
-      return { sessionId, event: "terminal:stuck", payload: { noProgressMs } };
+      // duration signal, never screen content. Carries the verdict reason + confidence
+      // (CLASS-02, observability symmetry) — both content-free machine tags/enums.
+      return {
+        sessionId,
+        event: "terminal:stuck",
+        payload: { noProgressMs, reason: c.reason, confidence: c.confidence },
+      };
     case "exited":
       // A per-session PTY exit. The worker process stays up for its OTHER sessions,
       // so the worker-process close is NOT this session's signal — this frame is.
