@@ -2869,6 +2869,23 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   },
   {
     "immutable": true,
+    "path": "agents.skills.terminal.drive",
+    "type": "object"
+  },
+  {
+    "default": "auto",
+    "immutable": true,
+    "path": "agents.skills.terminal.drive.mode",
+    "type": "string"
+  },
+  {
+    "default": "digest",
+    "immutable": true,
+    "path": "agents.skills.terminal.drive.readMode",
+    "type": "string"
+  },
+  {
+    "immutable": true,
     "path": "agents.skills.terminal.enabled",
     "type": "boolean"
   },
@@ -18257,6 +18274,34 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
               ],
               "type": "object"
             },
+            "drive": {
+              "additionalProperties": false,
+              "properties": {
+                "mode": {
+                  "default": "auto",
+                  "enum": [
+                    "auto",
+                    "attached",
+                    "detached"
+                  ],
+                  "type": "string"
+                },
+                "readMode": {
+                  "default": "digest",
+                  "enum": [
+                    "digest",
+                    "diff",
+                    "full"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "mode",
+                "readMode"
+              ],
+              "type": "object"
+            },
             "enabled": {
               "type": "boolean"
             },
@@ -28661,6 +28706,34 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                       "cols",
                       "rows",
                       "scrollback"
+                    ],
+                    "type": "object"
+                  },
+                  "drive": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "mode": {
+                        "default": "auto",
+                        "enum": [
+                          "auto",
+                          "attached",
+                          "detached"
+                        ],
+                        "type": "string"
+                      },
+                      "readMode": {
+                        "default": "digest",
+                        "enum": [
+                          "digest",
+                          "diff",
+                          "full"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "mode",
+                      "readMode"
                     ],
                     "type": "object"
                   },
