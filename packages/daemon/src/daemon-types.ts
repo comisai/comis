@@ -659,6 +659,15 @@ export interface BootContext {
    *  PRE-submit. Undefined when `maxCostPerHourUsd` is unset (count-only). Folded
    *  onto videoHandlerDeps as the `costLimiter` dep. */
   videoGenCostLimiter?: import("./api/video-cost-limiter.js").VideoCostLimiter;
+  /** JOB-01 (189): the durable async video-job store (shared memory.db table),
+   *  constructed in buildVideoGenBundle. Folded onto videoHandlerDeps as
+   *  `videoJobStore` (the handler inserts a pending row on submit) and consumed by
+   *  the background poller (listPending boot-resume + the completion tail). */
+  videoJobStore?: import("@comis/memory").VideoJobStore;
+  /** JOB-02 (189): the two-phase background poller, constructed in
+   *  buildVideoGenBundle. Started after setupChannels (wirePostChannelsLifecycle),
+   *  shut down via setupShutdown. Folded onto videoHandlerDeps as `videoPoller`. */
+  videoPoller?: import("./wiring/setup-video-poller.js").VideoPoller;
   /** VIS-01 (187): the provider-following vision bundle from buildMediaVisionBundle
    *  — `capability` is the main-provider vision bridge (folded onto
    *  MediaApiDeps.mainProviderVision) and `resolveMainModelId` is the single-source

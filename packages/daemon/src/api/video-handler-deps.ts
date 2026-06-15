@@ -58,8 +58,17 @@ export interface VideoHandlerDepsShape {
    *  `integrations.media.videoGeneration.maxCostPerHourUsd` is unset (count-only,
    *  no regression). When present the handler computes
    *  `est = estimateVideoCostUsd(...)` FIRST, then `canSpend(agentId, est)`
-   *  BEFORE port.execute (block with quota_exceeded), and
-   *  `record(agentId, actual ?? est)` AFTER a successful render. The count rate
-   *  limiter (maxPerHour) is RETAINED and orthogonal. */
+   *  BEFORE port.submit (block with quota_exceeded). The ACTUAL-cost reconcile
+   *  `record(agentId, actual ?? est)` is now the POLLER's job (it runs the
+   *  completion tail off-turn). The count rate limiter (maxPerHour) is RETAINED
+   *  and orthogonal. */
   costLimiter?: import("./video-cost-limiter.js").VideoCostLimiter;
+  /** JOB-01 (189): the durable async job store. The handler `insert`s a `pending`
+   *  row on a successful submit (jobId + routing + traceId + estimate), so the
+   *  background poller resumes it across the agent turn AND a daemon restart. */
+  videoJobStore: import("@comis/memory").VideoJobStore;
+  /** JOB-02 (189): hand the submitted job to the background poller, which drives
+   *  poll→done→fetchResult→persist→deliver→record→markDone off-turn. Narrow shape
+   *  (only `track`) so the deps stay honest about what the handler uses. */
+  videoPoller: { track(job: import("@comis/core").VideoGenJob): void };
 }

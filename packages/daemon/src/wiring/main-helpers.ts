@@ -521,7 +521,7 @@ export function buildVideoGenBundle(deps: {
  * The post-channels boot-context fields `buildVideoHandlerDeps` reads (mirrors
  * `ImageHandlerBootSlice`).
  */
-type VideoHandlerBootSlice = Pick<BootContext, "videoGenProvider" | "videoGenRateLimiter" | "videoGenCostLimiter" | "skillsLogger" | "container"> &
+type VideoHandlerBootSlice = Pick<BootContext, "videoGenProvider" | "videoGenRateLimiter" | "videoGenCostLimiter" | "videoJobStore" | "videoPoller" | "skillsLogger" | "container"> &
   Required<Pick<BootContext, "videoGenConfig" | "adaptersByType" | "workspaceDirs" | "defaultWorkspaceDir" | "persistVideo">>;
 
 /**
@@ -535,7 +535,10 @@ export function buildVideoHandlerDeps(
   c: VideoHandlerBootSlice,
   resolveAgentMainProvider: (agentId: string) => { providerId: string },
 ): import("../api/rpc-dispatch.js").ApiDispatchDeps["videoHandlerDeps"] {
-  if (!c.videoGenProvider || !c.videoGenRateLimiter) return undefined;
+  // 189: the async store + poller are REQUIRED for the submit path. They are
+  // constructed in buildVideoGenBundle alongside the provider, so when the
+  // provider exists they always do — but guard explicitly (no undefined slip).
+  if (!c.videoGenProvider || !c.videoGenRateLimiter || !c.videoJobStore || !c.videoPoller) return undefined;
   return {
     provider: c.videoGenProvider,
     rateLimiter: c.videoGenRateLimiter,
@@ -547,6 +550,8 @@ export function buildVideoHandlerDeps(
     defaultWorkspaceDir: c.defaultWorkspaceDir,
     persist: c.persistVideo, // DEL-01: persist getter (videos/)
     costLimiter: c.videoGenCostLimiter, // SEC-02 (DIVERGENCE 3): pre-submit ceiling
+    videoJobStore: c.videoJobStore, // JOB-01: handler inserts a pending row on submit
+    videoPoller: c.videoPoller, // JOB-02: hand the job to the background poller
   };
 }
 
