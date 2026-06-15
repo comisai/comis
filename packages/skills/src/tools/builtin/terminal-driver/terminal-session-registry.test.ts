@@ -23,8 +23,15 @@
 
 import { describe, it, expect, vi } from "vitest";
 import { EventEmitter } from "node:events";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 import { createFakeTimers } from "../../../../../../test/support/fake-timers.js";
+import {
+  composeStatusView,
+  notFoundStatus,
+  type WorkerStatusPerception,
+} from "./terminal-status-view.js";
 import {
   createTerminalSessionRegistry,
   DEFAULT_SCROLLBACK,
@@ -1734,5 +1741,103 @@ describe("createTerminalSessionRegistry — 124-05 fd3 events-push reader (TR-11
     await expect(
       registry.create({ allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }, OWNER),
     ).resolves.toBeDefined();
+  });
+});
+
+// ===========================================================================
+// 163-03 (CLASS-02 status half): the classifier `confidence` + `reason` thread
+// through the worker->registry status round-trip — the documented field-plumbing
+// bug class (project_mcp_field_plumbing). `classifyFrame` already computes both;
+// composeStatusView must fold them through and notFoundStatus must supply a safe
+// total default (high/exited) so the widened TerminalStatusView is never partial.
+//
+// RED on pre-patch: TerminalStatusView/WorkerStatusPerception carry NEITHER field,
+// so the perception literal below is a tsc error and the view assertions read
+// `undefined`. The source-introspection layer (esbuild strips type annotations, so
+// a bare interface widen is not runtime-RED — the events-terminal.test.ts precedent)
+// pins the two interfaces declare the fields.
+// ===========================================================================
+
+/** The src `terminal-status-view.ts` read for the type-only source-introspection RED. */
+const STATUS_VIEW_SRC = readFileSync(
+  fileURLToPath(new URL("./terminal-status-view.ts", import.meta.url)),
+  "utf8",
+);
+
+describe("163-03 — composeStatusView/notFoundStatus thread confidence + reason (CLASS-02)", () => {
+  it("composeStatusView passes perception.confidence + perception.reason through verbatim (pure fold)", () => {
+    const perception: WorkerStatusPerception = {
+      state: "awaiting-input",
+      cursorParked: true,
+      screenDiffEmpty: true,
+      interactions: 4,
+      confidence: "high",
+      reason: "settled_cursor_parked",
+    };
+    const view = composeStatusView(perception, { lastActivity: 123 });
+    expect(view.confidence).toBe(perception.confidence);
+    expect(view.reason).toBe(perception.reason);
+    // The pre-existing fold is unchanged for the other fields.
+    expect(view.state).toBe("awaiting-input");
+    expect(view.lastActivity).toBe(123);
+    expect(view.interactions).toBe(4);
+  });
+
+  it("notFoundStatus(undefined) supplies a safe total default (state/confidence:high/reason:exited) — no undefined field", () => {
+    const view = notFoundStatus(undefined);
+    expect(view.state).toBe("exited");
+    expect(view.confidence).toBe("high");
+    expect(view.reason).toBe("exited");
+    // The not-found degrade is the T-124-15 safe shape, never a real classifier verdict.
+    expect(view.cursorParked).toBe(false);
+    expect(view.screenDiffEmpty).toBe(true);
+  });
+
+  it("round-trip: a dialog perception {confidence:'medium', reason:'dialog_detected'} survives the worker->registry hop", () => {
+    // The field-plumbing pin: a perception the worker would emit for a dialog frame,
+    // folded through composeStatusView, must carry BOTH fields onto the view verbatim
+    // (a missed seam reads undefined here — the silent no-op this guards).
+    const perception: WorkerStatusPerception = {
+      state: "awaiting-input",
+      cursorParked: false,
+      screenDiffEmpty: true,
+      interactions: 1,
+      confidence: "medium",
+      reason: "dialog_detected",
+    };
+    const view = composeStatusView(perception, { lastActivity: 9000 });
+    expect(view.confidence).toBe("medium");
+    expect(view.reason).toBe("dialog_detected");
+  });
+
+  it("content-free (I3): reason is a structural machine tag — a single-line string with no newline / TUI bytes", () => {
+    // reason is sourced ONLY from Classification.reason (a fixed enum tag), never screen
+    // text; assert it carries no newline (the structural-only doc-promise, T-163-07).
+    const fromCompose = composeStatusView(
+      {
+        state: "stuck",
+        cursorParked: false,
+        screenDiffEmpty: true,
+        interactions: 0,
+        confidence: "medium",
+        reason: "no_progress",
+      },
+      { lastActivity: 1 },
+    );
+    expect(typeof fromCompose.reason).toBe("string");
+    expect(fromCompose.reason).not.toMatch(/[\r\n]/);
+    expect(notFoundStatus(undefined).reason).not.toMatch(/[\r\n]/);
+  });
+
+  it("source-introspection: both status shapes DECLARE confidence + reason (esbuild strips types → this is the runtime-RED layer)", () => {
+    // The two interfaces must both carry the fields. esbuild erases the annotations
+    // at build time, so a bare interface widen is invisible to a runtime assertion —
+    // this source check is the proven guard (events-terminal.test.ts precedent).
+    expect(STATUS_VIEW_SRC).toMatch(/confidence:\s*"high"\s*\|\s*"medium"/);
+    expect(STATUS_VIEW_SRC).toMatch(/reason:\s*string/);
+    // notFoundStatus supplies the safe default + composeStatusView folds the perception.
+    expect(STATUS_VIEW_SRC).toMatch(/reason:\s*"exited"/);
+    expect(STATUS_VIEW_SRC).toMatch(/perception\.confidence/);
+    expect(STATUS_VIEW_SRC).toMatch(/perception\.reason/);
   });
 });
