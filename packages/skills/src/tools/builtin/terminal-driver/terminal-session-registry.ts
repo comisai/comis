@@ -590,6 +590,10 @@ export function createTerminalSessionRegistry(
     }
     // The classifier state stays single-homed in the worker; compose it with the
     // daemon-side lastActivity (the leaf helper folds the two — keeps this file lean).
+    // The `as WorkerStatusPerception` cast is of an UNTRUSTED cross-process reply, so
+    // composeStatusView DEFENSIVELY narrows confidence/reason against a malformed /
+    // version-skewed worker before they reach the status surface (LR-03) — the cast is
+    // the happy-path type, the fold is the runtime safety net.
     return composeStatusView(reply.result as WorkerStatusPerception, handle);
   }
 

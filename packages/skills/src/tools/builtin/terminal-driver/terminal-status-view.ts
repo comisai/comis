@@ -95,12 +95,29 @@ export function notFoundStatus(handle: StatusHandleFields | undefined): Terminal
 }
 
 /**
+ * The safe default `reason` tag for a malformed/version-skewed worker perception — a
+ * structural machine tag (content-free, I3), NEVER screen bytes. Used when the worker
+ * reply omits / mis-types `reason` (LR-03).
+ */
+const UNKNOWN_REASON = "unknown";
+
+/**
  * Fold the worker's structural perception together with the daemon-side
  * `handle.lastActivity` into the full {@link TerminalStatusView}. The classifier state
  * stays single-homed in the worker; the registry only adds the activity timestamp it
  * owns.
  *
- * @param perception - The worker's `status`-frame reply subset.
+ * DEFENSIVE against a malformed reply (LR-03): the registry casts the cross-process IPC
+ * `reply.result` with `as WorkerStatusPerception` (an unchecked cast of untrusted bytes),
+ * so a version-skewed / corrupt worker could deliver an out-of-enum `confidence` or a
+ * missing / non-string `reason`. This fold NARROWS both before they reach the status
+ * surface the autonomous policy reads — coalescing `confidence` to `"medium"` and
+ * `reason` to {@link UNKNOWN_REASON} when not the expected enum/string — mirroring the
+ * `setup-terminal-tools` fd3 republish reader (T-163-11) and {@link notFoundStatus}'s
+ * safe-default stance, so the view stays TOTAL (never an `undefined`/type-breaking
+ * field). The well-formed happy path folds through verbatim.
+ *
+ * @param perception - The worker's `status`-frame reply subset (an UNTRUSTED cross-process value; narrowed here).
  * @param handle - The owning handle (for `lastActivity`; the worker's `exitCode` wins when present, else the handle's).
  */
 export function composeStatusView(
@@ -108,17 +125,29 @@ export function composeStatusView(
   handle: StatusHandleFields,
 ): TerminalStatusView {
   const exitCode = perception.exitCode ?? handle.exitCode;
+  // Narrow the two CLASS-02 fields against a malformed reply (LR-03): only the 2-value
+  // enum passes for confidence, only a string for reason — anything else degrades to the
+  // safe default rather than propagating a raw/undefined value onto the status surface.
+  const confidence =
+    perception.confidence === "high" || perception.confidence === "medium"
+      ? perception.confidence
+      : "medium";
+  const reason =
+    typeof perception.reason === "string" && perception.reason.length > 0
+      ? perception.reason
+      : UNKNOWN_REASON;
   return {
     state: perception.state,
     lastActivity: handle.lastActivity,
     interactions: perception.interactions,
     cursorParked: perception.cursorParked,
     screenDiffEmpty: perception.screenDiffEmpty,
-    // Pure pass-through fold: the classifier's confidence + reason ride from the
-    // worker's perception onto the view verbatim (the worker stays single-homed for
-    // the verdict; the registry only adds `lastActivity`).
-    confidence: perception.confidence,
-    reason: perception.reason,
+    // The classifier's confidence + reason ride from the worker's perception onto the
+    // view (the worker stays single-homed for the verdict; the registry only adds
+    // `lastActivity`) — defensively narrowed above so a malformed reply can never surface
+    // an undefined / out-of-enum value (LR-03).
+    confidence,
+    reason,
     ...(exitCode !== undefined ? { exitCode } : {}),
   };
 }
