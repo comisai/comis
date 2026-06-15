@@ -71,6 +71,31 @@ function chimericModelFromRow(row: DiagnosticRow): number {
   }
 }
 
+/** T1.3 (F6): the SPECIFIC flagged config keys from a config_posture row — CLOSED labels
+ *  only (never raw details / secret values, per the H1 no-body rule), so a fleet finding
+ *  NAMES which knob is off instead of "the flagged config keys" (the live friction was
+ *  grepping daemon.log to learn it was gateway.tls + CANARY_SECRET). served-below +
+ *  chimeric have dedicated findings, so they are NOT repeated here. Malformed folds to []. */
+function flaggedPostureKeys(row: DiagnosticRow): string[] {
+  if (row.details === undefined) return [];
+  try {
+    const d = JSON.parse(row.details) as {
+      tlsOff?: unknown;
+      canaryFallbackActive?: unknown;
+      strandedFindings?: unknown;
+    };
+    const keys: string[] = [];
+    if (d.tlsOff === true) keys.push("gateway.tls (off)");
+    if (d.canaryFallbackActive === true) keys.push("CANARY_SECRET (unset)");
+    if (Array.isArray(d.strandedFindings) && d.strandedFindings.length > 0) {
+      keys.push(`stranded secrets (${d.strandedFindings.length})`);
+    }
+    return keys;
+  } catch {
+    return [];
+  }
+}
+
 /** A single advisory multilingual flag from a model_health row. `undefined`
  *  means the key was absent or not a recognized value (omitted, no advisory). */
 type MultilingualFlag = boolean | "unknown" | undefined;
@@ -251,20 +276,27 @@ export function buildFindings(
     }
   }
   if (configPosture.length > 0) {
-    findings.push({
-      code: "config_posture",
-      detail: `${configPosture.length} config-posture signal(s) (insecure or drifted config)`,
-      count: configPosture.length,
-      hint: "review the gateway TLS / token posture and the flagged config keys",
-    });
-    // KNOB-03: dedicated served-below-configured finding from the LATEST posture
-    // row (max timestamp — scan, never assume query order). Posture is STANDING
-    // STATE, not cumulative: an old under-served boot superseded by a healthy
-    // one must not keep flagging the fleet.
+    // The LATEST posture row (max timestamp — scan, never assume query order). Posture is
+    // STANDING STATE, not cumulative: an old insecure/under-served boot superseded by a
+    // healthy one must not keep flagging the fleet. Used for BOTH the named-keys rollup and
+    // the dedicated served-below / chimeric findings below.
     let latest = configPosture[0]!;
     for (const row of configPosture) {
       if (row.timestamp > latest.timestamp) latest = row;
     }
+    // T1.3 (F6): name the SPECIFIC flagged keys (closed labels only) so an operator does
+    // not have to grep daemon.log to learn WHICH knob is off (gateway.tls, CANARY_SECRET…).
+    const flaggedKeys = flaggedPostureKeys(latest);
+    findings.push({
+      code: "config_posture",
+      detail:
+        flaggedKeys.length > 0
+          ? `${configPosture.length} config-posture signal(s) (insecure or drifted config) — flagged: ${flaggedKeys.join(", ")}`
+          : `${configPosture.length} config-posture signal(s) (insecure or drifted config)`,
+      count: configPosture.length,
+      hint: "reconcile the named flagged keys against the secure baseline (served-below + chimeric model have their own findings)",
+    });
+    // KNOB-03: dedicated served-below-configured finding from the latest posture row.
     const latestCount = servedBelowConfiguredFromRow(latest);
     if (latestCount > 0) {
       findings.push({

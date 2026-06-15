@@ -82,6 +82,7 @@ const SAFE_MESSAGE: Record<ImageErrorKind, string> = {
   quota_exceeded: "Image generation quota or rate limit was exceeded.",
   timeout: "Image generation timed out or was aborted.",
   unsupported_provider: "The selected provider cannot generate images.",
+  bad_request: "The image provider rejected the request.",
   empty_response: "The image provider returned no image.",
 };
 
@@ -94,6 +95,11 @@ const ERROR_HINT: Record<ImageErrorKind, string> = {
   timeout: "Increase integrations.media.imageGeneration.timeoutMs or retry.",
   unsupported_provider:
     "Set integrations.media.imageGeneration.provider to an image-capable provider (e.g. \"openrouter\").",
+  // NON-retry hint (contrast with empty_response's "Retry"): a permanent 4xx is
+  // re-rejected on retry, so the agent must fail fast. The exact provider reason
+  // rides the structured log (step "codex_image_failed"), not this hint.
+  bad_request:
+    "The provider rejected the request; a retry will not succeed — do not retry. The exact reason is in the daemon log (step: codex_image_failed).",
   empty_response: "Retry; the provider returned a non-image response.",
 };
 
@@ -113,6 +119,15 @@ function classifyImageError(res: AssistantImages): ImageErrorKind {
     return "quota_exceeded";
   }
   if (/timed out|timeout|deadline|etimedout/.test(msg)) return "timeout";
+  // A permanent 4xx — the provider rejected the request ITSELF (NOT auth/quota/
+  // content/timeout, all classified above). Retrying re-sends the same rejected
+  // request, so classify it as the NON-retryable `bad_request` (→ "precondition"
+  // log errorKind + a no-retry hint) rather than the retryable `empty_response`.
+  // This is the HTTP-400 incident fix: a Codex 400 (invalid-model / "Instructions
+  // are required" / "Store must be set to false") used to fall through to
+  // empty_response → the agent retried a permanent error. The `\b4\d\d\b` status
+  // scan runs AFTER auth(401/403)/quota(429), so it catches the remaining 4xx.
+  if (/\b4\d\d\b|bad request|invalid request|unprocessable/.test(msg)) return "bad_request";
   return "empty_response";
 }
 

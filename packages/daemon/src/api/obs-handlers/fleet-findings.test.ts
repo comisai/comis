@@ -150,3 +150,66 @@ describe("buildFindings — EMB-01 multilingual advisory (standing state)", () =
     expect(findings.some((f) => f.code === EMBED_CODE || f.code === RERANK_CODE)).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// T1.3 (F6) — the generic config_posture rollup NAMES the specific flagged keys
+// (closed labels only) instead of "the flagged config keys", so an operator does
+// not have to grep daemon.log to learn it was gateway.tls + CANARY_SECRET.
+// ---------------------------------------------------------------------------
+
+/** A config_posture row at `ts` carrying the given posture flags in its details JSON. */
+function configPostureRow(ts: number, details: Record<string, unknown>): DiagnosticRow {
+  return {
+    timestamp: ts,
+    category: "config_posture",
+    severity: "warning",
+    message: "config_posture",
+    details: JSON.stringify(details),
+  };
+}
+
+describe("buildFindings — T1.3 config_posture names the flagged keys (F6)", () => {
+  it("names gateway.tls + CANARY_SECRET + stranded secrets in the rollup detail", () => {
+    const findings = buildFindings(
+      [],
+      [],
+      [
+        configPostureRow(1_000, {
+          tlsOff: true,
+          canaryFallbackActive: true,
+          strandedFindings: [{ stranded: "anthropic", entryCount: 2 }],
+        }),
+      ],
+    );
+    const cp = findings.find((f) => f.code === "config_posture");
+    expect(cp).toBeDefined();
+    expect(cp!.detail).toMatch(/gateway\.tls/);
+    expect(cp!.detail).toMatch(/CANARY_SECRET/);
+    expect(cp!.detail).toMatch(/stranded secrets \(1\)/);
+    expect(cp!.hint).not.toBe("review the gateway TLS / token posture and the flagged config keys");
+  });
+
+  it("names keys from the LATEST posture row only (standing state — a healthy newer boot supersedes)", () => {
+    const findings = buildFindings(
+      [],
+      [],
+      [
+        configPostureRow(1_000, { tlsOff: true, canaryFallbackActive: true }),
+        configPostureRow(2_000, { tlsOff: false, canaryFallbackActive: false }),
+      ],
+    );
+    const cp = findings.find((f) => f.code === "config_posture");
+    expect(cp).toBeDefined();
+    expect(cp!.detail).not.toMatch(/gateway\.tls|CANARY_SECRET/);
+  });
+
+  it("never echoes a raw details body — only closed labels appear (no secret values / paths)", () => {
+    const findings = buildFindings(
+      [],
+      [],
+      [configPostureRow(1_000, { tlsOff: true, certPath: "/etc/ssl/private/key.pem", apiKey: "sk-leak" })],
+    );
+    const cp = findings.find((f) => f.code === "config_posture");
+    expect(cp!.detail).not.toMatch(/key\.pem|sk-leak|certPath/);
+  });
+});

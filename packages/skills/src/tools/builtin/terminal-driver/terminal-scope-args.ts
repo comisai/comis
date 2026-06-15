@@ -2,7 +2,7 @@
 // @allow-throw: exhaustiveness guards on the filesystem + network unions; unreachable at runtime, caught by TypeScript; equivalent to assertNever().
 /**
  * buildScopeArgs -- materialize a {@link TerminalScope} into the exact bwrap argv
- * (filesystem/network/uid + credentialHome + the ~/.comis carve-out).
+ * (filesystem/network/uid + credentialPaths + the ~/.comis carve-out).
  *
  * This is THE central scope -> jail mapping. It is MODELED on
  * `BwrapProvider.buildArgs` (`sandbox/bwrap-provider.ts:140-224`) but is a
@@ -159,12 +159,23 @@ function pushNetwork(args: string[], input: ScopeArgsInput): void {
 }
 
 /**
+ * True when `child` is a STRICT subpath of `parent` (segment-aware via a trailing
+ * separator, so `/a/.comis-evil` is NOT under `/a/.comis`). Deliberately false when
+ * `child === parent`: re-binding the data dir onto ITSELF would re-expose the
+ * secrets the carve-out exists to mask, so only a NESTED workspace is re-exposed.
+ */
+function isUnderDir(child: string, parent: string): boolean {
+  const withSep = parent.endsWith("/") ? parent : `${parent}/`;
+  return child.startsWith(withSep);
+}
+
+/**
  * Build the bwrap argv for a {@link TerminalScope}, in the canonical order:
  *
  *   [bwrapPath, ...systemRO(--ro-bind p p), --proc, --dev, --dev-bind /dev/pts,
- *    --tmpfs /tmp, <FS binds>, <credentialHome ro-bind>, <uid>,
+ *    --tmpfs /tmp, <FS binds>, <credentialPaths ro-bind-try>, <uid>,
  *    --unshare-all, <network>, --die-with-parent, --new-session, --chdir <cwd>,
- *    <CARVE-OUT --tmpfs <dataDir>>, --]
+ *    <CARVE-OUT --tmpfs <dataDir>>, <workspace re-bind if under dataDir>, --]
  *
  * `--unshare-all` already supplies `--unshare-pid` + `--unshare-user` + ipc/uts/
  * cgroup — no separate `--unshare-pid`. `--new-session` is emitted
@@ -187,10 +198,20 @@ export function buildScopeArgs(input: ScopeArgsInput): string[] {
   // -- Filesystem binds (the scope.filesystem dimension; workspace always bound) --
   pushFilesystemBinds(args, input);
 
-  // -- credentialHome: bind ~/.claude RO only when the operator opts in --
-  if (input.scope.credentialHome === "include") {
-    const claudeDir = `${input.home}/.claude`;
-    args.push("--ro-bind", claudeDir, claudeDir);
+  // -- credentialPaths: RO-bind each operator-listed credential path so the driven CLI sees
+  //    its own creds/config. TOOL-AGNOSTIC (no hardcoded ~/.claude): the operator lists what
+  //    to expose (~/.claude[.json] for Claude, ~/.codex for Codex, ~/.gemini for Gemini, …).
+  //    `~`/`~/` expands to home; `--ro-bind-try` skips a not-yet-created path (e.g. a first-run
+  //    trust file) instead of failing the spawn. Empty list (the default) binds nothing.
+  for (const credPath of input.scope.credentialPaths) {
+    if (credPath.length === 0) continue;
+    const expanded =
+      credPath === "~"
+        ? input.home
+        : credPath.startsWith("~/")
+          ? `${input.home}${credPath.slice(1)}`
+          : credPath;
+    args.push("--ro-bind-try", expanded, expanded);
   }
 
   // -- uid: a net-new uid != the daemon at the default (dedicated) --
@@ -223,6 +244,21 @@ export function buildScopeArgs(input: ScopeArgsInput): string[] {
   //    shadowed by this tmpfs, so the master key / secret store / runtime is denied
   //    to EVERY driven child regardless of scope (non-configurable, not a scope field).
   args.push("--tmpfs", input.dataDir);
+
+  // -- Agent-workspace persistence -- the carve-out above masks ALL of <dataDir>,
+  //    which also shadows the session workspace when it IS the agent's OWN workspace
+  //    (the default `<dataDir>/workspace/<agent>`, the same dir the agent's read/
+  //    write/exec tools operate on). Re-bind ONLY that subpath RW on top of the
+  //    tmpfs so the workspace is writable + PERSISTENT in the jail (a driven GSD
+  //    milestone's work survives), while the secrets at sibling <dataDir> paths
+  //    (secret.db / .env / config.yaml / memory.db) stay shadowed. A workspace
+  //    OUTSIDE <dataDir> (e.g. an operator-relocated dir) needs no re-bind — its
+  //    earlier `pushFilesystemBinds` mount is never masked. `isUnderDir` is strict
+  //    (workspace === dataDir is NOT re-exposed → re-binding ~/.comis onto itself
+  //    would defeat the carve-out).
+  if (isUnderDir(input.workspace, input.dataDir)) {
+    args.push("--bind", input.workspace, input.workspace);
+  }
 
   // The caller appends `bin, ...argv` after the terminator.
   args.push("--");

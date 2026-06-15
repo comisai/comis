@@ -146,7 +146,7 @@ const TerminalAllowEntrySchema = z.strictObject({
     paths: z.array(z.string()).optional(),
     network: z.enum(["none", "listed-hosts", "full"]).default("none"),
     hosts: z.array(z.string()).optional(),
-    credentialHome: z.enum(["exclude", "include"]).default("exclude"),
+    credentialPaths: z.array(z.string()).default([]),
     uid: z.enum(["dedicated", "daemon"]).default("dedicated"),
   }),
   /** Auto-answer policy for safe interaction prompts (§4.5). */

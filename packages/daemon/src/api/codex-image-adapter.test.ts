@@ -228,6 +228,22 @@ describe("createCodexImageAdapter — result mapping", () => {
     expect((result.error as { imageErrorKind?: string }).imageErrorKind).toBe("empty_response");
   });
 
+  it("OBS surfaces the transport's raw failure cause (e.g. an HTTP status) at WARN — it was invisible (troubleshooting-feedback-loop)", async () => {
+    const { manager } = mockOauth(async () => ok(VALID_BEARER));
+    // The transport saw a fast non-2xx → errorMessage "codex 400": the REAL
+    // cause the shipped classifier collapses into a generic "non-image response"
+    // (the "returned no image twice" incident — the status was never logged).
+    registerFakeTransport({ stopReason: "error", errorMessage: "codex 400", output: [] }, captured);
+    const adapter = createCodexImageAdapter({ oauthManager: manager, logger: logger as never });
+
+    await adapter.execute({ prompt: "x" });
+
+    // The raw cause must now be visible in the logs (was the obs gap).
+    const logged = JSON.stringify(logger._calls());
+    expect(logged).toContain("codex 400");
+    expect(logged).toContain("codex_image_failed");
+  });
+
   // WR-04 (184-REVIEW): a response.failed message surfaced by the transport must
   // classify to the CAUSE-specific ImageErrorKind via the shipped
   // classifyImageError — NOT a generic empty_response. These assert the full
@@ -236,6 +252,15 @@ describe("createCodexImageAdapter — result mapping", () => {
     { label: "content policy block", message: "Your request was rejected by the content policy", kind: "content_blocked" },
     { label: "quota / rate limit", message: "You exceeded your current quota, please check your plan", kind: "quota_exceeded" },
     { label: "auth / 401", message: "401 Unauthorized: invalid bearer", kind: "auth_required" },
+    // The HTTP-400 incident: a permanent contract 4xx (invalid model / missing
+    // instructions / store) must classify NON-retryable (bad_request), NOT the
+    // retryable empty_response — else the agent retries a permanent error
+    // (verified live: "the provider returned no image twice").
+    {
+      label: "permanent 4xx contract error",
+      message: 'codex 400: {"detail":"Instructions are required"}',
+      kind: "bad_request",
+    },
   ];
   for (const { label, message, kind } of failureCases) {
     it(`maps a response.failed "${label}" message to ImageGenError(${kind})`, async () => {
@@ -345,6 +370,24 @@ describe("createCodexImageAdapter — isAvailable + model", () => {
     expect(present.isAvailable()).toBe(true);
     expect(absent.isAvailable()).toBe(false);
     expect(present.id).toBe("openai-codex");
+  });
+
+  it("isAvailable() prefers the store-aware credentialsAvailable snapshot over the cold-cache hasCredentials", () => {
+    // Cold cache (hasCredentials=false) but the boot store-probe found the
+    // logged-in profile → the adapter MUST report available (the cold-cache fix).
+    const coldButLoggedIn = createCodexImageAdapter({
+      oauthManager: mockOauth(async () => ok(VALID_BEARER), false).manager,
+      credentialsAvailable: true,
+      logger: logger as never,
+    });
+    expect(coldButLoggedIn.isAvailable()).toBe(true);
+    // An explicit store-aware false is respected even over a stale-true cache.
+    const storeSaysNo = createCodexImageAdapter({
+      oauthManager: mockOauth(async () => ok(VALID_BEARER), true).manager,
+      credentialsAvailable: false,
+      logger: logger as never,
+    });
+    expect(storeSaysNo.isAvailable()).toBe(false);
   });
 
   it("exports a hand-built codex ImagesModel pointing at the ChatGPT backend", () => {

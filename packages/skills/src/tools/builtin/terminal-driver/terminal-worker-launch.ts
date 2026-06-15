@@ -18,10 +18,23 @@
  */
 
 import { spawn as childSpawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 import { systemEnvSnapshot } from "@comis/core";
 
 import type { FakeWorkerChild } from "./terminal-session-registry.js";
+
+/**
+ * Resolve the absolute path of the compiled standalone worker entry
+ * (`terminal-worker-main.js`) that {@link buildProductionSpawnWorker} forks.
+ * Computed from THIS module's own URL (both are siblings in the same
+ * `terminal-driver` dist dir) so it is correct regardless of install location —
+ * global npm prefix, bundled tarball, or dev dist — NEVER a data-dir placeholder.
+ * The daemon's `resolveWorkerJsPath` delegates here (119-04 closure).
+ */
+export function resolveWorkerMainPath(): string {
+  return fileURLToPath(new URL("./terminal-worker-main.js", import.meta.url));
+}
 
 /**
  * The 118-proven worker-launch permission posture (the daemon spawns the worker
@@ -57,6 +70,8 @@ export function buildProductionSpawnWorker(
   return () =>
     childSpawn(process.execPath, args, {
       stdio: ["pipe", "pipe", "pipe", "pipe"],
-      env: systemEnvSnapshot(),
+      // Inject the data dir so the worker's durable-state dir matches the
+      // `--allow-fs-write` scope above (the worker mkdir's + logs there).
+      env: { ...systemEnvSnapshot(), COMIS_TERMINAL_DATA_DIR: dataDir },
     }) as unknown as FakeWorkerChild;
 }

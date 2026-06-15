@@ -78,6 +78,12 @@ export const TRAJECTORY_EVENT_TYPES = [
   // GENQ-01: a memory-generation pass's output diverged from its source (content-free).
   "memory.generation_quality",
 
+  // Background task lifecycle (T2.2 / F9): promote/complete/fail of a long-running tool
+  // detached past the execute() boundary (content-free — ids + durationMs only).
+  "background_task.promoted",
+  "background_task.completed",
+  "background_task.failed",
+
   // Delivery queue lifecycle.
   "delivery.queued",
   "delivery.dispatched",

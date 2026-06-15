@@ -57,8 +57,26 @@ export {
 // under the 800-line cap; re-exported here so the package surface is unchanged).
 export {
   buildProductionSpawnWorker,
+  resolveWorkerMainPath,
   WORKER_PERMISSION_ARGS,
 } from "./terminal-worker-launch.js";
+
+// The no-secret host-allowlist egress proxy (EgressControlPort impl, spec §3.5),
+// moved here from @comis/daemon so the standalone worker process can construct
+// its OWN egress for `network: listed-hosts` (the worker runs outside the jail
+// and has network; the daemon also constructs one for the in-process test path).
+export {
+  createTerminalEgressProxy,
+  type TerminalEgressProxyDeps,
+  type EgressProxyLogger,
+} from "./terminal-egress-proxy.js";
+
+// The PERSISTENT, agent-scoped workspace allocator (`<agentWorkspaceDir>/terminal`).
+// The daemon injects it as the registry's `allocateWorkspace` with a no-op
+// `cleanupWorkspace`, so a driven session's work persists in the agent's own
+// workspace instead of a throwaway /tmp dir. See its doc + buildScopeArgs' carve-out
+// re-bind for the security posture (only this subtree is re-exposed in the jail).
+export { prepareAgentTerminalWorkspace } from "./terminal-workspace.js";
 
 // The per-session usage-cap primitive (closure-local counters + injected
 // clock). The tool layer consumes createSessionCaps to REJECT on

@@ -28,6 +28,9 @@ import { existsSync, statSync, rmSync } from "node:fs";
 import {
   allocateSessionWorkspace,
   cleanupSessionWorkspace,
+  prepareAgentTerminalWorkspace,
+  AGENT_TERMINAL_SUBDIR,
+  resolveCreateWorkspace,
 } from "./terminal-workspace.js";
 import {
   createTerminalSessionRegistry,
@@ -122,6 +125,64 @@ describe("allocateSessionWorkspace — a real per-session jail workspace (gap 2)
     expect(existsSync(workspace)).toBe(false);
     // Idempotent — a second cleanup (already gone) does not throw.
     expect(() => cleanupSessionWorkspace(workspace)).not.toThrow();
+  });
+});
+
+describe("prepareAgentTerminalWorkspace — the PERSISTENT, agent-scoped workspace (daemon allocator)", () => {
+  it("returns <agentWorkspaceDir>/terminal and creates it world-rwx + recursive (reusable across sessions)", () => {
+    const calls: { mkdir: string[]; chmod: Array<[string, number]> } = { mkdir: [], chmod: [] };
+    const ws = prepareAgentTerminalWorkspace("/home/u/.comis/workspace/agent-a", {
+      mkdir: (p) => calls.mkdir.push(p),
+      chmod: (p, m) => calls.chmod.push([p, m]),
+    });
+    const expected = `/home/u/.comis/workspace/agent-a/${AGENT_TERMINAL_SUBDIR}`;
+    expect(ws).toBe(expected);
+    // mkdir is recursive (idempotent across the agent's sessions) + chmod is world-rwx
+    // (a jailed dedicated-uid child must be able to write the daemon-owned dir).
+    expect(calls.mkdir).toEqual([expected]);
+    expect(calls.chmod).toEqual([[expected, 0o777]]);
+  });
+
+  it("really creates the dir on disk (default fs deps) and is idempotent on a second call", () => {
+    const base = allocateSessionWorkspace("agent-root").workspace; // a throwaway agent-workspace stand-in
+    try {
+      const ws1 = prepareAgentTerminalWorkspace(base);
+      expect(existsSync(ws1)).toBe(true);
+      expect(ws1.endsWith(`/${AGENT_TERMINAL_SUBDIR}`)).toBe(true);
+      expect(statSync(ws1).mode & 0o007).toBe(0o007); // world rwx
+      // Idempotent: a second prepare on the same agent dir does not throw (recursive mkdir).
+      expect(() => prepareAgentTerminalWorkspace(base)).not.toThrow();
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("resolveCreateWorkspace — cwd ~ expansion + clamp-to-workspace", () => {
+  const WS = "/home/u/.comis/workspace/terminal";
+  const allocate = () => WS;
+
+  it("clamps a literal-tilde cwd that resolves OUTSIDE the workspace to the workspace", () => {
+    // The agent's `~/.comis/workspace` expands to the PARENT of the session workspace
+    // → not within → clamped (it would otherwise break bwrap --chdir / escape the jail).
+    const r = resolveCreateWorkspace({ cwd: "~/.comis/workspace" }, allocate, "s1", "/home/u");
+    expect(r.workspace).toBe(WS);
+    expect(r.cwd).toBe(WS);
+  });
+
+  it("honors a cwd that (after ~ expansion) is WITHIN the workspace", () => {
+    const r = resolveCreateWorkspace({ cwd: "~/.comis/workspace/terminal/proj" }, allocate, "s1", "/home/u");
+    expect(r.cwd).toBe(`${WS}/proj`);
+  });
+
+  it("clamps a ../ escape attempt back to the workspace", () => {
+    const r = resolveCreateWorkspace({ cwd: `${WS}/../../../etc` }, allocate, "s1", "/home/u");
+    expect(r.cwd).toBe(WS);
+  });
+
+  it("defaults cwd to the workspace when none is supplied", () => {
+    const r = resolveCreateWorkspace({}, allocate, "s1", "/home/u");
+    expect(r.cwd).toBe(WS);
   });
 });
 

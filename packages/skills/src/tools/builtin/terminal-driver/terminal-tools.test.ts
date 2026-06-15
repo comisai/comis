@@ -56,7 +56,7 @@ import type { AllowEntryLike, TerminalScope } from "./allowlist-matcher.js";
 const DEFAULT_SCOPE: TerminalScope = {
   filesystem: "workspace",
   network: "none",
-  credentialHome: "exclude",
+  credentialPaths: [],
   uid: "dedicated",
 };
 
@@ -344,6 +344,18 @@ describe("terminal-tools — create gate + canonicalization + observability", ()
     expect(registry.createCalls).toHaveLength(0);
   });
 
+  it("the not-allowlisted error names the ALLOWED commands so the agent self-corrects (no more guessing)", async () => {
+    const registry = makeFakeRegistry();
+    const tool = createTerminalSessionCreateTool(baseDeps(registry)); // allowEntries → allows "bash"
+    // A rejection must tell the agent WHAT is allowed (the entry basenames), not only
+    // what it tried — otherwise it keeps guessing (npx, absolute paths, …). Here it
+    // tried `npx`; the error must surface the allowed basename `bash`.
+    await expect(
+      tool.execute("call-1", { allowId: "x", command: "npx" }),
+    ).rejects.toThrow(/\[permission_denied\][\s\S]*\bbash\b/);
+    expect(registry.createCalls).toHaveLength(0);
+  });
+
   it("fails closed when no sandbox provider is available", async () => {
     const registry = makeFakeRegistry();
     const deps = baseDeps(registry, { detectProvider: () => undefined });
@@ -449,7 +461,7 @@ describe("terminal-tools — scope is sourced from the entry, never the agent pa
       paths: ["/srv/data"],
       network: "listed-hosts",
       hosts: ["api.example.com"],
-      credentialHome: "include",
+      credentialPaths: ["~/.claude"],
       uid: "dedicated",
     };
     const registry = makeFakeRegistry();
@@ -476,7 +488,7 @@ describe("terminal-tools — scope is sourced from the entry, never the agent pa
     const entryScope: TerminalScope = {
       filesystem: "workspace",
       network: "none",
-      credentialHome: "exclude",
+      credentialPaths: [],
       uid: "dedicated",
     };
     const registry = makeFakeRegistry();
@@ -490,7 +502,7 @@ describe("terminal-tools — scope is sourced from the entry, never the agent pa
     const rawParams: Record<string, unknown> = {
       allowId: "bash",
       command: realBashPath(),
-      scope: { filesystem: "full", network: "full", credentialHome: "include", uid: "daemon" },
+      scope: { filesystem: "full", network: "full", credentialPaths: ["~/.claude"], uid: "daemon" },
     };
     await tool.execute("call-1", rawParams);
 

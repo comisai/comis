@@ -125,6 +125,8 @@ vi.mock("@comis/skills/tools", () => ({
     cleanup: vi.fn(),
   })),
   buildProductionSpawnWorker: vi.fn(() => vi.fn()),
+  resolveWorkerMainPath: vi.fn(() => "/tmp/terminal-worker-main.js"),
+  createTerminalEgressProxy: vi.fn(() => ({ materialize: vi.fn(async () => ({ socketPath: "/tmp/egress.sock", dispose: vi.fn() })) })),
   detectSandboxProvider: vi.fn(() => ({})),
   createTerminalSessionCreateTool: vi.fn(() => ({ name: "terminal_session_create", execute: vi.fn() })),
   createTerminalSessionReadTool: vi.fn(() => ({ name: "terminal_session_read", execute: vi.fn() })),

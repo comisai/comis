@@ -89,6 +89,19 @@ const BOOTSTRAP_PATH_PATTERNS: readonly RegExp[] = [
   /packages\/(core|infra)\/src\/runtime\//,
   /packages\/core\/src\/load-env\.ts$/,
   /packages\/core\/src\/config\/env-layer\.ts$/,
+  // The supervised Terminal Worker PROCESS entry (spec §1.1/§2.1): the daemon
+  // forks `node terminal-worker-main.js`, so this file OWNS the process boundary
+  // — it adapts process.stdin (the §2.3 IPC), process.env (config the daemon
+  // threads), and process.exit (lifecycle on parent-stdin-close) into the worker.
+  // Exactly the daemon.ts/cli.ts bootstrap role; the worker LOGIC stays port-based
+  // (createTerminalWorker takes injected clock/env/fs).
+  /packages\/skills\/src\/tools\/builtin\/terminal-driver\/terminal-worker-main\.ts$/,
+  // The in-jail egress relay-as-init PROCESS entry (spec §3.5): run as
+  // `node egress-relay-init.js --socket … -- child` as PID-1 inside the bwrap
+  // jail. It owns process.argv/env/exit (parse args, set the child's HTTPS_PROXY,
+  // exec the child) — the bootstrap role, like terminal-worker-main.ts. The
+  // top-level main() is guarded to run ONLY as the entry script (importable in tests).
+  /packages\/skills\/src\/tools\/builtin\/terminal-driver\/egress-relay-init\.ts$/,
   /packages\/[^/]+\/src\/__tests__\//,
   /test\//,
 ] as const;

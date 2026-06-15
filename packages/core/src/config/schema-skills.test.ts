@@ -107,7 +107,7 @@ describe("TerminalDriverConfigSchema -- closed allow-set", () => {
           paths: ["/srv/work"],
           network: "listed-hosts",
           hosts: ["api.anthropic.com"],
-          credentialHome: "include",
+          credentialPaths: ["~/.claude"],
           uid: "dedicated",
         },
         autoAnswer: "all",
@@ -140,7 +140,7 @@ describe("TerminalDriverConfigSchema -- closed allow-set", () => {
     expect(parsed.allow[0]!.match.path).toBe("/usr/local/bin/bash");
     expect(parsed.allow[0]!.match.argsPrefix).toEqual(["-lc"]);
     expect(parsed.allow[0]!.scope.filesystem).toBe("listed-paths");
-    expect(parsed.allow[0]!.scope.credentialHome).toBe("include");
+    expect(parsed.allow[0]!.scope.credentialPaths).toEqual(["~/.claude"]);
     expect(parsed.allow[0]!.consent.acknowledgedRisk).toBe(true);
     expect(parsed.allow[0]!.brokerDecoy?.tokenSource).toBe("comis-oauth");
   });
@@ -158,7 +158,7 @@ describe("TerminalDriverConfigSchema -- closed allow-set", () => {
     expect(result.success).toBe(false);
   });
 
-  it("applies the documented defaults (allow=[], credentialHome=exclude, autoAnswer=safe-only)", () => {
+  it("applies the documented defaults (allow=[], credentialPaths=[], autoAnswer=safe-only)", () => {
     // Omit `allow` entirely → defaults to [].
     const minimal = {
       enabled: false,
@@ -176,7 +176,7 @@ describe("TerminalDriverConfigSchema -- closed allow-set", () => {
     const parsed = TerminalDriverConfigSchema.parse(minimal);
     expect(parsed.allow).toEqual([]);
 
-    // Omit scope.credentialHome / autoAnswer on an entry → documented defaults.
+    // Omit scope.credentialPaths / autoAnswer on an entry → documented defaults.
     const withEntryDefaults = TerminalDriverConfigSchema.parse({
       ...minimal,
       allow: [
@@ -188,7 +188,7 @@ describe("TerminalDriverConfigSchema -- closed allow-set", () => {
         },
       ],
     });
-    expect(withEntryDefaults.allow[0]!.scope.credentialHome).toBe("exclude");
+    expect(withEntryDefaults.allow[0]!.scope.credentialPaths).toEqual([]);
     expect(withEntryDefaults.allow[0]!.autoAnswer).toBe("safe-only");
     expect(withEntryDefaults.allow[0]!.scope.filesystem).toBe("workspace");
     expect(withEntryDefaults.allow[0]!.scope.network).toBe("none");

@@ -40,7 +40,7 @@ function makeScope(overrides: Partial<TerminalScope> = {}): TerminalScope {
   return {
     filesystem: "workspace",
     network: "none",
-    credentialHome: "exclude",
+    credentialPaths: [],
     uid: "dedicated",
     ...overrides,
   };

@@ -75,12 +75,14 @@ import {
   buildReadResult,
   createSessionEmulator,
   diffSnapshot,
+  perceptionScreen,
   readSnapshotParams,
   type ReadResult,
   type SessionEmulator,
 } from "./terminal-render.js";
 import {
   runSettle,
+  settleHint,
   SETTLE_DEFAULT_IDLE_MS,
   type SettleDeps,
   type SettleParams,
@@ -560,7 +562,7 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
    * throw `invalid_value` → dispatch's catch returns ok:false with NOTHING written
    * (the write is AFTER the encode — the keystroke-injection guard).
    */
-  function handleSendKey(frame: TerminalRequestFrame): SendResult {
+  async function handleSendKey(frame: TerminalRequestFrame): Promise<SendResult> {
     const startedAt = nowMs();
     const sessionId = String(frame.params["sessionId"] ?? frame.sessionId);
     const state = sessions.get(sessionId);
@@ -573,7 +575,8 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     writeToBackend(state, bytes);
 
     logInteraction(sessionId, "send_key", startedAt, { keyCount: keys.length });
-    return { screen: state.ring, cursor: { x: 0, y: 0 } };
+    await state.writeFlush; // perceive the SETTLED grid (like read), not a mid-parse snapshot
+    return perceptionScreen(state.emu?.snapshot(), state.ring);
   }
 
   /**
@@ -609,7 +612,8 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
       bracketedPaste,
       bytes: payload.length,
     });
-    return { screen: state.ring, cursor: { x: 0, y: 0 } };
+    await state.writeFlush; // perceive the SETTLED grid, not a mid-parse snapshot
+    return perceptionScreen(state.emu?.snapshot(), state.ring);
   }
 
   /**
@@ -636,11 +640,10 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
   }
 
   /**
-   * Handle a `wait` frame — the explicit parameterized settle. Runs the
-   * bounded {@link runSettle} and replies `{matched,isComplete,reason,screen,cursor}`;
-   * an absent session is gone (reason `exit`, not-complete). CRITICAL: `isComplete`
-   * passes through from runSettle VERBATIM — `false` on timeout (the worker never
-   * holds the frame open; the attention model resumes the turn), NEVER hard-coded true.
+   * Handle a `wait` frame — the explicit parameterized settle. Runs {@link runSettle} and
+   * replies `{matched,isComplete,reason,producing,hint,screen,cursor}` (T1.1 adds producing/hint);
+   * an absent session is gone (reason `exit`, not-complete). CRITICAL: `isComplete` passes from
+   * runSettle VERBATIM — `false` on timeout (attention model resumes the turn), NEVER hard-coded true.
    */
   async function handleWait(frame: TerminalRequestFrame): Promise<WaitResult> {
     const startedAt = nowMs();
@@ -660,12 +663,14 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     const r = await settleSession(state, params);
 
     logInteraction(sessionId, "wait", startedAt, { reason: r.reason, isComplete: r.isComplete });
+    await state.writeFlush; // perceive the SETTLED grid, not a mid-parse snapshot
     return {
       matched: r.matched,
       isComplete: r.isComplete, // VERBATIM from runSettle — false on timeout.
       reason: r.reason,
-      screen: state.ring,
-      cursor: { x: 0, y: 0 },
+      producing: r.producing, // T1.1: was output still arriving at a not-complete timeout?
+      hint: settleHint(r), // T1.1: branched, actionable not-complete-timeout hint
+      ...perceptionScreen(state.emu?.snapshot(), state.ring),
     };
   }
 
@@ -694,7 +699,7 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
           result = await handleRead(frame); // awaits the pending emulator write-parse
           break;
         case "send_key":
-          result = handleSendKey(frame);
+          result = await handleSendKey(frame);
           break;
         case "send_text":
           result = await handleSendText(frame); // awaits the text↔submit settle

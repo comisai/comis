@@ -146,6 +146,63 @@ const FAKE_CREDS = {
 // Tests
 // ---------------------------------------------------------------------------
 
+const CODEX_PROFILE: OAuthProfile = {
+  provider: "openai-codex",
+  profileId: "openai-codex:default",
+  access: "access-token-xyz",
+  refresh: "refresh-token-abc",
+  expires: Date.now() + 3600_000,
+  version: 1,
+};
+
+describe("hasStoredCredentials (store-aware availability — the cold-cache image-gen fix)", () => {
+  let eventBus: TypedEventBus;
+  beforeEach(() => {
+    vi.clearAllMocks();
+    eventBus = new TypedEventBus();
+  });
+
+  it("is TRUE when the persisted store has a profile even though the in-memory cache is cold (where the sync hasCredentials is FALSE)", async () => {
+    // The exact production shape: encrypted-store mode, Codex logged in via
+    // `comis auth login` (profile in the store), no env key, cache cold at boot.
+    const secretManager = makeSecretManager({}); // no OAUTH_OPENAI_CODEX env key
+    const credentialStore = makeMockCredentialStore();
+    (credentialStore.list as ReturnType<typeof vi.fn>).mockImplementation(
+      async (filter?: { provider?: string }) =>
+        _ok(filter?.provider === "openai-codex" ? [CODEX_PROFILE] : []),
+    );
+    const manager = createOAuthTokenManager({
+      secretManager,
+      eventBus,
+      ...legacyOAuthDeps(),
+      credentialStore,
+    });
+
+    // The bug: the sync cache-only check misses the store-backed login.
+    expect(manager.hasCredentials("openai-codex")).toBe(false);
+    // The fix: the store-aware check finds it (cache cold, no env key, store hit).
+    expect(await manager.hasStoredCredentials("openai-codex")).toBe(true);
+  });
+
+  it("is FALSE when neither cache, env-var, nor store has the provider", async () => {
+    const manager = createOAuthTokenManager({
+      secretManager: makeSecretManager({}),
+      eventBus,
+      ...legacyOAuthDeps(),
+    });
+    expect(await manager.hasStoredCredentials("openai-codex")).toBe(false);
+  });
+
+  it("is TRUE from the env-var (SecretManager) with no store hit (bootstrap parity)", async () => {
+    const manager = createOAuthTokenManager({
+      secretManager: makeSecretManager({ OAUTH_OPENAI_CODEX: JSON.stringify(FAKE_CREDS) }),
+      eventBus,
+      ...legacyOAuthDeps(),
+    });
+    expect(await manager.hasStoredCredentials("openai-codex")).toBe(true);
+  });
+});
+
 describe("createOAuthTokenManager", () => {
   let eventBus: TypedEventBus;
 

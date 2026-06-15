@@ -13,7 +13,7 @@
  * (unix-socket bind reachable inside `--unshare-net`), Group B (raw direct-TCP
  * egress blocked), Group C (secure-profile credential absence + the child-env
  * scrub). The terminal-driver SCOPE cells built via the production
- * `buildScopeArgs` composer (filesystem/credentialHome/uid + the always-on
+ * `buildScopeArgs` composer (filesystem/credentialPaths/uid + the always-on
  * `~/.comis` carve-out, the allowlist-proxy ALLOW/DENY decision, no-provider
  * fail-closed) live in the sibling `terminal-driver/terminal-scope-matrix.linux.test.ts`
  * so the two compose WITHOUT overlap. Both run on `comisvps`; both skip on macOS.

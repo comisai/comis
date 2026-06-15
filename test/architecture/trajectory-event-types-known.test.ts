@@ -189,12 +189,11 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
 
   // -------------------------------------------------------------------
   // Background task manager — long-running task lifecycle outside the
-  // single execute() boundary.
+  // single execute() boundary. promoted/completed/failed are BRIDGED to the
+  // trajectory (T2.2 / F9 — TRAJECTORY_BRIDGE_MAPPING); cancelled/reentered
+  // remain unmapped (cancellation is rare; reentered is an SLO-latency hook).
   // -------------------------------------------------------------------
   "background_task:cancelled",
-  "background_task:completed",
-  "background_task:failed",
-  "background_task:promoted",
   "background_task:reentered",
 
   // -------------------------------------------------------------------
