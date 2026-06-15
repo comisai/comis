@@ -210,12 +210,14 @@ For per-provider setup, model defaults, and configuration, see the [Media & Voic
   </Accordion>
 
   <Accordion title="video_generate -- Generate videos from text prompts" icon="clapperboard">
-    Use `video_generate` to create a short video clip from a text prompt. The generated clip is delivered directly to the current channel via the daemon. This is the v2.24 baseline: an inline submit -> poll -> download against the **FAL** queue API (`fal-ai/veo3.1/fast` by default), proving the full loop end-to-end.
+    Use `video_generate` to create a short video clip from a text prompt. Rendering against the **FAL** queue API (`fal-ai/veo3.1/fast` by default) runs through one unified submit -> poll -> download contract.
+
+    **Async by default (the render outlives the turn).** A video render takes 30 s-5 min -- longer than a single agent turn and longer than the `promptTimeout`. So `video_generate` does **not** block: it submits the job, persists a durable job record, and returns a **job handle** (`{ jobId, state: "submitted", estimatedCostUsd }`) promptly. A background poller then drives the render to completion **independent of the originating turn and across a daemon restart**, downloads the clip before the (expiring) provider URL dies, persists it, and **announces the finished video to the originating channel** on its own. Use the [`video_status`](#video_status) tool with the returned `jobId` to check progress in the meantime. Delivery is **at-least-once**: a clip is delivered once it completes; if the daemon restarts mid-render it resumes from the persisted job and still delivers -- so a rare, bounded duplicate is possible, but a render is never lost and never redelivered indefinitely.
 
     **Provider following (`integrations.media.videoGeneration.provider: auto`, the default).** Video generation follows the agent's main provider and reuses its credentials, mirroring image generation: a `google` main resolves to **Google Veo** and an `xai` main resolves to **xAI Grok Imagine**, each with the key the agent already uses (`GOOGLE_API_KEY` / `XAI_API_KEY`) -- no video-specific key. Where the main provider has no video API (e.g. `openai`, `anthropic`), the tool returns an honest "unavailable" with a hint to set `integrations.media.videoGeneration.provider` (e.g. `fal` + `FAL_KEY`) -- it never silently routes to a different paid provider.
 
     <Note>
-    In **this release (v2.24 Phase 188)** the FAL path is fully wired and is the loop-prover: set `provider: fal` + `FAL_KEY` to generate today. The native **Veo** and **Grok Imagine** adapters land in **Phase 190** -- under `provider: auto` a `google`/`xai` main currently resolves the selection but reports an honest "unavailable" naming Phase 190 (use `provider: fal` + `FAL_KEY` in the meantime). The `video_status` tool (for long-running renders that outlive the turn) lands in **Phase 189**.
+    In **this release (v2.24)** the FAL path is fully wired and is the loop-prover: set `provider: fal` + `FAL_KEY` to generate today. The native **Veo** and **Grok Imagine** adapters land in **Phase 190** -- under `provider: auto` a `google`/`xai` main currently resolves the selection but reports an honest "unavailable" naming Phase 190 (use `provider: fal` + `FAL_KEY` in the meantime).
     </Note>
 
     | Parameter | Type | Required | Description |
@@ -232,9 +234,29 @@ For per-provider setup, model defaults, and configuration, see the [Media & Voic
 
     **Cost ceiling (estimate-first).** Video is dollars-per-clip and is **already rendering once submitted**, so unlike image generation the per-agent **USD** ceiling, `integrations.media.videoGeneration.maxCostPerHourUsd`, is gated on a **worst-case pre-submit estimate** (duration x per-second rate, with audio/4k as the upper bound): if the estimate would push the agent's accumulated hourly spend over the ceiling, the request is blocked with `errorKind: quota_exceeded` (and a hint naming the key) **before** the provider is called. The `maxPerHour` count limit is retained and orthogonal. Unset means no cost ceiling.
 
-    **Delivery, persistence, and degradation.** A generated clip is downloaded to a buffer and persisted to the agent's confined workspace under `~/.comis/workspace/media/videos/` (a UUID filename, size-capped) **before** any delivery decision -- an expiring provider URL cannot orphan it. Delivery is **capability-driven**: a channel whose adapter implements attachment sending receives the persisted file directly (as a `video` attachment with `durationSecs`); a channel without it (currently only **IRC**) degrades to a notice + the persisted path. For large clips the inline base64 fallback is **size-capped** -- above the cap the handler returns the persisted workspace path instead of a multi-megabyte base64 blob.
+    **Delivery, persistence, and degradation (in the background poller).** When the render completes, the poller downloads the clip to a buffer and persists it to the agent's confined workspace under `~/.comis/workspace/media/videos/` (a UUID filename, size-capped) **before** any delivery decision -- an expiring provider URL cannot orphan it. Delivery is **capability-driven**: a channel whose adapter implements attachment sending receives the persisted file directly (as a `video` attachment); a channel without it (currently only **IRC**) degrades to a notice + the persisted path. Because delivery happens off-turn from the persisted job, the finished clip reaches the channel that requested it even after the turn has ended (and after a daemon restart). The persisted file is not deleted after delivery, so generated clips survive for later inspection.
 
-    **Observability.** Each generation logs a single INFO completion line carrying the executing video provider, the agent's main provider, the model, `estimatedCostUsd`, `costUsd`, `sizeBytes`, `durationMs`, and the mime type; every failure branch logs an `errorKind` + an actionable `hint` (never the raw provider message, a key, or a bearer). The richer `comis explain` video reconstruction lands with the trajectory bridge in a later phase.
+    **Observability.** When the render completes the poller logs a single INFO completion line carrying the executing video provider, the model, `costUsd`, `sizeBytes`, `durationMs`, and the mime type; every failure branch (submit failure, a failed render, or a poll timeout) logs an `errorKind` + an actionable `hint` (never the raw provider message, a key, or a bearer). Because the completion runs off-turn, the poller stamps the originating `traceId` (captured at submit) on its log lines so the later completion stitches back to the request. The richer `comis explain` video reconstruction lands with the trajectory bridge in a later phase.
+  </Accordion>
+
+  <Accordion title="video_status -- Check a video render's progress and result" icon="hourglass">
+    Use `video_status` to check the status of a video-generation job by the `jobId` that [`video_generate`](#video_generate) returned. Because a render outlives the turn (and survives a daemon restart), `video_status` is how the agent polls progress while the background poller drives the job to completion -- the finished clip is then delivered to the channel automatically (no `video_status` call is required for delivery; it is for visibility).
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `job_id` | string | Yes | The job handle returned by `video_generate`. |
+
+    The response reports the job's durable state:
+
+    | Field | Type | When present |
+    |-------|------|--------------|
+    | `state` | `"pending"` \| `"done"` \| `"failed"` | Always. |
+    | `progress` | number (0-1) | While `pending`, when the provider reports it. |
+    | `mediaPath` | string | When `done` -- the persisted workspace path of the delivered clip. |
+    | `costUsd` | number | When `done` -- the reconciled actual cost. |
+    | `error` | string | When `failed` -- the failure kind (e.g. `content_blocked`, `job_timeout`). |
+
+    **Agent-scoped.** `video_status` is scoped to the **calling agent**: a `jobId` that belongs to a *different* agent returns a not-found result (`state: "failed"`), never another agent's media path or cost. In a multi-agent daemon an agent can only see its own jobs.
   </Accordion>
 </AccordionGroup>
 

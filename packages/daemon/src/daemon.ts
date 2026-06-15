@@ -221,7 +221,7 @@ import { setupSingleAgent } from "./wiring/setup-agents/index.js";
 import { buildDialecticWiring, dialecticWiringDepsFromBoot } from "./wiring/setup-dialectic.js";
 import { createConversationReset } from "./wiring/conversation-reset.js";
 import { setupSecretManager } from "./wiring/setup-secret-manager.js";
-import { restoreApprovalState, resolveGatewayTokens, setupChannelHealthMonitor, resolveModelHealthMultilingual, buildImageGenBundle, buildImageHandlerDeps, buildVideoGenBundle, buildVideoHandlerDeps, buildMediaVisionBundle, hardenDataDirPermissions } from "./wiring/main-helpers.js";
+import { restoreApprovalState, resolveGatewayTokens, setupChannelHealthMonitor, resolveModelHealthMultilingual, buildImageGenBundle, buildImageHandlerDeps, buildVideoGenBundle, buildVideoHandlerDeps, buildVideoStatusHandlerDeps, buildMediaVisionBundle, hardenDataDirPermissions } from "./wiring/main-helpers.js";
 import { createInboundMessageIdResolver, type InboundMessageIdResolver } from "./wiring/inbound-message-id-resolver.js";
 import { logOperationModelDryRun } from "./wiring/startup-dry-run.js";
 import { emitDockerRestartPolicyWarn } from "./setup-docker-restart-warn.js";
@@ -893,6 +893,9 @@ function buildRpcDispatchDeps(deps: {
   // Phase 188: video.generate handler deps (undefined when disabled). The spread
   // into ApiDispatchDeps below wires the live handler (source guard pins it).
   const videoHandlerDeps = buildVideoHandlerDeps(c, resolveAgentMainProviderFor);
+  // Phase 189 (JOB-04): video.status read-handler deps (undefined when disabled) —
+  // reads the SAME agent-scoped store the poller writes. Spread below (guard pins it).
+  const videoStatusHandlerDeps = buildVideoStatusHandlerDeps(c);
   // Inlined buildTokenStoreMutators.
   const addToTokenStore: import("./api/rpc-dispatch.js").ApiDispatchDeps["addToTokenStore"] = (entry) => { g.runtimeTokens.push({ id: entry.id, secretBuf: Buffer.from(entry.secret, "utf-8"), scopes: entry.scopes }); };
   const removeFromTokenStore: import("./api/rpc-dispatch.js").ApiDispatchDeps["removeFromTokenStore"] = (id) => {
@@ -987,6 +990,7 @@ function buildRpcDispatchDeps(deps: {
     skillRegistries: c.skillRegistries, notificationService: c.notificationContext.notificationService,
     imageHandlerDeps,
     videoHandlerDeps,
+    videoStatusHandlerDeps,
     oauthCredentialStore: c.oauthCredentialStore,
     // Wire observability DI seams.
     // ObservabilityApiDeps.dataDir: used by obs.trace.* handlers for session-index + bundle export.
@@ -2215,6 +2219,9 @@ async function bootChannels(boot: BootContext): Promise<void> {
     // config:mutated server edits surface on the next tool assembly.
     getMcpServerEntries: () => container.config.integrations?.mcp?.servers ?? [],
     sandboxProvider, imageGenProvider, videoGenProvider, backgroundTaskManager,
+    // JOB-04 (189): gate the video_status tool on the SAME condition video_generate
+    // uses (the async store + poller are wired exactly when videoGenProvider exists).
+    videoStatusEnabled: videoGenProvider,
     sessionTrackerRegistry: handle.sessionTrackerRegistry, getCapabilityPortForAgent,
     // broker activation seam. When executor.broker is configured,
     // thread the broker handle into setupTools so assembleToolsForAgent wires

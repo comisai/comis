@@ -97,6 +97,10 @@ describe("platform-tool registry parity", () => {
       // descriptor (gated on ctx.videoGenProvider, mirroring image_generate's
       // imageGenProvider gate) — the daemon populates the signal in Plan 04.
       "video_generate",
+      // The video-status query tool (189-03 / JOB-04). CONDITIONAL descriptor
+      // (gated on ctx.videoStatusEnabled — the async store+poller stack, set on
+      // the SAME condition video_generate uses). never-export (SEC-01).
+      "video_status",
       "whatsapp_action",
     ]);
   });

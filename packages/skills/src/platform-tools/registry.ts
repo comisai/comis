@@ -65,6 +65,7 @@ import { createNotifyTool } from "./tools/notify-tool.js";
 import { createBackgroundTasksTool } from "./tools/background-tasks-tool.js";
 import { createImageGenerateTool } from "./tools/image-generate-tool.js";
 import { createVideoGenerateTool } from "./tools/video-generate-tool.js";
+import { createVideoStatusTool } from "./tools/video-status-tool.js";
 import { createMemorySearchTool } from "./tools/memory-search-tool.js";
 import { createMemoryGetTool } from "./tools/memory-get-tool.js";
 import { createMemoryStoreTool } from "./tools/memory-store-tool.js";
@@ -146,6 +147,11 @@ export interface PlatformToolBuildContext {
   readonly imageGenProvider?: unknown;
   /** `video_generate` tool's conditional predicate signal (truthy when provider wired; daemon sets it in Phase 188 Plan 04). */
   readonly videoGenProvider?: unknown;
+  /** `video_status` tool's conditional predicate signal (Phase 189 / JOB-04;
+   *  truthy when the async stack — store + poller — is wired, gated on the SAME
+   *  condition `videoGenProvider` uses so video_status activates exactly when
+   *  video_generate does). */
+  readonly videoStatusEnabled?: unknown;
   /** `background_tasks` tool's conditional predicate signal (truthy when manager wired). */
   readonly backgroundTaskManager?: unknown;
   /** Per-agent tool capability port (resolved via daemon's deps map). */
@@ -375,6 +381,12 @@ export function createPlatformToolRegistry(): readonly PlatformToolDescriptor[] 
       category: "media",
       conditional: (ctx) => ctx.videoGenProvider !== undefined,
       build: (ctx) => createVideoGenerateTool(ctx.rpcCall as never),
+    },
+    {
+      name: "video_status",
+      category: "media",
+      conditional: (ctx) => ctx.videoStatusEnabled !== undefined,
+      build: (ctx) => createVideoStatusTool(ctx.rpcCall as never),
     },
     {
       name: "transcribe_audio",

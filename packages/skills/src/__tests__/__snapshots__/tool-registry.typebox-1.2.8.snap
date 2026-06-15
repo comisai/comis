@@ -1622,6 +1622,23 @@
     "conditional": true
   },
   {
+    "name": "video_status",
+    "category": "media",
+    "schema": {
+      "properties": {
+        "job_id": {
+          "description": "The job handle returned by video_generate.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "job_id"
+      ],
+      "type": "object"
+    },
+    "conditional": true
+  },
+  {
     "name": "transcribe_audio",
     "category": "media",
     "schema": {

@@ -605,6 +605,25 @@ export function buildVideoHandlerDeps(
 }
 
 /**
+ * Build the `videoStatusHandlerDeps` slice of `ApiDispatchDeps` (Phase 189 /
+ * Plan 03 — JOB-04). The READ side of the async lifecycle: `video.status` reads
+ * the SAME agent-scoped `videoJobStore` the poller writes (single source — no
+ * second instance). `undefined` when video generation is disabled (no store),
+ * which also leaves the `video_status` tool ungated (see `videoStatusEnabled`).
+ * Far narrower than `buildVideoHandlerDeps` — the read handler needs only the
+ * store + logger.
+ */
+export function buildVideoStatusHandlerDeps(
+  c: VideoHandlerBootSlice,
+): import("../api/rpc-dispatch.js").ApiDispatchDeps["videoStatusHandlerDeps"] {
+  if (!c.videoJobStore) return undefined;
+  return {
+    videoJobStore: c.videoJobStore, // JOB-04: agent-scoped get(job_id, agentId)
+    logger: c.skillsLogger,
+  };
+}
+
+/**
  * VIS-01 (187): resolve the VISION API key by PROVIDER. Mirrors
  * `resolveImageApiKey` (pi-image-adapter.ts:279) but keyed by PROVIDER, since
  * vision keys are the SAME completion-path keys (`OPENAI_API_KEY` /
