@@ -22,6 +22,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | transcriber | optional | media.transcribe RPC fails with "speech-to-text provider not configured"; voice messages flow through to the agent untranscribed | packages/daemon/src/api/types.ts:392 |
 | fileExtractor | optional | media.extract_document RPC fails with "file extraction provider not configured"; document attachments are forwarded as raw bytes | packages/daemon/src/api/types.ts:394 |
 | imageHandlerDeps | optional | image.generate RPC is not registered; image-generation features (Proactive v1 / IMGN) are disabled | packages/daemon/src/api/types.ts:400 |
+| videoHandlerDeps | optional | video.generate RPC is not registered; video-generation (submit → async background poller → announce-on-complete) is disabled (Phase 188/189) | packages/daemon/src/api/types.ts:618 |
 | workspaceDirs | required | — | packages/daemon/src/api/types.ts:411 |
 | defaultWorkspaceDir | required | — | packages/daemon/src/api/types.ts:412 |
 | defaultAgentId | required | — | packages/daemon/src/api/types.ts:413 |
