@@ -97,6 +97,10 @@ export {
   type AllowMatch,
   type TerminalScope,
   type SessionListing,
+  // 164-06: the origin key scoping a session's visibility — the daemon-wiring
+  // drive-scope helper (terminal-drive-scope.ts) returns it from registryOwnerFor
+  // (the I5 strip: a drive:-scoped wake owner → the stamped registry owner).
+  type SessionOwner,
   // The per-session caps surface (the daemon wires caps.forget to onCapForget)
   // + the reaper eviction payload (the daemon's onEvict hook param) + the typed reason.
   type SessionCaps,

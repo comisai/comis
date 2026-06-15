@@ -50,6 +50,7 @@ import {
 } from "./terminal-wake-dispatch.js";
 import { buildWokenTurnDriver, type TerminalAttentionConfig, type WokenTurnNotify } from "./terminal-wake-turn.js";
 import { removeWakeStateFile, type PersistedWakeOwner } from "./terminal-wake-persistence.js";
+import { driveScopeKeyFor, registryOwnerFor } from "./terminal-drive-scope.js";
 
 /** Dependencies for the keystone wake wiring. */
 export interface SetupTerminalWakeDeps {
@@ -104,10 +105,18 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
   // the loopGuard lifecycle exactly: closure-local, reclaimed in onSessionGone (so a recycled
   // sessionId never inherits a stale promotion), bounded over a milestone-length daemon. It is
   // the promote-once dedupe: the skills tool emits per-qualifying-wait, this Set collapses
-  // repeated emits for one session to ONE drive-started notify. A plain Set suffices for this
-  // plan (record + notify-once); plan 06 reads promotedSessions here to flip the drive-scope
-  // sessionKey for a promoted session's woken turns (the routing is DEFERRED to plan 06).
+  // repeated emits for one session to ONE drive-started notify. A plain Set suffices (record
+  // + notify-once); 164-06 reads promotedSessions here (via driveScopeKey below) to flip the
+  // drive-scope sessionKey for a promoted session's woken turns.
   const promotedSessions = new Set<string>();
+
+  // DRIVE-01 (164-06): the drive-scope attribution key for a session's woken turns. A
+  // PROMOTED session routes to `drive:<sessionId>` (isolating its woken turns from the
+  // primary `sessionKey:""` conversation); an unpromoted session stays on `""` (today's
+  // inline path — byte-identical, I1). This is ONLY the FSM/journal/conversation attribution
+  // key — `registryOwnerFor` strips it back to the stamped registry owner for every registry
+  // call (the I5 anchor), so the drive scope never changes which jail/allow-entry resolves.
+  const driveScopeKey = (sessionId: string): string => driveScopeKeyFor(sessionId, promotedSessions.has(sessionId));
 
   // The §4.4 woken-turn driver the FSM calls.
   const wakeOneTurn = buildWokenTurnDriver({
@@ -122,10 +131,16 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
 
   // The owner-scoped active-check (the P4 registry). A wake for a session this reports
   // false (killed/evicted/cross-owner) is dropped + audited by the FSM.
+  //
+  // DRIVE-01 (164-06): resolve via `registryOwnerFor(owner)` — the STAMPED registry owner.
+  // A promoted session's wake owner carries `drive:<id>`; passing that raw to `registry.get`
+  // would mismatch the stamped owner (`sameOwner`), report the session inactive, and DROP
+  // its wakes — the I9-class silent strand (T-164-23). The strip resolves the live session,
+  // so a promoted drive's wakes are NOT dropped.
   const isSessionActive = (sessionId: string, owner: PersistedWakeOwner): boolean => {
     const registry = deps.registries.get(owner.agentId);
     if (!registry) return false;
-    return registry.get(sessionId, { agentId: owner.agentId, sessionKey: owner.sessionKey }) !== undefined;
+    return registry.get(sessionId, registryOwnerFor(owner)) !== undefined;
   };
 
   // The hop-limit escalation (the FSM's forced-escalation path) → emit terminal:escalated
@@ -191,7 +206,7 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
   deps.eventBus.on("terminal:drive_promoted", onDrivePromoted);
 
   const dispatcher: TerminalWakeDispatcher = createTerminalWakeDispatcher({
-    eventBus: makeWakeAdapterBus(deps.eventBus, log),
+    eventBus: makeWakeAdapterBus(deps.eventBus, log, driveScopeKey),
     isSessionActive,
     wakeOneTurn,
     escalate,
@@ -249,11 +264,18 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
 /**
  * Adapt the daemon `TypedEventBus`'s redaction-safe `terminal:input_needed` event into the
  * FSM's narrow `WakeDispatcherBus` carrying `TerminalInputNeededWake`. Derives the
- * owner-scoped `owner` (`sessionKey: ""`, the forcing-use-case fallback) + a per-frame
- * `requestId` synthesized from `(sessionId, reason)` (the redaction-safe core event omits
- * requestId; the FSM's `(sessionId,requestId)` dedupe correlation needs it). N re-publishes
- * of ONE unanswered frame share a `requestId` → coalesce to ONE woken turn (OPS-09); a
- * distinct subsequent prompt (a fresh `reason`) is a fresh wake.
+ * owner-scoped `owner` + a per-frame `requestId` synthesized from `(sessionId, reason)` (the
+ * redaction-safe core event omits requestId; the FSM's `(sessionId,requestId)` dedupe
+ * correlation needs it). N re-publishes of ONE unanswered frame share a `requestId` →
+ * coalesce to ONE woken turn (OPS-09); a distinct subsequent prompt (a fresh `reason`) is a
+ * fresh wake.
+ *
+ * DRIVE-01 (164-06): the woken-turn owner's `sessionKey` is derived via `driveScopeKey` — a
+ * PROMOTED session routes to `drive:<sessionId>` (isolating its woken turns from the primary
+ * `sessionKey:""` conversation), an unpromoted one stays on `""` (the forcing-use-case
+ * fallback, today's path). This is ONLY the FSM/journal/conversation attribution; the
+ * woken-turn driver + the active-check strip it back to the stamped registry owner
+ * (`registryOwnerFor`) so the drive scope never changes which jail/allow-entry resolves (I5).
  *
  * The translating handler is wrapped 1:1 so `off` removes exactly the wrapper `on` added —
  * a per-(handler) WeakMap pairs the FSM's handler with our wrapper (no module-global state).
@@ -264,7 +286,11 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
  * the cast and DROPS a malformed frame with a WARN — never keying FSM state on
  * `"undefined:undefined"` or masking a future-emit-site bug as a silently-dropped wake.
  */
-function makeWakeAdapterBus(bus: TypedEventBus, log: ComisLogger): WakeDispatcherBus {
+function makeWakeAdapterBus(
+  bus: TypedEventBus,
+  log: ComisLogger,
+  driveScopeKey: (sessionId: string) => string,
+): WakeDispatcherBus {
   const wrappers = new WeakMap<(data: TerminalInputNeededWake) => void, (data: unknown) => void>();
   return {
     on(_event: "terminal:input_needed", handler: (data: TerminalInputNeededWake) => void): void {
@@ -285,7 +311,10 @@ function makeWakeAdapterBus(bus: TypedEventBus, log: ComisLogger): WakeDispatche
           // The redaction-safe core event omits requestId; correlate by (sessionId, reason)
           // so duplicate re-publishes of one frame coalesce, a fresh prompt re-wakes.
           requestId: `${ev.sessionId}:${reason}`,
-          owner: { agentId: ev.agentId, sessionKey: "" },
+          // DRIVE-01: drive:<id> for a promoted session (isolated woken-turn attribution),
+          // "" otherwise (the forcing-use-case fallback). The registry owner is stripped
+          // back to the stamped owner downstream (registryOwnerFor) — I5 by construction.
+          owner: { agentId: ev.agentId, sessionKey: driveScopeKey(ev.sessionId) },
           state: ev.state === "stuck" ? "stuck" : "awaiting-input",
           reason,
         });
