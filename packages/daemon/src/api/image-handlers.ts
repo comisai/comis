@@ -222,10 +222,11 @@ export function createImageHandlers(
       // profiles (main-helpers.ts buildImageGenBundle <- daemon.ts
       // oauthManagers.get(defaultAgentId)). So a NON-default agent whose main
       // provider DIFFERS runs the DEFAULT agent's port/credentials — a known,
-      // DOCUMENTED scope boundary (per-agent re-selection + live rotation is the
-      // Phase 186 / multi-agent refinement; see main-helpers.ts IN-01 +
-      // setup-image-provider.ts). Until 186 closes it, make the divergence
-      // OBSERVABLE rather than silent: the per-request obs line names the
+      // DOCUMENTED scope boundary (per-agent re-selection + live rotation is a
+      // deferred multi-agent refinement — v2.23 phases 184-186 deliberately kept
+      // boot-time selection behind the two-source firewall; see main-helpers.ts +
+      // setup-image-provider.ts). Until a future phase closes it, make the
+      // divergence OBSERVABLE rather than silent: the per-request obs line names the
       // caller's provider while execution uses the default's port, which would
       // otherwise mislead triage. Agents that share the default's provider
       // (matching ids) are unaffected — the common multi-agent case still works.
@@ -246,9 +247,9 @@ export function createImageHandlers(
             errorKind: "precondition" as const,
             hint:
               "This non-default agent's image request runs the DEFAULT agent's " +
-              "boot-selected provider/credentials. Per-agent re-selection lands " +
-              "in Phase 186; until then set integrations.media.imageGeneration." +
-              "provider explicitly, or run the image-capable agent as the default.",
+              "boot-selected provider/credentials. Per-agent re-selection is a " +
+              "deferred multi-agent refinement; until then set integrations.media." +
+              "imageGeneration.provider explicitly, or run the image-capable agent as the default.",
           },
           "Image request provider diverges from the boot-selected port (multi-agent misroute risk)",
         );

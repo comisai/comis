@@ -734,9 +734,9 @@ describe("createImageHandlers", () => {
   });
 
   // ─── WR-05 (184-REVIEW): multi-agent credential-misroute is a DOCUMENTED ────
-  // deferral (Phase 186). The boot-selected `provider` port is the DEFAULT
-  // agent's; a non-default agent whose resolved main provider DIFFERS runs the
-  // default agent's port/credentials. Until 186 re-selects per-request, the
+  // deferral (a future multi-agent refinement). The boot-selected `provider` port
+  // is the DEFAULT agent's; a non-default agent whose resolved main provider DIFFERS
+  // runs the default agent's port/credentials. Until per-request re-selection lands, the
   // handler must at least make the divergence OBSERVABLE (not silent), so triage
   // is not misled by the per-request obs line that names the caller's provider
   // while execution uses the default's port.
