@@ -18,10 +18,15 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { resolve, dirname } from "node:path";
 
 import { createAttentionEmitter } from "./terminal-attention-emitter.js";
 import { decodeFrames, type TerminalEventFrame } from "./terminal-ipc.js";
 import type { Classification, ClassifierState } from "./terminal-classifier.js";
+
+const here = dirname(fileURLToPath(import.meta.url));
 
 /** Build a {@link Classification} for a state (the emitter keys ONLY on `c.state`). */
 function classification(state: ClassifierState, reason = `${state}_reason`): Classification {
@@ -165,5 +170,48 @@ describe("createAttentionEmitter — TR-11 transition-only fd3 emit (the no-poll
     expect(capB.frames()).toHaveLength(1);
     expect(capA.frames()[0].sessionId).toBe("sA");
     expect(capB.frames()[0].sessionId).toBe("sB");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CLASS-02 (163-04) Task 1 — the core↔skills MIRROR-PARITY guard.
+//
+// `terminal-events-attention.ts` mirrors the core `TerminalEvents` keys
+// one-for-one so the daemon's `TypedEventBus` stays structurally compatible with
+// the bus the skills layer emits on. There is NO existing parity guard for these
+// shapes, so a `confidence` added to the core type but MISSED on the skills mirror
+// would be a silent no-op (the project_mcp_field_plumbing bug class) — caught only
+// at build:clean, not in vitest. This source-introspection assertion makes a missed
+// mirror RED in THIS plan's vitest verify (esbuild strips type annotations, so the
+// source layer is the genuinely-RED one). RED on pre-patch: the mirror has neither
+// `confidence` (input_needed + stuck) nor `reason` (stuck) yet.
+// ---------------------------------------------------------------------------
+describe("CLASS-02 — terminal-events-attention.ts mirrors confidence (+ stuck reason) one-for-one", () => {
+  /** Slice an `export interface <Name> { ... }` block out of the mirror source. */
+  function ifaceBlock(src: string, name: string): string {
+    const match = src.match(new RegExp(`export interface ${name}\\s*\\{[\\s\\S]*?\\n\\}`));
+    expect(match, `${name} interface must exist in terminal-events-attention.ts`).toBeTruthy();
+    return match![0];
+  }
+
+  it("TerminalInputNeededEvent (skills mirror) declares confidence (CLASS-02 source RED on pre-patch)", () => {
+    const src = readFileSync(resolve(here, "./terminal-events-attention.ts"), "utf8");
+    expect(ifaceBlock(src, "TerminalInputNeededEvent"), "input_needed mirror declares confidence").toMatch(
+      /confidence/,
+    );
+  });
+
+  it("TerminalStuckEvent (skills mirror) declares confidence AND reason (CLASS-02 source RED on pre-patch)", () => {
+    const src = readFileSync(resolve(here, "./terminal-events-attention.ts"), "utf8");
+    const block = ifaceBlock(src, "TerminalStuckEvent");
+    expect(block, "stuck mirror declares confidence").toMatch(/confidence/);
+    expect(block, "stuck mirror declares reason").toMatch(/reason/);
+  });
+
+  it("the skills mirror stays a PURE type-decl file — it value-imports nothing", () => {
+    const src = readFileSync(resolve(here, "./terminal-events-attention.ts"), "utf8");
+    // Only `import type` (or no import) is allowed — a value `import …` would breach
+    // the worker ↛ @comis/infra boundary the module's doc-comment promises.
+    expect(src, "no value import in the mirror").not.toMatch(/^import\s+(?!type\b)/m);
   });
 });

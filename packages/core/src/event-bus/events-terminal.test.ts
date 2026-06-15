@@ -297,7 +297,22 @@ describe("TerminalEvents — P5 attention + audit set (TR-11/OPS-04/SEC-11/SEC-1
     );
   });
 
-  it("terminal:input_needed delivers sessionId/agentId/state/reason — the attention wake (TR-11)", () => {
+  it("input_needed declares confidence; stuck declares confidence + reason (CLASS-02 source RED on pre-patch)", () => {
+    // esbuild strips bare type annotations, so this source-introspection layer is
+    // what fails on pre-patch code (the fields are absent on both blocks).
+    const src = readFileSync(resolve(here, "./events-terminal.ts"), "utf8");
+
+    const inputNeeded = src.match(/"terminal:input_needed":\s*\{[\s\S]*?\n\s*\};/);
+    expect(inputNeeded, "terminal:input_needed block must exist").toBeTruthy();
+    expect(inputNeeded![0], "input_needed declares confidence").toMatch(/confidence:/);
+
+    const stuck = src.match(/"terminal:stuck":\s*\{[\s\S]*?\n\s*\};/);
+    expect(stuck, "terminal:stuck block must exist").toBeTruthy();
+    expect(stuck![0], "stuck declares confidence").toMatch(/confidence:/);
+    expect(stuck![0], "stuck declares reason").toMatch(/reason:/);
+  });
+
+  it("terminal:input_needed delivers sessionId/agentId/state/reason/confidence — the attention wake (TR-11, CLASS-02)", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();
     const payload: EventMap["terminal:input_needed"] = {
@@ -305,6 +320,7 @@ describe("TerminalEvents — P5 attention + audit set (TR-11/OPS-04/SEC-11/SEC-1
       agentId: "agent-1",
       state: "awaiting-input",
       reason: "settled_cursor_parked",
+      confidence: "medium",
       timestamp: 5,
     };
 
@@ -317,6 +333,8 @@ describe("TerminalEvents — P5 attention + audit set (TR-11/OPS-04/SEC-11/SEC-1
     expect(received.agentId).toBe("agent-1");
     expect(received.state).toBe("awaiting-input");
     expect(received.reason).toBe("settled_cursor_parked");
+    // CLASS-02: the classifier confidence rides the wake event for the autonomous policy.
+    expect(received.confidence).toBe("medium");
     expect(typeof received.timestamp).toBe("number");
   });
 
@@ -330,19 +348,39 @@ describe("TerminalEvents — P5 attention + audit set (TR-11/OPS-04/SEC-11/SEC-1
         agentId: "a",
         state,
         reason: "r",
+        confidence: "medium",
         timestamp: 0,
       });
     }
     expect(seen).toEqual(["awaiting-input", "stuck"]);
   });
 
-  it("terminal:stuck delivers sessionId/agentId/noProgressMs — a duration signal, not content (OPS-04)", () => {
+  it("terminal:input_needed confidence union accepts high | medium (CLASS-02)", () => {
+    const bus = new TypedEventBus();
+    const seen: string[] = [];
+    bus.on("terminal:input_needed", (p) => seen.push(p.confidence));
+    for (const confidence of ["high", "medium"] as const) {
+      bus.emit("terminal:input_needed", {
+        sessionId: "s",
+        agentId: "a",
+        state: "awaiting-input",
+        reason: "r",
+        confidence,
+        timestamp: 0,
+      });
+    }
+    expect(seen).toEqual(["high", "medium"]);
+  });
+
+  it("terminal:stuck delivers sessionId/agentId/noProgressMs/reason/confidence — a duration + verdict signal, not content (OPS-04, CLASS-02)", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();
     const payload: EventMap["terminal:stuck"] = {
       sessionId: "sess-6",
       agentId: "agent-1",
       noProgressMs: 30_000,
+      reason: "no_progress",
+      confidence: "medium",
       timestamp: 6,
     };
 
@@ -354,6 +392,9 @@ describe("TerminalEvents — P5 attention + audit set (TR-11/OPS-04/SEC-11/SEC-1
     expect(received.sessionId).toBe("sess-6");
     expect(received.agentId).toBe("agent-1");
     expect(received.noProgressMs).toBe(30_000);
+    // CLASS-02: stuck now carries the classifier reason + confidence (observability symmetry).
+    expect(received.reason).toBe("no_progress");
+    expect(received.confidence).toBe("medium");
     expect(typeof received.timestamp).toBe("number");
   });
 
@@ -446,10 +487,12 @@ describe("TerminalEvents — P5 attention + audit set (TR-11/OPS-04/SEC-11/SEC-1
       agentId: "a",
       state: "awaiting-input",
       reason: "r",
+      confidence: "medium",
       timestamp: 0,
     };
     expect(Object.keys(inputNeeded).sort()).toEqual([
       "agentId",
+      "confidence",
       "reason",
       "sessionId",
       "state",
@@ -460,9 +503,18 @@ describe("TerminalEvents — P5 attention + audit set (TR-11/OPS-04/SEC-11/SEC-1
       sessionId: "s",
       agentId: "a",
       noProgressMs: 0,
+      reason: "no_progress",
+      confidence: "medium",
       timestamp: 0,
     };
-    expect(Object.keys(stuck).sort()).toEqual(["agentId", "noProgressMs", "sessionId", "timestamp"]);
+    expect(Object.keys(stuck).sort()).toEqual([
+      "agentId",
+      "confidence",
+      "noProgressMs",
+      "reason",
+      "sessionId",
+      "timestamp",
+    ]);
 
     const escalated: EventMap["terminal:escalated"] = {
       sessionId: "s",
