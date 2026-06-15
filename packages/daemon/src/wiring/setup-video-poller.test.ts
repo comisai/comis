@@ -1105,4 +1105,159 @@ describe("createVideoPoller", () => {
     expect(deps.sendAttachment).not.toHaveBeenCalled();
     poller.shutdown();
   });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // SEC-03 redaction (Phase 192-04) — the OFF-TURN poller log surface.
+  //
+  // The handler SEC-03 test (video-handlers.test.ts) covers the in-turn lines;
+  // the off-turn poller WARN/INFO lines are a SEPARATE surface the image-only
+  // SEC-03 test never reached. A poll/fetch failure rides `err: cause` on the
+  // `video_poll_failed` WARN, and the oversized-degrade INFO must never echo the
+  // retained `sourceUrl` (which for Veo IS the keyed-download-URL). Assert no
+  // secret (the full set incl. the Veo `…&key=AIza…` URL) appears in ANY poller
+  // log line across all 4 levels (incl. the serialized `err.message`).
+  // ─────────────────────────────────────────────────────────────────────────
+  // Realistic provider-key formats (so the de-mask discipline engages): a real
+  // `AIzaSy`+33 Google key (the Veo credential), a Bearer + an sk- key (Grok auth
+  // + the generic), and the Veo download URL with the key as `&key=AIza…`.
+  const GOOGLE_SECRET = "AIzaSyAbCdEfGhIjKlMnOpQrStUvWxYz0123456";
+  const BEARER_SECRET = "Bearer sk-grok-9f8e7d6c5b4a32100123456789ab";
+  const SK_SECRET = "sk-proj-DEADBEEFcafef00dDEADBEEFcafef00dXY";
+  const VEO_KEYED_URL =
+    `https://generativelanguage.googleapis.com/v1beta/files/abc:download?alt=media&key=${GOOGLE_SECRET}`;
+  const SECRET_VALUES = [
+    GOOGLE_SECRET,
+    BEARER_SECRET,
+    SK_SECRET,
+    "sk-grok-9f8e7d6c5b4a32100123456789ab",
+    VEO_KEYED_URL,
+  ];
+
+  /** Every poller log call (all 4 levels) + nested `err.message`/stack (a raw
+   *  provider Error rides `err: cause`; Error.message is non-enumerable so a
+   *  plain JSON.stringify drops it — the production Pino serializer emits it). */
+  function allPollerLogText(logger: ReturnType<typeof createMockLogger>): string[] {
+    const levels = ["debug", "info", "warn", "error"] as const;
+    const blobs: string[] = [];
+    for (const level of levels) {
+      const spy = logger[level] as ReturnType<typeof vi.fn>;
+      for (const call of spy.mock.calls) {
+        const payload = (call[0] ?? {}) as Record<string, unknown>;
+        blobs.push(JSON.stringify(payload));
+        if (typeof call[1] === "string") blobs.push(call[1]);
+        const errField = payload.err;
+        if (errField instanceof Error) {
+          blobs.push(errField.message);
+          if (typeof errField.stack === "string") blobs.push(errField.stack);
+        }
+      }
+    }
+    return blobs;
+  }
+
+  function assertNoPollerSecretLeak(logger: ReturnType<typeof createMockLogger>): void {
+    const blobs = allPollerLogText(logger);
+    expect(blobs.length).toBeGreaterThan(0); // non-vacuous
+    for (const blob of blobs) {
+      for (const secret of SECRET_VALUES) expect(blob).not.toContain(secret);
+      // No LIVE secret-shaped value (the sanitized `[REDACTED]` placeholder is
+      // safe — a live token has no `[` right after the prefix).
+      expect(blob).not.toMatch(/Bearer\s+[A-Za-z0-9._~+/=-]{8,}/i);
+      expect(blob).not.toMatch(/sk-[A-Za-z0-9]{6,}/);
+      expect(blob).not.toMatch(/key=AIza[A-Za-z0-9_-]{4,}/);
+      expect(blob).not.toMatch(/AIzaSy[A-Za-z0-9_-]{10,}/);
+    }
+  }
+
+  it("a fetchResult failure whose raw provider Error carries the full secret set does not leak it via the off-turn WARN", async () => {
+    // fetchResult rejects with a raw SDK-shaped error embedding every secret —
+    // the poller WARNs `err: cause` (video_poll_failed). No secret may surface.
+    const provider = makeProvider({
+      poll: vi.fn().mockResolvedValue(ok({ jobId: "fal-req-abc123", state: "done" })),
+      fetchResult: vi
+        .fn()
+        .mockResolvedValue(
+          err(
+            new Error(
+              `download failed: ${GOOGLE_SECRET} ${BEARER_SECRET} ${SK_SECRET} ${VEO_KEYED_URL}`,
+            ),
+          ),
+        ),
+    });
+    const { poller, deps } = makePoller({ provider, seedRows: [{ jobId: "fal-req-abc123" }] });
+    poller.track(makeRecord());
+    await flush();
+
+    // The failure WARN fired (non-vacuous).
+    expect(
+      (deps.logger.warn as ReturnType<typeof vi.fn>).mock.calls.some(
+        (c) => (c[0] as { step?: string }).step === "video_poll_failed",
+      ),
+    ).toBe(true);
+    assertNoPollerSecretLeak(deps.logger);
+  });
+
+  it("an oversized-degrade whose retained sourceUrl is the Veo keyed-download-URL never logs the key (video_poll_oversized_degrade)", async () => {
+    // The render result carries the Veo keyed-download-URL as sourceUrl; the clip
+    // is over the (forced) size limit → the degrade INFO/notice fires. The keyed
+    // URL rides the user-facing sendMessage TEXT, never the log object.
+    const provider = makeProvider({
+      fetchResult: vi.fn().mockResolvedValue(
+        ok({
+          buffer: SMALL_MP4,
+          mimeType: "video/mp4",
+          costUsd: 0.8,
+          model: "veo-3.1",
+          provider: "google",
+          durationSecs: 8,
+          sourceUrl: VEO_KEYED_URL,
+        }),
+      ),
+    });
+    // maxVideoBytes: 1000 forces the 42 KB PERSISTED_OK fixture oversized.
+    const { poller, deps } = makePoller({ provider, maxVideoBytes: 1000 });
+    poller.track(makeRecord());
+    await flush();
+
+    // The degrade branch fired (sendMessage, not sendAttachment) — non-vacuous.
+    expect(
+      (deps.logger.info as ReturnType<typeof vi.fn>).mock.calls.some(
+        (c) => (c[0] as { step?: string }).step === "video_poll_oversized_degrade",
+      ),
+    ).toBe(true);
+    // No secret in ANY poller log line (the keyed URL is on the sendMessage text).
+    assertNoPollerSecretLeak(deps.logger);
+  });
+
+  it("a failed oversized-degrade notice send (err: noticeResult.error carries a secret) does not leak it", async () => {
+    // The degrade-notice sendMessage rejects with a secret-bearing error → the
+    // poller WARNs `err: noticeResult.error`. No secret may surface.
+    const provider = makeProvider({
+      fetchResult: vi.fn().mockResolvedValue(
+        ok({
+          buffer: SMALL_MP4,
+          mimeType: "video/mp4",
+          costUsd: 0.8,
+          model: "veo-3.1",
+          provider: "google",
+          durationSecs: 8,
+          sourceUrl: VEO_KEYED_URL,
+        }),
+      ),
+    });
+    const sendMessage = vi
+      .fn()
+      .mockResolvedValue(err(new Error(`channel rejected the notice ${VEO_KEYED_URL} ${BEARER_SECRET}`)));
+    const { poller, deps } = makePoller({ provider, sendMessage, maxVideoBytes: 1000 });
+    poller.track(makeRecord());
+    await flush();
+
+    // The degrade WARN fired on the failed notice send (non-vacuous).
+    expect(
+      (deps.logger.warn as ReturnType<typeof vi.fn>).mock.calls.some(
+        (c) => (c[0] as { step?: string }).step === "video_poll_oversized_degrade",
+      ),
+    ).toBe(true);
+    assertNoPollerSecretLeak(deps.logger);
+  });
 });

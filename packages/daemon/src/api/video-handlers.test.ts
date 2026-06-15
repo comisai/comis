@@ -26,12 +26,18 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createVideoHandlers, type VideoHandlerDeps } from "./video-handlers.js";
-import { VideoGenError } from "@comis/core";
+import { VideoGenError, getToolMetadata } from "@comis/core";
 import { ok, err } from "@comis/shared";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 // SEC-03: the credential KEY-NAME set Pino redacts. The assertion below checks
 // no credential VALUE leaks into any video log line.
 import { CREDENTIAL_KEYS } from "@comis/observability";
+// SEC-01 regression-guard (Phase 192-04): a side-effect import of @comis/skills
+// runs the tool-metadata bootstrap (tool-bridge.ts calls registerAllToolMetadata()
+// at module load) so the SEC suite can pin video_generate/video_status
+// never-export via getToolMetadata, beside the architecture gate
+// (mcp-export-policy.test.ts). This is exactly how production registers metadata.
+import "@comis/skills";
 
 // Mock node:fs/promises so the SEC-03 workspace-file reference branch (and the
 // shared resolver) does no real I/O.
@@ -971,4 +977,211 @@ describe("createVideoHandlers (Phase 189 — inline→submit)", () => {
       expect(infoCalls(deps).some((c) => (c[0] as { step?: string }).step === "video_submitted")).toBe(true);
     });
   });
+});
+
+// ===========================================================================
+// SEC-03 redaction (Phase 192-04) — the FULL secret set incl. the Veo
+// keyed-download-URL, asserted across the HANDLER's log lines at every level.
+//
+// The image-handlers.test.ts:1795 redaction-assert twin, extended for video:
+//   - the secret set adds a FAL_KEY shape, an XAI_API_KEY shape, a GOOGLE_API_KEY
+//     (`AIza…`) shape, a Bearer, AND the Veo keyed-download-URL (`…&key=AIza…`) —
+//     the secret-bearing string the image-only test never covered (RESEARCH
+//     Runtime State Inventory: the Veo `uri + "&key="` download URL).
+//   - the harness captures EVERY call across all 4 levels and ALSO extracts the
+//     serialized `err.message` (a raw provider Error rides `err: cause` on the
+//     poller WARN; plain `JSON.stringify(Error)` drops `.message`, so the harness
+//     surfaces it explicitly — the real production-Pino leak surface).
+// The firmer guarantee is that the handler never CONSTRUCTS a secret-bearing
+// payload (only ids/labels/the typed kind/a knob-naming hint); the Pino redact
+// set (CREDENTIAL_KEYS) is the safety net. NEVER weaken the assert to pass — a
+// leak is a bug in the log construction, fixed THERE (the de-mask discipline).
+// ===========================================================================
+
+// The full SEC-03 secret set, in REALISTIC provider-key formats so the de-mask
+// discipline (sanitizeLogString + the Pino redact set) actually engages:
+//   - GOOGLE_SECRET: a real `AIzaSy`+33 Google API key (the Veo credential).
+//   - BEARER_SECRET / SK_SECRET: a Bearer + an OpenAI/Anthropic-style sk- key
+//     (xAI Grok also authenticates via a Bearer; the sk- shape is the generic).
+//   - VEO_KEYED_URL: the Veo download URI with the API key as `&key=AIza…` —
+//     the secret-bearing string the image-only SEC-03 test never covered.
+// NONE may appear in any captured log line at any level.
+const GOOGLE_SECRET = "AIzaSyAbCdEfGhIjKlMnOpQrStUvWxYz0123456";
+const BEARER_SECRET = "Bearer sk-grok-9f8e7d6c5b4a32100123456789ab";
+const SK_SECRET = "sk-proj-DEADBEEFcafef00dDEADBEEFcafef00dXY";
+const VEO_KEYED_URL =
+  `https://generativelanguage.googleapis.com/v1beta/files/abc:download?alt=media&key=${GOOGLE_SECRET}`;
+const VIDEO_SECRET_VALUES = [
+  GOOGLE_SECRET,
+  BEARER_SECRET,
+  SK_SECRET,
+  "sk-grok-9f8e7d6c5b4a32100123456789ab",
+  VEO_KEYED_URL,
+];
+
+/** Every captured log call (all 4 levels), as a list of stringified blobs.
+ *  Extracts the structured payload, the message string, AND any nested
+ *  `err.message` (Error.message is non-enumerable → dropped by a plain
+ *  JSON.stringify of the payload; the production Pino err serializer DOES emit
+ *  it, so a secret there is a real leak the harness must surface). */
+function allCapturedVideoLogText(deps: { logger: ReturnType<typeof createMockLogger> }): string[] {
+  const levels = ["debug", "info", "warn", "error"] as const;
+  const blobs: string[] = [];
+  for (const level of levels) {
+    const spy = deps.logger[level] as ReturnType<typeof vi.fn>;
+    for (const call of spy.mock.calls) {
+      const payload = (call[0] ?? {}) as Record<string, unknown>;
+      blobs.push(JSON.stringify(payload));
+      if (typeof call[1] === "string") blobs.push(call[1]);
+      // Surface a nested Error's message (rides `err: cause` / `err: <error>`).
+      const errField = payload.err;
+      if (errField instanceof Error) {
+        blobs.push(errField.message);
+        if (typeof errField.stack === "string") blobs.push(errField.stack);
+      }
+    }
+  }
+  return blobs;
+}
+
+/** Assert no secret value / Bearer / sk- token / `&key=AIza` appears anywhere. */
+function assertNoVideoSecretLeak(deps: { logger: ReturnType<typeof createMockLogger> }): void {
+  const blobs = allCapturedVideoLogText(deps);
+  // Sanity: the handler actually logged something (else this passes vacuously).
+  expect(blobs.length).toBeGreaterThan(0);
+  for (const blob of blobs) {
+    for (const secret of VIDEO_SECRET_VALUES) {
+      expect(blob).not.toContain(secret);
+    }
+    // No LIVE bearer/key token shape, and no keyed-download-URL key value. The
+    // sanitized placeholder `[REDACTED]` is SAFE — these patterns reject only an
+    // actual secret-shaped value (a live token has no `[` immediately after the
+    // prefix, so `Bearer sk-[REDACTED]` / `key=AIza[REDACTED]` correctly pass).
+    expect(blob).not.toMatch(/Bearer\s+[A-Za-z0-9._~+/=-]{8,}/i);
+    expect(blob).not.toMatch(/sk-[A-Za-z0-9]{6,}/);
+    expect(blob).not.toMatch(/key=AIza[A-Za-z0-9_-]{4,}/);
+    expect(blob).not.toMatch(/AIzaSy[A-Za-z0-9_-]{10,}/);
+  }
+  // CREDENTIAL_KEYS is the Pino redaction set (the safety net) — assert it carries
+  // the canonical key names (the value assertions above are the firm guarantee).
+  expect(CREDENTIAL_KEYS.has("authorization")).toBe(true);
+  expect(CREDENTIAL_KEYS.has("apiKey")).toBe(true);
+}
+
+describe("createVideoHandlers — SEC-03 no secret in any log line (full set + Veo keyed-URL)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("a submit failure whose VideoGenError message + hint carry the full secret set does not leak any of them", async () => {
+    // The provider error embeds EVERY secret in BOTH the message and the hint —
+    // the exact shape a leaking upstream SDK error (FAL/Veo/Grok) would carry.
+    // The hint is the operator-facing string the handler forwards VERBATIM, so a
+    // provider that (wrongly) echoes a key into its hint must still not leak.
+    const leakyError = new VideoGenError(
+      `submit rejected: ${GOOGLE_SECRET} ${BEARER_SECRET} ${SK_SECRET} ${VEO_KEYED_URL}`,
+      {
+        videoErrorKind: "auth_required",
+        // A provider hint that wrongly echoes a key — the handler must scrub it.
+        hint: `Re-auth the provider (a leaked-shaped hint: ${BEARER_SECRET} ${VEO_KEYED_URL}).`,
+      },
+    );
+    const deps = createMockDeps({
+      provider: {
+        id: "fal",
+        isAvailable: () => true,
+        submit: vi.fn().mockResolvedValue(err(leakyError)),
+        poll: vi.fn(),
+        fetchResult: vi.fn(),
+        execute: vi.fn(),
+      },
+    });
+    const handlers = createVideoHandlers(deps);
+    const result = (await handlers["video.generate"]!({
+      _agentId: "agent-sec03",
+      prompt: "a dragon",
+      _callerSessionKey: "default:u1:telegram:c1",
+    })) as { success: boolean };
+    // The provider error path returns success:false (the error MESSAGE may go to
+    // the CALLER — that is the contract — but it must never be LOGGED).
+    expect(result.success).toBe(false);
+    // The submit-failure WARN fired (so the assert is non-vacuous).
+    expect(warnCalls(deps).some((c) => (c[0] as { step?: string }).step === "video_submit")).toBe(true);
+    assertNoVideoSecretLeak(deps);
+  });
+
+  it("an i2v reference_image carrying a Veo keyed-download-URL as the image_url does not leak the key into any log", async () => {
+    // A reference_image URL that is itself the Veo keyed-download-URL: the SSRF
+    // resolver/validator path must never echo the keyed URL into a log line.
+    const core = await import("@comis/core");
+    (core.validateUrl as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ok: false,
+      error: new Error(`SSRF: refused to fetch ${VEO_KEYED_URL}`),
+    });
+    const deps = createMockDeps();
+    const handlers = createVideoHandlers(deps);
+    await expect(
+      handlers["video.generate"]!({
+        _agentId: "agent-sec03",
+        prompt: "animate this",
+        image_url: VEO_KEYED_URL,
+        _callerSessionKey: "default:u1:telegram:c1",
+      }),
+    ).rejects.toThrow();
+    expect(deps.provider.submit).not.toHaveBeenCalled();
+    // Whatever the handler logged on the SSRF-reject path, no key leaks.
+    const blobs = allCapturedVideoLogText(deps);
+    for (const blob of blobs) {
+      for (const secret of VIDEO_SECRET_VALUES) expect(blob).not.toContain(secret);
+      expect(blob).not.toMatch(/key=AIza[A-Za-z0-9_-]{4,}/);
+    }
+  });
+
+  it("the happy submit path logs only ids/labels (no secret-shaped token in any line)", async () => {
+    const reg = (() => {
+      const calls: Array<{ type: string; data: Record<string, unknown> }> = [];
+      const recorder = {
+        recordEvent: vi.fn((type: string, data: Record<string, unknown>) => calls.push({ type, data })),
+      };
+      return { calls, getRecorder: vi.fn(() => recorder) };
+    })();
+    const deps = createMockDeps({
+      trajectoryRegistry: reg as unknown as VideoHandlerDeps["trajectoryRegistry"],
+    });
+    const handlers = createVideoHandlers(deps);
+    const result = (await handlers["video.generate"]!({
+      _agentId: "agent-sec03",
+      prompt: "a sunset",
+      _callerSessionKey: "default:u1:telegram:c1",
+      _callerChannelType: "telegram",
+      _callerChannelId: "chat-sec03",
+    })) as { success: boolean };
+    expect(result.success).toBe(true);
+    assertNoVideoSecretLeak(deps);
+    // The trajectory records are also content-free (no secret-shaped token).
+    for (const c of reg.calls) {
+      const blob = JSON.stringify(c.data);
+      for (const secret of VIDEO_SECRET_VALUES) expect(blob).not.toContain(secret);
+      expect(blob).not.toMatch(/key=AIza[A-Za-z0-9_-]{4,}/);
+    }
+  });
+});
+
+// ===========================================================================
+// SEC-01 regression-guard (Phase 192-04) — video_generate / video_status stay
+// never-export, asserted in the SEC suite BESIDE the architecture gate
+// (mcp-export-policy.test.ts). A cost-bearing outbound tool must never reach the
+// MCP-exported set. Belt-and-suspenders: the arch gate enforces an explicit
+// policy on every registered tool; this pins the SPECIFIC video policy here.
+// ===========================================================================
+describe("video tools — SEC-01 never-export regression-guard", () => {
+  // Metadata is registered by the top-level side-effect import of @comis/skills.
+  it.each(["video_generate", "video_status"] as const)(
+    "%s resolves mcpExportPolicy 'never-export' (a generated clip bills + delivers — never MCP-exported)",
+    (name) => {
+      const meta = getToolMetadata(name);
+      expect(meta, `${name} must be registered`).toBeDefined();
+      expect(meta!.mcpExportPolicy).toBe("never-export");
+    },
+  );
 });
