@@ -1,6 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The pure auto-promotion predicate (DRIVE-02; design §4 Phase B, §7.1.2 LOCKED).
+ * The auto-promotion predicate + a thin content-free promotion emit helper (DRIVE-02;
+ * design §4 Phase B, §7.1.2 LOCKED).
+ *
+ * This module exports TWO things with DIFFERENT purity postures (IN-01 — the "pure/no-I/O"
+ * claim below is scoped to the predicate, NOT the file):
+ *   - {@link shouldPromoteDrive} — the PURE promotion DECISION (a free function over a
+ *     `WaitResult` + a `mode`; no I/O, no clock, no state).
+ *   - {@link emitDrivePromoted} — a thin SIDE-EFFECTING emit helper that performs the
+ *     (already-decided) content-free emit: `deps.emit("terminal:drive_promoted", …)` onto the
+ *     bus + a single `deps.info(...)` record. The I/O rides INJECTED seams (`DrivePromoteEmitDeps`)
+ *     — the helper still holds NO state and value-imports NO infra/observability package (so the
+ *     skills ↛ `@comis/infra`/`@comis/observability` boundary holds), but it is NOT a pure
+ *     function. It lives beside the predicate so the wait tool can decide-then-emit at one call
+ *     site while keeping `terminal-tools.ts` under its 800-line cap.
  *
  * `shouldPromoteDrive(result, mode)` answers ONE question over a `terminal_session_wait`
  * settle result: should this drive promote from the inline (attached) path to the
@@ -35,14 +48,18 @@
  *
  * Architecture invariants (binding — AGENTS.md / 124 house style, mirrors the pure-sibling
  * predicates `terminal-dialog-detector.ts` `detectsFullScreenDialog` and `terminal-settle.ts`
- * `settleHint`):
- *   - PURE: a free function, NOT a factory. NO clock/timer reads, NO module-global mutable
- *     state, NO I/O. A request → boolean response (Pitfall 1 — no wall-clock).
- *   - TOTAL / NEVER throws: every `(result, mode)` pair yields a boolean. It does not mutate
- *     its argument.
- *   - Infra-free: value-imports NOTHING at runtime (no node builtins needed) + a type-only
- *     `WaitResult` from `terminal-wait-reply.ts` — no platform runtime packages, no
- *     observability egress, no raw timer (the globals + infra-runtime-scope gates).
+ * `settleHint`). The PURE/no-I/O invariants below scope to {@link shouldPromoteDrive}
+ * specifically; {@link emitDrivePromoted} is the thin side-effecting emit helper (see the
+ * two-export note above):
+ *   - PURE (shouldPromoteDrive): a free function, NOT a factory. NO clock/timer reads, NO
+ *     module-global mutable state, NO I/O. A request → boolean response (Pitfall 1 — no wall-clock).
+ *   - TOTAL / NEVER throws: every `(result, mode)` pair yields a boolean; `emitDrivePromoted`
+ *     likewise never throws. Neither mutates its argument.
+ *   - Infra-free (whole module): value-imports NOTHING at runtime (no node builtins needed) +
+ *     type-only `WaitResult` / `TerminalDrivePromotedEvent` — no platform runtime packages, no
+ *     observability egress, no raw timer (the globals + infra-runtime-scope gates). The emit
+ *     helper's I/O goes exclusively through INJECTED seams (`DrivePromoteEmitDeps`), never a
+ *     value-imported bus/logger.
  *
  * State ownership: this predicate is the DECISION only. The skills layer evaluates it where
  * the wait-result is available; the daemon remains the state owner and enforces promote-once
