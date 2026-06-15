@@ -12,8 +12,15 @@
  * (a safe-pattern answer was sent). Phase 164 (DRIVE-02, v2.24) adds the autonomous-drive
  * promotion signal `terminal:drive_promoted` (a long drive crossed the inline→detached
  * threshold — the skills wait tool emits it, the daemon wake dispatcher consumes it to
- * fire ONE "drive started (backgrounded)" notification). Every payload carries `sessionId`
- * + `agentId` + `timestamp` so a transition is reconstructable from the bus alone (AGENTS.md §2.7).
+ * fire ONE "drive started (backgrounded)" notification). Phase 165 (DUR-01, v2.24) adds the
+ * durability RE-ATTACH signal `terminal:drive_reattached` (on a daemon restart the session
+ * registry recovered a durable drive whose detached tmux server SURVIVED + re-attached it as
+ * `running` instead of `lost` — the daemon emits it so a 40h drive's restart is reconstructable
+ * via `comis explain`, design §9); the genuinely-gone path REUSES the existing
+ * `terminal:session_state(state:"lost")` (there is NO `failed` member — the user-facing `failed`
+ * OUTCOME is Phase 166 NOTIFY-01's, derived from lost + a durable journal + an unrecoverable
+ * reason). Every payload carries `sessionId` + `agentId` + `timestamp` so a transition is
+ * reconstructable from the bus alone (AGENTS.md §2.7).
  *
  * Counts / ids / a redaction-safe `hint`, typed `reason`, or typed `state` ONLY
  * — NEVER keystrokes, screen contents, or command text. The keystroke event
@@ -203,6 +210,33 @@ export interface TerminalEvents {
      * `drive.mode:"detached"` (promote-at-first-wait, an explicit opt-in).
      */
     reason: "producing" | "mode_detached";
+    timestamp: number;
+  };
+
+  /**
+   * Autonomous-drive RE-ATTACH (DUR-01, Phase 165, v2.24): on a daemon restart the session
+   * registry recovered a persisted descriptor whose detached tmux server SURVIVED and
+   * re-attached the drive as `running` (NOT `lost`) WITHOUT a second create frame (I10 — the
+   * worker's `has-session`-gated backend re-attaches the surviving pane on the next read). The
+   * registry's `onReattached` hook (injected, infra-decoupled) drives this so a 40h drive's
+   * restart/re-attach is reconstructable via `comis explain` (design §9). MIRRORS
+   * {@link TerminalEvents}["terminal:drive_promoted"]'s content-free shape (the 164 precedent).
+   *
+   * The genuinely-gone counterpart is NOT a new event: it REUSES the existing
+   * `terminal:session_state(state:"lost")` + a content-free unrecoverable reason on the
+   * structured LOG. There is NO `state:"failed"` member (the union is
+   * created|running|exited|lost); the user-facing `failed` OUTCOME is Phase 166 NOTIFY-01's,
+   * derived downstream from (`lost` + a durable drive journal + the unrecoverable reason).
+   *
+   * CONTENT-FREE (I3): sessionId / agentId + a single-member `reason` enum (the WHY it
+   * re-attached, NEVER the screen) / timestamp ONLY. The screen the drive resumed on rides the
+   * detached tmux session, never the bus.
+   */
+  "terminal:drive_reattached": {
+    sessionId: string;
+    agentId: string;
+    /** Why the drive re-attached (a closed enum, NEVER screen text — I3): `tmux_alive` = the persisted descriptor's `comis-<id>` tmux server survived the restart, so it re-attached instead of being flipped `lost`. */
+    reason: "tmux_alive";
     timestamp: number;
   };
 }

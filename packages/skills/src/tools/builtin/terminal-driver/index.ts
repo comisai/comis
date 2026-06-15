@@ -218,6 +218,37 @@ export {
   type ReadDigest,
 } from "./terminal-read-digest.js";
 
+// 165-01 (DUR-01): the pure re-attach DECISION + the persisted durable session IDENTITY.
+// The registry's recover-on-boot (165-06) consumes reattachDecision; the daemon (165-07)
+// (de)serializes descriptors via serialize/deserialize for the durable descriptor store.
+// Pure, total, infra-free (injected has-session probe); the descriptor (de)serialize rejects
+// a malformed/partial identity to undefined (corrupt-skip, never partial-trust authorization).
+export {
+  reattachDecision,
+  serializeDescriptor,
+  deserializeDescriptor,
+  type SessionDescriptor,
+  type ReattachDecision,
+} from "./terminal-reattach-match.js";
+
+// 165-06 (DUR-01): the recover-on-boot SCAN orchestrator + the injected descriptor-store
+// port + the rehydrate/persist/durable-lost helpers the registry delegates to (kept here so
+// the 800-line registry stays lean). The daemon (165-07) implements SessionDescriptorStorePort
+// as the fs-safe durable descriptor store + injects it onto the registry deps. Pure via the
+// injected port; consumes 165-01's reattachDecision; the bulk lives here, not the registry.
+export {
+  recoverSessionDescriptors,
+  rehydrateHandleFromDescriptor,
+  buildSessionDescriptor,
+  applyRecoveredSessions,
+  markRunningSessionsLost,
+  staysRecoverable,
+  type SessionDescriptorStorePort,
+  type RecoveredAction,
+  type DurableCreateInputs,
+  type ApplyRecoveredDeps,
+} from "./terminal-session-reattach.js";
+
 // P5 124-05 (spec §2.3, TR-11): the transition-only in-worker attention emitter — the
 // WORKER half of the no-poll mechanism. The worker (124-05 Task 2) calls observe() with
 // each settled frame's classification; the emitter writes a redaction-safe

@@ -97,6 +97,41 @@ export function resolveTmuxPath(): string | undefined {
   }
 }
 
+/** A minimal structural WARN sink (the file logger satisfies it). */
+interface DurableWarnLogger {
+  warn(obj: Record<string, unknown>, msg?: string): void;
+}
+
+/**
+ * DUR-01 §7.1.5 — the durable-vs-fallback WARN. tmux availability is a RUNTIME property, NOT
+ * a config-validation hard-require (the LOCKED decision): `drive.durable:true` parses fine and
+ * DEGRADES gracefully when tmux is absent. When the worker boots on a host with no tmux
+ * (`tmuxPath === undefined`), a later `backend:"tmux"` durable drive falls back to pty/pipe —
+ * and a daemon restart then ends that session `lost` (with the journal preserved; the
+ * user-facing `failed` OUTCOME is Phase-166 NOTIFY-01's). Log ONE content-free WARN at boot so
+ * an operator sees WHY a durable drive will not survive a restart on this host. Best-effort
+ * (never throws out of the worker boot — a logging fault must not crash the process). §2.7:
+ * `errorKind:"precondition"` + `step:"tmux_resolve"` + a `hint` naming the degradation.
+ *
+ * @param tmuxPath - The resolved tmux binary path, or `undefined` when tmux is unavailable.
+ * @param logger - The worker's structural WARN sink.
+ */
+export function warnIfDurableTmuxUnavailable(tmuxPath: string | undefined, logger: DurableWarnLogger): void {
+  if (tmuxPath !== undefined) return; // tmux present — a durable drive is genuinely durable.
+  try {
+    logger.warn(
+      {
+        errorKind: "precondition",
+        step: "tmux_resolve",
+        hint: "durable requested but tmux unavailable; falling back non-durable; a restart then ends the session `lost` with the journal preserved (the user-facing `failed` outcome is derived in Phase 166)",
+      },
+      "terminal durable drive will degrade — tmux not found",
+    );
+  } catch {
+    /* best-effort — a WARN failure must never crash the worker boot */
+  }
+}
+
 /**
  * The tmux long-run backend (OPS-05): a named tmux session outlives the worker, so a
  * milestone survives a worker crash + is re-attachable. `createTmuxBackend` makes the
@@ -147,6 +182,9 @@ function main(): void {
   // a backend:"tmux" request degrades to pty/pipe (never an error).
   const tmuxPath = resolveTmuxPath();
   const loadTmux = tmuxPath ? buildLoadTmux(tmuxPath) : undefined;
+  // DUR-01 §7.1.5: WARN at boot if tmux is unavailable — a durable drive will degrade to
+  // non-durable here, so a restart ends it `lost` (journal preserved; `failed` is Phase-166's).
+  warnIfDurableTmuxUnavailable(tmuxPath, logger);
 
   const worker = createTerminalWorker({
     // The guarded node-pty loader (createRequire in a try → pipe fallback on a
