@@ -118,6 +118,46 @@ export function channelRendersVideoLink(channelType: string): boolean {
 }
 
 /**
+ * WR-03 (Phase 192): hosts whose video `sourceUrl` is KEYED/private — fetchable
+ * ONLY with a secret the adapter correctly WITHHOLDS from the shared URL. Sharing
+ * such a URL as a `link` hands the user a DEAD link (a 403 without the key), and a
+ * keyed variant would LEAK the credential to the channel. So these are excluded
+ * from the `link` policy → they degrade to `notice` + the workspace path.
+ *   - generativelanguage.googleapis.com : the Veo Dev-API download host (the
+ *     un-keyed video.uri 403s without the `&key=GOOGLE_API_KEY` the adapter
+ *     appends only for its OWN download — veo-adapter.ts:132).
+ *   - api.x.ai / *.x.ai : the xAI/Grok private download host (bearer-gated).
+ * FAL renders to a PUBLIC CDN (fal.media / *.fal.media) needing no secret — that
+ * link IS shareable and stays the `link` policy.
+ */
+const KEYED_VIDEO_URL_HOST_SUFFIXES: readonly string[] = Object.freeze([
+  "generativelanguage.googleapis.com",
+  "x.ai",
+]);
+
+/**
+ * WR-03: true when a provider `sourceUrl` is publicly fetchable WITHOUT a secret
+ * (so it is safe + useful to share as a `link`). False for a keyed/private host
+ * (Veo/Grok download URLs) and for a malformed/non-http URL (conservative — a URL
+ * we cannot classify is not shared). The clip's workspace path is always the
+ * recoverable artifact regardless, so a `false` here only downgrades to `notice`.
+ */
+export function isPubliclyFetchableVideoUrl(sourceUrl: string): boolean {
+  let host: string;
+  try {
+    const u = new URL(sourceUrl);
+    if (u.protocol !== "https:" && u.protocol !== "http:") return false;
+    host = u.hostname.toLowerCase();
+  } catch {
+    return false; // malformed URL — never share
+  }
+  for (const suffix of KEYED_VIDEO_URL_HOST_SUFFIXES) {
+    if (host === suffix || host.endsWith(`.${suffix}`)) return false;
+  }
+  return true;
+}
+
+/**
  * Human-readable byte formatter for the oversized-degrade notice text (e.g.
  * "50.0 MB", "128 KB"). A local copy of the media-compressor `formatBytes` (that
  * one is module-private + the media-compressor is the silent-drop file we must NOT
@@ -142,11 +182,12 @@ export interface OversizedDegradeMessage {
 
 /**
  * Build the DEL-03 oversized-video degrade message for the delivery site. Where
- * the channel renders links AND a retained provider URL is available, the `link`
- * policy shares that URL; otherwise the `notice` policy carries the local
- * workspace path. EITHER WAY the persisted `filePath` is included so the clip is
- * recoverable, and the text NEVER contains the v2.23 `[Attachment too large]`
- * silent-drop marker (this is the visible-degrade replacement for it).
+ * the channel renders links AND a retained provider URL is available AND that URL
+ * is PUBLICLY FETCHABLE without a secret (WR-03), the `link` policy shares that
+ * URL; otherwise the `notice` policy carries the local workspace path. EITHER WAY
+ * the persisted `filePath` is included so the clip is recoverable, and the text
+ * NEVER contains the v2.23 `[Attachment too large]` silent-drop marker (this is
+ * the visible-degrade replacement for it).
  */
 export function buildOversizedDegradeMessage(args: {
   channelType: string;
@@ -158,8 +199,15 @@ export function buildOversizedDegradeMessage(args: {
   const { channelType, sizeBytes, limit, filePath, sourceUrl } = args;
   const sizeStr = formatVideoBytes(sizeBytes);
   const limitStr = formatVideoBytes(limit);
+  // WR-03: only share `sourceUrl` as a link when the channel renders links AND the
+  // URL is publicly fetchable WITHOUT a secret. A keyed/private provider URL
+  // (Veo/Grok) would be a DEAD link to the user (403 without the key) or LEAK the
+  // key if keyed — degrade those to `notice` + the always-recoverable workspace path.
   const link =
-    channelRendersVideoLink(channelType) && typeof sourceUrl === "string" && sourceUrl.length > 0
+    channelRendersVideoLink(channelType) &&
+    typeof sourceUrl === "string" &&
+    sourceUrl.length > 0 &&
+    isPubliclyFetchableVideoUrl(sourceUrl)
       ? sourceUrl
       : undefined;
   if (link !== undefined) {
