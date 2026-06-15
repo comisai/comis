@@ -35,6 +35,11 @@ export const VideoJobDbRowSchema = z.strictObject({
   channel_type: z.string().nullable(),
   channel_id: z.string().nullable(),
   trace_id: z.string().nullable(),
+  // OBS-04 (Phase 192): the off-turn recorder fold key. Nullable — old rows
+  // (pre-192, or in-flight at upgrade time) are NULL → offline-only
+  // reconstruction. The strictObject above REJECTS a column the DDL adds without
+  // this line, so the schema + the ensureVideoJobTable DDL move in lockstep.
+  session_key: z.string().nullable(),
   // 'pending' | 'done' | 'failed' — Zod is the domain type; no SQL CHECK
   // (mirrors the delivery queue's `status` being a plain TEXT, validated in TS).
   state: z.string(),

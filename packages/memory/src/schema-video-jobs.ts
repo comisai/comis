@@ -49,6 +49,7 @@ export function ensureVideoJobTable(db: Database.Database): void {
       channel_type       TEXT,
       channel_id         TEXT,
       trace_id           TEXT,
+      session_key        TEXT,
       state              TEXT NOT NULL,
       estimated_cost_usd REAL,
       actual_cost_usd    REAL,
@@ -60,6 +61,20 @@ export function ensureVideoJobTable(db: Database.Database): void {
       updated_at_ms      INTEGER NOT NULL
     )
   `);
+  // OBS-04 (Phase 192): forward-only, re-run-safe migration for the
+  // `session_key` column. `CREATE TABLE IF NOT EXISTS` is a no-op on a table that
+  // a PRIOR v2.24 build (without this column) already created, so a fresh db gets
+  // the column from the CREATE above while an upgraded db needs this ALTER. Guard
+  // it with a `PRAGMA table_info` column-exists check so the ALTER runs at most
+  // once and re-running ensureVideoJobTable never throws (a duplicate ADD COLUMN
+  // would). The off-turn background poller resolves the per-session trajectory
+  // recorder by this key to stitch a background-completed render to its turn.
+  const hasSessionKey = (db.prepare("PRAGMA table_info(video_jobs)").all() as Array<{ name: string }>).some(
+    (c) => c.name === "session_key",
+  );
+  if (!hasSessionKey) {
+    db.exec(`ALTER TABLE video_jobs ADD COLUMN session_key TEXT`);
+  }
   // Partial index for the poller's listPending() boot-resume scan (JOB-03).
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_video_jobs_pending ON video_jobs (state) WHERE state = 'pending'`,

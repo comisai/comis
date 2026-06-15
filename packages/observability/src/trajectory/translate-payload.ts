@@ -22,6 +22,7 @@
  */
 
 import type { TrajectoryBridgedEventName } from "./event-bus-bridge.js";
+import { translateVideoPayload } from "./translate-video-payload.js";
 
 /**
  * Translate one EventBus payload into the `data` payload of a trajectory event.
@@ -777,6 +778,14 @@ export function translatePayload(
         ...(payload.provider !== undefined ? { provider: payload.provider } : {}),
         ...(payload.mainProvider !== undefined ? { mainProvider: payload.mainProvider } : {}),
       };
+
+    // ---- Video generation (OBS-04, Phase 192) ---- delegated to translate-video-payload.ts (file-size split; content-free + envelope-stripped, mirroring the image:*/media.vision:* arms above).
+    case "video:requested":
+    case "video:submitted":
+    case "video:generated":
+    case "video:delivered":
+    case "video:failed":
+      return translateVideoPayload(eventName, payload);
 
     default: {
       // Exhaustiveness — switch covers every TrajectoryBridgedEventName.

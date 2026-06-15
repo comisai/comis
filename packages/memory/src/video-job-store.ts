@@ -57,6 +57,10 @@ export interface VideoJobRecord {
   readonly channelType?: string;
   readonly channelId?: string;
   readonly traceId?: string;
+  /** OBS-04 (Phase 192): the formatted session key — the off-turn poller resolves
+   *  the per-session trajectory recorder by this to stitch a background-completed
+   *  render to its originating turn. Nullable in the row (old rows are NULL). */
+  readonly sessionKey?: string;
   readonly state: VideoJobState;
   readonly estimatedCostUsd?: number;
   readonly actualCostUsd?: number;
@@ -79,6 +83,9 @@ export interface VideoJobInsert {
   readonly channelType?: string;
   readonly channelId?: string;
   readonly traceId?: string;
+  /** OBS-04 (Phase 192): the formatted session key persisted at submit (the
+   *  off-turn recorder fold key). Optional — `undefined` outside a request scope. */
+  readonly sessionKey?: string;
   readonly state: VideoJobState;
   readonly estimatedCostUsd?: number;
   readonly submittedAtMs: number;
@@ -148,6 +155,7 @@ function rowToRecord(row: VideoJobDbRow): VideoJobRecord {
     ...(row.channel_type !== null ? { channelType: row.channel_type } : {}),
     ...(row.channel_id !== null ? { channelId: row.channel_id } : {}),
     ...(row.trace_id !== null ? { traceId: row.trace_id } : {}),
+    ...(row.session_key !== null ? { sessionKey: row.session_key } : {}),
     state: row.state as VideoJobState,
     ...(row.estimated_cost_usd !== null ? { estimatedCostUsd: row.estimated_cost_usd } : {}),
     ...(row.actual_cost_usd !== null ? { actualCostUsd: row.actual_cost_usd } : {}),
@@ -179,9 +187,9 @@ export function createVideoJobStore(db: Database.Database): VideoJobStore {
   const insertStmt = db.prepare(`
     INSERT INTO video_jobs (
       job_id, provider, model, agent_id, channel_type, channel_id, trace_id,
-      state, estimated_cost_usd, actual_cost_usd, media_path, progress,
-      last_error, submitted_at_ms, updated_at_ms
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?)
+      session_key, state, estimated_cost_usd, actual_cost_usd, media_path,
+      progress, last_error, submitted_at_ms, updated_at_ms
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?)
   `);
 
   // Agent-scoped read — filters by BOTH columns (the must-differ point 1;
@@ -234,6 +242,7 @@ export function createVideoJobStore(db: Database.Database): VideoJobStore {
           record.channelType ?? null,
           record.channelId ?? null,
           record.traceId ?? null,
+          record.sessionKey ?? null,
           record.state,
           record.estimatedCostUsd ?? null,
           record.submittedAtMs,
