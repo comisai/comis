@@ -158,7 +158,16 @@ const TerminalAllowEntrySchema = z.strictObject({
     acknowledgedRisk: z.literal(true),
     acknowledgedAt: z.string(),
   }),
-  /** Per-entry resource caps (all optional). */
+  /**
+   * Per-entry resource caps (all optional). `wallClockMs` / `maxInteractions` are the
+   * ENDURANCE-DIALABLE caps (ENDURE-01): each is `.int().optional()`, so `undefined` ⇒
+   * NO cap (today's behavior, I1) and an operator dials it to a 40h+ horizon. They stay
+   * cap-only knobs with NO `.default()` on purpose — adding a default would impose a cap
+   * where there is none today (I1). The high-default + reaper-exclusion + cap-named
+   * `failed` reason are the daemon's runtime concern (165-08's reaper wiring), not a
+   * schema default. A cap eviction names the cap that fired (I9 — never evicted for
+   * duration/quietness alone).
+   */
   limits: z
     .strictObject({
       maxSessions: z.number().int().optional(),
@@ -219,14 +228,18 @@ export const TerminalDriverConfigSchema = z.strictObject({
   audit: z.strictObject({ enabled: z.boolean() }),
   /**
    * Autonomous-drive policy (v2.24, additive — design §4 "Config surface"). OPTIONAL +
-   * `strictObject`: a config with NO `drive` block is byte-identical to today (I1). This
-   * phase introduces `mode` (DRIVE-02) + `readMode` (READ-01); Phases 165/166 extend this
-   * SAME block (durable / notify / heartbeatNotifyMs / heartbeatMs / maxCostUsd) — the
+   * `strictObject`: a config with NO `drive` block is byte-identical to today (I1). Phase 164
+   * introduced `mode` (DRIVE-02) + `readMode` (READ-01); Phase 165 (165-05) adds the three
+   * endurance/durability fields `durable` (DUR-01) / `heartbeatMs` (LIVE-01) / `maxCostUsd`
+   * (ENDURE-01); Phase 166 extends this SAME block further (notify / heartbeatNotifyMs). The
    * optional-block + per-field-`.default(...)` discipline lets each phase's additions stay
-   * independent (an unknown/typo'd `drive.*` key still rejects, OPS-02). The per-field
-   * defaults preserve today's effective behavior (`mode:"auto"` only promotes a genuinely-
-   * long drive; `readMode:"digest"` is already the tool's effective default). Changing/adding
-   * a default regenerates the `section-registry-parity` snapshot (a validate-only gate).
+   * independent (an unknown/typo'd `drive.*` key still rejects, OPS-02). The per-field defaults
+   * preserve today's effective behavior — `mode:"auto"` only promotes a genuinely-long drive;
+   * `readMode:"digest"` is already the tool's effective default; `durable:false` /
+   * `heartbeatMs:90_000` / `maxCostUsd:null` are inert. §7.1.5 LOCKED: `durable:true` is
+   * ACCEPTED at config-validation even on a tmux-less host (tmux availability is a RUNTIME
+   * property — degrade + WARN, never a config-time hard-require). Changing/adding a default
+   * regenerates the `section-registry-parity` snapshot (a validate-only gate).
    */
   drive: z
     .strictObject({
@@ -234,6 +247,34 @@ export const TerminalDriverConfigSchema = z.strictObject({
       mode: z.enum(["auto", "attached", "detached"]).default("auto"),
       /** Default wake-read shape (READ-01): a bounded digest / only changed rows / the whole bounded screen. */
       readMode: z.enum(["digest", "diff", "full"]).default("digest"),
+      /**
+       * DUR-01 — make the drive DURABLE: launch the driven CLI inside a detached
+       * tmux server (implying `backend:"tmux"` at runtime) so a worker/daemon exit
+       * leaves it running, and re-attach (never restart, never double-drive) on
+       * daemon restart. Default `false` = today's non-durable spawn drive (I1).
+       * §7.1.5 LOCKED: `durable:true` is ACCEPTED HERE even on a tmux-less host —
+       * tmux availability is a RUNTIME property; an unavailable/failed re-attach
+       * degrades to a non-durable drive + a logged WARN (and an honest `failed` on
+       * a subsequent restart), NOT a config-validation hard-require. Do NOT add a
+       * config-time tmux check.
+       */
+      durable: z.boolean().default(false),
+      /**
+       * LIVE-01 — the INTERNAL coarse liveness-backstop interval (ms). A safety net
+       * UNDER the event-driven wake (I2): on a tick with NO intervening transition it
+       * performs a SINGLE liveness check and synthesizes `stuck` only when genuinely
+       * hung — a legitimately-busy long compile/test is busy, NOT `stuck` (I9). NEVER
+       * a hot-path poll (no per-tick screen read). Default 90_000 (90s). This is the
+       * internal liveness tick, NOT the user-facing progress heartbeat (Phase 166).
+       */
+      heartbeatMs: z.number().int().positive().default(90_000),
+      /**
+       * ENDURE-01 — an optional per-drive SPEND CEILING (USD) over the whole run.
+       * On breach the drive escalates/stops — never silent overspend. `null` (default)
+       * = uncapped, preserving today's behavior (I1). Carries no privilege/path/
+       * credential (I5) — it bounds cost only.
+       */
+      maxCostUsd: z.number().nullable().default(null),
     })
     .optional(),
 });
