@@ -91,8 +91,29 @@ function makeProvider(overrides: Partial<MockProvider> = {}): MockProvider {
   };
 }
 
+/** A spy-wrapper over a frozen VideoJobStore so tests can assert call counts
+ *  (the real store is Object.freeze'd → vi.spyOn cannot redefine its methods).
+ *  Each method delegates to the real store (hits the real :memory: db). */
+function spyStore(real: VideoJobStore): VideoJobStore & {
+  markDoneSpy: ReturnType<typeof vi.fn>;
+  markFailedSpy: ReturnType<typeof vi.fn>;
+} {
+  const markDoneSpy = vi.fn((...args: Parameters<VideoJobStore["markDone"]>) => real.markDone(...args));
+  const markFailedSpy = vi.fn((...args: Parameters<VideoJobStore["markFailed"]>) => real.markFailed(...args));
+  return {
+    insert: (...a) => real.insert(...a),
+    listPending: () => real.listPending(),
+    get: (...a) => real.get(...a),
+    markDone: markDoneSpy as unknown as VideoJobStore["markDone"],
+    markFailed: markFailedSpy as unknown as VideoJobStore["markFailed"],
+    updateProgress: (...a) => real.updateProgress(...a),
+    markDoneSpy,
+    markFailedSpy,
+  };
+}
+
 interface MockPollerDeps {
-  store: VideoJobStore;
+  store: ReturnType<typeof spyStore>;
   provider: MockProvider;
   persist: ReturnType<typeof vi.fn>;
   costLimiter: { record: ReturnType<typeof vi.fn> };
@@ -119,12 +140,15 @@ function makePoller(opts: {
 } = {}): { poller: VideoPoller; deps: MockPollerDeps; db: Database.Database } {
   const db = new Database(":memory:");
   ensureVideoJobTable(db);
-  const store = createVideoJobStore(db);
+  const real = createVideoJobStore(db);
+  const store = spyStore(real);
 
-  // Seed any pending rows the resume test needs (synchronously — insert is sync
-  // under the hood despite the Promise wrapper).
-  for (const row of opts.seedRows ?? []) {
-    void store.insert({
+  // Seed pending rows. Default: ONE row matching makeJob()'s jobId so a bare
+  // `track(makeJob())` has a row to read its routing from (the handler inserts
+  // the row at submit, then calls track). Tests override via `seedRows`.
+  const rows = opts.seedRows ?? [{ jobId: "fal-req-abc123" }];
+  for (const row of rows) {
+    void real.insert({
       jobId: "seed-job",
       provider: "fal",
       model: "fal-ai/veo3.1/fast",
@@ -172,8 +196,10 @@ function makePoller(opts: {
   return { poller, deps, db };
 }
 
-/** Flush the microtask queue so fire-and-forget runJob loops settle. */
-async function flush(times = 6): Promise<void> {
+/** Flush the microtask queue so fire-and-forget runJob loops settle. The full
+ *  chain is loadRecord→poll→fetchResult→persist→sendAttachment→markDone→info —
+ *  each an await — so the default count is generous. */
+async function flush(times = 30): Promise<void> {
   for (let i = 0; i < times; i++) await Promise.resolve();
 }
 
@@ -185,7 +211,7 @@ describe("createVideoPoller", () => {
   // ─── JOB-02 happy path: poll→done→fetch→persist→deliver→record→markDone ───
   it("drives a tracked job to completion: persist once, deliver via sendAttachment, record actual cost, markDone", async () => {
     const { poller, deps } = makePoller();
-    const markDoneSpy = vi.spyOn(deps.store, "markDone");
+    const markDoneSpy = deps.store.markDoneSpy;
     poller.track(makeJob());
     await flush();
 
@@ -228,8 +254,8 @@ describe("createVideoPoller", () => {
       poll: vi.fn().mockResolvedValue(ok({ jobId: "fal-req-abc123", state: "failed" })),
     });
     const { poller, deps } = makePoller({ provider, seedRows: [{ jobId: "fal-req-abc123" }] });
-    const markFailedSpy = vi.spyOn(deps.store, "markFailed");
-    const markDoneSpy = vi.spyOn(deps.store, "markDone");
+    const markFailedSpy = deps.store.markFailedSpy;
+    const markDoneSpy = deps.store.markDoneSpy;
     poller.track(makeJob());
     await flush();
 
@@ -257,13 +283,13 @@ describe("createVideoPoller", () => {
     });
     const db = new Database(":memory:");
     ensureVideoJobTable(db);
-    const store = createVideoJobStore(db);
+    const store = spyStore(createVideoJobStore(db));
     void store.insert({
       jobId: "fal-req-abc123", provider: "fal", model: "m", agentId: "alpha",
       channelType: "telegram", channelId: "ch", traceId: "trace-seed",
       state: "pending", estimatedCostUsd: 2.4, submittedAtMs: 0, updatedAtMs: 0,
     });
-    const markFailedSpy = vi.spyOn(store, "markFailed");
+    const markFailedSpy = store.markFailedSpy;
     const logger = createMockLogger();
     const sleep = vi.fn().mockImplementation(async () => { clock += 60_000; }); // each sleep advances the clock
     const poller = createVideoPoller({
@@ -306,7 +332,7 @@ describe("createVideoPoller", () => {
     const { poller, deps } = makePoller({
       seedRows: [{ jobId: "seed-job", agentId: "alpha", channelType: "telegram", channelId: "ch-recorded" }],
     });
-    const markDoneSpy = vi.spyOn(deps.store, "markDone");
+    const markDoneSpy = deps.store.markDoneSpy;
     await poller.startAndResume();
     await flush();
 
@@ -325,7 +351,7 @@ describe("createVideoPoller", () => {
   });
 
   it("startAndResume(): no pending rows → no delivery, no resumed log", async () => {
-    const { poller, deps } = makePoller();
+    const { poller, deps } = makePoller({ seedRows: [] });
     await poller.startAndResume();
     await flush();
     expect(deps.sendAttachment).not.toHaveBeenCalled();
@@ -345,7 +371,7 @@ describe("createVideoPoller", () => {
   it("the sweeper re-discovers a pending row not in the in-flight set and re-tracks it (single-tick gate)", async () => {
     // Start with no in-flight jobs, then insert a pending row AFTER startAndResume
     // and advance the timer so the sweeper picks it up.
-    const { poller, deps } = makePoller();
+    const { poller, deps } = makePoller({ seedRows: [] });
     await poller.startAndResume();
     await flush();
     void deps.store.insert({
@@ -363,7 +389,7 @@ describe("createVideoPoller", () => {
 
   // ─── shutdown ───
   it("shutdown() clears the interval (cancelled in the timer record) and stops further polls", async () => {
-    const { poller, deps } = makePoller();
+    const { poller, deps } = makePoller({ seedRows: [] });
     await poller.startAndResume();
     poller.shutdown();
     const intervals = deps.timers.unrefRecord().filter((e) => e.kind === "interval");
@@ -385,7 +411,7 @@ describe("createVideoPoller", () => {
       adapterHasSend: false,
       seedRows: [{ jobId: "fal-req-abc123" }],
     });
-    const markDoneSpy = vi.spyOn(deps.store, "markDone");
+    const markDoneSpy = deps.store.markDoneSpy;
     poller.track(makeJob());
     await flush();
     // No throw; the clip IS persisted so the at-least-once contract still marks done.
