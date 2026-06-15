@@ -15,6 +15,7 @@ import type {
   FileLockPort,
   InjectionRateLimiter,
   OAuthCredentialStorePort,
+  OAuthTokenManager,
   SecretsCrypto,
   ToolCapabilityPort,
 } from "@comis/core";
@@ -267,4 +268,12 @@ export interface SingleAgentResult {
    * invariant (Pitfall 1: a parallel holder would always read empty).
    */
   executionPlanPort: ExecutionPlanPort;
+  /**
+   * Per-agent OAuthTokenManager (184). The SAME instance consumed for the
+   * executor's OAuth resolution — surfaced so the registry collects it into
+   * AgentsResult.oauthManagers and the image path can resolve the Codex bearer
+   * through the agent's exact manager (no second instance). Undefined when the
+   * agent has no OAuth config.
+   */
+  oauth?: OAuthTokenManager;
 }

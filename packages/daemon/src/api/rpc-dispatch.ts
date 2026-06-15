@@ -75,6 +75,28 @@ import { createProviderHandlers } from "./provider-handlers.js";
 // assignable from ApiDispatchDeps via structural subtyping.
 
 // ---------------------------------------------------------------------------
+// WR-04: media methods whose params carry a large base64/binary payload
+// (`source`/`image`/`video`/`audio`/`file`). The dispatcher error log writes
+// `params` for triage, but Pino's key-name redaction does NOT cover these
+// fields, so on a throw branch the whole image/video/audio body would land in
+// the daemon log — a content-hygiene violation (never log message bodies). For
+// these methods, omit the binary fields before logging; the method name + the
+// remaining small params still aid diagnosis.
+// ---------------------------------------------------------------------------
+
+const BINARY_PARAM_METHODS = new Set<string>([
+  "image.analyze",
+  "media.test.vision",
+  "media.test.video",
+  "media.test.document",
+  "media.test.stt",
+  "audio.transcribe",
+]);
+
+/** The large binary param keys stripped from the log payload for the methods above. */
+const BINARY_PARAM_KEYS = ["source", "image", "video", "audio", "file"] as const;
+
+// ---------------------------------------------------------------------------
 // Error classification
 // ---------------------------------------------------------------------------
 
@@ -419,6 +441,14 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
       if (method === "auth.set") {
         // eslint-disable-next-line @typescript-eslint/no-unused-vars -- intentional destructuring to omit credential fields
         const { access: _a, refresh: _r, accountId: _id, ...rest } = params;
+        safeParams = rest;
+      } else if (BINARY_PARAM_METHODS.has(method)) {
+        // WR-04: omit large base64/binary payload fields (image/video/audio
+        // bytes) from the log payload — content-hygiene (never log message
+        // bodies). Shallow-copy minus the binary keys; the method + small
+        // params (prompt, mimeType, language) remain for triage.
+        const rest: Record<string, unknown> = { ...params };
+        for (const key of BINARY_PARAM_KEYS) delete rest[key];
         safeParams = rest;
       }
       deps.logger[classified.level](

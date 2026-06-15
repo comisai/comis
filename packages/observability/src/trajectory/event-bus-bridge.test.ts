@@ -546,6 +546,231 @@ describe("attachTrajectoryToEventBus -- delivery events", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// OBS-04 (Phase 186): image-generation lifecycle bridge tests.
+//
+// The 4 image:* events are DIRECT-emitted by the daemon image RPC handler
+// (the daemon context has no bus bridge), but they MUST be declared in
+// EventMap + TRAJECTORY_BRIDGE_MAPPING + TRAJECTORY_EVENT_TYPES + a translator
+// for arch-closure (Pitfall 4). The translator forwards ONLY content-free
+// ids/labels/numbers/booleans (provider/model/costUsd/sizeBytes/outcome/
+// channelType/errorKind/delivered/mainProvider) — never the prompt, image
+// bytes, a key, or a raw provider message (T-186-08).
+// ---------------------------------------------------------------------------
+describe("attachTrajectoryToEventBus -- image generation (OBS-04)", () => {
+  it("image_requested_maps_to_image.requested with provider/mainProvider; correlation keys stripped", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("image:requested", {
+      provider: "openai",
+      mainProvider: "openai",
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      traceId: "trace-img",
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("image.requested");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.provider).toBe("openai");
+    expect(data.mainProvider).toBe("openai");
+    // Envelope-only correlation keys — must NOT appear in data.
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.traceId).toBeUndefined();
+  });
+
+  it("image_generated_maps_to_image.generated carrying costUsd/model/provider/sizeBytes/outcome (OBS-03 cost-carry)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("image:generated", {
+      provider: "openai",
+      model: "gpt-image-1",
+      costUsd: 0.04,
+      sizeBytes: 4242,
+      outcome: "ok",
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("image.generated");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.provider).toBe("openai");
+    expect(data.model).toBe("gpt-image-1");
+    // The OBS-03 binding field — the cost rides the trajectory record so
+    // `comis explain` reconstructs it (Route a).
+    expect(data.costUsd).toBe(0.04);
+    expect(data.sizeBytes).toBe(4242);
+    expect(data.outcome).toBe("ok");
+  });
+
+  it("image_delivered_maps_to_image.delivered with channelType/delivered", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("image:delivered", {
+      channelType: "telegram",
+      delivered: true,
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("image.delivered");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.channelType).toBe("telegram");
+    expect(data.delivered).toBe(true);
+  });
+
+  it("image_failed_maps_to_image.failed with errorKind/provider (no raw message)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("image:failed", {
+      errorKind: "content_blocked",
+      provider: "openai",
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("image.failed");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.errorKind).toBe("content_blocked");
+    expect(data.provider).toBe("openai");
+  });
+
+  it("image events are all trajectory-mapped (arch closure)", () => {
+    expect(TRAJECTORY_BRIDGE_MAPPING["image:requested"]).toBe("image.requested");
+    expect(TRAJECTORY_BRIDGE_MAPPING["image:generated"]).toBe("image.generated");
+    expect(TRAJECTORY_BRIDGE_MAPPING["image:delivered"]).toBe("image.delivered");
+    expect(TRAJECTORY_BRIDGE_MAPPING["image:failed"]).toBe("image.failed");
+    expect((TRAJECTORY_EVENT_TYPES as readonly string[]).includes("image.generated")).toBe(true);
+  });
+});
+
+describe("attachTrajectoryToEventBus -- vision analysis (VIS-04, append-only)", () => {
+  it("vision_requested_maps_to_media.vision.requested with provider/mainProvider; correlation keys stripped", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("media.vision:requested", {
+      provider: "anthropic",
+      mainProvider: "anthropic",
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      traceId: "trace-vis",
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("media.vision.requested");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.provider).toBe("anthropic");
+    expect(data.mainProvider).toBe("anthropic");
+    // Envelope-only correlation keys — must NOT appear in data.
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.traceId).toBeUndefined();
+  });
+
+  it("vision_completed_maps_to_media.vision.completed carrying path/costUsd/model/provider/outcome (VIS-04 cost-carry + path label)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("media.vision:completed", {
+      provider: "anthropic",
+      mainProvider: "anthropic",
+      model: "claude-sonnet-4-5",
+      costUsd: 0.002,
+      path: "main-vision",
+      outcome: "ok",
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("media.vision.completed");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.provider).toBe("anthropic");
+    expect(data.mainProvider).toBe("anthropic");
+    expect(data.model).toBe("claude-sonnet-4-5");
+    // The VIS-04 cost-carry field — cost rides the trajectory record (Route a).
+    expect(data.costUsd).toBe(0.002);
+    // VIS-03's "which path" signal.
+    expect(data.path).toBe("main-vision");
+    expect(data.outcome).toBe("ok");
+    expect(data.agentId).toBeUndefined();
+  });
+
+  it("vision_completed on the registry tier carries NO costUsd (those adapters return no cost — Pitfall 4)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("media.vision:completed", {
+      provider: "gemini",
+      mainProvider: "anthropic",
+      model: "gemini-pro-vision",
+      path: "registry",
+      outcome: "ok",
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.path).toBe("registry");
+    // Absent costUsd must NOT appear as an undefined key (presence-conditional spread).
+    expect("costUsd" in data).toBe(false);
+  });
+
+  it("vision_failed_maps_to_media.vision.failed with errorKind/path (no raw message)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("media.vision:failed", {
+      errorKind: "empty_response",
+      path: "main-vision",
+      provider: "anthropic",
+      mainProvider: "anthropic",
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("media.vision.failed");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.errorKind).toBe("empty_response");
+    expect(data.path).toBe("main-vision");
+    expect(data.provider).toBe("anthropic");
+  });
+
+  it("vision events are all trajectory-mapped (arch closure) + image.* tuple intact (append-only)", () => {
+    expect(TRAJECTORY_BRIDGE_MAPPING["media.vision:requested"]).toBe("media.vision.requested");
+    expect(TRAJECTORY_BRIDGE_MAPPING["media.vision:completed"]).toBe("media.vision.completed");
+    expect(TRAJECTORY_BRIDGE_MAPPING["media.vision:failed"]).toBe("media.vision.failed");
+    expect((TRAJECTORY_EVENT_TYPES as readonly string[]).includes("media.vision.completed")).toBe(true);
+    // The SemVer-frozen image.* mapping is STILL present (not renamed by the append).
+    expect(TRAJECTORY_BRIDGE_MAPPING["image:generated"]).toBe("image.generated");
+  });
+});
+
 describe("attachTrajectoryToEventBus -- unsubscribe + filter", () => {
   it("unsubscribe_stops_recording after the returned function is called", () => {
     const bus = makeBus();
@@ -1102,6 +1327,54 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       kind: "network",
       count: 100,
       windowMs: 60000,
+      timestamp: 0,
+    },
+    // OBS-04 (Phase 186): image-generation lifecycle — the envelope-only
+    // correlation invariant must hold for them too (no agentId/sessionKey leak).
+    "image:requested": {
+      provider: "openai",
+      mainProvider: "openai",
+      timestamp: 0,
+    },
+    "image:generated": {
+      provider: "openai",
+      model: "gpt-image-1",
+      costUsd: 0.04,
+      sizeBytes: 4242,
+      outcome: "ok",
+      timestamp: 0,
+    },
+    "image:delivered": {
+      channelType: "telegram",
+      delivered: true,
+      timestamp: 0,
+    },
+    "image:failed": {
+      errorKind: "content_blocked",
+      provider: "openai",
+      timestamp: 0,
+    },
+    // VIS-04 (Phase 187): vision-analysis lifecycle — the envelope-only
+    // correlation invariant must hold for them too (no agentId/sessionKey leak).
+    "media.vision:requested": {
+      provider: "anthropic",
+      mainProvider: "anthropic",
+      timestamp: 0,
+    },
+    "media.vision:completed": {
+      provider: "anthropic",
+      mainProvider: "anthropic",
+      model: "claude-sonnet-4-5",
+      costUsd: 0.002,
+      path: "main-vision",
+      outcome: "ok",
+      timestamp: 0,
+    },
+    "media.vision:failed": {
+      errorKind: "empty_response",
+      path: "main-vision",
+      provider: "anthropic",
+      mainProvider: "anthropic",
       timestamp: 0,
     },
   };
@@ -2719,14 +2992,18 @@ describe("attachTrajectoryToEventBus -- dedup events", () => {
 // ---------------------------------------------------------------------------
 
 describe("health:budget_exceeded entry (bridge entry count guard)", () => {
-  it("bridge entry count is exactly 69 (+3 T2.2 background_task promoted/completed/failed; +2 D3 breaker + 1 D7 offload Phase 151; +1 session:summary Phase 152; +1 context:budget_computed W2; +1 execution:tool_schema_unsupported Phase 175; +2 OBS-01 script signals Phase 180; +2 RECALL-01 memory:recalled/reranked; +1 GENQ-01 memory:generation_quality)", () => {
+  it("bridge entry count is exactly 76 (+3 T2.2 background_task promoted/completed/failed; +2 D3 breaker + 1 D7 offload Phase 151; +1 session:summary Phase 152; +1 context:budget_computed W2; +1 execution:tool_schema_unsupported Phase 175; +2 OBS-01 script signals Phase 180; +2 RECALL-01 memory:recalled/reranked; +1 GENQ-01 memory:generation_quality; +4 OBS-04 image:* Phase 186; +3 media.vision:* VIS-04 Phase 187)", () => {
     // 55 + tool:breaker_opened + tool:breaker_reset (D3) + tool:result_offloaded (D7)
     // + session:summary (F2/D5, Phase 152)
     // + execution:tool_schema_unsupported (GBNF-02, Phase 175 Plan 05)
     // + context:script_zero_hit + context:summary_language_mismatch (OBS-01, Phase 180 Plan 03)
     // + memory:recalled + memory:reranked (RECALL-01, observability-excellence)
-    // + memory:generation_quality (GENQ-01, observability-excellence).
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(69);
+    // + memory:generation_quality (GENQ-01, observability-excellence)
+    // + background_task:promoted/completed/failed (T2.2, background-task bridge)
+    // + image:requested/generated/delivered/failed (OBS-04, Phase 186 Plan 03)
+    // + media.vision:requested/completed/failed (VIS-04, Phase 187 Plan 03 —
+    //   APPEND-ONLY, the image.* tuple is untouched; Pitfall 5).
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(76);
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {

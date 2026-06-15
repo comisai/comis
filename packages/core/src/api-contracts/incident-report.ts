@@ -182,6 +182,63 @@ export const IncidentReportSchema = z.object({
       rerankerAvailable: z.boolean(),
     })
     .optional(),
+  /** OBS-03/OBS-04 (Phase 186): the image-generation turn reconstructed from the
+   *  session's `image.*` trajectory records (the terminal image record wins).
+   *  The image cost (`costUsd`) rides HERE — `comis explain` shows it from the
+   *  trajectory (Route a) — NOT `cost.costUsd`, which reads the executor-emitted
+   *  `sessionEnd` rollup (a different code path; the image RPC runs in the daemon
+   *  context — Pitfall 2). Content-free: ids/labels/costUsd/outcome ONLY (never
+   *  the prompt, image bytes, or a raw provider message). Optional + additive
+   *  (present only when the trajectory carries image records; schemaVersion stays
+   *  1) — pre-existing constructors omit it (the `recall` precedent). */
+  image: z
+    .object({
+      /** The executing image provider id (e.g. "openai"). */
+      provider: z.string(),
+      /** The image model the provider used (e.g. "gpt-image-1"). Absent on a failed/early turn. */
+      model: z.string().optional(),
+      /** The generation cost in USD — the OBS-03 reconstruction (Route a). Absent on a failed turn. */
+      costUsd: z.number().optional(),
+      /** The terminal outcome of the image turn. */
+      outcome: z.enum(["ok", "failed"]),
+      /** The classified failure kind when `outcome === "failed"`. Absent on success. */
+      errorKind: z.string().optional(),
+      /** Whether the image was delivered to a channel (image.delivered fired). */
+      delivered: z.boolean(),
+      /** WR-02 (186): false when the generation SUCCEEDED + was delivered (base64)
+       *  but the durable persist FAILED — a degraded delivery, still outcome:"ok"
+       *  and still charged. Absent ⇒ persisted (or pre-WR-02 record). */
+      persisted: z.boolean().optional(),
+    })
+    .optional(),
+  /** VIS-04 (Phase 187): the VISION turn reconstructed from the session's
+   *  `media.vision.*` trajectory records (the terminal record wins). The vision
+   *  cost (`costUsd`) rides HERE — `comis explain` shows it from the trajectory
+   *  (Route a) — NOT `cost.costUsd`, which reads the executor-emitted `sessionEnd`
+   *  rollup (a different code path; the vision RPC runs in the daemon context —
+   *  Pitfall 2). The `path` is VIS-03's "which tier served" signal. Content-free:
+   *  ids/labels/path/costUsd/outcome ONLY (never the image bytes, the analysis
+   *  prompt, or the model's answer). Optional + additive (present only when the
+   *  trajectory carries media.vision.* records; schemaVersion stays 1) —
+   *  pre-existing constructors omit it (the `image`/`recall` precedent). */
+  vision: z
+    .object({
+      /** The executing vision provider id (e.g. "anthropic" on main-vision, "gemini" on the registry tier). */
+      provider: z.string(),
+      /** The caller agent's resolved main provider id (the lockstep label). Absent on a pre-VIS-04 / partial record. */
+      mainProvider: z.string().optional(),
+      /** The vision model used (e.g. "claude-sonnet-4-5"). Absent on a failed/early turn or an adapter that omits it. */
+      model: z.string().optional(),
+      /** The analysis cost in USD — the VIS-04 reconstruction (Route a). Absent on a failed turn OR the registry/gemini-video tiers (Pitfall 4). */
+      costUsd: z.number().optional(),
+      /** Which ladder tier served (VIS-03's "which path" signal). Absent on a partial record. */
+      path: z.enum(["main-vision", "registry", "gemini-video", "unavailable"]).optional(),
+      /** The terminal outcome of the vision turn. */
+      outcome: z.enum(["ok", "failed"]),
+      /** The classified failure kind when `outcome === "failed"`. Absent on success. */
+      errorKind: z.string().optional(),
+    })
+    .optional(),
   summary: z.string(),
   likelyRootCause: z
     .object({
@@ -279,6 +336,15 @@ export interface IncidentFailure {
  * misclassification signal + offending tool/token). Derived from the heuristic
  * predicates in 153-PATTERNS.md ("678 / 503 heuristic derivation").
  */
+// @optional-field-count: 14 — this is the obs.explain signal accumulator, the
+// single shared contract every Glass-Box heuristic (Phase 153/175/177/180/186/187)
+// reads. Each optional field is a presence-conditional signal aggregated from a
+// distinct trajectory record class (contextBudget / promptTimeout /
+// toolSchemaUnsupported / recall / image / vision / channel / agentId / …) —
+// absent when that record class did not occur. Clustering them would couple
+// unrelated heuristics; the read sites already key on each independently. Grows
+// by one per Glass-Box signal class (image added in 186 — OBS-03/OBS-04; vision
+// added in 187 — VIS-04).
 export interface IncidentSignals {
   sessionKey: string;
   /** W8: agentId from the trajectory record envelopes (first seen). Fallback for
@@ -372,6 +438,42 @@ export interface IncidentSignals {
     lastLanes: number;
     lastFinalCount: number;
     rerankerAvailable: boolean;
+  };
+  /**
+   * OBS-03/OBS-04 (Phase 186): the image-generation turn reconstructed from the
+   * session's `image.*` trajectory records (the terminal image.generated /
+   * image.failed record wins; `delivered` set when image.delivered fired). The
+   * cost (`costUsd`) rides HERE so `comis explain` shows it from the trajectory
+   * (Route a) — NOT `cost.costUsd` (the executor `sessionEnd`, a different path —
+   * Pitfall 2). Content-free. Absent ⇒ no image records in the trajectory.
+   */
+  image?: {
+    provider: string;
+    model?: string;
+    costUsd?: number;
+    outcome: "ok" | "failed";
+    errorKind?: string;
+    delivered: boolean;
+    /** WR-02 (186): false on a persist-failed-but-delivered generation (degraded
+     *  delivery, still outcome:"ok", still charged). Absent ⇒ persisted. */
+    persisted?: boolean;
+  };
+  /**
+   * VIS-04 (Phase 187): the VISION turn reconstructed from the session's
+   * `media.vision.*` trajectory records (the terminal media.vision.completed /
+   * media.vision.failed record wins). The cost (`costUsd`) rides HERE so `comis
+   * explain` shows it from the trajectory (Route a) — NOT `cost.costUsd`
+   * (Pitfall 2). The `path` is VIS-03's "which tier served". Content-free.
+   * Absent ⇒ no media.vision.* records in the trajectory.
+   */
+  vision?: {
+    provider: string;
+    mainProvider?: string;
+    model?: string;
+    costUsd?: number;
+    path?: "main-vision" | "registry" | "gemini-video" | "unavailable";
+    outcome: "ok" | "failed";
+    errorKind?: string;
   };
 }
 

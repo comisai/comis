@@ -31,6 +31,18 @@ const ImageGenerateToolParams = Type.Object({
         "Image size. Provider-specific: fal.ai uses presets (square_hd, landscape_16_9), OpenAI uses pixel dims (1024x1024, 1792x1024). Omit for default.",
     }),
   ),
+  model: Type.Optional(
+    Type.String({
+      description:
+        "Override the provider's default image model (e.g. gpt-image-1, gemini-2.5-flash-image). Rejected if not valid for the active provider. Omit to use the default.",
+    }),
+  ),
+  reference_image: Type.Optional(
+    Type.String({
+      description:
+        "A workspace file path, URL, or data-URI of a reference image for edit/img2img. Omit for text-to-image.",
+    }),
+  ),
 });
 
 /**
@@ -49,7 +61,7 @@ export function createImageGenerateTool(rpcCall: RpcCall) {
     name: "image_generate",
     label: "Generate Image",
     description:
-      "Generate an image from a text prompt. The generated image is automatically delivered to the current channel.",
+      "Generate an image from a text prompt, optionally from a reference image (edit/img2img) and with an explicit model. The generated image is automatically delivered to the current channel.",
     parameters: ImageGenerateToolParams,
     rpcMethod: "image.generate",
   }, rpcCall);

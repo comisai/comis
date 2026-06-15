@@ -89,6 +89,39 @@ export function resolveAgentModel(
 }
 
 /**
+ * Resolve an agent's MAIN provider id in lockstep with the completion path
+ * (RES-01 / I4) — the handler-side accessor for provider-following image
+ * generation (Phase 183). Delegates to the EXACT completion-path
+ * `resolveAgentModel`, so the id it returns is the same one the completion
+ * runner resolves for the agent.
+ *
+ * Fallback is the operator-configurable `defaultAgentId` — NOT the literal
+ * string `"default"`. A deployment's default agent may be renamed (CLAUDE.md
+ * documents real `mldag` / `head_trader` agents); a literal-`"default"` lookup
+ * misses on those, yielding `undefined` and a `resolveAgentModel(undefined,…)`
+ * throw. This mirrors the boot selector (`daemon.ts`) and every other
+ * default-agent fallback in the daemon.
+ *
+ * When NEITHER `agentId` NOR `defaultAgentId` is present in the map (a
+ * misconfigured deployment), this returns an honest sentinel
+ * `{ providerId: "unknown" }` rather than throwing — `"unknown"` has no
+ * `IMAGE_CAPABILITY` entry, so downstream resolution surfaces the honest
+ * RES-03 unavailable path (with the knob-naming hint) instead of crashing the
+ * RPC handler.
+ */
+export function resolveAgentMainProvider(
+  agents: Record<string, { model: string; provider: string }>,
+  modelsConfig: { defaultModel: string; defaultProvider: string },
+  agentId: string,
+  defaultAgentId: string,
+): { providerId: string } {
+  const cfg = agents[agentId] ?? agents[defaultAgentId];
+  if (!cfg) return { providerId: "unknown" };
+  const { provider } = resolveAgentModel(cfg, modelsConfig);
+  return { providerId: provider };
+}
+
+/**
  * Resolve the EFFECTIVE rag.rerank.enabled for an agent.
  * Explicit operator value wins both directions; unset → auto-on iff the model
  * is locally present. `explicit` MUST be read from the RAW (pre-zod-default)

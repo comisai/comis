@@ -584,6 +584,13 @@ export const MediaProvidersContract = defineContract({
  * delivery (via `adapter.sendAttachment`) OR base64 fallback when no
  * channel context is present.
  *
+ * Request: `prompt`/`size` plus the optional CFG-02 fields `model` (a
+ * provider-default override, validated by the handler against the provider's
+ * model list — IN-02) and `reference_image` (a workspace path / url / data-uri
+ * STRING for edit/img2img, resolved by the handler — IN-01). The fields are
+ * additive (prompt-only callers are unaffected) and exist on the parsed request
+ * so the handler sees them typed (Pitfall 5).
+ *
  * Bespoke pre-Zod validation (handler returns `{ success: false, error }`-
  * shape — does NOT throw):
  *   - `prompt` missing → `{ success: false, error: "Missing required
@@ -603,6 +610,14 @@ export const ImageGenerateContract = defineContract({
   request: z.object({
     prompt: z.string().optional(),
     size: z.string().optional(),
+    // CFG-02 (Pitfall 5): the handler `.parse`s this request — without growing
+    // it, `params.model`/`params.reference_image` are typed `undefined` to the
+    // handler even though Zod would pass unknown keys through at runtime. Plan 03
+    // consumes these typed fields (IN-01 reference resolution + IN-02 model
+    // validation). Additive: existing prompt/size callers are unaffected.
+    model: z.string().optional(),
+    // A workspace file path / url / data-uri STRING (resolved by the handler).
+    reference_image: z.string().optional(),
   }),
   response: z.record(z.string(), z.unknown()),
   scopes: ["rpc"] as const,

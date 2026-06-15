@@ -2,32 +2,24 @@
 // @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321.
 /**
  * Media RPC handler methods (vision, TTS, link processing, audio transcription).
- * Covers 15 methods:
- *   image.analyze, tts.synthesize, tts.auto_check, link.process,
- *   audio.transcribe,
- *   media.transcribe, media.describe_video, media.extract_document,
- *   media.test.stt, media.test.tts, media.test.vision,
- *   media.test.document, media.test.video, media.test.link,
- *   media.providers
+ * Covers 15 methods: image.analyze, tts.synthesize, tts.auto_check,
+ * link.process, audio.transcribe, media.transcribe, media.describe_video,
+ * media.extract_document, media.test.{stt,tts,vision,document,video,link},
+ * media.providers.
  *
  * Uses the `@comis/core` contract registry. Method keys are computed-property
  * names (`[TtsSynthesizeContract.method]:`) so the bidirectional 1:1
  * architecture test resolves them through `defineContract({ method, ... })`
  * declarations in `packages/core/src/api-contracts/media.ts`. The
  * dispatcher-injected `_X` internal fields are stripped via
- * `stripInternalFields` BEFORE `contract.request.parse(...)` (never model
- * internals in the contract schema). The dispatcher reads `_channelType` /
- * `_chatType` / `_sessionKey` / `_agentId` from `rawParams` BEFORE the strip
- * step (the internal fields flow into the handler body through the
- * un-stripped params; the contract-parsed `params` carry only the
- * user-facing keys).
+ * `stripInternalFields` BEFORE `contract.request.parse(...)`; the dispatcher
+ * reads `_channelType`/`_chatType`/`_sessionKey`/`_agentId` from `rawParams`
+ * BEFORE the strip step (the contract-parsed `params` carry only user keys).
  *
- * The bespoke pre-Zod validation (no-vision-registry guard, no-TTS-adapter
- * guard, no-resolveAttachment guard, scope-rule deny branch, source_type
- * switch-case, etc.) is intentionally retained for user-friendly error
- * UX matching the existing media-handlers.test.ts assertions. The
- * contract parse runs AFTER + serves as type-narrowing + defense-in-depth
- * + dev-mode response shape check.
+ * The bespoke pre-Zod validation (no-registry/no-adapter/no-resolveAttachment
+ * guards, scope-rule deny, source_type switch) is retained for user-friendly
+ * error UX matching media-handlers.test.ts; the contract parse runs AFTER as
+ * type-narrowing + defense-in-depth + dev-mode response shape check.
  *
  * @module
  */
@@ -50,10 +42,11 @@ import {
   MediaProvidersContract,
   safePath,
   stripInternalFields,
-  validateUrl,
   systemGetEnv,
   systemNowMs,
+  resolveVisionPath,
 } from "@comis/core";
+import type { ImageErrorKind } from "@comis/core";
 import {
   selectVisionProvider,
   resolveVisionScope,
@@ -61,7 +54,16 @@ import {
   resolveOutputFormat,
   parseTtsDirective,
 } from "@comis/skills";
+// VIS-01 (187): the daemon-side vision gate — `isVisionCapable(getModel(...))`,
+// the SAME dance setup-channels-media.ts:135 runs. @comis/agent + pi-ai are
+// already daemon deps (graph-coordinator.ts:16, setup-channels-media.ts:35).
+import { isVisionCapable } from "@comis/agent";
+import { getModel } from "@earendil-works/pi-ai";
 import { guessMimeFromExtension, detectMimeFromMagicBytes, mimeToExtension } from "../wiring/daemon-utils.js";
+// VIS-04 (187): the vision-turn trajectory direct-emit helper (extracted to a
+// sibling to keep this file ≤800 — the emits would otherwise push it over).
+import { createVisionObsEmitter, resolveTerminalUnavailable } from "./vision-obs-emit.js";
+import { fetchImageBytesSsrfSafe } from "./ssrf-image-fetch.js";
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
 
@@ -85,7 +87,13 @@ export type { MediaHandlerDeps };
 export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcHandler> {
   return {
     [ImageAnalyzeContract.method]: async (rawParams) => {
-      if (!deps.visionRegistry || deps.visionRegistry.size === 0) {
+      // VIS-01 (187): the registry is no longer the ONLY vision path — a
+      // vision-capable MAIN provider serves image.analyze with no separate
+      // vision key (deps.mainProviderVision). Short-circuit ONLY when NEITHER a
+      // registry NOR a main-vision bridge is wired (the ladder's honest-
+      // unavailable tier handles the no-capable-tier case with an errorKind).
+      const hasRegistry = !!deps.visionRegistry && deps.visionRegistry.size > 0;
+      if (!hasRegistry && !deps.mainProviderVision) {
         throw new Error("No vision provider available for image analysis.");
       }
       const userParams = stripInternalFields(rawParams);
@@ -136,24 +144,16 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
           break;
         }
         case "url": {
-          // Validate URL through SSRF guard before fetching
-          const urlCheck = await validateUrl(source);
-          if (!urlCheck.ok) {
-            throw new Error(`SSRF blocked: ${urlCheck.error.message}`);
-          }
-          const response = await fetch(source, { redirect: "error" });
-          if (!response.ok) {
-            throw new Error(`Failed to fetch image: HTTP ${response.status}`);
-          }
-          // Content-Length check before downloading
-          const contentLength = response.headers.get("content-length");
+          // CR-01: route through the shared DNS-pinned SSRF fetcher — it
+          // validates the host BEFORE connecting, pins DNS to the validated IP
+          // (no rebinding TOCTOU window — a bare `fetch` would re-resolve DNS
+          // and could be rebound to an internal/metadata IP), refuses redirects,
+          // and bounds the download to maxBytes. The post-switch size check
+          // below stays as defense-in-depth.
           const maxBytes = deps.mediaConfig.imageAnalysis.maxFileSizeMb * 1024 * 1024;
-          if (contentLength && parseInt(contentLength, 10) > maxBytes) {
-            throw new Error(`Image file size exceeds limit of ${deps.mediaConfig.imageAnalysis.maxFileSizeMb}MB`);
-          }
-          const arrayBuffer = await response.arrayBuffer();
-          buffer = Buffer.from(arrayBuffer);
-          mimeType = response.headers.get("content-type") ?? "image/jpeg";
+          const fetched = await fetchImageBytesSsrfSafe(source, maxBytes);
+          buffer = fetched.buffer;
+          mimeType = fetched.mimeType ?? "image/jpeg";
           break;
         }
         case "base64": {
@@ -184,27 +184,95 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
         throw new Error(`Image size ${fileSizeMb.toFixed(1)}MB exceeds limit of ${deps.mediaConfig.imageAnalysis.maxFileSizeMb}MB`);
       }
 
-      // Use vision provider registry for provider auto-selection
+      // VIS-01/02/03 (187): the provider-following vision ladder. The handler is
+      // a CONSUMER of resolveVisionPath + deps.mainProviderVision (the 183
+      // firewall — never re-derives selection). Tiers: main-vision → registry
+      // (byte-identical to pre-187 when the main lacks vision) → honest-
+      // unavailable. The buffer/scope/size guards above ran FIRST (untouched).
+      const agentId = (rawParams._agentId as string | undefined) ?? deps.defaultAgentId;
       const preferredProvider = deps.mediaConfig.vision.defaultProvider;
-      const provider = selectVisionProvider(deps.visionRegistry, "image", preferredProvider);
-      if (!provider) {
-        throw new Error("No vision provider available for image analysis.");
+      const main = deps.resolveAgentMainProvider?.(agentId) ?? { providerId: "unknown" };
+      // VIS-04: §2.7 clock (systemNowMs, never Date.now()) + the trajectory/§2.7-log emitter (fires media.vision.requested at construction).
+      const visionStartMs = systemNowMs();
+      const obs = createVisionObsEmitter(rawParams._callerSessionKey as string | undefined, deps.trajectoryRegistry, deps.logger, agentId, visionStartMs, systemNowMs, { provider: main.providerId, mainProvider: main.providerId });
+      // The daemon-side vision gate (setup-channels-media.ts:135 dance): resolve
+      // the main model id from the SINGLE source (deps.mainModelIdFor) and ask
+      // pi-ai if it sees images. A resolution failure is conservative.
+      let visionCapable = false;
+      if (deps.mainProviderVision && deps.mainModelIdFor) {
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi-ai getModel requires KnownProvider/KnownModel; config stores flexible strings (the proven setup-channels-media.ts cast).
+          const resolvedModel = getModel(main.providerId as any, deps.mainModelIdFor(agentId) as any);
+          if (resolvedModel) visionCapable = isVisionCapable(resolvedModel);
+        } catch { /* model resolution failed → not vision-capable, use the registry */ }
       }
-      const visionResult = await provider.describeImage({
-        image: buffer,
-        prompt,
-        mimeType,
-      });
-      if (!visionResult.ok) throw visionResult.error;
-      const result = {
-        description: visionResult.value.text,
-        provider: visionResult.value.provider,
-        model: visionResult.value.model,
-      };
-      if (systemGetEnv("NODE_ENV") !== "production") {
-        ImageAnalyzeContract.response.parse(result);
+      const visionRegistry = deps.visionRegistry;
+      const registryAvailable = !!visionRegistry && !!selectVisionProvider(visionRegistry, "image", preferredProvider);
+      const sel = resolveVisionPath(
+        {
+          mediaKind: "image",
+          mainProviderId: main.providerId,
+          visionCapable,
+          // The bridge owns the actual cred resolution; the gate only asks
+          // "could the main serve?" — visionCapable implies a wired bridge here.
+          mainCredsAvailable: visionCapable && deps.mainProviderVision != null,
+          registryAvailable,
+          ...(preferredProvider ? { explicitDefaultProvider: preferredProvider } : {}),
+        },
+        (reason) => deps.logger.debug({ agentId, hint: reason, step: "vision_resolve" }, "vision path skip"),
+      );
+
+      // WR-03: the last bridge-failure kind/hint, carried into the honest-
+      // unavailable terminal so it keeps the specific reason (auth_required/etc).
+      let lastBridgeKind: ImageErrorKind | undefined;
+      let lastBridgeHint: string | undefined;
+
+      // main-vision FIRST. On a RUNTIME failure, fall back to the registry's OWN
+      // keys — never throw the bridge err out (T-187-08: no silent provider retry).
+      if (sel.ok && sel.path === "main-vision" && deps.mainProviderVision) {
+        const r = await deps.mainProviderVision.describeImage(buffer, prompt, mimeType, agentId);
+        if (r.ok) {
+          // VIS-04: media.vision.completed (path main-vision; costUsd from the
+          // bridge) + the §2.7 INFO completion line (one call).
+          obs.succeeded({ provider: r.value.provider, mainProvider: main.providerId, path: "main-vision", model: r.value.model, costUsd: r.value.costUsd });
+          const result = { description: r.value.text, provider: r.value.provider, model: r.value.model };
+          if (systemGetEnv("NODE_ENV") !== "production") ImageAnalyzeContract.response.parse(result);
+          return result;
+        }
+        // bridge runtime failure → registry fallback (media.vision.failed + §2.7 WARN).
+        // WR-03: keep the bridge's kind + content-free hint for the terminal.
+        const bridgeKind = (r.error as { errorKind?: ImageErrorKind }).errorKind;
+        lastBridgeKind = bridgeKind;
+        lastBridgeHint = (r.error as { message?: string }).message;
+        obs.failed({ errorKind: bridgeKind ?? "dependency", path: "main-vision", provider: main.providerId, mainProvider: main.providerId, hint: "main-vision failed; falling back to the vision registry", message: "Main-provider vision failed, trying the registry" });
       }
-      return result;
+
+      // registry SECOND (VIS-02 byte-identical when the main lacks vision / an
+      // explicit defaultProvider is set), OR the main-vision runtime fallback.
+      if ((sel.ok && (sel.path === "registry" || sel.path === "main-vision"))) {
+        const provider = visionRegistry ? selectVisionProvider(visionRegistry, "image", preferredProvider) : undefined;
+        if (provider) {
+          const visionResult = await provider.describeImage({ image: buffer, prompt, mimeType });
+          if (!visionResult.ok) {
+            // WR-01 (§2.7): instrument the registry tier's OWN failure (path
+            // label + classified errorKind) before throwing.
+            obs.failedFrom(visionResult.error, { path: "registry", provider: main.providerId, mainProvider: main.providerId, hint: "vision registry provider failed", message: "Vision registry analysis failed" });
+            throw visionResult.error;
+          }
+          // VIS-04: media.vision.completed (path registry; NO costUsd, Pitfall 4) + INFO line.
+          obs.succeeded({ provider: visionResult.value.provider, mainProvider: main.providerId, path: "registry", model: visionResult.value.model });
+          const result = { description: visionResult.value.text, provider: visionResult.value.provider, model: visionResult.value.model };
+          if (systemGetEnv("NODE_ENV") !== "production") ImageAnalyzeContract.response.parse(result);
+          return result;
+        }
+        // main-vision failed AND no registry provider → honest-unavailable below.
+      }
+
+      // honest-unavailable LAST — media.vision.failed + §2.7 WARN. WR-03: prefer
+      // the last bridge failure's kind/hint over the generic unsupported_provider.
+      const term = resolveTerminalUnavailable(sel, lastBridgeKind ?? "unsupported_provider", lastBridgeHint ?? "No vision provider available for image analysis.");
+      obs.failed({ errorKind: term.errorKind, path: "unavailable", provider: main.providerId, mainProvider: main.providerId, hint: term.hint, message: "Vision analysis unavailable" });
+      throw new Error("No vision provider available for image analysis.");
     },
 
     [TtsSynthesizeContract.method]: async (rawParams) => {
@@ -421,14 +489,36 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
 
       const mimeType = detectMimeFromMagicBytes(buffer) ?? "video/mp4";
 
+      // VIS-03 (187): raw video → the gemini-video tier ONLY (Pitfall 3 — pi-ai
+      // has no video content type, so main-vision is N/A for video). The handler
+      // consumes resolveVisionPath (mediaKind:"video"); describeVideo is UNCHANGED.
+      const agentId = (rawParams._agentId as string | undefined) ?? deps.defaultAgentId;
+      const main = deps.resolveAgentMainProvider?.(agentId) ?? { providerId: "unknown" };
+      // VIS-04: clock + the trajectory/§2.7-log emitter (fires media.vision.requested).
+      const visionStartMs = systemNowMs();
+      const obs = createVisionObsEmitter(rawParams._callerSessionKey as string | undefined, deps.trajectoryRegistry, deps.logger, agentId, visionStartMs, systemNowMs, { provider: main.providerId, mainProvider: main.providerId });
       const videoProvider = selectVisionProvider(deps.visionRegistry, "video", deps.mediaConfig.vision.defaultProvider);
-      if (!videoProvider?.describeVideo) {
+      const registryAvailable = !!videoProvider?.describeVideo;
+      const sel = resolveVisionPath(
+        { mediaKind: "video", mainProviderId: main.providerId, visionCapable: false, mainCredsAvailable: false, registryAvailable },
+        (reason) => deps.logger.debug({ agentId, hint: reason, step: "vision_resolve" }, "vision path skip"),
+      );
+      if (sel.ok === false || !videoProvider?.describeVideo) {
+        // honest-unavailable — media.vision.failed + §2.7 WARN, NOT an undefined-method call.
+        const term = resolveTerminalUnavailable(sel, "unsupported_provider", "No video-capable vision provider available (requires Gemini or compatible provider).");
+        obs.failed({ errorKind: term.errorKind, path: "unavailable", provider: main.providerId, mainProvider: main.providerId, hint: term.hint, message: "Video description unavailable" });
         throw new Error("No video-capable vision provider available (requires Gemini or compatible provider).");
       }
 
       const videoResult = await videoProvider.describeVideo({ video: buffer, prompt, mimeType });
-      if (!videoResult.ok) throw videoResult.error;
+      if (!videoResult.ok) {
+        // WR-01 (§2.7): instrument the gemini-video tier's OWN failure before throwing.
+        obs.failedFrom(videoResult.error, { path: "gemini-video", provider: main.providerId, mainProvider: main.providerId, hint: "gemini-video provider failed", message: "Video description failed" });
+        throw videoResult.error;
+      }
 
+      // VIS-04: media.vision.completed (path gemini-video; NO costUsd, Pitfall 4) + INFO line.
+      obs.succeeded({ provider: videoResult.value.provider, mainProvider: main.providerId, path: "gemini-video", model: videoResult.value.model });
       const result = {
         description: videoResult.value.text,
         provider: videoResult.value.provider,

@@ -1548,8 +1548,16 @@
     "category": "media",
     "schema": {
       "properties": {
+        "model": {
+          "description": "Override the provider's default image model (e.g. gpt-image-1, gemini-2.5-flash-image). Rejected if not valid for the active provider. Omit to use the default.",
+          "type": "string"
+        },
         "prompt": {
           "description": "Text description of the image to generate.",
+          "type": "string"
+        },
+        "reference_image": {
+          "description": "A workspace file path, URL, or data-URI of a reference image for edit/img2img. Omit for text-to-image.",
           "type": "string"
         },
         "size": {

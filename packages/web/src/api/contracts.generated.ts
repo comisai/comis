@@ -4110,6 +4110,12 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         },
         "size": {
           "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "reference_image": {
+          "type": "string"
         }
       },
       "additionalProperties": false
@@ -7820,6 +7826,83 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
             "lastLanes",
             "lastFinalCount",
             "rerankerAvailable"
+          ],
+          "additionalProperties": false
+        },
+        "image": {
+          "type": "object",
+          "properties": {
+            "provider": {
+              "type": "string"
+            },
+            "model": {
+              "type": "string"
+            },
+            "costUsd": {
+              "type": "number"
+            },
+            "outcome": {
+              "type": "string",
+              "enum": [
+                "ok",
+                "failed"
+              ]
+            },
+            "errorKind": {
+              "type": "string"
+            },
+            "delivered": {
+              "type": "boolean"
+            },
+            "persisted": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "provider",
+            "outcome",
+            "delivered"
+          ],
+          "additionalProperties": false
+        },
+        "vision": {
+          "type": "object",
+          "properties": {
+            "provider": {
+              "type": "string"
+            },
+            "mainProvider": {
+              "type": "string"
+            },
+            "model": {
+              "type": "string"
+            },
+            "costUsd": {
+              "type": "number"
+            },
+            "path": {
+              "type": "string",
+              "enum": [
+                "main-vision",
+                "registry",
+                "gemini-video",
+                "unavailable"
+              ]
+            },
+            "outcome": {
+              "type": "string",
+              "enum": [
+                "ok",
+                "failed"
+              ]
+            },
+            "errorKind": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "provider",
+            "outcome"
           ],
           "additionalProperties": false
         },

@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createMediaHandlers } from "./media-handlers.js";
 import type { MediaHandlerDeps } from "./media-handlers.js";
+import { validateUrl } from "@comis/core";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 
 // ---------------------------------------------------------------------------
@@ -23,12 +24,50 @@ vi.mock("node:crypto", () => ({
   randomUUID: () => "test-uuid-1234",
 }));
 
+// CR-01: the image.analyze `url` branch now routes through the shared
+// DNS-pinned SSRF fetcher (ssrf-image-fetch.ts → undici Agent + fetch). Mock
+// `undici` so Agent is a real class (constructor args captured) and `fetch`
+// delegates to globalThis.fetch — NEVER the real network.
+const { undiciAgentCtor, undiciAgentClose } = vi.hoisted(() => {
+  const undiciAgentCtor = vi.fn();
+  const undiciAgentClose = vi.fn().mockResolvedValue(undefined);
+  return { undiciAgentCtor, undiciAgentClose };
+});
+
+vi.mock("undici", () => {
+  class MockAgent {
+    close = undiciAgentClose;
+    constructor(args: unknown) {
+      undiciAgentCtor(args);
+    }
+  }
+  const fetch = (...args: Parameters<typeof globalThis.fetch>) => globalThis.fetch(...args);
+  return { Agent: MockAgent, fetch };
+});
+
 // Mock daemon-utils mime helpers (pure functions, stable returns)
 vi.mock("../wiring/daemon-utils.js", () => ({
   guessMimeFromExtension: vi.fn(() => "image/png"),
   detectMimeFromMagicBytes: vi.fn(() => "image/jpeg"),
   mimeToExtension: vi.fn(() => "mp3"),
 }));
+
+// VIS-01 (187): the daemon-side vision gate copies the setup-channels-media.ts
+// dance — `isVisionCapable(getModel(provider, modelId))`. Mock both so the gate
+// is deterministic without a live pi-ai catalog. getModel returns a sentinel
+// object; isVisionCapable reads `visionCapableNext` (per-test override). By
+// DEFAULT the main is NOT vision-capable → the registry path (VIS-02 today).
+const { getModelMock, isVisionCapableMock, visionState } = vi.hoisted(() => {
+  const visionState = { capable: false, throwOnResolve: false };
+  const getModelMock = vi.fn((_provider: string, _modelId: string) => {
+    if (visionState.throwOnResolve) throw new Error("model resolution failed");
+    return { input: visionState.capable ? ["text", "image"] : ["text"] };
+  });
+  const isVisionCapableMock = vi.fn((model: { input: string[] }) => model.input.includes("image"));
+  return { getModelMock, isVisionCapableMock, visionState };
+});
+vi.mock("@comis/agent", () => ({ isVisionCapable: isVisionCapableMock }));
+vi.mock("@earendil-works/pi-ai", () => ({ getModel: getModelMock }));
 
 // Mock @comis/skills functions used by handlers
 vi.mock("@comis/skills", () => ({
@@ -53,7 +92,12 @@ vi.mock("@comis/core", async (importOriginal) => {
   return {
     ...actual,
     safePath: (...segments: string[]) => segments.join("/"),
-    validateUrl: vi.fn(async () => ({ ok: true })),
+    // ok WITH a resolved value (hostname/ip/url) so the CR-01 url branch can pin
+    // DNS to the validated IP; SSRF-reject tests override per-call.
+    validateUrl: vi.fn(async () => ({
+      ok: true,
+      value: { hostname: "example.com", ip: "93.184.216.34", url: new URL("https://example.com/i.jpg") },
+    })),
   };
 });
 
@@ -72,9 +116,27 @@ function makeMockVisionProvider() {
   };
 }
 
+/** VIS-01 (187): a mock main-provider vision bridge. By default it succeeds
+ *  (the bridge resolved the main creds + ran a multimodal completion). Tests
+ *  override `.describeImage` for the err→registry-fallback case. */
+function makeMockMainProviderVision() {
+  return {
+    describeImage: vi.fn(async () => ({
+      ok: true as const,
+      value: { text: "A dog on a skateboard", provider: "anthropic", model: "claude-sonnet-4-5", costUsd: 0.002 },
+    })),
+  };
+}
+
 function makeDeps(overrides?: Partial<MediaHandlerDeps>): MediaHandlerDeps {
   return {
     visionRegistry: new Map([["gemini", makeMockVisionProvider() as never]]),
+    // VIS-01 (187): the main-provider vision wiring. Defaults: main = anthropic
+    // (vision-capable controlled by `visionState.capable`, default false → the
+    // registry path / VIS-02 today), the bridge succeeds when reached.
+    resolveAgentMainProvider: vi.fn((_agentId: string) => ({ providerId: "anthropic" })),
+    mainModelIdFor: vi.fn((_agentId: string) => "claude-sonnet-4-5"),
+    mainProviderVision: makeMockMainProviderVision() as never,
     mediaConfig: {
       imageAnalysis: { maxFileSizeMb: 10 },
       vision: {
@@ -134,6 +196,10 @@ function makeDeps(overrides?: Partial<MediaHandlerDeps>): MediaHandlerDeps {
 describe("createMediaHandlers", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // VIS-01 default posture: main NOT vision-capable → registry path (VIS-02
+    // byte-identical to pre-187). Individual tests flip these.
+    visionState.capable = false;
+    visionState.throwOnResolve = false;
   });
 
   // -------------------------------------------------------------------------
@@ -213,6 +279,548 @@ describe("createMediaHandlers", () => {
       })) as { description: string };
 
       expect(result.description).toBe("Vision analysis not available for this context.");
+    });
+
+    // ─── CR-01: the `url` source MUST route through the DNS-pinned SSRF ───────
+    // fetcher (shared with image-handlers), not a bare fetch that re-resolves
+    // DNS. This closes the rebinding TOCTOU gap for image.analyze too.
+
+    it("CR-01: a url source is fetched with a DNS-pinned dispatcher (no rebind window)", async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        headers: new Headers({ "content-type": "image/jpeg" }),
+        body: new ReadableStream<Uint8Array>({
+          start(c) {
+            c.enqueue(new Uint8Array([9, 9, 9]));
+            c.close();
+          },
+        }),
+      } as unknown as Response);
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+      undiciAgentCtor.mockClear();
+      try {
+        const deps = makeDeps();
+        const handlers = createMediaHandlers(deps);
+
+        const result = (await handlers["image.analyze"]!({
+          source_type: "url",
+          source: "https://example.com/i.jpg",
+          prompt: "Describe this",
+        })) as { description: string };
+
+        expect(validateUrl).toHaveBeenCalledWith("https://example.com/i.jpg");
+        // The pinned Agent (dispatcher) was constructed → DNS pinning enforced.
+        expect(undiciAgentCtor).toHaveBeenCalledTimes(1);
+        const [url, init] = fetchMock.mock.calls[0]! as [string, { redirect?: string; dispatcher?: unknown }];
+        expect(url).toBe("https://example.com/i.jpg");
+        expect(init.redirect).toBe("error");
+        expect(init.dispatcher).toBeDefined();
+        expect(result.description).toBe("A beautiful image");
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("CR-01: a url source that fails SSRF validation throws before any fetch", async () => {
+      (validateUrl as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        ok: false,
+        error: new Error("blocked private IP"),
+      });
+      const fetchMock = vi.fn();
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+      try {
+        const deps = makeDeps();
+        const handlers = createMediaHandlers(deps);
+
+        await expect(
+          handlers["image.analyze"]!({
+            source_type: "url",
+            source: "http://169.254.169.254/latest/meta-data",
+          }),
+        ).rejects.toThrow(/SSRF blocked/);
+        expect(fetchMock).not.toHaveBeenCalled();
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    // ─── VIS-01/02/03 (187): the provider-following vision ladder ─────────────
+    // main-vision FIRST → registry SECOND → honest-unavailable. The handler is a
+    // CONSUMER of resolveVisionPath + deps.mainProviderVision (the 183 firewall).
+
+    describe("VIS-01/02/03 vision ladder", () => {
+      it("VIS-01: routes to main-vision FIRST when the main model is vision-capable + has creds", async () => {
+        visionState.capable = true;
+        const deps = makeDeps();
+        const handlers = createMediaHandlers(deps);
+        const registryProvider = deps.visionRegistry!.get("gemini")!;
+
+        const result = (await handlers["image.analyze"]!({
+          source_type: "base64",
+          source: Buffer.from("png").toString("base64"),
+          prompt: "what is this",
+          _agentId: "default",
+        })) as { description: string; provider: string; model: string };
+
+        // The bridge ran; the registry was NOT consulted.
+        expect((deps.mainProviderVision as unknown as { describeImage: ReturnType<typeof vi.fn> }).describeImage)
+          .toHaveBeenCalledWith(expect.any(Buffer), "what is this", expect.any(String), "default");
+        expect((registryProvider as unknown as { describeImage: ReturnType<typeof vi.fn> }).describeImage)
+          .not.toHaveBeenCalled();
+        expect(result).toEqual({ description: "A dog on a skateboard", provider: "anthropic", model: "claude-sonnet-4-5" });
+        // VIS-03 path-log: a content-free line carries path:"main-vision".
+        const logged = (deps.logger.info as ReturnType<typeof vi.fn>).mock.calls
+          .concat((deps.logger.debug as ReturnType<typeof vi.fn>).mock.calls)
+          .map((c) => c[0]);
+        expect(logged.some((f) => f && (f as { path?: string }).path === "main-vision")).toBe(true);
+      });
+
+      it("VIS-01: succeeds via main-vision with NO separate vision-registry key (the bridge owns the cred)", async () => {
+        // The registry is EMPTY (no separate vision provider/key), but the main
+        // bridge succeeds (its cred came from the main provider).
+        visionState.capable = true;
+        const deps = makeDeps({ visionRegistry: new Map() });
+        const handlers = createMediaHandlers(deps);
+
+        const result = (await handlers["image.analyze"]!({
+          source_type: "base64",
+          source: "abc",
+          _agentId: "default",
+        })) as { description: string };
+
+        expect(result.description).toBe("A dog on a skateboard");
+        expect((deps.mainProviderVision as unknown as { describeImage: ReturnType<typeof vi.fn> }).describeImage)
+          .toHaveBeenCalledOnce();
+      });
+
+      it("VIS-02 NON-REGRESSION: a non-vision main is byte-identical to today (registry path, no bridge call)", async () => {
+        visionState.capable = false; // the pre-187 world
+        const deps = makeDeps();
+        const handlers = createMediaHandlers(deps);
+        const registryProvider = deps.visionRegistry!.get("gemini")!;
+
+        const result = (await handlers["image.analyze"]!({
+          source_type: "base64",
+          source: "abc",
+          prompt: "Describe this",
+          _agentId: "default",
+        })) as { description: string; provider: string; model: string };
+
+        // The registry ran exactly as before; the bridge was NOT called.
+        expect((registryProvider as unknown as { describeImage: ReturnType<typeof vi.fn> }).describeImage)
+          .toHaveBeenCalledWith({ image: expect.any(Buffer), prompt: "Describe this", mimeType: expect.any(String) });
+        expect((deps.mainProviderVision as unknown as { describeImage: ReturnType<typeof vi.fn> }).describeImage)
+          .not.toHaveBeenCalled();
+        expect(result).toEqual({ description: "A beautiful image", provider: "gemini", model: "gemini-pro-vision" });
+      });
+
+      it("VIS-02 explicit defaultProvider OVERRIDES main-first (A3 explicit wins → registry)", async () => {
+        visionState.capable = true; // main COULD do vision...
+        const deps = makeDeps({
+          mediaConfig: {
+            imageAnalysis: { maxFileSizeMb: 10 },
+            vision: { scopeRules: [], defaultScopeAction: "allow", defaultProvider: "gemini" }, // ...but explicit wins
+            tts: { autoMode: "off" as const, tagPattern: "\\[\\[tts\\]\\]" },
+          },
+        });
+        const handlers = createMediaHandlers(deps);
+        const registryProvider = deps.visionRegistry!.get("gemini")!;
+
+        const result = (await handlers["image.analyze"]!({
+          source_type: "base64",
+          source: "abc",
+          _agentId: "default",
+        })) as { description: string };
+
+        expect((deps.mainProviderVision as unknown as { describeImage: ReturnType<typeof vi.fn> }).describeImage)
+          .not.toHaveBeenCalled();
+        expect((registryProvider as unknown as { describeImage: ReturnType<typeof vi.fn> }).describeImage)
+          .toHaveBeenCalledOnce();
+        expect(result.description).toBe("A beautiful image");
+      });
+
+      it("VIS-01 main-vision RUNTIME failure falls back to the registry (its own keys, never throw-out)", async () => {
+        visionState.capable = true;
+        const failingBridge = {
+          describeImage: vi.fn(async () => ({
+            ok: false as const,
+            error: Object.assign(new Error("empty"), { errorKind: "empty_response" }),
+          })),
+        };
+        const deps = makeDeps({ mainProviderVision: failingBridge as never });
+        const handlers = createMediaHandlers(deps);
+        const registryProvider = deps.visionRegistry!.get("gemini")!;
+
+        const result = (await handlers["image.analyze"]!({
+          source_type: "base64",
+          source: "abc",
+          _agentId: "default",
+        })) as { description: string };
+
+        expect(failingBridge.describeImage).toHaveBeenCalledOnce();
+        expect((registryProvider as unknown as { describeImage: ReturnType<typeof vi.fn> }).describeImage)
+          .toHaveBeenCalledOnce();
+        expect(result.description).toBe("A beautiful image"); // the registry's result
+      });
+
+      it("VIS-03 honest-unavailable (errorKind) when neither main-vision nor a registry provider resolves", async () => {
+        // main not vision-capable AND empty registry → honest-unavailable.
+        visionState.capable = false;
+        const deps = makeDeps({ visionRegistry: new Map() });
+        const handlers = createMediaHandlers(deps);
+
+        await expect(
+          handlers["image.analyze"]!({ source_type: "base64", source: "abc", _agentId: "default" }),
+        ).rejects.toThrow(/vision provider available/i);
+      });
+
+      it("VIS-03 the gate is conservative when getModel throws (model resolution failure → registry)", async () => {
+        visionState.capable = true;
+        visionState.throwOnResolve = true; // getModel throws → visionCapable=false
+        const deps = makeDeps();
+        const handlers = createMediaHandlers(deps);
+        const registryProvider = deps.visionRegistry!.get("gemini")!;
+
+        await handlers["image.analyze"]!({ source_type: "base64", source: "abc", _agentId: "default" });
+
+        expect((deps.mainProviderVision as unknown as { describeImage: ReturnType<typeof vi.fn> }).describeImage)
+          .not.toHaveBeenCalled();
+        expect((registryProvider as unknown as { describeImage: ReturnType<typeof vi.fn> }).describeImage)
+          .toHaveBeenCalledOnce();
+      });
+
+      it("security floor RETAINED: a denied scope short-circuits BEFORE any tier (no bridge, no registry)", async () => {
+        visionState.capable = true;
+        const { resolveVisionScope } = await import("@comis/skills");
+        (resolveVisionScope as ReturnType<typeof vi.fn>).mockReturnValueOnce("deny");
+        const deps = makeDeps({
+          mediaConfig: {
+            imageAnalysis: { maxFileSizeMb: 10 },
+            vision: { scopeRules: [{ pattern: "x", action: "deny" }] as never, defaultScopeAction: "deny" },
+            tts: { autoMode: "off" as const, tagPattern: "\\[\\[tts\\]\\]" },
+          },
+        });
+        const handlers = createMediaHandlers(deps);
+        const registryProvider = deps.visionRegistry!.get("gemini")!;
+
+        const result = (await handlers["image.analyze"]!({
+          source_type: "base64",
+          source: "abc",
+          _channelType: "telegram",
+          _agentId: "default",
+        })) as { description: string };
+
+        expect(result.description).toBe("Vision analysis not available for this context.");
+        expect((deps.mainProviderVision as unknown as { describeImage: ReturnType<typeof vi.fn> }).describeImage)
+          .not.toHaveBeenCalled();
+        expect((registryProvider as unknown as { describeImage: ReturnType<typeof vi.fn> }).describeImage)
+          .not.toHaveBeenCalled();
+      });
+
+      it("security floor RETAINED: the buffer size cap still fires on the main-vision path", async () => {
+        visionState.capable = true;
+        const deps = makeDeps({
+          mediaConfig: {
+            imageAnalysis: { maxFileSizeMb: 0.000001 }, // ~1 byte limit → any image exceeds
+            vision: { scopeRules: [], defaultScopeAction: "allow" },
+            tts: { autoMode: "off" as const, tagPattern: "\\[\\[tts\\]\\]" },
+          },
+        });
+        const handlers = createMediaHandlers(deps);
+
+        await expect(
+          handlers["image.analyze"]!({
+            source_type: "base64",
+            source: Buffer.from("a much larger payload than one byte").toString("base64"),
+            _agentId: "default",
+          }),
+        ).rejects.toThrow(/exceeds limit/);
+        expect((deps.mainProviderVision as unknown as { describeImage: ReturnType<typeof vi.fn> }).describeImage)
+          .not.toHaveBeenCalled();
+      });
+    });
+
+    // -----------------------------------------------------------------------
+    // VIS-04 (187): the trajectory direct-emits (media.vision.{requested,
+    // completed,failed}) via the per-session recorder (the daemon RPC context
+    // has NO eventBus bridge — the image-handlers.ts:210 precedent). Resolve the
+    // recorder by `_callerSessionKey`; a null/absent recorder no-ops. Payloads
+    // are CONTENT-FREE (provider/mainProvider/model/path/costUsd/errorKind only —
+    // never the buffer/base64/prompt/response text; T-187-12).
+    // -----------------------------------------------------------------------
+    describe("VIS-04 trajectory direct-emit (content-free)", () => {
+      function makeRecorderMock() {
+        const records: Array<{ type: string; data: Record<string, unknown> }> = [];
+        const recordEvent = vi.fn((type: string, data: Record<string, unknown>) => {
+          records.push({ type, data });
+        });
+        const getRecorder = vi.fn((_sessionKey: string) => ({ recordEvent }));
+        return { records, recordEvent, getRecorder, trajectoryRegistry: { getRecorder } as never };
+      }
+
+      it("a successful main-vision turn records media.vision.requested + media.vision.completed{path:'main-vision',costUsd,outcome:'ok'}", async () => {
+        visionState.capable = true;
+        const rec = makeRecorderMock();
+        const deps = makeDeps({ trajectoryRegistry: rec.trajectoryRegistry });
+        const handlers = createMediaHandlers(deps);
+
+        await handlers["image.analyze"]!({
+          source_type: "base64",
+          source: "abc",
+          prompt: "what is this",
+          _agentId: "default",
+          _callerSessionKey: "default:u1:telegram:c1",
+        });
+
+        expect(rec.getRecorder).toHaveBeenCalledWith("default:u1:telegram:c1");
+        const types = rec.records.map((r) => r.type);
+        expect(types).toContain("media.vision.requested");
+        expect(types).toContain("media.vision.completed");
+        const completed = rec.records.find((r) => r.type === "media.vision.completed")!.data;
+        expect(completed.path).toBe("main-vision");
+        expect(completed.outcome).toBe("ok");
+        expect(completed.costUsd).toBe(0.002);
+        expect(completed.mainProvider).toBe("anthropic");
+        // CONTENT-FREE: no buffer/base64/prompt/answer text in ANY recorded payload.
+        const blob = JSON.stringify(rec.records);
+        expect(blob).not.toContain("what is this");
+        expect(blob).not.toContain("A dog on a skateboard");
+        expect(blob).not.toMatch(/abc/); // the base64 source
+      });
+
+      it("the registry tier records media.vision.completed with path:'registry' and NO costUsd (Pitfall 4)", async () => {
+        visionState.capable = false; // → registry path
+        const rec = makeRecorderMock();
+        const deps = makeDeps({ trajectoryRegistry: rec.trajectoryRegistry });
+        const handlers = createMediaHandlers(deps);
+
+        await handlers["image.analyze"]!({
+          source_type: "base64",
+          source: "abc",
+          _agentId: "default",
+          _callerSessionKey: "default:u1:telegram:c1",
+        });
+
+        const completed = rec.records.find((r) => r.type === "media.vision.completed");
+        expect(completed).toBeDefined();
+        expect(completed!.data.path).toBe("registry");
+        expect("costUsd" in completed!.data).toBe(false);
+      });
+
+      it("an honest-unavailable turn records media.vision.failed{errorKind,path}", async () => {
+        visionState.capable = false;
+        const rec = makeRecorderMock();
+        const deps = makeDeps({ visionRegistry: new Map(), trajectoryRegistry: rec.trajectoryRegistry });
+        const handlers = createMediaHandlers(deps);
+
+        await expect(
+          handlers["image.analyze"]!({
+            source_type: "base64",
+            source: "abc",
+            _agentId: "default",
+            _callerSessionKey: "default:u1:telegram:c1",
+          }),
+        ).rejects.toThrow(/vision provider available/i);
+
+        const failed = rec.records.find((r) => r.type === "media.vision.failed");
+        expect(failed).toBeDefined();
+        expect(typeof failed!.data.errorKind).toBe("string");
+        expect(failed!.data.path).toBe("unavailable");
+      });
+
+      it("WR-03: when main-vision fails AND no registry can serve, the TERMINAL unavailable record carries the bridge's specific errorKind (not generic unsupported_provider)", async () => {
+        // main-vision is the chosen path (sel.ok === true) and the bridge fails
+        // with a SPECIFIC kind (auth_required — the main provider's key is
+        // missing). With no registry provider, control reaches the honest-
+        // unavailable terminal. The terminal record (path:"unavailable") and the
+        // thrown error MUST preserve auth_required, not collapse to the generic
+        // unsupported_provider (the `sel.ok === false ? …` ternary is always
+        // false on the main-vision path).
+        visionState.capable = true;
+        const failingBridge = {
+          describeImage: vi.fn(async () => ({
+            ok: false as const,
+            error: Object.assign(new Error("no key"), { errorKind: "auth_required" }),
+          })),
+        };
+        const rec = makeRecorderMock();
+        const deps = makeDeps({
+          mainProviderVision: failingBridge as never,
+          visionRegistry: new Map(), // no registry fallback
+          trajectoryRegistry: rec.trajectoryRegistry,
+        });
+        const handlers = createMediaHandlers(deps);
+
+        await expect(
+          handlers["image.analyze"]!({
+            source_type: "base64",
+            source: "abc",
+            _agentId: "default",
+            _callerSessionKey: "default:u1:telegram:c1",
+          }),
+        ).rejects.toThrow(/vision provider available/i);
+
+        const failedRecords = rec.records.filter((r) => r.type === "media.vision.failed");
+        // Two failed records: the main-vision attempt + the terminal unavailable.
+        const terminal = failedRecords.find((r) => r.data.path === "unavailable");
+        expect(terminal).toBeDefined();
+        // WR-03: the terminal preserves the bridge's specific kind.
+        expect(terminal!.data.errorKind).toBe("auth_required");
+        // The §2.7 WARN for the terminal also carries the specific domain kind.
+        const warnTerminal = (deps.logger.warn as ReturnType<typeof vi.fn>).mock.calls
+          .map((c) => c[0] as Record<string, unknown>)
+          .find((f) => f && f.path === "unavailable");
+        expect(warnTerminal).toBeDefined();
+        expect(warnTerminal!.imageErrorKind).toBe("auth_required");
+      });
+
+      it("WR-03: the resolver-skip path (sel.ok === false) still uses the resolver's own errorKind at the terminal", async () => {
+        // Regression guard: when the resolver itself returns !ok (e.g. a
+        // mediaKind/capability combination it refuses), the terminal must keep
+        // honoring sel.errorKind — the WR-03 fix preserves the bridge kind ONLY
+        // when there was a bridge failure, never overriding a real resolver kind.
+        visionState.capable = false; // not vision-capable → registry path, no bridge attempt
+        const rec = makeRecorderMock();
+        const deps = makeDeps({ visionRegistry: new Map(), trajectoryRegistry: rec.trajectoryRegistry });
+        const handlers = createMediaHandlers(deps);
+
+        await expect(
+          handlers["image.analyze"]!({
+            source_type: "base64",
+            source: "abc",
+            _agentId: "default",
+            _callerSessionKey: "default:u1:telegram:c1",
+          }),
+        ).rejects.toThrow(/vision provider available/i);
+
+        const terminal = rec.records.find(
+          (r) => r.type === "media.vision.failed" && r.data.path === "unavailable",
+        );
+        expect(terminal).toBeDefined();
+        // No bridge ran → the terminal kind is the resolver/handler default,
+        // NOT a stale lastBridgeKind.
+        expect(typeof terminal!.data.errorKind).toBe("string");
+        expect(terminal!.data.errorKind).not.toBe("auth_required");
+      });
+
+      it("WR-01: a registry-tier provider failure emits media.vision.failed{path:'registry'} + a §2.7 WARN before throwing", async () => {
+        // §2.7: errorKind+hint on EVERY vision failure branch + the path label.
+        // The registry provider returns !ok → the handler must record
+        // media.vision.failed{path:"registry"} AND fire a content-free WARN
+        // (path:"registry") carrying the classified errorKind BEFORE re-throwing.
+        visionState.capable = false; // → registry path
+        const failingProvider = {
+          describeImage: vi.fn(async () => ({
+            ok: false as const,
+            error: Object.assign(new Error("registry boom"), { errorKind: "quota_exceeded" }),
+          })),
+          describeVideo: vi.fn(),
+        };
+        const rec = makeRecorderMock();
+        const deps = makeDeps({
+          visionRegistry: new Map([["gemini", failingProvider as never]]),
+          trajectoryRegistry: rec.trajectoryRegistry,
+        });
+        const handlers = createMediaHandlers(deps);
+
+        await expect(
+          handlers["image.analyze"]!({
+            source_type: "base64",
+            source: "abc",
+            prompt: "p",
+            _agentId: "default",
+            _callerSessionKey: "default:u1:telegram:c1",
+          }),
+        ).rejects.toThrow();
+
+        const failed = rec.records.find(
+          (r) => r.type === "media.vision.failed" && r.data.path === "registry",
+        );
+        expect(failed).toBeDefined();
+        expect(failed!.data.errorKind).toBe("quota_exceeded");
+        const warn = (deps.logger.warn as ReturnType<typeof vi.fn>).mock.calls
+          .map((c) => c[0] as Record<string, unknown>)
+          .find((f) => f && f.path === "registry");
+        expect(warn).toBeDefined();
+        expect(warn!.imageErrorKind).toBe("quota_exceeded");
+        expect(warn!.hint).toBeTruthy();
+        // CONTENT-FREE: neither the prompt nor the base64 source in the records.
+        const blob = JSON.stringify(rec.records);
+        expect(blob).not.toContain("\"p\"");
+        expect(blob).not.toContain("abc");
+      });
+
+      it("a main-vision RUNTIME failure records media.vision.failed for the bridge attempt, then media.vision.completed for the registry fallback", async () => {
+        visionState.capable = true;
+        const failingBridge = {
+          describeImage: vi.fn(async () => ({
+            ok: false as const,
+            error: Object.assign(new Error("empty"), { errorKind: "empty_response" }),
+          })),
+        };
+        const rec = makeRecorderMock();
+        const deps = makeDeps({ mainProviderVision: failingBridge as never, trajectoryRegistry: rec.trajectoryRegistry });
+        const handlers = createMediaHandlers(deps);
+
+        await handlers["image.analyze"]!({
+          source_type: "base64",
+          source: "abc",
+          _agentId: "default",
+          _callerSessionKey: "default:u1:telegram:c1",
+        });
+
+        const types = rec.records.map((r) => r.type);
+        // The bridge attempt failed (media.vision.failed, path main-vision)…
+        expect(types).toContain("media.vision.failed");
+        const failed = rec.records.find((r) => r.type === "media.vision.failed")!.data;
+        expect(failed.path).toBe("main-vision");
+        // …and the registry fallback then completed (path registry).
+        const completed = rec.records.find((r) => r.type === "media.vision.completed")!.data;
+        expect(completed.path).toBe("registry");
+      });
+
+      it("an absent recorder / absent _callerSessionKey no-ops (no crash)", async () => {
+        visionState.capable = true;
+        // No trajectoryRegistry wired AND no _callerSessionKey — the emits must be a no-op.
+        const deps = makeDeps();
+        const handlers = createMediaHandlers(deps);
+
+        const result = (await handlers["image.analyze"]!({
+          source_type: "base64",
+          source: "abc",
+          _agentId: "default",
+        })) as { description: string };
+
+        expect(result.description).toBe("A dog on a skateboard");
+      });
+
+      it("the §2.7 INFO completion line carries {visionProvider, mainProvider, model, path, durationMs, costUsd}", async () => {
+        visionState.capable = true;
+        const rec = makeRecorderMock();
+        const deps = makeDeps({ trajectoryRegistry: rec.trajectoryRegistry });
+        const handlers = createMediaHandlers(deps);
+
+        await handlers["image.analyze"]!({
+          source_type: "base64",
+          source: "abc",
+          prompt: "p",
+          _agentId: "default",
+          _callerSessionKey: "default:u1:telegram:c1",
+        });
+
+        const infoCalls = (deps.logger.info as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]);
+        const completeLine = infoCalls.find(
+          (f) => f && (f as { step?: string }).step === "vision_complete" && (f as { path?: string }).path === "main-vision",
+        ) as Record<string, unknown> | undefined;
+        expect(completeLine).toBeDefined();
+        expect(completeLine!.visionProvider).toBe("anthropic");
+        expect(completeLine!.mainProvider).toBe("anthropic");
+        expect(completeLine!.model).toBe("claude-sonnet-4-5");
+        expect(completeLine!.costUsd).toBe(0.002);
+        expect(typeof completeLine!.durationMs).toBe("number");
+      });
     });
   });
 
@@ -424,6 +1032,88 @@ describe("createMediaHandlers", () => {
       await expect(
         handlers["media.describe_video"]!({ attachment_url: "tg-file://vid" }),
       ).rejects.toThrow("Attachment resolution not available");
+    });
+
+    // ─── VIS-03 (187): raw video → gemini-video tier (main-vision N/A) ─────────
+
+    it("VIS-03 routes raw video to the gemini-video tier (UNCHANGED); the main-vision bridge is NEVER called for video", async () => {
+      visionState.capable = true; // even a vision-capable main does NOT serve video
+      const deps = makeDeps();
+      const handlers = createMediaHandlers(deps);
+
+      const result = (await handlers["media.describe_video"]!({
+        attachment_url: "tg-file://video456",
+        prompt: "what is happening",
+        _agentId: "default",
+      })) as { description: string; provider: string };
+
+      expect(result.description).toBe("A short video clip");
+      expect((deps.mainProviderVision as unknown as { describeImage: ReturnType<typeof vi.fn> }).describeImage)
+        .not.toHaveBeenCalled();
+      // VIS-03 path-log: a content-free line carries path:"gemini-video".
+      const logged = (deps.logger.info as ReturnType<typeof vi.fn>).mock.calls
+        .concat((deps.logger.debug as ReturnType<typeof vi.fn>).mock.calls)
+        .map((c) => c[0]);
+      expect(logged.some((f) => f && (f as { path?: string }).path === "gemini-video")).toBe(true);
+    });
+
+    it("VIS-03 honest-unavailable (errorKind, NOT an undefined-method call) when no video-capable provider exists", async () => {
+      const { selectVisionProvider } = await import("@comis/skills");
+      // A provider WITHOUT describeVideo → the registry is "available" but cannot
+      // serve video. The handler must surface an honest error, not call undefined.
+      (selectVisionProvider as ReturnType<typeof vi.fn>).mockReturnValue({ describeImage: vi.fn() });
+      const deps = makeDeps();
+      const handlers = createMediaHandlers(deps);
+
+      await expect(
+        handlers["media.describe_video"]!({ attachment_url: "tg-file://vid", _agentId: "default" }),
+      ).rejects.toThrow(/video-capable vision provider/i);
+    });
+
+    it("WR-01: a gemini-video provider failure emits media.vision.failed{path:'gemini-video'} + a §2.7 WARN before throwing", async () => {
+      // §2.7: errorKind+hint on EVERY vision failure branch + the path label.
+      // describeVideo returns !ok → the handler must record
+      // media.vision.failed{path:"gemini-video"} AND fire a content-free WARN
+      // (path:"gemini-video") with the classified errorKind BEFORE re-throwing.
+      const { selectVisionProvider } = await import("@comis/skills");
+      const failingVideoProvider = {
+        describeImage: vi.fn(),
+        describeVideo: vi.fn(async () => ({
+          ok: false as const,
+          error: Object.assign(new Error("video boom"), { errorKind: "timeout" }),
+        })),
+      };
+      (selectVisionProvider as ReturnType<typeof vi.fn>).mockReturnValue(failingVideoProvider);
+      const records: Array<{ type: string; data: Record<string, unknown> }> = [];
+      const recordEvent = vi.fn((type: string, data: Record<string, unknown>) => {
+        records.push({ type, data });
+      });
+      const trajectoryRegistry = { getRecorder: vi.fn(() => ({ recordEvent })) } as never;
+      const deps = makeDeps({ trajectoryRegistry });
+      const handlers = createMediaHandlers(deps);
+
+      await expect(
+        handlers["media.describe_video"]!({
+          attachment_url: "tg-file://vid",
+          prompt: "secret-video-prompt",
+          _agentId: "default",
+          _callerSessionKey: "default:u1:telegram:c1",
+        }),
+      ).rejects.toThrow();
+
+      const failed = records.find(
+        (r) => r.type === "media.vision.failed" && r.data.path === "gemini-video",
+      );
+      expect(failed).toBeDefined();
+      expect(failed!.data.errorKind).toBe("timeout");
+      const warn = (deps.logger.warn as ReturnType<typeof vi.fn>).mock.calls
+        .map((c) => c[0] as Record<string, unknown>)
+        .find((f) => f && f.path === "gemini-video");
+      expect(warn).toBeDefined();
+      expect(warn!.imageErrorKind).toBe("timeout");
+      expect(warn!.hint).toBeTruthy();
+      // CONTENT-FREE: the prompt never enters the records.
+      expect(JSON.stringify(records)).not.toContain("secret-video-prompt");
     });
   });
 

@@ -1,6 +1,6 @@
 {
-  "totalMinified": 122555,
-  "totalGzipped": 11978,
+  "totalMinified": 123253,
+  "totalGzipped": 12085,
   "budget": {
     "minified": 126000,
     "gzipped": 38912
@@ -87,7 +87,7 @@
     "heartbeat.trigger": 358,
     "heartbeat.update": 1066,
     "image.analyze": 501,
-    "image.generate": 304,
+    "image.generate": 366,
     "link.process": 455,
     "mcp.connect": 1706,
     "mcp.disconnect": 519,
@@ -150,7 +150,7 @@
     "obs.delivery.recent": 462,
     "obs.delivery.stats": 414,
     "obs.diagnostics": 596,
-    "obs.explain": 5830,
+    "obs.explain": 6562,
     "obs.fleet.health": 3320,
     "obs.getCacheStats": 358,
     "obs.reset": 571,

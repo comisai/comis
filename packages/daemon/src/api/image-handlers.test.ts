@@ -8,13 +8,41 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createImageHandlers, type ImageHandlerDeps } from "./image-handlers.js";
+import { ImageGenError } from "./pi-image-adapter.js";
+import { ValidationError } from "./errors.js";
 import { ok, err } from "@comis/shared";
+import { validateUrl } from "@comis/core";
+import type { PersistedFile } from "@comis/skills/tools";
+import { readFile } from "node:fs/promises";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
+// SEC-03: the credential KEY-NAME set that drives Pino's redact.paths. The
+// assertion below checks no credential VALUE leaks into any image log line.
+import { CREDENTIAL_KEYS } from "@comis/observability";
+
+/** DEL-01: a successful PersistedFile the per-agent persist getter returns. The
+ *  filePath is what sendAttachment receives (the PERSISTED path, NOT a tmpdir
+ *  path) and sizeBytes is the OBS-01 field (Plan 02 consumes it). */
+const PERSISTED_OK: PersistedFile = {
+  // A durable workspace path under ~/.comis/workspace/media/photos/ — what
+  // MediaPersistenceService returns. Deliberately NOT under an OS temp dir and
+  // NOT a `comis-img-*` ephemeral filename (the pre-DEL-01 signature the
+  // delivery assertion rejects).
+  filePath: "/home/agent/.comis/workspace/media/photos/abc123.png",
+  relativePath: "photos/abc123.png",
+  mimeType: "image/png",
+  sizeBytes: 4242,
+  mediaKind: "image",
+  savedAt: 0,
+};
 
 // Mock node:fs/promises and node:os to avoid real filesystem I/O
 vi.mock("node:fs/promises", () => ({
   writeFile: vi.fn().mockResolvedValue(undefined),
   unlink: vi.fn().mockResolvedValue(undefined),
+  // IN-01: the reference-image file path branch reads the resolved (safePath-
+  // confined) path. Returns deterministic bytes; tests assert WHICH path it
+  // was called with (workspace-confined), not the contents.
+  readFile: vi.fn().mockResolvedValue(Buffer.from("REF-FILE-BYTES")),
 }));
 
 vi.mock("node:os", async (importOriginal) => {
@@ -25,13 +53,48 @@ vi.mock("node:os", async (importOriginal) => {
   };
 });
 
+// CR-01: the reference_image URL branch now routes through the shared
+// DNS-pinned SSRF fetcher (ssrf-image-fetch.ts → undici Agent + fetch). Mock
+// `undici` so Agent is a real class (constructor args captured) and `fetch`
+// delegates to globalThis.fetch — NEVER the real network. Mirrors the
+// ssrf-fetcher.test.ts seam.
+const { undiciAgentCtor, undiciAgentClose } = vi.hoisted(() => {
+  const undiciAgentCtor = vi.fn();
+  const undiciAgentClose = vi.fn().mockResolvedValue(undefined);
+  return { undiciAgentCtor, undiciAgentClose };
+});
+
+vi.mock("undici", () => {
+  class MockAgent {
+    close = undiciAgentClose;
+    constructor(args: unknown) {
+      undiciAgentCtor(args);
+    }
+  }
+  const fetch = (...args: Parameters<typeof globalThis.fetch>) => globalThis.fetch(...args);
+  return { Agent: MockAgent, fetch };
+});
+
 // Preserve the contract registry exports + stripInternalFields helper that
 // the refactored handler now imports from @comis/core.
 vi.mock("@comis/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@comis/core")>();
   return {
     ...actual,
+    // safePath joins segments here (the real guard is unit-tested in core); the
+    // IN-01 path-traversal test asserts the handler routes the agent-supplied
+    // path THROUGH safePath (confinement under the workspace), mirroring the
+    // media-handlers.test.ts convention.
     safePath: (...segments: string[]) => segments.join("/"),
+    // validateUrl defaults to ok WITH a resolved value (hostname/ip/url) so the
+    // CR-01 URL branch can pin DNS to the validated IP; the SSRF test overrides
+    // it to reject.
+    validateUrl: vi.fn(async () => ({
+      ok: true,
+      value: { hostname: "example.com", ip: "93.184.216.34", url: new URL("https://example.com/ref.png") },
+    })),
+    // isValidImageModel / listImageModels come through `...actual` (the real
+    // IN-02 enumeration) so the reject hint lists the genuine model lists.
   };
 });
 
@@ -66,9 +129,58 @@ function createMockDeps(overrides: Partial<ImageHandlerDeps> = {}): ImageHandler
     },
     logger: createMockLogger() as any,
     getChannelAdapter: vi.fn().mockReturnValue(undefined),
+    resolveAgentMainProvider: vi.fn().mockReturnValue({ providerId: "openrouter" }),
+    // IN-01 (185): the reference-image file path branch resolves the agent
+    // workspace dir from these (mirrors MediaApiDeps; threaded through
+    // imageHandlerDeps this plan).
+    workspaceDirs: new Map<string, string>(),
+    defaultWorkspaceDir: "/tmp/test-workspace",
+    // DEL-01 (186): the per-agent persist getter (MediaPersistenceService.persist
+    // bound to the agent's workspace). Defaults to a successful PersistedFile so
+    // the existing handler tests still construct valid deps after the type grows.
+    persist: vi.fn().mockResolvedValue(ok(PERSISTED_OK)),
     ...overrides,
   };
 }
+
+/** OBS-04 (186): a mock trajectoryRegistry whose getRecorder returns a recorder
+ *  with a `recordEvent` spy — the direct-emit seam the handler records the 4
+ *  image.* events through. Returns BOTH the registry (for createMockDeps) and the
+ *  spy (so a test can assert the recorded events). `getRecorder` is a spy too so a
+ *  test can assert the session-key it was (or was not) resolved with. */
+function makeMockTrajectoryRegistry(): {
+  trajectoryRegistry: NonNullable<ImageHandlerDeps["trajectoryRegistry"]>;
+  recordEvent: ReturnType<typeof vi.fn>;
+  getRecorder: ReturnType<typeof vi.fn>;
+} {
+  const recordEvent = vi.fn().mockReturnValue("queued");
+  const getRecorder = vi.fn().mockReturnValue({ recordEvent });
+  // Only getRecorder is read by the handler (the direct-emit precedent) — the
+  // other registry methods are unused here, so a partial cast is sufficient.
+  const trajectoryRegistry = { getRecorder } as unknown as NonNullable<
+    ImageHandlerDeps["trajectoryRegistry"]
+  >;
+  return { trajectoryRegistry, recordEvent, getRecorder };
+}
+
+describe("ImageHandlerDeps.persist type (DEL-01)", () => {
+  it("exposes a per-agent persist getter returning Result<PersistedFile, Error>", () => {
+    // Type-level proof that the dep exists with the (agentId, buffer, opts)
+    // signature. The assignment fails to compile if types.ts lacks the field
+    // (the RED state before the GREEN type widen) or if the shape diverges.
+    const persist: ImageHandlerDeps["persist"] = async (
+      agentId: string,
+      buffer: Buffer,
+      opts: { mediaKind: "image"; mimeType: string },
+    ) => {
+      void agentId;
+      void buffer;
+      void opts;
+      return ok(PERSISTED_OK);
+    };
+    expect(typeof persist).toBe("function");
+  });
+});
 
 describe("createImageHandlers", () => {
   beforeEach(() => {
@@ -231,5 +343,1610 @@ describe("createImageHandlers", () => {
     expect(result.mimeType).toBe("image/png");
     // Should not attempt to get adapter
     expect(deps.getChannelAdapter).not.toHaveBeenCalled();
+  });
+
+  // ─── DEL-01: durable persistence replaces the tmpdir write+delete ──────────
+
+  it("DEL-01: persists the image and hands sendAttachment the PERSISTED filePath (not a tmpdir path)", async () => {
+    const mockSendAttachment = vi.fn().mockResolvedValue(ok("msg-del01"));
+    const persist = vi.fn().mockResolvedValue(ok(PERSISTED_OK));
+    const deps = createMockDeps({
+      getChannelAdapter: vi.fn().mockReturnValue({ sendAttachment: mockSendAttachment }),
+      persist,
+    });
+    const handlers = createImageHandlers(deps);
+    const result = await handlers["image.generate"]!({
+      _agentId: "agent-del01",
+      prompt: "a durable landscape",
+      _callerChannelType: "telegram",
+      _callerChannelId: "chat-del01",
+    });
+
+    // The handler persists the generated buffer via the per-agent getter,
+    // scoped to the caller's agentId with mediaKind:"image" (T-186-01 — the
+    // service routes to the agent's confined `photos/` subdir).
+    expect(persist).toHaveBeenCalledTimes(1);
+    expect(persist).toHaveBeenCalledWith(
+      "agent-del01",
+      expect.any(Buffer),
+      expect.objectContaining({ mediaKind: "image", mimeType: "image/png" }),
+    );
+    // sendAttachment receives the PERSISTED durable path — NOT an OS-tmpdir
+    // `comis-img-*` ephemeral path (the whole point of DEL-01). It lives under
+    // the agent workspace media dir.
+    const attachment = mockSendAttachment.mock.calls[0]?.[1] as { url: string };
+    expect(attachment.url).toBe(PERSISTED_OK.filePath);
+    expect(attachment.url).not.toMatch(/comis-img-/);
+    expect(attachment.url).toContain("workspace/media/photos/");
+    expect(result).toEqual({ success: true, delivered: true, mimeType: "image/png" });
+  });
+
+  it("DEL-01: a persistence failure WARNs and falls through to base64 (no crash, no sendAttachment)", async () => {
+    const mockSendAttachment = vi.fn().mockResolvedValue(ok("should-not-be-called"));
+    const persist = vi.fn().mockResolvedValue(err(new Error("disk full")));
+    const deps = createMockDeps({
+      getChannelAdapter: vi.fn().mockReturnValue({ sendAttachment: mockSendAttachment }),
+      persist,
+    });
+    const handlers = createImageHandlers(deps);
+    const result = (await handlers["image.generate"]!({
+      _agentId: "agent-del01b",
+      prompt: "a doomed render",
+      _callerChannelType: "telegram",
+      _callerChannelId: "chat-del01b",
+    })) as { success: boolean; imageBase64?: string; mimeType: string };
+
+    // Persist failed → base64 fallback, delivery skipped, no crash.
+    expect(persist).toHaveBeenCalledTimes(1);
+    expect(mockSendAttachment).not.toHaveBeenCalled();
+    expect(result.success).toBe(true);
+    expect(result.imageBase64).toBeDefined();
+    expect(result.mimeType).toBe("image/png");
+    // OBS-02: the persist-failure branch carries errorKind + a hint (§2.7).
+    // IN-02 (186): a persist failure (disk full / size cap) is `resource`
+    // exhaustion, not `network` — the WARN names the accurate log ErrorKind.
+    expect(deps.logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorKind: "resource",
+        hint: expect.stringContaining("persist"),
+        step: "image_persist",
+      }),
+      expect.any(String),
+    );
+  });
+
+  // ─── DEL-02 (regression-guard): capability-driven, NEVER a channel-name list ─
+
+  it("DEL-02: an adapter present but LACKING sendAttachment degrades to base64 (no undefined-method call)", async () => {
+    // The adapter object has NO sendAttachment property (today only IRC). The
+    // capability gate (typeof adapter.sendAttachment === "function") must skip
+    // delivery and fall through to base64 — never call an undefined method.
+    const persist = vi.fn().mockResolvedValue(ok(PERSISTED_OK));
+    const deps = createMockDeps({
+      getChannelAdapter: vi.fn().mockReturnValue({ /* no sendAttachment */ }),
+      persist,
+    });
+    const handlers = createImageHandlers(deps);
+    const result = (await handlers["image.generate"]!({
+      _agentId: "agent-del02",
+      prompt: "an IRC-bound image",
+      _callerChannelType: "irc",
+      _callerChannelId: "#chan",
+    })) as { success: boolean; imageBase64?: string; mimeType: string };
+
+    expect(result.success).toBe(true);
+    expect(result.imageBase64).toBeDefined();
+    expect(result.mimeType).toBe("image/png");
+  });
+
+  // ─── RES-01 keystone: the handler is no longer provider-blind ──────────────
+
+  it("resolves the agent main provider with the default agentId when none provided", async () => {
+    const deps = createMockDeps();
+    const handlers = createImageHandlers(deps);
+    const result = await handlers["image.generate"]!({
+      prompt: "a cat",
+      // no _agentId → defaults to "default"
+    });
+
+    // RES-01: the handler calls deps.resolveAgentMainProvider with the resolved agentId.
+    expect(deps.resolveAgentMainProvider).toHaveBeenCalledWith("default");
+    // The existing happy-path delivery still works (provider mock returns ok).
+    expect((result as any).success).toBe(true);
+  });
+
+  it("resolves the agent main provider with the supplied agentId for RES-01 lockstep", async () => {
+    const deps = createMockDeps();
+    const handlers = createImageHandlers(deps);
+    await handlers["image.generate"]!({
+      _agentId: "agent-x",
+      prompt: "a fox",
+    });
+
+    // RES-01: the resolved id flows from the dispatcher-injected _agentId.
+    expect(deps.resolveAgentMainProvider).toHaveBeenCalledWith("agent-x");
+  });
+
+  // ─── RES-03 honest-unavailable surfaced THROUGH the handler with the hint ──
+
+  it("surfaces the RES-03 unavailable hint naming the provider config knob", async () => {
+    const knobHint =
+      'Set integrations.media.imageGeneration.provider to an image-capable provider (e.g. "openrouter").';
+    const deps = createMockDeps({
+      provider: {
+        id: "unavailable",
+        isAvailable: () => false,
+        execute: vi.fn().mockResolvedValue(
+          err(
+            new ImageGenError("The selected provider cannot generate images.", {
+              imageErrorKind: "unsupported_provider",
+              hint: knobHint,
+            }),
+          ),
+        ),
+      },
+    });
+    const handlers = createImageHandlers(deps);
+    const result = (await handlers["image.generate"]!({
+      _agentId: "agent-anthropic",
+      prompt: "a landscape",
+    })) as { success: boolean; error: string; hint?: string };
+
+    // The handler surfaces the typed error's message AND its knob-naming hint.
+    expect(result.success).toBe(false);
+    expect(result.error).toBe("The selected provider cannot generate images.");
+    expect(result.hint).toBeDefined();
+    expect(result.hint).toContain("integrations.media.imageGeneration.provider");
+  });
+
+  // ─── WR-03 (§2.7): INFO completion line with durationMs on success ─────────
+
+  it("emits an INFO completion line with durationMs on the channel-delivered success path (WR-03)", async () => {
+    const mockSendAttachment = vi.fn().mockResolvedValue(ok("msg-789"));
+    const deps = createMockDeps({
+      getChannelAdapter: vi.fn().mockReturnValue({ sendAttachment: mockSendAttachment }),
+    });
+    const handlers = createImageHandlers(deps);
+    await handlers["image.generate"]!({
+      _agentId: "agent-1",
+      prompt: "a sunset",
+      _callerChannelType: "telegram",
+      _callerChannelId: "chat-7",
+    });
+
+    expect(deps.logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentId: "agent-1",
+        mainProvider: "openrouter",
+        delivered: true,
+        mimeType: "image/png",
+        durationMs: expect.any(Number),
+        step: "image_complete",
+      }),
+      expect.stringContaining("Image generation completed"),
+    );
+  });
+
+  it("emits an INFO completion line with durationMs on the base64-fallback success path (WR-03)", async () => {
+    const deps = createMockDeps({ getChannelAdapter: vi.fn().mockReturnValue(undefined) });
+    const handlers = createImageHandlers(deps);
+    await handlers["image.generate"]!({
+      _agentId: "agent-2",
+      prompt: "a dog",
+    });
+
+    expect(deps.logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentId: "agent-2",
+        mainProvider: "openrouter",
+        delivered: false,
+        mimeType: "image/png",
+        durationMs: expect.any(Number),
+        step: "image_complete",
+      }),
+      expect.stringContaining("Image generation completed"),
+    );
+  });
+
+  it("does NOT emit a completion INFO line on the failure path (WR-03)", async () => {
+    const deps = createMockDeps({
+      provider: {
+        id: "test-provider",
+        isAvailable: () => true,
+        execute: vi.fn().mockResolvedValue(err(new Error("Provider error: content blocked"))),
+      },
+    });
+    const handlers = createImageHandlers(deps);
+    await handlers["image.generate"]!({ _agentId: "agent-1", prompt: "x" });
+
+    const completionInfo = (deps.logger.info as ReturnType<typeof vi.fn>).mock.calls.some(
+      ([payload]) => (payload as { step?: string })?.step === "image_complete",
+    );
+    expect(completionInfo).toBe(false);
+  });
+
+  // ─── OBS-01 (§2.7): the FULL INFO completion field set on both paths ────────
+  // The WR-03 line (above) carries agentId/mainProvider/delivered/mimeType/
+  // durationMs/step. OBS-01 ADDS imageProvider/model/costUsd/sizeBytes so a
+  // generation is provider-, model-, cost-, and size-visible in one line.
+
+  /** Find the captured image_complete INFO payload (or undefined). */
+  function completionPayload(deps: ImageHandlerDeps): Record<string, unknown> | undefined {
+    const call = (deps.logger.info as ReturnType<typeof vi.fn>).mock.calls.find(
+      ([payload]) => (payload as { step?: string })?.step === "image_complete",
+    );
+    return call?.[0] as Record<string, unknown> | undefined;
+  }
+
+  it("OBS-01: the channel-delivered INFO line carries imageProvider/model/costUsd/sizeBytes", async () => {
+    const mockSendAttachment = vi.fn().mockResolvedValue(ok("msg-obs01"));
+    const deps = createMockDeps({
+      provider: {
+        id: "openai",
+        isAvailable: () => true,
+        // The widened ImageGenOutput (Task 1) carries model/costUsd through.
+        execute: vi
+          .fn()
+          .mockResolvedValue(
+            ok({ buffer: Buffer.from("img"), mimeType: "image/png", model: "gpt-image-1", costUsd: 0.04 }),
+          ),
+      },
+      getChannelAdapter: vi.fn().mockReturnValue({ sendAttachment: mockSendAttachment }),
+      // PERSISTED_OK.sizeBytes (4242) is the delivered-path sizeBytes source.
+      persist: vi.fn().mockResolvedValue(ok(PERSISTED_OK)),
+    });
+    const handlers = createImageHandlers(deps);
+    await handlers["image.generate"]!({
+      _agentId: "agent-obs01",
+      prompt: "a sunset",
+      _callerChannelType: "telegram",
+      _callerChannelId: "chat-obs01",
+    });
+
+    const payload = completionPayload(deps);
+    expect(payload).toBeDefined();
+    expect(payload).toMatchObject({
+      agentId: "agent-obs01",
+      imageProvider: "openai", // = deps.provider.id (the EXECUTING provider)
+      mainProvider: "openrouter",
+      model: "gpt-image-1",
+      costUsd: 0.04,
+      sizeBytes: 4242, // from the PersistedFile (DEL-01) on the delivered path
+      mimeType: "image/png",
+      delivered: true,
+      step: "image_complete",
+    });
+    // traceId rides the Pino ALS mixin (CLAUDE.md) — NOT a payload field. The
+    // RPC producer (createAgentRpcCall) injects _agentId/_callerSessionKey, never
+    // _traceId. Pin that the handler does not invent a traceId payload field.
+    expect(payload).not.toHaveProperty("traceId");
+  });
+
+  it("OBS-01: the base64-fallback INFO line carries imageProvider/model/costUsd/sizeBytes (buffer length)", async () => {
+    const buffer = Buffer.from("a-larger-image-buffer");
+    const deps = createMockDeps({
+      provider: {
+        id: "google",
+        isAvailable: () => true,
+        execute: vi
+          .fn()
+          .mockResolvedValue(ok({ buffer, mimeType: "image/png", model: "gemini-2.5-flash-image", costUsd: 0.01 })),
+      },
+      getChannelAdapter: vi.fn().mockReturnValue(undefined),
+    });
+    const handlers = createImageHandlers(deps);
+    await handlers["image.generate"]!({ _agentId: "agent-obs01b", prompt: "a dog" });
+
+    const payload = completionPayload(deps);
+    expect(payload).toBeDefined();
+    expect(payload).toMatchObject({
+      agentId: "agent-obs01b",
+      imageProvider: "google",
+      model: "gemini-2.5-flash-image",
+      costUsd: 0.01,
+      // base64 path: sizeBytes is the actual buffer length (no PersistedFile).
+      sizeBytes: buffer.byteLength,
+      delivered: false,
+      step: "image_complete",
+    });
+    expect(payload).not.toHaveProperty("traceId");
+  });
+
+  it("OBS-01 non-regression: an undefined costUsd/model is logged as undefined, never a crash (legacy path)", async () => {
+    // A legacy/text-only adapter returns only { buffer, mimeType } (Task 1
+    // non-regression). The INFO line must still emit, with costUsd/model unset.
+    const deps = createMockDeps({
+      provider: {
+        id: "openrouter",
+        isAvailable: () => true,
+        execute: vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("x"), mimeType: "image/png" })),
+      },
+      getChannelAdapter: vi.fn().mockReturnValue(undefined),
+    });
+    const handlers = createImageHandlers(deps);
+    const result = (await handlers["image.generate"]!({ _agentId: "agent-legacy", prompt: "a cat" })) as {
+      success: boolean;
+    };
+
+    expect(result.success).toBe(true);
+    const payload = completionPayload(deps);
+    expect(payload).toBeDefined();
+    expect(payload).toMatchObject({ imageProvider: "openrouter", delivered: false, step: "image_complete" });
+    expect(payload!.costUsd).toBeUndefined();
+    expect(payload!.model).toBeUndefined();
+    // sizeBytes is still the buffer length even on the legacy path.
+    expect(payload!.sizeBytes).toBe(1);
+  });
+
+  // ─── OBS-02 (§2.7): every handler failure branch logs errorKind + hint ──────
+  // The provider-error and persist-failure branches already do (above). The
+  // model-reject branch (IN-02) returned { success:false } with NO log — OBS-02
+  // adds a WARN naming errorKind + the listing hint BEFORE the return.
+
+  it("OBS-02: the model-reject branch WARNs errorKind:precondition + the listing hint before returning", async () => {
+    const execute = vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("x"), mimeType: "image/png" }));
+    const deps = createMockDeps({
+      provider: { id: "openai", isAvailable: () => true, execute },
+      resolveAgentMainProvider: vi.fn().mockReturnValue({ providerId: "openai" }),
+    });
+    const handlers = createImageHandlers(deps);
+
+    const result = (await handlers["image.generate"]!({
+      _agentId: "agent-reject",
+      prompt: "a fox",
+      model: "bogus-model",
+    })) as { success: boolean };
+
+    expect(result.success).toBe(false);
+    expect(execute).not.toHaveBeenCalled();
+    // The model-reject branch now emits a classified WARN (no failure path is
+    // undiagnosable — the §2.7 litmus). errorKind + a model-listing hint + step.
+    const warned = (deps.logger.warn as ReturnType<typeof vi.fn>).mock.calls.find(
+      ([payload]) => (payload as { step?: string })?.step === "image_model_reject",
+    );
+    expect(warned).toBeDefined();
+    const [payload] = warned as [Record<string, unknown>, string];
+    expect(payload.errorKind).toBe("precondition");
+    expect(payload.agentId).toBe("agent-reject");
+    expect(typeof payload.hint).toBe("string");
+    // The hint lists the valid models for the executing provider (openai).
+    expect(payload.hint as string).toContain("gpt-image-1");
+    // SEC: the WARN carries no raw provider message / model echo beyond the hint.
+  });
+
+  it("omits the hint field when the provider error carries no hint", async () => {
+    const deps = createMockDeps({
+      provider: {
+        id: "test-provider",
+        isAvailable: () => true,
+        execute: vi.fn().mockResolvedValue(err(new Error("Provider error: content blocked"))),
+      },
+    });
+    const handlers = createImageHandlers(deps);
+    const result = (await handlers["image.generate"]!({
+      _agentId: "agent-1",
+      prompt: "test prompt",
+    })) as { success: boolean; error: string; hint?: string };
+
+    // A plain Error has no .hint → the handler returns the legacy shape (no hint key).
+    expect(result).toEqual({ success: false, error: "Provider error: content blocked" });
+    expect("hint" in result).toBe(false);
+  });
+
+  // ─── WR-05 (184-REVIEW): multi-agent credential-misroute is a DOCUMENTED ────
+  // deferral (a future multi-agent refinement). The boot-selected `provider` port
+  // is the DEFAULT agent's; a non-default agent whose resolved main provider DIFFERS
+  // runs the default agent's port/credentials. Until per-request re-selection lands, the
+  // handler must at least make the divergence OBSERVABLE (not silent), so triage
+  // is not misled by the per-request obs line that names the caller's provider
+  // while execution uses the default's port.
+
+  it("WARNs when the caller's resolved provider diverges from the boot-selected port (misroute risk)", async () => {
+    const logger = createMockLogger() as unknown as ReturnType<typeof createMockLogger> & {
+      warn: ReturnType<typeof vi.fn>;
+    };
+    const deps = createMockDeps({
+      // Boot-selected port = the DEFAULT agent's (openrouter).
+      provider: {
+        id: "openrouter",
+        isAvailable: () => true,
+        execute: vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("x"), mimeType: "image/png" })),
+      },
+      // The CALLER (non-default agent) resolves to a DIFFERENT provider (codex).
+      resolveAgentMainProvider: vi.fn().mockReturnValue({ providerId: "openai-codex" }),
+      logger: logger as never,
+    });
+    const handlers = createImageHandlers(deps);
+
+    await handlers["image.generate"]!({ _agentId: "agent-codex", prompt: "a fox" });
+
+    const warned = logger.warn.mock.calls.find(
+      ([payload]) => (payload as { step?: string }).step === "image_provider_divergence",
+    );
+    expect(warned).toBeDefined();
+    const [payload] = warned as [Record<string, unknown>, string];
+    expect(payload.agentId).toBe("agent-codex");
+    expect(payload.callerProvider).toBe("openai-codex");
+    expect(payload.executedProvider).toBe("openrouter");
+    expect(payload.errorKind).toBe("precondition");
+    // Assert the actionable remediation knob, not a brittle phase number — the
+    // hint deliberately stopped naming "Phase 186" (d5612798); pin it to the
+    // stable config key an operator must set instead.
+    expect(payload.hint).toContain("integrations.media.imageGeneration.provider");
+  });
+
+  it("does NOT WARN when the caller's provider matches the boot-selected port (shared-provider agents)", async () => {
+    const logger = createMockLogger() as unknown as ReturnType<typeof createMockLogger> & {
+      warn: ReturnType<typeof vi.fn>;
+    };
+    const deps = createMockDeps({
+      provider: {
+        id: "openrouter",
+        isAvailable: () => true,
+        execute: vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("x"), mimeType: "image/png" })),
+      },
+      resolveAgentMainProvider: vi.fn().mockReturnValue({ providerId: "openrouter" }),
+      logger: logger as never,
+    });
+    const handlers = createImageHandlers(deps);
+
+    await handlers["image.generate"]!({ _agentId: "agent-2", prompt: "a fox" });
+
+    const warned = logger.warn.mock.calls.find(
+      ([payload]) => (payload as { step?: string }).step === "image_provider_divergence",
+    );
+    expect(warned).toBeUndefined();
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// IN-01 reference-image resolution (SSRF / path-traversal safe) + IN-02 model
+// validation + CFG-02 param threading (185-03, Task 2)
+// ───────────────────────────────────────────────────────────────────────────
+
+describe("createImageHandlers IN-01 reference_image resolution", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // Reset validateUrl to the default ok between tests (the SSRF case overrides).
+    (validateUrl as unknown as ReturnType<typeof vi.fn>).mockImplementation(async () => ({
+      ok: true,
+      value: { hostname: "example.com", ip: "93.184.216.34", url: new URL("https://example.com/ref.png") },
+    }));
+  });
+
+  const REF_B64 = Buffer.from("PNGBYTES").toString("base64");
+
+  it("Test 1: a raw base64 reference_image is decoded and threaded to execute() (data path)", async () => {
+    const execute = vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("x"), mimeType: "image/png" }));
+    const deps = createMockDeps({
+      provider: { id: "openrouter", isAvailable: () => true, execute },
+    });
+    const handlers = createImageHandlers(deps);
+
+    await handlers["image.generate"]!({
+      _agentId: "agent-1",
+      prompt: "edit this",
+      reference_image: `data:image/png;base64,${REF_B64}`,
+    });
+
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        referenceImage: expect.objectContaining({ data: REF_B64, mimeType: "image/png" }),
+      }),
+    );
+    // base64/data-uri must NOT touch the filesystem or the network.
+    expect(readFile).not.toHaveBeenCalled();
+  });
+
+  it("Test 2: a workspace file path is confined by safePath under the agent workspace dir", async () => {
+    const execute = vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("x"), mimeType: "image/png" }));
+    const deps = createMockDeps({
+      provider: { id: "openrouter", isAvailable: () => true, execute },
+      workspaceDirs: new Map([["agent-1", "/ws/agent-1"]]),
+    });
+    const handlers = createImageHandlers(deps);
+
+    await handlers["image.generate"]!({
+      _agentId: "agent-1",
+      prompt: "edit this",
+      reference_image: "sub/ref.png",
+    });
+
+    // safePath is mocked to join segments — the resolved path must start under
+    // the agent's workspace dir (confinement), and that path is what readFile reads.
+    expect(readFile).toHaveBeenCalledWith("/ws/agent-1/sub/ref.png");
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({ referenceImage: expect.objectContaining({ mimeType: expect.any(String) }) }),
+    );
+  });
+
+  it("Test 3: a path-traversal reference_image stays under the workspace root (never reads outside)", async () => {
+    const execute = vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("x"), mimeType: "image/png" }));
+    const deps = createMockDeps({
+      provider: { id: "openrouter", isAvailable: () => true, execute },
+      workspaceDirs: new Map([["agent-1", "/ws/agent-1"]]),
+    });
+    const handlers = createImageHandlers(deps);
+
+    await handlers["image.generate"]!({
+      _agentId: "agent-1",
+      prompt: "edit this",
+      reference_image: "../../etc/passwd",
+    });
+
+    // The handler routes the path THROUGH safePath (the T-185-09 confinement
+    // floor): readFile is called with a path that begins at the workspace root,
+    // NOT a bare /etc/passwd. (The real safePath rejects the escape; the mocked
+    // join proves the guard is on the path.)
+    const calledPath = (readFile as unknown as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as string | undefined;
+    if (calledPath !== undefined) {
+      expect(calledPath.startsWith("/ws/agent-1")).toBe(true);
+    }
+    // Either way, it must never read a path that resolves outside the workspace.
+    expect(readFile).not.toHaveBeenCalledWith("/etc/passwd");
+  });
+
+  it("Test 4: an internal-metadata URL is SSRF-blocked before any fetch", async () => {
+    (validateUrl as unknown as ReturnType<typeof vi.fn>).mockImplementation(async () => ({
+      ok: false,
+      error: new Error("blocked private IP"),
+    }));
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const execute = vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("x"), mimeType: "image/png" }));
+    const deps = createMockDeps({
+      provider: { id: "openrouter", isAvailable: () => true, execute },
+    });
+    const handlers = createImageHandlers(deps);
+
+    // The handler is @allow-throw — an SSRF-blocked reference throws (caught by
+    // rpc-dispatch → JSON-RPC error in production), exactly like the
+    // media-handlers SSRF path. The security floor is: no fetch to the internal
+    // endpoint, and no provider.execute.
+    await expect(
+      handlers["image.generate"]!({
+        _agentId: "agent-1",
+        prompt: "edit this",
+        reference_image: "http://169.254.169.254/latest/meta-data",
+      }),
+    ).rejects.toThrow(/SSRF blocked/);
+
+    expect(validateUrl).toHaveBeenCalledWith("http://169.254.169.254/latest/meta-data");
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+  });
+
+  it("Test 5: absence of reference_image keeps execute() text-only (no referenceImage — no regression)", async () => {
+    const execute = vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("x"), mimeType: "image/png" }));
+    const deps = createMockDeps({
+      provider: { id: "openrouter", isAvailable: () => true, execute },
+    });
+    const handlers = createImageHandlers(deps);
+
+    await handlers["image.generate"]!({ _agentId: "agent-1", prompt: "a fox" });
+
+    expect(execute).toHaveBeenCalledTimes(1);
+    const arg = execute.mock.calls[0]![0] as Record<string, unknown>;
+    expect(arg.referenceImage).toBeUndefined();
+    expect(readFile).not.toHaveBeenCalled();
+  });
+
+  // ─── CR-01: the URL branch MUST route through the DNS-pinned SSRF fetcher ───
+  // (not a bare fetch that re-resolves DNS), closing the DNS-rebinding TOCTOU
+  // window. A successful fetch must (a) validate the host, (b) pin the undici
+  // Agent dispatcher to the validated IP, (c) refuse redirects.
+
+  it("CR-01: a reference_image URL is fetched with a DNS-pinned dispatcher (no rebind window)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: new Headers({ "content-type": "image/png" }),
+      body: new ReadableStream<Uint8Array>({
+        start(c) {
+          c.enqueue(new Uint8Array([1, 2, 3]));
+          c.close();
+        },
+      }),
+    } as unknown as Response);
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+    undiciAgentCtor.mockClear();
+    try {
+      const execute = vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("x"), mimeType: "image/png" }));
+      const deps = createMockDeps({ provider: { id: "openrouter", isAvailable: () => true, execute } });
+      const handlers = createImageHandlers(deps);
+
+      await handlers["image.generate"]!({
+        _agentId: "agent-1",
+        prompt: "edit this",
+        reference_image: "https://example.com/ref.png",
+      });
+
+      // The host was SSRF-validated, the pinned Agent was constructed (dispatcher),
+      // and fetch refused redirects + carried the pinned dispatcher.
+      expect(validateUrl).toHaveBeenCalledWith("https://example.com/ref.png");
+      expect(undiciAgentCtor).toHaveBeenCalledTimes(1);
+      const [url, init] = fetchMock.mock.calls[0]! as [string, { redirect?: string; dispatcher?: unknown }];
+      expect(url).toBe("https://example.com/ref.png");
+      expect(init.redirect).toBe("error");
+      expect(init.dispatcher).toBeDefined();
+      // The decoded bytes are threaded to execute().
+      expect(execute).toHaveBeenCalledWith(
+        expect.objectContaining({
+          referenceImage: expect.objectContaining({
+            data: Buffer.from([1, 2, 3]).toString("base64"),
+            mimeType: "image/png",
+          }),
+        }),
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  // ─── IN-03 (186): reference-image rejections throw a TYPED error with an ───
+  // actionable, knob-naming message (§2.7). A bare `throw new Error(msg)`
+  // classified as internal/error (operator-alerting) and carried no remediation;
+  // a ValidationError classifies as validation/warn AND the message names the
+  // 20 MB cap / the raster-image remedy so the JSON-RPC error is self-actionable.
+
+  it("IN-03: an oversized data-uri reject is a ValidationError whose message names the 20 MB cap", async () => {
+    const oversized = "A".repeat(28 * 1024 * 1024);
+    const execute = vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("x"), mimeType: "image/png" }));
+    const deps = createMockDeps({ provider: { id: "openrouter", isAvailable: () => true, execute } });
+    const handlers = createImageHandlers(deps);
+
+    const thrown = await handlers["image.generate"]!({
+      _agentId: "agent-1",
+      prompt: "edit this",
+      reference_image: `data:image/png;base64,${oversized}`,
+    }).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+
+    expect(thrown).toBeInstanceOf(ValidationError);
+    // The message is actionable: it names the 20 MB cap (so the RPC error alone
+    // tells the caller how to remediate). Preserves the /size limit/ substring.
+    expect((thrown as Error).message).toMatch(/20 MB|20MB/);
+    expect((thrown as Error).message).toMatch(/size limit|exceeds/i);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("IN-03: an SVG reference_image reject is a ValidationError naming the raster-image remedy", async () => {
+    const execute = vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("x"), mimeType: "image/png" }));
+    const deps = createMockDeps({ provider: { id: "openrouter", isAvailable: () => true, execute } });
+    const handlers = createImageHandlers(deps);
+
+    const svg = Buffer.from("<svg></svg>").toString("base64");
+    const thrown = await handlers["image.generate"]!({
+      _agentId: "agent-1",
+      prompt: "edit this",
+      reference_image: `data:image/svg+xml;base64,${svg}`,
+    }).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+
+    expect(thrown).toBeInstanceOf(ValidationError);
+    expect((thrown as Error).message).toMatch(/raster|PNG|JPEG|WebP/i);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  // ─── WR-01: data-uri decode is size-capped (resource exhaustion) ───────────
+
+  it("WR-01: an oversized data-uri reference_image is rejected before threading to execute()", async () => {
+    // 21 MB of base64 'A' decodes to > 20 MB (MAX_REFERENCE_BYTES). Must reject.
+    const oversized = "A".repeat(28 * 1024 * 1024);
+    const execute = vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("x"), mimeType: "image/png" }));
+    const deps = createMockDeps({ provider: { id: "openrouter", isAvailable: () => true, execute } });
+    const handlers = createImageHandlers(deps);
+
+    await expect(
+      handlers["image.generate"]!({
+        _agentId: "agent-1",
+        prompt: "edit this",
+        reference_image: `data:image/png;base64,${oversized}`,
+      }),
+    ).rejects.toThrow(/exceeds the size limit/);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  // ─── WR-02: workspace-file read is size-capped ─────────────────────────────
+
+  it("WR-02: an oversized workspace-file reference_image is rejected before threading to execute()", async () => {
+    (readFile as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      Buffer.alloc(21 * 1024 * 1024, 1),
+    );
+    const execute = vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("x"), mimeType: "image/png" }));
+    const deps = createMockDeps({
+      provider: { id: "openrouter", isAvailable: () => true, execute },
+      workspaceDirs: new Map([["agent-1", "/ws/agent-1"]]),
+    });
+    const handlers = createImageHandlers(deps);
+
+    await expect(
+      handlers["image.generate"]!({
+        _agentId: "agent-1",
+        prompt: "edit this",
+        reference_image: "big.png",
+      }),
+    ).rejects.toThrow(/exceeds the size limit/);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  // ─── WR-03: charset-parameterized data-URIs accepted; non-base64 not decoded ─
+
+  it("WR-03: a charset-parameterized base64 data-URI is accepted (mime stripped of params)", async () => {
+    const payload = Buffer.from("PNGBYTES").toString("base64");
+    const execute = vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("x"), mimeType: "image/png" }));
+    const deps = createMockDeps({ provider: { id: "openrouter", isAvailable: () => true, execute } });
+    const handlers = createImageHandlers(deps);
+
+    await handlers["image.generate"]!({
+      _agentId: "agent-1",
+      prompt: "edit this",
+      // A parameterized media type before ;base64 must still match + decode.
+      reference_image: `data:image/png;charset=utf-8;base64,${payload}`,
+    });
+
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        // mime is the bare media type (params stripped), payload base64-decoded.
+        referenceImage: expect.objectContaining({ data: payload, mimeType: "image/png" }),
+      }),
+    );
+  });
+
+  it("WR-03: a non-base64 (URL-encoded) data-URI is NOT base64-decoded into garbage", async () => {
+    const execute = vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("x"), mimeType: "image/png" }));
+    const deps = createMockDeps({ provider: { id: "openrouter", isAvailable: () => true, execute } });
+    const handlers = createImageHandlers(deps);
+
+    // RFC 2397: no `;base64` token → the payload is URL-encoded text, NOT base64.
+    // The handler must URL-decode it (not mis-decode it as base64 garbage).
+    await handlers["image.generate"]!({
+      _agentId: "agent-1",
+      prompt: "edit this",
+      reference_image: "data:text/plain,Hello%20World",
+    });
+
+    const arg = execute.mock.calls[0]![0] as { referenceImage?: { data: string; mimeType: string } };
+    // The decoded bytes must equal the URL-decoded "Hello World", NOT
+    // Buffer.from("Hello%20World","base64") garbage.
+    expect(arg.referenceImage?.data).toBe(Buffer.from("Hello World", "utf-8").toString("base64"));
+    expect(arg.referenceImage?.mimeType).toBe("text/plain");
+  });
+});
+
+describe("createImageHandlers IN-02 model validation", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (validateUrl as unknown as ReturnType<typeof vi.fn>).mockImplementation(async () => ({
+      ok: true,
+      value: { hostname: "example.com", ip: "93.184.216.34", url: new URL("https://example.com/ref.png") },
+    }));
+  });
+
+  it("Test 6: an unknown model for the resolved provider is rejected with a hint LISTING valid models (no execute)", async () => {
+    const execute = vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("x"), mimeType: "image/png" }));
+    const deps = createMockDeps({
+      provider: { id: "openai", isAvailable: () => true, execute },
+      resolveAgentMainProvider: vi.fn().mockReturnValue({ providerId: "openai" }),
+    });
+    const handlers = createImageHandlers(deps);
+
+    const result = (await handlers["image.generate"]!({
+      _agentId: "agent-1",
+      prompt: "a fox",
+      model: "bogus-model",
+    })) as { success: boolean; error?: string; hint?: string };
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("bogus-model");
+    // The hint LISTS the valid openai models (IN-02 actionable reject).
+    expect(result.hint).toContain("gpt-image-1");
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("Test 7: a valid model for the resolved provider is accepted and threaded to execute()", async () => {
+    const execute = vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("x"), mimeType: "image/png" }));
+    const deps = createMockDeps({
+      provider: { id: "openai", isAvailable: () => true, execute },
+      resolveAgentMainProvider: vi.fn().mockReturnValue({ providerId: "openai" }),
+    });
+    const handlers = createImageHandlers(deps);
+
+    await handlers["image.generate"]!({
+      _agentId: "agent-1",
+      prompt: "a fox",
+      model: "gpt-image-1",
+    });
+
+    expect(execute).toHaveBeenCalledWith(expect.objectContaining({ model: "gpt-image-1" }));
+  });
+
+  it("Test 8 (CFG-02): a provider with an EMPTY Comis-side list does NOT reject every model (validate strictly only when listed)", async () => {
+    // openrouter has no Comis-side IMAGE_MODELS_BY_PROVIDER entry; a model arg
+    // must NOT be rejected (else every openrouter model is 'unknown'). The arg
+    // still flows through to execute (the provider/openrouter catalog decides).
+    const execute = vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("x"), mimeType: "image/png" }));
+    const deps = createMockDeps({
+      provider: { id: "openrouter", isAvailable: () => true, execute },
+      resolveAgentMainProvider: vi.fn().mockReturnValue({ providerId: "openrouter" }),
+    });
+    const handlers = createImageHandlers(deps);
+
+    const result = (await handlers["image.generate"]!({
+      _agentId: "agent-1",
+      prompt: "a fox",
+      model: "black-forest-labs/flux.2-pro",
+    })) as { success: boolean };
+
+    expect(result.success).toBe(true);
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "black-forest-labs/flux.2-pro" }),
+    );
+  });
+
+  // ─── WR-05: validate against the provider that ACTUALLY executes ───────────
+  // In a multi-agent daemon the boot-selected port (deps.provider) belongs to
+  // the DEFAULT agent; a non-default caller may resolve a DIFFERENT main
+  // provider. The model must be validated against the EXECUTING provider (the
+  // port that will run it), not the caller's — else a model valid for the
+  // caller passes Comis-side validation then fails late at the executing SDK.
+
+  it("WR-05: rejects a model valid for the CALLER but invalid for the EXECUTING (default) provider", async () => {
+    const execute = vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("x"), mimeType: "image/png" }));
+    const deps = createMockDeps({
+      // Boot-selected port = the DEFAULT agent's (google).
+      provider: { id: "google", isAvailable: () => true, execute },
+      // The CALLER resolves to openai (gpt-image-1 is valid for openai).
+      resolveAgentMainProvider: vi.fn().mockReturnValue({ providerId: "openai" }),
+    });
+    const handlers = createImageHandlers(deps);
+
+    const result = (await handlers["image.generate"]!({
+      _agentId: "agent-openai",
+      prompt: "a fox",
+      model: "gpt-image-1", // valid for openai, NOT for the executing google port
+    })) as { success: boolean; error?: string; hint?: string };
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("gpt-image-1");
+    // The reject names the EXECUTING provider + lists ITS models (reality).
+    expect(result.error).toContain("google");
+    expect(result.hint).toContain("gemini-2.5-flash-image");
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("WR-05: accepts a model valid for the EXECUTING (default) provider even when the caller differs", async () => {
+    const execute = vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("x"), mimeType: "image/png" }));
+    const deps = createMockDeps({
+      provider: { id: "google", isAvailable: () => true, execute },
+      resolveAgentMainProvider: vi.fn().mockReturnValue({ providerId: "openai" }),
+    });
+    const handlers = createImageHandlers(deps);
+
+    await handlers["image.generate"]!({
+      _agentId: "agent-openai",
+      prompt: "a fox",
+      model: "gemini-2.5-flash-image", // valid for the executing google port
+    });
+
+    expect(execute).toHaveBeenCalledWith(expect.objectContaining({ model: "gemini-2.5-flash-image" }));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// OBS-04 (186): direct-emit the image.* lifecycle to the per-session
+// trajectory recorder. The daemon RPC context has NO eventBus bridge, so the
+// handler resolves the recorder by `_callerSessionKey` and records directly
+// (the comis-session-manager.ts:298 precedent). image.generated carries costUsd
+// (OBS-03 Route a). A null recorder / absent _callerSessionKey must no-op
+// without crashing. Payloads are content-free (no prompt / bytes / secret).
+// ---------------------------------------------------------------------------
+describe("createImageHandlers — OBS-04 trajectory direct-emit", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const SESSION_KEY = "default:u1:telegram:c1";
+
+  it("happy path records image.requested then image.generated (with costUsd) then image.delivered", async () => {
+    const mockSendAttachment = vi.fn().mockResolvedValue(ok("msg-1"));
+    const { trajectoryRegistry, recordEvent, getRecorder } = makeMockTrajectoryRegistry();
+    const deps = createMockDeps({
+      trajectoryRegistry,
+      // The widened ImageGenOutput carries model + costUsd (186-02).
+      provider: {
+        id: "openai",
+        isAvailable: () => true,
+        execute: vi.fn().mockResolvedValue(
+          ok({
+            buffer: Buffer.from("img"),
+            mimeType: "image/png",
+            model: "gpt-image-1",
+            costUsd: 0.04,
+            provider: "openai",
+          }),
+        ),
+      },
+      resolveAgentMainProvider: vi.fn().mockReturnValue({ providerId: "openai" }),
+      getChannelAdapter: vi.fn().mockReturnValue({ sendAttachment: mockSendAttachment }),
+    });
+    const handlers = createImageHandlers(deps);
+
+    const result = await handlers["image.generate"]!({
+      _agentId: "default",
+      _callerSessionKey: SESSION_KEY,
+      _callerChannelType: "telegram",
+      _callerChannelId: "c1",
+      prompt: "a fox",
+    });
+
+    expect(result).toEqual({ success: true, delivered: true, mimeType: "image/png" });
+    // The recorder was resolved by the injected session key.
+    expect(getRecorder).toHaveBeenCalledWith(SESSION_KEY);
+
+    // The 3 success-path events fired, in order.
+    const types = recordEvent.mock.calls.map((c) => c[0]);
+    expect(types).toEqual(["image.requested", "image.generated", "image.delivered"]);
+
+    // image.requested: provider labels only (content-free).
+    const requested = recordEvent.mock.calls[0]![1] as Record<string, unknown>;
+    expect(requested.provider).toBe("openai");
+    expect(requested.mainProvider).toBe("openai");
+
+    // image.generated carries costUsd (OBS-03 Route a) + model + sizeBytes + outcome.
+    const generated = recordEvent.mock.calls[1]![1] as Record<string, unknown>;
+    expect(generated.provider).toBe("openai");
+    expect(generated.model).toBe("gpt-image-1");
+    expect(generated.costUsd).toBe(0.04);
+    expect(generated.sizeBytes).toBe(PERSISTED_OK.sizeBytes);
+    expect(generated.outcome).toBe("ok");
+
+    // image.delivered: channel TYPE + delivered boolean (never the channel id).
+    const delivered = recordEvent.mock.calls[2]![1] as Record<string, unknown>;
+    expect(delivered.channelType).toBe("telegram");
+    expect(delivered.delivered).toBe(true);
+
+    // Content-free: no event payload carries the prompt / image bytes / a key.
+    for (const call of recordEvent.mock.calls) {
+      const data = JSON.stringify(call[1] ?? {});
+      expect(data).not.toContain("a fox");
+      expect(data).not.toContain("img");
+    }
+  });
+
+  // WR-03 (186-REVIEW): the count rate-limit early-return previously emitted NO
+  // terminal image.* record and no WARN — leaving only an orphan image.requested
+  // that accumulateImageRecord seeds as outcome:"failed" with NO errorKind
+  // (indistinguishable from a generic abort), while the structurally-identical
+  // cost-ceiling block DOES emit image.failed{quota_exceeded} + a WARN. Make them
+  // consistent: the rate-limit block emits a terminal image.failed + a WARN
+  // carrying errorKind + a hint naming the maxPerHour knob (§2.7).
+  it("WR-03: the rate-limit early-return emits image.failed{quota_exceeded} + a WARN with a hint", async () => {
+    const { trajectoryRegistry, recordEvent } = makeMockTrajectoryRegistry();
+    const deps = createMockDeps({
+      trajectoryRegistry,
+      rateLimiter: { tryAcquire: vi.fn().mockReturnValue(false), reset: vi.fn() },
+      provider: {
+        id: "openai",
+        isAvailable: () => true,
+        execute: vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("img"), mimeType: "image/png" })),
+      },
+      resolveAgentMainProvider: vi.fn().mockReturnValue({ providerId: "openai" }),
+    });
+    const handlers = createImageHandlers(deps);
+
+    const result = await handlers["image.generate"]!({
+      _agentId: "agent-rl",
+      _callerSessionKey: SESSION_KEY,
+      prompt: "a fox",
+    });
+
+    expect((result as { success: boolean }).success).toBe(false);
+    expect(deps.provider.execute).not.toHaveBeenCalled();
+
+    // A terminal image.failed is recorded (no orphan requested-only turn).
+    const types = recordEvent.mock.calls.map((c) => c[0]);
+    expect(types).toContain("image.requested");
+    expect(types).toContain("image.failed");
+    const failed = recordEvent.mock.calls.find((c) => c[0] === "image.failed")![1] as Record<string, unknown>;
+    // The rate-limit block speaks the same domain vocabulary as the cost-ceiling
+    // block (a quota-style block) — quota_exceeded on the trajectory event.
+    expect(failed.errorKind).toBe("quota_exceeded");
+    expect(failed.provider).toBe("openai");
+
+    // OBS-02: a WARN logs the rate limit with the closed-union log errorKind +
+    // a hint naming the maxPerHour knob (mirrors the cost-ceiling block).
+    const warn = (deps.logger.warn as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c) => (c[0] as { step?: string }).step === "image_rate_limit",
+    );
+    expect(warn).toBeDefined();
+    expect((warn![0] as { errorKind?: string }).errorKind).toBe("resource");
+    expect((warn![0] as { imageErrorKind?: string }).imageErrorKind).toBe("quota_exceeded");
+    expect((warn![0] as { hint?: string }).hint).toMatch(/maxPerHour/);
+  });
+
+  it("records image.failed with errorKind on a provider error", async () => {
+    const { trajectoryRegistry, recordEvent } = makeMockTrajectoryRegistry();
+    const deps = createMockDeps({
+      trajectoryRegistry,
+      provider: {
+        id: "openai",
+        isAvailable: () => true,
+        execute: vi.fn().mockResolvedValue(
+          err(Object.assign(new Error("Image generation blocked"), { imageErrorKind: "content_blocked" })),
+        ),
+      },
+      resolveAgentMainProvider: vi.fn().mockReturnValue({ providerId: "openai" }),
+    });
+    const handlers = createImageHandlers(deps);
+
+    const result = await handlers["image.generate"]!({
+      _agentId: "default",
+      _callerSessionKey: SESSION_KEY,
+      prompt: "blocked content",
+    });
+
+    expect((result as { success: boolean }).success).toBe(false);
+    const types = recordEvent.mock.calls.map((c) => c[0]);
+    expect(types).toContain("image.requested");
+    expect(types).toContain("image.failed");
+    expect(types).not.toContain("image.generated");
+
+    const failed = recordEvent.mock.calls.find((c) => c[0] === "image.failed")![1] as Record<string, unknown>;
+    expect(failed.errorKind).toBeDefined();
+    expect(failed.provider).toBe("openai");
+    // Never the raw provider message.
+    expect(JSON.stringify(failed)).not.toContain("Image generation blocked");
+  });
+
+  // IN-02 (186-REVIEW): every image.failed trajectory record speaks ONE
+  // vocabulary — the domain ImageErrorKind family. An UNTYPED provider Error
+  // (no imageErrorKind) must fall back to a DOMAIN kind (empty_response — a
+  // non-classified, non-image provider failure), NOT the bare log-ish "error"
+  // literal that is not a member of the ImageErrorKind union. (The closed-union
+  // log ErrorKind mapping stays confined to the Pino line via IMAGE_ERR_TO_LOG.)
+  it("IN-02: an untyped provider Error records image.failed with a DOMAIN errorKind (not the 'error' literal)", async () => {
+    const { trajectoryRegistry, recordEvent } = makeMockTrajectoryRegistry();
+    const deps = createMockDeps({
+      trajectoryRegistry,
+      provider: {
+        id: "openai",
+        isAvailable: () => true,
+        // A plain Error (no imageErrorKind) — the legacy/untyped provider path.
+        execute: vi.fn().mockResolvedValue(err(new Error("Provider error: something broke"))),
+      },
+      resolveAgentMainProvider: vi.fn().mockReturnValue({ providerId: "openai" }),
+    });
+    const handlers = createImageHandlers(deps);
+
+    await handlers["image.generate"]!({
+      _agentId: "default",
+      _callerSessionKey: SESSION_KEY,
+      prompt: "a fox",
+    });
+
+    const failed = recordEvent.mock.calls.find((c) => c[0] === "image.failed")![1] as Record<string, unknown>;
+    // A domain-family kind, never the bare "error" literal.
+    expect(failed.errorKind).toBe("empty_response");
+    expect(failed.errorKind).not.toBe("error");
+  });
+
+  // WR-02 (186-REVIEW): a generation that SUCCEEDS but whose persist FAILS is a
+  // delivered, charged image (the base64 fallback IS the delivery — the agent
+  // receives the bytes). The terminal trajectory record must reflect that
+  // delivery as image.generated{outcome:"ok"} (with `persisted:false` to surface
+  // the degraded artifact) — NOT image.failed, which would mis-report a real,
+  // charged delivery as a failed generation and (via accumulateImageRecord's
+  // "terminal failed wins") reconstruct the turn as failed in `comis explain`.
+  // image.failed is reserved for an ACTUAL generation failure (!result.ok).
+  it("WR-02: a persist failure records image.generated{outcome:ok, persisted:false} (delivered, not failed)", async () => {
+    const { trajectoryRegistry, recordEvent } = makeMockTrajectoryRegistry();
+    const deps = createMockDeps({
+      trajectoryRegistry,
+      provider: {
+        id: "openai",
+        isAvailable: () => true,
+        execute: vi.fn().mockResolvedValue(
+          ok({ buffer: Buffer.from("img-bytes"), mimeType: "image/png", model: "gpt-image-1", costUsd: 0.04 }),
+        ),
+      },
+      resolveAgentMainProvider: vi.fn().mockReturnValue({ providerId: "openai" }),
+      persist: vi.fn().mockResolvedValue(err(new Error("disk full"))),
+    });
+    const handlers = createImageHandlers(deps);
+
+    const result = await handlers["image.generate"]!({
+      _agentId: "default",
+      _callerSessionKey: SESSION_KEY,
+      prompt: "a fox",
+    });
+
+    // Persist failure → base64 fallback (the agent IS delivered the image).
+    expect((result as { success: boolean; imageBase64?: string }).success).toBe(true);
+    expect((result as { imageBase64?: string }).imageBase64).toBeDefined();
+
+    // The terminal record is image.generated (a delivered, charged success), NOT
+    // image.failed. The persist-failed degradation rides `persisted:false`.
+    const types = recordEvent.mock.calls.map((c) => c[0]);
+    expect(types).toContain("image.generated");
+    expect(types).not.toContain("image.failed");
+    const generated = recordEvent.mock.calls.find((c) => c[0] === "image.generated")![1] as Record<string, unknown>;
+    expect(generated.outcome).toBe("ok");
+    expect(generated.persisted).toBe(false);
+    expect(generated.costUsd).toBe(0.04);
+    // sizeBytes on the persist-failed path is the raw buffer length (no PersistedFile).
+    expect(generated.sizeBytes).toBe(Buffer.from("img-bytes").byteLength);
+    // Content-free: the WARN error body never reaches the trajectory payload.
+    expect(JSON.stringify(generated)).not.toContain("disk full");
+  });
+
+  // WR-02 (186-REVIEW): the synthetic `observability:token_usage` billing emit
+  // must fire on EVERY charged generation, regardless of persist outcome — the
+  // image cost reaches sharedCostTracker + the token_usage table + billing even
+  // when persistence fails and the image is delivered as base64. Previously this
+  // emit lived inside the `else` (persisted-ok) branch, so a persist failure
+  // charged the cost-limiter but under-billed (three accounting views disagreed).
+  it("WR-02: bills observability:token_usage on a persist-failure-but-delivered generation", async () => {
+    const { trajectoryRegistry } = makeMockTrajectoryRegistry();
+    const eventBus = { emit: vi.fn() } as unknown as NonNullable<ImageHandlerDeps["eventBus"]>;
+    const deps = createMockDeps({
+      trajectoryRegistry,
+      eventBus,
+      provider: {
+        id: "openai",
+        isAvailable: () => true,
+        execute: vi.fn().mockResolvedValue(
+          ok({ buffer: Buffer.from("img"), mimeType: "image/png", model: "gpt-image-1", costUsd: 0.04, provider: "openai" }),
+        ),
+      },
+      resolveAgentMainProvider: vi.fn().mockReturnValue({ providerId: "openai" }),
+      persist: vi.fn().mockResolvedValue(err(new Error("disk full"))),
+    });
+    const handlers = createImageHandlers(deps);
+
+    await handlers["image.generate"]!({
+      _agentId: "agent-bill",
+      _callerSessionKey: SESSION_KEY,
+      _callerChannelId: "c1",
+      prompt: "a fox",
+    });
+
+    // The billing emit fired despite the persist failure (cost.total = costUsd).
+    const billed = (eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c) => c[0] === "observability:token_usage",
+    );
+    expect(billed).toBeDefined();
+    const payload = billed![1] as { agentId: string; cost: { total: number }; tokens: { total: number } };
+    expect(payload.agentId).toBe("agent-bill");
+    expect(payload.cost.total).toBe(0.04);
+    expect(payload.tokens.total).toBe(0);
+  });
+
+  // WR-02 non-regression: the billing emit STILL fires on the persisted-ok path
+  // (the hoist must not drop the existing delivered-path billing).
+  it("WR-02: still bills observability:token_usage on the persisted-ok delivered path", async () => {
+    const { trajectoryRegistry } = makeMockTrajectoryRegistry();
+    const eventBus = { emit: vi.fn() } as unknown as NonNullable<ImageHandlerDeps["eventBus"]>;
+    const mockSendAttachment = vi.fn().mockResolvedValue(ok("msg-1"));
+    const deps = createMockDeps({
+      trajectoryRegistry,
+      eventBus,
+      provider: {
+        id: "openai",
+        isAvailable: () => true,
+        execute: vi.fn().mockResolvedValue(
+          ok({ buffer: Buffer.from("img"), mimeType: "image/png", model: "gpt-image-1", costUsd: 0.04, provider: "openai" }),
+        ),
+      },
+      resolveAgentMainProvider: vi.fn().mockReturnValue({ providerId: "openai" }),
+      getChannelAdapter: vi.fn().mockReturnValue({ sendAttachment: mockSendAttachment }),
+    });
+    const handlers = createImageHandlers(deps);
+
+    await handlers["image.generate"]!({
+      _agentId: "agent-bill-ok",
+      _callerSessionKey: SESSION_KEY,
+      _callerChannelType: "telegram",
+      _callerChannelId: "c1",
+      prompt: "a fox",
+    });
+
+    const billed = (eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (c) => c[0] === "observability:token_usage",
+    );
+    // Fires exactly once (the hoist must not double-emit).
+    expect(billed.length).toBe(1);
+    expect((billed[0]![1] as { cost: { total: number } }).cost.total).toBe(0.04);
+  });
+
+  // WR-02: a zero-cost generation does NOT bill (the `> 0` guard is preserved).
+  it("WR-02: a zero-cost generation does not emit a billing token_usage on either path", async () => {
+    const { trajectoryRegistry } = makeMockTrajectoryRegistry();
+    const eventBus = { emit: vi.fn() } as unknown as NonNullable<ImageHandlerDeps["eventBus"]>;
+    const deps = createMockDeps({
+      trajectoryRegistry,
+      eventBus,
+      // No costUsd → 0 → no billing emit.
+      provider: {
+        id: "openrouter",
+        isAvailable: () => true,
+        execute: vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("img"), mimeType: "image/png" })),
+      },
+      persist: vi.fn().mockResolvedValue(err(new Error("disk full"))),
+    });
+    const handlers = createImageHandlers(deps);
+
+    await handlers["image.generate"]!({
+      _agentId: "agent-zero",
+      _callerSessionKey: SESSION_KEY,
+      prompt: "a fox",
+    });
+
+    const billed = (eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (c) => c[0] === "observability:token_usage",
+    );
+    expect(billed.length).toBe(0);
+  });
+
+  it("getRecorder returning null does not throw and still returns the generation", async () => {
+    const getRecorder = vi.fn().mockReturnValue(null);
+    const trajectoryRegistry = { getRecorder } as unknown as NonNullable<
+      ImageHandlerDeps["trajectoryRegistry"]
+    >;
+    const deps = createMockDeps({ trajectoryRegistry });
+    const handlers = createImageHandlers(deps);
+
+    const result = await handlers["image.generate"]!({
+      _agentId: "default",
+      _callerSessionKey: SESSION_KEY,
+      prompt: "a fox",
+    });
+
+    // The recorder was looked up but null — no crash, the generation still returns.
+    expect(getRecorder).toHaveBeenCalledWith(SESSION_KEY);
+    expect((result as { success: boolean }).success).toBe(true);
+  });
+
+  it("no _callerSessionKey means getRecorder is never called and the handler returns normally", async () => {
+    const { trajectoryRegistry, getRecorder, recordEvent } = makeMockTrajectoryRegistry();
+    const deps = createMockDeps({ trajectoryRegistry });
+    const handlers = createImageHandlers(deps);
+
+    const result = await handlers["image.generate"]!({
+      _agentId: "default",
+      // no _callerSessionKey
+      prompt: "a fox",
+    });
+
+    expect(getRecorder).not.toHaveBeenCalled();
+    expect(recordEvent).not.toHaveBeenCalled();
+    expect((result as { success: boolean }).success).toBe(true);
+  });
+
+  it("absent trajectoryRegistry (boot mode without one) does not throw", async () => {
+    // No trajectoryRegistry dep at all — the optional dep is undefined.
+    const deps = createMockDeps({ trajectoryRegistry: undefined });
+    const handlers = createImageHandlers(deps);
+
+    const result = await handlers["image.generate"]!({
+      _agentId: "default",
+      _callerSessionKey: SESSION_KEY,
+      prompt: "a fox",
+    });
+
+    expect((result as { success: boolean }).success).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SEC-02: the maxCostPerHourUsd cost ceiling. A new daemon-side per-agent USD
+// accumulator (image-cost-limiter.ts) is wired BESIDE the count rate limiter
+// (which is RETAINED). The handler pre-checks canSpend(agentId) BEFORE
+// provider.execute (block with quota_exceeded + a hint naming
+// maxCostPerHourUsd, and emit image.failed{quota_exceeded} for OBS-04
+// continuity), and records the actual costUsd AFTER a successful generation.
+// When the limiter dep is undefined (maxCostPerHourUsd unset) the ceiling is
+// skipped — count-only, no regression.
+// ---------------------------------------------------------------------------
+describe("createImageHandlers — SEC-02 cost ceiling", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  /** A mock ImageCostLimiter with canSpend/record/reset spies. */
+  function makeMockCostLimiter(canSpend: boolean): NonNullable<ImageHandlerDeps["costLimiter"]> {
+    return {
+      canSpend: vi.fn().mockReturnValue(canSpend),
+      record: vi.fn(),
+      reset: vi.fn(),
+    };
+  }
+
+  it("blocks with quota_exceeded BEFORE provider.execute when the ceiling is reached", async () => {
+    const { trajectoryRegistry, recordEvent } = makeMockTrajectoryRegistry();
+    const costLimiter = makeMockCostLimiter(false); // already over the ceiling
+    const deps = createMockDeps({ costLimiter, trajectoryRegistry });
+    const handlers = createImageHandlers(deps);
+
+    const result = await handlers["image.generate"]!({
+      _agentId: "agent-1",
+      _callerSessionKey: "default:u1:telegram:c1",
+      prompt: "a cat",
+    });
+
+    // Blocked: success:false with a hint NAMING the maxCostPerHourUsd knob.
+    expect((result as { success: boolean }).success).toBe(false);
+    expect((result as { hint?: string }).hint).toMatch(/maxCostPerHourUsd/);
+    // The expensive provider call is NOT made (the whole point — pre-check).
+    expect(deps.provider.execute).not.toHaveBeenCalled();
+    // The ceiling was consulted for THIS agent.
+    expect(costLimiter.canSpend).toHaveBeenCalledWith("agent-1");
+
+    // OBS-02: a WARN logs the quota ceiling. The Pino `errorKind` LOG field is
+    // the CLOSED union, so the domain `quota_exceeded` maps to `resource`
+    // (IMAGE_ERR_TO_LOG); the domain kind rides the separate `imageErrorKind`.
+    const calls = (deps.logger.warn as ReturnType<typeof vi.fn>).mock.calls;
+    const warn = calls.find(
+      (c) => (c[0] as { imageErrorKind?: string }).imageErrorKind === "quota_exceeded",
+    );
+    expect(warn).toBeDefined();
+    expect((warn![0] as { errorKind?: string }).errorKind).toBe("resource"); // closed-union log kind
+    expect((warn![0] as { hint?: string }).hint).toMatch(/maxCostPerHourUsd/);
+
+    // OBS-04 continuity: image.failed{quota_exceeded} is recorded (the domain
+    // kind — the trajectory event payload is not a closed-union log field).
+    const failed = recordEvent.mock.calls.find((c) => c[0] === "image.failed");
+    expect(failed).toBeDefined();
+    expect((failed![1] as { errorKind?: string }).errorKind).toBe("quota_exceeded");
+  });
+
+  it("skips the ceiling entirely when costLimiter is undefined (count-only, no regression)", async () => {
+    const deps = createMockDeps({ costLimiter: undefined });
+    const handlers = createImageHandlers(deps);
+
+    const result = await handlers["image.generate"]!({
+      _agentId: "agent-1",
+      prompt: "a cat",
+    });
+
+    // No ceiling configured → the generation proceeds (provider.execute IS called).
+    expect(deps.provider.execute).toHaveBeenCalled();
+    expect((result as { success: boolean }).success).toBe(true);
+  });
+
+  it("records the actual costUsd after a successful generation", async () => {
+    const costLimiter = makeMockCostLimiter(true); // under the ceiling
+    const deps = createMockDeps({
+      costLimiter,
+      provider: {
+        id: "openai",
+        isAvailable: () => true,
+        execute: vi.fn().mockResolvedValue(
+          ok({ buffer: Buffer.from("img"), mimeType: "image/png", model: "gpt-image-1", costUsd: 0.04 }),
+        ),
+      },
+    });
+    const handlers = createImageHandlers(deps);
+
+    await handlers["image.generate"]!({ _agentId: "agent-1", prompt: "a fox" });
+
+    // The post-hoc accumulate fired ONCE with the agent + the result's costUsd.
+    expect(costLimiter.record).toHaveBeenCalledTimes(1);
+    expect(costLimiter.record).toHaveBeenCalledWith("agent-1", 0.04);
+  });
+
+  it("records 0 (no crash) when a successful generation has no costUsd", async () => {
+    const costLimiter = makeMockCostLimiter(true);
+    const deps = createMockDeps({
+      costLimiter,
+      // No costUsd on the output (legacy adapter) → record(agentId, 0).
+      provider: {
+        id: "test-provider",
+        isAvailable: () => true,
+        execute: vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("img"), mimeType: "image/png" })),
+      },
+    });
+    const handlers = createImageHandlers(deps);
+
+    const result = await handlers["image.generate"]!({ _agentId: "agent-1", prompt: "a fox" });
+
+    expect((result as { success: boolean }).success).toBe(true);
+    expect(costLimiter.record).toHaveBeenCalledWith("agent-1", 0);
+  });
+
+  it("the count limit (maxPerHour) is still enforced FIRST — cost ceiling not consulted", async () => {
+    const costLimiter = makeMockCostLimiter(true);
+    const deps = createMockDeps({
+      costLimiter,
+      rateLimiter: { tryAcquire: vi.fn().mockReturnValue(false), reset: vi.fn() },
+    });
+    const handlers = createImageHandlers(deps);
+
+    const result = await handlers["image.generate"]!({ _agentId: "agent-1", prompt: "a cat" });
+
+    // The count limit short-circuits first (its existing error message is unchanged).
+    expect(result).toEqual({ success: false, error: "Rate limit exceeded: max 10 images per hour" });
+    // The cost ceiling was NOT reached (count check returned first).
+    expect(costLimiter.canSpend).not.toHaveBeenCalled();
+    expect(deps.provider.execute).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SEC-03: no credential value leaks into ANY image log line, at any level.
+//
+// The image handler must log only ids/labels/step/errorKind/hint/counts — never
+// the raw provider message, headers, a bearer, an API key, or a ChatGPT
+// account id (the codex OAuth identity). Pino's redact.paths + CREDENTIAL_KEYS
+// auto-redact credential-NAMED keys, but the firmer guarantee asserted here is
+// that the handler never even constructs a log payload carrying a secret VALUE
+// (so redaction is a safety net, not the only defence — T-186-14).
+//
+// This is a regression-guard: green today (the handler discards the raw
+// provider message at classification — pi-image-adapter.ts:109 — and logs only
+// labels), and turns RED if a future change starts logging a credential-bearing
+// field (e.g. `err: result.error` with a bearer in its message, or the raw
+// provider response headers).
+// ---------------------------------------------------------------------------
+describe("createImageHandlers — SEC-03 no secret in any log line", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // Distinct secret values planted in provider errors / fields. NONE of these
+  // may appear in any captured log payload or message.
+  const BEARER = "Bearer sk-test-SECRET-9f8e7d6c5b4a3210";
+  const SK_KEY = "sk-proj-DEADBEEFcafef00dDEADBEEFcafef00d";
+  const ACCOUNT_ID = "ChatGPT-Account-Id: acct-SECRET-1234567890";
+  const SECRET_VALUES = [BEARER, SK_KEY, ACCOUNT_ID, "sk-test-SECRET-9f8e7d6c5b4a3210", "acct-SECRET-1234567890"];
+
+  /** Every captured log call (all 4 levels), as a list of stringified blobs. */
+  function allCapturedLogText(deps: ImageHandlerDeps): string[] {
+    const levels = ["debug", "info", "warn", "error"] as const;
+    const blobs: string[] = [];
+    for (const level of levels) {
+      const spy = deps.logger[level] as ReturnType<typeof vi.fn>;
+      for (const call of spy.mock.calls) {
+        // Stringify the structured payload (arg 0) AND the message (arg 1). The
+        // payload is the leak risk; the message is asserted too for completeness.
+        blobs.push(JSON.stringify(call[0] ?? {}));
+        if (typeof call[1] === "string") blobs.push(call[1]);
+      }
+    }
+    return blobs;
+  }
+
+  /** Assert no secret value / Bearer / sk- token appears in any captured line. */
+  function assertNoSecretLeak(deps: ImageHandlerDeps): void {
+    const blobs = allCapturedLogText(deps);
+    // Sanity: the handler actually logged something (else this passes vacuously).
+    expect(blobs.length).toBeGreaterThan(0);
+    for (const blob of blobs) {
+      for (const secret of SECRET_VALUES) {
+        expect(blob).not.toContain(secret);
+      }
+      // No raw bearer/key token shape anywhere, regardless of the planted values.
+      // The `sk-` shape tolerates intra-token hyphens (sk-proj-..., sk-test-...).
+      expect(blob).not.toMatch(/Bearer\s+\S/i);
+      expect(blob).not.toMatch(/sk-[A-Za-z0-9-]{8,}/);
+    }
+    // CREDENTIAL_KEYS is the redaction set Pino keys on. None of its key NAMES
+    // should appear as a populated field carrying our secret — assert the names
+    // are at least the canonical ones (the assertion above covers the values).
+    expect(CREDENTIAL_KEYS.has("authorization")).toBe(true);
+    expect(CREDENTIAL_KEYS.has("apiKey")).toBe(true);
+  }
+
+  it("a provider error carrying a bearer does not leak it into any log line", async () => {
+    const deps = createMockDeps({
+      logger: createMockLogger(),
+      provider: {
+        id: "openai",
+        isAvailable: () => true,
+        // The raw error message embeds a bearer + a ChatGPT account id — the
+        // exact shape a leaking upstream SDK error would carry.
+        execute: vi
+          .fn()
+          .mockResolvedValue(
+            err(new Error(`Upstream 401: invalid credentials ${BEARER} ${ACCOUNT_ID}`)),
+          ),
+      },
+      resolveAgentMainProvider: vi.fn().mockReturnValue({ providerId: "openai" }),
+    });
+    const handlers = createImageHandlers(deps);
+
+    const result = await handlers["image.generate"]!({
+      _agentId: "agent-sec03",
+      _callerSessionKey: "default:u1:telegram:c1",
+      prompt: "a cat",
+    });
+
+    // The provider error path returns success:false. (The error MESSAGE may be
+    // returned to the CALLER — that is the contract — but it must not be LOGGED.)
+    expect((result as { success: boolean }).success).toBe(false);
+    assertNoSecretLeak(deps);
+  });
+
+  it("a typed ImageGenError with a credential-bearing message does not leak via the WARN/hint", async () => {
+    const deps = createMockDeps({
+      logger: createMockLogger(),
+      provider: {
+        id: "openai",
+        isAvailable: () => true,
+        execute: vi.fn().mockResolvedValue(
+          err(
+            new ImageGenError(`auth failed ${SK_KEY}`, {
+              imageErrorKind: "auth_required",
+              // Even the hint must not echo a secret — the handler forwards it.
+              hint: "Re-authenticate the provider; the OAuth token expired.",
+            }),
+          ),
+        ),
+      },
+      resolveAgentMainProvider: vi.fn().mockReturnValue({ providerId: "openai" }),
+    });
+    const handlers = createImageHandlers(deps);
+
+    await handlers["image.generate"]!({
+      _agentId: "agent-sec03",
+      _callerSessionKey: "default:u1:telegram:c1",
+      prompt: "a cat",
+    });
+
+    assertNoSecretLeak(deps);
+  });
+
+  it("a persist failure whose Error carries a secret does not leak it (err is serialized)", async () => {
+    // The persist-failure WARN logs `err: persisted.error`. A leaking storage
+    // layer could put a connection string / token in that Error. Pino redacts
+    // credential-named keys, but the handler must also not stuff a secret into
+    // a NON-credential-named field. Here the secret is in the Error message.
+    const deps = createMockDeps({
+      logger: createMockLogger(),
+      persist: vi.fn().mockResolvedValue(err(new Error(`disk backend rejected token ${SK_KEY}`))),
+    });
+    const handlers = createImageHandlers(deps);
+
+    const result = await handlers["image.generate"]!({
+      _agentId: "agent-sec03",
+      prompt: "a cat",
+    });
+
+    // Persist failure → base64 fallback (success). The WARN must not leak.
+    expect((result as { success: boolean }).success).toBe(true);
+    assertNoSecretLeak(deps);
+  });
+
+  it("the happy/delivered path logs only ids/labels (no secret even if the provider id were one)", async () => {
+    const mockSendAttachment = vi.fn().mockResolvedValue(ok("msg-sec03"));
+    const deps = createMockDeps({
+      logger: createMockLogger(),
+      provider: {
+        id: "openai",
+        isAvailable: () => true,
+        execute: vi
+          .fn()
+          .mockResolvedValue(ok({ buffer: Buffer.from("img"), mimeType: "image/png", model: "gpt-image-1", costUsd: 0.04 })),
+      },
+      getChannelAdapter: vi.fn().mockReturnValue({ sendAttachment: mockSendAttachment }),
+    });
+    const handlers = createImageHandlers(deps);
+
+    const result = await handlers["image.generate"]!({
+      _agentId: "agent-sec03",
+      prompt: "a cat",
+      _callerChannelType: "telegram",
+      _callerChannelId: "chat-sec03",
+    });
+
+    expect((result as { success: boolean }).success).toBe(true);
+    // The success path emits an INFO completion line — assert it carries no
+    // secret-shaped token (the values were never planted here, but the
+    // Bearer/sk- shape guards against an accidental credential in a label).
+    assertNoSecretLeak(deps);
   });
 });

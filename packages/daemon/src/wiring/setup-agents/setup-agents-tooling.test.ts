@@ -11,7 +11,11 @@
 
 import { describe, it, expect } from "vitest";
 import { getModels, getProviders, type KnownProvider } from "@earendil-works/pi-ai";
-import { resolveAgentModel, resolveEffectiveRerank } from "./setup-agents-tooling.js";
+import {
+  resolveAgentMainProvider,
+  resolveAgentModel,
+  resolveEffectiveRerank,
+} from "./setup-agents-tooling.js";
 
 describe("resolveAgentModel", () => {
   // Behavioral assertions: avoid pinning literal model IDs (which would
@@ -145,6 +149,66 @@ describe("resolveAgentModel", () => {
     expect(result.provider).toBe("openrouter");
     expect(result.model).not.toMatch(/^claude-/);
     expect(getModels("openrouter").find((m) => m.id === result.model)).toBeDefined();
+  });
+});
+
+describe("resolveAgentMainProvider", () => {
+  // WR-01 (183-REVIEW): the handler-side accessor that proves the RES-01 I4
+  // lockstep — it must resolve the SAME provider the completion path
+  // (resolveAgentModel) resolves, INCLUDING the default-agent fallback. The
+  // bug was a literal `"default"` fallback that breaks any deployment whose
+  // default agent is renamed (CLAUDE.md documents real `mldag` / `head_trader`
+  // agents); the fallback must key off the operator-configurable
+  // `defaultAgentId`, not the literal string.
+
+  const models = { defaultModel: "", defaultProvider: "" };
+
+  it("resolves the named agent's provider when the agentId is present in the map", () => {
+    const agents = {
+      mldag: { model: "default", provider: "openrouter" },
+      default: { model: "default", provider: "anthropic" },
+    };
+    expect(resolveAgentMainProvider(agents, models, "mldag", "mldag")).toEqual({
+      providerId: "openrouter",
+    });
+  });
+
+  it("falls back to defaultAgentId (NOT the literal \"default\") for an unmatched agentId on a renamed-default deployment", () => {
+    // The deployment's default agent is named "mldag"; there is NO literal
+    // "default" entry. An image.generate with no _agentId resolves to "" →
+    // must fall back to agents[defaultAgentId="mldag"], NOT agents["default"].
+    const agents = {
+      mldag: { model: "default", provider: "openrouter" },
+    };
+    // Pre-fix: `agents["default"]` is undefined → resolveAgentModel(undefined,…)
+    // throws "Cannot read properties of undefined" → handler aborts before
+    // execute. Post-fix: resolves via defaultAgentId.
+    expect(resolveAgentMainProvider(agents, models, "", "mldag")).toEqual({
+      providerId: "openrouter",
+    });
+  });
+
+  it("uses the literal \"default\" agent only when it IS the configured defaultAgentId", () => {
+    const agents = {
+      default: { model: "default", provider: "anthropic" },
+    };
+    expect(resolveAgentMainProvider(agents, models, "ghost", "default")).toEqual({
+      providerId: "anthropic",
+    });
+  });
+
+  it("yields an honest non-throwing sentinel when neither the agentId nor the defaultAgentId is in the map", () => {
+    // WR-01 extra guard: a misconfigured map (no matching agent, no default
+    // entry) must NOT throw resolveAgentModel(undefined,…) — it returns a
+    // sentinel providerId with no IMAGE_CAPABILITY entry, driving the honest
+    // unavailable path rather than crashing the handler.
+    const agents = {
+      other: { model: "default", provider: "openrouter" },
+    };
+    const result = resolveAgentMainProvider(agents, models, "ghost", "missing-default");
+    expect(result.providerId).toBeDefined();
+    // The sentinel must not be a real image-capable provider id.
+    expect(result.providerId).not.toBe("openrouter");
   });
 });
 
