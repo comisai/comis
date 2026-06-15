@@ -559,7 +559,87 @@ export interface MediaApiDeps {
     logger: ComisLogger;
     /** Direct channel delivery -- resolve adapter by channel type. */
     getChannelAdapter: (channelType: string) => Pick<import("@comis/core").ChannelPort, "sendAttachment"> | undefined;
+    /** RES-01: resolve the agent's main provider in lockstep with the
+     *  completion path (I4 — delegates to the same resolveAgentModel). The
+     *  handler uses this only for observability + lockstep verification; the
+     *  provider INSTANCE is selected at wiring time (setup-image-provider.ts),
+     *  never re-derived here (no second source of truth). */
+    resolveAgentMainProvider: (agentId: string) => { providerId: string };
+    /** IN-01 (185): resolve a `reference_image` workspace file path under the
+     *  caller's agent dir (safePath confinement). Mirror MediaApiDeps:572-573. */
+    workspaceDirs: Map<string, string>;
+    defaultWorkspaceDir: string;
+    /** DEL-01 (186): the per-agent persistence getter. Persists the generated
+     *  image buffer to the agent's confined workspace (`~/.comis/workspace/media/
+     *  photos/`) via MediaPersistenceService — replacing the ephemeral tmpdir
+     *  write+delete. The agentId resolves the workspace inside the getter
+     *  (mirrors the screenshot precedent at setup-tools.ts:305). Never throws —
+     *  returns `err` on a persistence failure so the handler falls through to the
+     *  base64 fallback. `PersistedFile` is on the `@comis/skills/tools` subpath
+     *  (NOT the bare barrel — the proven import path, setup-tools.ts:69). */
+    persist: (
+      agentId: string,
+      buffer: Buffer,
+      opts: { mediaKind: "image"; mimeType: string },
+    ) => Promise<import("@comis/shared").Result<import("@comis/skills/tools").PersistedFile, Error>>;
+    /** OBS-04 (186): the per-session trajectory recorder registry. The handler
+     *  resolves the recorder by `_callerSessionKey` and direct-emits the 4
+     *  image.* lifecycle events via `getRecorder(sessionKey)?.recordEvent(...)`
+     *  (the comis-session-manager.ts:298 precedent — the daemon RPC context has
+     *  NO eventBus bridge). Optional: `getRecorder?.()` no-ops to a non-crash on
+     *  a boot mode without a registry, and a null recorder is skipped. Read off
+     *  the BootContext `c.trajectoryRegistry` (already a field). */
+    trajectoryRegistry?: import("@comis/observability").SessionTrajectoryHandleRegistry;
+    /** SEC-02 (186): the per-agent/hour USD cost ceiling. Optional — undefined
+     *  when `integrations.media.imageGeneration.maxCostPerHourUsd` is unset, in
+     *  which case the ceiling check is skipped and only the count rate limit
+     *  applies (no regression). When present, the handler pre-checks
+     *  `canSpend(agentId)` BEFORE provider.execute (block with quota_exceeded)
+     *  and `record(agentId, costUsd)` AFTER a successful generation. The count
+     *  rate limiter (maxPerHour) is RETAINED and orthogonal. Constructed in
+     *  buildImageGenBundle (main-helpers.ts), gated on maxCostPerHourUsd. */
+    costLimiter?: import("./image-cost-limiter.js").ImageCostLimiter;
+    /** OBS-03 (186, optional secondary): the typed event bus. After a successful
+     *  generation with a non-zero costUsd the handler emits a synthetic
+     *  `observability:token_usage` (tokens all 0, cost.total = costUsd) so the
+     *  image cost reaches sharedCostTracker + the token_usage SQLite table +
+     *  billing — the BINDING OBS-03 assertion is the trajectory `image.generated`
+     *  cost-carry (Route a), this is the secondary. Same shape as the
+     *  MemoryApiDeps / WorkspaceApiDeps eventBus so the slices unify. */
+    eventBus?: AppContainer["eventBus"];
   };
+  /** VIS-01 (187): resolve the agent's MAIN provider id in lockstep with the
+   *  completion path (I4) — used for the obs label + the resolveVisionPath
+   *  input. The provider INSTANCE/creds are resolved inside mainProviderVision
+   *  (no second source of truth — the 183 firewall). Top-level (the vision
+   *  handlers read `deps.X` directly, unlike image's nested imageHandlerDeps).
+   *  Optional — absent on a boot mode without vision wiring → the handler treats
+   *  the main as "unknown" (not vision-capable) and falls to the registry. */
+  resolveAgentMainProvider?: (agentId: string) => { providerId: string };
+  /** VIS-01 (187): resolve the agent's MAIN model id, the SAME way
+   *  buildMediaVisionBundle resolves it (the single resolveAgentModel source of
+   *  truth). The handler-side vision gate computes `isVisionCapable(getModel(
+   *  main.providerId, mainModelIdFor(agentId)))` to short-circuit a non-vision
+   *  main WITHOUT an LLM call (the setup-channels-media.ts:135 try/catch dance).
+   *  Optional/undefined → the gate is conservative (not vision-capable). */
+  mainModelIdFor?: (agentId: string) => string | undefined;
+  /** VIS-01 (187): the main-provider vision bridge — ONE bounded completeSimple
+   *  over a multimodal [text,image] message on the agent's MAIN model, reusing
+   *  the main creds (no separate vision key). Returns the description + optional
+   *  costUsd, or an honest err (errorKind). The handler tries this FIRST when
+   *  isVisionCapable + creds; never re-derives selection. Optional — absent on a
+   *  boot mode without vision wiring → the handler falls to the registry. */
+  mainProviderVision?: {
+    describeImage(
+      buffer: Buffer, prompt: string, mimeType: string, agentId: string,
+    ): Promise<import("@comis/shared").Result<import("@comis/core").VisionResult & { costUsd?: number }, Error>>;
+  };
+  /** VIS-04 (187, Plan 03 fills the emits): the per-session trajectory recorder
+   *  registry — the handler resolves getRecorder(_callerSessionKey) and direct-
+   *  emits the media.vision.* lifecycle (the comis-session-manager.ts:298
+   *  precedent — no eventBus bridge in the daemon RPC context). Declared now;
+   *  the emits land in Plan 03. */
+  trajectoryRegistry?: import("@comis/observability").SessionTrajectoryHandleRegistry;
   /** media-handlers reads deps.workspaceDirs / deps.defaultWorkspaceDir
    *  / deps.defaultAgentId for STT / vision / link-processing file paths.
    *  Same shape as ChannelsApiDeps + WorkspaceApiDeps for ApiDispatchDeps multi-extends parity. */

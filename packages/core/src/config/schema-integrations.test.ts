@@ -100,11 +100,83 @@ describe("MediaConfigSchema - documentExtraction nesting", () => {
   it("includes imageGeneration with defaults from empty input", () => {
     const result = MediaConfigSchema.parse({});
     expect(result.imageGeneration).toBeDefined();
-    expect(result.imageGeneration.provider).toBe("fal");
+    // CFG-01: provider-following default flipped fal -> auto (binding invariant I2).
+    expect(result.imageGeneration.provider).toBe("auto");
     expect(result.imageGeneration.safetyChecker).toBe(true);
     expect(result.imageGeneration.maxPerHour).toBe(10);
     expect(result.imageGeneration.defaultSize).toBe("1024x1024");
     expect(result.imageGeneration.timeoutMs).toBe(60_000);
+    // CFG-01: fallbackChain defaults to an empty array; maxCostPerHourUsd is omitted.
+    expect(result.imageGeneration.fallbackChain).toEqual([]);
+    expect(result.imageGeneration.maxCostPerHourUsd).toBeUndefined();
+  });
+
+  it("keeps the fal provider valid for existing operator configs", () => {
+    // CFG-01 additive guarantee: a deployed config.yaml with provider:"fal" must still parse.
+    const result = MediaConfigSchema.parse({ imageGeneration: { provider: "fal" } });
+    expect(result.imageGeneration.provider).toBe("fal");
+  });
+
+  it("keeps the openai provider valid for existing operator configs", () => {
+    // CFG-01 additive guarantee: provider:"openai" still parses and round-trips.
+    const result = MediaConfigSchema.parse({ imageGeneration: { provider: "openai" } });
+    expect(result.imageGeneration.provider).toBe("openai");
+  });
+
+  it("accepts the new follow-main provider enum values", () => {
+    // CFG-01 widened enum: openrouter / openai-codex / google all parse without throwing.
+    for (const provider of ["openrouter", "openai-codex", "google"] as const) {
+      const result = MediaConfigSchema.parse({ imageGeneration: { provider } });
+      expect(result.imageGeneration.provider).toBe(provider);
+    }
+  });
+
+  it("rejects an unknown provider value at parse (closed enum)", () => {
+    // T-183-05: config-injection backstop — an unknown/typo'd provider fails at parse.
+    expect(() =>
+      MediaConfigSchema.parse({ imageGeneration: { provider: "totally-bogus" } }),
+    ).toThrow();
+  });
+
+  it("rejects an unknown imageGeneration key in strict mode", () => {
+    // strictObject — an injected unknown key never reaches a transport.
+    expect(() =>
+      MediaConfigSchema.parse({ imageGeneration: { provider: "auto", bogusKey: 1 } }),
+    ).toThrow();
+  });
+
+  it("parses a fallbackChain of valid provider enum values", () => {
+    // CFG-01 RES-04 surface: fallbackChain entries validate against the same closed enum.
+    const result = MediaConfigSchema.parse({
+      imageGeneration: { provider: "auto", fallbackChain: ["openrouter"] },
+    });
+    expect(result.imageGeneration.fallbackChain).toEqual(["openrouter"]);
+  });
+
+  it("rejects a fallbackChain entry outside the provider enum", () => {
+    // T-183-05: fallbackChain entries share the closed enum — a bogus entry fails at parse.
+    expect(() =>
+      MediaConfigSchema.parse({
+        imageGeneration: { provider: "auto", fallbackChain: ["bogus"] },
+      }),
+    ).toThrow();
+  });
+
+  it("parses an optional positive maxCostPerHourUsd ceiling", () => {
+    // CFG-01: lands additively now (positive number); enforcement is Phase 186 (SEC-02).
+    const result = MediaConfigSchema.parse({
+      imageGeneration: { provider: "auto", maxCostPerHourUsd: 5 },
+    });
+    expect(result.imageGeneration.maxCostPerHourUsd).toBe(5);
+  });
+
+  it("rejects a non-positive maxCostPerHourUsd value", () => {
+    // CFG-01: the cost ceiling must be a positive number.
+    expect(() =>
+      MediaConfigSchema.parse({
+        imageGeneration: { provider: "auto", maxCostPerHourUsd: -1 },
+      }),
+    ).toThrow();
   });
 
   it("accepts explicit documentExtraction overrides", () => {

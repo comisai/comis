@@ -125,7 +125,6 @@ import {
   setupChannels,
   createInteractiveCallbackWiring,
   setupMedia,
-  createImageGenGetter,
   setupCrossSession,
   setupTools,
   setupMonitoring,
@@ -167,11 +166,14 @@ import {
   type ServedWindowComparison,
   type SessionTrackerRegistry,
 } from "@comis/agent";
+// resolveAgentMainProvider is the handler-side accessor that delegates to the
+// EXACT completion-path resolveAgentModel (I4 lockstep / RES-01). Imported
+// directly (not via the wiring barrel) to avoid widening the barrel surface.
+import { resolveAgentMainProvider } from "./wiring/setup-agents/setup-agents-tooling.js";
 // createModelCatalog + resolveWorkspaceDir live in @comis/core.
 import { createModelCatalog, resolveWorkspaceDir } from "@comis/core";
 import {
   createFileStateTracker,
-  createImageGenRateLimiter,
   detectSandboxProvider,
 } from "@comis/skills";
 // The single process-singleton activity circuit breaker is constructed
@@ -219,7 +221,7 @@ import { setupSingleAgent } from "./wiring/setup-agents/index.js";
 import { buildDialecticWiring, dialecticWiringDepsFromBoot } from "./wiring/setup-dialectic.js";
 import { createConversationReset } from "./wiring/conversation-reset.js";
 import { setupSecretManager } from "./wiring/setup-secret-manager.js";
-import { restoreApprovalState, resolveGatewayTokens, setupChannelHealthMonitor, resolveModelHealthMultilingual } from "./wiring/main-helpers.js";
+import { restoreApprovalState, resolveGatewayTokens, setupChannelHealthMonitor, resolveModelHealthMultilingual, buildImageGenBundle, buildImageHandlerDeps, buildMediaVisionBundle } from "./wiring/main-helpers.js";
 import { createInboundMessageIdResolver, type InboundMessageIdResolver } from "./wiring/inbound-message-id-resolver.js";
 import { logOperationModelDryRun } from "./wiring/startup-dry-run.js";
 import { emitDockerRestartPolicyWarn } from "./setup-docker-restart-warn.js";
@@ -812,7 +814,7 @@ type PostChannelsBootContext = BootContext & Required<Pick<BootContext,
   | "memoryApi" | "memoryAdapter" | "embeddingQueue" | "continuationTracker"
   | "ttsAdapter" | "visionRegistry" | "linkRunner" | "transcriber" | "fileExtractor"
   | "resolveAttachment" | "deliveryQueue"
-  | "imageGenProvider" | "imageGenRateLimiter" | "imageGenConfig"
+  | "imageGenProvider" | "imageGenRateLimiter" | "imageGenConfig" | "persistImage" | "imageGenCostLimiter"
 >>;
 
 /**
@@ -910,17 +912,17 @@ function buildRpcDispatchDeps(deps: {
   defaultConfigPaths: string[];
 }): import("./api/rpc-dispatch.js").ApiDispatchDeps {
   const { channels: c, gateway: g, startupStartMs, defaultConfigPaths } = deps;
-  // Inlined buildImageHandlerDeps: undefined when image generation is disabled.
-  const imageHandlerDeps: import("./api/rpc-dispatch.js").ApiDispatchDeps["imageHandlerDeps"] =
-    (!c.imageGenProvider || !c.imageGenRateLimiter)
-      ? undefined
-      : {
-          provider: c.imageGenProvider,
-          rateLimiter: c.imageGenRateLimiter,
-          config: c.imageGenConfig,
-          logger: c.skillsLogger,
-          getChannelAdapter: (channelType: string) => c.adaptersByType.get(channelType),
-        };
+  // RES-01 keystone (I4 lockstep): the agent's main provider via the EXACT
+  // completion-path resolver, falling back to the configurable defaultAgentId
+  // (NOT literal "default"; WR-01 183-REVIEW). See resolveAgentMainProvider in
+  // setup-agents-tooling.ts for the fallback + honest-sentinel semantics.
+  const resolveAgentMainProviderFor = (agentId: string): { providerId: string } =>
+    resolveAgentMainProvider(c.container.config.agents, c.container.config.models, agentId, c.defaultAgentId);
+  // WR-04 (186-REVIEW): extracted to buildImageHandlerDeps (wiring/main-helpers.ts)
+  // to keep this composition root under its 3000-line architecture cap — the
+  // literal previously crammed six concerns onto one line to fit. Undefined when
+  // image generation is disabled (no provider / rate limiter).
+  const imageHandlerDeps = buildImageHandlerDeps(c, resolveAgentMainProviderFor);
   // Inlined buildTokenStoreMutators.
   const addToTokenStore: import("./api/rpc-dispatch.js").ApiDispatchDeps["addToTokenStore"] = (entry) => { g.runtimeTokens.push({ id: entry.id, secretBuf: Buffer.from(entry.secret, "utf-8"), scopes: entry.scopes }); };
   const removeFromTokenStore: import("./api/rpc-dispatch.js").ApiDispatchDeps["removeFromTokenStore"] = (id) => {
@@ -980,7 +982,7 @@ function buildRpcDispatchDeps(deps: {
     crossSessionSender: c.crossSessionSender, subAgentRunner: c.subAgentRunner,
     graphCoordinator: c.graphCoordinator, namedGraphStore: c.namedGraphStore, nodeTypeRegistry: c.nodeTypeRegistry,
     securityConfig: c.container.config.security, adaptersByType: c.adaptersByType,
-    inboundMessageIdResolver: c.inboundMessageIdResolver, visionRegistry: c.visionRegistry,
+    inboundMessageIdResolver: c.inboundMessageIdResolver, visionRegistry: c.visionRegistry, resolveAgentMainProvider: resolveAgentMainProviderFor, mainModelIdFor: c.mediaVisionBundle?.resolveMainModelId, mainProviderVision: c.mediaVisionBundle?.capability, trajectoryRegistry: c.trajectoryRegistry,
     mediaConfig: c.container.config.integrations.media, ttsAdapter: c.ttsAdapter, linkRunner: c.linkRunner,
     logger: c.logger, container: c.container, configPaths: c.configPaths, defaultConfigPaths,
     configGitManager: c.configGitManager,
@@ -1913,7 +1915,7 @@ async function bootAgents(
     // per-agent shared ExecutionPlanHolder reference map.
     // Threaded through buildChannelManagerDeps so the chat plan-stream reads
     // from the SAME object SEP publishes into (Pitfall 1).
-    executionPlanPorts,
+    executionPlanPorts, oauthManagers, // oauthManagers (184): DEFAULT agent's → buildImageGenBundle (CDX-01)
   } = await setupAgents({
     container, memoryAdapter, sessionStore, agentLogger, rerankerPort, rerankerModelPresent, entityStore, lcdStore, provenanceStore, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, pinnedStore: memoryAdapter, userRepresentationStore, relationshipStore, tunedAlphaStore, summarizerSpendBreaker, outboundMediaEnabled: true,
     autonomousMediaEnabled: !container.config.integrations.media.transcription.autoTranscribe
@@ -2095,7 +2097,7 @@ async function bootAgents(
     transcriber, ssrfFetcher, fileExtractor,
     rpcCall, wireDispatch, approvalGate, interactiveCallbackWiring,
     channelAdaptersRef, deliveryQueue, drainAndStartDeliveryPrune, shutdownDeliveryQueue,
-    cronWakeCallbackRef, trajectoryRegistry, executionPlanPorts, servedWindowComparisons, agentBootWindowInfo,
+    cronWakeCallbackRef, trajectoryRegistry, executionPlanPorts, oauthManagers, servedWindowComparisons, agentBootWindowInfo,
   });
 }
 
@@ -2151,7 +2153,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     | "mcpClientManager" | "singleAgentDeps" | "providerHealth"
     | "channelAdaptersRef" | "deliveryQueue" | "drainAndStartDeliveryPrune"
     | "shutdownDeliveryQueue" | "cronWakeCallbackRef" | "trajectoryRegistry"
-    | "executionPlanPorts"
+    | "executionPlanPorts" | "oauthManagers"
   >>;
   // Names consumed by bootChannels body itself; helper functions
   // re-destructure from `handle` directly so closure deps are explicit.
@@ -2187,19 +2189,11 @@ async function bootChannels(boot: BootContext): Promise<void> {
   // because setupTools consumes both as direct inputs).
   const sandboxProvider = detectSandboxProvider(skillsLogger);
   if (sandboxProvider) skillsLogger.info({ provider: sandboxProvider.name }, "Exec sandbox provider detected");
-  // Inlined buildImageGenBundle: image-generation provider (lazy getter) + rate limiter + config.
-  // lazy getter re-reads secretManager on each call so key rotation is live.
-  const imageGenConfig = container.config.integrations.media.imageGeneration;
-  const getImageGenProvider = createImageGenGetter(imageGenConfig, container.secretManager);
-  const imageGenProvider = getImageGenProvider(); // boot-time probe for rate-limiter + logging
-  const imageGenRateLimiter = imageGenProvider
-    ? createImageGenRateLimiter({ maxPerHour: imageGenConfig.maxPerHour })
-    : undefined;
-  if (imageGenProvider) {
-    skillsLogger.info({ provider: imageGenConfig.provider }, "Image generation provider initialized");
-  } else {
-    skillsLogger.debug("Image generation disabled: API key not configured or provider unknown");
-  }
+  // Image-generation bundle (see buildImageGenBundle in wiring/main-helpers.ts). 184: oauthManager threads the DEFAULT agent's OAuth manager for the Codex image path (CDX-01).
+  const { imageGenConfig, imageGenProvider, imageGenRateLimiter, persistImage, imageGenCostLimiter } =
+    buildImageGenBundle({ container, defaultAgentId, skillsLogger, oauthManager: handle.oauthManagers.get(defaultAgentId), workspaceDirs, defaultWorkspaceDir });
+  // VIS-01 (187): the provider-following vision bundle — same construction site, reusing the DEFAULT agent's OAuth manager (codex bearer) + the boot clock (the bridge's per-message timestamp). See buildMediaVisionBundle in wiring/main-helpers.ts.
+  const mediaVisionBundle = buildMediaVisionBundle({ container, defaultAgentId, skillsLogger, clock: handle.clock, oauthManager: handle.oauthManagers.get(defaultAgentId) });
 
   // 6.6.8.5. Tools + message preprocessing — HOISTED above setupChannels.
   // assembleToolsForAgent is now passed directly into
@@ -2415,7 +2409,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     notificationContext, bgCompletionRunnerContext, terminalWakeContext,
     crossSessionSender, subAgentRunner, sendToChannel, announceToParent,
     deadLetterQueue, announcementBatcher, gatewaySendRef,
-    sandboxProvider, imageGenProvider, imageGenRateLimiter, imageGenConfig,
+    sandboxProvider, imageGenProvider, imageGenRateLimiter, imageGenConfig, persistImage, imageGenCostLimiter, mediaVisionBundle,
     assembleToolsForAgent, preprocessMessageText, getCapabilityPortForAgent,
     heartbeatRunner, duplicateDetector, perAgentRunner, wakeCoalescer,
     nodeTypeRegistry, graphCoordinator, namedGraphStore,
@@ -2688,7 +2682,7 @@ async function bootShutdown(
     | "memoryApi" | "memoryAdapter" | "embeddingQueue" | "continuationTracker"
     | "ttsAdapter" | "visionRegistry" | "linkRunner" | "transcriber" | "fileExtractor"
     | "resolveAttachment" | "deliveryQueue" | "deadLetterQueue"
-    | "imageGenProvider" | "imageGenRateLimiter" | "imageGenConfig"
+    | "imageGenProvider" | "imageGenRateLimiter" | "imageGenConfig" | "persistImage" | "imageGenCostLimiter"
     | "getExecutor" | "rpcCall" | "wireDispatch"
     | "assembleToolsForAgent" | "preprocessMessageText"
     | "gatewaySendRef" | "channelAdaptersRef" | "cronWakeCallbackRef"

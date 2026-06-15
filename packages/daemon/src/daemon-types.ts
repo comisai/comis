@@ -526,6 +526,11 @@ export interface BootContext {
    * agent's reference into ChannelsDeps.executionPlanPort. Same object the
    * createAcpWiring path already shares (the single-shared-holder invariant). */
   executionPlanPorts?: Awaited<ReturnType<typeof setupAgents>>["executionPlanPorts"];
+  /** Per-agent OAuthTokenManager map (184). The DEFAULT agent's manager is
+   * threaded into buildImageGenBundle → the Codex image adapter so the image
+   * path resolves its OAuth bearer (CDX-01/CRED-01). Populated by bootAgents'
+   * setupAgents Object.assign; read by bootChannels' image bundle. */
+  oauthManagers?: Awaited<ReturnType<typeof setupAgents>>["oauthManagers"];
   mcpClientManager?: Awaited<ReturnType<typeof setupMcp>>["mcpClientManager"];
   /**
    * The ONE mode-selected MCP OAuth token store (selectMcpTokenStore),
@@ -622,6 +627,33 @@ export interface BootContext {
   imageGenProvider?: ReturnType<typeof createImageGenProvider> extends import("@comis/shared").Result<infer P, unknown> ? P | undefined : never;
   imageGenRateLimiter?: ImageGenRateLimiter;
   imageGenConfig?: BootContext["container"]["config"]["integrations"]["media"]["imageGeneration"];
+  /** DEL-01 (186): per-agent persist getter from buildImageGenBundle — persists
+   *  the generated image to the agent's confined workspace (`~/.comis/workspace/
+   *  media/photos/`) via MediaPersistenceService. Folded onto imageHandlerDeps
+   *  (daemon.ts:932) as the `persist` dep; the handler hands the returned
+   *  filePath to sendAttachment (no more tmpdir write+delete). */
+  persistImage?: (
+    agentId: string,
+    buffer: Buffer,
+    opts: { mediaKind: "image"; mimeType: string },
+  ) => Promise<import("@comis/shared").Result<import("@comis/skills/tools").PersistedFile, Error>>;
+  /** SEC-02 (186): per-agent/hour USD cost ceiling from buildImageGenBundle.
+   *  Undefined when `maxCostPerHourUsd` is unset (ceiling skipped, count-only).
+   *  Folded onto imageHandlerDeps (daemon.ts:932) as the `costLimiter` dep. */
+  imageGenCostLimiter?: import("./api/image-cost-limiter.js").ImageCostLimiter;
+  /** VIS-01 (187): the provider-following vision bundle from buildMediaVisionBundle
+   *  — `capability` is the main-provider vision bridge (folded onto
+   *  MediaApiDeps.mainProviderVision) and `resolveMainModelId` is the single-source
+   *  main model-id resolver (folded onto MediaApiDeps.mainModelIdFor for the
+   *  handler-side vision gate). Built beside buildImageGenBundle at the same
+   *  construction site, reusing the DEFAULT agent's OAuth manager + boot clock.
+   *  Inlined (not `ReturnType<typeof buildMediaVisionBundle>`) to keep
+   *  daemon-types.ts free of an import edge back to wiring/main-helpers.ts (which
+   *  imports BootContext from here — a cycle). */
+  mediaVisionBundle?: {
+    capability: import("./api/main-provider-vision.js").MainProviderVision;
+    resolveMainModelId: (agentId: string) => string | undefined;
+  };
   // Tools (assembler + preprocessor)
   assembleToolsForAgent?: ReturnType<typeof setupTools>["assembleToolsForAgent"];
   preprocessMessageText?: ReturnType<typeof setupTools>["preprocessMessageText"];

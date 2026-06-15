@@ -37,6 +37,9 @@ import {
   asStringArray,
   relativizeDiskPath,
   previewAndDigest,
+  applyMediaRecord,
+  type IncidentImageSignal,
+  type IncidentVisionSignal,
 } from "./obs-explain-signals-fields.js";
 
 // ---------------------------------------------------------------------------
@@ -88,6 +91,25 @@ interface Acc {
   recallCount: number;
   recallZeroHits: number;
   lastRecall?: { lanes: number; finalCount: number; rerankerAvailable: boolean };
+  /** OBS-03/OBS-04 (186): the image-generation turn reconstructed from the
+   *  session's image.* records (folded by `accumulateImageRecord`). The terminal
+   *  image.generated / image.failed record sets `outcome` + cost/model/errorKind;
+   *  image.delivered flips `delivered`. Undefined until an image.* record is seen
+   *  (presence-conditional output). */
+  image?: IncidentImageSignal;
+  /** IN-04 (186): the `seq` at which the image `outcome` was last set, so the
+   *  fold is seq-aware (a stale lower-seq terminal never overwrites a newer one)
+   *  rather than relying on record-array order. */
+  imageOutcomeSeq: number;
+  /** VIS-04 (187): the vision turn reconstructed from the session's
+   *  media.vision.* records (folded by `accumulateVisionRecord`). The terminal
+   *  media.vision.completed / media.vision.failed record sets `outcome` +
+   *  mainProvider/model/costUsd/path/errorKind. Undefined until a media.vision.*
+   *  record is seen (presence-conditional output). */
+  vision?: IncidentVisionSignal;
+  /** VIS-04 (187): the `seq` at which the vision `outcome` was last set (the
+   *  seq-aware fold, mirroring imageOutcomeSeq). */
+  visionOutcomeSeq: number;
   /** W8: event-shape tool.result toolCallIds already counted (dedup — the same
    *  call must not count twice if its result event is duplicated across sources). */
   seenToolResultCallIds: Set<string>;
@@ -319,6 +341,21 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
       };
       return;
     }
+    // OBS-04 (186) / VIS-04 (187): the image.* + media.vision.* lifecycles. The
+    // handler direct-emits these content-free records; `applyMediaRecord` folds
+    // each into the reconstructed image / vision turn (seq-aware IN-04 — driven
+    // by `rec.seq`, falling back to the running counter) so `comis explain`
+    // surfaces provider/model/path/costUsd/outcome (Route a — the cost rides the
+    // terminal record, NOT the executor sessionEnd). ids/labels/numbers/path only.
+    case "image.requested":
+    case "image.generated":
+    case "image.delivered":
+    case "image.failed":
+    case "media.vision.requested":
+    case "media.vision.completed":
+    case "media.vision.failed":
+      applyMediaRecord(acc, type, data, asNumber(rec.seq) ?? acc.seq++);
+      return;
     default:
       // Unknown event type — ignore (forward-compatible).
       return;
@@ -351,6 +388,11 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     recallZeroHits: 0,
     sessionKey: "",
     seq: 0,
+    // IN-04: -1 so the FIRST real terminal record (seq ≥ 0) always sets outcome
+    // (the image.requested seed does not advance it).
+    imageOutcomeSeq: -1,
+    // VIS-04: same -1 convention for the vision fold.
+    visionOutcomeSeq: -1,
   };
 
   for (const rec of records) {
@@ -447,5 +489,9 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
       : {}),
     ...(acc.agentId !== undefined ? { agentId: acc.agentId } : {}),
     ...(acc.channel !== undefined ? { channel: acc.channel } : {}),
+    ...(acc.image !== undefined ? { image: acc.image } : {}),
+    // VIS-04 (187): surface the reconstructed vision turn (presence-conditional,
+    // mirrors image — absent when the trajectory had no media.vision.* records).
+    ...(acc.vision !== undefined ? { vision: acc.vision } : {}),
   };
 }

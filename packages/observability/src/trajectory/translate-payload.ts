@@ -706,6 +706,78 @@ export function translatePayload(
         windowMs: payload.windowMs,
       };
 
+    // ---- Image generation (OBS-04, Phase 186) ----
+    // CONTENT-FREE (T-186-08): ids/labels/numbers/booleans ONLY — NEVER the
+    // prompt, the generated image bytes, a credential, or a raw provider
+    // message. `costUsd` rides image.generated so `comis explain` reconstructs
+    // the image turn's cost (OBS-03 Route a — the cost-carry precedent is the
+    // observability:token_usage → model.completed translator above). agentId +
+    // sessionKey + timestamp are envelope-only and stripped (the
+    // context:script_zero_hit precedent). Optional fields (model/costUsd/
+    // sizeBytes) spread presence-conditionally so absent values never appear as
+    // undefined keys (the tool:executed provenance convention).
+
+    case "image:requested":
+      return {
+        provider: payload.provider,
+        mainProvider: payload.mainProvider,
+      };
+
+    case "image:generated":
+      return {
+        provider: payload.provider,
+        outcome: payload.outcome,
+        ...(payload.model !== undefined ? { model: payload.model } : {}),
+        ...(payload.costUsd !== undefined ? { costUsd: payload.costUsd } : {}),
+        ...(payload.sizeBytes !== undefined ? { sizeBytes: payload.sizeBytes } : {}),
+      };
+
+    case "image:delivered":
+      return {
+        channelType: payload.channelType,
+        delivered: payload.delivered,
+      };
+
+    case "image:failed":
+      return {
+        errorKind: payload.errorKind,
+        provider: payload.provider,
+      };
+
+    // ---- Vision analysis (VIS-04, Phase 187) ----
+    // CONTENT-FREE (T-187-12): ids/labels/path/numbers/outcome/errorKind ONLY —
+    // NEVER the image bytes, the analysis prompt, the model's answer, or a key.
+    // The `path` label is VIS-03's "which path" signal. `costUsd` rides
+    // media.vision.completed (VIS-04 Route a — the cost-carry precedent is
+    // image:generated above); it + model spread presence-conditionally (the
+    // registry/gemini-video tiers return no cost — Pitfall 4). agentId +
+    // sessionKey + timestamp are envelope-only and STRIPPED (the image:* /
+    // context:script_zero_hit precedent).
+
+    case "media.vision:requested":
+      return {
+        provider: payload.provider,
+        mainProvider: payload.mainProvider,
+      };
+
+    case "media.vision:completed":
+      return {
+        provider: payload.provider,
+        mainProvider: payload.mainProvider,
+        path: payload.path,
+        outcome: payload.outcome,
+        ...(payload.model !== undefined ? { model: payload.model } : {}),
+        ...(payload.costUsd !== undefined ? { costUsd: payload.costUsd } : {}),
+      };
+
+    case "media.vision:failed":
+      return {
+        errorKind: payload.errorKind,
+        path: payload.path,
+        ...(payload.provider !== undefined ? { provider: payload.provider } : {}),
+        ...(payload.mainProvider !== undefined ? { mainProvider: payload.mainProvider } : {}),
+      };
+
     default: {
       // Exhaustiveness — switch covers every TrajectoryBridgedEventName.
       // If a new bridge entry is added without a translator, TypeScript

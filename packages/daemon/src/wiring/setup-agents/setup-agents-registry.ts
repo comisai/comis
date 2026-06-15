@@ -13,7 +13,7 @@
  * @module
  */
 
-import { safePath, type AppContainer, type InjectionRateLimiter, type OAuthCredentialStorePort, type SecretsCrypto, type ToolCapabilityPort } from "@comis/core";
+import { safePath, type AppContainer, type InjectionRateLimiter, type OAuthCredentialStorePort, type OAuthTokenManager, type SecretsCrypto, type ToolCapabilityPort } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type Database from "better-sqlite3";
 import type { SqliteMemoryAdapter, createSessionStore } from "@comis/memory";
@@ -118,6 +118,11 @@ export interface AgentsResult {
    * via has().
    */
   oauthCredentialStore: OAuthCredentialStorePort;
+  /** Per-agent OAuthTokenManager instances (184) — the SAME managers the
+   * executors use (no 2nd instance). daemon.ts threads the DEFAULT agent's into
+   * buildImageGenBundle → the Codex image adapter (CDX-01). Only OAuth-configured
+   * agents appear (setupSingleAgent's `oauth` is undefined otherwise). */
+  oauthManagers: Map<string, OAuthTokenManager>;
   /**
    * Session-scoped trajectory recorder registry. Daemon shutdown MUST
    * call `closeAll()` to flush every open per-session recorder.
@@ -341,6 +346,8 @@ export async function setupAgents(deps: {
   // into ChannelsDeps.executionPlanPort. Same reference across ACP + chat
   // (Pitfall 1 single-shared-holder invariant).
   const executionPlanPorts = new Map<string, import("@comis/core").ExecutionPlanPort>();
+  // Per-agent OAuthTokenManager map (184) — see AgentsResult.oauthManagers.
+  const oauthManagers = new Map<string, OAuthTokenManager>();
 
   // Resolve sub-agent tool names from config for delegation awareness
   const subAgentToolGroups = container.config.security?.agentToAgent?.subAgentToolGroups ?? [];
@@ -518,6 +525,7 @@ export async function setupAgents(deps: {
     skillRegistries.set(agentId, result.skillRegistry);
     toolCapabilityPorts.set(agentId, result.toolCapabilityPort);
     executionPlanPorts.set(agentId, result.executionPlanPort);
+    if (result.oauth) oauthManagers.set(agentId, result.oauth); // 184: per-agent OAuth manager (when present)
   }
 
   const defaultAgentId = routingConfig.defaultAgentId;
@@ -583,6 +591,7 @@ export async function setupAgents(deps: {
     // daemon threads the DEFAULT agent's holder into ChannelsDeps so the
     // chat plan-stream reads from the SAME object SEP publishes into.
     executionPlanPorts,
+    oauthManagers, // 184: per-agent OAuth managers → buildImageGenBundle (Codex image adapter)
   };
 }
 

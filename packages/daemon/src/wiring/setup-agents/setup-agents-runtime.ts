@@ -594,5 +594,6 @@ export async function setupSingleAgent(
     skillRegistry,
     toolCapabilityPort,
     executionPlanPort: executionPlanHolder, // SAME ref as PiExecutorDeps + AcpServerDeps (Pitfall 1).
+    oauth: authProvider.oauth, // 184: SAME manager consumed at :439 — surfaced for the Codex image path (no 2nd instance)
   };
 }

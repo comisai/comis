@@ -49,3 +49,84 @@ describe("translatePayload — OBS-01 script signals (envelope stripping)", () =
     expect(data.timestamp).toBeUndefined();
   });
 });
+
+// VIS-04 (Phase 187): the vision translators forward ONLY content-free
+// labels/numbers (provider/mainProvider/model/path/costUsd/outcome/errorKind) and
+// STRIP the envelope fields (agentId/sessionKey/timestamp), mirroring the
+// image:* cases. costUsd/model spread presence-conditionally (Pitfall 4 — the
+// registry/gemini-video tiers return no cost). NEVER the image bytes, the prompt,
+// or the model's answer (T-187-12).
+describe("translatePayload — VIS-04 vision signals (content-free + envelope stripping)", () => {
+  it("forwards media.vision:requested as exactly {provider, mainProvider}", () => {
+    const data = translatePayload("media.vision:requested", {
+      provider: "anthropic",
+      mainProvider: "anthropic",
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      timestamp: 1717171717,
+    });
+    expect(data).toEqual({ provider: "anthropic", mainProvider: "anthropic" });
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("forwards media.vision:completed with the path label + presence-conditional model/costUsd", () => {
+    const data = translatePayload("media.vision:completed", {
+      provider: "anthropic",
+      mainProvider: "anthropic",
+      model: "claude-sonnet-4-5",
+      costUsd: 0.002,
+      path: "main-vision",
+      outcome: "ok",
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      timestamp: 1717171717,
+    });
+    expect(data).toEqual({
+      provider: "anthropic",
+      mainProvider: "anthropic",
+      model: "claude-sonnet-4-5",
+      costUsd: 0.002,
+      path: "main-vision",
+      outcome: "ok",
+    });
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("media.vision:completed without costUsd (registry tier) omits the key entirely (Pitfall 4)", () => {
+    const data = translatePayload("media.vision:completed", {
+      provider: "gemini",
+      mainProvider: "anthropic",
+      path: "registry",
+      outcome: "ok",
+      timestamp: 1717171717,
+    });
+    expect(data).toEqual({ provider: "gemini", mainProvider: "anthropic", path: "registry", outcome: "ok" });
+    expect("costUsd" in data).toBe(false);
+    expect("model" in data).toBe(false);
+  });
+
+  it("forwards media.vision:failed as {errorKind, path, provider, mainProvider}", () => {
+    const data = translatePayload("media.vision:failed", {
+      errorKind: "empty_response",
+      path: "main-vision",
+      provider: "anthropic",
+      mainProvider: "anthropic",
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      timestamp: 1717171717,
+    });
+    expect(data).toEqual({
+      errorKind: "empty_response",
+      path: "main-vision",
+      provider: "anthropic",
+      mainProvider: "anthropic",
+    });
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+});

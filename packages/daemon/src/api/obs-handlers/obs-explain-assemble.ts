@@ -379,6 +379,15 @@ export function assembleIncidentReport(
     ...(signals.contextBudget !== undefined ? { contextBudget: signals.contextBudget } : {}),
     // RECALL-01: the memory-recall outcome (absent when the trajectory has no recall records).
     ...(signals.recall !== undefined ? { recall: signals.recall } : {}),
+    // OBS-03/OBS-04 (186): the image-generation turn reconstructed from the
+    // trajectory's image.* records (absent when the session generated no image).
+    // The cost rides here so `comis explain` shows it (Route a — NOT cost.costUsd,
+    // which reads the executor sessionEnd, a different path; Pitfall 2).
+    ...(signals.image !== undefined ? { image: signals.image } : {}),
+    // VIS-04 (187): the vision turn reconstructed from the trajectory's
+    // media.vision.* records (absent when the session ran no vision). The vision
+    // cost rides here too (Route a) — the image/vision folds are independent.
+    ...(signals.vision !== undefined ? { vision: signals.vision } : {}),
     summary,
     // Plan 05 fills likelyRootCause; Plan 04 fills truncations; Plan 05 fills
     // the report-level suggestedNextSteps.

@@ -3,7 +3,6 @@ import type { ImageGenerationPort, ImageGenerationConfig, SecretManager } from "
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
 import { createFalAdapter } from "./fal-adapter.js";
-import { createOpenAIImageAdapter } from "./openai-adapter.js";
 
 /**
  * Create an image generation provider based on configuration.
@@ -11,9 +10,16 @@ import { createOpenAIImageAdapter } from "./openai-adapter.js";
  * Returns `ok(undefined)` when the required API key is missing from SecretManager,
  * allowing graceful degradation (image generation disabled rather than erroring).
  *
+ * 185 FOLD: this legacy skills factory now serves ONLY `fal` (CFG-01
+ * explicit-config back-compat). The `openai` path was removed — the explicit
+ * `openai` config now routes through the daemon's `openai-images` registered
+ * pi-ai transport (setup-image-provider.ts), NOT a second skills adapter. Any
+ * non-`fal` provider therefore hits the `default` error branch here (the daemon
+ * selector resolves it upstream).
+ *
  * @param config - Image generation configuration with provider selection
  * @param secretManager - Credential access for API keys
- * @returns The configured adapter, undefined if key missing, or error for unknown providers
+ * @returns The configured fal adapter, undefined if key missing, or error for any non-fal provider
  */
 export function createImageGenProvider(
   config: ImageGenerationConfig,
@@ -24,12 +30,6 @@ export function createImageGenProvider(
       const apiKey = secretManager.get("FAL_KEY");
       if (!apiKey) return ok(undefined);
       return ok(createFalAdapter({ apiKey, model: config.model }));
-    }
-
-    case "openai": {
-      const apiKey = secretManager.get("OPENAI_API_KEY");
-      if (!apiKey) return ok(undefined);
-      return ok(createOpenAIImageAdapter({ apiKey, model: config.model }));
     }
 
     default:

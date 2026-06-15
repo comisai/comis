@@ -145,3 +145,11 @@ export type { IncidentSourceReader } from "./api/obs-handlers/obs-explain-reader
 // only; the H1 admin gate stays on bindFleetHealthHandlers (fleet-health.ts).
 // Consumer: test/live/scenarios/prove/fleet-reprove.test.ts
 export { assembleFleetHealthReport } from "./api/obs-handlers/fleet-health.js";
+
+// pi-ai image shim (Phase 183, I1 keystone): `createPiImageAdapter` +
+// `registerComisImageProviders` + `resolveImageApiKey` + the typed cross-plan
+// `ImageGenError` live in `./api/pi-image-adapter.js`. They are daemon-internal
+// — consumed via relative imports (`wiring/setup-image-provider`,
+// `wiring/main-helpers`) — and intentionally NOT on the public barrel until a
+// cross-package consumer exists (public-export-consumers gate). A future-phase
+// transport that genuinely needs one cross-package re-exports it here then.
