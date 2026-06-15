@@ -27,6 +27,10 @@ const MAIN_HELPERS_TS = resolve(REPO_ROOT, "packages/daemon/src/wiring/main-help
 const SETUP_TOOLS_TS = resolve(REPO_ROOT, "packages/daemon/src/wiring/setup-tools.ts");
 const SETUP_VIDEO_PROVIDER_TS = resolve(REPO_ROOT, "packages/daemon/src/wiring/setup-video-provider.ts");
 const REGISTRY_TS = resolve(REPO_ROOT, "packages/skills/src/platform-tools/registry.ts");
+const VIDEO_GENERATE_TOOL_TS = resolve(
+  REPO_ROOT,
+  "packages/skills/src/platform-tools/tools/video-generate-tool.ts",
+);
 
 /** Strip line + block comments so a token inside a comment cannot satisfy a
  *  wiring assertion (a comment naming buildVideoGenBundle is NOT the wiring). */
@@ -235,5 +239,37 @@ describe("video-generation built-but-not-wired source guard", () => {
     // past it, so the assertion fails RED until oauthManager is threaded into THIS
     // call (the addition lands well inside the ~170-char call body).
     expect(code).toMatch(/buildVideoGenBundle\s*\(\{[\s\S]{0,250}?oauthManager/);
+  });
+
+  // ─── Phase 191 (IN-03): the runtime-built tool description wiring ───
+  // The video_generate description is built at registration from the ACTIVE
+  // backend's VIDEO_MODELS matrix (listVideoModelCaps) — but ONLY if the registry
+  // build callback threads ctx.videoGenProvider into createVideoGenerateTool. The
+  // tool factory + the matrix lookup can exist, compile, and pass their unit tests
+  // while the registry still calls createVideoGenerateTool(ctx.rpcCall) single-arg,
+  // leaving the agent with the STATIC_FALLBACK forever (built-but-not-wired,
+  // Pitfall 5 — the milestone's #1 recurring blocker). These assertions pin the
+  // two-arg wiring (registry → tool) and the matrix import (tool → @comis/core) so
+  // a future refactor that drops either turns this test red.
+
+  it("registry.ts threads ctx.videoGenProvider into the video_generate build (createVideoGenerateTool two-arg)", () => {
+    const code = stripComments(readFileSync(REGISTRY_TS, "utf8"));
+    // The build callback must pass BOTH ctx.rpcCall and ctx.videoGenProvider.
+    // Single-arg createVideoGenerateTool(ctx.rpcCall as never) — the pre-191
+    // shipped code — does NOT match, so this fails RED until the seam is threaded.
+    expect(code).toMatch(/createVideoGenerateTool\s*\(\s*ctx\.rpcCall[^)]*ctx\.videoGenProvider/);
+  });
+
+  it("video-generate-tool.ts imports listVideoModelCaps from @comis/core (the matrix the description is built from)", () => {
+    const content = readFileSync(VIDEO_GENERATE_TOOL_TS, "utf8");
+    // The IN-03 description is built from the active backend's capability matrix;
+    // the accessor MUST be imported from the @comis/core barrel (Plan 01 surfaced
+    // it there — NOT a @comis/core/media subpath, which does not exist).
+    expect(content).toMatch(
+      /import\s*(?:type\s*)?\{[^}]*listVideoModelCaps[^}]*\}\s*from\s*["']@comis\/core["']/,
+    );
+    const code = stripComments(content);
+    // And the accessor must be CALLED in the description build (not just imported).
+    expect(code).toMatch(/listVideoModelCaps\s*\(/);
   });
 });

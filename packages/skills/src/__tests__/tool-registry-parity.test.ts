@@ -168,4 +168,51 @@ describe("platform-tool registry parity", () => {
       expect(JSON.stringify(tool?.parameters)).toContain("question");
     });
   });
+
+  // video_generate IN-03 build-signature non-regression (191-03). The 191 seam
+  // threads ctx.videoGenProvider into the build callback so the description is
+  // runtime-built from the active backend matrix. The parity STUB_CTX has NO
+  // videoGenProvider, so the build runs with provider=undefined → it MUST still
+  // construct (the STATIC_FALLBACK path, never throws) and MUST NOT change the
+  // captured params (CFG-02 is description-only — the description is NOT in the
+  // snapshot, so the snapshot stays byte-identical). Specifically: NO new param
+  // and NO reference_images param (the LOCKED multi-ref deferral).
+  describe("video_generate IN-03 build is provider-optional (CFG-02 description-only)", () => {
+    const videoDescriptor = REGISTRY.find((d) => d.name === "video_generate");
+
+    it("is registered as a CONDITIONAL descriptor gated on videoGenProvider", () => {
+      expect(videoDescriptor, "video_generate must be in the registry").toBeDefined();
+      expect(videoDescriptor!.category).toBe("media");
+      expect(typeof videoDescriptor!.conditional, "video_generate must carry a conditional gate").toBe(
+        "function",
+      );
+    });
+
+    it("builds with provider=undefined (STUB_CTX) without throwing and keeps name video_generate", () => {
+      let tool!: ReturnType<typeof videoDescriptor.build>;
+      expect(() => {
+        tool = videoDescriptor!.build(STUB_CTX);
+      }).not.toThrow();
+      expect(tool?.name).toBe("video_generate");
+    });
+
+    it("keeps the 8 shipped params and declares NO reference_images param (description-only)", () => {
+      const schema = videoDescriptor!.build(STUB_CTX)?.parameters as any;
+      expect(schema.required ?? []).toContain("prompt");
+      for (const p of [
+        "duration",
+        "aspect_ratio",
+        "resolution",
+        "audio",
+        "negative_prompt",
+        "seed",
+        "image_url",
+        "model",
+      ]) {
+        expect(schema.properties[p], `param ${p} must exist`).toBeDefined();
+      }
+      // The LOCKED multi-ref deferral — NO reference_images param this phase.
+      expect(schema.properties.reference_images).toBeUndefined();
+    });
+  });
 });
