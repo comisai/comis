@@ -379,6 +379,53 @@ describe("execute — the inline submit -> poll -> download loop", () => {
     }
   });
 
+  it("WR-05: a successful execute() populates durationSecs from the requested/effective duration", async () => {
+    falMock.queue.submit.mockResolvedValueOnce({ request_id: "req-dur" });
+    falMock.queue.status.mockResolvedValueOnce({ status: "COMPLETED" });
+    falMock.queue.result.mockResolvedValueOnce({
+      data: { video: { url: "https://cdn.fal.ai/dur.mp4" } },
+      requestId: "req-dur",
+    });
+    const restore = stubFetch(Buffer.from("vid"));
+    const adapter = createFalVideoAdapter({ apiKey: "k" });
+
+    const res = await adapter.execute(
+      { prompt: "p", durationSecs: 8 },
+      { timeoutMs: 5_000, pollIntervalMs: 1 },
+    );
+    restore();
+
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      // The output carries the duration the adapter actually requested, so the
+      // handler's reconcile + AttachmentPayload.durationSecs have a real value.
+      expect(res.value.durationSecs).toBe(8);
+    }
+  });
+
+  it("WR-05: a provider-reported duration in the result data wins over the requested duration", async () => {
+    falMock.queue.submit.mockResolvedValueOnce({ request_id: "req-dur2" });
+    falMock.queue.status.mockResolvedValueOnce({ status: "COMPLETED" });
+    // FAL reports an actual clip duration of 7s in the result payload.
+    falMock.queue.result.mockResolvedValueOnce({
+      data: { video: { url: "https://cdn.fal.ai/dur2.mp4", duration: 7 } },
+      requestId: "req-dur2",
+    });
+    const restore = stubFetch(Buffer.from("vid"));
+    const adapter = createFalVideoAdapter({ apiKey: "k" });
+
+    const res = await adapter.execute(
+      { prompt: "p", durationSecs: 8 },
+      { timeoutMs: 5_000, pollIntervalMs: 1 },
+    );
+    restore();
+
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.value.durationSecs).toBe(7);
+    }
+  });
+
   it("CR-01: a non-ok (403) download through execute() surfaces a CLASSIFIED VideoGenError, not a fake success", async () => {
     falMock.queue.submit.mockResolvedValueOnce({ request_id: "req-dl-403" });
     falMock.queue.status.mockResolvedValueOnce({ status: "COMPLETED" });

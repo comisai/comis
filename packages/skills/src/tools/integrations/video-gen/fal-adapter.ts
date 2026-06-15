@@ -26,7 +26,7 @@ import type {
 } from "@comis/core";
 import { VideoGenError, createPollDeadline, pollUntilDone } from "@comis/core";
 import type { Result } from "@comis/shared";
-import { err, fromPromise } from "@comis/shared";
+import { err, fromPromise, ok } from "@comis/shared";
 import { fal } from "@fal-ai/client";
 import { classifyFalVideoError } from "./classify-fal-video-error.js";
 
@@ -99,11 +99,25 @@ export function createFalVideoAdapter(opts: { apiKey: string; model?: string }):
       return fromPromise(
         (async () => {
           const res = await fal.queue.result(endpoint, { requestId: job.jobId });
-          const url = (res.data as { video?: { url?: string } }).video?.url;
+          const data = res.data as {
+            video?: { url?: string; duration?: unknown };
+            duration?: unknown;
+            cost?: unknown;
+            costUsd?: unknown;
+          };
+          const url = data.video?.url;
           if (!url) {
             throw new Error("fal: COMPLETED with no video.url"); // -> empty_response (FAL-02)
           }
           const { buffer, contentType } = await downloadVideoBytes(url, fetchOpts);
+          // WR-05: populate the optional metadata the only-wired adapter can
+          // know, so the handler's cost reconcile + AttachmentPayload.durationSecs
+          // are not permanently empty. FAL result-payload field names are not
+          // contractually stable, so read them DEFENSIVELY (finite-number only)
+          // and only set the output field when present. The exact billing field
+          // is re-verified when Phase 190 wires the live adapter.
+          const reportedDuration = firstFiniteNumber(data.video?.duration, data.duration);
+          const reportedCost = firstFiniteNumber(data.costUsd, data.cost);
           return {
             buffer,
             // WR-06: derive the MIME from the CDN content-type (or the URL
@@ -114,6 +128,8 @@ export function createFalVideoAdapter(opts: { apiKey: string; model?: string }):
             sourceUrl: url,
             model: endpoint,
             provider: "fal",
+            ...(reportedDuration !== undefined ? { durationSecs: reportedDuration } : {}),
+            ...(reportedCost !== undefined ? { costUsd: reportedCost } : {}),
           } satisfies VideoGenOutput;
         })(),
       );
@@ -164,6 +180,13 @@ export function createFalVideoAdapter(opts: { apiKey: string; model?: string }):
         return mapThrownToErr(fetched.error, {
           emptyResult: /no video\.url/.test(fetched.error.message),
         });
+      }
+      // WR-05: when the provider did not report a duration, fall back to the
+      // duration WE requested (the adapter knows it; fetchResult does not). This
+      // gives the handler's reconcile + delivery metadata a real value instead
+      // of a permanently-undefined field. A provider-reported duration wins.
+      if (fetched.value.durationSecs === undefined && input.durationSecs !== undefined) {
+        return ok({ ...fetched.value, durationSecs: input.durationSecs });
       }
       return fetched;
     },
@@ -246,6 +269,18 @@ async function downloadVideoBytes(
     throw new Error("fal: video.url returned an empty body");
   }
   return { buffer, contentType: response.headers.get("content-type") };
+}
+
+/**
+ * WR-05: return the first argument that is a finite number, else undefined.
+ * Used to read provider-reported duration/cost from the FAL result payload
+ * without trusting an unstable field's type (a string/null/NaN is ignored).
+ */
+function firstFiniteNumber(...values: unknown[]): number | undefined {
+  for (const v of values) {
+    if (typeof v === "number" && Number.isFinite(v)) return v;
+  }
+  return undefined;
 }
 
 /** Known video MIME types for the URL-extension fallback (WR-06). */
