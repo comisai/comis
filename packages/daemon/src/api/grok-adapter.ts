@@ -38,7 +38,9 @@
  * the codebase today (`oauthManager.getSupportedProviders()` returns only
  * `openai-codex`), so the OAuth branch is forward-looking: it activates when/if
  * pi-ai adds an xAI OAuth provider. Key-auth is the documented common case; GROK
- * is NOT blocked on OAuth.
+ * is NOT blocked on OAuth. The static `XAI_API_KEY` is BOOT-BOUND (captured at
+ * construction, rotation needs a daemon restart); only the defensive OAuth branch
+ * is per-call-fresh (WR-03 — see `resolveBearer`).
  *
  * PLACEMENT: this adapter lives in `@comis/daemon/src/api/` (NOT `@comis/skills`,
  * where `fal-adapter.ts` lives). The OAuth path needs the daemon-side
@@ -143,10 +145,17 @@ export function createGrokVideoAdapter(opts: {
   const doFetch = opts.fetchImpl ?? fetch;
 
   /**
-   * Resolve the Bearer PER submit/poll/fetchResult call (per-call freshness): the
-   * key path is a cheap return; the DEFENSIVE OAuth path refreshes inside
-   * `getApiKey` (the codex per-call-bearer idiom). The bearer flows ONLY into the
-   * `Authorization` header, never to a logger.
+   * Resolve the Bearer on each submit/poll/fetchResult call. The two auth sources
+   * differ in freshness (WR-03 — the comment matches the behavior):
+   *   - STATIC KEY (the proven primary): `opts.apiKey` is captured by this closure
+   *     at construction and returned verbatim — it is BOOT-BOUND, NOT re-read from
+   *     the secret store per call, so a key rotation requires a daemon restart to
+   *     take effect (parity with the Veo adapter's GoogleGenAI instance + the
+   *     "key rotation requires a daemon restart" boot-built contract). A future
+   *     per-call re-selection is the deferred multi-agent per-agent re-read.
+   *   - DEFENSIVE OAUTH (A1, forward-looking): `getApiKey` IS per-call-fresh —
+   *     it refreshes on expiry inside the manager (the codex per-call-bearer idiom).
+   * The bearer flows ONLY into the `Authorization` header, never to a logger.
    */
   const resolveBearer = async (): Promise<string> => {
     if (opts.apiKey !== undefined) return opts.apiKey;
