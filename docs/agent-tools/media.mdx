@@ -115,7 +115,7 @@ For per-provider setup, model defaults, and configuration, see the [Media & Voic
   </Accordion>
 
   <Accordion title="describe_video -- Describe video content" icon="film">
-    Use `describe_video` to have your agent watch a video and describe what happens in it. The tool uses the vision pipeline to extract key frames from the video and analyze them.
+    Use `describe_video` to have your agent watch a video and describe what happens in it. The tool sends the raw video to a Gemini vision model (the only provider that accepts raw video natively in this release -- there is no frame extraction); see the routing note below.
 
     | Parameter | Type | Required | Description |
     |-----------|------|----------|-------------|
