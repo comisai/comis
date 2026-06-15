@@ -91,6 +91,70 @@ describe("submit", () => {
       expect(res.value.jobId).toBe("req-opaque-xyz");
     }
   });
+
+  // IN-01 / Pitfall 4 (the headline oracle): a referenceImage present makes the
+  // adapter SWAP the endpoint id to the DISTINCT /image-to-video endpoint — the
+  // t2v endpoint REJECTS image_url, so a param toggle (Veo/Grok) is WRONG for FAL.
+  it("IN-01: with a referenceImage present, swaps fal.queue.submit to the /image-to-video endpoint and sets image_url as a data-URI", async () => {
+    falMock.queue.submit.mockResolvedValueOnce({ request_id: "req-i2v-1" });
+    const adapter = createFalVideoAdapter({ apiKey: "k" });
+
+    const res = await adapter.submit({
+      prompt: "animate this",
+      referenceImage: { data: "aGVsbG8=", mimeType: "image/png" },
+    });
+
+    // The endpoint id ACTUALLY CHANGED (not just a param toggle) — Pitfall 4.
+    expect(falMock.queue.submit).toHaveBeenCalledWith(
+      "fal-ai/veo3.1/fast/image-to-video",
+      expect.objectContaining({
+        input: expect.objectContaining({
+          prompt: "animate this",
+          image_url: "data:image/png;base64,aGVsbG8=",
+        }),
+      }),
+    );
+    // The swapped endpoint round-trips on job.model so poll/fetchResult target it.
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.value.model).toBe("fal-ai/veo3.1/fast/image-to-video");
+    }
+  });
+
+  // IN-01 non-regression: WITHOUT a referenceImage the endpoint stays the t2v
+  // default and NO image_url is set (the :63 default-endpoint test stays green).
+  it("IN-01: without a referenceImage, keeps the t2v endpoint and sets NO image_url", async () => {
+    falMock.queue.submit.mockResolvedValueOnce({ request_id: "req-t2v-1" });
+    const adapter = createFalVideoAdapter({ apiKey: "k" });
+
+    await adapter.submit({ prompt: "a sunset timelapse" });
+
+    expect(falMock.queue.submit).toHaveBeenCalledWith(
+      "fal-ai/veo3.1/fast",
+      expect.objectContaining({ input: expect.objectContaining({ prompt: "a sunset timelapse" }) }),
+    );
+    const submittedInput = falMock.queue.submit.mock.calls[0]![1].input as Record<string, unknown>;
+    expect(submittedInput).not.toHaveProperty("image_url");
+  });
+
+  // IN-01: an EXPLICIT opts.model wins — a caller-named endpoint is NOT swapped to
+  // /image-to-video even when a referenceImage is present (the operator override
+  // is authoritative; they may have named an i2v endpoint themselves).
+  it("IN-01: an explicit opts.model endpoint is used verbatim even with a referenceImage (no swap)", async () => {
+    falMock.queue.submit.mockResolvedValueOnce({ request_id: "req-i2v-explicit" });
+    const adapter = createFalVideoAdapter({ apiKey: "k", model: "fal-ai/kling/image-to-video" });
+
+    const res = await adapter.submit({
+      prompt: "p",
+      referenceImage: { data: "Ynl0ZXM=", mimeType: "image/jpeg" },
+    });
+
+    expect(falMock.queue.submit).toHaveBeenCalledWith(
+      "fal-ai/kling/image-to-video",
+      expect.objectContaining({ input: expect.objectContaining({ image_url: "data:image/jpeg;base64,Ynl0ZXM=" }) }),
+    );
+    expect(res.ok && res.value.model).toBe("fal-ai/kling/image-to-video");
+  });
 });
 
 describe("poll", () => {
@@ -98,8 +162,9 @@ describe("poll", () => {
     falMock.queue.status.mockResolvedValueOnce({ status: "COMPLETED" });
     const adapter = createFalVideoAdapter({ apiKey: "k" });
 
-    const res = await adapter.poll({ jobId: "req-1", provider: "fal", model: "m" });
+    const res = await adapter.poll({ jobId: "req-1", provider: "fal", model: "fal-ai/veo3.1/fast" });
 
+    // poll keys off job.model (so the i2v swap round-trips) — here the t2v endpoint.
     expect(falMock.queue.status).toHaveBeenCalledWith("fal-ai/veo3.1/fast", { requestId: "req-1" });
     expect(res.ok).toBe(true);
     if (res.ok) {
@@ -129,9 +194,10 @@ describe("fetchResult", () => {
     const restore = stubFetch(bytes);
     const adapter = createFalVideoAdapter({ apiKey: "k" });
 
-    const res = await adapter.fetchResult({ jobId: "req-3", provider: "fal", model: "m" });
+    const res = await adapter.fetchResult({ jobId: "req-3", provider: "fal", model: "fal-ai/veo3.1/fast" });
     restore();
 
+    // fetchResult keys off job.model (so the i2v swap round-trips) — here t2v.
     expect(falMock.queue.result).toHaveBeenCalledWith("fal-ai/veo3.1/fast", { requestId: "req-3" });
     expect(res.ok).toBe(true);
     if (res.ok) {
@@ -317,6 +383,39 @@ describe("execute — the inline submit -> poll -> download loop", () => {
       expect(res.value.mimeType).toBe("video/mp4");
       expect(res.value.sourceUrl).toBe("https://cdn.fal.ai/h.mp4");
     }
+  });
+
+  // IN-01 reachability (Pitfall 5 — built-but-not-wired guard): the i2v endpoint
+  // swap must be reachable from the WHOLE submit→poll→fetchResult loop, not just
+  // submit. With a referenceImage, every fal.queue.* call targets the swapped
+  // /image-to-video endpoint (the swap round-trips on job.model).
+  it("IN-01: an i2v execute() drives poll AND result against the swapped /image-to-video endpoint", async () => {
+    falMock.queue.submit.mockResolvedValueOnce({ request_id: "req-i2v-loop" });
+    falMock.queue.status.mockResolvedValueOnce({ status: "COMPLETED" });
+    falMock.queue.result.mockResolvedValueOnce({
+      data: { video: { url: "https://cdn.fal.ai/i2v.mp4" } },
+      requestId: "req-i2v-loop",
+    });
+    const restore = stubFetch(Buffer.from("vid"));
+    const adapter = createFalVideoAdapter({ apiKey: "k" });
+
+    const res = await adapter.execute(
+      { prompt: "p", referenceImage: { data: "aW1n", mimeType: "image/png" } },
+      { timeoutMs: 5_000, pollIntervalMs: 1 },
+    );
+    restore();
+
+    expect(res.ok).toBe(true);
+    expect(falMock.queue.submit).toHaveBeenCalledWith(
+      "fal-ai/veo3.1/fast/image-to-video",
+      expect.anything(),
+    );
+    expect(falMock.queue.status).toHaveBeenCalledWith("fal-ai/veo3.1/fast/image-to-video", {
+      requestId: "req-i2v-loop",
+    });
+    expect(falMock.queue.result).toHaveBeenCalledWith("fal-ai/veo3.1/fast/image-to-video", {
+      requestId: "req-i2v-loop",
+    });
   });
 
   it("FAL-02: COMPLETED with no video.url -> empty_response with a hint", async () => {

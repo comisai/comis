@@ -108,6 +108,38 @@ describe("createVeoVideoAdapter", () => {
     expect(r.ok).toBe(false);
   });
 
+  // IN-01 (A4): a referenceImage present adds the first-frame image as a
+  // TOP-LEVEL generateVideos({image}) arg (NOT a config field) on the SAME model
+  // (Veo has no endpoint swap, unlike FAL). image = { imageBytes, mimeType } —
+  // the SDK Image_2 shape (raw base64 bytes, NOT a data-URI).
+  it("IN-01: with a referenceImage, adds a top-level image arg { imageBytes, mimeType } on the same model", async () => {
+    genVideos.mockResolvedValue({ name: "operations/i2v", done: false });
+    const adapter = makeAdapter();
+
+    await adapter.submit({
+      prompt: "animate this",
+      referenceImage: { data: "aGVsbG8=", mimeType: "image/png" },
+    });
+
+    const callArg = genVideos.mock.calls[0]?.[0];
+    // Top-level image arg (a sibling of config), the SDK Image_2 raw-bytes shape.
+    expect(callArg.image).toEqual({ imageBytes: "aGVsbG8=", mimeType: "image/png" });
+    // The image is NOT smuggled into config (A4 — config holds lastFrame/refs only).
+    expect(callArg.config).not.toHaveProperty("image");
+    expect(callArg.config).not.toHaveProperty("imageBytes");
+  });
+
+  // IN-01 non-regression: WITHOUT a referenceImage there is NO top-level image arg.
+  it("IN-01: without a referenceImage, generateVideos receives no top-level image arg", async () => {
+    genVideos.mockResolvedValue({ name: "operations/t2v", done: false });
+    const adapter = makeAdapter();
+
+    await adapter.submit({ prompt: "a cat" });
+
+    const callArg = genVideos.mock.calls[0]?.[0];
+    expect(callArg).not.toHaveProperty("image");
+  });
+
   it("VEO-01 poll: maps .done/.error to pending|done|failed", async () => {
     const adapter = makeAdapter();
     const job = { jobId: "operations/abc", provider: "veo", model: "m" };

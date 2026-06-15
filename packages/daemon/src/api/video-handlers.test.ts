@@ -66,8 +66,15 @@ vi.mock("undici", () => {
 // with a resolved IP so the URL branch pins DNS; the SSRF test overrides it).
 vi.mock("@comis/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@comis/core")>();
+  // IN-02: wrap the matrix accessors in spies that DELEGATE to the real
+  // implementation by default (so the happy-path + real-backend reject tests
+  // exercise the genuine VIDEO_MODELS matrix), but can be overridden per-test
+  // (the i2v-on-a-t2v-only-backend reject needs a fabricated t2v-only cell —
+  // no real backend is t2v-only).
   return {
     ...actual,
+    listVideoModelCaps: vi.fn(actual.listVideoModelCaps),
+    supportedModes: vi.fn(actual.supportedModes),
     safePath: (...segments: string[]) => segments.join("/"),
     validateUrl: vi.fn(async () => ({
       ok: true,
@@ -512,5 +519,214 @@ describe("createVideoHandlers (Phase 189 — inline→submit)", () => {
     const deps = createMockDeps();
     expect("trajectoryRegistry" in deps).toBe(false);
     expect("eventBus" in deps).toBe(false);
+  });
+
+  // ─── IN-02: per-model param validation against VIDEO_MODELS, BEFORE submit ───
+  describe("IN-02 param validation (mode + caps + reject hints) before submit", () => {
+    it("IN-02: i2v on a t2v-only backend rejects BEFORE submit with a supported-modes hint (submit not called)", async () => {
+      // No real backend is t2v-only — override the matrix accessors so the
+      // EXECUTING provider exposes t2v but NOT i2v (listVideoModelCaps(...,"i2v")
+      // undefined). The handler must reject with a modes hint, NOT submit.
+      const core = await import("@comis/core");
+      const realDefaultCaps = core.listVideoModelCaps("fal", "t2v");
+      (core.listVideoModelCaps as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+        (_backend: string, mode: string) => (mode === "i2v" ? undefined : realDefaultCaps),
+      );
+      (core.supportedModes as unknown as ReturnType<typeof vi.fn>).mockReturnValue(["t2v"]);
+
+      const deps = createMockDeps();
+      const handlers = createVideoHandlers(deps);
+      const result = (await handlers["video.generate"]!({
+        _agentId: "agent-1",
+        prompt: "animate this",
+        image_url: "data:image/png;base64,aGVsbG8=",
+      })) as { success: boolean; hint?: string };
+
+      expect(result.success).toBe(false);
+      expect(result.hint).toMatch(/t2v/);
+      expect(result.hint).toMatch(/image_url/i); // "Omit image_url for text-to-video."
+      expect(deps.provider.submit).not.toHaveBeenCalled();
+      const w = warnCalls(deps).find((c) => (c[0] as { step?: string }).step === "video_mode_reject");
+      expect(w).toBeTruthy();
+      expect((w![0] as { errorKind?: string }).errorKind).toBe("precondition");
+    });
+
+    it("IN-02: an unsupported resolution (4k on grok) rejects BEFORE submit listing the valid set", async () => {
+      const deps = createMockDeps({
+        provider: {
+          id: "grok",
+          isAvailable: () => true,
+          submit: vi.fn().mockResolvedValue(ok(SUBMITTED_JOB)),
+          poll: vi.fn(),
+          fetchResult: vi.fn(),
+          execute: vi.fn(),
+        },
+        config: {
+          provider: "grok",
+          defaultDurationSecs: 6,
+          defaultAspectRatio: "16:9",
+          defaultResolution: "720p",
+          maxPerHour: 5,
+          timeoutMs: 300000,
+          pollIntervalMs: 10000,
+          fallbackChain: [],
+        } as unknown as VideoHandlerDeps["config"],
+      });
+      const handlers = createVideoHandlers(deps);
+      const result = (await handlers["video.generate"]!({
+        _agentId: "agent-1",
+        prompt: "a sunset",
+        resolution: "4k",
+      })) as { success: boolean; hint?: string };
+
+      expect(result.success).toBe(false);
+      // The hint LISTS grok's valid resolutions (the I3 honest set).
+      expect(result.hint).toMatch(/480p/);
+      expect(result.hint).toMatch(/720p/);
+      expect(deps.provider.submit).not.toHaveBeenCalled();
+      const w = warnCalls(deps).find((c) => (c[0] as { step?: string }).step === "video_resolution_reject");
+      expect(w).toBeTruthy();
+      expect((w![0] as { errorKind?: string }).errorKind).toBe("precondition");
+    });
+
+    it("IN-02 (Pitfall 2): a Veo 1080p render with duration!=8 rejects with a requires-8s hint (no submit)", async () => {
+      const deps = createMockDeps({
+        provider: {
+          id: "veo",
+          isAvailable: () => true,
+          submit: vi.fn().mockResolvedValue(ok(SUBMITTED_JOB)),
+          poll: vi.fn(),
+          fetchResult: vi.fn(),
+          execute: vi.fn(),
+        },
+        config: {
+          provider: "veo",
+          defaultDurationSecs: 8,
+          defaultAspectRatio: "16:9",
+          defaultResolution: "720p",
+          maxPerHour: 5,
+          timeoutMs: 300000,
+          pollIntervalMs: 10000,
+          fallbackChain: [],
+        } as unknown as VideoHandlerDeps["config"],
+      });
+      const handlers = createVideoHandlers(deps);
+      const result = (await handlers["video.generate"]!({
+        _agentId: "agent-1",
+        prompt: "a city",
+        resolution: "1080p",
+        duration: 4,
+      })) as { success: boolean; hint?: string };
+
+      expect(result.success).toBe(false);
+      expect(result.hint).toMatch(/8/);
+      expect(deps.provider.submit).not.toHaveBeenCalled();
+      const w = warnCalls(deps).find(
+        (c) => (c[0] as { step?: string }).step === "video_duration_constraint_reject",
+      );
+      expect(w).toBeTruthy();
+      expect((w![0] as { errorKind?: string }).errorKind).toBe("precondition");
+    });
+
+    it("IN-02 (Pitfall 2): a Veo 1080p render with duration 8 PASSES validation and submits", async () => {
+      const deps = createMockDeps({
+        provider: {
+          id: "veo",
+          isAvailable: () => true,
+          submit: vi.fn().mockResolvedValue(ok(SUBMITTED_JOB)),
+          poll: vi.fn(),
+          fetchResult: vi.fn(),
+          execute: vi.fn(),
+        },
+        config: {
+          provider: "veo",
+          defaultDurationSecs: 8,
+          defaultAspectRatio: "16:9",
+          defaultResolution: "720p",
+          maxPerHour: 5,
+          timeoutMs: 300000,
+          pollIntervalMs: 10000,
+          fallbackChain: [],
+        } as unknown as VideoHandlerDeps["config"],
+      });
+      const handlers = createVideoHandlers(deps);
+      const result = (await handlers["video.generate"]!({
+        _agentId: "agent-1",
+        prompt: "a city",
+        resolution: "1080p",
+        duration: 8,
+      })) as { success: boolean };
+
+      expect(result.success).toBe(true);
+      expect(deps.provider.submit).toHaveBeenCalledTimes(1);
+    });
+
+    it("IN-02 duration snap: an out-of-enum duration:5 on FAL reaches port.submit snapped to 6 (round-half-up)", async () => {
+      const deps = createMockDeps();
+      const handlers = createVideoHandlers(deps);
+      await handlers["video.generate"]!({ _agentId: "agent-1", prompt: "a quiet lake", duration: 5 });
+      const submit = deps.provider.submit as ReturnType<typeof vi.fn>;
+      const [input] = submit.mock.calls[0]! as [Record<string, unknown>];
+      // 5 is equidistant between 4 and 6 → round-half-up → 6 (Plan 01 snapDuration).
+      expect(input.durationSecs).toBe(6);
+    });
+
+    it("IN-02 validates against the EXECUTING deps.provider.id, never the caller main.providerId", async () => {
+      // The caller's main provider is grok (480p/720p — would reject 4k), but the
+      // EXECUTING provider is fal (4k valid). Validating against the executor must
+      // ACCEPT 4k and submit (a t2v 4k FAL render), proving the executor is the key.
+      const deps = createMockDeps({
+        resolveAgentMainProvider: vi.fn().mockReturnValue({ providerId: "grok" }),
+      });
+      const handlers = createVideoHandlers(deps);
+      const result = (await handlers["video.generate"]!({
+        _agentId: "agent-1",
+        prompt: "a 4k FAL render",
+        resolution: "4k",
+      })) as { success: boolean };
+
+      expect(result.success).toBe(true);
+      expect(deps.provider.submit).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // ─── IN-01: the SSRF resolver is REUSED for image_url (no second fetcher) ───
+  describe("IN-01 SSRF reuse + i2v mode threading (singular image_url)", () => {
+    it("IN-01: a blocked-host image_url is rejected by the SHARED resolver — submit is never called", async () => {
+      const core = await import("@comis/core");
+      (core.validateUrl as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        ok: false,
+        error: new Error("SSRF: blocked private IP"),
+      });
+      const deps = createMockDeps();
+      const handlers = createVideoHandlers(deps);
+      await expect(
+        handlers["video.generate"]!({
+          _agentId: "agent-1",
+          prompt: "fetch evil",
+          image_url: "http://169.254.169.254/latest/meta-data/",
+        }),
+      ).rejects.toThrow();
+      // The shared resolver's SSRF block surfaced; no second fetcher, no submit.
+      expect(deps.provider.submit).not.toHaveBeenCalled();
+    });
+
+    it("IN-01: a workspace-path image_url resolves under the caller's agent dir and threads referenceImage", async () => {
+      const deps = createMockDeps({
+        workspaceDirs: new Map([["agent-1", "/ws/agent-1"]]),
+      });
+      const handlers = createVideoHandlers(deps);
+      await handlers["video.generate"]!({
+        _agentId: "agent-1",
+        prompt: "animate the file",
+        image_url: "frames/first.png",
+      });
+      const submit = deps.provider.submit as ReturnType<typeof vi.fn>;
+      const input = submit.mock.calls[0]![0] as { referenceImage?: { data: string; mimeType: string } };
+      // Resolved via the shared resolver (mocked readFile → REF-FILE-BYTES) and
+      // threaded as referenceImage (the i2v mode the adapter variant-selects on).
+      expect(input.referenceImage).toBeTruthy();
+      expect(input.referenceImage!.data).toBe(Buffer.from("REF-FILE-BYTES").toString("base64"));
+    });
   });
 });

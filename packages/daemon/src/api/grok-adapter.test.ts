@@ -122,6 +122,31 @@ describe("createGrokVideoAdapter", () => {
     expect(typeof body.duration).toBe("number");
   });
 
+  // IN-01: a referenceImage present adds `image` to the body (the {url} data-URI
+  // form) on the SAME grok-imagine-video model (no endpoint swap, unlike FAL).
+  it("IN-01: with a referenceImage, adds image {url:data-URI} to the body on the same model", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ request_id: "req_i2v" }));
+    const adapter = createGrokVideoAdapter({ apiKey: API_KEY, fetchImpl });
+
+    await adapter.submit({
+      prompt: "animate this",
+      referenceImage: { data: "aGVsbG8=", mimeType: "image/png" },
+    });
+
+    const body = JSON.parse(fetchImpl.mock.calls[0][1].body);
+    expect(body.model).toBe("grok-imagine-video"); // SAME model, no swap
+    expect(body.image).toEqual({ url: "data:image/png;base64,aGVsbG8=" });
+  });
+
+  // IN-01 non-regression: WITHOUT a referenceImage there is NO image key.
+  it("IN-01: without a referenceImage, the body carries no image key", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ request_id: "req_noimg" }));
+    const adapter = createGrokVideoAdapter({ apiKey: API_KEY, fetchImpl });
+    await adapter.submit({ prompt: "p" });
+    const body = JSON.parse(fetchImpl.mock.calls[0][1].body);
+    expect(body).not.toHaveProperty("image");
+  });
+
   it("GROK-01 submit body: omits every field absent from the input (no undefined keys)", async () => {
     const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ request_id: "req_min" }));
     const adapter = createGrokVideoAdapter({ apiKey: API_KEY, fetchImpl });
