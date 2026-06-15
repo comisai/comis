@@ -202,6 +202,80 @@ describe("createVideoHandlers", () => {
     expect(costLimiter.record).toHaveBeenCalledWith("agent-1", 0.8);
   });
 
+  // ─── WR-02: the estimate and the request must agree on the resolved defaults ───
+  it("WR-02: a request omitting duration/resolution resolves the CONFIG defaults into the port input", async () => {
+    // No costLimiter → just assert the input sent to execute. The provider must
+    // receive the SAME resolved duration/resolution the estimate used, so it
+    // cannot apply its own (possibly higher-cost) defaults the estimate missed.
+    const deps = createMockDeps();
+    const handlers = createVideoHandlers(deps);
+    await handlers["video.generate"]!({ _agentId: "agent-1", prompt: "a quiet lake" }); // omits duration/resolution/audio
+    const execute = deps.provider.execute as ReturnType<typeof vi.fn>;
+    const [input] = execute.mock.calls[0]! as [Record<string, unknown>];
+    // config defaults: defaultDurationSecs 8, defaultResolution "720p".
+    expect(input.durationSecs).toBe(8);
+    expect(input.resolution).toBe("720p");
+  });
+
+  it("WR-02: the estimate is computed against the SAME resolved duration the port receives", async () => {
+    const costLimiter = {
+      canSpend: vi.fn().mockReturnValue(true),
+      record: vi.fn(),
+      reset: vi.fn(),
+    };
+    const deps = createMockDeps({ costLimiter });
+    const handlers = createVideoHandlers(deps);
+    await handlers["video.generate"]!({ _agentId: "agent-1", prompt: "a quiet lake" }); // omits duration
+    // The estimate used the resolved default duration (8 × fal $0.10/s = 0.8).
+    const [, estArg] = costLimiter.canSpend.mock.calls[0]!;
+    expect(estArg).toBeCloseTo(0.8, 5);
+    // …and the SAME duration reached the adapter input (estimate↔request agree).
+    const execute = deps.provider.execute as ReturnType<typeof vi.fn>;
+    const [input] = execute.mock.calls[0]! as [Record<string, unknown>];
+    expect(input.durationSecs).toBe(8);
+  });
+
+  // ─── WR-03: a cost-blocked request must NOT consume a count rate-limit slot ───
+  it("WR-03: a cost-ceiling block does NOT consume a count slot (the render never happened)", async () => {
+    const costLimiter = {
+      canSpend: vi.fn().mockReturnValue(false), // cost ceiling reached
+      record: vi.fn(),
+      reset: vi.fn(),
+    };
+    const tryAcquire = vi.fn().mockReturnValue(true);
+    const deps = createMockDeps({
+      costLimiter,
+      rateLimiter: { tryAcquire, reset: vi.fn() },
+    });
+    const handlers = createVideoHandlers(deps);
+    const result = (await handlers["video.generate"]!({
+      _agentId: "agent-1",
+      prompt: "a dragon",
+    })) as { success: boolean };
+    expect(result.success).toBe(false);
+    expect(deps.provider.execute).not.toHaveBeenCalled();
+    // The count slot must NOT have been burned on a cost-blocked request:
+    // tryAcquire is consumed only once the cost gate passes (or after a submit).
+    expect(tryAcquire).not.toHaveBeenCalled();
+  });
+
+  it("WR-03: a request that passes the cost gate DOES consume exactly one count slot", async () => {
+    const costLimiter = {
+      canSpend: vi.fn().mockReturnValue(true),
+      record: vi.fn(),
+      reset: vi.fn(),
+    };
+    const tryAcquire = vi.fn().mockReturnValue(true);
+    const deps = createMockDeps({
+      costLimiter,
+      rateLimiter: { tryAcquire, reset: vi.fn() },
+    });
+    const handlers = createVideoHandlers(deps);
+    await handlers["video.generate"]!({ _agentId: "agent-1", prompt: "a dragon" });
+    expect(tryAcquire).toHaveBeenCalledTimes(1);
+    expect(deps.provider.execute).toHaveBeenCalledTimes(1);
+  });
+
   // ─── port.execute receives the inline poll opts ───
   it("calls port.execute with (VideoGenInput, {timeoutMs, pollIntervalMs})", async () => {
     const deps = createMockDeps();

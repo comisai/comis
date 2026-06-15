@@ -146,32 +146,19 @@ export function createVideoHandlers(
         return { success: false, error: "Missing required parameter: prompt" };
       }
 
-      // Count rate limit (SEC-02, RETAINED) — checked FIRST. tryAcquire is an
-      // atomic check-and-increment (cannot be raced), so it bounds the blast
-      // radius for the soft cost ceiling below. A block is a quota-style guard:
-      // WARN with the closed-union log errorKind + the domain videoErrorKind + a
-      // hint naming maxPerHour (§2.7), logger-only (no trajectory emit).
-      if (!deps.rateLimiter.tryAcquire(agentId)) {
-        const hint =
-          `Video generation rate limit reached (max ${deps.config.maxPerHour} ` +
-          "per hour); raise integrations.media.videoGeneration.maxPerHour or wait " +
-          "for the hour window to reset.";
-        deps.logger.warn(
-          {
-            agentId,
-            step: "video_rate_limit",
-            errorKind: VIDEO_ERR_TO_LOG.quota_exceeded,
-            videoErrorKind: "quota_exceeded" as const,
-            hint,
-          },
-          "Video generation blocked: per-hour count rate limit reached",
-        );
-        // OBS-04 (Phase 192): emit video.failed{quota_exceeded} here.
-        return {
-          success: false,
-          error: `Rate limit exceeded: max ${deps.config.maxPerHour} videos per hour`,
-        };
-      }
+      // WR-02: resolve the config defaults ONCE, here, so the worst-case
+      // estimate and the port input AGREE on the duration/resolution/audio. If
+      // the input only carried explicitly-supplied fields, the provider would
+      // apply its OWN defaults (which need not match Comis's config defaults) —
+      // and the estimate, computed against the config defaults, could UNDER-count
+      // the actual render (e.g. config 720p but a provider default of 1080p/4k).
+      // SEC-02's contract is a worst-case UPPER bound; aligning estimate↔request
+      // restores it. `audio` stays undefined when neither param nor config sets
+      // it (→ provider default; the estimate uses no audio surcharge to match).
+      const resolvedDurationSecs = params.duration ?? deps.config.defaultDurationSecs;
+      const resolvedResolution = params.resolution ?? deps.config.defaultResolution;
+      const resolvedAspectRatio = params.aspect_ratio ?? deps.config.defaultAspectRatio;
+      const resolvedAudio = params.audio ?? deps.config.generateAudio;
 
       // SEC-02 / DIVERGENCE 3 — the PRE-SUBMIT worst-case cost ceiling. Compute
       // the estimate FIRST (a video clip is ALREADY rendering once submitted, I6,
@@ -180,13 +167,20 @@ export function createVideoHandlers(
       // `maxCostPerHourUsd` is unset → the ceiling is skipped (count-only, no
       // regression). Exceeding it blocks with quota_exceeded (logger-only WARN +
       // a hint naming the knob), and port.execute is NOT called.
+      //
+      // WR-03 ordering: the cost ceiling is checked BEFORE the count rate limit
+      // (tryAcquire) so a cost-blocked request does NOT burn a count slot for a
+      // render that never happened (which would exhaust maxPerHour without ever
+      // rendering, and surface the less-actionable count error). The count limit
+      // still gates the actual submit below and still bounds the soft cost cap's
+      // blast radius — it just no longer charges for cost-rejected requests.
       const estimatedCostUsd = estimateVideoCostUsd(
         deps.provider.id,
         params.model ?? deps.config.model,
         {
-          durationSecs: params.duration ?? deps.config.defaultDurationSecs,
-          resolution: params.resolution ?? deps.config.defaultResolution,
-          audio: params.audio ?? deps.config.generateAudio,
+          durationSecs: resolvedDurationSecs,
+          resolution: resolvedResolution,
+          audio: resolvedAudio,
         },
       );
       if (deps.costLimiter && !deps.costLimiter.canSpend(agentId, estimatedCostUsd)) {
@@ -209,6 +203,34 @@ export function createVideoHandlers(
         return { success: false, error: "Video generation cost ceiling exceeded", hint };
       }
 
+      // Count rate limit (SEC-02, RETAINED) — checked AFTER the cost ceiling
+      // (WR-03) but still BEFORE the submit. tryAcquire is an atomic
+      // check-and-increment (cannot be raced), so it bounds the blast radius for
+      // the soft cost ceiling above. A block is a quota-style guard: WARN with
+      // the closed-union log errorKind + the domain videoErrorKind + a hint
+      // naming maxPerHour (§2.7), logger-only (no trajectory emit).
+      if (!deps.rateLimiter.tryAcquire(agentId)) {
+        const hint =
+          `Video generation rate limit reached (max ${deps.config.maxPerHour} ` +
+          "per hour); raise integrations.media.videoGeneration.maxPerHour or wait " +
+          "for the hour window to reset.";
+        deps.logger.warn(
+          {
+            agentId,
+            step: "video_rate_limit",
+            errorKind: VIDEO_ERR_TO_LOG.quota_exceeded,
+            videoErrorKind: "quota_exceeded" as const,
+            hint,
+          },
+          "Video generation blocked: per-hour count rate limit reached",
+        );
+        // OBS-04 (Phase 192): emit video.failed{quota_exceeded} here.
+        return {
+          success: false,
+          error: `Rate limit exceeded: max ${deps.config.maxPerHour} videos per hour`,
+        };
+      }
+
       // SEC-03 image_url resolution (text-to-video baseline). Resolve ONLY when
       // supplied; absence keeps the request text-only. The resolution reuses the
       // SHARED SSRF + path-traversal resolver (the image guard verbatim —
@@ -226,12 +248,19 @@ export function createVideoHandlers(
 
       // DEL-01: the inline submit → bounded poll-loop → download. The port runs
       // the loop within timeoutMs; a deadline overrun surfaces as job_timeout.
+      //
+      // WR-02: send the RESOLVED duration/resolution/aspectRatio (param OR config
+      // default) — the same values the estimate above used — so the provider
+      // renders exactly what was priced and cannot apply a higher-cost default
+      // the estimate never saw. `audio` is sent only when explicitly resolved
+      // (param or config); left undefined it stays a provider default (and the
+      // estimate used no audio surcharge, so estimate↔request still agree).
       const input: VideoGenInput = {
         prompt,
-        ...(params.duration !== undefined ? { durationSecs: params.duration } : {}),
-        ...(params.aspect_ratio !== undefined ? { aspectRatio: params.aspect_ratio } : {}),
-        ...(params.resolution !== undefined ? { resolution: params.resolution } : {}),
-        ...(params.audio !== undefined ? { audio: params.audio } : {}),
+        durationSecs: resolvedDurationSecs,
+        aspectRatio: resolvedAspectRatio,
+        resolution: resolvedResolution,
+        ...(resolvedAudio !== undefined ? { audio: resolvedAudio } : {}),
         ...(params.negative_prompt !== undefined ? { negativePrompt: params.negative_prompt } : {}),
         ...(params.seed !== undefined ? { seed: params.seed } : {}),
         ...(referenceImage ? { referenceImage } : {}),
