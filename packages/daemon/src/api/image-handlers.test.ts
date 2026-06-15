@@ -769,7 +769,10 @@ describe("createImageHandlers", () => {
     expect(payload.callerProvider).toBe("openai-codex");
     expect(payload.executedProvider).toBe("openrouter");
     expect(payload.errorKind).toBe("precondition");
-    expect(payload.hint).toContain("186");
+    // Assert the actionable remediation knob, not a brittle phase number — the
+    // hint deliberately stopped naming "Phase 186" (d5612798); pin it to the
+    // stable config key an operator must set instead.
+    expect(payload.hint).toContain("integrations.media.imageGeneration.provider");
   });
 
   it("does NOT WARN when the caller's provider matches the boot-selected port (shared-provider agents)", async () => {
