@@ -154,12 +154,14 @@ export function buildAgentTerminalDurability(i: AgentTerminalDurabilityInputs): 
       i.eventBus.emit("terminal:drive_reattached", { sessionId, agentId, reason: "tmux_alive", timestamp: i.nowMs() });
       i.logger.info({ sessionId, agentId, step: "drive_reattached" }, "terminal durable drive re-attached on recover-on-boot");
     },
-    onUnrecoverable: ({ sessionId, agentId, reason, errorKind }) => {
+    onUnrecoverable: ({ sessionId, agentId, reason }) => {
       // DUR-02 (I10): a genuinely-gone durable session → the EXISTING lost state + a content-free
       // unrecoverable reason (the journal is PRESERVED by the holder; NOTIFY-01 layers `failed`).
+      // errorKind is the literal "dependency" (a gone backend) — the closed-union invariant
+      // requires a literal here, not the forwarded payload field (which is always "dependency").
       i.eventBus.emit("terminal:session_state", { sessionId, agentId, state: "lost", durationMs: 0, timestamp: i.nowMs() });
       i.logger.warn(
-        { sessionId, agentId, reason, hint: `a durable terminal drive could not be re-attached (${reason}); flipped lost with the journal preserved for a fresh drive`, errorKind, step: "drive_unrecoverable" },
+        { sessionId, agentId, reason, hint: `a durable terminal drive could not be re-attached (${reason}); flipped lost with the journal preserved for a fresh drive`, errorKind: "dependency" as const, step: "drive_unrecoverable" },
         "terminal durable drive unrecoverable on recover-on-boot",
       );
     },
