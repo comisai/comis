@@ -79,9 +79,20 @@ export interface VideoGenInput {
   negativePrompt?: string;
   /** Deterministic seed (provider-dependent) */
   seed?: number;
-  /** Phase 188: SSRF-resolved reference image for image-to-video (full
-   *  variant-select is Phase 191) — base64 + mime, resolved by the handler. */
+  /** Phase 188 / 191 (IN-01): SSRF-resolved first-frame reference image for
+   *  image-to-video — base64 + mime, resolved by the handler. This singular field
+   *  is the PRIMARY and (Phase 191) the ONLY consumed image input: each adapter
+   *  variant-selects on its presence (FAL swaps to its /image-to-video endpoint;
+   *  Veo/Grok add the image on the same model). */
   referenceImage?: { data: string; mimeType: string };
+  /** Phase 191 (IN-01) — FORWARD-COMPAT SCAFFOLDING, NOT consumed this phase.
+   *  Additional reference images for i2v, each with a role. `referenceImage` (the
+   *  first-frame) stays the primary, sole-consumed singular input this phase;
+   *  multi-ref consumption (Veo lastFrame/referenceImages, Grok reference_images,
+   *  FAL first-last-frame) is a LOCKED fast-follow deferral. This optional field
+   *  is byte-compatible scaffolding so the future phase is additive-only — no
+   *  adapter reads it yet. Each `ref` is the SSRF-resolved { data, mimeType }. */
+  referenceImages?: { ref: { data: string; mimeType: string }; role: "first_frame" | "last_frame" | "reference" }[];
   /** Overrides the per-backend default video model */
   model?: string;
 }

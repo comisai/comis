@@ -34,6 +34,18 @@ import { classifyFalVideoError } from "./classify-fal-video-error.js";
 const DEFAULT_VIDEO_ENDPOINT = "fal-ai/veo3.1/fast";
 
 /**
+ * IN-01 / Pitfall 4: FAL is the ONLY backend that needs a DIFFERENT model id for
+ * image-to-video — `fal-ai/veo3.1/fast/image-to-video` is a DISTINCT endpoint
+ * from the t2v default, and the t2v endpoint REJECTS `image_url` (Hermes
+ * `_resolve_model_for_modality`). Derive the i2v endpoint by appending the
+ * `/image-to-video` segment (idempotent — an id already ending in it is returned
+ * unchanged, so a caller who names an i2v endpoint themselves is not double-suffixed).
+ */
+function deriveI2VEndpoint(t2v: string): string {
+  return t2v.endsWith("/image-to-video") ? t2v : `${t2v}/image-to-video`;
+}
+
+/**
  * WR-01: hard fallback timeout for the result download when the caller threads
  * no AbortSignal (a standalone `fetchResult` from Phase 189's poller). The poll
  * loop deadline bounds `execute()`; this bounds a hung CDN on the download leg
@@ -65,7 +77,6 @@ export interface VideoFetchResultOpts {
  */
 export function createFalVideoAdapter(opts: { apiKey: string; model?: string }): VideoGenerationPort {
   fal.config({ credentials: opts.apiKey });
-  const endpoint = opts.model ?? DEFAULT_VIDEO_ENDPOINT;
 
   return {
     id: "fal",
@@ -74,11 +85,20 @@ export function createFalVideoAdapter(opts: { apiKey: string; model?: string }):
     submit(input: VideoGenInput): Promise<Result<VideoGenJob, Error>> {
       return fromPromise(
         (async () => {
+          // IN-01 variant-select (Pitfall 4): an explicit opts.model wins (the
+          // operator-named endpoint is authoritative); otherwise a first-frame
+          // referenceImage SWAPS the t2v default to its distinct /image-to-video
+          // endpoint, and the absence keeps text-to-video. The chosen endpoint is
+          // stored on job.model so poll()/fetchResult() target the SAME endpoint
+          // per job (the swap round-trips — the off-turn poller only has the job).
+          const isI2V = !!input.referenceImage;
+          const endpoint =
+            opts.model ?? (isI2V ? deriveI2VEndpoint(DEFAULT_VIDEO_ENDPOINT) : DEFAULT_VIDEO_ENDPOINT);
           const submitted = await fal.queue.submit(endpoint, { input: buildFalInput(input) });
           const job: VideoGenJob = {
             jobId: submitted.request_id, // opaque, secret-free, stable across poll() (VPORT-03)
             provider: "fal",
-            model: endpoint,
+            model: endpoint, // the resolved (possibly i2v-swapped) endpoint — round-trips to poll/fetch
           };
           return job;
         })(),
@@ -88,7 +108,9 @@ export function createFalVideoAdapter(opts: { apiKey: string; model?: string }):
     poll(job: VideoGenJob): Promise<Result<VideoJobStatus, Error>> {
       return fromPromise(
         (async () => {
-          const st = await fal.queue.status(endpoint, { requestId: job.jobId });
+          // Key off job.model (the endpoint submit resolved) so an i2v job polls
+          // its /image-to-video endpoint, not the t2v default (Pitfall 4 round-trip).
+          const st = await fal.queue.status(job.model, { requestId: job.jobId });
           const state: VideoJobStatus["state"] = st.status === "COMPLETED" ? "done" : "pending";
           return { jobId: job.jobId, state } satisfies VideoJobStatus;
         })(),
@@ -98,7 +120,8 @@ export function createFalVideoAdapter(opts: { apiKey: string; model?: string }):
     fetchResult(job: VideoGenJob, fetchOpts?: VideoFetchResultOpts): Promise<Result<VideoGenOutput, Error>> {
       return fromPromise(
         (async () => {
-          const res = await fal.queue.result(endpoint, { requestId: job.jobId });
+          // job.model round-trips the (possibly i2v-swapped) endpoint (Pitfall 4).
+          const res = await fal.queue.result(job.model, { requestId: job.jobId });
           const data = res.data as {
             video?: { url?: string; duration?: unknown };
             duration?: unknown;
@@ -126,7 +149,7 @@ export function createFalVideoAdapter(opts: { apiKey: string; model?: string }):
             // the handler would pick the wrong filename extension).
             mimeType: deriveVideoMime(contentType, url),
             sourceUrl: url,
-            model: endpoint,
+            model: job.model, // the (possibly i2v-swapped) endpoint this job ran on
             provider: "fal",
             ...(reportedDuration !== undefined ? { durationSecs: reportedDuration } : {}),
             ...(reportedCost !== undefined ? { costUsd: reportedCost } : {}),
@@ -315,12 +338,22 @@ function mapThrownToErr(error: Error, opts?: { emptyResult?: boolean }): Result<
 }
 
 /**
- * Map a normalized `VideoGenInput` to the FAL request input. Baseline pass-through;
- * per-model duration wire-encoding is refined in Phase 191.
+ * Map a normalized `VideoGenInput` to the FAL request input. The duration is
+ * wire-encoded as the FAL `"${n}s"` string (vs Veo's number / Grok's integer).
+ *
+ * IN-01 (Phase 191): when a first-frame `referenceImage` is present (i2v — the
+ * caller has SWAPPED to the /image-to-video endpoint in `submit`), the image is
+ * sent as the `image_url` data-URI (`data:<mime>;base64,<data>`) the FAL i2v
+ * endpoint requires. Only the SINGULAR `referenceImage` is consumed; the additive
+ * `referenceImages` array (first/last-frame multi-ref via the FAL flf endpoints)
+ * is a LOCKED fast-follow deferral — no adapter reads it this phase.
  */
 function buildFalInput(input: VideoGenInput): Record<string, unknown> {
   return {
     prompt: input.prompt,
+    ...(input.referenceImage
+      ? { image_url: `data:${input.referenceImage.mimeType};base64,${input.referenceImage.data}` }
+      : {}),
     ...(input.aspectRatio ? { aspect_ratio: input.aspectRatio } : {}),
     ...(input.durationSecs ? { duration: `${input.durationSecs}s` } : {}),
     ...(input.resolution ? { resolution: input.resolution } : {}),

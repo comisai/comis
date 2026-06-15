@@ -397,12 +397,21 @@ function reconcileTicksToUsd(ticks: unknown): number | undefined {
  * `durationSeconds`); resolution is validated to `480p`/`720p` upstream (the
  * Phase 191 VIDEO_MODELS matrix — passed through here). Omitted input fields are
  * ABSENT (the `...(x !== undefined ? {k:x} : {})` idiom — no `undefined` keys).
- * i2v `image`/`reference_images` plumbing is Phase 191 — NOT wired here.
+ *
+ * IN-01 (Phase 191): when a first-frame `referenceImage` is present (i2v), add
+ * `image` to the body — xAI accepts `{ url | file_id }`; we use the data-URI
+ * `{ url }` form. SAME `grok-imagine-video` model id for t2v AND i2v (no endpoint
+ * swap, unlike FAL). Only the SINGULAR referenceImage is consumed; the additive
+ * `referenceImages` array (Grok `reference_images[]`) is a LOCKED fast-follow
+ * deferral — not mapped here this phase.
  */
 function buildGrokBody(input: VideoGenInput, model: string): Record<string, unknown> {
   return {
     model,
     prompt: input.prompt,
+    ...(input.referenceImage
+      ? { image: { url: `data:${input.referenceImage.mimeType};base64,${input.referenceImage.data}` } }
+      : {}),
     ...(input.durationSecs !== undefined ? { duration: input.durationSecs } : {}),
     ...(input.aspectRatio ? { aspect_ratio: input.aspectRatio } : {}),
     ...(input.resolution ? { resolution: input.resolution } : {}),

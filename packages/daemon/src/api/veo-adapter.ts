@@ -108,6 +108,15 @@ export function createVeoVideoAdapter(opts: {
           const op = await ai.models.generateVideos({
             model,
             prompt: input.prompt,
+            // IN-01 (A4): the first-frame image is a TOP-LEVEL generateVideos arg
+            // (the SDK Image_2 raw-bytes shape { imageBytes, mimeType }), NOT a
+            // config field. SAME model id for t2v AND i2v (no endpoint swap,
+            // unlike FAL). Only the SINGULAR referenceImage is consumed; the
+            // additive referenceImages array (Veo lastFrame/referenceImages) is a
+            // LOCKED fast-follow deferral — buildVeoConfig is unchanged on that axis.
+            ...(input.referenceImage
+              ? { image: { imageBytes: input.referenceImage.data, mimeType: input.referenceImage.mimeType } }
+              : {}),
             config: buildVeoConfig(input),
           });
           if (!op.name) {
@@ -265,9 +274,13 @@ async function readOperationError(
  * Map a normalized `VideoGenInput` to the Veo `GenerateVideosConfig` (VEO-02).
  * `durationSeconds` is a NUMBER (NOT the FAL `${n}s` string). Omitted input
  * fields are ABSENT from the config (the `...(x !== undefined ? {k:x} : {})`
- * idiom — no `undefined` keys). i2v config (lastFrame/referenceImages from
- * `input.referenceImage`) is Phase 191 — the field is acknowledged but NOT mapped
- * here (variant-select is 191).
+ * idiom — no `undefined` keys).
+ *
+ * IN-01 (Phase 191): the first-frame i2v image is wired as a TOP-LEVEL
+ * `generateVideos({image})` arg in `submit` (A4), NOT here — the config holds
+ * only `lastFrame`/`referenceImages`, which are the LOCKED multi-ref deferral
+ * (no adapter reads `input.referenceImages` this phase), so this config is
+ * unchanged on the i2v axis.
  */
 function buildVeoConfig(input: VideoGenInput): GenerateVideosConfig {
   return {
@@ -277,7 +290,6 @@ function buildVeoConfig(input: VideoGenInput): GenerateVideosConfig {
     ...(input.negativePrompt ? { negativePrompt: input.negativePrompt } : {}),
     ...(input.audio !== undefined ? { generateAudio: input.audio } : {}),
     ...(input.seed !== undefined ? { seed: input.seed } : {}),
-    // i2v config plumbing (Phase 191 does variant-select): lastFrame, referenceImages.
   };
 }
 
