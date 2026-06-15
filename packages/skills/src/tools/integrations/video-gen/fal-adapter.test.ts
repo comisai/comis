@@ -192,6 +192,67 @@ describe("fetchResult", () => {
 
     expect(res.ok).toBe(false);
   });
+
+  // WR-01: an oversized Content-Length must be rejected BEFORE buffering the
+  // body (an OOM guard for a hostile/buggy CDN), mirroring ssrf-image-fetch.
+  it("WR-01: a Content-Length exceeding the cap is rejected pre-buffer (body never read)", async () => {
+    falMock.queue.result.mockResolvedValueOnce({
+      data: { video: { url: "https://cdn.fal.ai/huge.mp4" } },
+      requestId: "req-huge",
+    });
+    const original = globalThis.fetch;
+    const arrayBuffer = vi.fn().mockResolvedValue(Buffer.from("x").buffer.slice(0));
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      // Declare a body far over the cap.
+      headers: new Headers({ "content-length": String(500 * 1024 * 1024) }),
+      arrayBuffer,
+      body: { cancel: vi.fn().mockResolvedValue(undefined) },
+    }) as unknown as typeof fetch;
+
+    const adapter = createFalVideoAdapter({ apiKey: "k" });
+    const res = await adapter.fetchResult(
+      { jobId: "req-huge", provider: "fal", model: "m" },
+      { maxBytes: 200 * 1024 * 1024 },
+    );
+    globalThis.fetch = original;
+
+    expect(res.ok).toBe(false);
+    // The body must NOT have been fully buffered (the cap rejects pre-read).
+    expect(arrayBuffer).not.toHaveBeenCalled();
+  });
+
+  // WR-01: an already-aborted signal must reject the download (respect the
+  // operator deadline on a hung CDN), threaded from execute()'s runOpts.signal.
+  it("WR-01: an aborted signal rejects the download", async () => {
+    falMock.queue.result.mockResolvedValueOnce({
+      data: { video: { url: "https://cdn.fal.ai/slow.mp4" } },
+      requestId: "req-abort",
+    });
+    const original = globalThis.fetch;
+    // A fetch that honors AbortSignal: reject with an AbortError when aborted.
+    globalThis.fetch = vi.fn().mockImplementation((_url: string, init?: { signal?: AbortSignal }) => {
+      if (init?.signal?.aborted) {
+        return Promise.reject(Object.assign(new Error("The operation was aborted"), { name: "AbortError" }));
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        headers: new Headers(),
+        arrayBuffer: () => Promise.resolve(Buffer.from("vid").buffer.slice(0)),
+      });
+    }) as unknown as typeof fetch;
+
+    const adapter = createFalVideoAdapter({ apiKey: "k" });
+    const res = await adapter.fetchResult(
+      { jobId: "req-abort", provider: "fal", model: "m" },
+      { signal: AbortSignal.abort() },
+    );
+    globalThis.fetch = original;
+
+    expect(res.ok).toBe(false);
+  });
 });
 
 describe("execute — the inline submit -> poll -> download loop", () => {

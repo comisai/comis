@@ -34,6 +34,30 @@ import { classifyFalVideoError } from "./classify-fal-video-error.js";
 const DEFAULT_VIDEO_ENDPOINT = "fal-ai/veo3.1/fast";
 
 /**
+ * WR-01: hard fallback timeout for the result download when the caller threads
+ * no AbortSignal (a standalone `fetchResult` from Phase 189's poller). The poll
+ * loop deadline bounds `execute()`; this bounds a hung CDN on the download leg
+ * so it cannot block past the operator-configured budget indefinitely.
+ */
+const DOWNLOAD_TIMEOUT_MS = 120_000;
+
+/**
+ * WR-01: default streamed byte ceiling for the result download. The handler's
+ * MediaPersistenceService rejects oversize POST-buffer; this rejects DURING the
+ * download (a Content-Length pre-check + a streamed running total) so a hostile
+ * /buggy CDN body cannot OOM the process before the persist cap is consulted.
+ * 200 MB matches VIDEO_PERSIST_MAX_BYTES (main-helpers.ts).
+ */
+const DEFAULT_DOWNLOAD_MAX_BYTES = 200 * 1024 * 1024;
+
+/** Options bounding the result download (WR-01): caller-supplied abort signal
+ *  and/or a byte cap. Threaded from `execute`'s runOpts; defaulted otherwise. */
+export interface VideoFetchResultOpts {
+  signal?: AbortSignal;
+  maxBytes?: number;
+}
+
+/**
  * Create a FAL video-generation adapter over the queue API.
  *
  * @param opts - API key (passed ONLY to `fal.config`, never into a job/output)
@@ -71,7 +95,7 @@ export function createFalVideoAdapter(opts: { apiKey: string; model?: string }):
       );
     },
 
-    fetchResult(job: VideoGenJob): Promise<Result<VideoGenOutput, Error>> {
+    fetchResult(job: VideoGenJob, fetchOpts?: VideoFetchResultOpts): Promise<Result<VideoGenOutput, Error>> {
       return fromPromise(
         (async () => {
           const res = await fal.queue.result(endpoint, { requestId: job.jobId });
@@ -79,22 +103,7 @@ export function createFalVideoAdapter(opts: { apiKey: string; model?: string }):
           if (!url) {
             throw new Error("fal: COMPLETED with no video.url"); // -> empty_response (FAL-02)
           }
-          const response = await fetch(url);
-          // CR-01: reject a non-2xx status BEFORE reading the body. FAL video.url
-          // values are short-lived signed CDN URLs; an expired/4xx/5xx response
-          // resolves with `ok:false` and `arrayBuffer()` returns the ERROR body
-          // (an HTML/JSON 403 page, or empty). Without this guard that garbage
-          // flows out as a "successful" mp4, is persisted, and is delivered as
-          // success — the exact orphan-on-expiry class DEL-01 claims to close.
-          // The throw is caught by `fromPromise` and mapped by
-          // `classifyFalVideoError` to a typed VideoGenError (honest failure).
-          if (!response.ok) {
-            throw new Error(`fal: failed to download video.url: HTTP ${response.status}`);
-          }
-          const buffer = Buffer.from(await response.arrayBuffer());
-          if (buffer.byteLength === 0) {
-            throw new Error("fal: video.url returned an empty body");
-          }
+          const buffer = await downloadVideoBytes(url, fetchOpts);
           return {
             buffer,
             mimeType: "video/mp4",
@@ -143,7 +152,10 @@ export function createFalVideoAdapter(opts: { apiKey: string; model?: string }):
         return mapThrownToErr(lastErr ?? new Error("fal: job failed"));
       }
 
-      const fetched = await this.fetchResult(job);
+      // WR-01: thread the operator deadline's signal into the DOWNLOAD leg too
+      // (not just the poll loop), so a hung CDN on fetchResult honors the same
+      // budget the poll loop did.
+      const fetched = await this.fetchResult(job, runOpts.signal ? { signal: runOpts.signal } : undefined);
       if (!fetched.ok) {
         return mapThrownToErr(fetched.error, {
           emptyResult: /no video\.url/.test(fetched.error.message),
@@ -152,6 +164,80 @@ export function createFalVideoAdapter(opts: { apiKey: string; model?: string }):
       return fetched;
     },
   };
+}
+
+/**
+ * WR-07 (trust boundary): `url` is the FAL queue-result `video.url` — a
+ * PROVIDER-OWNED CDN URL, NOT the agent-supplied `image_url` input. The input
+ * path is rigorously SSRF-guarded (the DNS-pinned `fetchImageBytesSsrfSafe`
+ * resolver, Phase 185); this OUTPUT download trusts the provider CDN, so it does
+ * NOT re-run the SSRF resolver. That is a DELIBERATE trust decision, not an
+ * oversight. We still harden it: `redirect:"error"` (never silently follow a CDN
+ * open-redirect to an internal IP), a bounded signal (CR-01/WR-01), and a
+ * streamed byte cap. Phase 190's Veo/Grok adapters each fetch their own provider
+ * URL — they should follow this same bounded-download shape.
+ *
+ * @throws on a non-2xx status (CR-01), an empty body, an over-cap body (WR-01),
+ *   or an aborted signal — all caught by `fromPromise` at the call site and
+ *   classified by `classifyFalVideoError` into a typed `VideoGenError`.
+ */
+async function downloadVideoBytes(url: string, opts?: VideoFetchResultOpts): Promise<Buffer> {
+  const maxBytes = opts?.maxBytes ?? DEFAULT_DOWNLOAD_MAX_BYTES;
+  // WR-01: honor the caller's deadline signal; else a hard fallback timeout so a
+  // hung CDN cannot block forever.
+  const signal = opts?.signal ?? AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS);
+  const response = await fetch(url, { redirect: "error", signal });
+
+  // CR-01: reject a non-2xx status BEFORE reading the body. An expired/4xx/5xx
+  // FAL CDN URL resolves with `ok:false` and `arrayBuffer()` returns the ERROR
+  // body (an HTML/JSON 403 page, or empty) — without this guard that garbage
+  // flows out as a "successful" mp4 and is persisted + delivered as success
+  // (the exact orphan-on-expiry class DEL-01 claims to close).
+  if (!response.ok) {
+    throw new Error(`fal: failed to download video.url: HTTP ${response.status}`);
+  }
+
+  // WR-01: Content-Length pre-check — abort before buffering if the server
+  // DECLARES a body over the cap (an OOM guard; mirrors ssrf-image-fetch.ts).
+  const declared = parseInt(response.headers.get("content-length") ?? "", 10);
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    await response.body?.cancel();
+    throw new Error(`fal: video.url body exceeds the ${maxBytes}-byte cap (declared ${declared})`);
+  }
+
+  // WR-01: stream with a running byte cap when a body reader is available (the
+  // server may under-declare/omit length); fall back to arrayBuffer otherwise.
+  const reader = response.body?.getReader?.();
+  let buffer: Buffer;
+  if (reader) {
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.byteLength;
+        if (total > maxBytes) {
+          await reader.cancel();
+          throw new Error(`fal: video.url body exceeds the ${maxBytes}-byte cap`);
+        }
+        chunks.push(value);
+      }
+    } finally {
+      reader.releaseLock();
+    }
+    buffer = Buffer.concat(chunks);
+  } else {
+    buffer = Buffer.from(await response.arrayBuffer());
+    if (buffer.byteLength > maxBytes) {
+      throw new Error(`fal: video.url body exceeds the ${maxBytes}-byte cap`);
+    }
+  }
+
+  if (buffer.byteLength === 0) {
+    throw new Error("fal: video.url returned an empty body");
+  }
+  return buffer;
 }
 
 /** Map a thrown error to a typed `VideoGenError` Result via `classifyFalVideoError`. */

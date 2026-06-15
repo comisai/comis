@@ -156,8 +156,13 @@ export interface VideoGenerationPort {
   submit(input: VideoGenInput): Promise<Result<VideoGenJob, Error>>;
   /** Poll a submitted job's status (idempotent; jobId stable). */
   poll(job: VideoGenJob): Promise<Result<VideoJobStatus, Error>>;
-  /** Fetch + download the finished result to a buffer. */
-  fetchResult(job: VideoGenJob): Promise<Result<VideoGenOutput, Error>>;
+  /** Fetch + download the finished result to a buffer. `opts` bounds the
+   *  download (WR-01): an optional abort signal (the operator deadline; threaded
+   *  by `execute`) and a byte cap (defaulted by the adapter). */
+  fetchResult(
+    job: VideoGenJob,
+    opts?: { signal?: AbortSignal; maxBytes?: number },
+  ): Promise<Result<VideoGenOutput, Error>>;
   /** Inline convenience: submit + bounded poll-loop + fetchResult (Plan 03
    *  wires the loop; a deadline overrun surfaces as `job_timeout`). */
   execute(
