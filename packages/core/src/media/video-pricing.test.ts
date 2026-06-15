@@ -49,13 +49,73 @@ describe("estimateVideoCostUsd", () => {
     expect(at4k).toBeGreaterThan(at720);
   });
 
-  it("estimates the veo backend the same as the fal-hosted veo path", () => {
+  it("estimates the native veo 720p rate (audio-off) at the documented per-second rate", () => {
+    // Native Veo 3.0 Fast: $0.10/s @720p (audio-off), audio INCLUDED in base.
     const est = estimateVideoCostUsd("veo", undefined, {
-      durationSecs: 5,
-      resolution: "1080p",
+      durationSecs: 8,
+      resolution: "720p",
       audio: false,
     });
-    expect(est).toBeCloseTo(0.5, 5);
+    expect(est).toBeCloseTo(0.8, 5);
+  });
+
+  it("applies the veo 4k multiplier above the 720p rate", () => {
+    const at720 = estimateVideoCostUsd("veo", undefined, {
+      durationSecs: 8,
+      resolution: "720p",
+      audio: false,
+    });
+    const at4k = estimateVideoCostUsd("veo", undefined, {
+      durationSecs: 8,
+      resolution: "4k",
+      audio: false,
+    });
+    // fourKMultiplier: 3 → 8s × $0.10 × 3 = $2.40.
+    expect(at4k).toBeCloseTo(2.4, 5);
+    expect(at4k).toBeGreaterThan(at720);
+  });
+
+  it("keeps an audio=true veo estimate conservatively HIGH (audio surcharge ceiling)", () => {
+    // Native Veo 3.x bills audio in-base, so audioPerSecond is a conservative
+    // over-estimate ceiling (Pitfall 4) — the audio estimate must exceed the
+    // audio-off estimate so the pre-submit ceiling is never under-counted.
+    const audioOff = estimateVideoCostUsd("veo", undefined, {
+      durationSecs: 8,
+      resolution: "720p",
+      audio: false,
+    });
+    const audioOn = estimateVideoCostUsd("veo", undefined, {
+      durationSecs: 8,
+      resolution: "720p",
+      audio: true,
+    });
+    // audioPerSecond: 0.15 → 8s × $0.15 = $1.20 (the conservative ceiling).
+    expect(audioOn).toBeCloseTo(1.2, 5);
+    expect(audioOn).toBeGreaterThan(audioOff);
+  });
+
+  it("estimates the grok backend at the conservative refined per-second rate", () => {
+    // Conservative worst-case 0.07/s; the actual is reconciled from
+    // cost_in_usd_ticks by the Grok adapter (Plan 02).
+    const est = estimateVideoCostUsd("grok", undefined, { durationSecs: 6 });
+    expect(est).toBeCloseTo(0.42, 5);
+  });
+
+  it("leaves the fal estimate UNCHANGED (the proven baseline — non-regression)", () => {
+    // fal must stay byte-identical: $0.10/s base, $0.15/s audio, 3× @4k.
+    expect(estimateVideoCostUsd("fal", undefined, { durationSecs: 8, resolution: "720p", audio: false })).toBeCloseTo(
+      0.8,
+      5,
+    );
+    expect(estimateVideoCostUsd("fal", undefined, { durationSecs: 8, resolution: "720p", audio: true })).toBeCloseTo(
+      1.2,
+      5,
+    );
+    expect(estimateVideoCostUsd("fal", undefined, { durationSecs: 8, resolution: "4k", audio: false })).toBeCloseTo(
+      2.4,
+      5,
+    );
+    expect(VIDEO_PRICING.fal).toEqual({ perSecond: 0.1, audioPerSecond: 0.15, fourKMultiplier: 3 });
   });
 
   it("clamps a negative or zero duration to a non-negative estimate", () => {
