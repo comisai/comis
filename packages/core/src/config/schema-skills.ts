@@ -217,6 +217,25 @@ export const TerminalDriverConfigSchema = z.strictObject({
   allow: z.array(TerminalAllowEntrySchema).default([]),
   redactSecrets: z.boolean(),
   audit: z.strictObject({ enabled: z.boolean() }),
+  /**
+   * Autonomous-drive policy (v2.24, additive — design §4 "Config surface"). OPTIONAL +
+   * `strictObject`: a config with NO `drive` block is byte-identical to today (I1). This
+   * phase introduces `mode` (DRIVE-02) + `readMode` (READ-01); Phases 165/166 extend this
+   * SAME block (durable / notify / heartbeatNotifyMs / heartbeatMs / maxCostUsd) — the
+   * optional-block + per-field-`.default(...)` discipline lets each phase's additions stay
+   * independent (an unknown/typo'd `drive.*` key still rejects, OPS-02). The per-field
+   * defaults preserve today's effective behavior (`mode:"auto"` only promotes a genuinely-
+   * long drive; `readMode:"digest"` is already the tool's effective default). Changing/adding
+   * a default regenerates the `section-registry-parity` snapshot (a validate-only gate).
+   */
+  drive: z
+    .strictObject({
+      /** Auto-promote (default) / never (= today's inline behavior) / always-at-first-wait (DRIVE-02). */
+      mode: z.enum(["auto", "attached", "detached"]).default("auto"),
+      /** Default wake-read shape (READ-01): a bounded digest / only changed rows / the whole bounded screen. */
+      readMode: z.enum(["digest", "diff", "full"]).default("digest"),
+    })
+    .optional(),
 });
 
 /** Inferred terminal driver configuration type. */
