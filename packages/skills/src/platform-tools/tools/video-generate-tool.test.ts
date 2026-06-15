@@ -97,10 +97,8 @@ describe("createVideoGenerateTool", () => {
     const desc = tool.description;
     // The active backend is named.
     expect(desc).toContain("fal");
-    // FAL t2v durations enum [4,6,8].
-    expect(desc).toMatch(/\b4\b/);
-    expect(desc).toMatch(/\b6\b/);
-    expect(desc).toMatch(/\b8\b/);
+    // FAL t2v durations enum [4,6,8] (rendered "4/6/8s").
+    expect(desc).toContain("4/6/8s");
     // FAL t2v resolutions [720p,1080p,4k].
     expect(desc).toContain("720p");
     expect(desc).toContain("1080p");

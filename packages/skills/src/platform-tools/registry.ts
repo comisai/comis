@@ -380,7 +380,11 @@ export function createPlatformToolRegistry(): readonly PlatformToolDescriptor[] 
       name: "video_generate",
       category: "media",
       conditional: (ctx) => ctx.videoGenProvider !== undefined,
-      build: (ctx) => createVideoGenerateTool(ctx.rpcCall as never),
+      // IN-03 (191): thread the boot-selected videoGenProvider so the tool
+      // description is built at registration from the ACTIVE backend's
+      // capability matrix (the conditional above guarantees it is present).
+      build: (ctx) =>
+        createVideoGenerateTool(ctx.rpcCall as never, ctx.videoGenProvider as never),
     },
     {
       name: "video_status",
