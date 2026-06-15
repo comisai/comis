@@ -127,6 +127,16 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
   // is Phase 165 DUR-02's single durable-persistence point.
   const driveJournals = new Map<string, DriveJournal>();
 
+  // MR-01 (DRIVE-01 / §7.1.6): the closure-local per-session drive-START timestamp — the
+  // wall-clock ms a session was PROMOTED (the "drive started" moment, stamped in
+  // onDrivePromoted). The woken-turn driver derives the journal's cumulative `elapsedMs` as
+  // `now - driveStartedAtMs[sessionId]` (NOT a per-turn delta). Mirrors the driveJournals
+  // lifecycle EXACTLY: closure-local, keyed by the bare sessionId, reclaimed in onSessionGone
+  // (so a recycled sessionId never inherits a stale start), bounded over a milestone-length
+  // daemon. Phase 165 DUR-02 persists it beside the journal so a resumed drive's elapsedMs
+  // survives a restart.
+  const driveStartedAtMs = new Map<string, number>();
+
   // The §4.4 woken-turn driver the FSM calls.
   const wakeOneTurn = buildWokenTurnDriver({
     registries: deps.registries,
@@ -142,6 +152,10 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
         driveJournals.set(sessionId, j);
       },
     },
+    // MR-01: the drive-start accessor (the journal's elapsedMs base). Undefined until the
+    // session is promoted — the driver falls back to the turn's own start then (a sane ≥0
+    // elapsedMs), so an unpromoted/pre-stamp turn never throws.
+    driveStartMs: (sessionId: string): number | undefined => driveStartedAtMs.get(sessionId),
     nowMs,
     logger: deps.logger,
   });
@@ -197,6 +211,10 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
     const reason = e.reason === "mode_detached" ? "mode_detached" : "producing";
     if (promotedSessions.has(sessionId)) return; // promote-once — the daemon dedupe.
     promotedSessions.add(sessionId);
+    // MR-01: stamp the drive-start at the promotion instant — the journal's cumulative
+    // elapsedMs measures from here. Stamped once (promote-once gate above), reclaimed in
+    // onSessionGone, so a recycled sessionId re-stamps fresh.
+    driveStartedAtMs.set(sessionId, nowMs());
     log.info(
       { sessionId, agentId, reason, step: "drive_promoted" },
       "terminal drive promoted to a backgrounded drive-owner",
@@ -248,6 +266,9 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
     // DRIVE-01 (164-06): reclaim the per-session journal too (no per-session memory leak over
     // a milestone-length daemon; a recycled sessionId starts with a fresh journal).
     driveJournals.delete(sessionId);
+    // MR-01: reclaim the per-session drive-start timestamp alongside the journal (same
+    // lifecycle — no leak; a recycled sessionId re-stamps on its next promotion).
+    driveStartedAtMs.delete(sessionId);
     // removeWakeStateFile re-raises a non-ENOENT fs fault (@allow-throw) — wrap it so a
     // cleanup failure inside this bus listener can NEVER become an uncaughtException that
     // crashes the daemon (IN-04). Surface the fault to the log with an actionable hint.

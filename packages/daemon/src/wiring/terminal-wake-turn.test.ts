@@ -104,6 +104,10 @@ function build(opts: {
   loopRepeat?: boolean;
   autoAnswer?: "none" | "safe-only" | "all";
   hintPatterns?: string[];
+  /** A controllable clock — MR-01 elapsedMs-advances pins drive it forward across wakes. */
+  nowMs?: () => number;
+  /** The drive's start ms (MR-01) — `elapsedMs = nowMs() - driveStartMs`. */
+  driveStartMs?: (sessionId: string) => number;
 }) {
   const registry = makeRegistry(opts);
   const registries = new Map([["a", registry]]);
@@ -126,9 +130,10 @@ function build(opts: {
     getTerminalAttentionConfig: () => cfg,
     loopGuard: { observe: vi.fn(() => ({ repeat: opts.loopRepeat ?? false })), forget: vi.fn() },
     eventBus: eventBus as unknown as WokenTurnDriverDeps["eventBus"],
-    nowMs: () => 1_000,
+    nowMs: opts.nowMs ?? (() => 1_000),
     logger: logger as unknown as WokenTurnDriverDeps["logger"],
     ...(opts.journal ? { journal: opts.journal } : {}),
+    ...(opts.driveStartMs ? { driveStartMs: opts.driveStartMs } : {}),
   };
   const wakeOneTurn = buildWokenTurnDriver(deps);
   return { wakeOneTurn, registry, emitted, logger };
@@ -361,5 +366,136 @@ describe("terminal-wake-turn — registry-owner strip (DRIVE-01 / I5) + the cros
     expect(src, "promoted must derive from the total isDriveScoped accessor").toMatch(
       /promoted\s*=\s*isDriveScoped\(owner\)/,
     );
+  });
+});
+
+// ===========================================================================
+// MR-01: the journal writer populates the LOCKED §7.1.6 fields the resume
+// substrate needs — answeredPrompts[] (the DRIVE-01 "resume without re-answering"
+// dedup substrate, content-free pattern ids), elapsedMs (drive start → now),
+// and costUsd (0 + a documented note — no spend signal at the canned-keystroke
+// auto-answer seam). RED on pre-patch: recordJournal only wrote stepsTried +
+// lastClassification + lastScreenDigest + interactions, so answeredPrompts stayed
+// [] and elapsedMs stayed 0 forever (the exported appendAnswered had no caller).
+// ===========================================================================
+
+describe("terminal-wake-turn — MR-01: the journal populates answeredPrompts / elapsedMs (DRIVE-01 resume substrate)", () => {
+  it("a promoted drive that auto-answers a safe prompt records a content-free answeredPrompts entry (pattern id, not raw text)", async () => {
+    const { store, map } = makeJournalStore();
+    const { wakeOneTurn } = build({
+      screen: SAFE_SCREEN, // matches hintPatterns[0] → matchedPatternIndex 0
+      sendResult: { screen: "ok", cursor: { x: 1, y: 1 }, delivered: true },
+      journal: store,
+    });
+    await wakeOneTurn("s-1", DRIVE_OWNER);
+
+    const j = map.get("s-1")!;
+    // answeredPrompts is no longer always-empty: a delivered safe answer appends a tag.
+    expect(j.answeredPrompts.length, "a delivered safe answer must append an answeredPrompts tag").toBe(1);
+    // The tag is the content-free matched-pattern identity (an id), never the prompt text (I3).
+    expect(j.answeredPrompts[0]).toBe("pattern:0");
+    expect(j.answeredPrompts[0]).not.toContain("Press enter"); // never the raw prompt
+  });
+
+  it("answeredPrompts accumulates ONE entry per delivered safe answer across N wakes (the dedup substrate, capped)", async () => {
+    const { store, map } = makeJournalStore();
+    const { wakeOneTurn } = build({
+      screen: SAFE_SCREEN,
+      sendResult: { screen: "ok", cursor: { x: 1, y: 1 }, delivered: true },
+      journal: store,
+    });
+    for (let i = 0; i < 5; i++) {
+      // eslint-disable-next-line no-await-in-loop
+      await wakeOneTurn("s-1", DRIVE_OWNER);
+    }
+    const j = map.get("s-1")!;
+    // 5 delivered answers → 5 answeredPrompts entries (all pattern:0 here), bounded by the cap.
+    expect(j.answeredPrompts.length).toBe(5);
+    expect(j.answeredPrompts.every((t) => t === "pattern:0")).toBe(true);
+  });
+
+  it("an ESCALATED turn does NOT append to answeredPrompts (only a delivered safe answer does)", async () => {
+    const { store, map } = makeJournalStore();
+    const { wakeOneTurn } = build({
+      // A destructive prompt → escalate (no answer), but the journal still records the step.
+      screen: "Permanently delete all files? (y/n)",
+      sendResult: { screen: "ok", cursor: { x: 0, y: 0 }, delivered: true },
+      journal: store,
+      hintPatterns: ["(y/n)"],
+    });
+    await wakeOneTurn("s-1", DRIVE_OWNER);
+
+    const j = map.get("s-1")!;
+    expect(j.answeredPrompts, "an escalated turn answered no prompt").toEqual([]);
+    // The step IS recorded (the escalation is cross-wake memory) — just not as an answer.
+    expect(j.stepsTried.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("a NOT-delivered safe answer does NOT append to answeredPrompts (nothing was actually answered, WR-05 parity)", async () => {
+    const { store, map } = makeJournalStore();
+    const { wakeOneTurn } = build({
+      screen: SAFE_SCREEN,
+      // Degraded send: delivered falsy → the keystroke hit nothing → it did not answer.
+      sendResult: { screen: "", cursor: { x: 0, y: 0 } },
+      journal: store,
+    });
+    await wakeOneTurn("s-1", DRIVE_OWNER);
+
+    const j = map.get("s-1")!;
+    expect(j.answeredPrompts, "a not-delivered send answered nothing → no answeredPrompts entry").toEqual([]);
+  });
+
+  it("elapsedMs advances across wakes (drive start → now, via the injected clock)", async () => {
+    const { store, map } = makeJournalStore();
+    let clock = 10_000;
+    const driveStart = 10_000;
+    const { wakeOneTurn } = build({
+      screen: SAFE_SCREEN,
+      sendResult: { screen: "ok", cursor: { x: 1, y: 1 }, delivered: true },
+      journal: store,
+      nowMs: () => clock,
+      driveStartMs: () => driveStart,
+    });
+
+    await wakeOneTurn("s-1", DRIVE_OWNER);
+    const firstElapsed = map.get("s-1")!.elapsedMs;
+    // First wake at the start → elapsed ~0 (not the always-0 of the pre-patch journal, which
+    // never set the field — here it is explicitly derived from the clock).
+    expect(firstElapsed).toBe(0);
+
+    clock = 35_000; // 25s later
+    await wakeOneTurn("s-1", DRIVE_OWNER);
+    const secondElapsed = map.get("s-1")!.elapsedMs;
+    expect(secondElapsed, "elapsedMs must advance with the clock").toBe(25_000);
+    expect(secondElapsed).toBeGreaterThan(firstElapsed);
+  });
+
+  it("elapsedMs is content-free (a number) and never negative even if the clock is degenerate", async () => {
+    const { store, map } = makeJournalStore();
+    const { wakeOneTurn } = build({
+      screen: SAFE_SCREEN,
+      sendResult: { screen: "ok", cursor: { x: 1, y: 1 }, delivered: true },
+      journal: store,
+      nowMs: () => 5_000,
+      driveStartMs: () => 9_999, // start AFTER now (a degenerate/late-stamped start)
+    });
+    await wakeOneTurn("s-1", DRIVE_OWNER);
+    const j = map.get("s-1")!;
+    expect(typeof j.elapsedMs).toBe("number");
+    expect(j.elapsedMs, "a degenerate clock must never yield a negative elapsedMs").toBeGreaterThanOrEqual(0);
+  });
+
+  it("without a driveStartMs accessor the driver falls back to this turn's start (elapsedMs ≥ 0, never throws)", async () => {
+    const { store, map } = makeJournalStore();
+    const { wakeOneTurn } = build({
+      screen: SAFE_SCREEN,
+      sendResult: { screen: "ok", cursor: { x: 1, y: 1 }, delivered: true },
+      journal: store,
+      nowMs: () => 1_000,
+      // no driveStartMs — the daemon may not always supply one; the driver must still write
+      // a sane (≥0) elapsedMs and never throw.
+    });
+    await expect(wakeOneTurn("s-1", DRIVE_OWNER)).resolves.toBeUndefined();
+    expect(map.get("s-1")!.elapsedMs).toBeGreaterThanOrEqual(0);
   });
 });

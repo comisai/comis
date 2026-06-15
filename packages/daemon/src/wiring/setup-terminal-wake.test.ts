@@ -478,6 +478,19 @@ describe("setupTerminalWake — the keystone subscribe + woken-turn driver (124-
     expect(src, "must hold a closure-local promoted-Set").toMatch(/promotedSessions/);
   });
 
+  it("MR-01: the daemon stamps + reclaims a per-session drive-start and passes driveStartMs to the driver (source guard)", () => {
+    const src = readFileSync(fileURLToPath(new URL("./setup-terminal-wake.ts", import.meta.url)), "utf8");
+    // A closure-local per-session drive-start map (mirrors driveJournals) so the journal's
+    // elapsedMs measures from the promotion instant, not a per-turn delta.
+    expect(src, "must hold a closure-local drive-start map").toMatch(/driveStartedAtMs/);
+    // Stamped at promotion (the "drive started" moment) — set in the promotion consumer.
+    expect(src, "must stamp the drive-start on promotion").toMatch(/driveStartedAtMs\.set\(/);
+    // Reclaimed on end-of-life (no per-session leak — MR-02 surface) — deleted in onSessionGone.
+    expect(src, "must reclaim the drive-start on session end-of-life").toMatch(/driveStartedAtMs\.delete\(/);
+    // The accessor is threaded into the woken-turn driver as driveStartMs.
+    expect(src, "must pass driveStartMs to the woken-turn driver").toMatch(/driveStartMs/);
+  });
+
   // -------------------------------------------------------------------------
   // DRIVE-01 (164-06 Task 1): the drive-scope routing. A PROMOTED session's
   // woken turn is attributed to a dedicated `drive:<sessionId>` sessionKey (the

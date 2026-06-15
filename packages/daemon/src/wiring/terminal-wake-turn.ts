@@ -30,6 +30,7 @@ import {
   decideAutoAnswer,
   emptyJournal,
   appendStep,
+  appendAnswered,
   updateJournal,
   screenDigestLine,
   type LoopGuard,
@@ -120,6 +121,17 @@ export interface WokenTurnDriverDeps {
    * byte-identical, I1). The driver engages it ONLY when the wake owner is drive-scoped.
    */
   journal?: DriveJournalStore;
+  /**
+   * MR-01 (DRIVE-01 / §7.1.6): resolve the wall-clock ms a session's drive STARTED (the
+   * first promoted wake), so the journal's `elapsedMs = nowMs() - driveStartMs(sessionId)`
+   * is the cumulative drive duration the resume substrate + a `comis explain` need — NOT a
+   * per-turn delta. Optional + defensive: absent (or returning a non-finite/future value) ⇒
+   * the driver falls back to this turn's start, yielding a sane non-negative `elapsedMs`
+   * (never a throw, never a negative). The daemon owns the per-session start map
+   * (setupTerminalWake), mirroring the journal-holder lifecycle. Returns `undefined` for an
+   * as-yet-unstamped session (the driver then falls back to the turn's own start).
+   */
+  driveStartMs?: (sessionId: string) => number | undefined;
   /** Injected clock (no raw global). */
   nowMs: () => number;
   logger: ComisLogger;
@@ -185,13 +197,36 @@ export function buildWokenTurnDriver(
     const view = await registry.read(sessionId, ownerObj, { format: "text" });
     const screen = view.screen ?? "";
 
-    // DRIVE-01 (164-06): the bounded content-free journal — the PROMOTED drive's cross-wake
-    // memory. recordJournal reads-or-inits the per-session journal, sets the redacted
-    // lastScreenDigest (I3) + lastClassification, bumps interactions, and appends a
-    // content-free step tag for the action taken (never a keystroke). Gated on `promoted`
-    // (an unpromoted turn touches no journal — I1) + a present store. Wrapped never-throw:
-    // a journal fault logs (step:journal_update) + the turn still completes (the FSM contract).
-    const recordJournal = (stepTag: "answered" | "escalated" | "waited" | "loop"): void => {
+    // MR-01 (DRIVE-01 / §7.1.6): the cumulative drive duration the journal records as
+    // `elapsedMs` — `now - the drive's first-promoted-wake start`. Defensive: a missing
+    // accessor, or a non-finite / future start (a degenerate / late-stamped value), falls
+    // back to THIS turn's start so elapsedMs is always a sane non-negative number, never a
+    // throw and never negative (the journal field is content-free — a duration, not content).
+    const computeElapsedMs = (): number => {
+      const startedAt = deps.driveStartMs?.(sessionId);
+      const base = typeof startedAt === "number" && Number.isFinite(startedAt) && startedAt <= startMs ? startedAt : startMs;
+      return Math.max(0, deps.nowMs() - base);
+    };
+
+    // DRIVE-01 (164-06) + MR-01: the bounded content-free journal — the PROMOTED drive's
+    // cross-wake memory. recordJournal reads-or-inits the per-session journal, sets the redacted
+    // lastScreenDigest (I3) + lastClassification + the cumulative elapsedMs (MR-01), bumps
+    // interactions, appends a content-free step tag for the action taken (never a keystroke),
+    // and — on a delivered safe answer (`answeredPatternIndex` present) — appends the
+    // content-free matched-pattern identity to answeredPrompts (MR-01: the "resume without
+    // re-answering" dedup substrate; a `pattern:<index>` id, NEVER the prompt text — I3). Gated
+    // on `promoted` (an unpromoted turn touches no journal — I1) + a present store. Wrapped
+    // never-throw: a journal fault logs (step:journal_update) + the turn still completes (the
+    // FSM contract).
+    //
+    // costUsd is deliberately left at 0 here: the woken-turn auto-answer is a CANNED keystroke
+    // (no LLM completion), so there is no spend signal at this seam. The field stays reserved
+    // for a seam that has one (a future LLM-in-the-loop drive turn / Phase 165 spend ceiling);
+    // until then 0 is the honest value (I6 — never a fabricated cost).
+    const recordJournal = (
+      stepTag: "answered" | "escalated" | "waited" | "loop",
+      answeredPatternIndex?: number,
+    ): void => {
       if (!promoted || !deps.journal) return;
       try {
         const current = deps.journal.get(sessionId) ?? emptyJournal(sessionId);
@@ -204,8 +239,17 @@ export function buildWokenTurnDriver(
           lastClassification: status.state,
           lastScreenDigest: redactedDigest,
           interactions: current.interactions + 1,
+          elapsedMs: computeElapsedMs(),
         });
-        deps.journal.set(sessionId, appendStep(updated, stepTag));
+        const withStep = appendStep(updated, stepTag);
+        // MR-01: a delivered safe answer records WHICH pattern it answered (content-free id),
+        // so a resumed drive can skip an already-answered prompt. The skills journal clamps +
+        // caps this opaquely (I3/I7).
+        const next =
+          typeof answeredPatternIndex === "number"
+            ? appendAnswered(withStep, `pattern:${answeredPatternIndex}`)
+            : withStep;
+        deps.journal.set(sessionId, next);
       } catch (err) {
         log.warn(
           { sessionId, agentId: owner.agentId, err, hint: "drive journal update failed; the woken turn still completed (the journal is best-effort cross-wake memory)", errorKind: "resource" as const, step: "journal_update" },
@@ -259,9 +303,11 @@ export function buildWokenTurnDriver(
     // a successful answer (§2.7: the failure is reconstructable from logs+events alone).
     const delivered = sent.delivered === true;
     auditAnswer(deps, sessionId, owner.agentId, text, decision.matchedPatternIndex, decision.keys.length, delivered);
-    // DRIVE-01 (164-06): record the cross-wake-memory step — `answered` on a delivered safe
-    // auto-answer, `waited` when the send did not land (the FSM will re-wake on a fresh frame).
-    recordJournal(delivered ? "answered" : "waited");
+    // DRIVE-01 (164-06) + MR-01: record the cross-wake-memory step — `answered` on a delivered
+    // safe auto-answer (also appending the content-free matched-pattern id to answeredPrompts,
+    // the resume dedup substrate), `waited` when the send did not land (the FSM will re-wake on
+    // a fresh frame, and nothing was actually answered → no answeredPrompts entry, WR-05 parity).
+    recordJournal(delivered ? "answered" : "waited", delivered ? decision.matchedPatternIndex : undefined);
     if (delivered) {
       log.info(
         { sessionId, agentId: owner.agentId, matchedPatternIndex: decision.matchedPatternIndex, keystrokeCount: decision.keys.length, durationMs: deps.nowMs() - startMs, step: "wake_turn_answered" },
