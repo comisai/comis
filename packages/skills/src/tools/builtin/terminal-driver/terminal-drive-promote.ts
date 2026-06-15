@@ -53,9 +53,44 @@
  */
 
 import type { WaitResult } from "./terminal-wait-reply.js";
+import type { TerminalDrivePromotedEvent } from "./terminal-events-attention.js";
 
 /** The operator-selectable promotion policy (`drive.mode`, design §4 Phase B). */
 export type DriveMode = "auto" | "attached" | "detached";
+
+/**
+ * The narrow content-free-emit surface the wait tool hands to {@link emitDrivePromoted}
+ * (164-04). STRUCTURAL (not the full `TerminalToolDeps`) so this pure-decision sibling does
+ * not import the tool module — it sees only the bus emit overload + the INFO logger + the
+ * clock it needs. The skills layer never value-imports the concrete bus class (the worker ↛
+ * `@comis/infra`/`@comis/observability` boundary holds trivially).
+ */
+export interface DrivePromoteEmitDeps {
+  emit(event: "terminal:drive_promoted", payload: TerminalDrivePromotedEvent): unknown;
+  /** A pino-compatible INFO sink (one content-free record per promotion, §2.7). */
+  info(obj: Record<string, unknown>, msg: string): void;
+  /** Injected clock (no raw wall-clock global) — stamps the event `timestamp`. */
+  nowMs(): number;
+}
+
+/**
+ * Emit the ONE content-free `terminal:drive_promoted` event + a single content-free INFO
+ * record for a qualifying wait (164-04). Factored out of the wait tool so `terminal-tools.ts`
+ * stays ≤ the 800-line cap; the PROMOTION DECISION stays at the call site (`shouldPromoteDrive`),
+ * this helper only performs the (already-decided) emit. CONTENT-FREE (I3): the payload + the
+ * log carry sessionId/agentId/reason-enum ONLY — never the screen (the digest rides the LOG
+ * elsewhere, never the bus). The skills tool is STATELESS — it emits on EVERY qualifying wait;
+ * the once-guarantee is the daemon's promoted-Set dedupe (164-04 Task 2). Never throws.
+ */
+export function emitDrivePromoted(
+  deps: DrivePromoteEmitDeps,
+  sessionId: string,
+  agentId: string,
+  reason: TerminalDrivePromotedEvent["reason"],
+): void {
+  deps.emit("terminal:drive_promoted", { sessionId, agentId, reason, timestamp: deps.nowMs() });
+  deps.info({ sessionId, reason, step: "drive_promote" }, "terminal drive promoted to a backgrounded drive-owner");
+}
 
 /**
  * Should this drive promote from the inline path to the DRIVE-01 detached drive-owner,

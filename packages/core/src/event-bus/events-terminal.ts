@@ -9,8 +9,11 @@
  * TR-11/OPS-04/SEC-11/SEC-12) adds the attention + audit set: `terminal:input_needed`
  * (the agent-wake signal), `terminal:stuck` (settled, no progress), `terminal:escalated`
  * (an auto-answer escalation / hop-limit / loop audit), and `terminal:auto_answered`
- * (a safe-pattern answer was sent). Every payload carries `sessionId` + `agentId` +
- * `timestamp` so a transition is reconstructable from the bus alone (AGENTS.md §2.7).
+ * (a safe-pattern answer was sent). Phase 164 (DRIVE-02, v2.24) adds the autonomous-drive
+ * promotion signal `terminal:drive_promoted` (a long drive crossed the inline→detached
+ * threshold — the skills wait tool emits it, the daemon wake dispatcher consumes it to
+ * fire ONE "drive started (backgrounded)" notification). Every payload carries `sessionId`
+ * + `agentId` + `timestamp` so a transition is reconstructable from the bus alone (AGENTS.md §2.7).
  *
  * Counts / ids / a redaction-safe `hint`, typed `reason`, or typed `state` ONLY
  * — NEVER keystrokes, screen contents, or command text. The keystroke event
@@ -173,6 +176,33 @@ export interface TerminalEvents {
     matchedPatternIndex: number;
     /** Count of keystrokes the canned answer sent — a size signal, not the content. */
     keystrokeCount: number;
+    timestamp: number;
+  };
+
+  /**
+   * Autonomous-drive promotion (DRIVE-02, Phase 164, v2.24): a backgrounded-capable
+   * drive crossed the inline→detached threshold. The skills wait tool (Context A,
+   * the agent's LLM turn) consults the pure `shouldPromoteDrive` predicate (164-02) on
+   * its `WaitResult` and, on a qualifying wait, emits this event; the fd3 wake dispatcher
+   * (Context B, the daemon) consumes it into a closure-local promoted-Set and fires
+   * EXACTLY ONE "drive started (backgrounded)" notification (promote-once — the skills
+   * tool emits per-qualifying-wait, the daemon collapses to one). A sub-threshold inline
+   * drive (a `git status` one-shot) emits nothing (I1).
+   *
+   * CONTENT-FREE (I3): carries `sessionId`/`agentId` + a typed `reason` enum (the WHY it
+   * promoted) + `timestamp` ONLY — NEVER the screen, command output, or a secret. The
+   * screen digest that drove the wait rides the structured LOG, never the bus.
+   */
+  "terminal:drive_promoted": {
+    sessionId: string;
+    agentId: string;
+    /**
+     * Why the drive promoted (a closed enum, NEVER screen text — I3):
+     * `producing` = the honest `isComplete:false,producing:true` settle signal under
+     * `mode:"auto"` (the program is still working); `mode_detached` = the operator set
+     * `drive.mode:"detached"` (promote-at-first-wait, an explicit opt-in).
+     */
+    reason: "producing" | "mode_detached";
     timestamp: number;
   };
 }

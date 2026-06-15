@@ -612,6 +612,12 @@ export function buildTerminalSharedDeps(
     // tryGetContext().sessionKey ?? "") — derived PER CALL inside the tool (resolveOwner),
     // so the daemon needs no new owner arg. This agentId is the fallback half of that key.
     agentId,
+    // DRIVE-02 (164-04): thread the operator-resolved autonomous-drive promotion mode so the
+    // wait tool can emit terminal:drive_promoted on a qualifying wait. The skills layer never
+    // reads config (layer purity) — the daemon supplies the resolved mode here. The `drive`
+    // block is OPTIONAL (schema-skills.ts, plan 05); `?? "auto"` is the schema default + the
+    // safe pre-`drive`-block posture (an absent block only promotes a genuinely-long drive, I1).
+    driveMode: deps.config?.drive?.mode ?? "auto",
     // The operator approval gate — consulted only when a matched entry sets
     // approveOnCreate (else the create path is unchanged); a demanding entry with no
     // gate fail-closes in the tool.
