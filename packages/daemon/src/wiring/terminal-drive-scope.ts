@@ -71,6 +71,24 @@ export function driveScopeKeyFor(sessionId: string, promoted: boolean): string {
 }
 
 /**
+ * Is this wake owner drive-scoped (its `sessionKey` carries the reserved
+ * {@link DRIVE_SCOPE_PREFIX})? The SINGLE total accessor for the drive-scope test — used by
+ * both {@link registryOwnerFor} (the strip) and the woken-turn driver's `promoted` gate
+ * (IN-03), so ALL registry-owner resolution applies the identical defensive narrow.
+ *
+ * Total + never throws: a degenerate owner (`undefined`, a missing/non-string `sessionKey`)
+ * yields `false` — the woken-turn driver + the active-check evaluate this on EVERY wake, so a
+ * raw `owner.sessionKey.startsWith(...)` (which throws a `TypeError` on a degenerate owner)
+ * would strand the turn; this narrows like {@link registryOwnerFor} instead.
+ *
+ * @param owner - The wake owner the FSM carries.
+ * @returns `true` iff `owner.sessionKey` is a `drive:<id>` attribution key.
+ */
+export function isDriveScoped(owner: PersistedWakeOwner): boolean {
+  return typeof owner?.sessionKey === "string" && owner.sessionKey.startsWith(DRIVE_SCOPE_PREFIX);
+}
+
+/**
  * Strip a `drive:`-scoped wake owner back to the session's STAMPED registry owner — the I5
  * anchor. A `sessionKey` starting with {@link DRIVE_SCOPE_PREFIX} is collapsed to the
  * stamped `""` (the forcing use case's owner), so the registry resolves the LIVE session
@@ -89,7 +107,8 @@ export function driveScopeKeyFor(sessionId: string, promoted: boolean): string {
 export function registryOwnerFor(owner: PersistedWakeOwner): SessionOwner {
   const agentId = owner?.agentId ?? "";
   const sessionKey = typeof owner?.sessionKey === "string" ? owner.sessionKey : "";
-  // A drive-scoped key is a PURE attribution key — strip it to the stamped registry owner.
+  // A drive-scoped key is a PURE attribution key — strip it to the stamped registry owner
+  // (the same total drive-scope test as isDriveScoped, applied to the narrowed sessionKey).
   if (sessionKey.startsWith(DRIVE_SCOPE_PREFIX)) {
     return { agentId, sessionKey: "" };
   }

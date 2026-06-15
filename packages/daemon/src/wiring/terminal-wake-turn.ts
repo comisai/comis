@@ -38,7 +38,7 @@ import {
 } from "@comis/skills/tools";
 
 import type { PersistedWakeOwner } from "./terminal-wake-persistence.js";
-import { registryOwnerFor, DRIVE_SCOPE_PREFIX } from "./terminal-drive-scope.js";
+import { registryOwnerFor, isDriveScoped } from "./terminal-drive-scope.js";
 
 /** The per-entry attention config the woken turn reads (operator-dialable; NEVER agent-dialable). */
 export interface TerminalAttentionConfig {
@@ -172,7 +172,10 @@ export function buildWokenTurnDriver(
     // T-164-19/T-164-23). The drive: scope is used ONLY for the journal keying + the
     // promoted-gate below — never as the registry-authorization owner.
     const ownerObj = registryOwnerFor(owner);
-    const promoted = owner.sessionKey.startsWith(DRIVE_SCOPE_PREFIX);
+    // IN-03: derive `promoted` from the SAME total accessor the registry-owner strip uses
+    // (isDriveScoped), not a raw `owner.sessionKey.startsWith(...)` — uniform defensiveness
+    // (a degenerate owner narrows to unpromoted, never a TypeError that strands the turn).
+    const promoted = isDriveScoped(owner);
 
     // (1) session_status — the §4.4 turn start (owner-scoped; the classifier perception).
     const status = await registry.status(sessionId, ownerObj);

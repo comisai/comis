@@ -26,7 +26,7 @@ import { randomUUID } from "node:crypto";
 
 import { formatSessionKey } from "@comis/core";
 
-import { DRIVE_SCOPE_PREFIX, driveScopeKeyFor, registryOwnerFor } from "./terminal-drive-scope.js";
+import { DRIVE_SCOPE_PREFIX, driveScopeKeyFor, registryOwnerFor, isDriveScoped } from "./terminal-drive-scope.js";
 import type { PersistedWakeOwner } from "./terminal-wake-persistence.js";
 
 describe("terminal-drive-scope — the pure two-owner split (DRIVE-01 / I5 / A4)", () => {
@@ -63,6 +63,24 @@ describe("terminal-drive-scope — the pure two-owner split (DRIVE-01 / I5 / A4)
     // on every wake; a throw would strand the turn).
     expect(() => registryOwnerFor({ agentId: "a", sessionKey: undefined as unknown as string })).not.toThrow();
     expect(() => registryOwnerFor(undefined as unknown as PersistedWakeOwner)).not.toThrow();
+  });
+
+  it("IN-03: isDriveScoped is the SAME total accessor registryOwnerFor uses (a drive: owner is scoped; '' and a real subagent key are not)", () => {
+    expect(isDriveScoped({ agentId: "a", sessionKey: `${DRIVE_SCOPE_PREFIX}sess-1` })).toBe(true);
+    expect(isDriveScoped({ agentId: "a", sessionKey: "" })).toBe(false);
+    const subagentKey = formatSessionKey({ tenantId: "default", userId: "u", channelId: `sub-agent:${randomUUID()}` });
+    expect(isDriveScoped({ agentId: "a", sessionKey: subagentKey })).toBe(false);
+  });
+
+  it("IN-03: isDriveScoped never throws on a degenerate owner (total — the same defensive narrow as registryOwnerFor)", () => {
+    // The woken-turn driver's `promoted` gate calls this on every wake; a raw
+    // `owner.sessionKey.startsWith(...)` throws on a missing/non-string key — isDriveScoped
+    // narrows defensively (false) just like registryOwnerFor.
+    expect(() => isDriveScoped({ agentId: "a", sessionKey: undefined as unknown as string })).not.toThrow();
+    expect(isDriveScoped({ agentId: "a", sessionKey: undefined as unknown as string })).toBe(false);
+    expect(() => isDriveScoped(undefined as unknown as PersistedWakeOwner)).not.toThrow();
+    expect(isDriveScoped(undefined as unknown as PersistedWakeOwner)).toBe(false);
+    expect(isDriveScoped({ agentId: "a", sessionKey: 5 as unknown as string })).toBe(false);
   });
 
   it("A4: DRIVE_SCOPE_PREFIX is a value formatSessionKey never produces (no collision with a real subagent key)", () => {

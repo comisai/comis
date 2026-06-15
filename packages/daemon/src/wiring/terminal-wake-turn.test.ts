@@ -325,4 +325,41 @@ describe("terminal-wake-turn — registry-owner strip (DRIVE-01 / I5) + the cros
     expect(warn, "a journal-update failure must WARN with step:journal_update").toBeDefined();
     expect((warn![0] as { errorKind?: string }).errorKind).toBeDefined();
   });
+
+  it("IN-03: a degenerate owner (non-string sessionKey) does NOT throw the turn — promoted resolves defensively like registryOwnerFor", async () => {
+    // registryOwnerFor narrows a non-string sessionKey to "" (the woken-turn driver + the
+    // active-check call it on EVERY wake, so a throw would strand the turn). The `promoted`
+    // gate must use the SAME total accessor — a raw `owner.sessionKey.startsWith(...)` throws
+    // on a degenerate owner (TypeError: startsWith of undefined). RED on pre-patch: the raw
+    // `.startsWith` rejects the promise.
+    const { store, map } = makeJournalStore();
+    const { wakeOneTurn, registry } = build({
+      screen: SAFE_SCREEN,
+      sendResult: { screen: "ok", cursor: { x: 1, y: 1 }, delivered: true },
+      journal: store,
+    });
+    // A degenerate owner a future producer might hand: agentId present, sessionKey missing.
+    const degenerate = { agentId: "a" } as unknown as PersistedWakeOwner;
+    await expect(wakeOneTurn("s-1", degenerate)).resolves.toBeUndefined();
+    // The turn still ran its real work (the registry resolved via the stamped owner).
+    expect(registry.status).toHaveBeenCalledTimes(1);
+    // A degenerate (non-drive) owner is treated as unpromoted → no journal write (I1).
+    expect(store.set).not.toHaveBeenCalled();
+    expect(map.size).toBe(0);
+  });
+
+  it("IN-03: the promoted gate uses the same total accessor as the registry owner (source guard)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { fileURLToPath } = await import("node:url");
+    const src = readFileSync(fileURLToPath(new URL("./terminal-wake-turn.ts", import.meta.url)), "utf8");
+    // The raw, throw-prone `promoted = owner.sessionKey.startsWith(...)` assignment must be
+    // gone — replaced by the total `isDriveScoped(owner)` predicate (the same defensive narrow
+    // registryOwnerFor uses). (The regex targets the assignment, not prose mentioning it.)
+    expect(src, "the raw owner.sessionKey.startsWith promoted gate must be gone").not.toMatch(
+      /promoted\s*=\s*owner\.sessionKey\.startsWith/,
+    );
+    expect(src, "promoted must derive from the total isDriveScoped accessor").toMatch(
+      /promoted\s*=\s*isDriveScoped\(owner\)/,
+    );
+  });
 });
