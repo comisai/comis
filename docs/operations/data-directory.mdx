@@ -33,6 +33,8 @@ Here's everything Comis keeps on disk — and why.
 ├── traces/                  # per-session JSONL execution traces
 ├── workspace/               # default agent workspace (files, git, skills, terminal/)
 ├── workspace-<agentId>/     # named-agent workspaces (one per extra agent)
+├── terminal-drive/          # durable terminal-driver state (only with drive.durable: true)
+│   └── <agentId>/journals/<sessionId>.json
 ├── agents/                  # per-agent RPC state (subagent results, etc.)
 ├── background-tasks/        # background task state files
 ├── identity/
@@ -50,6 +52,7 @@ Some entries only appear under specific conditions.
 - `broker.sock` — present only when the credential broker is active (`executor.broker.enabled: true` in `config.yaml`). Ephemeral — deleted and recreated on each daemon start.
 - `ecosystem.config.js` — created only by `comis pm2 setup`.
 - Named workspaces like `workspace-myagent/` — appear only when you define more than one agent.
+- `terminal-drive/` — appears only when an agent runs a **durable** terminal drive (`drive.durable: true`). The per-agent durable drive-state journals live here; absent for non-durable (default) drives.
 </Note>
 
 ## File-by-file reference
@@ -207,6 +210,19 @@ The seeded `media/` subdirectory is scratch space for agent file operations and 
 
 **Written by:** the daemon on first startup for each agent.
 **Safe to delete?** Deleting a workspace erases the agent's identity files, cron job definitions, and skill configurations. The daemon recreates the directory structure but not the content you or the agent wrote there.
+
+---
+
+### `terminal-drive/`
+
+Durable drive-state journals for the [terminal-driver](/agent-tools/terminal-driver), written **only** when an agent runs a durable drive (`drive.durable: true`). Each journal lives at `terminal-drive/<agentId>/journals/<sessionId>.json` — one small JSON file per driven session, beside (but distinct from) the agent's persistent `terminal/` working directory under `workspace/`.
+
+The journal is what lets a long autonomous drive **survive a daemon restart**: a durable drive launches the driven CLI inside a detached tmux server that outlives the daemon, and the journal records the compact drive state — the objective, the last screen classification, the prompts already answered, and the steps tried — so on restart the driver **re-attaches to the live tmux session and resumes** instead of starting over or re-answering prompts. A genuinely-gone session is reported as failed with its journal preserved.
+
+The journal is **content-free and secret-redacted** (no captured terminal output, no message bodies, no credentials — secrets are scrubbed before anything is recorded), written atomically with mode `0o600` inside a `0o700` per-agent directory. It is reaped at the session's end of life.
+
+**Written by:** the daemon, on each update to a durable drive's state (and recovered on the next startup).
+**Safe to delete?** Yes, when the daemon is stopped. Deleting a journal means an in-flight durable drive cannot resume after the next restart — the driver treats the session as gone rather than resuming it. Non-durable (default) drives never write here.
 
 ---
 
