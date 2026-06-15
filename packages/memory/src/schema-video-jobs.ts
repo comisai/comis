@@ -69,10 +69,14 @@ export function ensureVideoJobTable(db: Database.Database): void {
   // once and re-running ensureVideoJobTable never throws (a duplicate ADD COLUMN
   // would). The off-turn background poller resolves the per-session trajectory
   // recorder by this key to stitch a background-completed render to its turn.
-  const hasSessionKey = (db.prepare("PRAGMA table_info(video_jobs)").all() as Array<{ name: string }>).some(
-    (c) => c.name === "session_key",
+  // PRAGMA table_info shape is the sanctioned inline-object cast (the
+  // schema.ts:50 / schema-pinned.ts:22 column-exists precedent) — the
+  // untyped-sqlite gate exempts `as { ... }[]` (a one-off PRAGMA projection, not
+  // a domain row that needs the RowMapper); `as Array<{...}>` would trip it.
+  const cols = new Set(
+    (db.prepare(`PRAGMA table_info(video_jobs)`).all() as { name: string }[]).map((r) => r.name),
   );
-  if (!hasSessionKey) {
+  if (!cols.has("session_key")) {
     db.exec(`ALTER TABLE video_jobs ADD COLUMN session_key TEXT`);
   }
   // Partial index for the poller's listPending() boot-resume scan (JOB-03).
