@@ -91,6 +91,27 @@ export {
   type DriveJournal,
   type DriveReadMode,
   type ReadDigest,
+  // 165-01/02/03/06 (DUR-01/02 / LIVE-01 / ENDURE-01): the Phase-165 pure siblings the
+  // daemon-side durability/endurance wiring (165-07) consumes — the re-attach DECISION +
+  // the durable descriptor (de)serialize + the busy-vs-hung predicate (the LIVE-01 backstop
+  // + the ENDURE-01 reaper exclusion) + the spend-ceiling check + the registry's injected
+  // descriptor-store port + recover-on-boot seams. Promoted to the top-level barrel here
+  // (the integration plan is their first `@comis/skills/tools`-level consumer).
+  reattachDecision,
+  serializeDescriptor,
+  deserializeDescriptor,
+  buildSessionDescriptor,
+  busyOrHung,
+  checkSpendCeiling,
+  type SessionDescriptor,
+  type ReattachDecision,
+  type SessionDescriptorStorePort,
+  type RecoveredAction,
+  type DurableCreateInputs,
+  type TerminalDurabilityDeps,
+  type BusySignal,
+  type BusyVerdict,
+  type SpendBreach,
   // 124-09: the woken-turn driver (daemon-side) consumes the safe-only auto-answer policy
   // (124-04) + the normalized loop-guard (124-04) — the SEC-12/SEC-11 governance modules.
   decideAutoAnswer,

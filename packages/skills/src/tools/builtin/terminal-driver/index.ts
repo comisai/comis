@@ -249,6 +249,16 @@ export {
   type TerminalDurabilityDeps,
 } from "./terminal-session-reattach.js";
 
+// 165-02 (LIVE-01 / ENDURE-01): the pure busy-vs-hung predicate the LIVE-01 backstop
+// (165-07) turns into a synthesized `stuck` ONLY on `"hung"` + the ENDURE-01 reaper idle
+// exclusion consumes on `"busy"` — ONE shared definition of "alive and making progress".
+// Promoted to the barrel here (165-07 is its first cross-package consumer).
+export { busyOrHung, type BusySignal, type BusyVerdict } from "./terminal-busy-predicate.js";
+
+// 165-03 (ENDURE-01): the pure spend-ceiling check over the drive journal's run-total cost
+// — the 165-07 wake-turn loop escalates/stops on a breach (never a silent overspend).
+export { checkSpendCeiling, type SpendBreach } from "./terminal-spend-ceiling.js";
+
 // P5 124-05 (spec §2.3, TR-11): the transition-only in-worker attention emitter — the
 // WORKER half of the no-poll mechanism. The worker (124-05 Task 2) calls observe() with
 // each settled frame's classification; the emitter writes a redaction-safe

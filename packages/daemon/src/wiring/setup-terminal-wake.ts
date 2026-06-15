@@ -69,9 +69,42 @@ export interface SetupTerminalWakeDeps {
   notify?: WokenTurnNotify;
   /** Base data dir (~/.comis) — the FSM's durable wake-state lives under `terminal-wake/`. */
   dataDir: string;
+  /**
+   * DUR-02 (165-07): the daemon-bound durable journal store — the single persistence
+   * point for a PROMOTED drive's rolling journal. The holder persists on every
+   * `journal.set` (so a 40h drive's progress survives a daemon restart) and seeds the
+   * resumed journal from `load` on a `terminal:drive_reattached` (so a re-attached drive
+   * resumes its objective + answered prompts rather than starting over, I10). Optional:
+   * ABSENT ⇒ no durable persistence (the Phase-164 in-memory-only behavior, byte-identical
+   * I1). The store wraps the `@comis/observability` fs-safe `persistDriveJournal` /
+   * `loadDriveJournal` / `removeDriveJournal` bound to `dataDir` (165-07 Task 4); a fake
+   * is injected in unit tests. ALL methods best-effort (never throw — the in-memory holder
+   * is the runtime source of truth). `remove` is the DISTINCT explicit delete called ONLY
+   * on a clean exit/evict, NEVER on a lost/crash (I10 preserve-on-failure).
+   */
+  driveJournalStore?: DriveJournalStorePort;
   /** Injected clock (no raw global). Default `systemNowMs`. */
   nowMs?: () => number;
   logger: ComisLogger;
+}
+
+/**
+ * The daemon-bound durable journal store the wake-holder consumes (DUR-02). A thin
+ * per-`dataDir` wrapper over the 165-04 `terminal-drive-journal-persistence.ts` module
+ * functions, agent-keyed (the holder is daemon-wide; the store is confined per-agent). The
+ * daemon (165-07 Task 4) binds the real fs impl; unit tests inject a fake. Every method is
+ * best-effort + total (a fault is swallowed inside the impl — the in-memory holder already
+ * updated). `remove` is the I10 explicit-only delete (persist/recover/load NEVER delete).
+ */
+export interface DriveJournalStorePort {
+  /** Persist (or overwrite) the journal for a promoted session — the single DUR-02 persistence point. */
+  persist(agentId: string, sessionId: string, journal: DriveJournal): void;
+  /** Recover all of an agent's persisted journals on boot (keyed by sessionId). */
+  recover(agentId: string): Map<string, DriveJournal>;
+  /** Load ONE persisted journal (the resume read on a re-attach); undefined when none. */
+  load(agentId: string, sessionId: string): DriveJournal | undefined;
+  /** Remove a journal file — the DISTINCT explicit delete (clean exit only, NEVER on crash, I10). */
+  remove(agentId: string, sessionId: string): void;
 }
 
 /** The handle the composition root keeps for shutdown. */
@@ -137,6 +170,15 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
   // survives a restart.
   const driveStartedAtMs = new Map<string, number>();
 
+  // DUR-02 (165-07): the per-session owning agentId — the durable journal store is confined
+  // PER-AGENT (`<dataDir>/terminal-drive/<agentId>/journals`), but the journal holder + the
+  // woken-turn driver key by the BARE sessionId (the worker is owner-agnostic). This map is
+  // the bridge: stamped on promotion (onDrivePromoted) + on a re-attach
+  // (terminal:drive_reattached), read by the journal.set persist wrapper so each journal
+  // lands under its agent's confined dir. Mirrors the driveJournals lifecycle EXACTLY:
+  // closure-local, reclaimed in onSessionGone, bounded over a milestone-length daemon.
+  const sessionAgent = new Map<string, string>();
+
   // The §4.4 woken-turn driver the FSM calls.
   const wakeOneTurn = buildWokenTurnDriver({
     registries: deps.registries,
@@ -150,6 +192,15 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
       get: (sessionId: string): DriveJournal | undefined => driveJournals.get(sessionId),
       set: (sessionId: string, j: DriveJournal): void => {
         driveJournals.set(sessionId, j);
+        // DUR-02 (165-07): the SINGLE durable persistence point — persist on EVERY set so a
+        // 40h drive's rolling journal survives a daemon restart. Gated on a present store +
+        // a known owning agent (a promoted session always has one, stamped in onDrivePromoted
+        // / on re-attach). Best-effort: the store swallows any fs fault (the in-memory holder
+        // already updated — never blocks the woken turn). NEVER deletes (I10).
+        const agentId = sessionAgent.get(sessionId);
+        if (deps.driveJournalStore && agentId !== undefined) {
+          deps.driveJournalStore.persist(agentId, sessionId, j);
+        }
       },
     },
     // MR-01: the drive-start accessor (the journal's elapsedMs base). Undefined until the
@@ -211,6 +262,9 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
     const reason = e.reason === "mode_detached" ? "mode_detached" : "producing";
     if (promotedSessions.has(sessionId)) return; // promote-once — the daemon dedupe.
     promotedSessions.add(sessionId);
+    // DUR-02 (165-07): stamp the owning agent so the journal.set persist wrapper can route
+    // this session's journal to the agent's confined durable dir (reclaimed in onSessionGone).
+    sessionAgent.set(sessionId, agentId);
     // MR-01: stamp the drive-start at the promotion instant — the journal's cumulative
     // elapsedMs measures from here. Stamped once (promote-once gate above), reclaimed in
     // onSessionGone, so a recycled sessionId re-stamps fresh.
@@ -240,6 +294,42 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
   };
   deps.eventBus.on("terminal:drive_promoted", onDrivePromoted);
 
+  // DUR-02 (165-07): RESUME on a re-attach. The registry's recover-on-boot (165-06)
+  // re-attached a surviving detached tmux session and emitted the content-free
+  // terminal:drive_reattached. The holder consumes it to SEED the resumed drive's journal
+  // (objective + last classification + answered prompts + steps tried) from the durable
+  // store into the in-memory cache, so the very next woken turn resumes from it rather than
+  // starting over or re-answering an already-answered prompt (I10). It also re-stamps the
+  // owning agent (so the journal.set persist routes correctly) + the drive-start (so the
+  // resumed elapsedMs survives — derived from the journal when present). A genuinely-gone
+  // session never reaches here (it is flipped lost, not re-attached). Defensive: validate the
+  // structural ids before keying state (T-164-12 parity); a missing store / missing journal
+  // is a no-op (a re-attach with nothing persisted simply resumes empty, never a throw).
+  const onDriveReattached = (e: { sessionId?: unknown; agentId?: unknown }): void => {
+    if (typeof e.sessionId !== "string" || typeof e.agentId !== "string") {
+      log.warn(
+        { hint: "malformed terminal:drive_reattached payload (missing sessionId/agentId); resume skipped", errorKind: "validation" as const, step: "drive_reattached_dropped" },
+        "terminal drive-reattach resume dropped a malformed frame",
+      );
+      return;
+    }
+    const { sessionId, agentId } = e;
+    sessionAgent.set(sessionId, agentId);
+    const resumed = deps.driveJournalStore?.load(agentId, sessionId);
+    if (resumed !== undefined) {
+      driveJournals.set(sessionId, resumed);
+      // The resumed elapsedMs base: re-derive the drive-start from the journal's cumulative
+      // elapsedMs so `now - driveStartedAtMs` reconstructs the SAME running total post-restart.
+      const elapsed = typeof resumed.elapsedMs === "number" && Number.isFinite(resumed.elapsedMs) && resumed.elapsedMs >= 0 ? resumed.elapsedMs : 0;
+      driveStartedAtMs.set(sessionId, nowMs() - elapsed);
+    }
+    log.info(
+      { sessionId, agentId, resumed: resumed !== undefined, step: "drive_reattached" },
+      "terminal drive re-attached; journal resumed from durable store",
+    );
+  };
+  deps.eventBus.on("terminal:drive_reattached", onDriveReattached);
+
   const dispatcher: TerminalWakeDispatcher = createTerminalWakeDispatcher({
     eventBus: makeWakeAdapterBus(deps.eventBus, log, driveScopeKey),
     isSessionActive,
@@ -256,15 +346,30 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
   // a milestone-length daemon never leaks the loop-guard ring, the durable wake-state
   // file, or the FSM in-memory state. Wired to the SAME eviction/exit signals the P4
   // reaper + the fd3 PTY-exit hook already publish (setup-terminal-tools.ts).
-  const onSessionGone = (sessionId: string): void => {
+  //
+  // DUR-02 / I10 (165-07): the `durableJournal` disposition gates whether the DURABLE
+  // journal file is removed. The IN-MEMORY caches are ALWAYS reclaimed (no leak), but the
+  // on-disk journal is removed ONLY on a CLEAN exit/evict (`"remove"`) and PRESERVED on a
+  // crash/lost (`"preserve"`) so a genuinely-gone-but-recoverable durable drive keeps its
+  // journal for a fresh drive to resume (preserve-on-failure — the whole point of DUR-02).
+  const onSessionGone = (sessionId: string, durableJournal: "remove" | "preserve"): void => {
     // Both total/never-throw.
     loopGuard.forget(sessionId);
     dispatcher.forgetSession(sessionId);
     // DRIVE-02 (164-04): reclaim the promoted-state so a recycled sessionId never inherits a
     // stale promotion (mirrors loopGuard.forget — wired to the SAME end-of-life signals below).
     promotedSessions.delete(sessionId);
-    // DRIVE-01 (164-06): reclaim the per-session journal too (no per-session memory leak over
-    // a milestone-length daemon; a recycled sessionId starts with a fresh journal).
+    // DUR-02 (165-07): reclaim the DURABLE journal file FIRST (while the owning agent is still
+    // known) — but ONLY on a clean exit/evict. On a lost/crash it is PRESERVED (I10).
+    const agentId = sessionAgent.get(sessionId);
+    if (durableJournal === "remove" && deps.driveJournalStore && agentId !== undefined) {
+      deps.driveJournalStore.remove(agentId, sessionId); // best-effort (the store swallows faults)
+    }
+    // DUR-02 (165-07): reclaim the per-session owning-agent bridge (no leak; same lifecycle).
+    sessionAgent.delete(sessionId);
+    // DRIVE-01 (164-06): reclaim the per-session in-memory journal cache (no per-session memory
+    // leak over a milestone-length daemon; a recycled sessionId starts with a fresh journal).
+    // NOTE: this drops the in-memory copy only — the DURABLE file is governed above (I10).
     driveJournals.delete(sessionId);
     // MR-01: reclaim the per-session drive-start timestamp alongside the journal (same
     // lifecycle — no leak; a recycled sessionId re-stamps on its next promotion).
@@ -281,9 +386,13 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
       );
     }
   };
-  const onEvicted = (e: { sessionId: string }): void => onSessionGone(e.sessionId);
+  // A reaper/operator eviction is a CLEAN end-of-life → remove the durable journal.
+  const onEvicted = (e: { sessionId: string }): void => onSessionGone(e.sessionId, "remove");
   const onStateChange = (e: { sessionId: string; state: string }): void => {
-    if (e.state === "exited" || e.state === "lost") onSessionGone(e.sessionId);
+    // A clean PTY `exited` removes the durable journal; a `lost` (crash / unrecoverable) is a
+    // genuine death whose journal is PRESERVED for a fresh drive to resume (DUR-02 / I10).
+    if (e.state === "exited") onSessionGone(e.sessionId, "remove");
+    else if (e.state === "lost") onSessionGone(e.sessionId, "preserve");
   };
   deps.eventBus.on("terminal:session_evicted", onEvicted);
   deps.eventBus.on("terminal:session_state", onStateChange);
@@ -297,6 +406,8 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
       // DRIVE-02 (164-04): unsubscribe the promotion consumer (no leaked listener; a
       // post-shutdown emit drives no notify).
       deps.eventBus.off("terminal:drive_promoted", onDrivePromoted);
+      // DUR-02 (165-07): unsubscribe the re-attach resume consumer too (no leaked listener).
+      deps.eventBus.off("terminal:drive_reattached", onDriveReattached);
       await dispatcher.shutdown();
     },
   };

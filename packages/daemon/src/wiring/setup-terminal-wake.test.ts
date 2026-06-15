@@ -704,15 +704,18 @@ describe("setupTerminalWake — the keystone subscribe + woken-turn driver (124-
     expect(js.store.persist, "an unpromoted drive must persist nothing").not.toHaveBeenCalled();
   });
 
-  it("DUR-02 resume: the holder seeds the journal cache from store.recover on construction (a re-attach resumes the journal)", () => {
+  it("DUR-02 resume: a terminal:drive_reattached seeds the journal cache from store.load (the registry signals the re-attach)", async () => {
     // A persisted journal from a prior daemon life (the restart).
     const seeded = new Map<string, DriveJournalShape>([
       ["a/s-resume", { objective: "build the app", lastClassification: "awaiting-input", lastScreenDigest: "", answeredPrompts: ["pattern:2"], stepsTried: ["ran:build"], elapsedMs: 1_000, interactions: 3, costUsd: 0, truncations: 0 }],
     ]);
     built = buildDur(dataDir, { screen: "Press enter to continue", seed: seeded });
     const { js } = built as Built & { js: ReturnType<typeof makeJournalStore> };
-    // On construction the holder recovered the agent's persisted journals (resume substrate).
-    expect(js.store.recover, "the holder must recover persisted journals on construction (resume)").toHaveBeenCalledWith("a");
+    // The registry's recover-on-boot re-attached the surviving tmux session → it emits the
+    // content-free terminal:drive_reattached, which the holder consumes to seed the resume.
+    built.bus.emit("terminal:drive_reattached", { sessionId: "s-resume", agentId: "a", reason: "tmux_alive", timestamp: 1 });
+    await flush();
+    expect(js.store.load, "the holder must load the persisted journal on a re-attach (resume)").toHaveBeenCalledWith("a", "s-resume");
   });
 
   it("DUR-02/I10 resume-no-re-answer: a resumed drive whose journal has answeredPrompts continues from it (the seeded answeredPrompts survives into the live journal)", async () => {
@@ -721,8 +724,9 @@ describe("setupTerminalWake — the keystone subscribe + woken-turn driver (124-
     ]);
     built = buildDur(dataDir, { screen: "Press enter to continue", seed: seeded });
     const { js } = built as Built & { js: ReturnType<typeof makeJournalStore> };
-    // The session was promoted in the prior life; re-promote on this boot (promote-once is
-    // per-life). A wake then updates the RESUMED journal — the prior answeredPrompts is carried.
+    // The registry re-attached the surviving session → seed the resumed journal into the
+    // live cache (the resume), AND re-promote on this boot (promote-once is per-life).
+    built.bus.emit("terminal:drive_reattached", { sessionId: "s-resume", agentId: "a", reason: "tmux_alive", timestamp: 1 });
     built.bus.fireDrivePromoted("s-resume", "a", "producing");
     await flush();
     built.bus.fireInputNeeded("s-resume", "a");
@@ -751,11 +755,13 @@ describe("setupTerminalWake — the keystone subscribe + woken-turn driver (124-
     expect(js.store.remove, "a lost/crash must NOT remove the durable journal (I10 preserve-on-failure)").not.toHaveBeenCalled();
   });
 
-  it("DUR-02 wiring (source guard): the journal.set wrapper persists + the holder recovers on construction", () => {
+  it("DUR-02 wiring (source guard): the journal.set wrapper persists + the holder seeds on a re-attach", () => {
     const src = readFileSync(fileURLToPath(new URL("./setup-terminal-wake.ts", import.meta.url)), "utf8");
     // The single DUR-02 persistence point: the journal.set wrapper calls the store's persist.
     expect(src, "the journal.set wrapper must persist via driveJournalStore").toMatch(/driveJournalStore\??\.persist\(/);
-    // The holder seeds from recover on construction (the resume substrate).
-    expect(src, "the holder must seed from driveJournalStore.recover on construction").toMatch(/driveJournalStore\??\.recover\(/);
+    // The holder seeds the resumed journal from the store on the re-attach signal.
+    expect(src, "the holder must seed from driveJournalStore.load on a re-attach").toMatch(/driveJournalStore\??\.load\(/);
+    // The re-attach signal is the registry's content-free terminal:drive_reattached.
+    expect(src, "the holder must consume terminal:drive_reattached for resume").toMatch(/terminal:drive_reattached/);
   });
 });
