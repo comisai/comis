@@ -201,6 +201,7 @@ export {
   deserializeJournal,
   CAP_ANSWERED,
   CAP_STEPS,
+  TAG_MAX,
   type DriveJournal,
 } from "./terminal-drive-journal.js";
 

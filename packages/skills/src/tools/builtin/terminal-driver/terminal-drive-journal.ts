@@ -19,10 +19,15 @@
  * NO fs write happens here.
  *
  * The three load-bearing properties:
- *   - BOUNDED (I7, Pitfall 3): {@link appendAnswered}/{@link appendStep} oldest-trim at
- *     {@link CAP_ANSWERED}/{@link CAP_STEPS}; an over-cap append drops the OLDEST and
- *     increments the run-total `truncations` breadcrumb — NEVER a silent unbounded
- *     append. After 10_000 appends each array is still ≤ its cap.
+ *   - BOUNDED (I7, Pitfall 3; MR-03): {@link appendAnswered}/{@link appendStep} oldest-trim
+ *     at {@link CAP_ANSWERED}/{@link CAP_STEPS} (the array-COUNT bound) AND clip each entry
+ *     to {@link TAG_MAX} bytes (the per-entry SIZE bound). An over-cap drop OR an over-size
+ *     clamp increments the run-total `truncations` breadcrumb — NEVER a silent unbounded
+ *     append and NEVER a silent full-size keep. So the serialized journal size is a function
+ *     of the caps × {@link TAG_MAX} REGARDLESS of caller convention (a future caller that
+ *     hands a multi-kilobyte tag, or a corrupted-after-crash file, is clamped on the way in),
+ *     not merely by the live caller passing short tags. After 10_000 appends each array is
+ *     still ≤ its cap and each entry ≤ {@link TAG_MAX} bytes.
  *   - CONTENT-FREE (I3): the journal stores enums/ids/counts/durations + normalized
  *     prompt/step TAGS + a (caller-supplied, already-redacted) one-line `lastScreenDigest`
  *     ONLY — never raw TUI bytes, command output, secrets, or keystrokes. The caller (the
@@ -76,8 +81,45 @@ export const CAP_ANSWERED = 64;
  */
 export const CAP_STEPS = 64;
 
+/**
+ * Max BYTE size of a SINGLE stored entry — a tag (`answeredPrompts`/`stepsTried`), the
+ * `objective`, or `lastScreenDigest` (MR-03 / I7). The caps above bound the array COUNT;
+ * this bounds the size of EACH entry, so the serialized-journal-size guarantee (the
+ * module's "size is a function of the caps" claim) holds REGARDLESS of caller convention
+ * — a future caller that hands a multi-kilobyte tag, or a corrupted-after-crash file with
+ * long entries, is CLAMPED here rather than blowing the byte ceiling the module promises
+ * (the gap the `mapWaitReply`-style discipline previously stopped one step short of). 256
+ * bytes is far more than a normalized prompt-hash / step-tag / one-line digest needs (the
+ * live caller passes ≤80-char digests + short enum tags); it exists to clip a pathological
+ * entry, not to bound normal use. A clamp is recorded on the `truncations` breadcrumb
+ * (never a silent full-size keep), mirroring `DIGEST_EXCERPT_MAX` in `terminal-read-digest.ts`.
+ */
+export const TAG_MAX = 256;
+
 /** The safe default classification for a fresh / unreadable journal (I8 — a shipped state). */
 const DEFAULT_CLASSIFICATION: ClassifierState = "working";
+
+/**
+ * Clip a string to at most {@link TAG_MAX} BYTES on a UTF-8 char boundary (never a split
+ * multibyte glyph), returning `{ value, clamped }` where `clamped` is `true` iff the input
+ * exceeded the cap. Pure; total; never throws (a non-string yields `{ "", false }`).
+ * Byte-accurate (not `.length`, which counts UTF-16 code units) because a tag/digest is
+ * attacker-influenceable TUI-derived text and the cap is a payload-size guard — mirrors
+ * `capWithBreadcrumb` in `terminal-read-digest.ts`.
+ */
+function clipTag(tag: string): { value: string; clamped: boolean } {
+  if (typeof tag !== "string") return { value: "", clamped: false };
+  if (Buffer.byteLength(tag, "utf8") <= TAG_MAX) return { value: tag, clamped: false };
+  // Slice the leading bytes, then decode losslessly — a trailing partial multibyte
+  // sequence is dropped, keeping the result ≤ TAG_MAX bytes and never a split glyph.
+  const value = Buffer.from(tag, "utf8").subarray(0, TAG_MAX).toString("utf8");
+  return { value, clamped: true };
+}
+
+/** Clip a scalar field ({@link clipTag}) for the constructors / deserialize — just the value. */
+function clipField(value: string): string {
+  return clipTag(value).value;
+}
 
 // ---------------------------------------------------------------------------
 // The shape (CONTEXT §7.1.6 — the MINIMAL rolling set; content-free per I3).
@@ -129,7 +171,9 @@ export interface DriveJournal {
  */
 export function emptyJournal(objective: string): DriveJournal {
   return {
-    objective: typeof objective === "string" ? objective : "",
+    // MR-03: clamp the objective to the per-entry byte bound (a degenerate/over-long
+    // objective cannot blow the serialized-size guarantee).
+    objective: clipField(typeof objective === "string" ? objective : ""),
     lastClassification: DEFAULT_CLASSIFICATION,
     lastScreenDigest: "",
     answeredPrompts: [],
@@ -142,19 +186,23 @@ export function emptyJournal(objective: string): DriveJournal {
 }
 
 /**
- * Append a tag to a capped array, oldest-trimming at `cap` and returning
- * `{ next, dropped }` where `dropped` is the count removed (0 or 1 for a single append).
- * Pure — never mutates `arr`. Models terminal-loop-guard's bounded ring, but reports the
- * drop count instead of silently dropping (I7).
+ * Append a tag to a capped array, oldest-trimming at `cap` (the COUNT bound) AND clipping
+ * the appended tag to {@link TAG_MAX} bytes (the per-entry SIZE bound, MR-03). Returns
+ * `{ next, dropped }` where `dropped` is the count of entries removed by oldest-trim PLUS
+ * 1 if the appended tag was byte-clamped — so a clamp, like a drop, lands on the
+ * `truncations` breadcrumb (never a silent full-size keep, I7). Pure — never mutates `arr`.
+ * Models terminal-loop-guard's bounded ring, but reports the drop/clamp count.
  */
 function appendCapped(arr: readonly string[], tag: string, cap: number): { next: string[]; dropped: number } {
-  const grown = [...arr, tag];
+  const { value, clamped } = clipTag(tag);
+  const clampDrop = clamped ? 1 : 0;
+  const grown = [...arr, value];
   if (grown.length <= cap) {
-    return { next: grown, dropped: 0 };
+    return { next: grown, dropped: clampDrop };
   }
-  const dropped = grown.length - cap;
+  const trimDropped = grown.length - cap;
   // Oldest-trim: keep the newest `cap` entries (drop from the front).
-  return { next: grown.slice(dropped), dropped };
+  return { next: grown.slice(trimDropped), dropped: trimDropped + clampDrop };
 }
 
 /**
@@ -191,7 +239,9 @@ export function updateJournal(
   return {
     ...j,
     ...(patch.lastClassification !== undefined ? { lastClassification: patch.lastClassification } : {}),
-    ...(typeof patch.lastScreenDigest === "string" ? { lastScreenDigest: patch.lastScreenDigest } : {}),
+    // MR-03: clamp the digest to the per-entry byte bound (the caller hands an ≤80-char
+    // redacted one-liner today; clip a pathological digest so the size guarantee holds).
+    ...(typeof patch.lastScreenDigest === "string" ? { lastScreenDigest: clipField(patch.lastScreenDigest) } : {}),
     ...(typeof patch.elapsedMs === "number" ? { elapsedMs: patch.elapsedMs } : {}),
     ...(typeof patch.interactions === "number" ? { interactions: patch.interactions } : {}),
     ...(typeof patch.costUsd === "number" ? { costUsd: patch.costUsd } : {}),
@@ -215,11 +265,13 @@ function numberOr(v: unknown, fallback: number): number {
 /**
  * Read a value as an array of STRINGS, dropping non-string entries (never coerced to
  * `"[object Object]"`), then oldest-trim to `cap` (a corrupted-large persisted array
- * cannot blow the cap). A non-array yields `[]`.
+ * cannot blow the count cap) AND clip each entry to {@link TAG_MAX} bytes (MR-03 — a
+ * corrupted-after-crash file with long entries cannot blow the per-entry byte bound).
+ * A non-array yields `[]`.
  */
 function stringArrayCapped(v: unknown, cap: number): string[] {
   if (!Array.isArray(v)) return [];
-  const strings = v.filter((e): e is string => typeof e === "string");
+  const strings = v.filter((e): e is string => typeof e === "string").map(clipField);
   return strings.length > cap ? strings.slice(strings.length - cap) : strings;
 }
 
@@ -251,9 +303,11 @@ export function deserializeJournal(raw: string | unknown): DriveJournal {
       ? (parsed as Record<string, unknown>)
       : {};
   return {
-    objective: typeof r.objective === "string" ? r.objective : "",
+    // MR-03: clip the scalar string fields too — a corrupted file with a multi-kilobyte
+    // objective/digest is clamped to the per-entry byte bound on read.
+    objective: clipField(typeof r.objective === "string" ? r.objective : ""),
     lastClassification: isClassifierState(r.lastClassification) ? r.lastClassification : DEFAULT_CLASSIFICATION,
-    lastScreenDigest: typeof r.lastScreenDigest === "string" ? r.lastScreenDigest : "",
+    lastScreenDigest: clipField(typeof r.lastScreenDigest === "string" ? r.lastScreenDigest : ""),
     answeredPrompts: stringArrayCapped(r.answeredPrompts, CAP_ANSWERED),
     stepsTried: stringArrayCapped(r.stepsTried, CAP_STEPS),
     elapsedMs: numberOr(r.elapsedMs, 0),

@@ -47,6 +47,7 @@ import {
   deserializeJournal,
   CAP_ANSWERED,
   CAP_STEPS,
+  TAG_MAX,
   type DriveJournal,
 } from "./terminal-drive-journal.js";
 
@@ -132,6 +133,74 @@ describe("appendStep — append, immutability, oldest-trim breadcrumb (I7)", () 
     for (let i = 0; i < CAP_ANSWERED + 1; i++) j = appendAnswered(j, `p${i}`);
     for (let i = 0; i < CAP_STEPS + 1; i++) j = appendStep(j, `s${i}`);
     expect(j.truncations).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// MR-03 (I7): per-entry byte size is bounded, not only array length. The caps
+// bound COUNT; TAG_MAX bounds the byte size of an individual tag/objective/digest
+// so the serialized-size guarantee holds regardless of caller convention (a future
+// caller, or a corrupted-after-crash file with multi-kilobyte entries). An over-long
+// entry is CLAMPED (truncate) and the truncations breadcrumb records it — never a
+// silent full-size keep.
+// ---------------------------------------------------------------------------
+
+describe("MR-03 — per-entry byte size is clamped at TAG_MAX (I7, not only array length)", () => {
+  it("appendAnswered clamps an over-long tag to TAG_MAX bytes and bumps truncations (never silently kept full-size)", () => {
+    const longTag = "x".repeat(TAG_MAX + 500);
+    const j = appendAnswered(emptyJournal("o"), longTag);
+    const stored = j.answeredPrompts[0]!;
+    expect(Buffer.byteLength(stored, "utf8")).toBeLessThanOrEqual(TAG_MAX);
+    // The clamp is recorded — never a silent full-size keep.
+    expect(j.truncations).toBeGreaterThan(0);
+    // The stored prefix is the leading bytes of the original (a deterministic truncate).
+    expect(longTag.startsWith(stored)).toBe(true);
+  });
+
+  it("appendStep clamps an over-long step tag to TAG_MAX bytes and bumps truncations", () => {
+    const longTag = "s".repeat(TAG_MAX + 1000);
+    const j = appendStep(emptyJournal("o"), longTag);
+    expect(Buffer.byteLength(j.stepsTried[0]!, "utf8")).toBeLessThanOrEqual(TAG_MAX);
+    expect(j.truncations).toBeGreaterThan(0);
+  });
+
+  it("a short tag is stored verbatim with no clamp and no truncations bump", () => {
+    const j = appendAnswered(emptyJournal("o"), "answered:ok");
+    expect(j.answeredPrompts).toEqual(["answered:ok"]);
+    expect(j.truncations).toBe(0);
+  });
+
+  it("emptyJournal clamps an over-long objective to TAG_MAX bytes (the bounded-size guarantee holds at construction)", () => {
+    const j = emptyJournal("o".repeat(TAG_MAX + 999));
+    expect(Buffer.byteLength(j.objective, "utf8")).toBeLessThanOrEqual(TAG_MAX);
+  });
+
+  it("updateJournal clamps an over-long lastScreenDigest to TAG_MAX bytes", () => {
+    const j = updateJournal(emptyJournal("o"), { lastScreenDigest: "d".repeat(TAG_MAX + 250) });
+    expect(Buffer.byteLength(j.lastScreenDigest, "utf8")).toBeLessThanOrEqual(TAG_MAX);
+  });
+
+  it("deserializeJournal clamps an over-long persisted entry (a corrupted-after-crash file cannot blow the per-entry bound)", () => {
+    const huge = "z".repeat(TAG_MAX + 4096);
+    const j = deserializeJournal(
+      JSON.stringify({ objective: huge, lastScreenDigest: huge, answeredPrompts: [huge], stepsTried: [huge] }),
+    );
+    expect(Buffer.byteLength(j.objective, "utf8")).toBeLessThanOrEqual(TAG_MAX);
+    expect(Buffer.byteLength(j.lastScreenDigest, "utf8")).toBeLessThanOrEqual(TAG_MAX);
+    expect(Buffer.byteLength(j.answeredPrompts[0]!, "utf8")).toBeLessThanOrEqual(TAG_MAX);
+    expect(Buffer.byteLength(j.stepsTried[0]!, "utf8")).toBeLessThanOrEqual(TAG_MAX);
+  });
+
+  it("the serialized journal is bounded by the caps × TAG_MAX even if a caller hands pathological multi-kilobyte tags", () => {
+    let j = emptyJournal("o".repeat(10_000));
+    for (let i = 0; i < CAP_ANSWERED + 5; i++) j = appendAnswered(j, "p".repeat(5_000));
+    for (let i = 0; i < CAP_STEPS + 5; i++) j = appendStep(j, "s".repeat(5_000));
+    const bytes = Buffer.byteLength(serializeJournal(j), "utf8");
+    // A loose, caller-convention-independent ceiling: (CAP_ANSWERED + CAP_STEPS) entries
+    // each ≤ TAG_MAX + the two scalar fields ≤ TAG_MAX + JSON overhead. Far below the
+    // ~640KB an unbounded 5KB-per-entry journal would reach.
+    const ceiling = (CAP_ANSWERED + CAP_STEPS + 2) * TAG_MAX + 4_096;
+    expect(bytes).toBeLessThanOrEqual(ceiling);
   });
 });
 
