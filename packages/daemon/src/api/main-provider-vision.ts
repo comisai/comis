@@ -237,7 +237,17 @@ export function createMainProviderVision(deps: MainProviderVisionDeps): MainProv
 
     // 3. ONE bounded completeSimple with the MULTIMODAL message (the keystone).
     const controller = new AbortController();
-    const timer = systemSetTimeout(() => controller.abort(), timeoutMs);
+    // WR-02: track whether OUR timer was the abort trigger. pi-ai's completeSimple
+    // RESOLVES (does not reject) on the abort event — the AssistantMessage then
+    // carries stopReason:"aborted" and hits the non-"stop" branch below rather
+    // than the catch. `timedOut` lets that branch classify a genuine wall-clock
+    // timeout as `timeout` instead of mis-reading "aborted" as `empty_response`.
+    // The bridge's own AbortController is the ONLY abort trigger on this path.
+    let timedOut = false;
+    const timer = systemSetTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, timeoutMs);
     try {
       const response = await completeSimple(
         model,
@@ -257,7 +267,14 @@ export function createMainProviderVision(deps: MainProviderVisionDeps): MainProv
       );
 
       if (response.stopReason !== "stop") {
-        const errorKind = classifyStopReason(response.stopReason);
+        // WR-02: a resolved-with-"aborted" stream means our timer fired (the
+        // ONLY abort trigger on this path) — classify it as a timeout, not the
+        // generic empty_response classifyStopReason would otherwise return.
+        const abortedByTimeout =
+          response.stopReason === "aborted" && (timedOut || controller.signal.aborted);
+        const errorKind: ImageErrorKind = abortedByTimeout
+          ? "timeout"
+          : classifyStopReason(response.stopReason);
         logger.warn(
           {
             agentId,
@@ -265,14 +282,18 @@ export function createMainProviderVision(deps: MainProviderVisionDeps): MainProv
             imageErrorKind: errorKind,
             step: "vision" as const,
             stopReason: response.stopReason,
-            hint: `vision completion ended with stopReason "${response.stopReason}"`,
+            hint: abortedByTimeout
+              ? "vision completion timed out"
+              : `vision completion ended with stopReason "${response.stopReason}"`,
           },
           "Main-provider vision completion did not finish cleanly",
         );
         return err(
           new VisionUnavailable(
             errorKind,
-            `Vision completion ended with stopReason "${response.stopReason}".`,
+            abortedByTimeout
+              ? "Vision completion timed out."
+              : `Vision completion ended with stopReason "${response.stopReason}".`,
           ),
         );
       }
@@ -285,7 +306,10 @@ export function createMainProviderVision(deps: MainProviderVisionDeps): MainProv
         costUsd: response.usage?.cost?.total,
       });
     } catch (llmErr) {
-      const aborted = controller.signal.aborted;
+      // WR-02: prefer the explicit timedOut flag (our timer fired) and keep
+      // controller.signal.aborted as the fallback — both indicate the bridge's
+      // own abort, the only abort trigger on this path.
+      const aborted = timedOut || controller.signal.aborted;
       logger.warn(
         {
           agentId,

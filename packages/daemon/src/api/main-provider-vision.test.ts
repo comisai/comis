@@ -174,6 +174,66 @@ describe("createMainProviderVision().describeImage", () => {
     expect(res.error.message.length).toBeGreaterThan(0);
   });
 
+  it("WR-02: a stream that RESOLVES with stopReason 'aborted' AFTER the timeout fired → classified timeout, NOT empty_response", async () => {
+    // pi-ai's completeSimple → AssistantMessageEventStream.result() RESOLVES
+    // (does not reject) on the abort event, with the AssistantMessage carrying
+    // stopReason:"aborted" (event-stream.js:64-75). So when our AbortController
+    // fires at timeoutMs, the SDK can resolve (not throw) — bypassing the
+    // catch-block timeout path. Drive that exact ordering: the timeout callback
+    // runs (arming the abort + the timedOut flag), THEN the stream resolves with
+    // stopReason:"aborted". The classification MUST be `timeout`.
+    let timeoutCb: (() => void) | undefined;
+    (systemSetTimeout as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      (cb: () => void, _ms: number) => {
+        timeoutCb = cb;
+        return Symbol("timer") as unknown as ReturnType<typeof setTimeout>;
+      },
+    );
+    (completeSimple as ReturnType<typeof vi.fn>).mockImplementationOnce(async () => {
+      // The wall-clock timeout fires first (the call exceeded timeoutMs)…
+      timeoutCb?.();
+      // …then pi-ai resolves the stream with the aborted AssistantMessage.
+      return assistantMsg({ text: "", stopReason: "aborted" });
+    });
+    const bridge = createMainProviderVision(makeDeps() as never);
+    const res = await bridge.describeImage(PNG, PROMPT, "image/png", "agent-1");
+    expect(res.ok).toBe(false);
+    if (res.ok) throw new Error("expected err");
+    expect(res.error).toBeInstanceOf(VisionUnavailable);
+    expect((res.error as VisionUnavailable).errorKind).toBe("timeout");
+    expect(res.error.message).toMatch(/timed out|timeout/i);
+  });
+
+  it("WR-02: a non-stop stream resolving 'aborted' WITHOUT the abort signal set is still classified by controller.signal (defensive)", async () => {
+    // Belt-and-suspenders: if a provider ever resolves stopReason:"aborted"
+    // and the controller IS aborted (the only abort trigger on this path is our
+    // own timer), it is a timeout. This pins that `aborted` is read as a
+    // timeout indicator on this branch, not a generic empty_response.
+    let timeoutCb: (() => void) | undefined;
+    (systemSetTimeout as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      (cb: () => void, _ms: number) => {
+        timeoutCb = cb;
+        return Symbol("timer") as unknown as ReturnType<typeof setTimeout>;
+      },
+    );
+    (completeSimple as ReturnType<typeof vi.fn>).mockImplementationOnce(async () => {
+      timeoutCb?.();
+      return assistantMsg({ text: "", stopReason: "aborted" });
+    });
+    const deps = makeDeps();
+    const bridge = createMainProviderVision(deps as never);
+    const res = await bridge.describeImage(PNG, PROMPT, "image/png", "agent-1");
+    expect(res.ok).toBe(false);
+    if (res.ok) throw new Error("expected err");
+    expect((res.error as VisionUnavailable).errorKind).toBe("timeout");
+    // The content-free WARN reflects the timeout classification.
+    const warnCall = deps.logger.warn.mock.calls.find(
+      (c: unknown[]) => (c[0] as { step?: string } | undefined)?.step === "vision",
+    );
+    expect(warnCall).toBeDefined();
+    expect((warnCall![0] as { imageErrorKind?: string }).imageErrorKind).toBe("timeout");
+  });
+
   it("no creds (resolveApiKey undefined AND no codex key) → err(auth_required); completeSimple NEVER called", async () => {
     const deps = makeDeps({
       resolveApiKey: vi.fn(() => undefined),
