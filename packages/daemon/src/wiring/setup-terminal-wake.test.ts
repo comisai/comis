@@ -18,9 +18,10 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { setupTerminalWake, type SetupTerminalWakeDeps } from "./setup-terminal-wake.js";
 import { WAKE_DIR_NAME } from "./terminal-wake-persistence.js";
@@ -55,6 +56,10 @@ function makeBus() {
     /** Simulate the Task-1 hook re-publishing an fd3 input_needed onto the bus. */
     fireInputNeeded(sessionId: string, agentId: string, reason = "settled_cursor_parked") {
       this.emit("terminal:input_needed", { sessionId, agentId, state: "awaiting-input", reason, timestamp: 1 });
+    },
+    /** DRIVE-02 (164-04): simulate the skills wait tool emitting a content-free promotion. */
+    fireDrivePromoted(sessionId: string, agentId: string, reason: "producing" | "mode_detached" = "producing") {
+      this.emit("terminal:drive_promoted", { sessionId, agentId, reason, timestamp: 1 });
     },
   };
 }
@@ -328,5 +333,148 @@ describe("setupTerminalWake — the keystone subscribe + woken-turn driver (124-
     expect(() =>
       built!.bus.emit("terminal:session_evicted", { sessionId: "s-x", agentId: "a", reason: "idle", durationMs: 1, timestamp: 5 }),
     ).not.toThrow();
+  });
+
+  // -------------------------------------------------------------------------
+  // DRIVE-02 (164-04): the dispatcher consumes terminal:drive_promoted into a
+  // closure-local promoted-Set (mirroring the loopGuard lifecycle) + fires EXACTLY
+  // ONE content-free "drive started (backgrounded)" notify per session via the
+  // WokenTurnNotify chain (origin:background_task — NOT the escalate() path). The
+  // skills wait tool emits per-qualifying-wait; the daemon collapses to one
+  // (promote-once). A sub-threshold inline drive emits nothing → no notify (I1).
+  // RED on pre-patch: no terminal:drive_promoted subscriber exists, so a promotion
+  // emit drives no notify (the notify stays at 0 calls).
+  // -------------------------------------------------------------------------
+
+  /** The notify calls the dispatcher made (the WokenTurnNotify chain). */
+  function notifyCalls(b: Built): Array<{ agentId: string; message: string; priority: string; origin: string }> {
+    return b.notify.mock.calls.map((c) => c[0] as { agentId: string; message: string; priority: string; origin: string });
+  }
+
+  it("DRIVE-02: a terminal:drive_promoted records the session + fires exactly ONE drive-started notify (WokenTurnNotify chain, origin:background_task)", async () => {
+    built = build(dataDir, { screen: "Building…" });
+    built.bus.fireDrivePromoted("s-drv", "a", "producing");
+    await flush();
+
+    const calls = notifyCalls(built);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ agentId: "a", priority: "normal", origin: "background_task" });
+    // The drive-started message is STRUCTURAL only — the session id + "background", no screen.
+    expect(calls[0]!.message).toContain("s-drv");
+    expect(calls[0]!.message.toLowerCase()).toContain("background");
+    // It is NOT an escalation — no terminal:escalated rides this path.
+    expect(built.bus.emitted.find((e) => e.event === "terminal:escalated")).toBeUndefined();
+  });
+
+  it("promote-once: a SECOND terminal:drive_promoted for the SAME session fires NO second notify (the daemon dedupe)", async () => {
+    built = build(dataDir, { screen: "Building…" });
+    built.bus.fireDrivePromoted("s-drv", "a", "producing");
+    built.bus.fireDrivePromoted("s-drv", "a", "producing"); // the skills tool emits per-qualifying-wait
+    await flush();
+
+    // The daemon promoted-Set collapses repeated emits for one session to ONE notify.
+    expect(built.notify).toHaveBeenCalledTimes(1);
+  });
+
+  it("promote-once is PER-SESSION: a different session still gets its own ONE notify", async () => {
+    built = build(dataDir, { screen: "Building…" });
+    built.bus.fireDrivePromoted("s-a", "a", "producing");
+    built.bus.fireDrivePromoted("s-b", "a", "mode_detached");
+    built.bus.fireDrivePromoted("s-a", "a", "producing"); // dup for s-a → no extra
+    await flush();
+
+    expect(built.notify).toHaveBeenCalledTimes(2);
+    const sessions = notifyCalls(built).map((c) => c.message);
+    expect(sessions.some((m) => m.includes("s-a"))).toBe(true);
+    expect(sessions.some((m) => m.includes("s-b"))).toBe(true);
+  });
+
+  it("I1: no terminal:drive_promoted emitted (the inline short-drive path) → NO notify", async () => {
+    built = build(dataDir, { screen: "$ " });
+    // A sub-threshold inline drive: the wait tool emitted nothing, so the dispatcher
+    // never sees a promotion. The promoted-Set stays empty; no drive-started notify.
+    built.bus.fireInputNeeded("s-inline", "a"); // a normal attention frame, NOT a promotion
+    await flush();
+
+    expect(notifyCalls(built).some((c) => c.origin === "background_task" && c.message.toLowerCase().includes("background")))
+      .toBe(false);
+  });
+
+  it("a malformed terminal:drive_promoted (missing sessionId/agentId) is dropped with a WARN, no notify (T-164-12 spoofing guard)", async () => {
+    built = build(dataDir, { screen: "Building…" });
+    built.bus.emit("terminal:drive_promoted", { reason: "producing", timestamp: 1 });
+    await flush();
+
+    expect(built.notify).not.toHaveBeenCalled();
+    const warn = built.logger.warn.mock.calls.find(
+      (c) => typeof (c[0] as { hint?: string })?.hint === "string" && (c[0] as { hint: string }).hint.includes("malformed"),
+    );
+    expect(warn, "a malformed drive_promoted must WARN with a 'malformed' hint").toBeDefined();
+    expect((warn![0] as { errorKind?: string }).errorKind).toBe("validation");
+  });
+
+  it("when deps.notify is absent the promotion is still recorded (bus-only) and does NOT throw", async () => {
+    const bus = makeBus();
+    const registry = makeRegistry({ screen: "Building…" });
+    const logger = makeLogger();
+    const registries = new Map<string, ReturnType<typeof makeRegistry>>([["a", registry]]);
+    // No `notify` in the deps — the promotion path must be a no-throw bus-only record.
+    const deps = {
+      eventBus: bus as unknown as SetupTerminalWakeDeps["eventBus"],
+      registries: registries as unknown as SetupTerminalWakeDeps["registries"],
+      getTerminalAttentionConfig: () => undefined,
+      dataDir,
+      nowMs: () => 1_000,
+      logger: logger as unknown as SetupTerminalWakeDeps["logger"],
+    } as SetupTerminalWakeDeps;
+    const handle = setupTerminalWake(deps);
+    expect(() => bus.fireDrivePromoted("s-drv", "a")).not.toThrow();
+    await flush();
+    await handle.shutdown();
+  });
+
+  it("onSessionGone forgets a promoted session: after eviction a fresh promotion for a recycled id notifies again", async () => {
+    built = build(dataDir, { screen: "Building…" });
+    built.bus.fireDrivePromoted("s-recycle", "a", "producing");
+    await flush();
+    expect(built.notify).toHaveBeenCalledTimes(1);
+
+    // The session is evicted — its promoted-state must be reclaimed (no stale dedupe).
+    built.bus.emit("terminal:session_evicted", { sessionId: "s-recycle", agentId: "a", reason: "idle", durationMs: 1, timestamp: 2 });
+    await flush();
+
+    // A recycled sessionId promoting again is a NEW promotion → a fresh notify.
+    built.bus.fireDrivePromoted("s-recycle", "a", "producing");
+    await flush();
+    expect(built.notify).toHaveBeenCalledTimes(2);
+  });
+
+  it("onSessionGone forgets a promoted session on a PTY exit (session_state exited|lost) too", async () => {
+    built = build(dataDir, { screen: "Building…" });
+    built.bus.fireDrivePromoted("s-exit", "a", "producing");
+    await flush();
+    expect(built.notify).toHaveBeenCalledTimes(1);
+
+    built.bus.emit("terminal:session_state", { sessionId: "s-exit", agentId: "a", state: "exited", durationMs: 0, timestamp: 3 });
+    await flush();
+    built.bus.fireDrivePromoted("s-exit", "a", "producing");
+    await flush();
+    expect(built.notify).toHaveBeenCalledTimes(2);
+  });
+
+  it("shutdown() unsubscribes terminal:drive_promoted (a post-shutdown promotion drives no notify)", async () => {
+    built = build(dataDir, { screen: "Building…" });
+    await built.handle.shutdown();
+    built.notify.mockClear();
+    built.bus.fireDrivePromoted("s-late", "a", "producing");
+    await flush();
+    expect(built.notify).not.toHaveBeenCalled();
+  });
+
+  it("the subscribe + shutdown unsubscribe are wired in setup-terminal-wake.ts (source guard)", () => {
+    const src = readFileSync(fileURLToPath(new URL("./setup-terminal-wake.ts", import.meta.url)), "utf8");
+    expect(src, "must subscribe terminal:drive_promoted").toMatch(/\.on\(\s*"terminal:drive_promoted"/);
+    expect(src, "must unsubscribe terminal:drive_promoted on shutdown").toMatch(/\.off\(\s*"terminal:drive_promoted"/);
+    expect(src, "must hold a closure-local promoted-Set").toMatch(/promotedSessions/);
   });
 });
