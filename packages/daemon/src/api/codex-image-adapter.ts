@@ -98,12 +98,26 @@ export function createCodexImageAdapter(opts: {
   model?: ImagesModel<"openai-codex-images">;
   timeoutMs?: number;
   logger: ComisLogger;
+  /**
+   * STORE-AWARE availability snapshot resolved at boot by the selector
+   * (`codexCredentialsAvailable`, via `hasStoredCredentials`). The sync
+   * `hasCredentials` is cache-only — cold at boot in encrypted-store mode — so a
+   * logged-in Codex profile read as unavailable. `isAvailable()` prefers this
+   * flag; it falls back to the cache-only check only when it is not threaded
+   * (callers/tests). Absent ⇒ the legacy sync behavior.
+   */
+  credentialsAvailable?: boolean;
 }): ImageGenerationPort {
   return {
     id: CODEX_PROVIDER_ID,
-    // CRED-01: codex credential availability is the OAuth manager, NOT the
-    // SecretManager (the bearer is OAuth, not an env key).
-    isAvailable: () => opts.oauthManager.hasCredentials(CODEX_PROVIDER_ID),
+    // CRED-01: codex credential availability is the OAuth credential, NOT the
+    // SecretManager (the bearer is OAuth, not an env key). Prefer the boot-
+    // resolved STORE-AWARE snapshot (the selector's codexCredentialsAvailable);
+    // fall back to the sync cache-only check only when it was not threaded — the
+    // latter under-reports a store-backed login at a cold-cache boot (the bug
+    // fixed in the selector; this closes the same trap on the adapter).
+    isAvailable: () =>
+      opts.credentialsAvailable ?? opts.oauthManager.hasCredentials(CODEX_PROVIDER_ID),
     execute(input: ImageGenInput): Promise<Result<ImageGenOutput, Error>> {
       return fromPromise(
         (async () => {

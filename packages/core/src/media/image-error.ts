@@ -25,6 +25,7 @@ export type ImageErrorKind =
   | "quota_exceeded"
   | "timeout"
   | "unsupported_provider"
+  | "bad_request"
   | "empty_response";
 
 /**
@@ -37,6 +38,11 @@ export const IMAGE_ERR_TO_LOG: Record<ImageErrorKind, ErrorKind> = {
   auth_required: "auth",
   quota_exceeded: "resource",
   timeout: "timeout",
+  // bad_request: the provider rejected the request itself (a permanent 4xx that
+  // is NOT auth/quota/content) — a caller/contract precondition failure, NOT a
+  // transient dependency error. Mapping it to "precondition" (not "dependency")
+  // keeps it OUT of the retryable bucket: retrying the same request just re-400s.
+  bad_request: "precondition",
   empty_response: "dependency",
   content_blocked: "dependency",
 };

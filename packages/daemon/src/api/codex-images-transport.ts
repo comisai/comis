@@ -52,7 +52,6 @@
  */
 import { type AssistantImages, type ImagesApiFunction } from "@earendil-works/pi-ai";
 import { decodeCodexJwtPayload, systemNowMs } from "@comis/core";
-import type { ComisLogger } from "@comis/infra";
 import os from "node:os";
 import { randomUUID } from "node:crypto";
 
@@ -282,16 +281,16 @@ async function parseCodexImageSse(
  * `AssistantImages` with `stopReason:"error"`/`"aborted"` the shipped
  * classifier maps).
  *
- * @param logger - Optional diagnostics logger. SEC-03: only `{ step, errorKind }`
- *   is ever logged — never the bearer, the account-id, or the headers object.
+ * NOTE: pi-ai's `ImagesApiFunction` contract is `(model, context, options)` —
+ * `generateImages()` NEVER passes a 4th arg, so a `logger` param here would be
+ * permanently `undefined` (dead). The redacted failure CAUSE is logged by the
+ * ADAPTER (`codex-image-adapter.ts`, which holds the real logger and WARNs
+ * `res.errorMessage` on a non-image result) — never from this transport.
  */
 export const generateImagesCodex: ImagesApiFunction = async (
   model,
   context,
   options,
-  // pi-ai's contract is (model, context, options); Comis threads an optional
-  // logger as a 4th positional arg from the adapter for diagnostics only.
-  logger?: ComisLogger,
 ): Promise<AssistantImages> => {
   const out: AssistantImages = {
     api: model.api,
@@ -346,7 +345,6 @@ export const generateImagesCodex: ImagesApiFunction = async (
         /* ignore — fall back to the bare status */
       }
       out.errorMessage = detail ? `codex ${resp.status}: ${detail}` : `codex ${resp.status}`;
-      logger?.debug({ step: "codex_image_transport", errorKind: "http_status" }, "codex image request failed");
       return out;
     }
 
@@ -355,14 +353,10 @@ export const generateImagesCodex: ImagesApiFunction = async (
       out.stopReason = "error";
       // WR-04: prefer the terminal response.failed cause (quota / content /
       // auth) so the shipped classifier maps the RIGHT kind; only a genuinely
-      // empty/unparseable stream falls back to empty_response. The raw cause is
-      // surfaced for classification but never logged (the DEBUG line carries
-      // only a static errorKind literal, never the message).
+      // empty/unparseable stream falls back to empty_response. The cause is
+      // surfaced via errorMessage for classification (+ the adapter's WARN),
+      // never echoed to the user.
       out.errorMessage = failedMessage ?? "empty_response: no image in stream";
-      logger?.debug(
-        { step: "codex_image_transport", errorKind: failedMessage ? "failed" : "empty_response" },
-        "codex image stream returned no image",
-      );
       return out;
     }
 
@@ -373,7 +367,6 @@ export const generateImagesCodex: ImagesApiFunction = async (
     // the errorMessage substring. Aborted is distinguished for the timeout kind.
     out.stopReason = options?.signal?.aborted ? "aborted" : "error";
     out.errorMessage = e instanceof Error ? e.message : String(e);
-    logger?.debug({ step: "codex_image_transport", errorKind: "exception" }, "codex image transport caught error");
     return out;
   }
 };

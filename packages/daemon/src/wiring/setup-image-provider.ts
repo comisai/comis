@@ -203,6 +203,9 @@ export function createImageProviderSelector(deps: {
           : CODEX_IMAGE_MODEL,
         timeoutMs: cfg.timeoutMs,
         logger: deps.logger,
+        // Store-aware availability snapshot → the adapter's isAvailable() (so it
+        // doesn't fall back to the cold-cache-only hasCredentials).
+        credentialsAvailable: deps.codexCredentialsAvailable,
       });
     }
 
