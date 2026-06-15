@@ -108,6 +108,8 @@ function build(opts: {
   nowMs?: () => number;
   /** The drive's start ms (MR-01) — `elapsedMs = nowMs() - driveStartMs`. */
   driveStartMs?: (sessionId: string) => number;
+  /** ENDURE-01 (165-07): the per-drive spend ceiling (USD), or null/undefined for uncapped. */
+  maxCostUsd?: number | null;
 }) {
   const registry = makeRegistry(opts);
   const registries = new Map([["a", registry]]);
@@ -134,6 +136,7 @@ function build(opts: {
     logger: logger as unknown as WokenTurnDriverDeps["logger"],
     ...(opts.journal ? { journal: opts.journal } : {}),
     ...(opts.driveStartMs ? { driveStartMs: opts.driveStartMs } : {}),
+    ...(opts.maxCostUsd !== undefined ? { maxCostUsd: opts.maxCostUsd } : {}),
   };
   const wakeOneTurn = buildWokenTurnDriver(deps);
   return { wakeOneTurn, registry, emitted, logger };
@@ -497,5 +500,175 @@ describe("terminal-wake-turn — MR-01: the journal populates answeredPrompts / 
     });
     await expect(wakeOneTurn("s-1", DRIVE_OWNER)).resolves.toBeUndefined();
     expect(map.get("s-1")!.elapsedMs).toBeGreaterThanOrEqual(0);
+  });
+});
+
+// ===========================================================================
+// 165-07 Task 3 (ENDURE-01): the spend-ceiling escalate path. On each PROMOTED turn the
+// driver reads the journal's honest run-total costUsd (I6 — NEVER fabricated) and runs the
+// pure checkSpendCeiling over deps.maxCostUsd; a breach escalates with the figure + a §2.7
+// WARN and STOPS the turn (no answer) — never a silent overspend. A null/absent ceiling is
+// a no-op (I1, byte-identical to today). RED on pre-patch: the driver never consults
+// checkSpendCeiling, so a journal whose costUsd exceeds the ceiling still auto-answers.
+// ===========================================================================
+
+describe("terminal-wake-turn — ENDURE-01: the spend-ceiling escalate path", () => {
+  it("a journal costUsd OVER drive.maxCostUsd escalates (terminal:escalated) + STOPS the turn (no answer)", async () => {
+    // Seed a resumed/accumulated journal whose run-total already exceeds the ceiling.
+    const seed = new Map<string, DriveJournal>([
+      ["s-1", { objective: "build", lastClassification: "awaiting-input", lastScreenDigest: "", answeredPrompts: [], stepsTried: [], elapsedMs: 0, interactions: 3, costUsd: 7.5, truncations: 0 }],
+    ]);
+    const { store } = makeJournalStore(seed);
+    const { wakeOneTurn, registry, emitted, logger } = build({
+      screen: SAFE_SCREEN, // a safe-answerable prompt — but the spend breach must pre-empt the answer
+      sendResult: { screen: "ok", cursor: { x: 1, y: 1 }, delivered: true },
+      journal: store,
+      maxCostUsd: 5,
+    });
+    await wakeOneTurn("s-1", DRIVE_OWNER);
+
+    // The drive STOPPED on the breach — no keystroke sent (never a silent overspend).
+    expect(registry.sendText, "a spend breach must STOP the turn — no auto-answer").not.toHaveBeenCalled();
+    // It escalated to a human via terminal:escalated.
+    const escalated = emitted.find((e) => e.event === "terminal:escalated");
+    expect(escalated, "a spend breach must emit terminal:escalated").toBeDefined();
+    expect(escalated!.payload).toMatchObject({ sessionId: "s-1", agentId: "a" });
+    // A §2.7 WARN names the breach with hint+errorKind + the figure (the spend ceiling).
+    const warn = logger.warn.mock.calls.find((c) => (c[0] as { step?: string })?.step === "spend_ceiling");
+    expect(warn, "a spend breach must WARN with step:spend_ceiling").toBeDefined();
+    expect(typeof (warn![0] as { hint?: string }).hint).toBe("string");
+    expect((warn![0] as { errorKind?: string }).errorKind).toBeDefined();
+  });
+
+  it("a journal costUsd AT the ceiling does NOT breach (strict >, the budget is not yet over)", async () => {
+    const seed = new Map<string, DriveJournal>([
+      ["s-1", { objective: "build", lastClassification: "awaiting-input", lastScreenDigest: "", answeredPrompts: [], stepsTried: [], elapsedMs: 0, interactions: 1, costUsd: 5, truncations: 0 }],
+    ]);
+    const { store } = makeJournalStore(seed);
+    const { wakeOneTurn, registry, emitted } = build({
+      screen: SAFE_SCREEN,
+      sendResult: { screen: "ok", cursor: { x: 1, y: 1 }, delivered: true },
+      journal: store,
+      maxCostUsd: 5,
+    });
+    await wakeOneTurn("s-1", DRIVE_OWNER);
+    // At the cap the budget is not yet over → the turn answers normally (no escalate).
+    expect(registry.sendText, "AT the ceiling the turn proceeds (strict >)").toHaveBeenCalledTimes(1);
+    expect(emitted.find((e) => e.event === "terminal:escalated"), "no escalate at the exact cap").toBeUndefined();
+  });
+
+  it("I1: a null maxCostUsd is a no-op — the turn behaves byte-identically to today (answers)", async () => {
+    const seed = new Map<string, DriveJournal>([
+      ["s-1", { objective: "build", lastClassification: "awaiting-input", lastScreenDigest: "", answeredPrompts: [], stepsTried: [], elapsedMs: 0, interactions: 1, costUsd: 9_999, truncations: 0 }],
+    ]);
+    const { store } = makeJournalStore(seed);
+    const { wakeOneTurn, registry, emitted } = build({
+      screen: SAFE_SCREEN,
+      sendResult: { screen: "ok", cursor: { x: 1, y: 1 }, delivered: true },
+      journal: store,
+      maxCostUsd: null, // uncapped — even a huge costUsd never breaches (I1)
+    });
+    await wakeOneTurn("s-1", DRIVE_OWNER);
+    expect(registry.sendText, "a null ceiling never breaches (I1)").toHaveBeenCalledTimes(1);
+    expect(emitted.find((e) => e.event === "terminal:escalated")).toBeUndefined();
+  });
+
+  it("I1: an UNPROMOTED turn never consults the spend ceiling (the spend check is drive-only)", async () => {
+    // No journal store engaged for an unpromoted owner; even a configured ceiling is inert.
+    const { wakeOneTurn, registry, emitted } = build({
+      screen: SAFE_SCREEN,
+      sendResult: { screen: "ok", cursor: { x: 1, y: 1 }, delivered: true },
+      maxCostUsd: 0.0001, // a tiny ceiling — but an unpromoted turn has no drive journal to check
+    });
+    await wakeOneTurn("s-1", OWNER);
+    expect(registry.sendText, "an unpromoted turn ignores the spend ceiling (I1)").toHaveBeenCalledTimes(1);
+    expect(emitted.find((e) => e.event === "terminal:escalated")).toBeUndefined();
+  });
+
+  it("I6: the spend check reads the journal's honest costUsd and does NOT fabricate a cost (the canned-keystroke seam stays 0)", async () => {
+    const { store, map } = makeJournalStore();
+    const { wakeOneTurn } = build({
+      screen: SAFE_SCREEN,
+      sendResult: { screen: "ok", cursor: { x: 1, y: 1 }, delivered: true },
+      journal: store,
+      maxCostUsd: 5,
+    });
+    await wakeOneTurn("s-1", DRIVE_OWNER);
+    // The canned-keystroke auto-answer has no LLM spend → costUsd stays the honest 0 (I6).
+    expect(map.get("s-1")!.costUsd, "the woken-turn seam must not fabricate a cost (I6)").toBe(0);
+  });
+});
+
+// ===========================================================================
+// 165-07 Task 3 (DUR-02 / I10): the resume-no-re-answer guard. On the FIRST turn of a
+// RESUMED drive this daemon life (its journal came back from disk with prior answeredPrompts
+// — the in-memory loop-guard ring is cold post-restart), a matched pattern already in
+// answeredPrompts is SKIPPED (the send is NOT re-issued) + a content-free waited step is
+// recorded. A LIVE drive (journal accumulated this life) is governed by the loop-guard, NOT
+// this guard, so it still answers (no behavior change for the live path). RED on pre-patch:
+// the driver re-sends a matched pattern even when the resumed journal already answered it.
+// ===========================================================================
+
+describe("terminal-wake-turn — DUR-02/I10: the resume-no-re-answer guard", () => {
+  it("a RESUMED drive whose journal already answered pattern 0 SKIPS the re-send on its first turn this life (sendText: 0 calls)", async () => {
+    // The seeded journal is the RESUMED one (prior life answered pattern:0); the loop-guard
+    // ring is empty (post-restart), so without the resume guard the driver would re-answer.
+    const seed = new Map<string, DriveJournal>([
+      ["s-1", { objective: "build", lastClassification: "awaiting-input", lastScreenDigest: "", answeredPrompts: ["pattern:0"], stepsTried: ["answered"], elapsedMs: 1_000, interactions: 2, costUsd: 0, truncations: 0 }],
+    ]);
+    const { store, map } = makeJournalStore(seed);
+    const { wakeOneTurn, registry } = build({
+      screen: SAFE_SCREEN, // matches hintPatterns[0] → matchedPatternIndex 0 (already answered)
+      sendResult: { screen: "ok", cursor: { x: 1, y: 1 }, delivered: true },
+      journal: store,
+    });
+    await wakeOneTurn("s-1", DRIVE_OWNER);
+
+    // The already-answered pattern is NOT re-sent (I10 — resume, don't re-answer).
+    expect(registry.sendText, "a resumed drive must NOT re-answer an already-answered prompt").not.toHaveBeenCalled();
+    // A content-free waited step is recorded (the turn did something — it waited, didn't answer).
+    const j = map.get("s-1")!;
+    expect(j.stepsTried.at(-1), "the resumed skip records a content-free waited step").toBe("waited");
+    // No NEW answeredPrompts entry (it was already answered; the skip does not double-record).
+    expect(j.answeredPrompts.filter((t) => t === "pattern:0").length, "the skip must not double-append the pattern").toBe(1);
+  });
+
+  it("a LIVE drive (journal accumulated THIS life, not resumed) still answers a repeated pattern — the loop-guard governs repeats, not this guard (the MR-01 accumulation is unchanged)", async () => {
+    const { store, map } = makeJournalStore();
+    const { wakeOneTurn, registry } = build({
+      screen: SAFE_SCREEN,
+      sendResult: { screen: "ok", cursor: { x: 1, y: 1 }, delivered: true },
+      journal: store,
+    });
+    // Turn 1: a fresh (empty) journal this life → answers, appends pattern:0.
+    await wakeOneTurn("s-1", DRIVE_OWNER);
+    // Turn 2: the journal now has pattern:0 but it was accumulated LIVE (not resumed) → the
+    // live path answers again (the loop-guard, faked off here, is the live-repeat handler).
+    await wakeOneTurn("s-1", DRIVE_OWNER);
+    expect(registry.sendText, "a live drive answers each turn (the resume guard only skips a RESUMED first turn)").toHaveBeenCalledTimes(2);
+    expect(map.get("s-1")!.answeredPrompts.length, "the live MR-01 accumulation is unchanged").toBe(2);
+  });
+
+  it("a RESUMED drive whose journal answered a DIFFERENT pattern still answers the current one (the skip is pattern-specific)", async () => {
+    // Resumed journal answered pattern:3; the current screen matches pattern:0 → NOT skipped.
+    const seed = new Map<string, DriveJournal>([
+      ["s-1", { objective: "build", lastClassification: "awaiting-input", lastScreenDigest: "", answeredPrompts: ["pattern:3"], stepsTried: ["answered"], elapsedMs: 1_000, interactions: 2, costUsd: 0, truncations: 0 }],
+    ]);
+    const { store } = makeJournalStore(seed);
+    const { wakeOneTurn, registry } = build({
+      screen: SAFE_SCREEN, // matchedPatternIndex 0 — a DIFFERENT pattern from the answered 3
+      sendResult: { screen: "ok", cursor: { x: 1, y: 1 }, delivered: true },
+      journal: store,
+    });
+    await wakeOneTurn("s-1", DRIVE_OWNER);
+    expect(registry.sendText, "a resumed drive answers a pattern it has NOT yet answered").toHaveBeenCalledTimes(1);
+  });
+
+  it("the spend check + resume guard are wired in terminal-wake-turn.ts (source guard)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { fileURLToPath } = await import("node:url");
+    const src = readFileSync(fileURLToPath(new URL("./terminal-wake-turn.ts", import.meta.url)), "utf8");
+    expect(src, "the turn must consult checkSpendCeiling over the journal costUsd").toMatch(/checkSpendCeiling\(/);
+    expect(src, "the turn must guard a resumed already-answered prompt via answeredPrompts.includes").toMatch(/answeredPrompts\.includes\(/);
   });
 });
