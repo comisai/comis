@@ -256,6 +256,7 @@ export type {
   DocumentationConfig,
   DocumentationLink,
   ImageGenerationConfig,
+  VideoGenerationConfig,
   NotificationConfig,
   VerbosityConfig,
   VerbosityLevel,

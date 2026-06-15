@@ -324,6 +324,7 @@ export type {
   FileExtractionConfig,
   MediaPersistenceConfig,
   ImageGenerationConfig,
+  VideoGenerationConfig,
   MonitoringConfig,
   DiskMonitorConfig,
   ResourceMonitorConfig,

@@ -1,0 +1,64 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * Rate limiter for video generation -- per-agent hourly budget (SEC-02 count cap).
+ *
+ * Mirrors the image-gen rate limiter verbatim: a simple fixed 1h window with an
+ * injectable clock. The count cap (checked first by the handler) bounds the
+ * blast radius of the dollars-per-clip cost ceiling (Plan 04's VideoCostLimiter).
+ *
+ * @module
+ */
+import { systemNowMs } from "@comis/core";
+
+export interface VideoGenRateLimiter {
+  /** Try to acquire a generation slot for the given agent. Returns false if over limit. */
+  tryAcquire(agentId: string): boolean;
+  /** Reset the counter for a specific agent. */
+  reset(agentId: string): void;
+}
+
+interface AgentBucket {
+  count: number;
+  windowStart: number;
+}
+
+/**
+ * Create a per-agent rate limiter for video generation.
+ *
+ * Uses a simple fixed-window approach: resets the counter after one hour from
+ * the first request in the window.
+ *
+ * @param opts - Configuration with maxPerHour limit and optional clock override
+ * @returns VideoGenRateLimiter instance
+ */
+export function createVideoGenRateLimiter(opts: {
+  maxPerHour: number;
+  nowMs?: () => number;
+}): VideoGenRateLimiter {
+  const buckets = new Map<string, AgentBucket>();
+  const nowMs = opts.nowMs ?? (() => systemNowMs());
+  const windowMs = 3_600_000; // 1 hour
+
+  return {
+    tryAcquire(agentId: string): boolean {
+      const now = nowMs();
+      let bucket = buckets.get(agentId);
+
+      if (!bucket || now - bucket.windowStart >= windowMs) {
+        bucket = { count: 0, windowStart: now };
+        buckets.set(agentId, bucket);
+      }
+
+      if (bucket.count >= opts.maxPerHour) {
+        return false;
+      }
+
+      bucket.count++;
+      return true;
+    },
+
+    reset(agentId: string): void {
+      buckets.delete(agentId);
+    },
+  };
+}
