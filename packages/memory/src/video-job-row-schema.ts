@@ -44,8 +44,25 @@ export const VideoJobDbRowSchema = z.strictObject({
   progress: z.number().nullable(),
   // The markFailed errorKind; the Plan-03 status handler surfaces it as `error`.
   last_error: z.string().nullable(),
+  // CR-01: persisted redelivery counter. NOT NULL DEFAULT 0 in the DDL, so it is
+  // always a number (never null) — the poller bounds the redelivery loop against
+  // it and dead-letters the row to `failed` once it exceeds maxDeliveryAttempts.
+  deliver_attempts: z.number(),
   submitted_at_ms: z.number(),
   updated_at_ms: z.number(),
 });
 
 export type VideoJobDbRow = z.infer<typeof VideoJobDbRowSchema>;
+
+/**
+ * Single-column projection for the CR-01 `incrementDeliveryAttempt` read-back —
+ * the bumped `deliver_attempts` value re-read in the same synchronous turn as the
+ * atomic UPDATE. A dedicated schema (vs. the full-row `VideoJobDbRowSchema`) so
+ * the SELECT can project ONE column and still go through `createRowMapper`
+ * (never an untyped `.get(...) as Type` cast — `untyped-sqlite.test.ts`).
+ */
+export const VideoJobAttemptRowSchema = z.strictObject({
+  deliver_attempts: z.number(),
+});
+
+export type VideoJobAttemptRow = z.infer<typeof VideoJobAttemptRowSchema>;

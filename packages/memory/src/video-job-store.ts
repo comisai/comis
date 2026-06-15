@@ -34,7 +34,11 @@ import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
 import { systemNowMs } from "@comis/core";
 import { createRowMapper } from "./row-mapper.js";
-import { VideoJobDbRowSchema, type VideoJobDbRow } from "./video-job-row-schema.js";
+import {
+  VideoJobDbRowSchema,
+  VideoJobAttemptRowSchema,
+  type VideoJobDbRow,
+} from "./video-job-row-schema.js";
 
 // ---------------------------------------------------------------------------
 // Domain types
@@ -59,6 +63,9 @@ export interface VideoJobRecord {
   readonly mediaPath?: string;
   readonly progress?: number;
   readonly lastError?: string;
+  /** CR-01: count of delivery/completion attempts; bounds the poller's
+   *  redelivery loop (dead-letter once it exceeds maxDeliveryAttempts). */
+  readonly deliverAttempts: number;
   readonly submittedAtMs: number;
   readonly updatedAtMs: number;
 }
@@ -105,6 +112,16 @@ export interface VideoJobStore {
   markFailed(jobId: string, errorKind: string): Promise<Result<void, Error>>;
   /** Update the optional progress fraction (JOB-02). */
   updateProgress(jobId: string, progress: number): Promise<Result<void, Error>>;
+  /**
+   * CR-01: atomically `deliver_attempts = deliver_attempts + 1` and return the
+   * NEW count. The poller calls this on each delivery/completion attempt and
+   * dead-letters the row to `failed` once the count exceeds maxDeliveryAttempts,
+   * so a persistent delivery failure converges instead of re-polling +
+   * re-downloading forever. Returns `0` when the jobId matches no row (e.g. the
+   * handler's insert-failure path tracks an un-persisted job in-memory) so the
+   * caller can still bound that case — never an infinite loop.
+   */
+  incrementDeliveryAttempt(jobId: string): Promise<Result<number, Error>>;
 }
 
 // ---------------------------------------------------------------------------
@@ -112,6 +129,7 @@ export interface VideoJobStore {
 // ---------------------------------------------------------------------------
 
 const videoJobMapper = createRowMapper(VideoJobDbRowSchema);
+const videoJobAttemptMapper = createRowMapper(VideoJobAttemptRowSchema);
 
 /** Map a validated DB row to the domain record (nullable → `?? undefined`). */
 function rowToRecord(row: VideoJobDbRow): VideoJobRecord {
@@ -129,6 +147,7 @@ function rowToRecord(row: VideoJobDbRow): VideoJobRecord {
     ...(row.media_path !== null ? { mediaPath: row.media_path } : {}),
     ...(row.progress !== null ? { progress: row.progress } : {}),
     ...(row.last_error !== null ? { lastError: row.last_error } : {}),
+    deliverAttempts: row.deliver_attempts,
     submittedAtMs: row.submitted_at_ms,
     updatedAtMs: row.updated_at_ms,
   };
@@ -182,6 +201,17 @@ export function createVideoJobStore(db: Database.Database): VideoJobStore {
 
   const updateProgressStmt = db.prepare(`
     UPDATE video_jobs SET progress = ?, updated_at_ms = ? WHERE job_id = ?
+  `);
+
+  // CR-01: atomic redelivery-counter bump. better-sqlite3 is synchronous +
+  // single-connection, so the UPDATE and the paired read below run in the SAME
+  // event-loop turn — no interleaving, so the read sees this UPDATE's value.
+  const incrementAttemptStmt = db.prepare(`
+    UPDATE video_jobs SET deliver_attempts = deliver_attempts + 1, updated_at_ms = ?
+    WHERE job_id = ?
+  `);
+  const readAttemptStmt = db.prepare(`
+    SELECT deliver_attempts FROM video_jobs WHERE job_id = ?
   `);
 
   // --- Store implementation ---
@@ -262,6 +292,28 @@ export function createVideoJobStore(db: Database.Database): VideoJobStore {
       try {
         updateProgressStmt.run(progress, systemNowMs(), jobId);
         return Promise.resolve(ok(undefined));
+      } catch (e) {
+        return Promise.resolve(err(e instanceof Error ? e : new Error(String(e))));
+      }
+    },
+
+    incrementDeliveryAttempt(jobId: string): Promise<Result<number, Error>> {
+      try {
+        // Atomic bump. `.changes === 0` means no such row (e.g. the handler's
+        // insert-failure path tracks an un-persisted job in-memory) — return 0
+        // so the caller bounds that case rather than spinning forever.
+        const info = incrementAttemptStmt.run(systemNowMs(), jobId);
+        if (info.changes === 0) return Promise.resolve(ok(0));
+        // Same synchronous turn (better-sqlite3 is sync + single-connection), so
+        // this read observes the UPDATE above. Parsed via the mapper — never an
+        // untyped `.get(...) as Type` cast (untyped-sqlite invariant).
+        const parsed = videoJobAttemptMapper.parseOptionalRow(readAttemptStmt.get(jobId));
+        if (!parsed.ok) {
+          return Promise.resolve(
+            err(new Error(`Row validation failed: ${parsed.error.message}`)),
+          );
+        }
+        return Promise.resolve(ok(parsed.value === undefined ? 0 : parsed.value.deliver_attempts));
       } catch (e) {
         return Promise.resolve(err(e instanceof Error ? e : new Error(String(e))));
       }

@@ -184,6 +184,39 @@ describe("VideoJobStore", () => {
   });
 
   // -----------------------------------------------------------------------
+  // incrementDeliveryAttempt (CR-01) — bounded redelivery counter
+  // -----------------------------------------------------------------------
+
+  describe("incrementDeliveryAttempt", () => {
+    it("increments deliver_attempts atomically and returns the NEW count (0→1→2)", async () => {
+      await store.insert(makeRecord({ jobId: "job-attempts", agentId: "alpha" }));
+
+      // A freshly-inserted row starts at 0; the first increment returns 1.
+      const first = await store.incrementDeliveryAttempt("job-attempts");
+      expect(first.ok).toBe(true);
+      if (first.ok) expect(first.value).toBe(1);
+
+      const second = await store.incrementDeliveryAttempt("job-attempts");
+      expect(second.ok).toBe(true);
+      if (second.ok) expect(second.value).toBe(2);
+
+      // The counter is durable — observable on a subsequent get.
+      const got = await store.get("job-attempts", "alpha");
+      expect(got.ok).toBe(true);
+      if (got.ok && got.value) expect(got.value.deliverAttempts).toBe(2);
+    });
+
+    it("returns 0 when the jobId matches no row (un-inserted row → no infinite in-memory loop signal)", async () => {
+      // CR-01 / WR-02: the handler's insert-failure path tracks an un-persisted
+      // job in-memory. incrementing a non-existent row must NOT throw and must
+      // signal "no row" via a 0 count so the poller can bound it.
+      const res = await store.incrementDeliveryAttempt("never-inserted");
+      expect(res.ok).toBe(true);
+      if (res.ok) expect(res.value).toBe(0);
+    });
+  });
+
+  // -----------------------------------------------------------------------
   // Nullable fidelity — SQLite NULL → z.nullable → undefined at the boundary
   // -----------------------------------------------------------------------
 
@@ -278,6 +311,19 @@ describe("ensureVideoJobTable (video_jobs DDL)", () => {
   it("is idempotent — calling twice does not throw (CREATE TABLE IF NOT EXISTS)", () => {
     ensureVideoJobTable(db);
     expect(() => ensureVideoJobTable(db)).not.toThrow();
+  });
+
+  it("includes a deliver_attempts column defaulting to 0 (CR-01 bounded redelivery)", () => {
+    ensureVideoJobTable(db);
+    const cols = db.prepare("PRAGMA table_info(video_jobs)").all() as Array<{
+      name: string;
+      dflt_value: string | null;
+      notnull: number;
+    }>;
+    const attempts = cols.find((c) => c.name === "deliver_attempts");
+    expect(attempts).toBeDefined();
+    expect(attempts!.notnull).toBe(1);
+    expect(String(attempts!.dflt_value)).toContain("0");
   });
 
   it("creates the pending partial index and the agent index", () => {

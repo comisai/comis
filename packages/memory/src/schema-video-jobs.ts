@@ -10,9 +10,17 @@
  * 800-line cap) — `initSchema` CALLS this so the table exists on every boot.
  *
  * SECURITY (T-189-02): columns are the opaque provider jobId + routing + state +
- * cost + path ONLY — no credential column. Columns MUST match
- * `VideoJobDbRowSchema` (video-job-row-schema.ts) exactly — the strictObject
- * rejects any drift.
+ * cost + path + a `deliver_attempts` redelivery counter ONLY — no credential
+ * column. Columns MUST match `VideoJobDbRowSchema` (video-job-row-schema.ts)
+ * exactly — the strictObject rejects any drift.
+ *
+ * CR-01 (Phase-189 code review): `deliver_attempts` bounds the poller's
+ * redelivery loop. A row whose channel delivery keeps failing is re-driven by
+ * the sweeper every `pollIntervalMs`; without a persisted counter that re-poll +
+ * re-download (up to 200 MB) repeats forever. The poller increments this column
+ * per delivery attempt and dead-letters the row to `failed` once it exceeds
+ * `maxDeliveryAttempts`. Persisted (not in-memory) so the bound survives the
+ * sweeper rebuilding the in-flight set from `listPending()` each tick.
  *
  * `better-sqlite3` durability is WAL + path-based chmod (never fd-based file
  * sync), so this DDL is permission-model-safe by construction — no fd-fs guard
@@ -47,6 +55,7 @@ export function ensureVideoJobTable(db: Database.Database): void {
       media_path         TEXT,
       progress           REAL,
       last_error         TEXT,
+      deliver_attempts   INTEGER NOT NULL DEFAULT 0,
       submitted_at_ms    INTEGER NOT NULL,
       updated_at_ms      INTEGER NOT NULL
     )
