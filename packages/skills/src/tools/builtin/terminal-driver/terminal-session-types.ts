@@ -83,4 +83,19 @@ export interface SessionHandle {
   workspace?: string;
   /** The origin that owns this session — `(agentId, sessionKey)` (TR-13/TR-09). Stamped at `create`; `list`/`read`/`get`/`kill`/`send*` filter on it (two subagents are mutually invisible). */
   owner: SessionOwner;
+  /**
+   * DUR-01 (165-06): `true` iff this is a `drive.durable:true` session backed by a
+   * detached tmux server that outlives a worker/daemon close. The durable-aware
+   * `markRunningSessionsLost` does NOT flip such a session `lost` while its tmux is
+   * alive (Q4); recover-on-boot rehydrates it `running`. ABSENT/false ⇒ today's
+   * non-durable spawn session (the documented lost floor on a worker close, I1).
+   */
+  durable?: boolean;
+  /**
+   * DUR-01 (165-06): the deterministic `comis-<sessionId>` tmux session name — the
+   * re-attach key the durable-aware `markRunningSessionsLost` probes via the injected
+   * `isTmuxAlive` (a durable handle with a live tmux name stays recoverable, not
+   * `lost`). Present only for a durable session (set at create-time + on rehydrate).
+   */
+  tmuxName?: string;
 }
