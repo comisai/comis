@@ -544,6 +544,11 @@ export const VideoGenerationConfigSchema = z.strictObject({
     pollIntervalMs: z.number().int().positive().default(10_000),
     /** Optional cap on concurrent in-flight jobs (consumed by the Phase 189 background poller). */
     maxConcurrentJobs: z.number().int().positive().optional(),
+    /** Max delivery/completion attempts before the Phase-189 poller dead-letters a
+     *  job to `failed` (CR-01). Bounds the redelivery loop so a persistent channel
+     *  delivery failure (or a stuck job) converges instead of re-polling +
+     *  re-downloading every pollIntervalMs forever (default: 5). */
+    maxDeliveryAttempts: z.number().int().positive().default(5),
     /** Providers consulted in order ONLY after the follow-main path fails (RES-04). Default empty. */
     fallbackChain: z.array(z.enum(VIDEO_PROVIDER_VALUES)).default([]),
     /** Optional per-agent/hour USD cost ceiling, gated PRE-submit (SEC-02, I6; enforcement Plan 04). */

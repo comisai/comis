@@ -196,6 +196,9 @@ describe("MediaConfigSchema - documentExtraction nesting", () => {
     expect(result.videoGeneration.maxPerHour).toBe(5);
     expect(result.videoGeneration.timeoutMs).toBe(300_000);
     expect(result.videoGeneration.pollIntervalMs).toBe(10_000);
+    // CR-01 (189 review): the poller's bounded-redelivery max attempts defaults
+    // to 5 (a persistent delivery failure dead-letters to `failed` after this).
+    expect(result.videoGeneration.maxDeliveryAttempts).toBe(5);
     // CFG-01: fallbackChain defaults empty; the optional knobs are omitted.
     expect(result.videoGeneration.fallbackChain).toEqual([]);
     expect(result.videoGeneration.generateAudio).toBeUndefined();
@@ -249,6 +252,22 @@ describe("MediaConfigSchema - documentExtraction nesting", () => {
       MediaConfigSchema.parse({
         videoGeneration: { provider: "auto", fallbackChain: ["bogus"] },
       }),
+    ).toThrow();
+  });
+
+  it("parses a positive integer video maxDeliveryAttempts override (CR-01)", () => {
+    const result = MediaConfigSchema.parse({
+      videoGeneration: { provider: "auto", maxDeliveryAttempts: 3 },
+    });
+    expect(result.videoGeneration.maxDeliveryAttempts).toBe(3);
+  });
+
+  it("rejects a non-positive or non-integer video maxDeliveryAttempts (CR-01)", () => {
+    expect(() =>
+      MediaConfigSchema.parse({ videoGeneration: { provider: "auto", maxDeliveryAttempts: 0 } }),
+    ).toThrow();
+    expect(() =>
+      MediaConfigSchema.parse({ videoGeneration: { provider: "auto", maxDeliveryAttempts: 1.5 } }),
     ).toThrow();
   });
 

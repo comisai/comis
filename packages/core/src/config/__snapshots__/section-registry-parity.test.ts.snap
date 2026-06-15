@@ -6009,6 +6009,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("integ
         "defaultDurationSecs": 8,
         "defaultResolution": "720p",
         "fallbackChain": [],
+        "maxDeliveryAttempts": 5,
         "maxPerHour": 5,
         "pollIntervalMs": 10000,
         "provider": "auto",
@@ -6521,6 +6522,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("integ
       "defaultDurationSecs": 8,
       "defaultResolution": "720p",
       "fallbackChain": [],
+      "maxDeliveryAttempts": 5,
       "maxPerHour": 5,
       "pollIntervalMs": 10000,
       "provider": "auto",
@@ -6568,6 +6570,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("integ
     "immutable": true,
     "path": "integrations.media.videoGeneration.maxCostPerHourUsd",
     "type": "number"
+  },
+  {
+    "default": 5,
+    "immutable": true,
+    "path": "integrations.media.videoGeneration.maxDeliveryAttempts",
+    "type": "integer"
   },
   {
     "default": 5,
@@ -11530,6 +11538,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
           "defaultDurationSecs": 8,
           "defaultResolution": "720p",
           "fallbackChain": [],
+          "maxDeliveryAttempts": 5,
           "maxPerHour": 5,
           "pollIntervalMs": 10000,
           "provider": "auto",
@@ -11785,6 +11794,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
         "defaultDurationSecs": 8,
         "defaultResolution": "720p",
         "fallbackChain": [],
+        "maxDeliveryAttempts": 5,
         "maxPerHour": 5,
         "pollIntervalMs": 10000,
         "provider": "auto",
@@ -12297,6 +12307,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
       "defaultDurationSecs": 8,
       "defaultResolution": "720p",
       "fallbackChain": [],
+      "maxDeliveryAttempts": 5,
       "maxPerHour": 5,
       "pollIntervalMs": 10000,
       "provider": "auto",
@@ -12344,6 +12355,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "immutable": true,
     "path": "integrations.media.videoGeneration.maxCostPerHourUsd",
     "type": "number"
+  },
+  {
+    "default": 5,
+    "immutable": true,
+    "path": "integrations.media.videoGeneration.maxDeliveryAttempts",
+    "type": "integer"
   },
   {
     "default": 5,
@@ -22809,6 +22826,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("int
           "defaultDurationSecs": 8,
           "defaultResolution": "720p",
           "fallbackChain": [],
+          "maxDeliveryAttempts": 5,
           "maxPerHour": 5,
           "pollIntervalMs": 10000,
           "provider": "auto",
@@ -23380,6 +23398,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("int
             "defaultDurationSecs": 8,
             "defaultResolution": "720p",
             "fallbackChain": [],
+            "maxDeliveryAttempts": 5,
             "maxPerHour": 5,
             "pollIntervalMs": 10000,
             "provider": "auto",
@@ -23425,6 +23444,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("int
               "exclusiveMinimum": 0,
               "type": "number"
             },
+            "maxDeliveryAttempts": {
+              "default": 5,
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
             "maxPerHour": {
               "default": 5,
               "exclusiveMinimum": 0,
@@ -23465,6 +23490,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("int
             "maxPerHour",
             "timeoutMs",
             "pollIntervalMs",
+            "maxDeliveryAttempts",
             "fallbackChain"
           ],
           "type": "object"
@@ -34220,6 +34246,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "defaultDurationSecs": 8,
             "defaultResolution": "720p",
             "fallbackChain": [],
+            "maxDeliveryAttempts": 5,
             "maxPerHour": 5,
             "pollIntervalMs": 10000,
             "provider": "auto",
@@ -34544,6 +34571,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "defaultDurationSecs": 8,
               "defaultResolution": "720p",
               "fallbackChain": [],
+              "maxDeliveryAttempts": 5,
               "maxPerHour": 5,
               "pollIntervalMs": 10000,
               "provider": "auto",
@@ -35115,6 +35143,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "defaultDurationSecs": 8,
                 "defaultResolution": "720p",
                 "fallbackChain": [],
+                "maxDeliveryAttempts": 5,
                 "maxPerHour": 5,
                 "pollIntervalMs": 10000,
                 "provider": "auto",
@@ -35160,6 +35189,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                   "exclusiveMinimum": 0,
                   "type": "number"
                 },
+                "maxDeliveryAttempts": {
+                  "default": 5,
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
                 "maxPerHour": {
                   "default": 5,
                   "exclusiveMinimum": 0,
@@ -35200,6 +35235,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "maxPerHour",
                 "timeoutMs",
                 "pollIntervalMs",
+                "maxDeliveryAttempts",
                 "fallbackChain"
               ],
               "type": "object"
