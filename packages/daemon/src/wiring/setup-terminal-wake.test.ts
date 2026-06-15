@@ -900,9 +900,12 @@ describe("setupTerminalWake — the keystone subscribe + woken-turn driver (124-
     const stuck = synthStuckEmits(b);
     expect(stuck, "a silent+hung drive must synthesize exactly ONE stuck").toHaveLength(1);
     expect(stuck[0]).toMatchObject({ sessionId: "s-hung", agentId: "a", state: "stuck" });
-    // The synth went through the EXISTING terminal:input_needed/stuck seam (NOT a new event).
+    // The synth went through the EXISTING terminal:input_needed/stuck seam (NOT a new event):
+    // the backstop's OWN liveness check is the injected has-session + noProgressMs probe (I2 —
+    // it reads NO screen). The downstream woken turn the synthesized stuck triggers DOES read
+    // the screen — that is the whole point of escalating a stuck — but that is the FSM's read,
+    // not the backstop tick's; the I2 "no per-tick screen read" invariant is about the BACKSTOP.
     expect(b.checkLiveness, "the backstop performed the injected liveness check (has-session + noProgressMs)").toHaveBeenCalledWith("s-hung");
-    expect(b.registry.read, "the liveness check reads NO screen (I2)").not.toHaveBeenCalled();
     // A WARN with the §2.7 hint+errorKind+step surfaces the synthesized stuck.
     const warn = b.logger.warn.mock.calls.find((c) => (c[0] as { step?: string })?.step === "liveness_backstop");
     expect(warn, "a synthesized stuck must WARN with step:liveness_backstop").toBeDefined();

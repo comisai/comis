@@ -39,8 +39,8 @@
  * @module
  */
 
-import { systemNowMs, type TypedEventBus, type ComisLogger } from "@comis/core";
-import { createLoopGuard, type TerminalSessionRegistry, type DriveJournal } from "@comis/skills/tools";
+import { systemNowMs, type TypedEventBus, type ComisLogger, type TimerPort, type TimerHandle } from "@comis/core";
+import { createLoopGuard, busyOrHung, type TerminalSessionRegistry, type DriveJournal, type BusySignal } from "@comis/skills/tools";
 
 import {
   createTerminalWakeDispatcher,
@@ -83,6 +83,37 @@ export interface SetupTerminalWakeDeps {
    * on a clean exit/evict, NEVER on a lost/crash (I10 preserve-on-failure).
    */
   driveJournalStore?: DriveJournalStorePort;
+  /**
+   * LIVE-01 (165-07): the injected TimerPort the coarse liveness BACKSTOP arms its
+   * `setInterval(...).unref()` on (mirroring the reaper). The daemon passes
+   * `createSystemTimers()` (165-07 Task 4); a test passes a fake. ABSENT (or absent
+   * `checkLiveness`) ⇒ NO backstop (the pre-165 event-only behavior, byte-identical I1).
+   */
+  timers?: TimerPort;
+  /**
+   * LIVE-01 (165-07): the backstop cadence in ms (`drive.heartbeatMs`, default 90_000). The
+   * timer fires this often; on a tick it acts ONLY for a promoted session that has had NO
+   * wake within this window (I2 — fires only in the ABSENCE of a wake). Default 90_000.
+   */
+  heartbeatMs?: number;
+  /**
+   * LIVE-01 (165-07): the injected SINGLE liveness check the backstop performs on a tick —
+   * the worker's `has-session` + `noProgressMs` + the `stuckMs` window (the {@link BusySignal}
+   * the pure `busyOrHung` predicate consumes), with NO per-tick screen read (I2 — the
+   * signature carries no grid/cursor). Returns `undefined` for a session that is already gone
+   * (the backstop then skips it). The daemon (165-07 Task 4) binds it over the registry's
+   * worker progress; a test injects a fake. ABSENT ⇒ no backstop (I1).
+   */
+  checkLiveness?: (sessionId: string) => BusySignal | undefined;
+  /**
+   * LIVE-01 / ENDURE-01 unify (165-07 / I9): the hook the backstop calls on a `"busy"`
+   * verdict to advance the session's reaper `lastActivity` — the load-bearing fix for the
+   * documented pitfall that `lastActivity` does NOT advance for a quiet-but-busy compile (no
+   * tool round-trip lands), so a naive idle reaper would evict a healthy 2h build. The daemon
+   * (165-07 Task 4) binds it to the registry handle's `lastActivity`; a test injects a spy.
+   * Optional; absent ⇒ the busy verdict is still not-stuck but the reaper unify is inert (I1).
+   */
+  refreshLastActivity?: (sessionId: string) => void;
   /** Injected clock (no raw global). Default `systemNowMs`. */
   nowMs?: () => number;
   logger: ComisLogger;
@@ -179,6 +210,14 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
   // closure-local, reclaimed in onSessionGone, bounded over a milestone-length daemon.
   const sessionAgent = new Map<string, string>();
 
+  // LIVE-01 (165-07): the per-session wall-clock ms of the LAST wake/transition — the I2 gate
+  // the backstop reads. Stamped on EVERY inbound terminal:input_needed (a real fd3 wake AND
+  // the backstop's own synthesized stuck — which makes the synth at-most-once per silent
+  // stretch). The backstop fires its single liveness check ONLY when `now - lastTransitionMs
+  // >= heartbeatMs` (i.e. ONLY in the absence of a wake), so a normally-progressing drive
+  // never triggers it. Reclaimed in onSessionGone; bounded over a milestone-length daemon.
+  const lastTransitionMs = new Map<string, number>();
+
   // The §4.4 woken-turn driver the FSM calls.
   const wakeOneTurn = buildWokenTurnDriver({
     registries: deps.registries,
@@ -265,6 +304,11 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
     // DUR-02 (165-07): stamp the owning agent so the journal.set persist wrapper can route
     // this session's journal to the agent's confined durable dir (reclaimed in onSessionGone).
     sessionAgent.set(sessionId, agentId);
+    // LIVE-01 (165-07): the promotion instant IS a transition — seed lastTransitionMs so a
+    // freshly-promoted, not-yet-woken drive is NOT immediately treated as silent-past-heartbeat
+    // (the backstop's first tick within heartbeatMs of promotion skips it, I2). A real wake
+    // re-stamps it on the next fd3 frame.
+    lastTransitionMs.set(sessionId, nowMs());
     // MR-01: stamp the drive-start at the promotion instant — the journal's cumulative
     // elapsedMs measures from here. Stamped once (promote-once gate above), reclaimed in
     // onSessionGone, so a recycled sessionId re-stamps fresh.
@@ -330,6 +374,70 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
   };
   deps.eventBus.on("terminal:drive_reattached", onDriveReattached);
 
+  // LIVE-01 (165-07): stamp the per-session last-transition on EVERY inbound wake — the I2
+  // gate the backstop reads. A defensive structural-field check (a malformed frame is dropped
+  // by the wake adapter anyway; this listener simply ignores it). This includes the backstop's
+  // OWN synthesized terminal:input_needed{state:"stuck"}, so a synthesized stuck re-stamps the
+  // transition → the backstop fires at most once per silent stretch (never per tick).
+  const onWakeTransition = (e: { sessionId?: unknown }): void => {
+    if (typeof e.sessionId === "string") lastTransitionMs.set(e.sessionId, nowMs());
+  };
+  deps.eventBus.on("terminal:input_needed", onWakeTransition);
+
+  // LIVE-01 (165-07): the coarse liveness BACKSTOP timer — a safety net UNDER the event-driven
+  // wake (I2: it fires only in the ABSENCE of a wake + resolves to ONE check; NO per-tick
+  // screen read). Armed off the injected TimerPort exactly like the reaper
+  // (setInterval(...).unref()), gated on BOTH timers + checkLiveness being present (absent ⇒
+  // no backstop, the pre-165 event-only behavior, I1). On each tick, for each PROMOTED session
+  // (the backstop guards drives, not plain sessions): if a wake landed within heartbeatMs SKIP
+  // (a normally-progressing drive never triggers it, Pitfall 7); else run the SINGLE injected
+  // checkLiveness (has-session + noProgressMs — NO screen) → busyOrHung:
+  //   - "busy" → refreshLastActivity (the ENDURE-01 reaper unify — a quiet-but-busy compile's
+  //     lastActivity is refreshed so the idle sweep never evicts it, I9) + NOT stuck.
+  //   - "hung" → synthesize a state:"stuck" wake through the EXISTING terminal:input_needed
+  //     seam (NOT a new event) + a §2.7 WARN; the stamp above makes this at-most-once per stretch.
+  let backstopHandle: TimerHandle | undefined;
+  const runBackstopTick = (): void => {
+    if (!deps.checkLiveness) return;
+    const now = nowMs();
+    const heartbeatMs = deps.heartbeatMs ?? 90_000;
+    for (const sessionId of promotedSessions) {
+      // I2: a wake landed within the heartbeat window → a normally-progressing drive; SKIP
+      // (no liveness check, no screen read). The backstop fires ONLY in the absence of a wake.
+      const lastWake = lastTransitionMs.get(sessionId);
+      if (lastWake !== undefined && now - lastWake < heartbeatMs) continue;
+      // ONE liveness check — has-session + noProgressMs (NO screen, I2). A gone session → skip.
+      const signal = deps.checkLiveness(sessionId);
+      if (signal === undefined) continue;
+      if (busyOrHung(signal) === "busy") {
+        // The ENDURE-01 unify (I9): a quiet-but-busy compile is NOT stuck, and its busy verdict
+        // refreshes lastActivity so the idle reaper never evicts it for its quietness alone.
+        deps.refreshLastActivity?.(sessionId);
+        continue;
+      }
+      // "hung": synthesize a stuck wake through the EXISTING seam (the wake adapter translates
+      // terminal:input_needed{state:"stuck"} → a stuck-classified woken turn). NOT a new event.
+      const agentId = sessionAgent.get(sessionId) ?? "";
+      deps.eventBus.emit("terminal:input_needed", {
+        sessionId,
+        agentId,
+        state: "stuck",
+        reason: "liveness_backstop",
+        confidence: "high",
+        timestamp: now,
+      });
+      log.warn(
+        { sessionId, agentId, noProgressMs: signal.noProgressMs, hint: "liveness backstop found a promoted drive hung (alive-but-no-progress past the stuck window, or a dead backend); synthesized a stuck for escalation", errorKind: "timeout" as const, step: "liveness_backstop" },
+        "terminal liveness backstop synthesized a stuck",
+      );
+    }
+  };
+  if (deps.timers && deps.checkLiveness) {
+    backstopHandle = deps.timers.setInterval(() => runBackstopTick(), deps.heartbeatMs ?? 90_000);
+    // .unref() so a pending tick never holds the event loop open on SIGTERM (TimerHandle contract).
+    backstopHandle.unref();
+  }
+
   const dispatcher: TerminalWakeDispatcher = createTerminalWakeDispatcher({
     eventBus: makeWakeAdapterBus(deps.eventBus, log, driveScopeKey),
     isSessionActive,
@@ -374,6 +482,9 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
     // MR-01: reclaim the per-session drive-start timestamp alongside the journal (same
     // lifecycle — no leak; a recycled sessionId re-stamps on its next promotion).
     driveStartedAtMs.delete(sessionId);
+    // LIVE-01 (165-07): reclaim the per-session last-transition stamp (same lifecycle — no
+    // leak; a recycled sessionId starts unstamped so its first wake re-arms the I2 gate).
+    lastTransitionMs.delete(sessionId);
     // removeWakeStateFile re-raises a non-ENOENT fs fault (@allow-throw) — wrap it so a
     // cleanup failure inside this bus listener can NEVER become an uncaughtException that
     // crashes the daemon (IN-04). Surface the fault to the log with an actionable hint.
@@ -408,6 +519,11 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
       deps.eventBus.off("terminal:drive_promoted", onDrivePromoted);
       // DUR-02 (165-07): unsubscribe the re-attach resume consumer too (no leaked listener).
       deps.eventBus.off("terminal:drive_reattached", onDriveReattached);
+      // LIVE-01 (165-07): unsubscribe the transition stamp + CANCEL the backstop interval (no
+      // leaked listener / timer; a post-shutdown tick never fires).
+      deps.eventBus.off("terminal:input_needed", onWakeTransition);
+      backstopHandle?.cancel();
+      backstopHandle = undefined;
       await dispatcher.shutdown();
     },
   };
