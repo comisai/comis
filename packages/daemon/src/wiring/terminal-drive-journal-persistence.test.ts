@@ -53,7 +53,7 @@ import { mkdtempSync, rmSync, readdirSync, readFileSync, statSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { emptyJournal, type DriveJournal } from "@comis/skills";
+import { emptyJournal, type DriveJournal } from "@comis/skills/tools";
 import {
   persistDriveJournal,
   recoverDriveJournals,
