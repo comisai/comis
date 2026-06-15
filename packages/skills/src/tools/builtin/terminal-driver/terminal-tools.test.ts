@@ -641,6 +641,82 @@ describe("terminal-tools — create passes a non-agent-dialable scrollback", () 
   });
 });
 
+// ===========================================================================
+// READ-01 (164-06 Task 3): the read tool delegates to boundedReadDigest — a
+// BOUNDED DIGEST of the current screen by default (readMode: digest|diff|full),
+// with an over-cap `truncated`/`truncations` breadcrumb (never a silent trim, I7),
+// while PRESERVING the redact + wrap prompt-injection defense (the digest is
+// inserted BEFORE redact+wrap, not instead). The tool description NAMES the
+// digest default. RED on pre-patch: the read tool does not call boundedReadDigest;
+// the description does not name the digest default; there is no truncated breadcrumb.
+// ===========================================================================
+
+describe("terminal-tools — READ-01 read tool delegates to boundedReadDigest", () => {
+  it("delegates to boundedReadDigest — digest default, the result carries the truncated breadcrumb", async () => {
+    const registry = makeFakeRegistry({
+      readImpl: async () => ({ screen: "small screen", cursor: { x: 0, y: 0 }, cols: 80, rows: 24, alt: false, alive: true }),
+    });
+    const tool = createTerminalSessionReadTool(baseDeps(registry));
+
+    const result = await tool.execute("call-1", { sessionId: "sess-1" });
+    const view = result.details as TerminalView & { truncated?: boolean };
+    // A small screen is under the cap → not truncated, but the breadcrumb field is present.
+    expect(view.truncated).toBe(false);
+    // The screen is still the (wrapped) content — the digest passed the small screen through.
+    expect(view.screen).toContain("small screen");
+    expect(view.screen).toMatch(/<<<UNTRUSTED_[a-f0-9]+>>>/);
+  });
+
+  it("an over-cap screen → truncated:true + a truncations count (never a silent trim, I7)", async () => {
+    // A pathological screen far beyond the 8192-byte cap.
+    const huge = "x".repeat(20_000);
+    const registry = makeFakeRegistry({
+      readImpl: async () => ({ screen: huge, cursor: { x: 0, y: 0 }, cols: 80, rows: 24, alt: false, alive: true }),
+    });
+    const tool = createTerminalSessionReadTool(baseDeps(registry));
+
+    const result = await tool.execute("call-1", { sessionId: "sess-1" });
+    const view = result.details as TerminalView & { truncated?: boolean; truncations?: number };
+    expect(view.truncated, "an over-cap read must flag truncated:true").toBe(true);
+    expect(view.truncations, "the dropped-byte count is the explicit anti-silent-trim breadcrumb").toBeGreaterThan(0);
+  });
+
+  it("honors readMode:full when threaded via deps (diff/full are not the default)", async () => {
+    const registry = makeFakeRegistry({
+      readImpl: async () => ({ screen: "full text", cursor: { x: 0, y: 0 }, cols: 80, rows: 24, alt: false, alive: true }),
+    });
+    // readMode is threaded via deps (like driveMode), defaulting to "digest".
+    const tool = createTerminalSessionReadTool(baseDeps(registry, { readMode: "full" }));
+
+    const result = await tool.execute("call-1", { sessionId: "sess-1" });
+    const view = result.details as TerminalView;
+    // full passes the whole (small) screen through, still wrapped.
+    expect(view.screen).toContain("full text");
+    expect(view.screen).toMatch(/<<<UNTRUSTED_[a-f0-9]+>>>/);
+  });
+
+  it("the screen stays redacted + wrapped (the digest is inserted BEFORE redact+wrap, not instead)", async () => {
+    const secret = "sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789";
+    const registry = makeFakeRegistry({
+      readImpl: async () => ({ screen: `key ${secret} end`, cursor: { x: 0, y: 0 }, cols: 80, rows: 24, alt: false, alive: true }),
+    });
+    const tool = createTerminalSessionReadTool(baseDeps(registry));
+
+    const result = await tool.execute("call-1", { sessionId: "sess-1" });
+    const view = result.details as TerminalView;
+    // The digest's screen flows through scrubSecretsFromText (redact) THEN wrapExternalContent.
+    expect(view.screen, "the raw secret must be redacted (redact preserved)").not.toContain(secret);
+    expect(view.screen).toContain("[REDACTED]");
+    expect(view.screen, "the wrap (prompt-injection defense) must be preserved").toMatch(/<<<UNTRUSTED_[a-f0-9]+>>>/);
+  });
+
+  it("the read-tool description names the digest default", () => {
+    const registry = makeFakeRegistry();
+    const tool = createTerminalSessionReadTool(baseDeps(registry));
+    expect(tool.description.toLowerCase(), "the description must name the bounded-digest default").toContain("digest");
+  });
+});
+
 // ---------------------------------------------------------------------------
 // The four interaction tools (send_text / send_key / resize / wait).
 // Each is a THIN delegation to the registry method (the read/kill precedent):
