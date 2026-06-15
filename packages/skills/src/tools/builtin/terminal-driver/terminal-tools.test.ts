@@ -33,6 +33,7 @@ import {
   type TerminalStuckEvent,
   type TerminalEscalatedEvent,
   type TerminalAutoAnsweredEvent,
+  type TerminalDrivePromotedEvent,
 } from "./terminal-tools.js";
 import {
   DEFAULT_SCROLLBACK,
@@ -872,6 +873,204 @@ describe("terminal-tools — wait delegation", () => {
     const dbg = logger.logs.find((l) => l.level === "debug" && l.obj.toolName === "terminal_session_wait");
     expect(dbg).toBeDefined();
     expect(dbg?.obj.durationMs).toBeTypeOf("number");
+  });
+});
+
+// ===========================================================================
+// DRIVE-02 (164-04, v2.24) — the wait tool emits a CONTENT-FREE
+// terminal:drive_promoted on a qualifying wait, via the pure shouldPromoteDrive
+// predicate (164-02). The skills layer is STATELESS — it emits on EVERY
+// qualifying wait; the promote-once guarantee is the daemon's promoted-Set dedupe
+// (164-04 Task 2). The returned `out` is UNCHANGED (the agent still gets the
+// honest WaitResult). Content-free: the event carries sessionId/agentId/reason-
+// enum/timestamp ONLY — never the screen (I3).
+// ===========================================================================
+
+/** A producing-but-not-complete settle result (the honest DRIVE-02 promotion signal). */
+const PRODUCING_TIMEOUT: WaitResult = {
+  matched: false,
+  isComplete: false,
+  reason: "timeout",
+  producing: true,
+  screen: "Building… 42% [secret-token-on-screen]",
+  cursor: { x: 0, y: 0 },
+};
+
+/** A completed-inline settle result (the I1 short-drive path — no promotion). */
+const COMPLETE_INLINE: WaitResult = {
+  matched: true,
+  isComplete: true,
+  reason: "idle",
+  screen: "$ ",
+  cursor: { x: 0, y: 0 },
+};
+
+function drivePromotedEvents(bus: ReturnType<typeof makeCapturingBus>): CapturedEvent[] {
+  return bus.events.filter((e) => e.event === "terminal:drive_promoted");
+}
+
+describe("terminal-tools — DRIVE-02 the wait tool emits terminal:drive_promoted (auto/attached/detached matrix)", () => {
+  it("auto + {isComplete:false,producing:true} → emits EXACTLY ONE terminal:drive_promoted with reason 'producing'", async () => {
+    const registry = makeFakeRegistry({ waitImpl: async () => PRODUCING_TIMEOUT });
+    const bus = makeCapturingBus();
+    const tool = createTerminalSessionWaitTool(baseDeps(registry, { eventBus: bus, driveMode: "auto" }));
+
+    await tool.execute("call-1", { sessionId: "s1", timeoutMs: 200 });
+
+    const promoted = drivePromotedEvents(bus);
+    expect(promoted).toHaveLength(1);
+    expect(promoted[0]!.payload).toMatchObject({ sessionId: "s1", agentId: "agent-1", reason: "producing" });
+  });
+
+  it("auto + {isComplete:true} → NO emit (I1 short-drive byte-identical)", async () => {
+    const registry = makeFakeRegistry({ waitImpl: async () => COMPLETE_INLINE });
+    const bus = makeCapturingBus();
+    const tool = createTerminalSessionWaitTool(baseDeps(registry, { eventBus: bus, driveMode: "auto" }));
+
+    await tool.execute("call-1", { sessionId: "s1", forIdleMs: 100 });
+
+    expect(drivePromotedEvents(bus)).toHaveLength(0);
+  });
+
+  it("attached + {isComplete:false,producing:true} → NO emit (I1 explicit opt-out, never promote)", async () => {
+    const registry = makeFakeRegistry({ waitImpl: async () => PRODUCING_TIMEOUT });
+    const bus = makeCapturingBus();
+    const tool = createTerminalSessionWaitTool(baseDeps(registry, { eventBus: bus, driveMode: "attached" }));
+
+    await tool.execute("call-1", { sessionId: "s1", timeoutMs: 200 });
+
+    expect(drivePromotedEvents(bus)).toHaveLength(0);
+  });
+
+  it("detached + first wait → emits terminal:drive_promoted with reason 'mode_detached' (explicit opt-in)", async () => {
+    // Even a completed-inline wait promotes under detached (promote-at-first-wait).
+    const registry = makeFakeRegistry({ waitImpl: async () => COMPLETE_INLINE });
+    const bus = makeCapturingBus();
+    const tool = createTerminalSessionWaitTool(baseDeps(registry, { eventBus: bus, driveMode: "detached" }));
+
+    await tool.execute("call-1", { sessionId: "s1", forIdleMs: 100 });
+
+    const promoted = drivePromotedEvents(bus);
+    expect(promoted).toHaveLength(1);
+    expect(promoted[0]!.payload).toMatchObject({ reason: "mode_detached" });
+  });
+
+  it("default driveMode (deps.driveMode omitted) is 'auto' — a producing wait still promotes", async () => {
+    const registry = makeFakeRegistry({ waitImpl: async () => PRODUCING_TIMEOUT });
+    const bus = makeCapturingBus();
+    // No driveMode in deps → the tool defaults to "auto".
+    const tool = createTerminalSessionWaitTool(baseDeps(registry, { eventBus: bus }));
+
+    await tool.execute("call-1", { sessionId: "s1", timeoutMs: 200 });
+
+    expect(drivePromotedEvents(bus)).toHaveLength(1);
+  });
+
+  it("the returned `out` is UNCHANGED by the emit — the agent still receives the honest WaitResult", async () => {
+    const registry = makeFakeRegistry({ waitImpl: async () => PRODUCING_TIMEOUT });
+    const bus = makeCapturingBus();
+    const tool = createTerminalSessionWaitTool(baseDeps(registry, { eventBus: bus, driveMode: "auto" }));
+
+    const res = await tool.execute("call-1", { sessionId: "s1", timeoutMs: 200 });
+    const body = res.details as WaitResult;
+    // The WaitResult flows back verbatim (NOT mutated/augmented by the promotion side-effect).
+    expect(body.isComplete).toBe(false);
+    expect(body.producing).toBe(true);
+    expect(body.reason).toBe("timeout");
+  });
+
+  it("the emitted payload is CONTENT-FREE — sessionId/agentId/reason/timestamp ONLY, no screen key (I3)", async () => {
+    const registry = makeFakeRegistry({ waitImpl: async () => PRODUCING_TIMEOUT });
+    const bus = makeCapturingBus();
+    const tool = createTerminalSessionWaitTool(baseDeps(registry, { eventBus: bus, driveMode: "auto" }));
+
+    await tool.execute("call-1", { sessionId: "s1", timeoutMs: 200 });
+
+    const promoted = drivePromotedEvents(bus);
+    expect(promoted).toHaveLength(1);
+    const payload = promoted[0]!.payload;
+    expect(Object.keys(payload).sort()).toEqual(["agentId", "reason", "sessionId", "timestamp"]);
+    // The screen (with its on-screen secret) must NEVER ride the bus event.
+    expect(payload).not.toHaveProperty("screen");
+    expect(JSON.stringify(payload)).not.toContain("secret-token-on-screen");
+  });
+
+  it("emits exactly ONE content-free INFO record on promotion (§2.7) — sessionId + reason, never the screen", async () => {
+    const registry = makeFakeRegistry({ waitImpl: async () => PRODUCING_TIMEOUT });
+    const logger = makeCapturingLogger();
+    const tool = createTerminalSessionWaitTool(baseDeps(registry, { logger, driveMode: "auto" }));
+
+    await tool.execute("call-1", { sessionId: "s1", timeoutMs: 200 });
+
+    const info = logger.logs.filter((l) => l.level === "info" && l.obj.step === "drive_promote");
+    expect(info).toHaveLength(1);
+    expect(info[0]!.obj.sessionId).toBe("s1");
+    expect(info[0]!.obj.reason).toBe("producing");
+    expect(JSON.stringify(info[0]!.obj)).not.toContain("secret-token-on-screen");
+  });
+
+  it("the wait tool calls the pure shouldPromoteDrive predicate (it does not re-implement the decision)", () => {
+    // The emit decision must delegate to the 164-02 predicate (one import + one call),
+    // not duplicate the isComplete/producing/mode truth table inline.
+    const src = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "./terminal-tools.ts"), "utf8");
+    expect(src, "must import shouldPromoteDrive from the pure predicate sibling").toMatch(
+      /import\s*\{[^}]*shouldPromoteDrive[^}]*\}\s*from\s*"\.\/terminal-drive-promote\.js"/,
+    );
+    // Exactly one call site (the wait tool), no re-implementation of the truth table.
+    expect((src.match(/shouldPromoteDrive\(/g) ?? []).length).toBe(1);
+  });
+});
+
+describe("TerminalEventBus — DRIVE-02 terminal:drive_promoted overload (164-04)", () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+
+  it("terminal-tools.ts widens TerminalEventBus with the terminal:drive_promoted emit overload (source RED on pre-patch)", () => {
+    const src = readFileSync(resolve(here, "./terminal-tools.ts"), "utf8");
+    expect(src, "terminal:drive_promoted overload must exist").toMatch(/emit\(event:\s*"terminal:drive_promoted"/);
+  });
+
+  it("a capturing fake accepts a terminal:drive_promoted emit against the strongly-typed TerminalEventBus", () => {
+    // The fake is typed as the REAL TerminalEventBus — if the overload were missing
+    // this emit would fail to typecheck (the closed-union proof; esbuild strips it
+    // but `tsc` over the package build catches it).
+    const events: Array<{ event: string; payload: Record<string, unknown> }> = [];
+    const bus: TerminalEventBus = {
+      emit: (event: string, payload: Record<string, unknown>) => {
+        events.push({ event, payload });
+        return undefined;
+      },
+    } as unknown as TerminalEventBus;
+
+    const promoted: TerminalDrivePromotedEvent = {
+      sessionId: "s1",
+      agentId: "a1",
+      reason: "producing",
+      timestamp: 1,
+    };
+    bus.emit("terminal:drive_promoted", promoted);
+
+    expect(events.map((e) => e.event)).toEqual(["terminal:drive_promoted"]);
+  });
+
+  it("TerminalDrivePromotedEvent is content-free by construction — no text/keys/screen/payload field", () => {
+    const promoted: TerminalDrivePromotedEvent = {
+      sessionId: "s",
+      agentId: "a",
+      reason: "mode_detached",
+      timestamp: 0,
+    };
+    expect(Object.keys(promoted).sort()).toEqual(["agentId", "reason", "sessionId", "timestamp"]);
+
+    // Source guard on the sibling decl file: the interface block must carry no raw
+    // text/keys/screen/payload field. RED on pre-patch (the interface does not exist yet).
+    const attnSrc = readFileSync(resolve(here, "./terminal-events-attention.ts"), "utf8");
+    const match = attnSrc.match(/interface TerminalDrivePromotedEvent\s*\{[\s\S]*?\n\}/);
+    expect(match, "TerminalDrivePromotedEvent must be declared").toBeTruthy();
+    const block = match![0];
+    expect(block, "no raw text field").not.toMatch(/^\s*text[?]?:/m);
+    expect(block, "no raw keys field").not.toMatch(/^\s*keys[?]?:/m);
+    expect(block, "no screen field").not.toMatch(/^\s*screen[?]?:/m);
+    expect(block, "no payload field").not.toMatch(/^\s*payload[?]?:/m);
   });
 });
 

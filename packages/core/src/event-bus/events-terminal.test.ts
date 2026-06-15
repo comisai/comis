@@ -560,3 +560,99 @@ describe("TerminalEvents — P5 attention + audit set (TR-11/OPS-04/SEC-11/SEC-1
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 164 DRIVE-02 (v2.24) — the autonomous-drive PROMOTION signal:
+// terminal:drive_promoted.
+//
+// The ONE net-new typed bus event the drive-promotion seam needs (164-04). The
+// skills wait tool (Context A, the agent's LLM turn) consults the pure
+// `shouldPromoteDrive` predicate (164-02) on its WaitResult and, on a qualifying
+// wait, emits this CONTENT-FREE event; the fd3 wake dispatcher (Context B, the
+// daemon) consumes it into a closure-local promoted-Set + fires exactly ONE
+// "drive started (backgrounded)" notification (promote-once). It declares the
+// event on the CLOSED `TypedEventBus` union so both the emit site (skills) and
+// the `.on` consumer (daemon) typecheck — an undeclared event fails to compile
+// (RESEARCH Pitfall 4 / the "MCP field plumbing 3 paths" bug class).
+//
+// CONTENT-FREE BY CONSTRUCTION (I3): sessionId / agentId / a typed `reason` enum
+// (`producing` | `mode_detached` — WHY it promoted, NEVER the screen) / timestamp
+// ONLY. The screen digest that drove the wait rides the structured LOG, never the
+// bus. RED on pre-patch: `events-terminal.ts` does not declare the key, so the
+// source-introspection layer (esbuild strips bare type annotations) does not find it.
+// ---------------------------------------------------------------------------
+describe("TerminalEvents — DRIVE-02 promotion signal (terminal:drive_promoted)", () => {
+  it("declares terminal:drive_promoted on TerminalEvents (source RED on pre-patch)", () => {
+    const src = readFileSync(resolve(here, "./events-terminal.ts"), "utf8");
+    expect(src, "terminal:drive_promoted key must be declared").toMatch(/"terminal:drive_promoted":/);
+  });
+
+  it("the module-doc event list mentions terminal:drive_promoted (source RED on pre-patch)", () => {
+    const src = readFileSync(resolve(here, "./events-terminal.ts"), "utf8");
+    // The header lists every event so a transition is reconstructable from the
+    // bus alone; the new event must be added there too (AGENTS.md §2.7).
+    const header = src.slice(0, src.indexOf("export interface TerminalEvents"));
+    expect(header, "the module-doc must mention terminal:drive_promoted").toMatch(/drive_promoted/);
+  });
+
+  it("terminal:drive_promoted delivers sessionId/agentId/reason/timestamp — the promotion signal (DRIVE-02)", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["terminal:drive_promoted"] = {
+      sessionId: "sess-7",
+      agentId: "agent-1",
+      reason: "producing",
+      timestamp: 7,
+    };
+
+    bus.on("terminal:drive_promoted", handler);
+    bus.emit("terminal:drive_promoted", payload);
+
+    expect(handler).toHaveBeenCalledWith(payload);
+    const received = handler.mock.calls[0]![0] as EventMap["terminal:drive_promoted"];
+    expect(received.sessionId).toBe("sess-7");
+    expect(received.agentId).toBe("agent-1");
+    expect(received.reason).toBe("producing");
+  });
+
+  it("terminal:drive_promoted reason union is exactly producing | mode_detached (the WHY enum, never screen text)", () => {
+    const bus = new TypedEventBus();
+    const seen: string[] = [];
+    bus.on("terminal:drive_promoted", (p) => seen.push(p.reason));
+    for (const reason of ["producing", "mode_detached"] as const) {
+      bus.emit("terminal:drive_promoted", {
+        sessionId: "s",
+        agentId: "a",
+        reason,
+        timestamp: 1,
+      });
+    }
+    expect(seen).toEqual(["producing", "mode_detached"]);
+  });
+
+  it("terminal:drive_promoted carries ONLY a content-free key-set — no screen/text/keystroke/payload/command field (I3)", () => {
+    // Object.keys proves no raw-payload field rides the bus (T-164-11). The payload
+    // is constructed from EventMap so the set tracks the declared type.
+    const promoted: EventMap["terminal:drive_promoted"] = {
+      sessionId: "s",
+      agentId: "a",
+      reason: "mode_detached",
+      timestamp: 0,
+    };
+    expect(Object.keys(promoted).sort()).toEqual(["agentId", "reason", "sessionId", "timestamp"]);
+
+    // Source-block guard (the counts/ids/enums-only pattern): the declared block
+    // may NOT contain a raw screen/text/keystroke/payload/command field. RED on
+    // pre-patch (the block does not exist yet).
+    const src = readFileSync(resolve(here, "./events-terminal.ts"), "utf8");
+    const match = src.match(/"terminal:drive_promoted":\s*\{[\s\S]*?\n\s*\};/);
+    expect(match, "terminal:drive_promoted event block must exist").toBeTruthy();
+    const block = match![0];
+    expect(block, "no screen field").not.toMatch(/^\s*screen[?]?:/m);
+    expect(block, "no raw text field").not.toMatch(/^\s*text[?]?:/m);
+    expect(block, "no raw keystroke field").not.toMatch(/^\s*keystroke[?]?:/m);
+    expect(block, "no raw keys field").not.toMatch(/^\s*keys[?]?:/m);
+    expect(block, "no payload field").not.toMatch(/^\s*payload[?]?:/m);
+    expect(block, "no command field").not.toMatch(/^\s*command[?]?:/m);
+  });
+});
