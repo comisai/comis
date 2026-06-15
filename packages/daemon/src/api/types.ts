@@ -608,6 +608,38 @@ export interface MediaApiDeps {
      *  MemoryApiDeps / WorkspaceApiDeps eventBus so the slices unify. */
     eventBus?: AppContainer["eventBus"];
   };
+  /** VIS-01 (187): resolve the agent's MAIN provider id in lockstep with the
+   *  completion path (I4) — used for the obs label + the resolveVisionPath
+   *  input. The provider INSTANCE/creds are resolved inside mainProviderVision
+   *  (no second source of truth — the 183 firewall). Top-level (the vision
+   *  handlers read `deps.X` directly, unlike image's nested imageHandlerDeps).
+   *  Optional — absent on a boot mode without vision wiring → the handler treats
+   *  the main as "unknown" (not vision-capable) and falls to the registry. */
+  resolveAgentMainProvider?: (agentId: string) => { providerId: string };
+  /** VIS-01 (187): resolve the agent's MAIN model id, the SAME way
+   *  buildMediaVisionBundle resolves it (the single resolveAgentModel source of
+   *  truth). The handler-side vision gate computes `isVisionCapable(getModel(
+   *  main.providerId, mainModelIdFor(agentId)))` to short-circuit a non-vision
+   *  main WITHOUT an LLM call (the setup-channels-media.ts:135 try/catch dance).
+   *  Optional/undefined → the gate is conservative (not vision-capable). */
+  mainModelIdFor?: (agentId: string) => string | undefined;
+  /** VIS-01 (187): the main-provider vision bridge — ONE bounded completeSimple
+   *  over a multimodal [text,image] message on the agent's MAIN model, reusing
+   *  the main creds (no separate vision key). Returns the description + optional
+   *  costUsd, or an honest err (errorKind). The handler tries this FIRST when
+   *  isVisionCapable + creds; never re-derives selection. Optional — absent on a
+   *  boot mode without vision wiring → the handler falls to the registry. */
+  mainProviderVision?: {
+    describeImage(
+      buffer: Buffer, prompt: string, mimeType: string, agentId: string,
+    ): Promise<import("@comis/shared").Result<import("@comis/core").VisionResult & { costUsd?: number }, Error>>;
+  };
+  /** VIS-04 (187, Plan 03 fills the emits): the per-session trajectory recorder
+   *  registry — the handler resolves getRecorder(_callerSessionKey) and direct-
+   *  emits the media.vision.* lifecycle (the comis-session-manager.ts:298
+   *  precedent — no eventBus bridge in the daemon RPC context). Declared now;
+   *  the emits land in Plan 03. */
+  trajectoryRegistry?: import("@comis/observability").SessionTrajectoryHandleRegistry;
   /** media-handlers reads deps.workspaceDirs / deps.defaultWorkspaceDir
    *  / deps.defaultAgentId for STT / vision / link-processing file paths.
    *  Same shape as ChannelsApiDeps + WorkspaceApiDeps for ApiDispatchDeps multi-extends parity. */

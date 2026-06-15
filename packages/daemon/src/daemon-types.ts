@@ -641,6 +641,19 @@ export interface BootContext {
    *  Undefined when `maxCostPerHourUsd` is unset (ceiling skipped, count-only).
    *  Folded onto imageHandlerDeps (daemon.ts:932) as the `costLimiter` dep. */
   imageGenCostLimiter?: import("./api/image-cost-limiter.js").ImageCostLimiter;
+  /** VIS-01 (187): the provider-following vision bundle from buildMediaVisionBundle
+   *  — `capability` is the main-provider vision bridge (folded onto
+   *  MediaApiDeps.mainProviderVision) and `resolveMainModelId` is the single-source
+   *  main model-id resolver (folded onto MediaApiDeps.mainModelIdFor for the
+   *  handler-side vision gate). Built beside buildImageGenBundle at the same
+   *  construction site, reusing the DEFAULT agent's OAuth manager + boot clock.
+   *  Inlined (not `ReturnType<typeof buildMediaVisionBundle>`) to keep
+   *  daemon-types.ts free of an import edge back to wiring/main-helpers.ts (which
+   *  imports BootContext from here — a cycle). */
+  mediaVisionBundle?: {
+    capability: import("./api/main-provider-vision.js").MainProviderVision;
+    resolveMainModelId: (agentId: string) => string | undefined;
+  };
   // Tools (assembler + preprocessor)
   assembleToolsForAgent?: ReturnType<typeof setupTools>["assembleToolsForAgent"];
   preprocessMessageText?: ReturnType<typeof setupTools>["preprocessMessageText"];

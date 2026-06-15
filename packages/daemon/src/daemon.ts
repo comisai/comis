@@ -221,7 +221,7 @@ import { setupSingleAgent } from "./wiring/setup-agents/index.js";
 import { buildDialecticWiring, dialecticWiringDepsFromBoot } from "./wiring/setup-dialectic.js";
 import { createConversationReset } from "./wiring/conversation-reset.js";
 import { setupSecretManager } from "./wiring/setup-secret-manager.js";
-import { restoreApprovalState, resolveGatewayTokens, setupChannelHealthMonitor, resolveModelHealthMultilingual, buildImageGenBundle, buildImageHandlerDeps } from "./wiring/main-helpers.js";
+import { restoreApprovalState, resolveGatewayTokens, setupChannelHealthMonitor, resolveModelHealthMultilingual, buildImageGenBundle, buildImageHandlerDeps, buildMediaVisionBundle } from "./wiring/main-helpers.js";
 import { createInboundMessageIdResolver, type InboundMessageIdResolver } from "./wiring/inbound-message-id-resolver.js";
 import { logOperationModelDryRun } from "./wiring/startup-dry-run.js";
 import { emitDockerRestartPolicyWarn } from "./setup-docker-restart-warn.js";
@@ -982,7 +982,7 @@ function buildRpcDispatchDeps(deps: {
     crossSessionSender: c.crossSessionSender, subAgentRunner: c.subAgentRunner,
     graphCoordinator: c.graphCoordinator, namedGraphStore: c.namedGraphStore, nodeTypeRegistry: c.nodeTypeRegistry,
     securityConfig: c.container.config.security, adaptersByType: c.adaptersByType,
-    inboundMessageIdResolver: c.inboundMessageIdResolver, visionRegistry: c.visionRegistry,
+    inboundMessageIdResolver: c.inboundMessageIdResolver, visionRegistry: c.visionRegistry, resolveAgentMainProvider: resolveAgentMainProviderFor, mainModelIdFor: c.mediaVisionBundle?.resolveMainModelId, mainProviderVision: c.mediaVisionBundle?.capability, trajectoryRegistry: c.trajectoryRegistry,
     mediaConfig: c.container.config.integrations.media, ttsAdapter: c.ttsAdapter, linkRunner: c.linkRunner,
     logger: c.logger, container: c.container, configPaths: c.configPaths, defaultConfigPaths,
     configGitManager: c.configGitManager,
@@ -2192,6 +2192,8 @@ async function bootChannels(boot: BootContext): Promise<void> {
   // Image-generation bundle (see buildImageGenBundle in wiring/main-helpers.ts). 184: oauthManager threads the DEFAULT agent's OAuth manager for the Codex image path (CDX-01).
   const { imageGenConfig, imageGenProvider, imageGenRateLimiter, persistImage, imageGenCostLimiter } =
     buildImageGenBundle({ container, defaultAgentId, skillsLogger, oauthManager: handle.oauthManagers.get(defaultAgentId), workspaceDirs, defaultWorkspaceDir });
+  // VIS-01 (187): the provider-following vision bundle — same construction site, reusing the DEFAULT agent's OAuth manager (codex bearer) + the boot clock (the bridge's per-message timestamp). See buildMediaVisionBundle in wiring/main-helpers.ts.
+  const mediaVisionBundle = buildMediaVisionBundle({ container, defaultAgentId, skillsLogger, clock: handle.clock, oauthManager: handle.oauthManagers.get(defaultAgentId) });
 
   // 6.6.8.5. Tools + message preprocessing — HOISTED above setupChannels.
   // assembleToolsForAgent is now passed directly into
@@ -2407,7 +2409,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     notificationContext, bgCompletionRunnerContext, terminalWakeContext,
     crossSessionSender, subAgentRunner, sendToChannel, announceToParent,
     deadLetterQueue, announcementBatcher, gatewaySendRef,
-    sandboxProvider, imageGenProvider, imageGenRateLimiter, imageGenConfig, persistImage, imageGenCostLimiter,
+    sandboxProvider, imageGenProvider, imageGenRateLimiter, imageGenConfig, persistImage, imageGenCostLimiter, mediaVisionBundle,
     assembleToolsForAgent, preprocessMessageText, getCapabilityPortForAgent,
     heartbeatRunner, duplicateDetector, perAgentRunner, wakeCoalescer,
     nodeTypeRegistry, graphCoordinator, namedGraphStore,

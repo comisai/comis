@@ -15,7 +15,7 @@ import {
   EMBED_MULTILINGUAL,
   RERANK_MULTILINGUAL,
 } from "@comis/core";
-import type { ImageGenerationPort, OAuthTokenManager } from "@comis/core";
+import type { ImageGenerationPort, OAuthTokenManager, ClockPort } from "@comis/core";
 import { createChannelHealthMonitor } from "@comis/channels";
 import { createImageGenRateLimiter } from "@comis/skills";
 // DEL-01 (186): the per-agent media persistence getter mirrors the screenshot
@@ -33,6 +33,9 @@ import { createImageGenGetter } from "./setup-media.js";
 import { createImageProviderSelector } from "./setup-image-provider.js";
 import { resolveAgentModel } from "./setup-agents/setup-agents-tooling.js";
 import { registerComisImageProviders } from "../api/pi-image-adapter.js";
+// VIS-01 (187): the provider-following vision bridge (Plan 01) — the bundle
+// builds its capability by closing over the cred resolvers + resolveAgentModel.
+import { createMainProviderVision, type MainProviderVision } from "../api/main-provider-vision.js";
 
 /**
  * Restore approval pending requests and cache from disk at startup.
@@ -399,4 +402,100 @@ export function buildImageHandlerDeps(
     eventBus: c.container.eventBus, // OBS-03 (186): synthetic cost
     costLimiter: c.imageGenCostLimiter, // SEC-02 (186): USD cost ceiling
   };
+}
+
+/**
+ * VIS-01 (187): resolve the VISION API key by PROVIDER. Mirrors
+ * `resolveImageApiKey` (pi-image-adapter.ts:279) but keyed by PROVIDER, since
+ * vision keys are the SAME completion-path keys (`OPENAI_API_KEY` /
+ * `ANTHROPIC_API_KEY` / `GOOGLE_API_KEY`) — there is no separate vision key
+ * (I7). Reads the SAME `SecretManager` the main provider uses, never the raw
+ * environment. Returns undefined for `openai-codex` (its bearer comes from the
+ * OAuth manager, the 184 path) and for any unknown / key-less provider, which
+ * surfaces as honest-unavailable inside the bridge.
+ */
+export function resolveVisionApiKey(
+  provider: string,
+  secretManager: { get(key: string): string | undefined },
+): string | undefined {
+  switch (provider) {
+    case "openai":
+      return secretManager.get("OPENAI_API_KEY");
+    case "anthropic":
+      return secretManager.get("ANTHROPIC_API_KEY");
+    case "google":
+    case "google-vertex":
+      // CRED-01 lockstep (185): GOOGLE_API_KEY — the SAME key the completion
+      // path, the vision provider registry, and the env-vars docs use for google.
+      return secretManager.get("GOOGLE_API_KEY");
+    // "openai-codex" → oauthManager.getApiKey("openai-codex") via the bundle's
+    // resolveCodexKey closure (184 precedent); image-incapable/unknown → honest-
+    // unavailable inside the bridge.
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * VIS-01 (187): build the provider-following VISION bridge capability the media
+ * handler consumes via `MediaApiDeps.mainProviderVision`. Mirrors
+ * `buildImageGenBundle`'s cred closure (:290-313) + `buildImageHandlerDeps`'s
+ * literal assembly — it closes over `container.secretManager` + the default
+ * agent's `oauthManager`/`oauthProfiles` + `resolveAgentModel` + the
+ * agents/models config, and delegates to Plan 01's `createMainProviderVision`.
+ *
+ * The capability resolves the agent's main `{ provider, modelId }` via the
+ * EXACT completion-path `resolveAgentModel` (the I4 lockstep — no second source
+ * of truth), then the key by-provider (`resolveVisionApiKey`) with the codex
+ * bearer fallback (the DEFAULT agent's OAuth manager). Also returns
+ * `resolveMainModelId` — the SAME resolver, surfaced so the handler-side vision
+ * gate (`isVisionCapable(getModel(provider, modelId))`) reads the model id from
+ * one place (threaded onto `MediaApiDeps.mainModelIdFor`).
+ */
+export function buildMediaVisionBundle(deps: {
+  container: BootContext["container"];
+  defaultAgentId: string;
+  skillsLogger: BootContext["skillsLogger"];
+  /** The boot ClockPort (the bridge needs a non-Date.now() per-message timestamp). */
+  clock: ClockPort;
+  /** The DEFAULT agent's OAuth manager (184), for the codex cred path. Undefined
+   *  → codex resolves no bearer → honest-unavailable (never a crash). */
+  oauthManager?: OAuthTokenManager;
+}): {
+  capability: MainProviderVision;
+  /** The single-source-of-truth main model-id resolver (→ MediaApiDeps.mainModelIdFor). */
+  resolveMainModelId: (agentId: string) => string | undefined;
+} {
+  const { container, defaultAgentId, skillsLogger, clock, oauthManager } = deps;
+  const cfgFor = (agentId: string): { model: string; provider: string } | undefined =>
+    container.config.agents[agentId] ??
+    container.config.agents[defaultAgentId] ??
+    container.config.agents["default"];
+  const oauthProfiles = (container.config.agents[defaultAgentId] ?? container.config.agents["default"])?.oauthProfiles;
+  // The I4 lockstep — the SAME resolver the completion path uses. A
+  // missing/misconfigured agent resolves to a sentinel that the bridge maps to
+  // honest-unavailable (getModel("unknown", "") fails the model guard).
+  const resolveMain = (agentId: string): { provider: string; modelId: string } => {
+    const cfg = cfgFor(agentId);
+    if (!cfg) return { provider: "unknown", modelId: "" };
+    const { provider, model } = resolveAgentModel(cfg, container.config.models);
+    return { provider, modelId: model };
+  };
+  const capability = createMainProviderVision({
+    resolveModel: resolveMain,
+    // cred-by-PROVIDER (vision keys: OPENAI/ANTHROPIC/GOOGLE_API_KEY) via the
+    // SAME SecretManager the completion path reads.
+    resolveApiKey: (provider: string) => resolveVisionApiKey(provider, container.secretManager),
+    // codex bearer via the DEFAULT agent's OAuth manager (184 precedent),
+    // unwrapped to string | undefined so the bridge stays OAuthError-decoupled.
+    resolveCodexKey: oauthManager
+      ? async (provider: string) => {
+          const r = await oauthManager.getApiKey(provider, { oauthProfiles });
+          return r.ok ? r.value : undefined;
+        }
+      : undefined,
+    clock,
+    logger: skillsLogger,
+  });
+  return { capability, resolveMainModelId: (agentId: string) => resolveMain(agentId).modelId || undefined };
 }
