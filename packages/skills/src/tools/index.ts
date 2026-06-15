@@ -103,6 +103,9 @@ export {
   buildSessionDescriptor,
   busyOrHung,
   checkSpendCeiling,
+  // The daemon-side has-session liveness probe builder (165-07 wiring): `tmux has-session -t
+  // comis-<id>` — the re-attach + backstop probe (exit 0 ⇒ alive).
+  buildTmuxHasSessionArgv,
   type SessionDescriptor,
   type ReattachDecision,
   type SessionDescriptorStorePort,

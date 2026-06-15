@@ -114,10 +114,11 @@ export interface SetupTerminalWakeDeps {
    * verdict to advance the session's reaper `lastActivity` — the load-bearing fix for the
    * documented pitfall that `lastActivity` does NOT advance for a quiet-but-busy compile (no
    * tool round-trip lands), so a naive idle reaper would evict a healthy 2h build. The daemon
-   * (165-07 Task 4) binds it to the registry handle's `lastActivity`; a test injects a spy.
-   * Optional; absent ⇒ the busy verdict is still not-stuck but the reaper unify is inert (I1).
+   * (165-07 Task 4) binds it to the registry handle's `lastActivity` (resolved by agentId); a
+   * test injects a spy. Optional; absent ⇒ the busy verdict is still not-stuck but the reaper
+   * unify is inert (I1).
    */
-  refreshLastActivity?: (sessionId: string) => void;
+  refreshLastActivity?: (sessionId: string, agentId: string) => void;
   /** Injected clock (no raw global). Default `systemNowMs`. */
   nowMs?: () => number;
   logger: ComisLogger;
@@ -416,7 +417,7 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
     if (busyOrHung(signal) === "busy") {
       // The ENDURE-01 unify (I9): a quiet-but-busy compile is NOT stuck, and its busy verdict
       // refreshes lastActivity so the idle reaper never evicts it for its quietness alone.
-      deps.refreshLastActivity?.(sessionId);
+      deps.refreshLastActivity?.(sessionId, agentId);
       return;
     }
     // "hung": synthesize a stuck wake through the EXISTING seam (the wake adapter translates
