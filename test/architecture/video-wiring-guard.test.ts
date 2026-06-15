@@ -25,6 +25,7 @@ const DAEMON_TS = resolve(REPO_ROOT, "packages/daemon/src/daemon.ts");
 const RPC_DISPATCH_TS = resolve(REPO_ROOT, "packages/daemon/src/api/rpc-dispatch.ts");
 const MAIN_HELPERS_TS = resolve(REPO_ROOT, "packages/daemon/src/wiring/main-helpers.ts");
 const SETUP_TOOLS_TS = resolve(REPO_ROOT, "packages/daemon/src/wiring/setup-tools.ts");
+const SETUP_VIDEO_PROVIDER_TS = resolve(REPO_ROOT, "packages/daemon/src/wiring/setup-video-provider.ts");
 const REGISTRY_TS = resolve(REPO_ROOT, "packages/skills/src/platform-tools/registry.ts");
 
 /** Strip line + block comments so a token inside a comment cannot satisfy a
@@ -183,5 +184,56 @@ describe("video-generation built-but-not-wired source guard", () => {
     expect(daemonCode).toMatch(/videoStatusEnabled/);
     const toolsCode = stripComments(readFileSync(SETUP_TOOLS_TS, "utf8"));
     expect(toolsCode).toMatch(/videoStatusEnabled/);
+  });
+
+  // ─── Phase 190 (VEO/GROK/CRED-01): live-adapter swap + oauthManager thread ───
+  // The 188 selector returned an honest-unavailable "lands in Phase 190" port for
+  // the veo/grok SELECTION (built-but-not-wired by design until the adapters
+  // existed). Plan 03 swaps that branch for the LIVE createVeoVideoAdapter /
+  // createGrokVideoAdapter (Plans 01/02) and threads the DEFAULT agent's
+  // oauthManager (bundle → selector → daemon) for the Grok key-or-OAuth path
+  // (CRED-01). These assertions pin every edge so a future refactor cannot regress
+  // veo/grok back to the placeholder without turning this test red (Pitfall 5 —
+  // the milestone's #1 recurring blocker).
+
+  it("setup-video-provider.ts veo branch CALLS createVeoVideoAdapter and grok branch CALLS createGrokVideoAdapter (not the placeholder)", () => {
+    const content = readFileSync(SETUP_VIDEO_PROVIDER_TS, "utf8");
+    // The live adapters must be IMPORTED from the daemon-api modules (Plans 01/02).
+    expect(content).toMatch(
+      /import\s*\{[^}]*createVeoVideoAdapter[^}]*\}\s*from\s*["']\.\.\/api\/veo-adapter\.js["']/,
+    );
+    expect(content).toMatch(
+      /import\s*\{[^}]*createGrokVideoAdapter[^}]*\}\s*from\s*["']\.\.\/api\/grok-adapter\.js["']/,
+    );
+    const code = stripComments(content);
+    // And CALLED in the resolved branch (the swap — not just imported, not a comment).
+    expect(code).toMatch(/createVeoVideoAdapter\s*\(/);
+    expect(code).toMatch(/createGrokVideoAdapter\s*\(/);
+    // The Phase-188 placeholder hint must be GONE from the live branch (the swap
+    // removed it — a residual "lands in Phase 190" means the placeholder survived).
+    expect(code).not.toMatch(/lands in Phase 190/);
+  });
+
+  it("main-helpers.ts buildVideoGenBundle threads oauthManager + oauthProfiles into createVideoProviderSelector (CRED-01 grok OAuth)", () => {
+    const code = stripComments(readFileSync(MAIN_HELPERS_TS, "utf8"));
+    // The selector call must carry oauthManager + oauthProfiles (mirroring the
+    // buildImageGenBundle precedent at :331-332). The bounded {0,600} window keeps
+    // the match scoped to the createVideoProviderSelector({...}) call body — a
+    // far-away oauthManager token (buildImageGenBundle / buildVideoHandlerDeps,
+    // both >2000 chars away) cannot satisfy it, so it fails RED until the thread
+    // is added inside THIS call.
+    expect(code).toMatch(/createVideoProviderSelector\s*\(\{[\s\S]{0,600}?oauthManager/);
+    expect(code).toMatch(/createVideoProviderSelector\s*\(\{[\s\S]{0,600}?oauthProfiles/);
+  });
+
+  it("daemon.ts threads oauthManager into the buildVideoGenBundle call (handle.oauthManagers.get(defaultAgentId))", () => {
+    const code = stripComments(readFileSync(DAEMON_TS, "utf8"));
+    // The buildVideoGenBundle({...}) call must carry oauthManager (mirror the
+    // :2169 buildImageGenBundle precedent). The bounded {0,250} window keeps the
+    // match inside the call's argument object — the next oauthManager token (the
+    // mediaVisionBundle call on the following line, ~290 chars away pre-patch) is
+    // past it, so the assertion fails RED until oauthManager is threaded into THIS
+    // call (the addition lands well inside the ~170-char call body).
+    expect(code).toMatch(/buildVideoGenBundle\s*\(\{[\s\S]{0,250}?oauthManager/);
   });
 });
