@@ -440,3 +440,85 @@ describe("ensureVideoJobTable (video_jobs DDL)", () => {
     expect(row).toBeDefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// CR-01 store-error resilience: EVERY method returns err() (never throws) when
+// the underlying SQLite statement fails. The store wraps each operation in a
+// try/catch that maps a thrown driver error to err(Error) — the poller / handler
+// chain on err with an early-return and (markFailed/markDone) keep the at-least-
+// once contract bounded rather than crashing the off-turn loop. Forced by closing
+// the db connection: better-sqlite3 throws "The database connection is not open"
+// on every prepared-statement run, exercising each catch branch.
+// ---------------------------------------------------------------------------
+describe("VideoJobStore — store-error resilience (every method returns err, never throws)", () => {
+  function makeClosedStore(): VideoJobStore {
+    const db = new Database(":memory:");
+    ensureVideoJobTable(db);
+    const store = createVideoJobStore(db);
+    db.close(); // every prepared statement now throws on run/get/all
+    return store;
+  }
+
+  const record = {
+    jobId: "fal-req-err",
+    provider: "fal",
+    model: "fal-ai/veo3.1/fast",
+    agentId: "alpha",
+    channelType: "telegram",
+    channelId: "ch-err",
+    traceId: "trace-err",
+    state: "pending" as const,
+    estimatedCostUsd: 2.4,
+    submittedAtMs: 1_700_000_000_000,
+    updatedAtMs: 1_700_000_000_000,
+  };
+
+  it("insert returns err on a driver failure (no throw)", async () => {
+    const store = makeClosedStore();
+    const r = await store.insert(record);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toBeInstanceOf(Error);
+  });
+
+  it("listPending returns err on a driver failure (no throw)", async () => {
+    const store = makeClosedStore();
+    const r = await store.listPending();
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toBeInstanceOf(Error);
+  });
+
+  it("get returns err on a driver failure (no throw)", async () => {
+    const store = makeClosedStore();
+    const r = await store.get("fal-req-err", "alpha");
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toBeInstanceOf(Error);
+  });
+
+  it("markDone returns err on a driver failure (no throw)", async () => {
+    const store = makeClosedStore();
+    const r = await store.markDone("fal-req-err", { mediaPath: "/x.mp4", actualCostUsd: 0.8 });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toBeInstanceOf(Error);
+  });
+
+  it("markFailed returns err on a driver failure (no throw)", async () => {
+    const store = makeClosedStore();
+    const r = await store.markFailed("fal-req-err", "empty_response", "a hint");
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toBeInstanceOf(Error);
+  });
+
+  it("updateProgress returns err on a driver failure (no throw)", async () => {
+    const store = makeClosedStore();
+    const r = await store.updateProgress("fal-req-err", 50);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toBeInstanceOf(Error);
+  });
+
+  it("incrementDeliveryAttempt returns err on a driver failure (no throw)", async () => {
+    const store = makeClosedStore();
+    const r = await store.incrementDeliveryAttempt("fal-req-err");
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toBeInstanceOf(Error);
+  });
+});
