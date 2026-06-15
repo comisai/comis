@@ -272,4 +272,48 @@ describe("video-generation built-but-not-wired source guard", () => {
     // And the accessor must be CALLED in the description build (not just imported).
     expect(code).toMatch(/listVideoModelCaps\s*\(/);
   });
+
+  // ─── Phase 192 (OBS-04): the obs-deps wiring for the off-turn poller emits ───
+  // The poller best-effort live-emits video.generated/delivered/failed off-turn
+  // via getRecorder(record.sessionKey) — but ONLY if buildVideoGenBundle threads
+  // trajectoryRegistry + eventBus into createVideoPoller, and daemon.ts threads
+  // them into buildVideoGenBundle. The poller + the emitter can exist, compile,
+  // and pass their unit tests while the LIVE daemon never wires the obs deps, so
+  // `comis explain` shows nothing for a background-completed turn (built-but-not-
+  // wired, Pitfall 5 — the milestone's #1 recurring blocker). Bounded windows
+  // keep each match scoped to the relevant call body — a far-away
+  // trajectoryRegistry/eventBus token (the image bundle / buildVideoHandlerDeps,
+  // both well outside the window) cannot satisfy it, so each fails RED until the
+  // thread is added inside THIS call.
+
+  it("main-helpers.ts threads trajectoryRegistry + eventBus into createVideoPoller (the off-turn emit deps)", () => {
+    const code = stripComments(readFileSync(MAIN_HELPERS_TS, "utf8"));
+    // The createVideoPoller({...}) call body (~700 chars) must carry both. The
+    // nearest other trajectoryRegistry token (the image bundle at buildImageHandlerDeps,
+    // ~5000 chars earlier) and the buildVideoHandlerDeps thread (after) are both
+    // outside the {0,800} window, so this fails RED until threaded into THIS call.
+    expect(code).toMatch(/createVideoPoller\s*\(\{[\s\S]{0,800}?trajectoryRegistry/);
+    expect(code).toMatch(/createVideoPoller\s*\(\{[\s\S]{0,800}?eventBus/);
+  });
+
+  it("buildVideoGenBundle accepts trajectoryRegistry + eventBus in its deps param (threaded from daemon.ts)", () => {
+    const code = stripComments(readFileSync(MAIN_HELPERS_TS, "utf8"));
+    // The bundle's deps destructure must include both so they can flow into the
+    // createVideoPoller call. Bounded to the buildVideoGenBundle deps destructure
+    // ({ container, defaultAgentId, ... } = deps) — measured from the function name.
+    expect(code).toMatch(/export function buildVideoGenBundle[\s\S]{0,2200}?trajectoryRegistry/);
+    expect(code).toMatch(/export function buildVideoGenBundle[\s\S]{0,2200}?eventBus/);
+  });
+
+  it("daemon.ts threads trajectoryRegistry + eventBus into the buildVideoGenBundle call", () => {
+    const code = stripComments(readFileSync(DAEMON_TS, "utf8"));
+    // The buildVideoGenBundle({...}) call must carry both (the SAME instances the
+    // image/vision paths use — container.eventBus + the boot trajectoryRegistry).
+    // The bounded {0,400} window keeps each match inside the call's argument
+    // object; the next trajectoryRegistry/eventBus token (the mediaVisionBundle /
+    // dispatch deps, well past it) cannot satisfy it, so it fails RED until each
+    // is threaded into THIS call.
+    expect(code).toMatch(/buildVideoGenBundle\s*\(\{[\s\S]{0,400}?trajectoryRegistry/);
+    expect(code).toMatch(/buildVideoGenBundle\s*\(\{[\s\S]{0,400}?eventBus/);
+  });
 });

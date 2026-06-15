@@ -159,6 +159,9 @@ function makePoller(opts: {
   persist?: ReturnType<typeof vi.fn>;
   config?: VideoGenerationConfig;
   seedRows?: Array<Record<string, unknown>>;
+  // OBS-04 (Phase 192): an optional trajectory registry — when provided the
+  // poller best-effort live-emits video.* off-turn via getRecorder(sessionKey).
+  trajectoryRegistry?: { getRecorder: ReturnType<typeof vi.fn> };
 } = {}): { poller: VideoPoller; deps: MockPollerDeps; db: Database.Database } {
   const db = new Database(":memory:");
   ensureVideoJobTable(db);
@@ -215,9 +218,21 @@ function makePoller(opts: {
     timers,
     sleep,
     nowMs,
+    ...(opts.trajectoryRegistry ? { trajectoryRegistry: opts.trajectoryRegistry as never } : {}),
   });
   void clock;
   return { poller, deps, db };
+}
+
+/** A capture recorder + a registry resolving it by sessionKey (OBS-04). */
+function captureRegistry(): { calls: Array<{ type: string; data: Record<string, unknown> }>; getRecorder: ReturnType<typeof vi.fn> } {
+  const calls: Array<{ type: string; data: Record<string, unknown> }> = [];
+  const recorder = {
+    recordEvent: vi.fn((type: string, data: Record<string, unknown>) => {
+      calls.push({ type, data });
+    }),
+  };
+  return { calls, getRecorder: vi.fn(() => recorder) };
 }
 
 /** Flush the microtask queue so fire-and-forget runJob loops settle. The full
@@ -351,6 +366,87 @@ describe("createVideoPoller", () => {
     expect((info![0] as { traceId?: string }).traceId).toBe("trace-seed");
     expect((info![0] as { costUsd?: number }).costUsd).toBe(0.8);
     expect(typeof (info![0] as { durationMs?: number }).durationMs).toBe("number");
+  });
+
+  // ─── OBS-04 (Phase 192): off-turn best-effort live trajectory emits ───
+  it("done branch best-effort live-emits video.generated THEN video.delivered from the ROW's sessionKey (off-turn, not ALS)", async () => {
+    const reg = captureRegistry();
+    const { poller } = makePoller({ trajectoryRegistry: reg });
+    poller.track(makeRecord({ sessionKey: "default:u1:telegram:c1" }));
+    await flush();
+    // The recorder was resolved by the ROW's sessionKey (the off-turn key — there
+    // is NO ALS frame in the poller tick).
+    expect(reg.getRecorder).toHaveBeenCalledWith("default:u1:telegram:c1");
+    const types = reg.calls.map((c) => c.type);
+    expect(types).toContain("video.generated");
+    expect(types).toContain("video.delivered");
+    // Order: generated before delivered.
+    expect(types.indexOf("video.generated")).toBeLessThan(types.indexOf("video.delivered"));
+    // video.generated carries the cost-carry (actual cost 0.8 from the fetch).
+    const gen = reg.calls.find((c) => c.type === "video.generated")!;
+    expect(gen.data).toMatchObject({ provider: "fal", outcome: "ok", costUsd: 0.8 });
+    // video.delivered records the channelType + delivered:true (sent ok).
+    const del = reg.calls.find((c) => c.type === "video.delivered")!;
+    expect(del.data).toEqual({ channelType: "telegram", delivered: true });
+  });
+
+  it("off-turn safety: getRecorder→undefined (recorder gone) → NO throw, NO record, the INFO floor STILL fires", async () => {
+    // The common off-turn case: the session closed / the daemon restarted, so the
+    // in-memory registry has no recorder. The live emit must no-op (the OFFLINE
+    // assembler in Plan 02 is the binding oracle); the §2.7 INFO line survives.
+    const reg = { getRecorder: vi.fn(() => undefined) };
+    const { poller, deps } = makePoller({ trajectoryRegistry: reg });
+    poller.track(makeRecord({ sessionKey: "gone-session" }));
+    await flush();
+    expect(reg.getRecorder).toHaveBeenCalledWith("gone-session");
+    // The completion INFO line STILL fired (the logger-only floor is intact).
+    const info = (deps.logger.info as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c) => (c[0] as { step?: string }).step === "video_poll_complete",
+    );
+    expect(info).toBeTruthy();
+  });
+
+  it("a job with NO sessionKey (old row) does not resolve a recorder; the INFO floor still fires (graceful)", async () => {
+    const reg = captureRegistry();
+    const { poller, deps } = makePoller({ trajectoryRegistry: reg });
+    // makeRecord() with sessionKey explicitly cleared (a pre-192 / in-flight row).
+    poller.track(makeRecord({ sessionKey: undefined }));
+    await flush();
+    expect(reg.getRecorder).not.toHaveBeenCalled();
+    expect(reg.calls).toHaveLength(0);
+    const info = (deps.logger.info as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c) => (c[0] as { step?: string }).step === "video_poll_complete",
+    );
+    expect(info).toBeTruthy();
+  });
+
+  it("fail branch best-effort live-emits video.failed {errorKind, provider} from the ROW's sessionKey (beside the WARN)", async () => {
+    // A provider that polls to `failed` (a thrown poll → the generic
+    // empty_response fallback) so the markFailed branch runs.
+    const provider = makeProvider({ poll: vi.fn().mockResolvedValue(err(new Error("boom"))) });
+    const reg = captureRegistry();
+    const { poller, deps } = makePoller({ provider, trajectoryRegistry: reg });
+    poller.track(makeRecord({ sessionKey: "default:u1:telegram:c1" }));
+    await flush();
+    expect(reg.getRecorder).toHaveBeenCalledWith("default:u1:telegram:c1");
+    const failed = reg.calls.find((c) => c.type === "video.failed");
+    expect(failed).toBeDefined();
+    expect(failed!.data).toEqual({ errorKind: "empty_response", provider: "fal" });
+    // SEC-03 / non-regression: the §2.7 WARN with the pinned step still fires.
+    const w = (deps.logger.warn as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c) => (c[0] as { step?: string }).step === "video_poll_failed",
+    );
+    expect(w).toBeTruthy();
+  });
+
+  it("no trajectoryRegistry (boot without one) → done branch does not throw and delivers normally", async () => {
+    // The poller's obs deps are optional; absent → no live emit, the floor + the
+    // delivery path are unaffected.
+    const { poller, deps } = makePoller(); // no trajectoryRegistry
+    poller.track(makeRecord({ sessionKey: "s" }));
+    await flush();
+    expect(deps.sendAttachment).toHaveBeenCalledTimes(1);
+    expect(deps.store.markDoneSpy).toHaveBeenCalledTimes(1);
   });
 
   // ─── JOB-03 restart resume: seed pending + done provider → ONE delivery ───
