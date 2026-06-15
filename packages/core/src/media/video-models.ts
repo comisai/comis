@@ -176,6 +176,14 @@ export function supportedModes(backend: string): ("t2v" | "i2v" | "v2v")[] {
  *   than requested is the safer default over slightly shorter. Deterministic.
  */
 export function snapDuration(caps: VideoModelCaps, d: number): number {
+  // IN-01: fail CLOSED on a non-finite duration (defense-in-depth — upstream Zod
+  // normally rejects NaN). For a range cell, Math.min(max, Math.max(min, NaN))
+  // would pass NaN straight to the wire; for an enum cell the reduce silently
+  // coerces to the seed. Snap to the smallest/min member so a non-finite value
+  // never reaches the provider.
+  if (!Number.isFinite(d)) {
+    return caps.durations.kind === "range" ? caps.durations.min : (caps.durations.values[0] ?? d);
+  }
   if (caps.durations.kind === "range") {
     return Math.min(caps.durations.max, Math.max(caps.durations.min, d));
   }
