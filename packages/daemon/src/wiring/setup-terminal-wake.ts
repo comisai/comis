@@ -99,12 +99,16 @@ export interface SetupTerminalWakeDeps {
   /**
    * LIVE-01 (165-07): the injected SINGLE liveness check the backstop performs on a tick —
    * the worker's `has-session` + `noProgressMs` + the `stuckMs` window (the {@link BusySignal}
-   * the pure `busyOrHung` predicate consumes), with NO per-tick screen read (I2 — the
-   * signature carries no grid/cursor). Returns `undefined` for a session that is already gone
-   * (the backstop then skips it). The daemon (165-07 Task 4) binds it over the registry's
-   * worker progress; a test injects a fake. ABSENT ⇒ no backstop (I1).
+   * the pure `busyOrHung` predicate consumes), with NO per-tick SCREEN read (I2 — the
+   * signature carries no grid/cursor; the daemon binds it to the registry's `status`
+   * round-trip, which returns the worker's CLASSIFIER perception — `working`/`stuck`/`exited` —
+   * never the screen bytes). Async: the single check is a worker round-trip, awaited inside the
+   * fire-and-forget tick. Receives the owning `agentId` (the backstop resolves it from the
+   * per-session bridge) so the daemon binding scopes the registry `status` round-trip. Returns
+   * `undefined` for a session that is already gone (the backstop skips it). The daemon (165-07
+   * Task 4) binds it; a test injects a fake. ABSENT ⇒ no backstop (I1).
    */
-  checkLiveness?: (sessionId: string) => BusySignal | undefined;
+  checkLiveness?: (sessionId: string, agentId: string) => Promise<BusySignal | undefined> | BusySignal | undefined;
   /**
    * LIVE-01 / ENDURE-01 unify (165-07 / I9): the hook the backstop calls on a `"busy"`
    * verdict to advance the session's reaper `lastActivity` — the load-bearing fix for the
@@ -397,39 +401,56 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
   //   - "hung" → synthesize a state:"stuck" wake through the EXISTING terminal:input_needed
   //     seam (NOT a new event) + a §2.7 WARN; the stamp above makes this at-most-once per stretch.
   let backstopHandle: TimerHandle | undefined;
+  // Process one promoted session's backstop check (async — the liveness check is a worker
+  // round-trip). Separated from the loop so a per-session fault is isolated + awaited cleanly.
+  const backstopCheckSession = async (sessionId: string, now: number, heartbeatMs: number): Promise<void> => {
+    if (!deps.checkLiveness) return;
+    // I2: a wake landed within the heartbeat window → a normally-progressing drive; SKIP
+    // (no liveness check, no screen read). The backstop fires ONLY in the absence of a wake.
+    const lastWake = lastTransitionMs.get(sessionId);
+    if (lastWake !== undefined && now - lastWake < heartbeatMs) return;
+    // ONE liveness check — has-session + noProgressMs (NO screen, I2). A gone session → skip.
+    const agentId = sessionAgent.get(sessionId) ?? "";
+    const signal = await deps.checkLiveness(sessionId, agentId);
+    if (signal === undefined) return;
+    if (busyOrHung(signal) === "busy") {
+      // The ENDURE-01 unify (I9): a quiet-but-busy compile is NOT stuck, and its busy verdict
+      // refreshes lastActivity so the idle reaper never evicts it for its quietness alone.
+      deps.refreshLastActivity?.(sessionId);
+      return;
+    }
+    // "hung": synthesize a stuck wake through the EXISTING seam (the wake adapter translates
+    // terminal:input_needed{state:"stuck"} → a stuck-classified woken turn). NOT a new event.
+    // The onWakeTransition listener re-stamps lastTransitionMs off this emit → the synth fires
+    // at most once per silent stretch (never per tick). `agentId` resolved above.
+    deps.eventBus.emit("terminal:input_needed", {
+      sessionId,
+      agentId,
+      state: "stuck",
+      reason: "liveness_backstop",
+      confidence: "high",
+      timestamp: now,
+    });
+    log.warn(
+      { sessionId, agentId, noProgressMs: signal.noProgressMs, hint: "liveness backstop found a promoted drive hung (alive-but-no-progress past the stuck window, or a dead backend); synthesized a stuck for escalation", errorKind: "timeout" as const, step: "liveness_backstop" },
+      "terminal liveness backstop synthesized a stuck",
+    );
+  };
   const runBackstopTick = (): void => {
     if (!deps.checkLiveness) return;
     const now = nowMs();
     const heartbeatMs = deps.heartbeatMs ?? 90_000;
-    for (const sessionId of promotedSessions) {
-      // I2: a wake landed within the heartbeat window → a normally-progressing drive; SKIP
-      // (no liveness check, no screen read). The backstop fires ONLY in the absence of a wake.
-      const lastWake = lastTransitionMs.get(sessionId);
-      if (lastWake !== undefined && now - lastWake < heartbeatMs) continue;
-      // ONE liveness check — has-session + noProgressMs (NO screen, I2). A gone session → skip.
-      const signal = deps.checkLiveness(sessionId);
-      if (signal === undefined) continue;
-      if (busyOrHung(signal) === "busy") {
-        // The ENDURE-01 unify (I9): a quiet-but-busy compile is NOT stuck, and its busy verdict
-        // refreshes lastActivity so the idle reaper never evicts it for its quietness alone.
-        deps.refreshLastActivity?.(sessionId);
-        continue;
-      }
-      // "hung": synthesize a stuck wake through the EXISTING seam (the wake adapter translates
-      // terminal:input_needed{state:"stuck"} → a stuck-classified woken turn). NOT a new event.
-      const agentId = sessionAgent.get(sessionId) ?? "";
-      deps.eventBus.emit("terminal:input_needed", {
-        sessionId,
-        agentId,
-        state: "stuck",
-        reason: "liveness_backstop",
-        confidence: "high",
-        timestamp: now,
+    // Snapshot the promoted set (a synth-stuck-triggered woken turn could mutate it mid-tick).
+    for (const sessionId of [...promotedSessions]) {
+      // Fire-and-forget per session; isolate a per-session fault so one bad check never throws
+      // out of the interval callback (which would be an unhandled rejection). The backstop is a
+      // best-effort safety net — a faulting liveness probe degrades to "no check this tick".
+      void backstopCheckSession(sessionId, now, heartbeatMs).catch((err: unknown) => {
+        log.warn(
+          { sessionId, err, hint: "liveness backstop check faulted; skipped this tick (the next tick retries)", errorKind: "resource" as const, step: "liveness_backstop_failed" },
+          "terminal liveness backstop check faulted",
+        );
       });
-      log.warn(
-        { sessionId, agentId, noProgressMs: signal.noProgressMs, hint: "liveness backstop found a promoted drive hung (alive-but-no-progress past the stuck window, or a dead backend); synthesized a stuck for escalation", errorKind: "timeout" as const, step: "liveness_backstop" },
-        "terminal liveness backstop synthesized a stuck",
-      );
     }
   };
   if (deps.timers && deps.checkLiveness) {
