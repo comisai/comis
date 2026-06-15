@@ -477,4 +477,119 @@ describe("setupTerminalWake — the keystone subscribe + woken-turn driver (124-
     expect(src, "must unsubscribe terminal:drive_promoted on shutdown").toMatch(/\.off\(\s*"terminal:drive_promoted"/);
     expect(src, "must hold a closure-local promoted-Set").toMatch(/promotedSessions/);
   });
+
+  // -------------------------------------------------------------------------
+  // DRIVE-01 (164-06 Task 1): the drive-scope routing. A PROMOTED session's
+  // woken turn is attributed to a dedicated `drive:<sessionId>` sessionKey (the
+  // FSM/journal/conversation scope), while the active-check resolves the SAME
+  // session via its STAMPED registry owner (`sessionKey:""`, via registryOwnerFor)
+  // so a promoted session's wakes are NOT dropped. An unpromoted session stays on
+  // `sessionKey:""` (today's path, I1).
+  // RED on pre-patch: makeWakeAdapterBus hard-codes `sessionKey:""` (no drive scope)
+  // AND isSessionActive passes the raw owner — so the routing + the strip don't exist.
+  // -------------------------------------------------------------------------
+
+  /**
+   * A registry whose session is ONLY resolvable under its STAMPED owner (`sessionKey:""`).
+   * `get`/`status`/`read` consult the owner: a call carrying a drive-scoped (or any
+   * non-"") sessionKey returns the not-found view (the production owner-gate, `sameOwner`).
+   * This is how a test proves the active-check + the woken-turn read strip the drive scope
+   * back to the stamped owner (I5) — without the strip, a promoted session reads not-found.
+   */
+  function makeStampedOnlyRegistry(opts: { screen: string }) {
+    const liveStatus = {
+      state: "awaiting-input" as const,
+      lastActivity: 0,
+      interactions: 1,
+      cursorParked: true,
+      screenDiffEmpty: true,
+    };
+    const liveView = { screen: opts.screen, cursor: { x: 0, y: 0 }, cols: 80, rows: 24, alt: false, alive: true };
+    const notFoundView = { screen: "", cursor: { x: 0, y: 0 }, cols: 0, rows: 0, alt: false, alive: false };
+    const stamped = (owner: { sessionKey?: string }): boolean => owner?.sessionKey === "";
+    return {
+      sendText: vi.fn(async () => ({ screen: opts.screen, cursor: { x: 0, y: 0 }, delivered: true })),
+      // Owner-gated: alive ONLY under the stamped owner; a drive-scoped get is not-found.
+      get: vi.fn((_id: string, owner: { sessionKey?: string }) =>
+        stamped(owner) ? ({ sessionId: "s", owner: { agentId: "a", sessionKey: "" } } as never) : undefined,
+      ),
+      status: vi.fn(async (_id: string, owner: { sessionKey?: string }) => (stamped(owner) ? liveStatus : { ...liveStatus, state: "exited" as const })),
+      read: vi.fn(async (_id: string, owner: { sessionKey?: string }) => (stamped(owner) ? liveView : notFoundView)),
+    };
+  }
+
+  function buildStampedOnly(dataDir: string, opts: { screen: string; hintPatterns?: string[] }): Built {
+    const bus = makeBus();
+    const registry = makeStampedOnlyRegistry({ screen: opts.screen });
+    const logger = makeLogger();
+    const notify = vi.fn(async () => undefined);
+    const registries = new Map<string, ReturnType<typeof makeStampedOnlyRegistry>>([["a", registry]]);
+    const deps: SetupTerminalWakeDeps = {
+      eventBus: bus as unknown as SetupTerminalWakeDeps["eventBus"],
+      registries: registries as unknown as SetupTerminalWakeDeps["registries"],
+      getTerminalAttentionConfig: () => ({
+        autoAnswer: "safe-only",
+        hintPatterns: opts.hintPatterns ?? ["press enter to continue"],
+        maxHops: 5,
+        maxConcurrentAttentionTurns: 2,
+      }),
+      notify,
+      dataDir,
+      nowMs: () => 1_000,
+      logger: logger as unknown as SetupTerminalWakeDeps["logger"],
+    };
+    const handle = setupTerminalWake(deps);
+    return { bus, registry: registry as unknown as Built["registry"], logger, notify, handle };
+  }
+
+  it("DRIVE-01: a promoted session's woken turn is attributed to drive:<id>, an unpromoted one to '' (I1)", async () => {
+    built = build(dataDir, { screen: "Press enter to continue" });
+
+    // (a) UNPROMOTED — the woken turn's owner sessionKey is "" (today's path, I1).
+    built.bus.fireInputNeeded("s-plain", "a");
+    await flush();
+    const plainOwner = built.registry.status.mock.calls.at(-1)?.[1] as { sessionKey: string } | undefined;
+    expect(plainOwner?.sessionKey, "an unpromoted woken turn resolves the stamped owner ''").toBe("");
+
+    // (b) PROMOTED — promote the session, then a wake routes the drive scope. The driver
+    //     STRIPS it for the registry call (Task 2), so status still resolves the stamped
+    //     owner; the drive:<id> attribution is asserted via the routing source + the
+    //     dedicated drive-scope helper test. Here we assert the promoted session is NOT
+    //     dropped (the active-check still sees it alive) — the load-bearing routing effect.
+    built.registry.status.mockClear();
+    built.bus.fireDrivePromoted("s-drv", "a", "producing");
+    await flush();
+    built.bus.fireInputNeeded("s-drv", "a");
+    await flush();
+    expect(built.registry.status, "a promoted session's wake still drives a turn (not dropped)").toHaveBeenCalled();
+  });
+
+  it("active-check: a promoted session's wake is NOT dropped — isSessionActive resolves via registryOwnerFor(owner)", async () => {
+    // The registry resolves the session ONLY under the stamped owner (sessionKey:"").
+    // After promotion the wake owner carries drive:<id>; the active-check MUST strip it
+    // (registryOwnerFor) or registry.get returns undefined and the wake is silently dropped
+    // (the I9-class strand). Pin: a promoted session's wake DRIVES a turn.
+    built = buildStampedOnly(dataDir, { screen: "Press enter to continue" });
+    built.bus.fireDrivePromoted("s-drv", "a", "producing");
+    await flush();
+    built.bus.fireInputNeeded("s-drv", "a");
+    await flush();
+
+    // The active-check resolved the promoted session (via the stripped stamped owner) →
+    // the turn ran (status round-tripped). If the active-check passed the raw drive owner,
+    // get → undefined → the wake is dropped and status is never called.
+    expect(built.registry.status, "the promoted session's wake must NOT be dropped by the active-check").toHaveBeenCalled();
+    // And the get the active-check made used the STAMPED owner (the strip), not drive:<id>.
+    const getOwners = (built.registry.get as unknown as ReturnType<typeof vi.fn>).mock.calls.map((c) => (c[1] as { sessionKey: string }).sessionKey);
+    expect(getOwners, "the active-check resolves via the stamped owner ''").toContain("");
+    expect(getOwners.some((k) => k.startsWith("drive:")), "the active-check must NOT pass a raw drive: owner to registry.get").toBe(false);
+  });
+
+  it("DRIVE-01 routing site: makeWakeAdapterBus derives the drive sessionKey from promotedSessions (source guard)", () => {
+    const src = readFileSync(fileURLToPath(new URL("./setup-terminal-wake.ts", import.meta.url)), "utf8");
+    // The line-228 `sessionKey:""` literal is replaced by the derived drive-scope key.
+    expect(src, "the woken-turn owner sessionKey must be derived via driveScopeKey(ev.sessionId)").toMatch(/sessionKey:\s*driveScopeKey\(ev\.sessionId\)/);
+    // The active-check resolves via the stamped registry owner (registryOwnerFor).
+    expect(src, "isSessionActive must resolve via registryOwnerFor(owner)").toMatch(/registryOwnerFor/);
+  });
 });
