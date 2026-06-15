@@ -91,7 +91,12 @@ agents:
             limits: { wallClockMs: 7200000, maxInteractions: 800 }
         redactSecrets: true
         audit: { enabled: true }
+        drive:                          # autonomous-drive policy (optional; omit ⇒ today's behavior)
+          mode: auto                    # auto (default) | attached (never promote) | detached (promote at first wait)
+          readMode: digest              # digest (default) | diff | full — the woken-turn read shape
 ```
+
+The whole `drive:` block is **optional** and additive: a config with no `drive` block behaves **exactly as before** (no auto-promotion change, the digest read is already the effective default). An unknown key under `drive:` (a typo) is rejected at config load, like every other terminal key.
 
 The agent then drives it: `terminal_session_create({ allowId: "claude", command: "/home/comis/.local/bin/claude", args: ["--permission-mode", "bypassPermissions"] })` -> wait -> `terminal_session_send_text(...)` -> `terminal_session_read(...)`.
 
@@ -149,6 +154,28 @@ A driven session runs in the **agent's own workspace**, not a throwaway temp dir
 - **Session lifetime is decoupled from a turn.** `session_create` returns immediately; the PTY lives in the worker across turns. Aborting the spawning turn does **not** kill the session.
 - **The agent is woken by attention events**, never polling: the worker classifies each session and emits a `terminal:*` event on a state transition; a short woken turn does `status -> read -> decide -> send -> ends`. The `terminal:input_needed` and `terminal:stuck` wake events carry the classification `confidence` and `reason` alongside the state (consumed by the autonomous-drive policy and surfaced in a `comis explain` of a drive) -- both are redaction-safe machine tags, never raw screen bytes.
 - **Worker crash isolation:** the worker is a separate supervised process -- a PTY/emulator crash restarts the worker, not the daemon. For milestone-length runs use `backend: "tmux"` so the session survives a worker restart and a human can `tmux attach` to take over.
+
+### Autonomous drive (`drive` config)
+
+A genuinely long drive (driving Claude Code to build a project for hours) shouldn't pour its hundreds of event-woken turns into the user's primary conversation. The `drive` block governs **where the woken turns run** and **what each one reads** -- both **optional**, both defaulting to today's behavior.
+
+- **`drive.mode`** -- `auto` (default) / `attached` / `detached`. Controls **auto-promotion**: a drive starts **attached** (inline and snappy), and on the first `terminal_session_wait` that returns *not-complete-but-still-producing* (the CLI is honestly still working, not done) it **auto-promotes** to a detached, journaled drive-owner running in its own isolated session scope. From then on its woken turns no longer touch the primary conversation; only the drive's terminal outcome bridges back. Promotion emits exactly one "drive started (backgrounded)" notification.
+  - `auto` -- promote on that honest still-producing signal (the recommended default).
+  - `attached` -- **never** promote; every woken turn stays inline, **byte-identical to today**.
+  - `detached` -- promote at the very first wait.
+  - A sub-threshold one-shot (`git status`, `ls`, a quick build that finishes before the first long wait) stays inline and allocates **nothing** -- no detached scope, no journal, no notification. There is no behavior change for a drive that was always short.
+
+  <Note>
+  This is **distinct** from the wall-clock auto-backgrounding of a long *tool call* (the "a long wait auto-backgrounds so the turn never blocks" behavior above). That mechanism keeps the *agent's own conversation turn* from blocking on a slow `wait`, keyed off a wall clock. `drive.mode` instead controls **where the subsequent event-woken turns execute**, keyed off the honest still-producing settle signal -- not a timer. They are orthogonal: one unblocks the calling turn, the other isolates the long drive.
+  </Note>
+
+- **`drive.readMode`** -- `digest` (default) / `diff` / `full`. The shape of the screen read each woken turn performs.
+  - `digest` -- a bounded digest of the **current rendered screen** (the viewport grid, never scrollback), so each of thousands of 40h wakes stays cheap.
+  - `diff` -- only the rows that changed since the last wake.
+  - `full` -- the whole screen, still bounded (opt-in, for diagnosis).
+  - Every mode is capped at a byte limit; an over-cap read writes a `truncations` breadcrumb (a count of dropped bytes) rather than silently trimming.
+
+The `drive` block will grow in later releases (durable resume across a daemon restart, a spend ceiling, a notification/heartbeat policy); those fields are not configurable yet. For now `mode` and `readMode` are the only keys, and -- as a closed schema -- any other key under `drive:` is rejected at config load.
 
 ### Classifier reliability
 
