@@ -330,7 +330,13 @@ export function createVideoHandlers(
         caps.requires8sFor.includes(resolvedResolution) &&
         resolvedDurationSecs !== 8
       ) {
-        const hint = `${deps.provider.id} requires duration 8 for ${resolvedResolution} (and reference images); set duration: 8.`;
+        // WR-01: the hint states ONLY the constraint actually enforced here — the
+        // resolution→8s rule keyed on `requires8sFor` (1080p/4k). The previous
+        // "(and reference images)" clause claimed a ref-image→8s rule the
+        // validator never enforces and the native-Veo-SDK research does not
+        // document (durationSeconds is a free number for i2v there), so it is
+        // dropped to keep the honest-rejection contract truthful (§2.7).
+        const hint = `${deps.provider.id} requires duration 8 for ${resolvedResolution}; set duration: 8.`;
         deps.logger.warn(
           { agentId, step: "video_duration_constraint_reject", errorKind: "precondition" as const, hint },
           "Video generation rejected: resolution requires 8s",
