@@ -432,7 +432,7 @@ describe("createTerminalSessionRegistry — scope rides the create frame", () =>
       paths: ["/srv/data"],
       network: "listed-hosts",
       hosts: ["api.example.com"],
-      credentialHome: "include",
+      credentialPaths: ["~/.claude"],
       uid: "dedicated",
     };
 
@@ -492,7 +492,7 @@ describe("createTerminalSessionRegistry — bwrapPath rides the create frame (ja
       argv: [],
       cols: 80,
       rows: 24,
-      scope: { filesystem: "workspace", network: "none", credentialHome: "exclude", uid: "dedicated" },
+      scope: { filesystem: "workspace", network: "none", credentialPaths: [], uid: "dedicated" },
       workspace: "/work/agent-1",
       cwd: "/work/agent-1",
     }, OWNER);
@@ -514,7 +514,7 @@ describe("createTerminalSessionRegistry — bwrapPath rides the create frame (ja
       argv: [],
       cols: 80,
       rows: 24,
-      scope: { filesystem: "workspace", network: "none", credentialHome: "exclude", uid: "dedicated" },
+      scope: { filesystem: "workspace", network: "none", credentialPaths: [], uid: "dedicated" },
       workspace: "/work/agent-1",
       cwd: "/work/agent-1",
     }, OWNER);

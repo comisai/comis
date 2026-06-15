@@ -9,7 +9,7 @@
  * jail (the composition: PTY-master-in-worker -> bwrap -> child):
  *
  *   1. {@link buildScopeArgs} -> `[bwrapPath, ...scopeArgs, "--"]`
- *      materializing the entry's `scope` (filesystem/network/uid + credentialHome
+ *      materializing the entry's `scope` (filesystem/network/uid + credentialPaths
  *      + the always-on ~/.comis carve-out).
  *   2. {@link scrubChildEnv} -> the child env (bwrap forwards the spawner
  *      env, no --clearenv, so the scrubbed env IS the child env). For
@@ -76,7 +76,7 @@ export const RELAY_LOOPBACK_PORT = 13128 as const;
 export const LEAST_PRIVILEGE_SCOPE: TerminalScope = {
   filesystem: "workspace",
   network: "none",
-  credentialHome: "exclude",
+  credentialPaths: [],
   uid: "dedicated",
 };
 

@@ -18151,13 +18151,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
                   "scope": {
                     "additionalProperties": false,
                     "properties": {
-                      "credentialHome": {
-                        "default": "exclude",
-                        "enum": [
-                          "exclude",
-                          "include"
-                        ],
-                        "type": "string"
+                      "credentialPaths": {
+                        "default": [],
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
                       },
                       "filesystem": {
                         "default": "workspace",
@@ -18202,7 +18201,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
                     "required": [
                       "filesystem",
                       "network",
-                      "credentialHome",
+                      "credentialPaths",
                       "uid"
                     ],
                     "type": "object"
@@ -28559,13 +28558,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                         "scope": {
                           "additionalProperties": false,
                           "properties": {
-                            "credentialHome": {
-                              "default": "exclude",
-                              "enum": [
-                                "exclude",
-                                "include"
-                              ],
-                              "type": "string"
+                            "credentialPaths": {
+                              "default": [],
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
                             },
                             "filesystem": {
                               "default": "workspace",
@@ -28610,7 +28608,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                           "required": [
                             "filesystem",
                             "network",
-                            "credentialHome",
+                            "credentialPaths",
                             "uid"
                           ],
                           "type": "object"

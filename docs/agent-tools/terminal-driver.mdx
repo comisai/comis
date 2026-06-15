@@ -67,20 +67,22 @@ agents:
             scope:
               filesystem: workspace            # only the session workspace is writable
               network: none                    # deny-all egress
-              credentialHome: exclude
+              credentialPaths: []              # no credentials exposed (least-privilege)
               uid: dedicated                   # run as a throwaway uid, not the daemon
             autoAnswer: safe-only
             consent: { acknowledgedRisk: true, acknowledgedAt: "2026-06-14T00:00:00Z" }
 
-          # Drive Claude Code (the flagship). It needs network + to read its own
-          # ~/.claude.json, so this entry dials scope UP -- an explicit operator choice.
+          # Drive an interactive AI CLI (Claude Code here, but the driver is TOOL-AGNOSTIC).
+          # It needs network + its own credentials/folder-trust, exposed via credentialPaths
+          # (RO) instead of binding the whole home -- an explicit operator choice. For other
+          # CLIs just list their cred dir: Codex -> ["~/.codex"]; Gemini -> ["~/.gemini"].
           - id: claude
             match: { path: /home/comis/.local/bin/claude }
             scope:
-              filesystem: home                 # ~/.claude + the project dir (~/.comis still denied)
+              filesystem: workspace            # only the session workspace is writable
               network: full                    # reach the model API
-              credentialHome: exclude          # Comis never reads the CLI's credential
-              uid: daemon                      # run as the daemon user so it can read its own auth
+              credentialPaths: ["~/.claude", "~/.claude.json"]   # RO: creds + folder-trust; ~ expands to home
+              uid: daemon                      # run as the daemon user so it can READ its own (comis-owned) creds
             autoAnswer: safe-only
             consent: { acknowledgedRisk: true, acknowledgedAt: "2026-06-14T00:00:00Z" }
             limits: { wallClockMs: 7200000, maxInteractions: 800 }
@@ -90,7 +92,7 @@ agents:
 
 The agent then drives it: `terminal_session_create({ allowId: "claude", command: "/home/comis/.local/bin/claude", args: ["--permission-mode", "bypassPermissions"] })` -> wait -> `terminal_session_send_text(...)` -> `terminal_session_read(...)`.
 
-**Driving a slow interactive AI CLI** (e.g. `claude`/`codex`): the model's reply takes tens of seconds, so pass a generous `terminal_session_wait({ forIdleMs: 20000, timeoutMs: 300000 })` — the settle returns the instant the CLI goes quiet (not at the timeout), and a long wait auto-backgrounds so the turn never blocks (the completion then arrives as a follow-up, e.g. a Telegram message). The CLI's **first-run startup gates** persist once accepted in the credential home, so accept them once before the first drive: Claude Code shows a "trust this folder" prompt and — under `--permission-mode bypassPermissions` — a "Bypass Permissions" warning whose default highlight is **"No, exit"**, so a reflexive Enter quits the CLI. Once accepted (and with `credentialHome` mapped so `~/.claude.json` is readable in the jail), later drives open straight to the prompt.
+**Driving a slow interactive AI CLI** (e.g. `claude`/`codex`): the model's reply takes tens of seconds, so pass a generous `terminal_session_wait({ forIdleMs: 20000, timeoutMs: 300000 })` — the settle returns the instant the CLI goes quiet (not at the timeout), and a long wait auto-backgrounds so the turn never blocks (the completion then arrives as a follow-up, e.g. a Telegram message). The CLI's **first-run startup gates** persist once accepted (recorded in the CLI's credential file), so accept them once **outside the jail** before the first drive: Claude Code shows a "trust this folder" prompt and — under `--permission-mode bypassPermissions` — a "Bypass Permissions" warning whose default highlight is **"No, exit"**, so a reflexive Enter quits the CLI. Once accepted (and with `credentialPaths` binding `~/.claude.json` RO into the jail), later drives open straight to the prompt. `credentialPaths` is RO, so pre-accept the gates outside the jail rather than relying on the driven CLI to persist them.
 
 ### Allow-entry fields
 
@@ -114,7 +116,7 @@ Every driven session runs in a bwrap jail materializing the entry's `scope`:
 |-----------------|--------|---------|
 | `filesystem` | `workspace` / `listed-paths` / `home` / `full` | `workspace` |
 | `network` | `none` / `listed-hosts` / `full` | `none` |
-| `credentialHome` | `exclude` / `include` | `exclude` |
+| `credentialPaths` | `string[]` — credential paths RO-bound into the jail (`~` expands to home), e.g. `["~/.claude", "~/.claude.json"]` (Claude) or `["~/.codex"]` (Codex) | `[]` |
 | `uid` | `dedicated` / `daemon` | `dedicated` |
 
 - **`~/.comis` carve-out (non-dialable):** the daemon data dir (master key, secret store) is masked with a tmpfs in **every** jail, even at `filesystem: full`. A driven child can never read Comis's secrets.

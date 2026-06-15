@@ -13,12 +13,12 @@ import { describe, it, expect } from "vitest";
 import type { TerminalScope } from "./allowlist-matcher.js";
 import { buildScopeArgs, type ScopeArgsInput } from "./terminal-scope-args.js";
 
-// -- least-privilege default scope (workspace / none / exclude / dedicated) --
+// -- least-privilege default scope (workspace / none / [] creds / dedicated) --
 function makeScope(overrides: Partial<TerminalScope> = {}): TerminalScope {
   return {
     filesystem: "workspace",
     network: "none",
-    credentialHome: "exclude",
+    credentialPaths: [],
     uid: "dedicated",
     ...overrides,
   };
@@ -189,15 +189,29 @@ describe("buildScopeArgs — network dimension (the transport seam)", () => {
   });
 });
 
-describe("buildScopeArgs — credentialHome dimension", () => {
-  it("include emits the ~/.claude ro-bind", () => {
-    const args = buildScopeArgs(makeInput({ scope: makeScope({ credentialHome: "include" }) }));
-    expect(hasBind(args, "--ro-bind", "/home/u/.claude", "/home/u/.claude")).toBe(true);
+describe("buildScopeArgs — credentialPaths dimension (tool-agnostic)", () => {
+  it("RO-binds each listed credential path, expanding ~ to home (--ro-bind-try)", () => {
+    const args = buildScopeArgs(
+      makeInput({ scope: makeScope({ credentialPaths: ["~/.claude", "~/.claude.json"] }) }),
+    );
+    expect(hasBind(args, "--ro-bind-try", "/home/u/.claude", "/home/u/.claude")).toBe(true);
+    expect(hasBind(args, "--ro-bind-try", "/home/u/.claude.json", "/home/u/.claude.json")).toBe(true);
   });
 
-  it("exclude emits no ~/.claude bind at all", () => {
-    const args = buildScopeArgs(makeInput({ scope: makeScope({ credentialHome: "exclude" }) }));
+  it("binds an absolute path verbatim (no ~ expansion)", () => {
+    const args = buildScopeArgs(makeInput({ scope: makeScope({ credentialPaths: ["/etc/codex/creds"] }) }));
+    expect(hasBind(args, "--ro-bind-try", "/etc/codex/creds", "/etc/codex/creds")).toBe(true);
+  });
+
+  it("is TOOL-AGNOSTIC — binds a non-Claude CLI's creds (~/.codex) the same way", () => {
+    const args = buildScopeArgs(makeInput({ scope: makeScope({ credentialPaths: ["~/.codex"] }) }));
+    expect(hasBind(args, "--ro-bind-try", "/home/u/.codex", "/home/u/.codex")).toBe(true);
+  });
+
+  it("empty list (the default) binds nothing — no .claude, no --ro-bind-try (least-privilege)", () => {
+    const args = buildScopeArgs(makeInput({ scope: makeScope({ credentialPaths: [] }) }));
     expect(args).not.toContain("/home/u/.claude");
+    expect(args).not.toContain("--ro-bind-try");
   });
 });
 

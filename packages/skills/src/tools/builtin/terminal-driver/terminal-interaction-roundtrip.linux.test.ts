@@ -63,7 +63,7 @@ function resolveBwrapPath(): string {
 const WORKSPACE_SCOPE: TerminalScope = {
   filesystem: "workspace",
   network: "none",
-  credentialHome: "exclude",
+  credentialPaths: [],
   uid: "dedicated",
 };
 

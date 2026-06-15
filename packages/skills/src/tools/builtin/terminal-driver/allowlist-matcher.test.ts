@@ -46,7 +46,7 @@ const OTHER_BIN = realpathSync("/bin/ls");
 const DEFAULT_SCOPE: TerminalScope = {
   filesystem: "workspace",
   network: "none",
-  credentialHome: "exclude",
+  credentialPaths: [],
   uid: "dedicated",
 };
 
@@ -225,7 +225,7 @@ describe("AllowEntryLike.scope — the scope contract carried verbatim (no-mutat
       paths: ["/srv/data"],
       network: "listed-hosts",
       hosts: ["api.example.com"],
-      credentialHome: "include",
+      credentialPaths: ["~/.claude"],
       uid: "daemon",
     };
     const matched = matchAllowEntry(link, [entry({}, "bash", scope)]);
@@ -243,7 +243,7 @@ describe("AllowEntryLike.scope — the scope contract carried verbatim (no-mutat
     const declared: TerminalScope = {
       filesystem: "full",
       network: "full",
-      credentialHome: "include",
+      credentialPaths: ["~/.claude"],
       uid: "daemon",
     };
     const input = entry({}, "bash", declared);
@@ -258,7 +258,7 @@ describe("AllowEntryLike.scope — the scope contract carried verbatim (no-mutat
   });
 
   it("the least-privilege default scope rides unchanged when an entry declares it", () => {
-    // The default (workspace fs, deny-all egress, credentialHome exclude, uid
+    // The default (workspace fs, deny-all egress, credentialPaths [], uid
     // dedicated) is the safe baseline — the matcher carries it untouched.
     const link = join(work, "bash-link");
     symlinkSync(CANONICAL_BASH, link);
@@ -267,7 +267,7 @@ describe("AllowEntryLike.scope — the scope contract carried verbatim (no-mutat
     expect(matched!.entry.scope).toEqual({
       filesystem: "workspace",
       network: "none",
-      credentialHome: "exclude",
+      credentialPaths: [],
       uid: "dedicated",
     });
   });

@@ -2,7 +2,7 @@
 // @allow-throw: exhaustiveness guards on the filesystem + network unions; unreachable at runtime, caught by TypeScript; equivalent to assertNever().
 /**
  * buildScopeArgs -- materialize a {@link TerminalScope} into the exact bwrap argv
- * (filesystem/network/uid + credentialHome + the ~/.comis carve-out).
+ * (filesystem/network/uid + credentialPaths + the ~/.comis carve-out).
  *
  * This is THE central scope -> jail mapping. It is MODELED on
  * `BwrapProvider.buildArgs` (`sandbox/bwrap-provider.ts:140-224`) but is a
@@ -173,7 +173,7 @@ function isUnderDir(child: string, parent: string): boolean {
  * Build the bwrap argv for a {@link TerminalScope}, in the canonical order:
  *
  *   [bwrapPath, ...systemRO(--ro-bind p p), --proc, --dev, --dev-bind /dev/pts,
- *    --tmpfs /tmp, <FS binds>, <credentialHome ro-bind>, <uid>,
+ *    --tmpfs /tmp, <FS binds>, <credentialPaths ro-bind-try>, <uid>,
  *    --unshare-all, <network>, --die-with-parent, --new-session, --chdir <cwd>,
  *    <CARVE-OUT --tmpfs <dataDir>>, <workspace re-bind if under dataDir>, --]
  *
@@ -198,10 +198,20 @@ export function buildScopeArgs(input: ScopeArgsInput): string[] {
   // -- Filesystem binds (the scope.filesystem dimension; workspace always bound) --
   pushFilesystemBinds(args, input);
 
-  // -- credentialHome: bind ~/.claude RO only when the operator opts in --
-  if (input.scope.credentialHome === "include") {
-    const claudeDir = `${input.home}/.claude`;
-    args.push("--ro-bind", claudeDir, claudeDir);
+  // -- credentialPaths: RO-bind each operator-listed credential path so the driven CLI sees
+  //    its own creds/config. TOOL-AGNOSTIC (no hardcoded ~/.claude): the operator lists what
+  //    to expose (~/.claude[.json] for Claude, ~/.codex for Codex, ~/.gemini for Gemini, …).
+  //    `~`/`~/` expands to home; `--ro-bind-try` skips a not-yet-created path (e.g. a first-run
+  //    trust file) instead of failing the spawn. Empty list (the default) binds nothing.
+  for (const credPath of input.scope.credentialPaths) {
+    if (credPath.length === 0) continue;
+    const expanded =
+      credPath === "~"
+        ? input.home
+        : credPath.startsWith("~/")
+          ? `${input.home}${credPath.slice(1)}`
+          : credPath;
+    args.push("--ro-bind-try", expanded, expanded);
   }
 
   // -- uid: a net-new uid != the daemon at the default (dedicated) --

@@ -60,7 +60,7 @@ export interface AllowMatch {
  * primitive (JSDoc :17, :24-25) and must not pull `zod` / the config module in.
  *
  * The defaults are LEAST-PRIVILEGE (`filesystem: "workspace"`, `network: "none"`,
- * `credentialHome: "exclude"`, `uid: "dedicated"`) — applied by the config schema's
+ * `credentialPaths: []`, `uid: "dedicated"`) — applied by the config schema's
  * `.default(...)`, so an entry that omits a sub-field already arrives least-privilege.
  * Scope is OPERATOR-DIALABLE ONLY: the agent has no tool param that can
  * set or widen it (the create tool's TypeBox params expose no `scope` field).
@@ -74,8 +74,14 @@ export interface TerminalScope {
   network: "none" | "listed-hosts" | "full";
   /** Allowlisted CONNECT hosts for `network: "listed-hosts"`. */
   hosts?: string[];
-  /** CLI credential dir (`~/.claude`) visibility (default `exclude` = never bound). */
-  credentialHome: "exclude" | "include";
+  /**
+   * Operator-listed credential paths RO-bound into the jail so the driven CLI sees its own
+   * creds/config — TOOL-AGNOSTIC: e.g. `["~/.claude", "~/.claude.json"]` for Claude Code,
+   * `["~/.codex"]` for Codex, `["~/.gemini"]` for Gemini. `~`/`~/` expands to the user's
+   * home; each is bound with `--ro-bind-try` (a not-yet-created path is skipped, not fatal).
+   * Default `[]` = bind nothing (least-privilege).
+   */
+  credentialPaths: readonly string[];
   /** Child uid (default `dedicated` = a net-new uid ≠ the daemon). */
   uid: "dedicated" | "daemon";
 }

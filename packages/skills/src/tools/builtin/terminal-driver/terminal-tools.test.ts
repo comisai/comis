@@ -56,7 +56,7 @@ import type { AllowEntryLike, TerminalScope } from "./allowlist-matcher.js";
 const DEFAULT_SCOPE: TerminalScope = {
   filesystem: "workspace",
   network: "none",
-  credentialHome: "exclude",
+  credentialPaths: [],
   uid: "dedicated",
 };
 
@@ -461,7 +461,7 @@ describe("terminal-tools — scope is sourced from the entry, never the agent pa
       paths: ["/srv/data"],
       network: "listed-hosts",
       hosts: ["api.example.com"],
-      credentialHome: "include",
+      credentialPaths: ["~/.claude"],
       uid: "dedicated",
     };
     const registry = makeFakeRegistry();
@@ -488,7 +488,7 @@ describe("terminal-tools — scope is sourced from the entry, never the agent pa
     const entryScope: TerminalScope = {
       filesystem: "workspace",
       network: "none",
-      credentialHome: "exclude",
+      credentialPaths: [],
       uid: "dedicated",
     };
     const registry = makeFakeRegistry();
@@ -502,7 +502,7 @@ describe("terminal-tools — scope is sourced from the entry, never the agent pa
     const rawParams: Record<string, unknown> = {
       allowId: "bash",
       command: realBashPath(),
-      scope: { filesystem: "full", network: "full", credentialHome: "include", uid: "daemon" },
+      scope: { filesystem: "full", network: "full", credentialPaths: ["~/.claude"], uid: "daemon" },
     };
     await tool.execute("call-1", rawParams);
 
