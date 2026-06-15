@@ -152,6 +152,22 @@ export function createCodexImageAdapter(opts: {
               { input: [{ type: "text", text: input.prompt }] },
               options,
             );
+            if (res.stopReason !== "stop") {
+              // OBS (troubleshooting-feedback-loop): the transport captures the
+              // REAL cause — an HTTP status ("codex <n>"), a response.failed
+              // message, or "empty_response" — in res.errorMessage, but the
+              // shipped classifier collapses it into a generic ImageErrorKind, so
+              // the actual Codex rejection was INVISIBLE in the logs (the
+              // "returned no image twice" incident: the agent only ever saw
+              // "non-image response", never the status). Surface it at WARN so it
+              // is diagnosable at the default level. SEC-03: res.errorMessage is
+              // the status/cause only — never the bearer/account-id/headers
+              // (those ride options.apiKey/options.headers, never the response).
+              opts.logger.warn(
+                { step: "codex_image_failed", stopReason: res.stopReason, cause: res.errorMessage },
+                "Codex image generation returned no image; surfacing the transport cause",
+              );
+            }
             // REUSE the shipped mapper/classifier (base64→buffer; classify a
             // non-stop outcome to an ImageErrorKind + WARN; throw ImageGenError).
             return toImageGenOutput(res, opts.logger);

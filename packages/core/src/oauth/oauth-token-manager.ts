@@ -132,8 +132,25 @@ export interface OAuthTokenManager {
     providerId: string,
     agentContext?: { oauthProfiles?: Record<string, string> },
   ): Promise<Result<string, OAuthError>>;
-  /** Check if credentials for a provider exist (in cache, store, or env-var). */
+  /**
+   * Synchronous best-effort check: the in-memory cache + env-var
+   * (SecretManager) ONLY. Does NOT consult the async persisted credential
+   * store — so in encrypted-store mode it UNDER-REPORTS a logged-in OAuth
+   * profile until the cache warms (the first {@link getApiKey}). For a
+   * store-aware answer (e.g. a boot-time availability probe) use
+   * {@link hasStoredCredentials}.
+   */
   hasCredentials(providerId: string): boolean;
+  /**
+   * Store-aware availability check: the in-memory cache, the env-var
+   * (SecretManager), OR the persisted credential store. The async companion to
+   * {@link hasCredentials} — use this where the cache may be cold (e.g. the
+   * image-provider boot probe in encrypted-store mode), so a logged-in OAuth
+   * profile persisted by `comis auth login` counts as available immediately at
+   * boot rather than only after the first completion warms the cache. Never
+   * throws (a store error resolves to `false`).
+   */
+  hasStoredCredentials(providerId: string): Promise<boolean>;
   /** Store credentials for a provider (e.g., after a login flow completes). */
   storeCredentials(providerId: string, creds: OAuthCredentials): void;
   /** Get the list of pi-ai built-in OAuth provider IDs. */

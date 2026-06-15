@@ -129,12 +129,22 @@ function extractPrompt(input: readonly { type: string; text?: string }[]): strin
 
 /** Build the Responses `image_generation` request body (CDX-03). */
 function buildRequestBody(modelId: string, prompt: string): string {
+  // The body MIRRORS pi-ai's proven codex TEXT body (openai-codex-responses.js
+  // buildRequestBody) for the fields the ChatGPT backend REQUIRES, plus the
+  // image_generation tool. Each requirement was VERIFIED LIVE via the 400
+  // `detail` (the codex backend validates required fields one at a time):
+  //   - `instructions` (non-empty)        — 400 "Instructions are required"
+  //   - `store: false` (not storable)     — 400 "Store must be set to false"
+  // The user's request rides `input`; `tool_choice` forces the hosted tool.
   return JSON.stringify({
     model: modelId,
+    store: false,
+    stream: true,
+    instructions:
+      "You are an image generation assistant. Use the image_generation tool to create the image the user requests.",
     input: [{ role: "user", content: [{ type: "input_text", text: prompt }] }],
     tools: [{ type: "image_generation" }],
     tool_choice: { type: "image_generation" }, // REQUIRED — force the hosted tool
-    stream: true,
   });
 }
 
@@ -322,7 +332,20 @@ export const generateImagesCodex: ImagesApiFunction = async (
 
     if (!resp.ok || !resp.body) {
       out.stopReason = "error";
-      out.errorMessage = `codex ${resp.status}`;
+      // OBS: read the error body (truncated) so the REAL 4xx reason (e.g. an
+      // invalid model or unsupported tool) reaches the caller — it was just
+      // "codex <status>" with no reason, which the classifier collapsed into a
+      // generic "non-image response" (the HTTP-400 incident, where the cause —
+      // the gpt-image-1 model id — was invisible). The body is the API error
+      // description (no secret: the bearer/CF headers are request-side, never
+      // echoed). Best-effort; a body read that throws degrades to the bare status.
+      let detail = "";
+      try {
+        detail = (await resp.text()).slice(0, 300);
+      } catch {
+        /* ignore — fall back to the bare status */
+      }
+      out.errorMessage = detail ? `codex ${resp.status}: ${detail}` : `codex ${resp.status}`;
       logger?.debug({ step: "codex_image_transport", errorKind: "http_status" }, "codex image request failed");
       return out;
     }

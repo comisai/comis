@@ -257,7 +257,7 @@ export function resolveModelHealthMultilingual(
  * refinement; Phase 183 resolves the common case (the default agent's main
  * provider) at boot.
  */
-export function buildImageGenBundle(deps: {
+export async function buildImageGenBundle(deps: {
   container: BootContext["container"];
   defaultAgentId: string;
   skillsLogger: BootContext["skillsLogger"];
@@ -276,7 +276,7 @@ export function buildImageGenBundle(deps: {
    */
   workspaceDirs: Map<string, string>;
   defaultWorkspaceDir: string;
-}): {
+}): Promise<{
   imageGenConfig: BootContext["container"]["config"]["integrations"]["media"]["imageGeneration"];
   imageGenProvider: ImageGenerationPort | undefined;
   imageGenRateLimiter: ReturnType<typeof createImageGenRateLimiter> | undefined;
@@ -289,7 +289,7 @@ export function buildImageGenBundle(deps: {
   /** SEC-02 (186): per-agent/hour USD cost ceiling. Undefined when
    *  `maxCostPerHourUsd` is unset (ceiling skipped — count limit still applies). */
   imageGenCostLimiter: ImageCostLimiter | undefined;
-} {
+}> {
   const { container, defaultAgentId, skillsLogger, oauthManager, workspaceDirs, defaultWorkspaceDir } = deps;
   const imageGenConfig = container.config.integrations.media.imageGeneration;
   registerComisImageProviders(); // PI-02 — once at boot, before any generateImages().
@@ -298,9 +298,25 @@ export function buildImageGenBundle(deps: {
   // accessor with this boot selector — defaultAgentId-first).
   const defaultAgentCfg =
     container.config.agents[defaultAgentId] ?? container.config.agents["default"];
-  const defaultMain = defaultAgentCfg
-    ? resolveAgentModel(defaultAgentCfg, container.config.models).provider
-    : "default";
+  // Resolve the default agent's provider AND chat model ONCE (the SAME
+  // resolveAgentModel the completion path uses — lockstep). The chat model
+  // (e.g. "gpt-5.5") is threaded to the codex image path: the Codex Responses
+  // endpoint 400s on the image-API model id "gpt-image-1" and needs a CHAT model
+  // with image_generation as a TOOL.
+  const defaultResolved = defaultAgentCfg
+    ? resolveAgentModel(defaultAgentCfg, container.config.models)
+    : undefined;
+  const defaultMain = defaultResolved?.provider ?? "default";
+  // CRED-01 (store-aware): pre-resolve Codex availability from the PERSISTED
+  // store (NOT the cold-at-boot in-memory cache) so a logged-in Codex profile
+  // counts as available at boot — the fix for the follow-main regression where
+  // a Codex agent's images froze unavailable for the daemon's life despite the
+  // SAME OAuth credential answering its text completions. Resolved ONCE here
+  // (async) and passed to the SYNC selector as a snapshot, keeping the selector
+  // and the pure resolveImageProvider synchronous.
+  const codexCredentialsAvailable = oauthManager
+    ? await oauthManager.hasStoredCredentials("openai-codex")
+    : false;
   const getImageGenProvider = createImageProviderSelector({
     imageGenConfig,
     secretManager: container.secretManager,
@@ -313,6 +329,8 @@ export function buildImageGenBundle(deps: {
     // used for defaultMain above (the agents-omitted "default" guard).
     oauthManager,
     oauthProfiles: defaultAgentCfg?.oauthProfiles,
+    codexCredentialsAvailable,
+    codexChatModelId: defaultResolved?.model,
   });
   const imageGenProvider = getImageGenProvider(); // boot-time probe for rate-limiter + logging
   const imageGenRateLimiter = imageGenProvider

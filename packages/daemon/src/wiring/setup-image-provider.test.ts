@@ -439,6 +439,71 @@ describe("createImageProviderSelector codex routing (CDX-01 wiring + CRED-01)", 
     expect(provider).toBeDefined();
     expect(provider!.id).toBe("openrouter");
   });
+
+  it("Test H (the cold-cache bug): a store-backed Codex login (codexCredentialsAvailable=true) routes to the codex adapter even when the sync cache says no", () => {
+    // The reported production bug: a Codex agent's images were honest-unavailable
+    // at boot because the gate used the sync, cache-only hasCredentials (cold at
+    // boot in encrypted-store mode, where the login lives in the persisted store).
+    // The fix threads a STORE-AWARE flag (resolved by buildImageGenBundle via
+    // hasStoredCredentials) that the gate honors. Here the sync hasCredentials
+    // says FALSE (cold cache) but the store-aware flag is TRUE → the selector
+    // MUST route to the codex adapter, NOT the honest-unavailable port.
+    const selector = createImageProviderSelector({
+      imageGenConfig: makeConfig({ provider: "auto" }),
+      secretManager: mockSecretManager({}), // no env keys
+      mainProviderId: "openai-codex",
+      legacyGetter: () => legacyAdapter(),
+      logger: createMockLogger() as never,
+      // Cache cold: the sync gate would say "no creds" …
+      oauthManager: mockOauthManager({ hasCredentials: vi.fn().mockReturnValue(false) }),
+      oauthProfiles: { "openai-codex": "default" },
+      // … but the store-aware probe found the logged-in profile.
+      codexCredentialsAvailable: true,
+    });
+
+    const provider = selector();
+    expect(provider).toBeDefined();
+    expect(provider!.id).toBe("openai-codex");
+  });
+
+  it("Test I (the HTTP-400 fix): the codex request uses the agent's CHAT model (codexChatModelId), NOT the invalid 'gpt-image-1'", async () => {
+    // VERIFIED LIVE: the Codex Responses endpoint rejects model:"gpt-image-1"
+    // (an image-API model) with HTTP 400 — it needs a CHAT model + the
+    // image_generation TOOL. The selector must thread the resolved chat model
+    // into the codex adapter so the request body carries it.
+    let capturedModelId: string | undefined;
+    registerImagesApiProvider({
+      api: "openai-codex-images",
+      generateImages: async (model) => {
+        capturedModelId = model.id;
+        return {
+          api: model.api,
+          provider: model.provider,
+          model: model.id,
+          output: [{ type: "image", data: Buffer.from("PNG").toString("base64"), mimeType: "image/png" }],
+          stopReason: "stop",
+          timestamp: 0,
+        } as unknown as AssistantImages;
+      },
+    } as never);
+    const selector = createImageProviderSelector({
+      imageGenConfig: makeConfig({ provider: "auto" }),
+      secretManager: mockSecretManager({}),
+      mainProviderId: "openai-codex",
+      legacyGetter: () => legacyAdapter(),
+      logger: createMockLogger() as never,
+      oauthManager: mockOauthManager({ hasCredentials: vi.fn().mockReturnValue(true) }),
+      oauthProfiles: { "openai-codex": "default" },
+      codexCredentialsAvailable: true,
+      codexChatModelId: "gpt-5.5",
+    });
+
+    const provider = selector();
+    expect(provider!.id).toBe("openai-codex");
+    await provider!.execute({ prompt: "x" });
+    // The request used the agent's CHAT model — NOT the 400-causing gpt-image-1.
+    expect(capturedModelId).toBe("gpt-5.5");
+  });
 });
 
 /**
@@ -666,5 +731,24 @@ describe("RES-01 keystone is wired into the LIVE daemon.ts composition root", ()
     const selRegion = helpersSrc.slice(selStart, selEnd);
     expect(selRegion).toContain("oauthManager");
     expect(selRegion).toMatch(/oauthProfiles:\s*[\w.?]*oauthProfiles/);
+    // The HTTP-400 fix: the resolved CHAT model must be threaded to the codex
+    // image path (else it falls back to the 400-causing gpt-image-1). A stranded
+    // thread would leave a Codex agent's images broken despite the availability fix.
+    expect(selRegion).toContain("codexChatModelId");
+  });
+
+  it("buildImageGenBundle resolves Codex availability from the STORE (hasStoredCredentials), not the cold cache (the cold-cache bug fix)", () => {
+    // The fix: the boot probe must consult the PERSISTED store (store-aware) so
+    // a logged-in Codex profile counts as available even with a cold in-memory
+    // cache at boot. main-helpers must (1) call hasStoredCredentials("openai-codex")
+    // and (2) thread the resolved flag into the selector as codexCredentialsAvailable.
+    // A parallel copy / a stranded resolution would fail this guard (the
+    // milestone's #1 recurring blocker; the original bug was exactly a gate that
+    // used the cold-cache-only hasCredentials).
+    expect(helpersSrc).toContain('hasStoredCredentials("openai-codex")');
+    const selStart = helpersSrc.indexOf("createImageProviderSelector({");
+    const selEnd = helpersSrc.indexOf("});", selStart);
+    const selRegion = helpersSrc.slice(selStart, selEnd);
+    expect(selRegion).toContain("codexCredentialsAvailable");
   });
 });

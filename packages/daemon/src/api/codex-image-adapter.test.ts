@@ -228,6 +228,22 @@ describe("createCodexImageAdapter — result mapping", () => {
     expect((result.error as { imageErrorKind?: string }).imageErrorKind).toBe("empty_response");
   });
 
+  it("OBS surfaces the transport's raw failure cause (e.g. an HTTP status) at WARN — it was invisible (troubleshooting-feedback-loop)", async () => {
+    const { manager } = mockOauth(async () => ok(VALID_BEARER));
+    // The transport saw a fast non-2xx → errorMessage "codex 400": the REAL
+    // cause the shipped classifier collapses into a generic "non-image response"
+    // (the "returned no image twice" incident — the status was never logged).
+    registerFakeTransport({ stopReason: "error", errorMessage: "codex 400", output: [] }, captured);
+    const adapter = createCodexImageAdapter({ oauthManager: manager, logger: logger as never });
+
+    await adapter.execute({ prompt: "x" });
+
+    // The raw cause must now be visible in the logs (was the obs gap).
+    const logged = JSON.stringify(logger._calls());
+    expect(logged).toContain("codex 400");
+    expect(logged).toContain("codex_image_failed");
+  });
+
   // WR-04 (184-REVIEW): a response.failed message surfaced by the transport must
   // classify to the CAUSE-specific ImageErrorKind via the shipped
   // classifyImageError — NOT a generic empty_response. These assert the full

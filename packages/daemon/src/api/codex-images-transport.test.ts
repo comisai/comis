@@ -152,6 +152,14 @@ describe("generateImagesCodex — request body (CDX-03)", () => {
     expect(body.input).toEqual([
       { role: "user", content: [{ type: "input_text", text: "a red cube" }] },
     ]);
+    // CDX-03: the Codex Responses endpoint 400s ("Instructions are required" —
+    // VERIFIED LIVE) without a non-empty `instructions`. The working text path
+    // (pi-ai) always sends one; the image path must too.
+    expect(typeof body.instructions).toBe("string");
+    expect((body.instructions as string).length).toBeGreaterThan(0);
+    // CDX-03: the endpoint 400s ("Store must be set to false" — VERIFIED LIVE)
+    // unless store is explicitly false (the hosted-tool path is not storable).
+    expect(body.store).toBe(false);
   });
 });
 
@@ -280,6 +288,30 @@ describe("generateImagesCodex — empty/failed stream (CDX-03)", () => {
 
     expect(res.stopReason).toBe("error");
     expect(res.errorMessage).toContain("empty_response");
+  });
+
+  it("surfaces the 4xx error BODY (not just the bare status) so the real cause is diagnosable (HTTP-400 incident)", async () => {
+    // A fast non-2xx (the live HTTP-400) — the transport must read the error
+    // body so the REAL cause (e.g. an invalid model) reaches the caller's WARN,
+    // not the bare "codex 400" the classifier collapsed to "non-image response".
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: false,
+        status: 400,
+        statusText: "",
+        body: null,
+        text: async () => '{"error":{"message":"Invalid model gpt-image-1"}}',
+      })),
+    );
+
+    const res = await generateImagesCodex(codexModel(), textContext("x"), opts());
+
+    expect(res.stopReason).toBe("error");
+    expect(res.errorMessage).toContain("codex 400");
+    // The REAL cause (the body) is now visible — it was the obs gap behind the
+    // "returned no image twice" incident.
+    expect(res.errorMessage).toContain("Invalid model");
   });
 
   // IN-01 (184-REVIEW): a hostile/huge no-newline stream must not grow the SSE
