@@ -215,3 +215,69 @@ describe("CLASS-02 — terminal-events-attention.ts mirrors confidence (+ stuck 
     expect(src, "no value import in the mirror").not.toMatch(/^import\s+(?!type\b)/m);
   });
 });
+
+// ---------------------------------------------------------------------------
+// CLASS-02 (163-04) Task 2 — frameForState threads c.confidence (+ c.reason on
+// stuck) onto the fd3 frame payload.
+//
+// The Classification `c` already carries `.confidence` + `.reason` (it is the
+// observe() input). Today the input_needed payload drops `confidence` and the
+// stuck payload drops BOTH. These tests decode the captured fd3 frame and assert
+// the payload now carries the verdict's confidence (and stuck's reason) — while
+// staying content-free (no screen/text/cursor field). RED on pre-patch (the
+// stuck payload has no confidence/reason; input_needed has no confidence).
+// ---------------------------------------------------------------------------
+describe("CLASS-02 — frameForState carries confidence (+ stuck reason), content-free", () => {
+  it("input_needed frame payload carries the verdict confidence (not a hardcoded default)", () => {
+    const cap = makeFd3Capture();
+    const emitter = createAttentionEmitter({ sessionId: "s1", writeFd3: cap.writeFd3 });
+
+    // A `medium`-confidence dialog detection (the CLASS-01 shape) — prove the ACTUAL
+    // value threads through, not a constant.
+    emitter.observe({ state: "awaiting-input", confidence: "medium", reason: "dialog_detected" });
+
+    const frames = cap.frames();
+    expect(frames).toHaveLength(1);
+    expect(frames[0].event).toBe("terminal:input_needed");
+    expect(frames[0].payload).toMatchObject({
+      state: "awaiting-input",
+      reason: "dialog_detected",
+      confidence: "medium",
+    });
+  });
+
+  it("stuck frame payload carries confidence AND reason AND noProgressMs (stuck currently drops confidence + reason)", () => {
+    const cap = makeFd3Capture();
+    const emitter = createAttentionEmitter({ sessionId: "s1", writeFd3: cap.writeFd3 });
+
+    emitter.observe(
+      { state: "stuck", confidence: "medium", reason: "no_progress" },
+      { noProgressMs: 30_000 },
+    );
+
+    const frames = cap.frames();
+    expect(frames).toHaveLength(1);
+    expect(frames[0].event).toBe("terminal:stuck");
+    expect(frames[0].payload).toMatchObject({
+      noProgressMs: 30_000,
+      reason: "no_progress",
+      confidence: "medium",
+    });
+  });
+
+  it("neither the input_needed nor the stuck payload leaks a screen/text/cursor field (redaction-safe by construction)", () => {
+    const cap = makeFd3Capture();
+    const emitter = createAttentionEmitter({ sessionId: "s1", writeFd3: cap.writeFd3 });
+
+    emitter.observe({ state: "awaiting-input", confidence: "medium", reason: "dialog_detected" });
+    emitter.observe({ state: "stuck", confidence: "high", reason: "no_progress" }, { noProgressMs: 31_000 });
+
+    for (const frame of cap.frames()) {
+      const payload = frame.payload as Record<string, unknown>;
+      expect(payload).not.toHaveProperty("screen");
+      expect(payload).not.toHaveProperty("text");
+      expect(payload).not.toHaveProperty("snapshot");
+      expect(payload).not.toHaveProperty("cursor");
+    }
+  });
+});
