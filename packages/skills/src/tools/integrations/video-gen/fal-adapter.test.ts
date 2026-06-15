@@ -78,6 +78,21 @@ describe("submit", () => {
     }
   });
 
+  // CAP-02 (ROADMAP SC#2 oracle): a normalized durationSecs reaches FAL as the
+  // STRING form "8s" — NOT the bare number Veo/Grok use. Pins the per-backend
+  // duration wire-encoding divergence at the FAL leg.
+  it("CAP-02: encodes durationSecs as the FAL string form (8 → \"8s\")", async () => {
+    falMock.queue.submit.mockResolvedValueOnce({ request_id: "req-dur-8" });
+    const adapter = createFalVideoAdapter({ apiKey: "k" });
+
+    await adapter.submit({ prompt: "p", durationSecs: 8 });
+
+    expect(falMock.queue.submit).toHaveBeenCalledWith(
+      "fal-ai/veo3.1/fast",
+      expect.objectContaining({ input: expect.objectContaining({ duration: "8s" }) }),
+    );
+  });
+
   it("VPORT-03: the jobId is the opaque request_id and contains NO secret", async () => {
     falMock.queue.submit.mockResolvedValueOnce({ request_id: "req-opaque-xyz" });
     const adapter = createFalVideoAdapter({ apiKey: "super-secret-key-9999" });
