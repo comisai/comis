@@ -10,7 +10,12 @@
  * The §4.3 decision tree (in priority order):
  *   1. `!alive`            → `exited`         (PTY exit — nothing more can render)
  *   2. `!settled`          → `working`        (output still flowing / cursor advancing)
- *   3. settled + diff∅ + CURSOR PARKED        → `awaiting-input`  (a real prompt)
+ *   3. settled + diff∅ + CURSOR PARKED        → `awaiting-input`  (a real prompt, `high`)
+ *   3b. settled + diff∅ + DIALOG STRUCTURE    → `awaiting-input`  (CLASS-01 — a full-
+ *                                              screen dialog whose cursor sits on a blank
+ *                                              input line BELOW the prompt block, so the
+ *                                              parked gate missed it; `medium`,
+ *                                              `dialog_detected`)
  *   4. settled + no-progress > stuckMs        → `stuck`           (by PROGRESS, OPS-04)
  *   5. else                → `working`        (settled but cursor NOT parked = a
  *                                              thinking/tool-use pause)
@@ -45,6 +50,7 @@
  * @module
  */
 
+import { detectsFullScreenDialog } from "./terminal-dialog-detector.js";
 import type { EmulatorSnapshot } from "./terminal-render.js";
 
 // ---------------------------------------------------------------------------
@@ -253,6 +259,21 @@ export function classifyFrame(frame: ClassifierFrame, history: FrameHistory): Cl
   );
   if (frame.diffEmpty && parked) {
     return { state: "awaiting-input", confidence: "high", reason: "settled_cursor_parked" };
+  }
+
+  // 3b. CLASS-01: a settled, diff∅ frame whose STRUCTURE is unmistakably a full-screen
+  //     dialog/menu — even though the cursor is NOT parked. This is the documented
+  //     claude-2.1.x shape: the prompt block (a box / an enumerated menu / a selector)
+  //     renders ABOVE and the cursor sits on a blank input line BELOW it, so
+  //     `isCursorParked` (correctly) returned false and we would otherwise fall through
+  //     to `stuck`. The predicate is pure + structural + CLI-agnostic; `hintPatterns`
+  //     reinforce a borderline selector only. Confidence is `medium` (the structural
+  //     certainty of a parked cursor is `high`; this is the heuristic dialog branch).
+  //     No new classifier state — reuses `awaiting-input`. SEC-12 escalate-always still
+  //     gates the actual answer downstream (a dialog_detected frame routes through the
+  //     same decideAutoAnswer the wake-turn calls — I4 no-bypass).
+  if (frame.diffEmpty && detectsFullScreenDialog(frame.snapshot, frame.hintPatterns)) {
+    return { state: "awaiting-input", confidence: "medium", reason: "dialog_detected" };
   }
 
   // 4. Settled, no prompt affordance, AND no progress past the stuck window ⇒ stuck
