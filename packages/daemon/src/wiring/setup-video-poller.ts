@@ -406,7 +406,41 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
     // the terminal successful delivery (CR-01/WR-03). markDone flipped the row out
     // of `pending`, so a retried completeJob can never reach this line twice for
     // one render → no phantom per-hour USD inflation.
-    costLimiter?.record(record.agentId, out.costUsd ?? record.estimatedCostUsd ?? 0);
+    const reconciledCostUsd = out.costUsd ?? record.estimatedCostUsd ?? 0;
+    costLimiter?.record(record.agentId, reconciledCostUsd);
+
+    // OBS-03 (Phase 192): the off-turn synthetic `observability:token_usage` cost
+    // route — the reconciled cost flows into the per-session rollup / fleet via
+    // the SAME route images use (image-handlers.ts:342). Emitted RIGHT AFTER the
+    // reconcile, EXACTLY ONCE per render (markDone already flipped the row out of
+    // pending → the done branch can't repeat — Pitfall 3), gated on `> 0`. The
+    // routing is read from the persisted ROW (traceId/agentId/channelId/sessionKey)
+    // — NOT ALS (there is no ALS frame off-turn, MUST-DIFFER 3 / WARNING-3). Tokens
+    // are all 0 (no LLM tokens for a video render); every token_usage subscriber
+    // SUMS cost.total (token-tracker guards `> 0`), so a 0-token event is safe (A3
+    // / T-192-05). FAL/Veo carry no per-call actual → `?? estimate` (Pitfall 4), so
+    // the rollup and the IncidentSignals.videoGenerated reconstruction agree.
+    if (deps.eventBus && reconciledCostUsd > 0) {
+      deps.eventBus.emit("observability:token_usage", {
+        timestamp: systemNowMs(),
+        traceId: record.traceId ?? "",
+        agentId: record.agentId,
+        channelId: record.channelId ?? "",
+        executionId: "",
+        provider: out.provider ?? record.provider,
+        model: out.model ?? record.model ?? "",
+        tokens: { prompt: 0, completion: 0, total: 0 },
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: reconciledCostUsd },
+        latencyMs: nowMs() - startMs,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        sessionKey: record.sessionKey ?? "",
+        savedVsUncached: 0,
+        cacheEligible: false,
+        warmupTurn: false,
+        pendingCacheInvestmentUsd: 0,
+      });
+    }
 
     // OBS-04 (Phase 192): BEST-EFFORT off-turn live emit — video.generated (the
     // cost-carry: costUsd ?? estimate, FAL has no actual — Pitfall 4) THEN
@@ -427,8 +461,12 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
       emitTrajectory(record, "video.delivered", { channelType: record.channelType, delivered });
     }
 
-    // I8 obs floor: the INFO completion line. MUST-DIFFER 3 — traceId is read
-    // from the row and put ON the object (the bg ctx has no ALS frame).
+    // OBS-01 / I8 obs floor: the INFO completion line with the FULL field set.
+    // MUST-DIFFER 3 — traceId is read from the row and put ON the object (the bg
+    // ctx has no ALS frame). `costUsd` is the RECONCILED cost (actual ?? estimate)
+    // so the completion line agrees with the cost rollup + the reconstruction
+    // (FAL/Veo have no per-call actual — Pitfall 4). mimeType + durationSecs ride
+    // it where derivable from the fetched `out` (OBS-01 completeness).
     logger.info(
       {
         traceId: record.traceId,
@@ -436,8 +474,10 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
         agentId: record.agentId,
         videoProvider: record.provider,
         model: out.model ?? record.model,
-        costUsd: out.costUsd,
+        costUsd: reconciledCostUsd,
         sizeBytes: persisted.value.sizeBytes,
+        mimeType,
+        ...(out.durationSecs !== undefined ? { durationSecs: out.durationSecs } : {}),
         durationMs: nowMs() - startMs,
         step: "video_poll_complete",
       },
