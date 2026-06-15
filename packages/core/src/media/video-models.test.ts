@@ -147,6 +147,22 @@ describe("snapDuration — enum snaps to the nearest member, ties round HALF-UP"
   });
 });
 
+describe("snapDuration — IN-01 non-finite duration fails closed (defense-in-depth)", () => {
+  const falT2v = listVideoModelCaps("fal", "t2v")!;
+  const grokT2v = listVideoModelCaps("grok", "t2v")!;
+
+  it("an enum cell with a NaN duration returns the smallest member, not the raw NaN", () => {
+    // Upstream Zod normally rejects NaN, but a non-finite must never reach the
+    // wire. For an enum cell, fail closed to the smallest (safest) member.
+    expect(snapDuration(falT2v, Number.NaN)).toBe(4);
+  });
+
+  it("a range cell with a NaN duration returns the min, not the raw NaN", () => {
+    // Pre-fix: Math.min(max, Math.max(min, NaN)) → NaN passes straight to the wire.
+    expect(snapDuration(grokT2v, Number.NaN)).toBe(1);
+  });
+});
+
 describe("snapDuration — range clamps to [min, max]", () => {
   const grokT2v = listVideoModelCaps("grok", "t2v")!;
 

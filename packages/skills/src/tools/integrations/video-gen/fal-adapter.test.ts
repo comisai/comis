@@ -155,6 +155,41 @@ describe("submit", () => {
     );
     expect(res.ok && res.value.model).toBe("fal-ai/kling/image-to-video");
   });
+
+  // WR-03: a per-request input.model is the RESOLVED model the handler validated
+  // against (`params.model ?? config.model`) — the adapter MUST render it so
+  // validation and execution AGREE. Pre-fix the adapter ignored input.model and
+  // used the construction-bound opts.model, so an explicit per-request model
+  // validated against one cell but rendered another. RED on pre-fix code: the
+  // submit targets the construction default, not input.model.
+  it("WR-03: a per-request input.model overrides the construction default (validate↔execute agree)", async () => {
+    falMock.queue.submit.mockResolvedValueOnce({ request_id: "req-model-override" });
+    const adapter = createFalVideoAdapter({ apiKey: "k" }); // no construction model → default
+
+    const res = await adapter.submit({ prompt: "p", model: "fal-ai/kling-video/v2/standard" });
+
+    expect(falMock.queue.submit).toHaveBeenCalledWith(
+      "fal-ai/kling-video/v2/standard",
+      expect.objectContaining({ input: expect.objectContaining({ prompt: "p" }) }),
+    );
+    // The chosen endpoint round-trips on job.model so poll/fetchResult target it.
+    expect(res.ok && res.value.model).toBe("fal-ai/kling-video/v2/standard");
+  });
+
+  // WR-03: a per-request input.model wins over a construction opts.model too (the
+  // request is the most-specific override; it is what the handler validated).
+  it("WR-03: a per-request input.model wins over the construction opts.model", async () => {
+    falMock.queue.submit.mockResolvedValueOnce({ request_id: "req-model-win" });
+    const adapter = createFalVideoAdapter({ apiKey: "k", model: "fal-ai/veo3.1/fast" });
+
+    const res = await adapter.submit({ prompt: "p", model: "fal-ai/kling-video/v2/standard" });
+
+    expect(falMock.queue.submit).toHaveBeenCalledWith(
+      "fal-ai/kling-video/v2/standard",
+      expect.anything(),
+    );
+    expect(res.ok && res.value.model).toBe("fal-ai/kling-video/v2/standard");
+  });
 });
 
 describe("poll", () => {

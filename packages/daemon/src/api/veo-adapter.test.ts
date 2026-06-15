@@ -140,6 +140,25 @@ describe("createVeoVideoAdapter", () => {
     expect(callArg).not.toHaveProperty("image");
   });
 
+  // WR-03: a per-request input.model is the RESOLVED model the handler validated
+  // against (`params.model ?? config.model`); the adapter MUST render it so
+  // validation and execution AGREE. Pre-fix the adapter ignored input.model and
+  // used the construction-bound model, so a per-request override validated against
+  // one cell but rendered another. RED on pre-fix code: generateVideos gets the
+  // construction default, and job.model reflects it instead of input.model.
+  it("WR-03: a per-request input.model overrides the construction default model (validate↔execute agree)", async () => {
+    genVideos.mockResolvedValue({ name: "operations/model-override", done: false });
+    const adapter = makeAdapter(); // construction default veo-3.0-fast-generate-001
+
+    const r = await adapter.submit({ prompt: "p", model: "veo-2.0-generate-001" });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    // generateVideos is called with the per-request model.
+    expect(genVideos.mock.calls[0]?.[0]?.model).toBe("veo-2.0-generate-001");
+    // job.model reflects what actually rendered (for obs + the persisted row).
+    expect(r.value.model).toBe("veo-2.0-generate-001");
+  });
+
   it("VEO-01 poll: maps .done/.error to pending|done|failed", async () => {
     const adapter = makeAdapter();
     const job = { jobId: "operations/abc", provider: "veo", model: "m" };
@@ -289,6 +308,55 @@ describe("createVeoVideoAdapter", () => {
     expect(r.error.name).toBe("VideoGenError");
     expect((r.error as { videoErrorKind?: string }).videoErrorKind).toBe("auth_required");
     expect((r.error as { hint?: string }).hint).toContain("GOOGLE_API_KEY");
+  });
+
+  // WR-04: execute() polls the operation to `done`, then re-reads it AGAIN inside
+  // fetchResult — a redundant getVideosOperation round-trip on the hot path. The
+  // fix threads the terminal operation from the poll loop into fetchResult so
+  // execute() makes exactly ONE getVideosOperation call for a job done on the
+  // first poll (the download fetch is separate). RED on pre-fix code: getOp is
+  // called TWICE (once in the poll loop, once in fetchResult).
+  it("WR-04: execute() on a job done-on-first-poll calls getVideosOperation exactly once (no re-poll in fetchResult)", async () => {
+    genVideos.mockResolvedValue({ name: "operations/done1", done: false });
+    // Every getVideosOperation returns a terminal done-with-uri operation.
+    getOp.mockResolvedValue({
+      done: true,
+      response: { generatedVideos: [{ video: { uri: "https://example/v.mp4" } }] },
+    });
+    const bytes = Buffer.from("ONCE");
+    const fetchSpy = vi.fn().mockResolvedValue(okResponse(bytes));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const adapter = makeAdapter();
+    const r = await adapter.execute({ prompt: "p" }, { timeoutMs: 10_000, pollIntervalMs: 1 });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value.buffer.equals(bytes)).toBe(true);
+    // ONE poll read (done on the first poll) — fetchResult reuses that terminal
+    // operation instead of re-reading it.
+    expect(getOp).toHaveBeenCalledTimes(1);
+    // The download still happens (separate from the LRO read).
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  // WR-04 non-regression: a standalone fetchResult (the Phase-189 off-turn poller
+  // path, which calls poll() then fetchResult() with NO snapshot) must STILL poll
+  // once to obtain the download uri — the re-poll elimination is execute()-only.
+  it("WR-04: a standalone fetchResult (no terminal snapshot) still reads the operation once (poller path intact)", async () => {
+    getOp.mockResolvedValue({
+      done: true,
+      response: { generatedVideos: [{ video: { uri: "https://example/v.mp4" } }] },
+    });
+    const bytes = Buffer.from("POLLER");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(okResponse(bytes)));
+
+    const adapter = makeAdapter();
+    const r = await adapter.fetchResult({ jobId: "operations/standalone", provider: "veo", model: "m" });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value.buffer.equals(bytes)).toBe(true);
+    // The poller path has no terminal snapshot → fetchResult reads the operation once.
+    expect(getOp).toHaveBeenCalledTimes(1);
   });
 
   it("VEO-02 download-before-return (DEL-01): fetch resolves before fetchResult resolves", async () => {

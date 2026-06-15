@@ -157,6 +157,24 @@ describe("createGrokVideoAdapter", () => {
     expect(Object.keys(body)).not.toContain("resolution");
   });
 
+  // WR-03: a per-request input.model is the RESOLVED model the handler validated
+  // against (`params.model ?? config.model`); the adapter MUST render it so
+  // validation and execution AGREE. Pre-fix the adapter ignored input.model and
+  // used the construction-bound model. RED on pre-fix code: the POST body.model +
+  // job.model are the construction default, not input.model.
+  it("WR-03: a per-request input.model overrides the construction default model (validate↔execute agree)", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ request_id: "req_model" }));
+    const adapter = createGrokVideoAdapter({ apiKey: API_KEY, fetchImpl }); // default grok-imagine-video
+
+    const r = await adapter.submit({ prompt: "p", model: "grok-imagine-video-2" });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const body = JSON.parse(fetchImpl.mock.calls[0][1].body);
+    expect(body.model).toBe("grok-imagine-video-2");
+    // job.model reflects what actually rendered (for obs + the persisted row).
+    expect(r.value.model).toBe("grok-imagine-video-2");
+  });
+
   it("GROK-01 submit non-2xx → err classified as auth_required (HTTP 401)", async () => {
     const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({}, { ok: false, status: 401 }));
     const adapter = createGrokVideoAdapter({ apiKey: API_KEY, fetchImpl });
@@ -329,6 +347,62 @@ describe("createGrokVideoAdapter", () => {
     expect(r.ok).toBe(false);
     if (r.ok) return;
     expect((r.error as { videoErrorKind?: string }).videoErrorKind).toBe("empty_response");
+  });
+
+  // WR-04: execute() polls the status to `done`, then re-reads it AGAIN inside
+  // fetchResult — a redundant GET /videos/{id} on the hot path. The fix threads
+  // the terminal status body from the poll loop into fetchResult so execute()
+  // makes exactly ONE status GET for a job done on the first poll (the submit POST
+  // and the CDN download are separate calls). RED on pre-fix code: the status URL
+  // is GET twice (once in the poll loop, once in fetchResult).
+  it("WR-04: execute() on a job done-on-first-poll reads the status GET exactly once (no re-poll in fetchResult)", async () => {
+    const bytes = Buffer.from("ONCE");
+    const fetchImpl = vi
+      .fn()
+      // 1: submit POST
+      .mockResolvedValueOnce(jsonResponse({ request_id: "req_done1" }))
+      // 2: poll status GET → done with url
+      .mockResolvedValueOnce(jsonResponse({ status: "done", video: { url: "https://cdn/v.mp4" } }))
+      // 3+: any further GET also returns done (so a redundant re-poll would still
+      // "work" — the test fails on the COUNT, not on a thrown error), download last
+      .mockResolvedValue(okDownload(bytes));
+    const adapter = createGrokVideoAdapter({ apiKey: API_KEY, fetchImpl });
+
+    const r = await adapter.execute({ prompt: "p" }, { timeoutMs: 10_000, pollIntervalMs: 1 });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value.buffer.equals(bytes)).toBe(true);
+
+    // Count GETs to the status URL (/videos/req_done1) — exactly one (the poll
+    // loop's terminal read; fetchResult reuses it). The submit POST and the CDN
+    // download are different URLs.
+    const statusGets = fetchImpl.mock.calls.filter(
+      ([url, init]: [string, { method?: string }]) =>
+        url === `${XAI_BASE}/videos/req_done1` && (init?.method ?? "GET") === "GET",
+    );
+    expect(statusGets).toHaveLength(1);
+  });
+
+  // WR-04 non-regression: a standalone fetchResult (the Phase-189 off-turn poller
+  // path, which calls poll() then fetchResult() with NO snapshot) must STILL GET
+  // the status once to obtain the download url — the re-poll elimination is
+  // execute()-only.
+  it("WR-04: a standalone fetchResult (no terminal snapshot) still GETs the status once (poller path intact)", async () => {
+    const bytes = Buffer.from("POLLER");
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ status: "done", video: { url: "https://cdn/v.mp4" } }))
+      .mockResolvedValueOnce(okDownload(bytes));
+    const adapter = createGrokVideoAdapter({ apiKey: API_KEY, fetchImpl });
+
+    const r = await adapter.fetchResult({ jobId: "req_standalone", provider: "grok", model: "grok-imagine-video" });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value.buffer.equals(bytes)).toBe(true);
+    const statusGets = fetchImpl.mock.calls.filter(
+      ([url]: [string]) => url === `${XAI_BASE}/videos/req_standalone`,
+    );
+    expect(statusGets).toHaveLength(1);
   });
 
   it("GROK-02 download-before-return (DEL-01): the download fetch resolves before fetchResult resolves", async () => {

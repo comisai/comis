@@ -671,6 +671,139 @@ describe("createVideoHandlers (Phase 189 — inline→submit)", () => {
       expect(deps.provider.submit).toHaveBeenCalledTimes(1);
     });
 
+    // WR-02: the matrix declares maxReferenceImages on every cell but the
+    // validator must ENFORCE it. veo-2.0-generate-001 i2v is maxReferenceImages:0
+    // ("no refs") — an i2v request (image present) resolving to it returns a
+    // NON-undefined caps object, so the `if (!caps)` mode-reject does NOT fire;
+    // without an explicit maxReferenceImages guard the image ships to a model the
+    // matrix says cannot accept one → a guaranteed provider 4xx. RED on pre-fix
+    // code: the request PASSES validation and submit() is called.
+    it("WR-02: an i2v request resolving to a maxReferenceImages:0 model (veo-2.0) rejects BEFORE submit", async () => {
+      const deps = createMockDeps({
+        provider: {
+          id: "veo",
+          isAvailable: () => true,
+          submit: vi.fn().mockResolvedValue(ok(SUBMITTED_JOB)),
+          poll: vi.fn(),
+          fetchResult: vi.fn(),
+          execute: vi.fn(),
+        },
+        config: {
+          provider: "veo",
+          model: "veo-2.0-generate-001", // the byModel override: maxReferenceImages 0
+          defaultDurationSecs: 8,
+          defaultAspectRatio: "16:9",
+          defaultResolution: "720p",
+          maxPerHour: 5,
+          timeoutMs: 300000,
+          pollIntervalMs: 10000,
+          fallbackChain: [],
+        } as unknown as VideoHandlerDeps["config"],
+      });
+      const handlers = createVideoHandlers(deps);
+      const result = (await handlers["video.generate"]!({
+        _agentId: "agent-1",
+        prompt: "animate this still",
+        image_url: "data:image/png;base64,aGVsbG8=", // image present → i2v mode
+      })) as { success: boolean; hint?: string };
+
+      expect(result.success).toBe(false);
+      // The reject names the limit + points the agent at text-to-video.
+      expect(result.hint).toMatch(/image/i);
+      expect(deps.provider.submit).not.toHaveBeenCalled();
+      const w = warnCalls(deps).find(
+        (c) => (c[0] as { step?: string }).step === "video_reference_image_reject",
+      );
+      expect(w).toBeTruthy();
+      expect((w![0] as { errorKind?: string }).errorKind).toBe("precondition");
+    });
+
+    // WR-02 non-regression: a t2v request (no image) on the SAME 0-ref model is
+    // NOT rejected by the reference-image guard — maxReferenceImages only gates
+    // the i2v (image-present) path.
+    it("WR-02: a t2v request (no image) on veo-2.0 is NOT blocked by the maxReferenceImages guard", async () => {
+      const deps = createMockDeps({
+        provider: {
+          id: "veo",
+          isAvailable: () => true,
+          submit: vi.fn().mockResolvedValue(ok(SUBMITTED_JOB)),
+          poll: vi.fn(),
+          fetchResult: vi.fn(),
+          execute: vi.fn(),
+        },
+        config: {
+          provider: "veo",
+          model: "veo-2.0-generate-001",
+          defaultDurationSecs: 8,
+          defaultAspectRatio: "16:9",
+          defaultResolution: "720p",
+          maxPerHour: 5,
+          timeoutMs: 300000,
+          pollIntervalMs: 10000,
+          fallbackChain: [],
+        } as unknown as VideoHandlerDeps["config"],
+      });
+      const handlers = createVideoHandlers(deps);
+      const result = (await handlers["video.generate"]!({
+        _agentId: "agent-1",
+        prompt: "a quiet still city", // NO image_url → t2v
+      })) as { success: boolean };
+
+      expect(result.success).toBe(true);
+      expect(deps.provider.submit).toHaveBeenCalledTimes(1);
+      const w = warnCalls(deps).find(
+        (c) => (c[0] as { step?: string }).step === "video_reference_image_reject",
+      );
+      expect(w).toBeFalsy();
+    });
+
+    // WR-01: the requires-8s reject hint must match what is ENFORCED. The check
+    // fires only on resolution (1080p/4k), but the hint claimed "(and reference
+    // images)" require 8s — a rule the validator never enforces and RESEARCH does
+    // not document for the native Veo SDK. RED on pre-fix code: the hint contains
+    // the over-claiming "reference images" clause.
+    it("WR-01: the requires-8s reject hint states only the resolution rule (no unenforced reference-image claim)", async () => {
+      const deps = createMockDeps({
+        provider: {
+          id: "veo",
+          isAvailable: () => true,
+          submit: vi.fn().mockResolvedValue(ok(SUBMITTED_JOB)),
+          poll: vi.fn(),
+          fetchResult: vi.fn(),
+          execute: vi.fn(),
+        },
+        config: {
+          provider: "veo",
+          defaultDurationSecs: 8,
+          defaultAspectRatio: "16:9",
+          defaultResolution: "720p",
+          maxPerHour: 5,
+          timeoutMs: 300000,
+          pollIntervalMs: 10000,
+          fallbackChain: [],
+        } as unknown as VideoHandlerDeps["config"],
+      });
+      const handlers = createVideoHandlers(deps);
+      const result = (await handlers["video.generate"]!({
+        _agentId: "agent-1",
+        prompt: "a city",
+        resolution: "4k",
+        duration: 4,
+      })) as { success: boolean; hint?: string };
+
+      expect(result.success).toBe(false);
+      // The hint names the ENFORCED constraint: 4k requires duration 8.
+      expect(result.hint).toMatch(/4k/);
+      expect(result.hint).toMatch(/duration 8/);
+      // It must NOT claim the unenforced reference-image→8s rule.
+      expect(result.hint).not.toMatch(/reference image/i);
+      const w = warnCalls(deps).find(
+        (c) => (c[0] as { step?: string }).step === "video_duration_constraint_reject",
+      );
+      expect(w).toBeTruthy();
+      expect((w![0] as { hint?: string }).hint).not.toMatch(/reference image/i);
+    });
+
     it("IN-02 duration snap: an out-of-enum duration:5 on FAL reaches port.submit snapped to 6 (round-half-up)", async () => {
       const deps = createMockDeps();
       const handlers = createVideoHandlers(deps);
