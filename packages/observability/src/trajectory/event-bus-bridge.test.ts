@@ -660,6 +660,117 @@ describe("attachTrajectoryToEventBus -- image generation (OBS-04)", () => {
   });
 });
 
+describe("attachTrajectoryToEventBus -- vision analysis (VIS-04, append-only)", () => {
+  it("vision_requested_maps_to_media.vision.requested with provider/mainProvider; correlation keys stripped", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("media.vision:requested", {
+      provider: "anthropic",
+      mainProvider: "anthropic",
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      traceId: "trace-vis",
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("media.vision.requested");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.provider).toBe("anthropic");
+    expect(data.mainProvider).toBe("anthropic");
+    // Envelope-only correlation keys — must NOT appear in data.
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.traceId).toBeUndefined();
+  });
+
+  it("vision_completed_maps_to_media.vision.completed carrying path/costUsd/model/provider/outcome (VIS-04 cost-carry + path label)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("media.vision:completed", {
+      provider: "anthropic",
+      mainProvider: "anthropic",
+      model: "claude-sonnet-4-5",
+      costUsd: 0.002,
+      path: "main-vision",
+      outcome: "ok",
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("media.vision.completed");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.provider).toBe("anthropic");
+    expect(data.mainProvider).toBe("anthropic");
+    expect(data.model).toBe("claude-sonnet-4-5");
+    // The VIS-04 cost-carry field — cost rides the trajectory record (Route a).
+    expect(data.costUsd).toBe(0.002);
+    // VIS-03's "which path" signal.
+    expect(data.path).toBe("main-vision");
+    expect(data.outcome).toBe("ok");
+    expect(data.agentId).toBeUndefined();
+  });
+
+  it("vision_completed on the registry tier carries NO costUsd (those adapters return no cost — Pitfall 4)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("media.vision:completed", {
+      provider: "gemini",
+      mainProvider: "anthropic",
+      model: "gemini-pro-vision",
+      path: "registry",
+      outcome: "ok",
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.path).toBe("registry");
+    // Absent costUsd must NOT appear as an undefined key (presence-conditional spread).
+    expect("costUsd" in data).toBe(false);
+  });
+
+  it("vision_failed_maps_to_media.vision.failed with errorKind/path (no raw message)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("media.vision:failed", {
+      errorKind: "empty_response",
+      path: "main-vision",
+      provider: "anthropic",
+      mainProvider: "anthropic",
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("media.vision.failed");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.errorKind).toBe("empty_response");
+    expect(data.path).toBe("main-vision");
+    expect(data.provider).toBe("anthropic");
+  });
+
+  it("vision events are all trajectory-mapped (arch closure) + image.* tuple intact (append-only)", () => {
+    expect(TRAJECTORY_BRIDGE_MAPPING["media.vision:requested"]).toBe("media.vision.requested");
+    expect(TRAJECTORY_BRIDGE_MAPPING["media.vision:completed"]).toBe("media.vision.completed");
+    expect(TRAJECTORY_BRIDGE_MAPPING["media.vision:failed"]).toBe("media.vision.failed");
+    expect((TRAJECTORY_EVENT_TYPES as readonly string[]).includes("media.vision.completed")).toBe(true);
+    // The SemVer-frozen image.* mapping is STILL present (not renamed by the append).
+    expect(TRAJECTORY_BRIDGE_MAPPING["image:generated"]).toBe("image.generated");
+  });
+});
+
 describe("attachTrajectoryToEventBus -- unsubscribe + filter", () => {
   it("unsubscribe_stops_recording after the returned function is called", () => {
     const bus = makeBus();
@@ -1218,6 +1329,29 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
     "image:failed": {
       errorKind: "content_blocked",
       provider: "openai",
+      timestamp: 0,
+    },
+    // VIS-04 (Phase 187): vision-analysis lifecycle — the envelope-only
+    // correlation invariant must hold for them too (no agentId/sessionKey leak).
+    "media.vision:requested": {
+      provider: "anthropic",
+      mainProvider: "anthropic",
+      timestamp: 0,
+    },
+    "media.vision:completed": {
+      provider: "anthropic",
+      mainProvider: "anthropic",
+      model: "claude-sonnet-4-5",
+      costUsd: 0.002,
+      path: "main-vision",
+      outcome: "ok",
+      timestamp: 0,
+    },
+    "media.vision:failed": {
+      errorKind: "empty_response",
+      path: "main-vision",
+      provider: "anthropic",
+      mainProvider: "anthropic",
       timestamp: 0,
     },
   };
@@ -2835,15 +2969,17 @@ describe("attachTrajectoryToEventBus -- dedup events", () => {
 // ---------------------------------------------------------------------------
 
 describe("health:budget_exceeded entry (bridge entry count guard)", () => {
-  it("bridge entry count is exactly 70 (+2 D3 breaker + 1 D7 offload Phase 151; +1 session:summary Phase 152; +1 context:budget_computed W2; +1 execution:tool_schema_unsupported Phase 175; +2 OBS-01 script signals Phase 180; +2 RECALL-01 memory:recalled/reranked; +1 GENQ-01 memory:generation_quality; +4 OBS-04 image:* Phase 186)", () => {
+  it("bridge entry count is exactly 73 (+2 D3 breaker + 1 D7 offload Phase 151; +1 session:summary Phase 152; +1 context:budget_computed W2; +1 execution:tool_schema_unsupported Phase 175; +2 OBS-01 script signals Phase 180; +2 RECALL-01 memory:recalled/reranked; +1 GENQ-01 memory:generation_quality; +4 OBS-04 image:* Phase 186; +3 media.vision:* VIS-04 Phase 187)", () => {
     // 55 + tool:breaker_opened + tool:breaker_reset (D3) + tool:result_offloaded (D7)
     // + session:summary (F2/D5, Phase 152)
     // + execution:tool_schema_unsupported (GBNF-02, Phase 175 Plan 05)
     // + context:script_zero_hit + context:summary_language_mismatch (OBS-01, Phase 180 Plan 03)
     // + memory:recalled + memory:reranked (RECALL-01, observability-excellence)
     // + memory:generation_quality (GENQ-01, observability-excellence)
-    // + image:requested/generated/delivered/failed (OBS-04, Phase 186 Plan 03).
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(70);
+    // + image:requested/generated/delivered/failed (OBS-04, Phase 186 Plan 03)
+    // + media.vision:requested/completed/failed (VIS-04, Phase 187 Plan 03 —
+    //   APPEND-ONLY, the image.* tuple is untouched; Pitfall 5).
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(73);
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {

@@ -37,6 +37,26 @@ describe("TRAJECTORY_EVENT_TYPES contains the image-generation lifecycle (OBS-04
   );
 });
 
+// VIS-04 (Phase 187): the three vision lifecycle types are APPENDED to the
+// closed tuple so the daemon vision RPC handler can `recordEvent(...)` them via
+// the per-session recorder (recordEvent REJECTS a type absent from
+// TRAJECTORY_EVENT_TYPES). Append-only — the image.* tuple is SemVer-frozen and
+// must stay intact (Pitfall 5 — a rename trips the bridge-count guard + codegen).
+describe("TRAJECTORY_EVENT_TYPES contains the vision lifecycle (VIS-04, append-only)", () => {
+  it.each(["media.vision.requested", "media.vision.completed", "media.vision.failed"])(
+    "includes %s",
+    (literal) => {
+      expect((TRAJECTORY_EVENT_TYPES as readonly string[]).includes(literal)).toBe(true);
+    },
+  );
+
+  it("the SemVer-frozen image.* tuple is STILL present (not renamed/deleted)", () => {
+    for (const frozen of ["image.requested", "image.generated", "image.delivered", "image.failed"]) {
+      expect((TRAJECTORY_EVENT_TYPES as readonly string[]).includes(frozen)).toBe(true);
+    }
+  });
+});
+
 describe("TrajectoryEvent forward-declared optional fields", () => {
   it("carries optional sourceSeq?: number", () => {
     expectTypeOf<TrajectoryEvent["sourceSeq"]>().toEqualTypeOf<number | undefined>();

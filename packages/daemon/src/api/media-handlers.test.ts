@@ -541,6 +541,165 @@ describe("createMediaHandlers", () => {
           .not.toHaveBeenCalled();
       });
     });
+
+    // -----------------------------------------------------------------------
+    // VIS-04 (187): the trajectory direct-emits (media.vision.{requested,
+    // completed,failed}) via the per-session recorder (the daemon RPC context
+    // has NO eventBus bridge — the image-handlers.ts:210 precedent). Resolve the
+    // recorder by `_callerSessionKey`; a null/absent recorder no-ops. Payloads
+    // are CONTENT-FREE (provider/mainProvider/model/path/costUsd/errorKind only —
+    // never the buffer/base64/prompt/response text; T-187-12).
+    // -----------------------------------------------------------------------
+    describe("VIS-04 trajectory direct-emit (content-free)", () => {
+      function makeRecorderMock() {
+        const records: Array<{ type: string; data: Record<string, unknown> }> = [];
+        const recordEvent = vi.fn((type: string, data: Record<string, unknown>) => {
+          records.push({ type, data });
+        });
+        const getRecorder = vi.fn((_sessionKey: string) => ({ recordEvent }));
+        return { records, recordEvent, getRecorder, trajectoryRegistry: { getRecorder } as never };
+      }
+
+      it("a successful main-vision turn records media.vision.requested + media.vision.completed{path:'main-vision',costUsd,outcome:'ok'}", async () => {
+        visionState.capable = true;
+        const rec = makeRecorderMock();
+        const deps = makeDeps({ trajectoryRegistry: rec.trajectoryRegistry });
+        const handlers = createMediaHandlers(deps);
+
+        await handlers["image.analyze"]!({
+          source_type: "base64",
+          source: "abc",
+          prompt: "what is this",
+          _agentId: "default",
+          _callerSessionKey: "default:u1:telegram:c1",
+        });
+
+        expect(rec.getRecorder).toHaveBeenCalledWith("default:u1:telegram:c1");
+        const types = rec.records.map((r) => r.type);
+        expect(types).toContain("media.vision.requested");
+        expect(types).toContain("media.vision.completed");
+        const completed = rec.records.find((r) => r.type === "media.vision.completed")!.data;
+        expect(completed.path).toBe("main-vision");
+        expect(completed.outcome).toBe("ok");
+        expect(completed.costUsd).toBe(0.002);
+        expect(completed.mainProvider).toBe("anthropic");
+        // CONTENT-FREE: no buffer/base64/prompt/answer text in ANY recorded payload.
+        const blob = JSON.stringify(rec.records);
+        expect(blob).not.toContain("what is this");
+        expect(blob).not.toContain("A dog on a skateboard");
+        expect(blob).not.toMatch(/abc/); // the base64 source
+      });
+
+      it("the registry tier records media.vision.completed with path:'registry' and NO costUsd (Pitfall 4)", async () => {
+        visionState.capable = false; // → registry path
+        const rec = makeRecorderMock();
+        const deps = makeDeps({ trajectoryRegistry: rec.trajectoryRegistry });
+        const handlers = createMediaHandlers(deps);
+
+        await handlers["image.analyze"]!({
+          source_type: "base64",
+          source: "abc",
+          _agentId: "default",
+          _callerSessionKey: "default:u1:telegram:c1",
+        });
+
+        const completed = rec.records.find((r) => r.type === "media.vision.completed");
+        expect(completed).toBeDefined();
+        expect(completed!.data.path).toBe("registry");
+        expect("costUsd" in completed!.data).toBe(false);
+      });
+
+      it("an honest-unavailable turn records media.vision.failed{errorKind,path}", async () => {
+        visionState.capable = false;
+        const rec = makeRecorderMock();
+        const deps = makeDeps({ visionRegistry: new Map(), trajectoryRegistry: rec.trajectoryRegistry });
+        const handlers = createMediaHandlers(deps);
+
+        await expect(
+          handlers["image.analyze"]!({
+            source_type: "base64",
+            source: "abc",
+            _agentId: "default",
+            _callerSessionKey: "default:u1:telegram:c1",
+          }),
+        ).rejects.toThrow(/vision provider available/i);
+
+        const failed = rec.records.find((r) => r.type === "media.vision.failed");
+        expect(failed).toBeDefined();
+        expect(typeof failed!.data.errorKind).toBe("string");
+        expect(failed!.data.path).toBe("unavailable");
+      });
+
+      it("a main-vision RUNTIME failure records media.vision.failed for the bridge attempt, then media.vision.completed for the registry fallback", async () => {
+        visionState.capable = true;
+        const failingBridge = {
+          describeImage: vi.fn(async () => ({
+            ok: false as const,
+            error: Object.assign(new Error("empty"), { errorKind: "empty_response" }),
+          })),
+        };
+        const rec = makeRecorderMock();
+        const deps = makeDeps({ mainProviderVision: failingBridge as never, trajectoryRegistry: rec.trajectoryRegistry });
+        const handlers = createMediaHandlers(deps);
+
+        await handlers["image.analyze"]!({
+          source_type: "base64",
+          source: "abc",
+          _agentId: "default",
+          _callerSessionKey: "default:u1:telegram:c1",
+        });
+
+        const types = rec.records.map((r) => r.type);
+        // The bridge attempt failed (media.vision.failed, path main-vision)…
+        expect(types).toContain("media.vision.failed");
+        const failed = rec.records.find((r) => r.type === "media.vision.failed")!.data;
+        expect(failed.path).toBe("main-vision");
+        // …and the registry fallback then completed (path registry).
+        const completed = rec.records.find((r) => r.type === "media.vision.completed")!.data;
+        expect(completed.path).toBe("registry");
+      });
+
+      it("an absent recorder / absent _callerSessionKey no-ops (no crash)", async () => {
+        visionState.capable = true;
+        // No trajectoryRegistry wired AND no _callerSessionKey — the emits must be a no-op.
+        const deps = makeDeps();
+        const handlers = createMediaHandlers(deps);
+
+        const result = (await handlers["image.analyze"]!({
+          source_type: "base64",
+          source: "abc",
+          _agentId: "default",
+        })) as { description: string };
+
+        expect(result.description).toBe("A dog on a skateboard");
+      });
+
+      it("the §2.7 INFO completion line carries {visionProvider, mainProvider, model, path, durationMs, costUsd}", async () => {
+        visionState.capable = true;
+        const rec = makeRecorderMock();
+        const deps = makeDeps({ trajectoryRegistry: rec.trajectoryRegistry });
+        const handlers = createMediaHandlers(deps);
+
+        await handlers["image.analyze"]!({
+          source_type: "base64",
+          source: "abc",
+          prompt: "p",
+          _agentId: "default",
+          _callerSessionKey: "default:u1:telegram:c1",
+        });
+
+        const infoCalls = (deps.logger.info as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]);
+        const completeLine = infoCalls.find(
+          (f) => f && (f as { step?: string }).step === "vision_complete" && (f as { path?: string }).path === "main-vision",
+        ) as Record<string, unknown> | undefined;
+        expect(completeLine).toBeDefined();
+        expect(completeLine!.visionProvider).toBe("anthropic");
+        expect(completeLine!.mainProvider).toBe("anthropic");
+        expect(completeLine!.model).toBe("claude-sonnet-4-5");
+        expect(completeLine!.costUsd).toBe(0.002);
+        expect(typeof completeLine!.durationMs).toBe("number");
+      });
+    });
   });
 
   // -------------------------------------------------------------------------
