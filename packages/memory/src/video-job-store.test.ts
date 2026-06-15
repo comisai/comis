@@ -1,0 +1,303 @@
+// SPDX-License-Identifier: Apache-2.0
+import { describe, it, expect, beforeEach } from "vitest";
+import Database from "better-sqlite3";
+import { initSchema } from "./schema.js";
+import { ensureVideoJobTable } from "./schema-video-jobs.js";
+import { createVideoJobStore } from "./video-job-store.js";
+import type { VideoJobStore } from "./video-job-store.js";
+
+// The Phase-189 durable async VideoJobStore — the SQLite-backed, state-machine
+// job store the background poller resumes against across a daemon restart
+// (JOB-01/JOB-03/JOB-04). Modeled on the production crash-safe delivery queue
+// (delivery-queue-adapter.test.ts): an in-memory :memory: db, ensureVideoJobTable
+// to create the table, then the frozen factory. No real fs, deterministic.
+
+describe("VideoJobStore", () => {
+  let db: Database.Database;
+  let store: VideoJobStore;
+
+  // Deterministic clock anchors for the fixtures (the store itself stamps
+  // updated_at_ms via systemNowMs() — these are the SUBMIT-time inputs only).
+  const submittedAt = 1_700_000_000_000;
+
+  /** Helper to build a minimal JOB-01 submit record. */
+  function makeRecord(overrides: Record<string, unknown> = {}) {
+    return {
+      jobId: "fal-req-abc123",
+      provider: "fal",
+      model: "fal-ai/veo3.1/fast",
+      agentId: "alpha",
+      channelType: "telegram",
+      channelId: "ch-999",
+      traceId: "trace-xyz",
+      state: "pending" as const,
+      estimatedCostUsd: 2.4,
+      submittedAtMs: submittedAt,
+      updatedAtMs: submittedAt,
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    // initSchema must create the video_jobs table (Task 2 integration check),
+    // but the store's own setup uses ensureVideoJobTable directly so Task 1's
+    // RED has its table dependency even before the initSchema wiring lands.
+    ensureVideoJobTable(db);
+    store = createVideoJobStore(db);
+  });
+
+  // -----------------------------------------------------------------------
+  // Round-trip + snake→camel fidelity (JOB-01)
+  // -----------------------------------------------------------------------
+
+  describe("insert + get round-trip", () => {
+    it("persists a job and reads it back with snake→camel field fidelity", async () => {
+      const ins = await store.insert(makeRecord());
+      expect(ins.ok).toBe(true);
+
+      const got = await store.get("fal-req-abc123", "alpha");
+      expect(got.ok).toBe(true);
+      if (!got.ok) return;
+      const job = got.value;
+      expect(job).toBeDefined();
+      if (!job) return;
+      // snake_case columns mapped to camelCase domain fields.
+      expect(job.jobId).toBe("fal-req-abc123");
+      expect(job.provider).toBe("fal");
+      expect(job.model).toBe("fal-ai/veo3.1/fast");
+      expect(job.agentId).toBe("alpha");
+      expect(job.channelType).toBe("telegram");
+      expect(job.channelId).toBe("ch-999");
+      expect(job.traceId).toBe("trace-xyz");
+      expect(job.state).toBe("pending");
+      expect(job.estimatedCostUsd).toBe(2.4);
+      // submitted_at_ms → submittedAtMs.
+      expect(job.submittedAtMs).toBe(submittedAt);
+      expect(job.updatedAtMs).toBe(submittedAt);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // listPending — only state='pending' rows (JOB-01)
+  // -----------------------------------------------------------------------
+
+  describe("listPending", () => {
+    it("returns ONLY rows in state 'pending'", async () => {
+      await store.insert(makeRecord({ jobId: "job-pending", agentId: "alpha" }));
+      await store.insert(makeRecord({ jobId: "job-done", agentId: "alpha" }));
+      // Transition the second job out of pending.
+      await store.markDone("job-done", { mediaPath: "/x.mp4", actualCostUsd: 2.4 });
+
+      const pending = await store.listPending();
+      expect(pending.ok).toBe(true);
+      if (!pending.ok) return;
+      const ids = pending.value.map((j) => j.jobId);
+      expect(ids).toContain("job-pending");
+      expect(ids).not.toContain("job-done");
+      expect(pending.value.every((j) => j.state === "pending")).toBe(true);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Agent-scoped get — no cross-agent leak (JOB-04 / TARGET-01 / Pitfall 6)
+  // -----------------------------------------------------------------------
+
+  describe("agent scoping", () => {
+    it("get(jobId, otherAgent) is not-found; get(jobId, ownerAgent) returns it", async () => {
+      await store.insert(makeRecord({ jobId: "job-alpha", agentId: "alpha" }));
+
+      // A DIFFERENT agent's request for the same globally-unique jobId → not-found.
+      const cross = await store.get("job-alpha", "beta");
+      expect(cross.ok).toBe(true);
+      if (cross.ok) expect(cross.value).toBeUndefined();
+
+      // The owning agent sees it.
+      const own = await store.get("job-alpha", "alpha");
+      expect(own.ok).toBe(true);
+      if (own.ok) {
+        expect(own.value).toBeDefined();
+        expect(own.value?.agentId).toBe("alpha");
+      }
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // markDone (JOB-02)
+  // -----------------------------------------------------------------------
+
+  describe("markDone", () => {
+    it("transitions state to 'done' and records mediaPath + actualCostUsd; advances updatedAtMs", async () => {
+      await store.insert(makeRecord({ jobId: "job-x", agentId: "alpha", updatedAtMs: submittedAt }));
+
+      const done = await store.markDone("job-x", { mediaPath: "/videos/job-x.mp4", actualCostUsd: 3.1 });
+      expect(done.ok).toBe(true);
+
+      const got = await store.get("job-x", "alpha");
+      expect(got.ok).toBe(true);
+      if (!got.ok || !got.value) return;
+      expect(got.value.state).toBe("done");
+      expect(got.value.mediaPath).toBe("/videos/job-x.mp4");
+      expect(got.value.actualCostUsd).toBe(3.1);
+      // systemNowMs() stamps a real now → strictly later than the fixture submit time.
+      expect(got.value.updatedAtMs).toBeGreaterThan(submittedAt);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // markFailed (JOB-02)
+  // -----------------------------------------------------------------------
+
+  describe("markFailed", () => {
+    it("transitions state to 'failed' and records the errorKind in last_error", async () => {
+      await store.insert(makeRecord({ jobId: "job-fail", agentId: "alpha" }));
+
+      const failed = await store.markFailed("job-fail", "job_timeout");
+      expect(failed.ok).toBe(true);
+
+      const got = await store.get("job-fail", "alpha");
+      expect(got.ok).toBe(true);
+      if (!got.ok || !got.value) return;
+      expect(got.value.state).toBe("failed");
+      expect(got.value.lastError).toBe("job_timeout");
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // updateProgress (JOB-02)
+  // -----------------------------------------------------------------------
+
+  describe("updateProgress", () => {
+    it("records the progress value, observable on a subsequent get", async () => {
+      await store.insert(makeRecord({ jobId: "job-prog", agentId: "alpha" }));
+
+      const upd = await store.updateProgress("job-prog", 0.5);
+      expect(upd.ok).toBe(true);
+
+      const got = await store.get("job-prog", "alpha");
+      expect(got.ok).toBe(true);
+      if (!got.ok || !got.value) return;
+      expect(got.value.progress).toBe(0.5);
+      // Progress update does not leave 'pending' state.
+      expect(got.value.state).toBe("pending");
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Nullable fidelity — SQLite NULL → z.nullable → undefined at the boundary
+  // -----------------------------------------------------------------------
+
+  describe("nullable fidelity", () => {
+    it("round-trips absent optional fields as undefined (SQLite NULL → ?? undefined)", async () => {
+      await store.insert(
+        makeRecord({
+          jobId: "job-min",
+          agentId: "alpha",
+          model: undefined,
+          channelType: undefined,
+          channelId: undefined,
+          traceId: undefined,
+          estimatedCostUsd: undefined,
+        }),
+      );
+
+      const got = await store.get("job-min", "alpha");
+      expect(got.ok).toBe(true);
+      if (!got.ok || !got.value) return;
+      const job = got.value;
+      expect(job.model).toBeUndefined();
+      expect(job.channelType).toBeUndefined();
+      expect(job.channelId).toBeUndefined();
+      expect(job.traceId).toBeUndefined();
+      expect(job.estimatedCostUsd).toBeUndefined();
+      // Non-nullable fields still present.
+      expect(job.jobId).toBe("job-min");
+      expect(job.provider).toBe("fal");
+      expect(job.submittedAtMs).toBe(submittedAt);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Never-throw / corrupt-row degrade — every method returns a Result
+  // -----------------------------------------------------------------------
+
+  describe("never-throw / corrupt-row degrade", () => {
+    it("a malformed row degrades to err via parseRows, not a throw", async () => {
+      await store.insert(makeRecord({ jobId: "job-good", agentId: "alpha" }));
+      // Corrupt the row's submitted_at_ms to a TEXT value the z.number() schema rejects.
+      // (A row mapper parse failure must surface as Result.err, mirroring the
+      // delivery queue's pendingEntries degrade — never an unhandled throw.)
+      db.prepare("UPDATE video_jobs SET submitted_at_ms = 'not-a-number' WHERE job_id = 'job-good'").run();
+
+      const got = await store.get("job-good", "alpha");
+      expect(got.ok).toBe(false);
+
+      const pending = await store.listPending();
+      expect(pending.ok).toBe(false);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Threat T-189-02: the persisted row carries NO secret column.
+  // -----------------------------------------------------------------------
+
+  describe("no-secret schema invariant", () => {
+    it("video_jobs has no key/token/secret/bearer/password column", () => {
+      const cols = db
+        .prepare("PRAGMA table_info(video_jobs)")
+        .all() as Array<{ name: string }>;
+      const names = cols.map((c) => c.name.toLowerCase());
+      expect(names.length).toBeGreaterThan(0);
+      for (const forbidden of ["key", "api_key", "apikey", "token", "secret", "bearer", "password", "authorization"]) {
+        expect(names).not.toContain(forbidden);
+      }
+    });
+  });
+});
+
+// ===========================================================================
+// Task 2: video_jobs table DDL (ensureVideoJobTable) + initSchema wiring.
+// Co-located here because Task 1's setup already imports ensureVideoJobTable.
+// ===========================================================================
+
+describe("ensureVideoJobTable (video_jobs DDL)", () => {
+  let db: Database.Database;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+  });
+
+  it("creates the video_jobs table on a fresh db", () => {
+    ensureVideoJobTable(db);
+    const row = db
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='video_jobs'")
+      .get();
+    expect(row).toBeDefined();
+  });
+
+  it("is idempotent — calling twice does not throw (CREATE TABLE IF NOT EXISTS)", () => {
+    ensureVideoJobTable(db);
+    expect(() => ensureVideoJobTable(db)).not.toThrow();
+  });
+
+  it("creates the pending partial index and the agent index", () => {
+    ensureVideoJobTable(db);
+    const indexes = db
+      .prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='video_jobs'")
+      .all() as Array<{ name: string }>;
+    const names = indexes.map((i) => i.name);
+    expect(names).toContain("idx_video_jobs_pending");
+    expect(names).toContain("idx_video_jobs_agent");
+  });
+
+  it("initSchema wires the video_jobs table on the boot path", () => {
+    // The anti-built-but-not-wired check at the schema layer: a fresh initSchema
+    // (the single boot-time DDL call) MUST create video_jobs — not just the
+    // standalone helper (JOB-01/JOB-03 restart resume reads this table on boot).
+    initSchema(db, 768);
+    const row = db
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='video_jobs'")
+      .get();
+    expect(row).toBeDefined();
+  });
+});
