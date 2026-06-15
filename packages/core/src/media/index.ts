@@ -18,3 +18,13 @@ export type {
   VisionPathSelection,
   VisionPathInput,
 } from "./resolve-vision-path.js";
+// Video generation (v2.24 Phase 188) — the video twins of the image symbols above.
+export { VIDEO_CAPABILITY } from "./video-capability.js";
+export { VIDEO_ERR_TO_LOG, VideoGenError } from "./video-error.js";
+export type { VideoErrorKind } from "./video-error.js";
+export { resolveVideoProvider, isBlockedObjectKey } from "./resolve-video-provider.js";
+export type {
+  VideoProviderSelection,
+  VideoGenSelectionConfig,
+} from "./resolve-video-provider.js";
+export { estimateVideoCostUsd, VIDEO_PRICING } from "./video-pricing.js";

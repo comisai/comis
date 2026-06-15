@@ -27,3 +27,26 @@ export type { ImageErrorKind } from "../media/index.js";
 // (the handler consumes the return STRUCTURALLY, no named type import) — the same
 // policy as `ImageProviderSelection`, which stays intra-`@comis/core/media`.
 export { resolveVisionPath } from "../media/index.js";
+// Video generation (v2.24 Phase 188) — the video twins of the image media
+// symbols above, surfaced on the public barrel so Plan 03 (the @comis/skills FAL
+// adapter) and Plan 04 (the @comis/daemon video handler + selector) can import
+// them. Plan 04 consumes `resolveVideoProvider` / `VIDEO_ERR_TO_LOG` /
+// `VideoErrorKind` / `VideoGenError` / `estimateVideoCostUsd` / `isBlockedObjectKey`;
+// Plan 03 consumes `VideoGenError` (+ the port types from exports/ports.ts).
+// Those plans land in LATER waves, so until then these are documented
+// planned-orphans tracked in test/support/public-api-policy.ts (the
+// SessionStorePort / ContextStorePort ahead-of-consumer precedent — NOT a
+// shrink-only architecture-allowlist entry). `VIDEO_CAPABILITY` and the
+// `VideoProviderSelection` / `VideoGenSelectionConfig` types stay OFF the public
+// barrel (intra-`@comis/core/media` only — the same policy as `IMAGE_CAPABILITY`
+// / `ImageProviderSelection`); a later phase re-exports them here if a
+// cross-package consumer ever needs them.
+export {
+  VIDEO_ERR_TO_LOG,
+  VideoGenError,
+  resolveVideoProvider,
+  isBlockedObjectKey,
+  estimateVideoCostUsd,
+  VIDEO_PRICING,
+} from "../media/index.js";
+export type { VideoErrorKind } from "../media/index.js";

@@ -176,6 +176,13 @@ export type {
 export type { OAuthCredentialStorePort, OAuthProfile } from "./oauth-credential-store.js";
 export type { ImageGenInput, ImageGenOutput, ImageGenerationPort } from "./provider.js";
 export type {
+  VideoGenInput,
+  VideoGenJob,
+  VideoJobStatus,
+  VideoGenOutput,
+  VideoGenerationPort,
+} from "./provider.js";
+export type {
   DeliveryQueuePort,
   DeliveryQueueEntry,
   DeliveryQueueEnqueueInput,

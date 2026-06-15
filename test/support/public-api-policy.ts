@@ -994,6 +994,35 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "resolveCodexStableSubject",
       "RewrittenOAuthError",
       "FileExtractionErrorKind",
+      // Video generation (v2.24 Phase 188, plan 188-01) — the greenfield
+      // @comis/core video foundation surfaced on the public barrel so the
+      // LATER-wave Plan 03 (@comis/skills FAL adapter) and Plan 04
+      // (@comis/daemon video handler + boot selector) can import them. They are
+      // ahead-of-consumer planned-orphans at THIS plan's commit (the
+      // SessionStorePort / ContextStorePort "listed so the gate is green before
+      // Plan 04 lands" precedent below — over-listing a soon-consumed symbol is
+      // the documented pattern, never under-listing). Each entry SHRINKS out of
+      // this baseline when its real in-repo consumer lands:
+      //   - VideoGenerationPort + the 4 value types: Plan 03's FAL adapter
+      //     implements the port; Plan 04's handler deps reference them.
+      //   - resolveVideoProvider / isBlockedObjectKey / VideoErrorKind /
+      //     VideoGenError / VIDEO_ERR_TO_LOG: Plan 04's selector + handler.
+      //   - estimateVideoCostUsd / VIDEO_PRICING: Plan 04's pre-submit cost gate.
+      // VIDEO_CAPABILITY + VideoProviderSelection + VideoGenSelectionConfig are
+      // NOT listed — they stay intra-`@comis/core/media` (the IMAGE_CAPABILITY /
+      // ImageProviderSelection policy), so they never reach the public barrel.
+      "VideoGenInput",
+      "VideoGenJob",
+      "VideoJobStatus",
+      "VideoGenOutput",
+      "VideoGenerationPort",
+      "VideoErrorKind",
+      "VIDEO_ERR_TO_LOG",
+      "VideoGenError",
+      "resolveVideoProvider",
+      "isBlockedObjectKey",
+      "estimateVideoCostUsd",
+      "VIDEO_PRICING",
       // MemoryLifecyclePort + MemoryLifecycleScope +
       // MemoryTier + LifecycleSweepReport were tracked here as SCAFFOLD-DORMANT
       // ahead-of-consumer planned-orphans. REMOVED:
