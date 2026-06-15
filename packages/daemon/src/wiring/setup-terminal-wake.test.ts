@@ -25,6 +25,7 @@ import { fileURLToPath } from "node:url";
 
 import { setupTerminalWake, type SetupTerminalWakeDeps } from "./setup-terminal-wake.js";
 import { WAKE_DIR_NAME } from "./terminal-wake-persistence.js";
+import type { DriveJournal as DriveJournalShape } from "@comis/skills/tools";
 
 // ---------------------------------------------------------------------------
 // A capturing TypedEventBus-shaped fake: records emits + fires `on` handlers.
@@ -604,5 +605,157 @@ describe("setupTerminalWake — the keystone subscribe + woken-turn driver (124-
     expect(src, "the woken-turn owner sessionKey must be derived via driveScopeKey(ev.sessionId)").toMatch(/sessionKey:\s*driveScopeKey\(ev\.sessionId\)/);
     // The active-check resolves via the stamped registry owner (registryOwnerFor).
     expect(src, "isSessionActive must resolve via registryOwnerFor(owner)").toMatch(/registryOwnerFor/);
+  });
+
+  // -------------------------------------------------------------------------
+  // DUR-02 (165-07 Task 1): the wake-holder PERSISTS each journal update via the
+  // 165-04 store + RESUMES from it on a re-attach. A resumed drive does NOT re-answer
+  // an already-answered prompt (the answeredPrompts dedup survives the restart, I10).
+  // The DURABLE file is preserved on a lost/crash; removed ONLY on a clean exit.
+  // RED on pre-patch: the journal.set wrapper does not persist + the holder does not
+  // seed from recover, so the store sees 0 persists + a re-attach resumes nothing.
+  // -------------------------------------------------------------------------
+
+  /** A capturing fake of the daemon-bound DUR-02 journal store (the 165-04 module wrapper). */
+  function makeJournalStore(seed?: Map<string, DriveJournalShape>) {
+    const disk = new Map<string, DriveJournalShape>(seed ?? []);
+    const persistCalls: Array<{ agentId: string; sessionId: string; journal: DriveJournalShape }> = [];
+    const removeCalls: Array<{ agentId: string; sessionId: string }> = [];
+    return {
+      persistCalls,
+      removeCalls,
+      disk,
+      store: {
+        persist: vi.fn((agentId: string, sessionId: string, journal: DriveJournalShape) => {
+          disk.set(`${agentId}/${sessionId}`, journal);
+          persistCalls.push({ agentId, sessionId, journal });
+        }),
+        recover: vi.fn((agentId: string) => {
+          const out = new Map<string, DriveJournalShape>();
+          for (const [k, v] of disk) {
+            const [a, s] = k.split("/");
+            if (a === agentId) out.set(s!, v);
+          }
+          return out;
+        }),
+        load: vi.fn((agentId: string, sessionId: string) => disk.get(`${agentId}/${sessionId}`)),
+        remove: vi.fn((agentId: string, sessionId: string) => {
+          disk.delete(`${agentId}/${sessionId}`);
+          removeCalls.push({ agentId, sessionId });
+        }),
+      },
+    };
+  }
+
+  /** Build with a DUR-02 journal store injected (+ the safe-pattern config so a wake answers). */
+  function buildDur(
+    dataDir: string,
+    opts: { screen: string; seed?: Map<string, DriveJournalShape>; hintPatterns?: string[] },
+  ): Built & { js: ReturnType<typeof makeJournalStore> } {
+    const bus = makeBus();
+    const registry = makeRegistry({ screen: opts.screen });
+    const logger = makeLogger();
+    const notify = vi.fn(async () => undefined);
+    const js = makeJournalStore(opts.seed);
+    const registries = new Map<string, ReturnType<typeof makeRegistry>>([["a", registry]]);
+    const deps = {
+      eventBus: bus as unknown as SetupTerminalWakeDeps["eventBus"],
+      registries: registries as unknown as SetupTerminalWakeDeps["registries"],
+      getTerminalAttentionConfig: () => ({
+        autoAnswer: "safe-only" as const,
+        hintPatterns: opts.hintPatterns ?? ["press enter to continue"],
+        maxHops: 5,
+        maxConcurrentAttentionTurns: 2,
+      }),
+      notify,
+      dataDir,
+      nowMs: () => 1_000,
+      logger: logger as unknown as SetupTerminalWakeDeps["logger"],
+      driveJournalStore: js.store,
+    } as unknown as SetupTerminalWakeDeps;
+    const handle = setupTerminalWake(deps);
+    return { bus, registry, logger, notify, handle, js };
+  }
+
+  it("DUR-02: a PROMOTED drive's journal is persisted on every update (the journal.set wrapper calls store.persist)", async () => {
+    built = buildDur(dataDir, { screen: "Press enter to continue" });
+    const { js } = built as Built & { js: ReturnType<typeof makeJournalStore> };
+    // Promote so the woken turn engages the journal (DRIVE-01 gating), then a wake updates it.
+    built.bus.fireDrivePromoted("s-dur", "a", "producing");
+    await flush();
+    built.bus.fireInputNeeded("s-dur", "a");
+    await flush();
+
+    // The journal.set wrapper persisted the updated journal for the promoted session.
+    expect(js.store.persist, "every journal.set must persist (DUR-02 single persistence point)").toHaveBeenCalled();
+    const persisted = js.persistCalls.find((c) => c.sessionId === "s-dur");
+    expect(persisted, "the promoted session's journal must be persisted").toBeDefined();
+    expect(persisted!.agentId).toBe("a");
+    // The persisted journal reflects the woken turn (interactions bumped past the empty 0).
+    expect(persisted!.journal.interactions).toBeGreaterThanOrEqual(1);
+  });
+
+  it("I1: an UNPROMOTED drive persists NOTHING (the persist is gated on promoted + a present store)", async () => {
+    built = buildDur(dataDir, { screen: "Press enter to continue" });
+    const { js } = built as Built & { js: ReturnType<typeof makeJournalStore> };
+    // No promotion → the woken turn never touches the journal → nothing is persisted (I1).
+    built.bus.fireInputNeeded("s-plain", "a");
+    await flush();
+    expect(js.store.persist, "an unpromoted drive must persist nothing").not.toHaveBeenCalled();
+  });
+
+  it("DUR-02 resume: the holder seeds the journal cache from store.recover on construction (a re-attach resumes the journal)", () => {
+    // A persisted journal from a prior daemon life (the restart).
+    const seeded = new Map<string, DriveJournalShape>([
+      ["a/s-resume", { objective: "build the app", lastClassification: "awaiting-input", lastScreenDigest: "", answeredPrompts: ["pattern:2"], stepsTried: ["ran:build"], elapsedMs: 1_000, interactions: 3, costUsd: 0, truncations: 0 }],
+    ]);
+    built = buildDur(dataDir, { screen: "Press enter to continue", seed: seeded });
+    const { js } = built as Built & { js: ReturnType<typeof makeJournalStore> };
+    // On construction the holder recovered the agent's persisted journals (resume substrate).
+    expect(js.store.recover, "the holder must recover persisted journals on construction (resume)").toHaveBeenCalledWith("a");
+  });
+
+  it("DUR-02/I10 resume-no-re-answer: a resumed drive whose journal has answeredPrompts continues from it (the seeded answeredPrompts survives into the live journal)", async () => {
+    const seeded = new Map<string, DriveJournalShape>([
+      ["a/s-resume", { objective: "build the app", lastClassification: "awaiting-input", lastScreenDigest: "", answeredPrompts: ["pattern:0"], stepsTried: [], elapsedMs: 1_000, interactions: 2, costUsd: 0, truncations: 0 }],
+    ]);
+    built = buildDur(dataDir, { screen: "Press enter to continue", seed: seeded });
+    const { js } = built as Built & { js: ReturnType<typeof makeJournalStore> };
+    // The session was promoted in the prior life; re-promote on this boot (promote-once is
+    // per-life). A wake then updates the RESUMED journal — the prior answeredPrompts is carried.
+    built.bus.fireDrivePromoted("s-resume", "a", "producing");
+    await flush();
+    built.bus.fireInputNeeded("s-resume", "a");
+    await flush();
+
+    // The journal persisted after the wake still carries the prior life's answered tag —
+    // the resume seeded the live cache from the recovered journal (not a fresh empty one).
+    const persisted = js.persistCalls.find((c) => c.sessionId === "s-resume");
+    expect(persisted, "the resumed session must persist its updated journal").toBeDefined();
+    expect(persisted!.journal.answeredPrompts, "the resumed journal must carry the prior life's answeredPrompts (I10)").toContain("pattern:0");
+    expect(persisted!.journal.interactions, "the resumed journal continues from the recovered interactions (not reset to 1)").toBeGreaterThan(2);
+  });
+
+  it("I10 preserve-on-crash: a lost/exited session reclaims the in-memory cache but does NOT remove the durable file", async () => {
+    built = buildDur(dataDir, { screen: "Press enter to continue" });
+    const { js } = built as Built & { js: ReturnType<typeof makeJournalStore> };
+    built.bus.fireDrivePromoted("s-crash", "a", "producing");
+    await flush();
+    built.bus.fireInputNeeded("s-crash", "a");
+    await flush();
+    expect(js.store.persist).toHaveBeenCalled();
+
+    // A crash/lost transition: the durable file MUST be preserved (a fresh drive resumes it).
+    built.bus.emit("terminal:session_state", { sessionId: "s-crash", agentId: "a", state: "lost", durationMs: 0, timestamp: 9 });
+    await flush();
+    expect(js.store.remove, "a lost/crash must NOT remove the durable journal (I10 preserve-on-failure)").not.toHaveBeenCalled();
+  });
+
+  it("DUR-02 wiring (source guard): the journal.set wrapper persists + the holder recovers on construction", () => {
+    const src = readFileSync(fileURLToPath(new URL("./setup-terminal-wake.ts", import.meta.url)), "utf8");
+    // The single DUR-02 persistence point: the journal.set wrapper calls the store's persist.
+    expect(src, "the journal.set wrapper must persist via driveJournalStore").toMatch(/driveJournalStore\??\.persist\(/);
+    // The holder seeds from recover on construction (the resume substrate).
+    expect(src, "the holder must seed from driveJournalStore.recover on construction").toMatch(/driveJournalStore\??\.recover\(/);
   });
 });
