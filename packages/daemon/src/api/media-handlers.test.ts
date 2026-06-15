@@ -52,6 +52,23 @@ vi.mock("../wiring/daemon-utils.js", () => ({
   mimeToExtension: vi.fn(() => "mp3"),
 }));
 
+// VIS-01 (187): the daemon-side vision gate copies the setup-channels-media.ts
+// dance — `isVisionCapable(getModel(provider, modelId))`. Mock both so the gate
+// is deterministic without a live pi-ai catalog. getModel returns a sentinel
+// object; isVisionCapable reads `visionCapableNext` (per-test override). By
+// DEFAULT the main is NOT vision-capable → the registry path (VIS-02 today).
+const { getModelMock, isVisionCapableMock, visionState } = vi.hoisted(() => {
+  const visionState = { capable: false, throwOnResolve: false };
+  const getModelMock = vi.fn((_provider: string, _modelId: string) => {
+    if (visionState.throwOnResolve) throw new Error("model resolution failed");
+    return { input: visionState.capable ? ["text", "image"] : ["text"] };
+  });
+  const isVisionCapableMock = vi.fn((model: { input: string[] }) => model.input.includes("image"));
+  return { getModelMock, isVisionCapableMock, visionState };
+});
+vi.mock("@comis/agent", () => ({ isVisionCapable: isVisionCapableMock }));
+vi.mock("@earendil-works/pi-ai", () => ({ getModel: getModelMock }));
+
 // Mock @comis/skills functions used by handlers
 vi.mock("@comis/skills", () => ({
   selectVisionProvider: vi.fn(
@@ -99,9 +116,27 @@ function makeMockVisionProvider() {
   };
 }
 
+/** VIS-01 (187): a mock main-provider vision bridge. By default it succeeds
+ *  (the bridge resolved the main creds + ran a multimodal completion). Tests
+ *  override `.describeImage` for the err→registry-fallback case. */
+function makeMockMainProviderVision() {
+  return {
+    describeImage: vi.fn(async () => ({
+      ok: true as const,
+      value: { text: "A dog on a skateboard", provider: "anthropic", model: "claude-sonnet-4-5", costUsd: 0.002 },
+    })),
+  };
+}
+
 function makeDeps(overrides?: Partial<MediaHandlerDeps>): MediaHandlerDeps {
   return {
     visionRegistry: new Map([["gemini", makeMockVisionProvider() as never]]),
+    // VIS-01 (187): the main-provider vision wiring. Defaults: main = anthropic
+    // (vision-capable controlled by `visionState.capable`, default false → the
+    // registry path / VIS-02 today), the bridge succeeds when reached.
+    resolveAgentMainProvider: vi.fn((_agentId: string) => ({ providerId: "anthropic" })),
+    mainModelIdFor: vi.fn((_agentId: string) => "claude-sonnet-4-5"),
+    mainProviderVision: makeMockMainProviderVision() as never,
     mediaConfig: {
       imageAnalysis: { maxFileSizeMb: 10 },
       vision: {
@@ -161,6 +196,10 @@ function makeDeps(overrides?: Partial<MediaHandlerDeps>): MediaHandlerDeps {
 describe("createMediaHandlers", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // VIS-01 default posture: main NOT vision-capable → registry path (VIS-02
+    // byte-identical to pre-187). Individual tests flip these.
+    visionState.capable = false;
+    visionState.throwOnResolve = false;
   });
 
   // -------------------------------------------------------------------------
@@ -305,6 +344,202 @@ describe("createMediaHandlers", () => {
       } finally {
         globalThis.fetch = originalFetch;
       }
+    });
+
+    // ─── VIS-01/02/03 (187): the provider-following vision ladder ─────────────
+    // main-vision FIRST → registry SECOND → honest-unavailable. The handler is a
+    // CONSUMER of resolveVisionPath + deps.mainProviderVision (the 183 firewall).
+
+    describe("VIS-01/02/03 vision ladder", () => {
+      it("VIS-01: routes to main-vision FIRST when the main model is vision-capable + has creds", async () => {
+        visionState.capable = true;
+        const deps = makeDeps();
+        const handlers = createMediaHandlers(deps);
+        const registryProvider = deps.visionRegistry!.get("gemini")!;
+
+        const result = (await handlers["image.analyze"]!({
+          source_type: "base64",
+          source: Buffer.from("png").toString("base64"),
+          prompt: "what is this",
+          _agentId: "default",
+        })) as { description: string; provider: string; model: string };
+
+        // The bridge ran; the registry was NOT consulted.
+        expect((deps.mainProviderVision as unknown as { describeImage: ReturnType<typeof vi.fn> }).describeImage)
+          .toHaveBeenCalledWith(expect.any(Buffer), "what is this", expect.any(String), "default");
+        expect((registryProvider as unknown as { describeImage: ReturnType<typeof vi.fn> }).describeImage)
+          .not.toHaveBeenCalled();
+        expect(result).toEqual({ description: "A dog on a skateboard", provider: "anthropic", model: "claude-sonnet-4-5" });
+        // VIS-03 path-log: a content-free line carries path:"main-vision".
+        const logged = (deps.logger.info as ReturnType<typeof vi.fn>).mock.calls
+          .concat((deps.logger.debug as ReturnType<typeof vi.fn>).mock.calls)
+          .map((c) => c[0]);
+        expect(logged.some((f) => f && (f as { path?: string }).path === "main-vision")).toBe(true);
+      });
+
+      it("VIS-01: succeeds via main-vision with NO separate vision-registry key (the bridge owns the cred)", async () => {
+        // The registry is EMPTY (no separate vision provider/key), but the main
+        // bridge succeeds (its cred came from the main provider).
+        visionState.capable = true;
+        const deps = makeDeps({ visionRegistry: new Map() });
+        const handlers = createMediaHandlers(deps);
+
+        const result = (await handlers["image.analyze"]!({
+          source_type: "base64",
+          source: "abc",
+          _agentId: "default",
+        })) as { description: string };
+
+        expect(result.description).toBe("A dog on a skateboard");
+        expect((deps.mainProviderVision as unknown as { describeImage: ReturnType<typeof vi.fn> }).describeImage)
+          .toHaveBeenCalledOnce();
+      });
+
+      it("VIS-02 NON-REGRESSION: a non-vision main is byte-identical to today (registry path, no bridge call)", async () => {
+        visionState.capable = false; // the pre-187 world
+        const deps = makeDeps();
+        const handlers = createMediaHandlers(deps);
+        const registryProvider = deps.visionRegistry!.get("gemini")!;
+
+        const result = (await handlers["image.analyze"]!({
+          source_type: "base64",
+          source: "abc",
+          prompt: "Describe this",
+          _agentId: "default",
+        })) as { description: string; provider: string; model: string };
+
+        // The registry ran exactly as before; the bridge was NOT called.
+        expect((registryProvider as unknown as { describeImage: ReturnType<typeof vi.fn> }).describeImage)
+          .toHaveBeenCalledWith({ image: expect.any(Buffer), prompt: "Describe this", mimeType: expect.any(String) });
+        expect((deps.mainProviderVision as unknown as { describeImage: ReturnType<typeof vi.fn> }).describeImage)
+          .not.toHaveBeenCalled();
+        expect(result).toEqual({ description: "A beautiful image", provider: "gemini", model: "gemini-pro-vision" });
+      });
+
+      it("VIS-02 explicit defaultProvider OVERRIDES main-first (A3 explicit wins → registry)", async () => {
+        visionState.capable = true; // main COULD do vision...
+        const deps = makeDeps({
+          mediaConfig: {
+            imageAnalysis: { maxFileSizeMb: 10 },
+            vision: { scopeRules: [], defaultScopeAction: "allow", defaultProvider: "gemini" }, // ...but explicit wins
+            tts: { autoMode: "off" as const, tagPattern: "\\[\\[tts\\]\\]" },
+          },
+        });
+        const handlers = createMediaHandlers(deps);
+        const registryProvider = deps.visionRegistry!.get("gemini")!;
+
+        const result = (await handlers["image.analyze"]!({
+          source_type: "base64",
+          source: "abc",
+          _agentId: "default",
+        })) as { description: string };
+
+        expect((deps.mainProviderVision as unknown as { describeImage: ReturnType<typeof vi.fn> }).describeImage)
+          .not.toHaveBeenCalled();
+        expect((registryProvider as unknown as { describeImage: ReturnType<typeof vi.fn> }).describeImage)
+          .toHaveBeenCalledOnce();
+        expect(result.description).toBe("A beautiful image");
+      });
+
+      it("VIS-01 main-vision RUNTIME failure falls back to the registry (its own keys, never throw-out)", async () => {
+        visionState.capable = true;
+        const failingBridge = {
+          describeImage: vi.fn(async () => ({
+            ok: false as const,
+            error: Object.assign(new Error("empty"), { errorKind: "empty_response" }),
+          })),
+        };
+        const deps = makeDeps({ mainProviderVision: failingBridge as never });
+        const handlers = createMediaHandlers(deps);
+        const registryProvider = deps.visionRegistry!.get("gemini")!;
+
+        const result = (await handlers["image.analyze"]!({
+          source_type: "base64",
+          source: "abc",
+          _agentId: "default",
+        })) as { description: string };
+
+        expect(failingBridge.describeImage).toHaveBeenCalledOnce();
+        expect((registryProvider as unknown as { describeImage: ReturnType<typeof vi.fn> }).describeImage)
+          .toHaveBeenCalledOnce();
+        expect(result.description).toBe("A beautiful image"); // the registry's result
+      });
+
+      it("VIS-03 honest-unavailable (errorKind) when neither main-vision nor a registry provider resolves", async () => {
+        // main not vision-capable AND empty registry → honest-unavailable.
+        visionState.capable = false;
+        const deps = makeDeps({ visionRegistry: new Map() });
+        const handlers = createMediaHandlers(deps);
+
+        await expect(
+          handlers["image.analyze"]!({ source_type: "base64", source: "abc", _agentId: "default" }),
+        ).rejects.toThrow(/vision provider available/i);
+      });
+
+      it("VIS-03 the gate is conservative when getModel throws (model resolution failure → registry)", async () => {
+        visionState.capable = true;
+        visionState.throwOnResolve = true; // getModel throws → visionCapable=false
+        const deps = makeDeps();
+        const handlers = createMediaHandlers(deps);
+        const registryProvider = deps.visionRegistry!.get("gemini")!;
+
+        await handlers["image.analyze"]!({ source_type: "base64", source: "abc", _agentId: "default" });
+
+        expect((deps.mainProviderVision as unknown as { describeImage: ReturnType<typeof vi.fn> }).describeImage)
+          .not.toHaveBeenCalled();
+        expect((registryProvider as unknown as { describeImage: ReturnType<typeof vi.fn> }).describeImage)
+          .toHaveBeenCalledOnce();
+      });
+
+      it("security floor RETAINED: a denied scope short-circuits BEFORE any tier (no bridge, no registry)", async () => {
+        visionState.capable = true;
+        const { resolveVisionScope } = await import("@comis/skills");
+        (resolveVisionScope as ReturnType<typeof vi.fn>).mockReturnValueOnce("deny");
+        const deps = makeDeps({
+          mediaConfig: {
+            imageAnalysis: { maxFileSizeMb: 10 },
+            vision: { scopeRules: [{ pattern: "x", action: "deny" }] as never, defaultScopeAction: "deny" },
+            tts: { autoMode: "off" as const, tagPattern: "\\[\\[tts\\]\\]" },
+          },
+        });
+        const handlers = createMediaHandlers(deps);
+        const registryProvider = deps.visionRegistry!.get("gemini")!;
+
+        const result = (await handlers["image.analyze"]!({
+          source_type: "base64",
+          source: "abc",
+          _channelType: "telegram",
+          _agentId: "default",
+        })) as { description: string };
+
+        expect(result.description).toBe("Vision analysis not available for this context.");
+        expect((deps.mainProviderVision as unknown as { describeImage: ReturnType<typeof vi.fn> }).describeImage)
+          .not.toHaveBeenCalled();
+        expect((registryProvider as unknown as { describeImage: ReturnType<typeof vi.fn> }).describeImage)
+          .not.toHaveBeenCalled();
+      });
+
+      it("security floor RETAINED: the buffer size cap still fires on the main-vision path", async () => {
+        visionState.capable = true;
+        const deps = makeDeps({
+          mediaConfig: {
+            imageAnalysis: { maxFileSizeMb: 0.000001 }, // ~1 byte limit → any image exceeds
+            vision: { scopeRules: [], defaultScopeAction: "allow" },
+            tts: { autoMode: "off" as const, tagPattern: "\\[\\[tts\\]\\]" },
+          },
+        });
+        const handlers = createMediaHandlers(deps);
+
+        await expect(
+          handlers["image.analyze"]!({
+            source_type: "base64",
+            source: Buffer.from("a much larger payload than one byte").toString("base64"),
+            _agentId: "default",
+          }),
+        ).rejects.toThrow(/exceeds limit/);
+        expect((deps.mainProviderVision as unknown as { describeImage: ReturnType<typeof vi.fn> }).describeImage)
+          .not.toHaveBeenCalled();
+      });
     });
   });
 
@@ -516,6 +751,42 @@ describe("createMediaHandlers", () => {
       await expect(
         handlers["media.describe_video"]!({ attachment_url: "tg-file://vid" }),
       ).rejects.toThrow("Attachment resolution not available");
+    });
+
+    // ─── VIS-03 (187): raw video → gemini-video tier (main-vision N/A) ─────────
+
+    it("VIS-03 routes raw video to the gemini-video tier (UNCHANGED); the main-vision bridge is NEVER called for video", async () => {
+      visionState.capable = true; // even a vision-capable main does NOT serve video
+      const deps = makeDeps();
+      const handlers = createMediaHandlers(deps);
+
+      const result = (await handlers["media.describe_video"]!({
+        attachment_url: "tg-file://video456",
+        prompt: "what is happening",
+        _agentId: "default",
+      })) as { description: string; provider: string };
+
+      expect(result.description).toBe("A short video clip");
+      expect((deps.mainProviderVision as unknown as { describeImage: ReturnType<typeof vi.fn> }).describeImage)
+        .not.toHaveBeenCalled();
+      // VIS-03 path-log: a content-free line carries path:"gemini-video".
+      const logged = (deps.logger.info as ReturnType<typeof vi.fn>).mock.calls
+        .concat((deps.logger.debug as ReturnType<typeof vi.fn>).mock.calls)
+        .map((c) => c[0]);
+      expect(logged.some((f) => f && (f as { path?: string }).path === "gemini-video")).toBe(true);
+    });
+
+    it("VIS-03 honest-unavailable (errorKind, NOT an undefined-method call) when no video-capable provider exists", async () => {
+      const { selectVisionProvider } = await import("@comis/skills");
+      // A provider WITHOUT describeVideo → the registry is "available" but cannot
+      // serve video. The handler must surface an honest error, not call undefined.
+      (selectVisionProvider as ReturnType<typeof vi.fn>).mockReturnValue({ describeImage: vi.fn() });
+      const deps = makeDeps();
+      const handlers = createMediaHandlers(deps);
+
+      await expect(
+        handlers["media.describe_video"]!({ attachment_url: "tg-file://vid", _agentId: "default" }),
+      ).rejects.toThrow(/video-capable vision provider/i);
     });
   });
 
