@@ -1,0 +1,65 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * The `videoHandlerDeps` dependency shape (Phase 188 / Plan 04), extracted from
+ * `api/types.ts` into its own leaf type module to keep `types.ts` under the
+ * 800-line architecture cap (the video deps + their doc comments would push it
+ * over). This is a TYPE-only module that imports only from `@comis/core` /
+ * `@comis/skills` / `@comis/infra` / the sibling cost-limiter — nothing in the
+ * `api/` handler graph imports it back, so it adds no madge cycle (same reasoning
+ * the inline image shape cites; the video shape simply lives here instead).
+ *
+ * OBSERVABILITY SCOPE (Phase 188 = logger-only): this shape deliberately carries
+ * NO `trajectoryRegistry`/`eventBus` field. The video handler's only
+ * observability in Phase 188 is structured Pino logger lines (an INFO completion
+ * line + an ERROR/WARN with errorKind+hint on every failure branch); it emits NO
+ * `video.*` trajectory events and adds NO synthetic `observability:token_usage`
+ * row. The eventBus→trajectory→`comis explain` bridge and the synthetic cost
+ * route are OBS-04 / OBS-03 — Phase 192, which ADDS the trajectory/eventBus
+ * fields here. Omitting them now keeps the deps honest about what the handler
+ * uses.
+ *
+ * @module
+ */
+import type { ComisLogger } from "@comis/infra";
+
+/** Dependencies the `video.generate` RPC handler consumes. Mirrors the inline
+ *  image `imageHandlerDeps` shape, retyped for video, with the DIVERGENCE-3 cost
+ *  limiter and the logger-only obs surface (no trajectory/eventBus). */
+export interface VideoHandlerDepsShape {
+  provider: import("@comis/core").VideoGenerationPort;
+  rateLimiter: import("@comis/skills").VideoGenRateLimiter;
+  config: import("@comis/core").VideoGenerationConfig;
+  logger: ComisLogger;
+  /** Direct channel delivery -- resolve adapter by channel type (DEL-02). */
+  getChannelAdapter: (channelType: string) => Pick<import("@comis/core").ChannelPort, "sendAttachment"> | undefined;
+  /** RES-01: resolve the agent's main provider in lockstep with the completion
+   *  path (I4). OBS/lockstep ONLY — the provider INSTANCE is selected at wiring
+   *  time (setup-video-provider.ts), NEVER re-derived here (the v2.20
+   *  keyless-summarizer two-source firewall). */
+  resolveAgentMainProvider: (agentId: string) => { providerId: string };
+  /** SEC-03: resolve an `image_url` workspace file path under the caller's agent
+   *  dir (safePath confinement) — the reference resolver is the image SSRF guard
+   *  reused verbatim (text-to-video baseline; i2v variant-select is Phase 191). */
+  workspaceDirs: Map<string, string>;
+  defaultWorkspaceDir: string;
+  /** DEL-01: the per-agent persistence getter. Persists the generated video
+   *  buffer to the agent's confined workspace (`~/.comis/workspace/media/
+   *  videos/`) via MediaPersistenceService (raised maxBytes). Never throws —
+   *  returns `err` on a persistence failure so the handler falls through to the
+   *  size-capped base64 fallback. `PersistedFile` is on the `@comis/skills/tools`
+   *  subpath (the proven import path). */
+  persist: (
+    agentId: string,
+    buffer: Buffer,
+    opts: { mediaKind: "video"; mimeType: string },
+  ) => Promise<import("@comis/shared").Result<import("@comis/skills/tools").PersistedFile, Error>>;
+  /** SEC-02 (DIVERGENCE 3): the per-agent/hour USD cost ceiling, gated
+   *  PRE-submit against a worst-case estimate. Optional — undefined when
+   *  `integrations.media.videoGeneration.maxCostPerHourUsd` is unset (count-only,
+   *  no regression). When present the handler computes
+   *  `est = estimateVideoCostUsd(...)` FIRST, then `canSpend(agentId, est)`
+   *  BEFORE port.execute (block with quota_exceeded), and
+   *  `record(agentId, actual ?? est)` AFTER a successful render. The count rate
+   *  limiter (maxPerHour) is RETAINED and orthogonal. */
+  costLimiter?: import("./video-cost-limiter.js").VideoCostLimiter;
+}

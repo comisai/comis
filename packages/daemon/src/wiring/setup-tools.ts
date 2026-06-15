@@ -29,7 +29,7 @@ import {
 } from "@comis/core";
 import { stat as fsStat } from "node:fs/promises";
 import type { PerAgentConfig } from "@comis/core";
-import type { ImageGenerationPort } from "@comis/core";
+import type { ImageGenerationPort, VideoGenerationPort } from "@comis/core";
 // Skills-concern symbols staying on the `.` subpath (policy, pipeline, MCP
 // bridge, credential injection, link understanding). These symbols live
 // in packages/skills/src/skills/index.ts.
@@ -46,11 +46,8 @@ import {
 } from "@comis/skills";
 import type { RpcCall } from "@comis/skills/platform-tools";
 
-// Tool capability adapters + factories live on the `./tools` subpath.
-// Exec / process / apply-patch tool factories, file-state tracker,
-// media-persistence / image-sanitizer all live under
-// packages/skills/src/tools/. Daemon imports them from the dedicated
-// subpath to surface the architectural boundary in the type system.
+// Tool capability adapters + factories (exec/process/apply-patch, file-state
+// tracker, media-persistence/image-sanitizer) live on the `./tools` subpath.
 import {
   createExecTool,
   createProcessTool,
@@ -159,6 +156,8 @@ export interface ToolsDeps {
   getCapabilityPortForAgent: (agentId: string) => ToolCapabilityPort;
   /** Image generation provider (undefined when API key missing -- tool not registered). */
   imageGenProvider?: ImageGenerationPort;
+  /** Video generation provider (undefined when disabled -- video_generate tool not registered; the registry descriptor is gated on this context signal). */
+  videoGenProvider?: VideoGenerationPort;
   /** OS-level sandbox provider detected once at daemon startup. */
   sandboxProvider?: SandboxProvider;
   /** Background task manager for background_tasks tool registration. */
@@ -478,6 +477,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
         mcpClientManager,
         onSuspiciousContent,
         imageGenProvider: deps.imageGenProvider,
+        videoGenProvider: deps.videoGenProvider,
         backgroundTaskManager: deps.backgroundTaskManager,
         toolCapabilityPort: deps.getCapabilityPortForAgent(agentId),
         contextEngineVersion: agentConfig?.contextEngine?.version ?? "pipeline",

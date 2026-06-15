@@ -608,60 +608,14 @@ export interface MediaApiDeps {
      *  MemoryApiDeps / WorkspaceApiDeps eventBus so the slices unify. */
     eventBus?: AppContainer["eventBus"];
   };
-  // Video generation deps (Phase 188 / Plan 04). The structural shape mirrors
-  // `imageHandlerDeps` above — inlined here (same madge-cycle constraint) so the
-  // file stays at the bottom of the api/ import graph. The dispatcher in
-  // api/rpc-dispatch.ts passes this through to createVideoHandlers.
-  //
-  // OBSERVABILITY SCOPE (Phase 188 = logger-only): this shape deliberately does
-  // NOT carry `trajectoryRegistry`/`eventBus`. The video handler's only
-  // observability in Phase 188 is structured Pino logger lines (an INFO
-  // completion line + an ERROR/WARN with errorKind+hint on every failure
-  // branch); it emits NO `video.*` trajectory events and adds NO synthetic
-  // `observability:token_usage` row. The eventBus→trajectory→`comis explain`
-  // bridge (the `video.requested`/`generated`/`failed`/`delivered` events) and
-  // the synthetic cost route are OBS-04 / OBS-03 — Phase 192. When that phase
-  // wires the bridge it ADDS the trajectory/eventBus fields here; omitting them
-  // now keeps the deps honest about what the handler actually uses.
-  videoHandlerDeps?: {
-    provider: import("@comis/core").VideoGenerationPort;
-    rateLimiter: import("@comis/skills").VideoGenRateLimiter;
-    config: import("@comis/core").VideoGenerationConfig;
-    logger: ComisLogger;
-    /** Direct channel delivery -- resolve adapter by channel type (DEL-02). */
-    getChannelAdapter: (channelType: string) => Pick<import("@comis/core").ChannelPort, "sendAttachment"> | undefined;
-    /** RES-01: resolve the agent's main provider in lockstep with the completion
-     *  path (I4). OBS/lockstep ONLY — the provider INSTANCE is selected at
-     *  wiring time (setup-video-provider.ts), NEVER re-derived here (the v2.20
-     *  keyless-summarizer two-source firewall). */
-    resolveAgentMainProvider: (agentId: string) => { providerId: string };
-    /** SEC-03: resolve an `image_url` workspace file path under the caller's
-     *  agent dir (safePath confinement) — the reference resolver is the image
-     *  SSRF guard reused verbatim (text-to-video baseline; i2v variant-select is
-     *  Phase 191). */
-    workspaceDirs: Map<string, string>;
-    defaultWorkspaceDir: string;
-    /** DEL-01: the per-agent persistence getter. Persists the generated video
-     *  buffer to the agent's confined workspace (`~/.comis/workspace/media/
-     *  videos/`) via MediaPersistenceService (raised maxBytes). Never throws —
-     *  returns `err` on a persistence failure so the handler falls through to the
-     *  size-capped base64 fallback. `PersistedFile` is on the
-     *  `@comis/skills/tools` subpath (the proven import path). */
-    persist: (
-      agentId: string,
-      buffer: Buffer,
-      opts: { mediaKind: "video"; mimeType: string },
-    ) => Promise<import("@comis/shared").Result<import("@comis/skills/tools").PersistedFile, Error>>;
-    /** SEC-02 (DIVERGENCE 3): the per-agent/hour USD cost ceiling, gated
-     *  PRE-submit against a worst-case estimate. Optional — undefined when
-     *  `integrations.media.videoGeneration.maxCostPerHourUsd` is unset, in which
-     *  case the ceiling is skipped (count-only, no regression). When present the
-     *  handler computes `est = estimateVideoCostUsd(...)` FIRST, then
-     *  `canSpend(agentId, est)` BEFORE port.execute (block with quota_exceeded),
-     *  and `record(agentId, actual ?? est)` AFTER a successful render. The count
-     *  rate limiter (maxPerHour) is RETAINED and orthogonal. */
-    costLimiter?: import("./video-cost-limiter.js").VideoCostLimiter;
-  };
+  // Video generation deps (Phase 188 / Plan 04). The shape mirrors
+  // `imageHandlerDeps` above (retyped for video, with the DIVERGENCE-3 cost
+  // limiter + logger-only obs) but lives in a sibling leaf type module
+  // (`./video-handler-deps.ts`) to keep THIS file under the 800-line cap; that
+  // module imports nothing from the api/ handler graph, so it adds no madge
+  // cycle. The dispatcher in api/rpc-dispatch.ts passes this through to
+  // createVideoHandlers.
+  videoHandlerDeps?: import("./video-handler-deps.js").VideoHandlerDepsShape;
   /** VIS-01 (187): resolve the agent's MAIN provider id in lockstep with the
    *  completion path (I4) — used for the obs label + the resolveVisionPath
    *  input. The provider INSTANCE/creds are resolved inside mainProviderVision

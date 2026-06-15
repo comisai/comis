@@ -6,7 +6,7 @@
  *
  * @module
  */
-import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync, chmodSync, statSync, mkdirSync } from "node:fs";
 import {
   safePath,
   createApprovalGate,
@@ -34,7 +34,7 @@ import { createImageCostLimiter, type ImageCostLimiter } from "../api/image-cost
 // PRE-submit against a worst-case estimate (sibling api/ module).
 import { createVideoCostLimiter, type VideoCostLimiter } from "../api/video-cost-limiter.js";
 import type { LoggingResult } from "./setup-logging.js";
-import type { BootContext } from "../daemon-types.js";
+import type { BootContext, PermissionCorrection } from "../daemon-types.js";
 // Sibling-direct imports (not via the wiring barrel) to keep main-helpers free
 // of a barrel import edge — these are the image-gen bundle's collaborators.
 import { createImageGenGetter } from "./setup-media.js";
@@ -644,4 +644,46 @@ export function buildMediaVisionBundle(deps: {
     logger: skillsLogger,
   });
   return { capability, resolveMainModelId: (agentId: string) => resolveMain(agentId).modelId || undefined };
+}
+
+/**
+ * Scan ~/.comis/ and fix permissions on the data directory and known sensitive
+ * files. Returns an array of corrections for deferred logging. Extracted from
+ * `daemon.ts` to keep the composition root under its 3000-line architecture cap
+ * (runs at startup; the result is logged after the logger is up). Self-contained
+ * — a `dataDir` string in, a `PermissionCorrection[]` out, only node:fs sync I/O.
+ */
+export function hardenDataDirPermissions(dataDir: string): PermissionCorrection[] {
+  const corrections: PermissionCorrection[] = [];
+
+  // Ensure data dir exists with 0o700
+  try {
+    mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+  } catch { /* may already exist */ }
+
+  // Fix data directory permissions
+  try {
+    const stat = statSync(dataDir);
+    const currentMode = stat.mode & 0o777;
+    if (currentMode !== 0o700) {
+      chmodSync(dataDir, 0o700);
+      corrections.push({ file: dataDir, oldMode: currentMode, newMode: 0o700 });
+    }
+  } catch { /* best-effort */ }
+
+  // Fix known sensitive files
+  const sensitiveFiles = ["config.yaml", "config.local.yaml", ".env", "secrets.db", "secrets.json"];
+  for (const filename of sensitiveFiles) {
+    try {
+      const filePath = `${dataDir}/${filename}`;
+      const stat = statSync(filePath);
+      const currentMode = stat.mode & 0o777;
+      if (currentMode !== 0o600) {
+        chmodSync(filePath, 0o600);
+        corrections.push({ file: filePath, oldMode: currentMode, newMode: 0o600 });
+      }
+    } catch { /* file may not exist; best-effort */ }
+  }
+
+  return corrections;
 }

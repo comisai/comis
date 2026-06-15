@@ -14,6 +14,7 @@ icon: "photo-film"
 |------|--------------|--------------------|
 | `image_analyze` | Analyze images using AI vision (file, URL, base64, or attachment URL) | Vision (follows the agent's main vision-capable model -- no separate key needed; else the Anthropic / OpenAI / Google registry) |
 | `image_generate` | Generate an image from a text prompt and deliver it to the current channel | Image gen (follows the agent's main provider by default; a Codex/ChatGPT-login main needs no image key; OpenRouter / fal opt-in) |
+| `video_generate` | Generate a short video from a text prompt and deliver it to the current channel | Video gen (follows the agent's main provider by default — Google→Veo, xAI→Grok Imagine; `fal` + `FAL_KEY` is the wired baseline this release) |
 | `tts_synthesize` | Generate spoken audio from text -- returns a workspace file path | TTS (OpenAI, ElevenLabs, Edge) |
 | `transcribe_audio` | Convert speech to text | STT (OpenAI Whisper, Groq, Deepgram) |
 | `describe_video` | Describe raw video content using vision | Vision (Gemini-only raw video) |
@@ -207,6 +208,34 @@ For per-provider setup, model defaults, and configuration, see the [Media & Voic
     When following a Codex main provider, Comis identifies itself to the ChatGPT backend as the official Codex client -- it sends the same first-party client headers (`originator: codex_cli_rs`, a Codex-shaped `User-Agent`, a `ChatGPT-Account-ID` decoded from your token, and per-request `session-id`/`x-client-request-id` identifiers) that the official Codex CLI sends. This is a **first-party-client compatibility shim** using **your own** ChatGPT/Codex OAuth credentials against the **same endpoint** the official Codex CLI uses -- so Cloudflare does not 403 requests from non-residential IPs. It is authorized reuse of your own credentials, **not detection evasion**. If a future change to the ChatGPT backend rejects this image path, set `integrations.media.imageGeneration.provider: openrouter` (with `OPENROUTER_API_KEY`) as the explicit fallback.
     </Note>
   </Accordion>
+
+  <Accordion title="video_generate -- Generate videos from text prompts" icon="clapperboard">
+    Use `video_generate` to create a short video clip from a text prompt. The generated clip is delivered directly to the current channel via the daemon. This is the v2.24 baseline: an inline submit -> poll -> download against the **FAL** queue API (`fal-ai/veo3.1/fast` by default), proving the full loop end-to-end.
+
+    **Provider following (`integrations.media.videoGeneration.provider: auto`, the default).** Video generation follows the agent's main provider and reuses its credentials, mirroring image generation: a `google` main resolves to **Google Veo** and an `xai` main resolves to **xAI Grok Imagine**, each with the key the agent already uses (`GOOGLE_API_KEY` / `XAI_API_KEY`) -- no video-specific key. Where the main provider has no video API (e.g. `openai`, `anthropic`), the tool returns an honest "unavailable" with a hint to set `integrations.media.videoGeneration.provider` (e.g. `fal` + `FAL_KEY`) -- it never silently routes to a different paid provider.
+
+    <Note>
+    In **this release (v2.24 Phase 188)** the FAL path is fully wired and is the loop-prover: set `provider: fal` + `FAL_KEY` to generate today. The native **Veo** and **Grok Imagine** adapters land in **Phase 190** -- under `provider: auto` a `google`/`xai` main currently resolves the selection but reports an honest "unavailable" naming Phase 190 (use `provider: fal` + `FAL_KEY` in the meantime). The `video_status` tool (for long-running renders that outlive the turn) lands in **Phase 189**.
+    </Note>
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `prompt` | string | Yes | Text description of the video to generate |
+    | `duration` | number | No | Clip length in seconds (provider-validated; default from `defaultDurationSecs`, e.g. 8) |
+    | `aspect_ratio` | string | No | `16:9`, `9:16`, `1:1` (provider-validated; default from `defaultAspectRatio`) |
+    | `resolution` | string | No | `720p`, `1080p`, `4k` (provider-validated; default from `defaultResolution`) |
+    | `audio` | boolean | No | Generate audio when the backend supports it (raises the cost estimate) |
+    | `negative_prompt` | string | No | What to avoid (provider-dependent) |
+    | `seed` | number | No | Deterministic seed (provider-dependent) |
+    | `image_url` | string | No | A workspace file path, URL, or data-URI of a reference image for image-to-video. SSRF-guarded + workspace-confined (full image-to-video variant selection lands in a later phase; the security floor is enforced now). |
+    | `model` | string | No | Override the backend's default video model/endpoint (e.g. `fal-ai/veo3.1/fast`). Omit to use the default. |
+
+    **Cost ceiling (estimate-first).** Video is dollars-per-clip and is **already rendering once submitted**, so unlike image generation the per-agent **USD** ceiling, `integrations.media.videoGeneration.maxCostPerHourUsd`, is gated on a **worst-case pre-submit estimate** (duration x per-second rate, with audio/4k as the upper bound): if the estimate would push the agent's accumulated hourly spend over the ceiling, the request is blocked with `errorKind: quota_exceeded` (and a hint naming the key) **before** the provider is called. The `maxPerHour` count limit is retained and orthogonal. Unset means no cost ceiling.
+
+    **Delivery, persistence, and degradation.** A generated clip is downloaded to a buffer and persisted to the agent's confined workspace under `~/.comis/workspace/media/videos/` (a UUID filename, size-capped) **before** any delivery decision -- an expiring provider URL cannot orphan it. Delivery is **capability-driven**: a channel whose adapter implements attachment sending receives the persisted file directly (as a `video` attachment with `durationSecs`); a channel without it (currently only **IRC**) degrades to a notice + the persisted path. For large clips the inline base64 fallback is **size-capped** -- above the cap the handler returns the persisted workspace path instead of a multi-megabyte base64 blob.
+
+    **Observability.** Each generation logs a single INFO completion line carrying the executing video provider, the agent's main provider, the model, `estimatedCostUsd`, `costUsd`, `sizeBytes`, `durationMs`, and the mime type; every failure branch logs an `errorKind` + an actionable `hint` (never the raw provider message, a key, or a bearer). The richer `comis explain` video reconstruction lands with the trajectory bridge in a later phase.
+  </Accordion>
 </AccordionGroup>
 
 ## Common Workflows
@@ -229,6 +258,7 @@ Media tools route to providers based on the credentials present in your secret s
 | TTS (`tts_synthesize`) | OpenAI TTS, ElevenLabs, Edge | Configured order; `auto-tts` heuristic decides when to use voice | `OPENAI_API_KEY`, `ELEVENLABS_API_KEY` (Edge is free) |
 | STT (`transcribe_audio`) | OpenAI Whisper (gpt-4o-mini-transcribe), Groq Whisper, Deepgram nova-3 | Fallback chain in declared order | `OPENAI_API_KEY`, `GROQ_API_KEY`, `DEEPGRAM_API_KEY` (at least one) |
 | Image generation (`image_generate`) | Follows the agent's main provider (`auto`): native **OpenAI** (`gpt-image-1`), **Google Gemini** (`gemini-2.5-flash-image`), **Codex** (ChatGPT-login), and **OpenRouter**; explicit `openrouter` / `openai-codex` / `openai` / `google` / `fal` | `auto` = the agent's main provider (reuses its key, or OAuth bearer for a Codex main); else the explicit `provider` | None in the `auto` case (reuses the main provider's key): `OPENAI_API_KEY` for an `openai` main, `GOOGLE_API_KEY` for a `google` main, the **OAuth bearer** for a Codex main (no image key). `OPENROUTER_API_KEY` for the OpenRouter opt-in; `FAL_KEY` for explicit `fal`. Honest "unavailable" (not silent) if the main provider can't generate images and no `provider` is set. |
+| Video generation (`video_generate`) | Follows the agent's main provider (`auto`): **Google Veo** for a `google` main, **xAI Grok Imagine** for an `xai` main (native adapters land Phase 190); explicit **`fal`** (FAL queue, `fal-ai/veo3.1/fast`) is the wired baseline this release | `auto` = the agent's main provider (reuses its key); else the explicit `provider` (`fal` / `google` / `xai`) | `FAL_KEY` for explicit `fal`; in the `auto` case reuses the main provider's key (`GOOGLE_API_KEY` for Veo, `XAI_API_KEY` for Grok — wired Phase 190). Honest "unavailable" (not silent) if the main provider can't generate video and no `provider` is set. |
 | Document extraction (`extract_document`) | Local pdf.js + CSV / text decoders | n/a | None (uses FFmpeg for some audio metadata) |
 
 ### Cost notes

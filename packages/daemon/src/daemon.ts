@@ -189,7 +189,7 @@ import { createTokenRegistry } from "./api/token-handlers.js";
 // trust-flag-FREE obsExplainForMcpClient closure (obs_explain MCP tool runs the
 // assembler directly under daemon authority — no admin RPC, no admin trust).
 import { assembleIncidentReportFromSources, assembleFleetHealthReport, makeRealReader } from "./api/obs-handlers/index.js";
-import type { DaemonInstance, DaemonOverrides, BootContext, PermissionCorrection, SessionStoreBridge } from "./daemon-types.js";
+import type { DaemonInstance, DaemonOverrides, BootContext, SessionStoreBridge } from "./daemon-types.js";
 import { createEmptyBootContext } from "./daemon-types.js";
 export type { DaemonInstance, DaemonOverrides } from "./daemon-types.js";
 import { setupObsPersistence } from "./observability/obs-persistence-wiring.js";
@@ -205,7 +205,7 @@ import { createProcessMonitor } from "./process/process-monitor.js";
 import { ok, err, suppressError } from "@comis/shared";
 import { exportTrajectoryBundle } from "@comis/observability";
 import { randomUUID } from "node:crypto";
-import { existsSync, chmodSync, statSync, mkdirSync, readFileSync, cpSync } from "node:fs";
+import { existsSync, statSync, mkdirSync, readFileSync, cpSync } from "node:fs";
 import { writeFile as fsWriteFile, rm } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { resolve as pathResolve } from "node:path";
@@ -221,7 +221,7 @@ import { setupSingleAgent } from "./wiring/setup-agents/index.js";
 import { buildDialecticWiring, dialecticWiringDepsFromBoot } from "./wiring/setup-dialectic.js";
 import { createConversationReset } from "./wiring/conversation-reset.js";
 import { setupSecretManager } from "./wiring/setup-secret-manager.js";
-import { restoreApprovalState, resolveGatewayTokens, setupChannelHealthMonitor, resolveModelHealthMultilingual, buildImageGenBundle, buildImageHandlerDeps, buildMediaVisionBundle } from "./wiring/main-helpers.js";
+import { restoreApprovalState, resolveGatewayTokens, setupChannelHealthMonitor, resolveModelHealthMultilingual, buildImageGenBundle, buildImageHandlerDeps, buildVideoGenBundle, buildVideoHandlerDeps, buildMediaVisionBundle, hardenDataDirPermissions } from "./wiring/main-helpers.js";
 import { createInboundMessageIdResolver, type InboundMessageIdResolver } from "./wiring/inbound-message-id-resolver.js";
 import { logOperationModelDryRun } from "./wiring/startup-dry-run.js";
 import { emitDockerRestartPolicyWarn } from "./setup-docker-restart-warn.js";
@@ -269,49 +269,6 @@ export function applyInspectDefaultsForLogging(
   inspect.defaultOptions.depth = null;
   inspect.defaultOptions.breakLength = Infinity;
   return { depthChanged, breakLengthChanged };
-}
-
-// ---------------------------------------------------------------------------
-// Startup permission hardening
-// ---------------------------------------------------------------------------
-
-/**
- * Scan ~/.comis/ and fix permissions on the data directory and known
- * sensitive files. Returns an array of corrections for deferred logging.
- */
-export function hardenDataDirPermissions(dataDir: string): PermissionCorrection[] {
-  const corrections: PermissionCorrection[] = [];
-
-  // Ensure data dir exists with 0o700
-  try {
-    mkdirSync(dataDir, { recursive: true, mode: 0o700 });
-  } catch { /* may already exist */ }
-
-  // Fix data directory permissions
-  try {
-    const stat = statSync(dataDir);
-    const currentMode = stat.mode & 0o777;
-    if (currentMode !== 0o700) {
-      chmodSync(dataDir, 0o700);
-      corrections.push({ file: dataDir, oldMode: currentMode, newMode: 0o700 });
-    }
-  } catch { /* best-effort */ }
-
-  // Fix known sensitive files
-  const sensitiveFiles = ["config.yaml", "config.local.yaml", ".env", "secrets.db", "secrets.json"];
-  for (const filename of sensitiveFiles) {
-    try {
-      const filePath = `${dataDir}/${filename}`;
-      const stat = statSync(filePath);
-      const currentMode = stat.mode & 0o777;
-      if (currentMode !== 0o600) {
-        chmodSync(filePath, 0o600);
-        corrections.push({ file: filePath, oldMode: currentMode, newMode: 0o600 });
-      }
-    } catch { /* file may not exist; best-effort */ }
-  }
-
-  return corrections;
 }
 
 // ---------------------------------------------------------------------------
@@ -815,6 +772,7 @@ type PostChannelsBootContext = BootContext & Required<Pick<BootContext,
   | "ttsAdapter" | "visionRegistry" | "linkRunner" | "transcriber" | "fileExtractor"
   | "resolveAttachment" | "deliveryQueue"
   | "imageGenProvider" | "imageGenRateLimiter" | "imageGenConfig" | "persistImage" | "imageGenCostLimiter"
+  | "videoGenProvider" | "videoGenRateLimiter" | "videoGenConfig" | "persistVideo" | "videoGenCostLimiter"
 >>;
 
 /**
@@ -923,6 +881,9 @@ function buildRpcDispatchDeps(deps: {
   // literal previously crammed six concerns onto one line to fit. Undefined when
   // image generation is disabled (no provider / rate limiter).
   const imageHandlerDeps = buildImageHandlerDeps(c, resolveAgentMainProviderFor);
+  // Phase 188: video.generate handler deps (undefined when disabled). The spread
+  // into ApiDispatchDeps below wires the live handler (source guard pins it).
+  const videoHandlerDeps = buildVideoHandlerDeps(c, resolveAgentMainProviderFor);
   // Inlined buildTokenStoreMutators.
   const addToTokenStore: import("./api/rpc-dispatch.js").ApiDispatchDeps["addToTokenStore"] = (entry) => { g.runtimeTokens.push({ id: entry.id, secretBuf: Buffer.from(entry.secret, "utf-8"), scopes: entry.scopes }); };
   const removeFromTokenStore: import("./api/rpc-dispatch.js").ApiDispatchDeps["removeFromTokenStore"] = (id) => {
@@ -1016,6 +977,7 @@ function buildRpcDispatchDeps(deps: {
     embeddingCacheStats: c.embeddingCacheStats, embeddingCircuitBreakerState: c.embeddingCircuitBreakerState,
     skillRegistries: c.skillRegistries, notificationService: c.notificationContext.notificationService,
     imageHandlerDeps,
+    videoHandlerDeps,
     oauthCredentialStore: c.oauthCredentialStore,
     // Wire observability DI seams.
     // ObservabilityApiDeps.dataDir: used by obs.trace.* handlers for session-index + bundle export.
@@ -2192,6 +2154,9 @@ async function bootChannels(boot: BootContext): Promise<void> {
   // Image-generation bundle (see buildImageGenBundle in wiring/main-helpers.ts). 184: oauthManager threads the DEFAULT agent's OAuth manager for the Codex image path (CDX-01).
   const { imageGenConfig, imageGenProvider, imageGenRateLimiter, persistImage, imageGenCostLimiter } =
     buildImageGenBundle({ container, defaultAgentId, skillsLogger, oauthManager: handle.oauthManagers.get(defaultAgentId), workspaceDirs, defaultWorkspaceDir });
+  // Video-generation bundle (Phase 188 — see buildVideoGenBundle in wiring/main-helpers.ts).
+  const { videoGenConfig, videoGenProvider, videoGenRateLimiter, persistVideo, videoGenCostLimiter } =
+    buildVideoGenBundle({ container, defaultAgentId, skillsLogger, workspaceDirs, defaultWorkspaceDir });
   // VIS-01 (187): the provider-following vision bundle — same construction site, reusing the DEFAULT agent's OAuth manager (codex bearer) + the boot clock (the bridge's per-message timestamp). See buildMediaVisionBundle in wiring/main-helpers.ts.
   const mediaVisionBundle = buildMediaVisionBundle({ container, defaultAgentId, skillsLogger, clock: handle.clock, oauthManager: handle.oauthManagers.get(defaultAgentId) });
 
@@ -2235,7 +2200,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     // Fresh accessor for per-server tool filtering — read live so
     // config:mutated server edits surface on the next tool assembly.
     getMcpServerEntries: () => container.config.integrations?.mcp?.servers ?? [],
-    sandboxProvider, imageGenProvider, backgroundTaskManager,
+    sandboxProvider, imageGenProvider, videoGenProvider, backgroundTaskManager,
     sessionTrackerRegistry: handle.sessionTrackerRegistry, getCapabilityPortForAgent,
     // broker activation seam. When executor.broker is configured,
     // thread the broker handle into setupTools so assembleToolsForAgent wires
@@ -2410,6 +2375,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     crossSessionSender, subAgentRunner, sendToChannel, announceToParent,
     deadLetterQueue, announcementBatcher, gatewaySendRef,
     sandboxProvider, imageGenProvider, imageGenRateLimiter, imageGenConfig, persistImage, imageGenCostLimiter, mediaVisionBundle,
+    videoGenProvider, videoGenRateLimiter, videoGenConfig, persistVideo, videoGenCostLimiter,
     assembleToolsForAgent, preprocessMessageText, getCapabilityPortForAgent,
     heartbeatRunner, duplicateDetector, perAgentRunner, wakeCoalescer,
     nodeTypeRegistry, graphCoordinator, namedGraphStore,
@@ -2683,6 +2649,7 @@ async function bootShutdown(
     | "ttsAdapter" | "visionRegistry" | "linkRunner" | "transcriber" | "fileExtractor"
     | "resolveAttachment" | "deliveryQueue" | "deadLetterQueue"
     | "imageGenProvider" | "imageGenRateLimiter" | "imageGenConfig" | "persistImage" | "imageGenCostLimiter"
+    | "videoGenProvider" | "videoGenRateLimiter" | "videoGenConfig" | "persistVideo" | "videoGenCostLimiter"
     | "getExecutor" | "rpcCall" | "wireDispatch"
     | "assembleToolsForAgent" | "preprocessMessageText"
     | "gatewaySendRef" | "channelAdaptersRef" | "cronWakeCallbackRef"
