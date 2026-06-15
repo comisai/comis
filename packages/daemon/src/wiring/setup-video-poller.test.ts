@@ -145,6 +145,29 @@ interface MockPollerDeps {
   timers: ReturnType<typeof createFakeTimers>;
   sleep: ReturnType<typeof vi.fn>;
   nowMs: () => number;
+  /** OBS-03 (Phase 192): the event bus the off-turn synthetic
+   *  `observability:token_usage` cost route emits on. */
+  eventBus: { emit: ReturnType<typeof vi.fn> };
+}
+
+/** The OBS-03 synthetic cost event shape (the loose `observability:token_usage`
+ *  payload the poller emits + token-tracker SUMs). */
+interface TokenUsageEvent {
+  traceId: string;
+  agentId: string;
+  channelId: string;
+  sessionKey: string;
+  provider: string;
+  model: string;
+  tokens: { prompt: number; completion: number; total: number };
+  cost: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number };
+}
+
+/** Find the OBS-03 synthetic cost emits the poller fired on the bus. */
+function tokenUsageEmits(deps: MockPollerDeps): TokenUsageEvent[] {
+  return deps.eventBus.emit.mock.calls
+    .filter((c) => c[0] === "observability:token_usage")
+    .map((c) => c[1] as TokenUsageEvent);
 }
 
 /**
@@ -200,11 +223,12 @@ function makePoller(opts: {
   const logger = createMockLogger();
   const timers = createFakeTimers();
   const sleep = vi.fn().mockResolvedValue(undefined);
+  const eventBus = { emit: vi.fn() };
   let clock = 0;
   const nowMs = () => clock; // never advances on its own → deadline only via explicit jumps
 
   const deps: MockPollerDeps = {
-    store, provider, persist, costLimiter, sendAttachment, getChannelAdapter, logger, timers, sleep, nowMs,
+    store, provider, persist, costLimiter, sendAttachment, getChannelAdapter, logger, timers, sleep, nowMs, eventBus,
   };
 
   const poller = createVideoPoller({
@@ -218,6 +242,7 @@ function makePoller(opts: {
     timers,
     sleep,
     nowMs,
+    eventBus: eventBus as never,
     ...(opts.trajectoryRegistry ? { trajectoryRegistry: opts.trajectoryRegistry as never } : {}),
   });
   void clock;
@@ -447,6 +472,140 @@ describe("createVideoPoller", () => {
     await flush();
     expect(deps.sendAttachment).toHaveBeenCalledTimes(1);
     expect(deps.store.markDoneSpy).toHaveBeenCalledTimes(1);
+  });
+
+  // ─── OBS-03 (Phase 192): the off-turn synthetic observability:token_usage cost route ───
+  it("done branch emits observability:token_usage EXACTLY ONCE: cost.total === actual, tokens 0, fields from the ROW (not ALS)", async () => {
+    const { poller, deps } = makePoller({
+      seedRows: [{ jobId: "fal-req-abc123", agentId: "alpha", channelType: "telegram", channelId: "ch-recorded", traceId: "trace-seed" }],
+    });
+    poller.track(makeRecord({ agentId: "alpha", channelId: "ch-recorded", traceId: "trace-seed", sessionKey: "default:u1:telegram:c1" }));
+    await flush();
+
+    const emits = tokenUsageEmits(deps);
+    // EXACTLY ONCE per render (markDone already flipped the row out of pending,
+    // so the done branch cannot repeat for one render — Pitfall 3).
+    expect(emits).toHaveLength(1);
+    const ev = emits[0]!;
+    // The actual cost from the FAL fetch (0.8) rides cost.total; tokens all 0
+    // (A3: subscribers SUM cost.total, never divide — a 0-token event is safe).
+    expect(ev.cost.total).toBeCloseTo(0.8, 4);
+    expect(ev.tokens).toEqual({ prompt: 0, completion: 0, total: 0 });
+    // MUST-DIFFER 3: the routing comes from the persisted ROW (no ALS frame off-turn).
+    expect(ev.traceId).toBe("trace-seed");
+    expect(ev.agentId).toBe("alpha");
+    expect(ev.channelId).toBe("ch-recorded");
+    expect(ev.sessionKey).toBe("default:u1:telegram:c1");
+    expect(ev.provider).toBe("fal");
+  });
+
+  it("FAL has no per-call actual → the synthetic cost.total falls back to the row's estimatedCostUsd (Pitfall 4)", async () => {
+    // A FAL-style fetch result with NO costUsd (the queue API reports no per-call
+    // cost). The cost route bills the estimate (the same `?? estimate` fallback
+    // costLimiter.record uses) so the rollup + the reconstruct agree.
+    const provider = makeProvider({
+      fetchResult: vi.fn().mockResolvedValue(
+        ok({ buffer: SMALL_MP4, mimeType: "video/mp4", model: "fal-ai/veo3.1/fast", provider: "fal", durationSecs: 8 }),
+      ),
+    });
+    const { poller, deps } = makePoller({
+      provider,
+      seedRows: [{ jobId: "fal-req-abc123", estimatedCostUsd: 1.5 }],
+    });
+    poller.track(makeRecord({ estimatedCostUsd: 1.5, sessionKey: "s" }));
+    await flush();
+
+    const emits = tokenUsageEmits(deps);
+    expect(emits).toHaveLength(1);
+    expect(emits[0]!.cost.total).toBeCloseTo(1.5, 4);
+  });
+
+  it("a render with no actual AND a zero estimate emits NO synthetic cost event (gated > 0)", async () => {
+    const provider = makeProvider({
+      fetchResult: vi.fn().mockResolvedValue(
+        ok({ buffer: SMALL_MP4, mimeType: "video/mp4", model: "m", provider: "fal", durationSecs: 8 }),
+      ),
+    });
+    const { poller, deps } = makePoller({
+      provider,
+      seedRows: [{ jobId: "fal-req-abc123", estimatedCostUsd: 0 }],
+    });
+    poller.track(makeRecord({ estimatedCostUsd: 0, sessionKey: "s" }));
+    await flush();
+
+    expect(tokenUsageEmits(deps)).toHaveLength(0);
+    // The delivery still happened — only the cost emit is gated, not the render.
+    expect(deps.store.markDoneSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("no eventBus (boot without one) → done branch does not throw and delivers normally", async () => {
+    // The eventBus dep is optional; absent → no synthetic cost emit, delivery
+    // path unaffected (the cost route is gated on deps.eventBus).
+    const db = new Database(":memory:");
+    ensureVideoJobTable(db);
+    const store = spyStore(createVideoJobStore(db));
+    void store.insert({
+      jobId: "fal-req-abc123", provider: "fal", model: "m", agentId: "alpha",
+      channelType: "telegram", channelId: "ch", traceId: "trace-seed",
+      state: "pending", estimatedCostUsd: 2.4, submittedAtMs: 0, updatedAtMs: 0,
+    });
+    const poller = createVideoPoller({
+      store, provider: makeProvider() as never, persist: vi.fn().mockResolvedValue(ok(PERSISTED_OK)) as never,
+      costLimiter: { record: vi.fn() }, getChannelAdapter: vi.fn().mockReturnValue({ sendAttachment: vi.fn().mockResolvedValue(ok("m")) }) as never,
+      config: makeConfig(), logger: createMockLogger(), timers: createFakeTimers(), sleep: vi.fn().mockResolvedValue(undefined), nowMs: () => 0,
+      // NO eventBus
+    });
+    poller.track(makeRecord({ channelId: "ch", sessionKey: "s" }));
+    await flush();
+    expect(store.markDoneSpy).toHaveBeenCalledTimes(1);
+  });
+
+  // ─── OBS-01 (Phase 192): the completion INFO line carries the full field set ───
+  it("OBS-01: the video_poll_complete INFO line carries videoProvider/model/costUsd/sizeBytes/durationMs/durationSecs/mimeType/traceId/jobId/agentId", async () => {
+    const { poller, deps } = makePoller({ seedRows: [{ jobId: "fal-req-abc123", agentId: "alpha", traceId: "trace-seed" }] });
+    poller.track(makeRecord({ agentId: "alpha", traceId: "trace-seed" }));
+    await flush();
+    const info = (deps.logger.info as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c) => (c[0] as { step?: string }).step === "video_poll_complete",
+    );
+    expect(info).toBeTruthy();
+    const line = info![0] as Record<string, unknown>;
+    expect(line.videoProvider).toBe("fal");
+    expect(line.model).toBe("fal-ai/veo3.1/fast");
+    expect(line.costUsd).toBe(0.8);
+    expect(line.sizeBytes).toBe(PERSISTED_OK.sizeBytes);
+    expect(typeof line.durationMs).toBe("number");
+    // OBS-01 completeness (192): mimeType + durationSecs ride the completion line
+    // where derivable (from the fetched `out`).
+    expect(line.durationSecs).toBe(8);
+    expect(line.mimeType).toBe("video/mp4");
+    expect(line.traceId).toBe("trace-seed");
+    expect(line.jobId).toBe("fal-req-abc123");
+    expect(line.agentId).toBe("alpha");
+  });
+
+  // ─── OBS-02 (Phase 192): every failure branch WARNs the closed errorKind + hint ───
+  it("OBS-02: every poller failure branch WARNs with the closed errorKind (∈ log union), videoErrorKind (domain), and hint", async () => {
+    // Drive the markFailed branch (a thrown poll → empty_response) and assert the
+    // WARN carries the CLOSED log errorKind (VIDEO_ERR_TO_LOG[kind]) + the domain
+    // videoErrorKind + an actionable hint — no failure branch emits unclassified.
+    const provider = makeProvider({ poll: vi.fn().mockResolvedValue(err(new Error("boom"))) });
+    const { poller, deps } = makePoller({ provider, seedRows: [{ jobId: "fal-req-abc123" }] });
+    poller.track(makeRecord({ sessionKey: "s" }));
+    await flush();
+    const w = (deps.logger.warn as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c) => (c[0] as { step?: string }).step === "video_poll_failed",
+    );
+    expect(w).toBeTruthy();
+    const line = w![0] as Record<string, unknown>;
+    // The closed log union (10-member ErrorKind) — empty_response maps to "dependency".
+    expect(line.errorKind).toBe("dependency");
+    // The domain kind (7-member VideoErrorKind) rides videoErrorKind, never the log union.
+    expect(line.videoErrorKind).toBe("empty_response");
+    expect(typeof line.hint).toBe("string");
+    expect((line.hint as string).length).toBeGreaterThan(0);
+    // No synthetic cost emit on a failed render (cost is reconciled only on done).
+    expect(tokenUsageEmits(deps)).toHaveLength(0);
   });
 
   // ─── JOB-03 restart resume: seed pending + done provider → ONE delivery ───
