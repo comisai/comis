@@ -95,6 +95,30 @@ function buildSummary(state: WizardState): string {
     lines.push(`Tools:      ${names.join(", ")}`);
   }
 
+  // Image generation section
+  if (state.imageProvider?.provider) {
+    lines.push("");
+    lines.push(`Image:      ${state.imageProvider.provider}`);
+  }
+
+  // Video generation section
+  if (state.videoProvider?.provider) {
+    lines.push("");
+    lines.push(`Video:      ${state.videoProvider.provider}`);
+  }
+
+  // Transcription (STT) section
+  if (state.transcriptionProvider?.provider) {
+    lines.push("");
+    lines.push(`Transcribe: ${state.transcriptionProvider.provider}`);
+  }
+
+  // Text-to-speech section
+  if (state.ttsProvider?.provider) {
+    lines.push("");
+    lines.push(`TTS:        ${state.ttsProvider.provider}`);
+  }
+
   // Workspace section
   if (state.dataDir) {
     lines.push("");
@@ -131,6 +155,22 @@ function buildEditOptions(state: WizardState): { value: string; label: string }[
 
   if (state.toolProviders) {
     options.push({ value: "tool-providers", label: "Tool Providers" });
+  }
+
+  if (state.imageProvider) {
+    options.push({ value: "image-providers", label: "Image Generation" });
+  }
+
+  if (state.videoProvider) {
+    options.push({ value: "video-providers", label: "Video Generation" });
+  }
+
+  if (state.transcriptionProvider) {
+    options.push({ value: "transcription", label: "Voice Transcription" });
+  }
+
+  if (state.ttsProvider) {
+    options.push({ value: "tts", label: "Text-to-Speech" });
   }
 
   if (state.dataDir) {

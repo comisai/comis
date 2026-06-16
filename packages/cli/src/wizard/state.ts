@@ -199,6 +199,10 @@ export const FLOW_STEPS: Record<FlowType, readonly WizardStepId[]> = {
     "gateway",
     "workspace",
     "tool-providers",
+    "image-providers",
+    "video-providers",
+    "transcription",
+    "tts",
     "review",
     "write-config",
     "daemon-start",
@@ -241,6 +245,10 @@ const STATE_DEPENDENCIES: Partial<
   gateway: [],
   workspace: [],
   "tool-providers": [],
+  "image-providers": [],
+  "video-providers": [],
+  transcription: [],
+  tts: [],
 };
 
 // ---------- Core State Functions ----------
@@ -406,6 +414,10 @@ export const NON_SKIPPABLE_STEPS: ReadonlySet<WizardStepId> = new Set([
   "channels",
   "gateway",
   "tool-providers",
+  "image-providers",
+  "video-providers",
+  "transcription",
+  "tts",
   "review",
   "write-config",
   "daemon-start",

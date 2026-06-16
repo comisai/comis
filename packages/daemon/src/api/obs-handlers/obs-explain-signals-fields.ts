@@ -27,6 +27,10 @@ export type IncidentImageSignal = NonNullable<IncidentSignals["image"]>;
  *  `IncidentSignals["vision"]`). */
 export type IncidentVisionSignal = NonNullable<IncidentSignals["vision"]>;
 
+/** OBS-04 (192): the reconstructed video-generation turn (the non-optional
+ *  shape of `IncidentSignals["videoGenerated"]`). */
+export type IncidentVideoSignal = NonNullable<IncidentSignals["videoGenerated"]>;
+
 /** Hard cap on every `errorPreview` — the long body is never carried whole. */
 const MAX_ERROR_PREVIEW = 200;
 
@@ -277,28 +281,130 @@ export function accumulateVisionRecord(
   }
 }
 
+/** OBS-04 (192): the seq-aware fold state for the reconstructed video turn +
+ *  the `seq` of the record that last SET `outcome` (the terminal record).
+ *  Mirrors `VisionFoldState`/`ImageFoldState` (IN-04): the fold is driven by the
+ *  record stream's `seq`, NOT array order, so only a record with a `seq` ≥ the
+ *  last outcome-setting record can overwrite `outcome`. */
+export interface VideoFoldState {
+  signal: IncidentVideoSignal | undefined;
+  /** The seq at which `outcome` was last set (a terminal generated/failed). */
+  outcomeSeq: number;
+}
+
+/**
+ * OBS-04 (192): fold one `video.*` trajectory record into the reconstructed
+ * video-generation turn (the analog of `accumulateVisionRecord`, in this helper
+ * to keep `obs-explain-signals.ts` ≤500). Pure: takes the prior fold state + the
+ * record's `type`/`data`/`seq` and returns the new state. The terminal
+ * `video.generated` / `video.failed` record sets `outcome` (+ model/costUsd/
+ * estimatedCostUsd/durationSecs on success — the cost rides generated, Route a;
+ * errorKind on failure); `video.delivered` flips the `delivered` latch (the
+ * `image.delivered` precedent); `video.requested` seeds a conservative
+ * `outcome:"failed"` block (so a turn aborting before a terminal still surfaces)
+ * and `video.submitted` adds the `jobId` (the OBS-04 stitch handle). Returns
+ * `prev` unchanged for a non-video type. Content-free reads (asString/asNumber —
+ * ids/labels/numbers only; never the prompt, the bytes, or a provider message;
+ * T-192-06). `sizeBytes` rides the LOG/event but NOT the report block (only
+ * durationSecs/cost/model — matching the `videoGenerated` Zod).
+ *
+ * SEQ-AWARE (IN-04): a terminal generated/failed only overwrites `outcome` when
+ * its `seq` is ≥ the seq of the last outcome-setting record — a stale lower-seq
+ * record arriving after a higher-seq terminal no longer flips the outcome. The
+ * `video.requested`/`video.submitted` seeds do not set `outcomeSeq`, so the
+ * first real terminal record always wins (background-completion: the off-turn
+ * `video.generated` arrives at a HIGHER seq than the in-turn `video.submitted`).
+ */
+export function accumulateVideoRecord(
+  prev: VideoFoldState,
+  type: string,
+  data: Record<string, unknown>,
+  seq: number,
+): VideoFoldState {
+  const signal = prev.signal;
+  switch (type) {
+    case "video.requested":
+    case "video.submitted": {
+      const provider = asString(data.provider);
+      const jobId = asString(data.jobId);
+      const next: IncidentVideoSignal = signal ?? { provider: provider ?? "", outcome: "failed", delivered: false };
+      if (provider !== undefined && next.provider.length === 0) next.provider = provider;
+      if (jobId !== undefined) next.jobId = jobId;
+      return { signal: next, outcomeSeq: prev.outcomeSeq };
+    }
+    case "video.generated": {
+      // Seq-aware terminal: a stale (lower-seq) record never overwrites a newer
+      // outcome. The carried `delivered`/`jobId` are preserved regardless of seq
+      // (delivered is a monotonic latch; jobId ties the off-turn completion back).
+      if (signal !== undefined && seq < prev.outcomeSeq) return prev;
+      const model = asString(data.model);
+      const costUsd = asNumber(data.costUsd);
+      const estimatedCostUsd = asNumber(data.estimatedCostUsd);
+      const durationSecs = asNumber(data.durationSecs);
+      return {
+        signal: {
+          provider: asString(data.provider) ?? signal?.provider ?? "",
+          outcome: "ok",
+          delivered: signal?.delivered ?? false,
+          ...(signal?.jobId !== undefined ? { jobId: signal.jobId } : {}),
+          ...(model !== undefined ? { model } : {}),
+          ...(costUsd !== undefined ? { costUsd } : {}),
+          ...(estimatedCostUsd !== undefined ? { estimatedCostUsd } : {}),
+          ...(durationSecs !== undefined ? { durationSecs } : {}),
+        },
+        outcomeSeq: seq,
+      };
+    }
+    case "video.delivered": {
+      const next: IncidentVideoSignal = signal ?? { provider: "", outcome: "ok", delivered: false };
+      next.delivered = data.delivered === true;
+      return { signal: next, outcomeSeq: prev.outcomeSeq };
+    }
+    case "video.failed": {
+      if (signal !== undefined && seq < prev.outcomeSeq) return prev;
+      const errorKind = asString(data.errorKind);
+      return {
+        signal: {
+          provider: asString(data.provider) ?? signal?.provider ?? "",
+          outcome: "failed",
+          delivered: signal?.delivered ?? false,
+          ...(signal?.jobId !== undefined ? { jobId: signal.jobId } : {}),
+          ...(errorKind !== undefined ? { errorKind } : {}),
+        },
+        outcomeSeq: seq,
+      };
+    }
+    default:
+      return prev;
+  }
+}
+
 /** The mutable media-fold slice the record normalizer (`toIncidentSignals`)
- *  carries — the two seq-aware folds (`image.*` 186, `media.vision.*` 187) +
- *  their outcome-seqs + the running seq counter. Structurally a subset of `Acc`;
- *  typed here so `applyMediaRecord` owns BOTH switch-case groups and keeps
- *  `obs-explain-signals.ts` ≤500 (extraction, NOT an allowlist bump). */
+ *  carries — the three seq-aware folds (`image.*` 186, `media.vision.*` 187,
+ *  `video.*` 192) + their outcome-seqs + the running seq counter. Structurally a
+ *  subset of `Acc`; typed here so `applyMediaRecord` owns ALL switch-case groups
+ *  and keeps `obs-explain-signals.ts` ≤500 (extraction, NOT an allowlist bump). */
 export interface MediaFoldSlice {
   image?: IncidentImageSignal;
   imageOutcomeSeq: number;
   vision?: IncidentVisionSignal;
   visionOutcomeSeq: number;
+  video?: IncidentVideoSignal;
+  videoOutcomeSeq: number;
   /** The running monotonic seq counter (for records lacking an explicit seq). */
   seq: number;
 }
 
 /**
- * VIS-04 / OBS-04: if `type` is an `image.*` or `media.vision.*` lifecycle
- * record, fold it into `slice` (mutating the matching signal + outcomeSeq) and
- * return `true`; otherwise return `false` (the normalizer falls through to its
- * other cases). Drives each fold by the record's `seq` (IN-04 — not array order;
- * records lacking a seq fall back to the running counter, monotonic by arrival).
- * Extracted from `toIncidentSignals` so the two record classes share one
- * dispatcher (the image + vision case bodies were byte-identical boilerplate).
+ * VIS-04 / OBS-04: if `type` is an `image.*`, `media.vision.*`, or `video.*`
+ * lifecycle record, fold it into `slice` (mutating the matching signal +
+ * outcomeSeq) and return `true`; otherwise return `false` (the normalizer falls
+ * through to its other cases). Drives each fold by the record's `seq` (IN-04 —
+ * not array order; records lacking a seq fall back to the running counter,
+ * monotonic by arrival). Extracted from `toIncidentSignals` so the three record
+ * classes share one dispatcher (their case bodies were byte-identical
+ * boilerplate) — and so the `video.*` arm lives HERE, keeping the 497-line
+ * `obs-explain-signals.ts` ≤500 (the WARNING-1 file-size budget).
  */
 export function applyMediaRecord(
   slice: MediaFoldSlice,
@@ -322,6 +428,16 @@ export function applyMediaRecord(
       const folded = accumulateVisionRecord({ signal: slice.vision, outcomeSeq: slice.visionOutcomeSeq }, type, data, recSeq);
       slice.vision = folded.signal;
       slice.visionOutcomeSeq = folded.outcomeSeq;
+      return true;
+    }
+    case "video.requested":
+    case "video.submitted":
+    case "video.generated":
+    case "video.delivered":
+    case "video.failed": {
+      const folded = accumulateVideoRecord({ signal: slice.video, outcomeSeq: slice.videoOutcomeSeq }, type, data, recSeq);
+      slice.video = folded.signal;
+      slice.videoOutcomeSeq = folded.outcomeSeq;
       return true;
     }
     default:

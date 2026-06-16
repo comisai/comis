@@ -164,6 +164,8 @@ export interface ShutdownDeps {
   proxyTypingCleanup?: () => void;
   /** Stop the delivery queue (from setupDeliveryQueue). */
   shutdownDeliveryQueue?: () => void;
+  /** Stop the background video poller — sweeper interval + in-flight loops (189). */
+  shutdownVideoPoller?: () => void;
   /** Stop the delivery mirror (from setupDeliveryMirror). */
   shutdownDeliveryMirror?: () => void;
   /** Stop the output retention housekeeper (from setupOutputRetention). */ outputRetentionShutdown?: () => void;
@@ -237,6 +239,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
     terminalWakeShutdown,
     proxyTypingCleanup,
     shutdownDeliveryQueue,
+    shutdownVideoPoller,
     shutdownDeliveryMirror,
     outputRetentionShutdown,
     stopChannelHealthMonitor,
@@ -254,6 +257,19 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
   /** Runs the full teardown body once. Subsequent calls no-op. */
   const onShutdown = async (): Promise<void> => {
       let shutdownOrder = 0;
+
+      // Collapse the repeated guarded sync-teardown shape
+      // `if (fn) { stopMs; await withStepTimeout(() => { fn(); log }, name) }` to
+      // one call. Behavior-neutral (same sequential order + `++shutdownOrder`
+      // numbering + per-step timeout); a no-op when `fn` is undefined.
+      const stopSync = async (fn: (() => void) | undefined, component: string): Promise<void> => {
+        if (!fn) return;
+        const stopMs = systemNowMs();
+        await withStepTimeout(() => {
+          fn();
+          daemonLogger.info({ component, durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
+        }, component, daemonLogger);
+      };
 
       // Daemon session cost summary
       const allUsage = tokenTracker.getAll();
@@ -531,31 +547,14 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
           daemonLogger.info({ component: "wake-coalescer", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "wake-coalescer", daemonLogger);
       }
-      // Drain the delivery queue, delivery mirror, and output
-      // retention housekeeper. Each replaces a system:shutdown subscriber
-      // previously installed in channels-helpers.ts:258 / :260 / :266 that
-      // silently no-op'd in production.
-      if (shutdownDeliveryQueue) {
-        const stopMs = systemNowMs();
-        await withStepTimeout(() => {
-          shutdownDeliveryQueue();
-          daemonLogger.info({ component: "delivery-queue", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
-        }, "delivery-queue", daemonLogger);
-      }
-      if (shutdownDeliveryMirror) {
-        const stopMs = systemNowMs();
-        await withStepTimeout(() => {
-          shutdownDeliveryMirror();
-          daemonLogger.info({ component: "delivery-mirror", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
-        }, "delivery-mirror", daemonLogger);
-      }
-      if (outputRetentionShutdown) {
-        const stopMs = systemNowMs();
-        await withStepTimeout(() => {
-          outputRetentionShutdown();
-          daemonLogger.info({ component: "output-retention", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
-        }, "output-retention", daemonLogger);
-      }
+      // Drain the delivery queue, the Phase-189 background video poller, the
+      // delivery mirror, and the output retention housekeeper. Each replaces a
+      // system:shutdown subscriber previously installed in channels-helpers.ts that
+      // silently no-op'd in production. Order is preserved (sequential await).
+      await stopSync(shutdownDeliveryQueue, "delivery-queue");
+      await stopSync(shutdownVideoPoller, "video-poller"); // 189: sweeper + in-flight loops
+      await stopSync(shutdownDeliveryMirror, "delivery-mirror");
+      await stopSync(outputRetentionShutdown, "output-retention");
       // Dispose all active Gemini caches on shutdown
       if (geminiCacheManager) {
         const stopMs = systemNowMs();
@@ -564,13 +563,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
           daemonLogger.info({ component: "gemini-cache", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "gemini-cache", daemonLogger);
       }
-      if (mediaTempManager) {
-        const stopMs = systemNowMs();
-        await withStepTimeout(() => {
-          mediaTempManager.stopCleanupInterval();
-          daemonLogger.info({ component: "media-temp-manager", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
-        }, "media-temp-manager", daemonLogger);
-      }
+      await stopSync(mediaTempManager ? () => mediaTempManager.stopCleanupInterval() : undefined, "media-temp-manager");
       // Drain per-agent background-process registries BEFORE stopping the broker.
       // Background exec processes use the broker as their egress proxy (HTTPS_PROXY
       // → broker TCP port). Stopping the broker first would cut their outbound

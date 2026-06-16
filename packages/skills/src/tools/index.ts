@@ -253,3 +253,13 @@ export { createCompositeFileExtractor } from "./integrations/document/composite-
 // Image generation (provider adapters, factory, rate limiter)
 export { createImageGenProvider, createImageGenRateLimiter } from "./integrations/image-gen/index.js";
 export type { ImageGenRateLimiter } from "./integrations/image-gen/index.js";
+
+// Video generation (FAL queue adapter, factory, rate limiter) — consumed by
+// Plan 04's daemon wiring (createVideoGenProvider + createVideoGenRateLimiter +
+// createFalVideoAdapter), mirroring the image route.
+export {
+  createVideoGenProvider,
+  createVideoGenRateLimiter,
+  createFalVideoAdapter,
+} from "./integrations/video-gen/index.js";
+export type { VideoGenRateLimiter } from "./integrations/video-gen/index.js";

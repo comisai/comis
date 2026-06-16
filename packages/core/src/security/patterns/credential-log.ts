@@ -45,6 +45,16 @@ export const URL_PASSWORD = /:\/\/([^:]+):([^@]{3,})@/g;
 /** Generic hex secret (40+ chars) */
 export const HEX_SECRET_LONG = /\b[0-9a-f]{40,}\b/gi;
 
+/**
+ * FAL API key: `<uuid-or-token>:<24+ hex>` (CR-01, Phase 192). A FAL `FAL_KEY`
+ * is a uuid-shaped id joined by `:` to a long hex secret half — caught by NEITHER
+ * `HEX_SECRET_LONG` (the uuid half has hyphens; the hex half is ~32 < 40 chars)
+ * NOR the digit-prefixed `TELEGRAM_BOT_TOKEN`. The 24-char-hex floor on the tail
+ * is what keeps ordinary `host:8080` / `key:value` prose from matching (a colon
+ * alone is not enough — the high-entropy hex tail is the discriminator). The head
+ * is hex + hyphens (a uuid) so a plain word before the colon does not match. */
+export const FAL_KEY = /\b[0-9a-fA-F][0-9a-fA-F-]{7,}:[0-9a-fA-F]{24,}\b/g;
+
 /** GitHub token (all prefixes: ghp, gho, ghu, ghs, ghr) */
 export const GITHUB_TOKEN_FULL = /\bgh[pousr]_[A-Za-z0-9_]{36,}\b/g;
 
@@ -62,5 +72,6 @@ export const CREDENTIAL_LOG_PATTERNS: readonly RegExp[] = [
   JWT_PATTERN,
   URL_PASSWORD,
   HEX_SECRET_LONG,
+  FAL_KEY,
   GITHUB_TOKEN_FULL,
 ];

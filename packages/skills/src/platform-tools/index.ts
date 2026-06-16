@@ -86,6 +86,9 @@ export { createNotifyTool } from "./tools/notify-tool.js";
 // Image generation
 export { createImageGenerateTool } from "./tools/image-generate-tool.js";
 
+// Video generation
+export { createVideoGenerateTool } from "./tools/video-generate-tool.js";
+
 // Heartbeat management
 export { createHeartbeatManageTool } from "./tools/heartbeat-manage-tool.js";
 

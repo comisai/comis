@@ -4,8 +4,8 @@
 **Status:** FINAL
 **Interface source:** `packages/daemon/src/api/types.ts` (`MediaApiDeps`)
 **Construction site:** `packages/daemon/src/daemon.ts` (`buildRpcDispatchDeps`)
-**Field count:** 16 (6 required + 10 optional + 0 stale-fallback)
-**Updated:** 2026-06-15 — +4 optional fields for the provider-following vision ladder (`resolveAgentMainProvider`, `mainModelIdFor`, `mainProviderVision` — Plan 187-02; `trajectoryRegistry` — Plan 187-03 VIS-04 obs).
+**Field count:** 17 (6 required + 11 optional + 0 stale-fallback)
+**Updated:** 2026-06-15 — +`videoStatusHandlerDeps` (Phase 189 review fix: the field was added to `MediaApiDeps` in Plan 189-03 but its audit row was missed, failing the AUDIT-sync architecture test). Prior: +4 optional fields for the provider-following vision ladder (`resolveAgentMainProvider`, `mainModelIdFor`, `mainProviderVision` — Plan 187-02; `trajectoryRegistry` — Plan 187-03 VIS-04 obs).
 **Location:** Co-located with @comis/daemon package. `files: ["dist", "bundled-skills"]` in `packages/daemon/package.json` excludes from npm tarball.
 
 ## Field Classification
@@ -22,6 +22,8 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | transcriber | optional | media.transcribe RPC fails with "speech-to-text provider not configured"; voice messages flow through to the agent untranscribed | packages/daemon/src/api/types.ts:392 |
 | fileExtractor | optional | media.extract_document RPC fails with "file extraction provider not configured"; document attachments are forwarded as raw bytes | packages/daemon/src/api/types.ts:394 |
 | imageHandlerDeps | optional | image.generate RPC is not registered; image-generation features (Proactive v1 / IMGN) are disabled | packages/daemon/src/api/types.ts:400 |
+| videoHandlerDeps | optional | video.generate RPC is not registered; video-generation (submit → async background poller → announce-on-complete) is disabled (Phase 188/189) | packages/daemon/src/api/types.ts:618 |
+| videoStatusHandlerDeps | optional | video.status RPC is not registered; the agent cannot poll an async video job's state (the read side of the Phase-189 lifecycle is disabled — video generation is off) | packages/daemon/src/api/types.ts:624 |
 | workspaceDirs | required | — | packages/daemon/src/api/types.ts:411 |
 | defaultWorkspaceDir | required | — | packages/daemon/src/api/types.ts:412 |
 | defaultAgentId | required | — | packages/daemon/src/api/types.ts:413 |
@@ -38,7 +40,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 ## Summary
 
 - **Pre-audit count:** 12
-- **Final count:** 16 (6 required + 10 optional)
+- **Final count:** 17 (6 required + 11 optional)
 - **Removed (stale-fallback):** 0
 - **`stale-fallback` classification rows:** 0 (architecture test enforces; no row may carry this terminal value at any commit)
 

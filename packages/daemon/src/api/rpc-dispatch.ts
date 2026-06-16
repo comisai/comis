@@ -58,6 +58,8 @@ import { createHeartbeatHandlers } from "./heartbeat-handlers.js";
 import { createSkillHandlers } from "./skill-handlers.js";
 import { createNotificationHandlers } from "./notification-handlers.js";
 import { createImageHandlers } from "./image-handlers.js";
+import { createVideoHandlers } from "./video-handlers.js";
+import { createVideoStatusHandlers } from "./video-status-handlers.js";
 import { createProviderHandlers } from "./provider-handlers.js";
 
 // ---------------------------------------------------------------------------
@@ -408,6 +410,19 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
     // Proactive v1: Image generation handlers
     ...(deps.imageHandlerDeps
       ? createImageHandlers(deps.imageHandlerDeps)
+      : {}),
+    // v2.24 Phase 188: Video generation handler (video.generate). Gated on the
+    // video bundle being wired (provider + rate limiter present); the spread
+    // closes the contract↔handler parity gate via [VideoGenerateContract.method].
+    ...(deps.videoHandlerDeps
+      ? createVideoHandlers(deps.videoHandlerDeps)
+      : {}),
+    // v2.24 Phase 189 (JOB-04): Video status handler (video.status). Gated on the
+    // status deps being wired (the agent-scoped store + logger); the spread closes
+    // the contract↔handler parity gate via [VideoStatusContract.method] in the SAME
+    // wave the contract is declared (no cross-wave strand — the 188 BLOCKER-1 class).
+    ...(deps.videoStatusHandlerDeps
+      ? createVideoStatusHandlers(deps.videoStatusHandlerDeps)
       : {}),
   };
 

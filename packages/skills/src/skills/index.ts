@@ -260,6 +260,13 @@ export { createCompositeFileExtractor } from "../tools/integrations/document/com
 export { createImageGenProvider, createImageGenRateLimiter } from "../tools/integrations/image-gen/index.js";
 export type { ImageGenRateLimiter } from "../tools/integrations/image-gen/index.js";
 
+// Video generation (FAL queue adapter, factory, rate limiter) — Phase 188 / Plan
+// 04 consumes these from the bare @comis/skills barrel exactly like the image
+// route (the daemon bundle imports the factory + rate limiter; the deps type
+// imports VideoGenRateLimiter).
+export { createVideoGenProvider, createVideoGenRateLimiter } from "../tools/integrations/video-gen/index.js";
+export type { VideoGenRateLimiter } from "../tools/integrations/video-gen/index.js";
+
 // ===========================================================================
 // The 38+ platform-tool factory re-exports that used to live here (the
 // `transitional kitchen-sink` block) have been dropped. Daemon now consumes

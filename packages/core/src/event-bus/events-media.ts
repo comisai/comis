@@ -200,3 +200,132 @@ export interface MediaVisionEvents {
     timestamp: number;
   };
 }
+
+/**
+ * MediaVideoGenerationEvents: video-generation lifecycle events (video:*).
+ *
+ * OBS-04 (Phase 192, v2.24): the daemon video RPC handler (`video.generate`,
+ * in-turn) AND the off-turn background poller (`setup-video-poller.ts`) record a
+ * video turn's lifecycle onto the per-session trajectory so `comis explain
+ * <sessionKey>` can reconstruct it — INCLUDING a job that completes in the
+ * background AFTER the originating turn ended. The submit ties the later
+ * completion via `traceId`/`jobId`; the persisted `session_key` job-row column is
+ * how the off-turn poller resolves the recorder.
+ *
+ * APPEND-ONLY (Pitfall 8): a NEW event set ALONGSIDE the SemVer-frozen
+ * `MediaGenerationEvents` `image:*` shape + `MediaVisionEvents` `media.vision:*`
+ * shape — never a rename of an `image.*`/`media.vision.*` literal (a rename trips
+ * the bridge-entry-count guard + the `IncidentReport` reconstruction + the web
+ * codegen cascade).
+ *
+ * DIRECT-emitted by the daemon video RPC handler / poller via the per-session
+ * trajectory recorder (`trajectoryRegistry.getRecorder(sessionKey).recordEvent`,
+ * the image-handlers.ts:210 precedent) — the daemon RPC/poller context has NO
+ * EventBus bridge subscription. Declared in `EventMap` (and mapped in the three
+ * trajectory registries + a translator) for trajectory-type ARCH CLOSURE and so
+ * a future bus emitter is already wired.
+ *
+ * CONTENT-FREE (T-192-01): every payload carries ids / labels / counts /
+ * `costUsd` / `outcome` / `errorKind` / booleans ONLY — NEVER the prompt, the
+ * video bytes, a credential, the Veo keyed-download-URL, or a raw provider
+ * message. `costUsd` rides `video:generated` (OBS-03 Route a — FAL/Veo estimate,
+ * Grok actual; optional so an absent value never appears) so the trajectory
+ * reconstruction surfaces the video turn's cost. The redaction-safe detail rides
+ * the structured Pino LOG, never the bus/trajectory.
+ */
+export interface MediaVideoGenerationEvents {
+  /**
+   * A video generation was requested (entry, after the main-provider resolve).
+   * Carries the EXECUTING provider id + the resolved main provider id (labels
+   * only — the lockstep/divergence signal). NO prompt.
+   */
+  "video:requested": {
+    /** The executing video provider id (the boot-selected port — `deps.provider.id`). */
+    provider: string;
+    /** The caller agent's resolved main provider id (RES-01 lockstep label). */
+    mainProvider: string;
+    /** Multi-tenant agent identifier (envelope correlation — stripped from trajectory data). */
+    agentId?: string;
+    /** Formatted session key (envelope correlation — stripped from trajectory data). */
+    sessionKey?: string;
+    timestamp: number;
+  };
+
+  /**
+   * A video job was SUBMITTED to the provider (the durable opaque jobId
+   * captured). The render itself completes off-turn in the background poller.
+   * Carries the executing provider + the jobId label. NO prompt.
+   */
+  "video:submitted": {
+    /** The executing video provider id. */
+    provider: string;
+    /** The durable opaque provider job/request id (a label, secret-free). */
+    jobId: string;
+    /** Multi-tenant agent identifier (envelope correlation — stripped from trajectory data). */
+    agentId?: string;
+    /** Formatted session key (envelope correlation — stripped from trajectory data). */
+    sessionKey?: string;
+    timestamp: number;
+  };
+
+  /**
+   * A video was generated successfully (the off-turn poller's done branch).
+   * Carries the cost + provider + model + size + duration + outcome — the OBS-03
+   * cost-carry record (`costUsd`) so `comis explain` reconstructs the turn's cost
+   * from the trajectory. NO video bytes, NO keyed-download-URL.
+   */
+  "video:generated": {
+    /** The executing video provider id. */
+    provider: string;
+    /** The video model the provider used (e.g. "veo-3.1"). Optional. */
+    model?: string;
+    /** The reconciled generation cost in USD (OBS-03; FAL/Veo estimate, Grok actual). Optional. */
+    costUsd?: number;
+    /** The persisted video size in bytes (a size signal, not the content). Optional. */
+    sizeBytes?: number;
+    /** The rendered clip duration in seconds (a label, from the provider result). Optional. */
+    durationSecs?: number;
+    /** Closed outcome label (always "ok" on this event — failures emit video:failed). */
+    outcome: "ok";
+    /** Multi-tenant agent identifier (envelope correlation — stripped from trajectory data). */
+    agentId?: string;
+    /** Formatted session key (envelope correlation — stripped from trajectory data). */
+    sessionKey?: string;
+    timestamp: number;
+  };
+
+  /**
+   * A generated video was delivered to a channel via `sendAttachment` (the
+   * off-turn poller's delivery branch). Carries the channel TYPE (not the channel
+   * id) + a delivered boolean (false on the IRC persisted-only degrade). NO bytes.
+   */
+  "video:delivered": {
+    /** The delivery channel TYPE (e.g. "telegram") — a label, never the channel id. */
+    channelType: string;
+    /** Whether the channel delivery succeeded (false → persisted-only / degraded). */
+    delivered: boolean;
+    /** Multi-tenant agent identifier (envelope correlation — stripped from trajectory data). */
+    agentId?: string;
+    /** Formatted session key (envelope correlation — stripped from trajectory data). */
+    sessionKey?: string;
+    timestamp: number;
+  };
+
+  /**
+   * A video generation failed (a classified provider error, a pre-submit quota
+   * block, or an off-turn poll/timeout). Carries the typed `errorKind` + the
+   * executing provider — NEVER the raw provider message (the redacted detail
+   * rides the structured LOG).
+   */
+  "video:failed": {
+    /** The classified failure kind (the log ErrorKind / VideoErrorKind label). */
+    errorKind: string;
+    /** The executing video provider id. */
+    provider: string;
+    /** Multi-tenant agent identifier (envelope correlation — stripped from trajectory data). */
+    agentId?: string;
+    /** Formatted session key (envelope correlation — stripped from trajectory data). */
+    sessionKey?: string;
+    timestamp: number;
+  };
+}

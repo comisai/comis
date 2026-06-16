@@ -40,6 +40,7 @@ import {
   applyMediaRecord,
   type IncidentImageSignal,
   type IncidentVisionSignal,
+  type IncidentVideoSignal,
 } from "./obs-explain-signals-fields.js";
 
 // ---------------------------------------------------------------------------
@@ -91,25 +92,20 @@ interface Acc {
   recallCount: number;
   recallZeroHits: number;
   lastRecall?: { lanes: number; finalCount: number; rerankerAvailable: boolean };
-  /** OBS-03/OBS-04 (186): the image-generation turn reconstructed from the
-   *  session's image.* records (folded by `accumulateImageRecord`). The terminal
-   *  image.generated / image.failed record sets `outcome` + cost/model/errorKind;
-   *  image.delivered flips `delivered`. Undefined until an image.* record is seen
-   *  (presence-conditional output). */
+  /** The image/vision/video turns reconstructed from the session's image.* (186),
+   *  media.vision.* (187), and video.* (192) records (folded by `applyMediaRecord`
+   *  → accumulate{Image,Vision,Video}Record). The terminal generated/completed/
+   *  failed record sets `outcome` (+ cost/model/path/errorKind/jobId); delivered
+   *  flips a latch. Each is undefined until its record class is seen (presence-
+   *  conditional output). The paired *OutcomeSeq is the `seq` at which `outcome`
+   *  was last set, so each fold is seq-aware (IN-04 — a stale lower-seq terminal
+   *  never overwrites a newer one) rather than relying on record-array order. */
   image?: IncidentImageSignal;
-  /** IN-04 (186): the `seq` at which the image `outcome` was last set, so the
-   *  fold is seq-aware (a stale lower-seq terminal never overwrites a newer one)
-   *  rather than relying on record-array order. */
   imageOutcomeSeq: number;
-  /** VIS-04 (187): the vision turn reconstructed from the session's
-   *  media.vision.* records (folded by `accumulateVisionRecord`). The terminal
-   *  media.vision.completed / media.vision.failed record sets `outcome` +
-   *  mainProvider/model/costUsd/path/errorKind. Undefined until a media.vision.*
-   *  record is seen (presence-conditional output). */
   vision?: IncidentVisionSignal;
-  /** VIS-04 (187): the `seq` at which the vision `outcome` was last set (the
-   *  seq-aware fold, mirroring imageOutcomeSeq). */
   visionOutcomeSeq: number;
+  video?: IncidentVideoSignal;
+  videoOutcomeSeq: number;
   /** W8: event-shape tool.result toolCallIds already counted (dedup — the same
    *  call must not count twice if its result event is duplicated across sources). */
   seenToolResultCallIds: Set<string>;
@@ -272,22 +268,19 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
       return;
     }
     case "context.budget": {
-      // W3 (obs-llm-troubleshooting): the per-call budget equation emitted by
-      // the LCD pre-flight (W2). LAST record wins — the terminal fit check
-      // explains the end state. Validated wholesale against the shared wire
-      // schema; a malformed/partial record is ignored (forward-compatible).
+      // W3 (obs-llm-troubleshooting): the per-call budget equation emitted by the
+      // LCD pre-flight (W2). LAST record wins — the terminal fit check explains
+      // the end state. Validated wholesale; malformed/partial ignored (fwd-compat).
       const parsed = IncidentContextBudgetSchema.safeParse(data);
       if (parsed.success) acc.contextBudget = parsed.data;
       return;
     }
     case "execution.prompt_timeout": {
-      // LAT-04 (177): the terminal prompt-timeout attribution record (stall
-      // budget / makespan ceiling / whole-turn — 177-03 emit sites). LAST
-      // record wins — the terminal kill explains the end state. Validated
-      // wholesale against the shared wire schema (the context.budget
-      // discipline, T-177-17); a malformed/partial record is ignored
-      // (forward-compatible — pre-extension rows carrying only timeoutMs
-      // still parse, every other field is optional).
+      // LAT-04 (177): the terminal prompt-timeout attribution record (stall /
+      // makespan / whole-turn — 177-03 emit sites). LAST record wins. Validated
+      // wholesale (the context.budget discipline, T-177-17); a malformed/partial
+      // record is ignored (forward-compatible — pre-extension timeoutMs-only rows
+      // still parse, every other field optional).
       const parsed = IncidentPromptTimeoutSchema.safeParse(data);
       if (parsed.success) acc.promptTimeout = parsed.data;
       return;
@@ -298,10 +291,9 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
         seq: asNumber(rec.seq) ?? acc.seq++,
         toolName: tool,
         originalChars: asNumber(data.originalChars) ?? 0,
-        // The trajectory translator writes the workspace-relative pointer as
-        // `diskPathRel` (translate-payload.ts) — NOT `diskPath` (that is the raw
-        // Pino LOG-shape field, read in handleLogRecord). Reading `diskPath` here
-        // silently yielded "<offloaded>" for every post-Phase-151 event-shape session.
+        // The translator writes the relative pointer as `diskPathRel` — NOT
+        // `diskPath` (the raw Pino LOG-shape field; reading it here silently
+        // yielded "<offloaded>" for every post-151 event-shape session).
         pointer: relativizeDiskPath(asString(data.diskPathRel)),
       });
       return;
@@ -341,12 +333,15 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
       };
       return;
     }
-    // OBS-04 (186) / VIS-04 (187): the image.* + media.vision.* lifecycles. The
-    // handler direct-emits these content-free records; `applyMediaRecord` folds
-    // each into the reconstructed image / vision turn (seq-aware IN-04 — driven
-    // by `rec.seq`, falling back to the running counter) so `comis explain`
-    // surfaces provider/model/path/costUsd/outcome (Route a — the cost rides the
-    // terminal record, NOT the executor sessionEnd). ids/labels/numbers/path only.
+    // OBS-04 (186) / VIS-04 (187) / OBS-04-video (192): the image.* +
+    // media.vision.* + video.* lifecycles. The handler/poller direct-emit these
+    // content-free records; `applyMediaRecord` folds each into the reconstructed
+    // image / vision / video turn (seq-aware IN-04 — driven by `rec.seq`, falling
+    // back to the running counter) so `comis explain` surfaces provider/model/
+    // jobId/costUsd/outcome (Route a — cost rides the terminal record, not the
+    // executor sessionEnd). The explicit video.* arms are LOAD-BEARING: without
+    // them the `default:` below silently DROPS video records (Pitfall 2 — a
+    // background-completed video turn would reconstruct as NOTHING).
     case "image.requested":
     case "image.generated":
     case "image.delivered":
@@ -354,6 +349,11 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
     case "media.vision.requested":
     case "media.vision.completed":
     case "media.vision.failed":
+    case "video.requested":
+    case "video.submitted":
+    case "video.generated":
+    case "video.delivered":
+    case "video.failed":
       applyMediaRecord(acc, type, data, asNumber(rec.seq) ?? acc.seq++);
       return;
     default:
@@ -389,10 +389,10 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     sessionKey: "",
     seq: 0,
     // IN-04: -1 so the FIRST real terminal record (seq ≥ 0) always sets outcome
-    // (the image.requested seed does not advance it).
+    // (the requested/submitted seeds do not advance it) — image/vision/video folds.
     imageOutcomeSeq: -1,
-    // VIS-04: same -1 convention for the vision fold.
     visionOutcomeSeq: -1,
+    videoOutcomeSeq: -1,
   };
 
   for (const rec of records) {
@@ -489,9 +489,11 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
       : {}),
     ...(acc.agentId !== undefined ? { agentId: acc.agentId } : {}),
     ...(acc.channel !== undefined ? { channel: acc.channel } : {}),
+    // 186/187/192: surface the reconstructed image / vision / video turns
+    // (presence-conditional — each absent when the trajectory had no records of
+    // that class). videoGenerated is the OBS-04 background-completion oracle.
     ...(acc.image !== undefined ? { image: acc.image } : {}),
-    // VIS-04 (187): surface the reconstructed vision turn (presence-conditional,
-    // mirrors image — absent when the trajectory had no media.vision.* records).
     ...(acc.vision !== undefined ? { vision: acc.vision } : {}),
+    ...(acc.video !== undefined ? { videoGenerated: acc.video } : {}),
   };
 }

@@ -6051,6 +6051,17 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("integ
         "tagPattern": "\\\\[\\\\[tts(?::.*?)?\\\\]\\\\]",
         "voice": "alloy"
       },
+      "videoGeneration": {
+        "defaultAspectRatio": "16:9",
+        "defaultDurationSecs": 8,
+        "defaultResolution": "720p",
+        "fallbackChain": [],
+        "maxDeliveryAttempts": 5,
+        "maxPerHour": 5,
+        "pollIntervalMs": 10000,
+        "provider": "auto",
+        "timeoutMs": 300000
+      },
       "vision": {
         "defaultScopeAction": "allow",
         "enabled": true,
@@ -6551,6 +6562,96 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("integ
     "immutable": true,
     "path": "integrations.media.tts.voice",
     "type": "string"
+  },
+  {
+    "default": {
+      "defaultAspectRatio": "16:9",
+      "defaultDurationSecs": 8,
+      "defaultResolution": "720p",
+      "fallbackChain": [],
+      "maxDeliveryAttempts": 5,
+      "maxPerHour": 5,
+      "pollIntervalMs": 10000,
+      "provider": "auto",
+      "timeoutMs": 300000
+    },
+    "immutable": true,
+    "path": "integrations.media.videoGeneration",
+    "type": "object"
+  },
+  {
+    "default": "16:9",
+    "immutable": true,
+    "path": "integrations.media.videoGeneration.defaultAspectRatio",
+    "type": "string"
+  },
+  {
+    "default": 8,
+    "immutable": true,
+    "path": "integrations.media.videoGeneration.defaultDurationSecs",
+    "type": "integer"
+  },
+  {
+    "default": "720p",
+    "immutable": true,
+    "path": "integrations.media.videoGeneration.defaultResolution",
+    "type": "string"
+  },
+  {
+    "default": [],
+    "immutable": true,
+    "path": "integrations.media.videoGeneration.fallbackChain",
+    "type": "array"
+  },
+  {
+    "immutable": true,
+    "path": "integrations.media.videoGeneration.generateAudio",
+    "type": "boolean"
+  },
+  {
+    "immutable": true,
+    "path": "integrations.media.videoGeneration.maxConcurrentJobs",
+    "type": "integer"
+  },
+  {
+    "immutable": true,
+    "path": "integrations.media.videoGeneration.maxCostPerHourUsd",
+    "type": "number"
+  },
+  {
+    "default": 5,
+    "immutable": true,
+    "path": "integrations.media.videoGeneration.maxDeliveryAttempts",
+    "type": "integer"
+  },
+  {
+    "default": 5,
+    "immutable": true,
+    "path": "integrations.media.videoGeneration.maxPerHour",
+    "type": "integer"
+  },
+  {
+    "immutable": true,
+    "path": "integrations.media.videoGeneration.model",
+    "type": "string"
+  },
+  {
+    "default": 10000,
+    "immutable": true,
+    "path": "integrations.media.videoGeneration.pollIntervalMs",
+    "type": "integer"
+  },
+  {
+    "default": "auto",
+    "immutable": true,
+    "path": "integrations.media.videoGeneration.provider",
+    "type": "string"
+  },
+  {
+    "default": 300000,
+    "immutable": true,
+    "path": "integrations.media.videoGeneration.timeoutMs",
+    "type": "integer"
   },
   {
     "default": {
@@ -11479,6 +11580,17 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
           "tagPattern": "\\\\[\\\\[tts(?::.*?)?\\\\]\\\\]",
           "voice": "alloy"
         },
+        "videoGeneration": {
+          "defaultAspectRatio": "16:9",
+          "defaultDurationSecs": 8,
+          "defaultResolution": "720p",
+          "fallbackChain": [],
+          "maxDeliveryAttempts": 5,
+          "maxPerHour": 5,
+          "pollIntervalMs": 10000,
+          "provider": "auto",
+          "timeoutMs": 300000
+        },
         "vision": {
           "defaultScopeAction": "allow",
           "enabled": true,
@@ -11723,6 +11835,17 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
         "provider": "openai",
         "tagPattern": "\\\\[\\\\[tts(?::.*?)?\\\\]\\\\]",
         "voice": "alloy"
+      },
+      "videoGeneration": {
+        "defaultAspectRatio": "16:9",
+        "defaultDurationSecs": 8,
+        "defaultResolution": "720p",
+        "fallbackChain": [],
+        "maxDeliveryAttempts": 5,
+        "maxPerHour": 5,
+        "pollIntervalMs": 10000,
+        "provider": "auto",
+        "timeoutMs": 300000
       },
       "vision": {
         "defaultScopeAction": "allow",
@@ -12224,6 +12347,96 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "immutable": true,
     "path": "integrations.media.tts.voice",
     "type": "string"
+  },
+  {
+    "default": {
+      "defaultAspectRatio": "16:9",
+      "defaultDurationSecs": 8,
+      "defaultResolution": "720p",
+      "fallbackChain": [],
+      "maxDeliveryAttempts": 5,
+      "maxPerHour": 5,
+      "pollIntervalMs": 10000,
+      "provider": "auto",
+      "timeoutMs": 300000
+    },
+    "immutable": true,
+    "path": "integrations.media.videoGeneration",
+    "type": "object"
+  },
+  {
+    "default": "16:9",
+    "immutable": true,
+    "path": "integrations.media.videoGeneration.defaultAspectRatio",
+    "type": "string"
+  },
+  {
+    "default": 8,
+    "immutable": true,
+    "path": "integrations.media.videoGeneration.defaultDurationSecs",
+    "type": "integer"
+  },
+  {
+    "default": "720p",
+    "immutable": true,
+    "path": "integrations.media.videoGeneration.defaultResolution",
+    "type": "string"
+  },
+  {
+    "default": [],
+    "immutable": true,
+    "path": "integrations.media.videoGeneration.fallbackChain",
+    "type": "array"
+  },
+  {
+    "immutable": true,
+    "path": "integrations.media.videoGeneration.generateAudio",
+    "type": "boolean"
+  },
+  {
+    "immutable": true,
+    "path": "integrations.media.videoGeneration.maxConcurrentJobs",
+    "type": "integer"
+  },
+  {
+    "immutable": true,
+    "path": "integrations.media.videoGeneration.maxCostPerHourUsd",
+    "type": "number"
+  },
+  {
+    "default": 5,
+    "immutable": true,
+    "path": "integrations.media.videoGeneration.maxDeliveryAttempts",
+    "type": "integer"
+  },
+  {
+    "default": 5,
+    "immutable": true,
+    "path": "integrations.media.videoGeneration.maxPerHour",
+    "type": "integer"
+  },
+  {
+    "immutable": true,
+    "path": "integrations.media.videoGeneration.model",
+    "type": "string"
+  },
+  {
+    "default": 10000,
+    "immutable": true,
+    "path": "integrations.media.videoGeneration.pollIntervalMs",
+    "type": "integer"
+  },
+  {
+    "default": "auto",
+    "immutable": true,
+    "path": "integrations.media.videoGeneration.provider",
+    "type": "string"
+  },
+  {
+    "default": 300000,
+    "immutable": true,
+    "path": "integrations.media.videoGeneration.timeoutMs",
+    "type": "integer"
   },
   {
     "default": {
@@ -22723,6 +22936,17 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("int
           "tagPattern": "\\\\[\\\\[tts(?::.*?)?\\\\]\\\\]",
           "voice": "alloy"
         },
+        "videoGeneration": {
+          "defaultAspectRatio": "16:9",
+          "defaultDurationSecs": 8,
+          "defaultResolution": "720p",
+          "fallbackChain": [],
+          "maxDeliveryAttempts": 5,
+          "maxPerHour": 5,
+          "pollIntervalMs": 10000,
+          "provider": "auto",
+          "timeoutMs": 300000
+        },
         "vision": {
           "defaultScopeAction": "allow",
           "enabled": true,
@@ -23282,6 +23506,110 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("int
           ],
           "type": "object"
         },
+        "videoGeneration": {
+          "additionalProperties": false,
+          "default": {
+            "defaultAspectRatio": "16:9",
+            "defaultDurationSecs": 8,
+            "defaultResolution": "720p",
+            "fallbackChain": [],
+            "maxDeliveryAttempts": 5,
+            "maxPerHour": 5,
+            "pollIntervalMs": 10000,
+            "provider": "auto",
+            "timeoutMs": 300000
+          },
+          "properties": {
+            "defaultAspectRatio": {
+              "default": "16:9",
+              "type": "string"
+            },
+            "defaultDurationSecs": {
+              "default": 8,
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "defaultResolution": {
+              "default": "720p",
+              "type": "string"
+            },
+            "fallbackChain": {
+              "default": [],
+              "items": {
+                "enum": [
+                  "auto",
+                  "fal",
+                  "google",
+                  "xai"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "generateAudio": {
+              "type": "boolean"
+            },
+            "maxConcurrentJobs": {
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "maxCostPerHourUsd": {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            "maxDeliveryAttempts": {
+              "default": 5,
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "maxPerHour": {
+              "default": 5,
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "model": {
+              "type": "string"
+            },
+            "pollIntervalMs": {
+              "default": 10000,
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "provider": {
+              "default": "auto",
+              "enum": [
+                "auto",
+                "fal",
+                "google",
+                "xai"
+              ],
+              "type": "string"
+            },
+            "timeoutMs": {
+              "default": 300000,
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "provider",
+            "defaultDurationSecs",
+            "defaultAspectRatio",
+            "defaultResolution",
+            "maxPerHour",
+            "timeoutMs",
+            "pollIntervalMs",
+            "maxDeliveryAttempts",
+            "fallbackChain"
+          ],
+          "type": "object"
+        },
         "vision": {
           "additionalProperties": false,
           "default": {
@@ -23416,7 +23744,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("int
         "infrastructure",
         "documentExtraction",
         "persistence",
-        "imageGeneration"
+        "imageGeneration",
+        "videoGeneration"
       ],
       "type": "object"
     }
@@ -34095,6 +34424,17 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "tagPattern": "\\\\[\\\\[tts(?::.*?)?\\\\]\\\\]",
             "voice": "alloy"
           },
+          "videoGeneration": {
+            "defaultAspectRatio": "16:9",
+            "defaultDurationSecs": 8,
+            "defaultResolution": "720p",
+            "fallbackChain": [],
+            "maxDeliveryAttempts": 5,
+            "maxPerHour": 5,
+            "pollIntervalMs": 10000,
+            "provider": "auto",
+            "timeoutMs": 300000
+          },
           "vision": {
             "defaultScopeAction": "allow",
             "enabled": true,
@@ -34408,6 +34748,17 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "provider": "openai",
               "tagPattern": "\\\\[\\\\[tts(?::.*?)?\\\\]\\\\]",
               "voice": "alloy"
+            },
+            "videoGeneration": {
+              "defaultAspectRatio": "16:9",
+              "defaultDurationSecs": 8,
+              "defaultResolution": "720p",
+              "fallbackChain": [],
+              "maxDeliveryAttempts": 5,
+              "maxPerHour": 5,
+              "pollIntervalMs": 10000,
+              "provider": "auto",
+              "timeoutMs": 300000
             },
             "vision": {
               "defaultScopeAction": "allow",
@@ -34968,6 +35319,110 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               ],
               "type": "object"
             },
+            "videoGeneration": {
+              "additionalProperties": false,
+              "default": {
+                "defaultAspectRatio": "16:9",
+                "defaultDurationSecs": 8,
+                "defaultResolution": "720p",
+                "fallbackChain": [],
+                "maxDeliveryAttempts": 5,
+                "maxPerHour": 5,
+                "pollIntervalMs": 10000,
+                "provider": "auto",
+                "timeoutMs": 300000
+              },
+              "properties": {
+                "defaultAspectRatio": {
+                  "default": "16:9",
+                  "type": "string"
+                },
+                "defaultDurationSecs": {
+                  "default": 8,
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "defaultResolution": {
+                  "default": "720p",
+                  "type": "string"
+                },
+                "fallbackChain": {
+                  "default": [],
+                  "items": {
+                    "enum": [
+                      "auto",
+                      "fal",
+                      "google",
+                      "xai"
+                    ],
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "generateAudio": {
+                  "type": "boolean"
+                },
+                "maxConcurrentJobs": {
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "maxCostPerHourUsd": {
+                  "exclusiveMinimum": 0,
+                  "type": "number"
+                },
+                "maxDeliveryAttempts": {
+                  "default": 5,
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "maxPerHour": {
+                  "default": 5,
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "model": {
+                  "type": "string"
+                },
+                "pollIntervalMs": {
+                  "default": 10000,
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "provider": {
+                  "default": "auto",
+                  "enum": [
+                    "auto",
+                    "fal",
+                    "google",
+                    "xai"
+                  ],
+                  "type": "string"
+                },
+                "timeoutMs": {
+                  "default": 300000,
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "provider",
+                "defaultDurationSecs",
+                "defaultAspectRatio",
+                "defaultResolution",
+                "maxPerHour",
+                "timeoutMs",
+                "pollIntervalMs",
+                "maxDeliveryAttempts",
+                "fallbackChain"
+              ],
+              "type": "object"
+            },
             "vision": {
               "additionalProperties": false,
               "default": {
@@ -35102,7 +35557,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "infrastructure",
             "documentExtraction",
             "persistence",
-            "imageGeneration"
+            "imageGeneration",
+            "videoGeneration"
           ],
           "type": "object"
         }

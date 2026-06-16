@@ -608,6 +608,20 @@ export interface MediaApiDeps {
      *  MemoryApiDeps / WorkspaceApiDeps eventBus so the slices unify. */
     eventBus?: AppContainer["eventBus"];
   };
+  // Video generation deps (Phase 188 / Plan 04). The shape mirrors
+  // `imageHandlerDeps` above (retyped for video, with the DIVERGENCE-3 cost
+  // limiter + logger-only obs) but lives in a sibling leaf type module
+  // (`./video-handler-deps.ts`) to keep THIS file under the 800-line cap; that
+  // module imports nothing from the api/ handler graph, so it adds no madge
+  // cycle. The dispatcher in api/rpc-dispatch.ts passes this through to
+  // createVideoHandlers.
+  videoHandlerDeps?: import("./video-handler-deps.js").VideoHandlerDepsShape;
+  /** Video status deps (Phase 189 / Plan 03 — JOB-04). The READ side of the
+   *  async lifecycle: `video.status` reads the agent-scoped job store the poller
+   *  writes. Lives in the same sibling leaf module (`./video-handler-deps.ts`) to
+   *  keep THIS file under the 800-line cap; the dispatcher passes it through to
+   *  createVideoStatusHandlers. */
+  videoStatusHandlerDeps?: import("./video-handler-deps.js").VideoStatusHandlerDepsShape;
   /** VIS-01 (187): resolve the agent's MAIN provider id in lockstep with the
    *  completion path (I4) — used for the obs label + the resolveVisionPath
    *  input. The provider INSTANCE/creds are resolved inside mainProviderVision

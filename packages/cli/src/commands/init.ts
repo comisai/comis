@@ -37,6 +37,10 @@ import { channelsStep } from "../wizard/steps/06-channels.js";
 import { gatewayStep } from "../wizard/steps/07-gateway.js";
 import { workspaceStep } from "../wizard/steps/08-workspace.js";
 import { toolProvidersStep } from "../wizard/steps/08b-tool-providers.js";
+import { videoProvidersStep } from "../wizard/steps/08c-video-providers.js";
+import { imageProvidersStep } from "../wizard/steps/08d-image-providers.js";
+import { transcriptionStep } from "../wizard/steps/08e-transcription.js";
+import { ttsStep } from "../wizard/steps/08f-tts.js";
 import { reviewStep } from "../wizard/steps/09-review.js";
 import { writeConfigStep } from "../wizard/steps/10-write-config.js";
 import { daemonStartStep } from "../wizard/steps/11-daemon-start.js";
@@ -45,7 +49,7 @@ import { finishStep } from "../wizard/steps/12-finish.js";
 // ---------- Step Registry ----------
 
 /**
- * Build the full step registry with all 14 wizard steps.
+ * Build the full step registry with all 19 wizard steps.
  *
  * Used by both interactive and non-interactive modes to provide
  * the same step implementations to the wizard runner.
@@ -63,6 +67,10 @@ export function buildStepRegistry(): StepRegistry {
   registry.set("gateway", gatewayStep);
   registry.set("workspace", workspaceStep);
   registry.set("tool-providers", toolProvidersStep);
+  registry.set("image-providers", imageProvidersStep);
+  registry.set("video-providers", videoProvidersStep);
+  registry.set("transcription", transcriptionStep);
+  registry.set("tts", ttsStep);
   registry.set("review", reviewStep);
   registry.set("write-config", writeConfigStep);
   registry.set("daemon-start", daemonStartStep);
@@ -103,6 +111,14 @@ function buildNonInteractiveOptionsFromCommander(
     slackAppToken: options.slackAppToken as string | undefined,
     lineToken: options.lineToken as string | undefined,
     lineSecret: options.lineSecret as string | undefined,
+    imageProvider: options.imageProvider as string | undefined,
+    imageApiKey: options.imageApiKey as string | undefined,
+    videoProvider: options.videoProvider as string | undefined,
+    videoApiKey: options.videoApiKey as string | undefined,
+    sttProvider: options.sttProvider as string | undefined,
+    sttApiKey: options.sttApiKey as string | undefined,
+    ttsProvider: options.ttsProvider as string | undefined,
+    ttsApiKey: options.ttsApiKey as string | undefined,
     dataDir: options.dataDir as string | undefined,
     configDir: options.configDir as string | undefined,
     storage: options.storage as "encrypted" | "file" | undefined,
@@ -169,6 +185,15 @@ export function registerInitCommand(program: Command): void {
     .option("--slack-app-token <tok>", "Slack app token")
     .option("--line-token <tok>", "LINE channel token")
     .option("--line-secret <sec>", "LINE channel secret")
+    // Media generation
+    .option("--image-provider <id>", "Image generation provider: auto|fal|openai|openai-codex|google|openrouter")
+    .option("--image-api-key <key>", "Image provider API key (e.g. FAL_KEY; reuses --api-key for a matching main provider)")
+    .option("--video-provider <id>", "Video generation provider: auto|fal|google|xai")
+    .option("--video-api-key <key>", "Video provider API key (e.g. FAL_KEY; reuses --api-key for a matching main provider)")
+    .option("--stt-provider <id>", "Voice transcription provider: openai|groq|deepgram")
+    .option("--stt-api-key <key>", "Transcription provider API key (reuses --api-key for a matching main provider)")
+    .option("--tts-provider <id>", "Text-to-speech provider: openai|elevenlabs|edge")
+    .option("--tts-api-key <key>", "TTS provider API key (reuses --api-key for a matching main provider; edge needs none)")
     // Paths
     .option("--data-dir <path>", "Workspace directory")
     .option("--config-dir <dir>", "Override config directory")

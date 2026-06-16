@@ -29,7 +29,7 @@ import {
 } from "@comis/core";
 import { stat as fsStat } from "node:fs/promises";
 import type { PerAgentConfig } from "@comis/core";
-import type { ImageGenerationPort } from "@comis/core";
+import type { ImageGenerationPort, VideoGenerationPort } from "@comis/core";
 // Skills-concern symbols staying on the `.` subpath (policy, pipeline, MCP
 // bridge, credential injection, link understanding). These symbols live
 // in packages/skills/src/skills/index.ts.
@@ -46,11 +46,8 @@ import {
 } from "@comis/skills";
 import type { RpcCall } from "@comis/skills/platform-tools";
 
-// Tool capability adapters + factories live on the `./tools` subpath.
-// Exec / process / apply-patch tool factories, file-state tracker,
-// media-persistence / image-sanitizer all live under
-// packages/skills/src/tools/. Daemon imports them from the dedicated
-// subpath to surface the architectural boundary in the type system.
+// Tool capability adapters + factories (exec/process/apply-patch, file-state
+// tracker, media-persistence/image-sanitizer) live on the `./tools` subpath.
 import {
   createExecTool,
   createProcessTool,
@@ -160,6 +157,11 @@ export interface ToolsDeps {
   getCapabilityPortForAgent: (agentId: string) => ToolCapabilityPort;
   /** Image generation provider (undefined when API key missing -- tool not registered). */
   imageGenProvider?: ImageGenerationPort;
+  /** Video generation provider (undefined when disabled -- video_generate tool not registered; the registry descriptor is gated on this context signal). */
+  videoGenProvider?: VideoGenerationPort;
+  /** JOB-04 (189): truthy when the async video stack (store + poller) is wired --
+   *  gates the video_status descriptor. Set on the SAME condition videoGenProvider uses. */
+  videoStatusEnabled?: unknown;
   /** OS-level sandbox provider detected once at daemon startup. */
   sandboxProvider?: SandboxProvider;
   /** Background task manager for background_tasks tool registration. */
@@ -482,6 +484,8 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
         mcpClientManager,
         onSuspiciousContent,
         imageGenProvider: deps.imageGenProvider,
+        videoGenProvider: deps.videoGenProvider,
+        videoStatusEnabled: deps.videoStatusEnabled, // JOB-04: gates the video_status descriptor
         backgroundTaskManager: deps.backgroundTaskManager,
         toolCapabilityPort: deps.getCapabilityPortForAgent(agentId),
         contextEngineVersion: agentConfig?.contextEngine?.version ?? "pipeline",
@@ -493,21 +497,19 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
         onConfigMutationStart: enterConfigMutationFence,
         onConfigMutationEnd: leaveConfigMutationFence,
         // After agents.create seeds the new workspace's template files
-        // (IDENTITY.md, ROLE.md, etc.) via ensureWorkspace, register those
-        // seeded paths in THIS session's tracker so the caller LLM can
-        // overwrite them via `write` without hitting the [not_read] gate.
-        // Each file path is absolute; the seeded content is deterministic
-        // (DEFAULT_TEMPLATES[name]), so we register the known mtime + content.
+        // (IDENTITY.md, ROLE.md, etc.) via ensureWorkspace, register those seeded
+        // paths in THIS session's tracker so the caller LLM can overwrite them via
+        // `write` without hitting the [not_read] gate. Each path is absolute; the
+        // seeded content is deterministic (DEFAULT_TEMPLATES[name]) -> known mtime.
         onAgentCreated: async ({ workspaceDir }) => {
           if (!workspaceDir) return;
           for (const name of WORKSPACE_FILE_NAMES) {
             const filePath = safePath(workspaceDir, name);
             try {
               const st = await fsStat(filePath);
-              // Idempotency: skip when tracker already records this path at
-              // the same mtime -- avoids redundant recordRead work when the
-              // same admin session creates the same agent twice (e.g. create,
-              // delete, re-create within one turn).
+              // Idempotency: skip when tracker already records this path at the
+              // same mtime -- avoids redundant recordRead when the same admin
+              // session re-creates the same agent within one turn.
               const existing = fileStateTracker.getReadState(filePath);
               if (existing && existing.mtime === st.mtimeMs) continue;
               fileStateTracker.recordRead(
@@ -527,15 +529,12 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
         browserWorkspaceDir: workspaceDirs.get(agentId) ?? defaultWorkspaceDir,
       };
 
-      // Registry-driven platform tools (45 descriptors; 4 conditional gates
-      // filter out background_tasks, image_generate, unified_context, browser
-      // when their predicate fails). Order is the descriptor declaration
-      // order in registry.ts (alphabetical by category then by name).
-      //
-      // The double `.filter` is intentional: the first drops descriptors
-      // whose `conditional` predicate fails; the second drops `undefined`
-      // build-returns (a defensive guard -- in practice every descriptor
-      // whose conditional passes returns a non-undefined AgentTool).
+      // Registry-driven platform tools, in registry.ts declaration order
+      // (alphabetical by category then name); conditional gates filter out a
+      // descriptor when its predicate fails. The double `.filter` is intentional:
+      // the first drops descriptors whose `conditional` fails; the second drops
+      // `undefined` build-returns (defensive -- every passing conditional returns
+      // a non-undefined AgentTool in practice).
       type PlatformTool = ReturnType<PlatformToolProvider>[number];
       const tools: ReturnType<PlatformToolProvider> = PLATFORM_TOOL_REGISTRY
         .filter((d) => !d.conditional || d.conditional(ctx))

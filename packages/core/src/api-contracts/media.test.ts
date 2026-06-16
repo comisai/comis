@@ -36,8 +36,8 @@ describe("media + image domain contracts", () => {
   // Aggregator sanity
   // -------------------------------------------------------------------------
 
-  it("MEDIA_CONTRACTS has exactly 16 entries (15 media + 1 image)", () => {
-    expect(MEDIA_CONTRACTS.length).toBe(16);
+  it("MEDIA_CONTRACTS has exactly 18 entries (15 media + 1 image + 2 video)", () => {
+    expect(MEDIA_CONTRACTS.length).toBe(18);
   });
 
   it("MEDIA_CONTRACTS method names cover every handler-factory method", () => {
@@ -60,6 +60,8 @@ describe("media + image domain contracts", () => {
     expect(methods.has("media.providers")).toBe(true);
     // image-handlers.ts (1):
     expect(methods.has("image.generate")).toBe(true);
+    // video-handlers.ts (1) — handler lands Phase 188 Plan 04:
+    expect(methods.has("video.generate")).toBe(true);
   });
 
   it("scope assignments mirror setup-gateway-api.ts registrations", () => {

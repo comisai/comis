@@ -170,3 +170,108 @@ describe("translatePayload — VIS-04 vision signals (content-free + envelope st
     expect(data.timestamp).toBeUndefined();
   });
 });
+
+// OBS-04 (Phase 192): the five video:* arms forward ONLY content-free ids /
+// labels / numbers / booleans (provider/mainProvider/model/jobId/costUsd/
+// sizeBytes/durationSecs/channelType/delivered/errorKind) and STRIP the envelope
+// (agentId/sessionKey/timestamp), mirroring the image:*/media.vision:* cases.
+// costUsd/model/sizeBytes/durationSecs spread presence-conditionally (the FAL
+// no-actual-cost case omits the key — Pitfall 4). NEVER the prompt, the video
+// bytes, a credential, or the Veo keyed-download-URL (the content-free invariant).
+describe("translatePayload — OBS-04 video signals (content-free + envelope stripping)", () => {
+  it("forwards video:requested as exactly {provider, mainProvider}", () => {
+    const data = translatePayload("video:requested", {
+      provider: "veo",
+      mainProvider: "google",
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      timestamp: 1717171717,
+    });
+    expect(data).toEqual({ provider: "veo", mainProvider: "google" });
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("forwards video:submitted as exactly {provider, jobId}", () => {
+    const data = translatePayload("video:submitted", {
+      provider: "veo",
+      jobId: "veo-op-123",
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      timestamp: 1717171717,
+    });
+    expect(data).toEqual({ provider: "veo", jobId: "veo-op-123" });
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("forwards video:generated with presence-conditional model/costUsd/sizeBytes/durationSecs (the cost-carry record)", () => {
+    const data = translatePayload("video:generated", {
+      provider: "veo",
+      model: "veo-3.1",
+      costUsd: 1.2,
+      sizeBytes: 9_000_000,
+      durationSecs: 8,
+      outcome: "ok",
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      timestamp: 1717171717,
+    });
+    expect(data).toEqual({
+      provider: "veo",
+      outcome: "ok",
+      model: "veo-3.1",
+      costUsd: 1.2,
+      sizeBytes: 9_000_000,
+      durationSecs: 8,
+    });
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("video:generated without optionals (FAL no-actual-cost) omits costUsd/model/sizeBytes/durationSecs entirely (Pitfall 4)", () => {
+    const data = translatePayload("video:generated", {
+      provider: "fal",
+      outcome: "ok",
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      timestamp: 1717171717,
+    });
+    expect(data).toEqual({ provider: "fal", outcome: "ok" });
+    expect("costUsd" in data).toBe(false);
+    expect("model" in data).toBe(false);
+    expect("sizeBytes" in data).toBe(false);
+    expect("durationSecs" in data).toBe(false);
+  });
+
+  it("forwards video:delivered as exactly {channelType, delivered}", () => {
+    const data = translatePayload("video:delivered", {
+      channelType: "telegram",
+      delivered: true,
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      timestamp: 1717171717,
+    });
+    expect(data).toEqual({ channelType: "telegram", delivered: true });
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("forwards video:failed as exactly {errorKind, provider}", () => {
+    const data = translatePayload("video:failed", {
+      errorKind: "content_blocked",
+      provider: "veo",
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      timestamp: 1717171717,
+    });
+    expect(data).toEqual({ errorKind: "content_blocked", provider: "veo" });
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+});

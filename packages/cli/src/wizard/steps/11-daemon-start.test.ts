@@ -58,7 +58,11 @@ vi.mock("@comis/core", async (importOriginal) => {
 import { spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, openSync } from "node:fs";
 import type { WizardPrompter, WizardState, Spinner } from "../index.js";
-import { daemonStartStep } from "./11-daemon-start.js";
+import {
+  daemonStartStep,
+  DAEMON_START_PROMPT,
+  DAEMON_RESTART_PROMPT,
+} from "./11-daemon-start.js";
 
 // ---------- Mock Prompter Helper ----------
 
@@ -149,6 +153,33 @@ describe("daemonStartStep", () => {
     expect(result).toBeDefined();
     expect(prompter.log.info).toHaveBeenCalledWith(
       expect.stringContaining("comis daemon start"),
+    );
+  });
+
+  // Contract guard for the daemon-restart fix: the step must prompt with the
+  // exact shared literals the NonInteractivePrompter keys off (DAEMON_*_PROMPT).
+  // If someone edits the message here without updating the constant, headless
+  // --start-daemon handling would silently break — these lock the two together.
+  it("prompts with DAEMON_RESTART_PROMPT when a daemon is already running", async () => {
+    // fetch mocked ok in beforeEach -> daemonRunning=true -> restart prompt.
+    const prompter = createMockPrompter({ select: ["no"] });
+
+    await daemonStartStep.execute(stateWithGateway(), prompter);
+
+    expect(prompter.select).toHaveBeenCalledWith(
+      expect.objectContaining({ message: DAEMON_RESTART_PROMPT }),
+    );
+  });
+
+  it("prompts with DAEMON_START_PROMPT when no daemon is running", async () => {
+    // Override fetch to reject so daemonRunning=false -> start prompt.
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("ECONNREFUSED")));
+    const prompter = createMockPrompter({ select: ["no"] });
+
+    await daemonStartStep.execute(stateWithGateway(), prompter);
+
+    expect(prompter.select).toHaveBeenCalledWith(
+      expect.objectContaining({ message: DAEMON_START_PROMPT }),
     );
   });
 
