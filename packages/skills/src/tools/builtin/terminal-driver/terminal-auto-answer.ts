@@ -8,16 +8,20 @@
  * to classify "is this dangerous" — it answers ONLY an operator-allowlisted safe
  * pattern and escalates the rest with no keystroke.
  *
- * Decision order (the escalate-always gate is FIRST and WINS over any safe match):
+ * Decision order (the escalate-always gate is a VETO on an about-to-answer safe match):
  *   1. mode `none`                       → escalate `no_safe_match`  (policy is OFF)
- *   2. ESCALATE-ALWAYS gate (structural) → escalate `auth_login` | `destructive` |
- *      `approval` — fires EVEN IF an operator hintPattern would otherwise match the
- *      same screen. A login/destructive/approval prompt is never guessed and never
- *      looped (SEC-12, T-124-08); a CLI cannot phish a canned answer by rendering a
- *      fake "(y/n)" beneath an auth/destructive prompt.
- *   3. otherwise (`safe-only` / `all`)   → the first matching operator safe pattern
- *      yields `{action:"answer", keys, matchedPatternIndex}`; no match → escalate
- *      `no_safe_match` (the SAFE default — no keystroke is ever invented).
+ *   2. match the FIRST operator safe pattern — the "we are about to auto-answer" signal.
+ *   3. ESCALATE-ALWAYS VETO (structural, SEC-12) → when a safe pattern matched, if that SAME
+ *      screen ALSO carries an `auth_login` | `destructive` | `approval` cue the canned answer is
+ *      VETOED + escalated. A CLI cannot phish a canned answer by rendering a fake "(y/n)" beneath
+ *      an auth/destructive prompt — the phish BY DEFINITION matches a safe pattern, so the veto
+ *      always covers it (the anti-phishing guard is fully intact). The gate is scoped to an actual
+ *      safe match so it NEVER fires on a driven CLI's NARRATION: a screen with no safe match is
+ *      never auto-answered anyway (step 4 → no_safe_match), so matching the broad markers there is
+ *      pure downside — they trip on prose ("delete a todo", "gh auth login") and wedge the drive
+ *      (real-VPS 2026-06-16).
+ *   4. a safe match with NO veto → `{action:"answer", keys, matchedPatternIndex}`; no safe match
+ *      → escalate `no_safe_match` (the SAFE default — no keystroke is ever invented).
  *
  * `all` may answer a broader set than the structural-safe heuristic but STILL escalates
  * auth/login/destructive/approval — it is documented "trusted-input only".
@@ -173,6 +177,15 @@ function cannedKeysFor(): string[] {
   return ["\r"];
 }
 
+/** The index of the FIRST operator safe pattern the screen matches, or `undefined` if none. */
+function firstSafePatternIndex(screen: string, hintPatterns: readonly string[]): number | undefined {
+  for (let i = 0; i < hintPatterns.length; i++) {
+    const pattern = hintPatterns[i] ?? "";
+    if (matchesSafePattern(screen, pattern)) return i;
+  }
+  return undefined;
+}
+
 // ---------------------------------------------------------------------------
 // The decision
 // ---------------------------------------------------------------------------
@@ -198,20 +211,30 @@ export function decideAutoAnswer(
     return { action: "escalate", reason: "no_safe_match" };
   }
 
-  // 2. ESCALATE-ALWAYS gate — runs BEFORE the safe-pattern match so it WINS even when
-  //    a hintPattern would match. A login/destructive/approval prompt is never guessed.
-  const forced = escalateAlwaysReason(screen);
-  if (forced !== undefined) {
-    return { action: "escalate", reason: forced };
+  // 2. Find the FIRST matching operator safe pattern — the "we are about to auto-answer" signal.
+  const matchedIndex = firstSafePatternIndex(screen, hintPatterns);
+
+  // 3. ESCALATE-ALWAYS gate (SEC-12) — a VETO on the about-to-answer safe match. It fires ONLY
+  //    when an operator safe pattern matched (we WOULD otherwise send a canned answer): if that
+  //    SAME screen also carries an auth/login, destructive, or approval cue the canned answer is
+  //    VETOED + escalated (a CLI cannot phish a safe match beneath an auth/destructive prompt —
+  //    SEC-12, T-124-08; the phish BY DEFINITION renders a safe-pattern affordance, so it ALWAYS
+  //    matches here, leaving the anti-phishing guard fully intact). A screen with NO safe-pattern
+  //    match is never auto-answered regardless (step 4 → no_safe_match), so running the BROAD
+  //    markers against it is pure downside: on a driven AI CLI they mis-fire on NARRATION
+  //    ("delete a todo", "remove all completed", "gh auth login") — a non-prompt — forcing a
+  //    false escalation that wedges the drive (real-VPS 2026-06-16: claude's TODO-app narration
+  //    forced a false `destructive`). Gating the gate on an actual safe match removes the
+  //    narration false-positives while never weakening the phishing veto.
+  if (matchedIndex !== undefined) {
+    const forced = escalateAlwaysReason(screen);
+    if (forced !== undefined) {
+      return { action: "escalate", reason: forced };
+    }
+    // A safe match with no auth/destructive/approval veto ⇒ answer (the canned Enter).
+    return { action: "answer", keys: cannedKeysFor(), matchedPatternIndex: matchedIndex };
   }
 
-  // 3. safe-only / all: answer the FIRST matching operator safe pattern; otherwise the
-  //    SAFE default (escalate — no keystroke is ever invented).
-  for (let i = 0; i < hintPatterns.length; i++) {
-    const pattern = hintPatterns[i] ?? "";
-    if (matchesSafePattern(screen, pattern)) {
-      return { action: "answer", keys: cannedKeysFor(), matchedPatternIndex: i };
-    }
-  }
+  // 4. No operator safe pattern matched ⇒ the SAFE default (escalate; no keystroke is invented).
   return { action: "escalate", reason: "no_safe_match" };
 }
