@@ -76,6 +76,22 @@ import type { TerminalDrivePromotedEvent } from "./terminal-events-attention.js"
 export type DriveMode = "auto" | "attached" | "detached";
 
 /**
+ * Resolve the EFFECTIVE {@link DriveMode} from the operator config (DELIVER-02 — the un-promoted
+ * drive gap). An EXPLICIT `drive.mode` always wins. ABSENT, the default tracks `drive.durable`: a
+ * DURABLE drive is by definition a long-running BACKGROUNDED drive (tmux, survive-restart), so it
+ * defaults to `detached` — it promotes at the FIRST wait → the daemon backstop tracks it → a
+ * "finished" completion notification fires when the CLI goes idle. A NON-durable (pty) drive is the
+ * quick-one-shot posture → `auto` (stays inline unless the CLI honestly reports `producing` at a
+ * wait timeout — I1, byte-identical to today). This closes the gap where a short DURABLE build whose
+ * wait happened to resolve `idle` (claude paused between output bursts, never a `producing` timeout)
+ * never promoted → was untracked → delivered no completion (real-VPS 2026-06-16: gpt-5.5 did a single
+ * idle wait + replied "Kicked off" on short builds). Pure + total; never throws.
+ */
+export function resolveDriveMode(mode: DriveMode | undefined, _durable: boolean): DriveMode {
+  return mode ?? "auto"; // RED stub: ignores durability — the GREEN fix defaults a durable drive to detached.
+}
+
+/**
  * The narrow content-free-emit surface the wait tool hands to {@link emitDrivePromoted}
  * (164-04). STRUCTURAL (not the full `TerminalToolDeps`) so this pure-decision sibling does
  * not import the tool module — it sees only the bus emit overload + the INFO logger + the

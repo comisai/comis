@@ -33,7 +33,7 @@
 
 import { describe, it, expect } from "vitest";
 
-import { shouldPromoteDrive } from "./terminal-drive-promote.js";
+import { shouldPromoteDrive, resolveDriveMode } from "./terminal-drive-promote.js";
 
 describe("shouldPromoteDrive (DRIVE-02 auto-promotion predicate)", () => {
   describe('mode:"auto" — keyed off the honest isComplete:false,producing:true signal', () => {
@@ -113,5 +113,25 @@ describe("shouldPromoteDrive (DRIVE-02 auto-promotion predicate)", () => {
       expect(() => shouldPromoteDrive(result, "attached")).not.toThrow();
       expect(() => shouldPromoteDrive(result, "detached")).not.toThrow();
     });
+  });
+});
+
+describe("resolveDriveMode (DELIVER-02 — a durable drive backgrounds; a pty one-shot stays inline)", () => {
+  // Real-VPS 2026-06-16: a short DURABLE claude build whose agent did a single `idle` wait (claude
+  // paused between bursts, never a `producing` timeout) under the default `auto` mode NEVER promoted
+  // → the daemon backstop (promoted-only) didn't track it → DELIVER-01 delivered no completion.
+  // A durable drive IS a long backgrounded drive, so absent an explicit mode it defaults to detached.
+  it("an absent mode + durable → detached (the long backgrounded drive promotes at the first wait → tracked)", () => {
+    expect(resolveDriveMode(undefined, true)).toBe("detached");
+  });
+
+  it("an absent mode + NON-durable (pty) → auto (the quick-one-shot inline posture, I1 byte-identical)", () => {
+    expect(resolveDriveMode(undefined, false)).toBe("auto");
+  });
+
+  it("an EXPLICIT operator mode ALWAYS wins over the durable default (no surprise override)", () => {
+    expect(resolveDriveMode("auto", true)).toBe("auto");
+    expect(resolveDriveMode("attached", true)).toBe("attached");
+    expect(resolveDriveMode("detached", false)).toBe("detached");
   });
 });
