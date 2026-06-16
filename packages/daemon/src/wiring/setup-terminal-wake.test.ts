@@ -1448,6 +1448,29 @@ describe("setupTerminalWake — the keystone subscribe + woken-turn driver (124-
       expect(info, "a heartbeat must emit an INFO step:drive_heartbeat record").toBeDefined();
     });
 
+    it("IN-01: a freshly-promoted drive emits NO heartbeat on the first tick WITHIN one cadence of promotion (the stamp is seeded at promotion)", async () => {
+      const b = buildNotify(dataDir, { screen: "Compiling…" });
+      built = b;
+      // Advance the wall clock so it is already well past one cadence (the realistic case: a daemon
+      // up for hours promotes a new drive). Pre-IN-01 the unstamped session reads `last:0` ⇒
+      // `now-0 >= cadence` ⇒ it would fire a bogus "elapsed 0.0h" heartbeat on the very first tick.
+      b.clock.now += HEARTBEAT_NOTIFY_MS * 5;
+      b.bus.fireDrivePromoted("s-fresh", "a", "producing");
+      await flush();
+      // The first heartbeat tick lands only a little after promotion (< one cadence later).
+      b.clock.now += Math.floor(HEARTBEAT_NOTIFY_MS / 10);
+      tickHeartbeat(b);
+      await flush();
+      // IN-01: the promotion seeded lastHeartbeatSentMs = promotion-instant, so it is NOT yet due —
+      // the first user heartbeat lands one FULL cadence after promotion, not seconds after.
+      expect(heartbeatNotifies(b), "a freshly-promoted drive must NOT heartbeat within the first cadence (IN-01)").toHaveLength(0);
+      // And after a full cadence past promotion, it DOES fire (the seed only delays, never silences).
+      b.clock.now += HEARTBEAT_NOTIFY_MS;
+      tickHeartbeat(b);
+      await flush();
+      expect(heartbeatNotifies(b), "after one full cadence the heartbeat fires (the seed delays, not silences)").toHaveLength(1);
+    });
+
     it("emits NO heartbeat for a SHORT (unpromoted) drive — only promoted drives are heartbeated (I1)", async () => {
       const b = buildNotify(dataDir, { screen: "$ " });
       built = b;

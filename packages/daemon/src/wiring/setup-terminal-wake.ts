@@ -364,6 +364,10 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
     // elapsedMs measures from here. Stamped once (promote-once gate above), reclaimed in
     // onSessionGone, so a recycled sessionId re-stamps fresh.
     driveStartedAtMs.set(sessionId, nowMs());
+    // IN-01 (166-REVIEW): seed the heartbeat dedupe stamp at promotion (mirroring lastTransitionMs)
+    // so the FIRST user heartbeat lands one full cadence AFTER promotion — not seconds after (an
+    // unstamped session reads `last:0` ⇒ `now-0 >= cadence` fires on the first tick: "elapsed 0.0h").
+    lastHeartbeatSentMs.set(sessionId, nowMs());
     log.info(
       { sessionId, agentId, reason, step: "drive_promoted" },
       "terminal drive promoted to a backgrounded drive-owner",
@@ -413,6 +417,9 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
     const elapsed = typeof resumed?.elapsedMs === "number" && Number.isFinite(resumed.elapsedMs) && resumed.elapsedMs >= 0 ? resumed.elapsedMs : 0;
     driveStartedAtMs.set(sessionId, nowMs() - elapsed);
     lastTransitionMs.set(sessionId, nowMs());
+    // IN-01 (166-REVIEW): seed the heartbeat dedupe stamp on resume too, so a recovered drive's
+    // first user heartbeat lands one full cadence after re-attach (not immediately on the next tick).
+    lastHeartbeatSentMs.set(sessionId, nowMs());
     return resumed !== undefined;
   };
 
