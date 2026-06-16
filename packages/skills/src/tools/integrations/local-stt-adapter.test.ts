@@ -18,6 +18,7 @@ import { ok, err } from "@comis/shared";
 import {
   createLocalWhisperAdapter,
   __resetLocalWhisperPipelineForTests,
+  __pcmBufferToSamplesForTests,
   type TransformersModule,
 } from "./local-stt-adapter.js";
 
@@ -31,21 +32,34 @@ const DATA_DIR = "/tmp/test-data";
 function makeFakeEngine(opts: {
   transcribeText?: string;
   pipelineRejects?: boolean;
+  /** Throw at call time (AFTER a successful load) to exercise the transcribe seam. */
+  transcribeThrows?: boolean;
+  /** Return this shape from the transcriber instead of `{ text }` (WR-03). */
+  transcribeResult?: unknown;
 }): {
   mod: TransformersModule;
   pipelineSpy: ReturnType<typeof vi.fn>;
+  transcribeSpy: ReturnType<typeof vi.fn>;
   env: Record<string, unknown>;
 } {
   const env: Record<string, unknown> = {};
-  const transcriber = vi.fn(async () => ({ text: opts.transcribeText ?? "hello" }));
+  const transcribeSpy = vi.fn(async () => {
+    if (opts.transcribeThrows) {
+      throw new Error("ONNX runtime inference error: tensor shape mismatch");
+    }
+    if (opts.transcribeResult !== undefined) {
+      return opts.transcribeResult;
+    }
+    return { text: opts.transcribeText ?? "hello" };
+  });
   const pipelineSpy = vi.fn(async () => {
     if (opts.pipelineRejects) {
       throw new Error("ONNX model load failed: short read");
     }
-    return transcriber;
+    return transcribeSpy;
   });
   const mod = { env, pipeline: pipelineSpy } as unknown as TransformersModule;
-  return { mod, pipelineSpy, env };
+  return { mod, pipelineSpy, transcribeSpy, env };
 }
 
 function pcmOk(): Result<Float32Array, Error> {
@@ -167,6 +181,96 @@ describe("createLocalWhisperAdapter", () => {
     expect(fake.pipelineSpy).toHaveBeenCalledTimes(1);
   });
 
+  it("does NOT evict the loaded singleton on a transcribe-time throw, and labels it 'dependency' not a load failure (WR-01)", async () => {
+    // The model LOADS fine (pipeline resolves), but the transcriber THROWS at
+    // call time — a per-call inference failure, not a load failure.
+    const fake = makeFakeEngine({ transcribeThrows: true });
+    const loadEngine = vi.fn(async () => fake.mod);
+    const adapter = createLocalWhisperAdapter({
+      dataDir: DATA_DIR,
+      loadEngine,
+      decodeToPcm16kF32: async () => pcmOk(),
+    });
+
+    const first = await adapter.transcribe(Buffer.from("audio"), { mimeType: "audio/ogg" });
+    const second = await adapter.transcribe(Buffer.from("audio"), { mimeType: "audio/ogg" });
+
+    expect(first.ok).toBe(false);
+    expect(second.ok).toBe(false);
+    // (a) Singleton preserved: a transcribe-time failure must NOT rebuild the
+    //     pipeline — pipeline() is called exactly ONCE across both calls.
+    expect(fake.pipelineSpy).toHaveBeenCalledTimes(1);
+    // (b) The transcribe seam ran on both calls against the SAME cached pipeline.
+    expect(fake.transcribeSpy).toHaveBeenCalledTimes(2);
+    // (c) Not mislabeled as a load failure — a transcribe failure is 'dependency'.
+    if (!first.ok) {
+      expect(first.error.message).not.toContain("failed to load");
+      expect((first.error as { kind?: string }).kind).toBe("dependency");
+    }
+  });
+
+  it("attaches the SttErrorKind to every surfaced failure branch (WR-02)", async () => {
+    // Empty-buffer branch → 'dependency'.
+    const emptyAdapter = createLocalWhisperAdapter({
+      dataDir: DATA_DIR,
+      loadEngine: async () => makeFakeEngine({}).mod,
+      decodeToPcm16kF32: async () => pcmOk(),
+    });
+    const emptyResult = await emptyAdapter.transcribe(Buffer.alloc(0), { mimeType: "audio/ogg" });
+    expect(emptyResult.ok).toBe(false);
+    if (!emptyResult.ok) {
+      expect((emptyResult.error as { kind?: string }).kind).toBe("dependency");
+    }
+
+    // Oversize branch → 'dependency'.
+    const oversizeAdapter = createLocalWhisperAdapter({
+      dataDir: DATA_DIR,
+      maxFileSizeMb: 1,
+      loadEngine: async () => makeFakeEngine({}).mod,
+      decodeToPcm16kF32: async () => pcmOk(),
+    });
+    const oversizeResult = await oversizeAdapter.transcribe(Buffer.alloc(1024 * 1024 + 1), {
+      mimeType: "audio/ogg",
+    });
+    expect(oversizeResult.ok).toBe(false);
+    if (!oversizeResult.ok) {
+      expect((oversizeResult.error as { kind?: string }).kind).toBe("dependency");
+    }
+
+    // Model-load branch → 'model_load_failed'.
+    const loadFailAdapter = createLocalWhisperAdapter({
+      dataDir: DATA_DIR,
+      loadEngine: async () => makeFakeEngine({ pipelineRejects: true }).mod,
+      decodeToPcm16kF32: async () => pcmOk(),
+    });
+    const loadFailResult = await loadFailAdapter.transcribe(Buffer.from("audio"), {
+      mimeType: "audio/ogg",
+    });
+    expect(loadFailResult.ok).toBe(false);
+    if (!loadFailResult.ok) {
+      expect((loadFailResult.error as { kind?: string }).kind).toBe("model_load_failed");
+    }
+  });
+
+  it("returns err (not a phantom ok with undefined text) when the engine yields an unexpected output shape (WR-03)", async () => {
+    const fake = makeFakeEngine({ transcribeResult: { notText: 123 } });
+    const adapter = createLocalWhisperAdapter({
+      dataDir: DATA_DIR,
+      loadEngine: async () => fake.mod,
+      decodeToPcm16kF32: async () => pcmOk(),
+    });
+
+    const result = await adapter.transcribe(Buffer.from("audio"), { mimeType: "audio/ogg" });
+
+    // The contract is `text: string` — a missing/non-string text must NOT
+    // surface as ok({ text: undefined }) (the phantom-success failure mode).
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toContain("unexpected engine output shape");
+      expect((result.error as { kind?: string }).kind).toBe("dependency");
+    }
+  });
+
   it("sets env.cacheDir to the scoped safePath under the data dir before the first pipeline() call", async () => {
     const fake = makeFakeEngine({});
     const loadEngine = vi.fn(async () => fake.mod);
@@ -202,6 +306,41 @@ describe("createLocalWhisperAdapter", () => {
       );
       expect(result.error.message).not.toContain("supersecretlongtokenvalue1234567");
       expect(result.error.message).toContain("[URL]");
+    }
+  });
+
+  it("treats a zero-byte decoded PCM as a decode failure, not an empty Float32Array (WR-04)", () => {
+    // ffmpeg "succeeded" (exit 0) but wrote no PCM — a valid container with no
+    // decodable audio stream, or a 0-duration clip. The old code produced an
+    // empty Float32Array fed into the engine; now it must be a decode error.
+    const result = __pcmBufferToSamplesForTests(Buffer.alloc(0));
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toContain("no decodable PCM");
+      expect((result.error as { kind?: string }).kind).toBe("dependency");
+    }
+  });
+
+  it("treats a non-multiple-of-4 decoded PCM length as a decode failure (WR-04)", () => {
+    // f32le PCM must be a whole number of 4-byte float samples; 1-3 stray bytes
+    // are a decode anomaly, not a sample to silently truncate.
+    const result = __pcmBufferToSamplesForTests(Buffer.alloc(6)); // 6 % 4 !== 0
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toContain("no decodable PCM");
+    }
+  });
+
+  it("decodes a valid 4-byte-multiple PCM buffer into the right number of samples (WR-04)", () => {
+    const buf = Buffer.alloc(12); // 3 float32 samples
+    buf.writeFloatLE(0.5, 0);
+    buf.writeFloatLE(-0.25, 4);
+    buf.writeFloatLE(1.0, 8);
+    const result = __pcmBufferToSamplesForTests(buf);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value).toHaveLength(3);
+      expect(Array.from(result.value)).toEqual([0.5, -0.25, 1.0]);
     }
   });
 
