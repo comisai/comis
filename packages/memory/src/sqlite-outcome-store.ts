@@ -85,6 +85,29 @@ function parseIdList(raw: string | null): string[] {
 }
 
 /**
+ * Source-tier precedence for `resolve()` fusion (OUTCOME-05): LOWER rank = HIGHER
+ * precedence. The deterministic `tool`/`pipeline` signals outrank everything —
+ * a high-confidence reaction NEVER beats a tool result. `judge` sits below the
+ * deterministic tier; `correction`/`explicit` are grouped with the `reaction`
+ * band (a `correction` is a soft-failure signal, NOT a deterministic verdict, so
+ * it never outranks a tool). An unknown/foreign source falls to the bottom.
+ *
+ * A `Map` (not a plain object) avoids the dynamic object-index lint while the
+ * lookup key is a DB-CHECK-constrained closed enum.
+ */
+const SOURCE_TIER_RANK = new Map<string, number>([
+  ["tool", 0],
+  ["pipeline", 0],
+  ["judge", 1],
+  ["reaction", 2],
+  ["correction", 2],
+  ["explicit", 2],
+]);
+function tierRank(source: string): number {
+  return SOURCE_TIER_RANK.get(source) ?? 3;
+}
+
+/**
  * Compute the deterministic row id from the UNIQUE tuple. A stable sha256 hex of
  * the space-joined `(tenant_id, agent_id, trajectory_id, source, observed_at)` —
  * NEVER `Date.now()`/`Math.random()`. The `createHash` precedent is
@@ -117,6 +140,13 @@ export function createSqliteOutcomeStore(deps: OutcomeStoreDeps): OutcomeSignalP
     "INSERT INTO outcome_events (id, tenant_id, agent_id, session_id, trajectory_id, outcome, source, confidence, sender_trust, recalled_ids, used_skill_ids, observed_at) " +
       "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
       "ON CONFLICT(tenant_id, agent_id, trajectory_id, source, observed_at) DO NOTHING",
+  );
+
+  // Scoped read for resolve(): the `tenant_id = ? AND agent_id = ?` filter is the
+  // load-bearing isolation boundary (SEC-01); every value is a bound `?` param.
+  const readStmt = db.prepare(
+    "SELECT id, session_id, trajectory_id, outcome, source, confidence, sender_trust, recalled_ids, used_skill_ids, observed_at " +
+      "FROM outcome_events WHERE tenant_id = ? AND agent_id = ? AND trajectory_id = ?",
   );
 
   // Age-based prune: DELETE every row older than the cutoff, wrapped in a
@@ -171,13 +201,94 @@ export function createSqliteOutcomeStore(deps: OutcomeStoreDeps): OutcomeSignalP
       }
     },
 
-    // resolve() — implemented in Task 2 (precedence-first fusion + fail-closed
-    // unknown + attribution). Placeholder keeps the OutcomeSignalPort type total.
     async resolve(
-      _trajectoryId: string,
-      _scope: LearningScope,
+      trajectoryId: string,
+      scope: LearningScope,
     ): Promise<Result<ResolvedOutcome, Error>> {
-      return ok({ outcome: "unknown", confidence: 0, sources: [], recalledIds: [], usedSkillIds: [] });
+      const startMs = systemNowMs();
+      const { tenantId, agentId } = scope;
+      // Fail-closed on an unresolved (tenant, agent) scope — NEVER widen to a
+      // shared/global pool (SEC-01 / T-198-05, the get_current_schema() leak
+      // vector). An empty id is a precondition violation, surfaced as err().
+      if (tenantId === "" || agentId === "") {
+        logger?.warn(
+          {
+            step: "outcome-resolve",
+            errorKind: "config" as const,
+            hint: "outcome resolve requires a resolved (tenant, agent) scope — refusing to widen to a shared pool",
+          },
+          "Outcome resolve rejected (unresolved scope)",
+        );
+        return err(new Error("outcome resolve requires a resolved (tenant, agent) scope"));
+      }
+      try {
+        const parsed = outcomeRowMapper.parseRows(readStmt.all(tenantId, agentId, trajectoryId));
+        if (!parsed.ok) return err(new Error(parsed.error.message));
+        const rows = parsed.value;
+
+        // Fail-closed unknown: a finished trajectory with no resolvable signal
+        // fuses to `unknown` and derives NO learning (OUTCOME-05); the coverage
+        // metric (Plan 04) must NOT count this as resolved.
+        if (rows.length === 0) {
+          logger?.debug(
+            { step: "outcome-resolve", resolved: false, durationMs: systemNowMs() - startMs },
+            "Outcome resolve — no signal (fail-closed unknown)",
+          );
+          return ok({ outcome: "unknown", confidence: 0, sources: [], recalledIds: [], usedSkillIds: [] });
+        }
+
+        // Precedence-first then confidence (OUTCOME-05): pick the highest-precedence
+        // tier present, then the MAX-confidence row WITHIN that tier. A
+        // high-confidence reaction never overrides a deterministic tool result.
+        let winner = rows[0]!;
+        for (const row of rows) {
+          const better =
+            tierRank(row.source) < tierRank(winner.source) ||
+            (tierRank(row.source) === tierRank(winner.source) && row.confidence > winner.confidence);
+          if (better) winner = row;
+        }
+
+        // sources = the distinct set of source strings present (deduped). Cast to
+        // the closed-union element type — the DDL CHECK guarantees in-set values.
+        const sources = [...new Set(rows.map((r) => r.source))] as ResolvedOutcome["sources"];
+
+        // Attribution: union+dedup recalledIds across ALL rows (any source may
+        // carry them); usedSkillIds is the EMPTY sink in P0 (populated Phase 201).
+        const recalledSet = new Set<string>();
+        for (const row of rows) for (const id of parseIdList(row.recalled_ids)) recalledSet.add(id);
+
+        const resolved: ResolvedOutcome = {
+          outcome: winner.outcome as ResolvedOutcome["outcome"],
+          confidence: winner.confidence,
+          sources,
+          recalledIds: [...recalledSet],
+          usedSkillIds: [],
+        };
+        logger?.debug(
+          {
+            step: "outcome-resolve",
+            resolved: true,
+            outcome: resolved.outcome,
+            sourceCount: sources.length,
+            durationMs: systemNowMs() - startMs,
+          },
+          "Outcome resolve complete",
+        );
+        return ok(resolved);
+      } catch (e: unknown) {
+        const error = e instanceof Error ? e : new Error(String(e));
+        logger?.warn(
+          {
+            step: "outcome-resolve",
+            durationMs: systemNowMs() - startMs,
+            err: error,
+            errorKind: "internal" as const,
+            hint: "outcome resolve query failed — check DB integrity",
+          },
+          "Outcome resolve failed",
+        );
+        return err(error);
+      }
     },
 
     // prune() — implemented in Task 3 (age-based housekeeping). Wired here so the
