@@ -2,15 +2,19 @@
 /**
  * Text-to-speech (TTS) step -- step 08f of the init wizard.
  *
- * Presents a single-select of all supported TTS providers (openai / elevenlabs
- * / edge, mirroring core's `TtsConfigSchema` enum) and collects the credential,
- * reusing the agent's MAIN provider key when it already supplies the matching
- * one (CRED-01):
+ * Presents a single-select of all supported TTS providers (edge / openai /
+ * elevenlabs / local, mirroring core's `TtsConfigSchema` enum, keyless-first)
+ * and collects the credential only when a keyed provider is chosen, reusing the
+ * agent's MAIN provider key when it already supplies the matching one (CRED-01):
  *
+ *   - `edge`       — Microsoft Edge TTS: free, NO key, no prompt. The keyless
+ *                    default (`initialValue`), matching the schema default.
  *   - `openai`     — reuses `OPENAI_API_KEY`; prompts only when the main
  *                    provider isn't `openai`.
  *   - `elevenlabs` — always prompts for `ELEVENLABS_API_KEY`.
- *   - `edge`       — Microsoft Edge TTS: free, NO key, no prompt.
+ *   - `local`      — offline Piper: keyless, NO prompt. The bundled voice
+ *                    arrives in a later release; until then the daemon
+ *                    honest-degrades to Edge.
  *
  * Written to `integrations.media.tts.provider`; the key flows through the same
  * managed-secrets path as the LLM key (step 10). This is the authoritative TTS
@@ -46,13 +50,23 @@ export const ttsStep: WizardStep = {
         label: tp.label,
         hint: tp.hint,
       })),
-      initialValue: state.ttsProvider?.provider ?? "openai",
+      initialValue: state.ttsProvider?.provider ?? "edge",
     });
 
-    // `edge` is free — no credential to collect.
+    // No static env key for this choice: `edge` (free) or `local` (offline
+    // Piper). Neither prompts for a key here. The message is branched so it is
+    // honest for `local` — Piper's bundled voice arrives in a later release, so
+    // until then the daemon honest-degrades to Edge.
     const requiredEnvKey = TTS_PROVIDER_ENV_KEYS[provider];
     if (!requiredEnvKey) {
-      prompter.log.info("Edge TTS is free — no API key needed.");
+      if (provider === "local") {
+        prompter.log.info(
+          "Offline Piper TTS is keyless (no API key). The bundled voice arrives " +
+            "in a later release; until then the daemon falls back to Edge.",
+        );
+      } else {
+        prompter.log.info("Edge TTS is free — no API key needed.");
+      }
       return updateState(state, { ttsProvider: { provider } });
     }
 

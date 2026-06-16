@@ -118,4 +118,57 @@ describe("transcriptionStep", () => {
       expect.objectContaining({ initialValue: "deepgram" }),
     );
   });
+
+  it("defaults to the keyless auto provider on a first-time run (WIZ-01)", async () => {
+    const prompter = createMockPrompter({ select: ["auto"] });
+    await transcriptionStep.execute(baseState(), prompter);
+    expect(prompter.select).toHaveBeenCalledWith(
+      expect.objectContaining({ initialValue: "auto" }),
+    );
+  });
+
+  it("auto and local are keyless and prompt for no API key (WIZ-01)", async () => {
+    for (const id of ["auto", "local"]) {
+      const p = createMockPrompter({ select: [id] });
+      const r = await transcriptionStep.execute(baseState(), p);
+      expect(r.transcriptionProvider).toEqual({ provider: id });
+      expect(p.password).not.toHaveBeenCalled();
+    }
+  });
+
+  it("offers auto and local as keyless-first ordered options (WIZ-04 drift mirror)", () => {
+    expect(SUPPORTED_TRANSCRIPTION_PROVIDERS.map((t) => t.id)).toEqual([
+      "auto",
+      "local",
+      "openai",
+      "groq",
+      "deepgram",
+    ]);
+  });
+
+  it("openai with a non-openai main prompts OPENAI_API_KEY but reuses an openai main key (CRED-01)", async () => {
+    // (a) non-openai main → must prompt for the OpenAI key (no silent reuse).
+    const promptingPrompter = createMockPrompter({
+      select: ["openai"],
+      password: ["sk-openai-key-1234"],
+    });
+    const anthropicMain: WizardState = {
+      completedSteps: [],
+      provider: { id: "anthropic", apiKey: "test-anthropic-key" },
+    };
+    await transcriptionStep.execute(anthropicMain, promptingPrompter);
+    expect(promptingPrompter.password).toHaveBeenCalledWith(
+      expect.objectContaining({ message: expect.stringContaining("OPENAI_API_KEY") }),
+    );
+
+    // (b) openai main → reuse its key, no prompt.
+    const reusingPrompter = createMockPrompter({ select: ["openai"] });
+    const openaiMain: WizardState = {
+      completedSteps: [],
+      provider: { id: "openai", apiKey: "test-openai-key" },
+    };
+    const result = await transcriptionStep.execute(openaiMain, reusingPrompter);
+    expect(reusingPrompter.password).not.toHaveBeenCalled();
+    expect(result.transcriptionProvider).toEqual({ provider: "openai" });
+  });
 });

@@ -13,6 +13,25 @@ note to sending a spoken reply -- can be fully automatic.
 
 <NonTechnicalNote />
 
+## Keyless by Default
+
+Voice works with **zero credentials out of the box**. Speech-to-text defaults to
+`auto` (keyless-first: a local whisper engine when one is available, otherwise an
+honest "not available" hint) and text-to-speech defaults to `edge` (Microsoft Edge
+TTS — free, no API key). A keyed cloud provider (OpenAI, Groq, Deepgram, ElevenLabs)
+is used **only** when you set it explicitly **or** your agent's main provider already
+supplies a usable audio key.
+
+<Warning>
+A **Codex / ChatGPT-subscription (OAuth) login cannot drive OpenAI audio endpoints.**
+The OAuth bearer is scoped to the Codex Responses backend and cannot reach
+`api.openai.com/v1/audio/*`. With the keyless-first resolver, a Codex-only agent is
+steered to a keyless provider and — if none is available yet — gets an actionable
+"not available" hint, **never a silent HTTP 401** from an empty-bearer request. To use
+OpenAI audio, set a separate platform API key (`OPENAI_API_KEY`) and
+`integrations.media.transcription.provider: openai` explicitly.
+</Warning>
+
 ## How Voice Works
 
 <Steps>
@@ -44,25 +63,79 @@ the bot's name.
 
 ## Transcription (Speech-to-Text)
 
-Comis supports three speech-to-text providers. You only need one configured, but
-you can set up multiple for automatic failover. Each provider connects to a
-different speech recognition service, so the best choice depends on your needs
-and which API keys you already have.
+The transcription `provider` is one of `auto` (the keyless-first default), `local`
+(a keyless local whisper engine), or a keyed cloud provider (`openai`, `groq`,
+`deepgram`). You only need one configured, and the default needs none — set up
+multiple via `fallbackProviders` for automatic failover.
 
-| Provider | Default Model | API Key | Special Features |
-|----------|--------------|---------|------------------|
-| OpenAI | gpt-4o-mini-transcribe | `OPENAI_API_KEY` | Default provider, fast |
-| Groq | whisper-large-v3-turbo | `GROQ_API_KEY` | Returns language detection and duration |
-| Deepgram | nova-3 | `DEEPGRAM_API_KEY` | High accuracy, real-time streaming |
+| Provider | Default Model | API Key | Notes |
+|----------|--------------|---------|-------|
+| `auto` | -- | None needed | **Default.** Keyless-first: resolves to the local engine when available, else follows the agent's main provider key, else honest-unavailable |
+| `local` | base | None needed | Keyless **in-process** whisper engine — auto-downloads a small model (default `base`) once to `~/.comis/models/whisper/` on first use, then reuses it. Or point `local.baseUrl` at an OpenAI-compatible local whisper server. |
+| `openai` | gpt-4o-mini-transcribe | `OPENAI_API_KEY` | Explicit opt-in; fast |
+| `groq` | whisper-large-v3-turbo | `GROQ_API_KEY` | Explicit opt-in; returns language detection and duration |
+| `deepgram` | nova-3 | `DEEPGRAM_API_KEY` | Explicit opt-in; high accuracy, real-time streaming |
+
+<Note>
+**Behavioral change (no backward-compat constraint):** earlier releases defaulted
+STT to `openai` and required `OPENAI_API_KEY`. The default is now `auto` (keyless).
+An install that relied on the implicit `openai` default plus a present
+`OPENAI_API_KEY` will resolve to `auto` → the keyless **local** whisper engine (it
+auto-downloads its model on the first voice note when ffmpeg is present and the host
+can reach the model hub), and honest-degrades to "not available" only if neither the
+local engine nor a reusable main-provider audio key can serve — **or** set
+`provider: openai` explicitly to restore the previous behavior. This is intentional:
+voice now works with zero credentials, and an OAuth-only main is never sent an
+empty-bearer request.
+</Note>
 
 <AccordionGroup>
-  <Accordion title="OpenAI">
-    Default transcription provider. Uses the gpt-4o-mini-transcribe model. Reliable
-    and fast for most use cases. Requires an OpenAI API key. Does not return
-    language or duration metadata in the response.
+  <Accordion title="auto (default, keyless-first)">
+    The default. Resolves a provider in priority order: a keyless **local** whisper
+    engine first (when available), then the agent's main-provider audio key **only if
+    one genuinely exists** (e.g. an `openai`/`groq` main with that key set), then any
+    configured `fallbackProviders`, and finally an honest "not available" hint naming
+    the exact remedy. An OAuth-only main (Codex) has no reusable audio key, so it is
+    steered straight to keyless / honest-unavailable — never an empty-bearer 401.
+  </Accordion>
 
-    This is the provider Comis uses out of the box if you have an OpenAI API key
-    configured. No additional setup beyond the API key is needed.
+  <Accordion title="local (keyless)">
+    A keyless local whisper engine — no API key, no cloud round-trip. Two modes:
+
+    - **In-process (default, zero-config).** When `local.baseUrl` is unset, Comis runs
+      whisper in-process via [Transformers.js](https://huggingface.co/docs/transformers.js).
+      The engine lazy-loads on the first voice note: it auto-downloads a small model
+      (`transcription.local.model`, default `base`) once over TLS from the model hub to
+      the scoped cache `~/.comis/models/whisper/`, then reuses the cached model for the
+      life of the process — so the **first** transcription is slower (it pays the
+      download + load) and every subsequent one is fast. The engine runs on ONNX
+      Runtime, which the daemon's existing `--allow-addons` flag already covers — no new
+      permission flag is needed (see [Node Permissions](/reference/node-permissions#keyless-local-stt-whisper-engine)).
+      If the engine or model can't load, or ffmpeg is absent, transcription
+      honest-degrades to "not available" (so `auto` falls through to the next rung) —
+      it never crashes the inbound message.
+    - **`local.baseUrl` server (escape hatch).** Set `transcription.local.baseUrl` to an
+      OpenAI-compatible local whisper **server** (faster-whisper-server, Speaches,
+      whisper.cpp-server, …) and Comis talks to it keyless — no in-process model
+      download, fully offline-capable, and GPU-accelerated if the server is. A reachable
+      server makes `local` available without the in-process engine.
+
+      <Warning>
+      **`local.baseUrl` is SSRF-guarded (loopback-only by default).** The URL is validated
+      (with DNS-rebinding protection) before any request: only **loopback** (`127.0.0.1`,
+      `localhost`, `::1`) and explicitly-allowlisted hosts are permitted; public and
+      cloud-metadata addresses are denied. A rejected `baseUrl` is treated as
+      *unreachable* (the resolver falls through to the in-process engine or
+      honest-unavailable) — it never drives an outbound request. Point it at a whisper
+      server on the local host, not a public URL.
+      </Warning>
+  </Accordion>
+
+  <Accordion title="OpenAI">
+    Explicit opt-in. Uses the gpt-4o-mini-transcribe model. Reliable and fast for
+    most use cases. Requires an OpenAI **platform** API key (`OPENAI_API_KEY`) — a
+    Codex/ChatGPT OAuth login cannot drive audio. Does not return language or
+    duration metadata in the response. Set `provider: openai` to use it.
   </Accordion>
 
   <Accordion title="Groq">
@@ -95,32 +168,63 @@ when a single provider has issues.
 integrations:
   media:
     transcription:
-      provider: openai                   # Primary provider
-      fallbackProviders:                 # Try these if primary fails
+      provider: auto                     # Keyless-first default
+      fallbackProviders:                 # Try these if the primary fails
         - groq
         - deepgram
 ```
 
-In this example, Comis tries OpenAI first. If OpenAI fails, it tries Groq. If Groq
-also fails, it tries Deepgram. The first successful transcription is used.
+In this example, Comis resolves `auto` first (keyless / follow-main). If that
+resolution cannot serve, it tries Groq, then Deepgram. The first successful
+transcription is used. (`auto` and `local` are also valid `fallbackProviders`
+entries — `auto` is a benign no-op rung the resolver collapses.)
 
 ## Text-to-Speech (TTS)
 
-Comis can convert your agent's text replies into spoken audio using three TTS
-providers. Like transcription, you only need one provider configured. The right
-choice depends on voice quality requirements, budget, and whether you need an
-API key.
+The TTS `provider` is one of `edge` (the keyless default), `openai`, `elevenlabs`,
+or `local`. You only need one configured, and the default needs none — the right
+choice depends on voice quality, budget, and whether you need an API key.
 
 | Provider | Default Model | Default Voice | API Key | Cost |
 |----------|--------------|--------------|---------|------|
-| OpenAI | tts-1 | alloy | `OPENAI_API_KEY` | Paid |
-| ElevenLabs | eleven_multilingual_v2 | Rachel | `ELEVENLABS_API_KEY` | Paid |
-| Edge | -- | en-US-AvaMultilingualNeural | None needed | Free |
+| `edge` | -- | en-US-AvaMultilingualNeural | None needed | **Default.** Free (network-dependent) |
+| `local` / `piper` | Xenova/mms-tts-eng | -- | None needed | Keyless **in-process** offline TTS — no network at synth time |
+| `openai` | tts-1 | alloy | `OPENAI_API_KEY` | Paid (explicit opt-in) |
+| `elevenlabs` | eleven_multilingual_v2 | Rachel | `ELEVENLABS_API_KEY` | Paid (explicit opt-in) |
+
+<Note>
+**Behavioral change:** TTS defaults to `edge` (keyless) instead of `openai`. Edge
+needs no key, so auto-reply works out of the box. A Codex/OAuth-only main also
+resolves to `edge`. Set `provider: openai` or `provider: elevenlabs` explicitly
+(with the matching key) for the paid providers.
+</Note>
 
 <AccordionGroup>
+  <Accordion title="Edge TTS (default, keyless)">
+    The default. Microsoft Edge text-to-speech — free, no API key required. Default
+    voice is en-US-AvaMultilingualNeural. Works out of the box for every install
+    (including Codex/OAuth-only mains). Limited customization compared to OpenAI and
+    ElevenLabs, but a great zero-config baseline. Network-dependent (it calls a
+    Microsoft Edge endpoint); for a fully offline voice, use `local`/`piper` below.
+  </Accordion>
+
+  <Accordion title="Local / Piper (offline, keyless)">
+    Keyless **offline** TTS. `provider: local` (or its alias `piper`) runs a small
+    single-speaker `text-to-audio` model (`Xenova/mms-tts-eng`) **in-process** via
+    `@huggingface/transformers` — the TTS twin of the local whisper STT engine. The
+    model auto-downloads once over TLS to `~/.comis/models/tts/` (a separate dir from
+    `models/whisper/`, already inside the daemon's `--allow-fs-write` scope), then
+    synthesizes with **no network at synth time**. A short/corrupt model download
+    fails closed (`model_load_failed`); if the engine or model is unavailable it
+    honest-degrades to a structured error (never crashes the reply). With TTS
+    `provider: auto`, the chain is `edge → local/piper → honest-unavailable`, so a
+    no-network install still speaks once the model is cached.
+  </Accordion>
+
   <Accordion title="OpenAI">
-    Default TTS provider. Uses the tts-1 model with the "alloy" voice. Supports
-    speed adjustment from 0.25x to 4.0x. Requires an OpenAI API key. A good
+    Explicit opt-in. Uses the tts-1 model with the "alloy" voice. Supports speed
+    adjustment from 0.25x to 4.0x. Requires an OpenAI **platform** API key
+    (`OPENAI_API_KEY`) — a Codex/ChatGPT OAuth login cannot drive audio. A good
     balance of quality and speed.
 
     OpenAI offers several voice options beyond "alloy." You can change the voice
@@ -136,16 +240,6 @@ API key.
     ElevenLabs voices sound the most natural and expressive. The advanced settings
     let you fine-tune how the voice sounds -- for example, increasing stability
     makes the voice more consistent, while boosting style adds more expressiveness.
-  </Accordion>
-
-  <Accordion title="Edge TTS">
-    Microsoft Edge text-to-speech. Free, no API key required. Default voice is
-    en-US-AvaMultilingualNeural. A good option for testing or budget-conscious
-    setups. Limited customization compared to OpenAI and ElevenLabs.
-
-    Since Edge TTS is free and requires no API key, it is the easiest way to try
-    out voice replies. You can always switch to OpenAI or ElevenLabs later for
-    higher quality.
   </Accordion>
 </AccordionGroup>
 
@@ -239,17 +333,21 @@ Full configuration reference for both transcription and text-to-speech:
 integrations:
   media:
     transcription:
-      provider: openai                # Primary: openai, groq, or deepgram
+      provider: auto                  # auto (keyless-first), local, openai, groq, deepgram
       model: gpt-4o-mini-transcribe   # Model override (provider-dependent)
+      local:                          # Keyless local whisper engine (used by auto/local)
+        model: base                   # In-process model (auto-downloads once to ~/.comis/models/whisper/)
+        baseUrl: ""                   # Set → OpenAI-compatible local whisper server (no in-process download)
+        # engine: ""                  # Engine selector (reserved for a later release)
       maxFileSizeMb: 25               # Max audio file size
       timeoutMs: 60000                # API timeout (1 min)
       language: ""                    # BCP-47 hint (e.g., "en", "es") -- empty = auto-detect
       autoTranscribe: true            # Auto-transcribe voice messages
       preflight: true                 # Pre-transcribe for mention detection
-      fallbackProviders: []           # Ordered fallback list
+      fallbackProviders: []           # Ordered fallback list (auto/local/openai/groq/deepgram)
 
     tts:
-      provider: openai                # openai, elevenlabs, or edge
+      provider: edge                  # edge (keyless default), openai, elevenlabs, local
       voice: alloy                    # Voice identifier
       format: opus                    # Default output format
       model: tts-1                    # Model override
@@ -272,22 +370,28 @@ integrations:
 
 ## What Happens Without a Provider
 
-Voice features degrade gracefully. You do not need every provider configured for
-the system to work.
+Voice features degrade gracefully — and the keyless defaults mean "no provider"
+is increasingly rare. You do not need every provider configured for the system to
+work.
 
-**Without a transcription provider**, voice messages are not auto-transcribed.
-Instead, your agent receives a hint: "Voice message attached -- use
-transcribe_audio tool to listen." The agent can still process voice messages
-using the [transcribe_audio](/agent-tools/media) on-demand tool if a provider
-key is available to the tool.
+**When transcription resolves to honest-unavailable** (STT `auto` when the keyless
+local engine cannot serve — e.g. ffmpeg is absent or the host has no egress to the
+model hub and no `local.baseUrl` server — and there is no reusable main-provider
+audio key, which is also the case for a Codex/OAuth-only main with none of the
+above), voice messages are not auto-transcribed and **no adapter is constructed**
+(so there is no empty-bearer 401). Instead, your agent still receives the message
+with a hint to use the [transcribe_audio](/agent-tools/media) on-demand tool. The
+honest-unavailable reason is logged once, naming the exact remedy (install ffmpeg,
+set `local.baseUrl`, or set `GROQ_API_KEY` / `OPENAI_API_KEY`). The agent's text
+reply is never blocked.
 
-**Without a TTS provider**, auto-reply modes have no effect. Text replies are
-sent as text regardless of the `autoMode` setting. The agent can still use
-[tts_synthesize](/agent-tools/media) if the tool and a provider key are
-available.
+**TTS defaults to keyless Edge**, so auto-reply works without any key. If you set
+a keyed TTS provider without its key, the resolution is honest-unavailable and text
+replies are sent as text regardless of `autoMode`; the agent can still use
+[tts_synthesize](/agent-tools/media) if a provider key is available.
 
-This means you can start with just transcription, add TTS later, or use neither
-and rely entirely on the on-demand tools.
+This means voice works out of the box with zero credentials — add a keyed cloud
+provider later only if you want one.
 
 ## Walkthrough: voice → transcript → reply → TTS
 
@@ -327,6 +431,61 @@ Here is the full round-trip for a WhatsApp voice note when transcription
 If TTS were not configured, the reply would still be delivered — just as
 text instead of audio. The `inbound` setting only triggers voice when the
 user spoke first, so written messages always get written replies.
+
+## Observability and cost
+
+Every transcription and synthesis is fully instrumented so an operator can
+reconstruct any voice turn from logs and the observability tools alone — no live
+repro needed.
+
+### Logs
+
+Each transcription/synthesis emits **one INFO completion line** carrying
+`provider`, `keyless` (a boolean), `model`, `durationMs`, `audioBytes`,
+`costUsd`, and the resolved selection `source` (the rung `auto` picked —
+`keyless-local`, `follow-main-key`, `fallback`, or `explicit`). Every failure
+branch emits a **WARN/ERROR** line with an `errorKind` (one of
+`no_keyless_engine`, `auth_required`, `model_load_failed`,
+`model_download_failed`, `timeout`, `network`, `dependency`) and an actionable
+`hint`. Secrets are never logged at any level — a provider's `baseUrl` is logged
+host-only (path and query dropped), and `Bearer` tokens, API keys, and the
+keyless-LLM sentinel are stripped before a message reaches a log line.
+
+### `comis explain` — reconstruct one voice turn
+
+`comis explain <sessionKey>` reconstructs a voice turn offline from the
+session's trajectory. The report's `voice` block shows the `provider`, whether
+it ran `keyless`, the `model`, `durationMs`, the `outcome` (`ok`/`failed`), the
+resolved selection `source` rung (and, when `auto` skipped a higher rung, the
+`onSkip` reasons that explain *why* it landed where it did), and — on a failure
+— the `errorKind`. The block is content-free: it carries ids, labels, numbers,
+and booleans only, never the audio, the transcript text, or a credential.
+
+### `comis fleet` — the voice-health signal
+
+`comis fleet` surfaces a `voice_health` finding beside `model_health` and
+`config_posture` when transcriptions/syntheses have been degrading across the
+window: the **count of degraded STT/TTS turns** and the **dominant voice
+`errorKind`** (for example, `model_load_failed` pointing at the local whisper
+model cache, or `auth_required` pointing at a missing audio key). Like every
+fleet finding it carries **counts, a short code, and a static hint only — no raw
+provider message and no secret — so it is safe to paste into a review.** Drill
+into the worst session it points at with `comis explain`.
+
+### Cost honesty
+
+Voice **cost reporting is honest about what the providers actually return.**
+Keyless paths (the `local` whisper engine, Edge TTS) record `costUsd: 0`
+**explicitly**, so "free" is *visible* on the `voice` block rather than an
+ambiguous absence. Keyed providers, however, **do not return a per-call cost**
+for transcription or synthesis today — neither the STT nor the TTS port carries
+a cost field — so a keyed voice turn shows **no `costUsd` at all**. That absence
+is honest: Comis never fabricates a price it did not receive. (Token-based LLM
+cost for the agent's *reply* is tracked separately, as usual; this note is only
+about the STT/TTS calls themselves.)
+
+Voice turns appear in the existing per-session trajectory — this phase added no
+new on-disk artifact or data-directory path.
 
 ## Related
 

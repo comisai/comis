@@ -447,12 +447,22 @@ With a **Codex (ChatGPT-login) main provider** and `provider: auto` (or explicit
 
 ## Voice and Media
 
-Optional. When unset, the matching feature falls back to the provider keys above (e.g. OpenAI for TTS) or is disabled.
+**All audio keys are OPTIONAL.** Voice defaults to keyless: speech-to-text to
+`auto` (keyless-first — a local whisper engine when available, else honest-
+unavailable) and text-to-speech to `edge` (Microsoft Edge TTS, no key). The keyed
+audio providers below — and `OPENAI_API_KEY` / `GROQ_API_KEY` for STT — are used
+**only** when you set `integrations.media.transcription.provider` /
+`.tts.provider` to that provider explicitly, **or** the agent's main provider
+already supplies a usable audio key. A **Codex/ChatGPT-OAuth login cannot drive
+OpenAI audio** (the bearer is scoped to the Codex Responses backend, not
+`/v1/audio/*`); a Codex-only main is steered to keyless and never issues an
+empty-bearer 401 — set a separate platform `OPENAI_API_KEY` + `provider: openai`
+to use OpenAI audio explicitly.
 
 | Variable | Used For |
 |----------|----------|
-| `ELEVENLABS_API_KEY` | ElevenLabs premium TTS voices |
-| `DEEPGRAM_API_KEY` | Deepgram Nova-3 speech-to-text |
+| `ELEVENLABS_API_KEY` | ElevenLabs premium TTS voices (explicit `tts.provider: elevenlabs`) |
+| `DEEPGRAM_API_KEY` | Deepgram Nova-3 speech-to-text (explicit `transcription.provider: deepgram`) |
 
 ```bash
 ELEVENLABS_API_KEY=sk_...

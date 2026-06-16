@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { validateUrl, BLOCKED_RANGES, CLOUD_METADATA_IPS } from "./ssrf-guard.js";
+import { validateUrl, validateLocalServerUrl, BLOCKED_RANGES, CLOUD_METADATA_IPS } from "./ssrf-guard.js";
 
 // Mock dns/promises so we get deterministic results without real DNS
 vi.mock("node:dns/promises", () => ({
@@ -152,5 +152,115 @@ describe("SSRF Guard", () => {
       }
     });
 
+  });
+
+  // -------------------------------------------------------------------------
+  // validateLocalServerUrl (SEC-02) — the INVERSE verdict of validateUrl.
+  //
+  // validateUrl BLOCKS loopback (it guards untrusted public fetches like
+  // reference_image). validateLocalServerUrl is for an operator-configured
+  // LOCAL server (`transcription.local.baseUrl`): it ALLOWS loopback + an
+  // explicit allowlist, and DENIES public/arbitrary egress (keeping the
+  // cloud-metadata deny as defense-in-depth). A test that asserts a loopback
+  // url is *rejected* would be WRONG — that is the v2.23 public-fetch policy,
+  // not the local-server policy.
+  // -------------------------------------------------------------------------
+  describe("validateLocalServerUrl", () => {
+    it("ALLOWS loopback IPv4 (127.0.0.1) — the legitimate local whisper server (validateUrl would reject this)", async () => {
+      mockLookup.mockResolvedValue({ address: "127.0.0.1", family: 4 });
+
+      const result = await validateLocalServerUrl("http://127.0.0.1:8000");
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value.hostname).toBe("127.0.0.1");
+        expect(result.value.ip).toBe("127.0.0.1");
+        expect(result.value.url.protocol).toBe("http:");
+      }
+    });
+
+    it("ALLOWS a loopback hostname (localhost) resolving to 127.0.0.1", async () => {
+      mockLookup.mockResolvedValue({ address: "127.0.0.1", family: 4 });
+
+      const result = await validateLocalServerUrl("http://localhost:11434");
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value.hostname).toBe("localhost");
+      }
+    });
+
+    it("ALLOWS IPv6 loopback ([::1]) — strips the brackets for the DNS lookup", async () => {
+      mockLookup.mockResolvedValue({ address: "::1", family: 6 });
+
+      const result = await validateLocalServerUrl("http://[::1]:8000");
+      expect(result.ok).toBe(true);
+      // The lookup must receive the bracket-stripped host (mirrors validateUrl).
+      expect(mockLookup).toHaveBeenCalledWith("::1");
+    });
+
+    it("rejects the cloud-metadata IP (169.254.169.254) as defense-in-depth", async () => {
+      mockLookup.mockResolvedValue({ address: "169.254.169.254", family: 4 });
+
+      const result = await validateLocalServerUrl("http://169.254.169.254/latest/meta-data");
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.message).toMatch(/cloud metadata/i);
+      }
+    });
+
+    it("DENIES a private host (10.0.0.5) — the SEC-02 core inversion (private+public both denied unless explicitly allowed)", async () => {
+      mockLookup.mockResolvedValue({ address: "10.0.0.5", family: 4 });
+
+      const result = await validateLocalServerUrl("http://10.0.0.5:8000");
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.message).toMatch(/not a loopback or explicitly-allowed/i);
+      }
+    });
+
+    it("DENIES an arbitrary public host (example.com) by default (loopback-only)", async () => {
+      mockLookup.mockResolvedValue({ address: "93.184.216.34", family: 4 });
+
+      const result = await validateLocalServerUrl("http://example.com:8000");
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.message).toMatch(/not a loopback or explicitly-allowed/i);
+      }
+    });
+
+    it("ALLOWS an explicitly-allowed host via the allowlist opt-in", async () => {
+      mockLookup.mockResolvedValue({ address: "93.184.216.34", family: 4 });
+
+      const result = await validateLocalServerUrl("http://example.com:8000", ["example.com"]);
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value.hostname).toBe("example.com");
+      }
+    });
+
+    it("DENIES a non-http protocol (ftp) — protocol check reused from ALLOWED_PROTOCOLS", async () => {
+      const result = await validateLocalServerUrl("ftp://127.0.0.1");
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.message).toContain("Blocked protocol");
+      }
+    });
+
+    it("returns err (never throws) on an invalid URL", async () => {
+      const result = await validateLocalServerUrl("not a url");
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.message).toContain("Invalid URL");
+      }
+    });
+
+    it("returns err (never throws) on a DNS resolution failure", async () => {
+      mockLookup.mockRejectedValue(new Error("getaddrinfo ENOTFOUND bad.invalid"));
+
+      const result = await validateLocalServerUrl("http://bad.invalid");
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.message).toContain("ENOTFOUND");
+      }
+    });
   });
 });

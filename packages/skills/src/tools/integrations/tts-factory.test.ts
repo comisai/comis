@@ -13,6 +13,11 @@ vi.mock("./elevenlabs-tts-adapter.js", () => ({
 vi.mock("./edge-tts-adapter.js", () => ({
   createEdgeTTSAdapter: vi.fn().mockReturnValue({ __type: "edge" }),
 }));
+vi.mock("./local-tts-adapter.js", () => ({
+  createLocalTtsAdapter: vi.fn().mockReturnValue({ __type: "local" }),
+}));
+
+const DATA_DIR = "/tmp/tts-test-data";
 
 function createMockSecretManager(secrets: Record<string, string | undefined>): SecretManager {
   return {
@@ -37,7 +42,7 @@ describe("createTTSProvider", () => {
     const secretManager = createMockSecretManager({ OPENAI_API_KEY: "sk-test" });
     const config: TtsConfig = { provider: "openai", voice: "alloy", format: "opus" };
 
-    const result = createTTSProvider(config, secretManager);
+    const result = createTTSProvider(config, secretManager, DATA_DIR);
 
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -59,7 +64,7 @@ describe("createTTSProvider", () => {
       model: "eleven_turbo_v2_5",
     };
 
-    const result = createTTSProvider(config, secretManager);
+    const result = createTTSProvider(config, secretManager, DATA_DIR);
 
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -81,7 +86,7 @@ describe("createTTSProvider", () => {
       format: "opus",
     };
 
-    const result = createTTSProvider(config, secretManager);
+    const result = createTTSProvider(config, secretManager, DATA_DIR);
 
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -97,7 +102,7 @@ describe("createTTSProvider", () => {
     // Force unknown provider via type assertion
     const config = { provider: "unknown", voice: "alloy", format: "opus" } as unknown as TtsConfig;
 
-    const result = createTTSProvider(config, secretManager);
+    const result = createTTSProvider(config, secretManager, DATA_DIR);
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -110,7 +115,7 @@ describe("createTTSProvider", () => {
     const secretManager = createMockSecretManager({});
     const config: TtsConfig = { provider: "edge", voice: "alloy", format: "opus" };
 
-    const result = createTTSProvider(config, secretManager);
+    const result = createTTSProvider(config, secretManager, DATA_DIR);
 
     expect(result.ok).toBe(true);
   });
@@ -120,7 +125,7 @@ describe("createTTSProvider", () => {
     const secretManager = createMockSecretManager({});
     const config: TtsConfig = { provider: "openai", voice: "alloy", format: "opus" };
 
-    createTTSProvider(config, secretManager);
+    createTTSProvider(config, secretManager, DATA_DIR);
 
     expect(createOpenAITTSAdapter).toHaveBeenCalledWith({
       apiKey: "",
@@ -133,12 +138,69 @@ describe("createTTSProvider", () => {
     const secretManager = createMockSecretManager({});
     const config: TtsConfig = { provider: "elevenlabs", voice: "alloy", format: "opus" };
 
-    createTTSProvider(config, secretManager);
+    createTTSProvider(config, secretManager, DATA_DIR);
 
     expect(createElevenLabsTTSAdapter).toHaveBeenCalledWith({
       apiKey: "",
       modelId: undefined,
       defaultVoice: "alloy",
+    });
+  });
+
+  // ===========================================================================
+  // TTS-02 (SHIP): the local/piper case routes to the in-process keyless
+  // transformers.js text-to-audio adapter (createLocalTtsAdapter) with the
+  // scoped dataDir threaded — NOT the raw "Unknown TTS provider: local" default
+  // error a wizard option (195) would otherwise expose. Mutation-proven: drop
+  // the case and these route to the default → fail.
+  // ===========================================================================
+  describe("local/piper offline TTS (TTS-02)", () => {
+    it("routes provider 'local' to createLocalTtsAdapter with the threaded dataDir", async () => {
+      const { createLocalTtsAdapter } = await import("./local-tts-adapter.js");
+      const secretManager = createMockSecretManager({});
+      const config: TtsConfig = { provider: "local", voice: "alloy", format: "mp3" };
+
+      const result = createTTSProvider(config, secretManager, DATA_DIR);
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect((result.value as unknown as { __type: string }).__type).toBe("local");
+      }
+      expect(createLocalTtsAdapter).toHaveBeenCalledWith(
+        expect.objectContaining({ dataDir: DATA_DIR }),
+      );
+    });
+
+    it("routes provider 'piper' to createLocalTtsAdapter with the threaded dataDir", async () => {
+      const { createLocalTtsAdapter } = await import("./local-tts-adapter.js");
+      const secretManager = createMockSecretManager({});
+      const config = {
+        provider: "piper",
+        voice: "alloy",
+        format: "mp3",
+      } as unknown as TtsConfig;
+
+      const result = createTTSProvider(config, secretManager, DATA_DIR);
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect((result.value as unknown as { __type: string }).__type).toBe("local");
+      }
+      expect(createLocalTtsAdapter).toHaveBeenCalledWith(
+        expect.objectContaining({ dataDir: DATA_DIR }),
+      );
+    });
+
+    it("does NOT route 'local' to the raw 'Unknown TTS provider' default error", async () => {
+      const secretManager = createMockSecretManager({});
+      const config: TtsConfig = { provider: "local", voice: "alloy", format: "mp3" };
+
+      const result = createTTSProvider(config, secretManager, DATA_DIR);
+
+      // The wizard (195) presents `local`; a raw provider-not-found behind a
+      // wizard option is the silent-stub anti-pattern. It must construct the
+      // adapter, not fall through to the default error.
+      expect(result.ok).toBe(true);
     });
   });
 });

@@ -190,9 +190,9 @@ export function registerInitCommand(program: Command): void {
     .option("--image-api-key <key>", "Image provider API key (e.g. FAL_KEY; reuses --api-key for a matching main provider)")
     .option("--video-provider <id>", "Video generation provider: auto|fal|google|xai")
     .option("--video-api-key <key>", "Video provider API key (e.g. FAL_KEY; reuses --api-key for a matching main provider)")
-    .option("--stt-provider <id>", "Voice transcription provider: openai|groq|deepgram")
-    .option("--stt-api-key <key>", "Transcription provider API key (reuses --api-key for a matching main provider)")
-    .option("--tts-provider <id>", "Text-to-speech provider: openai|elevenlabs|edge")
+    .option("--stt-provider <id>", "Voice transcription provider: auto|local|openai|groq|deepgram")
+    .option("--stt-api-key <key>", "Transcription provider API key (reuses --api-key for a matching main provider; auto/local need none)")
+    .option("--tts-provider <id>", "Text-to-speech provider: edge|openai|elevenlabs|local")
     .option("--tts-api-key <key>", "TTS provider API key (reuses --api-key for a matching main provider; edge needs none)")
     // Paths
     .option("--data-dir <path>", "Workspace directory")

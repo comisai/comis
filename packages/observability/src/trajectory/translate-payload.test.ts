@@ -275,3 +275,163 @@ describe("translatePayload — OBS-04 video signals (content-free + envelope str
     expect(data.timestamp).toBeUndefined();
   });
 });
+
+// OBS-02/03 (Phase 196): the six voice (STT/TTS) arms forward ONLY content-free
+// ids / labels / numbers / booleans / closed-enum reasons (provider/keyless/
+// model/durationMs/audioBytes/costUsd/outcome/errorKind/source/onSkip) and STRIP
+// the envelope (agentId/sessionKey/traceId/timestamp), mirroring the image:*/
+// media.vision:*/video:* cases. costUsd/model/durationMs/audioBytes spread
+// presence-conditionally; the keyless emitter passes costUsd:0 so it IS present
+// (FLAG 4 — keyless "$0" is load-bearing visibility, never stripped). The
+// onSkip reasons (a closed rung-list, no free text) ride the *:requested arms —
+// the OBS-03 "selection rung AND the onSkip reasons observable" obligation; the
+// `source` field alone names only the chosen rung, not why the others skipped.
+// NEVER the audio bytes, transcript text, synthesized audio, or a credential.
+describe("translatePayload — OBS-02/03 voice (STT/TTS) signals (content-free + envelope stripping)", () => {
+  it("forwards media.stt:requested as {provider, keyless, source} + the onSkip reasons (OBS-03), stripping the envelope", () => {
+    const data = translatePayload("media.stt:requested", {
+      provider: "local",
+      keyless: true,
+      source: "keyless-local",
+      onSkip: ["fallback \"openai\" skipped: no key"],
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      traceId: "trace-1",
+      timestamp: 1717171717,
+    });
+    expect(data).toEqual({
+      provider: "local",
+      keyless: true,
+      source: "keyless-local",
+      onSkip: ["fallback \"openai\" skipped: no key"],
+    });
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.traceId).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("media.tts:requested without onSkip omits the key entirely (no undefined)", () => {
+    const data = translatePayload("media.tts:requested", {
+      provider: "edge",
+      keyless: true,
+      source: "keyless-local",
+      timestamp: 1717171717,
+    });
+    expect(data).toEqual({ provider: "edge", keyless: true, source: "keyless-local" });
+    expect("onSkip" in data).toBe(false);
+  });
+
+  it("forwards media.stt:completed with costUsd:0 PRESENT for keyless (FLAG 4 — never stripped) + outcome:ok", () => {
+    const data = translatePayload("media.stt:completed", {
+      provider: "local",
+      keyless: true,
+      model: "base",
+      durationMs: 1200,
+      audioBytes: 5000,
+      costUsd: 0,
+      source: "keyless-local",
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      traceId: "trace-1",
+      timestamp: 1717171717,
+    });
+    expect(data).toEqual({
+      provider: "local",
+      keyless: true,
+      outcome: "ok",
+      model: "base",
+      durationMs: 1200,
+      audioBytes: 5000,
+      costUsd: 0,
+      source: "keyless-local",
+    });
+    // keyless $0 is load-bearing visibility — present, not stripped.
+    expect("costUsd" in data).toBe(true);
+    expect(data.costUsd).toBe(0);
+    expect(data.agentId).toBeUndefined();
+    expect(data.traceId).toBeUndefined();
+  });
+
+  it("media.tts:completed (keyed, no per-call cost) omits costUsd + presence-conditional optionals", () => {
+    const data = translatePayload("media.tts:completed", {
+      provider: "elevenlabs",
+      keyless: false,
+      durationMs: 800,
+      source: "follow-main-key",
+      timestamp: 1717171717,
+    });
+    expect(data).toEqual({
+      provider: "elevenlabs",
+      keyless: false,
+      outcome: "ok",
+      durationMs: 800,
+      source: "follow-main-key",
+    });
+    expect("costUsd" in data).toBe(false);
+    expect("model" in data).toBe(false);
+    expect("audioBytes" in data).toBe(false);
+  });
+
+  it("forwards media.stt:failed as {provider, outcome:failed, errorKind, source} (domain SttErrorKind verbatim)", () => {
+    const data = translatePayload("media.stt:failed", {
+      provider: "local",
+      errorKind: "model_load_failed",
+      source: "keyless-local",
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      traceId: "trace-1",
+      timestamp: 1717171717,
+    });
+    expect(data).toEqual({
+      provider: "local",
+      outcome: "failed",
+      errorKind: "model_load_failed",
+      source: "keyless-local",
+    });
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.traceId).toBeUndefined();
+  });
+
+  it("forwards media.tts:failed as {provider, outcome:failed, errorKind, source}", () => {
+    const data = translatePayload("media.tts:failed", {
+      provider: "edge",
+      errorKind: "network",
+      source: "explicit",
+      timestamp: 1717171717,
+    });
+    expect(data).toEqual({
+      provider: "edge",
+      outcome: "failed",
+      errorKind: "network",
+      source: "explicit",
+    });
+  });
+
+  it("never forwards a raw transcript / audio bytes / credential even if present on the payload (content-free invariant)", () => {
+    const data = translatePayload("media.stt:completed", {
+      provider: "openai",
+      keyless: false,
+      durationMs: 900,
+      source: "follow-main-key",
+      // hostile extras that MUST NOT cross into the trajectory:
+      text: "the secret transcript body",
+      audio: "<<raw audio bytes>>",
+      baseUrl: "https://api.openai.com/v1/audio?key=sk-secret",
+      apiKey: "sk-proj-supersecret",
+      timestamp: 1717171717,
+    });
+    expect("text" in data).toBe(false);
+    expect("audio" in data).toBe(false);
+    expect("baseUrl" in data).toBe(false);
+    expect("apiKey" in data).toBe(false);
+    expect(data).toEqual({
+      provider: "openai",
+      keyless: false,
+      outcome: "ok",
+      durationMs: 900,
+      source: "follow-main-key",
+    });
+  });
+});

@@ -12,6 +12,7 @@ import type { Attachment, TranscriptionPort } from "@comis/core";
 import { wrapExternalContent, type WrapExternalContentOptions, systemNowMs } from "@comis/core";
 import type { MediaProcessorLogger } from "./media-preprocessor.js";
 import { resolveMediaAttachment } from "./media-handler-factory.js";
+import { redactErrorMessage } from "./media-adapter-shared.js";
 
 /** Deps subset needed by the audio handler. */
 export interface AudioHandlerDeps {
@@ -69,8 +70,14 @@ export async function processAudioAttachment(
 
     if (result.ok) {
       const durationMs = systemNowMs() - sttStart;
+      // OBS-01 §2.7 INFO completion: carry the voice fields THIS skills tier can
+      // see — durationMs (wall-clock) + audioBytes (inbound buffer length) —
+      // alongside the existing language. provider/keyless/model are NOT visible
+      // here (the handler receives a bare TranscriptionPort, not its resolved
+      // config); the daemon RPC path (Phase 196 Plan 03) owns the full field set
+      // on the trajectory. Omit the unknown fields rather than log undefined.
       deps.logger.info(
-        { url: att.url, language: result.value.language },
+        { url: att.url, language: result.value.language, durationMs, audioBytes: buffer.byteLength },
         "Audio attachment transcribed",
       );
       deps.logger.debug?.({ url: att.url, mimeType: att.mimeType, reason: "stt", durationMs }, "Audio attachment transcribed");
@@ -87,12 +94,18 @@ export async function processAudioAttachment(
         },
       };
     } else {
-      deps.logger.warn({ url: att.url, error: result.error.message, hint: "STT provider returned error; voice message will not be transcribed", errorKind: "dependency" as const }, "Transcription failed");
-      deps.logger.debug?.({ url: att.url, reason: "stt-failed", err: result.error.message }, "Transcription failed");
+      // OBS-01: canonical `err:` (the Pino `err` serializer key — `error:` is
+      // silently dropped). SEC-01: redact the message before it reaches any log
+      // line (defense-in-depth — the adapter already sanitizes its Result.err,
+      // but the handler must never re-introduce a credential/URL).
+      const errMsg = redactErrorMessage(result.error.message);
+      deps.logger.warn({ url: att.url, err: errMsg, hint: "STT provider returned error; voice message will not be transcribed", errorKind: "dependency" as const }, "Transcription failed");
+      deps.logger.debug?.({ url: att.url, reason: "stt-failed", err: errMsg }, "Transcription failed");
     }
   } catch (e) {
-    deps.logger.warn({ url: att.url, error: String(e), hint: "Unexpected STT error; voice message will not be transcribed", errorKind: "internal" as const }, "Transcription threw unexpectedly");
-    deps.logger.debug?.({ url: att.url, reason: "stt-failed", err: String(e) }, "Transcription threw unexpectedly");
+    const errMsg = redactErrorMessage(String(e));
+    deps.logger.warn({ url: att.url, err: errMsg, hint: "Unexpected STT error; voice message will not be transcribed", errorKind: "internal" as const }, "Transcription threw unexpectedly");
+    deps.logger.debug?.({ url: att.url, reason: "stt-failed", err: errMsg }, "Transcription threw unexpectedly");
   }
 
   return { textPrefix: "[Voice message received but transcription failed — ask the user to send a text message instead]" };

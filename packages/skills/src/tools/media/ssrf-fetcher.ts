@@ -27,7 +27,8 @@ import { validateUrl } from "@comis/core";
 import type { ErrorKind } from "@comis/core";
 import type { Result } from "@comis/shared";
 import { fromPromise, suppressError } from "@comis/shared";
-import { Agent, fetch } from "undici";
+import { fetch } from "undici";
+import { createPinnedAgent } from "../integrations/pinned-fetch.js";
 
 /**
  * Downloaded media from an SSRF-validated fetch.
@@ -126,38 +127,10 @@ function classifyFetchError(error: unknown): ClassifiedError {
 }
 
 // ---------------------------------------------------------------------------
-// Agent-based DNS pinning
+// Agent-based DNS pinning — `createPinnedAgent` is the shared primitive in
+// ../integrations/pinned-fetch.ts (CR-01, Phase 197); this fetcher reuses it
+// rather than hand-rolling its own copy.
 // ---------------------------------------------------------------------------
-
-/**
- * Create a one-shot undici Agent that pins DNS resolution to a specific IP.
- *
- * The Agent's `connect.lookup` callback always returns the pre-validated IP,
- * preventing DNS rebinding (TOCTOU) between validation and connection while
- * preserving TLS SNI (because the original hostname stays in the URL).
- */
-function createPinnedAgent(ip: string): Agent {
-  return new Agent({
-    connect: {
-      lookup: (_hostname, options, callback) => {
-        // Return the pre-validated IP for all lookups through this agent.
-        // The address family is inferred from the IP format.
-        const family = ip.includes(":") ? 6 : 4;
-
-        // Node.js 22+ enables autoSelectFamily (Happy Eyeballs) by default,
-        // which calls lookup with {all: true} expecting an array of addresses.
-        if (options && typeof options === "object" && "all" in options && options.all) {
-          (callback as (err: null, addresses: Array<{ address: string; family: number }>) => void)(
-            null,
-            [{ address: ip, family }],
-          );
-        } else {
-          callback(null, ip, family);
-        }
-      },
-    },
-  });
-}
 
 /**
  * Create an SSRF-guarded HTTP fetch utility.

@@ -35,3 +35,16 @@ export { estimateVideoCostUsd, VIDEO_PRICING } from "./video-pricing.js";
 // Wave 2, so the dead-export gate goes green at the Wave-2/phase gate.
 export { listVideoModelCaps, supportedModes, snapDuration } from "./video-models.js";
 export type { VideoModelCaps, VideoDurations } from "./video-models.js";
+// Keyless voice (v2.25 Phase 193) — the STT/TTS twins of the image/video
+// symbols above. The daemon setup-audio-provider.ts (Plan 03) is the
+// cross-package consumer of the resolvers + the capability map + the error bridge.
+export { VOICE_KEYLESS, MAIN_PROVIDER_AUDIO } from "./voice-capability.js";
+export { STT_ERR_TO_LOG } from "./voice-error.js";
+export type { SttErrorKind } from "./voice-error.js";
+export { resolveTranscriptionProvider } from "./resolve-transcription-provider.js";
+export type {
+  SttSelection,
+  SttSelectionConfig,
+} from "./resolve-transcription-provider.js";
+export { resolveTtsProvider } from "./resolve-tts-provider.js";
+export type { TtsSelection, TtsSelectionConfig } from "./resolve-tts-provider.js";

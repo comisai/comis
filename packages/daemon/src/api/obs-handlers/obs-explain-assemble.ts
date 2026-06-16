@@ -394,6 +394,12 @@ export function assembleIncidentReport(
     // off-turn video.generated via jobId/traceId on one sessionKey. Cost rides
     // here (Route a). The offline assembler is the binding OBS-04 oracle.
     ...(signals.videoGenerated !== undefined ? { videoGenerated: signals.videoGenerated } : {}),
+    // OBS-02 (196): the VOICE turn reconstructed from the trajectory's
+    // media.stt.* / media.tts.* records (absent when the session ran no voice).
+    // Wholly in-turn (the daemon voice RPC handlers direct-emit). Cost rides here
+    // (Route a): keyless `costUsd:0` is VISIBLE (OBS-05), keyed cost is omitted
+    // (FLAG 4). The offline assembler is the binding OBS-02 oracle.
+    ...(signals.voice !== undefined ? { voice: signals.voice } : {}),
     summary,
     // Plan 05 fills likelyRootCause; Plan 04 fills truncations; Plan 05 fills
     // the report-level suggestedNextSteps.

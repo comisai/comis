@@ -28,9 +28,16 @@ vi.mock("./deepgram-stt-adapter.js", () => ({
   }),
 }));
 
+vi.mock("./local-stt-adapter.js", () => ({
+  createLocalWhisperAdapter: vi.fn().mockReturnValue({
+    transcribe: vi.fn().mockResolvedValue({ ok: true, value: { text: "local-mock" } }),
+  }),
+}));
+
 import { createOpenAISttAdapter } from "./openai-stt-adapter.js";
 import { createGroqSttAdapter } from "./groq-stt-adapter.js";
 import { createDeepgramSttAdapter } from "./deepgram-stt-adapter.js";
+import { createLocalWhisperAdapter } from "./local-stt-adapter.js";
 import { createMockLogger as _createMockLogger } from "../../../../../test/support/mock-logger.js";
 
 const createMockLogger = (): SttFallbackLogger => _createMockLogger() as unknown as SttFallbackLogger;
@@ -46,6 +53,9 @@ function createMockSecretManager(secrets: Record<string, string> = {}): SecretMa
   } as unknown as SecretManager;
 }
 
+/** A dummy data-dir threaded into the factory's required `dataDir` param (Plan 02). */
+const DUMMY_DATA_DIR = "/tmp/comis-test-data";
+
 function createBaseConfig(provider: string): TranscriptionConfig {
   return {
     provider: provider as TranscriptionConfig["provider"],
@@ -55,6 +65,7 @@ function createBaseConfig(provider: string): TranscriptionConfig {
     autoTranscribe: true,
     preflight: true,
     fallbackProviders: [],
+    local: { model: "base" },
   };
 }
 
@@ -80,7 +91,7 @@ describe("createSTTProvider", () => {
     const sm = createMockSecretManager(secrets);
     const config = createBaseConfig("openai");
 
-    const result = createSTTProvider(config, sm);
+    const result = createSTTProvider(config, sm, DUMMY_DATA_DIR);
 
     expect(result.ok).toBe(true);
     expect(createOpenAISttAdapter).toHaveBeenCalledTimes(1);
@@ -97,7 +108,7 @@ describe("createSTTProvider", () => {
     const sm = createMockSecretManager(secrets);
     const config = createBaseConfig("groq");
 
-    const result = createSTTProvider(config, sm);
+    const result = createSTTProvider(config, sm, DUMMY_DATA_DIR);
 
     expect(result.ok).toBe(true);
     expect(createGroqSttAdapter).toHaveBeenCalledTimes(1);
@@ -114,7 +125,7 @@ describe("createSTTProvider", () => {
     const sm = createMockSecretManager(secrets);
     const config = createBaseConfig("deepgram");
 
-    const result = createSTTProvider(config, sm);
+    const result = createSTTProvider(config, sm, DUMMY_DATA_DIR);
 
     expect(result.ok).toBe(true);
     expect(createDeepgramSttAdapter).toHaveBeenCalledTimes(1);
@@ -130,7 +141,7 @@ describe("createSTTProvider", () => {
     const sm = createMockSecretManager();
     const config = createBaseConfig("unsupported-provider");
 
-    const result = createSTTProvider(config, sm);
+    const result = createSTTProvider(config, sm, DUMMY_DATA_DIR);
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -139,18 +150,84 @@ describe("createSTTProvider", () => {
     }
   });
 
+  // LOCAL-01: the in-process keyless whisper branch (no baseUrl) — threads the
+  // scoped dataDir into createLocalWhisperAdapter (Plan 01).
+  it("creates the in-process local whisper adapter for 'local' provider with no baseUrl", () => {
+    const sm = createMockSecretManager();
+    const config: TranscriptionConfig = {
+      ...createBaseConfig("local"),
+      // Drop the factory-level model so the local.model is the source of truth.
+      model: undefined,
+      local: { model: "base" },
+    };
+
+    const result = createSTTProvider(config, sm, "/tmp/data");
+
+    expect(result.ok).toBe(true);
+    expect(createLocalWhisperAdapter).toHaveBeenCalledTimes(1);
+    expect(createLocalWhisperAdapter).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "base", dataDir: "/tmp/data" }),
+    );
+    // The in-process branch must NOT touch the OpenAI-compatible adapter.
+    expect(createOpenAISttAdapter).not.toHaveBeenCalled();
+  });
+
+  // LOCAL-03: the keyless OpenAI-compatible local-server branch. The bearer is
+  // the KEYLESS sentinel ("ollama-no-auth"), NEVER an empty string (Pitfall 5 →
+  // re-introduced 401), and the trailing slash on baseUrl is trimmed.
+  it("creates an OpenAI-compatible adapter with the KEYLESS sentinel when local.baseUrl is set", () => {
+    const sm = createMockSecretManager();
+    const config: TranscriptionConfig = {
+      ...createBaseConfig("local"),
+      model: undefined,
+      local: { model: "base", baseUrl: "http://127.0.0.1:9000/v1/" },
+    };
+
+    const result = createSTTProvider(config, sm, "/tmp/data");
+
+    expect(result.ok).toBe(true);
+    expect(createOpenAISttAdapter).toHaveBeenCalledTimes(1);
+    const callArg = (createOpenAISttAdapter as unknown as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    // The sentinel bearer — explicitly NOT an empty string (the no-empty-bearer pin).
+    expect(callArg.apiKey).toBe("ollama-no-auth");
+    expect(callArg.apiKey).not.toBe("");
+    // Trailing slash trimmed.
+    expect(callArg.baseUrl).toBe("http://127.0.0.1:9000/v1");
+    // SEC-02 Surface B: the local-baseUrl branch opts the adapter into the
+    // validate-then-fetch SSRF guard. Mutation: dropping this flag fails here.
+    expect(callArg.localServerGuard).toBe(true);
+    // The baseUrl branch must NOT construct the in-process whisper adapter.
+    expect(createLocalWhisperAdapter).not.toHaveBeenCalled();
+  });
+
+  // SEC-02 Surface B no-regression: the cloud OpenAI branch SHARES
+  // createOpenAISttAdapter but must NOT carry the local guard — it reaches
+  // api.openai.com legitimately and the guard would wrongly block it.
+  it("does NOT set localServerGuard on the cloud 'openai' branch (the guard is scoped to local.baseUrl only)", () => {
+    const sm = createMockSecretManager({ OPENAI_API_KEY: "sk-openai-123" });
+    const config = createBaseConfig("openai");
+
+    const result = createSTTProvider(config, sm, DUMMY_DATA_DIR);
+
+    expect(result.ok).toBe(true);
+    expect(createOpenAISttAdapter).toHaveBeenCalledTimes(1);
+    const callArg = (createOpenAISttAdapter as unknown as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    // The cloud adapter is NOT guarded — localServerGuard is absent/falsy.
+    expect(callArg.localServerGuard).toBeFalsy();
+  });
+
   it("calls SecretManager.get() with correct key names", () => {
     const sm = createMockSecretManager();
 
-    createSTTProvider(createBaseConfig("openai"), sm);
+    createSTTProvider(createBaseConfig("openai"), sm, DUMMY_DATA_DIR);
     expect(sm.get).toHaveBeenCalledWith("OPENAI_API_KEY");
 
     vi.clearAllMocks();
-    createSTTProvider(createBaseConfig("groq"), sm);
+    createSTTProvider(createBaseConfig("groq"), sm, DUMMY_DATA_DIR);
     expect(sm.get).toHaveBeenCalledWith("GROQ_API_KEY");
 
     vi.clearAllMocks();
-    createSTTProvider(createBaseConfig("deepgram"), sm);
+    createSTTProvider(createBaseConfig("deepgram"), sm, DUMMY_DATA_DIR);
     expect(sm.get).toHaveBeenCalledWith("DEEPGRAM_API_KEY");
   });
 
@@ -164,9 +241,10 @@ describe("createSTTProvider", () => {
       autoTranscribe: false,
       preflight: false,
       fallbackProviders: [],
+      local: { model: "base" },
     };
 
-    createSTTProvider(config, sm);
+    createSTTProvider(config, sm, DUMMY_DATA_DIR);
 
     expect(createOpenAISttAdapter).toHaveBeenCalledWith(
       expect.objectContaining({

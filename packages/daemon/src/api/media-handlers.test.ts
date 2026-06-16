@@ -143,6 +143,7 @@ function makeDeps(overrides?: Partial<MediaHandlerDeps>): MediaHandlerDeps {
         scopeRules: [],
         defaultScopeAction: "allow",
       },
+      transcription: {},
       tts: {
         autoMode: "off" as const,
         tagPattern: "\\[\\[tts\\]\\]",
@@ -960,6 +961,43 @@ describe("createMediaHandlers", () => {
       ).rejects.toThrow("Transcription service not configured");
     });
 
+    it("media.transcribe on an unconfigured provider rejects with a structured Error the dispatch boundary converts, never an unhandled crash (RES-05)", async () => {
+      // RES-05 regression PIN (Pitfall 5 / A1): when the Phase-193 keyless-first
+      // resolution leaves the transcriber undefined (a Codex/OAuth-only main with
+      // no audio key, or STT `auto` before the local engine lands), the on-demand
+      // RPC handler `throw`s a typed Error. That throw is NOT an unhandled crash —
+      // the JSON-RPC dispatch boundary (method-router.ts:2 / rpc-dispatch.ts:306-321)
+      // catches it and converts it to a structured `{error:{code,message}}` response,
+      // so the agent's text reply is never blocked. This test would FAIL if a future
+      // change made the handler reject with a non-Error (a raw string / undefined)
+      // that the json-rpc-2.0 library cannot envelope, or crash the dispatch.
+      const deps = makeDeps({ transcriber: undefined });
+      const handlers = createMediaHandlers(deps);
+
+      // The handler returns a rejected Promise (awaited at the dispatch boundary),
+      // never a synchronous throw that would escape the dispatch try/catch.
+      const pending = handlers["media.transcribe"]!({ attachment_url: "tg-file://abc" });
+      expect(pending).toBeInstanceOf(Promise);
+      // The rejection is a real Error instance carrying an actionable message —
+      // exactly what the dispatch boundary serializes into the JSON-RPC error
+      // envelope (a bare string / undefined would break that conversion).
+      await expect(pending).rejects.toBeInstanceOf(Error);
+      await expect(pending).rejects.toThrow(/not configured/i);
+    });
+
+    it("tts.synthesize on an unconfigured adapter rejects with a structured Error, never an unhandled crash (RES-05)", async () => {
+      // The TTS twin of the RES-05 pin: an honest-unavailable TTS resolution leaves
+      // ttsAdapter undefined; the on-demand handler throw is converted to a
+      // structured JSON-RPC error at the dispatch boundary, not a daemon crash.
+      const deps = makeDeps({ ttsAdapter: undefined });
+      const handlers = createMediaHandlers(deps);
+
+      const pending = handlers["tts.synthesize"]!({ text: "Hello" });
+      expect(pending).toBeInstanceOf(Promise);
+      await expect(pending).rejects.toBeInstanceOf(Error);
+      await expect(pending).rejects.toThrow(/not configured/i);
+    });
+
     it("throws when resolveAttachment is not available", async () => {
       const deps = makeDeps({ resolveAttachment: undefined });
       const handlers = createMediaHandlers(deps);
@@ -978,6 +1016,204 @@ describe("createMediaHandlers", () => {
       await expect(
         handlers["media.transcribe"]!({ attachment_url: "tg-file://missing" }),
       ).rejects.toThrow("Failed to resolve attachment");
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // OBS-02/03/05 (196): voice obs wiring (media.transcribe / tts.synthesize /
+  // media.test.stt) — record + §2.7 log via wireVoiceObs, the :595 RED-proof,
+  // the source rung + onSkip on the requested record, SEC-01 no-leak.
+  // -------------------------------------------------------------------------
+
+  describe("voice obs wiring (OBS-02/03/05)", () => {
+    function makeRecorderMock() {
+      const records: Array<{ type: string; data: Record<string, unknown> }> = [];
+      const recordEvent = vi.fn((type: string, data: Record<string, unknown>) => {
+        records.push({ type, data });
+      });
+      const getRecorder = vi.fn((_sessionKey: string) => ({ recordEvent }));
+      return { records, recordEvent, getRecorder, trajectoryRegistry: { getRecorder } as never };
+    }
+
+    /** Deps with the STT config slice + a resolved keyless-local STT selection
+     *  (the boot-resolved `source`/`keyless`/`onSkip` the daemon threads). */
+    function voiceDeps(overrides?: Partial<MediaHandlerDeps>): MediaHandlerDeps {
+      return makeDeps({
+        mediaConfig: {
+          imageAnalysis: { maxFileSizeMb: 10 },
+          vision: { scopeRules: [], defaultScopeAction: "allow" },
+          transcription: { provider: "local" },
+          tts: { provider: "edge", autoMode: "off" as const, tagPattern: "\\[\\[tts\\]\\]" },
+        },
+        voiceSelection: {
+          stt: { provider: "local", keyless: true, source: "keyless-local", onSkip: ['main "openai-codex" has no usable audio key'] },
+          tts: { provider: "edge", keyless: true, source: "keyless-local" },
+        },
+        ...overrides,
+      });
+    }
+
+    // ---- OBS-03 RED-proof: media.test.stt reads the STT provider (:595) ----
+    it("media.test.stt reports the TRANSCRIPTION provider, not the TTS provider (the :595 RED-proof)", async () => {
+      // Config: transcription.provider = "local", tts.provider = "edge". The handler
+      // must report the STT provider "local" — TODAY it returns "edge" (reads
+      // deps.mediaConfig.tts.provider at :595).
+      const deps = voiceDeps();
+      const handlers = createMediaHandlers(deps);
+
+      const result = (await handlers["media.test.stt"]!({
+        audio: Buffer.from("audio").toString("base64"),
+        mimeType: "audio/ogg",
+      })) as { provider: string };
+
+      expect(result.provider).toBe("local");
+    });
+
+    // ---- OBS-02: media.transcribe records media.stt.completed + §2.7 INFO ----
+    it("media.transcribe records media.stt.completed (provider/keyless/source) AND logs a §2.7 completion INFO", async () => {
+      const rec = makeRecorderMock();
+      const deps = voiceDeps({ trajectoryRegistry: rec.trajectoryRegistry });
+      const handlers = createMediaHandlers(deps);
+
+      await handlers["media.transcribe"]!({
+        attachment_url: "tg-file://voice123",
+        _agentId: "default",
+        _callerSessionKey: "default:u1:telegram:c1",
+      });
+
+      // (a) the obs record fired via the helper.
+      const completed = rec.records.find((r) => r.type === "media.stt.completed");
+      expect(completed).toBeDefined();
+      expect(completed!.data.provider).toBe("local");
+      expect(completed!.data.keyless).toBe(true);
+      expect(completed!.data.source).toBe("keyless-local");
+      expect(completed!.data.outcome).toBe("ok");
+      // (b) the §2.7 completion INFO carries provider/keyless/durationMs/audioBytes.
+      const infoCall = (deps.logger.info as ReturnType<typeof vi.fn>).mock.calls.find(
+        (c) => typeof c[1] === "string" && /transcription completed/i.test(c[1] as string),
+      );
+      expect(infoCall).toBeDefined();
+      expect((infoCall![0] as Record<string, unknown>).provider).toBe("local");
+      expect((infoCall![0] as Record<string, unknown>).keyless).toBe(true);
+      expect((infoCall![0] as Record<string, unknown>).durationMs).toBe(1500);
+      expect((infoCall![0] as Record<string, unknown>).audioBytes).toBe(Buffer.from("image-data").byteLength);
+    });
+
+    // ---- OBS-02: media.transcribe failure → media.stt.failed + §2.7 WARN ----
+    it("media.transcribe failure records media.stt.failed{errorKind} AND logs a §2.7 WARN with err/hint/errorKind/sttErrorKind", async () => {
+      const rec = makeRecorderMock();
+      const deps = voiceDeps({
+        trajectoryRegistry: rec.trajectoryRegistry,
+        transcriber: {
+          transcribe: vi.fn(async () => ({
+            ok: false as const,
+            error: Object.assign(new Error("provider failed"), { errorKind: "network" }),
+          })),
+        } as never,
+      });
+      const handlers = createMediaHandlers(deps);
+
+      await expect(
+        handlers["media.transcribe"]!({
+          attachment_url: "tg-file://voice123",
+          _agentId: "default",
+          _callerSessionKey: "default:u1:telegram:c1",
+        }),
+      ).rejects.toThrow();
+
+      const failed = rec.records.find((r) => r.type === "media.stt.failed");
+      expect(failed).toBeDefined();
+      expect(failed!.data.errorKind).toBe("network");
+      expect(failed!.data.outcome).toBe("failed");
+
+      const warnCall = (deps.logger.warn as ReturnType<typeof vi.fn>).mock.calls.find(
+        (c) => typeof c[1] === "string" && /transcription failed/i.test(c[1] as string),
+      );
+      expect(warnCall).toBeDefined();
+      const fields = warnCall![0] as Record<string, unknown>;
+      expect(fields.err).toBeDefined();
+      expect(fields.hint).toBeDefined();
+      // STT_ERR_TO_LOG["network"] = "network" (the closed log union); sttErrorKind = the domain.
+      expect(fields.errorKind).toBe("network");
+      expect(fields.sttErrorKind).toBe("network");
+    });
+
+    // ---- OBS-03: the source rung + onSkip reach the live emit (requested) ----
+    it("media.transcribe threads the resolved source rung AND onSkip reasons onto the recorded media.stt.requested", async () => {
+      const rec = makeRecorderMock();
+      const deps = voiceDeps({ trajectoryRegistry: rec.trajectoryRegistry });
+      const handlers = createMediaHandlers(deps);
+
+      await handlers["media.transcribe"]!({
+        attachment_url: "tg-file://voice123",
+        _agentId: "default",
+        _callerSessionKey: "default:u1:telegram:c1",
+      });
+
+      const requested = rec.records.find((r) => r.type === "media.stt.requested");
+      expect(requested).toBeDefined();
+      // The OBS-03 selection observability lands on the live handler path.
+      expect(requested!.data.source).toBe("keyless-local");
+      expect(requested!.data.onSkip).toEqual(['main "openai-codex" has no usable audio key']);
+    });
+
+    // ---- OBS-02: tts.synthesize records media.tts.completed + §2.7 INFO ----
+    it("tts.synthesize records media.tts.completed AND logs a §2.7 synthesis completion INFO", async () => {
+      const rec = makeRecorderMock();
+      const deps = voiceDeps({ trajectoryRegistry: rec.trajectoryRegistry });
+      const handlers = createMediaHandlers(deps);
+
+      await handlers["tts.synthesize"]!({
+        text: "Hello world",
+        _agentId: "default",
+        _callerSessionKey: "default:u1:telegram:c1",
+      });
+
+      const completed = rec.records.find((r) => r.type === "media.tts.completed");
+      expect(completed).toBeDefined();
+      expect(completed!.data.provider).toBe("edge");
+      expect(completed!.data.keyless).toBe(true);
+      expect(completed!.data.outcome).toBe("ok");
+
+      const infoCall = (deps.logger.info as ReturnType<typeof vi.fn>).mock.calls.find(
+        (c) => typeof c[1] === "string" && /speech synthesis completed/i.test(c[1] as string),
+      );
+      expect(infoCall).toBeDefined();
+      expect((infoCall![0] as Record<string, unknown>).provider).toBe("edge");
+    });
+
+    // ---- SEC-01: no credential leaks into any emitted line ----
+    it("SEC-01: a transcribe failure whose error carries a credential-bearing baseUrl leaks no Bearer/sentinel/full-URL in any line", async () => {
+      const rec = makeRecorderMock();
+      const leakyError = Object.assign(
+        new Error("POST https://api.openai.com/v1/audio/transcriptions failed: Authorization: Bearer sk-proj-SECRETTOKEN1234567890 (ollama-no-auth)"),
+        { errorKind: "network" },
+      );
+      const deps = voiceDeps({
+        trajectoryRegistry: rec.trajectoryRegistry,
+        transcriber: { transcribe: vi.fn(async () => ({ ok: false as const, error: leakyError })) } as never,
+      });
+      const handlers = createMediaHandlers(deps);
+
+      await expect(
+        handlers["media.transcribe"]!({
+          attachment_url: "tg-file://voice123",
+          _agentId: "default",
+          _callerSessionKey: "default:u1:telegram:c1",
+        }),
+      ).rejects.toThrow();
+
+      // Scan every emitted log line + every recorded trajectory payload.
+      const allLogged = JSON.stringify([
+        ...(deps.logger.info as ReturnType<typeof vi.fn>).mock.calls,
+        ...(deps.logger.warn as ReturnType<typeof vi.fn>).mock.calls,
+        ...(deps.logger.error as ReturnType<typeof vi.fn>).mock.calls,
+        ...rec.records,
+      ]);
+      expect(allLogged).not.toContain("sk-proj-SECRETTOKEN1234567890");
+      expect(allLogged).not.toContain("Bearer sk-");
+      expect(allLogged).not.toContain("ollama-no-auth");
+      expect(allLogged).not.toContain("/v1/audio/transcriptions");
     });
   });
 

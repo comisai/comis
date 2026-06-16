@@ -67,3 +67,25 @@ export type { VideoErrorKind } from "../media/index.js";
 // / IMAGE_MODELS_BY_PROVIDER policy: the accessors encapsulate it).
 export { listVideoModelCaps, supportedModes, snapDuration } from "../media/index.js";
 export type { VideoModelCaps, VideoDurations } from "../media/index.js";
+// Keyless voice (v2.25 Phase 193) — the daemon setup-audio-provider.ts (Plan 03,
+// Wave 2) consumes resolveTranscriptionProvider / resolveTtsProvider /
+// VOICE_KEYLESS / MAIN_PROVIDER_AUDIO / STT_ERR_TO_LOG / SttErrorKind
+// cross-package (the predicate-injection wiring + the honest-unavailable
+// branch). Surfaced on the public @comis/core barrel (the single public surface
+// — there is no ./media subpath) so the daemon imports them from @comis/core,
+// mirroring resolveImageProvider / resolveVideoProvider above. Until Wave 2
+// lands that consumer these are documented ahead-of-consumer planned-orphans
+// tracked in test/support/public-api-policy.ts (the video-foundation /
+// PollDeadline precedent at :30-43 — over-listing a soon-consumed symbol, NOT a
+// shrink-only architecture-allowlist entry); each SHRINKS out when Plan 03's
+// consumer lands. The SttSelection / TtsSelection / *SelectionConfig TYPES stay
+// OFF the public barrel (consumed structurally by the daemon, the same policy as
+// ImageProviderSelection / VideoProviderSelection above).
+export {
+  VOICE_KEYLESS,
+  MAIN_PROVIDER_AUDIO,
+  STT_ERR_TO_LOG,
+  resolveTranscriptionProvider,
+  resolveTtsProvider,
+} from "../media/index.js";
+export type { SttErrorKind } from "../media/index.js";

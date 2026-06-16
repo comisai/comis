@@ -521,6 +521,20 @@ export interface AuthApiDeps {
  * Dependencies for media-handlers + image-handlers
  * (media.transcribe/extract_document/tts, image.generate).
  */
+/** OBS-03 (196): the boot-resolved voice (STT/TTS) selection threaded to the
+ *  daemon RPC handlers for the trajectory emit — `provider`/`keyless`/`source` rung
+ *  + the collected `onSkip` reasons (the OBS-03 selection observability). Resolved
+ *  ONCE at boot by `setupMedia` from the SAME `SttSelection`/`TtsSelection` the
+ *  adapter construction used (no second source of truth). Optional — a selector-less
+ *  boot leaves it undefined and the handler derives provider+keyless from config. */
+export interface ResolvedVoiceSelection {
+  provider: string;
+  keyless: boolean;
+  source: "explicit" | "keyless-local" | "follow-main-key" | "fallback";
+  onSkip?: string[];
+}
+
+// @optional-field-count: MediaApiDeps is the daemon media-RPC deps aggregate — every media handler family (vision, image-gen, video-gen+status, transcription/TTS, voice obs+selection) threads its deps through this one interface, and each is OPTIONAL because the corresponding handler is feature-gated (constructed only when its provider/registry is configured). Splitting would fragment the single dispatch-deps seam the RPC router resolves; the count grows with the media feature set, not with bloat. (v2.25 added voiceSelection + obsStore; mirrors the v2.24 IncidentSignals audit-stamp.)
 export interface MediaApiDeps {
   visionRegistry?: Map<string, VisionProvider>;
   mediaConfig: {
@@ -529,6 +543,13 @@ export interface MediaApiDeps {
       scopeRules: ReadonlyArray<VisionScopeRule>;
       defaultScopeAction: "allow" | "deny";
       defaultProvider?: string;
+    };
+    /** OBS-03 (196): the STT (transcription) config slice. The runtime object is the
+     *  full `integrations.media` config, so this is already present; declared here so
+     *  `media.test.stt` reports the STT provider (the :595 reads-TTS RED-proof fix). */
+    transcription: {
+      provider?: string;
+      model?: string;
     };
     tts: {
       provider?: string;
@@ -654,6 +675,15 @@ export interface MediaApiDeps {
    *  precedent — no eventBus bridge in the daemon RPC context). Declared now;
    *  the emits land in Plan 03. */
   trajectoryRegistry?: import("@comis/observability").SessionTrajectoryHandleRegistry;
+  /** OBS-03 (196): the boot-resolved voice selections the daemon voice handlers
+   *  thread onto the `media.stt.*`/`media.tts.*` trajectory via `wireVoiceObs`.
+   *  Optional — undefined on a selector-less boot (handler derives from config). */
+  voiceSelection?: { stt?: ResolvedVoiceSelection; tts?: ResolvedVoiceSelection };
+  /** OBS-04 (196): the obs store the voice obs inserts a `voice_degraded`
+   *  health_signal row into on a STT/TTS failure (feeds the `comis fleet`
+   *  voice_health finding). Same instance as `ObservabilityApiDeps.obsStore`;
+   *  declared here so the voice handlers' deps slice can read it. Optional. */
+  obsStore?: import("@comis/memory").ObservabilityStore;
   /** media-handlers reads deps.workspaceDirs / deps.defaultWorkspaceDir
    *  / deps.defaultAgentId for STT / vision / link-processing file paths.
    *  Same shape as ChannelsApiDeps + WorkspaceApiDeps for ApiDispatchDeps multi-extends parity. */

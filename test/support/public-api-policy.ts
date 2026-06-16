@@ -1051,6 +1051,27 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // externally. They shrink out when that poller lands.
       "PollDeadline",
       "PollOutcome",
+      // Keyless voice (v2.25 Phase 193) — the STT/TTS capability-map + error
+      // surface on the public @comis/core barrel (exports/media.ts). Plan 01
+      // listed SIX symbols as ahead-of-consumer planned-orphans; Plan 03 (Wave 2)
+      // landed the real cross-package consumer (@comis/daemon
+      // setup-audio-provider.ts / setup-media.ts), so the THREE now-consumed
+      // symbols are SHRUNK OUT of this baseline (shrink-only ratchet, AGENTS.md
+      // §2.8 — closing an entry by deleting it, never adding): resolveTranscription
+      // Provider + resolveTtsProvider (name-imported by setup-audio-provider.ts) +
+      // STT_ERR_TO_LOG (name-imported by setup-media.ts for the honest-unavailable
+      // WARN). The THREE below stay listed — they are surfaced on the public barrel
+      // but have NO cross-package NAME-import consumer: VOICE_KEYLESS +
+      // MAIN_PROVIDER_AUDIO are consumed INSIDE the pure resolvers (intra-
+      // `@comis/core/media`), and SttErrorKind is consumed structurally (the
+      // daemon reads sel.errorKind off the result, not a named type import). They
+      // SHRINK out only if a future phase name-imports them cross-package. The
+      // SttSelection / TtsSelection / *SelectionConfig TYPES are NOT listed — they
+      // stay intra-`@comis/core/media` (the ImageProviderSelection /
+      // VideoProviderSelection policy), consumed structurally by the daemon.
+      "VOICE_KEYLESS",
+      "MAIN_PROVIDER_AUDIO",
+      "SttErrorKind",
       // MemoryLifecyclePort + MemoryLifecycleScope +
       // MemoryTier + LifecycleSweepReport were tracked here as SCAFFOLD-DORMANT
       // ahead-of-consumer planned-orphans. REMOVED:

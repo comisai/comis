@@ -225,4 +225,110 @@ describe("processAudioAttachment", () => {
       expect.objectContaining({ source: "voice_transcription" }),
     );
   });
+
+  // ---------------------------------------------------------------------------
+  // OBS-01 §2.7 structured logging (Phase 196)
+  // ---------------------------------------------------------------------------
+
+  // RED-proof #1: the WARN failure branches must log the CANONICAL `err:` key
+  // (the Pino `err` serializer fires on `err`, NOT on `error` — the latter is
+  // silently dropped). The DEBUG twins at :91/:95 already use `err:`; the WARN
+  // lines drifted to `error:`. Fails today on both WARN calls (result.err path +
+  // thrown-exception path).
+  it("logs the canonical err: key (not error:) on the STT-result-error WARN branch", async () => {
+    const transcriber: TranscriptionPort = {
+      transcribe: vi.fn().mockResolvedValue(err(new Error("API rate limited"))),
+    };
+    const logger = makeLogger();
+    const deps: AudioHandlerDeps = {
+      transcriber,
+      resolveAttachment: makeResolver(),
+      logger,
+    };
+
+    await processAudioAttachment(makeAudioAttachment(), deps, buildHint);
+
+    expect(logger.warn).toHaveBeenCalled();
+    const warnObj = (logger.warn as ReturnType<typeof vi.fn>).mock.calls[0]![0] as Record<string, unknown>;
+    expect(warnObj.err).toBeDefined();
+    expect(warnObj.error).toBeUndefined();
+    // The closed-log-union errorKind + hint must survive the rename (NOT regressed).
+    expect(warnObj.errorKind).toBe("dependency");
+    expect(warnObj.hint).toBeDefined();
+  });
+
+  it("logs the canonical err: key (not error:) on the thrown-exception WARN branch", async () => {
+    const transcriber: TranscriptionPort = {
+      transcribe: vi.fn().mockRejectedValue(new Error("crash")),
+    };
+    const logger = makeLogger();
+    const deps: AudioHandlerDeps = {
+      transcriber,
+      resolveAttachment: makeResolver(),
+      logger,
+    };
+
+    await processAudioAttachment(makeAudioAttachment(), deps, buildHint);
+
+    expect(logger.warn).toHaveBeenCalled();
+    const warnObj = (logger.warn as ReturnType<typeof vi.fn>).mock.calls[0]![0] as Record<string, unknown>;
+    expect(warnObj.err).toBeDefined();
+    expect(warnObj.error).toBeUndefined();
+    expect(warnObj.errorKind).toBe("internal");
+    expect(warnObj.hint).toBeDefined();
+  });
+
+  // OBS-01 INFO extension: the completion line carries the voice fields this
+  // skills tier CAN see — durationMs (wall-clock) + audioBytes (inbound buffer
+  // length) — alongside the existing language. provider/keyless/model are NOT
+  // visible at this pure-TranscriptionPort tier (the daemon RPC path, Plan 03,
+  // owns the full field set on the trajectory). Fails today (INFO logs only
+  // { url, language }).
+  it("logs an INFO completion line carrying durationMs + audioBytes on success", async () => {
+    const logger = makeLogger();
+    const deps: AudioHandlerDeps = {
+      transcriber: makeTranscriber(),
+      resolveAttachment: makeResolver(), // resolves Buffer.from("fake-audio-data") = 15 bytes
+      logger,
+    };
+
+    await processAudioAttachment(makeAudioAttachment(), deps, buildHint);
+
+    expect(logger.info).toHaveBeenCalled();
+    const infoObj = (logger.info as ReturnType<typeof vi.fn>).mock.calls[0]![0] as Record<string, unknown>;
+    expect(infoObj.language).toBe("en");
+    expect(typeof infoObj.durationMs).toBe("number");
+    expect(infoObj.audioBytes).toBe(Buffer.from("fake-audio-data").byteLength);
+  });
+
+  // SEC-01: the extended INFO/WARN lines must never re-introduce a credential
+  // when the handler spreads result fields into the log. Drive a failure whose
+  // sanitized message still cannot leak a key/Bearer/full-URL.
+  it("never leaks a credential, Bearer, or full URL in any emitted log line (SEC-01)", async () => {
+    const credentialBearingMessage =
+      "request to https://api.example.com/v1/audio?key=sk-SECRET123456789012345 failed with Bearer sk-SECRET123456789012345";
+    const transcriber: TranscriptionPort = {
+      transcribe: vi.fn().mockResolvedValue(err(new Error(credentialBearingMessage))),
+    };
+    const logger = makeLogger();
+    const deps: AudioHandlerDeps = {
+      transcriber,
+      resolveAttachment: makeResolver(),
+      logger,
+    };
+
+    await processAudioAttachment(makeAudioAttachment(), deps, buildHint);
+
+    const everyLoggedObject = [
+      ...(logger.info as ReturnType<typeof vi.fn>).mock.calls,
+      ...(logger.warn as ReturnType<typeof vi.fn>).mock.calls,
+      ...(logger.debug as ReturnType<typeof vi.fn>).mock.calls,
+    ].map((call) => JSON.stringify(call[0]));
+
+    for (const serialized of everyLoggedObject) {
+      expect(serialized).not.toContain("sk-SECRET");
+      expect(serialized).not.toContain("Bearer");
+      expect(serialized).not.toContain("https://api.example.com");
+    }
+  });
 });

@@ -23,6 +23,8 @@
 
 import type { TrajectoryBridgedEventName } from "./event-bus-bridge.js";
 import { translateVideoPayload } from "./translate-video-payload.js";
+import { translateVisionPayload } from "./translate-vision-payload.js";
+import { translateVoicePayload } from "./translate-voice-payload.js";
 
 /**
  * Translate one EventBus payload into the `data` payload of a trajectory event.
@@ -754,39 +756,11 @@ export function translatePayload(
         provider: payload.provider,
       };
 
-    // ---- Vision analysis (VIS-04, Phase 187) ----
-    // CONTENT-FREE (T-187-12): ids/labels/path/numbers/outcome/errorKind ONLY —
-    // NEVER the image bytes, the analysis prompt, the model's answer, or a key.
-    // The `path` label is VIS-03's "which path" signal. `costUsd` rides
-    // media.vision.completed (VIS-04 Route a — the cost-carry precedent is
-    // image:generated above); it + model spread presence-conditionally (the
-    // registry/gemini-video tiers return no cost — Pitfall 4). agentId +
-    // sessionKey + timestamp are envelope-only and STRIPPED (the image:* /
-    // context:script_zero_hit precedent).
-
+    // ---- Vision analysis (VIS-04, Phase 187) ---- delegated to translate-vision-payload.ts (file-size split, Phase 196; content-free + envelope-stripped, mirroring the image:* arms above + the video:* delegation below). The `path` label is VIS-03's "which path" signal; `costUsd` rides media.vision:completed (VIS-04 Route a).
     case "media.vision:requested":
-      return {
-        provider: payload.provider,
-        mainProvider: payload.mainProvider,
-      };
-
     case "media.vision:completed":
-      return {
-        provider: payload.provider,
-        mainProvider: payload.mainProvider,
-        path: payload.path,
-        outcome: payload.outcome,
-        ...(payload.model !== undefined ? { model: payload.model } : {}),
-        ...(payload.costUsd !== undefined ? { costUsd: payload.costUsd } : {}),
-      };
-
     case "media.vision:failed":
-      return {
-        errorKind: payload.errorKind,
-        path: payload.path,
-        ...(payload.provider !== undefined ? { provider: payload.provider } : {}),
-        ...(payload.mainProvider !== undefined ? { mainProvider: payload.mainProvider } : {}),
-      };
+      return translateVisionPayload(eventName, payload);
 
     // ---- Video generation (OBS-04, Phase 192) ---- delegated to translate-video-payload.ts (file-size split; content-free + envelope-stripped, mirroring the image:*/media.vision:* arms above).
     case "video:requested":
@@ -795,6 +769,15 @@ export function translatePayload(
     case "video:delivered":
     case "video:failed":
       return translateVideoPayload(eventName, payload);
+
+    // ---- Voice STT/TTS (OBS-02/03, Phase 196) ---- delegated to translate-voice-payload.ts (file-size split; content-free + envelope-stripped, mirroring the image:*/media.vision:*/video:* arms above). media.*:completed carries costUsd (keyless = 0 explicit — OBS-05 Route a); media.*:requested carries the onSkip reasons (OBS-03).
+    case "media.stt:requested":
+    case "media.stt:completed":
+    case "media.stt:failed":
+    case "media.tts:requested":
+    case "media.tts:completed":
+    case "media.tts:failed":
+      return translateVoicePayload(eventName, payload);
 
     default: {
       // Exhaustiveness — switch covers every TrajectoryBridgedEventName.

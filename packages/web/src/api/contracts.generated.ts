@@ -7948,6 +7948,51 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
           ],
           "additionalProperties": false
         },
+        "voice": {
+          "type": "object",
+          "properties": {
+            "provider": {
+              "type": "string"
+            },
+            "keyless": {
+              "type": "boolean"
+            },
+            "model": {
+              "type": "string"
+            },
+            "durationMs": {
+              "type": "number"
+            },
+            "costUsd": {
+              "type": "number"
+            },
+            "source": {
+              "type": "string",
+              "enum": [
+                "explicit",
+                "keyless-local",
+                "follow-main-key",
+                "fallback"
+              ]
+            },
+            "outcome": {
+              "type": "string",
+              "enum": [
+                "ok",
+                "failed"
+              ]
+            },
+            "errorKind": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "provider",
+            "keyless",
+            "outcome"
+          ],
+          "additionalProperties": false
+        },
         "summary": {
           "type": "string"
         },

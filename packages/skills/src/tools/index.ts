@@ -137,8 +137,18 @@ export type { BrowserService, ActParams } from "./browser/index.js";
 // Integrations -- STT provider factory
 export { createSTTProvider, createFallbackTranscription } from "./integrations/stt-factory.js";
 
+// Integrations -- keyless local (in-process) whisper STT adapter + boot probe
+export { createLocalWhisperAdapter } from "./integrations/local-stt-adapter.js";
+export type { LocalWhisperConfig } from "./integrations/local-stt-adapter.js";
+export { detectLocalSttEngine } from "./integrations/local-stt-probe.js";
+export type { LocalSttProbeResult, LocalSttProbeDeps } from "./integrations/local-stt-probe.js";
+
 // Integrations -- TTS provider factory
 export { createTTSProvider } from "./integrations/tts-factory.js";
+
+// Integrations -- keyless local/Piper (in-process) text-to-audio TTS adapter (TTS-02)
+export { createLocalTtsAdapter } from "./integrations/local-tts-adapter.js";
+export type { LocalTtsConfig } from "./integrations/local-tts-adapter.js";
 
 // Integrations -- TTS enhancements
 export { shouldAutoTts } from "./integrations/tts/tts-auto-mode.js";

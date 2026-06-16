@@ -134,7 +134,31 @@ const DEDICATED_SCRIPT_SIGNALS: ReadonlySet<string> = new Set([
   "script_zero_hit",
   "summary_language_mismatch",
   "generation_quality",
+  // OBS-04 (Phase 196): voice_degraded gets the dedicated `voice_health` finding
+  // below — excluded here so it is not ALSO counted in the generic
+  // `health_signal:voice_degraded` rollup (the double-report KNOB-03 guards against).
+  "voice_degraded",
 ]);
+
+/** OBS-04 (Phase 196): the closed domain `errorKind` (an `SttErrorKind`) carried
+ *  on a `voice_degraded` health_signal row's details JSON, parsed defensively
+ *  (the `scriptZeroHitFromRow` clone). Returns `null` when the row is not a
+ *  voice_degraded signal; returns `{ errorKind: undefined }` when it IS voice but
+ *  carries no/blank/non-string errorKind (an honest absence — the finding then
+ *  renders a count-only detail). Malformed/missing details JSON folds to `null`
+ *  (the row is ignored; counts only, no body ever surfaces, never throws). */
+function voiceDegradedFromRow(row: DiagnosticRow): { errorKind: string | undefined } | null {
+  if (row.details === undefined) return null;
+  try {
+    const parsed = JSON.parse(row.details) as { signal?: unknown; errorKind?: unknown };
+    if (parsed.signal !== "voice_degraded") return null;
+    const errorKind =
+      typeof parsed.errorKind === "string" && parsed.errorKind.length > 0 ? parsed.errorKind : undefined;
+    return { errorKind };
+  } catch {
+    return null; // malformed details JSON — counts only, no body.
+  }
+}
 
 /** OBS-01: `{scriptClass, lane}` from a script_zero_hit row's details JSON.
  *  Defensive parse cloning healthSignalLabel's style — malformed/missing folds
@@ -237,6 +261,39 @@ export function buildFindings(
       detail: `${genQualityCount} memory-generation pass(es) whose output diverged from the source (non-Latin source → Latin output, empty, or unparseable)`,
       count: genQualityCount,
       hint: "a memory-generation pass (consolidation/reasoning/user-representation) is producing low-quality output for non-Latin sources; the memory-pipeline model is too weak — configure a stronger memory model or pin providers.entries.<id>.capabilities.capabilityClass to frontier/mid (the R6 memory-ops override). Visibility only — not gated",
+    });
+  }
+
+  // OBS-04 (Phase 196): dedicated voice_health finding — the degraded STT/TTS
+  // turn count + the DOMINANT voice errorKind (the closed domain SttErrorKind),
+  // rolled up from the `voice_degraded` health_signal rows the daemon voice obs
+  // emits on a transcription/synthesis failure. Counts + a closed errorKind label
+  // + a STATIC hint ONLY — NEVER a raw provider message body or a secret (the H1
+  // no-body rule; safe to paste). Mirrors the `model_health` if-guard + the
+  // script-signal dedicated-grouping pattern. Beside model_health/config_posture.
+  let voiceDegradedCount = 0;
+  const voiceKindCounts = new Map<string, number>();
+  for (const row of healthSignals) {
+    const parsed = voiceDegradedFromRow(row);
+    if (parsed === null) continue;
+    voiceDegradedCount += 1;
+    if (parsed.errorKind !== undefined) {
+      voiceKindCounts.set(parsed.errorKind, (voiceKindCounts.get(parsed.errorKind) ?? 0) + 1);
+    }
+  }
+  if (voiceDegradedCount > 0) {
+    // The dominant errorKind: highest count, lexicographic tie-break (deterministic).
+    const topKind = [...voiceKindCounts.entries()].sort(
+      (a, b) => b[1] - a[1] || a[0].localeCompare(b[0]),
+    )[0]?.[0];
+    findings.push({
+      code: "voice_health",
+      detail:
+        topKind !== undefined
+          ? `${voiceDegradedCount} degraded STT/TTS turn(s); top errorKind ${topKind}`
+          : `${voiceDegradedCount} degraded STT/TTS turn(s)`,
+      count: voiceDegradedCount,
+      hint: "run `comis explain` on an affected voice session; for model_load_failed/model_download_failed check the whisper model cache + disk + the local engine probe (a keyless engine), or set the provider's audio API key for auth_required",
     });
   }
 

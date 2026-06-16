@@ -111,3 +111,51 @@ export function sanitizeLogString(input: string): string {
 
   return result;
 }
+
+/**
+ * Redact a free-text error/diagnostic string: strip URLs (`[URL]`), the bare
+ * `Authorization:`/`Bearer` credential-scheme markers, and any long token
+ * (`[REDACTED]`). The single source of truth for the SEC-01 redaction regex —
+ * reused by `sanitizeApiError` (adapter API-error bodies in `@comis/skills`),
+ * the inbound voice handler's structured-log lines, AND the voice-OUT pipeline's
+ * WARN branches in `@comis/channels`.
+ *
+ * Relocated here from `@comis/skills` (media-adapter-shared.ts) in Phase 197 so
+ * BOTH `@comis/skills` and `@comis/channels` resolve ONE definition: channels
+ * deliberately does NOT import skills (structural-typing boundary), so the pure
+ * primitive lives DOWN in core where both packages already depend. The redaction
+ * SEMANTICS are unchanged from the original — only the location moved.
+ *
+ * This is intentionally narrower than {@link sanitizeLogString} (which matches a
+ * catalog of known credential FORMATS): `redactErrorMessage` is the coarser
+ * URL/scheme/long-token scrubber for opaque adapter error bodies where the exact
+ * credential shape is unknown.
+ *
+ * @param body - The free-text error/diagnostic string to redact
+ * @returns The redacted string (URLs, credential schemes, and long tokens scrubbed)
+ */
+export function redactErrorMessage(body: string): string {
+  return (
+    body
+      .replace(/https?:\/\/[^\s"')]+/g, "[URL]")
+      // WR-03: redact a credential-scheme marker TOGETHER with the long token it
+      // carries, as ONE `[REDACTED]` — and ONLY when a >=20-char credential token
+      // actually follows. The optional `Authorization:` / `Bearer ` prefix is
+      // part of the match but the `{20,}` token is REQUIRED, so the prefix is
+      // consumed only alongside a real credential (no orphaned scheme word, no
+      // double-space), while a bare "bearer"/"authorization" used as PROSE — or a
+      // scheme followed by a sub-20-char value — is left verbatim (the prior
+      // non-anchored deletion mangled such prose). Single character class with a
+      // single `+`/`{20,}` quantifier — linear, no catastrophic backtracking.
+      // eslint-disable-next-line no-restricted-syntax, security/detect-unsafe-regex -- media adapter API-error sanitization (not the Pino censor literal); the optional prefixes precede a single character class with one bounded quantifier — no nested/overlapping quantifier, so it is linear-time (safe-regex false positive)
+      .replace(/\b(?:Authorization:\s*)?(?:Bearer\s+)?[A-Za-z0-9_-]{20,}/gi, "[REDACTED]")
+      // Defense-in-depth: any standalone long token NOT preceded by a scheme
+      // marker (so untouched above) is still redacted — preserves the prior
+      // long-token floor and the no-opaque-leak guarantee.
+      // eslint-disable-next-line no-restricted-syntax -- media adapter API-error sanitization (not the Pino censor literal)
+      .replace(/[A-Za-z0-9_-]{20,}/g, "[REDACTED]")
+      // Collapse any residual run of internal whitespace a redaction may have
+      // produced (single-space only — never alters non-redacted prose spacing).
+      .replace(/ {2,}/g, " ")
+  );
+}

@@ -5984,9 +5984,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("integ
       "transcription": {
         "autoTranscribe": true,
         "fallbackProviders": [],
+        "local": {
+          "model": "base"
+        },
         "maxFileSizeMb": 25,
         "preflight": true,
-        "provider": "openai",
+        "provider": "auto",
         "timeoutMs": 60000
       },
       "tts": {
@@ -6000,7 +6003,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("integ
           "telegram": "opus",
           "whatsapp": "mp3"
         },
-        "provider": "openai",
+        "provider": "edge",
         "tagPattern": "\\\\[\\\\[tts(?::.*?)?\\\\]\\\\]",
         "voice": "alloy"
       },
@@ -6317,9 +6320,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("integ
     "default": {
       "autoTranscribe": true,
       "fallbackProviders": [],
+      "local": {
+        "model": "base"
+      },
       "maxFileSizeMb": 25,
       "preflight": true,
-      "provider": "openai",
+      "provider": "auto",
       "timeoutMs": 60000
     },
     "immutable": true,
@@ -6344,6 +6350,30 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("integ
     "type": "string"
   },
   {
+    "default": {
+      "model": "base"
+    },
+    "immutable": true,
+    "path": "integrations.media.transcription.local",
+    "type": "object"
+  },
+  {
+    "immutable": true,
+    "path": "integrations.media.transcription.local.baseUrl",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "integrations.media.transcription.local.engine",
+    "type": "string"
+  },
+  {
+    "default": "base",
+    "immutable": true,
+    "path": "integrations.media.transcription.local.model",
+    "type": "string"
+  },
+  {
     "default": 25,
     "immutable": true,
     "path": "integrations.media.transcription.maxFileSizeMb",
@@ -6361,7 +6391,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("integ
     "type": "boolean"
   },
   {
-    "default": "openai",
+    "default": "auto",
     "immutable": true,
     "path": "integrations.media.transcription.provider",
     "type": "string"
@@ -6384,7 +6414,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("integ
         "telegram": "opus",
         "whatsapp": "mp3"
       },
-      "provider": "openai",
+      "provider": "edge",
       "tagPattern": "\\\\[\\\\[tts(?::.*?)?\\\\]\\\\]",
       "voice": "alloy"
     },
@@ -6499,7 +6529,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("integ
     "type": "string"
   },
   {
-    "default": "openai",
+    "default": "edge",
     "immutable": true,
     "path": "integrations.media.tts.provider",
     "type": "string"
@@ -11513,9 +11543,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
         "transcription": {
           "autoTranscribe": true,
           "fallbackProviders": [],
+          "local": {
+            "model": "base"
+          },
           "maxFileSizeMb": 25,
           "preflight": true,
-          "provider": "openai",
+          "provider": "auto",
           "timeoutMs": 60000
         },
         "tts": {
@@ -11529,7 +11562,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
             "telegram": "opus",
             "whatsapp": "mp3"
           },
-          "provider": "openai",
+          "provider": "edge",
           "tagPattern": "\\\\[\\\\[tts(?::.*?)?\\\\]\\\\]",
           "voice": "alloy"
         },
@@ -11769,9 +11802,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
       "transcription": {
         "autoTranscribe": true,
         "fallbackProviders": [],
+        "local": {
+          "model": "base"
+        },
         "maxFileSizeMb": 25,
         "preflight": true,
-        "provider": "openai",
+        "provider": "auto",
         "timeoutMs": 60000
       },
       "tts": {
@@ -11785,7 +11821,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
           "telegram": "opus",
           "whatsapp": "mp3"
         },
-        "provider": "openai",
+        "provider": "edge",
         "tagPattern": "\\\\[\\\\[tts(?::.*?)?\\\\]\\\\]",
         "voice": "alloy"
       },
@@ -12102,9 +12138,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "default": {
       "autoTranscribe": true,
       "fallbackProviders": [],
+      "local": {
+        "model": "base"
+      },
       "maxFileSizeMb": 25,
       "preflight": true,
-      "provider": "openai",
+      "provider": "auto",
       "timeoutMs": 60000
     },
     "immutable": true,
@@ -12129,6 +12168,30 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "type": "string"
   },
   {
+    "default": {
+      "model": "base"
+    },
+    "immutable": true,
+    "path": "integrations.media.transcription.local",
+    "type": "object"
+  },
+  {
+    "immutable": true,
+    "path": "integrations.media.transcription.local.baseUrl",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "integrations.media.transcription.local.engine",
+    "type": "string"
+  },
+  {
+    "default": "base",
+    "immutable": true,
+    "path": "integrations.media.transcription.local.model",
+    "type": "string"
+  },
+  {
     "default": 25,
     "immutable": true,
     "path": "integrations.media.transcription.maxFileSizeMb",
@@ -12146,7 +12209,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "type": "boolean"
   },
   {
-    "default": "openai",
+    "default": "auto",
     "immutable": true,
     "path": "integrations.media.transcription.provider",
     "type": "string"
@@ -12169,7 +12232,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
         "telegram": "opus",
         "whatsapp": "mp3"
       },
-      "provider": "openai",
+      "provider": "edge",
       "tagPattern": "\\\\[\\\\[tts(?::.*?)?\\\\]\\\\]",
       "voice": "alloy"
     },
@@ -12284,7 +12347,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "type": "string"
   },
   {
-    "default": "openai",
+    "default": "edge",
     "immutable": true,
     "path": "integrations.media.tts.provider",
     "type": "string"
@@ -22800,9 +22863,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("int
         "transcription": {
           "autoTranscribe": true,
           "fallbackProviders": [],
+          "local": {
+            "model": "base"
+          },
           "maxFileSizeMb": 25,
           "preflight": true,
-          "provider": "openai",
+          "provider": "auto",
           "timeoutMs": 60000
         },
         "tts": {
@@ -22816,7 +22882,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("int
             "telegram": "opus",
             "whatsapp": "mp3"
           },
-          "provider": "openai",
+          "provider": "edge",
           "tagPattern": "\\\\[\\\\[tts(?::.*?)?\\\\]\\\\]",
           "voice": "alloy"
         },
@@ -23175,9 +23241,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("int
           "default": {
             "autoTranscribe": true,
             "fallbackProviders": [],
+            "local": {
+              "model": "base"
+            },
             "maxFileSizeMb": 25,
             "preflight": true,
-            "provider": "openai",
+            "provider": "auto",
             "timeoutMs": 60000
           },
           "properties": {
@@ -23189,6 +23258,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("int
               "default": [],
               "items": {
                 "enum": [
+                  "auto",
+                  "local",
                   "openai",
                   "groq",
                   "deepgram"
@@ -23199,6 +23270,28 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("int
             },
             "language": {
               "type": "string"
+            },
+            "local": {
+              "additionalProperties": false,
+              "default": {
+                "model": "base"
+              },
+              "properties": {
+                "baseUrl": {
+                  "type": "string"
+                },
+                "engine": {
+                  "type": "string"
+                },
+                "model": {
+                  "default": "base",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "model"
+              ],
+              "type": "object"
             },
             "maxFileSizeMb": {
               "default": 25,
@@ -23213,8 +23306,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("int
               "type": "boolean"
             },
             "provider": {
-              "default": "openai",
+              "default": "auto",
               "enum": [
+                "auto",
+                "local",
                 "openai",
                 "groq",
                 "deepgram"
@@ -23234,7 +23329,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("int
             "timeoutMs",
             "autoTranscribe",
             "preflight",
-            "fallbackProviders"
+            "fallbackProviders",
+            "local"
           ],
           "type": "object"
         },
@@ -23251,7 +23347,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("int
               "telegram": "opus",
               "whatsapp": "mp3"
             },
-            "provider": "openai",
+            "provider": "edge",
             "tagPattern": "\\\\[\\\\[tts(?::.*?)?\\\\]\\\\]",
             "voice": "alloy"
           },
@@ -23362,11 +23458,13 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("int
               "type": "object"
             },
             "provider": {
-              "default": "openai",
+              "default": "edge",
               "enum": [
+                "edge",
                 "openai",
                 "elevenlabs",
-                "edge"
+                "local",
+                "piper"
               ],
               "type": "string"
             },
@@ -34219,9 +34317,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "transcription": {
             "autoTranscribe": true,
             "fallbackProviders": [],
+            "local": {
+              "model": "base"
+            },
             "maxFileSizeMb": 25,
             "preflight": true,
-            "provider": "openai",
+            "provider": "auto",
             "timeoutMs": 60000
           },
           "tts": {
@@ -34235,7 +34336,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "telegram": "opus",
               "whatsapp": "mp3"
             },
-            "provider": "openai",
+            "provider": "edge",
             "tagPattern": "\\\\[\\\\[tts(?::.*?)?\\\\]\\\\]",
             "voice": "alloy"
           },
@@ -34544,9 +34645,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "transcription": {
               "autoTranscribe": true,
               "fallbackProviders": [],
+              "local": {
+                "model": "base"
+              },
               "maxFileSizeMb": 25,
               "preflight": true,
-              "provider": "openai",
+              "provider": "auto",
               "timeoutMs": 60000
             },
             "tts": {
@@ -34560,7 +34664,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "telegram": "opus",
                 "whatsapp": "mp3"
               },
-              "provider": "openai",
+              "provider": "edge",
               "tagPattern": "\\\\[\\\\[tts(?::.*?)?\\\\]\\\\]",
               "voice": "alloy"
             },
@@ -34919,9 +35023,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "default": {
                 "autoTranscribe": true,
                 "fallbackProviders": [],
+                "local": {
+                  "model": "base"
+                },
                 "maxFileSizeMb": 25,
                 "preflight": true,
-                "provider": "openai",
+                "provider": "auto",
                 "timeoutMs": 60000
               },
               "properties": {
@@ -34933,6 +35040,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                   "default": [],
                   "items": {
                     "enum": [
+                      "auto",
+                      "local",
                       "openai",
                       "groq",
                       "deepgram"
@@ -34943,6 +35052,28 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 },
                 "language": {
                   "type": "string"
+                },
+                "local": {
+                  "additionalProperties": false,
+                  "default": {
+                    "model": "base"
+                  },
+                  "properties": {
+                    "baseUrl": {
+                      "type": "string"
+                    },
+                    "engine": {
+                      "type": "string"
+                    },
+                    "model": {
+                      "default": "base",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "model"
+                  ],
+                  "type": "object"
                 },
                 "maxFileSizeMb": {
                   "default": 25,
@@ -34957,8 +35088,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                   "type": "boolean"
                 },
                 "provider": {
-                  "default": "openai",
+                  "default": "auto",
                   "enum": [
+                    "auto",
+                    "local",
                     "openai",
                     "groq",
                     "deepgram"
@@ -34978,7 +35111,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "timeoutMs",
                 "autoTranscribe",
                 "preflight",
-                "fallbackProviders"
+                "fallbackProviders",
+                "local"
               ],
               "type": "object"
             },
@@ -34995,7 +35129,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                   "telegram": "opus",
                   "whatsapp": "mp3"
                 },
-                "provider": "openai",
+                "provider": "edge",
                 "tagPattern": "\\\\[\\\\[tts(?::.*?)?\\\\]\\\\]",
                 "voice": "alloy"
               },
@@ -35106,11 +35240,13 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                   "type": "object"
                 },
                 "provider": {
-                  "default": "openai",
+                  "default": "edge",
                   "enum": [
+                    "edge",
                     "openai",
                     "elevenlabs",
-                    "edge"
+                    "local",
+                    "piper"
                   ],
                   "type": "string"
                 },
