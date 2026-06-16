@@ -169,10 +169,19 @@ const HINT_BY_KIND: Record<SttErrorKind, string> = {
  * SEC-01 host-only redaction: strip credentials from a free-text provider error
  * BEFORE it reaches a log line, and reduce any URL to its HOST (drop path +
  * query, where a token may hide). `sanitizeLogString` (the @comis/core
- * defense-in-depth scrubber) removes Bearer markers / sk- keys / URL-embedded
+ * defense-in-depth scrubber) removes Bearer tokens / sk- keys / URL-embedded
  * passwords; the URL→host reduction here removes the path/query a token can ride
  * in. Never log a raw credential-bearing URL or `Bearer` (the §2.7 floor); Pino's
  * depth-3 censor is the layer-1 backstop.
+ *
+ * ORDER MATTERS (Phase 196 CR-02): `sanitizeLogString` must run FIRST, while the
+ * literal `Bearer <token>` is still intact — its `BEARER_TOKEN_LOG`
+ * (`/Bearer\s+.../`) rule is the ONLY one that catches a GENERIC opaque bearer
+ * (a Deepgram/ElevenLabs/custom token that is not `sk-`/hex-40+/a known prefix),
+ * and it is ANCHORED on that keyword. Stripping `Bearer` before sanitizing would
+ * destroy the anchor and leak the opaque token verbatim. So: sanitize first (the
+ * token becomes `Bearer [REDACTED]`), THEN drop the now-residual scheme markers
+ * and the keyless sentinel.
  */
 function redactVoiceLogMessage(message: string): string {
   const hostOnly = message.replace(/https?:\/\/[^\s"')]+/g, (url) => {
@@ -183,16 +192,22 @@ function redactVoiceLogMessage(message: string): string {
       return url.replace(/^(https?:\/\/[^/?#\s]+).*$/i, "$1");
     }
   });
-  // Drop the bare `Authorization:` / `Bearer` credential-scheme markers (the
-  // 196-01 redactErrorMessage precedent) so the line carries no credential
-  // CONTEXT at all — `sanitizeLogString` then redacts any surviving token tail.
-  const noScheme = hostOnly.replace(/\bAuthorization:/gi, "").replace(/\bBearer\b/gi, "");
-  // Strip the keyless-Ollama sentinel bearer value (`ollama-no-auth`): it is a
-  // platform-wide credential-position sentinel (the keyless-LLM bearer), so it
-  // must never appear in a voice log line at any level (T-196-08). It is too
-  // short for `sanitizeLogString`'s long-token rule, so strip it by exact name.
-  const noSentinel = noScheme.replace(/\bollama-no-auth\b/gi, "");
-  return sanitizeLogString(noSentinel);
+  // Redact FIRST — while `Bearer <token>` is intact so BEARER_TOKEN_LOG fires
+  // (it is anchored on the literal `Bearer ` and is the only rule that catches a
+  // generic opaque, non-`sk-`/non-hex token). After this, any bearer token is
+  // already `[REDACTED]`. `Bearer ollama-no-auth` is also caught here (the
+  // sentinel is ≥10 chars after the keyword).
+  const sanitized = sanitizeLogString(hostOnly);
+  // THEN drop the now-residual `Authorization:` / `Bearer` scheme markers so the
+  // line carries no credential CONTEXT at all (the token is already redacted by
+  // this point) — the 196-01 redactErrorMessage precedent.
+  const noScheme = sanitized.replace(/\bAuthorization:/gi, "").replace(/\bBearer\b/gi, "");
+  // Strip any BARE keyless-Ollama sentinel value (`ollama-no-auth`) not preceded
+  // by `Bearer` (those were caught above): it is a platform-wide credential-
+  // position sentinel (the keyless-LLM bearer), so it must never appear in a
+  // voice log line at any level (T-196-08). It is too short for
+  // `sanitizeLogString`'s long-token rule, so strip it by exact name.
+  return noScheme.replace(/\bollama-no-auth\b/gi, "");
 }
 
 /**
