@@ -105,6 +105,38 @@ describe("decideAutoAnswer — ESCALATE-ALWAYS wins over a hintPattern (Test 4: 
   });
 });
 
+describe("decideAutoAnswer — narration is NOT a prompt: a marker with no safe-pattern match must not force destructive (real-VPS 2026-06-16)", () => {
+  // Live Telegram drive: gpt-5.5 launched claude to build a Python app. claude NARRATED a TODO
+  // app ("add a todo, list, mark done, delete a todo by id, clear all completed") and queued
+  // `! python -m unittest` to run its tests. No operator safe pattern matched, but the
+  // destructive WORDS in claude's narration tripped the escalate-always gate → a FALSE
+  // `destructive` escalation that wedged the drive (the app was built but never delivered).
+  // The escalate-always gate is a VETO on an about-to-answer safe match (the anti-phishing case);
+  // with NO safe match there is nothing to auto-answer, so it must NOT fire on narration.
+  it("a driven CLI's narration with destructive WORDS + no operator safe-pattern match → no_safe_match, NOT destructive", () => {
+    const screen = [
+      "I built a small TODO app:",
+      "  add a todo, list todos, mark done, delete a todo by id, clear all completed.",
+      "Now running the tests:",
+      "❯ ! cd /home/comis/.comis/workspace/terminal && python -m unittest discover -s tests -v",
+    ].join("\n");
+    // The claude allow-entry configures NO hintPatterns → nothing here is auto-answerable.
+    const decision = decideAutoAnswer("safe-only", screen, []);
+    expect(decision).toEqual<AutoAnswerDecision>({ action: "escalate", reason: "no_safe_match" });
+  });
+
+  it("STILL escalates destructive when the destructive cue rides a screen that DOES match a safe pattern (phishing veto intact)", () => {
+    const screen = ["This will delete everything. Continue?", "(y/n) ❯ "].join("\n");
+    const decision = decideAutoAnswer("safe-only", screen, ["(y/n)"]);
+    expect(decision).toEqual<AutoAnswerDecision>({ action: "escalate", reason: "destructive" });
+  });
+
+  it("auth_login narration with no safe-pattern match → no_safe_match (not auth_login) — same veto semantics", () => {
+    const decision = decideAutoAnswer("safe-only", "Tip: run `gh auth login` to authenticate with GitHub.", []);
+    expect(decision).toEqual<AutoAnswerDecision>({ action: "escalate", reason: "no_safe_match" });
+  });
+});
+
 describe("decideAutoAnswer — mode none (Test 5: always escalate)", () => {
   it("escalates regardless of a matching hintPattern when the policy is off", () => {
     const screen = "Press enter to continue ❯ ";
