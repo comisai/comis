@@ -6,8 +6,17 @@
  * natural extraction). `daemon.ts` re-exports `runPreflightDoctor` so its public
  * surface (and `daemon.test.ts`'s `import … from "./daemon.js"`) is unchanged.
  *
+ * The timestamp is read via `@comis/core`'s `systemNowDate()` (the sanctioned
+ * runtime-root clock indirection) rather than a bare `new Date()`: extracting
+ * this probe out of the globals-exempt `daemon.ts` bootstrap root would
+ * otherwise trip the `globals` architecture gate (Phase 196 CR-01). The helper
+ * keeps the same wall-clock behavior while routing the read through the
+ * classifier-exempt `packages/core/src/runtime/` root.
+ *
  * @module
  */
+
+import { systemNowDate } from "@comis/core";
 
 interface PreflightProbeDatabase {
   prepare(sql: string): { get(): unknown };
@@ -46,7 +55,7 @@ export async function runPreflightDoctor(
     const message = err instanceof Error ? err.message : String(err);
     write(JSON.stringify({
       level: 60,
-      time: new Date().toISOString(),
+      time: systemNowDate().toISOString(),
       name: "comis-daemon",
       submodule: "preflight",
       errorKind: "dependency",
