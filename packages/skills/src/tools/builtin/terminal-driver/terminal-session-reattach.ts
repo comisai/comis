@@ -279,31 +279,89 @@ export interface TerminalDurabilityDeps {
 }
 
 /**
+ * The minimal worker round-trip the recover-on-boot re-attach drives (BL-01, 165-REVIEW):
+ * send a `reattach` frame to the worker and resolve whether it re-attached (`ok:true`).
+ * The registry binds it to its `request(...)` closure (typed down to `{ ok }`); a fake in
+ * unit tests resolves `true`/`false`. ABSENT ⇒ the legacy synchronous behavior (fire
+ * onReattached at recover-time without a worker confirmation) — not used in production.
+ */
+export type ReattachWorkerFn = (sessionId: string, cols: number, rows: number) => Promise<{ ok: boolean }>;
+
+/**
+ * BL-01 (165-REVIEW): drive ONE recovered session's worker re-attach + gate the obs hooks
+ * on the WORKER's confirmation (not the boot has-session probe alone). The registry already
+ * rehydrated the handle `running`; here we ask the freshly-spawned worker to re-attach the
+ * surviving tmux pane (the worker's `reattach` is `has-session`-gated, NEVER a new-session —
+ * I10). On `ok:true` → fire `onReattached` (the confirmed re-attach is the obs record). On
+ * `ok:false` (the tmux died between the boot probe and the worker spawn, or no tmux backend)
+ * → flip the handle `lost` + fire `onUnrecoverable` (honest death; the JOURNAL is preserved
+ * by the daemon holder, I10). Best-effort/never-throws (a faulting round-trip resolves the
+ * safe `lost` direction).
+ */
+async function driveWorkerReattach(
+  deps: TerminalDurabilityDeps,
+  sessions: Map<string, SessionHandle>,
+  descriptor: SessionDescriptor,
+  reattachWorker: ReattachWorkerFn,
+): Promise<void> {
+  let ok = false;
+  try {
+    ({ ok } = await reattachWorker(descriptor.sessionId, descriptor.cols, descriptor.rows));
+  } catch {
+    ok = false; // a faulting round-trip → the SAFE direction (lost), never a zombie running.
+  }
+  if (ok) {
+    deps.onReattached?.({ sessionId: descriptor.sessionId, agentId: descriptor.owner.agentId });
+    return;
+  }
+  // The worker could not re-attach — honest death (I10). Flip lost + fire the unrecoverable
+  // hook (the journal is preserved by the daemon holder; the descriptor is dropped by BL-03).
+  const handle = sessions.get(descriptor.sessionId);
+  if (handle !== undefined && handle.status === "running") handle.status = "lost";
+  deps.onUnrecoverable?.({ sessionId: descriptor.sessionId, agentId: descriptor.owner.agentId, reason: "tmux_session_gone", errorKind: "dependency" });
+}
+
+/**
  * The DUR-01 recover-on-boot APPLICATION: scan the persisted descriptors and, for each,
  * either rehydrate a `running` handle into the registry's `sessions` map (a live tmux,
- * NO create frame — I10) firing the content-free re-attach signal, or fire the
- * content-free unrecoverable hook (a genuinely-gone session — the daemon maps it to the
- * EXISTING `terminal:session_state(state:"lost")` + the reason; the journal is PRESERVED,
- * nothing removed here). A non-durable descriptor is skipped (today's lost floor, I1). The
- * `descriptorStore`-absent case is a no-op (I1). The BULK lives here (not the registry) to
- * protect the 800-line cap (Pitfall 5); the registry's recover-on-boot is ONE call.
+ * NO create frame — I10) and DRIVE the worker re-attach (gating the obs hooks on the
+ * worker's confirmation, BL-01), or — for a session gone at the boot probe — fire the
+ * content-free unrecoverable hook (the daemon maps it to the EXISTING
+ * `terminal:session_state(state:"lost")` + the reason; the JOURNAL is PRESERVED). A
+ * non-durable descriptor is skipped (today's lost floor, I1). The `descriptorStore`-absent
+ * case is a no-op (I1). The BULK lives here (not the registry) to protect the 800-line cap
+ * (Pitfall 5); the registry's recover-on-boot is ONE call.
  *
  * @param deps - The durability seams (descriptorStore + isTmuxAlive + the two hooks).
  * @param sessions - The registry's live session map (a recovered live session is set here).
  * @param nowMs - The registry's injected clock (stamps the rehydrated handle's lastActivity).
+ * @param reattachWorker - BL-01 (165-REVIEW): the registry's `reattach` worker round-trip.
+ *   When provided, a recovered live session is re-attached in the worker + the obs hooks are
+ *   gated on the worker's `ok` (fire-and-forget; recover-on-boot does not block). ABSENT ⇒
+ *   the legacy synchronous fire (no worker confirmation) — kept for unit-test ergonomics.
  */
 export function applyRecoveredSessions(
   deps: TerminalDurabilityDeps,
   sessions: Map<string, SessionHandle>,
   nowMs: () => number,
+  reattachWorker?: ReattachWorkerFn,
 ): void {
   if (deps.descriptorStore === undefined) return; // today's wiring — no recover (I1).
   const isTmuxAlive = deps.isTmuxAlive ?? ((): boolean => false);
   for (const r of recoverSessionDescriptors({ store: deps.descriptorStore, isTmuxAlive })) {
     if (r.action === "reattach") {
       sessions.set(r.descriptor.sessionId, rehydrateHandleFromDescriptor(r.descriptor, nowMs()));
-      deps.onReattached?.({ sessionId: r.descriptor.sessionId, agentId: r.descriptor.owner.agentId });
+      if (reattachWorker !== undefined) {
+        // BL-01: ask the worker to re-attach the surviving pane; gate the obs hooks on its
+        // confirmation. Fire-and-forget — recover-on-boot must not block daemon startup.
+        void driveWorkerReattach(deps, sessions, r.descriptor, reattachWorker);
+      } else {
+        // Legacy (no worker round-trip injected): fire the re-attach signal synchronously.
+        deps.onReattached?.({ sessionId: r.descriptor.sessionId, agentId: r.descriptor.owner.agentId });
+      }
     } else {
+      // Genuinely gone at the boot probe: fire the unrecoverable hook (the journal is
+      // preserved by the daemon holder, I10; the dead descriptor is dropped by BL-03).
       deps.onUnrecoverable?.({ sessionId: r.sessionId, agentId: r.owner.agentId, reason: r.reason, errorKind: "dependency" });
     }
   }

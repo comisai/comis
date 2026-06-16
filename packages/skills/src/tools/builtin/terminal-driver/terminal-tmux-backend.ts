@@ -174,6 +174,15 @@ export interface TmuxBackendDeps {
    * create/capture (long-lived read) child and for the one-shot send-keys/kill/resize.
    */
   runTmux: (argv: string[]) => TmuxChild;
+  /**
+   * BL-01 (165-REVIEW): re-attach ONLY — NEVER create. When `true` and `hasSession` is
+   * false, {@link createTmuxBackend} returns `undefined` (the session is genuinely gone;
+   * the worker's `reattach` handler replies `ok:false` → the registry flips `lost`). This
+   * is the recover-on-boot path: a fresh `new-session` would spawn a SECOND CLI against a
+   * session whose liveness we could not confirm — a double-drive (I10). Absent/false ⇒
+   * today's create-or-attach behavior (the create path is unchanged, byte-identical).
+   */
+  forceAttachOnly?: boolean;
 }
 
 /**
@@ -186,14 +195,22 @@ export interface TmuxBackendDeps {
  *
  * NEVER an unconditional `new-session`: re-creating an existing session would discard
  * the surviving session's state (the whole point of tmux survival).
+ *
+ * BL-01 (165-REVIEW): with `forceAttachOnly:true` (the recover-on-boot re-attach path)
+ * a GONE session (`hasSession` false) returns `undefined` instead of creating — the
+ * caller (the worker's `reattach` handler) then replies `ok:false`, NEVER a fresh CLI.
  */
-export function createTmuxBackend(deps: TmuxBackendDeps): FakePtyLike {
-  const { sessionId, bin, argv, cols, rows, tmuxPath, hasSession, runTmux } = deps;
+export function createTmuxBackend(deps: TmuxBackendDeps): FakePtyLike | undefined {
+  const { sessionId, bin, argv, cols, rows, tmuxPath, hasSession, runTmux, forceAttachOnly } = deps;
   const name = tmuxSessionName(sessionId);
 
   // The OPS-05 decision (RESEARCH Pitfall 6), made ONCE at construction.
   const exists = hasSession(name);
   if (!exists) {
+    // BL-01: attach-only (recover-on-boot) + the session is gone → re-attach is
+    // impossible. Return undefined so the worker replies ok:false (the registry flips
+    // lost + fires onUnrecoverable) — NEVER a fresh new-session (a double-drive, I10).
+    if (forceAttachOnly === true) return undefined;
     // Fresh session: create it DETACHED (the tmux server takes ownership of the PTY so
     // it outlives this worker). One-shot — its own lifetime is the create command, not
     // the session; the long-lived read child below follows the pane.

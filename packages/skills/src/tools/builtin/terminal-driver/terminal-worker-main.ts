@@ -136,11 +136,27 @@ export function warnIfDurableTmuxUnavailable(tmuxPath: string | undefined, logge
  * The tmux long-run backend (OPS-05): a named tmux session outlives the worker, so a
  * milestone survives a worker crash + is re-attachable. `createTmuxBackend` makes the
  * survival decision via `has-session`; `runTmux` wraps `child_process.spawn` (a
- * ChildProcess structurally satisfies {@link TmuxChild}). Used ONLY for `backend:"tmux"`.
+ * ChildProcess structurally satisfies {@link TmuxChild}). Used for `backend:"tmux"`
+ * create AND the BL-01 recover-on-boot `reattach` (`forceAttachOnly` — attach-or-gone,
+ * never a fresh `new-session`).
  */
 export function buildLoadTmux(tmuxPath: string): TmuxBackendLike {
+  const hasSession = (name: string): boolean => {
+    try {
+      execFileSync(tmuxPath, ["has-session", "-t", name], { stdio: "ignore" });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const runTmux =
+    (env: NodeJS.ProcessEnv) =>
+    (argv: string[]): TmuxChild =>
+      childSpawn(argv[0]!, argv.slice(1), { env }) as unknown as TmuxChild;
   return {
     spawn: (a) =>
+      // The create path never sets forceAttachOnly → createTmuxBackend always returns a
+      // handle here; the `?? throwingHandle` would be dead, so we assert non-undefined.
       createTmuxBackend({
         sessionId: a.sessionId,
         bin: a.bin,
@@ -149,15 +165,24 @@ export function buildLoadTmux(tmuxPath: string): TmuxBackendLike {
         rows: a.rows,
         env: a.env,
         tmuxPath,
-        hasSession: (name) => {
-          try {
-            execFileSync(tmuxPath, ["has-session", "-t", name], { stdio: "ignore" });
-            return true;
-          } catch {
-            return false;
-          }
-        },
-        runTmux: (argv) => childSpawn(argv[0]!, argv.slice(1), { env: a.env }) as unknown as TmuxChild,
+        hasSession,
+        runTmux: runTmux(a.env),
+      })!,
+    // BL-01 (165-REVIEW): recover-on-boot re-attach — attach to an EXISTING session ONLY
+    // (forceAttachOnly). The driven command is NOT re-spawned (the surviving pane is read),
+    // so bin/argv are empty; a gone session returns undefined → the worker replies ok:false.
+    reattach: (a) =>
+      createTmuxBackend({
+        sessionId: a.sessionId,
+        bin: "",
+        argv: [],
+        cols: a.cols,
+        rows: a.rows,
+        env: a.env,
+        tmuxPath,
+        hasSession,
+        runTmux: runTmux(a.env),
+        forceAttachOnly: true,
       }),
   };
 }

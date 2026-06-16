@@ -88,9 +88,8 @@ export type {
 } from "./terminal-session-types.js";
 
 /**
- * The per-session emulator scrollback depth — the SINGLE source the create tool
- * defaults to. NOT agent-dialable (no `scrollback` create param); bounds
- * per-session emulator memory to `(rows + scrollback) × cols` cells.
+ * The per-session emulator scrollback depth — the SINGLE source the create tool defaults
+ * to. NOT agent-dialable; bounds per-session emulator memory to `(rows + scrollback) x cols`.
  */
 export const DEFAULT_SCROLLBACK = 1000;
 
@@ -791,8 +790,11 @@ export function createTerminalSessionRegistry(
     }
   }
 
-  // DUR-01 recover-on-boot: re-attach durable sessions whose tmux survived a restart (sibling-owned; no-op without a store, I1).
-  if (deps.durability !== undefined) applyRecoveredSessions(deps.durability, sessions, nowMs);
+  // DUR-01 recover-on-boot (sibling-owned; no-op without a store, I1). BL-01 (165-REVIEW):
+  // the 4th arg is the worker `reattach` round-trip the sibling drives (worker re-attaches
+  // the surviving pane, NEVER a create; running status + obs hooks gated on its ok).
+  if (deps.durability !== undefined)
+    applyRecoveredSessions(deps.durability, sessions, nowMs, (id, cols, rows) => request(id, "reattach", { sessionId: id, cols, rows }));
 
   return { create, read, status, sendText, sendKey, resize, wait, get, list, kill, evict, size, cleanup };
 }

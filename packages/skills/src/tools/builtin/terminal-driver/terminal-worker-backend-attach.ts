@@ -124,6 +124,16 @@ export interface AttachBackendArgs {
   loadTmux?: TmuxBackendLike;
   /** The worker sessionId — the tmux backend derives its DETERMINISTIC `comis-<id>` name from it (survival). */
   sessionId: string;
+  /**
+   * BL-01 (165-REVIEW): RE-ATTACH ONLY (recover-on-boot). When `true` the tmux branch
+   * calls {@link TmuxBackendLike.reattach} (attach to an EXISTING session by name; a GONE
+   * session yields `undefined` → NOTHING is attached, NEVER a fresh `new-session`) instead
+   * of {@link TmuxBackendLike.spawn} — and there is NO pty/pipe fallback (a re-attach with
+   * no live tmux session is a genuine death, not a degrade). Absent/false ⇒ today's
+   * create-or-attach behavior (byte-identical). The plan's `{bin,argv}` are NOT used on
+   * this path (the surviving pane is read, never re-spawned).
+   */
+  attachOnly?: boolean;
 }
 
 /**
@@ -137,9 +147,30 @@ export interface AttachBackendArgs {
  *   - degraded branch: `spawnPipe(plan.bin, plan.argv, {env:plan.env})` (ALSO bwrap-wrapped — no
  *     unjailed degraded path), wire `stdout.on("data")`→appendRing, `close`/`error`→markExited,
  *     set `state.pipe`.
+ *
+ * Returns `true` when a backend was attached (the create path ALWAYS attaches one) and
+ * `false` ONLY on the BL-01 `attachOnly` re-attach of a gone session (or no tmux backend)
+ * — the caller (`handleReattach`) maps `false` to a worker `ok:false` reply.
  */
-export function attachBackend(args: AttachBackendArgs): void {
-  const { plan, cols, rows, state, loadPty, spawnPipe, logger, requestedBackend, loadTmux, sessionId } = args;
+export function attachBackend(args: AttachBackendArgs): boolean {
+  const { plan, cols, rows, state, loadPty, spawnPipe, logger, requestedBackend, loadTmux, sessionId, attachOnly } = args;
+
+  // BL-01 (165-REVIEW): the recover-on-boot RE-ATTACH path — attach to an EXISTING tmux
+  // session by name, NEVER create. A GONE session (reattach → undefined) attaches NOTHING
+  // and returns false (the worker replies ok:false → the registry flips lost); there is NO
+  // pty/pipe fallback (a re-attach with no live session is a genuine death, not a degrade).
+  if (attachOnly === true) {
+    if (loadTmux === undefined) return false; // cannot re-attach without the tmux backend.
+    const handle = loadTmux.reattach({ sessionId, cols, rows, env: plan.env });
+    if (handle === undefined) return false; // the tmux session is gone — honest death (I10).
+    handle.onData((d) => appendRing(state, d));
+    handle.onExit((e) => {
+      markExited(state, logger, e?.exitCode);
+    });
+    state.pty = handle;
+    state.backend = "tmux";
+    return true;
+  }
 
   // 124-08 (OPS-05): the tmux named-session backend — selected ONLY when the create frame
   // requested it AND the worker was built with the tmux loader. The handle is FakePtyLike-
@@ -161,7 +192,7 @@ export function attachBackend(args: AttachBackendArgs): void {
     });
     state.pty = handle;
     state.backend = "tmux";
-    return;
+    return true;
   }
 
   let pty: PtyModuleLike | undefined;
@@ -200,4 +231,7 @@ export function attachBackend(args: AttachBackendArgs): void {
     });
     state.pipe = child;
   }
+  // The create path always attaches a backend (pty or the degraded pipe) — the only
+  // not-attached outcome is the attachOnly re-attach of a gone session (handled above).
+  return true;
 }

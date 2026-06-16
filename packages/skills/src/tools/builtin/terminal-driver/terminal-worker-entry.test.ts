@@ -475,6 +475,119 @@ describe("createTerminalWorker — backend selection", () => {
   });
 });
 
+// ===========================================================================
+// BL-01 (165-REVIEW): the worker `reattach` frame — the load-bearing fix for the
+// recover-on-boot ZOMBIE. The registry rehydrates a recovered durable session
+// `running` but the worker (freshly spawned, EMPTY sessions map) only re-attaches a
+// tmux pane inside `handleCreate`. So a recovered session's first `read`/`status`
+// returned alive:false — a zombie. The fix: a distinct `reattach` method that
+// ATTACHES to an EXISTING tmux session by name (hasSession true → register + attach;
+// hasSession false → ok:false, NEVER a fresh new-session/create — I10 no-double-drive).
+//
+// THE GAP THE ORIGINALS MISSED: drive a `read` AGAINST the reattached session and
+// assert it returns the LIVE pane (alive:true), with exactly one reattach (no spawn).
+// ===========================================================================
+describe("createTerminalWorker — reattach frame (BL-01: recover-on-boot is not a zombie)", () => {
+  /** A fake tmux loader whose `reattach` returns a live pane handle iff `alive`. */
+  function makeReattachLoader(alive: boolean): {
+    loadTmux: { spawn: ReturnType<typeof vi.fn>; reattach: ReturnType<typeof vi.fn> };
+    emit: (chunk: string) => void;
+  } {
+    let onData: ((d: string) => void) | undefined;
+    const reattach = vi.fn(
+      (a: { sessionId: string; cols: number; rows: number }): FakePtyLike | undefined => {
+        void a;
+        if (!alive) return undefined; // the tmux session did NOT survive — gone.
+        return {
+          pid: 8181,
+          onData: (cb: (d: string) => void) => {
+            onData = cb;
+          },
+          onExit: vi.fn(),
+          write: vi.fn(),
+          resize: vi.fn(),
+          kill: vi.fn(),
+        };
+      },
+    );
+    // spawn must NEVER be called on the reattach path (that would be a fresh CLI → double-drive).
+    const spawn = vi.fn(() => {
+      throw new Error("reattach must NOT call spawn (I10 — no double-drive)");
+    });
+    return { loadTmux: { spawn, reattach }, emit: (chunk: string) => onData?.(chunk) };
+  }
+
+  function reattachFrame(sessionId: string): TerminalRequestFrame {
+    return {
+      sessionId,
+      requestId: `rq-reattach-${sessionId}`,
+      traceId: TRACE_ID,
+      method: "reattach",
+      params: { sessionId, cols: 120, rows: 40 },
+    };
+  }
+
+  it("re-attaches a LIVE tmux session (ok:true) so a subsequent read returns the LIVE pane (alive:true), with ZERO spawn (I10)", async () => {
+    const tmux = makeReattachLoader(true);
+    const worker = createTerminalWorker(
+      baseDeps({
+        loadPty: () => {
+          throw new Error("reattach must not touch node-pty");
+        },
+        loadTmux: tmux.loadTmux,
+      }),
+    );
+
+    // The recover-on-boot reattach frame (no prior create — the worker's sessions map is empty).
+    const reattach = await worker.handle(reattachFrame("old-sess"));
+    expect(reattach.ok, "a live tmux session re-attaches ok").toBe(true);
+    expect(tmux.loadTmux.reattach).toHaveBeenCalledTimes(1);
+    expect(tmux.loadTmux.spawn, "reattach must NOT spawn a fresh CLI (I10)").not.toHaveBeenCalled();
+
+    // THE LOAD-BEARING ASSERTION (the gap the originals skipped): a read against the
+    // reattached session returns the LIVE pane — alive:true + the surviving pane bytes —
+    // NOT the zombie alive:false the registry-only test never caught.
+    tmux.emit("resumed-pane-output\n");
+    await flushEmulator();
+    const read = await worker.handle({
+      sessionId: "old-sess",
+      requestId: "rq-read-resumed",
+      traceId: TRACE_ID,
+      method: "read",
+      params: { sessionId: "old-sess" },
+    });
+    expect((read.result as { alive: boolean }).alive, "a re-attached session is ALIVE, not a zombie").toBe(true);
+    expect((read.result as { screen: string }).screen).toContain("resumed-pane-output");
+  });
+
+  it("a GONE tmux session replies ok:false and registers NOTHING (a later read is alive:false — honest death, never a zombie)", async () => {
+    const tmux = makeReattachLoader(false); // hasSession false → reattach returns undefined
+    const worker = createTerminalWorker(
+      baseDeps({ loadPty: () => ({ spawn: vi.fn() }), loadTmux: tmux.loadTmux }),
+    );
+
+    const reattach = await worker.handle(reattachFrame("gone-sess"));
+    expect(reattach.ok, "a genuinely-gone tmux session re-attaches NOT-ok").toBe(false);
+    expect(tmux.loadTmux.spawn, "a gone session must NEVER fall back to a fresh spawn").not.toHaveBeenCalled();
+
+    // No session was registered — a read is the honest not-found alive:false (NOT a zombie running).
+    const read = await worker.handle({
+      sessionId: "gone-sess",
+      requestId: "rq-read-gone",
+      traceId: TRACE_ID,
+      method: "read",
+      params: { sessionId: "gone-sess" },
+    });
+    expect((read.result as { alive: boolean }).alive).toBe(false);
+  });
+
+  it("a reattach with NO loadTmux wired replies ok:false (cannot re-attach without the tmux backend)", async () => {
+    const worker = createTerminalWorker(baseDeps({ loadPty: () => ({ spawn: vi.fn() }) }));
+    const reattach = await worker.handle(reattachFrame("no-tmux"));
+    expect(reattach.ok).toBe(false);
+  });
+});
+
 describe("createTerminalWorker — ALS traceId re-establishment", () => {
   it("dispatches each frame inside runWithContext so the frame traceId is the live ALS context", async () => {
     let seenTraceId: string | undefined;

@@ -2076,6 +2076,33 @@ function fakeDescriptorStore(seed: SessionDescriptor[] = []): SessionDescriptorS
   };
 }
 
+/**
+ * A fake worker that auto-replies to the BL-01 recover-on-boot `reattach` frame with the
+ * given `ok`, and to a subsequent `read` with a live pane (so a test can drive a read
+ * AGAINST the recovered session and prove it is NOT a zombie). The reattach-vs-read replies
+ * are correlated by method.
+ */
+function makeReattachWorker(reattachOk: boolean): {
+  child: FakeWorkerChild;
+  requestFrames: TerminalRequestFrame[];
+} {
+  const fake = makeFakeWorker((frame) => {
+    if (frame.method === "reattach") {
+      return { sessionId: frame.sessionId, requestId: frame.requestId, ok: reattachOk, result: { backend: "tmux" } };
+    }
+    if (frame.method === "read") {
+      return {
+        sessionId: frame.sessionId,
+        requestId: frame.requestId,
+        ok: true,
+        result: { screen: "resumed-pane", cursor: { x: 0, y: 0 }, cols: 120, rows: 40, alt: false, alive: true },
+      };
+    }
+    return undefined;
+  });
+  return { child: fake.child, requestFrames: fake.requestFrames };
+}
+
 describe("createTerminalSessionRegistry — DUR-01 recover-on-boot re-attach", () => {
   it("re-attaches a durable session whose tmux is ALIVE as 'running' with ZERO create frames (I10 — never double-drive)", () => {
     const fake = makeFakeWorker();
@@ -2096,6 +2123,50 @@ describe("createTerminalSessionRegistry — DUR-01 recover-on-boot re-attach", (
     // the surviving pane on the next read instead.
     const createFrames = fake.requestFrames.filter((f) => f.method === "create");
     expect(createFrames, "recover-on-boot must NOT issue a create frame (I10)").toHaveLength(0);
+  });
+
+  it("BL-01 (the gap the originals missed): recover-on-boot fires ONE reattach frame + a subsequent read returns the LIVE pane (alive:true), ZERO create frames", async () => {
+    const fake = makeReattachWorker(true);
+    const store = fakeDescriptorStore([durableDescriptor()]);
+    const onReattached = vi.fn();
+    const onUnrecoverable = vi.fn();
+    const registry = createTerminalSessionRegistry(
+      baseDeps(() => fake.child, {
+        durability: { descriptorStore: store, isTmuxAlive: (n) => n === "comis-old-sess", onReattached, onUnrecoverable },
+      }),
+    );
+
+    // Let the eager recover-on-boot reattach round-trip settle (the worker confirms ok:true).
+    await vi.waitFor(() => expect(onReattached).toHaveBeenCalledTimes(1));
+
+    // EXACTLY ONE reattach frame, ZERO create frames (I10 — re-attach, never re-spawn).
+    expect(fake.requestFrames.filter((f) => f.method === "reattach"), "exactly one reattach frame").toHaveLength(1);
+    expect(fake.requestFrames.filter((f) => f.method === "create"), "ZERO create frames (I10)").toHaveLength(0);
+    expect(onUnrecoverable, "a confirmed re-attach is NOT unrecoverable").not.toHaveBeenCalled();
+
+    // THE LOAD-BEARING ASSERTION: a read against the recovered session returns the LIVE
+    // pane (alive:true) — NOT the zombie alive:false the registry-only test never caught.
+    const view = await registry.read("old-sess", DURABLE_OWNER);
+    expect(view.alive, "a re-attached session is ALIVE, not a zombie").toBe(true);
+    expect(view.screen).toContain("resumed-pane");
+  });
+
+  it("BL-01: a worker that re-attach-rejects (tmux died between the boot probe and the worker spawn) flips the session lost + fires onUnrecoverable (honest death, never a zombie)", async () => {
+    const fake = makeReattachWorker(false); // boot probe said alive, but the worker reattach replies ok:false
+    const store = fakeDescriptorStore([durableDescriptor()]);
+    const onReattached = vi.fn();
+    const onUnrecoverable = vi.fn();
+    const registry = createTerminalSessionRegistry(
+      baseDeps(() => fake.child, {
+        durability: { descriptorStore: store, isTmuxAlive: () => true, onReattached, onUnrecoverable },
+      }),
+    );
+
+    // The boot probe said alive, so a reattach frame is sent; the worker rejects it.
+    await vi.waitFor(() => expect(onUnrecoverable).toHaveBeenCalledTimes(1));
+    expect(onReattached, "a rejected re-attach is NOT a successful re-attach").not.toHaveBeenCalled();
+    // The handle is flipped lost (honest death) — a read is alive:false, never a zombie running.
+    expect(registry.get("old-sess", DURABLE_OWNER)?.status).toBe("lost");
   });
 
   it("a genuinely-gone durable session emits terminal:session_state(state:'lost') + a content-free unrecoverable reason — NOT a state:'failed', journal PRESERVED", () => {
@@ -2137,8 +2208,8 @@ describe("createTerminalSessionRegistry — DUR-01 recover-on-boot re-attach", (
     expect(fake.requestFrames.filter((f) => f.method === "create")).toHaveLength(0);
   });
 
-  it("a successful re-attach fires ONE content-free terminal:drive_reattached signal (the obs INFO record)", () => {
-    const fake = makeFakeWorker();
+  it("a worker-CONFIRMED re-attach fires ONE content-free terminal:drive_reattached signal (the obs INFO record)", async () => {
+    const fake = makeReattachWorker(true);
     const store = fakeDescriptorStore([durableDescriptor()]);
     const onReattached = vi.fn();
     createTerminalSessionRegistry(
@@ -2147,7 +2218,9 @@ describe("createTerminalSessionRegistry — DUR-01 recover-on-boot re-attach", (
       }),
     );
 
-    expect(onReattached).toHaveBeenCalledTimes(1);
+    // BL-01: onReattached fires only after the WORKER confirms the re-attach (ok:true),
+    // not blindly at recover-time (a tmux that died post-probe must not emit a re-attach).
+    await vi.waitFor(() => expect(onReattached).toHaveBeenCalledTimes(1));
     const info = onReattached.mock.calls[0]![0] as { sessionId: string; agentId: string };
     expect(info.sessionId).toBe("old-sess");
     expect(info.agentId).toBe("agent-dur");
