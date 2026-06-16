@@ -89,7 +89,11 @@ export function accumulateVoiceRecord(
       const model = asString(data.model);
       const durationMs = asNumber(data.durationMs);
       const costUsd = asNumber(data.costUsd);
-      const source = asString(data.source);
+      // WR-01 (196 review): fall back to the carried (requested-seeded) source when
+      // the terminal record omits it — mirrors the provider/keyless fallback so the
+      // OBS-03 selection rung survives a partial/reordered terminal record (the fold
+      // is the offline oracle for non-live records; the live emitter always passes it).
+      const source = (asString(data.source) as IncidentVoiceSignal["source"] | undefined) ?? signal?.source;
       return {
         signal: {
           provider: asString(data.provider) ?? signal?.provider ?? "",
@@ -98,7 +102,7 @@ export function accumulateVoiceRecord(
           ...(model !== undefined ? { model } : {}),
           ...(durationMs !== undefined ? { durationMs } : {}),
           ...(costUsd !== undefined ? { costUsd } : {}), // keyless 0 lands here (OBS-05)
-          ...(source !== undefined ? { source: source as IncidentVoiceSignal["source"] } : {}),
+          ...(source !== undefined ? { source } : {}),
         },
         outcomeSeq: seq,
       };
@@ -107,14 +111,16 @@ export function accumulateVoiceRecord(
     case "media.tts.failed": {
       if (signal !== undefined && seq < prev.outcomeSeq) return prev;
       const errorKind = asString(data.errorKind);
-      const source = asString(data.source);
+      // WR-01 (196 review): fall back to the carried (requested-seeded) source when
+      // the terminal record omits it — mirrors provider/keyless (see the completed arm).
+      const source = (asString(data.source) as IncidentVoiceSignal["source"] | undefined) ?? signal?.source;
       return {
         signal: {
           provider: asString(data.provider) ?? signal?.provider ?? "",
           keyless: typeof data.keyless === "boolean" ? data.keyless : (signal?.keyless ?? false),
           outcome: "failed",
           ...(errorKind !== undefined ? { errorKind } : {}),
-          ...(source !== undefined ? { source: source as IncidentVoiceSignal["source"] } : {}),
+          ...(source !== undefined ? { source } : {}),
         },
         outcomeSeq: seq,
       };
