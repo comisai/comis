@@ -97,8 +97,13 @@ export function resolveTtsProvider(
   }
 
   // 2. "auto" → the always-keyless EDGE rung (RES-02). Edge needs no key and no
-  //    engine, so it wins the auto default regardless of follow-main.
-  if (edgeAvailable() || VOICE_KEYLESS.has(TTS_KEYLESS_DEFAULT)) {
+  //    engine, so in production it wins the auto default — the daemon passes
+  //    `edgeAvailable: () => true` (edge is the shipped keyless adapter, and a
+  //    member of VOICE_KEYLESS). The predicate is gated (not hardcoded true) so
+  //    the follow-main/honest-unavailable fallthrough below stays reachable if a
+  //    future config disables edge — parity with the STT resolver's
+  //    localEngineAvailable rung, and so every branch is unit-coverable.
+  if (edgeAvailable()) {
     return { ok: true, provider: TTS_KEYLESS_DEFAULT, keyless: true, source: "keyless-local" };
   }
 
