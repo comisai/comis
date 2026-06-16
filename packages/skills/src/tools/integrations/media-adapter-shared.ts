@@ -8,13 +8,30 @@
  * @module media-adapter-shared
  */
 
+/**
+ * Redact a free-text error/diagnostic string: strip URLs (`[URL]`) and long
+ * tokens (`[REDACTED]`). The single source of truth for the SEC-01 redaction
+ * regex — reused by {@link sanitizeApiError} (adapter API-error bodies) and by
+ * the inbound voice handler's structured-log lines (so a credential can never
+ * reach a log line even if an upstream message was not pre-sanitized; the
+ * §2.7 "never log a secret at any level" floor / defense-in-depth).
+ */
+export function redactErrorMessage(body: string): string {
+  return (
+    body
+      .replace(/https?:\/\/[^\s"')]+/g, "[URL]")
+      // Strip an Authorization/Bearer credential marker entirely (scheme + any
+      // following token) so neither the scheme word nor the secret survives.
+      .replace(/\b(?:Authorization\s*:\s*)?Bearer\s+\S+/gi, "[REDACTED]")
+      // eslint-disable-next-line no-restricted-syntax -- media adapter API-error sanitization (not the Pino censor literal)
+      .replace(/[A-Za-z0-9_-]{20,}/g, "[REDACTED]")
+  );
+}
+
 /** Truncate and sanitize an API error body for user-facing error messages. */
 export function sanitizeApiError(status: number, body: string, provider: string): string {
   const truncated = body.length > 200 ? body.slice(0, 200) + "..." : body;
-  const cleaned = truncated
-    .replace(/https?:\/\/[^\s"')]+/g, "[URL]")
-    // eslint-disable-next-line no-restricted-syntax -- media adapter API-error sanitization (not the Pino censor literal)
-    .replace(/[A-Za-z0-9_-]{20,}/g, "[REDACTED]");
+  const cleaned = redactErrorMessage(truncated);
   return `${provider} error (${status}): ${cleaned}`;
 }
 
