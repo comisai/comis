@@ -25,13 +25,16 @@
  * treated as not-reachable (the guard rejects it and the probe falls through to
  * the in-process path) so a mis/maliciously-configured URL can never drive an
  * SSRF fetch from the boot probe. The reachability check itself is a
- * short-timeout fetch wrapped in a try (any error → not-reachable). No
- * credential-bearing URL is logged.
+ * short-timeout fetch wrapped in a try (any error → not-reachable), and (CR-01)
+ * is PINNED to the IP the guard resolved (undici dispatcher) so a hostname that
+ * passed as loopback cannot be rebound to a different IP at connect time
+ * (DNS-rebinding/TOCTOU). No credential-bearing URL is logged.
  *
  * @module
  */
 
 import { systemSetTimeout, systemClearTimeout, validateLocalServerUrl } from "@comis/core";
+import { fetchPinned } from "./pinned-fetch.js";
 
 /** Default reachability-probe timeout (ms). */
 const DEFAULT_PROBE_TIMEOUT_MS = 1_500;
@@ -71,14 +74,20 @@ export interface LocalSttProbeDeps {
  * SSRF guard (`validateLocalServerUrl`) has already run in `detectLocalSttEngine`
  * BEFORE this fetch — so this only ever fetches a loopback/explicitly-allowed
  * host (SEC-02).
+ *
+ * CR-01: the fetch is PINNED to `pinnedIp` (the IP the guard already resolved)
+ * via an undici dispatcher, so a hostname that resolved to loopback at
+ * validation cannot be rebound to a different IP at connect time (the
+ * DNS-rebinding/TOCTOU gap a plain re-resolving fetch left open). TLS SNI is
+ * preserved because the original hostname stays in `url`.
  */
-async function defaultReachable(url: string, timeoutMs: number): Promise<boolean> {
+async function defaultReachable(url: string, pinnedIp: string, timeoutMs: number): Promise<boolean> {
   const controller = new AbortController();
   const timer = systemSetTimeout(() => controller.abort(), timeoutMs);
   try {
     // A response of ANY status proves the server is up; only a network/abort
     // error means unreachable. We do not log the URL (it may carry creds).
-    await fetch(url, { method: "GET", signal: controller.signal });
+    await fetchPinned(url, pinnedIp, { method: "GET", signal: controller.signal });
     return true;
   } catch {
     return false;
@@ -135,7 +144,12 @@ export async function detectLocalSttEngine(
   if (baseUrl) {
     const guard = await validateLocalServerUrl(baseUrl);
     if (guard.ok) {
-      const reachableFn = deps.fetchProbe ?? ((url: string) => defaultReachable(url, timeoutMs));
+      // CR-01: the default reachability fetch pins the connection to the IP the
+      // guard just resolved (guard.value.ip). An injected `fetchProbe` test seam
+      // bypasses the real fetch entirely (the guard still gates it above).
+      const validatedIp = guard.value.ip;
+      const reachableFn =
+        deps.fetchProbe ?? ((url: string) => defaultReachable(url, validatedIp, timeoutMs));
       const reachable = await safeBoolean(() => reachableFn(baseUrl));
       if (reachable) {
         return { available: true, mode: "baseUrl" };

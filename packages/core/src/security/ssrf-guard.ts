@@ -1,9 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * SSRF Guard: DNS-pinned URL validation for server-side request forgery prevention.
+ * SSRF Guard: DNS-resolution + IP-range URL validation for server-side request
+ * forgery prevention.
  *
  * Validates URLs before any outbound HTTP request to ensure the resolved IP
  * is not in a blocked range (loopback, private, link-local, cloud metadata).
+ *
+ * This module RESOLVES + CLASSIFIES the host; it does NOT itself pin the IP for
+ * the connection. PINNING the resolved IP for the actual fetch (closing the
+ * DNS-rebinding/TOCTOU window between validation and connection while preserving
+ * TLS SNI) is the CALLER's responsibility — see `@comis/skills`'s
+ * `createSsrfGuardedFetcher` / `fetchPinned` and the daemon's
+ * `fetchImageBytesSsrfSafe`, which build an undici `Agent` from the
+ * `ValidatedUrl.ip` this function returns.
  *
  * Every web-facing tool must pass through validateUrl() before fetch.
  *
@@ -12,7 +21,9 @@
  * ALLOWING loopback + an explicit allowlist and DENYING public/arbitrary
  * egress — the opposite allow/deny of `validateUrl`, sharing the same
  * parse → protocol → DNS-resolve → ipaddr-classify flow and the
- * cloud-metadata deny.
+ * cloud-metadata deny. Its two SEC-02 consumers (the boot probe and the
+ * explicit-local runtime fetch) pin the resolved IP via `fetchPinned`, so the
+ * end-to-end rebinding property holds for them too.
  *
  * @module
  */

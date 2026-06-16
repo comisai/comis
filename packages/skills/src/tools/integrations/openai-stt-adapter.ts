@@ -4,6 +4,7 @@ import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
 import { sanitizeApiError, mimeToExtension } from "./media-adapter-shared.js";
 import { systemClearTimeout, systemSetTimeout, validateLocalServerUrl } from "@comis/core";
+import { fetchPinned } from "./pinned-fetch.js";
 
 /**
  * Configuration for the OpenAI STT adapter.
@@ -69,14 +70,22 @@ export function createOpenAISttAdapter(config: OpenAISttConfig): TranscriptionPo
         );
       }
 
-      // SEC-02 (Surface B): validate-then-fetch. When this adapter is built for
-      // a local whisper server (the stt-factory local.baseUrl branch sets
-      // `localServerGuard`), the `baseUrl` is SSRF-validated BEFORE the runtime
-      // fetch — an explicit transcription.provider:"local" bypasses the boot
-      // probe, so this is the guard for that runtime path. Loopback + an
+      // SEC-02 (Surface B): validate-then-PINNED-fetch. When this adapter is
+      // built for a local whisper server (the stt-factory local.baseUrl branch
+      // sets `localServerGuard`), the `baseUrl` is SSRF-validated BEFORE the
+      // runtime fetch — an explicit transcription.provider:"local" bypasses the
+      // boot probe, so this is the guard for that runtime path. Loopback + an
       // explicitly-allowed host pass; a non-loopback/metadata host is rejected
       // here, BEFORE the fetch fires. The cloud OpenAI path leaves the flag
       // unset, so api.openai.com is never validated by the local guard.
+      //
+      // CR-01: capture the resolved IP and PIN the connection to it (below) so a
+      // hostname that resolves to loopback HERE cannot be rebound to a different
+      // IP at connect time (the DNS-rebinding/TOCTOU gap a plain re-resolving
+      // fetch leaves open). `validatedIp` stays undefined on the cloud path → the
+      // cloud fetch is the unmodified global fetch (api.openai.com is a public IP
+      // that pinning is neither needed for nor correct on).
+      let validatedIp: string | undefined;
       if (config.localServerGuard) {
         const guard = await validateLocalServerUrl(baseUrl);
         if (!guard.ok) {
@@ -84,6 +93,7 @@ export function createOpenAISttAdapter(config: OpenAISttConfig): TranscriptionPo
             new Error(`Blocked local STT server URL: ${guard.error.message}`),
           );
         }
+        validatedIp = guard.value.ip;
       }
 
       try {
@@ -107,14 +117,23 @@ export function createOpenAISttAdapter(config: OpenAISttConfig): TranscriptionPo
         const controller = new AbortController();
         const timeout = systemSetTimeout(() => controller.abort(), timeoutMs);
         try {
-          const response = await fetch(`${baseUrl}/audio/transcriptions`, {
+          const url = `${baseUrl}/audio/transcriptions`;
+          const init = {
             method: "POST",
             headers: {
               Authorization: `Bearer ${config.apiKey}`,
             },
             body: formData,
             signal: controller.signal,
-          });
+          };
+          // CR-01: the local-server path fetches through an undici dispatcher
+          // PINNED to the IP `validateLocalServerUrl` already resolved (no DNS
+          // rebind window; TLS SNI preserved by keeping the hostname in `url`).
+          // The cloud path (validatedIp undefined) uses the unmodified global
+          // fetch — the local pin must never touch api.openai.com.
+          const response = validatedIp !== undefined
+            ? await fetchPinned(url, validatedIp, init as Parameters<typeof fetchPinned>[2])
+            : await fetch(url, init);
 
           if (!response.ok) {
             const body = await response.text();
