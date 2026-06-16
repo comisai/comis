@@ -41,6 +41,7 @@ import {
   type IncidentImageSignal,
   type IncidentVisionSignal,
   type IncidentVideoSignal,
+  type IncidentVoiceSignal,
 } from "./obs-explain-signals-fields.js";
 
 // ---------------------------------------------------------------------------
@@ -92,20 +93,23 @@ interface Acc {
   recallCount: number;
   recallZeroHits: number;
   lastRecall?: { lanes: number; finalCount: number; rerankerAvailable: boolean };
-  /** The image/vision/video turns reconstructed from the session's image.* (186),
-   *  media.vision.* (187), and video.* (192) records (folded by `applyMediaRecord`
-   *  → accumulate{Image,Vision,Video}Record). The terminal generated/completed/
-   *  failed record sets `outcome` (+ cost/model/path/errorKind/jobId); delivered
-   *  flips a latch. Each is undefined until its record class is seen (presence-
-   *  conditional output). The paired *OutcomeSeq is the `seq` at which `outcome`
-   *  was last set, so each fold is seq-aware (IN-04 — a stale lower-seq terminal
-   *  never overwrites a newer one) rather than relying on record-array order. */
+  /** The image/vision/video/voice turns reconstructed from the session's image.*
+   *  (186), media.vision.* (187), video.* (192), and media.stt / media.tts (196)
+   *  records (folded by `applyMediaRecord` → accumulate{Image,Vision,Video,Voice}Record).
+   *  The terminal generated/completed/failed record sets `outcome` (+ cost/model/
+   *  path/errorKind/jobId/keyless); delivered flips a latch. Each is undefined until
+   *  its record class is seen (presence-conditional output). The paired *OutcomeSeq
+   *  is the `seq` at which `outcome` was last set, so each fold is seq-aware (IN-04 —
+   *  a stale lower-seq terminal never overwrites a newer one) rather than relying on
+   *  record-array order. */
   image?: IncidentImageSignal;
   imageOutcomeSeq: number;
   vision?: IncidentVisionSignal;
   visionOutcomeSeq: number;
   video?: IncidentVideoSignal;
   videoOutcomeSeq: number;
+  voice?: IncidentVoiceSignal;
+  voiceOutcomeSeq: number;
   /** W8: event-shape tool.result toolCallIds already counted (dedup — the same
    *  call must not count twice if its result event is duplicated across sources). */
   seenToolResultCallIds: Set<string>;
@@ -333,15 +337,16 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
       };
       return;
     }
-    // OBS-04 (186) / VIS-04 (187) / OBS-04-video (192): the image.* +
-    // media.vision.* + video.* lifecycles. The handler/poller direct-emit these
-    // content-free records; `applyMediaRecord` folds each into the reconstructed
-    // image / vision / video turn (seq-aware IN-04 — driven by `rec.seq`, falling
-    // back to the running counter) so `comis explain` surfaces provider/model/
-    // jobId/costUsd/outcome (Route a — cost rides the terminal record, not the
-    // executor sessionEnd). The explicit video.* arms are LOAD-BEARING: without
-    // them the `default:` below silently DROPS video records (Pitfall 2 — a
-    // background-completed video turn would reconstruct as NOTHING).
+    // OBS-04 (186) / VIS-04 (187) / OBS-04-video (192) / OBS-02-voice (196): the
+    // image.* + media.vision.* + video.* + media.stt.*/media.tts.* lifecycles. The
+    // handlers/poller direct-emit these content-free records; `applyMediaRecord`
+    // folds each into the reconstructed image / vision / video / voice turn
+    // (seq-aware IN-04 — driven by `rec.seq`, falling back to the running counter)
+    // so `comis explain` surfaces provider/model/jobId/costUsd/keyless/source/
+    // outcome (Route a — cost rides the terminal record, not the executor
+    // sessionEnd). The explicit media.stt.*/media.tts.* arms are LOAD-BEARING:
+    // without them the `default:` below silently DROPS voice records (Pitfall 2 —
+    // a voice turn would reconstruct as NOTHING).
     case "image.requested":
     case "image.generated":
     case "image.delivered":
@@ -354,6 +359,12 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
     case "video.generated":
     case "video.delivered":
     case "video.failed":
+    case "media.stt.requested":
+    case "media.stt.completed":
+    case "media.stt.failed":
+    case "media.tts.requested":
+    case "media.tts.completed":
+    case "media.tts.failed":
       applyMediaRecord(acc, type, data, asNumber(rec.seq) ?? acc.seq++);
       return;
     default:
@@ -389,10 +400,11 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     sessionKey: "",
     seq: 0,
     // IN-04: -1 so the FIRST real terminal record (seq ≥ 0) always sets outcome
-    // (the requested/submitted seeds do not advance it) — image/vision/video folds.
+    // (the requested/submitted seeds do not advance it) — image/vision/video/voice.
     imageOutcomeSeq: -1,
     visionOutcomeSeq: -1,
     videoOutcomeSeq: -1,
+    voiceOutcomeSeq: -1,
   };
 
   for (const rec of records) {
@@ -489,11 +501,13 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
       : {}),
     ...(acc.agentId !== undefined ? { agentId: acc.agentId } : {}),
     ...(acc.channel !== undefined ? { channel: acc.channel } : {}),
-    // 186/187/192: surface the reconstructed image / vision / video turns
-    // (presence-conditional — each absent when the trajectory had no records of
-    // that class). videoGenerated is the OBS-04 background-completion oracle.
+    // 186/187/192/196: surface the reconstructed image / vision / video / voice
+    // turns (presence-conditional — each absent when the trajectory had no records
+    // of that class). videoGenerated is the OBS-04 background-completion oracle;
+    // voice is the OBS-02 voice-turn oracle (keyless costUsd:0 visible, OBS-05).
     ...(acc.image !== undefined ? { image: acc.image } : {}),
     ...(acc.vision !== undefined ? { vision: acc.vision } : {}),
     ...(acc.video !== undefined ? { videoGenerated: acc.video } : {}),
+    ...(acc.voice !== undefined ? { voice: acc.voice } : {}),
   };
 }
