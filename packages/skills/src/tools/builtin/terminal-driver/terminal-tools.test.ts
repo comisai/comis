@@ -379,6 +379,25 @@ describe("terminal-tools — create gate + canonicalization + observability", ()
     expect((result.details as CreateResult).sessionId).toBe("sess-1");
   });
 
+  it("FINDING-B (DUR-01): a durable-configured create tool stamps req.durable on the CreateRequest (→ the registry engages tmux)", async () => {
+    // Live VPS finding 2026-06-16: drive.durable:true never engaged tmux because the create tool
+    // never set req.durable (terminal-tools.ts) — so every session ran on the pty backend and the
+    // headline survive-a-daemon-restart drive was unreachable. The daemon supplies deps.durable
+    // (from config.drive.durable); the tool must thread it onto the CreateRequest.
+    const registry = makeFakeRegistry();
+    const tool = createTerminalSessionCreateTool(baseDeps(registry, { durable: true }));
+    await tool.execute("call-1", { allowId: "bash", command: realBashPath() });
+    expect(registry.createCalls).toHaveLength(1);
+    expect(registry.createCalls[0]!.durable, "drive.durable:true must thread to req.durable").toBe(true);
+  });
+
+  it("FINDING-B: a non-durable create tool leaves req.durable unset (I1 — today's spawn session)", async () => {
+    const registry = makeFakeRegistry();
+    const tool = createTerminalSessionCreateTool(baseDeps(registry));
+    await tool.execute("call-1", { allowId: "bash", command: realBashPath() });
+    expect(registry.createCalls[0]!.durable).toBeUndefined();
+  });
+
   it("logs INFO+durationMs+toolName and emits terminal:session_state on a successful create", async () => {
     const registry = makeFakeRegistry();
     const logger = makeCapturingLogger();

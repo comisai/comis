@@ -2444,3 +2444,35 @@ describe("createTerminalSessionRegistry — getOwner (ISSUE-3 daemon recovery se
     expect(registry.getOwner?.("no-such-session")).toBeUndefined();
   });
 });
+
+describe("createTerminalSessionRegistry — DUR-01: a durable create engages the tmux backend (FINDING-B)", () => {
+  it("a req.durable create stamps the handle durable + derives tmuxName comis-<id> + sets the create FRAME backend:'tmux'", async () => {
+    // Live VPS finding 2026-06-16: drive.durable:true never engaged tmux — the create tool never set
+    // req.durable, and even when set the registry used req.tmuxName (which the tool can't supply, since
+    // sessionId is generated HERE) and the create frame carried NO backend, so the worker always picked
+    // pty. The registry must derive the deterministic re-attach name from its own sessionId AND tell the
+    // worker to use tmux via the frame `backend` param (terminal-worker-entry.ts reads p["backend"]).
+    const fake = makeFakeWorker();
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child));
+    const { sessionId } = await registry.create(
+      { allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24, durable: true },
+      OWNER,
+    );
+    const handle = registry.get(sessionId, OWNER);
+    expect(handle?.durable, "a durable create stamps the handle durable").toBe(true);
+    expect(handle?.tmuxName, "the registry derives comis-<sessionId> (the tool cannot — it does not know sessionId)").toBe(`comis-${sessionId}`);
+    const createFrame = fake.requestFrames.find((f) => f.method === "create");
+    expect(createFrame?.params.backend, "the create frame MUST carry backend:'tmux' so the worker selects the tmux backend").toBe("tmux");
+  });
+
+  it("a non-durable create leaves the handle spawn (no durable/tmuxName) + the frame backend unset (I1)", async () => {
+    const fake = makeFakeWorker();
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child));
+    const { sessionId } = await registry.create({ allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }, OWNER);
+    const handle = registry.get(sessionId, OWNER);
+    expect(handle?.durable).toBeUndefined();
+    expect(handle?.tmuxName).toBeUndefined();
+    const createFrame = fake.requestFrames.find((f) => f.method === "create");
+    expect(createFrame?.params.backend).toBeUndefined();
+  });
+});

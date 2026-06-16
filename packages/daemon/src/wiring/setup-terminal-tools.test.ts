@@ -643,6 +643,17 @@ describe("buildTerminalSharedDeps — the WR-01 closure: populate the allow-set 
     expect(shared.allowEntries[0]!.limits).toMatchObject({ maxInteractions: 200 });
   });
 
+  it("FINDING-B (DUR-01): threads config.drive.durable → sharedDeps.durable so the create tool engages tmux; absent ⇒ false (I1)", () => {
+    // Live VPS finding 2026-06-16: drive.durable was parsed but NEVER threaded to the create tool
+    // (buildTerminalSharedDeps set driveMode/readMode but not durable), so the durable survive-a-
+    // daemon-restart path was unreachable — every session ran pty.
+    const registries = new Map<string, TerminalSessionRegistry>();
+    const durableDeps = { ...makeDepsWithConfig(), config: { ...makeConfig(), drive: { durable: true } } };
+    expect(buildTerminalSharedDeps(registries, "agent-a", durableDeps as never).durable, "config.drive.durable:true → deps.durable:true").toBe(true);
+    // No drive block (the default config) → false (today's spawn session, byte-identical).
+    expect(buildTerminalSharedDeps(registries, "agent-a", makeDepsWithConfig() as never).durable).toBe(false);
+  });
+
   it("a populated allow-set with limits feeds the per-session caps (caps go LIVE)", () => {
     const deps = makeDepsWithConfig();
     const registries = new Map<string, TerminalSessionRegistry>();
