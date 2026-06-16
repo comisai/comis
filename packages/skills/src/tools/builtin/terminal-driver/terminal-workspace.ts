@@ -112,19 +112,57 @@ function isWithinDir(child: string, parent: string): boolean {
  * the writable, re-bound workspace instead of failing the spawn or escaping the jail.
  */
 export function resolveCreateWorkspace(
-  req: { workspace?: string; cwd?: string },
+  req: { workspace?: string; cwd?: string; project?: string },
   allocate: (sessionId: string) => string,
   sessionId: string,
   home: string = homedir(),
+  ensureDir: (path: string) => void = defaultEnsureDir,
 ): ResolvedCreateWorkspace {
   const allocated = req.workspace === undefined;
   const workspace = req.workspace ?? allocate(sessionId);
   let cwd = workspace;
-  if (req.cwd !== undefined) {
+  // A `project` SLUG wins: the driver OWNS the in-workspace path so the agent never has to guess
+  // one the jail-escape clamp would reject (real-VPS 2026-06-17: the agent passed a SIBLING-of-the-
+  // workspace path → clamped → projects collided). It lands at <workspace>/projects/<slug> (slug
+  // sanitized to defeat `../`/absolute-path traversal) and is auto-created (ensureDir) so the jail
+  // `--chdir` always succeeds and each project gets its own folder under the agent's workspace.
+  if (req.project !== undefined && req.project !== "") {
+    cwd = join(resolve(workspace), "projects", sanitizeProjectSlug(req.project));
+    ensureDir(cwd);
+  } else if (req.cwd !== undefined) {
     const candidate = resolve(expandHome(req.cwd, home));
     if (isWithinDir(candidate, resolve(workspace))) cwd = candidate;
   }
   return { workspace, cwd, ownedWorkspace: allocated ? workspace : undefined };
+}
+
+/**
+ * Default {@link resolveCreateWorkspace} dir-ensurer: recursive `mkdir` + world-rwx
+ * ({@link WORKSPACE_MODE}) so a jail uid that is NOT the daemon (the `dedicated` default) can
+ * chdir into + write the bound project folder. The per-project twin of
+ * {@link prepareAgentTerminalWorkspace}; security rests on the jail (the folder is under the
+ * agent's re-bound workspace subtree, with `~/.comis` masked), not the mode.
+ */
+function defaultEnsureDir(path: string): void {
+  mkdirSync(path, { recursive: true });
+  chmodSync(path, WORKSPACE_MODE);
+}
+
+/**
+ * Reduce a `project` arg to a SINGLE safe path segment for `<workspace>/projects/<slug>`: every
+ * char outside `[A-Za-z0-9_-]` (so `/`, `.`, `~`, whitespace — anything that could form `../` or
+ * an absolute path) becomes `-`, dash-runs collapse, edges trim, and the result is truncated. A
+ * scrubbed-to-empty slug falls back to `project` so a session always gets a valid folder. The
+ * sanitized slug can never escape `projects/` (it has no separators), so an injectable workspace
+ * is never a traversal surface.
+ */
+function sanitizeProjectSlug(project: string): string {
+  const slug = project
+    .replace(/[^A-Za-z0-9_-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64);
+  return slug.length > 0 ? slug : "project";
 }
 
 /**

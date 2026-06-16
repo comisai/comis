@@ -201,7 +201,13 @@ const CreateParams = Type.Object({
   allowId: Type.String({ description: "Allowlist entry id to spawn under" }),
   command: Type.String({ description: "The binary to drive (an absolute/relative path; canonical-matched)" }),
   args: Type.Optional(Type.Array(Type.String(), { description: "Arguments appended after the entry's argsPrefix" })),
-  cwd: Type.Optional(Type.String({ description: "Working directory for the session" })),
+  cwd: Type.Optional(Type.String({ description: "Working directory for the session (honored only if within the session workspace; else clamped to it)" })),
+  project: Type.Optional(
+    Type.String({
+      description:
+        "Project name. The session opens in a dedicated per-project folder <workspace>/projects/<project> (auto-created) — pass the SAME name to keep working on, fix, or extend an existing project; different names give isolated folders for parallel projects.",
+    }),
+  ),
   cols: Type.Optional(Type.Integer({ description: "Terminal columns (default 120)" })),
   rows: Type.Optional(Type.Integer({ description: "Terminal rows (default 40)" })),
   name: Type.Optional(Type.String({ description: "Human-readable session name" })),
@@ -335,6 +341,10 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
       const args = readStringArray(params, "args");
       const cols = readInt(params, "cols", DEFAULT_COLS);
       const rows = readInt(params, "rows", DEFAULT_ROWS);
+      // Working dir: an explicit cwd (clamped within the workspace) OR a `project` name → its own
+      // <workspace>/projects/<slug> folder (auto-created). Both resolve in resolveCreateWorkspace.
+      const cwd = readString(params, "cwd");
+      const project = readString(params, "project");
 
       // abort ends the call, NOT the session — never registry.kill here. The
       // turn already aborted, so do NOT spawn a new session (create is the one
@@ -426,7 +436,12 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
             cols,
             rows,
             scrollback: DEFAULT_SCROLLBACK,
-            scope: matched.entry.scope, ...(deps.durable ? { durable: true } : {}), // FINDING-B: drive.durable → req.durable → the registry derives the tmux name + selects the tmux backend.
+            scope: matched.entry.scope,
+            // Agent-supplied working dir / project folder (resolveCreateWorkspace clamps cwd within
+            // the workspace + sanitizes project → <workspace>/projects/<slug>, auto-created).
+            ...(cwd !== undefined ? { cwd } : {}),
+            ...(project !== undefined ? { project } : {}),
+            ...(deps.durable ? { durable: true } : {}), // FINDING-B: drive.durable → req.durable → the registry derives the tmux name + selects the tmux backend.
           },
           // Stamp the origin so this session is visible ONLY to its owner.
           resolveOwner(deps),

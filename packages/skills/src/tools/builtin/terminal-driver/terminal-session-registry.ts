@@ -190,8 +190,12 @@ export interface CreateRequest {
   scope?: TerminalScope;
   /** Session workspace root — `scope`'s companion for the jail binds. */
   workspace?: string;
-  /** Session working directory — `scope`'s companion for the jail `--chdir`. */
+  /** Session working directory — `scope`'s companion for the jail `--chdir`. Honored only if it
+   *  resolves WITHIN the session workspace (else clamped to it — the jail-escape guard). */
   cwd?: string;
+  /** Project name → the session opens in `<workspace>/projects/<sanitized-slug>` (auto-created),
+   *  giving each project its own folder under the agent workspace. Takes precedence over `cwd`. */
+  project?: string;
   /** DUR-01 (165-06): `true` for a `drive.durable:true` session — persist a descriptor at create-time (Pitfall 6) + stamp the handle `durable` so the durable-aware {@link markRunningSessionsLost} keeps it recoverable while its tmux is alive (Q4). Absent ⇒ today's spawn session (I1). */
   durable?: boolean;
   /** DUR-01 (165-06): the deterministic `comis-<sessionId>` tmux name — the re-attach key persisted in the descriptor + stamped on the handle for the liveness probe (the daemon supplies it with `durable:true`). */
