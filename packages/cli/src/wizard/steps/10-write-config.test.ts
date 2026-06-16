@@ -377,6 +377,58 @@ describe("writeConfigStep", () => {
     expect(configContent.security).toBeUndefined();
   });
 
+  // ---------- video generation provider emission ----------
+
+  it("emits integrations.media.videoGeneration.provider when videoProvider is set", async () => {
+    const state: WizardState = {
+      ...populatedState(),
+      videoProvider: { provider: "google" },
+    };
+    const prompter = createMockPrompter();
+
+    await writeConfigStep.execute(state, prompter);
+
+    const writeCalls = vi.mocked(writeFileSync).mock.calls;
+    const configWriteCall = writeCalls.find(
+      ([path]) => typeof path === "string" && path.includes(".tmp"),
+    );
+    expect(configWriteCall).toBeDefined();
+
+    const configContent = JSON.parse(configWriteCall![1] as string);
+    expect(configContent.integrations.media.videoGeneration.provider).toBe("google");
+  });
+
+  it("omits integrations from config.yaml when no videoProvider is set", async () => {
+    const prompter = createMockPrompter();
+
+    await writeConfigStep.execute(populatedState(), prompter);
+
+    const writeCalls = vi.mocked(writeFileSync).mock.calls;
+    const configWriteCall = writeCalls.find(
+      ([path]) => typeof path === "string" && path.includes(".tmp"),
+    );
+    const configContent = JSON.parse(configWriteCall![1] as string);
+    expect(configContent.integrations).toBeUndefined();
+  });
+
+  it("writes the FAL_KEY video credential to .env when videoProvider is fal", async () => {
+    const state: WizardState = {
+      ...populatedState(),
+      videoProvider: { provider: "fal", apiKey: "fal-secret-key-123456" },
+    };
+    const prompter = createMockPrompter();
+
+    await writeConfigStep.execute(state, prompter);
+
+    const writeCalls = vi.mocked(writeFileSync).mock.calls;
+    const envWriteCall = writeCalls.find(
+      ([path]) => typeof path === "string" && path.includes(".env"),
+    );
+    expect(envWriteCall).toBeDefined();
+    const envContent = envWriteCall![1] as string;
+    expect(envContent).toContain("FAL_KEY=fal-secret-key-123456");
+  });
+
   it("includes elevatedReply in config when senderTrustEntries present", async () => {
     const state: WizardState = {
       ...populatedState(),
