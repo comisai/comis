@@ -6,7 +6,10 @@
  * running whisper in-process via `@huggingface/transformers` (Transformers.js),
  * auto-downloading a small ONNX model on first use to a scoped cache under
  * `~/.comis/models/whisper/`, then reusing it on every later call (a
- * module-level singleton — the model loads exactly once per process).
+ * module-level singleton — the model loads once per process and is NOT evicted
+ * by a per-call transcribe failure, only by a load failure; modulo a concurrent
+ * cold start where two simultaneous first calls can each build it before the
+ * promise is memoized — IN-01, a self-healing cold-start-only inefficiency).
  *
  * Design constraints (all enforced by local-stt-adapter.test.ts):
  *  - **Honest-degrade (LOCAL-02):** the engine is lazy-imported INSIDE a guarded
@@ -104,9 +107,10 @@ const MODEL_IDS: Record<string, string> = {
 
 /**
  * Module-level singleton: memoizes the `pipeline(...)` promise so the model
- * loads exactly once per process (LOCAL-01 "2nd call no re-download"). On a load
- * error it is reset to `undefined` (fail-closed retry — never a memoized
- * partial model).
+ * loads once per process (LOCAL-01 "2nd call no re-download"). It is reset to
+ * `undefined` ONLY on a LOAD error (fail-closed retry — never a memoized partial
+ * model). A per-call TRANSCRIBE failure does NOT reset it (WR-01) — a bad audio
+ * input must not thrash the good, already-loaded model.
  */
 let pipelinePromise: Promise<AsrPipeline> | undefined;
 
@@ -139,8 +143,10 @@ export interface SttDegradeError extends Error {
  * sanitization — only the kind. Writable assign; public shape is readonly.
  */
 function withKind(error: Error, kind: SttErrorKind): SttDegradeError {
-  (error as { kind: SttErrorKind }).kind = kind;
-  return error as SttDegradeError;
+  // Assign through an index-signature view (overlaps with Error, so no
+  // through-`unknown` cast); the public SttDegradeError shape is readonly.
+  (error as unknown as Record<string, unknown>)["kind"] = kind;
+  return error as unknown as SttDegradeError;
 }
 
 /**
@@ -309,7 +315,14 @@ export function createLocalWhisperAdapter(cfg: LocalWhisperConfig): Transcriptio
         );
       }
 
-      // 5. Singleton pipeline + transcribe; fail-closed on a bad load (SEC-03 seam).
+      // 5. Singleton pipeline build — fail-closed ONLY on a bad load (SEC-03
+      //    seam). IN-01: memoize the pipeline() PROMISE synchronously the moment
+      //    the engine module is in hand — there is NO `await` between the
+      //    `undefined` check and the assignment, so two near-simultaneous first
+      //    calls that reach here serialize on the one shared promise rather than
+      //    each building the model (modulo a concurrent cold start where both
+      //    are still awaiting loadEngine — see the doc-comment caveat).
+      let transcriber: AsrPipeline;
       try {
         if (pipelinePromise === undefined) {
           mod.env["cacheDir"] = cacheDir; // scoped, inside --allow-fs-write (LOCAL-04)
@@ -318,18 +331,50 @@ export function createLocalWhisperAdapter(cfg: LocalWhisperConfig): Transcriptio
             dtype: "q8", // quantized → minimal first-run download
           });
         }
-        const transcriber = await pipelinePromise;
-        const out = await transcriber(pcm.value);
-        return ok({ text: out.text, language: options.language, durationMs: undefined });
+        transcriber = await pipelinePromise;
       } catch (e: unknown) {
-        // Fail-closed: do NOT memoize a failed/partial load — reset so a
-        // transient failure can retry on the next call.
+        // Fail-closed: a failed/partial LOAD is NOT memoized — reset so a
+        // transient load failure can retry on the next call. This reset is
+        // correct ONLY for the load branch (WR-01).
         pipelinePromise = undefined;
         return err(
           degraded(
             "Local whisper model failed to load — the download may be incomplete or the model id is unavailable",
             e,
             "model_load_failed",
+          ),
+        );
+      }
+
+      // 6. Transcribe — a per-call inference failure does NOT evict the good,
+      //    already-loaded model (WR-01). The singleton stays memoized; a bad
+      //    audio input is not a reason to thrash the load-once pipeline. The
+      //    kind is `dependency` (a runtime inference failure), NOT
+      //    `model_load_failed` (the model loaded fine).
+      try {
+        const out = await transcriber(pcm.value);
+        // WR-03: out.text is the result of an injected/dynamically-imported
+        // third-party fn; the `text: string` type is an assertion, not a
+        // runtime guarantee. Validate at the boundary so an unexpected shape
+        // ({ text: undefined }, a chunked array, {}) surfaces as an honest err
+        // rather than a phantom ok({ text: undefined }).
+        const text = typeof out?.text === "string" ? out.text : undefined;
+        if (text === undefined) {
+          return err(
+            degraded(
+              "Local whisper returned no transcript text — unexpected engine output shape",
+              new Error(`unexpected result: ${typeof out?.text}`),
+              "dependency",
+            ),
+          );
+        }
+        return ok({ text, language: options.language, durationMs: undefined });
+      } catch (e: unknown) {
+        return err(
+          degraded(
+            "Local whisper failed to transcribe this audio",
+            e,
+            "dependency",
           ),
         );
       }
