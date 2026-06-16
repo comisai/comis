@@ -960,6 +960,43 @@ describe("createMediaHandlers", () => {
       ).rejects.toThrow("Transcription service not configured");
     });
 
+    it("media.transcribe on an unconfigured provider rejects with a structured Error the dispatch boundary converts, never an unhandled crash (RES-05)", async () => {
+      // RES-05 regression PIN (Pitfall 5 / A1): when the Phase-193 keyless-first
+      // resolution leaves the transcriber undefined (a Codex/OAuth-only main with
+      // no audio key, or STT `auto` before the local engine lands), the on-demand
+      // RPC handler `throw`s a typed Error. That throw is NOT an unhandled crash —
+      // the JSON-RPC dispatch boundary (method-router.ts:2 / rpc-dispatch.ts:306-321)
+      // catches it and converts it to a structured `{error:{code,message}}` response,
+      // so the agent's text reply is never blocked. This test would FAIL if a future
+      // change made the handler reject with a non-Error (a raw string / undefined)
+      // that the json-rpc-2.0 library cannot envelope, or crash the dispatch.
+      const deps = makeDeps({ transcriber: undefined });
+      const handlers = createMediaHandlers(deps);
+
+      // The handler returns a rejected Promise (awaited at the dispatch boundary),
+      // never a synchronous throw that would escape the dispatch try/catch.
+      const pending = handlers["media.transcribe"]!({ attachment_url: "tg-file://abc" });
+      expect(pending).toBeInstanceOf(Promise);
+      // The rejection is a real Error instance carrying an actionable message —
+      // exactly what the dispatch boundary serializes into the JSON-RPC error
+      // envelope (a bare string / undefined would break that conversion).
+      await expect(pending).rejects.toBeInstanceOf(Error);
+      await expect(pending).rejects.toThrow(/not configured/i);
+    });
+
+    it("tts.synthesize on an unconfigured adapter rejects with a structured Error, never an unhandled crash (RES-05)", async () => {
+      // The TTS twin of the RES-05 pin: an honest-unavailable TTS resolution leaves
+      // ttsAdapter undefined; the on-demand handler throw is converted to a
+      // structured JSON-RPC error at the dispatch boundary, not a daemon crash.
+      const deps = makeDeps({ ttsAdapter: undefined });
+      const handlers = createMediaHandlers(deps);
+
+      const pending = handlers["tts.synthesize"]!({ text: "Hello" });
+      expect(pending).toBeInstanceOf(Promise);
+      await expect(pending).rejects.toBeInstanceOf(Error);
+      await expect(pending).rejects.toThrow(/not configured/i);
+    });
+
     it("throws when resolveAttachment is not available", async () => {
       const deps = makeDeps({ resolveAttachment: undefined });
       const handlers = createMediaHandlers(deps);
