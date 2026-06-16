@@ -589,6 +589,11 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
   const dispatcher: TerminalWakeDispatcher = createTerminalWakeDispatcher({
     eventBus: makeWakeAdapterBus(deps.eventBus, log, driveScopeKey),
     isSessionActive,
+    // LIVE-03 (#4): the foreground-drive guard. The daemon owns the DRIVE-02 promotion state
+    // (promotedSessions); a session is "backgrounded" once its owning foreground turn handed
+    // off via auto-promotion. While still foreground (unpromoted) that turn handles its own
+    // settles, so the fd3 woken turn is suppressed — no spurious launch escalation.
+    isDriveBackgrounded: (sessionId) => promotedSessions.has(sessionId),
     wakeOneTurn,
     escalate,
     dataDir: deps.dataDir,
