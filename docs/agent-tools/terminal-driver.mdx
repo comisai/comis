@@ -97,6 +97,8 @@ agents:
           durable: false                # true ⇒ detached tmux: survive a daemon restart, re-attach + resume
           heartbeatMs: 90000            # internal liveness backstop (default 90s) — not a poll, not a user message
           maxCostUsd: null              # per-drive spend ceiling in USD (null = uncapped)
+          notify: terminal              # which outcomes reach you: terminal (default) | all (debug) | none — see Notifications
+          heartbeatNotifyMs: 3600000    # user "still working" heartbeat for a long drive (default 1h; 0 = terminal-only)
 ```
 
 The whole `drive:` block is **optional** and additive: a config with no `drive` block behaves **exactly as before** (no auto-promotion change, the digest read is already the effective default). An unknown key under `drive:` (a typo) is rejected at config load, like every other terminal key.
@@ -179,7 +181,7 @@ A genuinely long drive (driving Claude Code to build a project for hours) should
   - `full` -- the whole screen, still bounded (opt-in, for diagnosis).
   - Every mode is capped at a byte limit; an over-cap read writes a `truncations` breadcrumb (a count of dropped bytes) rather than silently trimming.
 
-Beyond `mode` and `readMode`, the `drive` block carries the endurance/durability keys covered next: `durable`, `heartbeatMs`, and `maxCostUsd`. The block remains a **closed schema** -- any unknown key under `drive:` (a typo) is rejected at config load. (A further notification/heartbeat policy to the *user* lands in a later release and is not configurable yet.)
+Beyond `mode` and `readMode`, the `drive` block carries the endurance/durability keys covered next: `durable`, `heartbeatMs`, and `maxCostUsd`, plus the user-facing `notify` and `heartbeatNotifyMs` keys covered under [Notifications](#notifications). The block remains a **closed schema** -- any unknown key under `drive:` (a typo) is rejected at config load. See [Notifications](#notifications) for how a drive's outcome and progress reach **you**.
 
 ### Durability & resume
 
@@ -208,7 +210,7 @@ The per-session caps and the reaper are **endurance-aware** and dialable to a 40
 - **`drive.heartbeatMs`** -- the **internal liveness backstop** interval in milliseconds (default `90000`, i.e. 90s). This is a **safety net under** the event-driven wake, not a poll: on a tick where **no wake intervened**, it performs **one** liveness check (is the worker/tmux alive? is the child genuinely idle vs. CPU-busy or trickling output?) and synthesizes `stuck` **only when the child is genuinely hung**. A legitimately-busy multi-hour compile is **busy, not `stuck`**. It reads **no screen** (it is not a per-tick screen read), it fires **only in the absence of a wake**, and it resolves to a single check.
 
   <Note>
-  `drive.heartbeatMs` is the **internal liveness tick** -- not a message to the user. A periodic progress *notification* to the user is a separate, later feature and is not this knob.
+  `drive.heartbeatMs` is the **internal liveness tick** -- not a message to the user. The user-facing "still working" progress *notification* is a **separate knob**, `drive.heartbeatNotifyMs` (see [Notifications](#notifications)) -- distinct from this internal backstop.
   </Note>
 
 These three keys are additive and default to today's behavior, so a config with no `drive` block (or with only `mode`/`readMode`) is unaffected:
@@ -229,7 +231,28 @@ agents:
           durable: true            # detached tmux: survive a daemon restart, re-attach + resume
           heartbeatMs: 90000       # internal liveness backstop (90s) — not a user message, not a poll
           maxCostUsd: 25.0         # per-drive spend ceiling (null ⇒ uncapped)
+          notify: terminal         # which outcomes reach YOU: terminal (default) | all (debug) | none
+          heartbeatNotifyMs: 3600000  # user "still working" heartbeat for a long drive (1h; 0 ⇒ terminal-only)
 ```
+
+### Notifications
+
+A long drive's hundreds of event-woken turns stay **out** of your conversation (they run in the promoted drive-owner's isolated session). What actually reaches **you** is governed by `drive.notify` and `drive.heartbeatNotifyMs` -- both **optional**, both defaulting to a conservative, spam-free posture. Every notification is **content-free** (see below), and an auth/approval/destructive **escalation always reaches you** regardless of the policy.
+
+**Three terminal outcomes.** A drive surfaces back to you on exactly one of three outcomes -- never a synthesized one (a low-confidence or still-working frame stays silent, it is never reported `done`):
+
+- **`done`** -- a clean exit: the driven CLI exited at high confidence, or an explicit `terminal_session_wait` `forText`/`forExit` you set matched. Honest completion only -- never fabricated.
+- **`needs-you`** -- an **escalation**: the auto-answer policy hit something it must not answer itself (destructive, an approval gate, an auth/login prompt) or the loop guard tripped. The drive **parks awaiting you** and notifies. This is the one outcome that **always** fires (see `notify: none` below).
+- **`failed`** -- a **genuine death**: an unrecoverable durable session (the tmux session is truly gone on restart, not merely detached -- its journal preserved for inspection), or a **named** cap-eviction (a `limits.wallClockMs`/`maxInteractions` you set was reached, and the reason names the cap that fired). A healthy long or quiet drive is **never** `failed` -- duration or silence alone never produces this outcome.
+
+- **`drive.notify`** -- `terminal` (default) / `all` / `none`. Which outcomes reach you.
+  - `terminal` -- you are notified **only on a terminal outcome** (`done` / `needs-you` / `failed`). The uninteresting middle -- a safe prompt the policy answered itself, a still-working frame -- stays silent. The recommended default.
+  - `all` -- every wake notifies. **Debug-only** (it re-floods your conversation with per-wake noise -- the very thing promotion exists to prevent).
+  - `none` -- the non-escalation outcomes (`done`, `failed`) **and** the heartbeat are suppressed. **An escalation (`needs-you`) still fires.** `notify: none` is **not** a security off-switch: it never weakens escalate-always (an auth/approval/destructive prompt always reaches you) or the loop guard. It silences only the routine outcomes.
+
+- **`drive.heartbeatNotifyMs`** -- a coarse "still working" progress heartbeat to you for a **promoted (long)** drive, so a 40-hour build is not 40 hours of silence. Default `3600000` (1h); `0` = **terminal-only** (no heartbeat). It is a bounded one-liner from the drive's journal (`still working — elapsed Xh, last activity <digest>, N interactions, ~$Y`). A **short** (unpromoted) drive emits **none**. This is **distinct** from `drive.heartbeatMs` (the [internal liveness backstop](#endurance--liveness) -- not a user message); the two are independent knobs.
+
+- **Every notification is content-free.** A notification or heartbeat carries the outcome/reason/`errorKind`, the duration, the interaction count, and a **redacted** final-screen excerpt -- **never** raw TUI bytes, keystrokes, or secrets. The heartbeat digest is drawn from the content-free drive journal, and a driven AI CLI's screen is treated as untrusted (a prompt-injection vector), so its text never rides a notification verbatim.
 
 ### Classifier reliability
 
