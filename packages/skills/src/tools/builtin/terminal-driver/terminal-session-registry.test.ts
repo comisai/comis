@@ -2476,3 +2476,26 @@ describe("createTerminalSessionRegistry — DUR-01: a durable create engages the
     expect(createFrame?.params.backend).toBeUndefined();
   });
 });
+
+describe("createTerminalSessionRegistry — DUR-01 FINDING-C: cleanup PRESERVES a durable session (survive-restart)", () => {
+  it("a graceful cleanup does NOT kill a durable session's tmux + KEEPS its descriptor (recover-on-boot re-attaches)", async () => {
+    // Live VPS finding 2026-06-16: cleanup() evicted EVERY session (kill frame + descriptorStore.remove),
+    // so a graceful daemon shutdown DESTROYED durable sessions instead of leaving the detached tmux +
+    // descriptor for recover-on-boot. A durable session must be preserved on cleanup.
+    const fake = makeFakeWorker();
+    const store = fakeDescriptorStore();
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, { durability: { descriptorStore: store, isTmuxAlive: () => true } }));
+    await registry.create({ allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24, durable: true }, DURABLE_OWNER);
+    await registry.cleanup();
+    expect(fake.requestFrames.filter((f) => f.method === "kill"), "a durable session's tmux must NOT be killed on a graceful cleanup").toHaveLength(0);
+    expect(store.remove, "the durable descriptor must be PRESERVED on cleanup (recover-on-boot needs it)").not.toHaveBeenCalled();
+  });
+
+  it("a graceful cleanup STILL evicts a non-durable session (kill frame sent) — I1 unchanged", async () => {
+    const fake = makeFakeWorker();
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child));
+    await registry.create({ allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }, OWNER);
+    await registry.cleanup();
+    expect(fake.requestFrames.filter((f) => f.method === "kill"), "a non-durable session is evicted on cleanup as before").toHaveLength(1);
+  });
+});

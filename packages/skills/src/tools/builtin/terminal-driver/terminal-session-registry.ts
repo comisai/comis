@@ -778,9 +778,9 @@ export function createTerminalSessionRegistry(
     // Stop the reaper FIRST so the sweep interval never outlives the registry
     // (no leaked interval firing post-teardown).
     reaper?.stop();
-    // Owner-AGNOSTIC: tears down the WHOLE per-agent registry, dropping every
-    // session regardless of owner (the per-agent worker is shared across owners).
+    // Owner-AGNOSTIC: tears down the per-agent registry, dropping every session (the worker is shared across owners).
     for (const handle of Array.from(sessions.values())) {
+      if (handle.durable === true) continue; // FINDING-C: PRESERVE a durable session (detached tmux + descriptor) for recover-on-boot re-attach; never kill it on a graceful shutdown.
       evictInternal(handle);
     }
     if (worker !== undefined) {
