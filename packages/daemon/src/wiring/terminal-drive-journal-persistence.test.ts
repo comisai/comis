@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * RED (165-04 Task 1, DUR-02): the DAEMON-side durable journal store
- * (`persistDriveJournal` / `recoverDriveJournals` / `loadDriveJournal` /
- * `removeDriveJournal`), the single genuinely-new capability of Phase 165.
+ * (`persistDriveJournal` / `loadDriveJournal` / `removeDriveJournal`), the single
+ * genuinely-new capability of Phase 165. The resume read is per-session lazy (a
+ * `load(agentId, sessionId)` on the first woken turn of a recovered session); there is
+ * deliberately NO bulk `recover(agentId)` scan (no production caller — 165-REVIEW ME-03).
  *
  * RED-first: `terminal-drive-journal-persistence.ts` does not exist when this
  * file is first committed — the import fails, every case is RED. The production
@@ -56,7 +58,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { emptyJournal, type DriveJournal } from "@comis/skills/tools";
 import {
   persistDriveJournal,
-  recoverDriveJournals,
   loadDriveJournal,
   removeDriveJournal,
   driveJournalDir,
@@ -101,31 +102,17 @@ describe("terminal-drive-journal-persistence (durable drive journal, real fs)", 
     rmSync(dataDir, { recursive: true, force: true });
   });
 
-  it("round-trips a persisted journal through persist then a FRESH recover (the restart)", () => {
+  it("round-trips a persisted journal through persist then a FRESH per-session load (the restart resume read)", () => {
     const journal = makeJournal();
     persistDriveJournal({ dataDir }, AGENT, "sess-a", journal);
 
-    // Simulated restart: a fresh recover scan re-reads everything from disk.
-    const recovered = recoverDriveJournals({ dataDir }, AGENT);
-    expect(recovered.size).toBe(1);
-    expect(recovered.get("sess-a")).toEqual(journal);
+    // Simulated restart: the holder's lazy resume read re-reads ONE journal from disk
+    // (DUR-02 is per-session; there is no bulk recover — 165-REVIEW ME-03).
+    expect(loadDriveJournal({ dataDir }, AGENT, "sess-a")).toEqual(journal);
   });
 
-  it("recovers every persisted session on a simulated daemon restart", () => {
-    persistDriveJournal({ dataDir }, AGENT, "sess-a", makeJournal({ interactions: 1 }));
-    persistDriveJournal({ dataDir }, AGENT, "sess-b", makeJournal({ interactions: 2, lastClassification: "working" }));
-    persistDriveJournal({ dataDir }, AGENT, "sess-c", makeJournal({ interactions: 3 }));
-
-    const recovered = recoverDriveJournals({ dataDir }, AGENT);
-    expect(recovered.size).toBe(3);
-    expect(recovered.get("sess-a")?.interactions).toBe(1);
-    expect(recovered.get("sess-b")?.lastClassification).toBe("working");
-    expect(recovered.get("sess-c")?.interactions).toBe(3);
-  });
-
-  it("isolates journals per agent (a different agentId recovers nothing)", () => {
+  it("isolates journals per agent (a different agentId loads nothing)", () => {
     persistDriveJournal({ dataDir }, AGENT, "sess-a", makeJournal());
-    expect(recoverDriveJournals({ dataDir }, "other-agent").size).toBe(0);
     expect(loadDriveJournal({ dataDir }, "other-agent", "sess-a")).toBeUndefined();
   });
 
@@ -185,10 +172,10 @@ describe("terminal-drive-journal-persistence (durable drive journal, real fs)", 
     );
     expect(raw).not.toMatch(/"(apiKey|password|secret|token|authorization|botToken|privateKey)"\s*:/i);
     // And it round-trips losslessly (the opaque digest survives, never re-expanded).
-    expect(recoverDriveJournals({ dataDir }, AGENT).get("sess-secret")).toEqual(journal);
+    expect(loadDriveJournal({ dataDir }, AGENT, "sess-secret")).toEqual(journal);
   });
 
-  it("skips a corrupt/partial file on recover instead of throwing (corrupt-after-crash → safe default)", () => {
+  it("loads a good journal even when a corrupt sibling file exists (corrupt-after-crash → never a throw)", () => {
     persistDriveJournal({ dataDir }, AGENT, "good", makeJournal());
     const journalsDir = driveJournalDir(dataDir, AGENT);
     mkdirSync(journalsDir, { recursive: true });
@@ -196,11 +183,9 @@ describe("terminal-drive-journal-persistence (durable drive journal, real fs)", 
     writeFileSync(join(journalsDir, "corrupt.json"), "{ this is not json");
     writeFileSync(join(journalsDir, "half.json"), '{"objective":"x"');
 
-    const recovered = recoverDriveJournals({ dataDir }, AGENT);
-    // The good one survives intact. The unparseable files are skipped OR
-    // deserialize-defaulted — never a throw, never a crash.
-    expect(() => recoverDriveJournals({ dataDir }, AGENT)).not.toThrow();
-    expect(recovered.get("good")).toEqual(makeJournal());
+    // The good one loads intact; a corrupt sibling does not affect it (per-session read).
+    expect(() => loadDriveJournal({ dataDir }, AGENT, "good")).not.toThrow();
+    expect(loadDriveJournal({ dataDir }, AGENT, "good")).toEqual(makeJournal());
   });
 
   it("loadDriveJournal yields deserialize's SAFE default for a corrupt file (never throws)", () => {
@@ -215,17 +200,17 @@ describe("terminal-drive-journal-persistence (durable drive journal, real fs)", 
     expect(loaded).toEqual(emptyJournal(""));
   });
 
-  it("returns an empty map when the agent's journal dir does not exist yet", () => {
-    expect(recoverDriveJournals({ dataDir }, "fresh-agent").size).toBe(0);
+  it("loads undefined when the agent's journal dir does not exist yet", () => {
+    expect(loadDriveJournal({ dataDir }, "fresh-agent", "sess-a")).toBeUndefined();
   });
 
-  it("I10 preserve-on-failure: persist/recover NEVER delete; remove is a DISTINCT explicit call", () => {
+  it("I10 preserve-on-failure: persist/load NEVER delete; remove is a DISTINCT explicit call", () => {
     persistDriveJournal({ dataDir }, AGENT, "sess-keep", makeJournal());
-    // Re-persisting / recovering repeatedly never removes the journal — a
+    // Re-persisting / loading repeatedly never removes the journal — a
     // genuinely-gone session keeps its journal for a fresh drive (I10).
-    recoverDriveJournals({ dataDir }, AGENT);
+    loadDriveJournal({ dataDir }, AGENT, "sess-keep");
     persistDriveJournal({ dataDir }, AGENT, "sess-other", makeJournal());
-    recoverDriveJournals({ dataDir }, AGENT);
+    loadDriveJournal({ dataDir }, AGENT, "sess-keep");
     expect(loadDriveJournal({ dataDir }, AGENT, "sess-keep")).toEqual(makeJournal());
 
     // Only the explicit remove deletes it (ENOENT-tolerant on a repeat).
@@ -248,9 +233,8 @@ describe("terminal-drive-journal-persistence (durable drive journal, real fs)", 
     // safePath throw PathTraversalError; persist/recover/load/remove must SWALLOW
     // that so recover-on-boot never crashes the daemon constructor.
     expect(() => persistDriveJournal({ dataDir: "." }, AGENT, "sess-rel", makeJournal())).not.toThrow();
-    expect(() => recoverDriveJournals({ dataDir: "." }, AGENT)).not.toThrow();
-    expect(recoverDriveJournals({ dataDir: "." }, AGENT).size).toBe(0);
     expect(() => loadDriveJournal({ dataDir: "." }, AGENT, "sess-rel")).not.toThrow();
+    expect(loadDriveJournal({ dataDir: "." }, AGENT, "sess-rel")).toBeUndefined();
     expect(() => removeDriveJournal({ dataDir: "." }, AGENT, "sess-rel")).not.toThrow();
   });
 });

@@ -37,7 +37,6 @@ import {
 } from "./terminal-session-descriptor-persistence.js";
 import {
   persistDriveJournal,
-  recoverDriveJournals,
   loadDriveJournal,
   removeDriveJournal,
 } from "./terminal-drive-journal-persistence.js";
@@ -249,7 +248,7 @@ export function buildWakeDurabilityDeps(i: WakeDurabilityInputs): {
 
   const driveJournalStore: DriveJournalStorePort = {
     persist: (agentId, sessionId, journal) => persistDriveJournal({ dataDir: i.dataDir }, agentId, sessionId, journal),
-    recover: (agentId): Map<string, DriveJournal> => recoverDriveJournals({ dataDir: i.dataDir }, agentId),
+    // The resume read is per-session lazy (165-REVIEW BL-02/ME-03) — NO bulk recover.
     load: (agentId, sessionId): DriveJournal | undefined => loadDriveJournal({ dataDir: i.dataDir }, agentId, sessionId),
     remove: (agentId, sessionId) => removeDriveJournal({ dataDir: i.dataDir }, agentId, sessionId),
   };

@@ -135,9 +135,14 @@ export interface SetupTerminalWakeDeps {
 export interface DriveJournalStorePort {
   /** Persist (or overwrite) the journal for a promoted session — the single DUR-02 persistence point. */
   persist(agentId: string, sessionId: string, journal: DriveJournal): void;
-  /** Recover all of an agent's persisted journals on boot (keyed by sessionId). */
-  recover(agentId: string): Map<string, DriveJournal>;
-  /** Load ONE persisted journal (the resume read on a re-attach); undefined when none. */
+  /**
+   * Load ONE persisted journal — the resume read (DUR-02 / I10). The holder calls it
+   * LAZILY on the first woken turn of a recovered/promoted session whose in-memory
+   * journal is empty (165-REVIEW BL-02 — order-independent, so the boot-time
+   * `terminal:drive_reattached` event is NOT load-bearing for resume). `undefined`
+   * when no journal is persisted. There is deliberately NO bulk `recover(agentId)`
+   * (the resume design reads one journal per re-attach; 165-REVIEW ME-03).
+   */
   load(agentId: string, sessionId: string): DriveJournal | undefined;
   /** Remove a journal file — the DISTINCT explicit delete (clean exit only, NEVER on crash, I10). */
   remove(agentId: string, sessionId: string): void;

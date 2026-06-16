@@ -55,9 +55,17 @@
  * already-redacted bytes verbatim and never re-structures them into a credential
  * field. The persisted file is mode-`0o600` in a `0o700` confined dir (V8).
  *
- * **I10 preserve-on-failure.** `persistDriveJournal` / `recoverDriveJournals`
- * NEVER delete a journal — a genuinely-gone session keeps its journal for a fresh
- * drive to pick up. {@link removeDriveJournal} is a DISTINCT explicit call.
+ * **I10 preserve-on-failure.** `persistDriveJournal` NEVER deletes a journal — a
+ * genuinely-gone session keeps its journal for a fresh drive to pick up. {@link
+ * removeDriveJournal} is a DISTINCT explicit call.
+ *
+ * **Per-session resume read (NO bulk recover).** DUR-02 resumes ONE journal per
+ * re-attach via {@link loadDriveJournal} — the wake holder seeds the in-memory
+ * journal lazily on the first woken turn of a recovered session (165-REVIEW BL-02).
+ * There is deliberately NO bulk `recover(agentId)` scan: it had no production caller
+ * (the resume design reads one journal per re-attach, not the whole agent set), so it
+ * was removed per KISS/YAGNI (AGENTS.md §2.3 — no port methods without a concrete
+ * caller; 165-REVIEW ME-03).
  *
  * No raw timers / clock here — pure confined I/O (the `globals` architecture gate).
  *
@@ -65,9 +73,6 @@
  */
 import {
   readFileSync as nodeReadFileSync,
-  readdirSync as nodeReaddirSync,
-  statSync as nodeStatSync,
-  existsSync as nodeExistsSync,
   unlinkSync as nodeUnlinkSync,
   openSync as nodeOpenSync,
   fsyncSync as nodeFsyncSync,
@@ -110,9 +115,6 @@ export interface DriveJournalPersistenceDeps {
   /** Write the file at `0o600`, symlink-safe (default: the `@comis/observability` helper). */
   writeRegularFile?: (options: WriteRegularFileOptions) => unknown;
   readFileSync?: (path: string, encoding: "utf-8") => string;
-  readdirSync?: (path: string) => string[];
-  statSync?: (path: string) => { isFile(): boolean };
-  existsSync?: (path: string) => boolean;
   unlinkSync?: (path: string) => void;
   /** Best-effort fsync trio over the completed write (the `writeDurable` hardening). */
   openSync?: (path: string, flags: string) => number;
@@ -203,77 +205,6 @@ export function persistDriveJournal(
     // Best-effort: swallow (mirrors terminal-wake-persistence). A failed persist
     // degrades to "this session is missed on recover", never a throw.
   }
-}
-
-/**
- * Recover all of an agent's drive journals from disk on daemon startup.
- *
- * Scans `<dataDir>/terminal-drive/<agentId>/journals/*.json`, mapping each file
- * through the total {@link deserializeJournal} (a corrupt/partial file yields a
- * SAFE default journal, never a throw); a file that fails to even READ is skipped.
- * Returns an empty Map when the dir does not exist or `dataDir`/`agentId` is
- * degenerate (the recover-on-boot path must NEVER crash the daemon constructor).
- *
- * NEVER deletes a journal (I10 preserve-on-failure) — a genuinely-gone session
- * keeps its journal for a fresh drive.
- */
-export function recoverDriveJournals(
-  deps: DriveJournalPersistenceDeps,
-  agentId: string,
-): Map<string, DriveJournal> {
-  const recovered = new Map<string, DriveJournal>();
-  const readFile = deps.readFileSync ?? nodeReadFileSync;
-  const readdir = deps.readdirSync ?? nodeReaddirSync;
-  const stat = deps.statSync ?? nodeStatSync;
-  const exists = deps.existsSync ?? nodeExistsSync;
-
-  // Best-effort: a degenerate dataDir/agentId (e.g. a relative "." from a
-  // bootstrap/test config) makes safePath throw PathTraversalError — recovery
-  // must NOT crash the daemon boot (165-07 recovers on construction). Swallow +
-  // return an empty Map (mirrors persistDriveJournal / recoverWakeStates).
-  let dir: string;
-  try {
-    dir = driveJournalDir(deps.dataDir, agentId);
-  } catch {
-    return recovered;
-  }
-  if (!exists(dir)) return recovered;
-
-  let files: string[];
-  try {
-    files = readdir(dir);
-  } catch {
-    return recovered;
-  }
-
-  for (const file of files) {
-    if (!file.endsWith(".json")) continue;
-    const sessionId = file.slice(0, -".json".length);
-    let filePath: string;
-    try {
-      filePath = safePath(dir, file);
-    } catch {
-      continue;
-    }
-    // Skip non-regular entries (a subdir named *.json would otherwise throw).
-    try {
-      if (!stat(filePath).isFile()) continue;
-    } catch {
-      continue;
-    }
-    let raw: string;
-    try {
-      raw = readFile(filePath, "utf-8");
-    } catch {
-      // Skip a file we cannot even read.
-      continue;
-    }
-    // deserializeJournal is TOTAL — a corrupt/partial payload yields a safe
-    // default journal, never a throw (the DUR-02 recovery contract).
-    recovered.set(sessionId, deserializeJournal(raw));
-  }
-
-  return recovered;
 }
 
 /**
