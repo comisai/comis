@@ -883,13 +883,17 @@ describe("setupMedia — construction follows the resolver's chosen provider (WR
     });
 
     expect(result.ttsAdapter).toBeDefined();
+    // createTTSProvider must be called with the RESOLVED provider, not "auto".
+    // TTS-02: a third arg — the scoped dataDir — is threaded through (mirrors STT).
     expect(mockCreateTTSProvider).toHaveBeenCalledWith(
       expect.objectContaining({ provider: "openai" }),
       expect.anything(),
+      expect.any(String),
     );
     expect(mockCreateTTSProvider).not.toHaveBeenCalledWith(
       expect.objectContaining({ provider: "auto" }),
       expect.anything(),
+      expect.any(String),
     );
   });
 

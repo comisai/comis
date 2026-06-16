@@ -146,6 +146,10 @@ export type { LocalSttProbeResult, LocalSttProbeDeps } from "./integrations/loca
 // Integrations -- TTS provider factory
 export { createTTSProvider } from "./integrations/tts-factory.js";
 
+// Integrations -- keyless local/Piper (in-process) text-to-audio TTS adapter (TTS-02)
+export { createLocalTtsAdapter } from "./integrations/local-tts-adapter.js";
+export type { LocalTtsConfig } from "./integrations/local-tts-adapter.js";
+
 // Integrations -- TTS enhancements
 export { shouldAutoTts } from "./integrations/tts/tts-auto-mode.js";
 export { resolveOutputFormat } from "./integrations/tts/tts-output-format.js";

@@ -331,12 +331,15 @@ export const TtsOutputFormatSchema = z.strictObject({
  * The operator-configurable TTS (text-to-speech) provider vocabulary (CFG-01).
  *
  * "edge" = the keyless Microsoft Edge TTS default (zero credentials, the new
- * default per I1); "openai"/"elevenlabs" are keyed cloud opt-ins; "local" = an
- * offline keyless engine (Piper) whose adapter lands Phase 197 — the value lands
- * here now so the resolver compiles against it. Closed enum so an injected/typo'd
- * provider fails at parse, not at a transport (T-193-05 / T-183-05 backstop).
+ * default per I1); "openai"/"elevenlabs" are keyed cloud opt-ins; "local" and
+ * "piper" are aliases for the SAME offline keyless in-process transformers.js
+ * text-to-audio adapter (TTS-02, shipped Phase 197) — both auto-download a small
+ * single-speaker ONNX voice model into `<dataDir>/models/tts/` and synthesize
+ * with no key and no network after the first load (both are members of the
+ * resolver's `VOICE_KEYLESS`). Closed enum so an injected/typo'd provider fails
+ * at parse, not at a transport (T-193-05 / T-183-05 backstop).
  */
-const TTS_PROVIDER_VALUES = ["edge", "openai", "elevenlabs", "local"] as const;
+const TTS_PROVIDER_VALUES = ["edge", "openai", "elevenlabs", "local", "piper"] as const;
 
 /**
  * Text-to-speech service configuration.

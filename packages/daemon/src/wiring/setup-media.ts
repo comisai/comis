@@ -120,12 +120,18 @@ export function createSTTProviderFactory(
  * Return a lazy getter that re-creates the TTS provider on each call,
  * reading the current secretManager state at invocation time.
  * Satisfies the read-on-use invariant.
+ *
+ * `dataDir` is a stable boot value (`container.config.dataDir`) captured once and
+ * threaded into the in-process `local`/`piper` adapter's model-cache root
+ * (`<dataDir>/models/tts/`) on every re-creation — mirrors
+ * `createSTTProviderFactory` (TTS-02).
  */
 export function createTTSProviderFactory(
   config: TtsConfig,
   secretManager: SecretManager,
+  dataDir: string,
 ): () => ReturnType<typeof createTTSProvider> {
-  return () => createTTSProvider(config, secretManager);
+  return () => createTTSProvider(config, secretManager, dataDir);
 }
 
 /**
@@ -274,18 +280,20 @@ export async function setupMedia(deps: {
   // selector (test harnesses / pre-193 callers) is NOT blocked (construct
   // directly). Keeping the gate and the logged-branch derived from this single
   // discriminant prevents a future edit from making them diverge.
+  // The scoped model-cache root for the in-process `local` adapters. Resolved
+  // ONCE at function scope from `container.config.dataDir` (NEVER process.env) so
+  // BOTH the STT (`<dataDir>/models/whisper/`, Plan 194-02 LOCAL-01) and the TTS
+  // (`<dataDir>/models/tts/`, TTS-02) construct/factory sites thread the identical
+  // value in lockstep; the `safePath(homedir, ".comis")` fallback mirrors
+  // daemon.ts when the config field is unset.
+  const dataDir = container.config.dataDir ?? safePath(os.homedir(), ".comis");
+
   const sttBlocked = sttSel?.ok === false;
   // Construct only when NOT blocked by the resolver. For 193 an approved
   // `sttSel.provider` is openai/groq/deepgram (keyed cases the factory handles) —
   // `local` resolves only when localEngineAvailable() is true (false in 193, the
   // Phase 194 seam), so the factory never sees `local` yet; `edge` is TTS-only.
   if (!sttBlocked) {
-    // Plan 02 (LOCAL-01): the scoped model-cache root for the in-process `local`
-    // whisper adapter (`<dataDir>/models/whisper/`). Resolved ONCE here from
-    // `container.config.dataDir` (NEVER process.env) so all STT construct/factory
-    // sites below thread the identical value in lockstep; the `safePath(homedir,
-    // ".comis")` fallback mirrors daemon.ts when the config field is unset.
-    const dataDir = container.config.dataDir ?? safePath(os.homedir(), ".comis");
     // WR-01/WR-02: thread the RESOLVED provider (+ its model) into construction
     // so the factory sees the provider the resolver actually approved (e.g. a
     // CRED-01 follow-main `auto`→openai), NOT the raw config `provider:"auto"`
@@ -392,9 +400,9 @@ export async function setupMedia(deps: {
     const ttsConfig = ttsSel?.ok
       ? { ...mediaConfig.tts, provider: ttsSel.provider as typeof mediaConfig.tts.provider }
       : mediaConfig.tts;
-    const ttsResult = createTTSProvider(ttsConfig, container.secretManager);
+    const ttsResult = createTTSProvider(ttsConfig, container.secretManager, dataDir);
     if (ttsResult.ok) {
-      const ttsFactory = createTTSProviderFactory(ttsConfig, container.secretManager);
+      const ttsFactory = createTTSProviderFactory(ttsConfig, container.secretManager, dataDir);
       // Lazy-delegation wrapper: delegates synthesize() to a fresh provider on
       // each call so a rotated key is observed without a daemon restart.
       ttsAdapter = {
