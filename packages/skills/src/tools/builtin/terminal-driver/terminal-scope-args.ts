@@ -257,6 +257,18 @@ export function buildScopeArgs(input: ScopeArgsInput): string[] {
   }
   args.push("--setenv", "CLAUDE_CODE_BUBBLEWRAP", "1");
 
+  // -- claude session-env carve-out (EROFS-03) -- a writable tmpfs at <home>/.claude/session-env.
+  //    claude's OWN bash sandbox remounts $HOME read-only IN-PLACE before `mkdir ~/.claude/
+  //    session-env/<id>` (its per-bash-command state) → EROFS on the default durable backend in the
+  //    prod seccomp'd daemon (CLAUDE_CODE_BUBBLEWRAP does NOT suppress that remount there — it only
+  //    appeared to on a non-seccomp socket). A SEPARATE sub-mount survives the in-place parent
+  //    remount, so the mkdir lands on a rw tmpfs → claude's Bash tool runs (live-proven 2026-06-17,
+  //    seccomp'd daemon, `--permission-mode bypassPermissions`). Ephemeral + per-jail; claude's
+  //    creds/config under ~/.claude stay intact (only the transient session-env subdir is the
+  //    tmpfs). Placed BEFORE the ~/.comis mask so that mask + the workspace re-bind stay the LAST
+  //    mounts. Harmless for a non-claude CLI (an unused empty tmpfs at a path it never touches).
+  args.push("--tmpfs", `${input.home}/.claude/session-env`);
+
   // -- The ~/.comis carve-out LAST -- later bwrap mount wins (the bind-order
   //    insight); even at filesystem:full (--bind / / | --bind <home>) ~/.comis is
   //    shadowed by this tmpfs, so the master key / secret store / runtime is denied
