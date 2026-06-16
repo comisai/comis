@@ -228,6 +228,16 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
   // never triggers it. Reclaimed in onSessionGone; bounded over a milestone-length daemon.
   const lastTransitionMs = new Map<string, number>();
 
+  // BL-02 (165-REVIEW): the per-session "lazy-seed attempted this daemon life" marker. The
+  // registry's recover-on-boot emits terminal:drive_reattached during the FLOOR-01 sweep
+  // BEFORE this holder subscribes, so that event is DROPPED on the boot path — making the
+  // resume non-load-bearing on the event. The robust fix is order-independent: on the FIRST
+  // wake of a session whose in-memory journal is empty, the holder LAZY-LOADS the durable
+  // journal (`maybeSeedRecoveredDrive`). This Set bounds that to ONE disk read per session
+  // per life (a plain, never-recovered session pays one no-op load on its first wake, never
+  // again). Reclaimed in onSessionGone; bounded over a milestone-length daemon.
+  const seedAttempted = new Set<string>();
+
   // The §4.4 woken-turn driver the FSM calls.
   const wakeOneTurn = buildWokenTurnDriver({
     registries: deps.registries,
@@ -348,17 +358,40 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
   };
   deps.eventBus.on("terminal:drive_promoted", onDrivePromoted);
 
-  // DUR-02 (165-07): RESUME on a re-attach. The registry's recover-on-boot (165-06)
-  // re-attached a surviving detached tmux session and emitted the content-free
-  // terminal:drive_reattached. The holder consumes it to SEED the resumed drive's journal
-  // (objective + last classification + answered prompts + steps tried) from the durable
-  // store into the in-memory cache, so the very next woken turn resumes from it rather than
-  // starting over or re-answering an already-answered prompt (I10). It also re-stamps the
-  // owning agent (so the journal.set persist routes correctly) + the drive-start (so the
-  // resumed elapsedMs survives — derived from the journal when present). A genuinely-gone
-  // session never reaches here (it is flipped lost, not re-attached). Defensive: validate the
-  // structural ids before keying state (T-164-12 parity); a missing store / missing journal
-  // is a no-op (a re-attach with nothing persisted simply resumes empty, never a throw).
+  // DUR-02 / ME-02 (165-07 / 165-REVIEW): SEED a recovered durable drive into the holder's
+  // in-memory state — the SHARED path for both the re-attach event (onDriveReattached) AND the
+  // BL-02 lazy-seed (maybeSeedRecoveredDrive). It (1) seeds the journal cache from the durable
+  // store (resume from objective + answered prompts, not a fresh empty — so the next woken turn
+  // does not re-answer, I10), (2) PROMOTES the session (promotedSessions + sessionAgent) so the
+  // woken-turn driver sees it drive-scoped AND the LIVE-01 backstop + spend ceiling guard the
+  // resumed drive (ME-02 — they only key on promoted, which is empty for a boot-recovered drive
+  // otherwise), and (3) stamps driveStartedAtMs (the resumed elapsedMs survives the restart) +
+  // lastTransitionMs (so a freshly-seeded drive is not instantly treated as silent-past-heartbeat).
+  // A missing store / missing journal still PROMOTES + stamps (so the backstop guards even a
+  // re-attach with nothing persisted) — it simply resumes an empty journal. Never throws.
+  const seedRecoveredDrive = (sessionId: string, agentId: string): boolean => {
+    sessionAgent.set(sessionId, agentId);
+    const resumed = deps.driveJournalStore?.load(agentId, sessionId);
+    if (resumed !== undefined) driveJournals.set(sessionId, resumed);
+    // ME-02: promote the recovered drive so the backstop + spend ceiling (which key ONLY on
+    // promotedSessions) guard its remaining, possibly-multi-hour life.
+    promotedSessions.add(sessionId);
+    // The resumed elapsedMs base: re-derive the drive-start from the journal's cumulative
+    // elapsedMs so `now - driveStartedAtMs` reconstructs the SAME running total post-restart
+    // (a missing/odd value → now, a sane ≥0 elapsedMs).
+    const elapsed = typeof resumed?.elapsedMs === "number" && Number.isFinite(resumed.elapsedMs) && resumed.elapsedMs >= 0 ? resumed.elapsedMs : 0;
+    driveStartedAtMs.set(sessionId, nowMs() - elapsed);
+    lastTransitionMs.set(sessionId, nowMs());
+    return resumed !== undefined;
+  };
+
+  // DUR-02 (165-07): RESUME on a re-attach. The registry's recover-on-boot (165-06) re-attached
+  // a surviving detached tmux session and emitted the content-free terminal:drive_reattached.
+  // The holder consumes it to seed + promote the resumed drive (the shared seedRecoveredDrive).
+  // NOTE (BL-02): this event can fire DURING the FLOOR-01 boot sweep BEFORE this listener
+  // subscribes (daemon.ts), so on the boot path it is DROPPED — the lazy-seed (below) is the
+  // load-bearing resume path; this listener covers a re-attach that happens AFTER subscription
+  // (a future call order). Defensive: validate the structural ids before keying state.
   const onDriveReattached = (e: { sessionId?: unknown; agentId?: unknown }): void => {
     if (typeof e.sessionId !== "string" || typeof e.agentId !== "string") {
       log.warn(
@@ -368,29 +401,42 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
       return;
     }
     const { sessionId, agentId } = e;
-    sessionAgent.set(sessionId, agentId);
-    const resumed = deps.driveJournalStore?.load(agentId, sessionId);
-    if (resumed !== undefined) {
-      driveJournals.set(sessionId, resumed);
-      // The resumed elapsedMs base: re-derive the drive-start from the journal's cumulative
-      // elapsedMs so `now - driveStartedAtMs` reconstructs the SAME running total post-restart.
-      const elapsed = typeof resumed.elapsedMs === "number" && Number.isFinite(resumed.elapsedMs) && resumed.elapsedMs >= 0 ? resumed.elapsedMs : 0;
-      driveStartedAtMs.set(sessionId, nowMs() - elapsed);
-    }
+    seedAttempted.add(sessionId); // the event delivered the seed → the lazy-seed need not re-load.
+    const resumed = seedRecoveredDrive(sessionId, agentId);
     log.info(
-      { sessionId, agentId, resumed: resumed !== undefined, step: "drive_reattached" },
+      { sessionId, agentId, resumed, step: "drive_reattached" },
       "terminal drive re-attached; journal resumed from durable store",
     );
   };
   deps.eventBus.on("terminal:drive_reattached", onDriveReattached);
 
+  // BL-02 (165-REVIEW): LAZY-SEED a recovered durable drive on its FIRST wake when the boot
+  // terminal:drive_reattached was dropped (the boot-race). On the first inbound wake for a
+  // session whose in-memory journal is empty (and not yet seed-attempted this life), load the
+  // durable journal: if one exists it is a recovered drive → seed + promote it (so the resume
+  // guard + the backstop/spend ceiling engage). Order-independent (does not depend on the boot
+  // event) + bounded (one disk read per session per life via seedAttempted). MUST run BEFORE
+  // the wake adapter computes the owner (so driveScopeKey sees the promotion on THIS wake) —
+  // onWakeTransition is registered before the adapter bus, and the bus fires handlers in order.
+  const maybeSeedRecoveredDrive = (sessionId: string, agentId: string): void => {
+    if (driveJournals.has(sessionId) || promotedSessions.has(sessionId) || seedAttempted.has(sessionId)) return;
+    seedAttempted.add(sessionId);
+    if (deps.driveJournalStore?.load(agentId, sessionId) === undefined) return; // not a recovered drive.
+    seedRecoveredDrive(sessionId, agentId);
+    log.info({ sessionId, agentId, step: "drive_resume_lazy_seed" }, "terminal drive lazy-seeded a recovered journal on first wake (BL-02)");
+  };
+
   // LIVE-01 (165-07): stamp the per-session last-transition on EVERY inbound wake — the I2
-  // gate the backstop reads. A defensive structural-field check (a malformed frame is dropped
-  // by the wake adapter anyway; this listener simply ignores it). This includes the backstop's
-  // OWN synthesized terminal:input_needed{state:"stuck"}, so a synthesized stuck re-stamps the
-  // transition → the backstop fires at most once per silent stretch (never per tick).
-  const onWakeTransition = (e: { sessionId?: unknown }): void => {
-    if (typeof e.sessionId === "string") lastTransitionMs.set(e.sessionId, nowMs());
+  // gate the backstop reads. BL-02: ALSO lazy-seed a recovered durable drive on its first wake
+  // (the boot terminal:drive_reattached may have been dropped) — run FIRST so the wake adapter
+  // computes a drive-scoped owner for a just-seeded session. A defensive structural-field check
+  // (a malformed frame is dropped by the wake adapter anyway). This includes the backstop's OWN
+  // synthesized terminal:input_needed{state:"stuck"} (which re-stamps the transition → the synth
+  // fires at most once per silent stretch).
+  const onWakeTransition = (e: { sessionId?: unknown; agentId?: unknown }): void => {
+    if (typeof e.sessionId !== "string") return;
+    if (typeof e.agentId === "string") maybeSeedRecoveredDrive(e.sessionId, e.agentId);
+    lastTransitionMs.set(e.sessionId, nowMs());
   };
   deps.eventBus.on("terminal:input_needed", onWakeTransition);
 
@@ -512,6 +558,9 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
     // LIVE-01 (165-07): reclaim the per-session last-transition stamp (same lifecycle — no
     // leak; a recycled sessionId starts unstamped so its first wake re-arms the I2 gate).
     lastTransitionMs.delete(sessionId);
+    // BL-02 (165-REVIEW): reclaim the lazy-seed-attempted marker (same lifecycle — no leak; a
+    // recycled sessionId re-attempts the recovered-journal load on its first wake).
+    seedAttempted.delete(sessionId);
     // removeWakeStateFile re-raises a non-ENOENT fs fault (@allow-throw) — wrap it so a
     // cleanup failure inside this bus listener can NEVER become an uncaughtException that
     // crashes the daemon (IN-04). Surface the fault to the log with an actionable hint.

@@ -755,6 +755,47 @@ describe("setupTerminalWake — the keystone subscribe + woken-turn driver (124-
     expect(js.store.remove, "a lost/crash must NOT remove the durable journal (I10 preserve-on-failure)").not.toHaveBeenCalled();
   });
 
+  it("BL-02 (the boot-race gap): a wake LAZY-SEEDS a recovered durable journal even when terminal:drive_reattached was DROPPED at boot — the resumed drive does NOT re-answer an already-answered prompt", async () => {
+    // The boot race: the registry's recover-on-boot emits terminal:drive_reattached during the
+    // FLOOR-01 sweep BEFORE setupTerminalWake subscribes, so the event is lost. The robust fix
+    // is order-independent: the holder lazy-seeds the journal from store.load on the FIRST
+    // woken turn of a recovered session (when its in-memory journal is empty). Here we seed the
+    // on-disk journal as already-answered "pattern:0" and fire a wake WITHOUT ever firing
+    // drive_reattached/drive_promoted (simulating the dropped boot event) — the woken turn must
+    // resume from disk + SKIP re-answering pattern:0 (resume, don't re-answer — I10/DUR-02).
+    const seeded = new Map<string, DriveJournalShape>([
+      ["a/s-boot", { objective: "build the app", lastClassification: "awaiting-input", lastScreenDigest: "", answeredPrompts: ["pattern:0"], stepsTried: ["ran:build"], elapsedMs: 5_000, interactions: 4, costUsd: 0, truncations: 0 }],
+    ]);
+    built = buildDur(dataDir, { screen: "Press enter to continue", seed: seeded });
+    const { js } = built as Built & { js: ReturnType<typeof makeJournalStore> };
+    // NO drive_reattached, NO drive_promoted — only the wake (the boot event was dropped).
+    built.bus.fireInputNeeded("s-boot", "a");
+    await flush();
+
+    // The holder lazy-loaded the persisted journal (the resume read happened on the first wake).
+    expect(js.store.load, "the first wake must lazy-load the recovered journal (BL-02)").toHaveBeenCalledWith("a", "s-boot");
+    // RESUME-no-re-answer (I10): pattern:0 was already answered before the crash, so the woken
+    // turn must NOT re-send the canned keystroke for it (the loop-guard ring is cold post-restart,
+    // so without the lazy-seed the resume guard has nothing to consult and re-answers).
+    expect(built.registry.sendText, "a resumed drive must NOT re-answer an already-answered prompt (BL-02/I10)").not.toHaveBeenCalled();
+    const reAnswered = built.bus.emitted.find((e) => e.event === "terminal:auto_answered");
+    expect(reAnswered, "no auto_answered for an already-answered prompt on resume").toBeUndefined();
+  });
+
+  it("BL-02: a wake for a recovered durable session with NO persisted journal is a no-op load (no throw; a plain session is unaffected)", async () => {
+    built = buildDur(dataDir, { screen: "Press enter to continue" }); // empty store
+    const { js } = built as Built & { js: ReturnType<typeof makeJournalStore> };
+    built.bus.fireInputNeeded("s-none", "a");
+    await flush();
+    // The lazy-seed attempted a load once (bounded), found nothing → the turn proceeds normally.
+    expect(js.store.load).toHaveBeenCalledWith("a", "s-none");
+    // A second wake does NOT re-load (bounded to one attempt per session per life).
+    js.store.load.mockClear();
+    built.bus.fireInputNeeded("s-none", "a");
+    await flush();
+    expect(js.store.load, "the lazy-seed load is attempted at most once per session per life").not.toHaveBeenCalled();
+  });
+
   it("DUR-02 wiring (source guard): the journal.set wrapper persists + the holder seeds on a re-attach", () => {
     const src = readFileSync(fileURLToPath(new URL("./setup-terminal-wake.ts", import.meta.url)), "utf8");
     // The single DUR-02 persistence point: the journal.set wrapper calls the store's persist.
@@ -821,12 +862,15 @@ describe("setupTerminalWake — the keystone subscribe + woken-turn driver (124-
       screen: string;
       heartbeatMs?: number;
       liveness: Record<string, { alive: boolean; noProgressMs: number; stuckMs: number } | undefined>;
+      /** ME-02 (165-REVIEW): an optional seeded journal store so a recovered drive can be lazy-seeded/promoted. */
+      seed?: Map<string, DriveJournalShape>;
     },
   ): Built & {
     fake: ReturnType<typeof makeFakeTimers>;
     clock: { now: number };
     refreshCalls: string[];
     checkLiveness: ReturnType<typeof vi.fn>;
+    js: ReturnType<typeof makeJournalStore>;
   } {
     const bus = makeBus();
     const registry = makeRegistry({ screen: opts.screen });
@@ -836,6 +880,7 @@ describe("setupTerminalWake — the keystone subscribe + woken-turn driver (124-
     const clock = { now: 100_000 };
     const refreshCalls: string[] = [];
     const checkLiveness = vi.fn((sessionId: string) => opts.liveness[sessionId]);
+    const js = makeJournalStore(opts.seed);
     const registries = new Map<string, ReturnType<typeof makeRegistry>>([["a", registry]]);
     const deps = {
       eventBus: bus as unknown as SetupTerminalWakeDeps["eventBus"],
@@ -849,9 +894,10 @@ describe("setupTerminalWake — the keystone subscribe + woken-turn driver (124-
       heartbeatMs: opts.heartbeatMs ?? 90_000,
       checkLiveness,
       refreshLastActivity: (sessionId: string) => refreshCalls.push(sessionId),
+      driveJournalStore: js.store,
     } as unknown as SetupTerminalWakeDeps;
     const handle = setupTerminalWake(deps);
-    return { bus, registry, logger, notify, handle, fake, clock, refreshCalls, checkLiveness };
+    return { bus, registry, logger, notify, handle, fake, clock, refreshCalls, checkLiveness, js };
   }
 
   /** The synth-stuck wakes the backstop emits through the existing terminal:input_needed seam. */
@@ -982,5 +1028,51 @@ describe("setupTerminalWake — the keystone subscribe + woken-turn driver (124-
     expect(src, "the backstop must consume the busy-vs-hung predicate").toMatch(/busyOrHung/);
     expect(src, "the backstop must gate on the per-session last-transition (I2)").toMatch(/lastTransition/);
     expect(src, "the backstop must read heartbeatMs").toMatch(/heartbeatMs/);
+  });
+
+  // -------------------------------------------------------------------------
+  // ME-02 (165-REVIEW): the LIVE-01 backstop + spend ceiling only guard
+  // promotedSessions, which is EMPTY for a boot-recovered durable drive. A
+  // re-attached drive that later hangs was invisible to the backstop. The fix:
+  // the recover/resume path (onDriveReattached AND the BL-02 lazy-seed) PROMOTES
+  // the recovered session so the backstop + spend ceiling cover its remaining life.
+  // RED on pre-patch: a recovered drive (never live-promoted) is not in
+  // promotedSessions, so the backstop skips it and synthesizes NO stuck on a hang.
+  // -------------------------------------------------------------------------
+  it("ME-02: a drive recovered via terminal:drive_reattached IS promoted → a later hang is backstopped (synth stuck)", async () => {
+    const seeded = new Map<string, DriveJournalShape>([
+      ["a/s-recov", { objective: "build", lastClassification: "working", lastScreenDigest: "", answeredPrompts: [], stepsTried: [], elapsedMs: 10_000, interactions: 1, costUsd: 0, truncations: 0 }],
+    ]);
+    const b = buildBackstop(dataDir, { screen: "$ ", heartbeatMs: 90_000, seed: seeded, liveness: { "s-recov": { alive: true, noProgressMs: 999_999, stuckMs: 600_000 } } });
+    built = b;
+    // The registry re-attached the surviving session on boot → the resume event (delivered
+    // here AFTER subscription) promotes it (ME-02) — no live drive_promoted ever fired.
+    b.bus.emit("terminal:drive_reattached", { sessionId: "s-recov", agentId: "a", reason: "tmux_alive", timestamp: 1 });
+    await flush();
+    // The drive then hangs (no wake past the heartbeat window) → the backstop must guard it.
+    b.clock.now += 120_000;
+    b.fake.tick();
+    await flush();
+
+    expect(b.checkLiveness, "a recovered drive must be liveness-checked by the backstop (ME-02)").toHaveBeenCalledWith("s-recov", "a");
+    expect(synthStuckEmits(b), "a recovered drive that hangs must synthesize a stuck (ME-02)").toHaveLength(1);
+    expect(synthStuckEmits(b)[0]).toMatchObject({ sessionId: "s-recov", agentId: "a", state: "stuck" });
+  });
+
+  it("ME-02: a drive recovered via the BL-02 lazy-seed (first wake; the boot event was dropped) IS promoted → a later hang is backstopped", async () => {
+    const seeded = new Map<string, DriveJournalShape>([
+      ["a/s-lazy", { objective: "build", lastClassification: "working", lastScreenDigest: "", answeredPrompts: [], stepsTried: [], elapsedMs: 10_000, interactions: 1, costUsd: 0, truncations: 0 }],
+    ]);
+    const b = buildBackstop(dataDir, { screen: "$ ", heartbeatMs: 90_000, seed: seeded, liveness: { "s-lazy": { alive: true, noProgressMs: 999_999, stuckMs: 600_000 } } });
+    built = b;
+    // NO drive_reattached (dropped at boot). The first wake lazy-seeds + promotes the recovered
+    // drive (BL-02) — which ALSO makes it backstop-guarded (ME-02 via the lazy-seed path).
+    b.bus.fireInputNeeded("s-lazy", "a");
+    await flush();
+    b.clock.now += 120_000;
+    b.fake.tick();
+    await flush();
+
+    expect(synthStuckEmits(b), "a lazily-recovered drive that hangs must synthesize a stuck (ME-02)").toHaveLength(1);
   });
 });
