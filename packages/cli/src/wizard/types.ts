@@ -442,19 +442,31 @@ export type SupportedTranscriptionProvider = {
   id: string;
   label: string;
   hint: string;
-  /** Env-var key for the credential this provider needs (all STT providers need one). */
-  envKey: string;
+  /**
+   * Env-var key for the STATIC credential this provider needs. Absent for
+   * `auto` (keyless-first / follow-main) and `local` (in-process whisper —
+   * downloads a small model, no key); present for the keyed cloud providers
+   * (`openai`/`groq`/`deepgram`).
+   */
+  envKey?: string;
 };
 
 /**
  * All operator-selectable speech-to-text providers, mirroring core's
- * `TranscriptionConfigSchema` enum (`openai` | `groq` | `deepgram`). Drift-guarded
- * in `08e-transcription.test.ts` against `TranscriptionConfigSchema`. Voice
- * auto-transcription is ON by default, so the provider choice is meaningful even
- * for a non-OpenAI main. `openai`/`groq` reuse the matching LLM key (CRED-01);
- * `deepgram` always needs its own `DEEPGRAM_API_KEY`.
+ * `TranscriptionConfigSchema` enum (`auto` | `local` | `openai` | `groq` |
+ * `deepgram`, default `auto`). Drift-guarded in `08e-transcription.test.ts`
+ * against `TranscriptionConfigSchema`. Voice auto-transcription is ON by
+ * default, so the provider choice is meaningful even for a non-OpenAI main.
+ *
+ * Keyless-first ordering: `auto` (the recommended default — keyless-first /
+ * follow-main) and `local` (in-process whisper) come before the keyed cloud
+ * providers and OMIT `envKey` (their absence from `TRANSCRIPTION_PROVIDER_ENV_KEYS`
+ * drives the no-prompt branch). `openai`/`groq` reuse the matching LLM key
+ * (CRED-01); `deepgram` always needs its own `DEEPGRAM_API_KEY`.
  */
 export const SUPPORTED_TRANSCRIPTION_PROVIDERS: readonly SupportedTranscriptionProvider[] = [
+  { id: "auto", label: "Auto (keyless-first)", hint: "Local whisper, or reuse your agent's audio key (recommended)" },
+  { id: "local", label: "Local whisper", hint: "in-process, no key (downloads a small model)" },
   { id: "openai", label: "OpenAI Whisper", hint: "whisper via OPENAI_API_KEY", envKey: "OPENAI_API_KEY" },
   { id: "groq", label: "Groq Whisper", hint: "fast whisper via GROQ_API_KEY", envKey: "GROQ_API_KEY" },
   { id: "deepgram", label: "Deepgram", hint: "Nova-3 via DEEPGRAM_API_KEY", envKey: "DEEPGRAM_API_KEY" },
@@ -480,14 +492,20 @@ export type SupportedTtsProvider = {
 
 /**
  * All operator-selectable text-to-speech providers, mirroring core's
- * `TtsConfigSchema` enum (`openai` | `elevenlabs` | `edge`). Drift-guarded in
- * `08f-tts.test.ts` against `TtsConfigSchema`. `openai` reuses `OPENAI_API_KEY`
- * (CRED-01); `elevenlabs` needs `ELEVENLABS_API_KEY`; `edge` is free (no key).
+ * `TtsConfigSchema` enum (`edge` | `openai` | `elevenlabs` | `local`, default
+ * `edge`). Drift-guarded in `08f-tts.test.ts` against `TtsConfigSchema`.
+ *
+ * Keyless-first ordering: `edge` (Microsoft Edge — the recommended keyless
+ * default) leads, and `local` (offline Piper — arrives in a later release)
+ * trails; both OMIT `envKey` (absent from `TTS_PROVIDER_ENV_KEYS` → no prompt).
+ * `openai` reuses `OPENAI_API_KEY` (CRED-01); `elevenlabs` needs
+ * `ELEVENLABS_API_KEY`.
  */
 export const SUPPORTED_TTS_PROVIDERS: readonly SupportedTtsProvider[] = [
+  { id: "edge", label: "Edge TTS", hint: "Microsoft Edge — free, no key (recommended)" },
   { id: "openai", label: "OpenAI TTS", hint: "via OPENAI_API_KEY", envKey: "OPENAI_API_KEY" },
   { id: "elevenlabs", label: "ElevenLabs", hint: "via ELEVENLABS_API_KEY", envKey: "ELEVENLABS_API_KEY" },
-  { id: "edge", label: "Edge TTS", hint: "Microsoft Edge — free, no key", },
+  { id: "local", label: "Local (offline Piper)", hint: "offline voice — arrives in a later release; requires setup" },
 ] as const;
 
 /**
