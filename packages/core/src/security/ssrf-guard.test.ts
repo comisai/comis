@@ -197,7 +197,7 @@ describe("SSRF Guard", () => {
       expect(mockLookup).toHaveBeenCalledWith("::1");
     });
 
-    it("DENIES the cloud-metadata IP (169.254.169.254) as defense-in-depth", async () => {
+    it("rejects the cloud-metadata IP (169.254.169.254) as defense-in-depth", async () => {
       mockLookup.mockResolvedValue({ address: "169.254.169.254", family: 4 });
 
       const result = await validateLocalServerUrl("http://169.254.169.254/latest/meta-data");
