@@ -112,7 +112,24 @@ export function createAudioProviderSelector(deps: {
   // this with "openai-codex" (Pitfall 2: the maps diverge from the image one).
   const audioKeyAvailable =
     deps.audioKeyAvailable ??
-    ((provider: string) => (deps.secretManager.get(AUDIO_ENV_KEY[provider] ?? "") ?? "") !== "");
+    ((provider: string) => {
+      const envKey = AUDIO_ENV_KEY[provider];
+      if (envKey === undefined) {
+        // The resolver only ever calls this for a provider it actually queries
+        // (an explicit config provider, or a non-undefined MAIN_PROVIDER_AUDIO
+        // value). A missing AUDIO_ENV_KEY entry here is therefore a genuine
+        // map-coverage gap — a provider that was added to the config enum /
+        // MAIN_PROVIDER_AUDIO but whose env-key mapping was forgotten. We stay
+        // FAIL-CLOSED (an unmapped provider can never be reported keyed), but
+        // emit a DEBUG breadcrumb (provider id + step only — NEVER a secret) so
+        // the next "why is voice unavailable for <provider>" diagnosis is one
+        // grep, not a forensic hunt (IN-02; the program's built-but-not-wired
+        // history).
+        deps.logger.debug({ provider, step: "audio_env_key_missing" }, "no AUDIO_ENV_KEY mapping for provider");
+        return false;
+      }
+      return (deps.secretManager.get(envKey) ?? "") !== "";
+    });
 
   // The once-per-resolution follow-main skip is the load-bearing "why did voice
   // go unavailable" evidence — promote it to INFO so it is visible at the default

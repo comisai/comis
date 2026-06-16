@@ -214,3 +214,72 @@ describe("createAudioProviderSelector — resolveTts", () => {
     expect(sel).toMatchObject({ ok: true, provider: "openai", source: "explicit" });
   });
 });
+
+// =============================================================================
+// IN-02 (Phase 193 code review): the default audioKeyAvailable closure must
+// surface an AUDIO_ENV_KEY map-coverage gap.
+//
+// When a provider the resolver actually queries has no AUDIO_ENV_KEY entry
+// (e.g. a future provider added to the config enum / MAIN_PROVIDER_AUDIO but
+// whose env-key mapping was forgotten), the `?? ""` lookup makes
+// secretManager.get("") return undefined → the predicate is false
+// (honest-unavailable, the SAFE direction). That is correct-by-design, but it
+// silently swallows the map gap forever. A once-per-call DEBUG breadcrumb (no
+// secret — provider id + step only) shortens the next "why is voice
+// unavailable for <provider>" diagnosis, per the program's built-but-not-wired
+// history. The fail-closed behavior MUST be preserved.
+// =============================================================================
+
+describe("createAudioProviderSelector — default closure surfaces an AUDIO_ENV_KEY map gap (IN-02)", () => {
+  it("emits a DEBUG breadcrumb (provider + step only, no secret) when a queried provider has no AUDIO_ENV_KEY mapping, and stays fail-closed", () => {
+    const logger = createMockLogger();
+    // "mystery" is not in AUDIO_ENV_KEY and not in VOICE_KEYLESS, so the resolver
+    // queries the default closure for it (explicit keyed provider path). NO
+    // audioKeyAvailable injected → the production closure runs.
+    const selector = createAudioProviderSelector({
+      transcriptionConfig: sttConfig("mystery"),
+      ttsConfig: ttsConfig("edge"),
+      // A key value is present but bound to a DIFFERENT env var — proving the
+      // breadcrumb fires on the missing MAPPING, not on a missing key value, and
+      // that the secret value never reaches the log.
+      secretManager: mockSecretManager({ OPENAI_API_KEY: "sk-secret-should-never-log" }),
+      mainProviderId: "ollama",
+      localEngineAvailable: () => false,
+      logger: logger as never,
+    });
+
+    const sel = selector.resolveStt();
+
+    // Fail-closed preserved: an unmapped provider can never be reported keyed.
+    expect(sel.ok).toBe(false);
+    if (!sel.ok) expect(sel.errorKind).toBe("auth_required");
+
+    // The breadcrumb fired with ONLY provider id + step (no key, no secret value).
+    const breadcrumb = (logger.debug as ReturnType<typeof vi.fn>).mock.calls.find(
+      ([payload]) => (payload as { step?: string })?.step === "audio_env_key_missing",
+    );
+    expect(breadcrumb).toBeDefined();
+    expect(breadcrumb![0]).toEqual({ provider: "mystery", step: "audio_env_key_missing" });
+    // The secret value must NEVER appear in the payload.
+    expect(JSON.stringify(breadcrumb![0])).not.toContain("sk-secret-should-never-log");
+  });
+
+  it("does NOT emit the breadcrumb for a provider that HAS an AUDIO_ENV_KEY mapping (openai)", () => {
+    const logger = createMockLogger();
+    const selector = createAudioProviderSelector({
+      transcriptionConfig: sttConfig("openai"),
+      ttsConfig: ttsConfig("edge"),
+      secretManager: mockSecretManager({ OPENAI_API_KEY: "sk-test" }),
+      mainProviderId: "ollama",
+      localEngineAvailable: () => false,
+      logger: logger as never,
+    });
+
+    selector.resolveStt();
+
+    const breadcrumb = (logger.debug as ReturnType<typeof vi.fn>).mock.calls.find(
+      ([payload]) => (payload as { step?: string })?.step === "audio_env_key_missing",
+    );
+    expect(breadcrumb).toBeUndefined();
+  });
+});
