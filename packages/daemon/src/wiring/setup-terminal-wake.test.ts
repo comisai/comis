@@ -1533,4 +1533,159 @@ describe("setupTerminalWake — the keystone subscribe + woken-turn driver (124-
       expect(holder, "the holder must import the extracted terminal-wake-notify sibling").toMatch(/terminal-wake-notify/);
     });
   });
+
+  // -------------------------------------------------------------------------
+  // ENDURE-01 (165-07): the operator per-drive spend ceiling (`drive.maxCostUsd`)
+  // must reach its sole consumer THROUGH setupTerminalWake. The durability bundle
+  // resolves it (terminal-durable-wiring.ts → maxCostUsd: config.drive?.maxCostUsd ??
+  // null) and the daemon SPREADS it into setupTerminalWake — but if the holder's deps
+  // interface omits `maxCostUsd`, the spread silently drops it (TS lets excess props
+  // through a spread) and buildWokenTurnDriver never receives it, so the consumer
+  // checkSpendCeiling(costUsd, deps.maxCostUsd ?? null) always sees `null` (uncapped)
+  // regardless of operator config — the configured ceiling is INERT. This is the
+  // cross-phase integration seam the per-module unit suites missed (the driver's own
+  // spend tests inject maxCostUsd DIRECTLY into buildWokenTurnDriver, never through the
+  // setupTerminalWake hop the daemon actually uses).
+  //
+  // I6 (no fabricated cost producer): costUsd stays honestly 0 at the canned-keystroke
+  // seam — so this test seeds the run-total cost into the DURABLE journal store (the
+  // honest persistence path), then recovers/promotes the drive so its FIRST woken turn
+  // reads the seeded costUsd at the spend-ceiling check (terminal-wake-turn.ts) — never
+  // fabricating a cost at the keystroke seam.
+  //
+  // RED on pre-patch: SetupTerminalWakeDeps does not declare `maxCostUsd` and the
+  // buildWokenTurnDriver({...}) call does not forward it, so a threaded maxCostUsd is
+  // dropped at the setupTerminalWake hop → no breach even when configured.
+  // -------------------------------------------------------------------------
+  describe("ENDURE-01 spend ceiling — the configured ceiling reaches the consumer THROUGH setupTerminalWake (cross-phase forwarding)", () => {
+    /**
+     * A registry whose session is always resolvable AND carries the `evict` spy the
+     * spend-ceiling breach path calls (terminal-wake-turn.ts — a breach evicts + escalates
+     * + WARNs, never a silent overspend). The base makeRegistry has no `evict`, so this
+     * adds it (the breach STOP is `registry.evict(sessionId, owner, "max_interactions")`).
+     */
+    function makeEvictableRegistry(opts: { screen: string }) {
+      const base = makeRegistry({ screen: opts.screen });
+      const evict = vi.fn(async () => undefined);
+      return Object.assign(base, { evict });
+    }
+
+    /**
+     * Build the keystone holder with a DUR-02 journal store seeded with a run-total
+     * costUsd AND the ENDURE-01 `maxCostUsd` THREADED THROUGH setupTerminalWake (not into
+     * buildWokenTurnDriver directly). `maxCostUsd: undefined` omits it entirely (the
+     * uncapped default). Returns the evictable registry so a test can assert the breach
+     * STOP fired.
+     */
+    function buildSpend(
+      dataDir: string,
+      opts: { screen: string; seed: Map<string, DriveJournalShape>; maxCostUsd?: number | null },
+    ): Built & { js: ReturnType<typeof makeJournalStore>; registry: ReturnType<typeof makeEvictableRegistry> } {
+      const bus = makeBus();
+      const registry = makeEvictableRegistry({ screen: opts.screen });
+      const logger = makeLogger();
+      const notify = vi.fn(async () => undefined);
+      const js = makeJournalStore(opts.seed);
+      const registries = new Map<string, ReturnType<typeof makeEvictableRegistry>>([["a", registry]]);
+      const deps = {
+        eventBus: bus as unknown as SetupTerminalWakeDeps["eventBus"],
+        registries: registries as unknown as SetupTerminalWakeDeps["registries"],
+        getTerminalAttentionConfig: () => ({ autoAnswer: "safe-only" as const, hintPatterns: ["press enter to continue"], maxHops: 5, maxConcurrentAttentionTurns: 2 }),
+        notify,
+        dataDir,
+        nowMs: () => 1_000,
+        logger: logger as unknown as SetupTerminalWakeDeps["logger"],
+        driveJournalStore: js.store,
+        // The ENDURE-01 dep under test — threaded THROUGH setupTerminalWake (the daemon
+        // spreads ...terminalDurability, which carries maxCostUsd; this exercises that hop).
+        ...(opts.maxCostUsd !== undefined ? { maxCostUsd: opts.maxCostUsd } : {}),
+      } as unknown as SetupTerminalWakeDeps;
+      const handle = setupTerminalWake(deps);
+      return { bus, registry, logger, notify, handle, js };
+    }
+
+    /** A journal seeded with a run-total cost (the honest persisted value, NOT fabricated at the seam). */
+    function seedWithCost(agentId: string, sessionId: string, costUsd: number): Map<string, DriveJournalShape> {
+      return new Map<string, DriveJournalShape>([
+        [`${agentId}/${sessionId}`, { objective: "build", lastClassification: "working", lastScreenDigest: "", answeredPrompts: [], stepsTried: [], elapsedMs: 10_000, interactions: 3, costUsd, truncations: 0 }],
+      ]);
+    }
+
+    /** The spend-ceiling §2.7 WARN the breach path emits (step:spend_ceiling). */
+    function spendBreachWarn(b: Built) {
+      return b.logger.warn.mock.calls.find((c) => (c[0] as { step?: string })?.step === "spend_ceiling");
+    }
+
+    it("a threaded maxCostUsd reaches the consumer: a recovered/promoted drive whose journal costUsd is OVER the configured ceiling has its FIRST woken turn breach the spend check (escalate + evict + STOP), never a silent overspend", async () => {
+      // The drive's honest run-total cost (seeded into the durable store, I6) exceeds the
+      // operator ceiling threaded through setupTerminalWake.
+      const seed = seedWithCost("a", "s-over", 10);
+      const b = buildSpend(dataDir, { screen: "Press enter to continue", seed, maxCostUsd: 5 });
+      built = b;
+      // Re-attach promotes + seeds the journal cache from disk (costUsd=10) so the first
+      // woken turn reads it at the spend-ceiling check.
+      b.bus.emit("terminal:drive_reattached", { sessionId: "s-over", agentId: "a", reason: "tmux_alive", timestamp: 1 });
+      await flush();
+      // A wake → the first woken turn. The spend check runs FIRST (before status/read/answer).
+      b.bus.fireInputNeeded("s-over", "a");
+      await flush();
+
+      // ENDURE-01: the breach fired BECAUSE the configured ceiling reached the consumer
+      // (pre-fix, maxCostUsd is dropped at the setupTerminalWake hop → uncapped → no breach).
+      const warn = spendBreachWarn(b);
+      expect(warn, "the configured maxCostUsd must reach the spend check (a breach WARNs step:spend_ceiling)").toBeDefined();
+      expect((warn![0] as { errorKind?: string }).errorKind, "a spend breach is errorKind:resource").toBe("resource");
+      expect((warn![0] as { maxCostUsd?: number }).maxCostUsd, "the §2.7 breach record names the configured ceiling (not null)").toBe(5);
+      expect((warn![0] as { costUsd?: number }).costUsd, "the §2.7 breach record names the over-cap run-total").toBe(10);
+      // On breach the drive is STOPPED (evicted) — never a silent overspend.
+      expect(b.registry.evict, "a breach must STOP the drive (evict), never let it run on uncapped").toHaveBeenCalledWith("s-over", expect.anything(), "max_interactions");
+      // And escalated to a human (the breach rides the existing escalate() path).
+      const escalated = b.bus.emitted.find((e) => e.event === "terminal:escalated");
+      expect(escalated, "a spend breach escalates to a human").toBeDefined();
+      // The breach pre-empts the turn: no canned keystroke was sent (the drive is stopping).
+      expect(b.registry.sendText, "a breached turn sends NO keystroke (it STOPS)").not.toHaveBeenCalled();
+    });
+
+    it("I1/I9: the SAME over-cost drive with maxCostUsd OMITTED (uncapped default) does NOT breach — a healthy drive under no ceiling is never stopped", async () => {
+      // Identical seeded over-cost journal, but NO maxCostUsd threaded → uncapped (I1).
+      const seed = seedWithCost("a", "s-uncapped", 10);
+      const b = buildSpend(dataDir, { screen: "Press enter to continue", seed }); // maxCostUsd omitted
+      built = b;
+      b.bus.emit("terminal:drive_reattached", { sessionId: "s-uncapped", agentId: "a", reason: "tmux_alive", timestamp: 1 });
+      await flush();
+      b.bus.fireInputNeeded("s-uncapped", "a");
+      await flush();
+
+      // Uncapped → checkSpendCeiling returns undefined → NO breach (I1 byte-identical to today).
+      expect(spendBreachWarn(b), "an uncapped drive must NOT breach (I1)").toBeUndefined();
+      expect(b.registry.evict, "an uncapped drive must NOT be stopped (I9)").not.toHaveBeenCalled();
+      // The turn proceeded normally: the safe-pattern screen was answered (not pre-empted).
+      expect(b.registry.sendText, "an uncapped turn proceeds to answer the safe prompt (not stopped)").toHaveBeenCalled();
+    });
+
+    it("I9 boundary: a drive UNDER the configured ceiling is never stopped (the ceiling reaches the consumer but does not spuriously fire)", async () => {
+      // costUsd (3) < maxCostUsd (5) → the threaded ceiling reaches the consumer but the
+      // strict `>` boundary means the budget is not yet over → no breach (proves the
+      // forwarding does not over-fire, distinct from the omitted-cap path above).
+      const seed = seedWithCost("a", "s-under", 3);
+      const b = buildSpend(dataDir, { screen: "Press enter to continue", seed, maxCostUsd: 5 });
+      built = b;
+      b.bus.emit("terminal:drive_reattached", { sessionId: "s-under", agentId: "a", reason: "tmux_alive", timestamp: 1 });
+      await flush();
+      b.bus.fireInputNeeded("s-under", "a");
+      await flush();
+
+      expect(spendBreachWarn(b), "a drive under the ceiling must NOT breach (I9)").toBeUndefined();
+      expect(b.registry.evict, "a drive under the ceiling must NOT be stopped (I9)").not.toHaveBeenCalled();
+      expect(b.registry.sendText, "a healthy under-cap turn proceeds normally").toHaveBeenCalled();
+    });
+
+    it("forwarding wiring (source guard): SetupTerminalWakeDeps declares maxCostUsd AND the buildWokenTurnDriver({...}) call forwards deps.maxCostUsd", () => {
+      const src = readFileSync(fileURLToPath(new URL("./setup-terminal-wake.ts", import.meta.url)), "utf8");
+      // The holder's deps interface must DECLARE the spend ceiling (else the daemon spread drops it).
+      expect(src, "SetupTerminalWakeDeps must declare maxCostUsd").toMatch(/maxCostUsd\??\s*:\s*number\s*\|\s*null/);
+      // The holder must FORWARD it into the woken-turn driver (the consumer reads deps.maxCostUsd).
+      expect(src, "buildWokenTurnDriver must be passed maxCostUsd: deps.maxCostUsd").toMatch(/maxCostUsd:\s*deps\.maxCostUsd/);
+    });
+  });
 });
