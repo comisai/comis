@@ -141,13 +141,14 @@ export function redactErrorMessage(body: string): string {
       // WR-03: redact a credential-scheme marker TOGETHER with the long token it
       // carries, as ONE `[REDACTED]` — and ONLY when a >=20-char credential token
       // actually follows. The optional `Authorization:` / `Bearer ` prefix is
-      // consumed (no orphaned scheme word, no double-space), while a bare
-      // "bearer"/"authorization" used as PROSE (no following credential) is left
-      // verbatim — the prior non-anchored deletion mangled such prose. The
-      // lookahead guarantees the run that follows is credential-length before the
-      // scheme prefix is eaten.
-      // eslint-disable-next-line no-restricted-syntax -- media adapter API-error sanitization (not the Pino censor literal)
-      .replace(/\b(?:Authorization:\s*)?(?:Bearer\s+)?(?=[A-Za-z0-9_-]{20,})[A-Za-z0-9_-]+/gi, "[REDACTED]")
+      // part of the match but the `{20,}` token is REQUIRED, so the prefix is
+      // consumed only alongside a real credential (no orphaned scheme word, no
+      // double-space), while a bare "bearer"/"authorization" used as PROSE — or a
+      // scheme followed by a sub-20-char value — is left verbatim (the prior
+      // non-anchored deletion mangled such prose). Single character class with a
+      // single `+`/`{20,}` quantifier — linear, no catastrophic backtracking.
+      // eslint-disable-next-line no-restricted-syntax, security/detect-unsafe-regex -- media adapter API-error sanitization (not the Pino censor literal); the optional prefixes precede a single character class with one bounded quantifier — no nested/overlapping quantifier, so it is linear-time (safe-regex false positive)
+      .replace(/\b(?:Authorization:\s*)?(?:Bearer\s+)?[A-Za-z0-9_-]{20,}/gi, "[REDACTED]")
       // Defense-in-depth: any standalone long token NOT preceded by a scheme
       // marker (so untouched above) is still redacted — preserves the prior
       // long-token floor and the no-opaque-leak guarantee.
