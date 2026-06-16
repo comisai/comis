@@ -120,4 +120,71 @@ describe("detectLocalSttEngine", () => {
     expect(canImportEngine).toHaveBeenCalledTimes(1);
     expect(canImportEngine).toHaveBeenCalledWith();
   });
+
+  // ---------------------------------------------------------------------------
+  // SEC-02 (Surface A): the reachability check is SSRF-guarded BEFORE the fetch.
+  // A non-loopback / unconfigured baseUrl must be treated as not-reachable
+  // (the guard rejects it before any fetch fires); a loopback baseUrl still
+  // resolves to mode "baseUrl". validateLocalServerUrl runs first.
+  // ---------------------------------------------------------------------------
+  describe("SEC-02 SSRF guard on the baseUrl reachability (Surface A)", () => {
+    it("treats a cloud-metadata baseUrl as NOT reachable and never invokes the reachability fetch", async () => {
+      const fetchProbe = vi.fn(async () => true);
+      const canImportEngine = vi.fn(async () => true);
+
+      const result = await detectLocalSttEngine({
+        baseUrl: "http://169.254.169.254",
+        ffmpegAvailable: true,
+        fetchProbe,
+        canImportEngine,
+      });
+
+      // The guard rejected the URL → the reachability fetch was NEVER called
+      // (guard-before-fetch), and the probe fell through to the in-process path.
+      expect(fetchProbe).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ available: true, mode: "in-process" });
+    });
+
+    it("treats a non-loopback private baseUrl as NOT reachable (no fetch) and falls through", async () => {
+      const fetchProbe = vi.fn(async () => true);
+      const canImportEngine = vi.fn(async () => false);
+
+      const result = await detectLocalSttEngine({
+        baseUrl: "http://10.0.0.5:9000",
+        ffmpegAvailable: true,
+        fetchProbe,
+        canImportEngine,
+      });
+
+      expect(fetchProbe).not.toHaveBeenCalled();
+      // No engine importable either → none.
+      expect(result).toMatchObject({ available: false, mode: "none" });
+    });
+
+    it("ALLOWS a loopback baseUrl through the guard and reports mode 'baseUrl' when reachable", async () => {
+      const fetchProbe = vi.fn(async () => true);
+      const canImportEngine = vi.fn(async () => true);
+
+      const result = await detectLocalSttEngine({
+        baseUrl: "http://127.0.0.1:8000",
+        ffmpegAvailable: true,
+        fetchProbe,
+        canImportEngine,
+      });
+
+      // Loopback passes the guard → the reachability fetch runs → mode "baseUrl".
+      expect(fetchProbe).toHaveBeenCalledTimes(1);
+      expect(result).toMatchObject({ available: true, mode: "baseUrl" });
+    });
+
+    it("never throws on a malformed baseUrl — the guard rejects it and the probe falls through", async () => {
+      const result = await detectLocalSttEngine({
+        baseUrl: "not a url",
+        ffmpegAvailable: true,
+        canImportEngine: async () => false,
+      });
+
+      expect(result).toMatchObject({ available: false, mode: "none" });
+    });
+  });
 });

@@ -431,4 +431,94 @@ describe("buildAudioResolverDeps — the real localEngineAvailable boot probe (P
     // The probe ran ONCE at boot; the predicate is a captured boolean, not per-call I/O.
     expect(detectEngine).toHaveBeenCalledTimes(1);
   });
+
+  // ===========================================================================
+  // SEC-02 (Surface A, boot capture): buildAudioResolverDeps guards
+  // media.transcription.local.baseUrl with validateLocalServerUrl BEFORE
+  // threading it into the probe. A non-loopback baseUrl is rejected at boot —
+  // the probe receives baseUrl:undefined (not a reachable server) and a
+  // host-only WARN/DEBUG (step) is logged WITHOUT the URL (T-194-11).
+  // ===========================================================================
+
+  it("does NOT thread a cloud-metadata baseUrl into the probe — it rejects it at boot and passes baseUrl:undefined (SEC-02)", async () => {
+    const badUrl = "http://169.254.169.254/latest/meta-data";
+    const detectEngine = vi.fn(
+      async () => ({ available: false, mode: "none" }) as const,
+    ) as unknown as typeof detectLocalSttEngine;
+
+    await buildAudioResolverDeps(
+      probeContainer({ sttProvider: "auto", mainProvider: "openai-codex", baseUrl: badUrl, keys: {} }),
+      "default",
+      createMockLogger() as never,
+      detectEngine,
+    );
+
+    // The rejected URL must NOT reach the probe as a (would-be reachable) server.
+    const probeArg = (detectEngine as unknown as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
+    expect(probeArg).toMatchObject({ baseUrl: undefined });
+  });
+
+  it("does NOT thread a non-loopback private baseUrl into the probe (SEC-02)", async () => {
+    const badUrl = "http://10.0.0.5:9000/v1";
+    const detectEngine = vi.fn(
+      async () => ({ available: false, mode: "none" }) as const,
+    ) as unknown as typeof detectLocalSttEngine;
+
+    await buildAudioResolverDeps(
+      probeContainer({ sttProvider: "auto", mainProvider: "openai-codex", baseUrl: badUrl, keys: {} }),
+      "default",
+      createMockLogger() as never,
+      detectEngine,
+    );
+
+    const probeArg = (detectEngine as unknown as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
+    expect(probeArg).toMatchObject({ baseUrl: undefined });
+  });
+
+  it("threads a loopback baseUrl through to the probe unchanged (the legitimate local server, SEC-02)", async () => {
+    const goodUrl = "http://127.0.0.1:9000/v1";
+    const detectEngine = vi.fn(
+      async () => ({ available: true, mode: "baseUrl" }) as const,
+    ) as unknown as typeof detectLocalSttEngine;
+
+    await buildAudioResolverDeps(
+      probeContainer({ sttProvider: "auto", mainProvider: "openai-codex", baseUrl: goodUrl, keys: {} }),
+      "default",
+      createMockLogger() as never,
+      detectEngine,
+    );
+
+    const probeArg = (detectEngine as unknown as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
+    expect(probeArg).toMatchObject({ baseUrl: goodUrl });
+  });
+
+  it("never logs the rejected baseUrl — the boot rejection log is host-only / step-only (T-194-11)", async () => {
+    const badUrl = "http://169.254.169.254/latest/meta-data?token=supersecretvalue1234567890";
+    const logger = createMockLogger();
+    const detectEngine = vi.fn(
+      async () => ({ available: false, mode: "none" }) as const,
+    ) as unknown as typeof detectLocalSttEngine;
+
+    await buildAudioResolverDeps(
+      probeContainer({ sttProvider: "auto", mainProvider: "openai-codex", baseUrl: badUrl, keys: {} }),
+      "default",
+      logger as never,
+      detectEngine,
+    );
+
+    // No log line at ANY level may contain the rejected URL or its query secret.
+    const allCalls = [
+      ...(logger.info as ReturnType<typeof vi.fn>).mock.calls,
+      ...(logger.warn as ReturnType<typeof vi.fn>).mock.calls,
+      ...(logger.debug as ReturnType<typeof vi.fn>).mock.calls,
+    ];
+    const serialized = JSON.stringify(allCalls);
+    expect(serialized).not.toContain("169.254.169.254");
+    expect(serialized).not.toContain("supersecretvalue1234567890");
+    // A rejection breadcrumb (step only) IS emitted so the next diagnosis is one grep.
+    const rejected = (logger.warn as ReturnType<typeof vi.fn>).mock.calls
+      .concat((logger.debug as ReturnType<typeof vi.fn>).mock.calls)
+      .some(([payload]) => (payload as { step?: string })?.step === "stt_local_baseurl_rejected");
+    expect(rejected).toBe(true);
+  });
 });
