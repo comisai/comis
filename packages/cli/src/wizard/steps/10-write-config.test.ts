@@ -398,7 +398,60 @@ describe("writeConfigStep", () => {
     expect(configContent.integrations.media.videoGeneration.provider).toBe("google");
   });
 
-  it("omits integrations from config.yaml when no videoProvider is set", async () => {
+  it("emits integrations.media.imageGeneration.provider when imageProvider is set", async () => {
+    const state: WizardState = {
+      ...populatedState(),
+      imageProvider: { provider: "openrouter" },
+    };
+    const prompter = createMockPrompter();
+
+    await writeConfigStep.execute(state, prompter);
+
+    const writeCalls = vi.mocked(writeFileSync).mock.calls;
+    const configWriteCall = writeCalls.find(
+      ([path]) => typeof path === "string" && path.includes(".tmp"),
+    );
+    const configContent = JSON.parse(configWriteCall![1] as string);
+    expect(configContent.integrations.media.imageGeneration.provider).toBe("openrouter");
+  });
+
+  it("emits BOTH image and video generation under integrations.media when both are set", async () => {
+    const state: WizardState = {
+      ...populatedState(),
+      imageProvider: { provider: "fal", apiKey: "fal-img-key-123456" },
+      videoProvider: { provider: "google" },
+    };
+    const prompter = createMockPrompter();
+
+    await writeConfigStep.execute(state, prompter);
+
+    const writeCalls = vi.mocked(writeFileSync).mock.calls;
+    const configWriteCall = writeCalls.find(
+      ([path]) => typeof path === "string" && path.includes(".tmp"),
+    );
+    const configContent = JSON.parse(configWriteCall![1] as string);
+    expect(configContent.integrations.media.imageGeneration.provider).toBe("fal");
+    expect(configContent.integrations.media.videoGeneration.provider).toBe("google");
+  });
+
+  it("writes the FAL_KEY image credential to .env when imageProvider is fal", async () => {
+    const state: WizardState = {
+      ...populatedState(),
+      imageProvider: { provider: "fal", apiKey: "fal-img-secret-7890" },
+    };
+    const prompter = createMockPrompter();
+
+    await writeConfigStep.execute(state, prompter);
+
+    const writeCalls = vi.mocked(writeFileSync).mock.calls;
+    const envWriteCall = writeCalls.find(
+      ([path]) => typeof path === "string" && path.includes(".env"),
+    );
+    const envContent = envWriteCall![1] as string;
+    expect(envContent).toContain("FAL_KEY=fal-img-secret-7890");
+  });
+
+  it("omits integrations from config.yaml when no media provider is set", async () => {
     const prompter = createMockPrompter();
 
     await writeConfigStep.execute(populatedState(), prompter);
