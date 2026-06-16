@@ -2338,9 +2338,8 @@ async function bootChannels(boot: BootContext): Promise<void> {
     dataDir: container.config.dataDir || ".",
     // 165-07 DUR-02 / LIVE-01 / ENDURE-01: the durable wake deps — the journal store
     // (persist-on-set + resume-on-re-attach), the liveness backstop (timers + heartbeatMs +
-    // checkLiveness via the worker status round-trip, whose lastActivity stamp IS the I9
-    // reaper unify — LO-03), and the spend ceiling (maxCostUsd). timers is the same TimerPort
-    // the reaper uses (createSystemTimers).
+    // checkLiveness via the worker status round-trip, whose lastActivity stamp IS the I9 reaper
+    // unify — LO-03), and the spend ceiling (maxCostUsd). timers = the reaper's TimerPort.
     ...terminalDurability,
     timers: handle.timers,
     logger: daemonLogger,
