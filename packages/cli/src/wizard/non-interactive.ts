@@ -461,12 +461,17 @@ export function buildNonInteractiveState(
   }
 
   // Transcription (STT) provider (step 08e, skipped in non-interactive mode).
-  // openai/groq reuse --api-key when it matches the main provider; deepgram (and
-  // any cross-provider choice) uses --stt-api-key.
+  // auto (keyless-first / follow-main) and local (in-process whisper) need no
+  // key; openai/groq reuse --api-key when it matches the main provider; deepgram
+  // (and any cross-provider choice) uses --stt-api-key.
   let transcriptionProvider: TranscriptionProviderConfig | undefined;
   if (opts.sttProvider !== undefined) {
     const requiredEnvKey = TRANSCRIPTION_PROVIDER_ENV_KEYS[opts.sttProvider];
-    if (
+    if (!requiredEnvKey) {
+      // keyless: auto (keyless-first / follow-main) or local (in-process
+      // whisper) — no static key collected here. Mirrors the TTS/image branches.
+      transcriptionProvider = { provider: opts.sttProvider };
+    } else if (
       opts.apiKey !== undefined &&
       PROVIDER_ENV_KEYS[opts.provider!] === requiredEnvKey
     ) {
