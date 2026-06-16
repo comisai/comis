@@ -20,7 +20,7 @@ import { randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import type { Result } from "@comis/shared";
 import { ok } from "@comis/shared";
-import { safePath, systemNowMs } from "@comis/core";
+import { safePath, systemNowMs, redactErrorMessage } from "@comis/core";
 import type { SendMessageOptions, TtsAutoMode } from "@comis/core";
 import { prepareVoicePayload } from "./voice-sender.js";
 
@@ -260,7 +260,7 @@ export async function executeVoiceResponse(
     if (!synthResult.ok) {
       deps.logger.warn(
         {
-          err: synthResult.error.message,
+          err: redactErrorMessage(synthResult.error.message),
           channelType: ctx.channelType,
           hint: "TTS synthesis failed; falling back to text-only response",
           errorKind: "dependency" as const,
@@ -318,7 +318,7 @@ export async function executeVoiceResponse(
     if (!payloadResult.ok) {
       deps.logger.warn(
         {
-          err: payloadResult.error.message,
+          err: redactErrorMessage(payloadResult.error.message),
           channelType: ctx.channelType,
           hint: "Voice payload preparation failed; falling back to text-only response",
           errorKind: "dependency" as const,
@@ -344,7 +344,7 @@ export async function executeVoiceResponse(
     if (!sendResult.ok) {
       deps.logger.warn(
         {
-          err: sendResult.error.message,
+          err: redactErrorMessage(sendResult.error.message),
           channelType: ctx.channelType,
           hint: "Voice attachment send failed; falling back to text-only response",
           errorKind: "network" as const,
