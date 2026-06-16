@@ -395,4 +395,75 @@ describe("TerminalDriverConfigSchema -- additive strict drive{} block (DRIVE-02/
       expect(result.error.issues.some((i) => i.path.includes("drive"))).toBe(true);
     }
   });
+
+  // -------------------------------------------------------------------------
+  // Phase 166 (166-02, NOTIFY-01/NOTIFY-02): the SAME additive strict drive{}
+  // block gains the two user-facing notification fields that COMPLETE the
+  // v2.24 drive block —
+  //   notify            (enum terminal/all/none, default "terminal") — NOTIFY-01:
+  //     which terminal outcomes reach the user. "none" still escalates (I4).
+  //   heartbeatNotifyMs (int>=0, default 3_600_000 / 1h) — NOTIFY-02 (§7.1.4):
+  //     the coarse user-facing progress-heartbeat cadence for a promoted long
+  //     drive. `0` is a VALID value = terminal-only (distinct from `heartbeatMs`
+  //     the INTERNAL liveness backstop which is .positive()).
+  // Both defaults preserve today's behavior (I1): a config with no drive block,
+  // or an empty drive block, is byte-identical to today. The block stays a
+  // closed strictObject (a typo'd key still rejects, OPS-02).
+  it("round-trips notify + heartbeatNotifyMs (the two Phase-166 fields parse to the supplied values)", () => {
+    const parsed = TerminalDriverConfigSchema.parse({
+      ...baseCfg,
+      drive: { notify: "all", heartbeatNotifyMs: 7_200_000 },
+    });
+    expect(parsed.drive?.notify).toBe("all");
+    expect(parsed.drive?.heartbeatNotifyMs).toBe(7_200_000);
+  });
+
+  it("fills the Phase-166 defaults on an EMPTY drive block (notify:terminal, heartbeatNotifyMs:3_600_000 — I1)", () => {
+    const parsed = TerminalDriverConfigSchema.parse({ ...baseCfg, drive: {} });
+    expect(parsed.drive?.notify).toBe("terminal");
+    expect(parsed.drive?.heartbeatNotifyMs).toBe(3_600_000);
+  });
+
+  it("parses with the drive block ABSENT (I1 — the Phase-166 fields add NO new behavior; parsed.drive is undefined)", () => {
+    const parsed = TerminalDriverConfigSchema.parse(baseCfg);
+    expect(parsed.drive).toBeUndefined();
+  });
+
+  it("ACCEPTS each notify enum member (terminal/all/none)", () => {
+    expect(TerminalDriverConfigSchema.parse({ ...baseCfg, drive: { notify: "terminal" } }).drive?.notify).toBe(
+      "terminal",
+    );
+    expect(TerminalDriverConfigSchema.parse({ ...baseCfg, drive: { notify: "all" } }).drive?.notify).toBe("all");
+    expect(TerminalDriverConfigSchema.parse({ ...baseCfg, drive: { notify: "none" } }).drive?.notify).toBe("none");
+  });
+
+  it("REJECTS an out-of-enum drive.notify (only terminal/all/none are valid — the enum is closed)", () => {
+    const result = TerminalDriverConfigSchema.safeParse({ ...baseCfg, drive: { notify: "loud" } });
+    expect(result.success).toBe(false);
+  });
+
+  it("ACCEPTS heartbeatNotifyMs:0 (terminal-only is a VALID value — .nonnegative(), DISTINCT from heartbeatMs which is .positive())", () => {
+    const parsed = TerminalDriverConfigSchema.parse({ ...baseCfg, drive: { heartbeatNotifyMs: 0 } });
+    expect(parsed.drive?.heartbeatNotifyMs).toBe(0);
+  });
+
+  it("REJECTS a negative or non-integer heartbeatNotifyMs (.int().nonnegative(); -1 and 1.5 both reject)", () => {
+    expect(
+      TerminalDriverConfigSchema.safeParse({ ...baseCfg, drive: { heartbeatNotifyMs: -1 } }).success,
+    ).toBe(false);
+    expect(
+      TerminalDriverConfigSchema.safeParse({ ...baseCfg, drive: { heartbeatNotifyMs: 1.5 } }).success,
+    ).toBe(false);
+  });
+
+  it("REJECTS a typo'd Phase-166 drive key (the block stays a closed strictObject after the additions, OPS-02)", () => {
+    const result = TerminalDriverConfigSchema.safeParse({
+      ...baseCfg,
+      drive: { notify: "terminal", heartbeatNotifyMls: 3_600_000 }, // typo: heartbeatNotifyMls
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.some((i) => i.path.includes("drive"))).toBe(true);
+    }
+  });
 });
