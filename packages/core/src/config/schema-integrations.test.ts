@@ -6,6 +6,8 @@ import {
   MediaConfigSchema,
   McpConfigSchema,
   McpServerEntrySchema,
+  TranscriptionConfigSchema,
+  TtsConfigSchema,
 } from "./schema-integrations.js";
 import {
   VideoGenerateContract,
@@ -303,12 +305,61 @@ describe("MediaConfigSchema - documentExtraction nesting", () => {
     // RES-03: the headline default flip — a fresh install with no audio key
     // resolves STT via `auto` (keyless-first / follow-main) instead of
     // constructing an empty-bearer OpenAI adapter (the 401 this milestone fixes).
+    // Assert both the schema directly and the MediaConfigSchema round-trip.
+    expect(TranscriptionConfigSchema.parse({}).provider).toBe("auto");
     expect(MediaConfigSchema.parse({}).transcription.provider).toBe("auto");
   });
 
   it("defaults tts.provider to edge (keyless, RES-03 flip)", () => {
     // RES-03: TTS defaults to the keyless Edge provider (zero credentials).
+    expect(TtsConfigSchema.parse({}).provider).toBe("edge");
     expect(MediaConfigSchema.parse({}).tts.provider).toBe("edge");
+  });
+
+  it("keeps every existing explicit STT provider valid (CFG-01 additive)", () => {
+    // I9 additive guarantee: every pre-flip + new STT provider still parses and
+    // round-trips identically through MediaConfigSchema.
+    for (const provider of ["openai", "groq", "deepgram", "local"] as const) {
+      expect(
+        MediaConfigSchema.parse({ transcription: { provider } }).transcription.provider,
+      ).toBe(provider);
+    }
+  });
+
+  it("keeps every existing explicit TTS provider valid (CFG-01 additive)", () => {
+    // I9 additive guarantee: every pre-flip + new TTS provider still parses.
+    for (const provider of ["openai", "elevenlabs", "edge", "local"] as const) {
+      expect(MediaConfigSchema.parse({ tts: { provider } }).tts.provider).toBe(provider);
+    }
+  });
+
+  it("rejects an unknown STT/TTS provider at parse (closed enum, T-193-05)", () => {
+    // Config-injection backstop — a typo'd/injected provider fails at parse, not
+    // at a transport. fallbackProviders shares the closed STT enum.
+    expect(() =>
+      MediaConfigSchema.parse({ transcription: { provider: "totally-bogus" } }),
+    ).toThrow();
+    expect(() =>
+      MediaConfigSchema.parse({ tts: { provider: "totally-bogus" } }),
+    ).toThrow();
+    expect(() =>
+      MediaConfigSchema.parse({ transcription: { provider: "auto", fallbackProviders: ["bogus"] } }),
+    ).toThrow();
+  });
+
+  it("defaults transcription.local.model to base and rejects an unknown local key (strictObject)", () => {
+    // CFG-01: the local STT sub-config defaults model to "base"; the strictObject
+    // invariant means an injected unknown key (T-193-06) fails at parse.
+    expect(TranscriptionConfigSchema.parse({ provider: "local" }).local.model).toBe("base");
+    const explicit = TranscriptionConfigSchema.parse({
+      provider: "local",
+      local: { model: "small", baseUrl: "http://127.0.0.1:8000" },
+    });
+    expect(explicit.local.model).toBe("small");
+    expect(explicit.local.baseUrl).toBe("http://127.0.0.1:8000");
+    expect(() =>
+      TranscriptionConfigSchema.parse({ provider: "local", local: { bogus: 1 } }),
+    ).toThrow();
   });
 
   it("accepts explicit documentExtraction overrides", () => {

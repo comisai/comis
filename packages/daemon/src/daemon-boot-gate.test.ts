@@ -103,8 +103,8 @@ function createMockContainer(gatewayOverrides?: Partial<GatewayConfig>): AppCont
       integrations: {
         mcp: { servers: [] },
         media: {
-          transcription: { provider: "openai", maxFileSizeMb: 25, timeoutMs: 60000, autoTranscribe: true, preflight: true, fallbackProviders: [] },
-          tts: { provider: "openai", voice: "alloy", format: "opus", autoMode: "never", tagPattern: "\\[\\[tts\\]\\]", outputFormats: {} },
+          transcription: { provider: "auto", maxFileSizeMb: 25, timeoutMs: 60000, autoTranscribe: true, preflight: true, fallbackProviders: [], local: { model: "base" } },
+          tts: { provider: "edge", voice: "alloy", format: "opus", autoMode: "never", tagPattern: "\\[\\[tts\\]\\]", outputFormats: {} },
           imageAnalysis: { maxFileSizeMb: 20 },
           vision: { enabled: false, defaultProvider: undefined, defaultScopeAction: "allow", scopeRules: [] },
           linkUnderstanding: { enabled: false, maxUrls: 3, maxContentChars: 5000, timeoutMs: 10_000 },
