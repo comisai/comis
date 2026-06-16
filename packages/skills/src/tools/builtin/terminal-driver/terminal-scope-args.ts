@@ -29,6 +29,7 @@
 import { SYSTEM_RO_PATHS } from "../sandbox/bwrap-provider.js";
 
 import type { TerminalScope } from "./allowlist-matcher.js";
+import { JAIL_UNSET_ENV_VARS } from "./terminal-env-scrub.js";
 
 // Re-export so consumers can `import { SYSTEM_RO_PATHS } from "./terminal-scope-args.js"`
 // alongside the composer — but the composer itself uses it as the RO base by default.
@@ -238,6 +239,23 @@ export function buildScopeArgs(input: ScopeArgsInput): string[] {
 
   // -- Working directory --
   args.push("--chdir", input.cwd);
+
+  // -- Env hardening (BACKEND-INDEPENDENT) -- emitted as bwrap flags (NOT mounts, so placed BEFORE
+  //    the carve-out/workspace re-bind that must stay the LAST mounts) so they apply whether the
+  //    worker spawns bwrap directly (PTY backend: env via `pty.spawn({env})`) OR via `tmux
+  //    new-session -- bwrap …` (the DEFAULT durable backend, where the new session inherits the tmux
+  //    SERVER env, BYPASSING the worker's scrubbed env object — real-VPS 2026-06-17: the daemon's
+  //    `NODE_OPTIONS=--permission …` leaked into a driven claude AND CLAUDE_CODE_BUBBLEWRAP never
+  //    reached it → its Bash/SessionStart hook EROFS'd on the default backend). `--unsetenv` strips
+  //    the daemon's interpreter-control hardening (NODE_OPTIONS, BASH_ENV, …) + the CLAUDECODE
+  //    sentinel; `--setenv CLAUDE_CODE_BUBBLEWRAP=1` (EROFS-01) tells the driven CLI it is already
+  //    bubblewrapped so it does NOT nest its own (nested-broken) sandbox. The PTY-path `env` scrub
+  //    (`scrubChildEnv`) stays as defense-in-depth; this is the authoritative, backend-independent
+  //    application.
+  for (const key of JAIL_UNSET_ENV_VARS) {
+    args.push("--unsetenv", key);
+  }
+  args.push("--setenv", "CLAUDE_CODE_BUBBLEWRAP", "1");
 
   // -- The ~/.comis carve-out LAST -- later bwrap mount wins (the bind-order
   //    insight); even at filesystem:full (--bind / / | --bind <home>) ~/.comis is
