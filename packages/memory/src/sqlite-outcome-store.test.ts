@@ -21,6 +21,7 @@ import Database from "better-sqlite3";
 import { createHash } from "node:crypto";
 import { initSchema } from "./schema.js";
 import { createSqliteOutcomeStore } from "./sqlite-outcome-store.js";
+import { systemNowMs } from "@comis/core";
 import type { OutcomeObservation } from "@comis/core";
 
 // ---------------------------------------------------------------------------
@@ -238,6 +239,45 @@ describe("createSqliteOutcomeStore", () => {
     });
   });
 
-  // prune() suite is added in Task 3.
+  describe("prune() — age-based housekeeping (OUTCOME-07 / anti-DoS)", () => {
+    const DAY_MS = 86_400_000;
+
+    it("removes rows older than the cutoff and keeps fresh rows", async () => {
+      const now = systemNowMs();
+      // A fresh row and a 40-day-old row (older than the 30-day cutoff).
+      await store.observe(makeObs({ trajectoryId: "fresh", observedAt: now }));
+      await store.observe(makeObs({ trajectoryId: "stale", observedAt: now - 40 * DAY_MS }));
+
+      const result = store.prune(30);
+      expect(result.changes).toBe(1);
+      expect(rowCount("stale")).toBe(0); // the 40-day-old row is gone
+      expect(rowCount("fresh")).toBe(1); // the fresh row remains
+    });
+
+    it("returns { changes: 0 } and removes nothing on an all-fresh table", async () => {
+      const now = systemNowMs();
+      await store.observe(makeObs({ trajectoryId: "fresh1", observedAt: now }));
+      await store.observe(makeObs({ trajectoryId: "fresh2", observedAt: now - DAY_MS }));
+      const result = store.prune(30);
+      expect(result.changes).toBe(0);
+      expect(rowCount("fresh1")).toBe(1);
+      expect(rowCount("fresh2")).toBe(1);
+    });
+
+    it("prunes by age across the whole table (tenant/agent-agnostic housekeeping), never touching rows newer than the cutoff", async () => {
+      const now = systemNowMs();
+      // Stale rows under TWO different (tenant, agent) pairs + one fresh row.
+      await store.observe(makeObs({ tenantId: "tenant_a", trajectoryId: "ta_old", observedAt: now - 40 * DAY_MS }));
+      await store.observe(makeObs({ tenantId: "tenant_b", trajectoryId: "tb_old", observedAt: now - 40 * DAY_MS }));
+      await store.observe(makeObs({ tenantId: "tenant_a", trajectoryId: "ta_new", observedAt: now }));
+
+      const result = store.prune(30);
+      expect(result.changes).toBe(2); // both stale rows, regardless of tenant
+      expect(rowCount("ta_old", "tenant_a")).toBe(0);
+      expect(rowCount("tb_old", "tenant_b")).toBe(0);
+      expect(rowCount("ta_new", "tenant_a")).toBe(1); // newer than cutoff — untouched
+    });
+  });
+
   void SCOPE_A;
 });
