@@ -150,6 +150,14 @@ export function buildAgentTerminalDurability(i: AgentTerminalDurabilityInputs): 
     onReattached: ({ sessionId, agentId }) => {
       // DUR-01 (I5/I3): the re-attach ran under the SAME persisted allow-entry; the content-free
       // record carries ids only (the screen the drive resumed on rides the detached tmux, never the bus).
+      //
+      // ME-01 (165-REVIEW) — observability note: this fires from the registry's recover-on-boot,
+      // which can run DURING the FLOOR-01 boot sweep BEFORE setupTerminalWake subscribes
+      // terminal:drive_reattached (the boot race). So the BUS event may be lost on the boot path
+      // (BL-02's lazy-seed makes RESUME independent of it). `terminal:drive_reattached` is also NOT
+      // in observability's TRAJECTORY_BRIDGE_MAPPING (no trajectory record). Therefore the
+      // AUTHORITATIVE §9 "reconstruct a 40h drive's restart via comis explain" record is the INFO
+      // log BELOW (it fires here regardless of any subscriber), NOT the bus event — by design.
       i.eventBus.emit("terminal:drive_reattached", { sessionId, agentId, reason: "tmux_alive", timestamp: i.nowMs() });
       i.logger.info({ sessionId, agentId, step: "drive_reattached" }, "terminal durable drive re-attached on recover-on-boot");
     },

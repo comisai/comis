@@ -231,6 +231,12 @@ export interface TerminalEvents {
    * CONTENT-FREE (I3): sessionId / agentId + a single-member `reason` enum (the WHY it
    * re-attached, NEVER the screen) / timestamp ONLY. The screen the drive resumed on rides the
    * detached tmux session, never the bus.
+   *
+   * OBSERVABILITY NOTE (165-REVIEW ME-01): this event can fire DURING the daemon's boot sweep
+   * BEFORE the wake-FSM subscribes (the recover-on-boot race), and it is NOT in observability's
+   * TRAJECTORY_BRIDGE_MAPPING — so the AUTHORITATIVE §9 boot re-attach record an operator
+   * reconstructs via `comis explain` is the INFO log at the emit site
+   * (`terminal-durable-wiring.ts`'s onReattached), which survives regardless of any subscriber.
    */
   "terminal:drive_reattached": {
     sessionId: string;
