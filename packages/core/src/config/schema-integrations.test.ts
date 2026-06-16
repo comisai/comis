@@ -297,6 +297,20 @@ describe("MediaConfigSchema - documentExtraction nesting", () => {
     expect(withVideo.imageGeneration).toEqual(imageOnly.imageGeneration);
   });
 
+  // ─── RES-03 / CFG-01 (193): keyless-first STT/TTS default flip ──────────────
+
+  it("defaults transcription.provider to auto (keyless-first, RES-03 flip)", () => {
+    // RES-03: the headline default flip — a fresh install with no audio key
+    // resolves STT via `auto` (keyless-first / follow-main) instead of
+    // constructing an empty-bearer OpenAI adapter (the 401 this milestone fixes).
+    expect(MediaConfigSchema.parse({}).transcription.provider).toBe("auto");
+  });
+
+  it("defaults tts.provider to edge (keyless, RES-03 flip)", () => {
+    // RES-03: TTS defaults to the keyless Edge provider (zero credentials).
+    expect(MediaConfigSchema.parse({}).tts.provider).toBe("edge");
+  });
+
   it("accepts explicit documentExtraction overrides", () => {
     const result = MediaConfigSchema.parse({
       documentExtraction: { maxPages: 10 },
