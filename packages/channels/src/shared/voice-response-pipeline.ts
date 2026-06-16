@@ -355,11 +355,21 @@ export async function executeVoiceResponse(
     }
 
     // Step 13: Success
+    // OBS-01 §2.7 completion INFO — extend with the §17 voice-identity fields
+    // (provider/keyless/model) the wiring threads in. costUsd is logged as 0 for
+    // a keyless provider (so "free" is visible, not absent) and OMITTED for a
+    // keyed provider (no per-call cost source today — FLAG 4). The selection
+    // `source` rung is the Phase-193 resolver-only field the pipeline tier does
+    // not receive; the daemon RPC path (Plan 03) owns `source` on the trajectory.
     deps.logger.info(
       {
         channelType: ctx.channelType,
         durationMs: systemNowMs() - startMs,
         durationSecs: payload.durationSecs,
+        ...(deps.ttsConfig.provider !== undefined ? { provider: deps.ttsConfig.provider } : {}),
+        ...(deps.ttsConfig.keyless !== undefined ? { keyless: deps.ttsConfig.keyless } : {}),
+        ...(deps.ttsConfig.model !== undefined ? { model: deps.ttsConfig.model } : {}),
+        ...(deps.ttsConfig.keyless === true ? { costUsd: 0 } : {}),
       },
       "Voice response sent",
     );

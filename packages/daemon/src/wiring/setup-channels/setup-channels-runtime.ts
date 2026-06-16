@@ -155,6 +155,11 @@ export async function buildAndStartChannelManager(
       : ttsConfig.provider === "edge" ? "edge"
       : "openai";
 
+    // OBS-01 (Phase 196): the keyless TTS providers (the `edge` default + the
+    // offline `local`/Piper engine) need no credential — surface that on the
+    // §2.7 voice-out completion INFO so "free" ($0) is visible, not absent.
+    const ttsKeyless = ttsConfig.provider === "edge" || ttsConfig.provider === "local";
+
     voiceResponsePipeline = {
       ttsAdapter: deps.ttsAdapter,
       audioConverter: deps.audioConverter,
@@ -173,10 +178,14 @@ export async function buildAndStartChannelManager(
         maxTextLength: ttsConfig.maxTextLength,
         outputFormats: ttsConfig.outputFormats,
         providerFormatKey,
+        // OBS-01 voice-identity for the §2.7 completion INFO (provider/keyless/model).
+        provider: ttsConfig.provider,
+        keyless: ttsKeyless,
+        ...(ttsConfig.model !== undefined ? { model: ttsConfig.model } : {}),
       },
       logger: channelsLogger,
     };
-    channelsLogger.debug({ autoMode: ttsConfig.autoMode, providerFormatKey }, "Voice response pipeline wired");
+    channelsLogger.debug({ autoMode: ttsConfig.autoMode, providerFormatKey, provider: ttsConfig.provider, keyless: ttsKeyless }, "Voice response pipeline wired");
   }
 
   let commandQueue: CommandQueue | undefined;
