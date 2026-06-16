@@ -278,12 +278,14 @@ export const TerminalDriverConfigSchema = z.strictObject({
       maxCostUsd: z.number().nullable().default(null),
       /**
        * NOTIFY-01 — which terminal-outcome notifications reach the USER: `terminal`
-       * (default) = `done`/`needs-you`/`failed` only; `all` = every wake (DEBUG-ONLY);
-       * `none` = non-escalation suppressed. I4: an escalation STILL fires under `none`
-       * (a needs-you IS a terminal notification) — `notify` NEVER weakens SEC-12
-       * escalate-always / SEC-11 loop-guard, it only gates the uninteresting middle.
-       * Default `terminal` preserves the conservative spam-free posture. Carries no
-       * privilege/path/credential (I5) — a policy knob only.
+       * (default) = `done`/`needs-you`/`failed` only; `all` = RESERVED for a future
+       * per-wake debug stream and **currently behaves exactly like `terminal`** (the
+       * per-wake notification is not yet implemented — WR-02); `none` = non-escalation
+       * suppressed. I4: an escalation STILL fires under `none` (a needs-you IS a terminal
+       * notification) — `notify` NEVER weakens SEC-12 escalate-always / SEC-11 loop-guard,
+       * it only gates the uninteresting middle. Default `terminal` preserves the
+       * conservative spam-free posture. Carries no privilege/path/credential (I5) — a
+       * policy knob only.
        */
       notify: z.enum(["terminal", "all", "none"]).default("terminal"),
       /**

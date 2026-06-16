@@ -97,7 +97,7 @@ agents:
           durable: false                # true ⇒ detached tmux: survive a daemon restart, re-attach + resume
           heartbeatMs: 90000            # internal liveness backstop (default 90s) — not a poll, not a user message
           maxCostUsd: null              # per-drive spend ceiling in USD (null = uncapped)
-          notify: terminal              # which outcomes reach you: terminal (default) | all (debug) | none — see Notifications
+          notify: terminal              # which outcomes reach you: terminal (default) | all (reserved; today == terminal) | none — see Notifications
           heartbeatNotifyMs: 3600000    # user "still working" heartbeat for a long drive (default 1h; 0 = terminal-only)
 ```
 
@@ -231,7 +231,7 @@ agents:
           durable: true            # detached tmux: survive a daemon restart, re-attach + resume
           heartbeatMs: 90000       # internal liveness backstop (90s) — not a user message, not a poll
           maxCostUsd: 25.0         # per-drive spend ceiling (null ⇒ uncapped)
-          notify: terminal         # which outcomes reach YOU: terminal (default) | all (debug) | none
+          notify: terminal         # which outcomes reach YOU: terminal (default) | all (reserved; today == terminal) | none
           heartbeatNotifyMs: 3600000  # user "still working" heartbeat for a long drive (1h; 0 ⇒ terminal-only)
 ```
 
@@ -247,7 +247,7 @@ A long drive's hundreds of event-woken turns stay **out** of your conversation (
 
 - **`drive.notify`** -- `terminal` (default) / `all` / `none`. Which outcomes reach you.
   - `terminal` -- you are notified **only on a terminal outcome** (`done` / `needs-you` / `failed`). The uninteresting middle -- a safe prompt the policy answered itself, a still-working frame -- stays silent. The recommended default.
-  - `all` -- every wake notifies. **Debug-only** (it re-floods your conversation with per-wake noise -- the very thing promotion exists to prevent).
+  - `all` -- **reserved for a future per-wake debug stream; currently behaves exactly like `terminal`.** The per-wake notification (a line on every answered/waited turn) is **not yet implemented**, so today `all` fires the same terminal outcomes as `terminal` and nothing more. Set it if you want the future debug behavior the moment it ships; until then it carries no extra noise.
   - `none` -- the non-escalation outcomes (`done`, `failed`) **and** the heartbeat are suppressed. **An escalation (`needs-you`) still fires.** `notify: none` is **not** a security off-switch: it never weakens escalate-always (an auth/approval/destructive prompt always reaches you) or the loop guard. It silences only the routine outcomes.
 
 - **`drive.heartbeatNotifyMs`** -- a coarse "still working" progress heartbeat to you for a **promoted (long)** drive, so a 40-hour build is not 40 hours of silence. Default `3600000` (1h); `0` = **terminal-only** (no heartbeat). It is a bounded one-liner from the drive's journal (`still working — elapsed Xh, last activity <digest>, N interactions, ~$Y`). A **short** (unpromoted) drive emits **none**. This is **distinct** from `drive.heartbeatMs` (the [internal liveness backstop](#endurance--liveness) -- not a user message); the two are independent knobs.
