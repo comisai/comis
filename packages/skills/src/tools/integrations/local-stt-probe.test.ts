@@ -21,6 +21,38 @@ import { detectLocalSttEngine } from "./local-stt-probe.js";
 // without a real dep load. Inert for the tests above (they inject canImportEngine).
 vi.mock("@huggingface/transformers", () => ({ env: {}, pipeline: vi.fn() }));
 
+// Mock undici so the SEC-02 pinned reachability fetch is observable without real
+// network/DNS (CR-01). `Agent` is a real class with a `close` spy and captures
+// the IP createPinnedAgent pinned; `fetch` delegates to `globalThis.fetch` so the
+// existing `globalThis.fetch` orchestration still drives `defaultReachable`, while
+// the dispatcher each call receives is recorded to prove the validated IP is pinned.
+const { mockAgentClose, undiciFetchCalls } = vi.hoisted(() => {
+  const mockAgentClose = vi.fn().mockResolvedValue(undefined);
+  const undiciFetchCalls: Array<{ url: unknown; init: Record<string, unknown> | undefined; pinnedIp?: string }> = [];
+  return { mockAgentClose, undiciFetchCalls };
+});
+
+vi.mock("undici", () => {
+  class MockAgent {
+    pinnedIp?: string;
+    close = mockAgentClose;
+    constructor(opts?: { connect?: { lookup?: (...a: unknown[]) => void } }) {
+      const lookup = opts?.connect?.lookup;
+      if (lookup) {
+        lookup("placeholder.host", {}, (_e: unknown, address: string) => {
+          this.pinnedIp = address;
+        });
+      }
+    }
+  }
+  const fetch = (url: unknown, init?: Record<string, unknown>) => {
+    const dispatcher = init?.dispatcher as { pinnedIp?: string } | undefined;
+    undiciFetchCalls.push({ url, init, pinnedIp: dispatcher?.pinnedIp });
+    return (globalThis.fetch as unknown as (...a: unknown[]) => unknown)(url, init);
+  };
+  return { Agent: MockAgent, fetch };
+});
+
 describe("detectLocalSttEngine", () => {
   it("reports available with mode 'baseUrl' and does NOT consult the in-process engine when the baseUrl is reachable", async () => {
     const fetchProbe = vi.fn(async () => true);
@@ -197,6 +229,8 @@ describe("detectLocalSttEngine", () => {
 describe("detectLocalSttEngine — default seams (real fetch + real lazy import)", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    undiciFetchCalls.length = 0;
+    mockAgentClose.mockClear();
   });
 
   it("uses the default reachability fetch when none is injected — a resolving fetch to a loopback baseUrl → mode 'baseUrl'", async () => {
@@ -214,6 +248,26 @@ describe("detectLocalSttEngine — default seams (real fetch + real lazy import)
     // ANY response status proves the server is up → reachable → mode baseUrl.
     expect(result).toMatchObject({ available: true, mode: "baseUrl" });
     expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("PINS the default reachability fetch to the validated IP (DNS-rebinding/TOCTOU closed — the CR-01 RED-proof)", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 404 }));
+
+    const result = await detectLocalSttEngine({
+      baseUrl: "http://127.0.0.1:8123",
+      ffmpegAvailable: false,
+    });
+
+    expect(result).toMatchObject({ available: true, mode: "baseUrl" });
+    // defaultReachable must fetch through undici with a dispatcher pinned to the
+    // IP `validateLocalServerUrl` resolved (loopback) — NOT a plain global
+    // re-resolving fetch (the pre-fix code, which carries no dispatcher → RED).
+    expect(undiciFetchCalls).toHaveLength(1);
+    const call = undiciFetchCalls[0]!;
+    expect(call.url).toBe("http://127.0.0.1:8123");
+    expect(call.init?.dispatcher).toBeDefined();
+    expect(call.pinnedIp).toBe("127.0.0.1");
+    expect(mockAgentClose).toHaveBeenCalled();
   });
 
   it("default reachability fetch resolves not-reachable (falls through) when fetch rejects", async () => {
