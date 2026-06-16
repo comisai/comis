@@ -1075,4 +1075,331 @@ describe("setupTerminalWake — the keystone subscribe + woken-turn driver (124-
 
     expect(synthStuckEmits(b), "a lazily-recovered drive that hangs must synthesize a stuck (ME-02)").toHaveLength(1);
   });
+
+  // -------------------------------------------------------------------------
+  // NOTIFY-01/02 outcome + heartbeat wiring (166-03). The keystone holder now
+  // DERIVES the user-facing done/failed outcomes at onStateChange/onEvicted (gated
+  // by drive.notify, capturing wasPromoted+journal BEFORE onSessionGone clears them,
+  // naming the cap on onEvicted), keeps the escalation notify UNCONDITIONAL (I4),
+  // and arms a SECOND coarse user-facing heartbeat timer (NOTIFY-02), distinct from
+  // the LIVE-01 internal backstop. The pure decision/digest fns are 166-01's siblings;
+  // these tests pin the WIRING (the outcome fires deps.notify; the heartbeat ticks;
+  // the gate suppresses; the ordering captures-before-clear).
+  // RED on pre-patch: the holder has no done/failed/heartbeat notify + no notifyPolicy
+  // / heartbeatNotifyMs deps — a promoted exit/lost/evict fires only the drive-started
+  // notify (never an outcome), and no second timer is armed.
+  // -------------------------------------------------------------------------
+  describe("NOTIFY-01/02 outcome + heartbeat wiring (166-03)", () => {
+    /** The heartbeat cadence used in these tests — DISTINCT from heartbeatMs so the timer is isolable. */
+    const HEARTBEAT_NOTIFY_MS = 3_600_000;
+
+    /**
+     * Build with the NOTIFY-01/02 wiring exercised: a fake TimerPort + a controllable clock
+     * (for the heartbeat tick), an optional seeded journal store (so a promoted drive carries a
+     * heartbeat-able journal), and the two new operator deps `notifyPolicy` + `heartbeatNotifyMs`.
+     * Mirrors `buildBackstop` (the fake-timer harness) — but for the user-facing outcome+heartbeat
+     * path, NOT the LIVE-01 backstop (no `checkLiveness`, so the backstop never arms; only the
+     * heartbeat timer is under test). The screen drives whether a wake escalates (I4 tests).
+     */
+    function buildNotify(
+      dataDir: string,
+      opts: {
+        screen: string;
+        notifyPolicy?: "terminal" | "all" | "none";
+        heartbeatNotifyMs?: number;
+        hintPatterns?: string[];
+        seed?: Map<string, DriveJournalShape>;
+      },
+    ): Built & { fake: ReturnType<typeof makeFakeTimers>; clock: { now: number }; js: ReturnType<typeof makeJournalStore> } {
+      const bus = makeBus();
+      const registry = makeRegistry({ screen: opts.screen });
+      const logger = makeLogger();
+      const notify = vi.fn(async () => undefined);
+      const fake = makeFakeTimers();
+      const clock = { now: 100_000 };
+      const js = makeJournalStore(opts.seed);
+      const registries = new Map<string, ReturnType<typeof makeRegistry>>([["a", registry]]);
+      const deps = {
+        eventBus: bus as unknown as SetupTerminalWakeDeps["eventBus"],
+        registries: registries as unknown as SetupTerminalWakeDeps["registries"],
+        getTerminalAttentionConfig: () => ({ autoAnswer: "safe-only" as const, hintPatterns: opts.hintPatterns ?? ["press enter to continue"], maxHops: 5, maxConcurrentAttentionTurns: 2 }),
+        notify,
+        dataDir,
+        nowMs: () => clock.now,
+        logger: logger as unknown as SetupTerminalWakeDeps["logger"],
+        timers: fake.timers,
+        driveJournalStore: js.store,
+        // The 166-03 operator deps under test.
+        notifyPolicy: opts.notifyPolicy ?? "terminal",
+        heartbeatNotifyMs: opts.heartbeatNotifyMs ?? HEARTBEAT_NOTIFY_MS,
+      } as unknown as SetupTerminalWakeDeps;
+      const handle = setupTerminalWake(deps);
+      return { bus, registry, logger, notify, handle, fake, clock, js };
+    }
+
+    /** The notify calls that are a terminal OUTCOME (done/failed) — NOT the drive-started promotion line. */
+    function outcomeNotifies(b: Built): Array<{ agentId: string; message: string }> {
+      return notifyCalls(b)
+        .filter((c) => /\b(done|completed|failed)\b/i.test(c.message) && !/running in the background/i.test(c.message))
+        .map((c) => ({ agentId: c.agentId, message: c.message }));
+    }
+
+    /** The heartbeat notifies — the NOTIFY-02 "still working" digest line. */
+    function heartbeatNotifies(b: Built): Array<{ agentId: string; message: string }> {
+      return notifyCalls(b)
+        .filter((c) => /still working/i.test(c.message))
+        .map((c) => ({ agentId: c.agentId, message: c.message }));
+    }
+
+    /** Fire ONLY the heartbeat interval (the one armed at the heartbeat cadence) — not the backstop's. */
+    function tickHeartbeat(b: Built & { fake: ReturnType<typeof makeFakeTimers> }, cadenceMs = HEARTBEAT_NOTIFY_MS): void {
+      for (const i of b.fake.intervals) if (i.intervalMs === cadenceMs) i.cb();
+    }
+
+    // --- DONE (NOTIFY-01) -------------------------------------------------
+
+    it("notifies exactly ONE content-free done when a PROMOTED session's PTY exits (high-confidence exited → done)", async () => {
+      const b = buildNotify(dataDir, { screen: "Building…" });
+      built = b;
+      b.bus.fireDrivePromoted("s-done", "a", "producing");
+      await flush();
+      b.bus.emit("terminal:session_state", { sessionId: "s-done", agentId: "a", state: "exited", durationMs: 0, timestamp: 3 });
+      await flush();
+
+      const done = outcomeNotifies(b);
+      expect(done, "a promoted clean exit notifies exactly one done").toHaveLength(1);
+      expect(done[0]).toMatchObject({ agentId: "a" });
+      expect(done[0]!.message).toContain("s-done");
+      // Content-free (I3): the done message carries the sessionId + the outcome enum, never screen text.
+      expect(done[0]!.message, "the done message must NOT leak screen text (I3)").not.toMatch(/Building/);
+    });
+
+    it("does NOT notify an outcome when an UNPROMOTED (inline short) session exits (I1 — byte-identical)", async () => {
+      const b = buildNotify(dataDir, { screen: "$ " });
+      built = b;
+      // No promotion — an inline drive. Its exit must stay byte-identical (no outcome notify, I1).
+      b.bus.emit("terminal:session_state", { sessionId: "s-inline", agentId: "a", state: "exited", durationMs: 0, timestamp: 3 });
+      await flush();
+      expect(outcomeNotifies(b), "an unpromoted exit must emit NO outcome notify (I1)").toHaveLength(0);
+    });
+
+    // --- FAILED (NOTIFY-01; lands the 165 deferral) -----------------------
+
+    it("notifies exactly ONE failed with an errorKind when a PROMOTED durable session goes lost (unrecoverable)", async () => {
+      const seeded = new Map<string, DriveJournalShape>([
+        ["a/s-lost", { objective: "build", lastClassification: "working", lastScreenDigest: "compiling", answeredPrompts: [], stepsTried: [], elapsedMs: 7_200_000, interactions: 12, costUsd: 0, truncations: 0 }],
+      ]);
+      const b = buildNotify(dataDir, { screen: "Building…", seed: seeded });
+      built = b;
+      // Re-attach (which promotes + seeds the journal) → then the durable session goes lost.
+      b.bus.emit("terminal:drive_reattached", { sessionId: "s-lost", agentId: "a", reason: "tmux_alive", timestamp: 1 });
+      await flush();
+      b.bus.emit("terminal:session_state", { sessionId: "s-lost", agentId: "a", state: "lost", durationMs: 0, timestamp: 9 });
+      await flush();
+
+      const failed = outcomeNotifies(b);
+      expect(failed, "a promoted lost notifies exactly one failed").toHaveLength(1);
+      expect(failed[0]!.message.toLowerCase(), "the failed message names the failed outcome").toContain("failed");
+      // The §2.7 record carries errorKind + hint (a failure branch, not just an INFO).
+      const warn = b.logger.warn.mock.calls.find((c) => (c[0] as { step?: string })?.step === "drive_outcome");
+      expect(warn, "a failed outcome must WARN with step:drive_outcome").toBeDefined();
+      expect((warn![0] as { errorKind?: string }).errorKind, "a lost failure is errorKind:dependency").toBe("dependency");
+      expect(typeof (warn![0] as { hint?: string }).hint, "a failed WARN carries a §2.7 hint").toBe("string");
+      // The captured interactions (from the journal, BEFORE onSessionGone cleared it) ride the record.
+      expect((warn![0] as { interactions?: number }).interactions, "the captured journal interactions ride the failed record (capture-before-clear)").toBe(12);
+    });
+
+    it("notifies exactly ONE failed NAMING the cap when a PROMOTED session is evicted by a named cap (wall_clock)", async () => {
+      const b = buildNotify(dataDir, { screen: "Building…" });
+      built = b;
+      b.bus.fireDrivePromoted("s-cap", "a", "producing");
+      await flush();
+      b.bus.emit("terminal:session_evicted", { sessionId: "s-cap", agentId: "a", reason: "wall_clock", durationMs: 0, timestamp: 5 });
+      await flush();
+
+      const failed = outcomeNotifies(b);
+      expect(failed, "a named cap-eviction notifies exactly one failed").toHaveLength(1);
+      // The cap name rides the message AND the §2.7 record (a deliberate bound, not a mystery — I9).
+      expect(failed[0]!.message, "the failed message NAMES the cap (wall_clock)").toContain("wall_clock");
+      const warn = b.logger.warn.mock.calls.find((c) => (c[0] as { step?: string })?.step === "drive_outcome");
+      expect(warn, "a cap failure WARNs with step:drive_outcome").toBeDefined();
+      expect((warn![0] as { errorKind?: string }).errorKind, "a cap failure is errorKind:resource").toBe("resource");
+      expect((warn![0] as { capName?: string }).capName, "the §2.7 record names the cap").toBe("wall_clock");
+    });
+
+    it("references the captured journal+promoted state even though onSessionGone clears them (capture-before-clear ordering)", async () => {
+      // onSessionGone deletes promotedSessions + driveJournals; the outcome derivation MUST read
+      // them FIRST. Pin: a promoted exit still notifies done — proving wasPromoted was captured
+      // before onSessionGone ran (if the order were reversed, promotedSessions.has would be false
+      // and the done would be suppressed).
+      const b = buildNotify(dataDir, { screen: "Building…" });
+      built = b;
+      b.bus.fireDrivePromoted("s-order", "a", "producing");
+      await flush();
+      b.bus.emit("terminal:session_state", { sessionId: "s-order", agentId: "a", state: "exited", durationMs: 0, timestamp: 3 });
+      await flush();
+      expect(outcomeNotifies(b), "the outcome derivation captured wasPromoted BEFORE onSessionGone cleared it").toHaveLength(1);
+    });
+
+    // --- I9 (never fail a healthy long/quiet drive) -----------------------
+
+    it("emits NO failed for a healthy long/quiet promoted drive that never goes lost or evicted (I9)", async () => {
+      const b = buildNotify(dataDir, { screen: "Compiling…" });
+      built = b;
+      b.bus.fireDrivePromoted("s-long", "a", "producing");
+      await flush();
+      // A 40h drive that emits only working/busy wakes — NEVER lost, NEVER evicted.
+      for (let i = 0; i < 8; i++) {
+        b.bus.fireInputNeeded("s-long", "a", `working_frame_${i}`);
+        await flush();
+      }
+      // No lost, no evict → no genuine death → NO failed (the I9 invariant is structural upstream).
+      expect(outcomeNotifies(b).filter((o) => /failed/i.test(o.message)), "a healthy long/quiet drive must never be reported failed (I9)").toHaveLength(0);
+    });
+
+    it("does NOT report failed for a transient lost on an UNPROMOTED session (only a promoted durable lost is a failure)", async () => {
+      const b = buildNotify(dataDir, { screen: "$ " });
+      built = b;
+      // An unpromoted session going lost is today's behavior — no user-facing failed (I1/I9).
+      b.bus.emit("terminal:session_state", { sessionId: "s-transient", agentId: "a", state: "lost", durationMs: 0, timestamp: 9 });
+      await flush();
+      expect(outcomeNotifies(b), "an unpromoted lost emits no failed (I1)").toHaveLength(0);
+    });
+
+    // --- I4 (escalation always fires; done/failed suppressed under none) ---
+
+    it("STILL fires the escalation notify under notifyPolicy:none (I4 — an escalation is never gated)", async () => {
+      const b = buildNotify(dataDir, { screen: "Permanently delete all files? (y/n)", notifyPolicy: "none", hintPatterns: ["(y/n)"] });
+      built = b;
+      // A destructive prompt → escalate-always WINS, even under notify:"none" (the I4 canary).
+      b.bus.fireInputNeeded("s-esc", "a");
+      await flush();
+
+      const escalated = b.bus.emitted.find((e) => e.event === "terminal:escalated");
+      expect(escalated, "a destructive screen must still escalate under notify:none").toBeDefined();
+      // The escalation reaches the user via deps.notify even under "none" (I4 — never suppressed).
+      const notifs = notifyCalls(b);
+      expect(notifs.some((c) => /needs a human|delete|escalat/i.test(c.message) || c.origin === "background_task"), "the escalation notify must fire under notify:none (I4)").toBe(true);
+      expect(notifs.length, "the escalation under none produced at least one notify").toBeGreaterThanOrEqual(1);
+    });
+
+    it("SUPPRESSES the done outcome under notifyPolicy:none (a promoted exit emits no done) while leaving the escalation path intact", async () => {
+      const b = buildNotify(dataDir, { screen: "Building…", notifyPolicy: "none" });
+      built = b;
+      b.bus.fireDrivePromoted("s-q", "a", "producing");
+      await flush();
+      // The drive-started promotion notify already fired (that is NOT gated — it is the 164 path).
+      b.notify.mockClear();
+      b.bus.emit("terminal:session_state", { sessionId: "s-q", agentId: "a", state: "exited", durationMs: 0, timestamp: 3 });
+      await flush();
+      expect(outcomeNotifies(b), "done is suppressed under notify:none").toHaveLength(0);
+    });
+
+    it("SUPPRESSES the failed outcome under notifyPolicy:none (a promoted named cap-eviction emits no failed notify)", async () => {
+      const b = buildNotify(dataDir, { screen: "Building…", notifyPolicy: "none" });
+      built = b;
+      b.bus.fireDrivePromoted("s-qc", "a", "producing");
+      await flush();
+      b.notify.mockClear();
+      b.bus.emit("terminal:session_evicted", { sessionId: "s-qc", agentId: "a", reason: "wall_clock", durationMs: 0, timestamp: 5 });
+      await flush();
+      expect(outcomeNotifies(b), "failed is suppressed under notify:none").toHaveLength(0);
+    });
+
+    // --- HEARTBEAT (NOTIFY-02) -------------------------------------------
+
+    it("arms a SECOND user-facing heartbeat interval at heartbeatNotifyMs and .unref()'s the handle (distinct from the LIVE-01 backstop)", () => {
+      const b = buildNotify(dataDir, { screen: "Building…", heartbeatNotifyMs: HEARTBEAT_NOTIFY_MS });
+      built = b;
+      const hb = b.fake.intervals.find((i) => i.intervalMs === HEARTBEAT_NOTIFY_MS);
+      expect(hb, "a user-facing heartbeat interval must be armed at heartbeatNotifyMs").toBeDefined();
+      expect(hb!.handle.unrefCalls, "the heartbeat handle must be .unref()'d (never holds the loop open on SIGTERM)").toBeGreaterThanOrEqual(1);
+    });
+
+    it("emits a content-free heartbeat for a PROMOTED drive at the cadence carrying the journal digest", async () => {
+      const seeded = new Map<string, DriveJournalShape>([
+        ["a/s-hb", { objective: "build", lastClassification: "working", lastScreenDigest: "12r 80c, 3 changed", answeredPrompts: [], stepsTried: [], elapsedMs: 7_200_000, interactions: 5, costUsd: 1.25, truncations: 0 }],
+      ]);
+      const b = buildNotify(dataDir, { screen: "Building…", seed: seeded });
+      built = b;
+      // Re-attach promotes + seeds the journal (the heartbeat reads driveJournals + sessionAgent).
+      b.bus.emit("terminal:drive_reattached", { sessionId: "s-hb", agentId: "a", reason: "tmux_alive", timestamp: 1 });
+      await flush();
+      // Advance the clock past the cadence, then fire the heartbeat interval.
+      b.clock.now += HEARTBEAT_NOTIFY_MS + 1;
+      tickHeartbeat(b);
+      await flush();
+
+      const beats = heartbeatNotifies(b);
+      expect(beats, "a promoted drive emits a heartbeat at the cadence").toHaveLength(1);
+      expect(beats[0]).toMatchObject({ agentId: "a" });
+      // The line is the content-free digest: the already-redacted lastScreenDigest, never raw bytes (I3).
+      expect(beats[0]!.message, "the heartbeat carries the journal digest").toContain("12r 80c, 3 changed");
+      expect(beats[0]!.message.toLowerCase(), "the heartbeat is the 'still working' progress line").toContain("still working");
+      // A §2.7 INFO heartbeat record (content-free, not DEBUG-only).
+      const info = b.logger.info.mock.calls.find((c) => (c[0] as { step?: string })?.step === "drive_heartbeat");
+      expect(info, "a heartbeat must emit an INFO step:drive_heartbeat record").toBeDefined();
+    });
+
+    it("emits NO heartbeat for a SHORT (unpromoted) drive — only promoted drives are heartbeated (I1)", async () => {
+      const b = buildNotify(dataDir, { screen: "$ " });
+      built = b;
+      // A plain unpromoted session present, but never promoted → not in promotedSessions.
+      b.bus.fireInputNeeded("s-short", "a");
+      await flush();
+      b.clock.now += HEARTBEAT_NOTIFY_MS + 1;
+      tickHeartbeat(b);
+      await flush();
+      expect(heartbeatNotifies(b), "an unpromoted short drive emits no heartbeat (I1)").toHaveLength(0);
+    });
+
+    it("arms NO heartbeat timer when heartbeatNotifyMs is 0 — but a terminal outcome (exited → done) STILL fires", async () => {
+      const b = buildNotify(dataDir, { screen: "Building…", heartbeatNotifyMs: 0 });
+      built = b;
+      // 0 ⇒ terminal-only: the heartbeat cadence interval must NEVER be armed (Pitfall 5).
+      const armedAtZero = b.fake.intervals.find((i) => i.intervalMs === 0);
+      expect(armedAtZero, "heartbeatNotifyMs:0 must arm NO heartbeat interval").toBeUndefined();
+      // But terminal outcomes are independent of the heartbeat — a promoted exit still notifies done.
+      b.bus.fireDrivePromoted("s-zero", "a", "producing");
+      await flush();
+      b.bus.emit("terminal:session_state", { sessionId: "s-zero", agentId: "a", state: "exited", durationMs: 0, timestamp: 3 });
+      await flush();
+      expect(outcomeNotifies(b), "a terminal outcome still fires under heartbeatNotifyMs:0").toHaveLength(1);
+    });
+
+    it("arms NO heartbeat timer under notifyPolicy:none (the heartbeat is a non-escalation notification, suppressed)", () => {
+      const b = buildNotify(dataDir, { screen: "Building…", notifyPolicy: "none", heartbeatNotifyMs: HEARTBEAT_NOTIFY_MS });
+      built = b;
+      const hb = b.fake.intervals.find((i) => i.intervalMs === HEARTBEAT_NOTIFY_MS);
+      expect(hb, "under notify:none the heartbeat timer must NOT be armed").toBeUndefined();
+    });
+
+    it("cancels the heartbeat interval on shutdown (no leaked timer)", async () => {
+      const b = buildNotify(dataDir, { screen: "Building…", heartbeatNotifyMs: HEARTBEAT_NOTIFY_MS });
+      const hb = b.fake.intervals.find((i) => i.intervalMs === HEARTBEAT_NOTIFY_MS);
+      await b.handle.shutdown();
+      built = undefined; // already shut down
+      expect(hb!.handle.cancelCalls, "shutdown must cancel the heartbeat interval").toBeGreaterThanOrEqual(1);
+    });
+
+    // --- wiring source guards (the extraction + the cap-name fix + the deps) ---
+
+    it("routes the outcome derivation through the 166-01 siblings + the extracted terminal-wake-notify helper (source guard)", () => {
+      const src = readFileSync(fileURLToPath(new URL("./setup-terminal-wake.ts", import.meta.url)), "utf8");
+      // The holder consumes the pure outcome map + the extracted emit helper.
+      expect(src, "the holder must derive the outcome via mapTerminalOutcome").toMatch(/mapTerminalOutcome/);
+      expect(src, "the holder must call the extracted emitTerminalOutcome helper").toMatch(/emitTerminalOutcome/);
+      // The onEvicted cap-name fix: the reason (currently dropped at :572) is read.
+      expect(src, "onEvicted must read e.reason to name the cap (the dropped-reason fix)").toMatch(/e\.reason/);
+      // The new operator dep is threaded.
+      expect(src, "the holder must accept a notifyPolicy dep").toMatch(/notifyPolicy/);
+    });
+
+    it("extracts the notify-gating + heartbeat loop into a terminal-wake-notify.ts sibling so the holder stays under the 800-line cap", () => {
+      const holder = readFileSync(fileURLToPath(new URL("./setup-terminal-wake.ts", import.meta.url)), "utf8");
+      expect(holder.split("\n").length, "setup-terminal-wake.ts must stay <= 800 lines via the extraction").toBeLessThanOrEqual(800);
+      // The extracted sibling exists and is imported.
+      expect(holder, "the holder must import the extracted terminal-wake-notify sibling").toMatch(/terminal-wake-notify/);
+    });
+  });
 });
