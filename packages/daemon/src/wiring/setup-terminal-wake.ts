@@ -51,7 +51,7 @@ import {
 import { buildWokenTurnDriver, type TerminalAttentionConfig, type WokenTurnNotify } from "./terminal-wake-turn.js";
 import { removeWakeStateFile, type PersistedWakeOwner } from "./terminal-wake-persistence.js";
 import { driveScopeKeyFor, registryOwnerFor } from "./terminal-drive-scope.js";
-import { emitTerminalOutcome, runHeartbeatTick, type TerminalNotifyDeps } from "./terminal-wake-notify.js";
+import { emitTerminalOutcome, runHeartbeatTick, shouldFailOnLost, type TerminalNotifyDeps } from "./terminal-wake-notify.js";
 
 /** Dependencies for the keystone wake wiring. */
 export interface SetupTerminalWakeDeps {
@@ -641,17 +641,16 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
     }
   };
   // NOTIFY-01 (166-03): derive + emit the user-facing terminal outcome for a PROMOTED drive,
-  // CAPTURING wasPromoted + the journal + the drive-start BEFORE onSessionGone clears them
-  // (the Open-Q2 ordering constraint — onSessionGone deletes promotedSessions/driveJournals/
-  // driveStartedAtMs). An UNPROMOTED session emits nothing (I1 — today's byte-identical path).
-  // The `done`/`failed` derivation + gating + the §2.7 record live in the extracted helper
-  // (terminal-wake-notify.ts), keeping this holder under the 800-line cap. needs-you is NEVER
-  // routed here — the escalate() paths own it UNCONDITIONALLY (I4).
+  // CAPTURING wasPromoted + journal + drive-start BEFORE onSessionGone clears them (the Open-Q2
+  // ordering constraint). An UNPROMOTED session emits nothing (I1). The done/failed derivation +
+  // gating + §2.7 record live in the extracted sibling (terminal-wake-notify.ts). needs-you is
+  // NEVER routed here — the escalate() paths own it UNCONDITIONALLY (I4).
   const emitOutcomeBeforeGone = (
     sessionId: string,
     transition: "exited" | "lost" | "evicted",
     capName: EvictReason | undefined,
     disposition: "remove" | "preserve",
+    lostReason?: string,
   ): void => {
     const wasPromoted = promotedSessions.has(sessionId);
     const j = driveJournals.get(sessionId);
@@ -666,20 +665,28 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
       agentId,
       transition,
       ...(capName !== undefined ? { capName } : {}),
+      // WR-03: thread the genuine-death reason so the `failed` message + WARN name the actual cause.
+      ...(lostReason !== undefined ? { lostReason } : {}),
       durationMs: startedAt !== undefined ? nowMs() - startedAt : undefined,
       interactions: j?.interactions,
     });
   };
-  // A reaper/operator eviction is a CLEAN end-of-life → remove the durable journal. The event
-  // carries the named cap reason (events-terminal.ts:97-103) — READ it to name the cap on the
-  // `failed` outcome (the dropped-reason fix; previously `(e)=>onSessionGone(e.sessionId,"remove")`).
+  // A reaper/operator eviction is a CLEAN end-of-life → remove the durable journal + name the cap
+  // on the `failed` outcome (events-terminal.ts:97-103). The eviction path is the SOLE owner of the
+  // cap-eviction outcome; CR-01 makes the reaper's companion plain lost inert (not a genuine death),
+  // so this no longer double-fires regardless of emit order (WR-01 resolved by CR-01).
   const onEvicted = (e: { sessionId: string; reason?: EvictReason }): void =>
     emitOutcomeBeforeGone(e.sessionId, "evicted", e.reason, "remove");
-  const onStateChange = (e: { sessionId: string; state: string }): void => {
-    // A clean PTY `exited` removes the durable journal (→ done); a `lost` (crash / unrecoverable)
-    // is a genuine death whose journal is PRESERVED for a fresh drive to resume (→ failed; I10).
+  // CR-01 (Phase 166): map `lost` → `failed` ONLY for a GENUINE death (unrecoverable:true, from
+  // durable-wiring's onUnrecoverable — the pure `shouldFailOnLost` lives in the sibling, IN-02). A
+  // transient/recoverable lost (worker-crash respawn / reaper plain-lost / re-attaching durable
+  // drive) reclaims state only — NO `failed` (I9/I10). `exited` → done. WR-03: reason rides through.
+  const onStateChange = (e: { sessionId: string; state: string; unrecoverable?: boolean; reason?: string }): void => {
     if (e.state === "exited") emitOutcomeBeforeGone(e.sessionId, "exited", undefined, "remove");
-    else if (e.state === "lost") emitOutcomeBeforeGone(e.sessionId, "lost", undefined, "preserve");
+    else if (e.state === "lost") {
+      if (shouldFailOnLost(e.unrecoverable)) emitOutcomeBeforeGone(e.sessionId, "lost", undefined, "preserve", e.reason);
+      else onSessionGone(e.sessionId, "preserve");
+    }
   };
   deps.eventBus.on("terminal:session_evicted", onEvicted);
   deps.eventBus.on("terminal:session_state", onStateChange);

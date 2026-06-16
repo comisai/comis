@@ -13,7 +13,7 @@
 
 import { describe, it, expect, vi } from "vitest";
 
-import { emitTerminalOutcome, runHeartbeatTick, type TerminalNotifyDeps, type TerminalOutcomeArgs, type HeartbeatTickArgs } from "./terminal-wake-notify.js";
+import { emitTerminalOutcome, runHeartbeatTick, shouldFailOnLost, type TerminalNotifyDeps, type TerminalOutcomeArgs, type HeartbeatTickArgs } from "./terminal-wake-notify.js";
 import type { NotifyPolicy, DriveJournal } from "@comis/skills/tools";
 
 interface NotifyHarness {
@@ -83,13 +83,40 @@ describe("emitTerminalOutcome — the gated done/failed emit + the §2.7 record 
     expect(deps.notify.mock.calls[0]![0].message).toContain("wall_clock");
   });
 
-  it("falls back to a structural cap name when an evicted transition carries no capName", () => {
+  it("WR-04: an evicted transition with NO capName reads as an explicit UNKNOWN cap — never a fabricated max_sessions", () => {
     const deps = makeNotifyDeps("terminal");
     emitTerminalOutcome(deps.deps, { sessionId: "s-2", agentId: "a", transition: "evicted" });
     // Still a failed (resource) — a missing cap defaults to a safe structural label, never throws.
     const warn = deps.warn.mock.calls.find((c) => (c[0] as { step?: string })?.step === "drive_outcome");
     expect((warn![0] as { errorKind?: string }).errorKind).toBe("resource");
     expect(deps.notify).toHaveBeenCalledTimes(1);
+    const msg = deps.notify.mock.calls[0]![0].message as string;
+    // WR-04: the message must NOT fabricate a plausible-but-false cap name (max_sessions).
+    expect(msg, "a missing cap must NOT be reported as a fabricated max_sessions").not.toContain("max_sessions");
+    // It reads honestly as an unknown cap ("(cap unknown)" / "unknown") rather than a real cap.
+    expect(msg.toLowerCase(), "a missing cap reads as an explicit unknown, not a real cap").toContain("unknown");
+    // The §2.7 record does NOT stamp a fabricated capName field either (it only records a REAL cap).
+    expect((warn![0] as { capName?: string }).capName, "no fabricated capName is recorded for an unknown cap").toBeUndefined();
+    // The hint names the unknown cap honestly, never max_sessions.
+    expect((warn![0] as { hint: string }).hint, "the §2.7 hint must not fabricate a cap").not.toContain("max_sessions");
+  });
+
+  it("WR-03: a lost transition threads the REAL unrecoverable reason onto the §2.7 record + hint (not a generic session_lost)", () => {
+    const deps = makeNotifyDeps("terminal");
+    emitTerminalOutcome(deps.deps, { ...baseArgs, transition: "lost", lostReason: "tmux_reattach_failed" });
+    const warn = deps.warn.mock.calls.find((c) => (c[0] as { step?: string })?.step === "drive_outcome");
+    expect((warn![0] as { outcome?: string }).outcome).toBe("failed");
+    // The real reason rides the record's reason field AND the hint (so `comis explain` names it).
+    expect((warn![0] as { reason?: string }).reason, "the real unrecoverable reason rides the §2.7 record (WR-03)").toBe("tmux_reattach_failed");
+    expect((warn![0] as { hint: string }).hint, "the §2.7 hint names the actual cause, not a generic lost").toContain("tmux_reattach_failed");
+  });
+
+  it("WR-03: a lost transition with NO lostReason falls back to the generic session_lost (never throws)", () => {
+    const deps = makeNotifyDeps("terminal");
+    emitTerminalOutcome(deps.deps, { ...baseArgs, transition: "lost" });
+    const warn = deps.warn.mock.calls.find((c) => (c[0] as { step?: string })?.step === "drive_outcome");
+    expect((warn![0] as { reason?: string }).reason, "absent lostReason falls back to the generic tag").toBe("session_lost");
+    expect((warn![0] as { hint: string }).hint).toContain("session_lost");
   });
 
   it("SKIPS the channel notify under policy none but STILL emits the §2.7 record (the gated-skip)", () => {
@@ -220,5 +247,26 @@ describe("runHeartbeatTick — the NOTIFY-02 per-tick heartbeat loop body (166-0
     await new Promise((r) => setImmediate(r));
     const warn = args.warn.mock.calls.find((c) => (c[0] as { step?: string })?.step === "drive_heartbeat_notify_failed");
     expect(warn, "a heartbeat notify rejection degrades to a WARN").toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CR-01 (the I9/I10 BLOCKER): `shouldFailOnLost` — the pure genuine-death
+// discriminator the wake holder's onStateChange consumes. ONLY an explicit
+// unrecoverable:true is a genuine death (→ map to failed); a transient/recoverable
+// lost (worker-crash respawn / a re-attaching durable drive — undefined / false)
+// must NEVER fail (the SAFE direction is "do not fail" — I9/I10).
+// ---------------------------------------------------------------------------
+describe("shouldFailOnLost — the CR-01 genuine-death discriminator (I9/I10)", () => {
+  it("returns true ONLY for an explicit unrecoverable:true (the genuine death)", () => {
+    expect(shouldFailOnLost(true)).toBe(true);
+  });
+
+  it("returns false for an UNSET (undefined) marker — a transient/recoverable lost (worker-crash respawn / re-attach)", () => {
+    expect(shouldFailOnLost(undefined), "an absent marker is a recoverable lost → never failed (I9/I10)").toBe(false);
+  });
+
+  it("returns false for an explicit false marker (the SAFE direction is do-not-fail)", () => {
+    expect(shouldFailOnLost(false)).toBe(false);
   });
 });

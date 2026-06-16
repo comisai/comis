@@ -36,6 +36,29 @@ export interface TerminalEvents {
     agentId: string;
     state: "created" | "running" | "exited" | "lost";
     /**
+     * CR-01 (Phase 166): the GENUINE-DEATH discriminator for a `lost` transition. `lost`
+     * has TWO indistinguishable-on-the-bus sources: a genuinely unrecoverable death
+     * (terminal-durable-wiring.ts `onUnrecoverable` — the durable tmux is truly gone on
+     * recover-on-boot; the ONLY I9-legitimate user-facing `failed`) and a TRANSIENT
+     * worker-process crash that respawns (terminal-worker-supervisor.ts → the fd3 re-publish;
+     * the supervisor's own hint says "worker will re-spawn") or a durable session that
+     * re-attaches (I10). Set `true` ONLY at the genuine-death emit; ABSENT on a
+     * transient/recoverable `lost` (a worker-crash respawn or the reaper's plain lost). The
+     * NOTIFY-01 wake holder maps `lost` → `failed` ONLY when this is `true` — otherwise it
+     * reclaims in-memory state with NO `failed` notification (the I9/I10 invariant). A boolean
+     * flag, content-free (I3).
+     */
+    unrecoverable?: boolean;
+    /**
+     * CR-01 / WR-03 (Phase 166): the content-free unrecoverable reason (a SHORT structural
+     * tag, e.g. `"tmux_session_gone"`) carried ONLY on a genuine-death `lost` (paired with
+     * `unrecoverable:true`) so NOTIFY-01 / `comis explain` can name the actual cause on the
+     * `failed` outcome + the §2.7 WARN, rather than a generic "session_lost". A machine tag,
+     * NEVER screen text / keystrokes / command output (the redacted detail rides the structured
+     * LOG, never the bus — I3).
+     */
+    reason?: string;
+    /**
      * DUAL MEANING by `state`: on `created` it is the create
      * OPERATION duration (`doneAt - start` of the spawn); on `lost` (the reaper/cap
      * eviction transition) it is the session's TOTAL wall-clock LIFETIME at eviction

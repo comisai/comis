@@ -88,7 +88,12 @@ export interface OutcomeInputs {
    */
   failure?:
     | { kind: "unrecoverable"; reason: string }
-    | { kind: "cap"; cap: EvictReason }
+    // WR-04 (Phase 166): `cap` carries the NAMED cap that tripped, or the explicit `"unknown"`
+    // sentinel when the eviction arrives without a cap name — NEVER a fabricated plausible cap
+    // (`max_sessions`). A closed structural value; the user message reads "(cap unknown)". The
+    // outcome map does not branch on `cap` (a cap-eviction is `failed` regardless), so this only
+    // governs how honestly the cap is LABELLED downstream.
+    | { kind: "cap"; cap: EvictReason | "unknown" }
     | undefined;
 }
 

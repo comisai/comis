@@ -60,7 +60,11 @@ import type { ComisLogger } from "@comis/infra";
  */
 export interface DurabilityEventBus {
   emit(event: "terminal:drive_reattached", payload: { sessionId: string; agentId: string; reason: "tmux_alive"; timestamp: number }): unknown;
-  emit(event: "terminal:session_state", payload: { sessionId: string; agentId: string; state: "lost"; durationMs: number; timestamp: number }): unknown;
+  // CR-01 (Phase 166): the genuine-death lost emit now carries the `unrecoverable:true`
+  // discriminator + the content-free `reason` (WR-03) so the NOTIFY-01 wake holder maps it to
+  // a user-facing `failed` (a transient/recoverable lost — the worker-crash respawn / reaper
+  // path — leaves both UNSET, so it is NOT reported failed; I9/I10). Both content-free (I3).
+  emit(event: "terminal:session_state", payload: { sessionId: string; agentId: string; state: "lost"; unrecoverable?: boolean; reason?: string; durationMs: number; timestamp: number }): unknown;
 }
 
 /** The stamped registry owner for a drive-scoped session — the forcing-use-case owner (I5). */
@@ -166,7 +170,15 @@ export function buildAgentTerminalDurability(i: AgentTerminalDurabilityInputs): 
       // unrecoverable reason (the journal is PRESERVED by the holder; NOTIFY-01 layers `failed`).
       // errorKind is the literal "dependency" (a gone backend) — the closed-union invariant
       // requires a literal here, not the forwarded payload field (which is always "dependency").
-      i.eventBus.emit("terminal:session_state", { sessionId, agentId, state: "lost", durationMs: 0, timestamp: i.nowMs() });
+      //
+      // CR-01 (Phase 166): stamp `unrecoverable:true` + thread the content-free `reason` (e.g.
+      // "tmux_session_gone") onto the lost emit. This is the ONLY emit site that marks the lost
+      // genuine — the worker-crash respawn (setup-terminal-tools.ts:321) + the reaper's plain
+      // lost (setup-terminal-tools.ts:243) deliberately leave both UNSET, so NOTIFY-01 reports
+      // `failed` ONLY for THIS genuine death (I9/I10). The reason rides the user-facing `failed`
+      // outcome + the §2.7 WARN so `comis explain` names the actual cause (WR-03), not a generic
+      // "session_lost".
+      i.eventBus.emit("terminal:session_state", { sessionId, agentId, state: "lost", unrecoverable: true, reason, durationMs: 0, timestamp: i.nowMs() });
       i.logger.warn(
         { sessionId, agentId, reason, hint: `a durable terminal drive could not be re-attached (${reason}); flipped lost with the journal preserved for a fresh drive`, errorKind: "dependency" as const, step: "drive_unrecoverable" },
         "terminal durable drive unrecoverable on recover-on-boot",

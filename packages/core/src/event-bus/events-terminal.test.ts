@@ -756,3 +756,98 @@ describe("TerminalEvents — DUR-01 re-attach signal (terminal:drive_reattached)
     expect(seen).toEqual(["created", "running", "exited", "lost"]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 166 CR-01 (v2.24) — the genuine-death DISCRIMINATOR on
+// terminal:session_state.
+//
+// `state:"lost"` has TWO sources that are otherwise indistinguishable on the
+// bus: a GENUINE unrecoverable death (terminal-durable-wiring.ts onUnrecoverable
+// — the durable tmux is truly gone on recover-on-boot, the ONLY I9-legitimate
+// `failed`) and a TRANSIENT worker-process crash that respawns (the supervisor's
+// "worker will re-spawn" path, re-published via the fd3 hook) / a durable session
+// that re-attaches (I10). NOTIFY-01 must map `lost` → user-facing `failed` ONLY
+// for the genuine death, so the event gains an optional `unrecoverable?: boolean`
+// discriminator (set ONLY at the genuine-death emit) + an optional content-free
+// `reason?: string` (a closed structural tag, e.g. "tmux_session_gone") so
+// NOTIFY-01 / `comis explain` can name the actual cause (WR-03) rather than a
+// generic "session_lost".
+//
+// CONTENT-FREE (I3): `unrecoverable` is a boolean flag; `reason` is a SHORT
+// structural tag (NEVER screen text / keystrokes / command output — the redacted
+// detail rides the structured LOG, never the bus). RED on pre-patch:
+// events-terminal.ts declares neither field on the session_state block, so the
+// source-introspection layer (esbuild strips bare type annotations) does not find
+// them and the typed emit below would not typecheck.
+// ---------------------------------------------------------------------------
+describe("TerminalEvents — CR-01 genuine-death discriminator (session_state unrecoverable/reason)", () => {
+  it("declares the optional unrecoverable + reason fields on terminal:session_state (source RED on pre-patch)", () => {
+    const src = readFileSync(resolve(here, "./events-terminal.ts"), "utf8");
+    const match = src.match(/"terminal:session_state":\s*\{[\s\S]*?\n\s*\};/);
+    expect(match, "terminal:session_state block must exist").toBeTruthy();
+    const block = match![0];
+    // The genuine-death discriminator — an OPTIONAL boolean (absent on a transient/recoverable lost).
+    expect(block, "session_state must declare an optional unrecoverable?: boolean").toMatch(/unrecoverable\?:\s*boolean/);
+    // The content-free unrecoverable reason — an OPTIONAL short structural tag (string).
+    expect(block, "session_state must declare an optional reason?: string").toMatch(/reason\?:\s*string/);
+  });
+
+  it("the session_state block carries NO raw screen/text/keys/payload/command field even with the new discriminator (I3 content-free)", () => {
+    // The new fields are a boolean flag + a closed structural tag — they must NOT open a
+    // raw-bytes door. The block remains counts/ids/enums/flags only.
+    const src = readFileSync(resolve(here, "./events-terminal.ts"), "utf8");
+    const match = src.match(/"terminal:session_state":\s*\{[\s\S]*?\n\s*\};/);
+    expect(match, "terminal:session_state block must exist").toBeTruthy();
+    const block = match![0];
+    expect(block, "no screen field").not.toMatch(/^\s*screen[?]?:/m);
+    expect(block, "no raw text field").not.toMatch(/^\s*text[?]?:/m);
+    expect(block, "no raw keys field").not.toMatch(/^\s*keys[?]?:/m);
+    expect(block, "no raw keystroke field").not.toMatch(/^\s*keystroke[?]?:/m);
+    expect(block, "no payload field").not.toMatch(/^\s*payload[?]?:/m);
+    expect(block, "no command field").not.toMatch(/^\s*command[?]?:/m);
+  });
+
+  it("terminal:session_state carries the genuine-death discriminator on a lost emit (unrecoverable + reason round-trip)", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    // A genuine unrecoverable death: the durable tmux is gone on recover-on-boot.
+    const payload: EventMap["terminal:session_state"] = {
+      sessionId: "sess-gone",
+      agentId: "agent-1",
+      state: "lost",
+      unrecoverable: true,
+      reason: "tmux_session_gone",
+      durationMs: 0,
+      timestamp: 1,
+    };
+
+    bus.on("terminal:session_state", handler);
+    bus.emit("terminal:session_state", payload);
+
+    expect(handler).toHaveBeenCalledWith(payload);
+    const received = handler.mock.calls[0]![0] as EventMap["terminal:session_state"];
+    expect(received.state).toBe("lost");
+    expect(received.unrecoverable, "a genuine death carries unrecoverable:true").toBe(true);
+    expect(received.reason, "the genuine death carries its content-free structural reason").toBe("tmux_session_gone");
+  });
+
+  it("terminal:session_state on a TRANSIENT/recoverable lost leaves the discriminator UNSET (a worker-crash respawn is NOT a genuine death)", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    // A transient worker-crash lost (the supervisor respawns) — NO unrecoverable marker.
+    const payload: EventMap["terminal:session_state"] = {
+      sessionId: "sess-crash",
+      agentId: "agent-1",
+      state: "lost",
+      durationMs: 0,
+      timestamp: 2,
+    };
+
+    bus.on("terminal:session_state", handler);
+    bus.emit("terminal:session_state", payload);
+
+    const received = handler.mock.calls[0]![0] as EventMap["terminal:session_state"];
+    // The absence of the discriminator is what tells NOTIFY-01 this is NOT a genuine death.
+    expect(received.unrecoverable, "a transient/recoverable lost leaves unrecoverable unset (I9/I10)").toBeUndefined();
+  });
+});

@@ -39,6 +39,16 @@ import { mapTerminalOutcome, shouldNotifyOutcome, heartbeatLine, type NotifyPoli
 import type { WokenTurnNotify } from "./terminal-wake-turn.js";
 
 /**
+ * WR-04 (Phase 166): the explicit "unknown cap" sentinel for an `evicted` outcome that arrives
+ * WITHOUT a cap name. Used in place of a fabricated plausible cap (`max_sessions`) so a missing
+ * cap reads honestly as "(cap unknown)" in the user message + the `failed` outcome — naming the
+ * WRONG cap would violate I9 ("name the cap so it reads as a choice, not a mystery"). In practice
+ * the reaper always supplies a cap (events-terminal.ts), so this is a defensive floor, not a hot
+ * path. It is a closed structural tag (matches the pure `OutcomeInputs.failure` `cap` widening).
+ */
+const CAP_UNKNOWN = "unknown" as const;
+
+/**
  * The narrow structural surface {@link emitTerminalOutcome} + {@link runHeartbeatTick} hand
  * their I/O to (a `Pick`-style contract, not the full `SetupTerminalWakeDeps`). The holder
  * binds these to its injected `notify` chain + the bound child logger + its clock + the
@@ -58,6 +68,29 @@ export interface TerminalNotifyDeps {
   policy: NotifyPolicy;
 }
 
+/**
+ * CR-01 (Phase 166): the GENUINE-DEATH discriminator for a `lost` transition — the pure
+ * decision the wake holder's `onStateChange` consumes so the holder stays under the 800-line
+ * cap (IN-02) and the I9/I10 invariant is RED-pinnable without a live CLI.
+ *
+ * `terminal:session_state{state:"lost"}` has TWO indistinguishable-on-the-bus sources: a
+ * genuinely unrecoverable death (terminal-durable-wiring.ts `onUnrecoverable` — the durable
+ * tmux is truly gone on recover-on-boot; stamps `unrecoverable:true`) and a TRANSIENT
+ * worker-process crash that respawns / a durable session that re-attaches (both leave
+ * `unrecoverable` UNSET). The user-facing `failed` outcome fires ONLY for the genuine death.
+ *
+ * Pure + total — never throws. The SAFE direction is `false` (do NOT fail): an absent /
+ * `undefined` / `false` marker is a transient/recoverable lost (a promoted long drive whose
+ * worker briefly crashes, or a re-attaching durable drive, is NEVER reported failed — I9/I10).
+ * ONLY an explicit `true` is a genuine death.
+ *
+ * @param unrecoverable - The genuine-death discriminator off the `terminal:session_state` event.
+ * @returns `true` iff the `lost` is a genuine death (→ map to `failed`); `false` otherwise.
+ */
+export function shouldFailOnLost(unrecoverable: boolean | undefined): boolean {
+  return unrecoverable === true;
+}
+
 /** The content-free outcome the holder derived from a state transition (DUR-02 / NOTIFY-01). */
 export interface TerminalOutcomeArgs {
   readonly sessionId: string;
@@ -65,11 +98,20 @@ export interface TerminalOutcomeArgs {
   /**
    * The transition the holder observed — `exited` (clean PTY exit → done) or a genuine death:
    * `lost` (durable + unrecoverable → failed) / `evicted` (a NAMED cap → failed naming the cap).
-   * `needs-you` is NEVER passed here (the existing escalate() path owns it — I4).
+   * `needs-you` is NEVER passed here (the existing escalate() path owns it — I4). A
+   * transient/recoverable `lost` never reaches here (the holder gates it via {@link shouldFailOnLost}).
    */
   readonly transition: "exited" | "lost" | "evicted";
   /** Present ONLY for `evicted` — the named cap the reaper tripped (the dropped-reason fix). */
   readonly capName?: EvictReason | undefined;
+  /**
+   * WR-03 (Phase 166): present ONLY for a genuine-death `lost` — the content-free unrecoverable
+   * reason (a closed structural tag, e.g. `"tmux_session_gone"`) threaded from the
+   * `terminal:session_state` event so the `failed` message + the §2.7 WARN name the actual cause
+   * (`comis explain` reads it) rather than a generic "session_lost". Absent ⇒ fall back to the
+   * generic reason. Content-free (I3 — a machine tag, never screen bytes).
+   */
+  readonly lostReason?: string | undefined;
   /** The captured cumulative drive duration (`nowMs - driveStartedAtMs`), captured before clear. */
   readonly durationMs?: number | undefined;
   /** The captured journal interaction count, captured before onSessionGone cleared the journal. */
@@ -95,13 +137,19 @@ export interface TerminalOutcomeArgs {
  */
 export function emitTerminalOutcome(deps: TerminalNotifyDeps, args: TerminalOutcomeArgs): void {
   // Build the I9-safe outcome inputs: a clean exit → done; a genuine death → failed.
-  // capName present ⇒ a NAMED cap-eviction (errorKind resource); else a lost ⇒ unrecoverable
+  // An `evicted` transition ⇒ a cap-eviction (errorKind resource); a `lost` ⇒ unrecoverable
   // (errorKind dependency). `needs-you` never reaches here (the escalate() path owns it — I4).
+  //
+  // WR-03: a `lost` failure threads the REAL unrecoverable reason (args.lostReason, e.g.
+  // "tmux_session_gone") so the user message + the §2.7 WARN name the actual cause; absent ⇒ the
+  // generic "session_lost" fallback. WR-04: an `evicted` failure NEVER fabricates a cap name —
+  // the failure's `cap` carries the real capName when present, else an explicit unknown sentinel
+  // (CAP_UNKNOWN) so a missing cap reads as "(cap unknown)", not a plausible-but-false cap.
   const failure =
     args.transition === "lost"
-      ? ({ kind: "unrecoverable", reason: "session_lost" } as const)
+      ? ({ kind: "unrecoverable", reason: args.lostReason ?? "session_lost" } as const)
       : args.transition === "evicted"
-        ? ({ kind: "cap", cap: args.capName ?? "max_sessions" } as const)
+        ? ({ kind: "cap", cap: args.capName ?? CAP_UNKNOWN } as const)
         : undefined;
   const outcome = mapTerminalOutcome({ classifier: args.transition === "exited" ? "exited" : "stuck", ...(failure ? { failure } : {}) });
   // The map yields undefined only for the silent middle — which this caller never produces
@@ -112,6 +160,9 @@ export function emitTerminalOutcome(deps: TerminalNotifyDeps, args: TerminalOutc
   if (outcome === "needs-you") return;
 
   const errorKind = failure?.kind === "cap" ? ("resource" as const) : ("dependency" as const);
+  // WR-04: the honest cap label — the real cap name, or an explicit unknown sentinel. NEVER a
+  // fabricated `max_sessions`. Drives both the §2.7 hint and the user message.
+  const capLabel = args.capName ?? CAP_UNKNOWN;
 
   // The §2.7 record — fires regardless of the channel gate (the log is the operator's floor).
   if (outcome === "done") {
@@ -126,13 +177,16 @@ export function emitTerminalOutcome(deps: TerminalNotifyDeps, args: TerminalOutc
         agentId: args.agentId,
         outcome,
         errorKind,
+        // WR-04: record the cap ONLY when it is a real cap name (never the unknown sentinel).
         ...(args.capName !== undefined ? { capName: args.capName } : {}),
+        // WR-03: record the real unrecoverable reason on a lost failure (a closed structural tag).
+        ...(failure?.kind === "unrecoverable" ? { reason: failure.reason } : {}),
         durationMs: args.durationMs,
         interactions: args.interactions,
         hint:
           failure?.kind === "cap"
-            ? `the terminal drive hit the ${args.capName} cap and was evicted; surface it to the user as a deliberate bound, not a crash`
-            : "the terminal drive's session was lost and could not be recovered; the journal is preserved for a fresh drive to resume",
+            ? `the terminal drive hit the ${capLabel} cap and was evicted; surface it to the user as a deliberate bound, not a crash`
+            : `the terminal drive's session was lost and could not be recovered (${failure?.kind === "unrecoverable" ? failure.reason : "session_lost"}); the journal is preserved for a fresh drive to resume`,
         step: "drive_outcome",
       },
       "terminal drive failed",
@@ -143,10 +197,13 @@ export function emitTerminalOutcome(deps: TerminalNotifyDeps, args: TerminalOutc
   // "none"; needs-you would always pass but never reaches here). STRUCTURAL message only (I3).
   if (!deps.notify) return; // bus-only channel (no notify callback) → the log above is the record (I1).
   if (!shouldNotifyOutcome(outcome, deps.policy)) return;
+  // WR-04: on an evicted failure name the cap honestly — the real cap, or "(cap unknown)" — never
+  // a fabricated one. A lost failure carries no cap suffix.
+  const failedSuffix = args.transition === "evicted" ? ` (${capLabel})` : "";
   const message =
     outcome === "done"
       ? `Terminal drive for session ${args.sessionId} completed (done)${describeTail(args)}.`
-      : `Terminal drive for session ${args.sessionId} failed${args.capName !== undefined ? ` (${args.capName})` : ""}${describeTail(args)}.`;
+      : `Terminal drive for session ${args.sessionId} failed${failedSuffix}${describeTail(args)}.`;
   void deps
     .notify({ agentId: args.agentId, message, priority: "normal", origin: "background_task" })
     .catch((err: unknown) => {

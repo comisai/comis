@@ -1199,26 +1199,31 @@ describe("setupTerminalWake — the keystone subscribe + woken-turn driver (124-
 
     // --- FAILED (NOTIFY-01; lands the 165 deferral) -----------------------
 
-    it("notifies exactly ONE failed with an errorKind when a PROMOTED durable session goes lost (unrecoverable)", async () => {
+    it("notifies exactly ONE failed with an errorKind when a PROMOTED durable session goes lost (GENUINE unrecoverable death)", async () => {
       const seeded = new Map<string, DriveJournalShape>([
         ["a/s-lost", { objective: "build", lastClassification: "working", lastScreenDigest: "compiling", answeredPrompts: [], stepsTried: [], elapsedMs: 7_200_000, interactions: 12, costUsd: 0, truncations: 0 }],
       ]);
       const b = buildNotify(dataDir, { screen: "Building…", seed: seeded });
       built = b;
-      // Re-attach (which promotes + seeds the journal) → then the durable session goes lost.
+      // Re-attach (which promotes + seeds the journal) → then the durable session goes GENUINELY
+      // lost. CR-01: ONLY a lost marked `unrecoverable:true` (the durable-wiring onUnrecoverable
+      // emit) is a genuine death → failed. It threads the real content-free reason (WR-03).
       b.bus.emit("terminal:drive_reattached", { sessionId: "s-lost", agentId: "a", reason: "tmux_alive", timestamp: 1 });
       await flush();
-      b.bus.emit("terminal:session_state", { sessionId: "s-lost", agentId: "a", state: "lost", durationMs: 0, timestamp: 9 });
+      b.bus.emit("terminal:session_state", { sessionId: "s-lost", agentId: "a", state: "lost", unrecoverable: true, reason: "tmux_session_gone", durationMs: 0, timestamp: 9 });
       await flush();
 
       const failed = outcomeNotifies(b);
-      expect(failed, "a promoted lost notifies exactly one failed").toHaveLength(1);
+      expect(failed, "a promoted GENUINE lost notifies exactly one failed").toHaveLength(1);
       expect(failed[0]!.message.toLowerCase(), "the failed message names the failed outcome").toContain("failed");
       // The §2.7 record carries errorKind + hint (a failure branch, not just an INFO).
       const warn = b.logger.warn.mock.calls.find((c) => (c[0] as { step?: string })?.step === "drive_outcome");
       expect(warn, "a failed outcome must WARN with step:drive_outcome").toBeDefined();
       expect((warn![0] as { errorKind?: string }).errorKind, "a lost failure is errorKind:dependency").toBe("dependency");
       expect(typeof (warn![0] as { hint?: string }).hint, "a failed WARN carries a §2.7 hint").toBe("string");
+      // WR-03: the REAL unrecoverable reason rides the §2.7 record + the hint (not a generic "session_lost").
+      expect((warn![0] as { reason?: string }).reason, "the genuine-death reason rides the failed record (WR-03)").toBe("tmux_session_gone");
+      expect((warn![0] as { hint: string }).hint, "the §2.7 hint names the actual cause (WR-03)").toContain("tmux_session_gone");
       // The captured interactions (from the journal, BEFORE onSessionGone cleared it) ride the record.
       expect((warn![0] as { interactions?: number }).interactions, "the captured journal interactions ride the failed record (capture-before-clear)").toBe(12);
     });
@@ -1239,6 +1244,30 @@ describe("setupTerminalWake — the keystone subscribe + woken-turn driver (124-
       expect(warn, "a cap failure WARNs with step:drive_outcome").toBeDefined();
       expect((warn![0] as { errorKind?: string }).errorKind, "a cap failure is errorKind:resource").toBe("resource");
       expect((warn![0] as { capName?: string }).capName, "the §2.7 record names the cap").toBe("wall_clock");
+    });
+
+    it("WR-01: the reaper's DUAL emit (session_evicted + the companion plain lost, production order) yields EXACTLY ONE failed naming the cap — no double-notify, no dependency-kind (CR-01 resolves the ordering fragility)", async () => {
+      const b = buildNotify(dataDir, { screen: "Building…" });
+      built = b;
+      b.bus.fireDrivePromoted("s-dual", "a", "producing");
+      await flush();
+      // The PRODUCTION reaper emits BOTH events on every eviction (setup-terminal-tools.ts onEvict,
+      // in this fixed order): the audited session_evicted (the cap) THEN the companion plain
+      // session_state{lost} (the lifecycle transition, NOT marked unrecoverable). Pre-CR-01 the
+      // correctness rested on that emit ORDER (the lost branch suppressed only because onSessionGone
+      // had cleared the promoted flag — fragile). Post-CR-01 the plain lost is not a genuine death,
+      // so it never maps to failed → the eviction path is the unambiguous SOLE outcome owner.
+      b.bus.emit("terminal:session_evicted", { sessionId: "s-dual", agentId: "a", reason: "max_interactions", durationMs: 0, timestamp: 5 });
+      b.bus.emit("terminal:session_state", { sessionId: "s-dual", agentId: "a", state: "lost", durationMs: 0, timestamp: 5 });
+      await flush();
+
+      const failed = outcomeNotifies(b).filter((o) => /failed/i.test(o.message));
+      expect(failed, "the dual reaper emit must yield exactly ONE failed (no double-notify)").toHaveLength(1);
+      expect(failed[0]!.message, "the single failed NAMES the cap (not a dependency-kind lost)").toContain("max_interactions");
+      // Exactly ONE failed §2.7 WARN — and it is the cap (resource) kind, never the lost (dependency) kind.
+      const warns = b.logger.warn.mock.calls.filter((c) => (c[0] as { step?: string })?.step === "drive_outcome");
+      expect(warns, "exactly one failed §2.7 record (no double)").toHaveLength(1);
+      expect((warns[0]![0] as { errorKind?: string }).errorKind, "the cap-eviction owns the outcome (resource, not dependency)").toBe("resource");
     });
 
     it("references the captured journal+promoted state even though onSessionGone clears them (capture-before-clear ordering)", async () => {
@@ -1278,6 +1307,70 @@ describe("setupTerminalWake — the keystone subscribe + woken-turn driver (124-
       b.bus.emit("terminal:session_state", { sessionId: "s-transient", agentId: "a", state: "lost", durationMs: 0, timestamp: 9 });
       await flush();
       expect(outcomeNotifies(b), "an unpromoted lost emits no failed (I1)").toHaveLength(0);
+    });
+
+    // --- CR-01 (the I9/I10 BLOCKER gap): a PROMOTED drive's TRANSIENT/recoverable lost is NOT a
+    //     genuine death → ZERO failed. `terminal:session_state{lost}` is emitted on the transient
+    //     worker-crash respawn path (terminal-worker-supervisor.ts → the fd3 re-publish) AND for a
+    //     durable session that re-attaches (I10) — neither carries `unrecoverable:true`. Only the
+    //     durable-wiring onUnrecoverable genuine death sets it. Pre-fix, onStateChange mapped EVERY
+    //     promoted lost → failed, falsely reporting a healthy/recoverable drive dead (the exact
+    //     false-fire the phase exists to prevent). RED on pre-fix: a promoted transient lost fires
+    //     ONE false failed (the assertion expects ZERO).
+    // ---------------------------------------------------------------------------
+
+    it("CR-01: a PROMOTED (non-durable) drive that goes lost via a TRANSIENT worker crash emits ZERO failed (I9/I10 — the worker re-spawns)", async () => {
+      const b = buildNotify(dataDir, { screen: "Compiling…" });
+      built = b;
+      // A promoted, NON-durable long drive (promotion does not require durability).
+      b.bus.fireDrivePromoted("s-crash", "a", "producing");
+      await flush();
+      // The worker process transiently crashes → the supervisor re-publishes state:"lost" WITHOUT
+      // an `unrecoverable` marker ("worker will re-spawn"). This must NOT be a user-facing failed.
+      b.bus.emit("terminal:session_state", { sessionId: "s-crash", agentId: "a", state: "lost", durationMs: 0, timestamp: 9 });
+      await flush();
+
+      expect(outcomeNotifies(b).filter((o) => /failed/i.test(o.message)), "a promoted transient worker-crash lost must NOT be reported failed (I9/I10)").toHaveLength(0);
+      // And no §2.7 failed WARN was emitted either (the drive is alive/recoverable).
+      const warn = b.logger.warn.mock.calls.find((c) => (c[0] as { step?: string })?.step === "drive_outcome");
+      expect(warn, "a transient lost must NOT emit a failed §2.7 record").toBeUndefined();
+    });
+
+    it("CR-01/I10: a PROMOTED DURABLE drive that emits lost while its tmux is alive (a re-attach) emits ZERO failed", async () => {
+      const seeded = new Map<string, DriveJournalShape>([
+        ["a/s-reattach", { objective: "build", lastClassification: "working", lastScreenDigest: "", answeredPrompts: [], stepsTried: [], elapsedMs: 5_000, interactions: 3, costUsd: 0, truncations: 0 }],
+      ]);
+      const b = buildNotify(dataDir, { screen: "Compiling…", seed: seeded });
+      built = b;
+      // A durable drive recovered + promoted on boot (re-attach).
+      b.bus.emit("terminal:drive_reattached", { sessionId: "s-reattach", agentId: "a", reason: "tmux_alive", timestamp: 1 });
+      await flush();
+      // A transient lost arrives (e.g. the over-broad crash snapshot) but the durable session is
+      // alive and re-attaching (I10) — the emit is NOT marked unrecoverable. ZERO failed.
+      b.bus.emit("terminal:session_state", { sessionId: "s-reattach", agentId: "a", state: "lost", durationMs: 0, timestamp: 9 });
+      await flush();
+
+      expect(outcomeNotifies(b).filter((o) => /failed/i.test(o.message)), "a re-attaching durable drive must NEVER be reported failed (I10)").toHaveLength(0);
+    });
+
+    it("CR-01: a GENUINE unrecoverable lost (unrecoverable:true) on a PROMOTED drive emits EXACTLY ONE failed naming the real reason (WR-03)", async () => {
+      const b = buildNotify(dataDir, { screen: "Building…" });
+      built = b;
+      b.bus.fireDrivePromoted("s-dead", "a", "producing");
+      await flush();
+      // The genuine death: the durable-wiring onUnrecoverable emit marks the lost unrecoverable +
+      // carries the real content-free reason. This is the ONE I9-legitimate failed source.
+      b.bus.emit("terminal:session_state", { sessionId: "s-dead", agentId: "a", state: "lost", unrecoverable: true, reason: "tmux_reattach_failed", durationMs: 0, timestamp: 9 });
+      await flush();
+
+      const failed = outcomeNotifies(b).filter((o) => /failed/i.test(o.message));
+      expect(failed, "a genuine unrecoverable death notifies exactly one failed").toHaveLength(1);
+      // The §2.7 record names the actual cause (WR-03), not a generic "session_lost".
+      const warn = b.logger.warn.mock.calls.find((c) => (c[0] as { step?: string })?.step === "drive_outcome");
+      expect(warn, "a genuine death emits a failed §2.7 record").toBeDefined();
+      expect((warn![0] as { errorKind?: string }).errorKind, "a lost failure is errorKind:dependency").toBe("dependency");
+      expect((warn![0] as { reason?: string }).reason, "the §2.7 record names the real unrecoverable reason (WR-03)").toBe("tmux_reattach_failed");
+      expect((warn![0] as { hint: string }).hint, "the §2.7 hint names the actual cause (WR-03)").toContain("tmux_reattach_failed");
     });
 
     // --- I4 (escalation always fires; done/failed suppressed under none) ---
