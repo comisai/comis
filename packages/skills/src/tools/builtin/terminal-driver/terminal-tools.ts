@@ -1,21 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The eight implemented terminal-driver AgentTool factories (spec §5):
- * `terminal_session_create` / `_read` / `_list` / `_kill` + `_send_text` / `_send_key` /
- * `_resize` / `_wait`. (`terminal_session_status` is the lone stub → `terminal-tools-stubs.ts`.)
- *
- * `create` is the gate composing the whole substrate: (1) ALLOWLIST GATE (`matchAllowEntry`
- * rejects a non-matching binary `permission_denied`; realpath + optional hash pin); (2)
- * FAIL-CLOSED (a `undefined` `detectProvider()` rejects rather than spawn unsandboxed); (3)
- * CANONICALIZE end-to-end (`buildDirectSpawn` is the SOLE realpath + `argsPrefix` site); (4)
- * OBSERVABILITY (success → INFO + `terminal:session_state`; failure → WARN + `terminal:spawn_failed`).
- *
- * `read`/`list`/`kill` + the four interaction tools are thin delegations to the injected,
- * ALREADY-GATED registry. `read` bounds the screen to a digest (READ-01, 164-06) before the
- * redact+wrap; `wait`'s `isComplete:false` survives verbatim and emits ONE content-free
- * `terminal:drive_promoted` on a qualifying wait (DRIVE-02, 164-04 — `out` unchanged; the daemon
- * dedupes to one notify). Architecture: daemon-side but in `@comis/skills`, so it takes an INJECTED
- * structural logger + event bus (never `getLogger` from `@comis/infra`) + an injected `nowMs` clock.
+ * The eight terminal-driver AgentTool factories (spec §5): `terminal_session_create` / `_read` /
+ * `_list` / `_kill` + `_send_text` / `_send_key` / `_resize` / `_wait` (`terminal_session_status`
+ * is the lone stub → `terminal-tools-stubs.ts`). `create` gates the substrate: (1) ALLOWLIST
+ * (`matchAllowEntry` rejects a non-matching binary `permission_denied`; realpath + optional hash
+ * pin); (2) FAIL-CLOSED (`undefined` `detectProvider()` rejects rather than spawn unsandboxed);
+ * (3) CANONICALIZE (`buildDirectSpawn` is the SOLE realpath + `argsPrefix` site); (4) OBSERVABILITY
+ * (success → INFO `terminal:session_state`; failure → WARN `terminal:spawn_failed`). The other seven
+ * thinly delegate to the injected, ALREADY-GATED registry: `read` digests the screen (READ-01)
+ * before redact+wrap; `wait`'s `isComplete:false` emits ONE content-free `terminal:drive_promoted`
+ * on a qualifying wait (DRIVE-02). Daemon-side in `@comis/skills`: INJECTED logger + bus + `nowMs`.
  *
  * @module
  */
