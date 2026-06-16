@@ -650,6 +650,8 @@ export function buildTerminalSharedDeps(
     // Same layer-purity posture as driveMode; `?? "digest"` is the schema default (plan 05's
     // drive.readMode) + the safe pre-block posture (the bounded current screen).
     readMode: deps.config?.drive?.readMode ?? "digest",
+    // DUR-01 (FINDING-B): drive.durable threaded to the create tool (same layer-purity posture) → create stamps req.durable:true → the registry derives the tmux name + selects the tmux backend (the survive-a-daemon-restart drive). Was UNWIRED: durable was a no-op, every session ran pty.
+    durable: deps.config?.drive?.durable ?? false,
     // The operator approval gate — consulted only when a matched entry sets
     // approveOnCreate (else the create path is unchanged); a demanding entry with no
     // gate fail-closes in the tool.

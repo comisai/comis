@@ -53,6 +53,7 @@ import type { TerminalScope } from "./allowlist-matcher.js";
 import { allocateSessionWorkspace, cleanupSessionWorkspace, resolveCreateWorkspace } from "./terminal-workspace.js";
 import { sameOwner, type SessionOwner } from "./terminal-session-owner.js";
 import { wireRegistryReaper, type EvictReason, type ReaperCaps } from "./terminal-reaper.js";
+import { tmuxSessionName } from "./terminal-tmux-backend.js";
 import {
   // DUR-01 (165-06): recover-on-boot scan + rehydrate + durable-lost gate (sibling-owned, cap headroom — Pitfall 5).
   applyRecoveredSessions,
@@ -497,20 +498,19 @@ export function createTerminalSessionRegistry(
       // Stamp the origin (owner-scoped list/read/get/kill/send*). The owner rides
       // the HANDLE only — NEVER the worker frame (the worker is owner-agnostic).
       owner,
-      // DUR-01: stamp the durable marker + re-attach key (the durable-aware lost gate, Q4); absent for a spawn session (I1).
-      ...(req.durable ? { durable: true, tmuxName: req.tmuxName } : {}),
+      // DUR-01: stamp the durable marker + re-attach key (the durable-aware lost gate, Q4); absent for a spawn session (I1). FINDING-B: the registry DERIVES the deterministic comis-<sessionId> name (the tool cannot — sessionId is generated HERE), so durable engages without the caller supplying tmuxName.
+      ...(req.durable ? { durable: true, tmuxName: req.tmuxName ?? tmuxSessionName(sessionId) } : {}),
     };
     sessions.set(sessionId, handle);
 
     // DUR-01: persist the durable descriptor at CREATE-time, BEFORE the create frame (Pitfall 6 — no orphan window); non-durable persists nothing (I1).
     if (req.durable && deps.durability?.descriptorStore !== undefined) {
       deps.durability.descriptorStore.persist(
-        buildSessionDescriptor({ sessionId, tmuxName: req.tmuxName, allowId: req.allowId, owner, cols: req.cols, rows: req.rows, createdAt, scope: req.scope }),
+        buildSessionDescriptor({ sessionId, tmuxName: req.tmuxName ?? tmuxSessionName(sessionId), allowId: req.allowId, owner, cols: req.cols, rows: req.rows, createdAt, scope: req.scope }),
       );
     }
 
-    // Forward the daemon-canonical {bin,argv} VERBATIM (buildDirectSpawn, the SOLE
-    // canonicalization site; argsPrefix preserved end-to-end). Fired WITHOUT
+    // Forward the daemon-canonical {bin,argv} VERBATIM (buildDirectSpawn, the SOLE canonicalization site; argsPrefix preserved end-to-end). Fired WITHOUT
     // blocking the turn, but we register an ASYNC create-reply waiter: a failed
     // backend spawn replies `ok:false` → flip the session to `lost` (list/read agree
     // alive:false) + fire the `onSpawnFailed` hook. The waiter resolves out-of-band.
@@ -528,9 +528,9 @@ export function createTerminalSessionRegistry(
       scope: req.scope,
       workspace, // the registry-allocated per-session jail dir (or caller override)
       cwd,
-      // The daemon-resolved bwrap path rides the frame so the worker's fail-closed
-      // branch reads it (undefined ⇒ no spawn, session lost).
+      // The daemon-resolved bwrap path rides the frame for the worker's fail-closed branch (undefined ⇒ no spawn, lost).
       bwrapPath: deps.bwrapPath,
+      ...(req.durable ? { backend: "tmux" } : {}), // FINDING-B: a durable drive selects the tmux backend (terminal-worker-entry.ts reads p["backend"]).
     });
     pending.set(`${sessionId}:${createFrame.requestId}`, (reply) => {
       if (reply.ok) return; // backend spawned — leave the session running.

@@ -173,6 +173,7 @@ export interface TerminalToolDeps {
    * `"digest"` (the bounded current screen) — `diff`/`full` honored when supplied.
    */
   readonly readMode?: DriveReadMode;
+  readonly durable?: boolean; // DUR-01 (FINDING-B): drive.durable (daemon-supplied like driveMode); true ⇒ create stamps req.durable:true → the registry derives the tmux name + selects the tmux backend (durable survive-restart). Default false.
   /**
    * The per-session usage caps — a SHARED per-agent instance the daemon builds from the
    * matched entry's `limits` AND threads into the registry's `onCapForget` (eviction forgets
@@ -417,8 +418,7 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
         // Scrollback is NOT an agent-facing param — the create surface
         // exposes only {allowId,command,args,cwd,cols,rows,...} to the model. The
         // per-session emulator's retained-memory ceiling is sourced from
-        // DEFAULT_SCROLLBACK (operator config later), so the agent cannot inflate
-        // per-session memory. The CreateParams schema is unchanged.
+        // DEFAULT_SCROLLBACK (operator config later), so the agent cannot inflate per-session memory. The CreateParams schema is unchanged.
         //
         // The sandbox scope is sourced EXCLUSIVELY from the matched
         // allow entry (operator closed config) — NEVER from `params`. The agent has
@@ -432,7 +432,7 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
             cols,
             rows,
             scrollback: DEFAULT_SCROLLBACK,
-            scope: matched.entry.scope,
+            scope: matched.entry.scope, ...(deps.durable ? { durable: true } : {}), // FINDING-B: drive.durable → req.durable → the registry derives the tmux name + selects the tmux backend.
           },
           // Stamp the origin so this session is visible ONLY to its owner.
           resolveOwner(deps),
