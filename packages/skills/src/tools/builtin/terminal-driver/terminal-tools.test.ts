@@ -1104,7 +1104,7 @@ describe("terminal-tools — DRIVE-02 the wait tool emits terminal:drive_promote
     expect(JSON.stringify(payload)).not.toContain("secret-token-on-screen");
   });
 
-  it("emits exactly ONE content-free INFO record on promotion (§2.7) — sessionId + reason, never the screen", async () => {
+  it("emits exactly ONE content-free INFO record on promotion (§2.7) — sessionId + agentId + reason, never the screen", async () => {
     const registry = makeFakeRegistry({ waitImpl: async () => PRODUCING_TIMEOUT });
     const logger = makeCapturingLogger();
     const tool = createTerminalSessionWaitTool(baseDeps(registry, { logger, driveMode: "auto" }));
@@ -1114,6 +1114,9 @@ describe("terminal-tools — DRIVE-02 the wait tool emits terminal:drive_promote
     const info = logger.logs.filter((l) => l.level === "info" && l.obj.step === "drive_promote");
     expect(info).toHaveLength(1);
     expect(info[0]!.obj.sessionId).toBe("s1");
+    // OBS: the promote INFO record must carry the REAL agentId (the daemon event already does) —
+    // a missing agentId here read as `undefined` while debugging the live drive (2026-06-16).
+    expect(info[0]!.obj.agentId).toBe("agent-1");
     expect(info[0]!.obj.reason).toBe("producing");
     expect(JSON.stringify(info[0]!.obj)).not.toContain("secret-token-on-screen");
   });

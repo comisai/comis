@@ -706,3 +706,57 @@ describe("terminal-wake-turn — DUR-02/I10: the resume-no-re-answer guard", () 
     expect(src, "the turn must guard a resumed already-answered prompt via answeredPrompts.includes").toMatch(/answeredPrompts\.includes\(/);
   });
 });
+
+// ===========================================================================
+// ISSUE-3 (live VPS 2026-06-16): a DETACHED drive whose session was created in a
+// request context (chat-API / Telegram) is STAMPED under owner (userId, nonEmptyKey)
+// — terminal-tools.ts resolveOwner. The worker→daemon re-publish drops that identity
+// (setup-terminal-tools.ts emits agentId only), so the daemon wake path builds
+// (realAgentId, ""), and registryOwnerFor cannot recover the userId/sessionKey. The
+// woken-turn driver must recover the STAMPED owner the registry holds (registry.getOwner)
+// and thread IT into status/read/sendText — else every detached channel/API drive strands.
+// ===========================================================================
+describe("terminal-wake-turn — ISSUE-3: a channel/API-stamped session drives via the recovered STAMPED owner (getOwner)", () => {
+  it("drives the LIVE session stamped under (userId, nonEmptyKey) — RED pre-fix (registryOwnerFor → not-found view → no drive)", async () => {
+    const STAMPED = { agentId: "openai-api", sessionKey: "default:openai-api:openai" };
+    const liveView = { screen: SAFE_SCREEN, cursor: { x: 0, y: 0 }, cols: 80, rows: 24, alt: false, alive: true };
+    const notFoundView = { screen: "", cursor: { x: 0, y: 0 }, cols: 0, rows: 0, alt: false, alive: false };
+    const owned = (o: { agentId?: string; sessionKey?: string }): boolean =>
+      o?.agentId === STAMPED.agentId && o?.sessionKey === STAMPED.sessionKey;
+    const sendText = vi.fn(async () => ({ screen: "ok", cursor: { x: 1, y: 1 }, delivered: true }));
+    const registry = {
+      // The registry HOLDS the session's stamped owner — the daemon's trusted recovery seam.
+      getOwner: vi.fn((_id: string) => STAMPED),
+      sendText,
+      get: vi.fn((_id: string, o: { agentId?: string; sessionKey?: string }) => (owned(o) ? { sessionId: "s", owner: STAMPED } : undefined)),
+      status: vi.fn(async (_id: string, o: { agentId?: string; sessionKey?: string }) =>
+        owned(o)
+          ? { state: "awaiting-input" as const, lastActivity: 0, interactions: 1, cursorParked: true, screenDiffEmpty: true }
+          : { state: "exited" as const, lastActivity: 0, interactions: 0, cursorParked: false, screenDiffEmpty: true },
+      ),
+      read: vi.fn(async (_id: string, o: { agentId?: string; sessionKey?: string }) => (owned(o) ? liveView : notFoundView)),
+      evict: vi.fn(async () => undefined),
+      kill: vi.fn(async () => undefined),
+    };
+    // registries is keyed by the REAL agentId; the wake owner the daemon derives is (realAgentId, "").
+    const registries = new Map([["default", registry]]);
+    const deps: WokenTurnDriverDeps = {
+      registries: registries as unknown as WokenTurnDriverDeps["registries"],
+      getTerminalAttentionConfig: () => CFG,
+      loopGuard: { observe: vi.fn(() => ({ repeat: false })), forget: vi.fn() },
+      eventBus: { emit: vi.fn(() => true) } as unknown as WokenTurnDriverDeps["eventBus"],
+      nowMs: () => 1_000,
+      logger: makeLogger() as unknown as WokenTurnDriverDeps["logger"],
+    };
+    const wakeOneTurn = buildWokenTurnDriver(deps);
+
+    // The wake owner the daemon builds for a non-promoted channel session: real agentId, empty key.
+    await wakeOneTurn("s-1", { agentId: "default", sessionKey: "" });
+
+    // Pre-fix the driver used registryOwnerFor → (default,"") → not-found → no drive. Post-fix it
+    // recovers STAMPED via getOwner → live view → it answers the safe prompt.
+    expect(registry.sendText, "the woken turn must DRIVE the live channel/API session, not the not-found view").toHaveBeenCalledTimes(1);
+    const readOwner = registry.read.mock.calls[0]?.[1];
+    expect(readOwner, "read must use the recovered STAMPED owner, not (realAgentId,'')").toMatchObject(STAMPED);
+  });
+});

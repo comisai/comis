@@ -65,14 +65,23 @@ function makeBus() {
   };
 }
 
-/** A fake per-agent registry: owner-scoped get/status/read/sendText with a scriptable screen. */
-function makeRegistry(opts: { screen: string; alive?: boolean }) {
+/** A fake per-agent registry: owner-scoped get/status/read/sendText with a scriptable screen.
+ *  `stampedOwner` (ISSUE-3): when set, the session is stamped under THAT owner (a channel/API
+ *  drive is stamped under (userId, nonEmptyKey)) and `get` is OWNER-STRICT against it (so a
+ *  cross-owner wake owner resolves not-found); `getOwner` recovers it. Omitted ⇒ owner-agnostic
+ *  (the today/forcing-use-case behavior — existing tests unchanged). */
+function makeRegistry(opts: { screen: string; alive?: boolean; stampedOwner?: { agentId: string; sessionKey: string } }) {
   // delivered:true mirrors the production registry's ok-reply path (WR-05) — a send that
   // round-trips a live worker is delivered, so the woken turn audits it as a real answer.
   const sendText = vi.fn(async () => ({ screen: opts.screen, cursor: { x: 0, y: 0 }, delivered: true }));
+  const stamped = opts.stampedOwner ?? { agentId: "a", sessionKey: "" };
+  const matches = (o: { agentId?: string; sessionKey?: string }): boolean =>
+    !opts.stampedOwner || (o?.agentId === stamped.agentId && o?.sessionKey === stamped.sessionKey);
   return {
     sendText,
-    get: vi.fn(() => (opts.alive === false ? undefined : ({ sessionId: "s", owner: { agentId: "a", sessionKey: "" } } as never))),
+    getOwner: vi.fn(() => (opts.alive === false ? undefined : stamped)),
+    get: vi.fn((_id: string, o: { agentId?: string; sessionKey?: string }) =>
+      opts.alive === false || !matches(o) ? undefined : ({ sessionId: "s", owner: stamped } as never)),
     status: vi.fn(async () => ({
       state: "awaiting-input" as const,
       lastActivity: 0,
@@ -111,9 +120,9 @@ interface Built {
   handle: ReturnType<typeof setupTerminalWake>;
 }
 
-function build(dataDir: string, opts: { screen: string; alive?: boolean; autoAnswer?: "none" | "safe-only" | "all"; hintPatterns?: string[] }): Built {
+function build(dataDir: string, opts: { screen: string; alive?: boolean; autoAnswer?: "none" | "safe-only" | "all"; hintPatterns?: string[]; stampedOwner?: { agentId: string; sessionKey: string } }): Built {
   const bus = makeBus();
-  const registry = makeRegistry({ screen: opts.screen, alive: opts.alive });
+  const registry = makeRegistry({ screen: opts.screen, alive: opts.alive, ...(opts.stampedOwner ? { stampedOwner: opts.stampedOwner } : {}) });
   const logger = makeLogger();
   const notify = vi.fn(async () => undefined);
   const registries = new Map<string, ReturnType<typeof makeRegistry>>([["a", registry]]);
@@ -161,6 +170,25 @@ describe("setupTerminalWake — the keystone subscribe + woken-turn driver (124-
     await flush();
     // The woken turn ran: it queried the owner-scoped status (the §4.4 turn start).
     expect(built.registry.status).toHaveBeenCalledTimes(1);
+  });
+
+  it("ISSUE-3: a wake for a session stamped under a channel/API owner (userId, nonEmptyKey) is NOT dropped cross-owner — the woken turn runs", async () => {
+    // Live VPS finding 2026-06-16: a chat-API/Telegram session is created in a request context,
+    // so it is STAMPED under (userId, sessionKey) — not (realAgentId, ""). The wake adapter
+    // derives (realAgentId="a", sessionKey="") from the owner-agnostic worker event. Pre-fix
+    // isSessionActive did registry.get(sessionId, ("a","")) → owner-strict mismatch → false → the
+    // wake was DROPPED ("inactive session", no turn) for an ALIVE session. The fix recovers the
+    // stamped owner via registry.getOwner so the live session resolves and the woken turn runs.
+    built = build(dataDir, {
+      screen: "Press enter to continue",
+      stampedOwner: { agentId: "openai-api", sessionKey: "default:openai-api:openai" },
+    });
+    built.bus.fireInputNeeded("s-1", "a"); // the wake agentId is the REAL agent "a"; the session is stamped under the userId
+    await flush();
+    expect(
+      built.registry.status,
+      "a channel/API-stamped session's wake must NOT be dropped cross-owner — the detached woken turn must run",
+    ).toHaveBeenCalledTimes(1);
   });
 
   it("auto-answer (SEC-12): a safe-pattern screen → send the canned keystroke + emit terminal:auto_answered", async () => {

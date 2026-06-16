@@ -53,6 +53,33 @@ describe("buildWakeDurabilityDeps — LO-03: checkLiveness refreshes lastActivit
     expect(handle.lastActivity, "checkLiveness's status round-trip refreshes lastActivity (the I9 unify)").toBe(50_000);
   });
 
+  it("ISSUE-3: a channel/API-stamped session's liveness check resolves the LIVE session (getOwner), NOT skipped as gone cross-owner", async () => {
+    // Live VPS finding 2026-06-16: a chat-API/Telegram drive is stamped under (userId, sessionKey).
+    // Pre-fix checkLiveness used driveOwner=(agentId,"") → registry.get cross-owner → undefined → the
+    // LIVE-01 backstop SKIPPED the live session (a hung channel drive would never be detected; a busy
+    // one never refreshed → the ENDURE-01 reaper could evict it as idle). The fix recovers the stamped
+    // owner via the registry's getOwner seam.
+    const STAMPED = { agentId: "openai-api", sessionKey: "default:openai-api:openai" };
+    const handle = { sessionId: "s-1", status: "running" as const, lastActivity: 1, durable: false as const, tmuxName: undefined };
+    const owned = (o: { agentId?: string; sessionKey?: string }): boolean => o?.agentId === STAMPED.agentId && o?.sessionKey === STAMPED.sessionKey;
+    const registry = {
+      getOwner: vi.fn(() => STAMPED),
+      get: vi.fn((_id: string, o: { agentId?: string; sessionKey?: string }) => (owned(o) ? (handle as never) : undefined)),
+      status: vi.fn(async (_id: string, o: { agentId?: string; sessionKey?: string }) =>
+        owned(o)
+          ? { state: "working" as const, lastActivity: 50_000, interactions: 1, cursorParked: false, screenDiffEmpty: false, confidence: "high" as const, reason: "working" }
+          : { state: "exited" as const, lastActivity: 0, interactions: 0, cursorParked: false, screenDiffEmpty: true, confidence: "high" as const, reason: "exited" }),
+    };
+    const registries = new Map([["a", registry]]);
+    const deps = buildWakeDurabilityDeps({ dataDir: "/tmp/nonexistent-comis-issue3", registries: registries as never, workerStuckMs: 600_000, nowMs: () => 50_000 });
+
+    const signal = await deps.checkLiveness("s-1", "a"); // agentId "a" is the REAL agent; the session is stamped under the userId
+
+    expect(signal, "a live channel/API-stamped session must resolve (busy/alive), not be skipped as gone cross-owner").toBeDefined();
+    expect(signal).toMatchObject({ alive: true });
+    expect(registry.status.mock.calls[0]?.[1], "the liveness status round-trip must use the recovered STAMPED owner").toMatchObject(STAMPED);
+  });
+
   it("the wake-durability bundle no longer exposes a redundant refreshLastActivity dep (LO-03 removed)", () => {
     const deps = buildWakeDurabilityDeps({
       dataDir: "/tmp/nonexistent-comis-lo03",

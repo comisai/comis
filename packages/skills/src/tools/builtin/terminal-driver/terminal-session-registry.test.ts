@@ -2430,3 +2430,17 @@ describe("createTerminalSessionRegistry — DUR-01 durable-aware markRunningSess
     expect(registry.get(b.sessionId, OWNER)?.status).toBe("lost");
   });
 });
+
+describe("createTerminalSessionRegistry — getOwner (ISSUE-3 daemon recovery seam)", () => {
+  it("returns the session's STAMPED owner by id WITHOUT an owner arg (owner-agnostic); undefined for an absent session", async () => {
+    // The daemon wake path recovers the (userId, sessionKey) the worker→event re-publish drops
+    // (setup-terminal-tools.ts emits agentId only) so a detached channel/API drive's woken turns
+    // resolve the LIVE session instead of dropping cross-owner. getOwner returns the IDENTITY only.
+    const fake = makeFakeWorker();
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child));
+    const channelOwner = { agentId: "openai-api", sessionKey: "default:openai-api:openai" };
+    const { sessionId } = await registry.create({ allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }, channelOwner);
+    expect(registry.getOwner?.(sessionId)).toEqual(channelOwner);
+    expect(registry.getOwner?.("no-such-session")).toBeUndefined();
+  });
+});
