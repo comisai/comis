@@ -1051,6 +1051,26 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // externally. They shrink out when that poller lands.
       "PollDeadline",
       "PollOutcome",
+      // Keyless voice (v2.25 Phase 193 Plan 01) — the STT/TTS resolver +
+      // capability-map + error-bridge surface on the public @comis/core barrel
+      // (exports/media.ts), so the LATER-wave Plan 03 (@comis/daemon
+      // setup-audio-provider.ts: the predicate-injection wiring) can import them
+      // cross-package. These are ahead-of-consumer planned-orphans (the
+      // video-foundation / PollDeadline "listed so the gate is green before the
+      // consumer lands" precedent — over-listing a soon-consumed symbol is the
+      // documented pattern, never under-listing). Each entry SHRINKS out of this
+      // baseline when Plan 03's real cross-package consumer lands. VOICE_KEYLESS
+      // + MAIN_PROVIDER_AUDIO + STT_ERR_TO_LOG + the two resolvers + SttErrorKind
+      // are surfaced; the SttSelection / TtsSelection / SttSelectionConfig /
+      // TtsSelectionConfig TYPES are NOT listed — they stay intra-`@comis/core/media`
+      // (the ImageProviderSelection / VideoProviderSelection policy), consumed
+      // structurally by the daemon, so they never reach the public barrel.
+      "VOICE_KEYLESS",
+      "MAIN_PROVIDER_AUDIO",
+      "STT_ERR_TO_LOG",
+      "resolveTranscriptionProvider",
+      "resolveTtsProvider",
+      "SttErrorKind",
       // MemoryLifecyclePort + MemoryLifecycleScope +
       // MemoryTier + LifecycleSweepReport were tracked here as SCAFFOLD-DORMANT
       // ahead-of-consumer planned-orphans. REMOVED:
