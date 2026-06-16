@@ -407,6 +407,61 @@ If TTS were not configured, the reply would still be delivered — just as
 text instead of audio. The `inbound` setting only triggers voice when the
 user spoke first, so written messages always get written replies.
 
+## Observability and cost
+
+Every transcription and synthesis is fully instrumented so an operator can
+reconstruct any voice turn from logs and the observability tools alone — no live
+repro needed.
+
+### Logs
+
+Each transcription/synthesis emits **one INFO completion line** carrying
+`provider`, `keyless` (a boolean), `model`, `durationMs`, `audioBytes`,
+`costUsd`, and the resolved selection `source` (the rung `auto` picked —
+`keyless-local`, `follow-main-key`, `fallback`, or `explicit`). Every failure
+branch emits a **WARN/ERROR** line with an `errorKind` (one of
+`no_keyless_engine`, `auth_required`, `model_load_failed`,
+`model_download_failed`, `timeout`, `network`, `dependency`) and an actionable
+`hint`. Secrets are never logged at any level — a provider's `baseUrl` is logged
+host-only (path and query dropped), and `Bearer` tokens, API keys, and the
+keyless-LLM sentinel are stripped before a message reaches a log line.
+
+### `comis explain` — reconstruct one voice turn
+
+`comis explain <sessionKey>` reconstructs a voice turn offline from the
+session's trajectory. The report's `voice` block shows the `provider`, whether
+it ran `keyless`, the `model`, `durationMs`, the `outcome` (`ok`/`failed`), the
+resolved selection `source` rung (and, when `auto` skipped a higher rung, the
+`onSkip` reasons that explain *why* it landed where it did), and — on a failure
+— the `errorKind`. The block is content-free: it carries ids, labels, numbers,
+and booleans only, never the audio, the transcript text, or a credential.
+
+### `comis fleet` — the voice-health signal
+
+`comis fleet` surfaces a `voice_health` finding beside `model_health` and
+`config_posture` when transcriptions/syntheses have been degrading across the
+window: the **count of degraded STT/TTS turns** and the **dominant voice
+`errorKind`** (for example, `model_load_failed` pointing at the local whisper
+model cache, or `auth_required` pointing at a missing audio key). Like every
+fleet finding it carries **counts, a short code, and a static hint only — no raw
+provider message and no secret — so it is safe to paste into a review.** Drill
+into the worst session it points at with `comis explain`.
+
+### Cost honesty
+
+Voice **cost reporting is honest about what the providers actually return.**
+Keyless paths (the `local` whisper engine, Edge TTS) record `costUsd: 0`
+**explicitly**, so "free" is *visible* on the `voice` block rather than an
+ambiguous absence. Keyed providers, however, **do not return a per-call cost**
+for transcription or synthesis today — neither the STT nor the TTS port carries
+a cost field — so a keyed voice turn shows **no `costUsd` at all**. That absence
+is honest: Comis never fabricates a price it did not receive. (Token-based LLM
+cost for the agent's *reply* is tracked separately, as usual; this note is only
+about the STT/TTS calls themselves.)
+
+Voice turns appear in the existing per-session trajectory — this phase added no
+new on-disk artifact or data-directory path.
+
 ## Related
 
 <CardGroup cols={2}>

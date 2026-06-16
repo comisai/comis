@@ -767,6 +767,8 @@ For `context_exhausted` sessions the report carries an optional **`contextBudget
 
 When the session ran any memory recalls the report carries an optional **`recall`** section -- the memory-recall outcome aggregated over the trajectory's `memory.recalled` records: `{ recalls, zeroHits, lastLanes, lastFinalCount, rerankerAvailable }` (counts and booleans only -- never the query text or any recalled memory body). `recalls` is how many recalls ran, `zeroHits` how many returned **no** injected memories (a recall miss), and the `last*` fields describe the terminal recall (its lane count and final injected-memory count). This drives a dedicated **`recall_miss`** `likelyRootCause` verdict: a degraded session whose recalls **all** missed (`zeroHits === recalls`) and that matched no tool/context/breaker cause is root-caused as a recall miss, pointing the operator at the recall **scope** (agent- vs user-scoped) and, for non-Latin queries, the trigram-twin lanes (see [`comis fleet`](#obs-fleet-health) `health_signal` / `config_posture` embedder). A zero-hit recall on a **healthy** turn is benign -- the agent simply did not need memory -- and never names a cause. The section is absent for sessions with no recall records.
 
+When the session ran a transcription or synthesis the report carries an optional **`voice`** block reconstructing that turn from the trajectory's `media.stt.*` / `media.tts.*` records: `{ provider, keyless, model?, durationMs?, costUsd?, source?, outcome, errorKind? }`. `keyless` is whether the resolved provider ran without a credential; `source` is the resolved selection rung (`keyless-local` / `follow-main-key` / `fallback` / `explicit`); `outcome` is `"ok"` / `"failed"`; `errorKind` is the domain voice error (`no_keyless_engine` / `auth_required` / `model_load_failed` / `model_download_failed` / `timeout` / `network` / `dependency`) on a failure. `costUsd` is `0` for a keyless turn (free is **visible**) and **omitted** for a keyed turn — the STT/TTS ports return no per-call cost, so Comis never fabricates one. The block is content-free (ids/labels/numbers/booleans only — never the audio or transcript text) and absent for sessions with no voice records. See [Voice → Observability and cost](/media/voice#observability-and-cost).
+
 Accepts EITHER `sessionKey` OR `traceId` (at least one is required). A `traceId` is canonicalized to its `sessionKey` first, so by-trace and by-session produce the identical report.
 
 `depth: "summary"` (the default) bounds the serialized report to roughly 6 KB (about 1,500 tokens) and caps the failure list; `depth: "full"` relaxes the array caps. At BOTH depths the report is digest-only: no raw tool-output body is ever inlined (oversized previews and untrusted external content collapse to a `resultDigest` fingerprint), and an honest `truncations[]` ledger records anything the bounding pass dropped.
@@ -779,7 +781,7 @@ An optional `coverage` block reports READ-coverage -- whether the trajectory, ro
 |----------|-------|
 | **Scope** | `admin` |
 | **Parameters** | `{ sessionKey?: string, traceId?: string, depth?: "summary" \| "full", includeSynthetic?: boolean }` -- at least one of `sessionKey` / `traceId` required. `includeSynthetic` is optional; include synthetic/test-harness sessions, which are excluded by default. |
-| **Returns** | An `IncidentReport`: `{ schemaVersion, sessionKey, traceId, agentId, channel, outcome: { endReason, degraded, severity }, cost: { costUsd, totalTokens, cacheReadRatio }, timing: { durationMs, turnCount }, toolStats, failures[], breakerTimeline[], offloads[], contextBudget?, recall?, summary, likelyRootCause, suggestedNextSteps[], truncations[], coverage? }` |
+| **Returns** | An `IncidentReport`: `{ schemaVersion, sessionKey, traceId, agentId, channel, outcome: { endReason, degraded, severity }, cost: { costUsd, totalTokens, cacheReadRatio }, timing: { durationMs, turnCount }, toolStats, failures[], breakerTimeline[], offloads[], contextBudget?, recall?, voice?, summary, likelyRootCause, suggestedNextSteps[], truncations[], coverage? }` |
 
 <CodeGroup>
 ```json Request
@@ -804,6 +806,7 @@ An optional `coverage` block reports READ-coverage -- whether the trajectory, ro
       { "seq": 11, "toolName": "web_fetch", "errorKind": "dependency", "resultDigest": "386bf5565d09", "resultBytes": 1500, "errorPreview": "[redacted:untrusted-content digest:386bf5565d09]" }
     ],
     "breakerTimeline": [ { "seq": 20, "event": "opened", "toolName": "web_fetch" } ],
+    "voice": { "provider": "local", "keyless": true, "model": "base", "durationMs": 1180, "costUsd": 0, "source": "keyless-local", "outcome": "ok" },
     "summary": "14 tool failures across 25 turns; endReason=completed_with_tool_errors",
     "likelyRootCause": {
       "code": "content_heuristic_misclassification",
@@ -836,6 +839,8 @@ Assemble a bounded, redaction-safe **cross-session** fleet-health triage (a `Fle
 `likelyRootCause` ranks **acute over chronic**: any degraded session with a named cause (`fleet_acute_degradation`, naming the dominant `degradedByCause` entry) out-ranks the standing config-posture (`fleet_config_posture`) and recurring-health-signal (`fleet_recurring_health_signal`) verdicts; only a fleet-wide degradation spike (`fleet_high_degraded_rate`) ranks above it. Routine `session_rebase` continuations (a restart resuming at the store's max seq) ingest at `info` severity and no longer inflate the warning findings.
 
 The boot-time `config_posture` diagnostic row carries `servedBelowConfiguredCount` in its details JSON -- the number of providers whose Ollama-served window (`num_ctx`) was below the configured `contextWindow` at that boot (a **count only**, never provider names; the posture record severity is `warning` when it is > 0). When the **latest** posture row's count is non-zero, `findings[]` gains the dedicated `config_posture:served_below_configured` code with that count -- latest-row semantics because posture is standing state, not cumulative (a healthy restart clears the finding). The hint names the `OLLAMA_CONTEXT_LENGTH` / Modelfile `PARAMETER num_ctx` knobs; a malformed or pre-v2.21 posture row folds to 0 defensively (no finding, never an assembly error). For triaging this finding on a local deployment -- model choice, window sizing, and the full knob map -- see the [Local models playbook](/operations/local-models).
+
+When transcriptions/syntheses degraded across the window, `findings[]` gains a `voice_health` code: the **count of degraded STT/TTS turns** and the **dominant voice `errorKind`** in the `detail` (e.g. `model_load_failed`, `auth_required`), with a hint pointing at `comis explain` and -- for the keyless-engine load/download failures -- the whisper model cache + disk + the local engine probe. The finding rolls up the `voice_degraded` `health_signal` diagnostic rows the daemon voice path emits on a failure; like every fleet finding it carries **counts + a short code + a closed errorKind label + a static hint only -- no raw provider body or secret, safe to paste**. A malformed row folds to a no-count defensively (never an assembly error), and there is no finding when no voice turn degraded. See [Voice → Observability and cost](/media/voice#observability-and-cost).
 
 This is the cross-session **sibling** of [`obs.explain`](#obs-explain): `obs.explain` post-mortems ONE session; `obs.fleet.health` rolls up a WINDOW of sessions.
 
@@ -876,7 +881,8 @@ This is the cross-session **sibling** of [`obs.explain`](#obs-explain): `obs.exp
       "tokenTotal": 735800
     },
     "findings": [
-      { "code": "fleet_recurring_health_signal", "detail": "lcd_divergence recurred across the window", "count": 14, "hint": "inspect the LCD compaction path" }
+      { "code": "fleet_recurring_health_signal", "detail": "lcd_divergence recurred across the window", "count": 14, "hint": "inspect the LCD compaction path" },
+      { "code": "voice_health", "detail": "6 degraded STT/TTS turn(s); top errorKind model_load_failed", "count": 6, "hint": "run `comis explain` on an affected voice session; for model_load_failed/model_download_failed check the whisper model cache + disk + the local engine probe (a keyless engine), or set the provider's audio API key for auth_required" }
     ],
     "likelyRootCause": {
       "code": "fleet_high_degraded_rate",

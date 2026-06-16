@@ -230,6 +230,8 @@ It holds model weights only — **no secret, no credential**, nothing user-speci
 **Written by:** the local STT adapter, on the first transcription that uses the in-process engine.
 **Safe to delete?** Yes. It re-downloads on the next local transcription; deleting it only forces one slower first call afterward. Never created (or needed) when you use a `local.baseUrl` server or a keyed cloud provider instead.
 
+Voice observability adds **no new on-disk artifact**: a transcription/synthesis records onto the **existing per-session trajectory** (the same `*.trajectory.jsonl` that carries every other turn event), so `comis explain` reconstructs the voice turn and `comis fleet` surfaces the `voice_health` signal without a dedicated voice file (see [Voice → Observability and cost](/media/voice#observability-and-cost)).
+
 ---
 
 ### `agents/`
