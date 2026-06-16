@@ -2400,6 +2400,22 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "MemoryLifecycleStoreDeps",
       "MemoryLifecyclePolicy",
       "MemoryLifecycleRowSchema",
+      // Outcome-signal store (v2.26 Verified Learning WS1, Phase 198 Plan 02).
+      // createSqliteOutcomeStore is the SOLE OutcomeSignalPort adapter (the
+      // (tenant, agent)-scoped outcome_events ledger — idempotent observe(),
+      // precedence-first-then-confidence resolve() with fail-closed unknown, and
+      // age-based prune()). It is an AHEAD-OF-CONSUMER factory-orphan: the daemon
+      // composition-root consumer LANDS in Plan 04 (Wave 4 — setup-learning.ts
+      // constructs it on the shared db handle in setup-memory + the default-OFF
+      // learningOutcome wiring subscribes/prunes), at which point this factory
+      // entry SHRINKS OUT (mirror createSqliteTunedAlphaStore / the lifecycle +
+      // relationship adapter shrinks; allowlist-shrink enforces shrink-only).
+      // OutcomeStoreDeps is the constructor-deps SHAPE type (referenced via inline
+      // objects only — the daemon calls the factory with an inline `{ db, logger }`)
+      // — PERMANENT baseline orphan (mirror MemoryTunedAlphaStoreDeps /
+      // MemoryLifecycleStoreDeps above).
+      "createSqliteOutcomeStore",
+      "OutcomeStoreDeps",
       // Scoped embedding-read store. createSqliteMemoryEmbeddingStore
       // is the sole MemoryEmbeddingStore adapter — the (tenant, agent)-scoped LEFT JOIN
       // vec_memories bulk read that hydrates the MMR diversity re-rank. Its daemon
