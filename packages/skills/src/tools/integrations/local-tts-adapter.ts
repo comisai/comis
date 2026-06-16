@@ -272,13 +272,23 @@ export function createLocalTtsAdapter(cfg: LocalTtsConfig): TTSPort {
   const encodeWaveform = cfg.encodeWaveform ?? defaultEncodeWaveform;
 
   return {
+    // WR-01: `_options` (voice/format/speed) is intentionally ignored. The pinned
+    // Xenova/mms-tts-eng model is single-speaker (so `voice` is meaningless) and
+    // this offline rung ALWAYS emits `OUTPUT_MIME` ("audio/mpeg") — the requested
+    // `format` is NOT honored here; the voice pipeline re-encodes downstream
+    // (needsConversion) to the channel's container, so playback still works. A
+    // caller must not assume the returned MIME matches a requested format.
     async synthesize(text: string, _options?: TTSOptions): Promise<Result<TTSResult, Error>> {
       // 1. Empty-text guard — runs before any engine load (mirror edge-tts).
+      //    IN-02: a validation failure, but the closed SttErrorKind vocabulary
+      //    (voice-error.ts) has no `validation` member → `dependency` is the
+      //    deliberate mapping, NOT a real missing-dependency failure.
       if (text.length === 0) {
         return err(withKind(new Error("Text is empty"), "dependency"));
       }
 
-      // 2. Max-length guard.
+      // 2. Max-length guard. IN-02: validation failure, `dependency` per the
+      //    vocabulary constraint above.
       if (text.length > maxTextLength) {
         return err(
           withKind(
@@ -350,6 +360,12 @@ export function createLocalTtsAdapter(cfg: LocalTtsConfig): TTSPort {
           ),
         );
       }
+      // IN-03 (known INFO, deferred): a missing/zero/NaN sampling_rate paired
+      // with a valid waveform falls back to 16000 rather than surfacing a
+      // degraded err. The pinned MMS-TTS model always returns a valid rate in
+      // practice, so this is not currently observed; tightening it to an honest
+      // err (consistent with the waveform-shape guard above) is a follow-up so as
+      // not to risk a behavior regression in this security-hardening pass.
       const samplingRate =
         typeof output.sampling_rate === "number" && output.sampling_rate > 0
           ? output.sampling_rate

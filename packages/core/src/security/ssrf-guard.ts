@@ -185,7 +185,12 @@ export async function validateUrl(
  * Pure validation — it does NOT fetch. Returns `Result`, never throws.
  *
  * @param urlString - The local server URL to validate
- * @param allowedHosts - Hostnames explicitly permitted beyond loopback (default `[]`)
+ * @param allowedHosts - Hostnames explicitly permitted beyond loopback (default
+ *   `[]`). Matched against the URL's LITERAL `hostname` string (IN-01) — NOT the
+ *   resolved IP and NOT a bracket-stripped IPv6 form. So to allow a LAN box at
+ *   `http://my-box.lan` the entry must be `"my-box.lan"`, not its IP; IP-literal
+ *   allowlisting (e.g. `"10.0.0.5"`) only matches a `baseUrl` whose hostname IS
+ *   that literal. Unmatched hosts fail CLOSED (denied).
  * @returns ok with hostname, resolved IP, and parsed URL on success; err on a
  *   non-loopback/unallowed host, a cloud-metadata IP, a bad protocol, or a
  *   parse/DNS failure

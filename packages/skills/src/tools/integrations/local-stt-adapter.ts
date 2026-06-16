@@ -348,12 +348,16 @@ export function createLocalWhisperAdapter(cfg: LocalWhisperConfig): Transcriptio
     ): Promise<Result<TranscriptionResult, Error>> {
       // 1. Empty-buffer guard — runs before any engine load or decode.
       if (audio.byteLength === 0) {
-        // WR-02: carry the kind like every other branch (clean message, no
-        // third-party cause to sanitize → withKind, not degraded).
+        // Carry the kind like every other branch (clean message, no third-party
+        // cause to sanitize → withKind, not degraded). IN-02: this is really a
+        // VALIDATION failure (bad input), but the closed SttErrorKind vocabulary
+        // (voice-error.ts) has no `validation` member, so `dependency` is the
+        // deliberate vocabulary mapping here — NOT a real missing-dependency.
         return err(withKind(new Error("Audio buffer is empty"), "dependency"));
       }
 
-      // 2. Size cap.
+      // 2. Size cap. IN-02: also a validation failure; `dependency` is the
+      //    deliberate mapping (the SttErrorKind union has no `validation` member).
       const fileSizeMb = audio.byteLength / (1024 * 1024);
       if (fileSizeMb > maxFileSizeMb) {
         return err(
