@@ -168,6 +168,14 @@ export function buildWokenTurnDriver(
   // repeats via the loop-guard (SEC-11) — so the live MR-01 accumulation is unchanged (I1).
   const resumedFirstTurnSeen = new Set<string>();
 
+  // HI-01 (165-REVIEW): the closure-local "spend ceiling already breached" marker — the
+  // dedupe that breaks the re-escalation STORM. Pre-fix a breach escalated + returned but left
+  // the drive alive + promoted, so the next fd3 wake / backstop tick re-breached + re-escalated
+  // forever. A breached session is recorded here so a SINGLE breach yields a SINGLE escalate +
+  // a SINGLE stop (the registry evict below) — never one escalate per wake. Mirrors
+  // resumedFirstTurnSeen's lifecycle (closure-local, reset on restart).
+  const breachedSessions = new Set<string>();
+
   /** Emit the escalation audit + route the NotifyFn chain (§4.7). Never the prompt text. */
   async function escalate(sessionId: string, owner: PersistedWakeOwner, reason: WokenTurnEscalationReason): Promise<void> {
     deps.eventBus.emit("terminal:escalated", { sessionId, agentId: owner.agentId, reason, timestamp: deps.nowMs() });
@@ -210,24 +218,30 @@ export function buildWokenTurnDriver(
     // (a degenerate owner narrows to unpromoted, never a TypeError that strands the turn).
     const promoted = isDriveScoped(owner);
 
-    // ENDURE-01 (165-07): the SPEND CEILING — checked FIRST on a promoted turn so a breach
-    // pre-empts any further work (no status/read/answer). Reads the journal's HONEST run-total
-    // costUsd (I6 — never a fabricated cost; it is 0 at the canned-keystroke seam today) and
-    // runs the pure checkSpendCeiling over the operator ceiling. On a breach: escalate with the
-    // figure + a §2.7 WARN + STOP the turn (return) — never a silent overspend. A null/absent
-    // ceiling or an unpromoted turn (no drive journal) is a no-op (I1, byte-identical to today).
+    // ENDURE-01 (165-07) / HI-01 (165-REVIEW): the SPEND CEILING — checked FIRST on a promoted
+    // turn so a breach pre-empts any further work (no status/read/answer). Reads the journal's
+    // HONEST run-total costUsd (I6 — never a fabricated cost; it is 0 at the canned-keystroke
+    // seam today) and runs the pure checkSpendCeiling over the operator ceiling.
     if (promoted && deps.journal) {
+      // HI-01: a session already breached this life is STOPPED — return immediately (no
+      // re-escalate, no re-work). This is the dedupe that breaks the re-escalation storm (the
+      // stop below should already have evicted it, but a concurrent in-flight wake is caught here).
+      if (breachedSessions.has(sessionId)) return;
       const costUsd = deps.journal.get(sessionId)?.costUsd ?? 0;
-      const breach = checkSpendCeiling(costUsd, deps.maxCostUsd ?? null);
-      if (breach) {
-        // The structural escalation (event + NotifyFn chain) reuses the existing escalate()
-        // path; `no_safe_match` is the closest reason in the SHIPPED terminal:escalated enum
-        // (widening that enum is a core-schema change out of this plan's scope) — the SPEND
-        // specifics (the figure + the cap) live on the dedicated §2.7 WARN below, which is the
-        // authoritative spend record an operator reconstructs the breach from (logs+events).
+      if (checkSpendCeiling(costUsd, deps.maxCostUsd ?? null)) {
+        breachedSessions.add(sessionId); // record FIRST so a re-entrant wake cannot double-escalate.
+        // Escalate ONCE. The structural escalation reuses the existing escalate() path;
+        // `no_safe_match` is the closest reason in the SHIPPED terminal:escalated enum (widening
+        // it pairs with the future spend producer — 165-REVIEW LO-02); the SPEND specifics ride
+        // the dedicated §2.7 WARN below (the authoritative breach record from logs+events).
         await escalate(sessionId, owner, "no_safe_match");
+        // HI-01: actually STOP the drive, not just the turn — evict via the registry so the
+        // descriptor + journal lifecycle + the holder's de-promote run (terminal:session_evicted
+        // → onSessionGone). Without this the next wake re-breaches forever. `max_interactions` is
+        // the closest EvictReason (a deliberate cap-stop); the spend figure rides the WARN.
+        await registry.evict(sessionId, ownerObj, "max_interactions");
         log.warn(
-          { sessionId, agentId: owner.agentId, costUsd, maxCostUsd: deps.maxCostUsd, hint: `terminal drive spend ceiling reached ($${costUsd} > $${deps.maxCostUsd}); the drive is stopped + escalated to a human (never a silent overspend)`, errorKind: "resource" as const, step: "spend_ceiling" },
+          { sessionId, agentId: owner.agentId, costUsd, maxCostUsd: deps.maxCostUsd, hint: `terminal drive spend ceiling reached ($${costUsd} > $${deps.maxCostUsd}); the drive is STOPPED (evicted) + escalated to a human (never a silent overspend, never a re-escalation storm)`, errorKind: "resource" as const, step: "spend_ceiling" },
           "terminal drive spend ceiling breached; stopping the drive",
         );
         return; // STOP — do not status/read/answer (never a silent overspend).

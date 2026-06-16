@@ -75,6 +75,10 @@ function makeRegistry(opts: { screen: string; sendResult: { screen: string; curs
         : { state: "exited" as const, lastActivity: 0, interactions: 0, cursorParked: false, screenDiffEmpty: true },
     ),
     read: vi.fn(async (_id: string, owner: { sessionKey?: string }) => (stamped(owner) ? liveView : notFoundView)),
+    // HI-01 (165-REVIEW): the stop path the spend breach drives (the reaper-backed evict that
+    // emits terminal:session_evicted → the holder de-promotes + removes the journal/descriptor).
+    evict: vi.fn(async () => undefined),
+    kill: vi.fn(async () => undefined),
   };
 }
 
@@ -596,6 +600,36 @@ describe("terminal-wake-turn — ENDURE-01: the spend-ceiling escalate path", ()
     await wakeOneTurn("s-1", DRIVE_OWNER);
     // The canned-keystroke auto-answer has no LLM spend → costUsd stays the honest 0 (I6).
     expect(map.get("s-1")!.costUsd, "the woken-turn seam must not fabricate a cost (I6)").toBe(0);
+  });
+
+  // HI-01 (165-REVIEW): a spend breach must STOP the drive, not just the turn. Pre-patch the
+  // turn escalated + returned but left the session alive + promoted, so the NEXT wake re-checked
+  // the ceiling, re-breached, re-escalated — indefinitely (a re-escalation storm). The fix:
+  // dedupe with a breachedSessions Set (one escalate) + actually stop the drive via the
+  // registry evict path (descriptor+journal lifecycle + de-promote run) so it is not re-woken.
+  it("HI-01: a spend breach STOPS the drive (registry.evict) — two wakes yield EXACTLY ONE escalate + ONE stop (no re-escalation storm)", async () => {
+    const seed = new Map<string, DriveJournal>([
+      ["s-1", { objective: "build", lastClassification: "awaiting-input", lastScreenDigest: "", answeredPrompts: [], stepsTried: [], elapsedMs: 0, interactions: 3, costUsd: 7.5, truncations: 0 }],
+    ]);
+    const { store } = makeJournalStore(seed);
+    const { wakeOneTurn, registry, emitted } = build({
+      screen: SAFE_SCREEN,
+      sendResult: { screen: "ok", cursor: { x: 1, y: 1 }, delivered: true },
+      journal: store,
+      maxCostUsd: 5,
+    });
+
+    // Two wakes for the same over-budget drive (what the fd3 loop / backstop would do).
+    await wakeOneTurn("s-1", DRIVE_OWNER);
+    await wakeOneTurn("s-1", DRIVE_OWNER);
+
+    // EXACTLY ONE escalate (the dedupe broke the storm) + the drive was actually STOPPED once.
+    const escalations = emitted.filter((e) => e.event === "terminal:escalated");
+    expect(escalations, "a single breach = a single escalate (no re-escalation storm)").toHaveLength(1);
+    expect(registry.evict, "the breach must STOP the drive via the registry evict path (descriptor+journal lifecycle + de-promote)").toHaveBeenCalledTimes(1);
+    expect(registry.evict).toHaveBeenCalledWith("s-1", expect.objectContaining({ sessionKey: "" }), expect.any(String));
+    // The drive never auto-answered (never a silent overspend), on either wake.
+    expect(registry.sendText).not.toHaveBeenCalled();
   });
 });
 
