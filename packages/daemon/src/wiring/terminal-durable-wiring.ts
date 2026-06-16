@@ -72,6 +72,19 @@ function driveOwner(agentId: string): { agentId: string; sessionKey: string } {
   return { agentId, sessionKey: "" };
 }
 
+/** ISSUE-3 (live VPS 2026-06-16): the session's STAMPED owner — recovered via the registry's
+ *  getOwner seam (the worker→event re-publish drops the (userId, sessionKey) for a channel/API
+ *  drive), else the forcing-use-case driveOwner. So the LIVE-01 backstop + the ENDURE-01 idle
+ *  exclusion resolve a channel/API detached drive's LIVE session instead of misjudging it gone or
+ *  idle (cross-owner) and silently stranding / evicting it. */
+function resolveStampedOwner(
+  registry: { getOwner?(s: string): { agentId: string; sessionKey: string } | undefined } | undefined,
+  sessionId: string,
+  agentId: string,
+): { agentId: string; sessionKey: string } {
+  return registry?.getOwner?.(sessionId) ?? driveOwner(agentId);
+}
+
 /**
  * Resolve the daemon-side `tmux` binary path (memoized — the resolution is process-stable, so
  * the per-agent durability wiring + the daemon-wide wake backstop share ONE `which tmux`).
@@ -193,7 +206,8 @@ export function buildAgentTerminalDurability(i: AgentTerminalDurabilityInputs): 
   // backstop (checkLiveness's status round-trip + refreshLastActivity), so a quiet-but-busy
   // build reads `busy` and is excluded from idle eviction; a genuinely-idle session reads `hung`.
   const isBusy = (s: { sessionId: string; lastActivity: number }): boolean => {
-    const handle = i.registries.get(i.agentId)?.get(s.sessionId, driveOwner(i.agentId));
+    const reg = i.registries.get(i.agentId);
+    const handle = reg?.get(s.sessionId, resolveStampedOwner(reg, s.sessionId, i.agentId));
     if (handle === undefined) return false; // gone → not busy (let the sweep do its thing)
     const alive = handle.status === "running" && (handle.durable !== true || (handle.tmuxName !== undefined && isTmuxAlive(handle.tmuxName)));
     const signal: BusySignal = { alive, noProgressMs: Math.max(0, i.nowMs() - s.lastActivity), stuckMs: i.workerStuckMs };
@@ -296,11 +310,12 @@ export function buildWakeDurabilityDeps(i: WakeDurabilityInputs): {
   const checkLiveness = async (sessionId: string, agentId: string): Promise<BusySignal | undefined> => {
     const registry = i.registries.get(agentId);
     if (registry === undefined) return undefined; // no registry for the agent → gone
-    const handle = registry.get(sessionId, driveOwner(agentId));
+    const owner = resolveStampedOwner(registry, sessionId, agentId); // ISSUE-3: the live channel/API session's stamped owner
+    const handle = registry.get(sessionId, owner);
     if (handle === undefined) return undefined; // gone → the backstop skips it
     // The SINGLE liveness check: the worker `status` round-trip (CLASSIFIER perception, NOT a
     // screen read — I2). It also refreshes the handle's lastActivity as a side effect.
-    const status = await registry.status(sessionId, driveOwner(agentId));
+    const status = await registry.status(sessionId, owner);
     const stuckMs = i.workerStuckMs;
     if (status.state === "exited") return { alive: false, noProgressMs: 0, stuckMs };
     // For a durable session also require the detached tmux to be alive (a wedged-but-present

@@ -106,7 +106,7 @@ export function emitDrivePromoted(
   reason: TerminalDrivePromotedEvent["reason"],
 ): void {
   deps.emit("terminal:drive_promoted", { sessionId, agentId, reason, timestamp: deps.nowMs() });
-  deps.info({ sessionId, reason, step: "drive_promote" }, "terminal drive promoted to a backgrounded drive-owner");
+  deps.info({ sessionId, agentId, reason, step: "drive_promote" }, "terminal drive promoted to a backgrounded drive-owner");
 }
 
 /**

@@ -212,7 +212,13 @@ export function buildWokenTurnDriver(
     // I5: WHERE not WHAT), never the not-found `alive:false` view (the I9-class strand,
     // T-164-19/T-164-23). The drive: scope is used ONLY for the journal keying + the
     // promoted-gate below — never as the registry-authorization owner.
-    const ownerObj = registryOwnerFor(owner);
+    // ISSUE-3 (live VPS 2026-06-16): recover the session's STAMPED owner — the worker→event
+    // re-publish drops the (userId, sessionKey) identity (setup-terminal-tools.ts emits agentId
+    // only), so `owner` is (realAgentId, "") and a channel/API drive (stamped under
+    // (userId, nonEmptyKey)) would degrade to the not-found view on every status/read/sendText.
+    // registry.getOwner is the daemon's trusted recovery seam; registryOwnerFor(owner) is the
+    // fallback for the forcing use case (sessionKey:"") and a registry double without getOwner.
+    const ownerObj = registry.getOwner?.(sessionId) ?? registryOwnerFor(owner);
     // IN-03: derive `promoted` from the SAME total accessor the registry-owner strip uses
     // (isDriveScoped), not a raw `owner.sessionKey.startsWith(...)` — uniform defensiveness
     // (a degenerate owner narrows to unpromoted, never a TypeError that strands the turn).

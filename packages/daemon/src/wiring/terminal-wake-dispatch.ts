@@ -222,14 +222,16 @@ export function createTerminalWakeDispatcher(
       return;
     }
 
-    // (2) ACTIVE-CHECK — drop wakes for killed/evicted/cross-owner sessions.
+    // (2) ACTIVE-CHECK — drop wakes for genuinely-gone sessions. ISSUE-3: isSessionActive now
+    // recovers the STAMPED owner (registry.getOwner), so a LIVE channel/API session is NOT dropped
+    // cross-owner; a drop here means the session is truly absent (killed/evicted/never-registered).
     if (!deps.isSessionActive(ev.sessionId, ev.owner)) {
       log.warn(
         {
           sessionId: ev.sessionId,
           requestId: ev.requestId,
           agentId: ev.owner.agentId,
-          hint: "Session is not active (killed/evicted); wake dropped — no re-entry into a dead PTY",
+          hint: "Session not found in the registry (killed/evicted/gone); wake dropped — no re-entry into a dead PTY",
           errorKind: "precondition" as const,
         },
         "Wake dispatch: dropped wake for inactive session",

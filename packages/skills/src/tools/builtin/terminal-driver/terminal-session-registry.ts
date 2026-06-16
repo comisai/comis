@@ -287,6 +287,7 @@ export interface TerminalSessionRegistry {
   kill(sessionId: string, owner: SessionOwner): Promise<void>;
   /** Evict with an audited reason — owner-checked, then the single drop + cleanup + onCapForget + onEvict + WARN site that the reaper sweep and the max_interactions path both drive. */
   evict(sessionId: string, owner: SessionOwner, reason: EvictReason): Promise<void>;
+  getOwner?(sessionId: string): SessionOwner | undefined; // ISSUE-3 recovery seam (daemon-trusted, owner-agnostic): stamped owner by id — recovers the (userId,sessionKey) the worker→event re-publish drops so a detached drive's woken turns resolve the LIVE session, not drop cross-owner. Identity only; undefined iff absent.
   size(): number;
   cleanup(): Promise<void>;
 }
@@ -794,5 +795,5 @@ export function createTerminalSessionRegistry(
   if (deps.durability !== undefined)
     applyRecoveredSessions(deps.durability, sessions, nowMs, (id, cols, rows) => request(id, "reattach", { sessionId: id, cols, rows }));
 
-  return { create, read, status, sendText, sendKey, resize, wait, get, list, kill, evict, size, cleanup };
+  return { create, read, status, sendText, sendKey, resize, wait, get, list, kill, evict, getOwner: (sessionId: string): SessionOwner | undefined => sessions.get(sessionId)?.owner, size, cleanup };
 }

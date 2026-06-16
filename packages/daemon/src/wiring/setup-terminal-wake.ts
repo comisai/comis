@@ -20,11 +20,11 @@
  *
  * **Owner derivation (the keystone seam).** The fd3 attention frame is unsolicited and the
  * worker is owner-agnostic, so the re-published `terminal:input_needed` carries `agentId`
- * but neither `sessionKey` nor `requestId`. The forcing use case (spec §4.4) is a top-level
- * agent driving its own session — `sessionKey: ""` (the documented owner fallback,
- * `terminal-session-owner.ts`). We derive `owner = { agentId, sessionKey: "" }`; every
- * registry call the woken turn makes is owner-scoped, so a non-matching owner degrades to
- * the not-found view (never a cross-owner leak). The `requestId` correlation key is
+ * but neither `sessionKey` nor `requestId`. The wake `owner = { agentId, sessionKey }` is the
+ * AGENT-TURN identity; the REGISTRY owner (status/read/send/active-check) is RECOVERED from the
+ * session's STAMPED owner via `registry.getOwner` (ISSUE-3 — a channel/API drive is stamped
+ * under `(userId, sessionKey)`, which the re-publish drops), so a DETACHED drive's woken turns
+ * resolve the LIVE session instead of dropping cross-owner. The `requestId` correlation key is
  * synthesized from `(sessionId, reason)` so N re-publishes of ONE unanswered frame coalesce
  * to ONE woken turn (OPS-09), and a distinct subsequent prompt (a fresh `reason`) is a fresh
  * wake.
@@ -315,7 +315,8 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
   const isSessionActive = (sessionId: string, owner: PersistedWakeOwner): boolean => {
     const registry = deps.registries.get(owner.agentId);
     if (!registry) return false;
-    return registry.get(sessionId, registryOwnerFor(owner)) !== undefined;
+    // ISSUE-3: recover the STAMPED owner (getOwner) the worker→event re-publish drops, so a channel/API drive's live wake is not falsely dropped cross-owner; fall back to the owner-scoped get.
+    return registry.getOwner?.(sessionId) !== undefined || registry.get(sessionId, registryOwnerFor(owner)) !== undefined;
   };
 
   // The hop-limit escalation (the FSM's forced-escalation path) → emit terminal:escalated
@@ -776,9 +777,9 @@ function makeWakeAdapterBus(
           // The redaction-safe core event omits requestId; correlate by (sessionId, reason)
           // so duplicate re-publishes of one frame coalesce, a fresh prompt re-wakes.
           requestId: `${ev.sessionId}:${reason}`,
-          // DRIVE-01: drive:<id> for a promoted session (isolated woken-turn attribution),
-          // "" otherwise (the forcing-use-case fallback). The registry owner is stripped
-          // back to the stamped owner downstream (registryOwnerFor) — I5 by construction.
+          // DRIVE-01: drive:<id> for a promoted session (isolated woken-turn attribution), ""
+          // otherwise. This stays the AGENT-TURN id; the REGISTRY owner is RECOVERED downstream via
+          // registry.getOwner (ISSUE-3, channel/API sessions), registryOwnerFor being the fallback.
           owner: { agentId: ev.agentId, sessionKey: driveScopeKey(ev.sessionId) },
           state: ev.state === "stuck" ? "stuck" : "awaiting-input",
           reason,
