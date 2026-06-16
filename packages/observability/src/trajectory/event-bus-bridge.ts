@@ -250,6 +250,23 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   "video:generated": "video.generated",
   "video:delivered": "video.delivered",
   "video:failed": "video.failed",
+
+  // ---- Voice STT/TTS (OBS-02/03, Phase 196; events-media.ts) ----
+  // APPEND-ONLY alongside the image:*/media.vision:*/video:* sections above —
+  // never a rename (Pitfall 8). Like those, these are DIRECT-emitted by the
+  // daemon voice RPC handler (media.transcribe / tts.synthesize) via the
+  // per-session recorder (NO bus bridge in the daemon RPC context); declared here
+  // for trajectory-type ARCH closure + a future bus emitter ONLY.
+  // media.*.completed carries `costUsd` (keyless = 0 explicit — OBS-05 Route a);
+  // media.*.requested carries the `onSkip` reasons (OBS-03). Content-free
+  // translators (translate-voice-payload.ts) forward only the
+  // ids/labels/numbers/booleans/closed-enum-reasons. KEY is COLON, VALUE is DOT.
+  "media.stt:requested": "media.stt.requested",
+  "media.stt:completed": "media.stt.completed",
+  "media.stt:failed": "media.stt.failed",
+  "media.tts:requested": "media.tts.requested",
+  "media.tts:completed": "media.tts.completed",
+  "media.tts:failed": "media.tts.failed",
 } as const satisfies Record<string, TrajectoryEventType>;
 
 /**
