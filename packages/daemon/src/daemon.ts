@@ -2012,7 +2012,8 @@ async function bootAgents(
   // Phase 193 keyless-first audio steering: setup-media gates STT/TTS construction
   // on this selector (resolveStt/resolveTts) BEFORE building any adapter — a
   // Codex/OAuth-only main never builds the empty-bearer OpenAI adapter (no 401).
-  const audioSelector = buildAudioResolverDeps(container, defaultAgentId, skillsLogger);
+  // Phase 194: buildAudioResolverDeps is async (runs the detectLocalSttEngine boot probe).
+  const audioSelector = await buildAudioResolverDeps(container, defaultAgentId, skillsLogger);
   const {
     ttsAdapter, visionRegistry, visionRegistryHolder, linkRunner,
     mediaTempManager, mediaSemaphore, audioConverter,

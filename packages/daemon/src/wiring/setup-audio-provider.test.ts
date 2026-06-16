@@ -15,7 +15,7 @@
  */
 import { describe, it, expect, vi } from "vitest";
 import type { AppContainer, SecretManager } from "@comis/core";
-import type { detectLocalSttEngine } from "@comis/skills";
+import type { detectLocalSttEngine } from "@comis/skills/tools";
 import {
   buildAudioResolverDeps,
   createAudioProviderSelector,

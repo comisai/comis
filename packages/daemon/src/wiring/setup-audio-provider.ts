@@ -24,9 +24,11 @@
  * Placement: `@comis/daemon`. Kept in a dedicated file (NOT folded into
  * setup-media.ts) so the skills-only setup-media module gains no `@comis/core`
  * media-resolver import edge — mirroring `setup-image-provider.ts`'s rationale.
- * `localEngineAvailable` is the Phase 194 seam (the daemon passes `() => false`
- * until the local whisper engine lands); `edgeAvailable` is the keyless TTS rung
- * (the daemon passes `() => true` — Edge is the shipped keyless adapter).
+ * `localEngineAvailable` is the Phase 194 seam — `buildAudioResolverDeps` now runs
+ * the one-shot `detectLocalSttEngine` boot probe and passes the captured boolean
+ * (a reachable `transcription.local.baseUrl` OR the importable in-process whisper
+ * engine + ffmpeg). `edgeAvailable` is the keyless TTS rung (the daemon passes
+ * `() => true` — Edge is the shipped keyless adapter).
  *
  * @module
  */
@@ -37,6 +39,7 @@ import {
   type AppContainer,
   type SecretManager,
 } from "@comis/core";
+import { detectFfmpeg, detectLocalSttEngine } from "@comis/skills/tools";
 import { resolveAgentMainProvider } from "./setup-agents/setup-agents-tooling.js";
 import type { ComisLogger } from "@comis/infra";
 
@@ -171,20 +174,50 @@ export function createAudioProviderSelector(deps: {
 }
 
 /**
- * Boot-composition shim (Phase 193): build the keyless-first audio selector from
- * the boot container + the DEFAULT agent id, resolving `mainProviderId` via the
- * SAME `resolveAgentMainProvider` accessor the image/video/vision paths use (I4
- * lockstep). Extracted here (NOT inlined in daemon.ts) so the composition root
- * stays under its 3000-line cap — the daemon calls this in one line and threads
- * the result into setupMedia. `localEngineAvailable` is `() => false` (the Phase
- * 194 seam); the audio-wiring-guard pins this call into the live daemon.
+ * Boot-composition shim (Phase 193 + 194): build the keyless-first audio selector
+ * from the boot container + the DEFAULT agent id, resolving `mainProviderId` via
+ * the SAME `resolveAgentMainProvider` accessor the image/video/vision paths use
+ * (I4 lockstep). Extracted here (NOT inlined in daemon.ts) so the composition root
+ * stays under its 3000-line cap — the daemon `await`s this once at boot and threads
+ * the result into setupMedia.
+ *
+ * Phase 194 (LOCAL-02/03): this runs the one-shot `detectLocalSttEngine` boot probe
+ * ONCE (mirroring `detectFfmpeg` — never throws, never downloads a model), logs
+ * availability exactly once at INFO (`step: stt_local_probe`), and CAPTURES the
+ * boolean as the synchronous `localEngineAvailable: () => probe.available` predicate
+ * the pure resolver consumes (Pitfall 4 — NO per-resolution I/O). The probe is true
+ * when a configured `transcription.local.baseUrl` server is reachable OR the
+ * in-process whisper engine is importable AND ffmpeg is present; otherwise the
+ * `auto`/`local` STT rung honest-degrades to unavailable (the Phase-193 behavior).
+ * A local server that comes up AFTER boot needs a daemon restart to be picked up
+ * (the boolean is captured once; Open Question Q3 — acceptable). The
+ * audio-wiring-guard pins the real probe + the absence of the hardcoded `() => false`.
+ *
+ * `detectEngine` is an injected test seam (defaults to the real
+ * `detectLocalSttEngine`) so unit tests stub the probe without touching the
+ * engine import or the network.
  */
-export function buildAudioResolverDeps(
+export async function buildAudioResolverDeps(
   container: AppContainer,
   defaultAgentId: string,
   logger: ComisLogger,
-): ReturnType<typeof createAudioProviderSelector> {
+  detectEngine: typeof detectLocalSttEngine = detectLocalSttEngine,
+): Promise<ReturnType<typeof createAudioProviderSelector>> {
   const media = container.config.integrations.media;
+  // One-shot boot probe (never throws). ffmpeg is the in-process decode gate; a
+  // reachable local.baseUrl short-circuits it inside detectLocalSttEngine.
+  const ffmpegCaps = await detectFfmpeg();
+  const probe = await detectEngine({
+    baseUrl: media.transcription.local?.baseUrl,
+    ffmpegAvailable: ffmpegCaps.ffmpegAvailable,
+  });
+  // LOCAL-02: availability is the load-bearing "why is keyless STT (un)available"
+  // evidence — log it ONCE at INFO at the default level. `mode` is the mechanism
+  // (baseUrl/in-process/none), NEVER the URL or a secret (T-194-11).
+  logger.info(
+    { available: probe.available, mode: probe.mode, step: "stt_local_probe" },
+    "local STT engine availability",
+  );
   return createAudioProviderSelector({
     transcriptionConfig: media.transcription,
     ttsConfig: media.tts,
@@ -195,7 +228,7 @@ export function buildAudioResolverDeps(
       defaultAgentId,
       defaultAgentId,
     ).providerId,
-    localEngineAvailable: () => false,
+    localEngineAvailable: () => probe.available,
     logger,
   });
 }
