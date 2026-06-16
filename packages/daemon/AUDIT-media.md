@@ -32,6 +32,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | mainModelIdFor | optional | the daemon-side vision-capability gate cannot resolve the main model id; `image_analyze` treats the main as non-vision-capable and uses the registry tier (VIS-01, Phase 187) | packages/daemon/src/api/types.ts:625 |
 | mainProviderVision | optional | the main-provider vision bridge is unwired; `image_analyze` skips main-vision and uses the registry tier / honest-unavailable (VIS-01, Phase 187) | packages/daemon/src/api/types.ts:632 |
 | trajectoryRegistry | optional | the vision handlers cannot resolve a per-session recorder; the `media.vision.*` trajectory direct-emits no-op (the §2.7 INFO/WARN log lines still fire) so `comis explain` lacks the vision turn (VIS-04, Phase 187) | packages/daemon/src/api/types.ts:642 |
+| voiceSelection | optional | the daemon voice handlers cannot read the boot-resolved STT/TTS `source`/`onSkip` reasons; the `media.stt.*`/`media.tts.*` trajectory records fall back to the config-derived provider + keyless (source defaults to "explicit") so `comis explain` shows the provider but not WHY `auto` picked the rung (OBS-03, Phase 196) | packages/daemon/src/api/types.ts:683 |
 
 ## Removed Fields (stale-fallback — deleted)
 
