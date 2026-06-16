@@ -231,7 +231,8 @@ export const TerminalDriverConfigSchema = z.strictObject({
    * `strictObject`: a config with NO `drive` block is byte-identical to today (I1). Phase 164
    * introduced `mode` (DRIVE-02) + `readMode` (READ-01); Phase 165 (165-05) adds the three
    * endurance/durability fields `durable` (DUR-01) / `heartbeatMs` (LIVE-01) / `maxCostUsd`
-   * (ENDURE-01); Phase 166 extends this SAME block further (notify / heartbeatNotifyMs). The
+   * (ENDURE-01); Phase 166 (166-02) COMPLETES this SAME block with the two user-facing
+   * notification fields `notify` (NOTIFY-01) / `heartbeatNotifyMs` (NOTIFY-02, §7.1.4). The
    * optional-block + per-field-`.default(...)` discipline lets each phase's additions stay
    * independent (an unknown/typo'd `drive.*` key still rejects, OPS-02). The per-field defaults
    * preserve today's effective behavior — `mode:"auto"` only promotes a genuinely-long drive;
@@ -275,6 +276,27 @@ export const TerminalDriverConfigSchema = z.strictObject({
        * credential (I5) — it bounds cost only.
        */
       maxCostUsd: z.number().nullable().default(null),
+      /**
+       * NOTIFY-01 — which terminal-outcome notifications reach the USER: `terminal`
+       * (default) = `done`/`needs-you`/`failed` only; `all` = every wake (DEBUG-ONLY);
+       * `none` = non-escalation suppressed. I4: an escalation STILL fires under `none`
+       * (a needs-you IS a terminal notification) — `notify` NEVER weakens SEC-12
+       * escalate-always / SEC-11 loop-guard, it only gates the uninteresting middle.
+       * Default `terminal` preserves the conservative spam-free posture. Carries no
+       * privilege/path/credential (I5) — a policy knob only.
+       */
+      notify: z.enum(["terminal", "all", "none"]).default("terminal"),
+      /**
+       * NOTIFY-02 (§7.1.4) — the user-facing progress-heartbeat cadence (ms) for a
+       * PROMOTED long drive: a coarse, content-free one-liner from the journal (I3) so a
+       * 40h drive is not 40h of silence. `0` = terminal-only (no heartbeat; today's
+       * behavior). Default 3_600_000 (1h) — a spam-free coarse cadence. `.int().nonnegative()`
+       * (NOT `.positive()`) BECAUSE `0` is the meaningful "terminal-only" value — this is
+       * DISTINCT from `heartbeatMs` (the INTERNAL liveness backstop above, `.positive()`,
+       * NOT a user message). A short (unpromoted) drive emits none (I1). Carries no
+       * privilege/path/credential (I5) — a cadence knob only.
+       */
+      heartbeatNotifyMs: z.number().int().nonnegative().default(3_600_000),
     })
     .optional(),
 });
