@@ -339,3 +339,118 @@ describe("wireVoiceObs — the handler-wiring helper (emitter + §2.7 logger clo
     expect(logger.warn).toHaveBeenCalledTimes(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// OBS-04 (Phase 196) — the voice_degraded fleet emit (route-(b)-minimal).
+//
+// On a transcription/synthesis FAILURE, wireVoiceObs.failed() ALSO inserts a
+// `voice_degraded` health_signal diagnostic row (when an obsStore is wired) so the
+// cross-session `comis fleet` voice_health finding (fleet-findings.ts) has a
+// source. The row is CONTENT-FREE: signal + the closed domain errorKind + the
+// voice family ONLY — never the raw provider message, never a secret. Insertion is
+// best-effort: an absent store no-ops, and a throwing store never breaks the
+// handler (the §2.7 lines + the trajectory record are the primary obligations).
+//
+// RED: wireVoiceObs does not accept/use an obsStore yet, so no row is inserted.
+// ---------------------------------------------------------------------------
+
+/** A capture ObservabilityStore exposing only insertDiagnostic (+ an optional throw). */
+function captureObsStore(opts: { throwOnInsert?: boolean } = {}) {
+  const rows: Array<{ category: string; details?: string; message: string; severity: string }> = [];
+  return {
+    rows,
+    insertDiagnostic: vi.fn((row: { category: string; details?: string; message: string; severity: string }) => {
+      if (opts.throwOnInsert) throw new Error("db is broken");
+      rows.push(row);
+    }),
+  };
+}
+
+describe("wireVoiceObs — OBS-04 voice_degraded fleet emit", () => {
+  it("failed() inserts ONE voice_degraded health_signal row carrying the closed domain errorKind + the voice family", () => {
+    const logger = captureLogger();
+    const obsStore = captureObsStore();
+    const w = wireVoiceObs({
+      sessionKey: "s",
+      trajectoryRegistry: undefined,
+      logger,
+      obsStore: obsStore as never,
+      agentId: "a",
+      kind: "stt",
+      requested: { provider: "local", mainProvider: "openai-codex", source: "keyless-local" },
+    });
+    w.failed({ sttErrorKind: "model_load_failed", provider: "local", source: "keyless-local", errMessage: "whisper model failed to load" });
+    expect(obsStore.insertDiagnostic).toHaveBeenCalledTimes(1);
+    const row = obsStore.rows[0]!;
+    expect(row.category).toBe("health_signal");
+    const details = JSON.parse(row.details!) as { signal: string; errorKind: string; kind: string };
+    expect(details.signal).toBe("voice_degraded");
+    expect(details.errorKind).toBe("model_load_failed");
+    expect(details.kind).toBe("stt");
+  });
+
+  it("completed() inserts NO voice_degraded row (only failures degrade)", () => {
+    const logger = captureLogger();
+    const obsStore = captureObsStore();
+    const w = wireVoiceObs({
+      sessionKey: "s",
+      trajectoryRegistry: undefined,
+      logger,
+      obsStore: obsStore as never,
+      agentId: "a",
+      kind: "tts",
+      requested: { provider: "edge", mainProvider: "openai", source: "keyless-local" },
+    });
+    w.completed({ provider: "edge", keyless: true, costUsd: 0, source: "keyless-local" });
+    expect(obsStore.insertDiagnostic).not.toHaveBeenCalled();
+  });
+
+  it("the inserted row is CONTENT-FREE — no raw provider message, no secret in details (SEC-01)", () => {
+    const logger = captureLogger();
+    const obsStore = captureObsStore();
+    const w = wireVoiceObs({
+      sessionKey: "s",
+      trajectoryRegistry: undefined,
+      logger,
+      obsStore: obsStore as never,
+      agentId: "a",
+      kind: "stt",
+      requested: { provider: "openai", mainProvider: "openai", source: "follow-main-key" },
+    });
+    const leaky = "POST https://api.openai.com/v1/audio/transcriptions failed (Authorization: Bearer sk-proj-abc123def456)";
+    w.failed({ sttErrorKind: "network", provider: "openai", source: "follow-main-key", errMessage: leaky });
+    const serialized = JSON.stringify(obsStore.rows[0]);
+    expect(serialized).not.toContain("sk-proj");
+    expect(serialized).not.toContain("Bearer");
+    expect(serialized).not.toContain("/v1/audio/transcriptions");
+    expect(serialized).not.toContain("api.openai.com");
+  });
+
+  it("is best-effort: an absent obsStore no-ops and a throwing obsStore never breaks the handler", () => {
+    const logger = captureLogger();
+    // absent store
+    const wNoStore = wireVoiceObs({
+      sessionKey: "s",
+      trajectoryRegistry: undefined,
+      logger,
+      agentId: "a",
+      kind: "stt",
+      requested: { provider: "local", mainProvider: "openai-codex", source: "keyless-local" },
+    });
+    expect(() => wNoStore.failed({ sttErrorKind: "timeout", provider: "local", source: "keyless-local", errMessage: "x" })).not.toThrow();
+    // throwing store
+    const throwingStore = captureObsStore({ throwOnInsert: true });
+    const wThrow = wireVoiceObs({
+      sessionKey: "s",
+      trajectoryRegistry: undefined,
+      logger,
+      obsStore: throwingStore as never,
+      agentId: "a",
+      kind: "stt",
+      requested: { provider: "local", mainProvider: "openai-codex", source: "keyless-local" },
+    });
+    expect(() => wThrow.failed({ sttErrorKind: "timeout", provider: "local", source: "keyless-local", errMessage: "x" })).not.toThrow();
+    // the §2.7 WARN line still fired despite the insert throwing
+    expect(logger.warn).toHaveBeenCalled();
+  });
+});

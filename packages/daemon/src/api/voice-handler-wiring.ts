@@ -57,7 +57,15 @@ export async function pruneTtsOutputDir(outputDir: string): Promise<void> {
 /** The minimal slice of `MediaHandlerDeps` the voice wiring reads. */
 type VoiceWiringDeps = Pick<
   MediaApiDeps,
-  "mediaConfig" | "trajectoryRegistry" | "logger" | "defaultAgentId" | "resolveAgentMainProvider" | "voiceSelection"
+  | "mediaConfig"
+  | "trajectoryRegistry"
+  | "logger"
+  | "defaultAgentId"
+  | "resolveAgentMainProvider"
+  | "voiceSelection"
+  // OBS-04 (196): the obs store the voice_degraded fleet emit inserts into (already
+  // on MediaApiDeps — no new dep). Optional; absent → the emit no-ops.
+  | "obsStore"
 >;
 
 /** The closed set of providers that run keyless (no credential). Used only when
@@ -127,6 +135,8 @@ export function wireVoiceForHandler(
     sessionKey: rawParams._callerSessionKey as string | undefined,
     trajectoryRegistry: deps.trajectoryRegistry,
     logger: deps.logger,
+    // OBS-04: thread the obsStore so a failure feeds the fleet voice_health finding.
+    ...(deps.obsStore !== undefined ? { obsStore: deps.obsStore } : {}),
     agentId,
     kind,
     requested: { provider: requested.provider, mainProvider: main.providerId, source: requested.source, ...(requested.onSkip !== undefined ? { onSkip: requested.onSkip } : {}) },

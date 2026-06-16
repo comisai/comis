@@ -42,8 +42,9 @@
  */
 
 import type { SessionTrajectoryHandleRegistry, TrajectoryEventType } from "@comis/observability";
-import { STT_ERR_TO_LOG, sanitizeLogString } from "@comis/core";
+import { STT_ERR_TO_LOG, sanitizeLogString, systemNowMs } from "@comis/core";
 import type { ComisLogger, SttErrorKind } from "@comis/core";
+import type { ObservabilityStore } from "@comis/memory";
 
 /** The resolved STT/TTS selection rung (OBS-03). Mirrors `SttSelection.source`. */
 export type VoiceSource = "explicit" | "keyless-local" | "follow-main-key" | "fallback";
@@ -195,6 +196,46 @@ function redactVoiceLogMessage(message: string): string {
 }
 
 /**
+ * OBS-04 (Phase 196): emit a CONTENT-FREE `voice_degraded` health_signal
+ * diagnostic row on a voice failure, so the cross-session `comis fleet`
+ * `voice_health` finding (fleet-findings.ts `voiceDegradedFromRow`/`buildFindings`)
+ * has a source. The fleet assembler reads `obs_diagnostics` (`health_signal` /
+ * `model_health` / `config_posture`) — voice failures emit NO row otherwise (the
+ * per-session trajectory record is daemon-context-only; the executor session_summary
+ * rollup that feeds the fleet carries only the closed LOG ErrorKinds, which conflate
+ * voice with non-voice). This is the route-(b)-minimal emit: the ONLY new emit site,
+ * and it lives in THIS obs-layer module (not media-handlers.ts), reading the obsStore
+ * already on MediaApiDeps — so no earlier-wave file is touched (the plan's FLAG-7
+ * route decision).
+ *
+ * Details carry the signal label + the closed domain `SttErrorKind` + the voice
+ * family ONLY — NEVER the raw provider message, a URL, or a secret (H1 no-body;
+ * the fleet finding is safe to paste). Best-effort: an absent store no-ops and a
+ * throwing store is swallowed (observability is non-fatal — the §2.7 lines + the
+ * trajectory record are the primary obligations; the store DEGRADES SILENTLY).
+ */
+function emitVoiceDegradedSignal(
+  obsStore: ObservabilityStore | undefined,
+  args: { kind: VoiceKind; errorKind: SttErrorKind; agentId: string },
+): void {
+  if (obsStore === undefined) return;
+  try {
+    obsStore.insertDiagnostic({
+      timestamp: systemNowMs(),
+      category: "health_signal",
+      severity: "warning",
+      agentId: args.agentId,
+      message: "voice_degraded",
+      // CONTENT-FREE: closed labels only (signal + the domain errorKind + the voice
+      // family). No provider message / URL / secret ever enters the details JSON.
+      details: JSON.stringify({ signal: "voice_degraded", errorKind: args.errorKind, kind: args.kind }),
+    });
+  } catch {
+    // Observability is non-fatal — a broken store must never break the voice handler.
+  }
+}
+
+/**
  * wireVoiceObs — the PRIMARY handler-wiring path (the WARNING-2 lever for the
  * `media-handlers.ts` 799/800 cap). Bundles {@link createVoiceObsEmitter} with a
  * typed §2.7 logger closure so Plan 03's per-handler delta is a `wireVoiceObs(...)`
@@ -215,12 +256,17 @@ export function wireVoiceObs(args: {
   sessionKey: string | undefined;
   trajectoryRegistry: SessionTrajectoryHandleRegistry | undefined;
   logger: ComisLogger;
+  /** OBS-04 (196): the observability store. When present, `failed()` ALSO inserts a
+   *  content-free `voice_degraded` health_signal row for the `comis fleet`
+   *  voice_health finding. Optional — absent off-turn / on a boot mode without it
+   *  (the row insert then no-ops; the §2.7 line + the trajectory record still fire). */
+  obsStore?: ObservabilityStore;
   agentId: string;
   kind: VoiceKind;
   requested: { provider: string; mainProvider: string; source: VoiceSource; onSkip?: string[] };
   logContext?: { traceId?: string; channelType?: string };
 }): WiredVoiceObs {
-  const { logger, agentId, kind, logContext } = args;
+  const { logger, obsStore, agentId, kind, logContext } = args;
   const obs = createVoiceObsEmitter(args);
   const okMsg = kind === "stt" ? "Transcription completed" : "Speech synthesis completed";
   const failMsg = kind === "stt" ? "Transcription failed" : "Speech synthesis failed";
@@ -247,6 +293,9 @@ export function wireVoiceObs(args: {
     },
     failed(a) {
       obs.failed({ errorKind: a.sttErrorKind, provider: a.provider, source: a.source });
+      // OBS-04: feed the cross-session fleet voice_health finding (content-free,
+      // best-effort — never breaks the handler).
+      emitVoiceDegradedSignal(obsStore, { kind, errorKind: a.sttErrorKind, agentId });
       logger.warn(
         {
           agentId,

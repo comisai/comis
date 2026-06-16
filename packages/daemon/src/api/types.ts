@@ -678,6 +678,11 @@ export interface MediaApiDeps {
    *  thread onto the `media.stt.*`/`media.tts.*` trajectory via `wireVoiceObs`.
    *  Optional — undefined on a selector-less boot (handler derives from config). */
   voiceSelection?: { stt?: ResolvedVoiceSelection; tts?: ResolvedVoiceSelection };
+  /** OBS-04 (196): the obs store the voice obs inserts a `voice_degraded`
+   *  health_signal row into on a STT/TTS failure (feeds the `comis fleet`
+   *  voice_health finding). Same instance as `ObservabilityApiDeps.obsStore`;
+   *  declared here so the voice handlers' deps slice can read it. Optional. */
+  obsStore?: import("@comis/memory").ObservabilityStore;
   /** media-handlers reads deps.workspaceDirs / deps.defaultWorkspaceDir
    *  / deps.defaultAgentId for STT / vision / link-processing file paths.
    *  Same shape as ChannelsApiDeps + WorkspaceApiDeps for ApiDispatchDeps multi-extends parity. */
