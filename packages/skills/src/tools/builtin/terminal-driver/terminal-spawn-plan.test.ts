@@ -121,3 +121,29 @@ describe("buildSpawnPlan — sandbox signal (a driven CLI must not nest its own 
     expect(plan.env.CLAUDE_CODE_BUBBLEWRAP).toBe("1"); // sandbox signal survives + honest "1"
   });
 });
+
+describe("buildSpawnPlan — backend-independent env hardening in the bwrap argv (the tmux/durable gap)", () => {
+  // Real-VPS 2026-06-17: the `env` field above is applied by the PTY backend (pty.spawn({env})),
+  // but the DEFAULT durable/tmux backend runs `tmux new-session -- bwrap …`, and the session
+  // inherits the tmux SERVER env, BYPASSING the worker's scrubbed env entirely. Result: the
+  // daemon's `NODE_OPTIONS=--permission …` leaked into a driven claude AND CLAUDE_CODE_BUBBLEWRAP
+  // never reached it → its Bash/SessionStart-hook EROFS'd on the default backend. Fix: emit the env
+  // hardening as bwrap FLAGS in the argv, so bwrap clears/sets its own child env on EVERY backend.
+  it("emits --setenv CLAUDE_CODE_BUBBLEWRAP 1 in the argv (reaches the tmux backend, not just PTY's env field)", async () => {
+    const plan = await buildSpawnPlan(makeInput(), { bwrapPath: "/usr/bin/bwrap" });
+    expect(plan.argv.join(" ")).toContain("--setenv CLAUDE_CODE_BUBBLEWRAP 1");
+  });
+
+  it("emits --unsetenv NODE_OPTIONS in the argv (strips the daemon's leaked Node --permission hardening)", async () => {
+    const plan = await buildSpawnPlan(makeInput(), { bwrapPath: "/usr/bin/bwrap" });
+    expect(plan.argv.join(" ")).toContain("--unsetenv NODE_OPTIONS");
+  });
+
+  it("emits --unsetenv for the whole interpreter-control blocklist + the CLAUDECODE sentinel", async () => {
+    const plan = await buildSpawnPlan(makeInput(), { bwrapPath: "/usr/bin/bwrap" });
+    const argvStr = plan.argv.join(" ");
+    for (const key of ["BASH_ENV", "PYTHONSTARTUP", "NODE_OPTIONS", "CLAUDECODE"]) {
+      expect(argvStr).toContain(`--unsetenv ${key}`);
+    }
+  });
+});
