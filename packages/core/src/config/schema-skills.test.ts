@@ -336,12 +336,14 @@ describe("TerminalDriverConfigSchema -- additive strict drive{} block (DRIVE-02/
   // -------------------------------------------------------------------------
   // Phase 165 (165-05, DUR-01/LIVE-01/ENDURE-01): the SAME additive strict
   // drive{} block gains three endurance/durability fields —
-  //   durable     (bool,        default false)  — DUR-01: detached tmux + re-attach
+  //   durable     (bool,        DEFAULT true)   — DUR-01: detached tmux + re-attach (the
+  //                                               default working setup since 2026-06-16 —
+  //                                               driveable via node-pty attach + survive-
+  //                                               restart via KillMode=process + data-dir socket)
   //   heartbeatMs (int>0,       default 90_000) — LIVE-01: internal liveness backstop interval
   //   maxCostUsd  (number|null, default null)   — ENDURE-01: per-drive spend ceiling
-  // All three default to INERT (I1): a config with no drive block, or an empty
-  // drive block, is byte-identical to today (durable:false, heartbeatMs:90000,
-  // maxCostUsd:null). The block stays a closed strictObject (a typo'd key still
+  // An EMPTY drive block fills durable:TRUE (the default backend), heartbeatMs:90000,
+  // maxCostUsd:null. The block stays a closed strictObject (a typo'd key still
   // rejects). §7.1.5 LOCKED: drive.durable:true is ACCEPTED at config-validation —
   // tmux availability is a RUNTIME property (degrade + WARN at runtime), NOT a
   // config-time hard-require; a RED test pins durable:true parses with NO tmux check.
@@ -355,11 +357,16 @@ describe("TerminalDriverConfigSchema -- additive strict drive{} block (DRIVE-02/
     expect(parsed.drive?.maxCostUsd).toBe(5);
   });
 
-  it("fills the Phase-165 defaults on an EMPTY drive block (durable:false, heartbeatMs:90000, maxCostUsd:null — I1 inert)", () => {
+  it("fills the Phase-165 defaults on an EMPTY drive block (durable:TRUE the default backend, heartbeatMs:90000, maxCostUsd:null)", () => {
     const parsed = TerminalDriverConfigSchema.parse({ ...baseCfg, drive: {} });
-    expect(parsed.drive?.durable).toBe(false);
+    expect(parsed.drive?.durable).toBe(true);
     expect(parsed.drive?.heartbeatMs).toBe(90_000);
     expect(parsed.drive?.maxCostUsd).toBeNull();
+  });
+
+  it("respects an explicit drive.durable:false opt-out (non-durable pty drive)", () => {
+    const parsed = TerminalDriverConfigSchema.parse({ ...baseCfg, drive: { durable: false } });
+    expect(parsed.drive?.durable).toBe(false);
   });
 
   it("ACCEPTS drive.durable:true with NO config-time tmux check (§7.1.5 LOCKED — tmux is a runtime property; the OTHER fields still default)", () => {

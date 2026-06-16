@@ -643,15 +643,19 @@ describe("buildTerminalSharedDeps — the WR-01 closure: populate the allow-set 
     expect(shared.allowEntries[0]!.limits).toMatchObject({ maxInteractions: 200 });
   });
 
-  it("FINDING-B (DUR-01): threads config.drive.durable → sharedDeps.durable so the create tool engages tmux; absent ⇒ false (I1)", () => {
-    // Live VPS finding 2026-06-16: drive.durable was parsed but NEVER threaded to the create tool
-    // (buildTerminalSharedDeps set driveMode/readMode but not durable), so the durable survive-a-
-    // daemon-restart path was unreachable — every session ran pty.
+  it("FINDING-B/DUR-01: threads config.drive.durable → sharedDeps.durable; DEFAULT-ON (tmux is the default backend), explicit opt-out respected", () => {
+    // Live VPS 2026-06-16: drive.durable was parsed but NEVER threaded to the create tool (Finding B,
+    // fixed). The tmux backend was then made driveable (the node-pty `attach` rework) + survive-a-restart
+    // (KillMode=process + data-dir socket), so the durable/tmux path is now the DEFAULT working setup —
+    // the runtime fallback flipped `?? false` → `?? true`. Explicit `durable:false` still opts out to pty.
     const registries = new Map<string, TerminalSessionRegistry>();
     const durableDeps = { ...makeDepsWithConfig(), config: { ...makeConfig(), drive: { durable: true } } };
-    expect(buildTerminalSharedDeps(registries, "agent-a", durableDeps as never).durable, "config.drive.durable:true → deps.durable:true").toBe(true);
-    // No drive block (the default config) → false (today's spawn session, byte-identical).
-    expect(buildTerminalSharedDeps(registries, "agent-a", makeDepsWithConfig() as never).durable).toBe(false);
+    expect(buildTerminalSharedDeps(registries, "agent-a", durableDeps as never).durable, "drive.durable:true → true").toBe(true);
+    // No drive block (the default config) → TRUE: durable/tmux is the DEFAULT backend now.
+    expect(buildTerminalSharedDeps(registries, "agent-a", makeDepsWithConfig() as never).durable, "no drive block → default-on").toBe(true);
+    // Explicit opt-OUT is respected → false (the non-durable pty backend).
+    const optOut = { ...makeDepsWithConfig(), config: { ...makeConfig(), drive: { durable: false } } };
+    expect(buildTerminalSharedDeps(registries, "agent-a", optOut as never).durable, "drive.durable:false → opt-out").toBe(false);
   });
 
   it("a populated allow-set with limits feeds the per-session caps (caps go LIVE)", () => {
