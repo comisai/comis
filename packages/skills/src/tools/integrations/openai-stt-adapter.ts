@@ -3,7 +3,7 @@ import type { TranscriptionPort, TranscriptionOptions, TranscriptionResult } fro
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
 import { sanitizeApiError, mimeToExtension } from "./media-adapter-shared.js";
-import { systemClearTimeout, systemSetTimeout } from "@comis/core";
+import { systemClearTimeout, systemSetTimeout, validateLocalServerUrl } from "@comis/core";
 
 /**
  * Configuration for the OpenAI STT adapter.
@@ -19,6 +19,18 @@ export interface OpenAISttConfig {
   readonly timeoutMs?: number;
   /** Maximum file size in megabytes (default: 25). */
   readonly maxFileSizeMb?: number;
+  /**
+   * SEC-02 (Surface B): when `true`, the `baseUrl` is validated by
+   * `validateLocalServerUrl` (the inverse SSRF guard — ALLOW loopback + an
+   * explicit allowlist, DENY public/private egress, keep the cloud-metadata
+   * deny) INSIDE `transcribe`, BEFORE the runtime fetch. Set ONLY by the
+   * stt-factory `local.baseUrl` branch — an explicit `transcription.provider:
+   * "local"` bypasses the boot probe (resolve-transcription-provider.ts:100), so
+   * this validate-then-fetch is the SSRF guard for the explicit-local runtime
+   * path. This adapter is SHARED with the cloud OpenAI path; the flag is UNSET
+   * there so `api.openai.com` is never blocked by the local guard.
+   */
+  readonly localServerGuard?: boolean;
 }
 
 const DEFAULT_MODEL = "gpt-4o-mini-transcribe";
@@ -55,6 +67,23 @@ export function createOpenAISttAdapter(config: OpenAISttConfig): TranscriptionPo
             `Audio file size ${fileSizeMb.toFixed(1)}MB exceeds limit of ${maxFileSizeMb}MB`,
           ),
         );
+      }
+
+      // SEC-02 (Surface B): validate-then-fetch. When this adapter is built for
+      // a local whisper server (the stt-factory local.baseUrl branch sets
+      // `localServerGuard`), the `baseUrl` is SSRF-validated BEFORE the runtime
+      // fetch — an explicit transcription.provider:"local" bypasses the boot
+      // probe, so this is the guard for that runtime path. Loopback + an
+      // explicitly-allowed host pass; a non-loopback/metadata host is rejected
+      // here, BEFORE the fetch fires. The cloud OpenAI path leaves the flag
+      // unset, so api.openai.com is never validated by the local guard.
+      if (config.localServerGuard) {
+        const guard = await validateLocalServerUrl(baseUrl);
+        if (!guard.ok) {
+          return err(
+            new Error(`Blocked local STT server URL: ${guard.error.message}`),
+          );
+        }
       }
 
       try {

@@ -83,6 +83,14 @@ export function createSTTProvider(
         // bearer is the KEYLESS sentinel — NEVER apiKey:"" (Pitfall 5 → an empty
         // bearer re-introduces the 401 this milestone fixes). The trailing slash
         // is trimmed so the adapter's `${baseUrl}/audio/transcriptions` join is clean.
+        //
+        // SEC-02 (Surface B): `localServerGuard: true` opts THIS construction
+        // into the adapter's validate-then-fetch SSRF guard. An explicit
+        // transcription.provider:"local" bypasses the boot probe
+        // (resolve-transcription-provider.ts:100), so the adapter is the only
+        // place left to guard the runtime fetch. The flag is set ONLY here (the
+        // local.baseUrl branch) — the cloud `case "openai"` above SHARES this
+        // adapter and must reach api.openai.com unguarded.
         return ok(
           createOpenAISttAdapter({
             apiKey: KEYLESS_API_KEY_SENTINEL,
@@ -90,6 +98,7 @@ export function createSTTProvider(
             model: config.model,
             timeoutMs: config.timeoutMs,
             maxFileSizeMb: config.maxFileSizeMb,
+            localServerGuard: true,
           }),
         );
       }
