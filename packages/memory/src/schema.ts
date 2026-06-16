@@ -12,6 +12,7 @@ import * as sqliteVec from "sqlite-vec";
 import { ensureLcdTables } from "./schema-lcd.js";
 import { ensurePinnedColumn } from "./schema-pinned.js";
 import { ensureVideoJobTable } from "./schema-video-jobs.js";
+import { ensureOutcomeEventsTable } from "./schema-outcome-events.js";
 
 /** Module-level flag tracking whether sqlite-vec loaded successfully. */
 let vecAvailable = false;
@@ -586,12 +587,10 @@ export function initSchema(db: Database.Database, embeddingDimensions: number): 
   `);
 
   // NOTE: the DAG context-store tables (ctx_*) were removed in v2.12 (Phase 126,
-  // LCD reimplementation) — only the schema-create call is deleted (no reverse
-  // migration exists); existing DBs keep harmless orphaned tables (design §9).
+  // LCD reimplementation) — only the schema-create call is gone (no reverse migration; existing DBs keep harmless orphaned tables, design §9).
   // The calls below run in dependency order AFTER the `memories` table (the FK
   // target) exists; each is idempotent, and every `ON DELETE CASCADE` fires via
-  // the `PRAGMA foreign_keys = ON` already set by `openSqliteDatabase`. Per-table
-  // contracts (schema shape, isolation scope, trust floor) live in each fn JSDoc.
+  // the `PRAGMA foreign_keys = ON` already set by `openSqliteDatabase`. Per-table contracts (schema shape, isolation scope, trust floor) live in each fn JSDoc.
   ensureMemoryColumns(db); // additive memory columns (forward-only; design §4.1)
   ensureEntityTables(db); // entity junction tables
   ensureUsefulnessTable(db); // recall-utility usefulness + intent bucket
@@ -603,6 +602,7 @@ export function initSchema(db: Database.Database, embeddingDimensions: number): 
   ensureLcdTables(db); // LCD lossless message + parts store (Phase 127)
   ensurePinnedColumn(db); // pinned-memory column + partial index (forward-only; design §4.1)
   ensureVideoJobTable(db); // durable async video-job store (Phase 189, JOB-01/JOB-03)
+  ensureOutcomeEventsTable(db); // outcome_events ledger (v2.26 WS1, OUTCOME-01) — no FK, (tenant,agent)-scoped
 
   // --- Observation partial indexes (design §4.1) --- created AFTER ensureMemoryColumns (indexed columns must exist first).
   // `idx_memories_unconsol` serves the candidate scan (consolidated_at IS NULL); `idx_memories_observations` serves the observation lookup (proof_count IS NOT NULL).
