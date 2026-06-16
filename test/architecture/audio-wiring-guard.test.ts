@@ -105,4 +105,34 @@ describe("keyless-first audio built-but-not-wired source guard", () => {
     expect(code).toMatch(/secretManager\.get\(/);
     expect(code).not.toMatch(/AUDIO_ENV_KEY\s*=\s*\{[\s\S]*?["']openai-codex["']/);
   });
+
+  it("setup-audio-provider.ts threads the real localEngineAvailable boot probe, not the hardcoded () => false (Phase 194)", () => {
+    // Phase 194 (LOCAL-02/03): buildAudioResolverDeps must run the one-shot
+    // detectLocalSttEngine boot probe and thread its captured boolean — NOT the
+    // Phase-193 hardcoded `localEngineAvailable: () => false`. This pins the
+    // program's #1 recurring blocker (built-but-not-wired): a refactor that drops
+    // the probe or re-hardcodes the false literal turns this red. NO allowlist add
+    // (allowlists are shrink-only).
+    const code = stripComments(readFileSync(SETUP_AUDIO_PROVIDER_TS, "utf8"));
+    // detectLocalSttEngine is wired as the boot probe (the injected test seam
+    // defaults to it: `detectEngine: typeof detectLocalSttEngine = detectLocalSttEngine`),
+    // so the live daemon calls the REAL probe. Asserting the `= detectLocalSttEngine`
+    // default pins the real wiring without coupling the guard to the seam's
+    // parameter name (the probe is invoked via the `detectEngine` alias).
+    expect(code).toMatch(/=\s*detectLocalSttEngine\b/);
+    // … and the probe IS invoked at boot, capturing its result.
+    expect(code).toMatch(/await\s+detectEngine\s*\(/);
+    // The seam is the captured boolean from that probe.
+    expect(code).toMatch(/localEngineAvailable:\s*\(\)\s*=>\s*probe\.available/);
+    // availability is logged once at boot (LOCAL-02).
+    expect(code).toMatch(/step:\s*["']stt_local_probe["']/);
+    // The hardcoded seam is GONE: no `localEngineAvailable: () => false`
+    // object-property assignment anywhere. This negative is deliberately NARROW —
+    // it matches ONLY the `localEngineAvailable:` property form, so it does NOT
+    // match the legitimate `?? (() => false)` injection default still present in
+    // createAudioProviderSelector (the fallback when no predicate is injected).
+    expect(code).not.toMatch(/localEngineAvailable:\s*\(\)\s*=>\s*false/);
+    // And the injection default is still there (the fallback must NOT be removed).
+    expect(code).toMatch(/\?\?\s*\(\(\)\s*=>\s*false\)/);
+  });
 });
