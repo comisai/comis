@@ -185,6 +185,50 @@ describe("classifyFrame — stuck (settled, no affordance, no progress > stuckMs
   });
 });
 
+describe("classifyFrame — STALE-ANCHOR recovery: a settled prompt with diffEmpty=false is awaiting-input, NOT stuck (real-VPS 2026-06-16)", () => {
+  // Live VPS terminal drive (v2.24): gpt-5.5 launched `claude`, backgrounded the drive
+  // (DRIVE-02), and claude finished building a multi-file app + sat at its idle `❯` input
+  // box. The worker runs settles only on OUTPUT, so once the drive was promoted and claude
+  // fell quiet, the classifier anchors (lastClassifiedSnapshot / lastProgressMs) FROZE. The
+  // liveness backstop's point-in-time status query then diffed the CURRENT static prompt
+  // against that STALE baseline → diffEmpty=false → branches 3/3b (which require diffEmpty)
+  // were skipped → the frame fell through to `stuck`, and the backstop re-escalated "stuck"
+  // every 3 min while claude was simply awaiting input. The cursor also sits on the `❯` line
+  // ABOVE claude's multi-line status footer, so isCursorParked (correctly) returns false.
+  //
+  // The fix: noProgressMs > stuckMs PROVES the screen has been static the whole window, so a
+  // detected dialog/prompt/selector affordance is a SETTLED prompt awaiting input — NOT a
+  // hang — regardless of the (stale) diffEmpty. Only a static frame with NO affordance is stuck.
+  const claudeIdleScreen = [
+    "● Worked for 4m 6s",
+    "",
+    "──────────────────────────────────────────────",
+    "❯ run the tests",
+    "──────────────────────────────────────────────",
+    "  Sonnet 4.6 │ terminal",
+    "  ⏵⏵ bypass permissions on (shift+tab to cycle)",
+  ];
+  const wouldBeStuck: FrameHistory = { noProgressMs: 90_001, stuckMs: 90_000 };
+
+  it("claude's idle `❯` box with a status footer below the cursor + diffEmpty=false + no-progress → awaiting-input, NOT stuck", () => {
+    const snapshot = snap(claudeIdleScreen, { x: 2, y: 3 }); // cursor on the `❯` line; footer 3 rows below ⇒ not parked
+    // The exact shape that triggered the bug: NOT parked (footer below) AND NOT diff-empty
+    // (the backstop's stale-anchor diff) — so steps 3/3b are skipped and step 4 is reached.
+    expect(isCursorParked(snapshot.cursor, snapshot.screen, snapshot.cols, snapshot.rows)).toBe(false);
+    const c = classifyFrame(frame({ settled: true, diffEmpty: false, snapshot }), wouldBeStuck);
+    expect(c.state).toBe("awaiting-input");
+    expect(c.reason).toBe("dialog_detected");
+  });
+
+  it("control: a genuinely hung frame (diffEmpty=false, NO affordance, no-progress) stays stuck — the recovery must not steal a real hang", () => {
+    const lines = ["frozen build output", "", "more frozen output below the cursor"];
+    const snapshot = snap(lines, { x: 5, y: 0 }); // cursor mid-screen, content below, no box/menu/selector
+    const c = classifyFrame(frame({ settled: true, diffEmpty: false, snapshot }), wouldBeStuck);
+    expect(c.state).toBe("stuck");
+    expect(c.reason).toBe("no_progress");
+  });
+});
+
 describe("classifyFrame — CLASS-01: a full-screen dialog is awaiting-input (dialog_detected), NOT stuck", () => {
   // The would-be-stuck history: settled + diff∅ but no progress past the stuck window.
   // Pre-patch this falls through to `stuck`; the new dialog branch intercepts it.
