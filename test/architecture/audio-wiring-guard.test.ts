@@ -67,14 +67,15 @@ describe("keyless-first audio built-but-not-wired source guard", () => {
     const code = stripComments(readFileSync(SETUP_MEDIA_TS, "utf8"));
     // The resolver call (resolveStt / the selector) must appear BEFORE the GATED
     // primary STT construction call. CRITICAL (plan note): anchor constructIdx on
-    // the gated call site `createSTTProvider(mediaConfig.transcription` — NOT a bare
+    // the gated call site `createSTTProvider(sttConfig` — NOT a bare
     // /createSTTProvider/ (which matches the import line) and NOT a bare
     // /createSTTProvider\s*\(/ (which matches the createSTTProviderFactory helper's
     // internal `createSTTProvider(config, ...)` call at the top of the file, BEFORE
-    // resolveStt — a false RED). The gated primary construct is uniquely
-    // `createSTTProvider(mediaConfig.transcription, ...)`.
+    // resolveStt — a false RED). After the WR-01 review fix the gated primary construct
+    // builds from the RESOLVER's chosen config, so it is uniquely `createSTTProvider(sttConfig, ...)`
+    // (the helper uses `(config`, the fallback loop uses `(fbConfig` — neither matches `(sttConfig`).
     const resolveIdx = code.search(/resolveStt|createAudioProviderSelector|resolveTranscriptionProvider|audioSelector/);
-    const constructIdx = code.indexOf("createSTTProvider(mediaConfig.transcription");
+    const constructIdx = code.indexOf("createSTTProvider(sttConfig");
     expect(resolveIdx).toBeGreaterThanOrEqual(0);
     expect(constructIdx).toBeGreaterThanOrEqual(0);
     expect(resolveIdx).toBeLessThan(constructIdx);
@@ -82,10 +83,11 @@ describe("keyless-first audio built-but-not-wired source guard", () => {
 
   it("setup-media.ts gates TTS construction on the resolver result before constructing the adapter", () => {
     const code = stripComments(readFileSync(SETUP_MEDIA_TS, "utf8"));
-    // Same resolver-before-construct ordering for TTS. The gated primary TTS
-    // construct is uniquely `createTTSProvider(mediaConfig.tts, ...)`.
+    // Same resolver-before-construct ordering for TTS. After the WR-01 review fix the
+    // gated primary TTS construct builds from the RESOLVER's chosen config, so it is
+    // uniquely `createTTSProvider(ttsConfig, ...)` (the helper uses `(config`).
     const resolveIdx = code.search(/resolveTts|audioSelector/);
-    const constructIdx = code.indexOf("createTTSProvider(mediaConfig.tts");
+    const constructIdx = code.indexOf("createTTSProvider(ttsConfig");
     expect(resolveIdx).toBeGreaterThanOrEqual(0);
     expect(constructIdx).toBeGreaterThanOrEqual(0);
     expect(resolveIdx).toBeLessThan(constructIdx);
