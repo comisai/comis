@@ -66,7 +66,7 @@ describe("mapTerminalOutcome — the middle is silent (undefined; never fabricat
     expect(mapTerminalOutcome({ classifier: "awaiting-input" })).toBeUndefined();
   });
 
-  it("working → undefined", () => {
+  it("maps a working frame to undefined (the silent middle)", () => {
     expect(mapTerminalOutcome({ classifier: "working" })).toBeUndefined();
   });
 
@@ -86,7 +86,7 @@ describe("mapTerminalOutcome — needs-you on an escalation (I4)", () => {
     ).toBe("needs-you");
   });
 
-  it("an auth_login escalation → needs-you", () => {
+  it("maps an auth_login escalation to needs-you", () => {
     expect(
       mapTerminalOutcome({ classifier: "stuck", escalation: "auth_login" }),
     ).toBe("needs-you");
@@ -211,7 +211,7 @@ describe("decideWakeAction — escalate-any-reason → escalate (READS the verdi
 });
 
 describe("decideWakeAction — answer → answer (silent); working/no-answer → wait (I6)", () => {
-  it("an answer verdict → answer", () => {
+  it("returns answer for an answer verdict (silent)", () => {
     const d: AutoAnswerDecision = { action: "answer", keys: ["\r"], matchedPatternIndex: 0 };
     expect(decideWakeAction("awaiting-input", d)).toBe("answer");
   });
