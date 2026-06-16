@@ -13,12 +13,12 @@ import { describe, it, expect } from "vitest";
 import type { TerminalScope } from "./allowlist-matcher.js";
 import { buildScopeArgs, type ScopeArgsInput } from "./terminal-scope-args.js";
 
-// -- least-privilege default scope (workspace / none / exclude / dedicated) --
+// -- least-privilege default scope (workspace / none / [] creds / dedicated) --
 function makeScope(overrides: Partial<TerminalScope> = {}): TerminalScope {
   return {
     filesystem: "workspace",
     network: "none",
-    credentialHome: "exclude",
+    credentialPaths: [],
     uid: "dedicated",
     ...overrides,
   };
@@ -189,15 +189,29 @@ describe("buildScopeArgs — network dimension (the transport seam)", () => {
   });
 });
 
-describe("buildScopeArgs — credentialHome dimension", () => {
-  it("include emits the ~/.claude ro-bind", () => {
-    const args = buildScopeArgs(makeInput({ scope: makeScope({ credentialHome: "include" }) }));
-    expect(hasBind(args, "--ro-bind", "/home/u/.claude", "/home/u/.claude")).toBe(true);
+describe("buildScopeArgs — credentialPaths dimension (tool-agnostic)", () => {
+  it("RO-binds each listed credential path, expanding ~ to home (--ro-bind-try)", () => {
+    const args = buildScopeArgs(
+      makeInput({ scope: makeScope({ credentialPaths: ["~/.claude", "~/.claude.json"] }) }),
+    );
+    expect(hasBind(args, "--ro-bind-try", "/home/u/.claude", "/home/u/.claude")).toBe(true);
+    expect(hasBind(args, "--ro-bind-try", "/home/u/.claude.json", "/home/u/.claude.json")).toBe(true);
   });
 
-  it("exclude emits no ~/.claude bind at all", () => {
-    const args = buildScopeArgs(makeInput({ scope: makeScope({ credentialHome: "exclude" }) }));
+  it("binds an absolute path verbatim (no ~ expansion)", () => {
+    const args = buildScopeArgs(makeInput({ scope: makeScope({ credentialPaths: ["/etc/codex/creds"] }) }));
+    expect(hasBind(args, "--ro-bind-try", "/etc/codex/creds", "/etc/codex/creds")).toBe(true);
+  });
+
+  it("is TOOL-AGNOSTIC — binds a non-Claude CLI's creds (~/.codex) the same way", () => {
+    const args = buildScopeArgs(makeInput({ scope: makeScope({ credentialPaths: ["~/.codex"] }) }));
+    expect(hasBind(args, "--ro-bind-try", "/home/u/.codex", "/home/u/.codex")).toBe(true);
+  });
+
+  it("empty list (the default) binds nothing — no .claude, no --ro-bind-try (least-privilege)", () => {
+    const args = buildScopeArgs(makeInput({ scope: makeScope({ credentialPaths: [] }) }));
     expect(args).not.toContain("/home/u/.claude");
+    expect(args).not.toContain("--ro-bind-try");
   });
 });
 
@@ -261,5 +275,50 @@ describe("buildScopeArgs — the always-on ~/.comis carve-out", () => {
     // and the carve-out is STILL the last mount
     const carveOut = lastIndexOfPair(args, "--tmpfs", "/home/u/.comis");
     expect(carveOut + 2).toBe(args.lastIndexOf("--"));
+  });
+
+  // -- agent-workspace persistence: re-expose the workspace AFTER the carve-out --
+  //
+  // When the session workspace is the agent's OWN workspace (default `~/.comis/
+  // workspace/<agent>`, the same dir the agent's read/write/exec tools use), it
+  // lives UNDER the carved-out data dir — so the `--tmpfs <dataDir>` mask would
+  // shadow it and the driven child could not write there (its work would not
+  // persist). buildScopeArgs must re-bind ONLY that subpath RW after the carve-out
+  // so the agent's workspace is writable + persistent in the jail while the
+  // secrets at sibling `~/.comis` paths (secret.db, .env, config.yaml, memory.db)
+  // stay masked. (`/ws` in the other tests is OUTSIDE the data dir, so they keep
+  // asserting the carve-out is last — this branch is workspace-under-dataDir only.)
+  const AGENT_WS = "/home/u/.comis/workspace/agent-a";
+
+  it("re-binds the workspace RW AFTER the carve-out when it lives UNDER the data dir (agent-workspace persistence)", () => {
+    const args = buildScopeArgs(makeInput({ workspace: AGENT_WS, cwd: AGENT_WS, dataDir: "/home/u/.comis" }));
+    const carveOut = lastIndexOfPair(args, "--tmpfs", "/home/u/.comis");
+    const reBind = lastIndexOfPair(args, "--bind", AGENT_WS);
+    expect(carveOut).toBeGreaterThanOrEqual(0);
+    // the re-mount of the agent workspace wins over the mask (later mount wins)
+    expect(reBind).toBeGreaterThan(carveOut);
+    // it is a RW --bind (not --ro-bind) of the workspace onto itself
+    expect(hasBind(args, "--bind", AGENT_WS, AGENT_WS)).toBe(true);
+  });
+
+  it("re-exposes ONLY the workspace subpath — sibling ~/.comis secret paths are NOT bound after the carve-out", () => {
+    const args = buildScopeArgs(makeInput({ workspace: AGENT_WS, cwd: AGENT_WS, dataDir: "/home/u/.comis" }));
+    const carveOut = lastIndexOfPair(args, "--tmpfs", "/home/u/.comis");
+    // Nothing under ~/.comis OTHER than the workspace may appear after the carve-out.
+    const after = args.slice(carveOut + 2);
+    const reExposesSecret = after.some(
+      (a) =>
+        a.startsWith("/home/u/.comis") &&
+        !a.startsWith(AGENT_WS) &&
+        a !== "/home/u/.comis", // the tmpfs target arg itself is consumed by slice(+2)
+    );
+    expect(reExposesSecret).toBe(false);
+  });
+
+  it("the agent-workspace re-bind is the LAST mount before the terminator (wins over the carve-out)", () => {
+    const args = buildScopeArgs(makeInput({ workspace: AGENT_WS, cwd: AGENT_WS, dataDir: "/home/u/.comis" }));
+    const reBind = lastIndexOfPair(args, "--bind", AGENT_WS);
+    // `--bind src dest` is a TRIPLE, so the terminator sits at reBind + 3.
+    expect(reBind + 3).toBe(args.lastIndexOf("--"));
   });
 });

@@ -40,6 +40,7 @@ import {
   type TerminalReplyFrame,
   type TerminalEventFrame,
 } from "./terminal-ipc.js";
+import { waitReplyTimeoutMs } from "./terminal-settle.js";
 
 /** A no-op structural logger. */
 function makeLogger() {
@@ -431,7 +432,7 @@ describe("createTerminalSessionRegistry — scope rides the create frame", () =>
       paths: ["/srv/data"],
       network: "listed-hosts",
       hosts: ["api.example.com"],
-      credentialHome: "include",
+      credentialPaths: ["~/.claude"],
       uid: "dedicated",
     };
 
@@ -491,7 +492,7 @@ describe("createTerminalSessionRegistry — bwrapPath rides the create frame (ja
       argv: [],
       cols: 80,
       rows: 24,
-      scope: { filesystem: "workspace", network: "none", credentialHome: "exclude", uid: "dedicated" },
+      scope: { filesystem: "workspace", network: "none", credentialPaths: [], uid: "dedicated" },
       workspace: "/work/agent-1",
       cwd: "/work/agent-1",
     }, OWNER);
@@ -513,7 +514,7 @@ describe("createTerminalSessionRegistry — bwrapPath rides the create frame (ja
       argv: [],
       cols: 80,
       rows: 24,
-      scope: { filesystem: "workspace", network: "none", credentialHome: "exclude", uid: "dedicated" },
+      scope: { filesystem: "workspace", network: "none", credentialPaths: [], uid: "dedicated" },
       workspace: "/work/agent-1",
       cwd: "/work/agent-1",
     }, OWNER);
@@ -738,6 +739,43 @@ describe("createTerminalSessionRegistry — request() reply timeout (wedged work
     const view = await readPromise;
     expect(view.alive).toBe(false);
     expect(view.screen).toBe("");
+  });
+
+  it("wait() sizes its reply timeout to the settle budget, NOT the generic short timeout (slow AI-CLI settle is not pre-empted)", async () => {
+    // Regression: `wait`'s IPC reply lands only when the in-worker settle resolves
+    // (60-90s+ for a driven `claude`). Pre-patch EVERY round-trip used the generic
+    // ~10s requestTimeoutMs, so the IPC pre-empted the settle at ~10s and returned a
+    // not-complete result while the CLI was still working — stranding the agent.
+    const fake = makeFakeWorker(); // never replies → the request reply-timer is what fires
+    let firedCb: (() => void) | undefined;
+    let scheduledMs: number | undefined;
+    const setTimer = vi.fn((cb: () => void, ms: number) => {
+      firedCb = cb;
+      scheduledMs = ms;
+      return { id: 1 } as unknown;
+    });
+    const registry = createTerminalSessionRegistry(
+      baseDeps(() => fake.child, {
+        requestTimeoutMs: 1234,
+        setTimer: setTimer as never,
+        clearTimer: vi.fn() as never,
+      }),
+    );
+    const { sessionId } = await registry.create(
+      { allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24 },
+      OWNER,
+    );
+
+    const waitPromise = registry.wait(sessionId, OWNER, { forIdleMs: 30_000, timeoutMs: 120_000 });
+    // The wait scheduled its reply timeout at the settle budget + margin — NOT the
+    // generic 1234ms requestTimeoutMs that read/write/resize use.
+    expect(scheduledMs).toBe(waitReplyTimeoutMs(120_000));
+    expect(scheduledMs).not.toBe(1234);
+
+    // Fire the (long) reply timeout → the wait degrades to the honest not-complete shape.
+    firedCb?.();
+    const result = await waitPromise;
+    expect(result.isComplete).toBe(false);
   });
 
   it("a normal reply cancels the pending timeout (clearTimer is called, no spurious timeout fire)", async () => {
@@ -1130,7 +1168,7 @@ describe("createTerminalSessionRegistry — wait forwarding", () => {
     const p = registry.wait(sessionId, OWNER, { forIdleMs: 120 });
     firedCb?.(); // simulate the reply-timeout expiry → ok:false
     const out = await p;
-    expect(out).toEqual({
+    expect(out).toMatchObject({
       matched: false,
       isComplete: false,
       reason: "timeout",
@@ -1138,6 +1176,8 @@ describe("createTerminalSessionRegistry — wait forwarding", () => {
       cursor: { x: 0, y: 0 },
     });
     expect(out.isComplete).toBe(false);
+    // T1.1: the degraded shape now carries a worker-wedged hint (not an empty result).
+    expect(out.hint).toMatch(/did not reply|wedged|status/i);
   });
 
   it("defaults a missing/odd isComplete to false (never coerces to true) on a malformed reply", async () => {
@@ -1515,6 +1555,31 @@ describe("createTerminalSessionRegistry — reaper composition", () => {
     expect(reg.list(subA).map((r) => r.sessionId)).toContain(s.sessionId);
     expect(onEvict).not.toHaveBeenCalled();
     expect(onCapForget).not.toHaveBeenCalled();
+  });
+
+  // The teardown paired with `allocateWorkspace`: kill/evict/reap must route the
+  // workspace removal through the INJECTABLE `cleanupWorkspace`, not a hard-coded
+  // `rm -rf`. This is the seam a data-dir-rooted daemon uses to PERSIST the agent's
+  // own workspace — it injects a no-op so a driven milestone's work survives the
+  // session end. RED on the pre-patch registry: line 743 called `cleanupSessionWorkspace`
+  // directly, so an injected hook was dead and the agent workspace would be deleted.
+  it("Test C3 — injectable cleanupWorkspace: kill routes teardown through the injected hook with the session workspace (the persist-the-agent-workspace seam)", async () => {
+    const fake = makeIsolatingWorker();
+    const cleanupWorkspace = vi.fn<(workspace: string) => void>();
+    const agentWorkspace = "/home/u/.comis/workspace/agent-a";
+    const { deps } = reaperDeps(() => fake.child, {
+      maxSessions: 10,
+      allocateWorkspace: () => agentWorkspace,
+      cleanupWorkspace,
+    });
+    const reg = createTerminalSessionRegistry(deps);
+
+    const s = await reg.create(bashReq, subA);
+    await reg.kill(s.sessionId, subA);
+
+    // The injected teardown ran with the agent's workspace — a daemon passes a
+    // NO-OP here so the persistent workspace is NOT rm -rf'd on session end.
+    expect(cleanupWorkspace).toHaveBeenCalledWith(agentWorkspace);
   });
 });
 

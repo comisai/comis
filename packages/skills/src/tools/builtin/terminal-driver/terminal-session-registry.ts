@@ -54,6 +54,8 @@ import type { TerminalScope } from "./allowlist-matcher.js";
 import { allocateSessionWorkspace, cleanupSessionWorkspace, resolveCreateWorkspace } from "./terminal-workspace.js";
 import { sameOwner, type SessionOwner } from "./terminal-session-owner.js";
 import { wireRegistryReaper, type EvictReason, type ReaperCaps } from "./terminal-reaper.js";
+import { waitReplyTimeoutMs } from "./terminal-settle.js";
+import { mapWaitReply, degradedWaitResult, type WaitResult } from "./terminal-wait-reply.js";
 import { wireWorkerSupervision } from "./terminal-worker-supervisor.js";
 // The registry's shared structural contracts the BODY references (deps/handle/worker)
 // type-imported from the neutral leaf terminal-session-types.ts (124-01 cycle break).
@@ -142,8 +144,10 @@ export interface TerminalSessionRegistryDeps extends ReaperCaps {
   bwrapPath?: string;
   /** Daemon-injected no-secret egress port — the daemon->worker-main seam for `listed-hosts`; a live `net` server, so (unlike bwrapPath) NOT frame-serialized. Type-only from @comis/core. */
   egressControl?: EgressControlPort;
-  /** Allocate a real per-session jail workspace dir (gap 2); default {@link allocateSessionWorkspace} (world-rwx mkdtemp under os.tmpdir()). `create` threads it onto the frame as workspace+cwd so the jail binds RW + --chdirs in (else it defaults to HOME, which uid 65534 cannot use). Injectable for a data-dir-rooted daemon allocator; cleanup is the paired {@link cleanupSessionWorkspace}. */
+  /** Allocate a real per-session jail workspace dir (gap 2); default {@link allocateSessionWorkspace} (world-rwx mkdtemp under os.tmpdir()). `create` threads it onto the frame as workspace+cwd so the jail binds RW + --chdirs in (else it defaults to HOME, which uid 65534 cannot use). Injectable for a data-dir-rooted daemon allocator; cleanup is the paired {@link cleanupWorkspace}. */
   allocateWorkspace?: (sessionId: string) => string;
+  /** Teardown paired with {@link allocateWorkspace}; default {@link cleanupSessionWorkspace} (`rm -rf` the throwaway mkdtemp dir on kill/evict/reap). A daemon rooting the workspace in the agent's OWN persistent workspace MUST inject a NO-OP so the agent's workspace (skills/memory/milestone work) is NOT deleted on session end. */
+  cleanupWorkspace?: (workspace: string) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -216,14 +220,9 @@ export interface SendResult {
 // above) so the registry's public surface is unchanged.
 export type { TerminalStatusView };
 
-/** The settle snapshot returned by `wait` (spec §5) — `{matched,isComplete,reason}` + the view subset. */
-export interface WaitResult {
-  matched: boolean;
-  isComplete: boolean;
-  reason: string;
-  screen: string;
-  cursor: { x: number; y: number };
-}
+// The wait reply shape + its defensive worker→daemon mapping live in terminal-wait-reply
+// (extracted to keep this file under the 800-line cap + make the mapping a tested unit).
+export type { WaitResult };
 
 /** A `list` row — the create-time + liveness summary. */
 export interface SessionListing {
@@ -319,6 +318,11 @@ export function createTerminalSessionRegistry(
     deps.clearTimer ?? ((handle: unknown) => systemClearTimeout(handle as SystemTimeoutHandle));
   // gap 2: per-session jail workspace allocator (default = the real mkdtemp helper).
   const allocateWorkspace = deps.allocateWorkspace ?? ((id: string) => allocateSessionWorkspace(id).workspace);
+  // The paired teardown for `allocateWorkspace`. Default = the `rm -rf` of the
+  // throwaway mkdtemp dir. A daemon that roots the workspace in the agent's OWN
+  // (persistent) workspace MUST inject a no-op here — else the kill/evict/reap path
+  // would delete the agent's workspace (skills, memory, a milestone's work) wholesale.
+  const cleanupWorkspace = deps.cleanupWorkspace ?? ((workspace: string) => cleanupSessionWorkspace(workspace));
 
   /**
    * Split a `${sessionId}:${requestId}` pending key. Both halves are UUIDs (no
@@ -436,21 +440,24 @@ export function createTerminalSessionRegistry(
     sessionId: string,
     method: string,
     params: Record<string, unknown>,
+    replyTimeoutMs?: number,
   ): Promise<TerminalReplyFrame> {
     const child = ensureWorker();
     const frame = buildRequestFrame(sessionId, method, params);
     const key = `${sessionId}:${frame.requestId}`;
+    // `wait` overrides this — its reply lands only when the in-worker settle resolves (60-90s+ for an AI CLI); the generic short timeout would pre-empt it.
+    const effectiveTimeoutMs = replyTimeoutMs ?? requestTimeoutMs;
     return new Promise<TerminalReplyFrame>((resolve) => {
       const timer = setTimer(() => {
         // Expired with no reply — drop the waiter and settle a typed timeout.
         if (pending.delete(key)) {
           logger.warn(
-            { sessionId, method, durationMs: requestTimeoutMs, hint: "worker reply timed out; degrading request", errorKind: "timeout" as const },
+            { sessionId, method, durationMs: effectiveTimeoutMs, hint: "worker reply timed out; degrading request", errorKind: "timeout" as const },
             "terminal worker reply timeout",
           );
           resolve({ sessionId, requestId: frame.requestId, ok: false, error: "worker timeout" });
         }
-      }, requestTimeoutMs);
+      }, effectiveTimeoutMs);
       // Wrap the resolver so a correlated reply cancels the pending timeout.
       pending.set(key, (f) => {
         clearTimer(timer);
@@ -666,15 +673,6 @@ export function createTerminalSessionRegistry(
     return { ok: true };
   }
 
-  /**
-   * The honest not-complete settle shape for a wedged/absent worker — NEVER
-   * `isComplete:true` (a false `true` would strand the agent: the attention
-   * model would finalize a live session). Used on the reply-timeout `ok:false` path.
-   */
-  function degradedWait(): WaitResult {
-    return { matched: false, isComplete: false, reason: "timeout", screen: "", cursor: { x: 0, y: 0 } };
-  }
-
   async function wait(
     sessionId: string,
     owner: SessionOwner,
@@ -682,33 +680,16 @@ export function createTerminalSessionRegistry(
   ): Promise<WaitResult> {
     const handle = ownedHandle(sessionId, owner);
     if (handle === undefined || handle.status !== "running") {
-      return degradedWait();
+      return degradedWaitResult();
     }
-    const reply = await request(sessionId, "wait", { sessionId, ...args });
+    const reply = await request(sessionId, "wait", { sessionId, ...args }, waitReplyTimeoutMs(args.timeoutMs));
     if (!reply.ok || reply.result === undefined) {
-      // A wedged worker (the reply timeout) → the honest not-complete shape.
-      return degradedWait();
+      // A wedged worker (the reply timeout) → the honest not-complete shape (with hint).
+      return degradedWaitResult();
     }
-    // Defensively map the worker's settle result: preserve isComplete VERBATIM,
-    // but DEFAULT a missing/odd value to false — never true.
-    const r = reply.result as {
-      matched?: unknown;
-      isComplete?: unknown;
-      reason?: unknown;
-      screen?: unknown;
-      cursor?: { x?: unknown; y?: unknown };
-    };
     handle.lastActivity = nowMs();
-    return {
-      matched: r.matched === true,
-      isComplete: r.isComplete === true,
-      reason: typeof r.reason === "string" ? r.reason : "timeout",
-      screen: typeof r.screen === "string" ? r.screen : "",
-      cursor: {
-        x: typeof r.cursor?.x === "number" ? r.cursor.x : 0,
-        y: typeof r.cursor?.y === "number" ? r.cursor.y : 0,
-      },
-    };
+    // Defensive worker→daemon map (preserves isComplete verbatim; passes T1.1 producing/hint).
+    return mapWaitReply(reply.result);
   }
 
   function get(sessionId: string, owner: SessionOwner): SessionHandle | undefined {
@@ -740,7 +721,7 @@ export function createTerminalSessionRegistry(
       send(sessionId, "kill", { sessionId });
     }
     sessions.delete(sessionId);
-    if (handle.workspace !== undefined) cleanupSessionWorkspace(handle.workspace);
+    if (handle.workspace !== undefined) cleanupWorkspace(handle.workspace);
     logger.info({ sessionId }, "terminal session killed");
   }
 

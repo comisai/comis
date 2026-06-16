@@ -10,13 +10,14 @@ import type { ImageErrorKind } from "./image-error.js";
  * proves observability stays parseable without extending the log union.
  */
 
-// The 6 image error kinds, as a literal array (exhaustiveness driver).
+// The 7 image error kinds, as a literal array (exhaustiveness driver).
 const ALL_IMAGE_ERROR_KINDS: readonly ImageErrorKind[] = [
   "content_blocked",
   "auth_required",
   "quota_exceeded",
   "timeout",
   "unsupported_provider",
+  "bad_request",
   "empty_response",
 ];
 
@@ -53,5 +54,8 @@ describe("IMAGE_ERR_TO_LOG", () => {
     expect(IMAGE_ERR_TO_LOG.unsupported_provider).toBe("precondition");
     expect(IMAGE_ERR_TO_LOG.auth_required).toBe("auth");
     expect(IMAGE_ERR_TO_LOG.quota_exceeded).toBe("resource");
+    // bad_request is NON-retryable ("precondition", not the retryable
+    // "dependency") — a permanent 4xx must not be retried (the HTTP-400 fix).
+    expect(IMAGE_ERR_TO_LOG.bad_request).toBe("precondition");
   });
 });

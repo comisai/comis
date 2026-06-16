@@ -5961,7 +5961,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("integ
         "maxPerHour": 10,
         "provider": "auto",
         "safetyChecker": true,
-        "timeoutMs": 60000
+        "timeoutMs": 120000
       },
       "infrastructure": {
         "concurrencyLimit": 3,
@@ -6156,7 +6156,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("integ
       "maxPerHour": 10,
       "provider": "auto",
       "safetyChecker": true,
-      "timeoutMs": 60000
+      "timeoutMs": 120000
     },
     "immutable": true,
     "path": "integrations.media.imageGeneration",
@@ -6203,7 +6203,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("integ
     "type": "boolean"
   },
   {
-    "default": 60000,
+    "default": 120000,
     "immutable": true,
     "path": "integrations.media.imageGeneration.timeoutMs",
     "type": "integer"
@@ -11490,7 +11490,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
           "maxPerHour": 10,
           "provider": "auto",
           "safetyChecker": true,
-          "timeoutMs": 60000
+          "timeoutMs": 120000
         },
         "infrastructure": {
           "concurrencyLimit": 3,
@@ -11746,7 +11746,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
         "maxPerHour": 10,
         "provider": "auto",
         "safetyChecker": true,
-        "timeoutMs": 60000
+        "timeoutMs": 120000
       },
       "infrastructure": {
         "concurrencyLimit": 3,
@@ -11941,7 +11941,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
       "maxPerHour": 10,
       "provider": "auto",
       "safetyChecker": true,
-      "timeoutMs": 60000
+      "timeoutMs": 120000
     },
     "immutable": true,
     "path": "integrations.media.imageGeneration",
@@ -11988,7 +11988,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "type": "boolean"
   },
   {
-    "default": 60000,
+    "default": 120000,
     "immutable": true,
     "path": "integrations.media.imageGeneration.timeoutMs",
     "type": "integer"
@@ -18364,13 +18364,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
                   "scope": {
                     "additionalProperties": false,
                     "properties": {
-                      "credentialHome": {
-                        "default": "exclude",
-                        "enum": [
-                          "exclude",
-                          "include"
-                        ],
-                        "type": "string"
+                      "credentialPaths": {
+                        "default": [],
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
                       },
                       "filesystem": {
                         "default": "workspace",
@@ -18415,7 +18414,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
                     "required": [
                       "filesystem",
                       "network",
-                      "credentialHome",
+                      "credentialPaths",
                       "uid"
                     ],
                     "type": "object"
@@ -22778,7 +22777,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("int
           "maxPerHour": 10,
           "provider": "auto",
           "safetyChecker": true,
-          "timeoutMs": 60000
+          "timeoutMs": 120000
         },
         "infrastructure": {
           "concurrencyLimit": 3,
@@ -22983,7 +22982,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("int
             "maxPerHour": 10,
             "provider": "auto",
             "safetyChecker": true,
-            "timeoutMs": 60000
+            "timeoutMs": 120000
           },
           "properties": {
             "defaultSize": {
@@ -23035,7 +23034,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("int
               "type": "boolean"
             },
             "timeoutMs": {
-              "default": 60000,
+              "default": 120000,
               "exclusiveMinimum": 0,
               "maximum": 9007199254740991,
               "type": "integer"
@@ -28888,13 +28887,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                         "scope": {
                           "additionalProperties": false,
                           "properties": {
-                            "credentialHome": {
-                              "default": "exclude",
-                              "enum": [
-                                "exclude",
-                                "include"
-                              ],
-                              "type": "string"
+                            "credentialPaths": {
+                              "default": [],
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
                             },
                             "filesystem": {
                               "default": "workspace",
@@ -28939,7 +28937,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                           "required": [
                             "filesystem",
                             "network",
-                            "credentialHome",
+                            "credentialPaths",
                             "uid"
                           ],
                           "type": "object"
@@ -34198,7 +34196,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "maxPerHour": 10,
             "provider": "auto",
             "safetyChecker": true,
-            "timeoutMs": 60000
+            "timeoutMs": 120000
           },
           "infrastructure": {
             "concurrencyLimit": 3,
@@ -34523,7 +34521,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "maxPerHour": 10,
               "provider": "auto",
               "safetyChecker": true,
-              "timeoutMs": 60000
+              "timeoutMs": 120000
             },
             "infrastructure": {
               "concurrencyLimit": 3,
@@ -34728,7 +34726,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "maxPerHour": 10,
                 "provider": "auto",
                 "safetyChecker": true,
-                "timeoutMs": 60000
+                "timeoutMs": 120000
               },
               "properties": {
                 "defaultSize": {
@@ -34780,7 +34778,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                   "type": "boolean"
                 },
                 "timeoutMs": {
-                  "default": 60000,
+                  "default": 120000,
                   "exclusiveMinimum": 0,
                   "maximum": 9007199254740991,
                   "type": "integer"

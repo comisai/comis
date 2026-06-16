@@ -64,7 +64,7 @@ export type {
   TerminalEscalatedEvent,
   TerminalAutoAnsweredEvent,
 } from "./terminal-events-attention.js";
-import { matchAllowEntry, buildDirectSpawn, type AllowEntryLike } from "./allowlist-matcher.js";
+import { matchAllowEntry, buildDirectSpawn, allowedCommandNames, type AllowEntryLike } from "./allowlist-matcher.js";
 import type { SessionCaps } from "./terminal-caps.js";
 import { enforceSendCapsThenAudit, readDimension } from "./terminal-send-guards.js";
 import type { SandboxProvider } from "../sandbox/types.js";
@@ -258,7 +258,7 @@ const WaitParams = Type.Object({
   forIdleMs: Type.Optional(Type.Integer({ description: "Settle when idle for this many ms" })),
   forText: Type.Optional(Type.String({ description: "Settle when this text appears on screen" })),
   forExit: Type.Optional(Type.Boolean({ description: "Settle when the session exits" })),
-  timeoutMs: Type.Optional(Type.Integer({ description: "Bounded in-turn settle timeout (default 15000, capped)" })),
+  timeoutMs: Type.Optional(Type.Integer({ description: "Max in-turn settle timeout in ms (default 15000; capped at 600000). Driving a slow AI CLI (e.g. claude) that takes 60-90s+? Pass a large value (e.g. 120000) WITH forIdleMs — the wait returns the instant the CLI goes idle, not at the timeout." })),
 });
 
 const ResizeParams = Type.Object({
@@ -364,7 +364,7 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
       const matched = matchAllowEntry(command, deps.allowEntries);
       if (matched === undefined) {
         throwToolError("permission_denied", `command not allowlisted: ${command}`, {
-          hint: "the requested binary does not match any operator allowlist entry's canonical path",
+          validValues: allowedCommandNames(deps.allowEntries),
         });
       }
 

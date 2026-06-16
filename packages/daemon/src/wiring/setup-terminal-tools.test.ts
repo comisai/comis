@@ -177,7 +177,7 @@ function configEntry(
 const LEAST_PRIVILEGE: TerminalAllowEntry["scope"] = {
   filesystem: "workspace",
   network: "none",
-  credentialHome: "exclude",
+  credentialPaths: [],
   uid: "dedicated",
 };
 
@@ -187,7 +187,7 @@ describe("mapAllowEntry — config scope is preserved onto AllowEntryLike", () =
       filesystem: "home",
       network: "listed-hosts",
       hosts: ["api.example.com"],
-      credentialHome: "include",
+      credentialPaths: ["~/.claude"],
       uid: "daemon",
     });
     const mapped = mapAllowEntry(entry);
@@ -198,19 +198,19 @@ describe("mapAllowEntry — config scope is preserved onto AllowEntryLike", () =
     expect(mapped.scope.filesystem).toBe("home");
     expect(mapped.scope.network).toBe("listed-hosts");
     expect(mapped.scope.hosts).toEqual(["api.example.com"]);
-    expect(mapped.scope.credentialHome).toBe("include");
+    expect(mapped.scope.credentialPaths).toEqual(["~/.claude"]);
     expect(mapped.scope.uid).toBe("daemon");
   });
 
   it("preserves the least-privilege scope through the map (the safe default survives)", () => {
     // The config schema already default-applies least-privilege (workspace/none/
-    // exclude/dedicated — core owns + tests that). The daemon mapping must carry it
+    // []-creds/dedicated — core owns + tests that). The daemon mapping must carry it
     // through UNCHANGED — never re-default or widen it.
     const mapped = mapAllowEntry(configEntry(LEAST_PRIVILEGE));
 
     expect(mapped.scope.filesystem).toBe("workspace");
     expect(mapped.scope.network).toBe("none");
-    expect(mapped.scope.credentialHome).toBe("exclude");
+    expect(mapped.scope.credentialPaths).toEqual([]);
     expect(mapped.scope.uid).toBe("dedicated");
   });
 
@@ -512,7 +512,7 @@ describe("buildTerminalSharedDeps — the WR-01 closure: populate the allow-set 
         {
           id: "claude-code",
           match: { path: "/usr/local/bin/claude" },
-          scope: { filesystem: "home", network: "full", credentialHome: "include", uid: "dedicated" },
+          scope: { filesystem: "home", network: "full", credentialPaths: ["~/.claude"], uid: "dedicated" },
           autoAnswer: "safe-only",
           hintPatterns: ["press enter to continue"],
           consent: { acknowledgedRisk: true, acknowledgedAt: "2026-06-03T00:00:00Z" },

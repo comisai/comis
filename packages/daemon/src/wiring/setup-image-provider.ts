@@ -100,6 +100,28 @@ export function createImageProviderSelector(deps: {
   oauthManager?: OAuthTokenManager;
   /** The DEFAULT agent's `Record<provider, profileId>` map (for getApiKey). */
   oauthProfiles?: Record<string, string>;
+  /**
+   * STORE-AWARE Codex availability, resolved ONCE by the async caller
+   * (`buildImageGenBundle` via `oauthManager.hasStoredCredentials("openai-codex")`)
+   * and passed in as a sync snapshot — so the selector + the pure resolver stay
+   * synchronous. This is the AUTHORITATIVE Codex gate: it sees a logged-in
+   * profile in the PERSISTED store even when the in-memory cache is cold at boot
+   * (encrypted-store mode), which the sync `hasCredentials` could not — the bug
+   * that froze a Codex agent's image generation unavailable despite text working.
+   * When omitted (callers/tests that don't pre-resolve it) the gate falls back to
+   * the sync `oauthManager.hasCredentials` (the pre-fix behavior).
+   */
+  codexCredentialsAvailable?: boolean;
+  /**
+   * The agent's resolved CHAT model id (e.g. "gpt-5.5") for the follow-main
+   * Codex path. The Codex Responses endpoint rejects the image-API model id
+   * "gpt-image-1" with HTTP 400 ("returned a non-image response" — verified live)
+   * — it needs a valid CHAT model with `image_generation` as a TOOL. Threaded
+   * from buildImageGenBundle (the SAME resolveAgentModel the completion path
+   * uses) into the codex adapter's request model. Absent ⇒ the legacy
+   * CODEX_IMAGE_MODEL default (back-compat for callers/tests).
+   */
+  codexChatModelId?: string;
 }): () => ImageGenerationPort | undefined {
   return () => {
     const cfg = deps.imageGenConfig;
@@ -119,15 +141,23 @@ export function createImageProviderSelector(deps: {
     const sel = resolveImageProvider(
       cfg,
       deps.mainProviderId,
-      // CRED-01: codex availability is the OAuth manager (the bearer is OAuth,
-      // not a SecretManager env key) — so a Codex-only agent with NO
-      // FAL_KEY/OPENAI_API_KEY resolves available. `hasCredentials` is keyed on
-      // the OAuth provider id "openai-codex" (NOT the images api). Absent
-      // manager → false (honest-unavailable, never a crash). Every other api
-      // stays the 183 SecretManager env-key check.
+      // CRED-01: codex availability is the OAuth credential (the bearer is
+      // OAuth, not a SecretManager env key) — so a Codex-only agent with NO
+      // FAL_KEY/OPENAI_API_KEY resolves available. The AUTHORITATIVE gate is the
+      // store-aware `codexCredentialsAvailable` flag, pre-resolved by the async
+      // caller (buildImageGenBundle) via `hasStoredCredentials("openai-codex")`
+      // — it sees a logged-in profile in the PERSISTED store even when the
+      // in-memory cache is cold at boot (encrypted-store mode), the bug the sync
+      // cache-only `hasCredentials` caused (a Codex agent's images froze
+      // unavailable for the daemon's life despite text working). Falls back to
+      // the sync `hasCredentials` ONLY when the flag was not pre-resolved
+      // (callers/tests). Absent manager + no flag → false (honest-unavailable,
+      // never a crash). Every other api stays the SecretManager env-key check.
       (imagesApi) =>
         imagesApi === "openai-codex-images"
-          ? (deps.oauthManager?.hasCredentials("openai-codex") ?? false)
+          ? (deps.codexCredentialsAvailable ??
+            deps.oauthManager?.hasCredentials("openai-codex") ??
+            false)
           : resolveImageApiKey(imagesApi, deps.secretManager) !== undefined,
       // WR-04 (183-REVIEW): the once-per-resolution follow-main skip is the
       // load-bearing "why did images go unavailable" evidence — promote it to
@@ -164,9 +194,18 @@ export function createImageProviderSelector(deps: {
       return createCodexImageAdapter({
         oauthManager: deps.oauthManager,
         oauthProfiles: deps.oauthProfiles,
-        model: CODEX_IMAGE_MODEL,
+        // Use the agent's CHAT model (e.g. "gpt-5.5") for the Codex Responses
+        // request — the endpoint 400s on the image-API model id "gpt-image-1"
+        // (verified live); image_generation is a TOOL, not the top-level model.
+        // Falls back to CODEX_IMAGE_MODEL when the chat model is not threaded.
+        model: deps.codexChatModelId
+          ? { ...CODEX_IMAGE_MODEL, id: deps.codexChatModelId }
+          : CODEX_IMAGE_MODEL,
         timeoutMs: cfg.timeoutMs,
         logger: deps.logger,
+        // Store-aware availability snapshot → the adapter's isAvailable() (so it
+        // doesn't fall back to the cold-cache-only hasCredentials).
+        credentialsAvailable: deps.codexCredentialsAvailable,
       });
     }
 

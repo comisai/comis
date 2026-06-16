@@ -157,8 +157,22 @@ export interface OAuthTokenManager {
     providerId: string,
     agentContext?: { oauthProfiles?: Record<string, string> },
   ): Promise<Result<string, OAuthError>>;
-  /** Check if credentials for a provider exist (in cache, store, or env-var). */
+  /**
+   * Synchronous best-effort check: the in-memory cache + env-var (SecretManager)
+   * ONLY. Does NOT consult the async persisted credential store — so in
+   * encrypted-store mode it UNDER-REPORTS a logged-in OAuth profile until the
+   * cache warms (the first getApiKey). For a store-aware answer (e.g. a
+   * boot-time availability probe) use {@link hasStoredCredentials}.
+   */
   hasCredentials(providerId: string): boolean;
+  /**
+   * Store-aware availability check: the in-memory cache, the env-var, OR the
+   * persisted credential store. The async companion to {@link hasCredentials} —
+   * use this where the cache may be cold (the image-provider boot probe in
+   * encrypted-store mode) so a `comis auth login` profile counts as available at
+   * boot rather than only after the first completion. Never throws.
+   */
+  hasStoredCredentials(providerId: string): Promise<boolean>;
   /** Store credentials for a provider (e.g., after a login flow completes). */
   storeCredentials(providerId: string, creds: OAuthCredentials): void;
   /** Get the list of pi-ai built-in OAuth provider IDs. */
@@ -1413,11 +1427,27 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
 
     hasCredentials(providerId: string): boolean {
       // Cache-only synchronous check — sufficient for "has any candidate".
-      // Async store/list checks live in getApiKey.
+      // Async store/list checks live in getApiKey + hasStoredCredentials.
       const cached = Array.from(cache.values()).some((p) => p.provider === providerId);
       if (cached) return true;
       const secretKey = toSecretKey(providerId, keyPrefix);
       return secretManager.has(secretKey);
+    },
+
+    async hasStoredCredentials(providerId: string): Promise<boolean> {
+      // Store-AWARE companion to the sync, cache-only hasCredentials(). Honors
+      // the interface's "cache, store, OR env-var" contract that the sync
+      // method cannot (the credential store is async). The image-provider boot
+      // probe MUST use this: in encrypted-store mode the in-memory cache is
+      // cold at boot, so a logged-in OAuth profile (e.g. Codex via
+      // `comis auth login`, persisted in the store) reads as ABSENT through
+      // hasCredentials — which froze a Codex agent's image generation
+      // unavailable for the daemon's life even though the SAME OAuth credential
+      // answered its text completions (the CRED-01/CDX-01 follow-main regression).
+      if (Array.from(cache.values()).some((p) => p.provider === providerId)) return true;
+      if (secretManager.has(toSecretKey(providerId, keyPrefix))) return true;
+      const listResult = await credentialStore.list({ provider: providerId });
+      return listResult.ok && listResult.value.length > 0;
     },
 
     storeCredentials(providerId: string, creds: OAuthCredentials): void {

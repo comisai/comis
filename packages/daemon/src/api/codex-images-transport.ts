@@ -52,7 +52,6 @@
  */
 import { type AssistantImages, type ImagesApiFunction } from "@earendil-works/pi-ai";
 import { decodeCodexJwtPayload, systemNowMs } from "@comis/core";
-import type { ComisLogger } from "@comis/infra";
 import os from "node:os";
 import { randomUUID } from "node:crypto";
 
@@ -129,12 +128,22 @@ function extractPrompt(input: readonly { type: string; text?: string }[]): strin
 
 /** Build the Responses `image_generation` request body (CDX-03). */
 function buildRequestBody(modelId: string, prompt: string): string {
+  // The body MIRRORS pi-ai's proven codex TEXT body (openai-codex-responses.js
+  // buildRequestBody) for the fields the ChatGPT backend REQUIRES, plus the
+  // image_generation tool. Each requirement was VERIFIED LIVE via the 400
+  // `detail` (the codex backend validates required fields one at a time):
+  //   - `instructions` (non-empty)        — 400 "Instructions are required"
+  //   - `store: false` (not storable)     — 400 "Store must be set to false"
+  // The user's request rides `input`; `tool_choice` forces the hosted tool.
   return JSON.stringify({
     model: modelId,
+    store: false,
+    stream: true,
+    instructions:
+      "You are an image generation assistant. Use the image_generation tool to create the image the user requests.",
     input: [{ role: "user", content: [{ type: "input_text", text: prompt }] }],
     tools: [{ type: "image_generation" }],
     tool_choice: { type: "image_generation" }, // REQUIRED — force the hosted tool
-    stream: true,
   });
 }
 
@@ -272,16 +281,16 @@ async function parseCodexImageSse(
  * `AssistantImages` with `stopReason:"error"`/`"aborted"` the shipped
  * classifier maps).
  *
- * @param logger - Optional diagnostics logger. SEC-03: only `{ step, errorKind }`
- *   is ever logged — never the bearer, the account-id, or the headers object.
+ * NOTE: pi-ai's `ImagesApiFunction` contract is `(model, context, options)` —
+ * `generateImages()` NEVER passes a 4th arg, so a `logger` param here would be
+ * permanently `undefined` (dead). The redacted failure CAUSE is logged by the
+ * ADAPTER (`codex-image-adapter.ts`, which holds the real logger and WARNs
+ * `res.errorMessage` on a non-image result) — never from this transport.
  */
 export const generateImagesCodex: ImagesApiFunction = async (
   model,
   context,
   options,
-  // pi-ai's contract is (model, context, options); Comis threads an optional
-  // logger as a 4th positional arg from the adapter for diagnostics only.
-  logger?: ComisLogger,
 ): Promise<AssistantImages> => {
   const out: AssistantImages = {
     api: model.api,
@@ -322,8 +331,20 @@ export const generateImagesCodex: ImagesApiFunction = async (
 
     if (!resp.ok || !resp.body) {
       out.stopReason = "error";
-      out.errorMessage = `codex ${resp.status}`;
-      logger?.debug({ step: "codex_image_transport", errorKind: "http_status" }, "codex image request failed");
+      // OBS: read the error body (truncated) so the REAL 4xx reason (e.g. an
+      // invalid model or unsupported tool) reaches the caller — it was just
+      // "codex <status>" with no reason, which the classifier collapsed into a
+      // generic "non-image response" (the HTTP-400 incident, where the cause —
+      // the gpt-image-1 model id — was invisible). The body is the API error
+      // description (no secret: the bearer/CF headers are request-side, never
+      // echoed). Best-effort; a body read that throws degrades to the bare status.
+      let detail = "";
+      try {
+        detail = (await resp.text()).slice(0, 300);
+      } catch {
+        /* ignore — fall back to the bare status */
+      }
+      out.errorMessage = detail ? `codex ${resp.status}: ${detail}` : `codex ${resp.status}`;
       return out;
     }
 
@@ -332,14 +353,10 @@ export const generateImagesCodex: ImagesApiFunction = async (
       out.stopReason = "error";
       // WR-04: prefer the terminal response.failed cause (quota / content /
       // auth) so the shipped classifier maps the RIGHT kind; only a genuinely
-      // empty/unparseable stream falls back to empty_response. The raw cause is
-      // surfaced for classification but never logged (the DEBUG line carries
-      // only a static errorKind literal, never the message).
+      // empty/unparseable stream falls back to empty_response. The cause is
+      // surfaced via errorMessage for classification (+ the adapter's WARN),
+      // never echoed to the user.
       out.errorMessage = failedMessage ?? "empty_response: no image in stream";
-      logger?.debug(
-        { step: "codex_image_transport", errorKind: failedMessage ? "failed" : "empty_response" },
-        "codex image stream returned no image",
-      );
       return out;
     }
 
@@ -350,7 +367,6 @@ export const generateImagesCodex: ImagesApiFunction = async (
     // the errorMessage substring. Aborted is distinguished for the timeout kind.
     out.stopReason = options?.signal?.aborted ? "aborted" : "error";
     out.errorMessage = e instanceof Error ? e.message : String(e);
-    logger?.debug({ step: "codex_image_transport", errorKind: "exception" }, "codex image transport caught error");
     return out;
   }
 };

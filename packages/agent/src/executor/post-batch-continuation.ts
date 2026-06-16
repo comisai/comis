@@ -152,7 +152,7 @@ export async function runPostBatchContinuation(
   // Step 1: disable check.
   if (!config.enabled || config.maxRetries === 0) {
     logger.info(
-      { submodule: SUBMODULE, agentId, decision: "skip", reason: "disabled" },
+      { submodule: SUBMODULE, agentId, decision: "skip", continuationReason: "disabled" },
       "Post-batch continuation skipped",
     );
     return ok({
@@ -169,7 +169,7 @@ export async function runPostBatchContinuation(
   const msgs = messages as any[];
   if (!Array.isArray(msgs) || msgs.length === 0) {
     logger.info(
-      { submodule: SUBMODULE, agentId, decision: "skip", reason: "non_empty_final" },
+      { submodule: SUBMODULE, agentId, decision: "skip", continuationReason: "non_empty_final" },
       "Post-batch continuation skipped",
     );
     return ok({
@@ -191,7 +191,7 @@ export async function runPostBatchContinuation(
 
   if (!lastIsEmpty) {
     logger.info(
-      { submodule: SUBMODULE, agentId, decision: "skip", reason: "non_empty_final" },
+      { submodule: SUBMODULE, agentId, decision: "skip", continuationReason: "non_empty_final" },
       "Post-batch continuation skipped",
     );
     return ok({
@@ -222,7 +222,7 @@ export async function runPostBatchContinuation(
 
   if (priorToolCallCount === 0) {
     logger.info(
-      { submodule: SUBMODULE, agentId, decision: "skip", reason: "no_tool_calls" },
+      { submodule: SUBMODULE, agentId, decision: "skip", continuationReason: "no_tool_calls" },
       "Post-batch continuation skipped",
     );
     return ok({
@@ -240,7 +240,7 @@ export async function runPostBatchContinuation(
       submodule: SUBMODULE,
       agentId,
       decision: "fire",
-      reason: "empty_after_tool_batch",
+      continuationReason: "empty_after_tool_batch",
       priorToolCallCount,
       priorToolNames,
       maxAttempts: config.maxRetries,

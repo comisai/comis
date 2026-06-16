@@ -763,6 +763,8 @@ export function buildSessionEndMetadata(args: {
   totalTokens: number;
   executionId: string;
   traceId: string | undefined;
+  /** T1.4 (F5): the formatted session key, stored so the metadata can drive `comis explain`. */
+  sessionKey: string;
   clock: ClockPort;
   /** F1 health rollup (D5) — the 5 fields spread onto sessionEnd. Computed once
    *  at the chokepoint via buildSessionHealthRollup so this builder stays pure. */
@@ -770,6 +772,7 @@ export function buildSessionEndMetadata(args: {
 }): SessionMetadata {
   return {
     ...(args.traceId && { traceId: args.traceId }),
+    ...(args.sessionKey && { sessionKey: args.sessionKey }),
     runId: args.executionId,
     sessionEnd: {
       type: "session_end",
@@ -1429,6 +1432,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       totalTokens: result.tokensUsed.total,
       executionId,
       traceId: tryGetContext()?.traceId,
+      sessionKey: formattedKey, // T1.4: the explain-format key, so the metadata is self-describing
       clock: deps.clock,
       rollup: sessionHealthRollup,
     }));

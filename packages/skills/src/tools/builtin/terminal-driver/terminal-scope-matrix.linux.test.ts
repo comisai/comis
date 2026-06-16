@@ -17,8 +17,8 @@
  * `provider.buildArgs()` (`bwrap-egress-integration.test.ts:265`).
  *
  * THE PROBE MATRIX (each row = a cell built via buildScopeArgs + a spawned probe):
- *   - cred ENOENT at credentialHome:exclude (default)
- *   - cred READABLE at credentialHome:include (seeded fixture)
+ *   - cred ENOENT at credentialPaths:[] (default)
+ *   - cred READABLE at credentialPaths:[~/.claude] (seeded fixture)
  *   - write-outside-workspace fails at filesystem:workspace
  *   - ~/.comis ENOENT EVEN at filesystem:full (the carve-out, flagship)
  *   - child runs as uid==65534 (nobody) at uid:dedicated
@@ -35,7 +35,7 @@
  * is noted-not-built.
  *
  * FILE SPLIT (composes with `bwrap-egress-integration.test.ts` without overlap):
- *   - THIS file owns the terminal-SCOPE cells (filesystem/credentialHome/uid/the
+ *   - THIS file owns the terminal-SCOPE cells (filesystem/credentialPaths/uid/the
  *     ~/.comis carve-out/env-scrub/no-provider) built via `buildScopeArgs`.
  *   - `bwrap-egress-integration.test.ts` owns the egress-TRANSPORT proof (the
  *     unix-socket bind reachability + raw `--unshare-net` direct-TCP block + the
@@ -234,7 +234,7 @@ describe.skipIf(!linuxBwrap)(
     // Credential home: ENOENT at the default (exclude), readable
     //             only at the operator opt-in (include).
     // -----------------------------------------------------------------------
-    describe("credentialHome", () => {
+    describe("credentialPaths", () => {
       let home: string;
       let credFile: string;
 
@@ -249,11 +249,11 @@ describe.skipIf(!linuxBwrap)(
         writeFileSync(credFile, '{"fixture":"cred"}', "utf8");
       });
 
-      it("cat ~/.claude/.credentials.json -> ENOENT at credentialHome:exclude (default)", () => {
+      it("cat ~/.claude/.credentials.json -> ENOENT at credentialPaths:[] (default)", () => {
         const scope: TerminalScope = {
           filesystem: "workspace",
           network: "none",
-          credentialHome: "exclude",
+          credentialPaths: [],
           uid: "dedicated",
         };
         const argv = buildCellArgs(scope, {
@@ -266,16 +266,16 @@ describe.skipIf(!linuxBwrap)(
         // The cred file is NOT bound -> cat fails (no such file).
         expect(
           r.status !== 0 || out.includes("No such file or directory"),
-          `~/.claude/.credentials.json MUST be absent at credentialHome:exclude ` +
+          `~/.claude/.credentials.json MUST be absent at credentialPaths:[] ` +
             `(the baseline never binds it). status=${r.status} out=${out}`,
         ).toBe(true);
       });
 
-      it("cat ~/.claude/.credentials.json -> readable at credentialHome:include", () => {
+      it("cat ~/.claude/.credentials.json -> readable at credentialPaths:[~/.claude]", () => {
         const scope: TerminalScope = {
           filesystem: "workspace",
           network: "none",
-          credentialHome: "include",
+          credentialPaths: ["~/.claude"],
           uid: "dedicated",
         };
         const argv = buildCellArgs(scope, {
@@ -287,7 +287,7 @@ describe.skipIf(!linuxBwrap)(
         // The operator opt-in binds ~/.claude RO -> the fixture is readable.
         expect(
           r.status,
-          `~/.claude/.credentials.json MUST be readable at credentialHome:include ` +
+          `~/.claude/.credentials.json MUST be readable at credentialPaths:[~/.claude] ` +
             `(the operator opt-in binds it RO). status=${r.status} stderr=${r.stderr}`,
         ).toBe(0);
         expect(r.stdout ?? "").toContain("fixture");
@@ -317,7 +317,7 @@ describe.skipIf(!linuxBwrap)(
         const scope: TerminalScope = {
           filesystem: "workspace",
           network: "none",
-          credentialHome: "exclude",
+          credentialPaths: [],
           uid: "dedicated",
         };
         const argv = buildCellArgs(scope, { workspace: ws, home, dataDir: join(home, ".comis") });
@@ -353,7 +353,7 @@ describe.skipIf(!linuxBwrap)(
         const scope: TerminalScope = {
           filesystem: "workspace",
           network: "none",
-          credentialHome: "exclude",
+          credentialPaths: [],
           uid: "dedicated",
         };
         const argv = buildCellArgs(scope, {
@@ -400,7 +400,7 @@ describe.skipIf(!linuxBwrap)(
         const scope: TerminalScope = {
           filesystem: "full", // the broadest reach — the carve-out STILL wins
           network: "none",
-          credentialHome: "exclude",
+          credentialPaths: [],
           uid: "dedicated",
         };
         const argv = buildCellArgs(scope, {
@@ -448,7 +448,7 @@ describe.skipIf(!linuxBwrap)(
         const scope: TerminalScope = {
           filesystem: "workspace",
           network: "none",
-          credentialHome: "exclude",
+          credentialPaths: [],
           uid: "dedicated",
         };
         // Build the FULL production spawn plan (it scrubs the env via the real
@@ -512,7 +512,7 @@ describe.skipIf(!linuxBwrap)(
         const scope: TerminalScope = {
           filesystem: "workspace",
           network: "none", // --unshare-net, no socket, no proxy
-          credentialHome: "exclude",
+          credentialPaths: [],
           uid: "dedicated",
         };
         const argv = buildCellArgs(scope, {
@@ -563,7 +563,7 @@ describe.skipIf(!linuxBwrap)(
             filesystem: "workspace",
             network: "listed-hosts", // --unshare-net + --bind <relaySocketPath>
             hosts: ["example.com"],
-            credentialHome: "exclude",
+            credentialPaths: [],
             uid: "dedicated",
           };
           // cwd MUST be in-bounds (filesystem:workspace binds only the workspace) —
@@ -657,7 +657,7 @@ describe.skipIf(!linuxBwrap)(
         const scope: TerminalScope = {
           filesystem: "workspace",
           network: "none",
-          credentialHome: "exclude",
+          credentialPaths: [],
           uid: "dedicated",
         };
         // Undefined bwrapPath (provider absent) -> reject BEFORE any spawn.

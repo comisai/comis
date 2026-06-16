@@ -22,8 +22,12 @@ import { describe, it, expect } from "vitest";
 
 import {
   runSettle,
+  settleHint,
   SETTLE_DEFAULT_IDLE_MS,
+  SETTLE_DEFAULT_TIMEOUT_MS,
   SETTLE_MAX_TIMEOUT_MS,
+  WAIT_REPLY_MARGIN_MS,
+  waitReplyTimeoutMs,
   type SettleDeps,
 } from "./terminal-settle.js";
 
@@ -353,7 +357,7 @@ describe("runSettle — TIMEOUT (load-bearing isComplete:false)", () => {
 
     const result = await p;
     expect(threw).toBe(false);
-    expect(result).toEqual({ matched: false, isComplete: false, reason: "timeout" });
+    expect(result).toMatchObject({ matched: false, isComplete: false, reason: "timeout" });
     // EXPLICIT: a false `true` here would strand the agent (the attention model finalizes a live session).
     expect(result?.isComplete).toBe(false);
   });
@@ -363,29 +367,96 @@ describe("runSettle — CAP (DoS bound)", () => {
   it("clamps a > SETTLE_MAX_TIMEOUT_MS request to the cap (the effective scheduled timeout is the cap)", async () => {
     const sched = makeScheduler();
     const source = makeSource("");
-    // Request a 10-minute wait with an idle window LONGER than the cap, so only
-    // the (clamped) overall-timeout timer can fire — the cap is the binding bound.
-    const p = runSettle(makeDeps(sched, source), {
-      timeoutMs: 10 * 60 * 1000,
-      forIdleMs: 20 * 60 * 1000,
-    });
+    // Request a wait ABOVE the cap with an idle window LONGER still, so only the
+    // (clamped) overall-timeout timer can fire — the cap is the binding bound.
+    const overCap = SETTLE_MAX_TIMEOUT_MS + 60_000;
+    const p = runSettle(makeDeps(sched, source), { timeoutMs: overCap, forIdleMs: overCap * 2 });
 
-    // The OVERALL-timeout timer was scheduled at exactly the cap (not the
-    // requested 600000); the requested 600000 never reaches setTimer at all.
+    // The OVERALL-timeout timer was scheduled at exactly the cap (not the requested
+    // over-cap value, which never reaches setTimer).
     expect(sched.scheduledDelays).toContain(SETTLE_MAX_TIMEOUT_MS);
-    expect(sched.scheduledDelays).not.toContain(10 * 60 * 1000);
+    expect(sched.scheduledDelays).not.toContain(overCap);
 
-    // Fire the cap → it resolves a timeout (the 20-min idle window cannot pre-empt it).
     sched.advance(SETTLE_MAX_TIMEOUT_MS);
     const result = await p;
     expect(result.reason).toBe("timeout");
     expect(result.isComplete).toBe(false);
   });
 
-  it("exposes a sane default idle window and cap", () => {
+  it("HONORS a sub-cap timeoutMs (AI-CLI driving): a 120s wait is NOT clamped to the 15s default", async () => {
+    // The v2.11 regression: SETTLE_MAX was 15_000, so a realistic AI-CLI wait
+    // (driven `claude` takes 60-90s+) was clamped to 15s and timed out before the CLI
+    // finished — stranding the agent. A sub-cap timeoutMs must be honored verbatim.
+    const sched = makeScheduler();
+    const source = makeSource("");
+    const p = runSettle(makeDeps(sched, source), { timeoutMs: 120_000, forIdleMs: 300_000 });
+    expect(sched.scheduledDelays).toContain(120_000);
+    expect(sched.scheduledDelays).not.toContain(SETTLE_DEFAULT_TIMEOUT_MS);
+    sched.advance(120_000);
+    const result = await p;
+    expect(result.reason).toBe("timeout");
+    expect(result.isComplete).toBe(false);
+  });
+
+  it("defaults an omitted timeoutMs to SETTLE_DEFAULT_TIMEOUT_MS (the bounded primitive for fast settles)", async () => {
+    const sched = makeScheduler();
+    const source = makeSource("");
+    const p = runSettle(makeDeps(sched, source), { forIdleMs: 600_000 });
+    expect(sched.scheduledDelays).toContain(SETTLE_DEFAULT_TIMEOUT_MS);
+    sched.advance(SETTLE_DEFAULT_TIMEOUT_MS);
+    await p;
+  });
+
+  it("exposes a sane default idle window + a default/cap sized for AI-CLI driving", () => {
     expect(SETTLE_DEFAULT_IDLE_MS).toBeGreaterThanOrEqual(75);
     expect(SETTLE_DEFAULT_IDLE_MS).toBeLessThanOrEqual(150);
-    expect(SETTLE_MAX_TIMEOUT_MS).toBe(15000);
+    expect(SETTLE_DEFAULT_TIMEOUT_MS).toBe(15_000);
+    expect(SETTLE_MAX_TIMEOUT_MS).toBe(600_000);
+  });
+
+  it("waitReplyTimeoutMs sizes the IPC reply timeout to the clamped settle budget + margin", () => {
+    // The daemon→worker reply timeout for `wait` must exceed the settle's own cap,
+    // else the IPC pre-empts a long-but-legitimate AI-CLI settle (the ~10s cut-off bug).
+    expect(waitReplyTimeoutMs(120_000)).toBe(120_000 + WAIT_REPLY_MARGIN_MS);
+    expect(waitReplyTimeoutMs(undefined)).toBe(SETTLE_DEFAULT_TIMEOUT_MS + WAIT_REPLY_MARGIN_MS);
+    expect(waitReplyTimeoutMs(SETTLE_MAX_TIMEOUT_MS + 1_000_000)).toBe(SETTLE_MAX_TIMEOUT_MS + WAIT_REPLY_MARGIN_MS);
+  });
+});
+
+describe("runSettle — producing diagnostic (T1.1: a not-complete timeout explains itself)", () => {
+  it("reports producing:true when output changed within the last window before the timeout", async () => {
+    // The live friction: a wait returned not-complete with no signal that the driven
+    // CLI was STILL WORKING. `producing` distinguishes "keep waiting" from "idle/stuck".
+    const sched = makeScheduler();
+    const source = makeSource("");
+    const p = runSettle(makeDeps(sched, source), { forIdleMs: 20000, timeoutMs: 30000 });
+    sched.advance(15000);
+    source.write("...the CLI is still generating..."); // ring change re-arms idle to 35000
+    sched.advance(16000); // t=31000 → timeout (30000) fires before the re-armed idle (35000)
+    const r = await p;
+    expect(r.reason).toBe("timeout");
+    expect(r.isComplete).toBe(false);
+    expect(r.producing).toBe(true);
+  });
+
+  it("reports producing:false on a quiet timeout (no output near the deadline)", async () => {
+    const sched = makeScheduler();
+    const source = makeSource("idle prompt$ ");
+    const p = runSettle(makeDeps(sched, source), { forIdleMs: 20000, timeoutMs: 15000 });
+    sched.advance(16000); // timeout at 15000; no writes ⇒ never produced near the deadline
+    const r = await p;
+    expect(r.reason).toBe("timeout");
+    expect(r.producing).toBe(false);
+  });
+
+  it("settleHint disambiguates a not-complete timeout and is silent for the complete reasons", () => {
+    expect(settleHint({ matched: false, isComplete: false, reason: "timeout", producing: true }))
+      .toMatch(/still producing|call wait again|not finished/i);
+    expect(settleHint({ matched: false, isComplete: false, reason: "timeout", producing: false }))
+      .toMatch(/idle|status|stuck|may be done/i);
+    expect(settleHint({ matched: true, isComplete: true, reason: "idle" })).toBeUndefined();
+    expect(settleHint({ matched: true, isComplete: true, reason: "text" })).toBeUndefined();
+    expect(settleHint({ matched: true, isComplete: true, reason: "exit" })).toBeUndefined();
   });
 });
 
@@ -606,7 +677,7 @@ describe("runSettle — adaptive N-stable-window debounce (stableWindows, spec �
 
     const result = await p;
     expect(threw).toBe(false);
-    expect(result).toEqual({ matched: false, isComplete: false, reason: "timeout" });
+    expect(result).toMatchObject({ matched: false, isComplete: false, reason: "timeout" });
     expect(result?.isComplete).toBe(false);
   });
 

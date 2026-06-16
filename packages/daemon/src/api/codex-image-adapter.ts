@@ -98,12 +98,26 @@ export function createCodexImageAdapter(opts: {
   model?: ImagesModel<"openai-codex-images">;
   timeoutMs?: number;
   logger: ComisLogger;
+  /**
+   * STORE-AWARE availability snapshot resolved at boot by the selector
+   * (`codexCredentialsAvailable`, via `hasStoredCredentials`). The sync
+   * `hasCredentials` is cache-only — cold at boot in encrypted-store mode — so a
+   * logged-in Codex profile read as unavailable. `isAvailable()` prefers this
+   * flag; it falls back to the cache-only check only when it is not threaded
+   * (callers/tests). Absent ⇒ the legacy sync behavior.
+   */
+  credentialsAvailable?: boolean;
 }): ImageGenerationPort {
   return {
     id: CODEX_PROVIDER_ID,
-    // CRED-01: codex credential availability is the OAuth manager, NOT the
-    // SecretManager (the bearer is OAuth, not an env key).
-    isAvailable: () => opts.oauthManager.hasCredentials(CODEX_PROVIDER_ID),
+    // CRED-01: codex credential availability is the OAuth credential, NOT the
+    // SecretManager (the bearer is OAuth, not an env key). Prefer the boot-
+    // resolved STORE-AWARE snapshot (the selector's codexCredentialsAvailable);
+    // fall back to the sync cache-only check only when it was not threaded — the
+    // latter under-reports a store-backed login at a cold-cache boot (the bug
+    // fixed in the selector; this closes the same trap on the adapter).
+    isAvailable: () =>
+      opts.credentialsAvailable ?? opts.oauthManager.hasCredentials(CODEX_PROVIDER_ID),
     execute(input: ImageGenInput): Promise<Result<ImageGenOutput, Error>> {
       return fromPromise(
         (async () => {
@@ -152,6 +166,22 @@ export function createCodexImageAdapter(opts: {
               { input: [{ type: "text", text: input.prompt }] },
               options,
             );
+            if (res.stopReason !== "stop") {
+              // OBS (troubleshooting-feedback-loop): the transport captures the
+              // REAL cause — an HTTP status ("codex <n>"), a response.failed
+              // message, or "empty_response" — in res.errorMessage, but the
+              // shipped classifier collapses it into a generic ImageErrorKind, so
+              // the actual Codex rejection was INVISIBLE in the logs (the
+              // "returned no image twice" incident: the agent only ever saw
+              // "non-image response", never the status). Surface it at WARN so it
+              // is diagnosable at the default level. SEC-03: res.errorMessage is
+              // the status/cause only — never the bearer/account-id/headers
+              // (those ride options.apiKey/options.headers, never the response).
+              opts.logger.warn(
+                { step: "codex_image_failed", stopReason: res.stopReason, cause: res.errorMessage },
+                "Codex image generation returned no image; surfacing the transport cause",
+              );
+            }
             // REUSE the shipped mapper/classifier (base64→buffer; classify a
             // non-stop outcome to an ImageErrorKind + WARN; throw ImageGenError).
             return toImageGenOutput(res, opts.logger);

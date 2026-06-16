@@ -30,7 +30,6 @@ import type { EgressMaterialization } from "@comis/core";
 import type { EmulatorSnapshot, SessionEmulator } from "./terminal-render.js";
 import type { TerminalScope } from "./allowlist-matcher.js";
 import type { AttentionEmitter } from "./terminal-attention-emitter.js";
-import type { SettleResult } from "./terminal-settle.js";
 
 /** Structural logger — the minimal `{info,debug,warn,error}` surface; NOT `@comis/infra`'s `getLogger` (the worker never value-imports infra); the daemon injects the real logger. */
 export interface WorkerLogger {
@@ -183,16 +182,10 @@ export interface ResizeResult {
 }
 
 /**
- * The `wait` reply payload (spec §5 / TR-05): the settle outcome plus the
- * post-settle `{screen,cursor}`. `isComplete` is the LOAD-BEARING signal — it
- * flows through from `runSettle` VERBATIM (never coerced) so a timeout's `false`
- * survives (the turn ends; the P5 attention model RESUMES it, never finalizes a
- * live session).
+ * The `wait` reply payload (spec §5 / TR-05). The canonical shape + its defensive
+ * worker→daemon mapping live in terminal-wait-reply so the worker and the daemon share
+ * ONE type; re-exported here for the worker's reply-builder. `isComplete` is LOAD-BEARING
+ * — it flows from `runSettle` VERBATIM (a timeout's `false` survives; the P5 attention
+ * model RESUMES the turn, never finalizes a live session). T1.1 adds `producing` + `hint`.
  */
-export interface WaitResult {
-  matched: boolean;
-  isComplete: boolean;
-  reason: SettleResult["reason"];
-  screen: string;
-  cursor: { x: number; y: number };
-}
+export type { WaitResult } from "./terminal-wait-reply.js";

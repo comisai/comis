@@ -308,10 +308,12 @@ describe("runPostBatchContinuation", () => {
     expect(decisionCall![0]).toMatchObject({
       submodule: "executor.post-batch-continuation",
       decision: "fire",
-      reason: "empty_after_tool_batch",
+      continuationReason: "empty_after_tool_batch", // T1.2: de-collided from the terminal settle `reason`
       priorToolCallCount: 3,
       priorToolNames: ["agents_manage"],
     });
+    // T1.2: no bare `reason` field — it collided with the terminal settle reason across log lines.
+    expect(decisionCall![0].reason).toBeUndefined();
 
     // Per-attempt INFO log.
     const attemptCall = infoCalls.find(

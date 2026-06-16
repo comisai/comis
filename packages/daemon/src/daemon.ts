@@ -2166,7 +2166,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
   if (sandboxProvider) skillsLogger.info({ provider: sandboxProvider.name }, "Exec sandbox provider detected");
   // Image-generation bundle (see buildImageGenBundle in wiring/main-helpers.ts). 184: oauthManager threads the DEFAULT agent's OAuth manager for the Codex image path (CDX-01).
   const { imageGenConfig, imageGenProvider, imageGenRateLimiter, persistImage, imageGenCostLimiter } =
-    buildImageGenBundle({ container, defaultAgentId, skillsLogger, oauthManager: handle.oauthManagers.get(defaultAgentId), workspaceDirs, defaultWorkspaceDir });
+    await buildImageGenBundle({ container, defaultAgentId, skillsLogger, oauthManager: handle.oauthManagers.get(defaultAgentId), workspaceDirs, defaultWorkspaceDir });
   // Video-generation bundle (Phase 188 baseline + 189 async + 190 live adapters —
   // see buildVideoGenBundle in wiring/main-helpers.ts). 189: pass the shared
   // memory.db handle (the VideoJobStore binds it), the EARLY channelAdaptersRef

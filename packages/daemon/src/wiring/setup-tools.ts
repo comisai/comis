@@ -632,7 +632,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       // .terminal) onto the base deps — the allow-set populates (per-session caps live),
       // workerCaps + the daemon TimerPort thread so the reaper goes LIVE, autoAnswer/
       // hintPatterns/backend consumed downstream; absent config ⇒ empty set + no reaper.
-      const terminalBase = { dataDir, skillsLogger, eventBus, sandboxProvider, approvalGate, ...terminalEgress, timers: deps.timers };
+      const terminalBase = { dataDir, skillsLogger, eventBus, sandboxProvider, approvalGate, ...terminalEgress, timers: deps.timers, agentWorkspaceDir: workspaceDirs.get(agentId) ?? defaultWorkspaceDir };
       wireTerminalTools(tools, terminalRegistries, agentId, buildTerminalWiringDeps(terminalBase, skillsConfig.terminal));
 
       // Context expansion tools (v2.12 Phase 131): dag-gated ctx_* wiring — gate + WR-04/WR-05 in maybeWireContextTools (file-size cap; see its doc).

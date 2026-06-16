@@ -28,10 +28,8 @@
  * @module
  */
 
-import { resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 import type { ComisLogger } from "@comis/infra";
-import { createTerminalEgressProxy } from "./terminal-egress-proxy.js";
 // The daemon does not depend on the pi SDK directly — it references the tool
 // array type via @comis/skills' PlatformToolProvider (= () => AgentTool[]), the
 // same way setup-tools.ts types its `tools` array.
@@ -64,6 +62,9 @@ const ESCALATION_REASONS = new Set<string>([
 import {
   createTerminalSessionRegistry,
   buildProductionSpawnWorker,
+  resolveWorkerMainPath,
+  createTerminalEgressProxy,
+  prepareAgentTerminalWorkspace,
   createTerminalSessionCreateTool,
   createTerminalSessionReadTool,
   createTerminalSessionListTool,
@@ -135,6 +136,14 @@ export interface TerminalWiringDeps {
    */
   readonly bwrapPath?: string;
   /**
+   * The resolved per-agent workspace dir (see {@link TerminalWiringBaseDeps.agentWorkspaceDir}).
+   * Present ⇒ the per-agent registry roots sessions in `<agentWorkspaceDir>/terminal`
+   * (persistent, agent-scoped) with a no-op cleanup; absent ⇒ the throwaway `/tmp`
+   * default. The injected workspace is re-bound RW after the `~/.comis` carve-out by
+   * `buildScopeArgs`, so it is writable in the jail while secrets stay masked.
+   */
+  readonly agentWorkspaceDir?: string;
+  /**
    * Reaper caps — the closed `worker.{maxSessions,idleTtlMs,
    * stuckMs}` (schema-skills.ts) + the per-entry `limits.wallClockMs` (default 0
    * while the allow-set is empty). Threaded into the per-agent registry's reaper so
@@ -199,18 +208,17 @@ export function mapAllowEntry(entry: TerminalAllowEntry): AllowEntryLike {
 }
 
 /**
- * Resolve the worker entry's runtime JS path (the dist sibling of the
- * `terminal-worker-entry` source). The production worker-spawn posture forks
- * `node <permission-args> <workerJs>`; this is never invoked while the allow-set
- * is empty (the gate rejects every create first), but the registry is
- * constructed with the correct posture so a later phase only has to populate the
- * allow-set + ship the worker main.
+ * Resolve the standalone worker process entry (`terminal-worker-main.js`) that
+ * the production worker-spawn posture forks (`node <permission-args> <workerJs>`).
+ * Delegates to `@comis/skills`'s own dist-location resolver
+ * ({@link resolveWorkerMainPath}) — the entry ships INSIDE the skills package, so
+ * its path is computed from that module's URL, correct across install locations
+ * (global npm prefix / bundled tarball / dev dist) and NEVER a data-dir
+ * placeholder. The worker mkdir's its durable-state dir under `<dataDir>` itself
+ * (the daemon injects `COMIS_TERMINAL_DATA_DIR` + scopes `--allow-fs-write` there).
  */
-function resolveWorkerJsPath(dataDir: string): string {
-  // Placeholder under the data dir until the standalone worker main lands
-  // (the worker is currently an in-process factory; the separate-process entry
-  // is wired in a later step). Never spawned while the allow-set is empty.
-  return resolve(dataDir, "terminal-worker", "worker-main.js");
+function resolveWorkerJsPath(_dataDir: string): string {
+  return resolveWorkerMainPath();
 }
 
 /**
@@ -354,6 +362,9 @@ function getOrCreateTerminalRegistry(
     // Thread the SHARED per-agent caps instance into the reaper hooks so onCapForget
     // forgets the SAME cap-state map the tool deps consume (one instance for both).
     const reaperHooks = buildTerminalReaperHooks(agentId, { ...deps, caps });
+    // The agent's OWN workspace, captured for the allocator closure (const ⇒ TS narrows
+    // it to string inside the arrow). Present ⇒ sessions are PERSISTENT + agent-scoped.
+    const agentWs = deps.agentWorkspaceDir;
     registry = createTerminalSessionRegistry({
       spawnWorker: buildProductionSpawnWorker(resolveWorkerJsPath(deps.dataDir), deps.dataDir),
       logger: deps.skillsLogger,
@@ -364,6 +375,21 @@ function getOrCreateTerminalRegistry(
       // host ⇒ the worker fail-closes (no unjailed spawn).
       bwrapPath: deps.bwrapPath,
       egressControl: deps.egressControl,
+      // Agent-workspace persistence: root each session in the agent's OWN workspace
+      // (`<agentWorkspaceDir>/terminal`) with a NO-OP cleanup, so a driven session's
+      // work (e.g. a full GSD milestone's app) survives the session end and the agent
+      // sees it under its workspace — instead of a throwaway /tmp dir rm'd on kill.
+      // `buildScopeArgs` re-binds ONLY this subtree RW after the ~/.comis carve-out,
+      // so the agent's secrets + its other workspace files stay masked in the jail.
+      // Absent agentWorkspaceDir (test paths) ⇒ the ephemeral mkdtemp default stands.
+      ...(agentWs
+        ? {
+            allocateWorkspace: () => prepareAgentTerminalWorkspace(agentWs),
+            cleanupWorkspace: () => {
+              /* persistent: never rm the agent's own workspace on session end */
+            },
+          }
+        : {}),
       // Turn a worker backend-spawn failure (an `ok:false` create
       // reply, which the registry uses to flip the session to `lost`) into the
       // `terminal:spawn_failed` bus event. The registry already logged the WARN +
@@ -465,6 +491,14 @@ export interface TerminalWiringBaseDeps {
   readonly bwrapPath?: string;
   /** The daemon's injected TimerPort (drives the reaper sweep). */
   readonly timers?: TimerPort;
+  /**
+   * The resolved per-agent workspace dir (`workspaceDirs.get(agentId) ?? default`,
+   * the same dir the agent's read/write/exec tools use). When present, the registry
+   * roots each session in `<agentWorkspaceDir>/terminal` (PERSISTENT, no-op cleanup)
+   * instead of a throwaway `/tmp` dir — so a driven milestone's work survives the
+   * session and the agent can see it. Absent ⇒ the ephemeral default (test paths).
+   */
+  readonly agentWorkspaceDir?: string;
 }
 
 /**
@@ -502,6 +536,7 @@ export function buildTerminalWiringDeps(
     ...(base.egressControl ? { egressControl: base.egressControl } : {}),
     ...(base.bwrapPath ? { bwrapPath: base.bwrapPath } : {}),
     ...(base.timers ? { timers: base.timers } : {}),
+    ...(base.agentWorkspaceDir ? { agentWorkspaceDir: base.agentWorkspaceDir } : {}),
     ...(workerCaps ? { workerCaps } : {}),
     ...(config ? { config } : {}),
   };
