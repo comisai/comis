@@ -230,4 +230,39 @@ describe("terminal-reattach-match — serialize/deserialize round-trip (the dura
     const bad = { ...makeDescriptor(), owner: { sessionKey: "" } as unknown as SessionDescriptor["owner"] };
     expect(deserializeDescriptor(bad)).toBeUndefined();
   });
+
+  it("round-trips a listed-paths/listed-hosts scope (I5 — the optional paths/hosts arrays survive recover-on-boot)", () => {
+    // A durable drive with a listed-paths filesystem + listed-hosts network posture: the
+    // optional scope.paths/scope.hosts string arrays are load-bearing AUTHORIZATION (I5) and
+    // MUST round-trip intact through persist → recover-on-boot (exercises the isScope
+    // paths/hosts element validators that a workspace/none scope never reaches).
+    const desc = makeDescriptor({
+      scope: {
+        filesystem: "listed-paths",
+        network: "listed-hosts",
+        credentialPaths: ["~/.aws/credentials"],
+        uid: "dedicated",
+        paths: ["/work/repo", "/work/cache"],
+        hosts: ["api.example.com", "registry.example.com"],
+      },
+    });
+    const round = deserializeDescriptor(serializeDescriptor(desc));
+
+    expect(round).toEqual(desc);
+    expect(round?.scope.paths).toEqual(["/work/repo", "/work/cache"]);
+    expect(round?.scope.hosts).toEqual(["api.example.com", "registry.example.com"]);
+  });
+
+  it("rejects a scope whose paths or hosts array carries a non-string element (corrupt-skip — I5 identity must be well-typed)", () => {
+    const badPaths = {
+      ...makeDescriptor(),
+      scope: { filesystem: "listed-paths", network: "none", credentialPaths: [], uid: "dedicated", paths: ["/ok", 42 as unknown as string] },
+    };
+    expect(deserializeDescriptor(badPaths)).toBeUndefined();
+    const badHosts = {
+      ...makeDescriptor(),
+      scope: { filesystem: "workspace", network: "listed-hosts", credentialPaths: [], uid: "dedicated", hosts: ["ok.example.com", 7 as unknown as string] },
+    };
+    expect(deserializeDescriptor(badHosts)).toBeUndefined();
+  });
 });
