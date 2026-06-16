@@ -107,4 +107,49 @@ describe("resolveTtsProvider", () => {
     const sel = resolveTtsProvider({ provider: "totally-bogus" }, "ollama", EDGE_ON, NO_AUDIO_KEY);
     expect(sel.ok).toBe(false);
   });
+
+  // ===========================================================================
+  // TTS-01 (edge keyless default) + the SHIP piper rung — confirmation (197-03)
+  // ===========================================================================
+  describe("TTS-01 edge-default + piper rung confirm (197-03)", () => {
+    it("TTS-01: auto rests on the always-keyless edge rung across every main provider", () => {
+      // The end-to-end keyless-default confirmation: regardless of which main an
+      // agent resolves to (keyless-only, keyed, or OAuth-only), `auto` resolves
+      // to keyless edge — edge needs no key and no engine, so it is always the
+      // auto default. This is TTS-01 at the resolver (the schema default is
+      // already "edge"; no production code change in this plan).
+      for (const main of ["ollama", "openai", "anthropic", "openai-codex", "google"]) {
+        const sel = resolveTtsProvider({ provider: "auto" }, main, EDGE_ON, NO_AUDIO_KEY);
+        expect(sel, `auto on main '${main}' must rest on keyless edge`).toMatchObject({
+          ok: true,
+          provider: "edge",
+          keyless: true,
+        });
+      }
+    });
+
+    it("SHIP: the piper rung is reachable and keyless when an operator selects it explicitly", () => {
+      // Phase 197 SHIP: the offline transformers.js text-to-audio adapter is
+      // wired (tts-factory local/piper case), so an explicit piper selection
+      // resolves to a keyless provider the factory can construct — it degrades
+      // cleanly (reachable), never an honest-unavailable crash. (On DEFER this
+      // would still resolve keyless at the resolver, but the factory would
+      // honest-unavailable; here it routes to the adapter.)
+      const sel = resolveTtsProvider({ provider: "piper" }, "openai-codex", EDGE_ON, NO_AUDIO_KEY);
+      expect(sel).toMatchObject({ ok: true, provider: "piper", keyless: true, source: "explicit" });
+    });
+
+    it("SHIP: the piper rung is reachable via the auto fallthrough chain when edge is disabled", () => {
+      // With edge disabled, an operator can still get offline keyless TTS by
+      // listing piper in the fallback chain — it resolves keyless without a key
+      // (the SHIP rung), rather than falling through to honest-unavailable.
+      const sel = resolveTtsProvider(
+        { provider: "auto", fallbackProviders: ["piper"] },
+        "openai-codex",
+        EDGE_OFF,
+        NO_AUDIO_KEY,
+      );
+      expect(sel).toMatchObject({ ok: true, provider: "piper", keyless: true, source: "fallback" });
+    });
+  });
 });
