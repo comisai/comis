@@ -18,15 +18,20 @@
  *      importable → available, mode "in-process".
  *   3. otherwise → not available, mode "none".
  *
- * Security: the `baseUrl` reachability is a short-timeout fetch wrapped in a try
- * (loopback-default; any error → not-reachable). This is ONLY the loopback seam
- * — the full SSRF / DNS-rebinding guard is Phase 197 (do not build it here). No
+ * Security (SEC-02): the configured `baseUrl` is validated by
+ * `validateLocalServerUrl` (the inverse SSRF guard — ALLOW loopback + an
+ * explicit allowlist, DENY public/private egress, keep the cloud-metadata deny)
+ * BEFORE the reachability fetch fires. A non-loopback/unconfigured baseUrl is
+ * treated as not-reachable (the guard rejects it and the probe falls through to
+ * the in-process path) so a mis/maliciously-configured URL can never drive an
+ * SSRF fetch from the boot probe. The reachability check itself is a
+ * short-timeout fetch wrapped in a try (any error → not-reachable). No
  * credential-bearing URL is logged.
  *
  * @module
  */
 
-import { systemSetTimeout, systemClearTimeout } from "@comis/core";
+import { systemSetTimeout, systemClearTimeout, validateLocalServerUrl } from "@comis/core";
 
 /** Default reachability-probe timeout (ms). */
 const DEFAULT_PROBE_TIMEOUT_MS = 1_500;
@@ -62,8 +67,10 @@ export interface LocalSttProbeDeps {
 
 /**
  * Default reachability check: a short-timeout GET to the server root. Any error
- * (refused, DNS, timeout, non-2xx is still "reachable") resolves `false`.
- * Loopback-friendly only — the full SSRF guard is Phase 197.
+ * (refused, DNS, timeout, non-2xx is still "reachable") resolves `false`. The
+ * SSRF guard (`validateLocalServerUrl`) has already run in `detectLocalSttEngine`
+ * BEFORE this fetch — so this only ever fetches a loopback/explicitly-allowed
+ * host (SEC-02).
  */
 async function defaultReachable(url: string, timeoutMs: number): Promise<boolean> {
   const controller = new AbortController();
@@ -117,13 +124,22 @@ export async function detectLocalSttEngine(
   const timeoutMs = deps.timeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
 
   // 1. A reachable configured server is sufficient (I6) — do NOT consult the
-  //    in-process engine.
+  //    in-process engine. SEC-02: the baseUrl is SSRF-guarded BEFORE the
+  //    reachability check fires (guard-before-fetch). validateLocalServerUrl
+  //    ALLOWS loopback + an explicit allowlist and DENIES public/private egress
+  //    (keeping the cloud-metadata deny); a rejected URL is treated as
+  //    not-reachable so a mis/maliciously-configured baseUrl can never drive an
+  //    SSRF fetch — the probe falls through to the in-process path. The guard
+  //    also gates the injected `fetchProbe` test seam (it sits before the seam).
   const baseUrl = deps.baseUrl;
   if (baseUrl) {
-    const reachableFn = deps.fetchProbe ?? ((url: string) => defaultReachable(url, timeoutMs));
-    const reachable = await safeBoolean(() => reachableFn(baseUrl));
-    if (reachable) {
-      return { available: true, mode: "baseUrl" };
+    const guard = await validateLocalServerUrl(baseUrl);
+    if (guard.ok) {
+      const reachableFn = deps.fetchProbe ?? ((url: string) => defaultReachable(url, timeoutMs));
+      const reachable = await safeBoolean(() => reachableFn(baseUrl));
+      if (reachable) {
+        return { available: true, mode: "baseUrl" };
+      }
     }
   }
 

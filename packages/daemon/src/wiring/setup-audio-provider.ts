@@ -36,6 +36,7 @@
 import {
   resolveTranscriptionProvider,
   resolveTtsProvider,
+  validateLocalServerUrl,
   type AppContainer,
   type SecretManager,
 } from "@comis/core";
@@ -226,11 +227,33 @@ export async function buildAudioResolverDeps(
   detectEngine: typeof detectLocalSttEngine = detectLocalSttEngine,
 ): Promise<ReturnType<typeof createAudioProviderSelector>> {
   const media = container.config.integrations.media;
+  // SEC-02 (Surface A boot capture): validate the configured local.baseUrl with
+  // the inverse SSRF guard (ALLOW loopback + explicit allowlist, DENY public/
+  // private egress, keep the cloud-metadata deny) BEFORE threading it into the
+  // probe. A rejected URL is dropped (the probe receives `undefined` so it does
+  // NOT treat a bad/unconfigured URL as a reachable server); the rejection is
+  // logged host/step-only — NEVER the URL (it may carry creds; T-194-11). This
+  // is the same guard the probe runs at the fetch site — applying it here too
+  // keeps a bad URL from even reaching the probe.
+  const configuredBaseUrl = media.transcription.local?.baseUrl;
+  let guardedBaseUrl: string | undefined;
+  if (configuredBaseUrl !== undefined) {
+    const guard = await validateLocalServerUrl(configuredBaseUrl);
+    if (guard.ok) {
+      guardedBaseUrl = configuredBaseUrl;
+    } else {
+      // Host/step-only breadcrumb — the rejected URL is NEVER logged (T-194-11).
+      logger.warn(
+        { step: "stt_local_baseurl_rejected" },
+        "configured transcription.local.baseUrl rejected by the SSRF guard (not a loopback or explicitly-allowed local host) — ignoring it",
+      );
+    }
+  }
   // One-shot boot probe (never throws). ffmpeg is the in-process decode gate; a
   // reachable local.baseUrl short-circuits it inside detectLocalSttEngine.
   const ffmpegCaps = await detectFfmpeg();
   const probe = await detectEngine({
-    baseUrl: media.transcription.local?.baseUrl,
+    baseUrl: guardedBaseUrl,
     ffmpegAvailable: ffmpegCaps.ffmpegAvailable,
   });
   // LOCAL-02: availability is the load-bearing "why is keyless STT (un)available"
