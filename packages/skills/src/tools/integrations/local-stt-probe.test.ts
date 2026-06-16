@@ -13,8 +13,13 @@
  * unavailable; ffmpeg absent → unavailable; both unavailable → "none";
  * never-throws on the worst-case path; the probe triggers no model download.
  */
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { detectLocalSttEngine } from "./local-stt-probe.js";
+
+// For the "default seams" block: the default `canImportEngine` does a guarded
+// lazy `import("@huggingface/transformers")` — mock it so the import resolves
+// without a real dep load. Inert for the tests above (they inject canImportEngine).
+vi.mock("@huggingface/transformers", () => ({ env: {}, pipeline: vi.fn() }));
 
 describe("detectLocalSttEngine", () => {
   it("reports available with mode 'baseUrl' and does NOT consult the in-process engine when the baseUrl is reachable", async () => {
@@ -186,5 +191,48 @@ describe("detectLocalSttEngine", () => {
 
       expect(result).toMatchObject({ available: false, mode: "none" });
     });
+  });
+});
+
+describe("detectLocalSttEngine — default seams (real fetch + real lazy import)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("uses the default reachability fetch when none is injected — a resolving fetch to a loopback baseUrl → mode 'baseUrl'", async () => {
+    // No `fetchProbe` seam → exercises defaultReachable (the AbortController +
+    // short-timeout `fetch`). A loopback host passes the SSRF guard without DNS.
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(null, { status: 404 }));
+
+    const result = await detectLocalSttEngine({
+      baseUrl: "http://127.0.0.1:8123",
+      ffmpegAvailable: false,
+    });
+
+    // ANY response status proves the server is up → reachable → mode baseUrl.
+    expect(result).toMatchObject({ available: true, mode: "baseUrl" });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("default reachability fetch resolves not-reachable (falls through) when fetch rejects", async () => {
+    // defaultReachable's catch branch → false → no in-process engine + no ffmpeg → none.
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("ECONNREFUSED"));
+
+    const result = await detectLocalSttEngine({
+      baseUrl: "http://127.0.0.1:8123",
+      ffmpegAvailable: false,
+    });
+
+    expect(result).toMatchObject({ available: false, mode: "none" });
+  });
+
+  it("uses the default lazy-import canImportEngine when none is injected — engine importable + ffmpeg → 'in-process'", async () => {
+    // No `canImportEngine` seam → exercises defaultCanImportEngine (the guarded
+    // lazy `import`, mocked above to resolve). No baseUrl → straight to in-process.
+    const result = await detectLocalSttEngine({ ffmpegAvailable: true });
+
+    expect(result).toMatchObject({ available: true, mode: "in-process" });
   });
 });

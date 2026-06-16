@@ -24,6 +24,49 @@ import {
   type TtsTransformersModule,
 } from "./local-tts-adapter.js";
 
+/**
+ * Hoisted, mutable controls for the DEFAULT-seam mocks below. The default
+ * `loadEngine` (a guarded lazy `import("@huggingface/transformers")`) and the
+ * default `encodeWaveform` (the ffmpeg `execFile` shell) are exercised in the
+ * "default seams" block by NOT injecting their config seams — so we mock the
+ * external module + the node built-ins they touch, without any real network or
+ * ffmpeg. The 12 tests above inject both seams, so these mocks are inert for them.
+ */
+const seam = vi.hoisted(() => ({
+  ffmpeg: "ok" as "ok" | "fail",
+  encodedBytes: 16,
+}));
+
+vi.mock("@huggingface/transformers", () => {
+  const synth = vi.fn(async () => ({
+    audio: new Float32Array([0.1, -0.1, 0.2, -0.2]),
+    sampling_rate: 16000,
+  }));
+  return { env: {}, pipeline: vi.fn(async () => synth) };
+});
+
+vi.mock("node:child_process", () => ({
+  // promisify(execFile) calls this as (file, args, options, callback).
+  execFile: (
+    _file: string,
+    _args: readonly string[],
+    _opts: unknown,
+    cb: (err: Error | null, res?: { stdout: string; stderr: string }) => void,
+  ) => {
+    if (seam.ffmpeg === "fail") {
+      cb(new Error("ffmpeg: command not found"));
+      return;
+    }
+    cb(null, { stdout: "", stderr: "" });
+  },
+}));
+
+vi.mock("node:fs/promises", () => ({
+  writeFile: vi.fn(async () => undefined),
+  readFile: vi.fn(async () => Buffer.alloc(seam.encodedBytes, 1)),
+  rm: vi.fn(async () => undefined),
+}));
+
 const DATA_DIR = "/tmp/test-data";
 
 /**
@@ -316,5 +359,69 @@ describe("createLocalTtsAdapter", () => {
     expect(task).toBe("text-to-audio");
     // The pinned id — a single-speaker MMS-TTS/VITS repo (no speaker embeddings).
     expect(modelId).toBe("Xenova/mms-tts-eng");
+  });
+});
+
+describe("createLocalTtsAdapter — default seams (real lazy-import + ffmpeg encode)", () => {
+  beforeEach(() => {
+    __resetLocalTtsPipelineForTests();
+    seam.ffmpeg = "ok";
+    seam.encodedBytes = 16;
+  });
+
+  it("uses the default lazy-import loadEngine when none is injected, and synthesizes via the mocked engine", async () => {
+    // No `loadEngine` seam → exercises defaultLoadEngine (the guarded
+    // `await import("@huggingface/transformers")`, mocked above — no network).
+    const adapter = createLocalTtsAdapter({ dataDir: DATA_DIR, encodeWaveform: encodeOk() });
+
+    const result = await adapter.synthesize("hello from the default engine");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.mimeType).toBe("audio/mpeg");
+    }
+  });
+
+  it("uses the default ffmpeg encodeWaveform when none is injected, returning the encoded MP3 buffer", async () => {
+    // No `encodeWaveform` seam → exercises defaultEncodeWaveform (the ffmpeg
+    // `execFile` shell, mocked above to succeed + return non-empty bytes).
+    const fake = makeFakeEngine({ waveform: new Float32Array([0.3, -0.3, 0.6, -0.6]) });
+    const adapter = createLocalTtsAdapter({ dataDir: DATA_DIR, loadEngine: async () => fake.mod });
+
+    const result = await adapter.synthesize("encode me to mp3");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.mimeType).toBe("audio/mpeg");
+      expect(result.value.audio.byteLength).toBeGreaterThan(0);
+    }
+  });
+
+  it("default encodeWaveform returns err (kind dependency) when the ffmpeg shell fails", async () => {
+    seam.ffmpeg = "fail";
+    const fake = makeFakeEngine({ waveform: new Float32Array([0.3, -0.3]) });
+    const adapter = createLocalTtsAdapter({ dataDir: DATA_DIR, loadEngine: async () => fake.mod });
+
+    const result = await adapter.synthesize("encode me");
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toContain("ffmpeg failed to encode");
+      expect((result.error as { kind?: string }).kind).toBe("dependency");
+    }
+  });
+
+  it("default encodeWaveform returns err when ffmpeg produces zero audio bytes", async () => {
+    seam.encodedBytes = 0;
+    const fake = makeFakeEngine({ waveform: new Float32Array([0.3, -0.3]) });
+    const adapter = createLocalTtsAdapter({ dataDir: DATA_DIR, loadEngine: async () => fake.mod });
+
+    const result = await adapter.synthesize("encode me");
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toContain("produced no audio");
+      expect((result.error as { kind?: string }).kind).toBe("dependency");
+    }
   });
 });

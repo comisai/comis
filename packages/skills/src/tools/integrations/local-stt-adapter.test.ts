@@ -22,6 +22,46 @@ import {
   type TransformersModule,
 } from "./local-stt-adapter.js";
 
+/**
+ * Hoisted, mutable controls for the DEFAULT-seam mocks. The "default seams" block
+ * exercises defaultLoadEngine (the guarded lazy `import`) + defaultDecodeToPcm16kF32
+ * (the ffmpeg `execFile` shell + PCM read) by NOT injecting those seams — so we
+ * mock the external module + the node built-ins, no real network/ffmpeg. The 17
+ * tests above inject both seams, so these mocks are inert for them.
+ */
+const seam = vi.hoisted(() => ({
+  ffmpeg: "ok" as "ok" | "fail",
+  pcmBytes: 16, // a 4-byte-multiple → 4 f32 samples
+}));
+
+vi.mock("@huggingface/transformers", () => {
+  const transcribe = vi.fn(async () => ({ text: "default-engine transcript" }));
+  return { env: {}, pipeline: vi.fn(async () => transcribe) };
+});
+
+vi.mock("node:child_process", () => ({
+  // promisify(execFile) calls this as (file, args, options, callback).
+  execFile: (
+    _file: string,
+    _args: readonly string[],
+    _opts: unknown,
+    cb: (err: Error | null, res?: { stdout: string; stderr: string }) => void,
+  ) => {
+    if (seam.ffmpeg === "fail") {
+      cb(new Error("ffmpeg: command not found"));
+      return;
+    }
+    cb(null, { stdout: "", stderr: "" });
+  },
+}));
+
+vi.mock("node:fs/promises", () => ({
+  writeFile: vi.fn(async () => undefined),
+  readFile: vi.fn(async () => Buffer.alloc(seam.pcmBytes, 1)),
+  rm: vi.fn(async () => undefined),
+  stat: vi.fn(async () => ({ size: 1024 })),
+}));
+
 const DATA_DIR = "/tmp/test-data";
 
 /**
@@ -466,5 +506,53 @@ describe("createLocalWhisperAdapter", () => {
 
       expect(result.ok).toBe(true);
     });
+  });
+});
+
+describe("createLocalWhisperAdapter — default seams (real lazy-import + ffmpeg decode)", () => {
+  beforeEach(() => {
+    __resetLocalWhisperPipelineForTests();
+    seam.ffmpeg = "ok";
+    seam.pcmBytes = 16;
+  });
+
+  it("uses the default lazy-import loadEngine when none is injected, transcribing via the mocked engine", async () => {
+    // No `loadEngine` seam → exercises defaultLoadEngine (the guarded lazy
+    // `import("@huggingface/transformers")`, mocked above). Decode is injected.
+    const adapter = createLocalWhisperAdapter({
+      dataDir: DATA_DIR,
+      decodeToPcm16kF32: async () => ok(new Float32Array([0.1, 0.2, 0.3])),
+    });
+
+    const result = await adapter.transcribe(Buffer.from("audio"), { mimeType: "audio/ogg" });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.text).toBe("default-engine transcript");
+    }
+  });
+
+  it("uses the default ffmpeg decodeToPcm16kF32 when none is injected, decoding to f32 PCM samples", async () => {
+    // No `decodeToPcm16kF32` seam → exercises defaultDecodeToPcm16kF32 (the
+    // ffmpeg `execFile` shell + PCM read, mocked above to succeed). Engine injected.
+    const fake = makeFakeEngine({ transcribeText: "decoded ok" });
+    const adapter = createLocalWhisperAdapter({ dataDir: DATA_DIR, loadEngine: async () => fake.mod });
+
+    const result = await adapter.transcribe(Buffer.from("audio-bytes"), { mimeType: "audio/ogg" });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.text).toBe("decoded ok");
+    }
+  });
+
+  it("default ffmpeg decode returns err (never throws) when the ffmpeg shell fails", async () => {
+    seam.ffmpeg = "fail";
+    const fake = makeFakeEngine({ transcribeText: "unused" });
+    const adapter = createLocalWhisperAdapter({ dataDir: DATA_DIR, loadEngine: async () => fake.mod });
+
+    const result = await adapter.transcribe(Buffer.from("audio-bytes"), { mimeType: "audio/ogg" });
+
+    expect(result.ok).toBe(false);
   });
 });
