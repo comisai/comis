@@ -20,9 +20,11 @@ export function redactErrorMessage(body: string): string {
   return (
     body
       .replace(/https?:\/\/[^\s"')]+/g, "[URL]")
-      // Strip an Authorization/Bearer credential marker entirely (scheme + any
-      // following token) so neither the scheme word nor the secret survives.
-      .replace(/\b(?:Authorization\s*:\s*)?Bearer\s+\S+/gi, "[REDACTED]")
+      // Drop the bare `Authorization:`/`Bearer` credential-scheme markers (the
+      // token that follows is already caught by the long-token rule below) so
+      // the line carries no credential context at all.
+      .replace(/\bAuthorization:/gi, "")
+      .replace(/\bBearer\b/gi, "")
       // eslint-disable-next-line no-restricted-syntax -- media adapter API-error sanitization (not the Pino censor literal)
       .replace(/[A-Za-z0-9_-]{20,}/g, "[REDACTED]")
   );
