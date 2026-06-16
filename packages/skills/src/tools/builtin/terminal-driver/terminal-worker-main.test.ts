@@ -76,11 +76,14 @@ describe("terminal-worker-main helpers", () => {
     expect(() => bad.error({}, "boom")).not.toThrow();
   });
 
-  it("buildLoadTmux returns a TmuxBackendLike with a spawn() factory (wiring into createTmuxBackend)", () => {
-    const loadTmux = buildLoadTmux("/usr/bin/tmux");
+  it("buildLoadTmux returns a TmuxBackendLike (spawn + reattach) wiring the injected node-pty attach loader", () => {
+    const fakeLoadPty = () => ({ spawn: vi.fn() });
+    const loadTmux = buildLoadTmux("/usr/bin/tmux", fakeLoadPty);
     expect(typeof loadTmux.spawn).toBe("function");
-    // Not invoked here: spawn() would run tmux has-session / new-session (a real
-    // server). The construction + shape is what's under test.
+    expect(typeof loadTmux.reattach).toBe("function");
+    // Not invoked here: spawn() would run tmux has-session / new-session against a real
+    // server. The 2-arg seam (tmuxPath + the node-pty loader the attach client reuses) is
+    // what's under test — drivability comes from attaching a pty, not a capture-pane.
   });
 });
 
