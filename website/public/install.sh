@@ -3721,15 +3721,18 @@ WorkingDirectory=${COMIS_WORKING_DIR}
 
 # --permission: Node permission model. fs-write scoped to paths the daemon
 # actually writes to at runtime:
-#   DATA_DIR        — config, logs, memory.db, workspace, sessions
+#   DATA_DIR        — config, logs, memory.db, workspace, sessions, and the
+#                     keyless local-STT whisper model cache (models/whisper/) —
+#                     so no extra fs-write flag is needed when local STT ships
 #   HOME/.npm       — npm cache + logs (MCP servers spawned via npx)
 #   HOME/.pi        — pi-agent-core SettingsManager (agent config dir)
 #   /tmp            — media temp files (PrivateTmp=yes sandboxes this already)
 # fs-read wildcarded: ProtectSystem=strict + ProtectHome=read-only enforce the
 # real filesystem perimeter at the kernel level.
-# --allow-addons + --allow-worker: native deps like sharp and better-sqlite3.
+# --allow-addons + --allow-worker: native deps like sharp and better-sqlite3 —
+# and the ONNX Runtime used by the local-STT whisper engine, so it needs no new flag.
 # --jitless and MemoryDenyWriteExecute are intentionally NOT set: both break
-# WebAssembly, which bundled undici uses for HTTP parsing.
+# WebAssembly, which bundled undici (HTTP parsing) and the WASM ONNX fallback use.
 ExecStart=${COMIS_NODE_BIN} --permission --allow-addons --allow-worker --allow-fs-read=* --allow-fs-write=${COMIS_DATA_DIR} --allow-fs-write=${COMIS_SVC_HOME}/.npm --allow-fs-write=${COMIS_SVC_HOME}/.pi --allow-fs-write=/tmp${COMIS_BROWSER_FS_WRITE_FLAGS} --allow-child-process ${COMIS_DAEMON_JS}
 
 Restart=on-failure

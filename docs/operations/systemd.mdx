@@ -267,9 +267,29 @@ the daemon can access:
 
 This acts as a second layer of security, even if a vulnerability is exploited.
 
+The keyless **in-process local STT** engine caches its whisper model under the data
+dir at `<data-dir>/models/whisper/` (e.g. `/var/lib/comis/models/whisper/`), so the
+existing `--allow-fs-write=/var/lib/comis` and `ReadWritePaths=/var/lib/comis` already
+cover it — **no additional `--allow-fs-write` or `ReadWritePaths` entry is needed** for
+local STT.
+
 <Note>
-See [Node Permissions — Production fd-API Disablement](/reference/node-permissions#production-fd-api-disablement-linux) for the impact of `--permission` on daemon-process fd-based APIs (`fsync`, `fchmod`, `fchown`).
+See [Node Permissions — Production fd-API Disablement](/reference/node-permissions#production-fd-api-disablement-linux) for the impact of `--permission` on daemon-process fd-based APIs (`fsync`, `fchmod`, `fchown`), and [Keyless local STT (whisper) engine](/reference/node-permissions#keyless-local-stt-whisper-engine) for why local STT needs no new flag.
 </Note>
+
+<Warning>
+The reference unit above sets `--jitless` and `MemoryDenyWriteExecute=yes`, and does
+**not** pass `--allow-addons`. The keyless **in-process** whisper engine needs the
+opposite: `--allow-addons` (its ONNX Runtime is a native addon) and JIT / writable-exec
+memory for the WebAssembly ONNX fallback. The bundled `install.sh` unit therefore omits
+`--jitless`/`MemoryDenyWriteExecute` and includes `--allow-addons` for exactly this
+class of dependency (see [`website/public/install.sh`](https://github.com/comisai/comis/blob/main/website/public/install.sh)).
+If you harden a hand-written unit with `--jitless`/`MemoryDenyWriteExecute` and want
+local STT, either add `--allow-addons` and drop those two hardening flags, **or** keep
+the hardening and use a `transcription.local.baseUrl` whisper **server** instead (an
+out-of-process server is unaffected by the daemon's addon/JIT flags). Either way the
+model-cache write path is already in scope.
+</Warning>
 
 ### EnvironmentFile=-/etc/comis/env
 
