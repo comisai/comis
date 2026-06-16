@@ -63,6 +63,30 @@ export type WokenTurnEscalationReason =
   | "no_safe_match";
 
 /**
+ * The user-facing escalation message (§4.7) — short, ACTIONABLE, and REDACTION-SAFE: built from
+ * ONLY the sessionId + the structural `reason`, NEVER the screen (which is attacker-influenceable).
+ * The live Telegram drive (2026-06-16) escalated with the bare `Terminal session X needs a human:
+ * <reason>.` — the user could not tell what was wanted or how to unblock the drive. This states the
+ * reason in plain words AND tells the user they can REPLY to drive the session (the agent relays
+ * their reply to it) or "stop" to end it, and that they can ask to see the screen on demand (the
+ * read tool wraps + redacts it — the screen is never pushed proactively).
+ */
+export function buildEscalationMessage(sessionId: string, reason: WokenTurnEscalationReason): string {
+  const why: Record<WokenTurnEscalationReason, string> = {
+    auth_login: "needs you to handle a sign-in / credential prompt",
+    destructive: "is asking to confirm a possibly-destructive action",
+    approval: "needs your approval to proceed",
+    loop_detected: "looks stuck — it is repeating the same step",
+    no_safe_match: "is waiting for input",
+  };
+  return (
+    `Terminal session ${sessionId} ${why[reason]}. ` +
+    `Reply here with what I should send to it — e.g. "continue", "yes", or a command — or "stop" to end the drive. ` +
+    `(Ask me to "show the terminal" to see its current screen.)`
+  );
+}
+
+/**
  * The narrow event-bus surface the woken turn emits onto (a `Pick`-style contract, the
  * `terminal-send-guards.ts:79` precedent — structurally assignable from the daemon
  * `TypedEventBus`). Carries ONLY the redaction-safe audit events.
@@ -184,10 +208,11 @@ export function buildWokenTurnDriver(
       "terminal woken turn escalated",
     );
     if (deps.notify) {
-      // §4.7: a short, redaction-safe human message — the structural reason ONLY, never the screen.
+      // §4.7: a short, redaction-safe, ACTIONABLE human message — the structural reason + how to
+      // respond, NEVER the screen (built by buildEscalationMessage from sessionId + reason only).
       await deps.notify({
         agentId: owner.agentId,
-        message: `Terminal session ${sessionId} needs a human: ${reason}.`,
+        message: buildEscalationMessage(sessionId, reason),
         priority: "normal",
         origin: "background_task",
       });
