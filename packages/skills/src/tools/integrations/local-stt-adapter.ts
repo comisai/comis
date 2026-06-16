@@ -25,10 +25,15 @@
  *    `safePath(dataDir, "models", "whisper")` (NEVER raw `path.join`) before the
  *    first `pipeline()` call; that path is already inside the daemon's
  *    `--allow-fs-write=${COMIS_DATA_DIR}` scope, so no new permission flag.
- *  - **Fail-closed (the SEC-03 seam):** a short/corrupt model load → `err`
- *    (kind `model_load_failed`) and the singleton is RESET so a transient
- *    failure can retry — never a silent partial-model success. Full pinned-hash
- *    integrity is Phase 197; this only lays the fail-closed seam.
+ *  - **Fail-closed + integrity (the SEC-03 seam):** a short/corrupt model load
+ *    → `err` (kind `model_load_failed`) and the singleton is RESET so a
+ *    transient failure can retry — never a silent partial-model success.
+ *    Phase 197 hardens this with the pinned `MODEL_IDS` anchor (only a hardcoded
+ *    id is loaded; an unknown key → the pinned default), the TLS HF-Hub source,
+ *    and an OPTIONAL post-load size-floor (a sub-`MODEL_SIZE_FLOOR_BYTES` cached
+ *    model → fail-closed `model_load_failed`). HONEST limit: transformers.js
+ *    exposes NO caller-visible content-hash, so SEC-03 is pinned-id + TLS +
+ *    fail-closed + size-floor, NOT a cryptographic content-hash check.
  *  - **Redaction (SEC-01 light floor):** every surfaced error string is passed
  *    through `sanitizeApiError`, which strips URLs (`[URL]`) and long tokens
  *    (`[REDACTED]`), so no credential-bearing `baseUrl`/token leaks.
@@ -88,6 +93,21 @@ export interface LocalWhisperConfig {
     audio: Buffer,
     mime: string,
   ) => Promise<Result<Float32Array, Error>>;
+  /**
+   * SEC-03 size-floor seam: after the pipeline loads, resolve the on-disk size
+   * (bytes) of the cached model under `cacheDir`, or `undefined` if it cannot be
+   * reliably determined. A size BELOW {@link MODEL_SIZE_FLOOR_BYTES} is treated
+   * as a truncated/partial download → fail-closed `model_load_failed` (the bad
+   * load is not memoized). The DEFAULT returns `undefined`: the transformers.js
+   * etag cache layout is NOT a documented contract, so production does NOT guess
+   * a fragile path (the §2.10 bug class) — an unknown size is never a false
+   * corruption, and the integrity floor rests on the pinned id + the fail-closed
+   * seam + the TLS HF-Hub source. Injected in tests to drive the size-floor.
+   */
+  readonly statModelCache?: (
+    cacheDir: string,
+    modelId: string,
+  ) => Promise<number | undefined>;
 }
 
 const DEFAULT_MODEL = "base";
@@ -96,14 +116,32 @@ const DECODE_TIMEOUT_MS = 30_000;
 
 /**
  * Exact ONNX whisper repo ids per size (the `onnx-community/*` Transformers.js-
- * compatible repos). This id is ALSO the SEC-03 "pinned model id" seam — the
- * full pinned-hash integrity check is Phase 197.
+ * compatible repos). This is the SEC-03 "pinned model id" anchor: only these
+ * hardcoded ids are ever loaded — an unknown/blank model key resolves to the
+ * pinned default ({@link DEFAULT_MODEL}) below, so no caller-supplied/arbitrary
+ * remote id can be fetched. Fetched over TLS from the HF Hub (`allowRemoteModels`).
+ *
+ * SEC-03 HONEST scope: this is pinned-id + TLS + the fail-closed
+ * `model_load_failed` seam + an OPTIONAL post-load size-floor — NOT a pinned
+ * content-hash. Transformers.js etag-caches the download but exposes no
+ * caller-visible content-hash API, so no cryptographic-integrity claim is made
+ * (documented in voice.mdx by Plan 04).
  */
 const MODEL_IDS: Record<string, string> = {
   tiny: "onnx-community/whisper-tiny",
   base: "onnx-community/whisper-base",
   small: "onnx-community/whisper-small",
 };
+
+/**
+ * SEC-03 size-floor: a cached whisper model below this many bytes is treated as
+ * a truncated/partial download (corruption), never a valid model. The smallest
+ * pinned model (whisper-tiny, q8) is multiple MB on disk; 1 MB is a conservative
+ * floor that no real model undershoots but a near-zero/partial file trips. Only
+ * enforced when the `statModelCache` seam returns a concrete size (the default
+ * returns `undefined` → no enforcement; see the seam doc-comment).
+ */
+const MODEL_SIZE_FLOOR_BYTES = 1024 * 1024; // 1 MB
 
 /**
  * Module-level singleton: memoizes the `pipeline(...)` promise so the model
@@ -244,6 +282,23 @@ async function defaultDecodeToPcm16kF32(
   }
 }
 
+/**
+ * Default SEC-03 size-floor seam: returns `undefined` (size unknown). The
+ * transformers.js etag cache layout is NOT a documented contract, so production
+ * does NOT guess a model-file path to `fs.stat` (the §2.10 bug class — a
+ * hand-built path that may not exist). The size-floor therefore enforces nothing
+ * by default; the integrity floor rests on the pinned id + the fail-closed
+ * `model_load_failed` seam + the TLS HF-Hub source. Tests inject a concrete size
+ * to exercise the floor. `safePath` is used (never raw `path.join`) for any
+ * future real inspection that adopts a documented layout.
+ */
+async function defaultStatModelCache(
+  _cacheDir: string,
+  _modelId: string,
+): Promise<number | undefined> {
+  return undefined;
+}
+
 /** Default engine loader: a guarded lazy import (never a top-level static import). */
 async function defaultLoadEngine(): Promise<TransformersModule> {
   // The literal module name appears ONLY here, inside the guarded loader, so a
@@ -266,6 +321,9 @@ export function createLocalWhisperAdapter(cfg: LocalWhisperConfig): Transcriptio
   const cacheDir = safePath(cfg.dataDir, "models", "whisper");
   const loadEngine = cfg.loadEngine ?? defaultLoadEngine;
   const decode = cfg.decodeToPcm16kF32 ?? defaultDecodeToPcm16kF32;
+  const statModelCache = cfg.statModelCache ?? defaultStatModelCache;
+  // SEC-03 pinned-id anchor: only a hardcoded MODEL_IDS value is ever loaded; an
+  // unknown/blank key resolves to the pinned default — never the raw caller key.
   const modelId = MODEL_IDS[modelKey] ?? MODEL_IDS[DEFAULT_MODEL]!;
 
   return {
@@ -341,6 +399,34 @@ export function createLocalWhisperAdapter(cfg: LocalWhisperConfig): Transcriptio
           degraded(
             "Local whisper model failed to load — the download may be incomplete or the model id is unavailable",
             e,
+            "model_load_failed",
+          ),
+        );
+      }
+
+      // SEC-03 size-floor: a pipeline() that "loaded" but whose on-disk model is
+      // implausibly small is a truncated/partial download masquerading as a
+      // working model (the v2.24/188 silent-corrupt-download lesson). When the
+      // size seam reports a concrete sub-floor size, FAIL CLOSED and reset the
+      // singleton (same fail-closed discipline as the load catch) so the bad
+      // model is never memoized and a re-download is retried. An `undefined`
+      // size (the default — cache layout is not a documented contract) enforces
+      // nothing.
+      let modelBytes: number | undefined;
+      try {
+        modelBytes = await statModelCache(cacheDir, modelId);
+      } catch {
+        // A stat failure is NOT corruption — keep the load and rely on the
+        // pinned-id + fail-closed triad (an unreadable stat must not block a
+        // working model).
+        modelBytes = undefined;
+      }
+      if (modelBytes !== undefined && modelBytes < MODEL_SIZE_FLOOR_BYTES) {
+        pipelinePromise = undefined;
+        return err(
+          degraded(
+            "Local whisper model failed integrity check — the cached model is implausibly small (incomplete/truncated download)",
+            new Error(`model bytes=${modelBytes} below floor=${MODEL_SIZE_FLOOR_BYTES}`),
             "model_load_failed",
           ),
         );
