@@ -163,7 +163,7 @@ describe("createOpenAITTSAdapter", () => {
     }
   });
 
-  it("should handle network errors", async () => {
+  it("should sanitize network/timeout errors in the catch branch (SEC-01, mirrors the HTTP branch + edge-tts)", async () => {
     globalThis.fetch = vi.fn().mockRejectedValue(new Error("Connection refused"));
 
     const adapter = createOpenAITTSAdapter({ apiKey: "sk-test" });
@@ -171,7 +171,30 @@ describe("createOpenAITTSAdapter", () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.error.message).toBe("Connection refused");
+      // The catch is now routed through sanitizeApiError (status 0) like the
+      // edge-tts sibling and the in-file HTTP-error branch — NOT returned raw.
+      expect(result.error.message).toContain("OpenAI TTS error (0)");
+      expect(result.error.message).toContain("Connection refused");
+    }
+  });
+
+  it("should redact a credential-bearing network error in the catch branch", async () => {
+    globalThis.fetch = vi
+      .fn()
+      .mockRejectedValue(
+        new Error("fetch https://api.openai.com/v1 failed: Bearer sk-leak0123456789abcdef"),
+      );
+
+    const adapter = createOpenAITTSAdapter({ apiKey: "sk-test" });
+    const result = await adapter.synthesize("Hello");
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toContain("OpenAI TTS error (0)");
+      expect(result.error.message).not.toContain("https://api.openai.com");
+      expect(result.error.message).not.toContain("Bearer");
+      expect(result.error.message).not.toContain("sk-leak0123456789abcdef");
+      expect(result.error.message).toContain("[REDACTED]");
     }
   });
 

@@ -219,6 +219,20 @@ Guarded call sites:
 If you see `ERR_ACCESS_DENIED` errors in daemon logs that are NOT related to child-process file access, check whether the operation involves one of the fd-based APIs above. The `isFsyncDisabledByPermissionModel` guard handles the known call sites, but third-party Node.js libraries loaded by the daemon may also use fd-based APIs.
 </Note>
 
+## Keyless local STT (whisper) engine
+
+The keyless **in-process** local speech-to-text engine (whisper, run via [Transformers.js](https://huggingface.co/docs/transformers.js)) needs **no new `--permission` flag** — the daemon's existing launch flags already cover it:
+
+| What the engine does | Already covered by | Why |
+|----------------------|--------------------|-----|
+| Loads ONNX Runtime (a native addon) | `--allow-addons` | The same flag that already permits `sharp` and `better-sqlite3`. ONNX Runtime is just another native addon. |
+| Falls back to a WebAssembly ONNX backend | (no flag) | `--jitless` and `MemoryDenyWriteExecute` are deliberately **not** set on the reference daemon launch — both break WebAssembly (bundled `undici` already needs WASM), so the WASM ORT fallback runs too. |
+| Auto-downloads the whisper model on first use | `--allow-fs-write=${COMIS_DATA_DIR}` | The model is cached under the data dir at `~/.comis/models/whisper/`, which is inside the existing data-dir write scope — no extra `--allow-fs-write` entry is required. |
+
+So enabling local STT requires **zero changes** to the daemon's permission flags. If a future hardening pass does a defensive fd-based fs op on the cached model (e.g. a post-write `chmod`), it routes through `isFsyncDisabledByPermissionModel` (the same guard documented above for `fsync`/`fchmod`), so it degrades gracefully under `--permission` rather than throwing.
+
+The auto-downloaded model carries no secret and no credential. See [Voice — Transcription](/media/voice#transcription-speech-to-text) for the engine's behavior and [Data Directory — `models/whisper/`](/operations/data-directory#models-whisper) for the cache.
+
 <CardGroup cols={2}>
   <Card title="Security Model" icon="shield" href="/security">
     Defense-in-depth security architecture

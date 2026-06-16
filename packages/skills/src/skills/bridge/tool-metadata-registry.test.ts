@@ -155,6 +155,34 @@ describe("tool-metadata-registry -- video synthesis never-export (SEC-01)", () =
 });
 
 // ===========================================================================
+// Voice tool export policy regression (SEC-04, 197-03)
+// ===========================================================================
+
+describe("tool-metadata-registry -- voice tool export policy regression (SEC-04)", () => {
+  // The two voice tools' export policies are deliberately DIFFERENT — do NOT
+  // "fix" them to match. transcribe_audio is READ-ONLY (it turns inbound audio
+  // into text; isReadOnly:true) so it is permission-gated — usable by an MCP
+  // client only behind an explicit grant. tts_synthesize is OUTBOUND (it
+  // produces audio delivered to a channel) so it is never-export — it must never
+  // reach the MCP-exported set at all. This block is mutation-proven RED:
+  // flipping EITHER registration in tool-metadata-registry.ts (e.g.
+  // transcribe_audio → never-export/safe, or tts_synthesize → permission-gated)
+  // fails the matching assertion. The mcp-export-policy.test.ts AST gate
+  // additionally requires every registered name to carry an explicit policy.
+  it("transcribe_audio stays permission-gated (read-only, gated — NOT never-export, NOT safe)", () => {
+    const meta = getToolMetadata("transcribe_audio");
+    expect(meta, "transcribe_audio must be registered").toBeDefined();
+    expect(meta!.mcpExportPolicy).toBe("permission-gated");
+  });
+
+  it("tts_synthesize stays never-export (outbound audio delivery — never MCP-exported)", () => {
+    const meta = getToolMetadata("tts_synthesize");
+    expect(meta, "tts_synthesize must be registered").toBeDefined();
+    expect(meta!.mcpExportPolicy).toBe("never-export");
+  });
+});
+
+// ===========================================================================
 // Result Size Caps
 // ===========================================================================
 

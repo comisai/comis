@@ -55,9 +55,36 @@ describe("ttsStep", () => {
           expect.objectContaining({ value: "openai" }),
           expect.objectContaining({ value: "elevenlabs" }),
           expect.objectContaining({ value: "edge" }),
+          expect.objectContaining({ value: "local" }),
         ]),
       }),
     );
+  });
+
+  it("defaults to the keyless edge provider on a first-time run (WIZ-02)", async () => {
+    const prompter = createMockPrompter();
+    await ttsStep.execute(baseState(), prompter);
+    expect(prompter.select).toHaveBeenCalledWith(
+      expect.objectContaining({ initialValue: "edge" }),
+    );
+  });
+
+  it("edge and local are keyless and prompt for no API key (WIZ-02)", async () => {
+    for (const id of ["edge", "local"]) {
+      const prompter = createMockPrompter({ select: [id] });
+      const result = await ttsStep.execute(baseState(), prompter);
+      expect(result.ttsProvider).toEqual({ provider: id });
+      expect(prompter.password).not.toHaveBeenCalled();
+    }
+  });
+
+  it("offers edge-first then local as keyless-first ordered options (WIZ-04 drift mirror)", () => {
+    expect(SUPPORTED_TTS_PROVIDERS.map((t) => t.id)).toEqual([
+      "edge",
+      "openai",
+      "elevenlabs",
+      "local",
+    ]);
   });
 
   it("edge: records provider with no credential prompt (free)", async () => {

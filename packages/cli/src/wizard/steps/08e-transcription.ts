@@ -3,10 +3,14 @@
  * Voice transcription (STT) step -- step 08e of the init wizard.
  *
  * Presents a single-select of all supported speech-to-text providers
- * (openai / groq / deepgram, mirroring core's `TranscriptionConfigSchema` enum)
- * and collects the credential, reusing the agent's MAIN provider key when it
- * already supplies the matching one (CRED-01):
+ * (auto / local / openai / groq / deepgram, mirroring core's
+ * `TranscriptionConfigSchema` enum) and collects a credential ONLY when the
+ * choice needs a STATIC one the wizard doesn't already hold (CRED-01):
  *
+ *   - `auto`     — keyless-first (the recommended default): a keyless local
+ *                  engine, or reuse the agent's main audio key. No prompt.
+ *   - `local`    — in-process whisper (downloads a small model): keyless, no
+ *                  prompt.
  *   - `openai`   — Whisper: reuses `OPENAI_API_KEY`; prompts only when the main
  *                  provider isn't `openai`.
  *   - `groq`     — Groq Whisper: reuses `GROQ_API_KEY`; prompts only when the
@@ -47,10 +51,17 @@ export const transcriptionStep: WizardStep = {
         label: tp.label,
         hint: tp.hint,
       })),
-      initialValue: state.transcriptionProvider?.provider ?? "openai",
+      initialValue: state.transcriptionProvider?.provider ?? "auto",
     });
 
     const requiredEnvKey = TRANSCRIPTION_PROVIDER_ENV_KEYS[provider];
+
+    // No static env key for this choice: `auto` (keyless-first / follow-main) or
+    // `local` (in-process whisper). Neither prompts for a key here.
+    if (!requiredEnvKey) {
+      prompter.log.info("Transcription will use a keyless local engine (no API key needed).");
+      return updateState(state, { transcriptionProvider: { provider } });
+    }
 
     // CRED-01 reuse: main provider already supplies the matching key (e.g. an
     // openai main + openai STT → both OPENAI_API_KEY).

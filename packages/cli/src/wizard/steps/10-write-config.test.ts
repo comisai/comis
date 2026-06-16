@@ -156,6 +156,34 @@ describe("writeConfigStep", () => {
     expect(envContent).toContain("ANTHROPIC_API_KEY=sk-test-key-123");
   });
 
+  it("a keyless-default install (keyless main, omitted audio providers) writes no OPENAI_API_KEY to the env file (WIZ-03 never-strand)", async () => {
+    // The motivating I2 bug, headless variant: an OAuth-only / keyless main with
+    // the keyless STT/TTS schema defaults (transcription/tts omitted) must NOT
+    // strand a phantom OPENAI_API_KEY. collectManagedSecrets writes an audio key
+    // ONLY when state carries an apiKey (10-write-config.ts:291-300); a keyless
+    // main has no PROVIDER_ENV_KEYS entry either, so nothing reaches the .env.
+    const prompter = createMockPrompter();
+
+    await writeConfigStep.execute(
+      {
+        ...populatedState(),
+        provider: { id: "ollama" }, // keyless main — no apiKey
+        // transcriptionProvider / ttsProvider deliberately omitted → daemon
+        // applies the keyless schema default (auto / edge) at load.
+      },
+      prompter,
+    );
+
+    const writeCalls = vi.mocked(writeFileSync).mock.calls;
+    const envWriteCall = writeCalls.find(
+      ([path]) => typeof path === "string" && path.includes(".env"),
+    );
+    expect(envWriteCall).toBeDefined();
+
+    const envContent = envWriteCall![1] as string;
+    expect(envContent).not.toContain("OPENAI_API_KEY");
+  });
+
   it("data directory created when it does not exist", async () => {
     vi.mocked(existsSync).mockReturnValue(false);
     const prompter = createMockPrompter();

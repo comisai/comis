@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from "vitest";
-import { sanitizeLogString } from "./log-sanitizer.js";
+import { sanitizeLogString, redactErrorMessage } from "./log-sanitizer.js";
 
 describe("sanitizeLogString", () => {
   describe("OpenAI/Anthropic API keys (sk-*)", () => {
@@ -318,5 +318,77 @@ describe("sanitizeLogString", () => {
       const twice = sanitizeLogString(once);
       expect(twice).toBe(once);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// redactErrorMessage — the SEC-01 free-text error/diagnostic scrubber.
+//
+// Relocated from @comis/skills (media-adapter-shared.ts) to @comis/core/security
+// in Phase 197 Plan 02 so BOTH @comis/skills (its 6 adapter callers + sanitizeApiError)
+// AND @comis/channels (the voice-out pipeline WARN branches) can depend on a SINGLE
+// source — @comis/channels deliberately does NOT import @comis/skills (structural-typing
+// boundary), so the primitive had to move DOWN to core. The redaction SEMANTICS are
+// unchanged — these asserts pin the exact behavior the skills tests previously relied on.
+// ---------------------------------------------------------------------------
+describe("redactErrorMessage", () => {
+  it("strips URLs, the Bearer scheme, Authorization marker, and a long token", () => {
+    const input =
+      "POST https://api.openai.com/v1/audio/speech failed: Authorization: Bearer sk-abc123def456ghi789jkl012mno345pqr678";
+    const result = redactErrorMessage(input);
+    expect(result).toContain("[URL]");
+    expect(result).not.toContain("https://api.openai.com");
+    expect(result).not.toContain("Bearer");
+    expect(result).not.toContain("Authorization:");
+    // The long token after Bearer is replaced by the long-token rule.
+    expect(result).not.toContain("sk-abc123def456ghi789jkl012mno345pqr678");
+    expect(result).toContain("[REDACTED]");
+  });
+
+  it("leaves clean text unchanged (idempotent on non-secret input)", () => {
+    expect(redactErrorMessage("timeout after 30s")).toBe("timeout after 30s");
+    expect(redactErrorMessage("plain text no secrets")).toBe("plain text no secrets");
+  });
+
+  it("redacts a 20+ char alphanumeric/_- run but NOT a short one (regex semantics preserved)", () => {
+    // 20+ chars → redacted
+    expect(redactErrorMessage("token=abcdefghij0123456789xyz")).toContain("[REDACTED]");
+    // a short run (<20) is left intact
+    const shortRun = "code=abc12345";
+    expect(redactErrorMessage(shortRun)).toBe(shortRun);
+  });
+
+  it("strips the ollama-no-auth sentinel as a long token (no keyless-sentinel leak)", () => {
+    // The keyless sentinel rides as a Bearer credential on the local path; the
+    // Bearer scheme is dropped and the >=20-char sentinel run is redacted.
+    const input = "local whisper Bearer ollama-no-auth-sentinel-0123456789 unreachable";
+    const result = redactErrorMessage(input);
+    expect(result).not.toContain("Bearer");
+    expect(result).not.toContain("ollama-no-auth-sentinel-0123456789");
+    expect(result).toContain("[REDACTED]");
+  });
+
+  // WR-03: the scheme stripping must not mangle benign prose, and must not leave
+  // an orphaned double-space where a real credential was redacted.
+  it("does NOT mangle prose that merely mentions 'bearer'/'authorization' (no following credential)", () => {
+    // No credential-length token follows the scheme words → they are prose and
+    // must survive verbatim (the pre-fix non-anchored deletion mutilated them).
+    const prose = "the bearer of bad news; authorization is required for this step";
+    expect(redactErrorMessage(prose)).toBe(prose);
+    const prose2 = "a Bearer token format hint was returned";
+    expect(redactErrorMessage(prose2)).toBe(prose2);
+  });
+
+  it("redacts a real 'Authorization: Bearer <token>' cleanly with NO orphaned double-space", () => {
+    const input = "Authorization: Bearer sk-abc123def456ghi789jkl012mno345pqr678 rejected";
+    const result = redactErrorMessage(input);
+    expect(result).not.toContain("Bearer");
+    expect(result).not.toContain("Authorization:");
+    expect(result).not.toContain("sk-abc123def456ghi789jkl012mno345pqr678");
+    expect(result).toContain("[REDACTED]");
+    // The pre-fix code left a leading double-space ("  sk... rejected"); the
+    // scheme + token now collapse into one [REDACTED] with single spacing.
+    expect(result).not.toMatch(/ {2,}/);
+    expect(result).toBe("[REDACTED] rejected");
   });
 });

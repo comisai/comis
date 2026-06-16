@@ -1684,20 +1684,29 @@ External service integrations for search, MCP servers, media processing, and aut
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `provider` | `enum` | `"openai"` | STT provider: `openai`, `groq`, `deepgram` |
+| `provider` | `enum` | `"auto"` | STT provider: `auto` (keyless-first default), `local`, `openai`, `groq`, `deepgram`. `auto` resolves the local engine → main-provider key (if present) → fallback → honest-unavailable; an OAuth-only main is never sent an empty-bearer request |
 | `model` | `string` | _(unset)_ | Provider-specific model ID |
+| `local` | `object` | _(see below)_ | Keyless local STT sub-config (used by `auto`/`local`) |
 | `maxFileSizeMb` | `number` | `25` | Max file size in MB |
 | `timeoutMs` | `number` | `60000` | API request timeout in ms |
 | `language` | `string` | _(unset)_ | BCP-47 language hint (auto-detect if omitted) |
 | `autoTranscribe` | `boolean` | `true` | Auto-transcribe voice messages in pipeline |
 | `preflight` | `boolean` | `true` | Enable preflight STT for mention detection |
-| `fallbackProviders` | `enum[]` | `[]` | Ordered fallback providers |
+| `fallbackProviders` | `enum[]` | `[]` | Ordered fallback providers (`auto`, `local`, `openai`, `groq`, `deepgram`) |
+
+**Local STT (integrations.media.transcription.local)** -- keyless
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `model` | `string` | `"base"` | Local whisper model name |
+| `baseUrl` | `string` | _(unset)_ | Optional OpenAI-compatible local whisper server URL |
+| `engine` | `string` | _(unset)_ | Engine selector (reserved for a later release) |
 
 **TTS (integrations.media.tts)**
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `provider` | `enum` | `"openai"` | TTS provider: `openai`, `elevenlabs`, `edge` |
+| `provider` | `enum` | `"edge"` | TTS provider: `edge` (keyless default), `openai`, `elevenlabs`, `local` |
 | `voice` | `string` | `"alloy"` | Voice identifier |
 | `format` | `string` | `"opus"` | Output audio format |
 | `model` | `string` | _(unset)_ | Provider-specific model ID |

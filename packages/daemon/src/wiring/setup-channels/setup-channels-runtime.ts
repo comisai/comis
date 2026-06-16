@@ -173,10 +173,13 @@ export async function buildAndStartChannelManager(
         maxTextLength: ttsConfig.maxTextLength,
         outputFormats: ttsConfig.outputFormats,
         providerFormatKey,
+        provider: ttsConfig.provider, // OBS-01 §2.7 voice-identity (INFO line)
+        keyless: ttsConfig.provider === "edge" || ttsConfig.provider === "local", // edge/local ⇒ $0
+        ...(ttsConfig.model !== undefined ? { model: ttsConfig.model } : {}),
       },
       logger: channelsLogger,
     };
-    channelsLogger.debug({ autoMode: ttsConfig.autoMode, providerFormatKey }, "Voice response pipeline wired");
+    channelsLogger.debug({ autoMode: ttsConfig.autoMode, providerFormatKey, provider: ttsConfig.provider }, "Voice response pipeline wired");
   }
 
   let commandQueue: CommandQueue | undefined;

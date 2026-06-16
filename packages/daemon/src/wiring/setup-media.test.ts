@@ -761,3 +761,187 @@ describe("STT/TTS lazy-delegation — rotated key observed per call without rest
     expect(typeof mod.createImageGenGetter).toBe("function");
   });
 });
+
+// =============================================================================
+// WR-01 / WR-02 (Phase 193 code-review): the construction seam MUST build from
+// the resolver's CHOSEN provider, not the raw config.
+//
+// The documented CRED-01 follow-main path is: STT config provider:"auto",
+// default agent main = openai, OPENAI_API_KEY present, localEngineAvailable()
+// === false. resolveStt() then returns {ok:true, provider:"openai",
+// source:"follow-main-key"} — but pre-fix setup-media passed the RAW config
+// (provider:"auto") to createSTTProvider, which hits the factory's `default`
+// branch → err("Unknown STT provider: auto") → transcriber stays undefined and
+// the operator sees a misleading "not configured" WARN. No prior test exercised
+// the construct seam AFTER a follow-main resolution (daemon.test.ts mocks
+// setupMedia; the boot-gate overrides it).
+//
+// To faithfully reproduce the bug, the createSTTProvider / createTTSProvider
+// mocks below mirror the REAL skills factory (stt-factory.ts:35-67,
+// tts-factory.ts): keyed providers → {ok}, anything else (including "auto")
+// → err("Unknown … provider: <provider>"). With that mock, a config carrying
+// provider:"auto" yields an undefined transcriber (RED); only threading the
+// resolved provider:"openai" into construction flips it green.
+// =============================================================================
+
+describe("setupMedia — construction follows the resolver's chosen provider (WR-01/WR-02)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockDetectFfmpeg.mockResolvedValue({
+      ffmpegAvailable: true, ffmpegVersion: "6.0",
+      ffprobeAvailable: true, ffprobeVersion: "6.0",
+    });
+    mockCreateVisionProviderRegistry.mockReturnValue(new Map());
+    // Mirror the real factory: only keyed providers construct; "auto" (and any
+    // other unknown) returns the "Unknown … provider" err the default branch
+    // produces.
+    mockCreateSTTProvider.mockImplementation((config: any) => {
+      if (config.provider === "openai" || config.provider === "groq" || config.provider === "deepgram") {
+        return { ok: true, value: { transcribe: vi.fn(), name: `${config.provider}-stt` } };
+      }
+      return { ok: false, error: { message: `Unknown STT provider: ${config.provider}` } };
+    });
+    mockCreateTTSProvider.mockImplementation((config: any) => {
+      if (config.provider === "openai" || config.provider === "elevenlabs") {
+        return { ok: true, value: { synthesize: vi.fn(), name: `${config.provider}-tts` } };
+      }
+      return { ok: false, error: { message: `Unknown TTS provider: ${config.provider}` } };
+    });
+  });
+
+  async function getSetupMedia() {
+    const mod = await import("./setup-media.js");
+    return mod.setupMedia;
+  }
+
+  /** A selector stub whose resolveStt/resolveTts return the supplied selections. */
+  function fakeSelector(stt: any, tts: any) {
+    return { resolveStt: () => stt, resolveTts: () => tts } as any;
+  }
+
+  it("constructs the STT transcriber from the resolved provider after a follow-main resolution (config 'auto' → resolved 'openai')", async () => {
+    const setupMedia = await getSetupMedia();
+    const result = await setupMedia({
+      // STT config is the documented default: provider "auto".
+      container: createMinimalMediaConfig({ transcription: { provider: "auto", fallbackProviders: [] } }),
+      skillsLogger: createMockLogger() as any,
+      // The resolver followed the main provider's key → openai is usable.
+      audioSelector: fakeSelector(
+        { ok: true, provider: "openai", keyless: false, source: "follow-main-key" },
+        { ok: true, provider: "edge", keyless: true, source: "keyless-local" },
+      ),
+    });
+
+    // The bug: pre-fix, construction passed provider:"auto" → factory default
+    // branch → err → transcriber undefined. The transcriber MUST be built for
+    // the resolved openai provider.
+    expect(result.transcriber).toBeDefined();
+    // createSTTProvider must have been called with the RESOLVED provider, not "auto".
+    // Plan 02: a third arg — the scoped dataDir — is threaded through.
+    expect(mockCreateSTTProvider).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "openai" }),
+      expect.anything(),
+      expect.any(String),
+    );
+    // It must NEVER be called with the raw "auto" once a selector approved openai.
+    expect(mockCreateSTTProvider).not.toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "auto" }),
+      expect.anything(),
+      expect.any(String),
+    );
+  });
+
+  it("threads the resolved STT model from the selection into construction (WR-02)", async () => {
+    const setupMedia = await getSetupMedia();
+    await setupMedia({
+      container: createMinimalMediaConfig({ transcription: { provider: "auto", model: "config-default", fallbackProviders: [] } }),
+      skillsLogger: createMockLogger() as any,
+      audioSelector: fakeSelector(
+        { ok: true, provider: "openai", keyless: false, model: "whisper-resolved", source: "follow-main-key" },
+        { ok: true, provider: "edge", keyless: true, source: "keyless-local" },
+      ),
+    });
+
+    // The selection's model must reach the adapter config, not the raw config model.
+    expect(mockCreateSTTProvider).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "openai", model: "whisper-resolved" }),
+      expect.anything(),
+      expect.any(String),
+    );
+  });
+
+  it("constructs the TTS adapter from the resolved provider when edge is disabled and follow-main wins (config 'auto' → resolved 'openai')", async () => {
+    const setupMedia = await getSetupMedia();
+    const result = await setupMedia({
+      container: createMinimalMediaConfig({ media: { tts: { provider: "auto", voice: "alloy", maxTextLength: 4096 } } }),
+      skillsLogger: createMockLogger() as any,
+      audioSelector: fakeSelector(
+        { ok: true, provider: "openai", keyless: false, source: "follow-main-key" },
+        // An operator disabled edge; the resolver fell through to follow-main openai.
+        { ok: true, provider: "openai", keyless: false, source: "follow-main-key" },
+      ),
+    });
+
+    expect(result.ttsAdapter).toBeDefined();
+    // createTTSProvider must be called with the RESOLVED provider, not "auto".
+    // TTS-02: a third arg — the scoped dataDir — is threaded through (mirrors STT).
+    expect(mockCreateTTSProvider).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "openai" }),
+      expect.anything(),
+      expect.any(String),
+    );
+    expect(mockCreateTTSProvider).not.toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "auto" }),
+      expect.anything(),
+      expect.any(String),
+    );
+  });
+
+  it("preserves pre-193 behavior: with NO selector, construction uses the raw config provider unchanged", async () => {
+    const setupMedia = await getSetupMedia();
+    await setupMedia({
+      // No audioSelector → pre-193 callers (test harnesses) construct from config.
+      container: createMinimalMediaConfig({ transcription: { provider: "openai", fallbackProviders: [] } }),
+      skillsLogger: createMockLogger() as any,
+    });
+
+    expect(mockCreateSTTProvider).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "openai" }),
+      expect.anything(),
+      expect.any(String),
+    );
+  });
+
+  // Plan 02 (LOCAL-01): the scoped container.config.dataDir is threaded into every
+  // createSTTProvider call site so the in-process `local` adapter writes its model
+  // cache to <dataDir>/models/whisper/. process.env is NOT used.
+  it("threads the scoped container.config.dataDir into the local STT provider construction", async () => {
+    const setupMedia = await getSetupMedia();
+    const container = createMinimalMediaConfig({
+      transcription: { provider: "local", fallbackProviders: [] },
+    });
+    // The in-process local adapter must cache under THIS dataDir.
+    container.config.dataDir = "/var/lib/comis-test";
+    // Mirror the real factory: the local provider constructs successfully.
+    mockCreateSTTProvider.mockReturnValue({
+      ok: true,
+      value: { transcribe: vi.fn(), name: "local-stt" },
+    });
+
+    await setupMedia({
+      container,
+      skillsLogger: createMockLogger() as any,
+      audioSelector: fakeSelector(
+        { ok: true, provider: "local", keyless: true, source: "keyless-local" },
+        { ok: true, provider: "edge", keyless: true, source: "keyless-local" },
+      ),
+    });
+
+    // The resolved 'local' provider AND the scoped dataDir reach the factory.
+    expect(mockCreateSTTProvider).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "local" }),
+      expect.anything(),
+      "/var/lib/comis-test",
+    );
+  });
+});

@@ -30,7 +30,7 @@ import type { ComisLogger } from "@comis/core";
  */
 
 /**
- * Closed enum of trajectory event types (39 total).
+ * Closed enum of trajectory event types (45 total).
  *
  * Order is deliberate (life-cycle: session.* → prompt → model → tool →
  * skill → memory → delivery → lifecycle envelopes → control-plane sentinel).
@@ -219,6 +219,25 @@ export const TRAJECTORY_EVENT_TYPES = [
   "video.generated",
   "video.delivered",
   "video.failed",
+
+  // OBS-02/03 (Phase 196): voice (STT/TTS) lifecycle on the explain timeline.
+  // Direct-emitted by the daemon voice RPC handler (media.transcribe /
+  // tts.synthesize) via the per-session recorder (the daemon RPC context has NO
+  // EventBus bridge — direct-emit is the sanctioned path, the
+  // image-handlers.ts:210 precedent). APPEND-ONLY alongside the SemVer-frozen
+  // image.*/media.vision.*/video.* tuples above — never a rename (Pitfall 8).
+  // Content-free: provider/keyless/model/durationMs/audioBytes/costUsd/source/
+  // onSkip/outcome/errorKind ONLY — never the audio bytes, the transcript, the
+  // synthesized audio, or a key (T-196-04). `media.*.completed` carries `costUsd`
+  // (keyless = 0 explicit; keyed omitted — OBS-05 Route a) and `media.*.requested`
+  // carries the `onSkip` reasons (OBS-03 — WHY auto picked the rung) so `comis
+  // explain` reconstructs the voice turn including the selection provenance.
+  "media.stt.requested",
+  "media.stt.completed",
+  "media.stt.failed",
+  "media.tts.requested",
+  "media.tts.completed",
+  "media.tts.failed",
 ] as const;
 
 /** Closed union of trajectory event type strings. */

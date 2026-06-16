@@ -8,9 +8,11 @@ import type { TokenTracker } from "./observability/token-tracker.js";
 import type { ShutdownHandle } from "./wiring/setup-shutdown.js";
 import type { ProcessMonitor } from "./process/process-monitor.js";
 import { main, type DaemonOverrides, type DaemonInstance, runPreflightDoctor, applyInspectDefaultsForLogging } from "./daemon.js";
-// hardenDataDirPermissions extracted to wiring/main-helpers.ts (Phase 188 — to
-// recover daemon.ts line-cap headroom for the video-gen wiring).
-import { hardenDataDirPermissions } from "./wiring/main-helpers.js";
+// hardenDataDirPermissions was extracted to wiring/main-helpers.ts (Phase 188 —
+// to recover daemon.ts line-cap headroom for the video-gen wiring), then moved
+// again to its own wiring/harden-data-dir.ts (Phase 193 — to clear the
+// main-helpers.ts over-cap inherited from the v2.24 squash; shrink-only split).
+import { hardenDataDirPermissions } from "./wiring/harden-data-dir.js";
 import type { MediaResult } from "./wiring/setup-media.js";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -122,8 +124,8 @@ function createMockContainer(gatewayOverrides?: Partial<GatewayConfig>): AppCont
       integrations: {
         mcp: { servers: [] },
         media: {
-          transcription: { provider: "openai", maxFileSizeMb: 25, timeoutMs: 60000, autoTranscribe: true, preflight: true, fallbackProviders: [] },
-          tts: { provider: "openai", voice: "alloy", format: "opus", autoMode: "never", tagPattern: "\\[\\[tts\\]\\]", outputFormats: {} },
+          transcription: { provider: "auto", maxFileSizeMb: 25, timeoutMs: 60000, autoTranscribe: true, preflight: true, fallbackProviders: [], local: { model: "base" } },
+          tts: { provider: "edge", voice: "alloy", format: "opus", autoMode: "never", tagPattern: "\\[\\[tts\\]\\]", outputFormats: {} },
           imageAnalysis: { maxFileSizeMb: 20 },
           vision: { enabled: false, defaultProvider: undefined, defaultScopeAction: "allow", scopeRules: [] },
           linkUnderstanding: { enabled: false, maxUrls: 3, maxContentChars: 5000, timeoutMs: 10_000 },

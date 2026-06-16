@@ -98,7 +98,14 @@ export function createOpenAITTSAdapter(config: OpenAITTSAdapterConfig): TTSPort 
           mimeType: formatToMimeType(format),
         });
       } catch (error: unknown) {
-        return err(error instanceof Error ? error : new Error(String(error)));
+        // Sanitize the network/timeout error like the in-file HTTP-error branch
+        // (:88-90) and the edge-tts sibling — never return the raw message (it
+        // can carry a credential-bearing baseUrl/token). SEC-01 floor / I8.
+        return err(
+          new Error(
+            sanitizeApiError(0, error instanceof Error ? error.message : String(error), "OpenAI TTS"),
+          ),
+        );
       }
     },
   };

@@ -213,3 +213,150 @@ describe("buildFindings — T1.3 config_posture names the flagged keys (F6)", ()
     expect(cp!.detail).not.toMatch(/key\.pem|sk-leak|certPath/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// OBS-04 (Phase 196) — the voice_health fleet finding.
+//
+// A degraded STT/TTS turn emits a `health_signal` diagnostic row labelled
+// `voice_degraded` (the route-(b) emit, scoped to the obs layer — see the plan's
+// FLAG-7 spike decision). buildFindings rolls those rows up into ONE
+// counts+hints-only `voice_health` finding beside `model_health`/`config_posture`:
+// the degraded count + the dominant voice errorKind (the domain SttErrorKind, a
+// CLOSED label — never a raw provider body or a secret). The finding rides the
+// existing `count desc, code asc` sort and is guarded on zero voice traffic
+// (mirrors `if (modelHealth.length > 0)`).
+//
+// RED: the `voice_degraded` arm + the `voice_health` finding do not exist yet, so
+// NO `voice_health` finding is produced — every assertion below fails on the
+// pre-patch code.
+// ---------------------------------------------------------------------------
+
+const VOICE_CODE = "voice_health";
+
+/** A `health_signal` row at `ts` labelled `voice_degraded`, carrying the closed
+ *  domain `errorKind` (+ the `kind` family) in its details JSON. */
+function voiceDegradedRow(ts: number, errorKind: string, kind: "stt" | "tts" = "stt"): DiagnosticRow {
+  return {
+    timestamp: ts,
+    category: "health_signal",
+    severity: "warning",
+    message: "health_signal",
+    details: JSON.stringify({ signal: "voice_degraded", errorKind, kind }),
+  };
+}
+
+describe("buildFindings — OBS-04 voice_health finding", () => {
+  it("emits ONE voice_health finding with the degraded count + the dominant voice errorKind", () => {
+    const findings = buildFindings(
+      [
+        voiceDegradedRow(1_000, "model_load_failed", "stt"),
+        voiceDegradedRow(2_000, "model_load_failed", "stt"),
+        voiceDegradedRow(3_000, "auth_required", "tts"),
+      ],
+      [],
+      [],
+    );
+    const voice = findings.filter((f) => f.code === VOICE_CODE);
+    expect(voice).toHaveLength(1);
+    expect(voice[0]!.count).toBe(3);
+    // The dominant errorKind (highest count) is named in the detail.
+    expect(voice[0]!.detail).toMatch(/3 degraded STT\/TTS turn\(s\)/);
+    expect(voice[0]!.detail).toMatch(/model_load_failed/);
+    // The hint points at comis explain + the whisper model cache.
+    expect(voice[0]!.hint).toMatch(/comis explain/);
+    expect(voice[0]!.hint).toMatch(/model_load_failed|model_download_failed|whisper/);
+  });
+
+  it("does NOT emit a voice_health finding when there are zero voice_degraded rows (zero-traffic guard)", () => {
+    // Other health signals present, but no voice_degraded.
+    const findings = buildFindings(
+      [
+        {
+          timestamp: 1_000,
+          category: "health_signal",
+          severity: "warning",
+          message: "health_signal",
+          details: JSON.stringify({ signal: "lcd_divergence" }),
+        },
+      ],
+      [],
+      [],
+    );
+    expect(findings.some((f) => f.code === VOICE_CODE)).toBe(false);
+  });
+
+  it("is SAFE TO PASTE — the detail+hint carry no raw provider body, no URL, no secret (SEC-01 H1)", () => {
+    // Even though the row only ever holds a closed errorKind, pin that the FINDING
+    // text is a fixed digest naming only the count + the closed label.
+    const findings = buildFindings(
+      [
+        voiceDegradedRow(1_000, "auth_required", "stt"),
+        voiceDegradedRow(2_000, "network", "tts"),
+      ],
+      [],
+      [],
+    );
+    const voice = findings.find((f) => f.code === VOICE_CODE);
+    expect(voice).toBeDefined();
+    for (const text of [voice!.detail, voice!.hint]) {
+      expect(text).not.toMatch(/https?:\/\//); // no URL
+      expect(text).not.toMatch(/Bearer|sk-|ollama-no-auth/i); // no credential / sentinel
+      expect(text).not.toMatch(/Error:|at .*\.ts:|\bstack\b/i); // no raw message / stack
+    }
+  });
+
+  it("folds a malformed / missing voice_degraded details to no-throw and ignores it (defensive parse)", () => {
+    const malformed: DiagnosticRow = {
+      timestamp: 1_000,
+      category: "health_signal",
+      severity: "warning",
+      message: "health_signal",
+      details: "not json {",
+    };
+    const good = voiceDegradedRow(2_000, "timeout", "stt");
+    expect(() => buildFindings([malformed, good], [], [])).not.toThrow();
+    const findings = buildFindings([malformed, good], [], []);
+    const voice = findings.find((f) => f.code === VOICE_CODE);
+    // The malformed row never parses to voice_degraded → only the good row counts.
+    expect(voice?.count).toBe(1);
+    expect(voice!.detail).toMatch(/timeout/);
+  });
+
+  it("falls back to a generic detail when no errorKind is recorded on the voice_degraded rows", () => {
+    const noKind: DiagnosticRow = {
+      timestamp: 1_000,
+      category: "health_signal",
+      severity: "warning",
+      message: "health_signal",
+      details: JSON.stringify({ signal: "voice_degraded" }), // errorKind absent
+    };
+    const findings = buildFindings([noKind], [], []);
+    const voice = findings.find((f) => f.code === VOICE_CODE);
+    expect(voice?.count).toBe(1);
+    // No dominant kind → the detail still renders, naming the count.
+    expect(voice!.detail).toMatch(/1 degraded STT\/TTS turn\(s\)/);
+  });
+
+  it("rides the deterministic count-desc/code-asc sort beside other findings", () => {
+    // 5 voice_degraded + 2 model_health: voice_health (count 5) must sort before
+    // model_health (count 2). Insert in an order that a stable sort would NOT fix
+    // by itself.
+    const voiceRows: DiagnosticRow[] = [
+      voiceDegradedRow(1_000, "model_load_failed"),
+      voiceDegradedRow(2_000, "model_load_failed"),
+      voiceDegradedRow(3_000, "model_load_failed"),
+      voiceDegradedRow(4_000, "network"),
+      voiceDegradedRow(5_000, "network"),
+    ];
+    const modelRows: DiagnosticRow[] = [
+      modelHealthRow(1_000, { embeddingMultilingual: true, rerankerMultilingual: true }),
+      modelHealthRow(2_000, { embeddingMultilingual: true, rerankerMultilingual: true }),
+    ];
+    const findings = buildFindings(voiceRows, modelRows, []);
+    const voiceIdx = findings.findIndex((f) => f.code === VOICE_CODE);
+    const modelIdx = findings.findIndex((f) => f.code === "model_health");
+    expect(voiceIdx).toBeGreaterThanOrEqual(0);
+    expect(modelIdx).toBeGreaterThanOrEqual(0);
+    expect(voiceIdx).toBeLessThan(modelIdx); // count 5 before count 2
+  });
+});

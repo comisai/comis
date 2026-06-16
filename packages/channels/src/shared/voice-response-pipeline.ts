@@ -20,7 +20,7 @@ import { randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import type { Result } from "@comis/shared";
 import { ok } from "@comis/shared";
-import { safePath, systemNowMs } from "@comis/core";
+import { safePath, systemNowMs, redactErrorMessage } from "@comis/core";
 import type { SendMessageOptions, TtsAutoMode } from "@comis/core";
 import { prepareVoicePayload } from "./voice-sender.js";
 
@@ -98,6 +98,18 @@ export interface VoiceResponsePipelineDeps {
     maxTextLength: number;
     outputFormats?: Record<string, string>;
     providerFormatKey?: "openai" | "elevenlabs" | "edge";
+    /**
+     * OBS-01 voice-identity fields (Phase 196) for the §2.7 completion INFO line.
+     * Threaded from the wiring point (the resolved TTS provider). `keyless` true
+     * for the keyless `edge`/`local` defaults; `costUsd` is logged as `0` when
+     * keyless (so "free" is visible) and OMITTED for a keyed provider (no
+     * per-call cost source today — FLAG 4). The selection `source` rung is the
+     * Phase-193 resolver-only field the pipeline tier does not receive — the
+     * daemon RPC path (Plan 03) owns `source` on the trajectory.
+     */
+    provider?: string;
+    keyless?: boolean;
+    model?: string;
   };
   /** Structured logger. */
   readonly logger: {
@@ -248,7 +260,7 @@ export async function executeVoiceResponse(
     if (!synthResult.ok) {
       deps.logger.warn(
         {
-          err: synthResult.error.message,
+          err: redactErrorMessage(synthResult.error.message),
           channelType: ctx.channelType,
           hint: "TTS synthesis failed; falling back to text-only response",
           errorKind: "dependency" as const,
@@ -306,7 +318,7 @@ export async function executeVoiceResponse(
     if (!payloadResult.ok) {
       deps.logger.warn(
         {
-          err: payloadResult.error.message,
+          err: redactErrorMessage(payloadResult.error.message),
           channelType: ctx.channelType,
           hint: "Voice payload preparation failed; falling back to text-only response",
           errorKind: "dependency" as const,
@@ -332,7 +344,7 @@ export async function executeVoiceResponse(
     if (!sendResult.ok) {
       deps.logger.warn(
         {
-          err: sendResult.error.message,
+          err: redactErrorMessage(sendResult.error.message),
           channelType: ctx.channelType,
           hint: "Voice attachment send failed; falling back to text-only response",
           errorKind: "network" as const,
@@ -343,11 +355,21 @@ export async function executeVoiceResponse(
     }
 
     // Step 13: Success
+    // OBS-01 §2.7 completion INFO — extend with the §17 voice-identity fields
+    // (provider/keyless/model) the wiring threads in. costUsd is logged as 0 for
+    // a keyless provider (so "free" is visible, not absent) and OMITTED for a
+    // keyed provider (no per-call cost source today — FLAG 4). The selection
+    // `source` rung is the Phase-193 resolver-only field the pipeline tier does
+    // not receive; the daemon RPC path (Plan 03) owns `source` on the trajectory.
     deps.logger.info(
       {
         channelType: ctx.channelType,
         durationMs: systemNowMs() - startMs,
         durationSecs: payload.durationSecs,
+        ...(deps.ttsConfig.provider !== undefined ? { provider: deps.ttsConfig.provider } : {}),
+        ...(deps.ttsConfig.keyless !== undefined ? { keyless: deps.ttsConfig.keyless } : {}),
+        ...(deps.ttsConfig.model !== undefined ? { model: deps.ttsConfig.model } : {}),
+        ...(deps.ttsConfig.keyless === true ? { costUsd: 0 } : {}),
       },
       "Voice response sent",
     );

@@ -173,9 +173,9 @@ integrations:
     vision:
       enabled: true
     transcription:
-      provider: openai
+      provider: auto                # Keyless-first default (no API key needed)
     tts:
-      provider: openai
+      provider: edge                # Keyless default (Microsoft Edge, no API key)
       autoMode: off
     linkUnderstanding:
       enabled: false

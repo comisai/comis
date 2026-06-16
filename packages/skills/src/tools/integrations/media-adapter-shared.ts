@@ -8,13 +8,22 @@
  * @module media-adapter-shared
  */
 
+import { redactErrorMessage } from "@comis/core";
+
+/**
+ * Re-export of the SEC-01 free-text error scrubber, relocated to
+ * `@comis/core/security` in Phase 197 so `@comis/channels` (the voice-OUT
+ * pipeline, which deliberately does NOT import `@comis/skills`) can share the
+ * SINGLE definition. This re-export keeps the ~6 existing adapter callers
+ * (`media-handler-audio.ts`) and {@link sanitizeApiError} below importing it
+ * from this module unchanged — there is no second copy of the regex.
+ */
+export { redactErrorMessage } from "@comis/core";
+
 /** Truncate and sanitize an API error body for user-facing error messages. */
 export function sanitizeApiError(status: number, body: string, provider: string): string {
   const truncated = body.length > 200 ? body.slice(0, 200) + "..." : body;
-  const cleaned = truncated
-    .replace(/https?:\/\/[^\s"')]+/g, "[URL]")
-    // eslint-disable-next-line no-restricted-syntax -- media adapter API-error sanitization (not the Pino censor literal)
-    .replace(/[A-Za-z0-9_-]{20,}/g, "[REDACTED]");
+  const cleaned = redactErrorMessage(truncated);
   return `${provider} error (${status}): ${cleaned}`;
 }
 

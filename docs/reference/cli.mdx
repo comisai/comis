@@ -1394,6 +1394,8 @@ Assemble an `IncidentReport` for a single agent session — a bounded, causal po
 
 The positional argument is routed automatically: a **session key** (`tenant:user:channel:ts`, contains `:`) is passed as `sessionKey`; a **trace ID** (a UUID, no `:`) is passed as `traceId`. The daemon canonicalizes a trace ID to its session key first, so both forms produce the identical report.
 
+When the session included a transcription or synthesis, the report carries a `voice` block reconstructing that turn: the `provider`, whether it ran `keyless`, the `model`, `durationMs`, the `outcome`, the resolved selection `source` rung (with the `onSkip` reasons when `auto` skipped a higher rung), the `costUsd` (`0` for a keyless turn; omitted for a keyed turn — the audio ports return no per-call cost), and the failure `errorKind`. Content-free — ids, labels, and numbers only, never the audio or transcript text. See [Voice → Observability and cost](/media/voice#observability-and-cost).
+
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--format <format>` | `table` \| `json` | `table` | Output format |
@@ -1425,6 +1427,8 @@ Assemble a `FleetHealthReport` — a bounded, **cross-session** triage over a re
 The table view prints the degraded-by-cause spread as a `Degraded by cause: context_exhausted=13, output_starved=9` line (sorted highest-count first; counts + closed-set labels only, no raw bodies) — omitted when no degraded session carried a named cause. The full per-cause map is also on the `--format json` output (`degradedByCause`).
 
 A dedicated `config_posture:served_below_configured` finding fires when an Ollama provider serves a smaller `num_ctx` than the configured `contextWindow` — the agents on that provider silently run with the smaller window. The count is the number of providers affected at the **latest** boot (posture is standing state, not cumulative — a healthy restart clears it). Fix by raising the served window (`OLLAMA_CONTEXT_LENGTH=<configured> ollama serve`, or Modelfile `PARAMETER num_ctx <configured>` — see the [served-window section](/reference/config-yaml#local-model-context-window) for the VRAM caveat), then run `comis explain` on a served-bound session for the numbers-backed budget verdict — and see the [Local models playbook](/operations/local-models) for the full local-deployment triage map.
+
+A `voice_health` finding fires when transcriptions/syntheses degraded across the window: the count of degraded STT/TTS turns and the dominant voice `errorKind` (e.g. `model_load_failed` → check the local whisper model cache, `auth_required` → set the provider's audio key). Counts + a closed errorKind label + a static hint only — no raw provider body or secret, safe to paste. Drill into the worst voice session it points at with `comis explain`. See [Voice → Observability and cost](/media/voice#observability-and-cost).
 
 This is the cross-session **sibling** of `comis explain` (single-session). It is a **remote admin RPC** over the operator's gateway token — DISTINCT from `comis health`, the **local daemon doctor** that runs offline checks with no RPC. (`comis health` is unaffected; this is a separate command.)
 

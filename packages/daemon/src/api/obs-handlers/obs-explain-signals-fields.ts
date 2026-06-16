@@ -18,6 +18,11 @@
 
 import { fingerprint, sanitizeLogString } from "@comis/core";
 import type { IncidentSignals } from "@comis/core";
+// OBS-02 (196): the voice fold lives in a sibling (the obs-handlers/* 500-line cap);
+// applyMediaRecord dispatches the media.stt.*/media.tts.* arms to it.
+import { accumulateVoiceRecord, type IncidentVoiceSignal } from "./obs-explain-voice-fold.js";
+// Re-export so obs-explain-signals.ts keeps its single fields-import for the Acc type.
+export type { IncidentVoiceSignal } from "./obs-explain-voice-fold.js";
 
 /** The reconstructed image-generation turn (the non-optional shape of
  *  `IncidentSignals["image"]`). */
@@ -380,10 +385,11 @@ export function accumulateVideoRecord(
 }
 
 /** The mutable media-fold slice the record normalizer (`toIncidentSignals`)
- *  carries — the three seq-aware folds (`image.*` 186, `media.vision.*` 187,
- *  `video.*` 192) + their outcome-seqs + the running seq counter. Structurally a
- *  subset of `Acc`; typed here so `applyMediaRecord` owns ALL switch-case groups
- *  and keeps `obs-explain-signals.ts` ≤500 (extraction, NOT an allowlist bump). */
+ *  carries — the four seq-aware folds (`image.*` 186, `media.vision.*` 187,
+ *  `video.*` 192, `media.stt.*`/`media.tts.*` 196) + their outcome-seqs + the
+ *  running seq counter. Structurally a subset of `Acc`; typed here so
+ *  `applyMediaRecord` owns ALL switch-case groups and keeps
+ *  `obs-explain-signals.ts` ≤500 (extraction, NOT an allowlist bump). */
 export interface MediaFoldSlice {
   image?: IncidentImageSignal;
   imageOutcomeSeq: number;
@@ -391,20 +397,23 @@ export interface MediaFoldSlice {
   visionOutcomeSeq: number;
   video?: IncidentVideoSignal;
   videoOutcomeSeq: number;
+  voice?: IncidentVoiceSignal;
+  voiceOutcomeSeq: number;
   /** The running monotonic seq counter (for records lacking an explicit seq). */
   seq: number;
 }
 
 /**
- * VIS-04 / OBS-04: if `type` is an `image.*`, `media.vision.*`, or `video.*`
- * lifecycle record, fold it into `slice` (mutating the matching signal +
- * outcomeSeq) and return `true`; otherwise return `false` (the normalizer falls
- * through to its other cases). Drives each fold by the record's `seq` (IN-04 —
- * not array order; records lacking a seq fall back to the running counter,
- * monotonic by arrival). Extracted from `toIncidentSignals` so the three record
- * classes share one dispatcher (their case bodies were byte-identical
- * boilerplate) — and so the `video.*` arm lives HERE, keeping the 497-line
- * `obs-explain-signals.ts` ≤500 (the WARNING-1 file-size budget).
+ * VIS-04 / OBS-04 / OBS-02: if `type` is an `image.*`, `media.vision.*`,
+ * `video.*`, or `media.stt.*`/`media.tts.*` lifecycle record, fold it into
+ * `slice` (mutating the matching signal + outcomeSeq) and return `true`; otherwise
+ * return `false` (the normalizer falls through to its other cases). Drives each
+ * fold by the record's `seq` (IN-04 — not array order; records lacking a seq fall
+ * back to the running counter, monotonic by arrival). Extracted from
+ * `toIncidentSignals` so the four record classes share one dispatcher (their case
+ * bodies were byte-identical boilerplate) — and so the `video.*`/`media.stt.*`/
+ * `media.tts.*` arms live HERE, keeping `obs-explain-signals.ts` ≤500 (the
+ * WARNING-1 file-size budget).
  */
 export function applyMediaRecord(
   slice: MediaFoldSlice,
@@ -438,6 +447,17 @@ export function applyMediaRecord(
       const folded = accumulateVideoRecord({ signal: slice.video, outcomeSeq: slice.videoOutcomeSeq }, type, data, recSeq);
       slice.video = folded.signal;
       slice.videoOutcomeSeq = folded.outcomeSeq;
+      return true;
+    }
+    case "media.stt.requested":
+    case "media.stt.completed":
+    case "media.stt.failed":
+    case "media.tts.requested":
+    case "media.tts.completed":
+    case "media.tts.failed": {
+      const folded = accumulateVoiceRecord({ signal: slice.voice, outcomeSeq: slice.voiceOutcomeSeq }, type, data, recSeq);
+      slice.voice = folded.signal;
+      slice.voiceOutcomeSeq = folded.outcomeSeq;
       return true;
     }
     default:

@@ -63,6 +63,9 @@ import { guessMimeFromExtension, detectMimeFromMagicBytes, mimeToExtension } fro
 // VIS-04 (187): the vision-turn trajectory direct-emit helper (extracted to a
 // sibling to keep this file ≤800 — the emits would otherwise push it over).
 import { createVisionObsEmitter, resolveTerminalUnavailable } from "./vision-obs-emit.js";
+// OBS-02/03 (196): the voice-handler wiring shim (sibling — media-handlers.ts is
+// at its 800-line cap). Each handler calls wireVoiceForHandler + .completed/.failed.
+import { wireVoiceForHandler, toSttErrorKind, pruneTtsOutputDir } from "./voice-handler-wiring.js";
 import { fetchImageBytesSsrfSafe } from "./ssrf-image-fetch.js";
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
@@ -309,8 +312,14 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
         ttsOpts.speed = directive.directive.speed;
       }
 
+      // OBS-02/03: fire media.tts.requested + thread source/onSkip; record + §2.7 line.
+      const voiceObs = wireVoiceForHandler(rawParams, deps, "tts");
       const synthResult = await deps.ttsAdapter.synthesize(text, ttsOpts as { voice?: string; format?: string });
-      if (!synthResult.ok) throw synthResult.error;
+      if (!synthResult.ok) {
+        voiceObs.failed({ sttErrorKind: toSttErrorKind(synthResult.error), provider: voiceObs.provider, source: voiceObs.source, errMessage: synthResult.error.message });
+        throw synthResult.error;
+      }
+      voiceObs.completed({ provider: voiceObs.provider, keyless: voiceObs.keyless, audioBytes: synthResult.value.audio.byteLength, source: voiceObs.source }); // WR-02: keyless costUsd:0 derived centrally in wireVoiceObs
 
       // Determine file extension from mimeType
       const ext = mimeToExtension(synthResult.value.mimeType);
@@ -323,24 +332,8 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
       // fs-safe-allowed: per-agent workspace media output dir (`<agentDir>/media/tts`); not ~/.comis/ directly
       await fs.mkdir(outputDir, { recursive: true });
 
-      // Simple TTL cleanup: delete files older than 1 hour (best-effort)
-      try {
-        const entries = await fs.readdir(outputDir);
-        const cutoff = systemNowMs() - 3_600_000;
-        for (const entry of entries) {
-          try {
-            const entryPath = safePath(outputDir, entry);
-            const stat = await fs.stat(entryPath);
-            if (stat.mtimeMs < cutoff) {
-              await fs.unlink(entryPath);
-            }
-          } catch {
-            // Individual file cleanup failure is non-fatal
-          }
-        }
-      } catch {
-        // Cleanup failure is non-fatal
-      }
+      // Simple TTL cleanup: delete files older than 1 hour (best-effort, extracted).
+      await pruneTtsOutputDir(outputDir);
 
       // Write audio file
       const filePath = safePath(outputDir, fileName);
@@ -453,12 +446,17 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
       // Detect MIME type from magic bytes or default to audio/ogg (common for voice messages)
       const mimeType = detectMimeFromMagicBytes(buffer) ?? "audio/ogg";
 
+      // OBS-02/03: fire media.stt.requested + thread source/onSkip; record + §2.7 line.
+      const voice = wireVoiceForHandler(rawParams, deps, "stt");
       const sttResult = await deps.transcriber.transcribe(buffer, {
         mimeType,
         ...(language && { language }),
       });
-      if (!sttResult.ok) throw sttResult.error;
-
+      if (!sttResult.ok) {
+        voice.failed({ sttErrorKind: toSttErrorKind(sttResult.error), provider: voice.provider, source: voice.source, errMessage: sttResult.error.message });
+        throw sttResult.error;
+      }
+      voice.completed({ provider: voice.provider, keyless: voice.keyless, ...(sttResult.value.durationMs !== undefined ? { durationMs: sttResult.value.durationMs } : {}), audioBytes: buffer.byteLength, source: voice.source }); // WR-02: keyless costUsd:0 derived centrally
       const result = {
         text: sttResult.value.text,
         language: sttResult.value.language,
@@ -592,7 +590,7 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
         text: sttResult.value.text,
         language: sttResult.value.language,
         durationMs: sttResult.value.durationMs,
-        provider: deps.mediaConfig.tts.provider ?? "configured",
+        provider: deps.mediaConfig.transcription.provider ?? "configured",
       };
       if (systemGetEnv("NODE_ENV") !== "production") {
         MediaTestSttContract.response.parse(result);
@@ -764,7 +762,8 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
       MediaProvidersContract.request.parse(userParams);
       const result = {
         stt: deps.transcriber ? {
-          provider: "configured",
+          // FLAG 6 (OBS-03): report the resolved STT provider (selection > config > literal).
+          provider: deps.voiceSelection?.stt?.provider ?? deps.mediaConfig.transcription.provider ?? "configured",
           model: undefined,
           fallback: [],
         } : null,

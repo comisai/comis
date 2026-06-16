@@ -8,11 +8,23 @@ import {
 } from "./voice-response-pipeline.js";
 
 // ---------------------------------------------------------------------------
-// Mock @comis/core safePath
+// Mock @comis/core safePath + the relocated redactErrorMessage.
+//
+// redactErrorMessage is mocked with the REAL relocated semantics (URL→[URL],
+// Bearer/Authorization strip, 20+-char token→[REDACTED]) so the redaction
+// asserts below exercise the actual scrubber the pipeline imports from
+// @comis/core (NOT a pass-through stub) — the SEC-01 voice-out floor.
 // ---------------------------------------------------------------------------
 vi.mock("@comis/core", () => ({
   safePath: vi.fn((...segments: string[]) => segments.join("/")),
   systemNowMs: () => Date.now(),
+  redactErrorMessage: vi.fn((body: string): string =>
+    body
+      .replace(/https?:\/\/[^\s"')]+/g, "[URL]")
+      .replace(/\bAuthorization:/gi, "")
+      .replace(/\bBearer\b/gi, "")
+      .replace(/[A-Za-z0-9_-]{20,}/g, "[REDACTED]"),
+  ),
 }));
 
 // ---------------------------------------------------------------------------
@@ -70,6 +82,11 @@ function createMockDeps(
       maxTextLength: 4096,
       outputFormats: undefined,
       providerFormatKey: "openai",
+      // OBS-01 voice-identity fields (Phase 196) — the resolved STT/TTS provider
+      // identity the wiring point threads into the pipeline for the §2.7 INFO line.
+      provider: "edge",
+      keyless: true,
+      model: "edge-tts",
     },
     logger: {
       debug: vi.fn(),
@@ -459,5 +476,138 @@ describe("executeVoiceResponse", () => {
       }),
       undefined,
     );
+  });
+
+  // -------------------------------------------------------------------
+  // OBS-01 §2.7 — extended voice-out completion INFO (Phase 196)
+  // -------------------------------------------------------------------
+  it("logs the §17 voice fields (provider/keyless/model/costUsd) on the 'Voice response sent' INFO", async () => {
+    const deps = createMockDeps(); // ttsConfig: provider:edge, keyless:true, model:edge-tts
+    const ctx = createMockCtx();
+
+    const result = await executeVoiceResponse(deps, ctx);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.voiceSent).toBe(true);
+
+    expect(deps.logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        // existing fields preserved
+        channelType: "telegram",
+        durationMs: expect.any(Number),
+        durationSecs: 5,
+        // OBS-01 extension
+        provider: "edge",
+        keyless: true,
+        model: "edge-tts",
+        costUsd: 0, // keyless records 0 EXPLICITLY (FLAG 4 — "free" is visible, not absent)
+      }),
+      "Voice response sent",
+    );
+  });
+
+  it("omits costUsd on a keyed provider (no per-call cost source; FLAG 4)", async () => {
+    const deps = createMockDeps({
+      ttsConfig: {
+        autoMode: "inbound",
+        tagPattern: "\\[\\[tts(?::.*?)?\\]\\]",
+        voice: "alloy",
+        maxTextLength: 4096,
+        providerFormatKey: "openai",
+        provider: "openai",
+        keyless: false,
+        model: "gpt-4o-mini-tts",
+      },
+    });
+    const ctx = createMockCtx();
+
+    const result = await executeVoiceResponse(deps, ctx);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const infoCall = (deps.logger.info as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c) => c[1] === "Voice response sent",
+    );
+    expect(infoCall).toBeDefined();
+    const infoObj = infoCall![0] as Record<string, unknown>;
+    expect(infoObj.provider).toBe("openai");
+    expect(infoObj.keyless).toBe(false);
+    expect(infoObj.model).toBe("gpt-4o-mini-tts");
+    // keyed path carries no per-call cost source today — omit, don't log undefined.
+    expect("costUsd" in infoObj).toBe(false);
+  });
+
+  // -------------------------------------------------------------------
+  // SEC-01 — the voice-OUT WARN branches redact credential-bearing errors
+  // (the Phase-196 carry-forward; invariant I8: no secret logged at any level).
+  // Each of the 3 failure branches (:263 synth, :321 payload, :347 send) must
+  // route its err: field through redactErrorMessage (relocated to @comis/core).
+  // -------------------------------------------------------------------
+  const LEAKY = "POST https://host/synth failed: Bearer sk-leak0123456789abcdef";
+
+  function warnErrFor(logger: VoiceResponsePipelineDeps["logger"], msg: string): string {
+    const call = (logger.warn as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c) => c[1] === msg,
+    );
+    expect(call, `expected a WARN "${msg}"`).toBeDefined();
+    return (call![0] as Record<string, unknown>).err as string;
+  }
+
+  it("redacts the TTS-synthesis WARN err: (URL/Bearer/long-token scrubbed)", async () => {
+    const deps = createMockDeps({
+      ttsAdapter: { synthesize: vi.fn().mockResolvedValue(err(new Error(LEAKY))) },
+    });
+
+    await executeVoiceResponse(deps, createMockCtx());
+
+    const errField = warnErrFor(deps.logger, "TTS synthesis failed");
+    expect(errField).toContain("[URL]");
+    expect(errField).not.toContain("https://host/synth");
+    expect(errField).not.toContain("Bearer");
+    expect(errField).not.toContain("sk-leak0123456789abcdef");
+    expect(errField).toContain("[REDACTED]");
+  });
+
+  it("redacts the voice-payload WARN err: (URL/Bearer/long-token scrubbed)", async () => {
+    mockPrepareVoicePayload.mockResolvedValue(err(new Error(LEAKY)));
+    const deps = createMockDeps();
+
+    await executeVoiceResponse(deps, createMockCtx());
+
+    const errField = warnErrFor(deps.logger, "Voice payload preparation failed");
+    expect(errField).toContain("[URL]");
+    expect(errField).not.toContain("https://host/synth");
+    expect(errField).not.toContain("Bearer");
+    expect(errField).not.toContain("sk-leak0123456789abcdef");
+    expect(errField).toContain("[REDACTED]");
+  });
+
+  it("redacts the voice-send WARN err: (URL/Bearer/long-token scrubbed)", async () => {
+    const deps = createMockDeps();
+    const ctx = createMockCtx({
+      adapter: { sendAttachment: vi.fn().mockResolvedValue(err(new Error(LEAKY))) },
+    });
+
+    await executeVoiceResponse(deps, ctx);
+
+    const errField = warnErrFor(deps.logger, "Voice attachment send failed");
+    expect(errField).toContain("[URL]");
+    expect(errField).not.toContain("https://host/synth");
+    expect(errField).not.toContain("Bearer");
+    expect(errField).not.toContain("sk-leak0123456789abcdef");
+    expect(errField).toContain("[REDACTED]");
+  });
+
+  it("passes a clean (non-secret) error message through readable in the WARN err:", async () => {
+    const deps = createMockDeps({
+      ttsAdapter: { synthesize: vi.fn().mockResolvedValue(err(new Error("timeout after 30s"))) },
+    });
+
+    await executeVoiceResponse(deps, createMockCtx());
+
+    const errField = warnErrFor(deps.logger, "TTS synthesis failed");
+    expect(errField).toBe("timeout after 30s");
   });
 });

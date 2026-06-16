@@ -1436,6 +1436,53 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       provider: "veo",
       timestamp: 0,
     },
+    // OBS-02/03 (Phase 196): voice STT/TTS lifecycle — the envelope-only
+    // correlation invariant must hold for them too (no agentId/sessionKey/traceId
+    // leak; onSkip is a closed rung-list, NOT an envelope key — it stays).
+    "media.stt:requested": {
+      provider: "local",
+      keyless: true,
+      source: "keyless-local",
+      onSkip: ["fallback \"openai\" skipped: no key"],
+      timestamp: 0,
+    },
+    "media.stt:completed": {
+      provider: "local",
+      keyless: true,
+      model: "base",
+      durationMs: 1200,
+      audioBytes: 5000,
+      costUsd: 0,
+      source: "keyless-local",
+      timestamp: 0,
+    },
+    "media.stt:failed": {
+      errorKind: "model_load_failed",
+      provider: "local",
+      source: "keyless-local",
+      timestamp: 0,
+    },
+    "media.tts:requested": {
+      provider: "edge",
+      keyless: true,
+      source: "keyless-local",
+      timestamp: 0,
+    },
+    "media.tts:completed": {
+      provider: "edge",
+      keyless: true,
+      model: "en-US-AriaNeural",
+      durationMs: 700,
+      costUsd: 0,
+      source: "keyless-local",
+      timestamp: 0,
+    },
+    "media.tts:failed": {
+      errorKind: "network",
+      provider: "edge",
+      source: "explicit",
+      timestamp: 0,
+    },
   };
 
   it.each(Object.keys(TRAJECTORY_BRIDGE_MAPPING))(
@@ -3051,7 +3098,7 @@ describe("attachTrajectoryToEventBus -- dedup events", () => {
 // ---------------------------------------------------------------------------
 
 describe("health:budget_exceeded entry (bridge entry count guard)", () => {
-  it("bridge entry count is exactly 81 (+3 T2.2 background_task promoted/completed/failed; +2 D3 breaker + 1 D7 offload Phase 151; +1 session:summary Phase 152; +1 context:budget_computed W2; +1 execution:tool_schema_unsupported Phase 175; +2 OBS-01 script signals Phase 180; +2 RECALL-01 memory:recalled/reranked; +1 GENQ-01 memory:generation_quality; +4 OBS-04 image:* Phase 186; +3 media.vision:* VIS-04 Phase 187; +5 video:* OBS-04 Phase 192)", () => {
+  it("bridge entry count is exactly 87 (+3 T2.2 background_task promoted/completed/failed; +2 D3 breaker + 1 D7 offload Phase 151; +1 session:summary Phase 152; +1 context:budget_computed W2; +1 execution:tool_schema_unsupported Phase 175; +2 OBS-01 script signals Phase 180; +2 RECALL-01 memory:recalled/reranked; +1 GENQ-01 memory:generation_quality; +4 OBS-04 image:* Phase 186; +3 media.vision:* VIS-04 Phase 187; +5 video:* OBS-04 Phase 192; +6 voice media.stt/tts:* OBS-02/03 Phase 196)", () => {
     // 55 + tool:breaker_opened + tool:breaker_reset (D3) + tool:result_offloaded (D7)
     // + session:summary (F2/D5, Phase 152)
     // + execution:tool_schema_unsupported (GBNF-02, Phase 175 Plan 05)
@@ -3064,7 +3111,9 @@ describe("health:budget_exceeded entry (bridge entry count guard)", () => {
     //   APPEND-ONLY, the image.* tuple is untouched; Pitfall 5).
     // + video:requested/submitted/generated/delivered/failed (OBS-04, Phase 192
     //   Plan 01 — APPEND-ONLY beside image.*/media.vision.*; Pitfall 8).
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(81);
+    // + media.stt:requested/completed/failed + media.tts:requested/completed/failed
+    //   (OBS-02/03, Phase 196 Plan 02 — APPEND-ONLY beside the media.*/video.* tuples).
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(87);
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {

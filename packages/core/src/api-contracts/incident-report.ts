@@ -286,6 +286,43 @@ export const IncidentReportSchema = z.object({
       delivered: z.boolean(),
     })
     .optional(),
+  /** OBS-02/OBS-05 (Phase 196): the VOICE turn reconstructed from the session's
+   *  `media.stt.*` / `media.tts.*` trajectory records (the terminal
+   *  `media.*.completed` / `media.*.failed` record wins). Voice is wholly IN-TURN
+   *  (unlike video's off-turn poller) — the daemon `media.transcribe` /
+   *  `tts.synthesize` RPC handlers direct-emit the lifecycle records in one turn.
+   *  The cost rides HERE (Route a — NOT `cost.costUsd`, the executor `sessionEnd`,
+   *  a different path: the voice RPC runs in the daemon context, Pitfall 2). OBS-05
+   *  honest limit (FLAG 4): a keyless turn records `costUsd:0` EXPLICITLY (so "free"
+   *  is VISIBLE, not absent); a keyed turn OMITS cost (no port carries a per-call
+   *  source today — NOT a fabricated number). The `source` is the OBS-03 resolved
+   *  selection rung (WHY `auto` picked it). Content-free: provider/keyless/model/
+   *  durationMs/costUsd/source/outcome/errorKind ONLY — never a transcript, audio
+   *  bytes, or a credential (the `videoGenerated` content-free discipline). Optional
+   *  + additive (present only when the trajectory carries `media.stt.*`/`media.tts.*`
+   *  records; schemaVersion stays 1) — pre-existing constructors omit it (the
+   *  `image`/`vision`/`videoGenerated` precedent). SINGLE-TURN by design: the
+   *  terminal record wins (the image/vision single-signal convention). */
+  voice: z
+    .object({
+      /** The executing voice provider id (e.g. "local", "edge", "openai", "groq", "deepgram", "elevenlabs"). */
+      provider: z.string(),
+      /** Whether the turn ran keyless (a local whisper engine for STT, Edge for TTS — no credential). */
+      keyless: z.boolean(),
+      /** The STT/TTS model used (e.g. "base", "whisper-large-v3-turbo", "tts-1"). Absent on a failed/early turn or an adapter that omits it. */
+      model: z.string().optional(),
+      /** The wall-clock transcription/synthesis duration in ms. Absent on a failed/early turn. */
+      durationMs: z.number().optional(),
+      /** The turn cost in USD (Route a). `0` (explicit) on a keyless turn; ABSENT on a keyed turn (no per-call source today — FLAG 4). */
+      costUsd: z.number().optional(),
+      /** The OBS-03 resolved selection rung — WHY `auto` chose this provider. Absent on a partial record. */
+      source: z.enum(["explicit", "keyless-local", "follow-main-key", "fallback"]).optional(),
+      /** The terminal outcome of the voice turn. */
+      outcome: z.enum(["ok", "failed"]),
+      /** The classified failure kind when `outcome === "failed"` (the domain SttErrorKind string, verbatim). Absent on success. */
+      errorKind: z.string().optional(),
+    })
+    .optional(),
   summary: z.string(),
   likelyRootCause: z
     .object({
@@ -544,6 +581,25 @@ export interface IncidentSignals {
     outcome: "ok" | "failed";
     errorKind?: string;
     delivered: boolean;
+  };
+  /**
+   * OBS-02/OBS-05 (Phase 196): the VOICE turn reconstructed from the session's
+   * `media.stt.*` / `media.tts.*` trajectory records (the terminal completed/
+   * failed record wins). Wholly in-turn (the daemon voice RPC handlers
+   * direct-emit). The cost rides HERE (Route a — NOT `cost.costUsd`, Pitfall 2):
+   * `0` explicit on keyless (OBS-05 "free" visible), absent on keyed (no per-call
+   * source — FLAG 4). `source` is the OBS-03 selection rung. Content-free. Absent
+   * ⇒ no `media.stt.*`/`media.tts.*` records in the trajectory.
+   */
+  voice?: {
+    provider: string;
+    keyless: boolean;
+    model?: string;
+    durationMs?: number;
+    costUsd?: number;
+    source?: "explicit" | "keyless-local" | "follow-main-key" | "fallback";
+    outcome: "ok" | "failed";
+    errorKind?: string;
   };
 }
 

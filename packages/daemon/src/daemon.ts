@@ -221,7 +221,10 @@ import { setupSingleAgent } from "./wiring/setup-agents/index.js";
 import { buildDialecticWiring, dialecticWiringDepsFromBoot } from "./wiring/setup-dialectic.js";
 import { createConversationReset } from "./wiring/conversation-reset.js";
 import { setupSecretManager } from "./wiring/setup-secret-manager.js";
-import { restoreApprovalState, resolveGatewayTokens, setupChannelHealthMonitor, resolveModelHealthMultilingual, buildImageGenBundle, buildImageHandlerDeps, buildVideoGenBundle, buildVideoHandlerDeps, buildVideoStatusHandlerDeps, buildMediaVisionBundle, hardenDataDirPermissions } from "./wiring/main-helpers.js";
+import { restoreApprovalState, resolveGatewayTokens, setupChannelHealthMonitor, resolveModelHealthMultilingual, buildImageGenBundle, buildImageHandlerDeps, buildVideoGenBundle, buildVideoHandlerDeps, buildVideoStatusHandlerDeps, buildMediaVisionBundle } from "./wiring/main-helpers.js";
+import { hardenDataDirPermissions } from "./wiring/harden-data-dir.js";
+import { buildAudioResolverDeps } from "./wiring/setup-audio-provider.js";
+import { runPreflightDoctor } from "./wiring/preflight-doctor.js";
 import { createInboundMessageIdResolver, type InboundMessageIdResolver } from "./wiring/inbound-message-id-resolver.js";
 import { logOperationModelDryRun } from "./wiring/startup-dry-run.js";
 import { emitDockerRestartPolicyWarn } from "./setup-docker-restart-warn.js";
@@ -271,58 +274,11 @@ export function applyInspectDefaultsForLogging(
   return { depthChanged, breakLengthChanged };
 }
 
-// ---------------------------------------------------------------------------
-// Preflight native-dep doctor
-// ---------------------------------------------------------------------------
-
-interface PreflightProbeDatabase {
-  prepare(sql: string): { get(): unknown };
-  close(): void;
-}
-type PreflightDatabaseCtor = new (path: string) => PreflightProbeDatabase;
-
-/**
- * Probe better-sqlite3 before any subsystem init. A missing transitive
- * `bindings` folder (known failure mode from partial npm upgrades) makes
- * better-sqlite3 throw at first require, which otherwise surfaces as an
- * opaque mid-boot crash and a systemd restart loop. Here we catch it up
- * front and exit 78 (EX_CONFIG) with an actionable hint, so operators can
- * repair instead of chasing a cascading failure.
- */
-export async function runPreflightDoctor(
-  exitFn: (code: number) => void,
-  opts: {
-    stderrWrite?: (s: string) => void;
-    loadBetterSqlite3?: () => Promise<PreflightDatabaseCtor>;
-  } = {},
-): Promise<void> {
-  const write = opts.stderrWrite ?? ((s: string) => { process.stderr.write(s); });
-  const load = opts.loadBetterSqlite3
-    ?? (async () => (await import("better-sqlite3")).default as unknown as PreflightDatabaseCtor);
-  try {
-    const Database = await load();
-    const db = new Database(":memory:");
-    try {
-      const row = db.prepare("select 1 as ok").get();
-      if (!row) throw new Error("better-sqlite3 returned no row from sentinel query");
-    } finally {
-      db.close();
-    }
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    write(JSON.stringify({
-      level: 60,
-      time: new Date().toISOString(),
-      name: "comis-daemon",
-      submodule: "preflight",
-      errorKind: "dependency",
-      err: message,
-      hint: "Native module 'better-sqlite3' failed to load. Try: npm rebuild better-sqlite3 (or re-run install.sh). If this persists, reinstall comisai from a fresh tarball.",
-      msg: "Preflight check failed: better-sqlite3 unavailable",
-    }) + "\n");
-    exitFn(78);
-  }
-}
+// Preflight native-dep doctor — extracted to wiring/preflight-doctor.ts to keep
+// this composition root ≤3000 lines (v2.25 audio wiring pushed it over). Imported
+// for the boot call site below AND re-exported so `runPreflightDoctor` stays on
+// daemon.ts's public surface (daemon.test.ts imports it from "./daemon.js").
+export { runPreflightDoctor };
 
 // ---------------------------------------------------------------------------
 // Foundation helpers — scrub + store-wins env merge
@@ -962,7 +918,7 @@ function buildRpcDispatchDeps(deps: {
     configWebhook: c.container.config.daemon.configWebhook as { url?: string; timeoutMs?: number; secret?: string },
     secretStore: c.secretStore, mutableSecretManager: c.mutableHandle, envFilePath: c.envPath, logLevelManager: c.logLevelManager,
     getAgentBrowserService: c.getAgentBrowserService,
-    resolveAttachment: c.resolveAttachment, transcriber: c.transcriber, fileExtractor: c.fileExtractor,
+    resolveAttachment: c.resolveAttachment, transcriber: c.transcriber, fileExtractor: c.fileExtractor, voiceSelection: c.voiceSelection,
     approvalGate: c.approvalGate, suspendedAgents: c.suspendedAgents,
     hotAdd: g.hotAdd, hotRemove: g.hotRemove,
     diagnosticCollector: c.diagnosticCollector, billingEstimator: c.billingEstimator,
@@ -2007,11 +1963,16 @@ async function bootAgents(
   };
 
   // 6.6.7. Media (moved up from 6.6.8 -- media infrastructure must be ready before channels)
+  // Phase 193 keyless-first audio steering: setup-media gates STT/TTS construction
+  // on this selector (resolveStt/resolveTts) BEFORE building any adapter — a
+  // Codex/OAuth-only main never builds the empty-bearer OpenAI adapter (no 401).
+  // Phase 194: buildAudioResolverDeps is async (runs the detectLocalSttEngine boot probe).
+  const audioSelector = await buildAudioResolverDeps(container, defaultAgentId, skillsLogger);
   const {
     ttsAdapter, visionRegistry, visionRegistryHolder, linkRunner,
     mediaTempManager, mediaSemaphore, audioConverter,
-    transcriber, ssrfFetcher, fileExtractor,
-  } = await _setupMedia({ container, skillsLogger, onSuspiciousContent });
+    transcriber, ssrfFetcher, fileExtractor, voiceSelection,
+  } = await _setupMedia({ container, skillsLogger, onSuspiciousContent, audioSelector });
 
   // 6.6.7.5. RPC bridge (deferred dispatch) -- moved before setupChannels so rpcCall
   // can be threaded into channel config command handling.
@@ -2069,7 +2030,7 @@ async function bootAgents(
     getAgentCronScheduler, getAgentBrowserService,
     sessionTrackerRegistry, auditAggregator, onSuspiciousContent,
     ttsAdapter, visionRegistry, visionRegistryHolder, linkRunner, mediaTempManager, mediaSemaphore, audioConverter,
-    transcriber, ssrfFetcher, fileExtractor,
+    transcriber, ssrfFetcher, fileExtractor, voiceSelection,
     rpcCall, wireDispatch, approvalGate, interactiveCallbackWiring,
     channelAdaptersRef, deliveryQueue, drainAndStartDeliveryPrune, shutdownDeliveryQueue,
     cronWakeCallbackRef, trajectoryRegistry, executionPlanPorts, oauthManagers, servedWindowComparisons, agentBootWindowInfo,

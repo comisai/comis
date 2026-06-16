@@ -35,6 +35,8 @@ Here's everything Comis keeps on disk — and why.
 ├── workspace-<agentId>/     # named-agent workspaces (one per extra agent)
 ├── terminal-drive/          # durable terminal-driver state (default; absent only with drive.durable: false)
 │   └── <agentId>/journals/<sessionId>.json
+├── models/                  # auto-downloaded ML model caches
+│   └── whisper/             # local STT whisper model (downloaded once on first use, reused)
 ├── agents/                  # per-agent RPC state (subagent results, etc.)
 ├── background-tasks/        # background task state files
 ├── identity/
@@ -53,6 +55,8 @@ Some entries only appear under specific conditions.
 - `ecosystem.config.js` — created only by `comis pm2 setup`.
 - Named workspaces like `workspace-myagent/` — appear only when you define more than one agent.
 - `terminal-drive/` — the per-agent **durable** terminal drive-state journals. A durable drive is the **default** (`drive.durable: true`), so this appears whenever an agent runs a terminal drive; absent only for an explicit `drive.durable: false` (non-durable) drive or on a tmux-less host.
+- `models/whisper/` — created only after the **first** voice transcription that uses the keyless in-process local STT engine (when `integrations.media.transcription.provider` resolves to `local` without a `local.baseUrl` server). Absent on a fresh install and whenever local STT never runs.
+- `models/tts/` — created only after the **first** voice reply that uses the keyless in-process offline TTS engine (when `integrations.media.tts.provider` resolves to `local`/`piper`). A separate subdir from `models/whisper/`. Absent on a fresh install and whenever local TTS never runs.
 </Note>
 
 ## File-by-file reference
@@ -231,6 +235,28 @@ The journal is **content-free and secret-redacted** (no captured terminal output
 
 **Written by:** the daemon, on each update to a durable drive's state (and recovered on the next startup).
 **Safe to delete?** Yes, when the daemon is stopped. Deleting a journal means an in-flight durable drive cannot resume after the next restart — the driver treats the session as gone rather than resuming it. Non-durable drives (the explicit `drive.durable: false` opt-out) never write here.
+
+---
+
+### `models/whisper/`
+
+The on-disk cache for the **keyless in-process local STT engine** (whisper, run via Transformers.js / ONNX Runtime). When voice transcription resolves to the `local` provider without a `local.baseUrl` server, the engine lazy-downloads a small model (`integrations.media.transcription.local.model`, default `base`) **once** over TLS from the model hub on the first voice note, writes it here, and reuses it for the rest of the process. The directory lives under the data dir, so it is already inside the daemon's `--allow-fs-write=${COMIS_DATA_DIR}` scope — no extra permission grant is required (see [Voice](/media/voice#transcription-speech-to-text) and [Node Permissions](/reference/node-permissions#keyless-local-stt-whisper-engine)).
+
+It holds model weights only — **no secret, no credential**, nothing user-specific.
+
+**Written by:** the local STT adapter, on the first transcription that uses the in-process engine.
+**Safe to delete?** Yes. It re-downloads on the next local transcription; deleting it only forces one slower first call afterward. Never created (or needed) when you use a `local.baseUrl` server or a keyed cloud provider instead.
+
+### `models/tts/`
+
+The on-disk cache for the **keyless in-process offline TTS engine** (`local`/`piper`, a single-speaker `text-to-audio` model run via Transformers.js / ONNX Runtime — the TTS twin of `models/whisper/`). When a voice reply resolves to the `local`/`piper` TTS provider, the engine lazy-downloads a small voice model **once** over TLS from the model hub, writes it here (a separate subdir from `models/whisper/`), and reuses it for the rest of the process — so synthesis needs **no network** thereafter. Already inside the daemon's `--allow-fs-write=${COMIS_DATA_DIR}` scope — no extra permission grant (see [Voice → Text-to-Speech](/media/voice#text-to-speech-tts)).
+
+It holds model weights only — **no secret, no credential**, nothing user-specific.
+
+**Written by:** the local TTS adapter, on the first reply that uses the in-process offline engine.
+**Safe to delete?** Yes. It re-downloads on the next local synthesis; deleting it only forces one slower first call. Never created (or needed) when TTS uses `edge` or a keyed cloud provider.
+
+Voice observability adds **no new on-disk artifact**: a transcription/synthesis records onto the **existing per-session trajectory** (the same `*.trajectory.jsonl` that carries every other turn event), so `comis explain` reconstructs the voice turn and `comis fleet` surfaces the `voice_health` signal without a dedicated voice file (see [Voice → Observability and cost](/media/voice#observability-and-cost)).
 
 ---
 
