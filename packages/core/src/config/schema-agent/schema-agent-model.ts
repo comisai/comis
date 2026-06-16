@@ -155,7 +155,8 @@ export type ModelOperationType =
   | "taskExtraction"
   | "condensation"
   | "verification"    // R4: pre-delivery critic (Phase 154)
-  | "planning";       // R5: pre-execution planner (Phase 154, deferrable on M2)
+  | "planning"        // R5: pre-execution planner (Phase 154, deferrable on M2)
+  | "outcomeJudge";   // OUTCOME-04: the optional cost-gated outcome judge (fast tier, Phase 198)
 
 /**
  * Per-operation model entry: groups model override and timeout for a single

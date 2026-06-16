@@ -33,7 +33,7 @@ describe("LearningOutcomeConfigSchema — per-agent outcome-signal config (defau
     expect(result.success).toBe(false);
   });
 
-  it("range-validates minConfidenceToLearn ([0,1]) and retentionDays (positive int)", () => {
+  it("rejects out-of-range minConfidenceToLearn ([0,1]) and non-positive-int retentionDays", () => {
     expect(LearningOutcomeConfigSchema.safeParse({ minConfidenceToLearn: 1.5 }).success).toBe(false);
     expect(LearningOutcomeConfigSchema.safeParse({ minConfidenceToLearn: -0.1 }).success).toBe(false);
     expect(LearningOutcomeConfigSchema.safeParse({ retentionDays: 0 }).success).toBe(false);

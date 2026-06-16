@@ -1072,6 +1072,22 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "VOICE_KEYLESS",
       "MAIN_PROVIDER_AUDIO",
       "SttErrorKind",
+      // Verified Learning outcome signal (v2.26 Phase 198 Plan 01, Wave 1) — the
+      // greenfield OutcomeSignalPort + its DTOs surfaced on the public @comis/core
+      // barrel (exports/ports.ts) so the LATER-wave plans can import them BY TYPE:
+      // Plan 02's @comis/memory `createSqliteOutcomeStore` implements the port,
+      // Plan 03's judge seam + Plan 04's @comis/daemon `setup-learning` wiring
+      // construct/observe/resolve against it. These are interface-first ahead-of-
+      // consumer planned-orphans (the TunedAlphaStore / MemoryLifecyclePort
+      // precedent directly above — listed so the gate is green before the consumer
+      // lands, never under-listed). Each SHRINKS out of this baseline when its real
+      // cross-package consumer lands (the shrink-only ratchet, AGENTS.md §2.8):
+      // OutcomeSignalPort + the 4 DTOs go when Plan 02's adapter name-imports them.
+      "OutcomeSignalPort",
+      "LearningScope",
+      "OutcomeObservation",
+      "ResolvedOutcome",
+      "OutcomePruneResult",
       // MemoryLifecyclePort + MemoryLifecycleScope +
       // MemoryTier + LifecycleSweepReport were tracked here as SCAFFOLD-DORMANT
       // ahead-of-consumer planned-orphans. REMOVED:

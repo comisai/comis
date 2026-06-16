@@ -241,19 +241,23 @@ describe("resolveOperationDefaults — top-of-cohort selection", () => {
 // ---------------------------------------------------------------------------
 
 describe("OPERATION_TIER_MAP", () => {
-  it("covers all 9 ModelOperationType values (including verification + planning)", () => {
+  it("covers all 10 ModelOperationType values (including verification, planning + outcomeJudge)", () => {
     const expectedOps = [
       "interactive", "cron", "heartbeat", "subagent", "compaction",
-      "taskExtraction", "condensation", "verification", "planning",
+      "taskExtraction", "condensation", "verification", "planning", "outcomeJudge",
     ];
     for (const op of expectedOps) {
       expect(OPERATION_TIER_MAP).toHaveProperty(op);
     }
-    expect(Object.keys(OPERATION_TIER_MAP)).toHaveLength(9);
+    expect(Object.keys(OPERATION_TIER_MAP)).toHaveLength(10);
   });
 
   it("interactive is mapped to primary tier", () => {
     expect(OPERATION_TIER_MAP.interactive).toBe("primary");
+  });
+
+  it("outcomeJudge is mapped to the fast tier (OUTCOME-04: optional cost-gated judge)", () => {
+    expect(OPERATION_TIER_MAP.outcomeJudge).toBe("fast");
   });
 
   it("heartbeat is mapped to fast tier", () => {

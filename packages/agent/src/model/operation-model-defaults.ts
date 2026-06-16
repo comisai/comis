@@ -141,6 +141,7 @@ export const OPERATION_TIER_MAP: Record<ModelOperationType, "primary" | "mid" | 
   condensation: "fast",
   verification: "primary",  // R4: local-only self-check; configured: cheap model via Level 2
   planning: "primary",       // R5: same resolution path; deferrable on M2
+  outcomeJudge: "fast",      // OUTCOME-04: optional cost-gated outcome judge — a fast classification op
 };
 
 /**
@@ -158,6 +159,7 @@ export const OPERATION_TIMEOUT_DEFAULTS: Partial<Record<ModelOperationType, numb
   taskExtraction: 30_000,
   condensation: 30_000,
   verification: 120_000,  // R4: same ceiling as the critic LLM_TIMEOUT_MS (Phase 154)
+  outcomeJudge: 30_000,   // OUTCOME-04: mirrors condensation — a fast classification op
 };
 
 /**
@@ -174,4 +176,5 @@ export const OPERATION_CACHE_DEFAULTS: Partial<Record<ModelOperationType, "none"
   cron: "short", // 5m TTL: covers within-execution multi-step reuse, avoids 1h write premium across hourly runs.
   verification: "none",  // R4: critic responses consume the reviewed response and must not be cached (Phase 154)
   planning: "none",       // R5: planner responses are request-specific; caching wastes storage (Phase 154)
+  outcomeJudge: "none",   // OUTCOME-04: judge responses are request-specific (like verification)
 };
