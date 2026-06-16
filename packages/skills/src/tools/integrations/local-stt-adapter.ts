@@ -159,6 +159,47 @@ function degraded(hint: string, cause: unknown, kind: SttErrorKind): SttDegradeE
 }
 
 /**
+ * Convert a raw f32le PCM buffer (as ffmpeg writes it) into a copied
+ * `Float32Array`, validating the decode at the boundary (WR-04).
+ *
+ * A zero-byte buffer means ffmpeg "succeeded" (exit 0) but produced no PCM —
+ * a valid container with no decodable audio stream, or a 0-duration clip. A
+ * non-multiple-of-4 length means stray bytes that are NOT a whole f32 sample.
+ * Both are decode anomalies: surface a `degraded` `err` (kind `dependency`)
+ * instead of feeding an empty / truncated sample array into the engine (which
+ * would either throw — mishandled — or yield a phantom-empty transcript). The
+ * result is copied out of the file-backed buffer so it survives temp cleanup.
+ */
+function pcmBufferToSamples(pcmBuffer: Buffer): Result<Float32Array, Error> {
+  if (pcmBuffer.byteLength === 0 || pcmBuffer.byteLength % 4 !== 0) {
+    return err(
+      degraded(
+        "ffmpeg produced no decodable PCM for local whisper (no audio stream or zero-length clip)",
+        new Error(`pcm bytes=${pcmBuffer.byteLength}`),
+        "dependency",
+      ),
+    );
+  }
+  const samples = new Float32Array(
+    pcmBuffer.buffer,
+    pcmBuffer.byteOffset,
+    pcmBuffer.byteLength / 4,
+  );
+  // Copy out of the file-backed buffer so the typed array survives cleanup.
+  return ok(Float32Array.from(samples));
+}
+
+/**
+ * TEST-ONLY: exercise the WR-04 PCM-boundary guard without shelling real ffmpeg.
+ * Not exported on the package barrel — only imported by
+ * `local-stt-adapter.test.ts` (same invariant as
+ * `__resetLocalWhisperPipelineForTests`).
+ */
+export function __pcmBufferToSamplesForTests(pcmBuffer: Buffer): Result<Float32Array, Error> {
+  return pcmBufferToSamples(pcmBuffer);
+}
+
+/**
  * Default ffmpeg decode: shells ffmpeg to raw 16 kHz mono f32 PCM, then reads it
  * into a Float32Array. Mirrors `audio-converter.ts:extractWaveform` (s16le/8000
  * → f32le/16000). Returns a `degraded(...)` `err` carrying kind `dependency`
@@ -181,13 +222,8 @@ async function defaultDecodeToPcm16kF32(
       { timeout: DECODE_TIMEOUT_MS },
     );
     const pcmBuffer = await fs.readFile(tempPcm);
-    const samples = new Float32Array(
-      pcmBuffer.buffer,
-      pcmBuffer.byteOffset,
-      Math.floor(pcmBuffer.byteLength / 4),
-    );
-    // Copy out of the file-backed buffer so the typed array survives cleanup.
-    return ok(Float32Array.from(samples));
+    // WR-04: validate the decode (empty / non-4-byte-multiple) at the boundary.
+    return pcmBufferToSamples(pcmBuffer);
   } catch (e: unknown) {
     return err(
       degraded(
