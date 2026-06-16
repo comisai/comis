@@ -143,6 +143,7 @@ function makeDeps(overrides?: Partial<MediaHandlerDeps>): MediaHandlerDeps {
         scopeRules: [],
         defaultScopeAction: "allow",
       },
+      transcription: {},
       tts: {
         autoMode: "off" as const,
         tagPattern: "\\[\\[tts\\]\\]",

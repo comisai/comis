@@ -186,7 +186,12 @@ function redactVoiceLogMessage(message: string): string {
   // 196-01 redactErrorMessage precedent) so the line carries no credential
   // CONTEXT at all — `sanitizeLogString` then redacts any surviving token tail.
   const noScheme = hostOnly.replace(/\bAuthorization:/gi, "").replace(/\bBearer\b/gi, "");
-  return sanitizeLogString(noScheme);
+  // Strip the keyless-Ollama sentinel bearer value (`ollama-no-auth`): it is a
+  // platform-wide credential-position sentinel (the keyless-LLM bearer), so it
+  // must never appear in a voice log line at any level (T-196-08). It is too
+  // short for `sanitizeLogString`'s long-token rule, so strip it by exact name.
+  const noSentinel = noScheme.replace(/\bollama-no-auth\b/gi, "");
+  return sanitizeLogString(noSentinel);
 }
 
 /**

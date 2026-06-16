@@ -18,6 +18,11 @@
 
 import { fingerprint, sanitizeLogString } from "@comis/core";
 import type { IncidentSignals } from "@comis/core";
+// OBS-02 (196): the voice fold lives in a sibling (the obs-handlers/* 500-line cap);
+// applyMediaRecord dispatches the media.stt.*/media.tts.* arms to it.
+import { accumulateVoiceRecord, type IncidentVoiceSignal } from "./obs-explain-voice-fold.js";
+// Re-export so obs-explain-signals.ts keeps its single fields-import for the Acc type.
+export type { IncidentVoiceSignal } from "./obs-explain-voice-fold.js";
 
 /** The reconstructed image-generation turn (the non-optional shape of
  *  `IncidentSignals["image"]`). */
@@ -30,10 +35,6 @@ export type IncidentVisionSignal = NonNullable<IncidentSignals["vision"]>;
 /** OBS-04 (192): the reconstructed video-generation turn (the non-optional
  *  shape of `IncidentSignals["videoGenerated"]`). */
 export type IncidentVideoSignal = NonNullable<IncidentSignals["videoGenerated"]>;
-
-/** OBS-02 (196): the reconstructed voice (STT/TTS) turn (the non-optional shape
- *  of `IncidentSignals["voice"]`). */
-export type IncidentVoiceSignal = NonNullable<IncidentSignals["voice"]>;
 
 /** Hard cap on every `errorPreview` — the long body is never carried whole. */
 const MAX_ERROR_PREVIEW = 200;
@@ -374,101 +375,6 @@ export function accumulateVideoRecord(
           delivered: signal?.delivered ?? false,
           ...(signal?.jobId !== undefined ? { jobId: signal.jobId } : {}),
           ...(errorKind !== undefined ? { errorKind } : {}),
-        },
-        outcomeSeq: seq,
-      };
-    }
-    default:
-      return prev;
-  }
-}
-
-/** OBS-02 (196): the seq-aware fold state for the reconstructed voice turn + the
- *  `seq` of the record that last SET `outcome` (the terminal record). Mirrors
- *  `VideoFoldState`/`VisionFoldState`/`ImageFoldState` (IN-04): the fold is driven
- *  by the record stream's `seq`, NOT array order, so only a record with a `seq` ≥
- *  the last outcome-setting record can overwrite `outcome`. */
-export interface VoiceFoldState {
-  signal: IncidentVoiceSignal | undefined;
-  /** The seq at which `outcome` was last set (a terminal completed/failed). */
-  outcomeSeq: number;
-}
-
-/**
- * OBS-02 (196): fold one `media.stt.*` / `media.tts.*` trajectory record into the
- * reconstructed voice turn (the analog of `accumulateVisionRecord`, in this helper
- * to keep `obs-explain-signals.ts` ≤500). Pure: takes the prior fold state + the
- * record's `type`/`data`/`seq` and returns the new state. The voice fold is
- * SIMPLER than video — no `delivered`/`jobId`/background-completion; voice is
- * wholly in-turn like image/vision. The terminal `media.*.completed` /
- * `media.*.failed` record sets `outcome` (+ keyless/model/durationMs/costUsd on
- * success — the cost rides completed, Route a; keyless `0` lands here, OBS-05;
- * errorKind on failure). `media.*.requested` seeds a conservative `outcome:"failed"`
- * block (so a turn aborting before a terminal still surfaces — the `video.requested`
- * seed precedent), carrying `source` if present; it does NOT set `outcomeSeq`.
- * Returns `prev` unchanged for a non-voice type. Content-free reads (asString/
- * asNumber + the boolean reader — ids/labels/numbers/booleans only; never an audio
- * byte, transcript, or a provider message; T-196-09).
- *
- * SEQ-AWARE (IN-04): a terminal completed/failed only overwrites `outcome` when its
- * `seq` is ≥ the seq of the last outcome-setting record — a stale lower-seq record
- * arriving after a higher-seq terminal no longer flips the outcome. The
- * `media.*.requested` seed does not set `outcomeSeq`, so the first real terminal
- * record always wins.
- */
-export function accumulateVoiceRecord(
-  prev: VoiceFoldState,
-  type: string,
-  data: Record<string, unknown>,
-  seq: number,
-): VoiceFoldState {
-  const signal = prev.signal;
-  switch (type) {
-    case "media.stt.requested":
-    case "media.tts.requested": {
-      const provider = asString(data.provider);
-      const source = asString(data.source);
-      const next: IncidentVoiceSignal =
-        signal ?? { provider: provider ?? "", keyless: false, outcome: "failed" };
-      if (provider !== undefined && next.provider.length === 0) next.provider = provider;
-      if (source !== undefined && next.source === undefined) {
-        next.source = source as IncidentVoiceSignal["source"];
-      }
-      return { signal: next, outcomeSeq: prev.outcomeSeq };
-    }
-    case "media.stt.completed":
-    case "media.tts.completed": {
-      // Seq-aware terminal: a stale (lower-seq) record never overwrites a newer outcome.
-      if (signal !== undefined && seq < prev.outcomeSeq) return prev;
-      const model = asString(data.model);
-      const durationMs = asNumber(data.durationMs);
-      const costUsd = asNumber(data.costUsd);
-      const source = asString(data.source);
-      return {
-        signal: {
-          provider: asString(data.provider) ?? signal?.provider ?? "",
-          keyless: typeof data.keyless === "boolean" ? data.keyless : (signal?.keyless ?? false),
-          outcome: "ok",
-          ...(model !== undefined ? { model } : {}),
-          ...(durationMs !== undefined ? { durationMs } : {}),
-          ...(costUsd !== undefined ? { costUsd } : {}), // keyless 0 lands here (OBS-05)
-          ...(source !== undefined ? { source: source as IncidentVoiceSignal["source"] } : {}),
-        },
-        outcomeSeq: seq,
-      };
-    }
-    case "media.stt.failed":
-    case "media.tts.failed": {
-      if (signal !== undefined && seq < prev.outcomeSeq) return prev;
-      const errorKind = asString(data.errorKind);
-      const source = asString(data.source);
-      return {
-        signal: {
-          provider: asString(data.provider) ?? signal?.provider ?? "",
-          keyless: typeof data.keyless === "boolean" ? data.keyless : (signal?.keyless ?? false),
-          outcome: "failed",
-          ...(errorKind !== undefined ? { errorKind } : {}),
-          ...(source !== undefined ? { source: source as IncidentVoiceSignal["source"] } : {}),
         },
         outcomeSeq: seq,
       };

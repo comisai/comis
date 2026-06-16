@@ -544,7 +544,9 @@ export async function setupMedia(deps: {
   // config-derived provider + keyless).
   const voiceSelection: { stt?: ResolvedVoiceSelection; tts?: ResolvedVoiceSelection } = {};
   if (sttSel?.ok) {
-    const skips = deps.audioSelector?.sttSkips() ?? [];
+    // Optional-call `sttSkips` — a selector built before the 196 skip-collection
+    // (or a partial test mock) may not expose it; an absent collector → no onSkip.
+    const skips = deps.audioSelector?.sttSkips?.() ?? [];
     voiceSelection.stt = {
       provider: sttSel.provider,
       keyless: sttSel.keyless,
@@ -553,7 +555,7 @@ export async function setupMedia(deps: {
     };
   }
   if (ttsSel?.ok) {
-    const skips = deps.audioSelector?.ttsSkips() ?? [];
+    const skips = deps.audioSelector?.ttsSkips?.() ?? [];
     voiceSelection.tts = {
       provider: ttsSel.provider,
       keyless: ttsSel.keyless,

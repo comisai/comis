@@ -93,15 +93,11 @@ interface Acc {
   recallCount: number;
   recallZeroHits: number;
   lastRecall?: { lanes: number; finalCount: number; rerankerAvailable: boolean };
-  /** The image/vision/video/voice turns reconstructed from the session's image.*
-   *  (186), media.vision.* (187), video.* (192), and media.stt / media.tts (196)
-   *  records (folded by `applyMediaRecord` → accumulate{Image,Vision,Video,Voice}Record).
-   *  The terminal generated/completed/failed record sets `outcome` (+ cost/model/
-   *  path/errorKind/jobId/keyless); delivered flips a latch. Each is undefined until
-   *  its record class is seen (presence-conditional output). The paired *OutcomeSeq
-   *  is the `seq` at which `outcome` was last set, so each fold is seq-aware (IN-04 —
-   *  a stale lower-seq terminal never overwrites a newer one) rather than relying on
-   *  record-array order. */
+  /** The image (186) / vision (187) / video (192) / voice (196) turns reconstructed
+   *  from the session's image.* / media.vision.* / video.* / media.stt / media.tts
+   *  records (folded by `applyMediaRecord`). Each is undefined until its record class
+   *  is seen. The paired *OutcomeSeq makes each fold seq-aware (IN-04 — a stale
+   *  lower-seq terminal never overwrites a newer one). */
   image?: IncidentImageSignal;
   imageOutcomeSeq: number;
   vision?: IncidentVisionSignal;
@@ -337,16 +333,10 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
       };
       return;
     }
-    // OBS-04 (186) / VIS-04 (187) / OBS-04-video (192) / OBS-02-voice (196): the
-    // image.* + media.vision.* + video.* + media.stt.*/media.tts.* lifecycles. The
-    // handlers/poller direct-emit these content-free records; `applyMediaRecord`
-    // folds each into the reconstructed image / vision / video / voice turn
-    // (seq-aware IN-04 — driven by `rec.seq`, falling back to the running counter)
-    // so `comis explain` surfaces provider/model/jobId/costUsd/keyless/source/
-    // outcome (Route a — cost rides the terminal record, not the executor
-    // sessionEnd). The explicit media.stt.*/media.tts.* arms are LOAD-BEARING:
-    // without them the `default:` below silently DROPS voice records (Pitfall 2 —
-    // a voice turn would reconstruct as NOTHING).
+    // 186/187/192/196: image.* + media.vision.* + video.* + media.stt.*/media.tts.*
+    // lifecycles → applyMediaRecord folds each into its reconstructed turn (seq-aware
+    // IN-04). The explicit media.stt.*/media.tts.* arms are LOAD-BEARING — without
+    // them the default: below silently DROPS voice records (Pitfall 2).
     case "image.requested":
     case "image.generated":
     case "image.delivered":
@@ -399,8 +389,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     recallZeroHits: 0,
     sessionKey: "",
     seq: 0,
-    // IN-04: -1 so the FIRST real terminal record (seq ≥ 0) always sets outcome
-    // (the requested/submitted seeds do not advance it) — image/vision/video/voice.
+    // IN-04: -1 so the FIRST real terminal record always sets outcome (seeds do not).
     imageOutcomeSeq: -1,
     visionOutcomeSeq: -1,
     videoOutcomeSeq: -1,
@@ -501,10 +490,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
       : {}),
     ...(acc.agentId !== undefined ? { agentId: acc.agentId } : {}),
     ...(acc.channel !== undefined ? { channel: acc.channel } : {}),
-    // 186/187/192/196: surface the reconstructed image / vision / video / voice
-    // turns (presence-conditional — each absent when the trajectory had no records
-    // of that class). videoGenerated is the OBS-04 background-completion oracle;
-    // voice is the OBS-02 voice-turn oracle (keyless costUsd:0 visible, OBS-05).
+    // 186/187/192/196: surface the reconstructed image/vision/video/voice turns (presence-conditional; voice = the OBS-02 oracle, keyless costUsd:0 visible).
     ...(acc.image !== undefined ? { image: acc.image } : {}),
     ...(acc.vision !== undefined ? { vision: acc.vision } : {}),
     ...(acc.video !== undefined ? { videoGenerated: acc.video } : {}),
