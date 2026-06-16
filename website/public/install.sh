@@ -3735,6 +3735,19 @@ ExecStart=${COMIS_NODE_BIN} --permission --allow-addons --allow-worker --allow-f
 Restart=on-failure
 RestartSec=5s
 TimeoutStopSec=45
+# KillMode=process: on stop, systemd signals ONLY the main daemon process — NOT the whole
+# cgroup (the default 'control-group'). REQUIRED for durable terminal drives (DUR-01): a
+# durable session runs its child inside a detached 'tmux new-session -d' server that
+# daemonizes (reparented to init) but REMAINS a member of this unit's cgroup — the daemon
+# cannot move it out (ProtectControlGroups=yes + non-root service user + no user bus). With
+# the default control-group kill, every 'systemctl restart' SIGKILLs that tmux server, so a
+# durable session can NEVER survive a restart. With KillMode=process the daemonized tmux
+# server is left alone and survives; non-durable cleanup is preserved because graceful
+# shutdown runs the registry cleanup AND the Terminal Worker self-exits on its stdin EOF
+# when the daemon dies (its bwrap children are --die-with-parent). Trade-off: after a HARD
+# crash other long-lived children (MCP servers, browser) may briefly linger until
+# Restart= respawns the daemon (~5s); the terminal worker + exec sandboxes self-reap.
+KillMode=process
 # The daemon self-restarts by trapping SIGUSR2, shutting down cleanly, and
 # exiting with code 42 (see packages/daemon/src/daemon.ts). Two settings work
 # together here:
