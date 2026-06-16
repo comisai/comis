@@ -304,12 +304,10 @@ async function driveWorkerReattach(
   descriptor: SessionDescriptor,
   reattachWorker: ReattachWorkerFn,
 ): Promise<void> {
-  let ok = false;
-  try {
-    ({ ok } = await reattachWorker(descriptor.sessionId, descriptor.cols, descriptor.rows));
-  } catch {
-    ok = false; // a faulting round-trip → the SAFE direction (lost), never a zombie running.
-  }
+  // A faulting round-trip → the SAFE direction (not-ok ⇒ lost), never a zombie running.
+  const ok = await reattachWorker(descriptor.sessionId, descriptor.cols, descriptor.rows)
+    .then((r) => r.ok)
+    .catch(() => false);
   if (ok) {
     deps.onReattached?.({ sessionId: descriptor.sessionId, agentId: descriptor.owner.agentId });
     return;
