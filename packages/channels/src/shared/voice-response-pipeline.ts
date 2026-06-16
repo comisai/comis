@@ -98,6 +98,18 @@ export interface VoiceResponsePipelineDeps {
     maxTextLength: number;
     outputFormats?: Record<string, string>;
     providerFormatKey?: "openai" | "elevenlabs" | "edge";
+    /**
+     * OBS-01 voice-identity fields (Phase 196) for the §2.7 completion INFO line.
+     * Threaded from the wiring point (the resolved TTS provider). `keyless` true
+     * for the keyless `edge`/`local` defaults; `costUsd` is logged as `0` when
+     * keyless (so "free" is visible) and OMITTED for a keyed provider (no
+     * per-call cost source today — FLAG 4). The selection `source` rung is the
+     * Phase-193 resolver-only field the pipeline tier does not receive — the
+     * daemon RPC path (Plan 03) owns `source` on the trajectory.
+     */
+    provider?: string;
+    keyless?: boolean;
+    model?: string;
   };
   /** Structured logger. */
   readonly logger: {

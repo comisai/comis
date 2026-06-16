@@ -70,6 +70,11 @@ function createMockDeps(
       maxTextLength: 4096,
       outputFormats: undefined,
       providerFormatKey: "openai",
+      // OBS-01 voice-identity fields (Phase 196) — the resolved STT/TTS provider
+      // identity the wiring point threads into the pipeline for the §2.7 INFO line.
+      provider: "edge",
+      keyless: true,
+      model: "edge-tts",
     },
     logger: {
       debug: vi.fn(),
@@ -459,5 +464,66 @@ describe("executeVoiceResponse", () => {
       }),
       undefined,
     );
+  });
+
+  // -------------------------------------------------------------------
+  // OBS-01 §2.7 — extended voice-out completion INFO (Phase 196)
+  // -------------------------------------------------------------------
+  it("logs the §17 voice fields (provider/keyless/model/costUsd) on the 'Voice response sent' INFO", async () => {
+    const deps = createMockDeps(); // ttsConfig: provider:edge, keyless:true, model:edge-tts
+    const ctx = createMockCtx();
+
+    const result = await executeVoiceResponse(deps, ctx);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.voiceSent).toBe(true);
+
+    expect(deps.logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        // existing fields preserved
+        channelType: "telegram",
+        durationMs: expect.any(Number),
+        durationSecs: 5,
+        // OBS-01 extension
+        provider: "edge",
+        keyless: true,
+        model: "edge-tts",
+        costUsd: 0, // keyless records 0 EXPLICITLY (FLAG 4 — "free" is visible, not absent)
+      }),
+      "Voice response sent",
+    );
+  });
+
+  it("omits costUsd on a keyed provider (no per-call cost source; FLAG 4)", async () => {
+    const deps = createMockDeps({
+      ttsConfig: {
+        autoMode: "inbound",
+        tagPattern: "\\[\\[tts(?::.*?)?\\]\\]",
+        voice: "alloy",
+        maxTextLength: 4096,
+        providerFormatKey: "openai",
+        provider: "openai",
+        keyless: false,
+        model: "gpt-4o-mini-tts",
+      },
+    });
+    const ctx = createMockCtx();
+
+    const result = await executeVoiceResponse(deps, ctx);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const infoCall = (deps.logger.info as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c) => c[1] === "Voice response sent",
+    );
+    expect(infoCall).toBeDefined();
+    const infoObj = infoCall![0] as Record<string, unknown>;
+    expect(infoObj.provider).toBe("openai");
+    expect(infoObj.keyless).toBe(false);
+    expect(infoObj.model).toBe("gpt-4o-mini-tts");
+    // keyed path carries no per-call cost source today — omit, don't log undefined.
+    expect("costUsd" in infoObj).toBe(false);
   });
 });
