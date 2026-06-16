@@ -59,6 +59,17 @@ export interface ObserveOptions {
    * content. Defaults to 0 when the worker omits it.
    */
   noProgressMs?: number;
+  /**
+   * LIVE-04 (#4): SUPPRESS the fd3 write for this observe while still ADVANCING `lastState`
+   * (so the transition is recorded and never re-fires on a later settle). The worker sets it
+   * when the settle was the agent's explicit foreground `terminal_session_wait`: that wait's
+   * REPLY is the agent's attention signal (it unblocks and drives), so a fd3 woken turn would
+   * be REDUNDANT and RACE it (at launch claude's welcome screen settles DURING the wait → an
+   * awaiting-input transition → a spurious "waiting for input" before the agent sends its first
+   * keystroke — real-VPS 2026-06-16). A backgrounded drive is attended by the daemon backstop,
+   * not this fd3, so suppressing the wait-settle emit never strands it.
+   */
+  suppressEmit?: boolean;
 }
 
 /** The emitter's surface — exactly what the worker (124-05 Task 2) drives. */

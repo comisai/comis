@@ -280,4 +280,24 @@ describe("CLASS-02 — frameForState carries confidence (+ stuck reason), conten
       expect(payload).not.toHaveProperty("cursor");
     }
   });
+
+  it("LIVE-04 (#4): a suppressed observe (a foreground `wait` settle) writes NO fd3 frame but still advances lastState", () => {
+    // Real-VPS 2026-06-16: at launch claude's welcome screen settled DURING the agent's foreground
+    // terminal_session_wait → an awaiting-input transition → a redundant fd3 woken turn escalated
+    // "waiting for input" BEFORE the agent (which the wait reply unblocks) sent the build prompt.
+    const cap = makeFd3Capture();
+    const emitter = createAttentionEmitter({ sessionId: "s1", writeFd3: cap.writeFd3 });
+    emitter.observe(classification("awaiting-input", "settled_cursor_parked"), { suppressEmit: true });
+    expect(cap.frames(), "a wait-settle observe must write NO fd3 frame (the wait reply is the agent's signal)").toHaveLength(0);
+    // The transition was RECORDED (lastState advanced) → a later observe at the SAME state is a no-op.
+    emitter.observe(classification("awaiting-input", "settled_cursor_parked"));
+    expect(cap.frames(), "the suppressed transition advanced lastState → it does not re-fire at the same state").toHaveLength(0);
+  });
+
+  it("LIVE-04 (#4): a NON-suppressed observe still emits — the act-then-return follow-up (send/create settle) is unchanged", () => {
+    const cap = makeFd3Capture();
+    const emitter = createAttentionEmitter({ sessionId: "s1", writeFd3: cap.writeFd3 });
+    emitter.observe(classification("awaiting-input", "settled_cursor_parked")); // not a wait → emits
+    expect(cap.frames(), "a non-suppressed awaiting-input still wakes the agent").toHaveLength(1);
+  });
 });
