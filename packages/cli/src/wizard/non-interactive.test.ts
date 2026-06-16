@@ -340,12 +340,16 @@ describe("validateNonInteractiveOptions", () => {
   });
 
   it("accepts each valid --stt-provider and --tts-provider value", () => {
-    for (const id of ["openai", "groq", "deepgram"]) {
+    // WIZ-04 (updated-not-frozen, I9): the allow-lists GREW keyless-first when
+    // Plan 01 reshaped SUPPORTED_TRANSCRIPTION_PROVIDERS / SUPPORTED_TTS_PROVIDERS.
+    // The validator derives `known` from those constants, so auto/local/edge are
+    // now accepted without a key flag.
+    for (const id of ["auto", "local", "openai", "groq", "deepgram"]) {
       expect(() =>
         validateNonInteractiveOptions(validOpts({ sttProvider: id })),
       ).not.toThrow();
     }
-    for (const id of ["openai", "elevenlabs", "edge"]) {
+    for (const id of ["edge", "openai", "elevenlabs", "local"]) {
       expect(() =>
         validateNonInteractiveOptions(validOpts({ ttsProvider: id })),
       ).not.toThrow();
@@ -562,6 +566,39 @@ describe("buildNonInteractiveState", () => {
     );
     expect(state.transcriptionProvider).toEqual({ provider: "openai" });
     expect(state.ttsProvider).toEqual({ provider: "openai" });
+  });
+
+  it("records a keyless STT provider for --stt-provider auto with an ollama main and no key (WIZ-03)", () => {
+    // Pitfall 3: the STT branch must take the explicit `!requiredEnvKey`
+    // keyless short-circuit (mirroring TTS/image), NOT the fragile reuse-main
+    // fall-through that happens to work only because ollama also has no env key.
+    const state = buildNonInteractiveState(
+      validOpts({ provider: "ollama", apiKey: undefined, sttProvider: "auto" }),
+    );
+    expect(state.transcriptionProvider).toEqual({ provider: "auto" });
+    expect(state.transcriptionProvider).not.toHaveProperty("apiKey");
+  });
+
+  it("records a keyless STT provider for --stt-provider local with no key (WIZ-03)", () => {
+    const state = buildNonInteractiveState(
+      validOpts({ provider: "ollama", apiKey: undefined, sttProvider: "local" }),
+    );
+    expect(state.transcriptionProvider).toEqual({ provider: "local" });
+    expect(state.transcriptionProvider).not.toHaveProperty("apiKey");
+  });
+
+  it("leaves STT and TTS unset when the audio flags are omitted so the daemon applies keyless defaults (WIZ-03 never-strand)", () => {
+    // The codex-safe mechanism: with NO --stt-provider/--tts-provider, the state
+    // omits both sections, so 10-write-config writes nothing and the daemon's
+    // Phase-193 schema default (auto/edge) applies — never a stranded openai.
+    // A keyless ollama main stands in for the OAuth-only case (openai-codex
+    // itself still hard-throws per FLAG 3 / OQ1=A; the keyless-default path is
+    // what protects an OAuth-only user from a phantom OPENAI_API_KEY).
+    const state = buildNonInteractiveState(
+      validOpts({ provider: "ollama", apiKey: undefined }),
+    );
+    expect(state.transcriptionProvider).toBeUndefined();
+    expect(state.ttsProvider).toBeUndefined();
   });
 
   it("records auto video provider without a credential", () => {
