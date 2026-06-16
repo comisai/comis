@@ -52,6 +52,7 @@ import type { ReadOptions } from "./terminal-render.js";
 import { createSessionCaps, type SessionCaps, type SessionLimits } from "./terminal-caps.js";
 import type { EvictReason } from "./terminal-reaper.js";
 import type { AllowEntryLike, TerminalScope } from "./allowlist-matcher.js";
+import { runWithContext } from "@comis/core";
 
 /** The least-privilege default scope (mirrors the config schema defaults). */
 const DEFAULT_SCOPE: TerminalScope = {
@@ -996,6 +997,38 @@ describe("terminal-tools — DRIVE-02 the wait tool emits terminal:drive_promote
     const promoted = drivePromotedEvents(bus);
     expect(promoted).toHaveLength(1);
     expect(promoted[0]!.payload).toMatchObject({ sessionId: "s1", agentId: "agent-1", reason: "producing" });
+  });
+
+  it("promotion agentId is the REAL agentId (deps.agentId), NOT ctx.userId — DRIVE-01/I5 journal + owner routing (RED on pre-patch)", async () => {
+    // Regression for the 2026-06-16 live VPS finding: a chat-API drive
+    // (sessionKey "default:openai-api:openai") promoted with agentId="openai-api" —
+    // the USERID, not the agent "default". The daemon keys the per-agent durable
+    // journal dir (`terminal-drive/<agentId>/journals/`, DUR-02) AND the detached
+    // drive-owner's inherited allow-entry (DRIVE-01/I5) on the REAL agentId. The
+    // owner-KEY is userId-based for registry owner-scoping ONLY; the content-free
+    // terminal:drive_promoted event must carry deps.agentId, never ctx.userId.
+    const registry = makeFakeRegistry({ waitImpl: async () => PRODUCING_TIMEOUT });
+    const bus = makeCapturingBus();
+    const tool = createTerminalSessionWaitTool(baseDeps(registry, { eventBus: bus, driveMode: "auto" }));
+
+    // A live RequestContext whose userId ("openai-api") DIFFERS from the agent ("agent-1").
+    await runWithContext(
+      {
+        tenantId: "default",
+        userId: "openai-api",
+        sessionKey: "default:openai-api:openai",
+        traceId: "00000000-0000-4000-8000-000000000000",
+        startedAt: 1,
+        trustLevel: "admin",
+      },
+      () => tool.execute("call-1", { sessionId: "s1", timeoutMs: 200 }),
+    );
+
+    const promoted = drivePromotedEvents(bus);
+    expect(promoted).toHaveLength(1);
+    const agentId = (promoted[0]!.payload as TerminalDrivePromotedEvent).agentId;
+    expect(agentId).toBe("agent-1"); // the REAL agent — routes journal + drive-owner allow-entry
+    expect(agentId).not.toBe("openai-api"); // never the userId/owner-key
   });
 
   it("auto + {isComplete:true} → NO emit (I1 short-drive byte-identical)", async () => {
