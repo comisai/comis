@@ -69,6 +69,7 @@ import type {
   SessionState,
   TmuxBackendLike,
   WorkerBackend,
+  WorkerFsPort,
   WorkerLogger,
 } from "./terminal-worker-types.js";
 import {
@@ -100,19 +101,11 @@ import {
 // ---------------------------------------------------------------------------
 //
 // WorkerLogger + FakePtyLike + PtyModuleLike + PipeChildLike + WorkerBackend +
-// SessionState moved to the neutral leaf terminal-worker-types.ts (124-01) to break
-// the backend-attach import cycle (the entry value-imports attachBackend, backend-attach
-// needed these types back). Type-imported above; re-exported below so the public surface
-// (TerminalWorkerDeps + the worker tests' structural-type imports) is unchanged.
-
-/** The durable-fs ops the worker uses — injected so the fsync-thrower test runs on macOS. */
-export interface WorkerFsPort {
-  writeFileSync(path: string, data: string): void;
-  renameSync(from: string, to: string): void;
-  openSync(path: string, flags: string): number;
-  fsyncSync(fd: number): void;
-  closeSync(fd: number): void;
-}
+// SessionState + WorkerFsPort moved to the neutral leaf terminal-worker-types.ts (124-01;
+// WorkerFsPort in 165-REVIEW) to break the import cycles (the entry value-imports
+// attachBackend + terminal-worker-defaults, both of which need these types back).
+// Type-imported above; re-exported below so the public surface (TerminalWorkerDeps + the
+// worker tests' structural-type imports) is unchanged.
 
 /** Worker dependencies — all injectable for unit tests; production defaults provided. */
 // @optional-field-count: 15 optional fields — TerminalWorkerDeps is the worker's
@@ -199,6 +192,7 @@ export type {
   SessionState,
   TmuxBackendLike,
   WorkerBackend,
+  WorkerFsPort,
   WorkerLogger,
 } from "./terminal-worker-types.js";
 

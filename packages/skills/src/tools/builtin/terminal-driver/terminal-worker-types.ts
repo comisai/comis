@@ -39,6 +39,15 @@ export interface WorkerLogger {
   error(obj: Record<string, unknown>, msg: string): void;
 }
 
+/** The durable-fs ops the worker uses — injected so the fsync-thrower test runs on macOS. Moved to this neutral leaf (165-REVIEW) so the worker-defaults sibling can type the default fs port without an import cycle back through the entry. */
+export interface WorkerFsPort {
+  writeFileSync(path: string, data: string): void;
+  renameSync(from: string, to: string): void;
+  openSync(path: string, flags: string): number;
+  fsyncSync(fd: number): void;
+  closeSync(fd: number): void;
+}
+
 /** Structural node-pty session handle (subset of `IPty`): `onData`→ring, `onExit`→markExited (payload ignored — only the exit signal matters), write/resize/kill forwarded. */
 export interface FakePtyLike {
   pid: number;

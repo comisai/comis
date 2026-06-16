@@ -30,8 +30,7 @@ import {
   closeSync as fsCloseSync,
 } from "node:fs";
 
-import type { PipeChildLike, PtyModuleLike } from "./terminal-worker-types.js";
-import type { WorkerFsPort } from "./terminal-worker-entry.js";
+import type { PipeChildLike, PtyModuleLike, WorkerFsPort } from "./terminal-worker-types.js";
 
 /**
  * The per-session emulator scrollback depth (retained rows above the viewport).

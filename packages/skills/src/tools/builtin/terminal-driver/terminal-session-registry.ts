@@ -435,14 +435,12 @@ export function createTerminalSessionRegistry(
   }
 
   /**
-   * Send a request frame to the worker and await its correlated reply, BOUNDED by
-   * a reply timeout. A wedged-but-alive worker (node-pty read loop stuck, driven
-   * CLI blocking the frame loop, a lost reply with no stream close) emits no
-   * `close`/`error` — without the timeout the `await` would hang the whole turn +
-   * leak the resolver. On timeout we delete the pending key and resolve a typed
-   * `ok:false` reply so `read` degrades to the not-alive view instead of hanging.
-   * The timer is the sanctioned `setTimer` indirection (no raw global), `.unref()`d
-   * in production.
+   * Send a request frame to the worker and await its correlated reply, BOUNDED by a reply
+   * timeout. A wedged-but-alive worker (node-pty read loop stuck, driven CLI blocking the frame
+   * loop, a lost reply with no stream close) emits no `close`/`error` — without the timeout the
+   * `await` would hang the whole turn + leak the resolver. On timeout we delete the pending key
+   * and resolve a typed `ok:false` reply so `read` degrades to the not-alive view instead of
+   * hanging. The timer is the sanctioned `setTimer` indirection (no raw global), `.unref()`d in production.
    */
   function request(
     sessionId: string,
