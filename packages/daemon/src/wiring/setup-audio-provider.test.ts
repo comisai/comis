@@ -14,8 +14,13 @@
  * @module
  */
 import { describe, it, expect, vi } from "vitest";
-import type { SecretManager } from "@comis/core";
-import { createAudioProviderSelector, AUDIO_ENV_KEY } from "./setup-audio-provider.js";
+import type { AppContainer, SecretManager } from "@comis/core";
+import type { detectLocalSttEngine } from "@comis/skills";
+import {
+  buildAudioResolverDeps,
+  createAudioProviderSelector,
+  AUDIO_ENV_KEY,
+} from "./setup-audio-provider.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 
 /** A SecretManager exposing only the supplied keys (the audioKeyAvailable seam). */
@@ -281,5 +286,149 @@ describe("createAudioProviderSelector — default closure surfaces an AUDIO_ENV_
       ([payload]) => (payload as { step?: string })?.step === "audio_env_key_missing",
     );
     expect(breadcrumb).toBeUndefined();
+  });
+});
+
+// =============================================================================
+// Phase 194 (LOCAL-02 / LOCAL-03): buildAudioResolverDeps runs the one-shot
+// detectLocalSttEngine boot probe and threads its captured boolean as the
+// SYNCHRONOUS localEngineAvailable predicate — replacing the Phase-193
+// hardcoded () => false. The probe runs ONCE at boot (mirror detectFfmpeg),
+// logs availability exactly once at INFO (step: stt_local_probe), and the
+// resolver predicate is a captured boolean (Pitfall 4: no per-resolution I/O,
+// no boot-time model download). When available → an auto/local STT with no main
+// key resolves to the `local` rung; when unavailable → honest-degrade (the
+// Phase-193 fallthrough, no regression). A reachable local.baseUrl makes the
+// probe true WITHOUT the in-process engine (mode "baseUrl").
+// =============================================================================
+
+/**
+ * A minimal AppContainer for buildAudioResolverDeps: only the fields the builder
+ * reads (integrations.media.transcription/.tts, secretManager, agents/models for
+ * resolveAgentMainProvider). `agents.default.provider` is taken literally by
+ * resolveAgentModel when it is not "default", so the main resolves deterministically
+ * to openai-codex with no pi-ai catalog dependency.
+ */
+function probeContainer(opts: {
+  sttProvider?: string;
+  baseUrl?: string;
+  keys?: Record<string, string>;
+  mainProvider?: string;
+}): AppContainer {
+  const transcription = {
+    provider: opts.sttProvider ?? "auto",
+    maxFileSizeMb: 25,
+    timeoutMs: 60_000,
+    autoTranscribe: true,
+    preflight: true,
+    fallbackProviders: [] as string[],
+    local: { model: "base", baseUrl: opts.baseUrl },
+  };
+  const tts = { provider: "edge", fallbackProviders: [] as string[] };
+  const keys = opts.keys ?? {};
+  return {
+    config: {
+      integrations: { media: { transcription, tts } },
+      agents: { default: { model: "gpt-5-codex", provider: opts.mainProvider ?? "openai-codex" } },
+      models: { defaultModel: "", defaultProvider: "" },
+    },
+    secretManager: mockSecretManager(keys),
+  } as unknown as AppContainer;
+}
+
+describe("buildAudioResolverDeps — the real localEngineAvailable boot probe (Phase 194)", () => {
+  it("runs the in-process probe and resolves an auto/no-key STT to the local rung when the engine is available (LOCAL-02)", async () => {
+    const detectEngine = vi.fn(
+      async () => ({ available: true, mode: "in-process" }) as const,
+    ) as unknown as typeof detectLocalSttEngine;
+
+    const selector = await buildAudioResolverDeps(
+      probeContainer({ sttProvider: "auto", mainProvider: "openai-codex", keys: {} }),
+      "default",
+      createMockLogger() as never,
+      detectEngine,
+    );
+
+    const sel = selector.resolveStt();
+    // Engine available → keyless-local rung wins even though the codex main has
+    // no audio key (the Phase-193 fallthrough is now activated).
+    expect(sel).toMatchObject({ ok: true, provider: "local", keyless: true, source: "keyless-local" });
+    expect(detectEngine).toHaveBeenCalledTimes(1);
+  });
+
+  it("honest-degrades an auto/no-key STT to unavailable when the probe says unavailable (no Phase-193 regression)", async () => {
+    const detectEngine = vi.fn(
+      async () => ({ available: false, mode: "none" }) as const,
+    ) as unknown as typeof detectLocalSttEngine;
+
+    const selector = await buildAudioResolverDeps(
+      probeContainer({ sttProvider: "auto", mainProvider: "openai-codex", keys: {} }),
+      "default",
+      createMockLogger() as never,
+      detectEngine,
+    );
+
+    const sel = selector.resolveStt();
+    expect(sel.ok).toBe(false);
+    if (!sel.ok) expect(sel.errorKind).toBe("no_keyless_engine");
+  });
+
+  it("makes localEngineAvailable true via a reachable local.baseUrl WITHOUT the in-process engine (LOCAL-03)", async () => {
+    const baseUrl = "http://127.0.0.1:9000/v1";
+    const detectEngine = vi.fn(
+      async () => ({ available: true, mode: "baseUrl" }) as const,
+    ) as unknown as typeof detectLocalSttEngine;
+
+    const selector = await buildAudioResolverDeps(
+      probeContainer({ sttProvider: "auto", mainProvider: "openai-codex", baseUrl, keys: {} }),
+      "default",
+      createMockLogger() as never,
+      detectEngine,
+    );
+
+    const sel = selector.resolveStt();
+    expect(sel).toMatchObject({ ok: true, provider: "local", keyless: true });
+    // The probe was consulted with the configured baseUrl (LOCAL-03 seam).
+    expect((detectEngine as unknown as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]).toMatchObject({
+      baseUrl,
+    });
+  });
+
+  it("logs availability exactly once at INFO with step stt_local_probe and the boolean (LOCAL-02)", async () => {
+    const logger = createMockLogger();
+    const detectEngine = vi.fn(
+      async () => ({ available: true, mode: "in-process" }) as const,
+    ) as unknown as typeof detectLocalSttEngine;
+
+    await buildAudioResolverDeps(
+      probeContainer({ sttProvider: "auto", mainProvider: "openai-codex", keys: {} }),
+      "default",
+      logger as never,
+      detectEngine,
+    );
+
+    const probeLogs = (logger.info as ReturnType<typeof vi.fn>).mock.calls.filter(
+      ([payload]) => (payload as { step?: string })?.step === "stt_local_probe",
+    );
+    expect(probeLogs).toHaveLength(1);
+    expect(probeLogs[0]![0]).toMatchObject({ step: "stt_local_probe", available: true });
+  });
+
+  it("captures the probe boolean at boot — resolveStt() twice does NOT re-run detectEngine (Pitfall 4: synchronous predicate)", async () => {
+    const detectEngine = vi.fn(
+      async () => ({ available: true, mode: "in-process" }) as const,
+    ) as unknown as typeof detectLocalSttEngine;
+
+    const selector = await buildAudioResolverDeps(
+      probeContainer({ sttProvider: "auto", mainProvider: "openai-codex", keys: {} }),
+      "default",
+      createMockLogger() as never,
+      detectEngine,
+    );
+
+    selector.resolveStt();
+    selector.resolveStt();
+    // The probe ran ONCE at boot; the predicate is a captured boolean, not per-call I/O.
+    expect(detectEngine).toHaveBeenCalledTimes(1);
   });
 });
