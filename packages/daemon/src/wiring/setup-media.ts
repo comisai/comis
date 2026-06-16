@@ -8,8 +8,9 @@
  * @module
  */
 
+import * as os from "node:os";
 import type { AppContainer, TTSPort, TranscriptionPort, VisionProvider, FileExtractionPort, WrapExternalContentOptions, SecretManager, ImageGenerationConfig, TranscriptionConfig, TtsConfig } from "@comis/core";
-import { STT_ERR_TO_LOG } from "@comis/core";
+import { STT_ERR_TO_LOG, safePath } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { createAudioProviderSelector } from "./setup-audio-provider.js";
 import {
@@ -93,12 +94,18 @@ export interface MediaResult {
  * Return a lazy getter that re-creates the STT provider on each call,
  * reading the current secretManager state at invocation time.
  * Satisfies the read-on-use invariant.
+ *
+ * `dataDir` is a stable boot value (`container.config.dataDir`) captured once and
+ * threaded into the in-process `local` adapter's model-cache root on every
+ * re-creation — the per-call wrapper rebuilds the adapter but the cache scope is
+ * fixed at boot (Plan 02 LOCAL-01).
  */
 export function createSTTProviderFactory(
   config: TranscriptionConfig,
   secretManager: SecretManager,
+  dataDir: string,
 ): () => ReturnType<typeof createSTTProvider> {
-  return () => createSTTProvider(config, secretManager);
+  return () => createSTTProvider(config, secretManager, dataDir);
 }
 
 /**
@@ -265,6 +272,12 @@ export async function setupMedia(deps: {
   // `local` resolves only when localEngineAvailable() is true (false in 193, the
   // Phase 194 seam), so the factory never sees `local` yet; `edge` is TTS-only.
   if (!sttBlocked) {
+    // Plan 02 (LOCAL-01): the scoped model-cache root for the in-process `local`
+    // whisper adapter (`<dataDir>/models/whisper/`). Resolved ONCE here from
+    // `container.config.dataDir` (NEVER process.env) so all STT construct/factory
+    // sites below thread the identical value in lockstep; the `safePath(homedir,
+    // ".comis")` fallback mirrors daemon.ts when the config field is unset.
+    const dataDir = container.config.dataDir ?? safePath(os.homedir(), ".comis");
     // WR-01/WR-02: thread the RESOLVED provider (+ its model) into construction
     // so the factory sees the provider the resolver actually approved (e.g. a
     // CRED-01 follow-main `auto`→openai), NOT the raw config `provider:"auto"`
@@ -282,18 +295,18 @@ export async function setupMedia(deps: {
           ...(sttSel.model ? { model: sttSel.model } : {}),
         }
       : mediaConfig.transcription;
-    const sttResult = createSTTProvider(sttConfig, container.secretManager);
+    const sttResult = createSTTProvider(sttConfig, container.secretManager, dataDir);
     if (sttResult.ok) {
       // Build the lazy factory for the primary provider
-      const sttFactory = createSTTProviderFactory(sttConfig, container.secretManager);
+      const sttFactory = createSTTProviderFactory(sttConfig, container.secretManager, dataDir);
 
       // Build fallback factories if configured
       const fallbackFactories: Array<() => ReturnType<typeof createSTTProvider>> = [];
       for (const fbProvider of mediaConfig.transcription.fallbackProviders) {
         const fbConfig = { ...mediaConfig.transcription, provider: fbProvider };
-        const fbResult = createSTTProvider(fbConfig, container.secretManager);
+        const fbResult = createSTTProvider(fbConfig, container.secretManager, dataDir);
         if (fbResult.ok) {
-          fallbackFactories.push(createSTTProviderFactory(fbConfig, container.secretManager));
+          fallbackFactories.push(createSTTProviderFactory(fbConfig, container.secretManager, dataDir));
         }
       }
       const hasFallback = fallbackFactories.length > 0;
