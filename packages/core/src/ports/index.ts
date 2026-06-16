@@ -62,6 +62,13 @@ export type {
   UsefulnessSignal,
 } from "./memory-usefulness-store.js";
 export type {
+  OutcomeSignalPort,
+  LearningScope,
+  OutcomeObservation,
+  ResolvedOutcome,
+  OutcomePruneResult,
+} from "./outcome-signal-port.js";
+export type {
   MemoryConsolidationStore,
   ConsolidationCandidate,
   ConsolidationPlan,

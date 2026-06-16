@@ -65,8 +65,13 @@ describe("OutcomeSignalPort — outcome-signal contract (observe/resolve/prune)"
     expect(portSrc, "no @comis/memory import in core port").not.toMatch(
       /^\s*import\b[^\n]*@comis\/memory/m,
     );
-    // There is NO MemoryError type — the port returns Result<T, Error>.
-    expect(portSrc, "no MemoryError — Result<T, Error> only").not.toMatch(/\bMemoryError\b/);
+    // There is NO MemoryError type — the port returns Result<T, Error>. Assert
+    // it is never IMPORTED nor USED as the Result error channel (prose mentions
+    // of the word in doc comments are fine — the contract is about type usage).
+    expect(portSrc, "no MemoryError import").not.toMatch(/import[^\n]*\bMemoryError\b/);
+    expect(portSrc, "Result error channel is Error, never MemoryError").not.toMatch(
+      /Result<[^>]*,\s*MemoryError\s*>/,
+    );
   });
 
   it("accepts a structurally-valid implementation exposing observe/resolve/prune and exercises them", async () => {
