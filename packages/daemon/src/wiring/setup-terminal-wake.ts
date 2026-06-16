@@ -127,6 +127,8 @@ export interface SetupTerminalWakeDeps {
    * Default 3_600_000.
    */
   heartbeatNotifyMs?: number;
+  /** ENDURE-01 (165-07): the operator per-drive spend ceiling (`drive.maxCostUsd`), `null` = uncapped (default, I1). FORWARDED to the woken-turn driver below; the lone consumer STOPS+escalates a breach (see {@link WokenTurnDriverDeps.maxCostUsd}). */
+  maxCostUsd?: number | null;
   // LO-03 (165-REVIEW): NO refreshLastActivity dep — checkLiveness's `registry.status`
   // round-trip already stamps the handle's lastActivity (the registry status side effect), so a
   // busy verdict's liveness check IS the ENDURE-01 idle-reaper unify (I9). A separate refresh
@@ -297,6 +299,7 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
     // session is promoted — the driver falls back to the turn's own start then (a sane ≥0
     // elapsedMs), so an unpromoted/pre-stamp turn never throws.
     driveStartMs: (sessionId: string): number | undefined => driveStartedAtMs.get(sessionId),
+    maxCostUsd: deps.maxCostUsd, // ENDURE-01 (165-07): forward the operator spend ceiling to checkSpendCeiling.
     nowMs,
     logger: deps.logger,
   });
