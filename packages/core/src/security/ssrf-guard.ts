@@ -7,6 +7,13 @@
  *
  * Every web-facing tool must pass through validateUrl() before fetch.
  *
+ * `validateLocalServerUrl` (SEC-02) is the co-located INVERSE: it guards an
+ * operator-configured LOCAL server URL (`transcription.local.baseUrl`) by
+ * ALLOWING loopback + an explicit allowlist and DENYING public/arbitrary
+ * egress — the opposite allow/deny of `validateUrl`, sharing the same
+ * parse → protocol → DNS-resolve → ipaddr-classify flow and the
+ * cloud-metadata deny.
+ *
  * @module
  */
 
@@ -131,6 +138,91 @@ export async function validateUrl(
       if (BLOCKED_RANGES.includes(range)) {
         throw new Error(
           `Blocked: resolved IP ${address} is in ${range} range`,
+        );
+      }
+
+      return { hostname, ip: address, url: parsed };
+    })(),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// validateLocalServerUrl (SEC-02) — the INVERSE of validateUrl
+// ---------------------------------------------------------------------------
+
+/**
+ * Validate an operator-configured LOCAL server URL (e.g.
+ * `transcription.local.baseUrl` for a keyless local whisper server) for SSRF
+ * safety, with the INVERSE policy of {@link validateUrl}.
+ *
+ * `validateUrl` is the guard for UNTRUSTED public fetches (reference_image,
+ * web-fetch): it BLOCKS loopback/private as SSRF targets. That policy is wrong
+ * for a local server URL — the legitimate target IS loopback (a local whisper
+ * server on 127.0.0.1). So this function FLIPS the verdict:
+ *
+ * - **ALLOW** loopback (127.0.0.1 / ::1 / a hostname resolving to loopback) —
+ *   the legitimate local server.
+ * - **ALLOW** a host in the explicit `allowedHosts` allowlist (operator opt-in;
+ *   default `[]` → loopback-only).
+ * - **DENY** every other resolved range — private, public, link-local, etc.
+ *   (the SEC-02 core inversion: no arbitrary egress through a local-server knob).
+ * - **DENY** the `CLOUD_METADATA_IPS` regardless (defense-in-depth — a
+ *   `local.baseUrl` must NEVER reach 169.254.169.254 even if mis-resolved).
+ *
+ * It reuses `validateUrl`'s parse → protocol-check → DNS-resolve → ipaddr-
+ * classify flow verbatim through DNS resolution; only the final verdict differs.
+ * Pure validation — it does NOT fetch. Returns `Result`, never throws.
+ *
+ * @param urlString - The local server URL to validate
+ * @param allowedHosts - Hostnames explicitly permitted beyond loopback (default `[]`)
+ * @returns ok with hostname, resolved IP, and parsed URL on success; err on a
+ *   non-loopback/unallowed host, a cloud-metadata IP, a bad protocol, or a
+ *   parse/DNS failure
+ */
+export async function validateLocalServerUrl(
+  urlString: string,
+  allowedHosts: ReadonlyArray<string> = [],
+): Promise<Result<ValidatedUrl, Error>> {
+  return fromPromise(
+    (async (): Promise<ValidatedUrl> => {
+      // 1. Parse URL (identical to validateUrl).
+      let parsed: URL;
+      try {
+        parsed = new URL(urlString);
+      } catch {
+        throw new Error(`Invalid URL: ${urlString}`);
+      }
+
+      // 2. Protocol check (identical — only http/https).
+      if (!ALLOWED_PROTOCOLS.has(parsed.protocol)) {
+        throw new Error(
+          `Blocked protocol: ${parsed.protocol} — only http and https are allowed`,
+        );
+      }
+
+      // 3. DNS resolution (identical — strip IPv6 brackets for the lookup).
+      const hostname = parsed.hostname;
+      const lookupHost = hostname.startsWith("[") && hostname.endsWith("]")
+        ? hostname.slice(1, -1)
+        : hostname;
+      const { address } = await lookup(lookupHost);
+
+      // 4. Cloud metadata IP blocklist — KEPT as defense-in-depth (a local
+      //    server URL must never reach a cloud metadata endpoint).
+      if (CLOUD_METADATA_IPS.includes(address)) {
+        throw new Error(
+          `Blocked: resolved IP ${address} is a cloud metadata service address`,
+        );
+      }
+
+      // 5. INVERTED verdict: ALLOW loopback or an explicitly-allowed host;
+      //    DENY everything else (private/public/etc.).
+      const ip = ipaddr.parse(address);
+      const isLoopback = ip.range() === "loopback";
+      const isExplicit = allowedHosts.includes(parsed.hostname);
+      if (!isLoopback && !isExplicit) {
+        throw new Error(
+          `Blocked: ${parsed.hostname} is not a loopback or explicitly-allowed local host`,
         );
       }
 
