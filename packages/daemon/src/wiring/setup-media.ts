@@ -242,10 +242,6 @@ export async function setupMedia(deps: {
   // lazy-delegation wrapper for the rotated-key read-on-use invariant.
   let transcriber: TranscriptionPort | undefined;
   const sttSel = deps.audioSelector?.resolveStt();
-  // `sttBlocked` is true ONLY when the selector ran and returned honest-unavailable
-  // — that gates construction OFF (no empty-bearer adapter). When no selector was
-  // supplied (test harnesses / pre-193 callers) it is false (construct directly).
-  const sttBlocked = sttSel !== undefined && !sttSel.ok;
   if (sttSel && !sttSel.ok) {
     skillsLogger.warn(
       {
@@ -257,15 +253,39 @@ export async function setupMedia(deps: {
       "STT unavailable — keyless-first resolution (no adapter constructed)",
     );
   }
+  // The construction-gating predicate, computed in exactly ONE place (WR-03):
+  // blocked ONLY when the selector ran and returned honest-unavailable (`ok ===
+  // false`) — that gates construction OFF (no empty-bearer adapter). An undefined
+  // selector (test harnesses / pre-193 callers) is NOT blocked (construct
+  // directly). Keeping the gate and the logged-branch derived from this single
+  // discriminant prevents a future edit from making them diverge.
+  const sttBlocked = sttSel?.ok === false;
   // Construct only when NOT blocked by the resolver. For 193 an approved
   // `sttSel.provider` is openai/groq/deepgram (keyed cases the factory handles) —
   // `local` resolves only when localEngineAvailable() is true (false in 193, the
   // Phase 194 seam), so the factory never sees `local` yet; `edge` is TTS-only.
   if (!sttBlocked) {
-    const sttResult = createSTTProvider(mediaConfig.transcription, container.secretManager);
+    // WR-01/WR-02: thread the RESOLVED provider (+ its model) into construction
+    // so the factory sees the provider the resolver actually approved (e.g. a
+    // CRED-01 follow-main `auto`→openai), NOT the raw config `provider:"auto"`
+    // which would hit the factory `default` → err. Mirrors the fallback loop
+    // below. Only override when a selector ran (`sttSel?.ok`); preserve pre-193
+    // behavior (construct straight from config) when no selector was supplied.
+    const sttConfig = sttSel?.ok
+      ? {
+          ...mediaConfig.transcription,
+          // The resolver derives `provider` from the same capability maps +
+          // config enum, so it is always a member of the config provider union;
+          // `SttSelection.provider` is declared `string` only to decouple the
+          // resolver type from the schema. Cast to the field's exact type.
+          provider: sttSel.provider as typeof mediaConfig.transcription.provider,
+          ...(sttSel.model ? { model: sttSel.model } : {}),
+        }
+      : mediaConfig.transcription;
+    const sttResult = createSTTProvider(sttConfig, container.secretManager);
     if (sttResult.ok) {
       // Build the lazy factory for the primary provider
-      const sttFactory = createSTTProviderFactory(mediaConfig.transcription, container.secretManager);
+      const sttFactory = createSTTProviderFactory(sttConfig, container.secretManager);
 
       // Build fallback factories if configured
       const fallbackFactories: Array<() => ReturnType<typeof createSTTProvider>> = [];
@@ -298,11 +318,14 @@ export async function setupMedia(deps: {
 
       if (hasFallback) {
         skillsLogger.info({
-          provider: mediaConfig.transcription.provider,
+          // Report the RESOLVED provider actually constructed (e.g. follow-main
+          // `auto`→openai), not the raw config `provider` — so the boot log is
+          // the ground truth for "which STT backend is live".
+          provider: sttConfig.provider,
           fallbackCount: fallbackFactories.length,
         }, "STT service initialized with fallback chain");
       } else {
-        skillsLogger.info({ provider: mediaConfig.transcription.provider }, "STT service initialized");
+        skillsLogger.info({ provider: sttConfig.provider }, "STT service initialized");
       }
     } else {
       skillsLogger.warn({
@@ -322,11 +345,14 @@ export async function setupMedia(deps: {
   // logs once. Use a lazy-delegation wrapper for the rotated-key read-on-use.
   let ttsAdapter: TTSPort | undefined;
   const ttsSel = deps.audioSelector?.resolveTts();
-  const ttsBlocked = ttsSel !== undefined && !ttsSel.ok;
   if (ttsSel && !ttsSel.ok) {
     skillsLogger.warn(
       {
         err: ttsSel.errorKind,
+        // STT_ERR_TO_LOG is intentionally shared: TTS reuses the SttErrorKind
+        // vocabulary + its log bridge (voice-error.ts, design Assumption A3) —
+        // `TtsSelection.errorKind` is typed `SttErrorKind`. The STT-named symbol
+        // here is correct, not a copy-paste (IN-01).
         errorKind: STT_ERR_TO_LOG[ttsSel.errorKind],
         hint: ttsSel.hint,
         step: "tts_unavailable",
@@ -334,10 +360,20 @@ export async function setupMedia(deps: {
       "TTS unavailable — keyless-first resolution (no adapter constructed)",
     );
   }
+  // Single discriminant for the construction gate (WR-03) — see the STT note above.
+  const ttsBlocked = ttsSel?.ok === false;
   if (!ttsBlocked) {
-    const ttsResult = createTTSProvider(mediaConfig.tts, container.secretManager);
+    // WR-01: thread the RESOLVED provider into construction (mirrors STT). Today
+    // `auto`→edge works because the default config already carries
+    // `provider:"edge"`, but an operator who disables edge and relies on
+    // follow-main would otherwise hit the identical `default`→err trap. Only
+    // override when a selector ran; preserve pre-193 behavior otherwise.
+    const ttsConfig = ttsSel?.ok
+      ? { ...mediaConfig.tts, provider: ttsSel.provider as typeof mediaConfig.tts.provider }
+      : mediaConfig.tts;
+    const ttsResult = createTTSProvider(ttsConfig, container.secretManager);
     if (ttsResult.ok) {
-      const ttsFactory = createTTSProviderFactory(mediaConfig.tts, container.secretManager);
+      const ttsFactory = createTTSProviderFactory(ttsConfig, container.secretManager);
       // Lazy-delegation wrapper: delegates synthesize() to a fresh provider on
       // each call so a rotated key is observed without a daemon restart.
       ttsAdapter = {
@@ -347,7 +383,7 @@ export async function setupMedia(deps: {
           return result.value.synthesize(text, options);
         },
       };
-      skillsLogger.debug({ provider: mediaConfig.tts.provider }, "TTS service initialized");
+      skillsLogger.debug({ provider: ttsConfig.provider }, "TTS service initialized");
     } else {
       skillsLogger.warn({ err: ttsResult.error.message, hint: "Configure TTS provider in integrations.media.tts section", errorKind: "config" as const }, "TTS service not configured");
     }
