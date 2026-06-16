@@ -25,15 +25,23 @@
  *    `safePath(dataDir, "models", "whisper")` (NEVER raw `path.join`) before the
  *    first `pipeline()` call; that path is already inside the daemon's
  *    `--allow-fs-write=${COMIS_DATA_DIR}` scope, so no new permission flag.
- *  - **Fail-closed + integrity (the SEC-03 seam):** a short/corrupt model load
- *    → `err` (kind `model_load_failed`) and the singleton is RESET so a
- *    transient failure can retry — never a silent partial-model success.
- *    Phase 197 hardens this with the pinned `MODEL_IDS` anchor (only a hardcoded
- *    id is loaded; an unknown key → the pinned default), the TLS HF-Hub source,
- *    and an OPTIONAL post-load size-floor (a sub-`MODEL_SIZE_FLOOR_BYTES` cached
- *    model → fail-closed `model_load_failed`). HONEST limit: transformers.js
- *    exposes NO caller-visible content-hash, so SEC-03 is pinned-id + TLS +
- *    fail-closed + size-floor, NOT a cryptographic content-hash check.
+ *  - **Fail-closed + integrity (SEC-03):** the LIVE, prod-running integrity
+ *    mechanism is the pinned `MODEL_IDS` anchor (only a hardcoded id is loaded;
+ *    an unknown key → the pinned default) + the TLS HF-Hub source + the
+ *    fail-closed load: a short/corrupt `pipeline()` load → `err` (kind
+ *    `model_load_failed`) and the singleton is RESET so a transient failure can
+ *    retry — never a silent partial-model success. The post-load `statModelCache`
+ *    size-floor (a sub-`MODEL_SIZE_FLOOR_BYTES` cached model → fail-closed) is an
+ *    OPTIONAL, **TEST-ONLY** seam: its default (`defaultStatModelCache`) returns
+ *    `undefined`, so it enforces NOTHING off a real daemon (the transformers.js
+ *    etag cache layout is not a documented contract — guessing a path to stat is
+ *    the §2.10 bug class). Do NOT read the size-floor as live corrupt-download
+ *    protection; the fail-closed LOAD is what catches a truncated download in
+ *    prod. HONEST limit: transformers.js exposes NO caller-visible content-hash,
+ *    so SEC-03 is pinned-id + TLS + fail-closed load (NOT a content-hash, and NOT
+ *    a size-floor in prod). The TTS twin (`local-tts-adapter.ts`) deliberately
+ *    carries NO size-floor seam at all — its SEC-03 scope is the same pinned-id +
+ *    TLS + fail-closed-load triad, MINUS the inert STT size seam.
  *  - **Redaction (SEC-01 light floor):** every surfaced error string is passed
  *    through `sanitizeApiError`, which strips URLs (`[URL]`) and long tokens
  *    (`[REDACTED]`), so no credential-bearing `baseUrl`/token leaks.
@@ -94,15 +102,21 @@ export interface LocalWhisperConfig {
     mime: string,
   ) => Promise<Result<Float32Array, Error>>;
   /**
-   * SEC-03 size-floor seam: after the pipeline loads, resolve the on-disk size
-   * (bytes) of the cached model under `cacheDir`, or `undefined` if it cannot be
-   * reliably determined. A size BELOW {@link MODEL_SIZE_FLOOR_BYTES} is treated
-   * as a truncated/partial download → fail-closed `model_load_failed` (the bad
-   * load is not memoized). The DEFAULT returns `undefined`: the transformers.js
-   * etag cache layout is NOT a documented contract, so production does NOT guess
-   * a fragile path (the §2.10 bug class) — an unknown size is never a false
-   * corruption, and the integrity floor rests on the pinned id + the fail-closed
-   * seam + the TLS HF-Hub source. Injected in tests to drive the size-floor.
+   * SEC-03 size-floor seam (OPTIONAL, **TEST-ONLY** — see below): after the
+   * pipeline loads, resolve the on-disk size (bytes) of the cached model under
+   * `cacheDir`, or `undefined` if it cannot be reliably determined. A size BELOW
+   * {@link MODEL_SIZE_FLOOR_BYTES} is treated as a truncated/partial download →
+   * fail-closed `model_load_failed` (the bad load is not memoized).
+   *
+   * The DEFAULT ({@link defaultStatModelCache}) returns `undefined`, so the
+   * size-floor ENFORCES NOTHING in production: the transformers.js etag cache
+   * layout is NOT a documented contract, so production does NOT guess a fragile
+   * path to `fs.stat` (the §2.10 bug class) — and an unknown size must never be a
+   * false corruption. The LIVE prod integrity floor is therefore the pinned id +
+   * the fail-closed LOAD + the TLS HF-Hub source; this seam exists so the
+   * fail-closed-on-implausible-size BRANCH is exercisable (tests inject a concrete
+   * size). A future caller that adopts a documented cache layout could supply a
+   * real implementation to make the floor live.
    */
   readonly statModelCache?: (
     cacheDir: string,
@@ -283,14 +297,15 @@ async function defaultDecodeToPcm16kF32(
 }
 
 /**
- * Default SEC-03 size-floor seam: returns `undefined` (size unknown). The
+ * Default SEC-03 size-floor seam: ALWAYS returns `undefined` (size unknown), so
+ * the size-floor enforces NOTHING in production — it is inert by default and the
+ * floor branch only ever fires when a test injects a concrete size. The
  * transformers.js etag cache layout is NOT a documented contract, so production
  * does NOT guess a model-file path to `fs.stat` (the §2.10 bug class — a
- * hand-built path that may not exist). The size-floor therefore enforces nothing
- * by default; the integrity floor rests on the pinned id + the fail-closed
- * `model_load_failed` seam + the TLS HF-Hub source. Tests inject a concrete size
- * to exercise the floor. `safePath` is used (never raw `path.join`) for any
- * future real inspection that adopts a documented layout.
+ * hand-built path that may not exist). The LIVE prod integrity floor is the
+ * pinned id + the fail-closed LOAD (`model_load_failed`) + the TLS HF-Hub source,
+ * NOT this seam. `safePath` would be used (never raw `path.join`) by any future
+ * real inspection that adopts a documented layout.
  */
 async function defaultStatModelCache(
   _cacheDir: string,
@@ -404,14 +419,16 @@ export function createLocalWhisperAdapter(cfg: LocalWhisperConfig): Transcriptio
         );
       }
 
-      // SEC-03 size-floor: a pipeline() that "loaded" but whose on-disk model is
-      // implausibly small is a truncated/partial download masquerading as a
-      // working model (the v2.24/188 silent-corrupt-download lesson). When the
-      // size seam reports a concrete sub-floor size, FAIL CLOSED and reset the
-      // singleton (same fail-closed discipline as the load catch) so the bad
-      // model is never memoized and a re-download is retried. An `undefined`
-      // size (the default — cache layout is not a documented contract) enforces
-      // nothing.
+      // SEC-03 size-floor (OPTIONAL, TEST-ONLY seam — inert in prod): a
+      // pipeline() that "loaded" but whose on-disk model is implausibly small is
+      // a truncated/partial download masquerading as a working model (the
+      // v2.24/188 silent-corrupt-download lesson). When the injected size seam
+      // reports a concrete sub-floor size, FAIL CLOSED and reset the singleton
+      // (same fail-closed discipline as the load catch) so the bad model is never
+      // memoized and a re-download is retried. The DEFAULT seam returns
+      // `undefined` (cache layout is not a documented contract → no path guess),
+      // so this branch enforces NOTHING off a real daemon — the live SEC-03
+      // protection for a corrupt download is the fail-closed LOAD above, not this.
       let modelBytes: number | undefined;
       try {
         modelBytes = await statModelCache(cacheDir, modelId);

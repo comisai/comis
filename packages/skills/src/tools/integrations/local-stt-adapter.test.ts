@@ -532,6 +532,29 @@ describe("createLocalWhisperAdapter — default seams (real lazy-import + ffmpeg
     }
   });
 
+  it("the DEFAULT statModelCache seam enforces NO size-floor in production (WR-02 honest contract) — a normal load proceeds with no statModelCache injected", async () => {
+    // WR-02: the SEC-03 size-floor is a TEST-ONLY seam. The production default
+    // (defaultStatModelCache) returns undefined because the transformers.js etag
+    // cache layout is not a documented contract (guessing a path is the §2.10 bug
+    // class). So with NO statModelCache injected, the size-floor is INERT — the
+    // load proceeds on the live SEC-03 triad (pinned id + TLS + fail-closed load),
+    // NOT on a content/size integrity check. This locks the documented behavior so
+    // a reader does not believe corrupt-download size protection runs in prod.
+    const fake = makeFakeEngine({ transcribeText: "ok-no-size-floor" });
+    const adapter = createLocalWhisperAdapter({
+      dataDir: DATA_DIR,
+      loadEngine: async () => fake.mod,
+      decodeToPcm16kF32: async () => ok(new Float32Array([0.1, 0.2, 0.3])),
+      // no statModelCache → the real defaultStatModelCache (returns undefined).
+    });
+
+    const result = await adapter.transcribe(Buffer.from("audio"), { mimeType: "audio/ogg" });
+
+    // The default seam never fails the load on size — pinned id + fail-closed only.
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.text).toBe("ok-no-size-floor");
+  });
+
   it("uses the default ffmpeg decodeToPcm16kF32 when none is injected, decoding to f32 PCM samples", async () => {
     // No `decodeToPcm16kF32` seam → exercises defaultDecodeToPcm16kF32 (the
     // ffmpeg `execFile` shell + PCM read, mocked above to succeed). Engine injected.
