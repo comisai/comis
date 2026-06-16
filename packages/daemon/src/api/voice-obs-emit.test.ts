@@ -251,6 +251,53 @@ describe("wireVoiceObs — the handler-wiring helper (emitter + §2.7 logger clo
     expect(msg).toMatch(/transcription/i);
   });
 
+  // WR-02 (196 review): the OBS-05 keyless `costUsd:0` rule is centralized in
+  // wireVoiceObs/the emitter — the caller need not pass `0`. A keyless completion
+  // WITHOUT costUsd must still show `costUsd:0` (free is VISIBLE — FLAG 4) on BOTH
+  // the trajectory record AND the §2.7 log line; a keyed completion without cost
+  // omits it; an explicit cost always wins. This pins the invariant in one place
+  // so a future voice handler can't silently regress keyless $0 visibility.
+  it("WR-02: keyless completion WITHOUT costUsd derives costUsd:0 on the record AND the log line", () => {
+    const recorder = captureRecorder();
+    const logger = captureLogger();
+    const w = wireVoiceObs({
+      sessionKey: "s",
+      trajectoryRegistry: { getRecorder: () => recorder } as never,
+      logger,
+      agentId: "a",
+      kind: "stt",
+      requested: { provider: "local", mainProvider: "openai-codex", source: "keyless-local" },
+    });
+    // NOTE: no costUsd passed — the centralized rule must supply 0 for keyless.
+    w.completed({ provider: "local", keyless: true, audioBytes: 5000, source: "keyless-local" });
+    const rec = recorder.calls.find((c) => c.type === "media.stt.completed");
+    expect(rec!.data.costUsd).toBe(0);
+    expect(logger.info.mock.calls[0]![0].costUsd).toBe(0);
+  });
+
+  it("WR-02: keyed completion WITHOUT costUsd omits costUsd; an explicit cost wins on both record and log", () => {
+    const recorder = captureRecorder();
+    const logger = captureLogger();
+    const w = wireVoiceObs({
+      sessionKey: "s",
+      trajectoryRegistry: { getRecorder: () => recorder } as never,
+      logger,
+      agentId: "a",
+      kind: "tts",
+      requested: { provider: "elevenlabs", mainProvider: "openai", source: "explicit" },
+    });
+    // keyed, no cost → omitted (not 0).
+    w.completed({ provider: "elevenlabs", keyless: false, audioBytes: 4096, source: "explicit" });
+    const rec1 = recorder.calls.find((c) => c.type === "media.tts.completed");
+    expect(rec1!.data).not.toHaveProperty("costUsd");
+    expect(logger.info.mock.calls[0]![0]).not.toHaveProperty("costUsd");
+    // keyed WITH an explicit cost → that cost is carried verbatim (the override wins).
+    w.completed({ provider: "elevenlabs", keyless: false, costUsd: 0.0123, source: "explicit" });
+    const rec2 = recorder.calls.filter((c) => c.type === "media.tts.completed")[1]!;
+    expect(rec2.data.costUsd).toBe(0.0123);
+    expect(logger.info.mock.calls[1]![0].costUsd).toBe(0.0123);
+  });
+
   it("failed() records media.stt.failed AND emits ONE logger.warn with err:+hint+errorKind(STT_ERR_TO_LOG)+sttErrorKind", () => {
     const recorder = captureRecorder();
     const logger = captureLogger();

@@ -319,7 +319,7 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
         voiceObs.failed({ sttErrorKind: toSttErrorKind(synthResult.error), provider: voiceObs.provider, source: voiceObs.source, errMessage: synthResult.error.message });
         throw synthResult.error;
       }
-      voiceObs.completed({ provider: voiceObs.provider, keyless: voiceObs.keyless, audioBytes: synthResult.value.audio.byteLength, ...(voiceObs.keyless ? { costUsd: 0 } : {}), source: voiceObs.source });
+      voiceObs.completed({ provider: voiceObs.provider, keyless: voiceObs.keyless, audioBytes: synthResult.value.audio.byteLength, source: voiceObs.source }); // WR-02: keyless costUsd:0 derived centrally in wireVoiceObs
 
       // Determine file extension from mimeType
       const ext = mimeToExtension(synthResult.value.mimeType);
@@ -456,7 +456,7 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
         voice.failed({ sttErrorKind: toSttErrorKind(sttResult.error), provider: voice.provider, source: voice.source, errMessage: sttResult.error.message });
         throw sttResult.error;
       }
-      voice.completed({ provider: voice.provider, keyless: voice.keyless, ...(sttResult.value.durationMs !== undefined ? { durationMs: sttResult.value.durationMs } : {}), audioBytes: buffer.byteLength, ...(voice.keyless ? { costUsd: 0 } : {}), source: voice.source });
+      voice.completed({ provider: voice.provider, keyless: voice.keyless, ...(sttResult.value.durationMs !== undefined ? { durationMs: sttResult.value.durationMs } : {}), audioBytes: buffer.byteLength, source: voice.source }); // WR-02: keyless costUsd:0 derived centrally
       const result = {
         text: sttResult.value.text,
         language: sttResult.value.language,

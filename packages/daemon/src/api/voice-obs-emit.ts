@@ -52,6 +52,20 @@ export type VoiceSource = "explicit" | "keyless-local" | "follow-main-key" | "fa
 /** Which voice family this emitter records — selects the `media.${kind}.*` event names. */
 export type VoiceKind = "stt" | "tts";
 
+/**
+ * OBS-05 (Phase 196, WR-02): the SINGLE source of truth for the keyless-cost rule
+ * — `keyless ⇒ costUsd:0 explicit` (so "free" is VISIBLE — FLAG 4), `keyed-no-cost
+ * ⇒ omit`. Previously this ternary was duplicated inline at the two `media-handlers.ts`
+ * voice call sites; a third voice handler could silently omit it and regress the
+ * keyless `$0` visibility with no test catching it. Centralized here so every
+ * `completed` path (the trajectory record AND the §2.7 log line) derives it once.
+ * An explicit caller `costUsd` always wins (keyed providers that DO know their cost).
+ */
+function effectiveCostUsd(costUsd: number | undefined, keyless: boolean): number | undefined {
+  if (costUsd !== undefined) return costUsd;
+  return keyless ? 0 : undefined;
+}
+
 /** A bound voice-trajectory emitter. Returned by `createVoiceObsEmitter` (which
  *  fires `media.${kind}.requested` at construction). The handler calls
  *  `completed` / `failed` on the branch it takes. Every emit is a no-op when no
@@ -62,7 +76,9 @@ export interface VoiceObsEmitter {
    *  recorder). False off-turn / boot-without-registry — every method then no-ops. */
   readonly active: boolean;
   /** A transcription/synthesis SUCCEEDED: record `media.${kind}.completed` with the
-   *  cost-carry (keyless passes `costUsd:0` → present; keyed-no-cost omits it — FLAG 4). */
+   *  cost-carry. The keyless `costUsd:0` is derived centrally (WR-02) — the caller
+   *  need NOT pass `0`; an explicit `costUsd` wins, keyless-without-cost ⇒ `0`
+   *  (present, so "free" is visible — FLAG 4), keyed-without-cost ⇒ omitted. */
   completed(args: {
     provider: string;
     keyless: boolean;
@@ -121,6 +137,8 @@ export function createVoiceObsEmitter(args: {
   return {
     active: recorder != null,
     completed({ provider, keyless, model, durationMs, audioBytes, costUsd, source }) {
+      // WR-02: derive the keyless `costUsd:0` centrally (the single source of truth).
+      const cost = effectiveCostUsd(costUsd, keyless);
       emit(COMPLETED, {
         provider,
         keyless,
@@ -128,7 +146,7 @@ export function createVoiceObsEmitter(args: {
         ...(model !== undefined ? { model } : {}),
         ...(durationMs !== undefined ? { durationMs } : {}),
         ...(audioBytes !== undefined ? { audioBytes } : {}),
-        ...(costUsd !== undefined ? { costUsd } : {}), // keyless passes 0 → present (FLAG 4)
+        ...(cost !== undefined ? { costUsd: cost } : {}), // keyless ⇒ 0 (present — FLAG 4)
         source,
       });
     },
@@ -290,6 +308,9 @@ export function wireVoiceObs(args: {
     obs,
     completed(a) {
       obs.completed(a);
+      // WR-02: the §2.7 line carries the SAME centrally-derived keyless cost as the
+      // trajectory record (keyless ⇒ 0 visible; an explicit cost wins; keyed ⇒ omit).
+      const cost = effectiveCostUsd(a.costUsd, a.keyless);
       logger.info(
         {
           agentId,
@@ -298,7 +319,7 @@ export function wireVoiceObs(args: {
           ...(a.model !== undefined ? { model: a.model } : {}),
           ...(a.durationMs !== undefined ? { durationMs: a.durationMs } : {}),
           ...(a.audioBytes !== undefined ? { audioBytes: a.audioBytes } : {}),
-          ...(a.costUsd !== undefined ? { costUsd: a.costUsd } : {}),
+          ...(cost !== undefined ? { costUsd: cost } : {}),
           source: a.source,
           step: kind === "stt" ? "transcribe" : "synthesize",
           ...(logContext ?? {}),
