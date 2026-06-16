@@ -363,4 +363,108 @@ describe("createLocalWhisperAdapter", () => {
       expect(result.value.language).toBe("en");
     }
   });
+
+  // ===========================================================================
+  // SEC-03: model-download integrity hardening (pinned id + size-floor +
+  // confirm fail-closed). HONEST scope: pinned id + TLS + the existing
+  // fail-closed model_load_failed seam + an OPTIONAL size-floor. There is NO
+  // caller-visible content-hash (transformers.js exposes none) — so NO test
+  // mocks a "hash mismatch" the production code never computes (Pitfall 4).
+  // ===========================================================================
+  describe("SEC-03 model-download integrity", () => {
+    it("loads the model id from the pinned MODEL_IDS map (onnx-community/whisper-*) for a known key", async () => {
+      const fake = makeFakeEngine({});
+      const adapter = createLocalWhisperAdapter({
+        dataDir: DATA_DIR,
+        model: "small",
+        loadEngine: async () => fake.mod,
+        decodeToPcm16kF32: async () => pcmOk(),
+      });
+
+      await adapter.transcribe(Buffer.from("audio"), { mimeType: "audio/ogg" });
+
+      // The pinned id — NOT an arbitrary/remote id — is what pipeline() receives.
+      expect(fake.pipelineSpy).toHaveBeenCalledTimes(1);
+      const [task, modelId] = fake.pipelineSpy.mock.calls[0]!;
+      expect(task).toBe("automatic-speech-recognition");
+      expect(modelId).toBe("onnx-community/whisper-small");
+    });
+
+    it("falls back to the pinned default 'base' id for an unknown/blank model key (no arbitrary remote id)", async () => {
+      const fake = makeFakeEngine({});
+      const adapter = createLocalWhisperAdapter({
+        dataDir: DATA_DIR,
+        model: "nonexistent-model-key",
+        loadEngine: async () => fake.mod,
+        decodeToPcm16kF32: async () => pcmOk(),
+      });
+
+      await adapter.transcribe(Buffer.from("audio"), { mimeType: "audio/ogg" });
+
+      const [, modelId] = fake.pipelineSpy.mock.calls[0]!;
+      // An unknown key resolves to the pinned default id, never the raw key.
+      expect(modelId).toBe("onnx-community/whisper-base");
+    });
+
+    it("fails closed with model_load_failed and resets the singleton when the post-load size-floor reports a near-zero cached model (SEC-03)", async () => {
+      const fake = makeFakeEngine({ transcribeText: "should-never-be-reached" });
+      // The injected size seam reports an implausibly small on-disk model — a
+      // truncated/partial download masquerading as a loaded pipeline.
+      const statModelCache = vi.fn(async () => 128);
+      const adapter = createLocalWhisperAdapter({
+        dataDir: DATA_DIR,
+        loadEngine: async () => fake.mod,
+        decodeToPcm16kF32: async () => pcmOk(),
+        statModelCache,
+      });
+
+      const first = await adapter.transcribe(Buffer.from("audio"), { mimeType: "audio/ogg" });
+      const second = await adapter.transcribe(Buffer.from("audio"), { mimeType: "audio/ogg" });
+
+      expect(first.ok).toBe(false);
+      if (!first.ok) {
+        expect((first.error as { kind?: string }).kind).toBe("model_load_failed");
+        expect(first.error.message).toMatch(/incomplete|truncated|too small|size/i);
+      }
+      // Fail-closed: the bad load is NOT memoized — pipeline() is retried.
+      expect(second.ok).toBe(false);
+      expect(fake.pipelineSpy).toHaveBeenCalledTimes(2);
+      expect(statModelCache).toHaveBeenCalled();
+    });
+
+    it("proceeds normally when the size-floor reports a plausible model size", async () => {
+      const fake = makeFakeEngine({ transcribeText: "ok" });
+      const statModelCache = vi.fn(async () => 50 * 1024 * 1024); // 50 MB — plausible
+      const adapter = createLocalWhisperAdapter({
+        dataDir: DATA_DIR,
+        loadEngine: async () => fake.mod,
+        decodeToPcm16kF32: async () => pcmOk(),
+        statModelCache,
+      });
+
+      const result = await adapter.transcribe(Buffer.from("audio"), { mimeType: "audio/ogg" });
+
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.value.text).toBe("ok");
+    });
+
+    it("proceeds (no false corruption) when the size-floor seam reports unknown size — the default production behavior", async () => {
+      // The default statModelCache returns undefined (the transformers.js etag
+      // cache layout is NOT a documented contract, so production does not guess a
+      // path) → the size-floor is a no-op and the load proceeds on the pinned-id
+      // + fail-closed + TLS triad. An undefined size must NEVER be a corruption.
+      const fake = makeFakeEngine({ transcribeText: "ok" });
+      const statModelCache = vi.fn(async () => undefined);
+      const adapter = createLocalWhisperAdapter({
+        dataDir: DATA_DIR,
+        loadEngine: async () => fake.mod,
+        decodeToPcm16kF32: async () => pcmOk(),
+        statModelCache,
+      });
+
+      const result = await adapter.transcribe(Buffer.from("audio"), { mimeType: "audio/ogg" });
+
+      expect(result.ok).toBe(true);
+    });
+  });
 });
