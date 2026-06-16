@@ -125,7 +125,7 @@ describe("resolveDriveMode (DELIVER-02 — a durable drive backgrounds; a pty on
     expect(resolveDriveMode(undefined, true)).toBe("detached");
   });
 
-  it("an absent mode + NON-durable (pty) → auto (the quick-one-shot inline posture, I1 byte-identical)", () => {
+  it("returns auto for an absent mode on a NON-durable (pty) drive — the quick-one-shot inline posture (I1, byte-identical)", () => {
     expect(resolveDriveMode(undefined, false)).toBe("auto");
   });
 
