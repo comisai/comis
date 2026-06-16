@@ -40,7 +40,7 @@
  */
 
 import { systemNowMs, type TypedEventBus, type ComisLogger, type TimerPort, type TimerHandle } from "@comis/core";
-import { createLoopGuard, busyOrHung, type TerminalSessionRegistry, type DriveJournal, type BusySignal } from "@comis/skills/tools";
+import { createLoopGuard, busyOrHung, type TerminalSessionRegistry, type DriveJournal, type BusySignal, type NotifyPolicy, type EvictReason } from "@comis/skills/tools";
 
 import {
   createTerminalWakeDispatcher,
@@ -51,6 +51,7 @@ import {
 import { buildWokenTurnDriver, type TerminalAttentionConfig, type WokenTurnNotify } from "./terminal-wake-turn.js";
 import { removeWakeStateFile, type PersistedWakeOwner } from "./terminal-wake-persistence.js";
 import { driveScopeKeyFor, registryOwnerFor } from "./terminal-drive-scope.js";
+import { emitTerminalOutcome, runHeartbeatTick, type TerminalNotifyDeps } from "./terminal-wake-notify.js";
 
 /** Dependencies for the keystone wake wiring. */
 export interface SetupTerminalWakeDeps {
@@ -109,6 +110,14 @@ export interface SetupTerminalWakeDeps {
    * Task 4) binds it; a test injects a fake. ABSENT ⇒ no backstop (I1).
    */
   checkLiveness?: (sessionId: string, agentId: string) => Promise<BusySignal | undefined> | BusySignal | undefined;
+  /**
+   * NOTIFY-01 (166-03): the operator `drive.notify` policy that gates the user-facing
+   * `done`/`failed` outcome notifications (a `needs-you` escalation is NEVER gated — it rides
+   * the existing escalate() path, I4). `"terminal"` (default) + `"all"` fire `done`/`failed`;
+   * `"none"` suppresses them (the escalation still fires). Resolved per-daemon from the default
+   * agent's `drive` block (terminal-durable-wiring.ts). Default `"terminal"` (today's intent).
+   */
+  notifyPolicy?: NotifyPolicy;
   // LO-03 (165-REVIEW): NO refreshLastActivity dep — checkLiveness's `registry.status`
   // round-trip already stamps the handle's lastActivity (the registry status side effect), so a
   // busy verdict's liveness check IS the ENDURE-01 idle-reaper unify (I9). A separate refresh
@@ -156,6 +165,18 @@ export interface TerminalWakeContext {
 export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeContext {
   const nowMs = deps.nowMs ?? systemNowMs;
   const log = deps.logger.child({ submodule: "setup-terminal-wake" });
+
+  // NOTIFY-01 (166-03): the resolved drive.notify policy (default "terminal" — today's intent).
+  const notifyPolicy: NotifyPolicy = deps.notifyPolicy ?? "terminal";
+  // The structural notify/log/clock/policy bundle the extracted emit helper consumes
+  // (terminal-wake-notify.ts) — keeps the holder thin (the gating + the §2.7 record live there).
+  const notifyDeps: TerminalNotifyDeps = {
+    ...(deps.notify ? { notify: deps.notify } : {}),
+    info: (obj, msg) => log.info(obj, msg),
+    warn: (obj, msg) => log.warn(obj, msg),
+    nowMs,
+    policy: notifyPolicy,
+  };
 
   // Default hop / concurrency caps for the FSM construction. The PER-WAKE owner-config
   // (getTerminalAttentionConfig) governs the auto-answer policy; the FSM-level caps are
@@ -568,13 +589,46 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
       );
     }
   };
-  // A reaper/operator eviction is a CLEAN end-of-life → remove the durable journal.
-  const onEvicted = (e: { sessionId: string }): void => onSessionGone(e.sessionId, "remove");
+  // NOTIFY-01 (166-03): derive + emit the user-facing terminal outcome for a PROMOTED drive,
+  // CAPTURING wasPromoted + the journal + the drive-start BEFORE onSessionGone clears them
+  // (the Open-Q2 ordering constraint — onSessionGone deletes promotedSessions/driveJournals/
+  // driveStartedAtMs). An UNPROMOTED session emits nothing (I1 — today's byte-identical path).
+  // The `done`/`failed` derivation + gating + the §2.7 record live in the extracted helper
+  // (terminal-wake-notify.ts), keeping this holder under the 800-line cap. needs-you is NEVER
+  // routed here — the escalate() paths own it UNCONDITIONALLY (I4).
+  const emitOutcomeBeforeGone = (
+    sessionId: string,
+    transition: "exited" | "lost" | "evicted",
+    capName: EvictReason | undefined,
+    disposition: "remove" | "preserve",
+  ): void => {
+    const wasPromoted = promotedSessions.has(sessionId);
+    const j = driveJournals.get(sessionId);
+    const startedAt = driveStartedAtMs.get(sessionId);
+    const agentId = sessionAgent.get(sessionId) ?? "";
+    // Reclaim ALL per-session state (the in-memory caches are ALWAYS cleared; the durable file
+    // disposition is per the transition — exited/evicted "remove", lost "preserve", I10).
+    onSessionGone(sessionId, disposition);
+    if (!wasPromoted) return; // an unpromoted (inline short) drive emits NO outcome (I1).
+    emitTerminalOutcome(notifyDeps, {
+      sessionId,
+      agentId,
+      transition,
+      ...(capName !== undefined ? { capName } : {}),
+      durationMs: startedAt !== undefined ? nowMs() - startedAt : undefined,
+      interactions: j?.interactions,
+    });
+  };
+  // A reaper/operator eviction is a CLEAN end-of-life → remove the durable journal. The event
+  // carries the named cap reason (events-terminal.ts:97-103) — READ it to name the cap on the
+  // `failed` outcome (the dropped-reason fix; previously `(e)=>onSessionGone(e.sessionId,"remove")`).
+  const onEvicted = (e: { sessionId: string; reason?: EvictReason }): void =>
+    emitOutcomeBeforeGone(e.sessionId, "evicted", e.reason, "remove");
   const onStateChange = (e: { sessionId: string; state: string }): void => {
-    // A clean PTY `exited` removes the durable journal; a `lost` (crash / unrecoverable) is a
-    // genuine death whose journal is PRESERVED for a fresh drive to resume (DUR-02 / I10).
-    if (e.state === "exited") onSessionGone(e.sessionId, "remove");
-    else if (e.state === "lost") onSessionGone(e.sessionId, "preserve");
+    // A clean PTY `exited` removes the durable journal (→ done); a `lost` (crash / unrecoverable)
+    // is a genuine death whose journal is PRESERVED for a fresh drive to resume (→ failed; I10).
+    if (e.state === "exited") emitOutcomeBeforeGone(e.sessionId, "exited", undefined, "remove");
+    else if (e.state === "lost") emitOutcomeBeforeGone(e.sessionId, "lost", undefined, "preserve");
   };
   deps.eventBus.on("terminal:session_evicted", onEvicted);
   deps.eventBus.on("terminal:session_state", onStateChange);

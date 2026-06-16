@@ -434,33 +434,44 @@ describe("setupTerminalWake — the keystone subscribe + woken-turn driver (124-
     await handle.shutdown();
   });
 
+  // The drive-STARTED (promotion) notifies only — distinct from the 166-03 done/failed outcome
+  // notify a promoted exit/evict now ALSO fires. These reclaim tests assert the promote-once
+  // dedupe survives end-of-life, so they count the drive-started line, not the total.
+  function driveStartedCount(b: Built): number {
+    return notifyCalls(b).filter((c) => /running in the background/i.test(c.message)).length;
+  }
+
   it("onSessionGone forgets a promoted session: after eviction a fresh promotion for a recycled id notifies again", async () => {
     built = build(dataDir, { screen: "Building…" });
     built.bus.fireDrivePromoted("s-recycle", "a", "producing");
     await flush();
-    expect(built.notify).toHaveBeenCalledTimes(1);
+    expect(driveStartedCount(built)).toBe(1);
 
-    // The session is evicted — its promoted-state must be reclaimed (no stale dedupe).
+    // The session is evicted — its promoted-state must be reclaimed (no stale dedupe). (The
+    // eviction now also fires a 166-03 failed outcome notify; the reclaim assertion counts the
+    // drive-started line only.)
     built.bus.emit("terminal:session_evicted", { sessionId: "s-recycle", agentId: "a", reason: "idle", durationMs: 1, timestamp: 2 });
     await flush();
 
-    // A recycled sessionId promoting again is a NEW promotion → a fresh notify.
+    // A recycled sessionId promoting again is a NEW promotion → a fresh drive-started notify.
     built.bus.fireDrivePromoted("s-recycle", "a", "producing");
     await flush();
-    expect(built.notify).toHaveBeenCalledTimes(2);
+    expect(driveStartedCount(built)).toBe(2);
   });
 
   it("onSessionGone forgets a promoted session on a PTY exit (session_state exited|lost) too", async () => {
     built = build(dataDir, { screen: "Building…" });
     built.bus.fireDrivePromoted("s-exit", "a", "producing");
     await flush();
-    expect(built.notify).toHaveBeenCalledTimes(1);
+    expect(driveStartedCount(built)).toBe(1);
 
+    // The exit now also fires a 166-03 done outcome notify; the reclaim assertion counts the
+    // drive-started line only.
     built.bus.emit("terminal:session_state", { sessionId: "s-exit", agentId: "a", state: "exited", durationMs: 0, timestamp: 3 });
     await flush();
     built.bus.fireDrivePromoted("s-exit", "a", "producing");
     await flush();
-    expect(built.notify).toHaveBeenCalledTimes(2);
+    expect(driveStartedCount(built)).toBe(2);
   });
 
   it("shutdown() unsubscribes terminal:drive_promoted (a post-shutdown promotion drives no notify)", async () => {
@@ -1386,9 +1397,10 @@ describe("setupTerminalWake — the keystone subscribe + woken-turn driver (124-
 
     it("routes the outcome derivation through the 166-01 siblings + the extracted terminal-wake-notify helper (source guard)", () => {
       const src = readFileSync(fileURLToPath(new URL("./setup-terminal-wake.ts", import.meta.url)), "utf8");
-      // The holder consumes the pure outcome map + the extracted emit helper.
-      expect(src, "the holder must derive the outcome via mapTerminalOutcome").toMatch(/mapTerminalOutcome/);
+      const sibling = readFileSync(fileURLToPath(new URL("./terminal-wake-notify.ts", import.meta.url)), "utf8");
+      // The holder calls the extracted emit helper; the helper consumes the pure outcome map.
       expect(src, "the holder must call the extracted emitTerminalOutcome helper").toMatch(/emitTerminalOutcome/);
+      expect(sibling, "the extracted helper must derive the outcome via mapTerminalOutcome").toMatch(/mapTerminalOutcome/);
       // The onEvicted cap-name fix: the reason (currently dropped at :572) is read.
       expect(src, "onEvicted must read e.reason to name the cap (the dropped-reason fix)").toMatch(/e\.reason/);
       // The new operator dep is threaded.
