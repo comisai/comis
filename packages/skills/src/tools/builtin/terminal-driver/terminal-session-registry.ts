@@ -340,9 +340,8 @@ export function createTerminalSessionRegistry(
   const cleanupWorkspace = deps.cleanupWorkspace ?? ((workspace: string) => cleanupSessionWorkspace(workspace));
 
   /**
-   * Split a `${sessionId}:${requestId}` pending key. Both halves are UUIDs (no
-   * embedded `:`), so the FIRST `:` is the separator — reconstructs waiter identity
-   * on flush.
+   * Split a `${sessionId}:${requestId}` pending key. Both halves are UUIDs (no embedded
+   * `:`), so the FIRST `:` is the separator — reconstructs waiter identity on flush.
    */
   function splitPendingKey(key: string): { sessionId: string; requestId: string } {
     const idx = key.indexOf(":");
@@ -352,10 +351,10 @@ export function createTerminalSessionRegistry(
   }
 
   /**
-   * Clear the worker handle and flush its pending waiters (on crash / close). Each
-   * synthetic termination reply carries the waiter's REAL `(sessionId,requestId)`
-   * from its pending key (not blanked) so an identity-keyed caller cannot mis-handle
-   * it; a per-waiter DEBUG records the flush (the §2.7-observable transition).
+   * Clear the worker handle and flush its pending waiters (on crash / close). Each synthetic
+   * termination reply carries the waiter's REAL `(sessionId,requestId)` from its pending key
+   * (not blanked) so an identity-keyed caller cannot mis-handle it; a per-waiter DEBUG records
+   * the flush (the §2.7-observable transition).
    */
   function clearWorker(): void {
     worker = undefined;
@@ -735,10 +734,10 @@ export function createTerminalSessionRegistry(
   }
 
   /**
-   * Drop a session WITHOUT an owner check — the shared end-of-life path: fire the
-   * kill frame (if running), delete the handle, and best-effort rm the
-   * registry-allocated workspace (the single workspace-removal site, never
-   * throws). `kill` gates this on ownership; `cleanup` calls it for every session.
+   * Drop a session WITHOUT an owner check — the shared end-of-life path: kill frame (if
+   * running), delete the handle, rm the registry-allocated workspace, and drop a durable
+   * session's DESCRIPTOR (BL-03 — a cleanly-killed/evicted durable session is no longer
+   * re-attachable; the journal is preserved by the daemon holder). `kill` gates on ownership.
    */
   function evictInternal(handle: SessionHandle): void {
     const { sessionId } = handle;
@@ -748,6 +747,7 @@ export function createTerminalSessionRegistry(
     }
     sessions.delete(sessionId);
     if (handle.workspace !== undefined) cleanupWorkspace(handle.workspace);
+    if (handle.durable === true) deps.durability?.descriptorStore?.remove(sessionId); // BL-03
     logger.info({ sessionId }, "terminal session killed");
   }
 

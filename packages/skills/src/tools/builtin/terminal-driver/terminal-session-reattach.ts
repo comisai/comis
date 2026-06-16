@@ -315,10 +315,13 @@ async function driveWorkerReattach(
     return;
   }
   // The worker could not re-attach — honest death (I10). Flip lost + fire the unrecoverable
-  // hook (the journal is preserved by the daemon holder; the descriptor is dropped by BL-03).
+  // hook + drop the now-dead DESCRIPTOR (BL-03 — its tmuxName no longer resolves, so keeping
+  // it re-scans/re-probes/re-emits lost every boot). The JOURNAL is preserved by the daemon
+  // holder (the descriptor store is distinct from the journal store).
   const handle = sessions.get(descriptor.sessionId);
   if (handle !== undefined && handle.status === "running") handle.status = "lost";
   deps.onUnrecoverable?.({ sessionId: descriptor.sessionId, agentId: descriptor.owner.agentId, reason: "tmux_session_gone", errorKind: "dependency" });
+  deps.descriptorStore?.remove(descriptor.sessionId);
 }
 
 /**
@@ -326,11 +329,12 @@ async function driveWorkerReattach(
  * either rehydrate a `running` handle into the registry's `sessions` map (a live tmux,
  * NO create frame — I10) and DRIVE the worker re-attach (gating the obs hooks on the
  * worker's confirmation, BL-01), or — for a session gone at the boot probe — fire the
- * content-free unrecoverable hook (the daemon maps it to the EXISTING
- * `terminal:session_state(state:"lost")` + the reason; the JOURNAL is PRESERVED). A
- * non-durable descriptor is skipped (today's lost floor, I1). The `descriptorStore`-absent
- * case is a no-op (I1). The BULK lives here (not the registry) to protect the 800-line cap
- * (Pitfall 5); the registry's recover-on-boot is ONE call.
+ * content-free unrecoverable hook + remove the dead DESCRIPTOR (BL-03; the daemon maps the
+ * hook to the EXISTING `terminal:session_state(state:"lost")` + the reason; the JOURNAL is
+ * PRESERVED by the daemon holder, only the dead descriptor is dropped). A non-durable
+ * descriptor is skipped (today's lost floor, I1). The `descriptorStore`-absent case is a
+ * no-op (I1). The BULK lives here (not the registry) to protect the 800-line cap (Pitfall
+ * 5); the registry's recover-on-boot is ONE call.
  *
  * @param deps - The durability seams (descriptorStore + isTmuxAlive + the two hooks).
  * @param sessions - The registry's live session map (a recovered live session is set here).
@@ -360,9 +364,12 @@ export function applyRecoveredSessions(
         deps.onReattached?.({ sessionId: r.descriptor.sessionId, agentId: r.descriptor.owner.agentId });
       }
     } else {
-      // Genuinely gone at the boot probe: fire the unrecoverable hook (the journal is
-      // preserved by the daemon holder, I10; the dead descriptor is dropped by BL-03).
+      // Genuinely gone at the boot probe: fire the unrecoverable hook + drop the dead
+      // DESCRIPTOR (BL-03 — a stale descriptor with a dead tmuxName re-scans/re-probes/
+      // re-emits lost every boot). The JOURNAL is preserved by the daemon holder (I10 —
+      // the descriptor store is distinct from the journal store).
       deps.onUnrecoverable?.({ sessionId: r.sessionId, agentId: r.owner.agentId, reason: r.reason, errorKind: "dependency" });
+      deps.descriptorStore.remove(r.sessionId);
     }
   }
 }

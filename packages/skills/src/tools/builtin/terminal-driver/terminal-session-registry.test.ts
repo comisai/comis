@@ -2198,9 +2198,13 @@ describe("createTerminalSessionRegistry — DUR-01 recover-on-boot re-attach", (
     // The unrecoverable hook carries ONLY ids/enum (content-free, I3) — no screen/text.
     expect(Object.keys(info).sort()).toEqual(["agentId", "errorKind", "reason", "sessionId"]);
 
-    // The JOURNAL is PRESERVED (I10) — recover-on-boot does NOT remove the descriptor's
-    // journal; the user-facing `failed` outcome is derived downstream in Phase 166.
-    expect(store.remove, "the genuinely-gone path must not delete the durable record/journal").not.toHaveBeenCalled();
+    // BL-03 (165-REVIEW): the genuinely-gone path REMOVES the dead DESCRIPTOR (a stale
+    // descriptor with a dead tmuxName has no recovery value — keeping it re-scans + re-probes
+    // + re-emits `lost` EVERY boot, an unbounded boot regression). The JOURNAL is preserved
+    // SEPARATELY by the daemon holder (I10 — distinct from the descriptor store; the
+    // user-facing `failed` outcome is derived downstream in Phase 166).
+    expect(store.remove, "the genuinely-gone path drops the dead descriptor (BL-03)").toHaveBeenCalledTimes(1);
+    expect(store.remove).toHaveBeenCalledWith("old-sess");
 
     // It is NOT re-attached (not in the live session map).
     expect(registry.get("old-sess", DURABLE_OWNER)).toBeUndefined();
@@ -2275,6 +2279,91 @@ describe("createTerminalSessionRegistry — DUR-01 recover-on-boot re-attach", (
     const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, { durability: { descriptorStore: store } }));
     await registry.create({ allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }, OWNER);
     expect(store.persist).not.toHaveBeenCalled();
+  });
+
+  it("BL-03: a worker-reattach-FAILED session (ok:false) drops its dead descriptor (a second boot recovers nothing)", async () => {
+    // The boot probe said alive (a reattach frame is sent), but the worker rejects it —
+    // the descriptor is now dead (its tmuxName no longer resolves) and must be dropped so
+    // the next boot does not re-scan + re-probe + re-emit lost for it forever.
+    const fake = makeReattachWorker(false);
+    const store = fakeDescriptorStore([durableDescriptor()]);
+    createTerminalSessionRegistry(
+      baseDeps(() => fake.child, { durability: { descriptorStore: store, isTmuxAlive: () => true } }),
+    );
+    await vi.waitFor(() => expect(store.remove).toHaveBeenCalledWith("old-sess"));
+
+    // A SECOND boot (a fresh registry on the SAME store) recovers nothing — the leak is closed.
+    const fake2 = makeReattachWorker(false);
+    const onUnrecoverable2 = vi.fn();
+    createTerminalSessionRegistry(
+      baseDeps(() => fake2.child, { durability: { descriptorStore: store, isTmuxAlive: () => true, onUnrecoverable: onUnrecoverable2 } }),
+    );
+    // No descriptor left → nothing to re-attach, nothing to fail, no reattach frame.
+    expect(fake2.requestFrames.filter((f) => f.method === "reattach")).toHaveLength(0);
+    expect(onUnrecoverable2).not.toHaveBeenCalled();
+  });
+});
+
+// ===========================================================================
+// BL-03 (165-REVIEW): the descriptor leak — descriptorStore.remove had ZERO
+// callers, so every durable descriptor file leaked forever + inflated every boot
+// (re-scan + a blocking tmux has-session probe + a spurious `lost` per dead one).
+// The fix wires remove at BOTH ends of the descriptor lifecycle: the genuinely-gone
+// recover path (above) AND clean exit/evict (here — the registry's end-of-life site).
+// The journal-vs-descriptor split holds: the journal is preserved on a crash/lost
+// (I10, the daemon holder's job), but the DESCRIPTOR is dropped whenever the session
+// is no longer re-attachable (clean-exit AND confirmed-gone).
+// ===========================================================================
+describe("createTerminalSessionRegistry — BL-03 descriptor removal on clean exit/evict", () => {
+  it("evicting a durable session removes its descriptor (the re-attach key for a session that no longer exists)", async () => {
+    const fake = makeFakeWorker();
+    const store = fakeDescriptorStore();
+    const registry = createTerminalSessionRegistry(
+      baseDeps(() => fake.child, {
+        // A reaper-composed registry so evict() runs the full end-of-life path.
+        maxSessions: 4,
+        timers: createFakeTimers(),
+        durability: { descriptorStore: store, isTmuxAlive: () => true },
+      }),
+    );
+    const { sessionId } = await registry.create(
+      { allowId: "claude-drive", bin: "/usr/bin/claude", argv: [], cols: 80, rows: 24, durable: true, tmuxName: "comis-ev" },
+      DURABLE_OWNER,
+    );
+    store.remove.mockClear(); // ignore any create-path churn; assert ONLY the evict removal.
+
+    await registry.evict(sessionId, DURABLE_OWNER, "max_interactions");
+
+    expect(store.remove, "a cleanly-evicted durable session drops its descriptor (BL-03)").toHaveBeenCalledWith(sessionId);
+  });
+
+  it("killing a durable session removes its descriptor (the shared end-of-life site)", async () => {
+    const fake = makeFakeWorker();
+    const store = fakeDescriptorStore();
+    const registry = createTerminalSessionRegistry(
+      baseDeps(() => fake.child, { durability: { descriptorStore: store, isTmuxAlive: () => true } }),
+    );
+    const { sessionId } = await registry.create(
+      { allowId: "claude-drive", bin: "/usr/bin/claude", argv: [], cols: 80, rows: 24, durable: true, tmuxName: "comis-kill" },
+      DURABLE_OWNER,
+    );
+    store.remove.mockClear();
+
+    await registry.kill(sessionId, DURABLE_OWNER);
+
+    expect(store.remove, "a cleanly-killed durable session drops its descriptor (BL-03)").toHaveBeenCalledWith(sessionId);
+  });
+
+  it("I1: a NON-durable session's kill does NOT touch the descriptor store (nothing was persisted)", async () => {
+    const fake = makeFakeWorker();
+    const store = fakeDescriptorStore();
+    const registry = createTerminalSessionRegistry(
+      baseDeps(() => fake.child, { durability: { descriptorStore: store, isTmuxAlive: () => true } }),
+    );
+    const { sessionId } = await registry.create({ allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }, OWNER);
+    store.remove.mockClear();
+    await registry.kill(sessionId, OWNER);
+    expect(store.remove).not.toHaveBeenCalled();
   });
 });
 
