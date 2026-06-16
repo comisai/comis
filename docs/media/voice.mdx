@@ -119,6 +119,16 @@ empty-bearer request.
       whisper.cpp-server, …) and Comis talks to it keyless — no in-process model
       download, fully offline-capable, and GPU-accelerated if the server is. A reachable
       server makes `local` available without the in-process engine.
+
+      <Warning>
+      **`local.baseUrl` is SSRF-guarded (loopback-only by default).** The URL is validated
+      (with DNS-rebinding protection) before any request: only **loopback** (`127.0.0.1`,
+      `localhost`, `::1`) and explicitly-allowlisted hosts are permitted; public and
+      cloud-metadata addresses are denied. A rejected `baseUrl` is treated as
+      *unreachable* (the resolver falls through to the in-process engine or
+      honest-unavailable) — it never drives an outbound request. Point it at a whisper
+      server on the local host, not a public URL.
+      </Warning>
   </Accordion>
 
   <Accordion title="OpenAI">
@@ -177,7 +187,8 @@ choice depends on voice quality, budget, and whether you need an API key.
 
 | Provider | Default Model | Default Voice | API Key | Cost |
 |----------|--------------|--------------|---------|------|
-| `edge` | -- | en-US-AvaMultilingualNeural | None needed | **Default.** Free |
+| `edge` | -- | en-US-AvaMultilingualNeural | None needed | **Default.** Free (network-dependent) |
+| `local` / `piper` | Xenova/mms-tts-eng | -- | None needed | Keyless **in-process** offline TTS — no network at synth time |
 | `openai` | tts-1 | alloy | `OPENAI_API_KEY` | Paid (explicit opt-in) |
 | `elevenlabs` | eleven_multilingual_v2 | Rachel | `ELEVENLABS_API_KEY` | Paid (explicit opt-in) |
 
@@ -193,7 +204,21 @@ resolves to `edge`. Set `provider: openai` or `provider: elevenlabs` explicitly
     The default. Microsoft Edge text-to-speech — free, no API key required. Default
     voice is en-US-AvaMultilingualNeural. Works out of the box for every install
     (including Codex/OAuth-only mains). Limited customization compared to OpenAI and
-    ElevenLabs, but a great zero-config baseline.
+    ElevenLabs, but a great zero-config baseline. Network-dependent (it calls a
+    Microsoft Edge endpoint); for a fully offline voice, use `local`/`piper` below.
+  </Accordion>
+
+  <Accordion title="Local / Piper (offline, keyless)">
+    Keyless **offline** TTS. `provider: local` (or its alias `piper`) runs a small
+    single-speaker `text-to-audio` model (`Xenova/mms-tts-eng`) **in-process** via
+    `@huggingface/transformers` — the TTS twin of the local whisper STT engine. The
+    model auto-downloads once over TLS to `~/.comis/models/tts/` (a separate dir from
+    `models/whisper/`, already inside the daemon's `--allow-fs-write` scope), then
+    synthesizes with **no network at synth time**. A short/corrupt model download
+    fails closed (`model_load_failed`); if the engine or model is unavailable it
+    honest-degrades to a structured error (never crashes the reply). With TTS
+    `provider: auto`, the chain is `edge → local/piper → honest-unavailable`, so a
+    no-network install still speaks once the model is cached.
   </Accordion>
 
   <Accordion title="OpenAI">

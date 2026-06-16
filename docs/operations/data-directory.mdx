@@ -53,6 +53,7 @@ Some entries only appear under specific conditions.
 - `ecosystem.config.js` — created only by `comis pm2 setup`.
 - Named workspaces like `workspace-myagent/` — appear only when you define more than one agent.
 - `models/whisper/` — created only after the **first** voice transcription that uses the keyless in-process local STT engine (when `integrations.media.transcription.provider` resolves to `local` without a `local.baseUrl` server). Absent on a fresh install and whenever local STT never runs.
+- `models/tts/` — created only after the **first** voice reply that uses the keyless in-process offline TTS engine (when `integrations.media.tts.provider` resolves to `local`/`piper`). A separate subdir from `models/whisper/`. Absent on a fresh install and whenever local TTS never runs.
 </Note>
 
 ## File-by-file reference
@@ -229,6 +230,15 @@ It holds model weights only — **no secret, no credential**, nothing user-speci
 
 **Written by:** the local STT adapter, on the first transcription that uses the in-process engine.
 **Safe to delete?** Yes. It re-downloads on the next local transcription; deleting it only forces one slower first call afterward. Never created (or needed) when you use a `local.baseUrl` server or a keyed cloud provider instead.
+
+### `models/tts/`
+
+The on-disk cache for the **keyless in-process offline TTS engine** (`local`/`piper`, a single-speaker `text-to-audio` model run via Transformers.js / ONNX Runtime — the TTS twin of `models/whisper/`). When a voice reply resolves to the `local`/`piper` TTS provider, the engine lazy-downloads a small voice model **once** over TLS from the model hub, writes it here (a separate subdir from `models/whisper/`), and reuses it for the rest of the process — so synthesis needs **no network** thereafter. Already inside the daemon's `--allow-fs-write=${COMIS_DATA_DIR}` scope — no extra permission grant (see [Voice → Text-to-Speech](/media/voice#text-to-speech-tts)).
+
+It holds model weights only — **no secret, no credential**, nothing user-specific.
+
+**Written by:** the local TTS adapter, on the first reply that uses the in-process offline engine.
+**Safe to delete?** Yes. It re-downloads on the next local synthesis; deleting it only forces one slower first call. Never created (or needed) when TTS uses `edge` or a keyed cloud provider.
 
 Voice observability adds **no new on-disk artifact**: a transcription/synthesis records onto the **existing per-session trajectory** (the same `*.trajectory.jsonl` that carries every other turn event), so `comis explain` reconstructs the voice turn and `comis fleet` surfaces the `voice_health` signal without a dedicated voice file (see [Voice → Observability and cost](/media/voice#observability-and-cost)).
 
