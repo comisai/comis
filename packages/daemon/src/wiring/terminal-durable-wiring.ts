@@ -202,7 +202,15 @@ export interface WakeDurabilityInputs {
 
 /** The default-agent terminal config the wake-durability bundle reads its operator caps from. */
 export interface WakeDurabilityConfig {
-  readonly drive?: { readonly heartbeatMs?: number; readonly maxCostUsd?: number | null };
+  readonly drive?: {
+    readonly heartbeatMs?: number;
+    readonly maxCostUsd?: number | null;
+    // NOTIFY-01 / NOTIFY-02 (166-03): the user-facing notification policy + the coarse heartbeat
+    // cadence (`drive.notify` / `drive.heartbeatNotifyMs`, schema-skills.ts) — resolved here so
+    // the wake holder gets them in the same bundle as heartbeatMs/maxCostUsd.
+    readonly notify?: "terminal" | "all" | "none";
+    readonly heartbeatNotifyMs?: number;
+  };
   readonly worker?: { readonly stuckMs?: number };
 }
 
@@ -219,7 +227,14 @@ export function buildTerminalWakeDurability(i: {
   readonly registries: ReadonlyMap<string, TerminalSessionRegistry>;
   readonly nowMs: () => number;
   readonly config: WakeDurabilityConfig | undefined;
-}): ReturnType<typeof buildWakeDurabilityDeps> & { heartbeatMs: number; maxCostUsd: number | null } {
+}): ReturnType<typeof buildWakeDurabilityDeps> & {
+  heartbeatMs: number;
+  maxCostUsd: number | null;
+  // NOTIFY-01 / NOTIFY-02 (166-03): the resolved user-facing notification policy + heartbeat
+  // cadence, spread into setupTerminalWake (the daemon aliases `notify` → `notifyPolicy`).
+  notifyPolicy: "terminal" | "all" | "none";
+  heartbeatNotifyMs: number;
+} {
   return {
     ...buildWakeDurabilityDeps({
       dataDir: i.dataDir,
@@ -229,6 +244,10 @@ export function buildTerminalWakeDurability(i: {
     }),
     heartbeatMs: i.config?.drive?.heartbeatMs ?? 90_000,
     maxCostUsd: i.config?.drive?.maxCostUsd ?? null,
+    // NOTIFY-01 (166-03): default "terminal" (today's intent — done/failed fire, the escalation
+    // always fires); NOTIFY-02: default 1h (a coarse spam-free user heartbeat; 0 = terminal-only).
+    notifyPolicy: i.config?.drive?.notify ?? "terminal",
+    heartbeatNotifyMs: i.config?.drive?.heartbeatNotifyMs ?? 3_600_000,
   };
 }
 

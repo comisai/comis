@@ -118,6 +118,15 @@ export interface SetupTerminalWakeDeps {
    * agent's `drive` block (terminal-durable-wiring.ts). Default `"terminal"` (today's intent).
    */
   notifyPolicy?: NotifyPolicy;
+  /**
+   * NOTIFY-02 (166-03): the COARSE user-facing heartbeat cadence in ms (`drive.heartbeatNotifyMs`,
+   * default 3_600_000 / 1h). A SECOND timer (distinct from the LIVE-01 internal backstop's
+   * `heartbeatMs`) fires this often; on a tick it emits a content-free progress digest for each
+   * PROMOTED drive due at the cadence. `0` ⇒ terminal-only (the timer is NEVER armed). The timer
+   * is also NOT armed under `notifyPolicy:"none"` (the heartbeat is a non-escalation notification).
+   * Default 3_600_000.
+   */
+  heartbeatNotifyMs?: number;
   // LO-03 (165-REVIEW): NO refreshLastActivity dep — checkLiveness's `registry.status`
   // round-trip already stamps the handle's lastActivity (the registry status side effect), so a
   // busy verdict's liveness check IS the ENDURE-01 idle-reaper unify (I9). A separate refresh
@@ -242,6 +251,13 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
   // >= heartbeatMs` (i.e. ONLY in the absence of a wake), so a normally-progressing drive
   // never triggers it. Reclaimed in onSessionGone; bounded over a milestone-length daemon.
   const lastTransitionMs = new Map<string, number>();
+
+  // NOTIFY-02 (166-03): the per-session wall-clock ms of the LAST user-facing heartbeat sent —
+  // the coarse-cadence dedupe stamp. The heartbeat tick fires for a promoted session only when
+  // `now - lastHeartbeatSentMs >= heartbeatNotifyMs`, then stamps it. Mirrors lastTransitionMs's
+  // lifecycle EXACTLY: closure-local, reclaimed in onSessionGone (a recycled sessionId starts
+  // unstamped → its first due-check fires from 0), bounded over a milestone-length daemon.
+  const lastHeartbeatSentMs = new Map<string, number>();
 
   // BL-02 (165-REVIEW): the per-session "lazy-seed attempted this daemon life" marker. The
   // registry's recover-on-boot emits terminal:drive_reattached during the FLOOR-01 sweep
@@ -527,6 +543,38 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
     backstopHandle.unref();
   }
 
+  // NOTIFY-02 (166-03): the COARSE user-facing heartbeat timer — a SECOND interval, distinct
+  // from the LIVE-01 backstop (a 1h user cadence vs the 90s internal liveness tick; the design
+  // names these "distinct"). Cloned from the backstop arm pattern (setInterval(...).unref()).
+  // Armed ONLY when timers + notify are present AND heartbeatNotifyMs > 0 (Pitfall 5 — `0` is
+  // terminal-only, never armed) AND notifyPolicy !== "none" (the heartbeat is a non-escalation
+  // notification, suppressed under "none"; the escalation still fires via escalate()). The
+  // per-tick loop body lives in the extracted terminal-wake-notify.ts (runHeartbeatTick) to keep
+  // this holder under the 800-line cap — it iterates promotedSessions ONLY (I1) + reads the
+  // journal (NEVER the screen, I2/I3).
+  let heartbeatNotifyHandle: TimerHandle | undefined;
+  const heartbeatNotifyMs = deps.heartbeatNotifyMs ?? 3_600_000;
+  if (deps.timers && deps.notify && heartbeatNotifyMs > 0 && notifyPolicy !== "none") {
+    const notifyFn = deps.notify;
+    heartbeatNotifyHandle = deps.timers.setInterval(
+      () =>
+        runHeartbeatTick({
+          promotedSessions,
+          driveJournals,
+          sessionAgent,
+          lastHeartbeatSentMs,
+          notify: notifyFn,
+          info: (obj, msg) => log.info(obj, msg),
+          warn: (obj, msg) => log.warn(obj, msg),
+          nowMs,
+          heartbeatNotifyMs,
+        }),
+      heartbeatNotifyMs,
+    );
+    // .unref() so a pending tick never holds the event loop open on SIGTERM (TimerHandle contract).
+    heartbeatNotifyHandle.unref();
+  }
+
   const dispatcher: TerminalWakeDispatcher = createTerminalWakeDispatcher({
     eventBus: makeWakeAdapterBus(deps.eventBus, log, driveScopeKey),
     isSessionActive,
@@ -574,6 +622,9 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
     // LIVE-01 (165-07): reclaim the per-session last-transition stamp (same lifecycle — no
     // leak; a recycled sessionId starts unstamped so its first wake re-arms the I2 gate).
     lastTransitionMs.delete(sessionId);
+    // NOTIFY-02 (166-03): reclaim the per-session heartbeat dedupe stamp (same lifecycle — no
+    // leak; a recycled sessionId starts unstamped so its first due-check fires from 0).
+    lastHeartbeatSentMs.delete(sessionId);
     // BL-02 (165-REVIEW): reclaim the lazy-seed-attempted marker (same lifecycle — no leak; a
     // recycled sessionId re-attempts the recovered-journal load on its first wake).
     seedAttempted.delete(sessionId);
@@ -649,6 +700,10 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
       deps.eventBus.off("terminal:input_needed", onWakeTransition);
       backstopHandle?.cancel();
       backstopHandle = undefined;
+      // NOTIFY-02 (166-03): CANCEL the user-facing heartbeat interval too (no leaked timer; a
+      // post-shutdown tick never fires).
+      heartbeatNotifyHandle?.cancel();
+      heartbeatNotifyHandle = undefined;
       await dispatcher.shutdown();
     },
   };

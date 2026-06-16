@@ -918,9 +918,12 @@ describe("setupTerminalWake — the keystone subscribe + woken-turn driver (124-
   it("LIVE-01: the backstop arms a deps.timers.setInterval at heartbeatMs and .unref()'s the handle (mirrors the reaper)", () => {
     built = buildBackstop(dataDir, { screen: "Building…", heartbeatMs: 45_000, liveness: {} });
     const { fake } = built as ReturnType<typeof buildBackstop>;
-    expect(fake.intervals, "the backstop must arm exactly one interval").toHaveLength(1);
-    expect(fake.intervals[0]!.intervalMs, "the interval cadence is heartbeatMs").toBe(45_000);
-    expect(fake.intervals[0]!.handle.unrefCalls, "the backstop handle must be .unref()'d (never holds the loop open on SIGTERM)").toBeGreaterThanOrEqual(1);
+    // The backstop interval is the one armed at heartbeatMs (the buildBackstop harness also
+    // arms the 166-03 user-facing heartbeat interval at the default cadence — assert the
+    // backstop one specifically, distinct from that).
+    const backstop = fake.intervals.find((i) => i.intervalMs === 45_000);
+    expect(backstop, "the backstop must arm an interval at heartbeatMs").toBeDefined();
+    expect(backstop!.handle.unrefCalls, "the backstop handle must be .unref()'d (never holds the loop open on SIGTERM)").toBeGreaterThanOrEqual(1);
   });
 
   it("LIVE-01 / I2: a normally-progressing drive (a transition INSIDE heartbeatMs) triggers 0 synth-stuck + reads NO screen (Pitfall 7)", async () => {
