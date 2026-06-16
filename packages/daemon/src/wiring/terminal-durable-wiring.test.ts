@@ -80,6 +80,31 @@ describe("buildWakeDurabilityDeps — LO-03: checkLiveness refreshes lastActivit
     expect(registry.status.mock.calls[0]?.[1], "the liveness status round-trip must use the recovered STAMPED owner").toMatchObject(STAMPED);
   });
 
+  it("DELIVER-01 (#2): an awaiting-input classifier verdict surfaces awaitingInput:true (a finished, idle backgrounded drive) — still busy, NOT hung", async () => {
+    // The completion signal the daemon backstop reads to fire a one-time 'drive finished —
+    // waiting for input' notification. An awaiting-input drive is alive + busy (the busy/hung
+    // predicate is unchanged); awaitingInput is a PURELY ADDITIVE field on the probe.
+    const handle = { sessionId: "s-1", status: "running" as const, lastActivity: 1, durable: false as const, tmuxName: undefined };
+    const registry = {
+      get: vi.fn(() => handle as never),
+      status: vi.fn(async () => ({
+        state: "awaiting-input" as const,
+        lastActivity: 50_000,
+        interactions: 3,
+        cursorParked: true,
+        screenDiffEmpty: true,
+        confidence: "high" as const,
+        reason: "settled_cursor_parked",
+      })),
+    };
+    const registries = new Map([["a", registry]]);
+    const deps = buildWakeDurabilityDeps({ dataDir: "/tmp/nonexistent-comis-deliver01", registries: registries as never, workerStuckMs: 600_000, nowMs: () => 50_000 });
+
+    const signal = await deps.checkLiveness("s-1", "a");
+    expect(signal, "an awaiting-input drive is alive + busy (not hung)").toMatchObject({ alive: true });
+    expect(signal?.awaitingInput, "awaiting-input surfaces the DELIVER-01 completion signal").toBe(true);
+  });
+
   it("the wake-durability bundle no longer exposes a redundant refreshLastActivity dep (LO-03 removed)", () => {
     const deps = buildWakeDurabilityDeps({
       dataDir: "/tmp/nonexistent-comis-lo03",

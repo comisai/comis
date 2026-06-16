@@ -40,7 +40,7 @@ import {
   loadDriveJournal,
   removeDriveJournal,
 } from "./terminal-drive-journal-persistence.js";
-import type { DriveJournalStorePort } from "./setup-terminal-wake.js";
+import type { DriveJournalStorePort, LivenessSignal } from "./setup-terminal-wake.js";
 import {
   busyOrHung,
   buildTmuxHasSessionArgv,
@@ -314,7 +314,7 @@ export function buildTerminalWakeDurability(i: {
  */
 export function buildWakeDurabilityDeps(i: WakeDurabilityInputs): {
   driveJournalStore: DriveJournalStorePort;
-  checkLiveness: (sessionId: string, agentId: string) => Promise<BusySignal | undefined>;
+  checkLiveness: (sessionId: string, agentId: string) => Promise<LivenessSignal | undefined>;
 } {
   const isTmuxAlive = buildIsTmuxAlive(
     resolveDaemonTmuxPath(),
@@ -328,7 +328,7 @@ export function buildWakeDurabilityDeps(i: WakeDurabilityInputs): {
     remove: (agentId, sessionId) => removeDriveJournal({ dataDir: i.dataDir }, agentId, sessionId),
   };
 
-  const checkLiveness = async (sessionId: string, agentId: string): Promise<BusySignal | undefined> => {
+  const checkLiveness = async (sessionId: string, agentId: string): Promise<LivenessSignal | undefined> => {
     const registry = i.registries.get(agentId);
     if (registry === undefined) return undefined; // no registry for the agent → gone
     const owner = resolveStampedOwner(registry, sessionId, agentId); // ISSUE-3: the live channel/API session's stamped owner

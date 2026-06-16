@@ -900,7 +900,7 @@ describe("setupTerminalWake — the keystone subscribe + woken-turn driver (124-
     opts: {
       screen: string;
       heartbeatMs?: number;
-      liveness: Record<string, { alive: boolean; noProgressMs: number; stuckMs: number } | undefined>;
+      liveness: Record<string, { alive: boolean; noProgressMs: number; stuckMs: number; awaitingInput?: boolean } | undefined>;
       /** ME-02 (165-REVIEW): an optional seeded journal store so a recovered drive can be lazy-seeded/promoted. */
       seed?: Map<string, DriveJournalShape>;
     },
@@ -971,6 +971,30 @@ describe("setupTerminalWake — the keystone subscribe + woken-turn driver (124-
     expect(synthStuckEmits(b), "a normally-progressing drive must NOT be declared stuck").toHaveLength(0);
     expect(b.checkLiveness, "a wake intervened → the backstop must skip the liveness check").not.toHaveBeenCalled();
     expect(b.registry.read, "the backstop must NEVER read the screen per tick (I2)").not.toHaveBeenCalled();
+  });
+
+  it("DELIVER-01 (#2): a promoted drive that reaches awaiting-input (finished + idle) notifies the user EXACTLY ONCE — not per tick, and never a stuck", async () => {
+    // Real-VPS 2026-06-16: a backgrounded 'build a snake game' drive finished (claude idle at
+    // its ❯ box) but NOTHING was delivered — the conversation dead-ended at 'Kicked off'. A
+    // backgrounded drive emits no fd3 attention once promoted, and the backstop acted only on
+    // 'hung'. The backstop now also delivers a ONE-TIME completion notification on awaiting-input.
+    const b = buildBackstop(dataDir, { screen: "❯ ", heartbeatMs: 90_000, liveness: { "s-done": { alive: true, noProgressMs: 0, stuckMs: 600_000, awaitingInput: true } } });
+    built = b;
+    b.bus.fireDrivePromoted("s-done", "a", "producing");
+    await flush();
+    b.notify.mockClear(); // drop the 'drive started' promotion notify; we assert the COMPLETION notify
+    // Past the heartbeat window with no intervening wake → the backstop checks + sees awaiting-input.
+    b.clock.now += 120_000;
+    b.fake.tick();
+    await flush();
+    expect(b.notify, "a finished (awaiting-input) backgrounded drive notifies the user exactly once").toHaveBeenCalledTimes(1);
+    expect(synthStuckEmits(b), "a finished/idle drive is awaiting-input (busy), NEVER synthesized stuck").toHaveLength(0);
+    // De-dup: a SECOND tick while STILL awaiting-input must NOT re-notify (no per-tick spam).
+    b.notify.mockClear();
+    b.clock.now += 120_000;
+    b.fake.tick();
+    await flush();
+    expect(b.notify, "completion is delivered once per idle period, not every backstop tick").not.toHaveBeenCalled();
   });
 
   it("LIVE-01: a SILENT + HUNG drive (no transition past heartbeatMs, busyOrHung→hung) synthesizes EXACTLY ONE stuck through the existing terminal:input_needed seam (no 600s wait)", async () => {
