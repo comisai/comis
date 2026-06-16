@@ -35,14 +35,14 @@
 import { writeSync, mkdirSync, appendFileSync } from "node:fs";
 import { resolve as pathResolve } from "node:path";
 import { homedir } from "node:os";
-import { spawn as childSpawn, execFileSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import { createTerminalWorker, defaultLoadPty } from "./terminal-worker-entry.js";
 import { createStdioPump } from "./terminal-worker-stdio-pump.js";
 import { createTerminalEgressProxy } from "./terminal-egress-proxy.js";
-import { createTmuxBackend, type TmuxChild } from "./terminal-tmux-backend.js";
-import type { TmuxBackendLike } from "./terminal-worker-types.js";
+import { createTmuxBackend } from "./terminal-tmux-backend.js";
+import type { TmuxBackendLike, FakePtyLike, PtyModuleLike } from "./terminal-worker-types.js";
 
 /**
  * The durable-state dir the daemon scopes `--allow-fs-write` to
@@ -160,15 +160,19 @@ export function warnIfDurableTmuxUnavailable(tmuxPath: string | undefined, logge
 /**
  * The tmux long-run backend (OPS-05): a named tmux session outlives the worker, so a
  * milestone survives a worker crash + is re-attachable. `createTmuxBackend` makes the
- * survival decision via `has-session`; `runTmux` wraps `child_process.spawn` (a
- * ChildProcess structurally satisfies {@link TmuxChild}). Used for `backend:"tmux"`
- * create AND the BL-01 recover-on-boot `reattach` (`forceAttachOnly` — attach-or-gone,
- * never a fresh `new-session`).
+ * survival decision via `has-session`, runs the one-shot tmux commands (new-session /
+ * set-option / kill-session) via `runOneShot` (`execFileSync`), and DRIVES the session via
+ * a node-pty `tmux attach` (`spawnAttachPty` = `loadPty().spawn`) — which streams the pane,
+ * forwards keystrokes, and exits on session death (the streaming model the worker's ring/
+ * emulator needs; NOT the prior one-shot capture-pane that mis-flagged sessions exited).
+ * Used for `backend:"tmux"` create AND the BL-01 recover-on-boot `reattach` (`forceAttachOnly`
+ * — attach-or-gone, never a fresh `new-session`). `loadPty` is the SAME node-pty loader the
+ * pty backend uses (the attach client is an ordinary pty).
  */
-export function buildLoadTmux(tmuxPath: string): TmuxBackendLike {
-  // DUR-01: the STABLE data-dir socket every tmux command targets via `-S` — so the
-  // server binds it and a restarted daemon re-attaches to the SAME socket (NOT the
-  // PrivateTmp-private /tmp default, which the new daemon generation cannot reach).
+export function buildLoadTmux(tmuxPath: string, loadPty: () => PtyModuleLike): TmuxBackendLike {
+  // DUR-01: the STABLE data-dir socket every tmux command targets via `-S` — so the server
+  // binds it and a restarted daemon re-attaches to the SAME socket (NOT the PrivateTmp-private
+  // /tmp default, which the new daemon generation cannot reach).
   const socketPath = resolveTmuxSocketPath(durableDir());
   const hasSession = (name: string): boolean => {
     try {
@@ -178,10 +182,25 @@ export function buildLoadTmux(tmuxPath: string): TmuxBackendLike {
       return false;
     }
   };
-  const runTmux =
+  // One-shot tmux command runner (new-session / set-option / kill-session): synchronous,
+  // inherits the worker's scrubbed env per call; throws on a non-zero exit (the factory wraps
+  // the tolerable ones). Distinct from the ATTACH path, which is a long-lived streaming pty.
+  const runOneShot =
     (env: NodeJS.ProcessEnv) =>
-    (argv: string[]): TmuxChild =>
-      childSpawn(argv[0]!, argv.slice(1), { env }) as unknown as TmuxChild;
+    (argv: string[]): void => {
+      execFileSync(argv[0]!, argv.slice(1), { env, stdio: "ignore" });
+    };
+  // The DRIVING attach pty: node-pty `tmux attach -t <name>` — streams the pane (onData),
+  // forwards keystrokes (write), resizes via the pty, exits on session death. TERM is forced
+  // so the tmux client renders (the worker's scrubbed env may omit it).
+  const spawnAttachPty =
+    (a: { cols: number; rows: number; env: NodeJS.ProcessEnv }) =>
+    (name: string): FakePtyLike =>
+      loadPty().spawn(tmuxPath, ["-S", socketPath, "attach", "-t", name], {
+        cols: a.cols,
+        rows: a.rows,
+        env: { ...a.env, TERM: a.env.TERM ?? "xterm-256color" },
+      });
   return {
     spawn: (a) =>
       // The create path never sets forceAttachOnly → createTmuxBackend always returns a
@@ -196,10 +215,11 @@ export function buildLoadTmux(tmuxPath: string): TmuxBackendLike {
         tmuxPath,
         socketPath,
         hasSession,
-        runTmux: runTmux(a.env),
+        runOneShot: runOneShot(a.env),
+        spawnAttachPty: spawnAttachPty(a),
       })!,
     // BL-01 (165-REVIEW): recover-on-boot re-attach — attach to an EXISTING session ONLY
-    // (forceAttachOnly). The driven command is NOT re-spawned (the surviving pane is read),
+    // (forceAttachOnly). The driven command is NOT re-spawned (the surviving pane is attached),
     // so bin/argv are empty; a gone session returns undefined → the worker replies ok:false.
     reattach: (a) =>
       createTmuxBackend({
@@ -212,7 +232,8 @@ export function buildLoadTmux(tmuxPath: string): TmuxBackendLike {
         tmuxPath,
         socketPath,
         hasSession,
-        runTmux: runTmux(a.env),
+        runOneShot: runOneShot(a.env),
+        spawnAttachPty: spawnAttachPty(a),
         forceAttachOnly: true,
       }),
   };
@@ -237,7 +258,8 @@ function main(): void {
   // Long-run tmux backend (OPS-05) — present only if tmux is installed; absent ⇒
   // a backend:"tmux" request degrades to pty/pipe (never an error).
   const tmuxPath = resolveTmuxPath();
-  const loadTmux = tmuxPath ? buildLoadTmux(tmuxPath) : undefined;
+  // The attach client is an ordinary pty → reuse the SAME node-pty loader the pty backend uses.
+  const loadTmux = tmuxPath ? buildLoadTmux(tmuxPath, defaultLoadPty) : undefined;
   // DUR-01 §7.1.5: WARN at boot if tmux is unavailable — a durable drive will degrade to
   // non-durable here, so a restart ends it `lost` (journal preserved; `failed` is Phase-166's).
   warnIfDurableTmuxUnavailable(tmuxPath, logger);
