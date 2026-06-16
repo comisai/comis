@@ -25,6 +25,21 @@ import type {
   ChannelConfig,
   GatewayConfig,
   ProviderConfig,
+  VideoProviderConfig,
+  ImageProviderConfig,
+  TranscriptionProviderConfig,
+  TtsProviderConfig,
+} from "./types.js";
+import {
+  SUPPORTED_VIDEO_PROVIDERS,
+  VIDEO_PROVIDER_ENV_KEYS,
+  SUPPORTED_IMAGE_PROVIDERS,
+  IMAGE_PROVIDER_ENV_KEYS,
+  SUPPORTED_TRANSCRIPTION_PROVIDERS,
+  TRANSCRIPTION_PROVIDER_ENV_KEYS,
+  SUPPORTED_TTS_PROVIDERS,
+  TTS_PROVIDER_ENV_KEYS,
+  PROVIDER_ENV_KEYS,
 } from "./types.js";
 import type {
   WizardPrompter,
@@ -37,6 +52,7 @@ import type {
 } from "./prompter.js";
 import { validatePort } from "./validators/port.js";
 import { validateAgentName } from "./validators/agent-name.js";
+import { DAEMON_START_PROMPT, DAEMON_RESTART_PROMPT } from "./steps/11-daemon-start.js";
 
 // ---------- Types ----------
 
@@ -66,6 +82,16 @@ export type NonInteractiveOptions = {
   slackAppToken?: string;
   lineToken?: string;
   lineSecret?: string;
+  // Media generation
+  imageProvider?: string;
+  imageApiKey?: string;
+  videoProvider?: string;
+  videoApiKey?: string;
+  // Media processing
+  sttProvider?: string;
+  sttApiKey?: string;
+  ttsProvider?: string;
+  ttsApiKey?: string;
   // Paths
   dataDir?: string;
   configDir?: string;
@@ -206,6 +232,47 @@ export function validateNonInteractiveOptions(
     );
   }
 
+  // --image-provider / --video-provider, when provided, must be one of the
+  // closed media vocabulary. Unlike LLM providers (an evolving pi-ai catalog),
+  // these are fixed config enums, so a typo would FATAL the daemon at config
+  // parse — reject early with a clear hint.
+  if (opts.imageProvider !== undefined) {
+    const known = SUPPORTED_IMAGE_PROVIDERS.map((ip) => ip.id);
+    if (!known.includes(opts.imageProvider)) {
+      throw new NonInteractiveError(
+        `--image-provider must be one of: ${known.join(", ")}`,
+        "imageProvider",
+      );
+    }
+  }
+  if (opts.videoProvider !== undefined) {
+    const known = SUPPORTED_VIDEO_PROVIDERS.map((vp) => vp.id);
+    if (!known.includes(opts.videoProvider)) {
+      throw new NonInteractiveError(
+        `--video-provider must be one of: ${known.join(", ")}`,
+        "videoProvider",
+      );
+    }
+  }
+  if (opts.sttProvider !== undefined) {
+    const known = SUPPORTED_TRANSCRIPTION_PROVIDERS.map((tp) => tp.id);
+    if (!known.includes(opts.sttProvider)) {
+      throw new NonInteractiveError(
+        `--stt-provider must be one of: ${known.join(", ")}`,
+        "sttProvider",
+      );
+    }
+  }
+  if (opts.ttsProvider !== undefined) {
+    const known = SUPPORTED_TTS_PROVIDERS.map((tp) => tp.id);
+    if (!known.includes(opts.ttsProvider)) {
+      throw new NonInteractiveError(
+        `--tts-provider must be one of: ${known.join(", ")}`,
+        "ttsProvider",
+      );
+    }
+  }
+
   // Validate channel credentials
   if (opts.channels && opts.channels.length > 0) {
     for (const channel of opts.channels) {
@@ -344,6 +411,94 @@ export function buildNonInteractiveState(
     }
   }
 
+  // Image-generation provider (step 08d, skipped in non-interactive mode).
+  // Mirrors the interactive step (CRED-01): an openai/google/openrouter choice
+  // that matches the main provider reuses --api-key; fal or a cross-provider
+  // choice uses --image-api-key; auto and openai-codex (OAuth) take no key.
+  let imageProvider: ImageProviderConfig | undefined;
+  if (opts.imageProvider !== undefined) {
+    const requiredEnvKey = IMAGE_PROVIDER_ENV_KEYS[opts.imageProvider];
+    if (!requiredEnvKey) {
+      // auto or openai-codex — no static key collected here.
+      imageProvider = { provider: opts.imageProvider };
+    } else if (
+      opts.apiKey !== undefined &&
+      PROVIDER_ENV_KEYS[opts.provider!] === requiredEnvKey
+    ) {
+      imageProvider = { provider: opts.imageProvider };
+    } else if (opts.imageApiKey !== undefined) {
+      imageProvider = { provider: opts.imageProvider, apiKey: opts.imageApiKey };
+    } else {
+      imageProvider = { provider: opts.imageProvider };
+    }
+  }
+
+  // Video-generation provider (step 08c, skipped in non-interactive mode).
+  // Build the state the step would have produced from --video-provider. The
+  // credential resolution mirrors the interactive step (CRED-01): a google/xai
+  // choice that matches the main provider reuses --api-key (no extra key); fal
+  // or a cross-provider google/xai uses --video-api-key.
+  let videoProvider: VideoProviderConfig | undefined;
+  if (opts.videoProvider !== undefined) {
+    const requiredEnvKey = VIDEO_PROVIDER_ENV_KEYS[opts.videoProvider];
+    if (!requiredEnvKey) {
+      // auto — follow the main provider; no credential.
+      videoProvider = { provider: opts.videoProvider };
+    } else if (
+      opts.apiKey !== undefined &&
+      PROVIDER_ENV_KEYS[opts.provider!] === requiredEnvKey
+    ) {
+      // Main provider already supplies the matching key (e.g. google main + Veo).
+      videoProvider = { provider: opts.videoProvider };
+    } else if (opts.videoApiKey !== undefined) {
+      videoProvider = { provider: opts.videoProvider, apiKey: opts.videoApiKey };
+    } else {
+      // No key available to satisfy this provider — record the selection so the
+      // config is written; the daemon surfaces an honest auth_required at use
+      // time (no video-specific ${VAR} ref to crash boot).
+      videoProvider = { provider: opts.videoProvider };
+    }
+  }
+
+  // Transcription (STT) provider (step 08e, skipped in non-interactive mode).
+  // openai/groq reuse --api-key when it matches the main provider; deepgram (and
+  // any cross-provider choice) uses --stt-api-key.
+  let transcriptionProvider: TranscriptionProviderConfig | undefined;
+  if (opts.sttProvider !== undefined) {
+    const requiredEnvKey = TRANSCRIPTION_PROVIDER_ENV_KEYS[opts.sttProvider];
+    if (
+      opts.apiKey !== undefined &&
+      PROVIDER_ENV_KEYS[opts.provider!] === requiredEnvKey
+    ) {
+      transcriptionProvider = { provider: opts.sttProvider };
+    } else if (opts.sttApiKey !== undefined) {
+      transcriptionProvider = { provider: opts.sttProvider, apiKey: opts.sttApiKey };
+    } else {
+      transcriptionProvider = { provider: opts.sttProvider };
+    }
+  }
+
+  // TTS provider (step 08f, skipped in non-interactive mode). edge needs no key;
+  // openai reuses --api-key when the main provider is openai; elevenlabs (and any
+  // cross-provider openai) uses --tts-api-key.
+  let ttsProvider: TtsProviderConfig | undefined;
+  if (opts.ttsProvider !== undefined) {
+    const requiredEnvKey = TTS_PROVIDER_ENV_KEYS[opts.ttsProvider];
+    if (!requiredEnvKey) {
+      // edge — free, no key.
+      ttsProvider = { provider: opts.ttsProvider };
+    } else if (
+      opts.apiKey !== undefined &&
+      PROVIDER_ENV_KEYS[opts.provider!] === requiredEnvKey
+    ) {
+      ttsProvider = { provider: opts.ttsProvider };
+    } else if (opts.ttsApiKey !== undefined) {
+      ttsProvider = { provider: opts.ttsProvider, apiKey: opts.ttsApiKey };
+    } else {
+      ttsProvider = { provider: opts.ttsProvider };
+    }
+  }
+
   // Gateway config — token is the only supported gateway auth method.
   // Auto-generate a 48-char hex token when none provided (same as step 07).
   const gatewayToken = opts.gatewayToken ?? randomBytes(24).toString("hex");
@@ -390,6 +545,10 @@ export function buildNonInteractiveState(
     "gateway",
     "workspace",
     "tool-providers",
+    "image-providers",
+    "video-providers",
+    "transcription",
+    "tts",
     "review",
   ];
 
@@ -403,6 +562,10 @@ export function buildNonInteractiveState(
     agentName: opts.agentName ?? "comis-agent",
     model,
     channels,
+    ...(imageProvider !== undefined && { imageProvider }),
+    ...(videoProvider !== undefined && { videoProvider }),
+    ...(transcriptionProvider !== undefined && { transcriptionProvider }),
+    ...(ttsProvider !== undefined && { ttsProvider }),
     gateway,
     dataDir,
     skipHealth: opts.skipHealth ?? false,
@@ -445,10 +608,22 @@ export class NonInteractivePrompter implements WizardPrompter {
   }
 
   async select<T>(opts: SelectOpts<T>): Promise<T> {
-    // Handle daemon start prompt specifically -- it uses select() with
-    // "yes"/"no" string values, NOT confirm() with boolean.
-    if (opts.message === "Start the Comis daemon now?") {
-      const value = this.opts.startDaemon ? "yes" : "no";
+    // Daemon start/restart prompts (step 11) MUST respect --start-daemon. Both
+    // use select() with string values, not confirm(). Without this, the generic
+    // first-option fallback below picks "yes"/"restart" and a plain
+    // `comis init --non-interactive` (startDaemon defaults false) silently
+    // spawns — or, when a daemon already holds the gateway port, STOPS+RESPAWNS
+    // an unrelated running daemon (observed live). We key off the exact prompt
+    // literals the step exports so the two can never drift.
+    if (
+      opts.message === DAEMON_START_PROMPT ||
+      opts.message === DAEMON_RESTART_PROMPT
+    ) {
+      const value = this.opts.startDaemon
+        ? opts.message === DAEMON_RESTART_PROMPT
+          ? "restart"
+          : "yes"
+        : "no";
       // Find the matching option to return the correctly-typed value
       const match = opts.options.find(
         (o) => String(o.value) === value,

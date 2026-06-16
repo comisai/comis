@@ -131,6 +131,27 @@ describe("sanitizeLogString", () => {
     });
   });
 
+  describe("FAL API keys (<uuid>:<32hex>)", () => {
+    // CR-01 (Phase 192): a FAL FAL_KEY is shaped `<uuid>:<32+hex>`. The UUID half
+    // has hyphens (breaking a hex run) and the hex half is ~32 chars (< the 40-char
+    // HEX_SECRET_LONG floor), so it is NOT sk-/Bearer/AIza/long-hex — every prior
+    // pattern missed it, leaking a FAL credential echoed into a provider error body.
+    it("redacts a FAL key (uuid:hex) defense-in-depth pattern", () => {
+      const falKey = "b1946ac9-2c7f-4d3e-8a1b-9f8e7d6c5b4a:9f8e7d6c5b4a32109f8e7d6c5b4a3210";
+      const input = `FAL submit rejected key=${falKey}`;
+      const result = sanitizeLogString(input);
+      expect(result).not.toContain(falKey);
+      expect(result).not.toContain("9f8e7d6c5b4a32109f8e7d6c5b4a3210");
+    });
+
+    it("does NOT redact a bare lowercase word pair (no false positive on prose)", () => {
+      // The pattern requires the colon-joined high-entropy hex tail; ordinary
+      // "host:port" or "key:value" prose must survive.
+      const input = "connecting to host:8080 with verbose:true";
+      expect(sanitizeLogString(input)).toBe(input);
+    });
+  });
+
   describe("Slack app tokens (xapp-*)", () => {
     it("redacts Slack app token", () => {
       const input = "Slack token: xapp-1-A02ABCDEFGH-1234567890123-abc123def456";

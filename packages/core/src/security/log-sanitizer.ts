@@ -23,6 +23,7 @@ import {
   JWT_PATTERN,
   URL_PASSWORD,
   HEX_SECRET_LONG,
+  FAL_KEY,
   GITHUB_TOKEN_FULL,
   ANTHROPIC_API_KEY,
   OPENAI_PROJECT_KEY,
@@ -67,6 +68,10 @@ const CREDENTIAL_PATTERNS: Array<{ pattern: RegExp; replacement: string }> = [
   { pattern: URL_PASSWORD, replacement: "://$1:[REDACTED]@" },
   // Discord bot tokens: M/N prefix, three dot-separated segments
   { pattern: DISCORD_BOT_TOKEN, replacement: "[REDACTED_DISCORD_TOKEN]" },
+  // FAL API keys: <uuid-or-token>:<24+ hex> (CR-01, Phase 192). Before the generic
+  // hex pass so the colon-joined key is replaced as one unit; the 24-hex-tail floor
+  // keeps ordinary host:port / key:value prose out.
+  { pattern: FAL_KEY, replacement: "[REDACTED_FAL]" },
   // Generic hex secrets (40+ chars of hex, commonly git tokens, etc.)
   { pattern: HEX_SECRET_LONG, replacement: "[REDACTED_HEX]" },
   // GitHub tokens: ghp_, gho_, ghu_, ghs_, ghr_ followed by 36+ chars

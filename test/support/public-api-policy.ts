@@ -994,6 +994,63 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "resolveCodexStableSubject",
       "RewrittenOAuthError",
       "FileExtractionErrorKind",
+      // Video generation (v2.24 Phase 188) — the greenfield @comis/core video
+      // foundation surfaced on the public barrel so the LATER-wave Plan 04
+      // (@comis/daemon video handler + boot selector) can import them. These are
+      // the REMAINING ahead-of-consumer planned-orphans (the
+      // SessionStorePort / ContextStorePort "listed so the gate is green before
+      // the consumer lands" precedent — over-listing a soon-consumed symbol is
+      // the documented pattern, never under-listing). Each entry SHRINKS out of
+      // this baseline when its real in-repo consumer lands.
+      //
+      // SHRUNK at Plan 03 (this plan): the port + 4 value types
+      // (VideoGenerationPort / VideoGenInput / VideoGenJob / VideoJobStatus /
+      // VideoGenOutput), VideoErrorKind, and VideoGenError now have real
+      // cross-package consumers in @comis/skills/.../video-gen (the FAL adapter
+      // implements the port + throws VideoGenError; the classifier name-imports
+      // VideoErrorKind) — so they are removed from this list.
+      //
+      // STILL ORPHAN (kept — Plan 04 / @comis/daemon consumes them):
+      //   - resolveVideoProvider / isBlockedObjectKey / VIDEO_ERR_TO_LOG:
+      //     Plan 04's boot selector + handler.
+      //   - estimateVideoCostUsd / VIDEO_PRICING: Plan 04's pre-submit cost gate.
+      //   - VideoGenerateContract (api-contracts/media.ts, Plan 02): the RPC
+      //     contract is declared in Wave 1; its `[VideoGenerateContract.method]`
+      //     handler lands in Plan 04 (Wave 3) — a documented cross-wave seam.
+      // VIDEO_CAPABILITY + VideoProviderSelection + VideoGenSelectionConfig are
+      // NOT listed — they stay intra-`@comis/core/media` (the IMAGE_CAPABILITY /
+      // ImageProviderSelection policy), so they never reach the public barrel.
+      "VIDEO_ERR_TO_LOG",
+      "resolveVideoProvider",
+      "isBlockedObjectKey",
+      "estimateVideoCostUsd",
+      "VIDEO_PRICING",
+      "VideoGenerateContract",
+      // CAP-02 per-model capability-matrix TYPES (v2.24 Phase 191 Plan 01).
+      // Surfaced on the @comis/core barrel (exports/media.ts) in Wave 1. The
+      // ACCESSORS listVideoModelCaps / supportedModes / snapDuration were tracked
+      // here as ahead-of-consumer planned-orphans; REMOVED in Plan 02 (Wave 2):
+      // the @comis/daemon video-handlers now name-imports all three from
+      // @comis/core for the IN-02 validator (a real cross-package consumer), so
+      // they are no longer orphans (Plan 03's video-generate-tool adds a second
+      // consumer of listVideoModelCaps for the IN-03 dynamic description). The
+      // VideoModelCaps / VideoDurations TYPES STAY listed — they are surfaced on
+      // the barrel but have no NAME-import consumer yet (the handler reads them
+      // via inference off listVideoModelCaps's return type, not a named import),
+      // so they remain ahead-of-consumer planned-orphans until a future phase
+      // name-imports the type. The raw VIDEO_MODELS const is NOT listed — it
+      // stays intra-`@comis/core/media` (the VIDEO_CAPABILITY /
+      // IMAGE_MODELS_BY_PROVIDER policy), never on the public barrel.
+      "VideoModelCaps",
+      "VideoDurations",
+      // Shared bounded-poll helper (Plan 03, DIVERGENCE 5). createPollDeadline /
+      // pollUntilDone already have a real consumer (the @comis/skills FAL
+      // adapter's execute()), so they are NOT listed. The PollDeadline /
+      // PollOutcome TYPES are ahead-of-consumer planned-orphans: Phase 189's
+      // daemon background poller name-imports them when it drives the loop
+      // externally. They shrink out when that poller lands.
+      "PollDeadline",
+      "PollOutcome",
       // MemoryLifecyclePort + MemoryLifecycleScope +
       // MemoryTier + LifecycleSweepReport were tracked here as SCAFFOLD-DORMANT
       // ahead-of-consumer planned-orphans. REMOVED:
@@ -1239,6 +1296,12 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "DocumentationConfigSchema",
       "DocumentationLinkSchema",
       "ImageGenerationConfigSchema",
+      // Video-generation config schema (v2.24). Documented config-API surface,
+      // parity sibling of ImageGenerationConfigSchema: out-of-package consumers
+      // (daemon, CLI wizard) use the inferred VideoGenerationConfig TYPE, so the
+      // schema VALUE is a baseline orphan here. The CLI init-wizard drift-guard
+      // test parses it to keep SUPPORTED_VIDEO_PROVIDERS aligned with the enum.
+      "VideoGenerationConfigSchema",
       "NotificationConfigSchema",
       "VerbosityConfigSchema",
       "VerbosityLevelSchema",
@@ -2535,6 +2598,20 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // non-test value consumer of each lands.
       "reduceFleetWindow",
       "FleetWindowRollup",
+      // Video job store (v2.24 Phase 189, JOB-01). SHRUNK at Plan 02 (the async
+      // poller wave): `createVideoJobStore` (constructed in main-helpers
+      // buildVideoGenBundle), `VideoJobStore` + `VideoJobRecord` (the poller +
+      // handler-deps name-import them) now have real in-repo consumers — removed.
+      // STILL ORPHAN (kept — Plan 03 video_status handler / offline path):
+      //   - VideoJobInsert / VideoJobDoneInput / VideoJobState: domain types the
+      //     store API uses internally; no separate cross-package name-import yet.
+      //   - ensureVideoJobTable: wired into initSchema (intra-@comis/memory) +
+      //     used only by tests + the offline path; no other-package consumer.
+      // Remove each remaining entry when its Plan-03 in-repo value consumer lands.
+      "VideoJobState",
+      "VideoJobInsert",
+      "VideoJobDoneInput",
+      "ensureVideoJobTable",
     ])],
     // @comis/scheduler: baseline orphans tracked here.
     ["@comis/scheduler", new Set<string>([

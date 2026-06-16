@@ -233,6 +233,22 @@ export type { NamedGraphStore, NamedGraphEntry, NamedGraphSummary } from "./name
 // Delivery queue adapter
 export { createSqliteDeliveryQueue } from "./delivery-queue-adapter.js";
 
+// Video job store (durable async video-job lifecycle — Phase 189, JOB-01).
+// The SQLite-backed, agent-scoped, state-machine job store the background
+// poller (Plan 02) resumes against across a daemon restart; the video_status
+// handler (Plan 03) reads an agent-scoped row. Constructed on the shared
+// memory.db handle (like createSqliteDeliveryQueue). ensureVideoJobTable is the
+// idempotent DDL initSchema already calls; exported for the offline/test path.
+export { createVideoJobStore } from "./video-job-store.js";
+export type {
+  VideoJobStore,
+  VideoJobRecord,
+  VideoJobState,
+  VideoJobInsert,
+  VideoJobDoneInput,
+} from "./video-job-store.js";
+export { ensureVideoJobTable } from "./schema-video-jobs.js";
+
 // Delivery mirror adapter
 export { createSqliteDeliveryMirror } from "./delivery-mirror-adapter.js";
 

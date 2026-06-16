@@ -1,6 +1,6 @@
 {
-  "totalMinified": 123253,
-  "totalGzipped": 12085,
+  "totalMinified": 124609,
+  "totalGzipped": 12240,
   "budget": {
     "minified": 126000,
     "gzipped": 38912
@@ -150,7 +150,7 @@
     "obs.delivery.recent": 462,
     "obs.delivery.stats": 414,
     "obs.diagnostics": 596,
-    "obs.explain": 6562,
+    "obs.explain": 6978,
     "obs.fleet.health": 3320,
     "obs.getCacheStats": 358,
     "obs.reset": 571,
@@ -202,6 +202,8 @@
     "tokens.rotate": 555,
     "tts.auto_check": 508,
     "tts.synthesize": 469,
+    "video.generate": 516,
+    "video.status": 480,
     "whatsapp.action": 268,
     "workspace.deleteFile": 420,
     "workspace.git.commit": 529,

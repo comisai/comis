@@ -420,11 +420,11 @@ At least one provider key is required. Each provider is detected at startup; mis
 |----------|----------|-----------|
 | `ANTHROPIC_API_KEY` | Anthropic (Claude family; also `image_analyze` when an Anthropic model is the agent's vision-capable main, or via the vision registry fallback) | `sk-ant-...` |
 | `OPENAI_API_KEY` | OpenAI (GPT family, Whisper, embeddings; native `image_generate` via the OpenAI Images API for an `openai` main; also `image_analyze` when a GPT-4o-class model is the vision-capable main, or via the vision registry fallback) | `sk-...` |
-| `GOOGLE_API_KEY` | Google AI Studio (Gemini family; native `image_generate` via Gemini for a `google` main; also `image_analyze` for a Gemini vision-capable main and `describe_video` raw video, or via the vision registry fallback) | `AIza...` |
+| `GOOGLE_API_KEY` | Google AI Studio (Gemini family; native `image_generate` via Gemini and native `video_generate` via Veo for a `google` main; also `image_analyze` for a Gemini vision-capable main and `describe_video` raw video, or via the vision registry fallback) | `AIza...` |
 | `GROQ_API_KEY` | Groq (Llama, Whisper) | `gsk_...` |
 | `MISTRAL_API_KEY` | Mistral AI | -- |
 | `DEEPSEEK_API_KEY` | DeepSeek | `sk-...` |
-| `XAI_API_KEY` | xAI (Grok, search) | `xai-...` |
+| `XAI_API_KEY` | xAI (Grok, search; native `video_generate` via Grok Imagine for an `xai` main) | `xai-...` |
 | `TOGETHER_API_KEY` | Together AI | -- |
 | `CEREBRAS_API_KEY` | Cerebras | `csk-...` |
 | `OPENROUTER_API_KEY` | OpenRouter (multi-provider proxy; also the `image_generate` opt-in path) | `sk-or-...` |
@@ -440,6 +440,8 @@ Some providers reuse a parent key for sub-services: OpenAI Whisper STT and nativ
 **Image generation reuses the main provider's key.** With the default `integrations.media.imageGeneration.provider: auto`, the `image_generate` tool follows the agent's main provider and reuses **its** credentials — so in the common case **no image-specific key is needed**. A key-auth **`openai`** main generates via the OpenAI Images API with `OPENAI_API_KEY`; a **`google`** main generates via Gemini with `GOOGLE_API_KEY` (the same key the completion path and vision use — **not** `GEMINI_API_KEY`). To opt in to OpenRouter for image generation, set `provider: openrouter` and supply `OPENROUTER_API_KEY`; `FAL_KEY` is still used for the explicit `provider: fal` path.
 
 With a **Codex (ChatGPT-login) main provider** and `provider: auto` (or explicit `provider: openai-codex`), `image_generate` reuses the agent's **OAuth bearer** — bootstrapped from [`OAUTH_OPENAI_CODEX`](#oauth-openai-codex) or `comis auth login --provider openai-codex` — so **no image-specific key** is needed; the token refreshes automatically per call. The bearer is an OAuth credential, never an `OPENAI_API_KEY`.
+
+**`FAL_KEY` also enables video generation.** The `video_generate` tool (v2.24) uses the same `FAL_KEY` for the explicit `provider: fal` path (FAL queue API, `fal-ai/veo3.1/fast`). With the default `integrations.media.videoGeneration.provider: auto`, video generation **follows the agent's main provider and reuses its key**, mirroring image generation: a `google` main generates via **Veo** (default `veo-3.0-fast-generate-001`) reusing `GOOGLE_API_KEY`, and an `xai` main generates via **Grok Imagine** (`grok-imagine-video`) reusing `XAI_API_KEY` (or a SuperGrok login) — so in the common case **no video-specific key** is needed. (The native-Veo path also has a FAL-hosted fallback: `provider: fal` + `model: fal-ai/veo3.1`, which needs `FAL_KEY`, a second credential.) There is **no video-specific env var** beyond reusing these provider keys.
 
 **Vision (`image_analyze`) reuses the main provider's key too.** When the agent's main model is vision-capable (Claude / GPT-4o / Gemini and other image-accepting models), `image_analyze` routes through that main model and reuses **its** credentials — `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GOOGLE_API_KEY` for a key-auth main, or the **OAuth bearer** for a Codex main — so **no separate vision key is needed** in that case. There is **no new vision env var**: if you fall back to the independent vision registry (when the main model can't see images, or you set an explicit `integrations.media.vision.defaultProvider`), it uses the same `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GOOGLE_API_KEY`. `describe_video` (raw video) is Gemini-only and uses `GOOGLE_API_KEY`.
 

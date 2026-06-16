@@ -47,6 +47,7 @@ import {
   SENDGRID_KEY,
   JWT_PATTERN,
   HEX_SECRET_LONG,
+  FAL_KEY,
   GITHUB_TOKEN_FULL,
   DISCORD_BOT_TOKEN,
   BEARER_TOKEN_LOG,
@@ -180,6 +181,9 @@ export const SECRET_SHAPE_PATTERNS: readonly RegExp[] = [
   TELEGRAM_BOT_TOKEN,
   DISCORD_BOT_TOKEN,
   HEX_SECRET_LONG,
+  // FAL key shape `<uuid>:<hex>` (CR-01, Phase 192) — mirror the log sanitizer so
+  // a FAL credential under a benign activity key is masked here too.
+  FAL_KEY,
   // The three shapes the log sanitizer (CREDENTIAL_LOG_PATTERNS) covers
   // but the activity redactor previously omitted. Without these, a secret-shaped
   // value under a benign allowlisted key (url/cmd/note) reached the rendered

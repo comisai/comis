@@ -7,7 +7,10 @@ import type { LogLevelManager } from "./observability/log-infra.js";
 import type { TokenTracker } from "./observability/token-tracker.js";
 import type { ShutdownHandle } from "./wiring/setup-shutdown.js";
 import type { ProcessMonitor } from "./process/process-monitor.js";
-import { main, type DaemonOverrides, type DaemonInstance, hardenDataDirPermissions, runPreflightDoctor, applyInspectDefaultsForLogging } from "./daemon.js";
+import { main, type DaemonOverrides, type DaemonInstance, runPreflightDoctor, applyInspectDefaultsForLogging } from "./daemon.js";
+// hardenDataDirPermissions extracted to wiring/main-helpers.ts (Phase 188 — to
+// recover daemon.ts line-cap headroom for the video-gen wiring).
+import { hardenDataDirPermissions } from "./wiring/main-helpers.js";
 import type { MediaResult } from "./wiring/setup-media.js";
 import * as fs from "node:fs";
 import * as os from "node:os";

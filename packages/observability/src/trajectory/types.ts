@@ -202,6 +202,23 @@ export const TRAJECTORY_EVENT_TYPES = [
   "media.vision.requested",
   "media.vision.completed",
   "media.vision.failed",
+
+  // OBS-04 (Phase 192): video-generation lifecycle on the explain timeline.
+  // Direct-emitted by the daemon video RPC handler (in-turn) AND the off-turn
+  // background poller (setup-video-poller.ts) via the per-session recorder (the
+  // daemon RPC/poller context has NO EventBus bridge — direct-emit is the
+  // sanctioned path, the image-handlers.ts:210 precedent). APPEND-ONLY alongside
+  // the SemVer-frozen image.*/media.vision.* tuples above — never a rename
+  // (Pitfall 8). Content-free: ids/labels/counts/costUsd/outcome/errorKind/
+  // booleans ONLY — never the prompt, video bytes, a key, the Veo keyed-URL, or a
+  // raw provider message (T-192-01). `video.generated` carries `costUsd` so
+  // `comis explain` reconstructs the video turn's cost (OBS-03 Route a),
+  // INCLUDING a job that completed in the background after the turn ended.
+  "video.requested",
+  "video.submitted",
+  "video.generated",
+  "video.delivered",
+  "video.failed",
 ] as const;
 
 /** Closed union of trajectory event type strings. */

@@ -1573,6 +1573,72 @@
     "conditional": true
   },
   {
+    "name": "video_generate",
+    "category": "media",
+    "schema": {
+      "properties": {
+        "aspect_ratio": {
+          "description": "Aspect ratio: 16:9 | 9:16 | 1:1 (provider-validated). Omit for default.",
+          "type": "string"
+        },
+        "audio": {
+          "description": "Generate audio (provider-dependent). Omit for the provider default.",
+          "type": "boolean"
+        },
+        "duration": {
+          "description": "Clip length in seconds (provider-validated). Omit for default.",
+          "type": "number"
+        },
+        "image_url": {
+          "description": "A workspace file path, URL, or data-URI of a source image for image-to-video. SSRF-guarded and workspace-confined by the handler. Omit for text-to-video.",
+          "type": "string"
+        },
+        "model": {
+          "description": "Override the provider's default video model/endpoint (e.g. fal-ai/veo3.1/fast). Omit to use the default.",
+          "type": "string"
+        },
+        "negative_prompt": {
+          "description": "Text describing what to avoid in the generated video.",
+          "type": "string"
+        },
+        "prompt": {
+          "description": "Text description of the video to generate.",
+          "type": "string"
+        },
+        "resolution": {
+          "description": "Resolution: 720p | 1080p | 4k (provider-validated). Omit for default.",
+          "type": "string"
+        },
+        "seed": {
+          "description": "Deterministic seed for reproducible generations (provider-dependent).",
+          "type": "number"
+        }
+      },
+      "required": [
+        "prompt"
+      ],
+      "type": "object"
+    },
+    "conditional": true
+  },
+  {
+    "name": "video_status",
+    "category": "media",
+    "schema": {
+      "properties": {
+        "job_id": {
+          "description": "The job handle returned by video_generate.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "job_id"
+      ],
+      "type": "object"
+    },
+    "conditional": true
+  },
+  {
     "name": "transcribe_audio",
     "category": "media",
     "schema": {

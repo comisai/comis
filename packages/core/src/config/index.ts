@@ -175,6 +175,7 @@ export {
   FileExtractionConfigSchema,
   MediaPersistenceConfigSchema,
   ImageGenerationConfigSchema,
+  VideoGenerationConfigSchema,
 } from "./schema-integrations.js";
 export { MonitoringConfigSchema } from "./schema-observability.js";
 export { ObservabilityConfigSchema } from "./schema-observability.js";
@@ -324,6 +325,7 @@ export type {
   FileExtractionConfig,
   MediaPersistenceConfig,
   ImageGenerationConfig,
+  VideoGenerationConfig,
   MonitoringConfig,
   DiskMonitorConfig,
   ResourceMonitorConfig,

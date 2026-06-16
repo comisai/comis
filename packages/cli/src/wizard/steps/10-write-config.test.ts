@@ -377,6 +377,135 @@ describe("writeConfigStep", () => {
     expect(configContent.security).toBeUndefined();
   });
 
+  // ---------- video generation provider emission ----------
+
+  it("emits integrations.media.videoGeneration.provider when videoProvider is set", async () => {
+    const state: WizardState = {
+      ...populatedState(),
+      videoProvider: { provider: "google" },
+    };
+    const prompter = createMockPrompter();
+
+    await writeConfigStep.execute(state, prompter);
+
+    const writeCalls = vi.mocked(writeFileSync).mock.calls;
+    const configWriteCall = writeCalls.find(
+      ([path]) => typeof path === "string" && path.includes(".tmp"),
+    );
+    expect(configWriteCall).toBeDefined();
+
+    const configContent = JSON.parse(configWriteCall![1] as string);
+    expect(configContent.integrations.media.videoGeneration.provider).toBe("google");
+  });
+
+  it("emits integrations.media.imageGeneration.provider when imageProvider is set", async () => {
+    const state: WizardState = {
+      ...populatedState(),
+      imageProvider: { provider: "openrouter" },
+    };
+    const prompter = createMockPrompter();
+
+    await writeConfigStep.execute(state, prompter);
+
+    const writeCalls = vi.mocked(writeFileSync).mock.calls;
+    const configWriteCall = writeCalls.find(
+      ([path]) => typeof path === "string" && path.includes(".tmp"),
+    );
+    const configContent = JSON.parse(configWriteCall![1] as string);
+    expect(configContent.integrations.media.imageGeneration.provider).toBe("openrouter");
+  });
+
+  it("emits BOTH image and video generation under integrations.media when both are set", async () => {
+    const state: WizardState = {
+      ...populatedState(),
+      imageProvider: { provider: "fal", apiKey: "fal-img-key-123456" },
+      videoProvider: { provider: "google" },
+    };
+    const prompter = createMockPrompter();
+
+    await writeConfigStep.execute(state, prompter);
+
+    const writeCalls = vi.mocked(writeFileSync).mock.calls;
+    const configWriteCall = writeCalls.find(
+      ([path]) => typeof path === "string" && path.includes(".tmp"),
+    );
+    const configContent = JSON.parse(configWriteCall![1] as string);
+    expect(configContent.integrations.media.imageGeneration.provider).toBe("fal");
+    expect(configContent.integrations.media.videoGeneration.provider).toBe("google");
+  });
+
+  it("writes the FAL_KEY image credential to .env when imageProvider is fal", async () => {
+    const state: WizardState = {
+      ...populatedState(),
+      imageProvider: { provider: "fal", apiKey: "fal-img-secret-7890" },
+    };
+    const prompter = createMockPrompter();
+
+    await writeConfigStep.execute(state, prompter);
+
+    const writeCalls = vi.mocked(writeFileSync).mock.calls;
+    const envWriteCall = writeCalls.find(
+      ([path]) => typeof path === "string" && path.includes(".env"),
+    );
+    const envContent = envWriteCall![1] as string;
+    expect(envContent).toContain("FAL_KEY=fal-img-secret-7890");
+  });
+
+  it("emits transcription + tts providers and the deepgram/elevenlabs keys", async () => {
+    const state: WizardState = {
+      ...populatedState(),
+      transcriptionProvider: { provider: "deepgram", apiKey: "dg-secret-123456" },
+      ttsProvider: { provider: "elevenlabs", apiKey: "el-secret-123456" },
+    };
+    const prompter = createMockPrompter();
+
+    await writeConfigStep.execute(state, prompter);
+
+    const writeCalls = vi.mocked(writeFileSync).mock.calls;
+    const configContent = JSON.parse(
+      writeCalls.find(([p]) => typeof p === "string" && p.includes(".tmp"))![1] as string,
+    );
+    expect(configContent.integrations.media.transcription.provider).toBe("deepgram");
+    expect(configContent.integrations.media.tts.provider).toBe("elevenlabs");
+
+    const envContent = writeCalls.find(
+      ([p]) => typeof p === "string" && p.includes(".env"),
+    )![1] as string;
+    expect(envContent).toContain("DEEPGRAM_API_KEY=dg-secret-123456");
+    expect(envContent).toContain("ELEVENLABS_API_KEY=el-secret-123456");
+  });
+
+  it("omits integrations from config.yaml when no media provider is set", async () => {
+    const prompter = createMockPrompter();
+
+    await writeConfigStep.execute(populatedState(), prompter);
+
+    const writeCalls = vi.mocked(writeFileSync).mock.calls;
+    const configWriteCall = writeCalls.find(
+      ([path]) => typeof path === "string" && path.includes(".tmp"),
+    );
+    const configContent = JSON.parse(configWriteCall![1] as string);
+    expect(configContent.integrations).toBeUndefined();
+  });
+
+  it("writes the FAL_KEY video credential to .env when videoProvider is fal", async () => {
+    const state: WizardState = {
+      ...populatedState(),
+      videoProvider: { provider: "fal", apiKey: "fal-secret-key-123456" },
+    };
+    const prompter = createMockPrompter();
+
+    await writeConfigStep.execute(state, prompter);
+
+    const writeCalls = vi.mocked(writeFileSync).mock.calls;
+    const envWriteCall = writeCalls.find(
+      ([path]) => typeof path === "string" && path.includes(".env"),
+    );
+    expect(envWriteCall).toBeDefined();
+    const envContent = envWriteCall![1] as string;
+    expect(envContent).toContain("FAL_KEY=fal-secret-key-123456");
+  });
+
   it("includes elevatedReply in config when senderTrustEntries present", async () => {
     const state: WizardState = {
       ...populatedState(),

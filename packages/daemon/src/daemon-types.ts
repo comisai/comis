@@ -32,7 +32,7 @@ import type {
   HeartbeatRunner,
   CronScheduler,
 } from "@comis/scheduler";
-import type { BrowserService, SandboxProvider, ImageGenRateLimiter } from "@comis/skills";
+import type { BrowserService, SandboxProvider, ImageGenRateLimiter, VideoGenRateLimiter } from "@comis/skills";
 import type { RpcCall } from "@comis/skills/platform-tools";
 import type { LogLevelManager } from "./observability/log-infra.js";
 import type { TokenTracker } from "./observability/token-tracker.js";
@@ -67,7 +67,7 @@ import type {
 } from "@comis/agent";
 import type { createRestartContinuationTracker } from "./wiring/restart-continuation.js";
 import type { createSystemEventQueue, createWakeCoalescer } from "@comis/scheduler";
-import type { createFileStateTracker, createImageGenProvider } from "@comis/skills";
+import type { createFileStateTracker, createImageGenProvider, createVideoGenProvider } from "@comis/skills";
 import type { createTracingLogger } from "./observability/trace-logger.js";
 import type { createLogLevelManager } from "./observability/log-infra.js";
 import type { createTokenTracker } from "./observability/token-tracker.js";
@@ -641,6 +641,30 @@ export interface BootContext {
    *  Undefined when `maxCostPerHourUsd` is unset (ceiling skipped, count-only).
    *  Folded onto imageHandlerDeps (daemon.ts:932) as the `costLimiter` dep. */
   imageGenCostLimiter?: import("./api/image-cost-limiter.js").ImageCostLimiter;
+  // Video generation (Phase 188 / Plan 04) — the buildVideoGenBundle outputs,
+  // mirroring the image-gen fields. Folded onto videoHandlerDeps in
+  // buildVideoHandlerDeps; daemon.ts threads them through the boot context.
+  videoGenProvider?: ReturnType<typeof createVideoGenProvider> extends import("@comis/shared").Result<infer P, unknown> ? P | undefined : never;
+  videoGenRateLimiter?: VideoGenRateLimiter;
+  videoGenConfig?: BootContext["container"]["config"]["integrations"]["media"]["videoGeneration"];
+  /** DEL-01 (188): per-agent persist getter from buildVideoGenBundle — persists
+   *  the generated video to `~/.comis/workspace/media/videos/` (raised maxBytes).
+   *  Folded onto videoHandlerDeps as the `persist` dep. */
+  persistVideo?: (
+    agentId: string,
+    buffer: Buffer,
+    opts: { mediaKind: "video"; mimeType: string },
+  ) => Promise<import("@comis/shared").Result<import("@comis/skills/tools").PersistedFile, Error>>;
+  /** SEC-02 (188 / DIVERGENCE 3): per-agent/hour video USD cost ceiling, gated
+   *  PRE-submit. Undefined when `maxCostPerHourUsd` is unset (count-only). Folded
+   *  onto videoHandlerDeps as the `costLimiter` dep. */
+  videoGenCostLimiter?: import("./api/video-cost-limiter.js").VideoCostLimiter;
+  /** JOB-01 (189): the durable async video-job store (shared memory.db), built in
+   *  buildVideoGenBundle; folded onto videoHandlerDeps (insert-on-submit). */
+  videoJobStore?: import("@comis/memory").VideoJobStore;
+  /** JOB-02 (189): the two-phase background poller, built in buildVideoGenBundle;
+   *  started post-setupChannels + shut down via setupShutdown; on videoHandlerDeps. */
+  videoPoller?: import("./wiring/setup-video-poller.js").VideoPoller;
   /** VIS-01 (187): the provider-following vision bundle from buildMediaVisionBundle
    *  — `capability` is the main-provider vision bridge (folded onto
    *  MediaApiDeps.mainProviderVision) and `resolveMainModelId` is the single-source

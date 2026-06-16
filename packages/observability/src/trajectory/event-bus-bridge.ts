@@ -235,6 +235,21 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   "media.vision:requested": "media.vision.requested",
   "media.vision:completed": "media.vision.completed",
   "media.vision:failed": "media.vision.failed",
+
+  // ---- Video generation (OBS-04, Phase 192; events-media.ts) ----
+  // APPEND-ONLY alongside the image:*/media.vision:* sections above — never a
+  // rename (Pitfall 8; the v2.17-merge gate cascade). Like image.*/media.vision.*,
+  // these are DIRECT-emitted by the daemon video RPC handler (in-turn) AND the
+  // off-turn background poller via the per-session recorder (NO bus bridge in the
+  // daemon RPC/poller context); declared here for trajectory-type ARCH closure +
+  // a future bus emitter ONLY. video.generated carries `costUsd` (OBS-03 Route a —
+  // FAL/Veo estimate, Grok actual, optional). Content-free translators
+  // (translate-payload.ts) forward only the ids/labels/numbers/outcome/errorKind.
+  "video:requested": "video.requested",
+  "video:submitted": "video.submitted",
+  "video:generated": "video.generated",
+  "video:delivered": "video.delivered",
+  "video:failed": "video.failed",
 } as const satisfies Record<string, TrajectoryEventType>;
 
 /**

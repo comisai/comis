@@ -293,6 +293,64 @@ describe("validateNonInteractiveOptions", () => {
     };
     expect(() => validateNonInteractiveOptions(opts)).not.toThrow();
   });
+
+  it("rejects an unknown --video-provider (closed config vocabulary)", () => {
+    const opts = validOpts({ videoProvider: "runway" });
+    expect(() => validateNonInteractiveOptions(opts)).toThrow(NonInteractiveError);
+    try {
+      validateNonInteractiveOptions(opts);
+    } catch (e) {
+      expect((e as NonInteractiveError).field).toBe("videoProvider");
+    }
+  });
+
+  it("accepts each valid --video-provider value", () => {
+    for (const id of ["auto", "fal", "google", "xai"]) {
+      expect(() =>
+        validateNonInteractiveOptions(validOpts({ videoProvider: id })),
+      ).not.toThrow();
+    }
+  });
+
+  it("rejects an unknown --image-provider (closed config vocabulary)", () => {
+    const opts = validOpts({ imageProvider: "midjourney" });
+    expect(() => validateNonInteractiveOptions(opts)).toThrow(NonInteractiveError);
+    try {
+      validateNonInteractiveOptions(opts);
+    } catch (e) {
+      expect((e as NonInteractiveError).field).toBe("imageProvider");
+    }
+  });
+
+  it("accepts each valid --image-provider value", () => {
+    for (const id of ["auto", "fal", "openai", "openai-codex", "google", "openrouter"]) {
+      expect(() =>
+        validateNonInteractiveOptions(validOpts({ imageProvider: id })),
+      ).not.toThrow();
+    }
+  });
+
+  it("rejects an unknown --stt-provider / --tts-provider", () => {
+    expect(() =>
+      validateNonInteractiveOptions(validOpts({ sttProvider: "assemblyai" })),
+    ).toThrow(NonInteractiveError);
+    expect(() =>
+      validateNonInteractiveOptions(validOpts({ ttsProvider: "playht" })),
+    ).toThrow(NonInteractiveError);
+  });
+
+  it("accepts each valid --stt-provider and --tts-provider value", () => {
+    for (const id of ["openai", "groq", "deepgram"]) {
+      expect(() =>
+        validateNonInteractiveOptions(validOpts({ sttProvider: id })),
+      ).not.toThrow();
+    }
+    for (const id of ["openai", "elevenlabs", "edge"]) {
+      expect(() =>
+        validateNonInteractiveOptions(validOpts({ ttsProvider: id })),
+      ).not.toThrow();
+    }
+  });
 });
 
 // ==========================================================================
@@ -445,6 +503,90 @@ describe("buildNonInteractiveState", () => {
     expect(state.channels![2]).toEqual({ type: "irc", validated: false });
   });
 
+  it("omits image/video provider when the flags are not set", () => {
+    const state = buildNonInteractiveState(validOpts());
+    expect(state.imageProvider).toBeUndefined();
+    expect(state.videoProvider).toBeUndefined();
+  });
+
+  it("records auto image provider without a credential", () => {
+    const state = buildNonInteractiveState(validOpts({ imageProvider: "auto" }));
+    expect(state.imageProvider).toEqual({ provider: "auto" });
+  });
+
+  it("records openai-codex image provider without a credential (OAuth)", () => {
+    const state = buildNonInteractiveState(validOpts({ imageProvider: "openai-codex" }));
+    expect(state.imageProvider).toEqual({ provider: "openai-codex" });
+  });
+
+  it("reuses the main provider key for a matching openai image provider", () => {
+    const state = buildNonInteractiveState(
+      validOpts({ provider: "openai", apiKey: "sk-openai-main-123456", imageProvider: "openai" }),
+    );
+    expect(state.imageProvider).toEqual({ provider: "openai" });
+  });
+
+  it("uses --image-api-key for fal image generation", () => {
+    const state = buildNonInteractiveState(
+      validOpts({ imageProvider: "fal", imageApiKey: "fal-img-key-1234567890" }),
+    );
+    expect(state.imageProvider).toEqual({
+      provider: "fal",
+      apiKey: "fal-img-key-1234567890",
+    });
+  });
+
+  it("records edge TTS with no credential and deepgram STT with --stt-api-key", () => {
+    const state = buildNonInteractiveState(
+      validOpts({
+        sttProvider: "deepgram",
+        sttApiKey: "dg-key-1234567890",
+        ttsProvider: "edge",
+      }),
+    );
+    expect(state.transcriptionProvider).toEqual({
+      provider: "deepgram",
+      apiKey: "dg-key-1234567890",
+    });
+    expect(state.ttsProvider).toEqual({ provider: "edge" });
+  });
+
+  it("reuses the main openai key for openai STT/TTS (no extra credential)", () => {
+    const state = buildNonInteractiveState(
+      validOpts({
+        provider: "openai",
+        apiKey: "sk-openai-main-123456",
+        sttProvider: "openai",
+        ttsProvider: "openai",
+      }),
+    );
+    expect(state.transcriptionProvider).toEqual({ provider: "openai" });
+    expect(state.ttsProvider).toEqual({ provider: "openai" });
+  });
+
+  it("records auto video provider without a credential", () => {
+    const state = buildNonInteractiveState(validOpts({ videoProvider: "auto" }));
+    expect(state.videoProvider).toEqual({ provider: "auto" });
+  });
+
+  it("reuses the main provider key for a matching google video provider", () => {
+    const state = buildNonInteractiveState(
+      validOpts({ provider: "google", apiKey: "AIza-main-1234567890", videoProvider: "google" }),
+    );
+    // CRED-01: no extra key — GOOGLE_API_KEY already covered by the main provider.
+    expect(state.videoProvider).toEqual({ provider: "google" });
+  });
+
+  it("uses --video-api-key for fal", () => {
+    const state = buildNonInteractiveState(
+      validOpts({ videoProvider: "fal", videoApiKey: "fal-secret-key-1234567890" }),
+    );
+    expect(state.videoProvider).toEqual({
+      provider: "fal",
+      apiKey: "fal-secret-key-1234567890",
+    });
+  });
+
   it("defaults dataDir to homedir/.comis/data", () => {
     const state = buildNonInteractiveState(validOpts());
     expect(state.dataDir).toBe("/home/test/.comis/data");
@@ -455,7 +597,7 @@ describe("buildNonInteractiveState", () => {
     expect(state.dataDir).toBe("/custom/data");
   });
 
-  it("includes all interactive steps (incl. storage + tool-providers) in completedSteps", () => {
+  it("includes all interactive steps (incl. storage + tool/image/video-providers) in completedSteps", () => {
     const state = buildNonInteractiveState(validOpts());
     expect(state.completedSteps).toEqual([
       "welcome",
@@ -469,6 +611,10 @@ describe("buildNonInteractiveState", () => {
       "gateway",
       "workspace",
       "tool-providers",
+      "image-providers",
+      "video-providers",
+      "transcription",
+      "tts",
       "review",
     ]);
   });
@@ -600,6 +746,34 @@ describe("NonInteractivePrompter", () => {
         ],
       });
       expect(result).toBe("no");
+    });
+
+    // Regression: the "Daemon is already running…" restart prompt fell through
+    // to the generic first-option fallback (= "restart"), so a plain
+    // `comis init --non-interactive` (startDaemon defaults false) silently
+    // stopped + respawned whatever daemon held the gateway port.
+    it("returns 'no' for the restart prompt when startDaemon=false (does NOT restart)", async () => {
+      const p = new NonInteractivePrompter(validOpts({ startDaemon: false }));
+      const result = await p.select({
+        message: "Daemon is already running. What would you like to do?",
+        options: [
+          { value: "restart", label: "Restart" },
+          { value: "no", label: "Leave running" },
+        ],
+      });
+      expect(result).toBe("no");
+    });
+
+    it("returns 'restart' for the restart prompt when startDaemon=true", async () => {
+      const p = new NonInteractivePrompter(validOpts({ startDaemon: true }));
+      const result = await p.select({
+        message: "Daemon is already running. What would you like to do?",
+        options: [
+          { value: "restart", label: "Restart" },
+          { value: "no", label: "Leave running" },
+        ],
+      });
+      expect(result).toBe("restart");
     });
 
     it("returns initialValue if set for other prompts", async () => {

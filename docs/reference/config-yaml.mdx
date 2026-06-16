@@ -1787,6 +1787,50 @@ integrations:
 A Codex main provider's image request identifies itself to the ChatGPT backend as the official Codex client (`originator: codex_cli_rs`, a Codex-shaped `User-Agent`, and a `ChatGPT-Account-ID` decoded from your token) — a **first-party-client compatibility shim** using **your own** OAuth credentials against the **same endpoint** the official Codex CLI uses (so Cloudflare does not 403 non-residential IPs). It is authorized reuse of your own credentials, **not detection evasion**.
 </Note>
 
+**Video Generation (integrations.media.videoGeneration)**
+
+Controls the `video_generate` tool. By default (`provider: auto`) video generation **follows the agent's main provider and reuses its credentials**, mirroring image generation: a `google` main resolves to **Google Veo** and an `xai` main resolves to **xAI Grok Imagine**, each with the key the agent already uses (`GOOGLE_API_KEY` / `XAI_API_KEY`). Where the main provider has no video API (e.g. `openai`, `anthropic`), the tool returns an honest "unavailable" with a hint to set `provider` (e.g. `fal` + `FAL_KEY`) — it never silently routes to a different paid provider.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `provider` | `enum` | `"auto"` | `auto` (follow the agent's main provider, reuse its credentials), or an explicit provider: `fal`, `google`, `xai`. Explicit overrides follow-main. |
+| `model` | `string` | _(unset)_ | Provider-specific model/endpoint ID; overrides the per-backend default (e.g. `fal-ai/veo3.1/fast`). |
+| `defaultDurationSecs` | `number` | `8` | Default clip length in seconds when the tool call omits `duration` (provider-validated). |
+| `defaultAspectRatio` | `string` | `"16:9"` | Default aspect ratio (`16:9`, `9:16`, `1:1`). |
+| `defaultResolution` | `string` | `"720p"` | Default resolution (`720p`, `1080p`, `4k`). |
+| `generateAudio` | `boolean` | _(unset)_ | Generate audio when the backend supports it (omit for the provider default). Raises the worst-case cost estimate. |
+| `maxPerHour` | `number` | `5` | Max video generations per hour per agent (rate limit). |
+| `timeoutMs` | `number` | `300000` | Inline `execute()` poll-loop timeout in ms (a render can take 30 s–5 min). |
+| `pollIntervalMs` | `number` | `10000` | Poll cadence in ms while awaiting a terminal job state. |
+| `maxConcurrentJobs` | `number` | _(unset)_ | Optional cap on concurrent in-flight jobs (consumed by the background poller in a later phase). |
+| `maxDeliveryAttempts` | `number` | `5` | Max delivery/completion attempts the background poller makes before it **dead-letters** a job to `failed`. Each sweep re-drives a still-`pending` job whose channel delivery failed; this bounds that retry so a **persistent** delivery failure (channel down, oversize attachment, bad credential) converges to `failed` instead of re-polling + re-downloading the clip every `pollIntervalMs` forever. The render cost is recorded on the limiter **only** on a successful terminal delivery, so a dead-lettered job is never billed. |
+| `fallbackChain` | `enum[]` | `[]` | Ordered providers consulted **only after** follow-main fails (same value set as `provider`). Each skipped entry is logged with a reason. |
+| `maxCostPerHourUsd` | `number` | _(unset)_ | Optional per-agent hourly **cost** ceiling (USD), gated **estimate-first**. **Enforced:** because a video clip is already rendering once submitted, the ceiling is checked against a **worst-case pre-submit estimate** (duration × per-second rate, audio/4k upper bound) — if `(accumulated + estimate)` would exceed this value the request is blocked with `quota_exceeded` (a `success: false` + a hint naming this key) **before** the provider is called; the actual cost is reconciled after a successful render. Orthogonal to and additive over `maxPerHour`. When unset there is no cost ceiling. |
+
+<Note>
+**This release (v2.24 Phase 188)** wires the **FAL** path as the loop-prover: set `provider: fal` + `FAL_KEY` to generate today. The native **Veo** and **Grok Imagine** adapters land in **Phase 190** — under `provider: auto` a `google`/`xai` main currently resolves the selection but reports an honest "unavailable" naming Phase 190 (use `provider: fal` + `FAL_KEY` in the meantime).
+</Note>
+
+```yaml
+integrations:
+  media:
+    videoGeneration:
+      provider: auto        # follow the agent's main provider (google→Veo, xai→Grok; wired Phase 190)
+      maxPerHour: 5
+```
+
+```yaml
+integrations:
+  media:
+    videoGeneration:
+      provider: fal                  # explicit — the wired baseline this release (needs FAL_KEY)
+      model: fal-ai/veo3.1/fast
+      defaultDurationSecs: 8
+      timeoutMs: 300000
+      pollIntervalMs: 10000
+      maxCostPerHourUsd: 5           # per-agent/hour USD ceiling, gated on the pre-submit estimate
+```
+
 **Vision (integrations.media.vision)**
 
 | Key | Type | Default | Description |

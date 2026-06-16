@@ -7906,6 +7906,48 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
           ],
           "additionalProperties": false
         },
+        "videoGenerated": {
+          "type": "object",
+          "properties": {
+            "provider": {
+              "type": "string"
+            },
+            "model": {
+              "type": "string"
+            },
+            "jobId": {
+              "type": "string"
+            },
+            "costUsd": {
+              "type": "number"
+            },
+            "estimatedCostUsd": {
+              "type": "number"
+            },
+            "durationSecs": {
+              "type": "number"
+            },
+            "outcome": {
+              "type": "string",
+              "enum": [
+                "ok",
+                "failed"
+              ]
+            },
+            "errorKind": {
+              "type": "string"
+            },
+            "delivered": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "provider",
+            "outcome",
+            "delivered"
+          ],
+          "additionalProperties": false
+        },
         "summary": {
           "type": "string"
         },
@@ -10943,6 +10985,101 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         "filePath",
         "mimeType",
         "sizeBytes"
+      ],
+      "additionalProperties": false
+    },
+    "scopes": [
+      "rpc"
+    ]
+  },
+  "video.generate": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "prompt": {
+          "type": "string"
+        },
+        "duration": {
+          "type": "number"
+        },
+        "aspect_ratio": {
+          "type": "string"
+        },
+        "resolution": {
+          "type": "string"
+        },
+        "audio": {
+          "type": "boolean"
+        },
+        "negative_prompt": {
+          "type": "string"
+        },
+        "seed": {
+          "type": "number"
+        },
+        "image_url": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {}
+    },
+    "scopes": [
+      "rpc"
+    ]
+  },
+  "video.status": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "job_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "job_id"
+      ],
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "done",
+            "failed"
+          ]
+        },
+        "progress": {
+          "type": "number"
+        },
+        "mediaPath": {
+          "type": "string"
+        },
+        "costUsd": {
+          "type": "number"
+        },
+        "error": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "state"
       ],
       "additionalProperties": false
     },

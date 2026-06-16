@@ -128,29 +128,40 @@ describe("toolProvidersStep", () => {
 
   it("collects all three providers when all selected", async () => {
     const prompter = createMockPrompter({
-      multiselect: [["brave", "elevenlabs", "perplexity"]],
-      password: ["brv-key-1234567890", "el-key-1234567890", "pplx-key-1234567890"],
+      multiselect: [["brave", "tavily", "perplexity"]],
+      password: ["brv-key-1234567890", "tvly-key-1234567890", "pplx-key-1234567890"],
     });
 
     const result = await toolProvidersStep.execute(baseState(), prompter);
 
     expect(result.toolProviders).toHaveLength(3);
-    expect(result.toolProviders!.map((tp) => tp.id)).toEqual(["brave", "elevenlabs", "perplexity"]);
+    expect(result.toolProviders!.map((tp) => tp.id)).toEqual(["brave", "tavily", "perplexity"]);
   });
 
   it("password prompt includes provider label", async () => {
     const prompter = createMockPrompter({
-      multiselect: [["elevenlabs"]],
-      password: ["el-test-key-1234567"],
+      multiselect: [["tavily"]],
+      password: ["tvly-test-key-1234567"],
     });
 
     await toolProvidersStep.execute(baseState(), prompter);
 
     expect(prompter.password).toHaveBeenCalledWith(
       expect.objectContaining({
-        message: "ElevenLabs API key",
+        message: "Tavily API key",
       }),
     );
+  });
+
+  it("multiselect no longer offers TTS providers (moved to the dedicated tts step)", async () => {
+    const prompter = createMockPrompter({ multiselect: [[]] });
+
+    await toolProvidersStep.execute(baseState(), prompter);
+
+    const call = vi.mocked(prompter.multiselect).mock.calls[0][0];
+    const ids = (call.options as { value: string }[]).map((o) => o.value);
+    expect(ids).not.toContain("elevenlabs");
+    expect(ids).not.toContain("openai-tts");
   });
 
   it("password prompt validates minimum length", async () => {
@@ -179,7 +190,7 @@ describe("toolProvidersStep", () => {
       expect.objectContaining({
         options: expect.arrayContaining([
           expect.objectContaining({ value: "brave", label: "Brave Search" }),
-          expect.objectContaining({ value: "elevenlabs", label: "ElevenLabs" }),
+          expect.objectContaining({ value: "tavily", label: "Tavily" }),
           expect.objectContaining({ value: "perplexity", label: "Perplexity" }),
         ]),
       }),

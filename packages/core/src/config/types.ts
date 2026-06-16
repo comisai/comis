@@ -90,6 +90,7 @@ export type {
   FileExtractionConfig,
   MediaPersistenceConfig,
   ImageGenerationConfig,
+  VideoGenerationConfig,
 } from "./schema-integrations.js";
 export type {
   MonitoringConfig,

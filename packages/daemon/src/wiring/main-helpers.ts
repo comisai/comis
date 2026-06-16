@@ -6,7 +6,7 @@
  *
  * @module
  */
-import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync, chmodSync, statSync, mkdirSync } from "node:fs";
 import {
   safePath,
   createApprovalGate,
@@ -15,9 +15,23 @@ import {
   EMBED_MULTILINGUAL,
   RERANK_MULTILINGUAL,
 } from "@comis/core";
-import type { ImageGenerationPort, OAuthTokenManager, ClockPort } from "@comis/core";
+import type { ImageGenerationPort, OAuthTokenManager, ClockPort, VideoGenerationPort } from "@comis/core";
 import { createChannelHealthMonitor } from "@comis/channels";
 import { createImageGenRateLimiter } from "@comis/skills";
+// Video generation (Phase 188 / Plan 04): the FAL queue factory + per-agent rate
+// limiter, imported from the bare @comis/skills barrel exactly like the image
+// route (the adapter + @fal-ai/client dep stay in @comis/skills — no daemon
+// phantom dep).
+import { createVideoGenProvider, createVideoGenRateLimiter } from "@comis/skills";
+// JOB-01/JOB-02 (189): the durable async job store (shared memory.db) + the
+// two-phase background poller. createVideoJobStore is from @comis/memory (the
+// store lives beside the delivery queue); createVideoPoller is the sibling daemon
+// wiring. Both are CONSTRUCTED here in buildVideoGenBundle (the construction site
+// the wiring guard pins) so a future refactor cannot regress the path to unwired.
+import { createVideoJobStore } from "@comis/memory";
+import { createVideoPoller, type VideoPoller } from "./setup-video-poller.js";
+import { resolveVideoSecretsForRedaction } from "./video-log-redaction.js";
+import type { DeliveryAdapter, TimerPort, ChannelPort } from "@comis/core";
 // DEL-01 (186): the per-agent media persistence getter mirrors the screenshot
 // precedent (setup-tools.ts:69,305). Sibling-direct on the `@comis/skills/tools`
 // subpath (the proven path), NOT the bare `@comis/skills` barrel.
@@ -25,12 +39,16 @@ import { createMediaPersistenceService, type MediaPersistenceService } from "@co
 // SEC-02 (186): the per-agent/hour USD cost ceiling, a daemon-side accumulator
 // (sibling api/ module) constructed beside the count rate limiter below.
 import { createImageCostLimiter, type ImageCostLimiter } from "../api/image-cost-limiter.js";
+// SEC-02 (188 / DIVERGENCE 3): the per-agent/hour video USD cost ceiling, gated
+// PRE-submit against a worst-case estimate (sibling api/ module).
+import { createVideoCostLimiter, type VideoCostLimiter } from "../api/video-cost-limiter.js";
 import type { LoggingResult } from "./setup-logging.js";
-import type { BootContext } from "../daemon-types.js";
+import type { BootContext, PermissionCorrection } from "../daemon-types.js";
 // Sibling-direct imports (not via the wiring barrel) to keep main-helpers free
 // of a barrel import edge — these are the image-gen bundle's collaborators.
 import { createImageGenGetter } from "./setup-media.js";
 import { createImageProviderSelector } from "./setup-image-provider.js";
+import { createVideoProviderSelector } from "./setup-video-provider.js";
 import { resolveAgentModel } from "./setup-agents/setup-agents-tooling.js";
 import { registerComisImageProviders } from "../api/pi-image-adapter.js";
 // VIS-01 (187): the provider-following vision bridge (Plan 01) — the bundle
@@ -422,6 +440,244 @@ export function buildImageHandlerDeps(
   };
 }
 
+/** Raised persistence cap for video (DEL-01): 200 MB (vs the 50 MB image
+ *  default) holds a multi-minute 1080p mp4 while bounding a runaway download. */
+const VIDEO_PERSIST_MAX_BYTES = 200 * 1024 * 1024;
+
+/**
+ * WR-06: narrow a live channel adapter to its capabilities at RUNTIME.
+ * `channelAdaptersRef` is typed `Map<string, DeliveryAdapter>` (the delivery queue
+ * needs only `sendMessage`), but the runtime entries are the FULL channel adapters
+ * — some expose `sendAttachment`, some (IRC) do not. A `typeof sendAttachment ===
+ * "function"` check (not a blind double-cast) returns `undefined` for a
+ * non-attaching adapter, so the poller's IRC-degrade branch triggers on a typed
+ * `undefined`. DEL-03: the return type also exposes `sendMessage` (a REQUIRED
+ * ChannelPort + DeliveryAdapter method) for the oversized-degrade link/notice; the
+ * cast stays sound — an adapter passing the typeof check is a full ChannelPort.
+ */
+function resolveAttachmentAdapter(
+  adapter: DeliveryAdapter | undefined,
+): Pick<ChannelPort, "sendAttachment" | "sendMessage"> | undefined {
+  if (
+    adapter &&
+    typeof (adapter as { sendAttachment?: unknown }).sendAttachment === "function"
+  ) {
+    return adapter as unknown as Pick<ChannelPort, "sendAttachment" | "sendMessage">;
+  }
+  return undefined;
+}
+
+/**
+ * Build the video-generation bundle (lazy boot selector + boot probe + rate
+ * limiter + cost limiter + per-agent persist getter + config). Mirrors
+ * `buildImageGenBundle`; extracted from `daemon.ts` to hold its 3000-line cap.
+ *
+ * RES-02/CRED-01: the selector routes explicit `fal` to the skills FAL adapter,
+ * follows the DEFAULT agent's resolved main provider for `auto` (veo/grok
+ * selection, live adapters land Phase 190 → honest-unavailable here), and returns
+ * an honest-unavailable port (with the knob hint) for a video-incapable main
+ * (RES-03) — never a misroute. The getter reads the config + secretManager on
+ * use, but is invoked ONCE here at boot and the handler holds that boot-built
+ * port — key rotation requires a daemon restart (parity with the image bundle).
+ */
+export function buildVideoGenBundle(deps: {
+  container: BootContext["container"];
+  defaultAgentId: string;
+  skillsLogger: BootContext["skillsLogger"];
+  /** DEL-01: per-agent workspace dirs + default, threaded from the call site;
+   *  the per-agent `persistVideo` getter resolves the agent's confined workspace
+   *  from these. */
+  workspaceDirs: Map<string, string>;
+  defaultWorkspaceDir: string;
+  /** JOB-01 (189): the shared better-sqlite3 memory.db handle the VideoJobStore
+   *  binds (the SAME handle setupDeliveryQueue takes — typed `unknown` to avoid a
+   *  cross-package better-sqlite3 type dep, exactly like setupDeliveryQueue). */
+  db: unknown;
+  /** JOB-03 (189) — WARNING-1: the EARLY-created channel-adapter registry the
+   *  delivery queue closes over. It is populated BY REFERENCE in
+   *  wirePostChannelsLifecycle (after setupChannels), so the poller resolves a
+   *  LIVE adapter at delivery time — NOT the late `adaptersByType` (which is not
+   *  in scope at this call site). Mirrors `setupDeliveryQueue({ channelAdapters })`. */
+  channelAdaptersRef: Map<string, DeliveryAdapter>;
+  /** The daemon TimerPort drives the poller's outer sweeper (sanctioned, unref'd). */
+  timers: TimerPort;
+  /** DEFAULT agent's OAuthTokenManager — threaded to the selector for the Grok-video OAuth path (190 / CRED-01). @see buildImageGenBundle. */
+  oauthManager?: OAuthTokenManager;
+  /** OBS-04/OBS-03 (192): trajectory registry + event bus → createVideoPoller (off-turn video.* live emit by record.sessionKey + the cost route). Optional. */
+  trajectoryRegistry?: import("@comis/observability").SessionTrajectoryHandleRegistry;
+  eventBus?: BootContext["container"]["eventBus"];
+}): {
+  videoGenConfig: BootContext["container"]["config"]["integrations"]["media"]["videoGeneration"];
+  videoGenProvider: VideoGenerationPort | undefined;
+  videoGenRateLimiter: ReturnType<typeof createVideoGenRateLimiter> | undefined;
+  /** DEL-01: per-agent persist getter → MediaPersistenceService.persist (videos/). */
+  persistVideo: (
+    agentId: string,
+    buffer: Buffer,
+    opts: { mediaKind: "video"; mimeType: string },
+  ) => ReturnType<MediaPersistenceService["persist"]>;
+  /** SEC-02 (DIVERGENCE 3): per-agent/hour USD cost ceiling, gated PRE-submit.
+   *  Undefined when `maxCostPerHourUsd` is unset (ceiling skipped, count-only). */
+  videoGenCostLimiter: VideoCostLimiter | undefined;
+  /** JOB-01 (189): the durable async job store (undefined when video disabled). */
+  videoJobStore: ReturnType<typeof createVideoJobStore> | undefined;
+  /** JOB-02 (189): the two-phase background poller (undefined when video disabled). */
+  videoPoller: VideoPoller | undefined;
+} {
+  const { container, defaultAgentId, skillsLogger, workspaceDirs, defaultWorkspaceDir, db, channelAdaptersRef, timers, oauthManager, trajectoryRegistry, eventBus } = deps;
+  const videoGenConfig = container.config.integrations.media.videoGeneration;
+  const defaultAgentCfg =
+    container.config.agents[defaultAgentId] ?? container.config.agents["default"];
+  const defaultMain = defaultAgentCfg
+    ? resolveAgentModel(defaultAgentCfg, container.config.models).provider
+    : "default";
+  const getVideoGenProvider = createVideoProviderSelector({
+    videoGenConfig,
+    secretManager: container.secretManager,
+    mainProviderId: defaultMain,
+    // The skills FAL factory getter (explicit `provider:"fal"`). createVideoGenProvider
+    // returns ok(undefined) when FAL_KEY is absent, else the adapter; unwrap to
+    // the port|undefined the selector's legacyGetter expects.
+    legacyGetter: () => {
+      const r = createVideoGenProvider(videoGenConfig, container.secretManager);
+      return r.ok ? r.value : undefined;
+    },
+    logger: skillsLogger,
+    // 190 (CRED-01): the DEFAULT agent's OAuth manager + oauthProfiles for the
+    // Grok-video key-or-OAuth path (mirrors buildImageGenBundle:331-332).
+    oauthManager,
+    oauthProfiles: defaultAgentCfg?.oauthProfiles,
+  });
+  const videoGenProvider = getVideoGenProvider(); // boot-time probe
+  const videoGenRateLimiter = videoGenProvider
+    ? createVideoGenRateLimiter({ maxPerHour: videoGenConfig.maxPerHour })
+    : undefined;
+  // SEC-02 (DIVERGENCE 3): the USD cost ceiling, constructed ONLY when
+  // `maxCostPerHourUsd` is set AND a provider exists — otherwise undefined and
+  // the handler skips the ceiling (count-only, no regression).
+  const videoGenCostLimiter =
+    videoGenProvider && videoGenConfig.maxCostPerHourUsd
+      ? createVideoCostLimiter({ maxCostPerHourUsd: videoGenConfig.maxCostPerHourUsd })
+      : undefined;
+  // DEL-01: per-agent MediaPersistenceService getter (mirrors persistImage) with
+  // a RAISED maxBytes for video. Writes to `~/.comis/workspace/media/videos/`.
+  const videoPersistenceServices = new Map<string, MediaPersistenceService>();
+  const persistVideo = (
+    agentId: string,
+    buffer: Buffer,
+    opts: { mediaKind: "video"; mimeType: string },
+  ): ReturnType<MediaPersistenceService["persist"]> => {
+    let svc = videoPersistenceServices.get(agentId);
+    if (!svc) {
+      svc = createMediaPersistenceService({
+        workspaceDir: workspaceDirs.get(agentId) ?? defaultWorkspaceDir,
+        logger: skillsLogger,
+        maxBytes: VIDEO_PERSIST_MAX_BYTES,
+      });
+      videoPersistenceServices.set(agentId, svc);
+    }
+    return svc.persist(buffer, opts);
+  };
+  // JOB-01/JOB-02 (189): construct the durable store + background poller ONLY when
+  // a provider exists (else they are undefined and the boot wiring + handler-deps
+  // builder short-circuit on `!videoGenProvider`). The store binds the SHARED
+  // memory.db handle (Q1/O3 LOCKED). The poller closes over `channelAdaptersRef`
+  // (WARNING-1: the EARLY registry the delivery queue uses, populated by reference
+  // after setupChannels) so announce-on-complete reaches a LIVE adapter outside a
+  // turn — never the late `adaptersByType` (not in scope here).
+  let videoJobStore: ReturnType<typeof createVideoJobStore> | undefined;
+  let videoPoller: VideoPoller | undefined;
+  if (videoGenProvider) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- db is better-sqlite3 Database; typed unknown to avoid a cross-package type dep (mirrors setupDeliveryQueue).
+    videoJobStore = createVideoJobStore(db as any);
+    videoPoller = createVideoPoller({
+      store: videoJobStore,
+      provider: videoGenProvider,
+      persist: persistVideo,
+      videoSecrets: resolveVideoSecretsForRedaction(container.secretManager), // SEC-03 (CR-01) exact-match log scrub
+      ...(videoGenCostLimiter ? { costLimiter: videoGenCostLimiter } : {}),
+      // The poller resolves a LIVE adapter at delivery time from the early
+      // channelAdaptersRef (populated by reference post-setupChannels) — the
+      // delivery-queue mechanism retyped for an attachment send. Runtime-narrowed
+      // by resolveAttachmentAdapter (WR-06 / DEL-03 — see its doc).
+      getChannelAdapter: (
+        channelType: string,
+      ): Pick<ChannelPort, "sendAttachment" | "sendMessage"> | undefined =>
+        resolveAttachmentAdapter(channelAdaptersRef.get(channelType)),
+      config: videoGenConfig,
+      logger: skillsLogger,
+      timers,
+      // OBS-04/OBS-03 (192): off-turn video.* live emit + the cost route (optional).
+      ...(trajectoryRegistry ? { trajectoryRegistry } : {}),
+      ...(eventBus ? { eventBus } : {}),
+    });
+    skillsLogger.info(
+      { provider: videoGenConfig.provider, mainProvider: defaultMain },
+      "Video generation provider initialized",
+    );
+  } else {
+    skillsLogger.debug("Video generation disabled: API key not configured or provider unknown");
+  }
+  return { videoGenConfig, videoGenProvider, videoGenRateLimiter, persistVideo, videoGenCostLimiter, videoJobStore, videoPoller };
+}
+
+/**
+ * The post-channels boot-context fields `buildVideoHandlerDeps` reads (mirrors
+ * `ImageHandlerBootSlice`).
+ */
+type VideoHandlerBootSlice = Pick<BootContext, "videoGenProvider" | "videoGenRateLimiter" | "videoGenCostLimiter" | "videoJobStore" | "videoPoller" | "trajectoryRegistry" | "skillsLogger" | "container"> &
+  Required<Pick<BootContext, "videoGenConfig" | "adaptersByType" | "workspaceDirs" | "defaultWorkspaceDir" | "persistVideo">>;
+
+/**
+ * Build the `videoHandlerDeps` slice of `ApiDispatchDeps` — `undefined` when
+ * video disabled. Mirrors `buildImageHandlerDeps`. OBS-04 (192): threads
+ * `trajectoryRegistry` (in-turn video.* direct-emit) + `eventBus` off `c`.
+ */
+export function buildVideoHandlerDeps(
+  c: VideoHandlerBootSlice,
+  resolveAgentMainProvider: (agentId: string) => { providerId: string },
+): import("../api/rpc-dispatch.js").ApiDispatchDeps["videoHandlerDeps"] {
+  // 189: the async store + poller are REQUIRED for the submit path. They are
+  // constructed in buildVideoGenBundle alongside the provider, so when the
+  // provider exists they always do — but guard explicitly (no undefined slip).
+  if (!c.videoGenProvider || !c.videoGenRateLimiter || !c.videoJobStore || !c.videoPoller) return undefined;
+  return {
+    provider: c.videoGenProvider,
+    rateLimiter: c.videoGenRateLimiter,
+    config: c.videoGenConfig,
+    logger: c.skillsLogger,
+    getChannelAdapter: (channelType: string) => c.adaptersByType.get(channelType),
+    resolveAgentMainProvider, // RES-01 (obs/lockstep only)
+    workspaceDirs: c.workspaceDirs, // SEC-03: image_url path confinement
+    defaultWorkspaceDir: c.defaultWorkspaceDir,
+    persist: c.persistVideo, // DEL-01: persist getter (videos/)
+    costLimiter: c.videoGenCostLimiter, // SEC-02 (DIVERGENCE 3): pre-submit ceiling
+    videoJobStore: c.videoJobStore, // JOB-01: handler inserts a pending row on submit
+    videoPoller: c.videoPoller, // JOB-02: hand the job to the background poller
+    trajectoryRegistry: c.trajectoryRegistry, // OBS-04 (192): in-turn video.* direct-emit
+    eventBus: c.container.eventBus, // OBS-03 (192): parity (off-turn cost route = poller)
+  };
+}
+
+/**
+ * Build the `videoStatusHandlerDeps` slice of `ApiDispatchDeps` (Phase 189 /
+ * Plan 03 — JOB-04). The READ side of the async lifecycle: `video.status` reads
+ * the SAME agent-scoped `videoJobStore` the poller writes (single source — no
+ * second instance). `undefined` when video generation is disabled (no store),
+ * which also leaves the `video_status` tool ungated (see `videoStatusEnabled`).
+ * Far narrower than `buildVideoHandlerDeps` — the read handler needs only the
+ * store + logger.
+ */
+export function buildVideoStatusHandlerDeps(
+  c: VideoHandlerBootSlice,
+): import("../api/rpc-dispatch.js").ApiDispatchDeps["videoStatusHandlerDeps"] {
+  if (!c.videoJobStore) return undefined;
+  return {
+    videoJobStore: c.videoJobStore, // JOB-04: agent-scoped get(job_id, agentId)
+    logger: c.skillsLogger,
+  };
+}
+
 /**
  * VIS-01 (187): resolve the VISION API key by PROVIDER. Mirrors
  * `resolveImageApiKey` (pi-image-adapter.ts:279) but keyed by PROVIDER, since
@@ -516,4 +772,46 @@ export function buildMediaVisionBundle(deps: {
     logger: skillsLogger,
   });
   return { capability, resolveMainModelId: (agentId: string) => resolveMain(agentId).modelId || undefined };
+}
+
+/**
+ * Scan ~/.comis/ and fix permissions on the data directory and known sensitive
+ * files. Returns an array of corrections for deferred logging. Extracted from
+ * `daemon.ts` to keep the composition root under its 3000-line architecture cap
+ * (runs at startup; the result is logged after the logger is up). Self-contained
+ * — a `dataDir` string in, a `PermissionCorrection[]` out, only node:fs sync I/O.
+ */
+export function hardenDataDirPermissions(dataDir: string): PermissionCorrection[] {
+  const corrections: PermissionCorrection[] = [];
+
+  // Ensure data dir exists with 0o700
+  try {
+    mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+  } catch { /* may already exist */ }
+
+  // Fix data directory permissions
+  try {
+    const stat = statSync(dataDir);
+    const currentMode = stat.mode & 0o777;
+    if (currentMode !== 0o700) {
+      chmodSync(dataDir, 0o700);
+      corrections.push({ file: dataDir, oldMode: currentMode, newMode: 0o700 });
+    }
+  } catch { /* best-effort */ }
+
+  // Fix known sensitive files
+  const sensitiveFiles = ["config.yaml", "config.local.yaml", ".env", "secrets.db", "secrets.json"];
+  for (const filename of sensitiveFiles) {
+    try {
+      const filePath = `${dataDir}/${filename}`;
+      const stat = statSync(filePath);
+      const currentMode = stat.mode & 0o777;
+      if (currentMode !== 0o600) {
+        chmodSync(filePath, 0o600);
+        corrections.push({ file: filePath, oldMode: currentMode, newMode: 0o600 });
+      }
+    } catch { /* file may not exist; best-effort */ }
+  }
+
+  return corrections;
 }

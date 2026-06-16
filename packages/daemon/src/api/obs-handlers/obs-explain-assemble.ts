@@ -388,6 +388,12 @@ export function assembleIncidentReport(
     // media.vision.* records (absent when the session ran no vision). The vision
     // cost rides here too (Route a) — the image/vision folds are independent.
     ...(signals.vision !== undefined ? { vision: signals.vision } : {}),
+    // OBS-04 (192): the VIDEO turn reconstructed from the trajectory's video.*
+    // records (absent when the session generated no video). Reconstructs a
+    // background-completed job too — the in-turn video.submitted ties the later
+    // off-turn video.generated via jobId/traceId on one sessionKey. Cost rides
+    // here (Route a). The offline assembler is the binding OBS-04 oracle.
+    ...(signals.videoGenerated !== undefined ? { videoGenerated: signals.videoGenerated } : {}),
     summary,
     // Plan 05 fills likelyRootCause; Plan 04 fills truncations; Plan 05 fills
     // the report-level suggestedNextSteps.
