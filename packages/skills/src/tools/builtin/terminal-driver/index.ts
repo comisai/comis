@@ -259,6 +259,24 @@ export { busyOrHung, type BusySignal, type BusyVerdict } from "./terminal-busy-p
 // — the 165-07 wake-turn loop escalates/stops on a breach (never a silent overspend).
 export { checkSpendCeiling, type SpendBreach } from "./terminal-spend-ceiling.js";
 
+// 166-01 (NOTIFY-01): the pure three-way wake decision + the I9-safe terminal-outcome map
+// (done/needs-you/failed — the failed outcome deferred from Phase 165 lands here). The
+// daemon wake-notify wiring (plan 03) is their first consumer.
+export {
+  decideWakeAction,
+  mapTerminalOutcome,
+  type OutcomeInputs,
+  type EscalationReason,
+} from "./terminal-drive-outcome.js";
+
+// 166-01 (NOTIFY-01): the pure drive.notify gate — needs-you ALWAYS fires (I4); done/failed
+// suppressed only under "none". Consumed by the plan-03 outcome-notify wiring.
+export { shouldNotifyOutcome, type NotifyPolicy } from "./terminal-notify-policy.js";
+
+// 166-02 (NOTIFY-02): the pure content-free heartbeat one-liner from the drive journal (I3).
+// The plan-03 heartbeat cadence timer notifies it for each promoted drive.
+export { heartbeatLine } from "./terminal-heartbeat-digest.js";
+
 // P5 124-05 (spec §2.3, TR-11): the transition-only in-worker attention emitter — the
 // WORKER half of the no-poll mechanism. The worker (124-05 Task 2) calls observe() with
 // each settled frame's classification; the emitter writes a redaction-safe

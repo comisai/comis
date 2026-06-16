@@ -115,6 +115,18 @@ export {
   type BusySignal,
   type BusyVerdict,
   type SpendBreach,
+  // 166-01/02 (NOTIFY-01/02): the pure user-facing notification kernel — the three-way wake
+  // decision + the I9-safe done/needs-you/failed outcome map (the failed outcome deferred
+  // from Phase 165 lands here), the drive.notify gate (needs-you always fires — I4), and the
+  // content-free heartbeat one-liner (I3). The daemon wake-notify wiring (plan 03) is their
+  // first `@comis/skills/tools`-level consumer (the public-export-consumers arch gate).
+  decideWakeAction,
+  mapTerminalOutcome,
+  shouldNotifyOutcome,
+  heartbeatLine,
+  type OutcomeInputs,
+  type EscalationReason,
+  type NotifyPolicy,
   // 124-09: the woken-turn driver (daemon-side) consumes the safe-only auto-answer policy
   // (124-04) + the normalized loop-guard (124-04) — the SEC-12/SEC-11 governance modules.
   decideAutoAnswer,
