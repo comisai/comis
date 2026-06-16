@@ -23463,7 +23463,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("int
                 "edge",
                 "openai",
                 "elevenlabs",
-                "local"
+                "local",
+                "piper"
               ],
               "type": "string"
             },
@@ -35244,7 +35245,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                     "edge",
                     "openai",
                     "elevenlabs",
-                    "local"
+                    "local",
+                    "piper"
                   ],
                   "type": "string"
                 },
