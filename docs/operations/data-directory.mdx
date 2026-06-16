@@ -33,7 +33,7 @@ Here's everything Comis keeps on disk — and why.
 ├── traces/                  # per-session JSONL execution traces
 ├── workspace/               # default agent workspace (files, git, skills, terminal/)
 ├── workspace-<agentId>/     # named-agent workspaces (one per extra agent)
-├── terminal-drive/          # durable terminal-driver state (only with drive.durable: true)
+├── terminal-drive/          # durable terminal-driver state (default; absent only with drive.durable: false)
 │   └── <agentId>/journals/<sessionId>.json
 ├── agents/                  # per-agent RPC state (subagent results, etc.)
 ├── background-tasks/        # background task state files
@@ -52,7 +52,7 @@ Some entries only appear under specific conditions.
 - `broker.sock` — present only when the credential broker is active (`executor.broker.enabled: true` in `config.yaml`). Ephemeral — deleted and recreated on each daemon start.
 - `ecosystem.config.js` — created only by `comis pm2 setup`.
 - Named workspaces like `workspace-myagent/` — appear only when you define more than one agent.
-- `terminal-drive/` — appears only when an agent runs a **durable** terminal drive (`drive.durable: true`). The per-agent durable drive-state journals live here; absent for non-durable (default) drives.
+- `terminal-drive/` — the per-agent **durable** terminal drive-state journals. A durable drive is the **default** (`drive.durable: true`), so this appears whenever an agent runs a terminal drive; absent only for an explicit `drive.durable: false` (non-durable) drive or on a tmux-less host.
 </Note>
 
 ## File-by-file reference
@@ -230,7 +230,7 @@ The journal is what lets a long autonomous drive **survive a daemon restart**: a
 The journal is **content-free and secret-redacted** (no captured terminal output, no message bodies, no credentials — secrets are scrubbed before anything is recorded), written atomically with mode `0o600` inside a `0o700` per-agent directory. It is reaped at the session's end of life.
 
 **Written by:** the daemon, on each update to a durable drive's state (and recovered on the next startup).
-**Safe to delete?** Yes, when the daemon is stopped. Deleting a journal means an in-flight durable drive cannot resume after the next restart — the driver treats the session as gone rather than resuming it. Non-durable (default) drives never write here.
+**Safe to delete?** Yes, when the daemon is stopped. Deleting a journal means an in-flight durable drive cannot resume after the next restart — the driver treats the session as gone rather than resuming it. Non-durable drives (the explicit `drive.durable: false` opt-out) never write here.
 
 ---
 

@@ -694,12 +694,15 @@ install_build_tools_linux() {
         # python3-venv: agent exec tool needs venvs for pip installs
         # ffmpeg: media processing (TTS, audio/video)
         # bubblewrap: sandbox for secure command execution
+        # tmux: durable terminal-driver sessions (drive.durable, default on) run inside a
+        #   detached tmux server so they SURVIVE a daemon restart (re-attach by name);
+        #   absent ⇒ graceful degrade to a non-durable pty drive + a logged WARN
         # pipx, golang-go: agent exec sandbox toolchain coverage (pipx for Python CLIs
         #   that don't fit uvx's ephemeral-run model; golang-go for `go install`)
         # ca-certificates curl wget unzip xz-utils bzip2: required by language installers
         #   (rustup, pipx, go modules, npm tarballs, deno, bun) inside bwrap; missing any
         #   one of these causes silent TLS failures or mid-extraction crashes
-        local apt_pkgs="build-essential python3 python3-venv python3-pip pipx make g++ cmake pkg-config ffmpeg bubblewrap golang-go ca-certificates curl wget unzip xz-utils bzip2"
+        local apt_pkgs="build-essential python3 python3-venv python3-pip pipx make g++ cmake pkg-config ffmpeg bubblewrap tmux golang-go ca-certificates curl wget unzip xz-utils bzip2"
         if is_root; then
             run_quiet_step "Updating package index" apt-get update || ui_warn "Package index update had errors (continuing)"
             run_quiet_step "Installing system packages" apt-get install -y -qq $apt_pkgs
@@ -713,18 +716,18 @@ install_build_tools_linux() {
 
     if command -v dnf &> /dev/null; then
         if is_root; then
-            run_quiet_step "Installing system packages" dnf install -y gcc gcc-c++ make cmake pkgconf-pkg-config python3 python3-pip ffmpeg bubblewrap systemd-devel golang pipx unzip xz ca-certificates curl wget
+            run_quiet_step "Installing system packages" dnf install -y gcc gcc-c++ make cmake pkgconf-pkg-config python3 python3-pip ffmpeg bubblewrap tmux systemd-devel golang pipx unzip xz ca-certificates curl wget
         else
-            run_quiet_step "Installing system packages" sudo dnf install -y gcc gcc-c++ make cmake pkgconf-pkg-config python3 python3-pip ffmpeg bubblewrap systemd-devel golang pipx unzip xz ca-certificates curl wget
+            run_quiet_step "Installing system packages" sudo dnf install -y gcc gcc-c++ make cmake pkgconf-pkg-config python3 python3-pip ffmpeg bubblewrap tmux systemd-devel golang pipx unzip xz ca-certificates curl wget
         fi
         return 0
     fi
 
     if command -v yum &> /dev/null; then
         if is_root; then
-            run_quiet_step "Installing system packages" yum install -y gcc gcc-c++ make cmake pkgconf-pkg-config python3 python3-pip ffmpeg bubblewrap systemd-devel golang pipx unzip xz ca-certificates curl wget
+            run_quiet_step "Installing system packages" yum install -y gcc gcc-c++ make cmake pkgconf-pkg-config python3 python3-pip ffmpeg bubblewrap tmux systemd-devel golang pipx unzip xz ca-certificates curl wget
         else
-            run_quiet_step "Installing system packages" sudo yum install -y gcc gcc-c++ make cmake pkgconf-pkg-config python3 python3-pip ffmpeg bubblewrap systemd-devel golang pipx unzip xz ca-certificates curl wget
+            run_quiet_step "Installing system packages" sudo yum install -y gcc gcc-c++ make cmake pkgconf-pkg-config python3 python3-pip ffmpeg bubblewrap tmux systemd-devel golang pipx unzip xz ca-certificates curl wget
         fi
         return 0
     fi

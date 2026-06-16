@@ -94,7 +94,7 @@ agents:
         drive:                          # autonomous-drive policy (optional; omit ⇒ today's behavior)
           mode: auto                    # auto (default) | attached (never promote) | detached (promote at first wait)
           readMode: digest              # digest (default) | diff | full — the woken-turn read shape
-          durable: false                # true ⇒ detached tmux: survive a daemon restart, re-attach + resume
+          durable: true                 # default — detached tmux: survive a daemon restart, re-attach + resume (false ⇒ non-durable pty)
           heartbeatMs: 90000            # internal liveness backstop (default 90s) — not a poll, not a user message
           maxCostUsd: null              # per-drive spend ceiling in USD (null = uncapped)
           notify: terminal              # which outcomes reach you: terminal (default) | all (reserved; today == terminal) | none — see Notifications
@@ -119,7 +119,7 @@ The agent then drives it: `terminal_session_create({ allowId: "claude", command:
 | `consent` | Required informed-consent record (`acknowledgedRisk: true` + a timestamp). |
 | `limits` | Optional per-session caps: `wallClockMs`, `maxInteractions`, `maxRequestsPerSession`, `maxSessions`. |
 | `approveOnCreate` | Require the approval gate at `session_create`. |
-| `backend` | `spawn` (default, non-durable) or `tmux` (long-run survival). A **durable drive** (`drive.durable: true`) implies `tmux` at runtime — see [Durability & resume](#durability--resume). |
+| `backend` | `tmux` (long-run survival, **the default** — a durable drive implies it) or `spawn` (non-durable, the `drive.durable: false` opt-out). See [Durability & resume](#durability--resume). |
 
 ## Security model
 
@@ -185,9 +185,9 @@ Beyond `mode` and `readMode`, the `drive` block carries the endurance/durability
 
 ### Durability & resume
 
-A multi-hour-to-40-hour drive has to outlive the daemon restarting under it. By default it does **not**: the `spawn` backend ties the driven CLI's lifetime to the worker, so a daemon/worker exit kills it. A **durable drive** decouples the two.
+A multi-hour-to-40-hour drive has to outlive the daemon restarting under it. By **default** it now does: a durable drive runs the driven CLI in a detached tmux server that survives, and the daemon re-attaches on restart. (Set `drive.durable: false` to opt out to the non-durable `spawn` backend, which ties the CLI's lifetime to the worker so a daemon/worker exit kills it.)
 
-- **`drive.durable`** -- `false` (default) / `true`. Setting `true` makes the drive **durable**: the driven CLI is launched inside a **detached tmux server** (a process independent of the worker, implying `backend: "tmux"` at runtime), so a worker or daemon exit leaves the CLI + its PTY **running**. On daemon restart the session registry **re-attaches** to the live tmux session -- matched by a stable per-drive name persisted in the journal -- instead of flipping it `lost`. Re-attach never starts a second copy of the CLI (no double-drive).
+- **`drive.durable`** -- `true` (**default**) / `false`. The default `true` makes every drive **durable**: the driven CLI is launched inside a **detached tmux server** (a process independent of the worker, implying `backend: "tmux"` at runtime), so a worker or daemon exit leaves the CLI + its PTY **running**. This is the default because the tmux backend is both **driveable** (the worker attaches a real pty to stream + send keystrokes) and **survive-a-restart** (the deployed systemd unit ships `KillMode=process` and the tmux socket lives under the data dir, so the restarted daemon re-attaches; see [systemd](/operations/systemd)). On a host with **no tmux** it degrades to a non-durable pty drive + a `WARN` (not a config error). On daemon restart the session registry **re-attaches** to the live tmux session -- matched by a stable per-drive name persisted in the journal -- instead of flipping it `lost`. Re-attach never starts a second copy of the CLI (no double-drive). On daemon restart the session registry **re-attaches** to the live tmux session -- matched by a stable per-drive name persisted in the journal -- instead of flipping it `lost`. Re-attach never starts a second copy of the CLI (no double-drive).
   - **Resume, don't restart.** A durable drive persists a compact, **content-free** rolling journal (the objective, the last classification, the prompts it has already answered, and the steps it has tried -- never screen bytes or secrets) beside the agent's workspace. On re-attach the drive **resumes from that journal**: it picks up where it left off and does **not** re-run from the top or re-answer a prompt it already answered. The journal files live under `<dataDir>/terminal-drive/<agentId>/journals/` (see [the data-directory reference](/operations/data-directory)).
   - **A genuinely-gone session is reported `failed`, never silently restarted.** If the tmux session is truly gone on restart (not merely detached), the drive surfaces as `failed` with its **journal preserved** for inspection -- it is never quietly started over.
 

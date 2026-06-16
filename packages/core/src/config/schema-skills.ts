@@ -252,14 +252,19 @@ export const TerminalDriverConfigSchema = z.strictObject({
        * DUR-01 — make the drive DURABLE: launch the driven CLI inside a detached
        * tmux server (implying `backend:"tmux"` at runtime) so a worker/daemon exit
        * leaves it running, and re-attach (never restart, never double-drive) on
-       * daemon restart. Default `false` = today's non-durable spawn drive (I1).
-       * §7.1.5 LOCKED: `durable:true` is ACCEPTED HERE even on a tmux-less host —
-       * tmux availability is a RUNTIME property; an unavailable/failed re-attach
-       * degrades to a non-durable drive + a logged WARN (and an honest `failed` on
-       * a subsequent restart), NOT a config-validation hard-require. Do NOT add a
-       * config-time tmux check.
+       * daemon restart. DEFAULT `true` (2026-06-16): the tmux backend is now both
+       * DRIVEABLE (the node-pty `attach` rework — streams + accepts input) and
+       * SURVIVE-A-RESTART (the deployed unit ships `KillMode=process` + the data-dir
+       * tmux socket), so it is the default working setup; set `durable:false` to opt
+       * out to the non-durable pty drive. §7.1.5 LOCKED: `durable:true` is ACCEPTED
+       * HERE even on a tmux-less host — tmux availability is a RUNTIME property; an
+       * unavailable/failed re-attach degrades to a non-durable drive + a logged WARN
+       * (and an honest `failed` on a subsequent restart), NOT a config-validation
+       * hard-require. Do NOT add a config-time tmux check. (The runtime effective
+       * default lives in buildTerminalSharedDeps' `?? true` — this default applies
+       * when a `drive` block is present but omits `durable`.)
        */
-      durable: z.boolean().default(false),
+      durable: z.boolean().default(true),
       /**
        * LIVE-01 — the INTERNAL coarse liveness-backstop interval (ms). A safety net
        * UNDER the event-driven wake (I2): on a tick with NO intervening transition it
