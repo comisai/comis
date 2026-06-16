@@ -367,4 +367,28 @@ describe("redactErrorMessage", () => {
     expect(result).not.toContain("ollama-no-auth-sentinel-0123456789");
     expect(result).toContain("[REDACTED]");
   });
+
+  // WR-03: the scheme stripping must not mangle benign prose, and must not leave
+  // an orphaned double-space where a real credential was redacted.
+  it("does NOT mangle prose that merely mentions 'bearer'/'authorization' (no following credential)", () => {
+    // No credential-length token follows the scheme words → they are prose and
+    // must survive verbatim (the pre-fix non-anchored deletion mutilated them).
+    const prose = "the bearer of bad news; authorization is required for this step";
+    expect(redactErrorMessage(prose)).toBe(prose);
+    const prose2 = "a Bearer token format hint was returned";
+    expect(redactErrorMessage(prose2)).toBe(prose2);
+  });
+
+  it("redacts a real 'Authorization: Bearer <token>' cleanly with NO orphaned double-space", () => {
+    const input = "Authorization: Bearer sk-abc123def456ghi789jkl012mno345pqr678 rejected";
+    const result = redactErrorMessage(input);
+    expect(result).not.toContain("Bearer");
+    expect(result).not.toContain("Authorization:");
+    expect(result).not.toContain("sk-abc123def456ghi789jkl012mno345pqr678");
+    expect(result).toContain("[REDACTED]");
+    // The pre-fix code left a leading double-space ("  sk... rejected"); the
+    // scheme + token now collapse into one [REDACTED] with single spacing.
+    expect(result).not.toMatch(/ {2,}/);
+    expect(result).toBe("[REDACTED] rejected");
+  });
 });
