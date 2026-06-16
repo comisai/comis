@@ -60,6 +60,20 @@ WatchdogSec=30s
 # Shutdown: allow 45s for graceful shutdown (app timeout is 30s)
 TimeoutStopSec=45
 
+# KillMode=process: on stop, signal ONLY the main daemon process — NOT the whole
+# cgroup (the default `control-group`). REQUIRED for durable terminal drives (DUR-01):
+# a durable session runs its child inside a detached `tmux new-session -d` server that
+# daemonizes (reparented to init) but REMAINS a member of this unit's cgroup — the daemon
+# can't move it out (ProtectControlGroups=yes + non-root @USER@ + no user bus). With the
+# default control-group kill, every `systemctl restart` SIGKILLs that tmux server and the
+# session can NEVER survive a restart. With KillMode=process the daemonized tmux server is
+# left alone and survives; non-durable cleanup is preserved because graceful shutdown runs
+# the registry cleanup AND the Terminal Worker self-exits on its stdin EOF when the daemon
+# dies (its bwrap children are --die-with-parent). Trade-off: after a HARD crash (no
+# graceful shutdown) other long-lived children (MCP servers, browser) may briefly linger
+# until Restart= respawns the daemon (~5s); the terminal worker + exec sandboxes self-reap.
+KillMode=process
+
 # Resource limits
 MemoryMax=2G
 TasksMax=100

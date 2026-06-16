@@ -91,3 +91,33 @@ describe("buildSpawnPlan — relay-init script bind (the VPS Cannot-find-module 
     expect(plan.argv).not.toContain(RELAY_INIT_PATH);
   });
 });
+
+describe("buildSpawnPlan — sandbox signal (a driven CLI must not nest its own broken sandbox)", () => {
+  it("injects CLAUDE_CODE_BUBBLEWRAP=1 so a sandbox-aware CLI trusts the outer bwrap (no nested-sandbox EROFS)", async () => {
+    // Real-VPS 2026-06-16 (session a7c44a66): a driven `claude` did NOT detect our outer bwrap,
+    // so its Bash tool nested its OWN bubblewrap sandbox, which remounts $HOME ro and then
+    // EROFSes on `mkdir ~/.claude/session-env/<id>` — claude authored the snake-game files but
+    // every Bash command was dead. We ALWAYS jail the CLI in bwrap (buildSpawnPlan throws
+    // JailUnavailableError otherwise), so signal it: claude reads CLAUDE_CODE_BUBBLEWRAP →
+    // "already bubblewrapped" → skips the redundant, nested-broken second sandbox and runs bash
+    // directly in OUR jail (the operator-configured security boundary). Honest: we DID bwrap it.
+    const plan = await buildSpawnPlan(makeInput(), { bwrapPath: "/usr/bin/bwrap" });
+    expect(plan.env.CLAUDE_CODE_BUBBLEWRAP).toBe("1");
+  });
+
+  it("preserves the bubblewrap signal AFTER scrubChildEnv strips every CLAUDE_CODE_* key", async () => {
+    // scrubChildEnv blanket-strips CLAUDE_CODE_* (the daemon's OWN nested-session markers, since
+    // the daemon can itself run inside a Claude Code session). The bubblewrap signal shares that
+    // prefix, so it MUST be injected POST-scrub or the scrubber erases it — which is precisely
+    // why a jailed claude never saw it and nested its own sandbox.
+    const plan = await buildSpawnPlan(
+      makeInput({
+        env: { CLAUDE_CODE_ENTRYPOINT: "cli", CLAUDECODE: "1", CLAUDE_CODE_BUBBLEWRAP: "" },
+      }),
+      { bwrapPath: "/usr/bin/bwrap" },
+    );
+    expect(plan.env.CLAUDE_CODE_ENTRYPOINT).toBeUndefined(); // daemon marker scrubbed
+    expect(plan.env.CLAUDECODE).toBeUndefined(); // nested-session sentinel scrubbed
+    expect(plan.env.CLAUDE_CODE_BUBBLEWRAP).toBe("1"); // sandbox signal survives + honest "1"
+  });
+});

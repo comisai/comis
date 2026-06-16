@@ -19,8 +19,8 @@
  *
  * State → event-frame mapping (the worker-known fields ONLY; the daemon adds
  * `agentId`/`timestamp` on re-publish — the worker is owner-agnostic):
- *   - `awaiting-input` → `terminal:input_needed`, payload `{ state, reason }`
- *   - `stuck`          → `terminal:stuck`,        payload `{ noProgressMs }`
+ *   - `awaiting-input` → `terminal:input_needed`, payload `{ state, reason, confidence }`
+ *   - `stuck`          → `terminal:stuck`,        payload `{ noProgressMs, reason, confidence }`
  *   - `exited`         → `terminal:session_state`, payload `{ state: "exited" }`
  *                        (a per-session exit; the worker hosts OTHER sessions, so the
  *                        worker-process close is NOT a per-session signal — this is)
@@ -59,6 +59,17 @@ export interface ObserveOptions {
    * content. Defaults to 0 when the worker omits it.
    */
   noProgressMs?: number;
+  /**
+   * LIVE-04 (#4): SUPPRESS the fd3 write for this observe while still ADVANCING `lastState`
+   * (so the transition is recorded and never re-fires on a later settle). The worker sets it
+   * when the settle was the agent's explicit foreground `terminal_session_wait`: that wait's
+   * REPLY is the agent's attention signal (it unblocks and drives), so a fd3 woken turn would
+   * be REDUNDANT and RACE it (at launch claude's welcome screen settles DURING the wait → an
+   * awaiting-input transition → a spurious "waiting for input" before the agent sends its first
+   * keystroke — real-VPS 2026-06-16). A backgrounded drive is attended by the daemon backstop,
+   * not this fd3, so suppressing the wait-settle emit never strands it.
+   */
+  suppressEmit?: boolean;
 }
 
 /** The emitter's surface — exactly what the worker (124-05 Task 2) drives. */
@@ -96,12 +107,22 @@ function frameForState(
 ): TerminalEventFrame | undefined {
   switch (c.state) {
     case "awaiting-input":
-      // The attention wake — a real prompt the agent must answer (TR-11).
-      return { sessionId, event: "terminal:input_needed", payload: { state: "awaiting-input", reason: c.reason } };
+      // The attention wake — a real prompt the agent must answer (TR-11). Carries the
+      // classifier verdict's confidence (CLASS-02) — a content-free enum, not screen text.
+      return {
+        sessionId,
+        event: "terminal:input_needed",
+        payload: { state: "awaiting-input", reason: c.reason, confidence: c.confidence },
+      };
     case "stuck":
       // Settled, no affordance, no progress past the stuck window (OPS-04) — a
-      // duration signal, never screen content.
-      return { sessionId, event: "terminal:stuck", payload: { noProgressMs } };
+      // duration signal, never screen content. Carries the verdict reason + confidence
+      // (CLASS-02, observability symmetry) — both content-free machine tags/enums.
+      return {
+        sessionId,
+        event: "terminal:stuck",
+        payload: { noProgressMs, reason: c.reason, confidence: c.confidence },
+      };
     case "exited":
       // A per-session PTY exit. The worker process stays up for its OTHER sessions,
       // so the worker-process close is NOT this session's signal — this frame is.
@@ -137,6 +158,12 @@ export function createAttentionEmitter(deps: AttentionEmitterDeps): AttentionEmi
       // Edge-trigger: nothing to do while the state is unchanged (NOT level-triggered).
       if (c.state === lastState) return;
       lastState = c.state;
+
+      // LIVE-04 (#4): a foreground `wait` settle ADVANCES lastState (above) — so the transition is
+      // recorded and never re-fires on a later settle — but writes NO fd3 frame. The agent's wait
+      // REPLY is its attention signal (it unblocks and drives); a fd3 woken turn here would race it
+      // (the launch escalation). A backgrounded drive is attended by the daemon backstop, not fd3.
+      if (opts?.suppressEmit === true) return;
 
       const frame = frameForState(sessionId, c, opts?.noProgressMs ?? 0);
       // A non-attention state (`working`) records the transition but emits no frame.

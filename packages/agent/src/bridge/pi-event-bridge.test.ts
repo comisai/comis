@@ -738,6 +738,24 @@ describe("createPiEventBridge", () => {
         expect(warn![0].transportOk).toBe(true);
       });
 
+      it("exitCodeIsDrivenSession tool: a non-zero DRIVEN-session exitCode is NOT a tool failure (no exit_code flag)", () => {
+        // Real-VPS 2026-06-16: a bash terminal session that exited 1 made terminal_session_status
+        // return success:false / classifiedFailureBy:'exit_code' — but the tool SUCCEEDED (it
+        // correctly reported {state:exited, exitCode:1}). The exitCode is the DRIVEN session's,
+        // NOT the tool's outcome, so the exit-code heuristic must skip a flagged tool.
+        registerToolMetadata("test_term_status_drv", { exitCodeIsDrivenSession: true });
+        const { listener } = createPiEventBridge(deps);
+        const result = {
+          content: [{ type: "text", text: '{"state":"exited","exitCode":1}' }],
+          details: { state: "exited", exitCode: 1, reason: "pty_exit" },
+        };
+        listener(makeToolExecutionEndEvent("test_term_status_drv", "tc-drv1", false, result) as any);
+        const { endEmit, warn } = findEmitAndWarn("test_term_status_drv");
+        expect(endEmit).toBeDefined();
+        expect(endEmit![1].classifiedFailureBy).toBeUndefined(); // NOT flagged exit_code
+        expect(warn).toBeUndefined(); // a success → no failure WARN
+      });
+
       it("detector flips a status:200... no wait — a status:500 web_fetch → 'failure_detector', transportOk:true, httpStatus + matchedRule/Token", () => {
         // Register a structured-field detector on a unique tool name (self-isolating).
         registerToolMetadata("test_web_fetch_p1c", {

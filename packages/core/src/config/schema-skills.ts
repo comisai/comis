@@ -158,7 +158,16 @@ const TerminalAllowEntrySchema = z.strictObject({
     acknowledgedRisk: z.literal(true),
     acknowledgedAt: z.string(),
   }),
-  /** Per-entry resource caps (all optional). */
+  /**
+   * Per-entry resource caps (all optional). `wallClockMs` / `maxInteractions` are the
+   * ENDURANCE-DIALABLE caps (ENDURE-01): each is `.int().optional()`, so `undefined` ⇒
+   * NO cap (today's behavior, I1) and an operator dials it to a 40h+ horizon. They stay
+   * cap-only knobs with NO `.default()` on purpose — adding a default would impose a cap
+   * where there is none today (I1). The high-default + reaper-exclusion + cap-named
+   * `failed` reason are the daemon's runtime concern (165-08's reaper wiring), not a
+   * schema default. A cap eviction names the cap that fired (I9 — never evicted for
+   * duration/quietness alone).
+   */
   limits: z
     .strictObject({
       maxSessions: z.number().int().optional(),
@@ -217,6 +226,86 @@ export const TerminalDriverConfigSchema = z.strictObject({
   allow: z.array(TerminalAllowEntrySchema).default([]),
   redactSecrets: z.boolean(),
   audit: z.strictObject({ enabled: z.boolean() }),
+  /**
+   * Autonomous-drive policy (v2.24, additive — design §4 "Config surface"). OPTIONAL +
+   * `strictObject`: a config with NO `drive` block is byte-identical to today (I1). Phase 164
+   * introduced `mode` (DRIVE-02) + `readMode` (READ-01); Phase 165 (165-05) adds the three
+   * endurance/durability fields `durable` (DUR-01) / `heartbeatMs` (LIVE-01) / `maxCostUsd`
+   * (ENDURE-01); Phase 166 (166-02) COMPLETES this SAME block with the two user-facing
+   * notification fields `notify` (NOTIFY-01) / `heartbeatNotifyMs` (NOTIFY-02, §7.1.4). The
+   * optional-block + per-field-`.default(...)` discipline lets each phase's additions stay
+   * independent (an unknown/typo'd `drive.*` key still rejects, OPS-02). The per-field defaults
+   * preserve today's effective behavior — `mode:"auto"` only promotes a genuinely-long drive;
+   * `readMode:"digest"` is already the tool's effective default; `durable:false` /
+   * `heartbeatMs:90_000` / `maxCostUsd:null` are inert. §7.1.5 LOCKED: `durable:true` is
+   * ACCEPTED at config-validation even on a tmux-less host (tmux availability is a RUNTIME
+   * property — degrade + WARN, never a config-time hard-require). Changing/adding a default
+   * regenerates the `section-registry-parity` snapshot (a validate-only gate).
+   */
+  drive: z
+    .strictObject({
+      /** Auto-promote (default) / never (= today's inline behavior) / always-at-first-wait (DRIVE-02). */
+      mode: z.enum(["auto", "attached", "detached"]).default("auto"),
+      /** Default wake-read shape (READ-01): a bounded digest / only changed rows / the whole bounded screen. */
+      readMode: z.enum(["digest", "diff", "full"]).default("digest"),
+      /**
+       * DUR-01 — make the drive DURABLE: launch the driven CLI inside a detached
+       * tmux server (implying `backend:"tmux"` at runtime) so a worker/daemon exit
+       * leaves it running, and re-attach (never restart, never double-drive) on
+       * daemon restart. DEFAULT `true` (2026-06-16): the tmux backend is now both
+       * DRIVEABLE (the node-pty `attach` rework — streams + accepts input) and
+       * SURVIVE-A-RESTART (the deployed unit ships `KillMode=process` + the data-dir
+       * tmux socket), so it is the default working setup; set `durable:false` to opt
+       * out to the non-durable pty drive. §7.1.5 LOCKED: `durable:true` is ACCEPTED
+       * HERE even on a tmux-less host — tmux availability is a RUNTIME property; an
+       * unavailable/failed re-attach degrades to a non-durable drive + a logged WARN
+       * (and an honest `failed` on a subsequent restart), NOT a config-validation
+       * hard-require. Do NOT add a config-time tmux check. (The runtime effective
+       * default lives in buildTerminalSharedDeps' `?? true` — this default applies
+       * when a `drive` block is present but omits `durable`.)
+       */
+      durable: z.boolean().default(true),
+      /**
+       * LIVE-01 — the INTERNAL coarse liveness-backstop interval (ms). A safety net
+       * UNDER the event-driven wake (I2): on a tick with NO intervening transition it
+       * performs a SINGLE liveness check and synthesizes `stuck` only when genuinely
+       * hung — a legitimately-busy long compile/test is busy, NOT `stuck` (I9). NEVER
+       * a hot-path poll (no per-tick screen read). Default 90_000 (90s). This is the
+       * internal liveness tick, NOT the user-facing progress heartbeat (Phase 166).
+       */
+      heartbeatMs: z.number().int().positive().default(90_000),
+      /**
+       * ENDURE-01 — an optional per-drive SPEND CEILING (USD) over the whole run.
+       * On breach the drive escalates/stops — never silent overspend. `null` (default)
+       * = uncapped, preserving today's behavior (I1). Carries no privilege/path/
+       * credential (I5) — it bounds cost only.
+       */
+      maxCostUsd: z.number().nullable().default(null),
+      /**
+       * NOTIFY-01 — which terminal-outcome notifications reach the USER: `terminal`
+       * (default) = `done`/`needs-you`/`failed` only; `all` = RESERVED for a future
+       * per-wake debug stream and **currently behaves exactly like `terminal`** (the
+       * per-wake notification is not yet implemented — WR-02); `none` = non-escalation
+       * suppressed. I4: an escalation STILL fires under `none` (a needs-you IS a terminal
+       * notification) — `notify` NEVER weakens SEC-12 escalate-always / SEC-11 loop-guard,
+       * it only gates the uninteresting middle. Default `terminal` preserves the
+       * conservative spam-free posture. Carries no privilege/path/credential (I5) — a
+       * policy knob only.
+       */
+      notify: z.enum(["terminal", "all", "none"]).default("terminal"),
+      /**
+       * NOTIFY-02 (§7.1.4) — the user-facing progress-heartbeat cadence (ms) for a
+       * PROMOTED long drive: a coarse, content-free one-liner from the journal (I3) so a
+       * 40h drive is not 40h of silence. `0` = terminal-only (no heartbeat; today's
+       * behavior). Default 3_600_000 (1h) — a spam-free coarse cadence. `.int().nonnegative()`
+       * (NOT `.positive()`) BECAUSE `0` is the meaningful "terminal-only" value — this is
+       * DISTINCT from `heartbeatMs` (the INTERNAL liveness backstop above, `.positive()`,
+       * NOT a user message). A short (unpromoted) drive emits none (I1). Carries no
+       * privilege/path/credential (I5) — a cadence knob only.
+       */
+      heartbeatNotifyMs: z.number().int().nonnegative().default(3_600_000),
+    })
+    .optional(),
 });
 
 /** Inferred terminal driver configuration type. */

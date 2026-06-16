@@ -185,6 +185,113 @@ describe("classifyFrame — stuck (settled, no affordance, no progress > stuckMs
   });
 });
 
+describe("classifyFrame — STALE-ANCHOR recovery: a settled prompt with diffEmpty=false is awaiting-input, NOT stuck (real-VPS 2026-06-16)", () => {
+  // Live VPS terminal drive (v2.24): gpt-5.5 launched `claude`, backgrounded the drive
+  // (DRIVE-02), and claude finished building a multi-file app + sat at its idle `❯` input
+  // box. The worker runs settles only on OUTPUT, so once the drive was promoted and claude
+  // fell quiet, the classifier anchors (lastClassifiedSnapshot / lastProgressMs) FROZE. The
+  // liveness backstop's point-in-time status query then diffed the CURRENT static prompt
+  // against that STALE baseline → diffEmpty=false → branches 3/3b (which require diffEmpty)
+  // were skipped → the frame fell through to `stuck`, and the backstop re-escalated "stuck"
+  // every 3 min while claude was simply awaiting input. The cursor also sits on the `❯` line
+  // ABOVE claude's multi-line status footer, so isCursorParked (correctly) returns false.
+  //
+  // The fix: noProgressMs > stuckMs PROVES the screen has been static the whole window, so a
+  // detected dialog/prompt/selector affordance is a SETTLED prompt awaiting input — NOT a
+  // hang — regardless of the (stale) diffEmpty. Only a static frame with NO affordance is stuck.
+  const claudeIdleScreen = [
+    "● Worked for 4m 6s",
+    "",
+    "──────────────────────────────────────────────",
+    "❯ run the tests",
+    "──────────────────────────────────────────────",
+    "  Sonnet 4.6 │ terminal",
+    "  ⏵⏵ bypass permissions on (shift+tab to cycle)",
+  ];
+  const wouldBeStuck: FrameHistory = { noProgressMs: 90_001, stuckMs: 90_000 };
+
+  it("claude's idle `❯` box with a status footer below the cursor + diffEmpty=false + no-progress → awaiting-input, NOT stuck", () => {
+    const snapshot = snap(claudeIdleScreen, { x: 2, y: 3 }); // cursor on the `❯` line; footer 3 rows below ⇒ not parked
+    // The exact shape that triggered the bug: NOT parked (footer below) AND NOT diff-empty
+    // (the backstop's stale-anchor diff) — so steps 3/3b are skipped and step 4 is reached.
+    expect(isCursorParked(snapshot.cursor, snapshot.screen, snapshot.cols, snapshot.rows)).toBe(false);
+    const c = classifyFrame(frame({ settled: true, diffEmpty: false, snapshot }), wouldBeStuck);
+    expect(c.state).toBe("awaiting-input");
+    expect(c.reason).toBe("dialog_detected");
+  });
+
+  it("control: a genuinely hung frame (diffEmpty=false, NO affordance, no-progress) stays stuck — the recovery must not steal a real hang", () => {
+    const lines = ["frozen build output", "", "more frozen output below the cursor"];
+    const snapshot = snap(lines, { x: 5, y: 0 }); // cursor mid-screen, content below, no box/menu/selector
+    const c = classifyFrame(frame({ settled: true, diffEmpty: false, snapshot }), wouldBeStuck);
+    expect(c.state).toBe("stuck");
+    expect(c.reason).toBe("no_progress");
+  });
+});
+
+describe("classifyFrame — CLASS-01: a full-screen dialog is awaiting-input (dialog_detected), NOT stuck", () => {
+  // The would-be-stuck history: settled + diff∅ but no progress past the stuck window.
+  // Pre-patch this falls through to `stuck`; the new dialog branch intercepts it.
+  const wouldBeStuck: FrameHistory = { noProgressMs: 30_000, stuckMs: 5_000 };
+
+  it("RED→GREEN: a boxed permission dialog with the cursor on a blank input line below it → awaiting-input/medium/dialog_detected", () => {
+    // The documented claude-2.1.x misread shape: a boxed permission prompt ABOVE,
+    // the cursor parked on an EMPTY row well below the last non-blank row (so
+    // isCursorParked correctly returns false). Pre-patch: this is `stuck`. The dialog
+    // branch must read it as awaiting-input (confidence medium, reason dialog_detected).
+    const lines = [
+      "╭────────────────────────────────────────╮",
+      "│ Claude needs your permission to run:     │",
+      "│   $ rm build/                            │",
+      "│ ❯ 1. Yes   2. No                         │",
+      "╰────────────────────────────────────────╯",
+      ...Array.from({ length: 18 }, () => ""),
+    ];
+    const snapshot = snap(lines, { x: 0, y: 23 }); // cursor on the empty bottom grid row
+    const c = classifyFrame(frame({ settled: true, diffEmpty: true, snapshot }), wouldBeStuck);
+    expect(c.state).toBe("awaiting-input");
+    expect(c.confidence).toBe("medium");
+    expect(c.reason).toBe("dialog_detected");
+  });
+
+  it("control (I9): a genuinely hung frame with NO dialog structure stays stuck (the dialog branch must not steal it)", () => {
+    // Frozen prose, cursor mid-screen above content, no box/menu/selector → still stuck.
+    const lines = ["frozen output line", "", "trailing content below the cursor"];
+    const snapshot = snap(lines, { x: 5, y: 0 });
+    const c = classifyFrame(frame({ settled: true, diffEmpty: true, snapshot }), wouldBeStuck);
+    expect(c.state).toBe("stuck");
+    expect(c.reason).toBe("no_progress");
+  });
+
+  it("control (the #1 de-risk): a thinking-pause generation frame stays working, never awaiting-input", () => {
+    // Settled + diff∅ but the cursor is mid-screen in the generation region with content
+    // below it, and there is NO dialog structure → working (the dialog branch must not
+    // fire on prose). Uses a non-stuck history so the working fallthrough is exercised.
+    const lines = [
+      "● Thinking about the request…",
+      "  Let me analyze the codebase structure",
+      "",
+      "  …and here is content rendered BELOW the cursor",
+      "  more generated output",
+    ];
+    const snapshot = snap(lines, { x: 4, y: 1 });
+    const c = classifyFrame(frame({ settled: true, diffEmpty: true, snapshot }), noStuck);
+    expect(c.state).toBe("working");
+    expect(c.reason).toBe("settled_cursor_unparked");
+  });
+
+  it("a real prompt with the cursor parked at the bottom stays awaiting-input/high (the high-confidence path is unchanged)", () => {
+    // The dialog branch only fires when `parked` already returned false; a genuinely
+    // parked prompt keeps the high-confidence settled_cursor_parked verdict.
+    const lines = ["Build finished.", "All checks passed.", "Continue? (y/n) "];
+    const snapshot = snap(lines, { x: 16, y: 2 });
+    const c = classifyFrame(frame({ settled: true, diffEmpty: true, snapshot }), wouldBeStuck);
+    expect(c.state).toBe("awaiting-input");
+    expect(c.confidence).toBe("high");
+    expect(c.reason).toBe("settled_cursor_parked");
+  });
+});
+
 describe("classifyFrame — never throws (typed result, pure)", () => {
   it("returns a typed Classification for a degenerate empty-screen frame", () => {
     const snapshot = snap([""], { x: 0, y: 0 });
@@ -269,17 +376,31 @@ describe("isCursorParked — parked at/near the last non-blank prompt row", () =
 });
 
 // ===========================================================================
-// Plan 124-03 Task 3: the 8-scenario fixture corpus that PINS the classifier
-// (spec §10.4 — de-risks the #1 risk). Each `<scenario>.stream.txt` is replayed
-// through a REAL `createSessionEmulator` (the terminal-golden-frame.test.ts
-// pattern); the worker frame (settled/diffEmpty) is modelled per scenario; the
-// classifier verdict is asserted. The streams are HAND-AUTHORED to the documented
-// `claude` byte patterns (deterministic + reviewable, like the spinner/altscreen
-// goldens) — see fixtures/README.md.
+// Plan 124-03 Task 3 + Plan 163-02 (CLASS-02): the per-CLI fixture corpus that
+// PINS the classifier (spec §10.4 — de-risks the #1 risk). Each
+// `<scenario>.stream.txt` is replayed through a REAL `createSessionEmulator` (the
+// terminal-golden-frame.test.ts pattern); the worker frame (settled/diffEmpty) is
+// modelled per scenario; the classifier verdict — its STATE and its CONFIDENCE — is
+// asserted. The streams are HAND-AUTHORED synthetic byte streams (deterministic +
+// reviewable, like the spinner/altscreen goldens) — see fixtures/README.md.
 //
-// REFRESH this corpus on each `claude` version bump (spec §10.4): a render that
-// shifts the cursor position will surface as a failing corpus case here.
-// Pinned against `claude --version` 2.1.161.
+// CLASS-02 extends the original 8 claude scenarios to claude + codex + aider ×
+// {idle-working, awaiting-text-input, full-screen menu, permission dialog, completed,
+// hung} and asserts the `confidence` on every case. The RED rows are the two claude
+// dialog shapes (`claude-permission-dialog`, `claude-menu`): the documented misread
+// (the prompt block ABOVE, the cursor on a blank input line BELOW) which classified
+// `stuck` on pre-Plan-01 code — now they classify awaiting-input/medium/dialog_detected,
+// so they are the deterministic REGRESSION LOCK (the next TUI redesign that shifts the
+// cursor/chrome fails HERE, not in a production drive — the CLASS-02 thesis).
+//
+// REFRESH this corpus on each `claude`/`codex`/`aider` version bump (spec §10.4): a
+// render that shifts the cursor position or the dialog chrome surfaces as a failing
+// corpus case here. The `cli` tag on each row documents which fixtures to refresh on a
+// given CLI bump. Pinned against `claude --version` 2.1.177 (Claude Code), `codex` 0.138
+// (codex-cli), `aider` 0.81 — the codex/aider streams reproduce each CLI's documented TUI
+// SHAPE (boxed prompt / enumerated menu / `(y/n)` gate / parked input prompt), authored
+// synthetically (a live capture is non-deterministic + auth-gated + cannot posix_spawnp
+// in-harness on macOS — fixtures/README.md "Why hand-authored").
 // ===========================================================================
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -300,12 +421,24 @@ async function replayCorpusFixture(streamName: string): Promise<EmulatorSnapshot
 }
 
 /**
- * The 8 scenarios + the worker frame each represents + the EXPECTED classifier
- * state. `settled`/`diffEmpty` model the frame the worker would build at the moment
- * of classification: a quiesced prompt is `settled+diffEmpty`; a still-streaming
- * `working` frame is `unsettled`. The load-bearing rows are `thinking-pause`
- * (settled+diffEmpty but the cursor is mid-screen → working, NOT awaiting-input) and
- * the three real prompts (settled+diffEmpty + cursor parked → awaiting-input).
+ * A corpus scenario: the fixture stream + the worker frame it represents + the
+ * EXPECTED classifier verdict (state AND confidence). `settled`/`diffEmpty` model the
+ * frame the worker would build at the moment of classification: a quiesced prompt is
+ * `settled+diffEmpty`; a still-streaming `working` frame is `unsettled`. The
+ * load-bearing rows are `thinking-pause` (settled+diffEmpty but the cursor is mid-screen
+ * → working, NOT awaiting-input), the parked prompts (settled+diffEmpty + cursor parked
+ * → awaiting-input/high), and the CLASS-02 dialog rows (settled+diffEmpty + dialog
+ * STRUCTURE but the cursor NOT parked → awaiting-input/medium/dialog_detected — the
+ * misread the classifier now reads correctly).
+ *
+ * - `expectedConfidence` (CLASS-02): when set, the corpus loop asserts
+ *   `result.confidence === expectedConfidence` in addition to the state. A parked prompt
+ *   is `high` (`settled_cursor_parked`); a dialog is `medium` (`dialog_detected`); an
+ *   unsettled `working` frame is `high` (`unsettled_output`); a stuck frame is `medium`.
+ * - `cli` (CLASS-02): which CLI's TUI shape the fixture reproduces — documents which
+ *   fixtures to refresh on a given CLI version bump.
+ * - `history` (CLASS-02): the per-row progress history; defaults to `noStuckCorpus`. The
+ *   `hung` rows set `noProgressMs > stuckMs` so the stuck-by-progress branch is reached.
  */
 interface CorpusCase {
   stream: string;
@@ -313,44 +446,58 @@ interface CorpusCase {
   diffEmpty: boolean;
   hintPatterns?: readonly string[];
   expected: "working" | "awaiting-input" | "exited" | "stuck";
+  expectedConfidence?: "high" | "medium";
+  cli?: "claude" | "codex" | "aider";
+  history?: FrameHistory;
   why: string;
 }
 
 const CORPUS: readonly CorpusCase[] = [
+  // --- claude: the original 124-03 8-scenario corpus (now confidence-asserted) ---
   {
     stream: "startup.stream.txt",
     settled: false,
     diffEmpty: false,
     expected: "working",
-    why: "the CLI is still drawing its banner — output flowing, not yet settled",
+    expectedConfidence: "high",
+    cli: "claude",
+    why: "the CLI is still drawing its banner — output flowing, not yet settled (unsettled_output ⇒ high)",
   },
   {
     stream: "trust-dialog.stream.txt",
     settled: true,
     diffEmpty: true,
     expected: "awaiting-input",
-    why: "a real trust prompt, settled, cursor parked at the affordance near the bottom",
+    expectedConfidence: "high",
+    cli: "claude",
+    why: "a real trust prompt, settled, cursor parked at the affordance near the bottom (settled_cursor_parked ⇒ high)",
   },
   {
     stream: "ask-user-question.stream.txt",
     settled: true,
     diffEmpty: true,
     expected: "awaiting-input",
-    why: "an AskUserQuestion choice menu, settled, cursor parked on the selected option",
+    expectedConfidence: "high",
+    cli: "claude",
+    why: "an AskUserQuestion choice menu, settled, cursor parked on the selected option (high)",
   },
   {
     stream: "permission-gate.stream.txt",
     settled: true,
     diffEmpty: true,
     expected: "awaiting-input",
-    why: "a tool-permission (y/n) gate, settled, cursor parked at the prompt",
+    expectedConfidence: "high",
+    cli: "claude",
+    why: "a tool-permission (y/n) gate, settled, cursor parked at the prompt (high)",
   },
   {
     stream: "long-working.stream.txt",
     settled: false,
     diffEmpty: false,
     expected: "working",
-    why: "a long working stream (spinner + streaming output) — unsettled",
+    expectedConfidence: "high",
+    cli: "claude",
+    why: "a long working stream (spinner + streaming output) — unsettled (high)",
   },
   {
     // THE load-bearing negative: settled + diffEmpty (a momentary quiet during
@@ -359,29 +506,194 @@ const CORPUS: readonly CorpusCase[] = [
     settled: true,
     diffEmpty: true,
     expected: "working",
-    why: "a thinking/tool-use pause: settled+diff∅ but cursor mid-screen ⇒ working, NEVER awaiting-input (the #1 de-risk)",
+    expectedConfidence: "medium",
+    cli: "claude",
+    why: "a thinking/tool-use pause: settled+diff∅ but cursor mid-screen ⇒ working, NEVER awaiting-input (settled_cursor_unparked ⇒ medium; the #1 de-risk)",
   },
   {
     stream: "completion.stream.txt",
     settled: true,
     diffEmpty: true,
     expected: "awaiting-input",
-    why: "completion returns to the prompt, settled, cursor parked at the bottom",
+    expectedConfidence: "high",
+    cli: "claude",
+    why: "completion returns to the prompt, settled, cursor parked at the bottom (high)",
   },
   {
     stream: "auth-expired.stream.txt",
     settled: true,
     diffEmpty: true,
     expected: "awaiting-input",
-    why: "an auth/login prompt (expired Max) — settled, cursor parked; 124-04 asserts it ESCALATES",
+    expectedConfidence: "high",
+    cli: "claude",
+    why: "an auth/login prompt (expired Max) — settled, cursor parked; 124-04 asserts it ESCALATES (high)",
+  },
+
+  // --- claude: the RED dialog shapes (CLASS-02 regression lock; Plan 01 closed these) ---
+  {
+    // THE REGRESSION LOCK: the documented claude-2.1.x misread — an ASCII-bordered
+    // permission prompt ABOVE, the cursor on a blank input line BELOW (so isCursorParked
+    // is false). Pre-Plan-01 this fell through to `stuck`; the dialog branch now reads it
+    // as awaiting-input/medium/dialog_detected. A render shift that moves the cursor or
+    // drops the box fails HERE, not in a production drive.
+    stream: "claude-permission-dialog.stream.txt",
+    settled: true,
+    diffEmpty: true,
+    expected: "awaiting-input",
+    expectedConfidence: "medium",
+    cli: "claude",
+    why: "the RED misread: a boxed permission dialog ABOVE + cursor on a blank line BELOW ⇒ awaiting-input/medium/dialog_detected (was stuck pre-Plan-01)",
+  },
+  {
+    stream: "claude-menu.stream.txt",
+    settled: true,
+    diffEmpty: true,
+    expected: "awaiting-input",
+    expectedConfidence: "medium",
+    cli: "claude",
+    why: "the RED misread family: a full-screen enumerated menu ABOVE + cursor on a blank line BELOW ⇒ awaiting-input/medium/dialog_detected",
+  },
+  {
+    // THE NEGATIVE-SPACE REGRESSION LOCK (MR-01 / LR-02): a *completed* response that
+    // ends in a MARKDOWN TABLE is generation OUTPUT, NOT a dialog. The frame is
+    // settled+diff∅ with the cursor MID-SCREEN (the table + trailing prose rendered
+    // BELOW it, so isCursorParked is false) — the EXACT gate that reaches the dialog
+    // branch. The over-broad pre-fix ASCII_BORDER read every `| col | col |` row as
+    // dialog chrome → a spurious awaiting-input wake (a false escalation that erodes the
+    // very wake signal phases 164-166 depend on). The tightened predicate requires a
+    // real `+---+` border (or predominantly-border `|` fill), so a markdown table is
+    // NOT a dialog ⇒ this falls through to working. A future loosening that re-admits
+    // the table fails HERE, not in a production drive (the corpus-as-lock thesis applied
+    // to the predicate's negative space).
+    stream: "claude-completion-table.stream.txt",
+    settled: true,
+    diffEmpty: true,
+    expected: "working",
+    expectedConfidence: "medium",
+    cli: "claude",
+    why: "MR-01/LR-02 negative lock: a completion ending in a markdown table, cursor mid-screen ⇒ working (NOT a dialog) — a markdown table is generation output, not dialog chrome (settled_cursor_unparked ⇒ medium)",
+  },
+
+  // --- codex: the six states (TUI SHAPE reference; synthetic content-free chrome) ---
+  {
+    stream: "codex-working.stream.txt",
+    settled: false,
+    diffEmpty: false,
+    expected: "working",
+    expectedConfidence: "high",
+    cli: "codex",
+    why: "codex streaming output — unsettled ⇒ working (high)",
+  },
+  {
+    stream: "codex-awaiting-input.stream.txt",
+    settled: true,
+    diffEmpty: true,
+    expected: "awaiting-input",
+    expectedConfidence: "high",
+    cli: "codex",
+    why: "codex parked at its input prompt, cursor on the affordance ⇒ awaiting-input/high (settled_cursor_parked)",
+  },
+  {
+    stream: "codex-menu.stream.txt",
+    settled: true,
+    diffEmpty: true,
+    expected: "awaiting-input",
+    expectedConfidence: "medium",
+    cli: "codex",
+    why: "codex full-screen boxed menu, cursor on a blank line below ⇒ awaiting-input/medium/dialog_detected",
+  },
+  {
+    stream: "codex-permission-dialog.stream.txt",
+    settled: true,
+    diffEmpty: true,
+    expected: "awaiting-input",
+    expectedConfidence: "medium",
+    cli: "codex",
+    why: "codex boxed (y/n) permission gate, cursor on a blank line below ⇒ awaiting-input/medium/dialog_detected",
+  },
+  {
+    stream: "codex-completed.stream.txt",
+    settled: true,
+    diffEmpty: true,
+    expected: "awaiting-input",
+    expectedConfidence: "high",
+    cli: "codex",
+    why: "codex finished and returned to its parked input prompt ⇒ awaiting-input/high",
+  },
+  {
+    stream: "codex-hung.stream.txt",
+    settled: true,
+    diffEmpty: true,
+    expected: "stuck",
+    expectedConfidence: "medium",
+    cli: "codex",
+    history: { noProgressMs: 30_000, stuckMs: 5_000 },
+    why: "codex frozen prose, NO box/menu/selector, cursor mid-screen + no progress > stuckMs ⇒ stuck/medium (the dialog branch must NOT steal it)",
+  },
+
+  // --- aider: the six states (TUI SHAPE reference; synthetic content-free chrome) ---
+  {
+    stream: "aider-working.stream.txt",
+    settled: false,
+    diffEmpty: false,
+    expected: "working",
+    expectedConfidence: "high",
+    cli: "aider",
+    why: "aider streaming output — unsettled ⇒ working (high)",
+  },
+  {
+    stream: "aider-awaiting-input.stream.txt",
+    settled: true,
+    diffEmpty: true,
+    expected: "awaiting-input",
+    expectedConfidence: "high",
+    cli: "aider",
+    why: "aider parked at its `>` chat prompt, cursor on the affordance ⇒ awaiting-input/high (settled_cursor_parked)",
+  },
+  {
+    stream: "aider-menu.stream.txt",
+    settled: true,
+    diffEmpty: true,
+    expected: "awaiting-input",
+    expectedConfidence: "medium",
+    cli: "aider",
+    why: "aider full-screen enumerated menu, cursor on a blank line below ⇒ awaiting-input/medium/dialog_detected",
+  },
+  {
+    stream: "aider-permission-dialog.stream.txt",
+    settled: true,
+    diffEmpty: true,
+    expected: "awaiting-input",
+    expectedConfidence: "medium",
+    cli: "aider",
+    why: "aider (y/n) confirmation gate, cursor on a blank line below ⇒ awaiting-input/medium/dialog_detected",
+  },
+  {
+    stream: "aider-completed.stream.txt",
+    settled: true,
+    diffEmpty: true,
+    expected: "awaiting-input",
+    expectedConfidence: "high",
+    cli: "aider",
+    why: "aider applied its edits and returned to the parked `>` prompt ⇒ awaiting-input/high",
+  },
+  {
+    stream: "aider-hung.stream.txt",
+    settled: true,
+    diffEmpty: true,
+    expected: "stuck",
+    expectedConfidence: "medium",
+    cli: "aider",
+    history: { noProgressMs: 30_000, stuckMs: 5_000 },
+    why: "aider frozen prose, NO box/menu/selector, cursor mid-screen + no progress > stuckMs ⇒ stuck/medium",
   },
 ];
 
-describe("classifyFrame — the 8-scenario fixture corpus (spec §10.4; refresh on claude version bump)", () => {
+describe("classifyFrame — the per-CLI fixture corpus (spec §10.4 + CLASS-02; refresh on claude/codex/aider version bump)", () => {
   const noStuckCorpus: FrameHistory = { noProgressMs: 0, stuckMs: 5_000 };
 
   for (const c of CORPUS) {
-    it(`pins '${c.stream}' → ${c.expected} (${c.why})`, async () => {
+    it(`pins '${c.stream}' → ${c.expected}${c.expectedConfidence ? `/${c.expectedConfidence}` : ""} (${c.why})`, async () => {
       const snapshot = await replayCorpusFixture(c.stream);
       // The worker computes diffEmpty from diffSnapshot(prev,next); for these
       // single-frame fixtures we model it from the scenario (a real second read
@@ -397,8 +709,15 @@ describe("classifyFrame — the 8-scenario fixture corpus (spec §10.4; refresh 
         snapshot,
         hintPatterns: c.hintPatterns,
       };
-      const result = classifyFrame(frameForClassify, noStuckCorpus);
+      // CLASS-02: the hung rows carry a stuck history (noProgressMs > stuckMs); all
+      // others use the no-stuck default so the table stays the single source of truth.
+      const result = classifyFrame(frameForClassify, c.history ?? noStuckCorpus);
       expect(result.state).toBe(c.expected);
+      // CLASS-02: assert the CONFIDENCE per case (not just the state) — the corpus is
+      // the regression lock for both. A render shift that flips medium↔high (e.g. the
+      // cursor lands on the affordance and the dialog branch yields to the parked
+      // branch, or vice-versa) fails here, not in a production drive.
+      if (c.expectedConfidence) expect(result.confidence).toBe(c.expectedConfidence);
     });
   }
 

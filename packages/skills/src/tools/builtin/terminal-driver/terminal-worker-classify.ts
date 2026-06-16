@@ -52,6 +52,14 @@ export interface ObserveSettledFrameArgs {
   stuckMs: number;
   /** Optional operator prompt cues (reinforce the cursor-parked gate only; never override structure). */
   hintPatterns?: readonly string[];
+  /**
+   * LIVE-04 (#4): suppress the fd3 ATTENTION write for this frame while still updating the
+   * progress clock + the emitter's edge-state. The worker sets it when the settle was the
+   * agent's explicit foreground `wait` — that wait's reply is the agent's attention signal, so a
+   * fd3 woken turn would race it (the launch escalation). Default `false` (act-then-return settles
+   * + the exit path emit normally; a backgrounded drive is attended by the daemon backstop, not fd3).
+   */
+  suppressEmit?: boolean;
 }
 
 /**
@@ -64,7 +72,7 @@ export interface ObserveSettledFrameArgs {
  * @param args - The session record + emitter + the settle verdict + the injected clock + stuckMs.
  */
 export async function observeSettledFrame(args: ObserveSettledFrameArgs): Promise<void> {
-  const { state, emitter, settled, nowMs, stuckMs, hintPatterns } = args;
+  const { state, emitter, settled, nowMs, stuckMs, hintPatterns, suppressEmit } = args;
 
   // Await the pending @xterm parse so the snapshot reflects the just-emitted bytes
   // (the same stability flush handleRead awaits before serializing a settled frame).
@@ -105,8 +113,10 @@ export async function observeSettledFrame(args: ObserveSettledFrameArgs): Promis
     { noProgressMs, stuckMs },
   );
 
-  // Edge-triggered fd3 emit (the emitter writes only on a state transition).
-  emitter.observe(classification, { noProgressMs });
+  // Edge-triggered fd3 emit (the emitter writes only on a state transition). LIVE-04 (#4): on a
+  // foreground `wait` settle, suppress the write (the wait reply is the agent's attention signal)
+  // while the emitter still advances its edge-state so the transition never re-fires later.
+  emitter.observe(classification, { noProgressMs, suppressEmit });
 }
 
 /** Explicit dependencies for {@link statusReplyFromState} — a read-only query, so (unlike {@link ObserveSettledFrameArgs}) it takes NO emitter. */
@@ -136,6 +146,11 @@ export interface StatusReplyArgs {
  * query must never perturb the transition detection. A degraded ring-only session
  * (no emulator) reports `working` with an empty diff (the safe direction). Never throws.
  *
+ * 163-03 (CLASS-02): the reply also carries the classifier's `confidence` + `reason`
+ * (the classification's own fields in the classified branch; a `high` liveness verdict
+ * in the no-emulator branch) — content-free structural signals (an enum + a machine
+ * tag, never screen text) that `composeStatusView` folds onto the status view.
+ *
  * @param args - The session record + the settle verdict + the injected clock + stuckMs.
  */
 export async function statusReplyFromState(args: StatusReplyArgs): Promise<WorkerStatusPerception> {
@@ -152,6 +167,10 @@ export async function statusReplyFromState(args: StatusReplyArgs): Promise<Worke
       cursorParked: false,
       screenDiffEmpty: true,
       interactions: state.interactions,
+      // No grid to classify ⇒ the verdict is pure liveness, a structural certainty:
+      // confidence `high`, reason mirrors the alive/exited split (the safe direction).
+      confidence: "high" as const,
+      reason: state.alive ? "working" : "exited",
       ...(state.exitCode !== undefined ? { exitCode: state.exitCode } : {}),
     };
   }
@@ -175,6 +194,11 @@ export async function statusReplyFromState(args: StatusReplyArgs): Promise<Worke
     cursorParked,
     screenDiffEmpty,
     interactions: state.interactions,
+    // CLASS-02: surface the classifier's own confidence + reason (computed above at
+    // `classification`) — never a hardcoded constant; this is the WHY/HOW-SURE the
+    // status tool + the autonomous policy (164-166) read.
+    confidence: classification.confidence,
+    reason: classification.reason,
     ...(state.exitCode !== undefined ? { exitCode: state.exitCode } : {}),
   };
 }

@@ -633,7 +633,16 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           const transportOk = !endEvent.isError;
           // :591 — SDK isError flip (the transport/call itself errored).
           if (!toolSuccess) classifiedFailureBy = "sdk_iserror";
-          if (toolSuccess && endEvent.result != null) {
+          // Tool metadata, read ONCE — gates the exit-code heuristic AND the failureDetector hook.
+          const toolMeta = getToolMetadata(endEvent.toolName);
+          // The exit-code heuristic flags a non-zero `details.exitCode` as a tool failure — but
+          // ONLY when the exit code is the TOOL's own outcome (exec/process). The terminal
+          // driver's perception tools (status/read/wait) surface the DRIVEN SESSION's exit code
+          // as an informational datum (`exitCodeIsDrivenSession`); a driven program exiting
+          // non-zero there does NOT mean the tool failed — the tool SUCCEEDED in reporting it.
+          // Skip flagged tools (real-VPS 2026-06-16: a bash `exit 1` misclassified a perfectly
+          // successful terminal_session_status as success:false / classifiedFailureBy:exit_code).
+          if (toolSuccess && endEvent.result != null && toolMeta?.exitCodeIsDrivenSession !== true) {
             const details = (endEvent.result as Record<string, unknown>)?.details;
             if (
               details != null &&
@@ -655,7 +664,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           // NOTE: this wires the hook SEAM; per-tool detector bodies are
           // authored separately.
           {
-            const detector = getToolMetadata(endEvent.toolName)?.failureDetector;
+            const detector = toolMeta?.failureDetector;
             if (detector !== undefined) {
               try {
                 const detected = detector(endEvent.result, endEvent.isError);

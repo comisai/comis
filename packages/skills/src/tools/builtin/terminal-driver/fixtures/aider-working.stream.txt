@@ -1,0 +1,4 @@
+[2J[1;1HThinking...
+    | editing files  / editing files  - editing files  \ editing files  | editing files  / editing files
+  applying the diff...
+[4;1H

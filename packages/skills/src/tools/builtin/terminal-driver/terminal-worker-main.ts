@@ -35,14 +35,14 @@
 import { writeSync, mkdirSync, appendFileSync } from "node:fs";
 import { resolve as pathResolve } from "node:path";
 import { homedir } from "node:os";
-import { spawn as childSpawn, execFileSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import { createTerminalWorker, defaultLoadPty } from "./terminal-worker-entry.js";
 import { createStdioPump } from "./terminal-worker-stdio-pump.js";
 import { createTerminalEgressProxy } from "./terminal-egress-proxy.js";
-import { createTmuxBackend, type TmuxChild } from "./terminal-tmux-backend.js";
-import type { TmuxBackendLike } from "./terminal-worker-types.js";
+import { createTmuxBackend } from "./terminal-tmux-backend.js";
+import type { TmuxBackendLike, FakePtyLike, PtyModuleLike } from "./terminal-worker-types.js";
 
 /**
  * The durable-state dir the daemon scopes `--allow-fs-write` to
@@ -50,10 +50,35 @@ import type { TmuxBackendLike } from "./terminal-worker-types.js";
  * `COMIS_TERMINAL_DATA_DIR=<dataDir>` so this matches the write scope exactly;
  * the home fallback is for a direct (non-daemon) launch.
  */
+/**
+ * Map a data dir to the worker's durable-state dir `<dataDir>/terminal-worker`. Exported
+ * + single-sourced so BOTH the worker ({@link durableDir}) AND the daemon's recover-on-boot
+ * liveness probe (`buildIsTmuxAlive`) derive the SAME tmux socket path from a data dir — a
+ * drifted literal there would probe the wrong socket and falsely declare durable sessions lost.
+ */
+export function terminalWorkerDir(dataDir: string): string {
+  return pathResolve(dataDir, "terminal-worker");
+}
+
 export function durableDir(): string {
   // eslint-disable-next-line no-restricted-syntax -- worker PROCESS entry: the daemon threads the (non-secret) data dir via env when forking; not a SecretManager value.
   const dataDir = process.env.COMIS_TERMINAL_DATA_DIR ?? pathResolve(homedir(), ".comis");
-  return pathResolve(dataDir, "terminal-worker");
+  return terminalWorkerDir(dataDir);
+}
+
+/**
+ * The explicit tmux `-S` socket path: `<durableDir>/tmux.sock`. DUR-01 survival key —
+ * the socket lives on the PERSISTENT, shared data dir, NOT tmux's default
+ * `/tmp/tmux-<uid>/default`. systemd `PrivateTmp=yes` gives every daemon START a fresh
+ * private /tmp, so a /tmp socket is unreachable from the restarted daemon and re-attach
+ * fails even though `KillMode=process` keeps the tmux server process alive (proven live
+ * on the VPS 2026-06-16). The data-dir socket is reachable by BOTH daemon generations, so
+ * the restarted daemon re-attaches by name. Short path by design (well under the ~108-char
+ * AF_UNIX `sun_path` limit). The dir is `mkdir`'d in {@link main} (the `--allow-fs-write`
+ * scope), so the socket's parent always exists before the tmux server binds it.
+ */
+export function resolveTmuxSocketPath(dir: string): string {
+  return pathResolve(dir, "tmux.sock");
 }
 
 /**
@@ -97,15 +122,89 @@ export function resolveTmuxPath(): string | undefined {
   }
 }
 
+/** A minimal structural WARN sink (the file logger satisfies it). */
+interface DurableWarnLogger {
+  warn(obj: Record<string, unknown>, msg?: string): void;
+}
+
+/**
+ * DUR-01 §7.1.5 — the durable-vs-fallback WARN. tmux availability is a RUNTIME property, NOT
+ * a config-validation hard-require (the LOCKED decision): `drive.durable:true` parses fine and
+ * DEGRADES gracefully when tmux is absent. When the worker boots on a host with no tmux
+ * (`tmuxPath === undefined`), a later `backend:"tmux"` durable drive falls back to pty/pipe —
+ * and a daemon restart then ends that session `lost` (with the journal preserved; the
+ * user-facing `failed` OUTCOME is Phase-166 NOTIFY-01's). Log ONE content-free WARN at boot so
+ * an operator sees WHY a durable drive will not survive a restart on this host. Best-effort
+ * (never throws out of the worker boot — a logging fault must not crash the process). §2.7:
+ * `errorKind:"precondition"` + `step:"tmux_resolve"` + a `hint` naming the degradation.
+ *
+ * @param tmuxPath - The resolved tmux binary path, or `undefined` when tmux is unavailable.
+ * @param logger - The worker's structural WARN sink.
+ */
+export function warnIfDurableTmuxUnavailable(tmuxPath: string | undefined, logger: DurableWarnLogger): void {
+  if (tmuxPath !== undefined) return; // tmux present — a durable drive is genuinely durable.
+  try {
+    logger.warn(
+      {
+        errorKind: "precondition" as const,
+        step: "tmux_resolve",
+        hint: "durable requested but tmux unavailable; falling back non-durable; a restart then ends the session `lost` with the journal preserved (the user-facing `failed` outcome is derived in Phase 166)",
+      },
+      "terminal durable drive will degrade — tmux not found",
+    );
+  } catch {
+    /* best-effort — a WARN failure must never crash the worker boot */
+  }
+}
+
 /**
  * The tmux long-run backend (OPS-05): a named tmux session outlives the worker, so a
  * milestone survives a worker crash + is re-attachable. `createTmuxBackend` makes the
- * survival decision via `has-session`; `runTmux` wraps `child_process.spawn` (a
- * ChildProcess structurally satisfies {@link TmuxChild}). Used ONLY for `backend:"tmux"`.
+ * survival decision via `has-session`, runs the one-shot tmux commands (new-session /
+ * set-option / kill-session) via `runOneShot` (`execFileSync`), and DRIVES the session via
+ * a node-pty `tmux attach` (`spawnAttachPty` = `loadPty().spawn`) — which streams the pane,
+ * forwards keystrokes, and exits on session death (the streaming model the worker's ring/
+ * emulator needs; NOT the prior one-shot capture-pane that mis-flagged sessions exited).
+ * Used for `backend:"tmux"` create AND the BL-01 recover-on-boot `reattach` (`forceAttachOnly`
+ * — attach-or-gone, never a fresh `new-session`). `loadPty` is the SAME node-pty loader the
+ * pty backend uses (the attach client is an ordinary pty).
  */
-export function buildLoadTmux(tmuxPath: string): TmuxBackendLike {
+export function buildLoadTmux(tmuxPath: string, loadPty: () => PtyModuleLike): TmuxBackendLike {
+  // DUR-01: the STABLE data-dir socket every tmux command targets via `-S` — so the server
+  // binds it and a restarted daemon re-attaches to the SAME socket (NOT the PrivateTmp-private
+  // /tmp default, which the new daemon generation cannot reach).
+  const socketPath = resolveTmuxSocketPath(durableDir());
+  const hasSession = (name: string): boolean => {
+    try {
+      execFileSync(tmuxPath, ["-S", socketPath, "has-session", "-t", name], { stdio: "ignore" });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  // One-shot tmux command runner (new-session / set-option / kill-session): synchronous,
+  // inherits the worker's scrubbed env per call; throws on a non-zero exit (the factory wraps
+  // the tolerable ones). Distinct from the ATTACH path, which is a long-lived streaming pty.
+  const runOneShot =
+    (env: NodeJS.ProcessEnv) =>
+    (argv: string[]): void => {
+      execFileSync(argv[0]!, argv.slice(1), { env, stdio: "ignore" });
+    };
+  // The DRIVING attach pty: node-pty `tmux attach -t <name>` — streams the pane (onData),
+  // forwards keystrokes (write), resizes via the pty, exits on session death. TERM is forced
+  // so the tmux client renders (the worker's scrubbed env may omit it).
+  const spawnAttachPty =
+    (a: { cols: number; rows: number; env: NodeJS.ProcessEnv }) =>
+    (name: string): FakePtyLike =>
+      loadPty().spawn(tmuxPath, ["-S", socketPath, "attach", "-t", name], {
+        cols: a.cols,
+        rows: a.rows,
+        env: { ...a.env, TERM: a.env.TERM ?? "xterm-256color" },
+      });
   return {
     spawn: (a) =>
+      // The create path never sets forceAttachOnly → createTmuxBackend always returns a
+      // handle here; the `?? throwingHandle` would be dead, so we assert non-undefined.
       createTmuxBackend({
         sessionId: a.sessionId,
         bin: a.bin,
@@ -114,15 +213,28 @@ export function buildLoadTmux(tmuxPath: string): TmuxBackendLike {
         rows: a.rows,
         env: a.env,
         tmuxPath,
-        hasSession: (name) => {
-          try {
-            execFileSync(tmuxPath, ["has-session", "-t", name], { stdio: "ignore" });
-            return true;
-          } catch {
-            return false;
-          }
-        },
-        runTmux: (argv) => childSpawn(argv[0]!, argv.slice(1), { env: a.env }) as unknown as TmuxChild,
+        socketPath,
+        hasSession,
+        runOneShot: runOneShot(a.env),
+        spawnAttachPty: spawnAttachPty(a),
+      })!,
+    // BL-01 (165-REVIEW): recover-on-boot re-attach — attach to an EXISTING session ONLY
+    // (forceAttachOnly). The driven command is NOT re-spawned (the surviving pane is attached),
+    // so bin/argv are empty; a gone session returns undefined → the worker replies ok:false.
+    reattach: (a) =>
+      createTmuxBackend({
+        sessionId: a.sessionId,
+        bin: "",
+        argv: [],
+        cols: a.cols,
+        rows: a.rows,
+        env: a.env,
+        tmuxPath,
+        socketPath,
+        hasSession,
+        runOneShot: runOneShot(a.env),
+        spawnAttachPty: spawnAttachPty(a),
+        forceAttachOnly: true,
       }),
   };
 }
@@ -146,7 +258,11 @@ function main(): void {
   // Long-run tmux backend (OPS-05) — present only if tmux is installed; absent ⇒
   // a backend:"tmux" request degrades to pty/pipe (never an error).
   const tmuxPath = resolveTmuxPath();
-  const loadTmux = tmuxPath ? buildLoadTmux(tmuxPath) : undefined;
+  // The attach client is an ordinary pty → reuse the SAME node-pty loader the pty backend uses.
+  const loadTmux = tmuxPath ? buildLoadTmux(tmuxPath, defaultLoadPty) : undefined;
+  // DUR-01 §7.1.5: WARN at boot if tmux is unavailable — a durable drive will degrade to
+  // non-durable here, so a restart ends it `lost` (journal preserved; `failed` is Phase-166's).
+  warnIfDurableTmuxUnavailable(tmuxPath, logger);
 
   const worker = createTerminalWorker({
     // The guarded node-pty loader (createRequire in a try → pipe fallback on a

@@ -694,12 +694,15 @@ install_build_tools_linux() {
         # python3-venv: agent exec tool needs venvs for pip installs
         # ffmpeg: media processing (TTS, audio/video)
         # bubblewrap: sandbox for secure command execution
+        # tmux: durable terminal-driver sessions (drive.durable, default on) run inside a
+        #   detached tmux server so they SURVIVE a daemon restart (re-attach by name);
+        #   absent ⇒ graceful degrade to a non-durable pty drive + a logged WARN
         # pipx, golang-go: agent exec sandbox toolchain coverage (pipx for Python CLIs
         #   that don't fit uvx's ephemeral-run model; golang-go for `go install`)
         # ca-certificates curl wget unzip xz-utils bzip2: required by language installers
         #   (rustup, pipx, go modules, npm tarballs, deno, bun) inside bwrap; missing any
         #   one of these causes silent TLS failures or mid-extraction crashes
-        local apt_pkgs="build-essential python3 python3-venv python3-pip pipx make g++ cmake pkg-config ffmpeg bubblewrap golang-go ca-certificates curl wget unzip xz-utils bzip2"
+        local apt_pkgs="build-essential python3 python3-venv python3-pip pipx make g++ cmake pkg-config ffmpeg bubblewrap tmux golang-go ca-certificates curl wget unzip xz-utils bzip2"
         if is_root; then
             run_quiet_step "Updating package index" apt-get update || ui_warn "Package index update had errors (continuing)"
             run_quiet_step "Installing system packages" apt-get install -y -qq $apt_pkgs
@@ -713,18 +716,18 @@ install_build_tools_linux() {
 
     if command -v dnf &> /dev/null; then
         if is_root; then
-            run_quiet_step "Installing system packages" dnf install -y gcc gcc-c++ make cmake pkgconf-pkg-config python3 python3-pip ffmpeg bubblewrap systemd-devel golang pipx unzip xz ca-certificates curl wget
+            run_quiet_step "Installing system packages" dnf install -y gcc gcc-c++ make cmake pkgconf-pkg-config python3 python3-pip ffmpeg bubblewrap tmux systemd-devel golang pipx unzip xz ca-certificates curl wget
         else
-            run_quiet_step "Installing system packages" sudo dnf install -y gcc gcc-c++ make cmake pkgconf-pkg-config python3 python3-pip ffmpeg bubblewrap systemd-devel golang pipx unzip xz ca-certificates curl wget
+            run_quiet_step "Installing system packages" sudo dnf install -y gcc gcc-c++ make cmake pkgconf-pkg-config python3 python3-pip ffmpeg bubblewrap tmux systemd-devel golang pipx unzip xz ca-certificates curl wget
         fi
         return 0
     fi
 
     if command -v yum &> /dev/null; then
         if is_root; then
-            run_quiet_step "Installing system packages" yum install -y gcc gcc-c++ make cmake pkgconf-pkg-config python3 python3-pip ffmpeg bubblewrap systemd-devel golang pipx unzip xz ca-certificates curl wget
+            run_quiet_step "Installing system packages" yum install -y gcc gcc-c++ make cmake pkgconf-pkg-config python3 python3-pip ffmpeg bubblewrap tmux systemd-devel golang pipx unzip xz ca-certificates curl wget
         else
-            run_quiet_step "Installing system packages" sudo yum install -y gcc gcc-c++ make cmake pkgconf-pkg-config python3 python3-pip ffmpeg bubblewrap systemd-devel golang pipx unzip xz ca-certificates curl wget
+            run_quiet_step "Installing system packages" sudo yum install -y gcc gcc-c++ make cmake pkgconf-pkg-config python3 python3-pip ffmpeg bubblewrap tmux systemd-devel golang pipx unzip xz ca-certificates curl wget
         fi
         return 0
     fi
@@ -3738,6 +3741,19 @@ ExecStart=${COMIS_NODE_BIN} --permission --allow-addons --allow-worker --allow-f
 Restart=on-failure
 RestartSec=5s
 TimeoutStopSec=45
+# KillMode=process: on stop, systemd signals ONLY the main daemon process — NOT the whole
+# cgroup (the default 'control-group'). REQUIRED for durable terminal drives (DUR-01): a
+# durable session runs its child inside a detached 'tmux new-session -d' server that
+# daemonizes (reparented to init) but REMAINS a member of this unit's cgroup — the daemon
+# cannot move it out (ProtectControlGroups=yes + non-root service user + no user bus). With
+# the default control-group kill, every 'systemctl restart' SIGKILLs that tmux server, so a
+# durable session can NEVER survive a restart. With KillMode=process the daemonized tmux
+# server is left alone and survives; non-durable cleanup is preserved because graceful
+# shutdown runs the registry cleanup AND the Terminal Worker self-exits on its stdin EOF
+# when the daemon dies (its bwrap children are --die-with-parent). Trade-off: after a HARD
+# crash other long-lived children (MCP servers, browser) may briefly linger until
+# Restart= respawns the daemon (~5s); the terminal worker + exec sandboxes self-reap.
+KillMode=process
 # The daemon self-restarts by trapping SIGUSR2, shutting down cleanly, and
 # exiting with code 42 (see packages/daemon/src/daemon.ts). Two settings work
 # together here:

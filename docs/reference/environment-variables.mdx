@@ -42,6 +42,10 @@ Overrides the base data directory where Comis stores its databases, logs, and ru
 export COMIS_DATA_DIR="/var/lib/comis"
 ```
 
+<Note>
+Durable [terminal-driver](/agent-tools/terminal-driver) drives (`drive.durable: true`) persist their resume journals under this directory (`terminal-drive/<agentId>/journals/` — see the [data directory reference](/operations/data-directory)). They use **no dedicated environment variable**: the journals are content-free files under the data dir, so `COMIS_DATA_DIR` (or the default `~/.comis`) is the only knob that relocates them.
+</Note>
+
 ### `COMIS_GATEWAY_URL`
 
 | Property | Value |

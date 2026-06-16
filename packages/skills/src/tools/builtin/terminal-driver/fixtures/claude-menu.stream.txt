@@ -1,0 +1,6 @@
+[2J[1;1HWhich approach should I take?
+
+1. Refactor incrementally
+2. Rewrite the module
+3. Leave the code as-is
+[24;1H

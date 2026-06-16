@@ -65,7 +65,8 @@ import {
   type TerminalSessionRegistry,
 } from "@comis/skills/tools";
 // Terminal-driver (v2.11) wiring extracted to setup-terminal-tools.ts (file-size cap).
-import { wireTerminalTools, buildTerminalEgressDeps, buildTerminalWiringDeps, deriveTerminalAttentionConfig } from "./setup-terminal-tools.js";
+import { wireAgentTerminalTools, buildTerminalEgressDeps, deriveTerminalAttentionConfig } from "./setup-terminal-tools.js";
+import { buildTerminalWakeDurability, type WakeDurabilityConfig } from "./terminal-durable-wiring.js";
 // In-session expansion-loop (v2.12 Phase 131, E1/E2) dag-gated ctx_* wiring.
 import { maybeWireContextTools } from "./setup-context-tools.js";
 // Tool-audit DEBUG-line subscription extracted to setup-tool-audit.ts (file-size cap).
@@ -228,6 +229,9 @@ export interface ToolsResult {
   /** 124-09: resolve the per-agent terminal attention config (allow-entry autoAnswer/
    *  hintPatterns + caps); read per-wake so a config swap applies; undefined ⇒ escalate. */
   getTerminalAttentionConfig: (agentId: string) => ReturnType<typeof deriveTerminalAttentionConfig>;
+  /** 165-07: the durable wake deps (journal store + checkLiveness + heartbeatMs/maxCostUsd)
+   *  the composition root spreads into setupTerminalWake. */
+  terminalDurability: ReturnType<typeof buildTerminalWakeDurability>;
 }
 
 // ---------------------------------------------------------------------------
@@ -627,13 +631,9 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       // Apply patch tool -- always included, gated by tool policy
       tools.push(createApplyPatchTool(workspaceDirs.get(agentId) ?? defaultWorkspaceDir, effectiveSharedPaths, skillsLogger));
 
-      // Terminal driver (v2.11): per-agent registry + nine never-export tools. 124-09
-      // (WR-01 closure): buildTerminalWiringDeps folds the operator config (skillsConfig
-      // .terminal) onto the base deps — the allow-set populates (per-session caps live),
-      // workerCaps + the daemon TimerPort thread so the reaper goes LIVE, autoAnswer/
-      // hintPatterns/backend consumed downstream; absent config ⇒ empty set + no reaper.
-      const terminalBase = { dataDir, skillsLogger, eventBus, sandboxProvider, approvalGate, ...terminalEgress, timers: deps.timers, agentWorkspaceDir: workspaceDirs.get(agentId) ?? defaultWorkspaceDir };
-      wireTerminalTools(tools, terminalRegistries, agentId, buildTerminalWiringDeps(terminalBase, skillsConfig.terminal));
+      // Terminal driver (v2.11): per-agent registry + nine never-export tools (165-07 durability
+      // wired inside). wireAgentTerminalTools folds the base deps + operator config in one call.
+      wireAgentTerminalTools(tools, terminalRegistries, agentId, { dataDir, skillsLogger, eventBus, sandboxProvider, approvalGate, ...terminalEgress, timers: deps.timers, agentWorkspaceDir: workspaceDirs.get(agentId) ?? defaultWorkspaceDir }, skillsConfig.terminal);
 
       // Context expansion tools (v2.12 Phase 131): dag-gated ctx_* wiring — gate + WR-04/WR-05 in maybeWireContextTools (file-size cap; see its doc).
       maybeWireContextTools(tools, deps.lcdStore, agentId, agentConfig, {
@@ -761,16 +761,10 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
   // setup-tool-audit.ts (file-size cap; the truncate + sanitize + DEBUG-line logic).
   setupToolAuditLogging(eventBus, skillsLogger);
 
-  // Drain per-agent background-process registries on shutdown.
-  // Previously this lived inside an eventBus.on("system:shutdown", ...)
-  // subscriber, but the event had zero production emitters — the cleanup
-  // silently no-op'd in production. The closure is now returned to the
-  // composition root (daemon.ts → setupShutdown) and invoked directly via
-  // ShutdownDeps.shutdownBackgroundProcesses.
-  //
-  // The original single closure splits into two ShutdownDeps fields: this
-  // function (background-processes) and mcpClientManagerDisconnectAll (bound
-  // at daemon.ts directly off the mcpClientManager handle).
+  // Drain per-agent background-process registries on shutdown. Returned to the composition
+  // root (daemon.ts → setupShutdown, ShutdownDeps.shutdownBackgroundProcesses) and invoked
+  // directly — the prior eventBus.on("system:shutdown", ...) subscriber had zero production
+  // emitters (a silent no-op); mcpClientManagerDisconnectAll is the sibling ShutdownDeps field.
   async function shutdownBackgroundProcesses(): Promise<void> {
     let totalKilled = 0;
     for (const [agentId, registry] of processRegistries) {
@@ -786,6 +780,9 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
     processRegistries.clear();
   }
 
+  // 165-07: the daemon-wide wake durability bundle spread into setupTerminalWake (built in the helper).
+  const terminalDurability = buildTerminalWakeDurability({ dataDir, registries: terminalRegistries, nowMs: systemNowMs, config: agents[defaultAgentId]?.skills?.terminal as WakeDurabilityConfig | undefined });
+
   return {
     assembleToolsForAgent,
     preprocessMessageText,
@@ -794,5 +791,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
     // 124-09: per-agent terminal attention config (allow-entry autoAnswer/hintPatterns + caps); read per-wake.
     getTerminalAttentionConfig: (agentId: string) =>
       deriveTerminalAttentionConfig((agents[agentId] ?? agents[defaultAgentId])?.skills?.terminal),
+    // 165-07: the durable wake deps the composition root spreads into setupTerminalWake.
+    terminalDurability,
   };
 }

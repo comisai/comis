@@ -61,6 +61,11 @@ export {
   WORKER_PERMISSION_ARGS,
 } from "./terminal-worker-launch.js";
 
+// DUR-01 socket-path helpers (PURE) — re-exported so the daemon's recover-on-boot
+// liveness probe derives the SAME `<dataDir>/terminal-worker/tmux.sock` the worker binds.
+// Importing for the re-export runs no side effect: worker-main's `main()` is `isEntryScript`-guarded.
+export { terminalWorkerDir, resolveTmuxSocketPath } from "./terminal-worker-main.js";
+
 // The no-secret host-allowlist egress proxy (EgressControlPort impl, spec §3.5),
 // moved here from @comis/daemon so the standalone worker process can construct
 // its OWN egress for `network: listed-hosts` (the worker runs outside the jail
@@ -137,19 +142,17 @@ export {
 // DETERMINISTICALLY-named session (comis-<sessionId>) so the server outlives the worker and
 // a restart RE-ATTACHES (has-session → read the existing pane) rather than re-creating
 // (RESEARCH Pitfall 6). The daemon (124-09) binds the resolved tmux path + has-session probe
-// + runTmux into the loadTmux seam. Pure command builders + the FakePtyLike-shaped factory;
-// infra-free (only node:child_process). The live survival test is Linux-gated.
+// into the loadTmux seam. Pure command builders + the FakePtyLike-shaped factory (a node-pty
+// `tmux attach` that streams + drives); dependency-free (the one-shot runner + attach-pty
+// spawner are injected). The live drive/survival test is Linux-gated.
 export {
   createTmuxBackend,
-  defaultRunTmux,
   tmuxSessionName,
   buildTmuxSpawnArgv,
   buildTmuxHasSessionArgv,
   buildTmuxKillArgv,
-  buildTmuxSendKeysArgv,
-  buildTmuxCaptureArgv,
-  buildTmuxResizeArgv,
-  type TmuxChild,
+  buildTmuxAttachArgv,
+  buildTmuxSetOptionArgv,
   type TmuxBackendDeps,
 } from "./terminal-tmux-backend.js";
 
@@ -187,6 +190,95 @@ export {
   type LoopGuard,
   type LoopGuardDeps,
 } from "./terminal-loop-guard.js";
+
+// 164-01 (DRIVE-01, design §7.1.6): the pure bounded content-free drive-state journal —
+// a promoted drive's CROSS-WAKE MEMORY. The daemon woken-turn driver (164-06) reads+updates
+// it per wake via the closure-local Map<sessionId, DriveJournal> holder in setupTerminalWake.
+// Pure shape + (de)serialize/append/oldest-trim; content-free (I3), bounded (I7).
+export {
+  emptyJournal,
+  appendAnswered,
+  appendStep,
+  updateJournal,
+  serializeJournal,
+  deserializeJournal,
+  CAP_ANSWERED,
+  CAP_STEPS,
+  TAG_MAX,
+  type DriveJournal,
+} from "./terminal-drive-journal.js";
+
+// 164-03 (READ-01, design §7.1 OD-3): the pure bounded digest/diff read selector + the
+// content-free one-line screen digest. The daemon woken-turn read (164-06) applies
+// boundedReadDigest to the returned view + threads screenDigestLine into the journal's
+// lastScreenDigest (run through scrubSecretsFromText); the read tool delegates to
+// boundedReadDigest (digest default). Pure, byte-capped (I7), never throws.
+export {
+  boundedReadDigest,
+  screenDigestLine,
+  READ_DIGEST_BYTE_CAP,
+  type DriveReadMode,
+  type ReadDigest,
+} from "./terminal-read-digest.js";
+
+// 165-01 (DUR-01): the pure re-attach DECISION + the persisted durable session IDENTITY.
+// The registry's recover-on-boot (165-06) consumes reattachDecision; the daemon (165-07)
+// (de)serializes descriptors via serialize/deserialize for the durable descriptor store.
+// Pure, total, infra-free (injected has-session probe); the descriptor (de)serialize rejects
+// a malformed/partial identity to undefined (corrupt-skip, never partial-trust authorization).
+export {
+  reattachDecision,
+  serializeDescriptor,
+  deserializeDescriptor,
+  type SessionDescriptor,
+  type ReattachDecision,
+} from "./terminal-reattach-match.js";
+
+// 165-06 (DUR-01): the recover-on-boot SCAN orchestrator + the injected descriptor-store
+// port + the rehydrate/persist/durable-lost helpers the registry delegates to (kept here so
+// the 800-line registry stays lean). The daemon (165-07) implements SessionDescriptorStorePort
+// as the fs-safe durable descriptor store + injects it onto the registry deps. Pure via the
+// injected port; consumes 165-01's reattachDecision; the bulk lives here, not the registry.
+export {
+  recoverSessionDescriptors,
+  rehydrateHandleFromDescriptor,
+  buildSessionDescriptor,
+  applyRecoveredSessions,
+  markRunningSessionsLost,
+  staysRecoverable,
+  type SessionDescriptorStorePort,
+  type RecoveredAction,
+  type DurableCreateInputs,
+  type TerminalDurabilityDeps,
+} from "./terminal-session-reattach.js";
+
+// 165-02 (LIVE-01 / ENDURE-01): the pure busy-vs-hung predicate the LIVE-01 backstop
+// (165-07) turns into a synthesized `stuck` ONLY on `"hung"` + the ENDURE-01 reaper idle
+// exclusion consumes on `"busy"` — ONE shared definition of "alive and making progress".
+// Promoted to the barrel here (165-07 is its first cross-package consumer).
+export { busyOrHung, type BusySignal, type BusyVerdict } from "./terminal-busy-predicate.js";
+
+// 165-03 (ENDURE-01): the pure spend-ceiling check over the drive journal's run-total cost
+// — the 165-07 wake-turn loop escalates/stops on a breach (never a silent overspend).
+export { checkSpendCeiling, type SpendBreach } from "./terminal-spend-ceiling.js";
+
+// 166-01 (NOTIFY-01): the pure three-way wake decision + the I9-safe terminal-outcome map
+// (done/needs-you/failed — the failed outcome deferred from Phase 165 lands here). The
+// daemon wake-notify wiring (plan 03) is their first consumer.
+export {
+  decideWakeAction,
+  mapTerminalOutcome,
+  type OutcomeInputs,
+  type EscalationReason,
+} from "./terminal-drive-outcome.js";
+
+// 166-01 (NOTIFY-01): the pure drive.notify gate — needs-you ALWAYS fires (I4); done/failed
+// suppressed only under "none". Consumed by the plan-03 outcome-notify wiring.
+export { shouldNotifyOutcome, type NotifyPolicy } from "./terminal-notify-policy.js";
+
+// 166-02 (NOTIFY-02): the pure content-free heartbeat one-liner from the drive journal (I3).
+// The plan-03 heartbeat cadence timer notifies it for each promoted drive.
+export { heartbeatLine } from "./terminal-heartbeat-digest.js";
 
 // P5 124-05 (spec §2.3, TR-11): the transition-only in-worker attention emitter — the
 // WORKER half of the no-poll mechanism. The worker (124-05 Task 2) calls observe() with

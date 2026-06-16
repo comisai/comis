@@ -10,8 +10,17 @@
  * The §4.3 decision tree (in priority order):
  *   1. `!alive`            → `exited`         (PTY exit — nothing more can render)
  *   2. `!settled`          → `working`        (output still flowing / cursor advancing)
- *   3. settled + diff∅ + CURSOR PARKED        → `awaiting-input`  (a real prompt)
- *   4. settled + no-progress > stuckMs        → `stuck`           (by PROGRESS, OPS-04)
+ *   3. settled + diff∅ + CURSOR PARKED        → `awaiting-input`  (a real prompt, `high`)
+ *   3b. settled + diff∅ + DIALOG STRUCTURE    → `awaiting-input`  (CLASS-01 — a full-
+ *                                              screen dialog whose cursor sits on a blank
+ *                                              input line BELOW the prompt block, so the
+ *                                              parked gate missed it; `medium`,
+ *                                              `dialog_detected`)
+ *   4. settled + no-progress > stuckMs:
+ *        4a. + a DIALOG/PROMPT affordance (regardless of diff∅) → `awaiting-input` (LIVE-02 —
+ *            a settled prompt the STALE backgrounded-drive anchor mis-diffed as changing, so
+ *            diff∅ was false and 3/3b were skipped; `medium`, `dialog_detected`)
+ *        4b. else                                               → `stuck`  (by PROGRESS, OPS-04)
  *   5. else                → `working`        (settled but cursor NOT parked = a
  *                                              thinking/tool-use pause)
  *
@@ -45,6 +54,7 @@
  * @module
  */
 
+import { detectsFullScreenDialog } from "./terminal-dialog-detector.js";
 import type { EmulatorSnapshot } from "./terminal-render.js";
 
 // ---------------------------------------------------------------------------
@@ -255,9 +265,41 @@ export function classifyFrame(frame: ClassifierFrame, history: FrameHistory): Cl
     return { state: "awaiting-input", confidence: "high", reason: "settled_cursor_parked" };
   }
 
-  // 4. Settled, no prompt affordance, AND no progress past the stuck window ⇒ stuck
-  //    (by PROGRESS, OPS-04 — never by elapsed session wall-clock).
+  // 3b. CLASS-01: a settled, diff∅ frame whose STRUCTURE is unmistakably a full-screen
+  //     dialog/menu — even though the cursor is NOT parked. This is the documented
+  //     claude-2.1.x shape: the prompt block (a box / an enumerated menu / a selector)
+  //     renders ABOVE and the cursor sits on a blank input line BELOW it, so
+  //     `isCursorParked` (correctly) returned false and we would otherwise fall through
+  //     to `stuck`. The predicate is pure + structural + CLI-agnostic; `hintPatterns`
+  //     reinforce a borderline selector only. Confidence is `medium` (the structural
+  //     certainty of a parked cursor is `high`; this is the heuristic dialog branch).
+  //     No new classifier state — reuses `awaiting-input`. SEC-12 escalate-always still
+  //     gates the actual answer downstream (a dialog_detected frame routes through the
+  //     same decideAutoAnswer the wake-turn calls — I4 no-bypass).
+  if (frame.diffEmpty && detectsFullScreenDialog(frame.snapshot, frame.hintPatterns)) {
+    return { state: "awaiting-input", confidence: "medium", reason: "dialog_detected" };
+  }
+
+  // 4. Settled, no progress past the stuck window. Before declaring a hang, re-check the
+  //    interactive-affordance STRUCTURE — INDEPENDENT of `diffEmpty` (LIVE-02). The `diffEmpty`
+  //    gate on the awaiting-input branches (3/3b) keys on the attention emitter's edge-trigger
+  //    anchor, which goes STALE for a backgrounded, idle drive: the worker runs settles only on
+  //    OUTPUT, so once a drive is promoted (DRIVE-02) and the CLI falls quiet, no settle
+  //    re-advances `lastClassifiedSnapshot`/`lastProgressMs`. The liveness backstop's
+  //    point-in-time `status` query (LIVE-01) then diffs the CURRENT settled prompt against that
+  //    stale baseline → `diffEmpty=false` → branches 3/3b are skipped → the frame falls here and
+  //    is mislabeled `stuck`, and the backstop re-escalates it every tick (real-VPS 2026-06-16:
+  //    claude's idle `❯` input box with a status footer BELOW the cursor — isCursorParked missed
+  //    it (footer below) AND the stale-anchor diff made diffEmpty=false). But noProgressMs >
+  //    stuckMs PROVES the screen has been static for the WHOLE window, so a detected
+  //    dialog/prompt/selector affordance is a SETTLED prompt awaiting input, NOT a hang (a
+  //    still-GENERATING CLI emits output → progress → never reaches this branch). Only a static
+  //    frame with NO affordance is genuinely stuck. SEC-12 escalate-always still gates the answer
+  //    downstream (this routes through the SAME decideAutoAnswer as step 3b — I4 no-bypass).
   if (history.noProgressMs > history.stuckMs) {
+    if (detectsFullScreenDialog(frame.snapshot, frame.hintPatterns)) {
+      return { state: "awaiting-input", confidence: "medium", reason: "dialog_detected" };
+    }
     return { state: "stuck", confidence: "medium", reason: "no_progress" };
   }
 

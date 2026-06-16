@@ -1,41 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The eight implemented terminal-driver AgentTool factories (spec §5):
- * `terminal_session_create` / `_read` / `_list` / `_kill` and the
- * four interaction tools `_send_text` / `_send_key` / `_resize` / `_wait`.
- * (`terminal_session_status` is the lone remaining stub →
- * `terminal-tools-stubs.ts`.)
- *
- * `create` is the gate that composes the whole substrate:
- *   1. ALLOWLIST GATE: `matchAllowEntry(command, allowEntries)` — a
- *      command whose canonical binary matches no operator entry is rejected with
- *      `permission_denied` and NEVER reaches the registry (no worker spawn). The
- *      matcher enforces realpath + the optional hash pin.
- *   2. FAIL-CLOSED: if `detectProvider()` returns `undefined` there is
- *      no sandbox runtime — `create` rejects rather than spawn an unsandboxed
- *      child.
- *   3. CANONICALIZE (end-to-end): `buildDirectSpawn(entry, command,
- *      args)` is the SOLE canonicalization site — it resolves the realpath and
- *      prepends the operator's `argsPrefix`. The resulting `{bin,argv}` (NOT the
- *      raw command) is handed to the registry, so the worker spawns the canonical
- *      target verbatim and never re-derives realpath (the argsPrefix guarantee
- *      holds end-to-end).
- *   4. OBSERVABILITY: a successful transition logs INFO + `durationMs` +
- *      emits `terminal:session_state`; a spawn failure logs WARN + `hint` +
- *      `errorKind` + emits `terminal:spawn_failed`, then rethrows.
- *
- * `read` / `list` / `kill` and the four interaction tools (`send_text` /
- * `send_key` / `resize` / `wait`) are thin delegations to the injected registry —
- * they operate on an ALREADY-GATED session (create enforced the allowlist + fail-closed
- * checks), so they do NOT re-run the allowlist gate and never touch `detectProvider` (the
- * read/list/kill precedent). The registry's forwarding methods carry the
- * post-action settled snapshot back; `wait`'s `isComplete:false` survives verbatim.
- *
- * Architecture: this module is daemon-side but lives in `@comis/skills`, so it
- * takes an INJECTED structural logger + event bus (never `getLogger` from
- * `@comis/infra` — the registry mirrors this). The daemon (composition root)
- * passes the real logger + the `TypedEventBus`. Clock is the
- * injected `nowMs` (no raw wall-clock global).
+ * The eight terminal-driver AgentTool factories (spec §5): `terminal_session_create` / `_read` /
+ * `_list` / `_kill` + `_send_text` / `_send_key` / `_resize` / `_wait` (`terminal_session_status`
+ * is the lone stub → `terminal-tools-stubs.ts`). `create` gates the substrate: (1) ALLOWLIST
+ * (`matchAllowEntry` rejects a non-matching binary `permission_denied`; realpath + optional hash
+ * pin); (2) FAIL-CLOSED (`undefined` `detectProvider()` rejects rather than spawn unsandboxed);
+ * (3) CANONICALIZE (`buildDirectSpawn` is the SOLE realpath + `argsPrefix` site); (4) OBSERVABILITY
+ * (success → INFO `terminal:session_state`; failure → WARN `terminal:spawn_failed`). The other seven
+ * thinly delegate to the injected, ALREADY-GATED registry: `read` digests the screen (READ-01)
+ * before redact+wrap; `wait`'s `isComplete:false` emits ONE content-free `terminal:drive_promoted`
+ * on a qualifying wait (DRIVE-02). Daemon-side in `@comis/skills`: INJECTED logger + bus + `nowMs`.
  *
  * @module
  */
@@ -55,15 +29,19 @@ import type {
   TerminalStuckEvent,
   TerminalEscalatedEvent,
   TerminalAutoAnsweredEvent,
+  TerminalDrivePromotedEvent,
 } from "./terminal-events-attention.js";
-// Re-export the P5 attention/audit event payloads so consumers (and the daemon
-// emit hooks, 124-09) reach them via the tool module alongside TerminalEventBus.
+// Re-export the P5 attention/audit event payloads + the DRIVE-02 promotion payload (164-04)
+// so consumers (the daemon emit hooks, 124-09 / 164-04) reach them via the tool module.
 export type {
   TerminalInputNeededEvent,
   TerminalStuckEvent,
   TerminalEscalatedEvent,
   TerminalAutoAnsweredEvent,
+  TerminalDrivePromotedEvent,
 } from "./terminal-events-attention.js";
+import { shouldPromoteDrive, emitDrivePromoted, resolveDriveMode, type DriveMode } from "./terminal-drive-promote.js";
+import { boundedReadDigest, READ_DIGEST_BYTE_CAP, type DriveReadMode } from "./terminal-read-digest.js";
 import { matchAllowEntry, buildDirectSpawn, allowedCommandNames, type AllowEntryLike } from "./allowlist-matcher.js";
 import type { SessionCaps } from "./terminal-caps.js";
 import { enforceSendCapsThenAudit, readDimension } from "./terminal-send-guards.js";
@@ -118,14 +96,11 @@ export interface TerminalEvictedEvent {
 }
 
 /**
- * The keystroke-audit event payload (mirrors core
- * `TerminalEvents["terminal:keystroke"]`). REDACTION-SAFE BY CONSTRUCTION:
- * it carries the counts/ids (`redactions`, `byteLength`) + the typed `outcome` ONLY
- * — there is NO `text`/`keys`/`payload` field, so an emit site cannot leak a
- * keystroke on the bus even by mistake. The scrubSecretsFromText-REDACTED
- * payload rides the structured LOG only; the bus event is the redaction-safe summary.
- * `outcome` is an ATTEMPT tag: `attempted` = forwarded, `rejected` = blocked
- * by a cap breach — never proof of delivery; `sessionId` is caller-asserted.
+ * The keystroke-audit event payload (mirrors core `TerminalEvents["terminal:keystroke"]`).
+ * REDACTION-SAFE BY CONSTRUCTION: counts/ids (`redactions`, `byteLength`) + the typed
+ * `outcome` ONLY — no `text`/`keys`/`payload` field, so an emit site cannot leak a keystroke
+ * (the redacted payload rides the LOG). `outcome` is an ATTEMPT tag (`attempted`=forwarded,
+ * `rejected`=cap-breach), never proof of delivery; `sessionId` is caller-asserted.
  */
 export interface TerminalKeystrokeEvent {
   sessionId: string;
@@ -156,6 +131,9 @@ export interface TerminalEventBus {
   emit(event: "terminal:stuck", payload: TerminalStuckEvent): unknown;
   emit(event: "terminal:escalated", payload: TerminalEscalatedEvent): unknown;
   emit(event: "terminal:auto_answered", payload: TerminalAutoAnsweredEvent): unknown;
+  // DRIVE-02 (164-04) — the autonomous-drive promotion signal the wait tool emits on a
+  // qualifying wait; the daemon wake dispatcher consumes it (promote-once + ONE notify).
+  emit(event: "terminal:drive_promoted", payload: TerminalDrivePromotedEvent): unknown;
 }
 
 /** Dependencies shared by all four implemented tools. */
@@ -165,9 +143,8 @@ export interface TerminalToolDeps {
   /** The operator allow-set (parsed config mapped onto `AllowEntryLike`); the allowlist trust source. */
   readonly allowEntries: AllowEntryLike[];
   /**
-   * Sandbox-provider detector. Injected so the fail-closed test can
-   * force `undefined`. Production passes a closure over the daemon's
-   * once-detected provider (or `detectSandboxProvider` itself).
+   * Sandbox-provider detector (injected so the fail-closed test can force `undefined`).
+   * Production passes a closure over the daemon's once-detected provider.
    */
   readonly detectProvider: () => SandboxProvider | undefined;
   /** Injected structural logger (daemon passes the real one). */
@@ -179,21 +156,32 @@ export interface TerminalToolDeps {
   /** The owning agent id — stamped onto every emitted event. */
   readonly agentId: string;
   /**
-   * The per-session usage caps. A SHARED per-agent instance
-   * the daemon constructs from the matched entry's `limits` AND also threads into the
-   * registry's `onCapForget` so eviction forgets the SAME cap-state map.
-   * `create` calls `startSession`; each `send_*` calls `consumeRequest` (REJECT on
-   * breach — session survives) + `consumeInteraction` / `checkWallClock` (EVICT via
-   * `registry.evict` on breach); the explicit kill tool calls `forget`. The evict
-   * branches do NOT call `forget` (the registry onCapForget owns that — no double-forget).
+   * DRIVE-02 (164-04): the operator-resolved promotion policy (`drive.mode`), supplied by the
+   * daemon (`buildTerminalSharedDeps` reads `config.drive.mode`); the skills layer never reads
+   * config (layer purity). The wait tool feeds it to `shouldPromoteDrive`. Default `"auto"`.
+   */
+  readonly driveMode?: DriveMode;
+  /**
+   * READ-01 (164-06): the operator-resolved read mode (`drive.readMode`), supplied by the
+   * daemon like {@link driveMode}. The read tool feeds it to `boundedReadDigest`. Default
+   * `"digest"` (the bounded current screen) — `diff`/`full` honored when supplied.
+   */
+  readonly readMode?: DriveReadMode;
+  readonly durable?: boolean; // DUR-01 (FINDING-B): drive.durable (daemon-supplied like driveMode); true ⇒ create stamps req.durable:true → the registry derives the tmux name + selects the tmux backend (durable survive-restart). Default false.
+  /**
+   * The per-session usage caps — a SHARED per-agent instance the daemon builds from the
+   * matched entry's `limits` AND threads into the registry's `onCapForget` (eviction forgets
+   * the SAME map). `create` → `startSession`; each `send_*` → `consumeRequest` (REJECT on
+   * breach, session survives) + `consumeInteraction`/`checkWallClock` (EVICT via
+   * `registry.evict`); the kill tool → `forget`. The evict branches do NOT call `forget`
+   * (the registry onCapForget owns that — no double-forget).
    */
   readonly caps: SessionCaps;
   /**
-   * The operator approval gate. Injected by the daemon (the existing
-   * `ApprovalGate` from setup-tools). Consulted ONLY when the matched entry sets
-   * `approveOnCreate` — an entry that demands approval with NO gate wired
-   * fail-closes (reject), never silently proceeds. Optional so non-approving
-   * deployments + the read/list/kill tools need not supply it.
+   * The operator approval gate (the daemon's `ApprovalGate` from setup-tools). Consulted
+   * ONLY when the matched entry sets `approveOnCreate` — a demanding entry with NO gate wired
+   * fail-closes (reject), never silently proceeds. Optional (non-approving deployments + the
+   * read/list/kill tools need not supply it).
    */
   readonly approvalGate?: ApprovalGate;
 }
@@ -303,13 +291,11 @@ function readOptInt(p: Record<string, unknown>, key: string): number | undefined
 // ---------------------------------------------------------------------------
 
 /**
- * Derive the calling origin `(agentId, sessionKey)` for the owner-scoped registry
- * calls. Read from the AsyncLocalStorage `RequestContext`
- * (`tryGetContext()`) the SAME way the create approval gate already does
- * (terminal-tools.ts create): `agentId = ctx.userId ?? deps.agentId`, `sessionKey
- * = ctx.sessionKey ?? ""`. Two subagent runs of one parent get distinct owners
- * (each subagent `channelId` is `"sub-agent:<uuid>"`, session-key.ts:78-79), so a
- * subagent sees ONLY its own sessions and siblings are mutually invisible.
+ * Derive the calling origin `(agentId, sessionKey)` for the owner-scoped registry calls from
+ * the AsyncLocalStorage `RequestContext` (`tryGetContext()`), the SAME way the create approval
+ * gate does: `agentId = ctx.userId ?? deps.agentId`, `sessionKey = ctx.sessionKey ?? ""`. Two
+ * subagent runs of one parent get distinct owners (each subagent `channelId` is
+ * `"sub-agent:<uuid>"`, session-key.ts:78-79), so siblings are mutually invisible.
  */
 export function resolveOwner(deps: TerminalToolDeps): SessionOwner {
   const ctx = tryGetContext();
@@ -426,8 +412,7 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
         // Scrollback is NOT an agent-facing param — the create surface
         // exposes only {allowId,command,args,cwd,cols,rows,...} to the model. The
         // per-session emulator's retained-memory ceiling is sourced from
-        // DEFAULT_SCROLLBACK (operator config later), so the agent cannot inflate
-        // per-session memory. The CreateParams schema is unchanged.
+        // DEFAULT_SCROLLBACK (operator config later), so the agent cannot inflate per-session memory. The CreateParams schema is unchanged.
         //
         // The sandbox scope is sourced EXCLUSIVELY from the matched
         // allow entry (operator closed config) — NEVER from `params`. The agent has
@@ -441,7 +426,7 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
             cols,
             rows,
             scrollback: DEFAULT_SCROLLBACK,
-            scope: matched.entry.scope,
+            scope: matched.entry.scope, ...(deps.durable ? { durable: true } : {}), // FINDING-B: drive.durable → req.durable → the registry derives the tmux name + selects the tmux backend.
           },
           // Stamp the origin so this session is visible ONLY to its owner.
           resolveOwner(deps),
@@ -510,11 +495,11 @@ export function createTerminalSessionReadTool(deps: TerminalToolDeps): AgentTool
   return {
     name: "terminal_session_read",
     label: "Terminal: read session",
-    description: "Read the current settled screen + cursor of a terminal session.",
+    description:
+      "Read a BOUNDED DIGEST of the current settled screen + cursor by default (readMode: digest|diff|full); an over-cap read is flagged (truncated), never silently trimmed.",
     parameters: ReadParams,
 
-    // 4-arg execute: observe the turn signal (read is read-only — it never
-    // kills; the owner-scoped read is the load-bearing change).
+    // 4-arg execute: read is read-only (owner-scoped); the digest bounds the result.
     async execute(
       _id: string,
       params: Record<string, unknown>,
@@ -522,11 +507,8 @@ export function createTerminalSessionReadTool(deps: TerminalToolDeps): AgentTool
       _onUpdate?: AgentToolUpdateCallback,
     ): Promise<AgentToolResult<unknown>> {
       const sessionId = readString(params, "sessionId") ?? "";
-      // Forward the render params to the worker (closing a prior
-      // schema-only gap — these were declared but never forwarded). Spec §5
-      // defaults: format=text, scrollback=0, includeAltBuffer=true. The schema
-      // (TypeBox closed Union) already validated `format`; the worker's render
-      // dispatch defaults any unrecognized value to text as a 2nd guard.
+      // Forward the render params to the worker (spec §5 defaults: format=text, scrollback=0,
+      // includeAltBuffer=true; the TypeBox closed Union already validated `format`).
       const format = (readString(params, "format") as "text" | "ansi" | "html" | undefined) ?? "text";
       const scrollback = readInt(params, "scrollback", 0);
       const includeAltBuffer = readBool(params, "includeAltBuffer") ?? true;
@@ -536,20 +518,20 @@ export function createTerminalSessionReadTool(deps: TerminalToolDeps): AgentTool
         scrollback,
         includeAltBuffer,
       });
-      // §3.6: the driven CLI's screen is a PROMPT-INJECTION vector — it can
-      // render attacker-controlled text (a file/web the CLI read) and echo secrets.
-      // REDACT secret-shaped values FIRST (so a leaked token never reaches the agent
-      // or the wrap), THEN wrap as untrusted external content (random delimiter +
-      // injection warning + marker-sanitization) so a hijacked agent sees framed,
-      // un-actionable text — never a bare injection payload. Only `screen` is
-      // transformed; cursor/cols/rows/alt/alive/diff pass through unchanged.
-      const { text: redacted, redactions } = scrubSecretsFromText(view.screen);
+      // READ-01: bound the screen to a digest (current screen / changed rows / full) BEFORE
+      // the redact+wrap — an over-cap read is clipped with a truncations breadcrumb, never a
+      // silent trim (I7). digest.screen (not view.screen) flows into the §3.6 defense below.
+      const digest = boundedReadDigest(view, deps.readMode ?? "digest", READ_DIGEST_BYTE_CAP);
+      // §3.6: the screen is a PROMPT-INJECTION vector. REDACT secret-shaped values FIRST (a
+      // leaked token never reaches the agent/the wrap), THEN wrap as untrusted external content.
+      const { text: redacted, redactions } = scrubSecretsFromText(digest.screen);
       const wrappedScreen = wrapExternalContent(redacted, { source: "unknown" });
       deps.logger.debug(
-        { toolName: "terminal_session_read", sessionId, format, scrollback, redactions, step: "read" },
+        { toolName: "terminal_session_read", sessionId, format, scrollback, redactions, truncated: digest.truncated, step: "read" },
         "terminal session read",
       );
-      return jsonResult({ ...view, screen: wrappedScreen });
+      const breadcrumb = digest.truncations !== undefined ? { truncated: digest.truncated, truncations: digest.truncations } : { truncated: digest.truncated };
+      return jsonResult({ ...view, screen: wrappedScreen, ...breadcrumb });
     },
   };
 }
@@ -748,11 +730,10 @@ export function createTerminalSessionResizeTool(deps: TerminalToolDeps): AgentTo
 }
 
 /**
- * `terminal_session_wait` — a bounded in-turn settle on idle/text/exit.
- * Returns `{matched,isComplete,reason,screen,cursor}` VERBATIM from the registry —
- * on timeout the load-bearing `isComplete:false` survives (the attention model
- * resumes the turn). This tool is read-only (it observes a settle; it writes
- * nothing), so it logs DEBUG. It NEVER coerces `isComplete`.
+ * `terminal_session_wait` — a bounded in-turn settle on idle/text/exit. Returns the registry
+ * `WaitResult` VERBATIM (on timeout the load-bearing `isComplete:false` survives; NEVER
+ * coerced), logs DEBUG, and on a qualifying wait (the `shouldPromoteDrive` predicate) emits
+ * ONE content-free `terminal:drive_promoted` (DRIVE-02; the daemon dispatcher dedupes to one).
  */
 export function createTerminalSessionWaitTool(deps: TerminalToolDeps): AgentTool<typeof WaitParams> {
   return {
@@ -793,6 +774,24 @@ export function createTerminalSessionWaitTool(deps: TerminalToolDeps): AgentTool
         },
         "terminal session settle resolved",
       );
+      // DRIVE-02 (164-04): on a qualifying wait, emit ONE content-free terminal:drive_promoted
+      // (the daemon dispatcher dedupes to one notify). `out` is UNCHANGED. The skills layer is
+      // STATELESS (emits per-qualifying-wait); the predicate decides, the helper emits. reason
+      // is the WHY enum, never the screen (I3).
+      // DELIVER-02: resolve the EFFECTIVE mode — an explicit `drive.mode` wins; absent, a DURABLE
+      // drive (the default long backgrounded drive) → `detached` (promote at the first wait → the
+      // backstop tracks it → a completion notification fires when the CLI idles), a pty one-shot →
+      // `auto` (inline, I1). Closes the gap where a short durable build whose wait resolved `idle`
+      // (claude paused, never a `producing` timeout) never promoted → was untracked → no completion.
+      const driveMode = resolveDriveMode(deps.driveMode, deps.durable === true);
+      if (shouldPromoteDrive(out, driveMode)) {
+        emitDrivePromoted(
+          { emit: deps.eventBus.emit.bind(deps.eventBus), info: deps.logger.info.bind(deps.logger), nowMs: deps.nowMs },
+          sessionId,
+          deps.agentId, // REAL agent, not the userId owner-key — daemon routes journal + drive-owner by agentId (live VPS 260616)
+          driveMode === "detached" ? "mode_detached" : "producing",
+        );
+      }
       return jsonResult(out);
     },
   };

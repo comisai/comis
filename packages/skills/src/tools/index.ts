@@ -68,6 +68,8 @@ export {
   createTerminalSessionRegistry,
   buildProductionSpawnWorker,
   resolveWorkerMainPath,
+  terminalWorkerDir,
+  resolveTmuxSocketPath,
   createTerminalEgressProxy,
   prepareAgentTerminalWorkspace,
   matchAllowEntry,
@@ -76,6 +78,57 @@ export {
   // instance per agent (from the matched entry's limits) feeding both the tool deps
   // (consume*) and the registry onCapForget (caps.forget).
   createSessionCaps,
+  // 164-01/03: the daemon woken-turn driver (164-06) consumes the pure drive-state journal
+  // (cross-wake memory) + the bounded digest/diff read selector + the content-free screen
+  // digest line — DRIVE-01 / READ-01. The read tool (164-06) delegates to boundedReadDigest.
+  emptyJournal,
+  appendAnswered,
+  appendStep,
+  updateJournal,
+  serializeJournal,
+  deserializeJournal,
+  boundedReadDigest,
+  screenDigestLine,
+  READ_DIGEST_BYTE_CAP,
+  type DriveJournal,
+  type DriveReadMode,
+  type ReadDigest,
+  // 165-01/02/03/06 (DUR-01/02 / LIVE-01 / ENDURE-01): the Phase-165 pure siblings the
+  // daemon-side durability/endurance wiring (165-07) consumes — the re-attach DECISION +
+  // the durable descriptor (de)serialize + the busy-vs-hung predicate (the LIVE-01 backstop
+  // + the ENDURE-01 reaper exclusion) + the spend-ceiling check + the registry's injected
+  // descriptor-store port + recover-on-boot seams. Promoted to the top-level barrel here
+  // (the integration plan is their first `@comis/skills/tools`-level consumer).
+  reattachDecision,
+  serializeDescriptor,
+  deserializeDescriptor,
+  buildSessionDescriptor,
+  busyOrHung,
+  checkSpendCeiling,
+  // The daemon-side has-session liveness probe builder (165-07 wiring): `tmux has-session -t
+  // comis-<id>` — the re-attach + backstop probe (exit 0 ⇒ alive).
+  buildTmuxHasSessionArgv,
+  type SessionDescriptor,
+  type ReattachDecision,
+  type SessionDescriptorStorePort,
+  type RecoveredAction,
+  type DurableCreateInputs,
+  type TerminalDurabilityDeps,
+  type BusySignal,
+  type BusyVerdict,
+  type SpendBreach,
+  // 166-01/02 (NOTIFY-01/02): the pure user-facing notification kernel — the three-way wake
+  // decision + the I9-safe done/needs-you/failed outcome map (the failed outcome deferred
+  // from Phase 165 lands here), the drive.notify gate (needs-you always fires — I4), and the
+  // content-free heartbeat one-liner (I3). The daemon wake-notify wiring (plan 03) is their
+  // first `@comis/skills/tools`-level consumer (the public-export-consumers arch gate).
+  decideWakeAction,
+  mapTerminalOutcome,
+  shouldNotifyOutcome,
+  heartbeatLine,
+  type OutcomeInputs,
+  type EscalationReason,
+  type NotifyPolicy,
   // 124-09: the woken-turn driver (daemon-side) consumes the safe-only auto-answer policy
   // (124-04) + the normalized loop-guard (124-04) — the SEC-12/SEC-11 governance modules.
   decideAutoAnswer,
@@ -97,6 +150,10 @@ export {
   type AllowMatch,
   type TerminalScope,
   type SessionListing,
+  // 164-06: the origin key scoping a session's visibility — the daemon-wiring
+  // drive-scope helper (terminal-drive-scope.ts) returns it from registryOwnerFor
+  // (the I5 strip: a drive:-scoped wake owner → the stamped registry owner).
+  type SessionOwner,
   // The per-session caps surface (the daemon wires caps.forget to onCapForget)
   // + the reaper eviction payload (the daemon's onEvict hook param) + the typed reason.
   type SessionCaps,

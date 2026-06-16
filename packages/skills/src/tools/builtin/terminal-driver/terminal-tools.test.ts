@@ -33,6 +33,7 @@ import {
   type TerminalStuckEvent,
   type TerminalEscalatedEvent,
   type TerminalAutoAnsweredEvent,
+  type TerminalDrivePromotedEvent,
 } from "./terminal-tools.js";
 import {
   DEFAULT_SCROLLBACK,
@@ -51,6 +52,7 @@ import type { ReadOptions } from "./terminal-render.js";
 import { createSessionCaps, type SessionCaps, type SessionLimits } from "./terminal-caps.js";
 import type { EvictReason } from "./terminal-reaper.js";
 import type { AllowEntryLike, TerminalScope } from "./allowlist-matcher.js";
+import { runWithContext } from "@comis/core";
 
 /** The least-privilege default scope (mirrors the config schema defaults). */
 const DEFAULT_SCOPE: TerminalScope = {
@@ -377,6 +379,25 @@ describe("terminal-tools — create gate + canonicalization + observability", ()
     expect((result.details as CreateResult).sessionId).toBe("sess-1");
   });
 
+  it("FINDING-B (DUR-01): a durable-configured create tool stamps req.durable on the CreateRequest (→ the registry engages tmux)", async () => {
+    // Live VPS finding 2026-06-16: drive.durable:true never engaged tmux because the create tool
+    // never set req.durable (terminal-tools.ts) — so every session ran on the pty backend and the
+    // headline survive-a-daemon-restart drive was unreachable. The daemon supplies deps.durable
+    // (from config.drive.durable); the tool must thread it onto the CreateRequest.
+    const registry = makeFakeRegistry();
+    const tool = createTerminalSessionCreateTool(baseDeps(registry, { durable: true }));
+    await tool.execute("call-1", { allowId: "bash", command: realBashPath() });
+    expect(registry.createCalls).toHaveLength(1);
+    expect(registry.createCalls[0]!.durable, "drive.durable:true must thread to req.durable").toBe(true);
+  });
+
+  it("FINDING-B: a non-durable create tool leaves req.durable unset (I1 — today's spawn session)", async () => {
+    const registry = makeFakeRegistry();
+    const tool = createTerminalSessionCreateTool(baseDeps(registry));
+    await tool.execute("call-1", { allowId: "bash", command: realBashPath() });
+    expect(registry.createCalls[0]!.durable).toBeUndefined();
+  });
+
   it("logs INFO+durationMs+toolName and emits terminal:session_state on a successful create", async () => {
     const registry = makeFakeRegistry();
     const logger = makeCapturingLogger();
@@ -640,6 +661,82 @@ describe("terminal-tools — create passes a non-agent-dialable scrollback", () 
   });
 });
 
+// ===========================================================================
+// READ-01 (164-06 Task 3): the read tool delegates to boundedReadDigest — a
+// BOUNDED DIGEST of the current screen by default (readMode: digest|diff|full),
+// with an over-cap `truncated`/`truncations` breadcrumb (never a silent trim, I7),
+// while PRESERVING the redact + wrap prompt-injection defense (the digest is
+// inserted BEFORE redact+wrap, not instead). The tool description NAMES the
+// digest default. RED on pre-patch: the read tool does not call boundedReadDigest;
+// the description does not name the digest default; there is no truncated breadcrumb.
+// ===========================================================================
+
+describe("terminal-tools — READ-01 read tool delegates to boundedReadDigest", () => {
+  it("delegates to boundedReadDigest — digest default, the result carries the truncated breadcrumb", async () => {
+    const registry = makeFakeRegistry({
+      readImpl: async () => ({ screen: "small screen", cursor: { x: 0, y: 0 }, cols: 80, rows: 24, alt: false, alive: true }),
+    });
+    const tool = createTerminalSessionReadTool(baseDeps(registry));
+
+    const result = await tool.execute("call-1", { sessionId: "sess-1" });
+    const view = result.details as TerminalView & { truncated?: boolean };
+    // A small screen is under the cap → not truncated, but the breadcrumb field is present.
+    expect(view.truncated).toBe(false);
+    // The screen is still the (wrapped) content — the digest passed the small screen through.
+    expect(view.screen).toContain("small screen");
+    expect(view.screen).toMatch(/<<<UNTRUSTED_[a-f0-9]+>>>/);
+  });
+
+  it("an over-cap screen → truncated:true + a truncations count (never a silent trim, I7)", async () => {
+    // A pathological screen far beyond the 8192-byte cap.
+    const huge = "x".repeat(20_000);
+    const registry = makeFakeRegistry({
+      readImpl: async () => ({ screen: huge, cursor: { x: 0, y: 0 }, cols: 80, rows: 24, alt: false, alive: true }),
+    });
+    const tool = createTerminalSessionReadTool(baseDeps(registry));
+
+    const result = await tool.execute("call-1", { sessionId: "sess-1" });
+    const view = result.details as TerminalView & { truncated?: boolean; truncations?: number };
+    expect(view.truncated, "an over-cap read must flag truncated:true").toBe(true);
+    expect(view.truncations, "the dropped-byte count is the explicit anti-silent-trim breadcrumb").toBeGreaterThan(0);
+  });
+
+  it("honors readMode:full when threaded via deps (diff/full are not the default)", async () => {
+    const registry = makeFakeRegistry({
+      readImpl: async () => ({ screen: "full text", cursor: { x: 0, y: 0 }, cols: 80, rows: 24, alt: false, alive: true }),
+    });
+    // readMode is threaded via deps (like driveMode), defaulting to "digest".
+    const tool = createTerminalSessionReadTool(baseDeps(registry, { readMode: "full" }));
+
+    const result = await tool.execute("call-1", { sessionId: "sess-1" });
+    const view = result.details as TerminalView;
+    // full passes the whole (small) screen through, still wrapped.
+    expect(view.screen).toContain("full text");
+    expect(view.screen).toMatch(/<<<UNTRUSTED_[a-f0-9]+>>>/);
+  });
+
+  it("the screen stays redacted + wrapped (the digest is inserted BEFORE redact+wrap, not instead)", async () => {
+    const secret = "sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789";
+    const registry = makeFakeRegistry({
+      readImpl: async () => ({ screen: `key ${secret} end`, cursor: { x: 0, y: 0 }, cols: 80, rows: 24, alt: false, alive: true }),
+    });
+    const tool = createTerminalSessionReadTool(baseDeps(registry));
+
+    const result = await tool.execute("call-1", { sessionId: "sess-1" });
+    const view = result.details as TerminalView;
+    // The digest's screen flows through scrubSecretsFromText (redact) THEN wrapExternalContent.
+    expect(view.screen, "the raw secret must be redacted (redact preserved)").not.toContain(secret);
+    expect(view.screen).toContain("[REDACTED]");
+    expect(view.screen, "the wrap (prompt-injection defense) must be preserved").toMatch(/<<<UNTRUSTED_[a-f0-9]+>>>/);
+  });
+
+  it("the read-tool description names the digest default", () => {
+    const registry = makeFakeRegistry();
+    const tool = createTerminalSessionReadTool(baseDeps(registry));
+    expect(tool.description.toLowerCase(), "the description must name the bounded-digest default").toContain("digest");
+  });
+});
+
 // ---------------------------------------------------------------------------
 // The four interaction tools (send_text / send_key / resize / wait).
 // Each is a THIN delegation to the registry method (the read/kill precedent):
@@ -872,6 +969,239 @@ describe("terminal-tools — wait delegation", () => {
     const dbg = logger.logs.find((l) => l.level === "debug" && l.obj.toolName === "terminal_session_wait");
     expect(dbg).toBeDefined();
     expect(dbg?.obj.durationMs).toBeTypeOf("number");
+  });
+});
+
+// ===========================================================================
+// DRIVE-02 (164-04, v2.24) — the wait tool emits a CONTENT-FREE
+// terminal:drive_promoted on a qualifying wait, via the pure shouldPromoteDrive
+// predicate (164-02). The skills layer is STATELESS — it emits on EVERY
+// qualifying wait; the promote-once guarantee is the daemon's promoted-Set dedupe
+// (164-04 Task 2). The returned `out` is UNCHANGED (the agent still gets the
+// honest WaitResult). Content-free: the event carries sessionId/agentId/reason-
+// enum/timestamp ONLY — never the screen (I3).
+// ===========================================================================
+
+/** A producing-but-not-complete settle result (the honest DRIVE-02 promotion signal). */
+const PRODUCING_TIMEOUT: WaitResult = {
+  matched: false,
+  isComplete: false,
+  reason: "timeout",
+  producing: true,
+  screen: "Building… 42% [secret-token-on-screen]",
+  cursor: { x: 0, y: 0 },
+};
+
+/** A completed-inline settle result (the I1 short-drive path — no promotion). */
+const COMPLETE_INLINE: WaitResult = {
+  matched: true,
+  isComplete: true,
+  reason: "idle",
+  screen: "$ ",
+  cursor: { x: 0, y: 0 },
+};
+
+function drivePromotedEvents(bus: ReturnType<typeof makeCapturingBus>): CapturedEvent[] {
+  return bus.events.filter((e) => e.event === "terminal:drive_promoted");
+}
+
+describe("terminal-tools — DRIVE-02 the wait tool emits terminal:drive_promoted (auto/attached/detached matrix)", () => {
+  it("auto + {isComplete:false,producing:true} → emits EXACTLY ONE terminal:drive_promoted with reason 'producing'", async () => {
+    const registry = makeFakeRegistry({ waitImpl: async () => PRODUCING_TIMEOUT });
+    const bus = makeCapturingBus();
+    const tool = createTerminalSessionWaitTool(baseDeps(registry, { eventBus: bus, driveMode: "auto" }));
+
+    await tool.execute("call-1", { sessionId: "s1", timeoutMs: 200 });
+
+    const promoted = drivePromotedEvents(bus);
+    expect(promoted).toHaveLength(1);
+    expect(promoted[0]!.payload).toMatchObject({ sessionId: "s1", agentId: "agent-1", reason: "producing" });
+  });
+
+  it("promotion agentId is the REAL agentId (deps.agentId), NOT ctx.userId — DRIVE-01/I5 journal + owner routing (RED on pre-patch)", async () => {
+    // Regression for the 2026-06-16 live VPS finding: a chat-API drive
+    // (sessionKey "default:openai-api:openai") promoted with agentId="openai-api" —
+    // the USERID, not the agent "default". The daemon keys the per-agent durable
+    // journal dir (`terminal-drive/<agentId>/journals/`, DUR-02) AND the detached
+    // drive-owner's inherited allow-entry (DRIVE-01/I5) on the REAL agentId. The
+    // owner-KEY is userId-based for registry owner-scoping ONLY; the content-free
+    // terminal:drive_promoted event must carry deps.agentId, never ctx.userId.
+    const registry = makeFakeRegistry({ waitImpl: async () => PRODUCING_TIMEOUT });
+    const bus = makeCapturingBus();
+    const tool = createTerminalSessionWaitTool(baseDeps(registry, { eventBus: bus, driveMode: "auto" }));
+
+    // A live RequestContext whose userId ("openai-api") DIFFERS from the agent ("agent-1").
+    await runWithContext(
+      {
+        tenantId: "default",
+        userId: "openai-api",
+        sessionKey: "default:openai-api:openai",
+        traceId: "00000000-0000-4000-8000-000000000000",
+        startedAt: 1,
+        trustLevel: "admin",
+      },
+      () => tool.execute("call-1", { sessionId: "s1", timeoutMs: 200 }),
+    );
+
+    const promoted = drivePromotedEvents(bus);
+    expect(promoted).toHaveLength(1);
+    const agentId = (promoted[0]!.payload as TerminalDrivePromotedEvent).agentId;
+    expect(agentId).toBe("agent-1"); // the REAL agent — routes journal + drive-owner allow-entry
+    expect(agentId).not.toBe("openai-api"); // never the userId/owner-key
+  });
+
+  it("auto + {isComplete:true} → NO emit (I1 short-drive byte-identical)", async () => {
+    const registry = makeFakeRegistry({ waitImpl: async () => COMPLETE_INLINE });
+    const bus = makeCapturingBus();
+    const tool = createTerminalSessionWaitTool(baseDeps(registry, { eventBus: bus, driveMode: "auto" }));
+
+    await tool.execute("call-1", { sessionId: "s1", forIdleMs: 100 });
+
+    expect(drivePromotedEvents(bus)).toHaveLength(0);
+  });
+
+  it("attached + {isComplete:false,producing:true} → NO emit (I1 explicit opt-out, never promote)", async () => {
+    const registry = makeFakeRegistry({ waitImpl: async () => PRODUCING_TIMEOUT });
+    const bus = makeCapturingBus();
+    const tool = createTerminalSessionWaitTool(baseDeps(registry, { eventBus: bus, driveMode: "attached" }));
+
+    await tool.execute("call-1", { sessionId: "s1", timeoutMs: 200 });
+
+    expect(drivePromotedEvents(bus)).toHaveLength(0);
+  });
+
+  it("detached + first wait → emits terminal:drive_promoted with reason 'mode_detached' (explicit opt-in)", async () => {
+    // Even a completed-inline wait promotes under detached (promote-at-first-wait).
+    const registry = makeFakeRegistry({ waitImpl: async () => COMPLETE_INLINE });
+    const bus = makeCapturingBus();
+    const tool = createTerminalSessionWaitTool(baseDeps(registry, { eventBus: bus, driveMode: "detached" }));
+
+    await tool.execute("call-1", { sessionId: "s1", forIdleMs: 100 });
+
+    const promoted = drivePromotedEvents(bus);
+    expect(promoted).toHaveLength(1);
+    expect(promoted[0]!.payload).toMatchObject({ reason: "mode_detached" });
+  });
+
+  it("default driveMode (deps.driveMode omitted) is 'auto' — a producing wait still promotes", async () => {
+    const registry = makeFakeRegistry({ waitImpl: async () => PRODUCING_TIMEOUT });
+    const bus = makeCapturingBus();
+    // No driveMode in deps → the tool defaults to "auto".
+    const tool = createTerminalSessionWaitTool(baseDeps(registry, { eventBus: bus }));
+
+    await tool.execute("call-1", { sessionId: "s1", timeoutMs: 200 });
+
+    expect(drivePromotedEvents(bus)).toHaveLength(1);
+  });
+
+  it("the returned `out` is UNCHANGED by the emit — the agent still receives the honest WaitResult", async () => {
+    const registry = makeFakeRegistry({ waitImpl: async () => PRODUCING_TIMEOUT });
+    const bus = makeCapturingBus();
+    const tool = createTerminalSessionWaitTool(baseDeps(registry, { eventBus: bus, driveMode: "auto" }));
+
+    const res = await tool.execute("call-1", { sessionId: "s1", timeoutMs: 200 });
+    const body = res.details as WaitResult;
+    // The WaitResult flows back verbatim (NOT mutated/augmented by the promotion side-effect).
+    expect(body.isComplete).toBe(false);
+    expect(body.producing).toBe(true);
+    expect(body.reason).toBe("timeout");
+  });
+
+  it("the emitted payload is CONTENT-FREE — sessionId/agentId/reason/timestamp ONLY, no screen key (I3)", async () => {
+    const registry = makeFakeRegistry({ waitImpl: async () => PRODUCING_TIMEOUT });
+    const bus = makeCapturingBus();
+    const tool = createTerminalSessionWaitTool(baseDeps(registry, { eventBus: bus, driveMode: "auto" }));
+
+    await tool.execute("call-1", { sessionId: "s1", timeoutMs: 200 });
+
+    const promoted = drivePromotedEvents(bus);
+    expect(promoted).toHaveLength(1);
+    const payload = promoted[0]!.payload;
+    expect(Object.keys(payload).sort()).toEqual(["agentId", "reason", "sessionId", "timestamp"]);
+    // The screen (with its on-screen secret) must NEVER ride the bus event.
+    expect(payload).not.toHaveProperty("screen");
+    expect(JSON.stringify(payload)).not.toContain("secret-token-on-screen");
+  });
+
+  it("emits exactly ONE content-free INFO record on promotion (§2.7) — sessionId + agentId + reason, never the screen", async () => {
+    const registry = makeFakeRegistry({ waitImpl: async () => PRODUCING_TIMEOUT });
+    const logger = makeCapturingLogger();
+    const tool = createTerminalSessionWaitTool(baseDeps(registry, { logger, driveMode: "auto" }));
+
+    await tool.execute("call-1", { sessionId: "s1", timeoutMs: 200 });
+
+    const info = logger.logs.filter((l) => l.level === "info" && l.obj.step === "drive_promote");
+    expect(info).toHaveLength(1);
+    expect(info[0]!.obj.sessionId).toBe("s1");
+    // OBS: the promote INFO record must carry the REAL agentId (the daemon event already does) —
+    // a missing agentId here read as `undefined` while debugging the live drive (2026-06-16).
+    expect(info[0]!.obj.agentId).toBe("agent-1");
+    expect(info[0]!.obj.reason).toBe("producing");
+    expect(JSON.stringify(info[0]!.obj)).not.toContain("secret-token-on-screen");
+  });
+
+  it("the wait tool calls the pure shouldPromoteDrive predicate (it does not re-implement the decision)", () => {
+    // The emit decision must delegate to the 164-02 predicate (one import + one call),
+    // not duplicate the isComplete/producing/mode truth table inline.
+    const src = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "./terminal-tools.ts"), "utf8");
+    expect(src, "must import shouldPromoteDrive from the pure predicate sibling").toMatch(
+      /import\s*\{[^}]*shouldPromoteDrive[^}]*\}\s*from\s*"\.\/terminal-drive-promote\.js"/,
+    );
+    // Exactly one call site (the wait tool), no re-implementation of the truth table.
+    expect((src.match(/shouldPromoteDrive\(/g) ?? []).length).toBe(1);
+  });
+});
+
+describe("TerminalEventBus — DRIVE-02 terminal:drive_promoted overload (164-04)", () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+
+  it("terminal-tools.ts widens TerminalEventBus with the terminal:drive_promoted emit overload (source RED on pre-patch)", () => {
+    const src = readFileSync(resolve(here, "./terminal-tools.ts"), "utf8");
+    expect(src, "terminal:drive_promoted overload must exist").toMatch(/emit\(event:\s*"terminal:drive_promoted"/);
+  });
+
+  it("a capturing fake accepts a terminal:drive_promoted emit against the strongly-typed TerminalEventBus", () => {
+    // The fake is typed as the REAL TerminalEventBus — if the overload were missing
+    // this emit would fail to typecheck (the closed-union proof; esbuild strips it
+    // but `tsc` over the package build catches it).
+    const events: Array<{ event: string; payload: Record<string, unknown> }> = [];
+    const bus: TerminalEventBus = {
+      emit: (event: string, payload: Record<string, unknown>) => {
+        events.push({ event, payload });
+        return undefined;
+      },
+    } as unknown as TerminalEventBus;
+
+    const promoted: TerminalDrivePromotedEvent = {
+      sessionId: "s1",
+      agentId: "a1",
+      reason: "producing",
+      timestamp: 1,
+    };
+    bus.emit("terminal:drive_promoted", promoted);
+
+    expect(events.map((e) => e.event)).toEqual(["terminal:drive_promoted"]);
+  });
+
+  it("TerminalDrivePromotedEvent is content-free by construction — no text/keys/screen/payload field", () => {
+    const promoted: TerminalDrivePromotedEvent = {
+      sessionId: "s",
+      agentId: "a",
+      reason: "mode_detached",
+      timestamp: 0,
+    };
+    expect(Object.keys(promoted).sort()).toEqual(["agentId", "reason", "sessionId", "timestamp"]);
+
+    // Source guard on the sibling decl file: the interface block must carry no raw
+    // text/keys/screen/payload field. RED on pre-patch (the interface does not exist yet).
+    const attnSrc = readFileSync(resolve(here, "./terminal-events-attention.ts"), "utf8");
+    const match = attnSrc.match(/interface TerminalDrivePromotedEvent\s*\{[\s\S]*?\n\}/);
+    expect(match, "TerminalDrivePromotedEvent must be declared").toBeTruthy();
+    const block = match![0];
+    expect(block, "no raw text field").not.toMatch(/^\s*text[?]?:/m);
+    expect(block, "no raw keys field").not.toMatch(/^\s*keys[?]?:/m);
+    expect(block, "no screen field").not.toMatch(/^\s*screen[?]?:/m);
+    expect(block, "no payload field").not.toMatch(/^\s*payload[?]?:/m);
   });
 });
 

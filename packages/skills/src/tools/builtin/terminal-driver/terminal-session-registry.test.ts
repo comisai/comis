@@ -23,8 +23,15 @@
 
 import { describe, it, expect, vi } from "vitest";
 import { EventEmitter } from "node:events";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 import { createFakeTimers } from "../../../../../../test/support/fake-timers.js";
+import {
+  composeStatusView,
+  notFoundStatus,
+  type WorkerStatusPerception,
+} from "./terminal-status-view.js";
 import {
   createTerminalSessionRegistry,
   DEFAULT_SCROLLBACK,
@@ -33,6 +40,8 @@ import {
 } from "./terminal-session-registry.js";
 import type { EvictReason } from "./terminal-reaper.js";
 import type { TerminalScope } from "./allowlist-matcher.js";
+import type { SessionDescriptorStorePort } from "./terminal-session-reattach.js";
+import type { SessionDescriptor } from "./terminal-reattach-match.js";
 import {
   encodeFrame,
   createFrameDecoder,
@@ -160,6 +169,96 @@ describe("createTerminalSessionRegistry — crash isolation", () => {
 
     expect(registry.get(sessionId, OWNER)?.status).toBe("exited");
     expect(registry.get(sessionId, OWNER)?.exitCode).toBe(1);
+  });
+});
+
+// ===========================================================================
+// MR-02: a worker CRASH must emit a per-session lifecycle signal so the daemon's
+// per-session reclaimers (onSessionGone → promotedSessions / driveJournals /
+// driveStartedAtMs / loop-guard / FSM-state / wake-file) fire. Pre-patch, the
+// crash handlers only mutated the in-memory handle status (markRunningSessionsLost
+// / the close flip) and emitted NOTHING — so a promoted session whose worker
+// crashes leaked its drive-state for the daemon's lifetime. The fix re-publishes
+// a terminal:session_state frame per affected session through the SAME injected
+// onTerminalEvent seam the PTY-exit path uses (buildTerminalEventHook → the bus →
+// onSessionGone).
+// ===========================================================================
+
+describe("createTerminalSessionRegistry — MR-02: worker-crash emits a per-session lifecycle event", () => {
+  /** Collect the TerminalEventFrames the registry dispatches to onTerminalEvent. */
+  function makeEventSink() {
+    const frames: TerminalEventFrame[] = [];
+    return { onTerminalEvent: (f: TerminalEventFrame) => frames.push(f), frames };
+  }
+
+  it("a child 'error' (worker crash) emits terminal:session_state{state:'lost'} for each running session", async () => {
+    const fake = makeFakeWorker();
+    const sink = makeEventSink();
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, { onTerminalEvent: sink.onTerminalEvent }));
+
+    const a = await registry.create({ allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }, OWNER);
+    const b = await registry.create({ allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }, OWNER);
+
+    fake.emitError();
+
+    // One lost-lifecycle frame per running session (the daemon re-publishes each onto the bus
+    // → onSessionGone reclaims the per-session drive-state — no leak).
+    const lost = sink.frames.filter((f) => f.event === "terminal:session_state");
+    const lostIds = lost.map((f) => f.sessionId).sort();
+    expect(lostIds).toEqual([a.sessionId, b.sessionId].sort());
+    for (const f of lost) {
+      expect((f.payload as { state?: string }).state, "the crash lifecycle state is 'lost'").toBe("lost");
+    }
+  });
+
+  it("a child 'close(code)' emits terminal:session_state{state:'exited'} for each running session", async () => {
+    const fake = makeFakeWorker();
+    const sink = makeEventSink();
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, { onTerminalEvent: sink.onTerminalEvent }));
+
+    const a = await registry.create({ allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }, OWNER);
+
+    fake.emitClose(1);
+
+    const exited = sink.frames.filter((f) => f.event === "terminal:session_state");
+    expect(exited.map((f) => f.sessionId)).toEqual([a.sessionId]);
+    expect((exited[0]!.payload as { state?: string }).state).toBe("exited");
+  });
+
+  it("the per-session lifecycle frame is content-free (sessionId + a state enum only — no screen/payload bytes, I3)", async () => {
+    const fake = makeFakeWorker();
+    const sink = makeEventSink();
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, { onTerminalEvent: sink.onTerminalEvent }));
+
+    await registry.create({ allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }, OWNER);
+    fake.emitError();
+
+    const frame = sink.frames.find((f) => f.event === "terminal:session_state")!;
+    expect(frame, "a crash must emit a session_state frame").toBeDefined();
+    // Content-free: the payload carries the lifecycle state ONLY (no screen/text/keys field).
+    const payloadKeys = Object.keys((frame.payload ?? {}) as Record<string, unknown>);
+    expect(payloadKeys).toEqual(["state"]);
+  });
+
+  it("a crash with NO still-running sessions emits no lifecycle frame (nothing to reclaim)", async () => {
+    const fake = makeFakeWorker();
+    const sink = makeEventSink();
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, { onTerminalEvent: sink.onTerminalEvent }));
+    // Create then KILL the only session — it is no longer `running` when the worker crashes,
+    // so the crash has nothing to reclaim and emits no lifecycle frame.
+    const { sessionId } = await registry.create({ allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }, OWNER);
+    await registry.kill(sessionId, OWNER);
+    fake.emitError();
+    expect(sink.frames.filter((f) => f.event === "terminal:session_state")).toHaveLength(0);
+  });
+
+  it("a crash without an onTerminalEvent sink still flips the handle + never throws (the seam is optional)", async () => {
+    const fake = makeFakeWorker();
+    // No onTerminalEvent dep — the emit is best-effort; the crash isolation still works.
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child));
+    const { sessionId } = await registry.create({ allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }, OWNER);
+    expect(() => fake.emitError()).not.toThrow();
+    expect(registry.get(sessionId, OWNER)?.status).toBe("lost");
   });
 });
 
@@ -1674,13 +1773,27 @@ describe("createTerminalSessionRegistry — 124-05 fd3 events-push reader (TR-11
     expect(() => fake.emitFd3(Buffer.concat([prefix, garbage]))).not.toThrow();
 
     // The corrupt worker is dropped (running session → lost), a WARN with the closed-
-    // union errorKind 'validation' was logged, and the hook was never called with junk.
+    // union errorKind 'validation' was logged, and the hook was never called with the JUNK
+    // frame — but MR-02: the crash path now re-publishes a CLEAN content-free
+    // terminal:session_state{lost} lifecycle frame so the daemon reclaims this session's
+    // drive-state. So the hook IS called, with exactly that lifecycle frame (never the junk).
     expect(registry.get(sessionId, OWNER)?.status).toBe("lost");
     const warn = logger.warn.mock.calls.find(
       ([obj]) => (obj as { errorKind?: string }).errorKind === "validation",
     );
     expect(warn).toBeDefined();
-    expect(onTerminalEvent).not.toHaveBeenCalled();
+    // The junk event-shaped frame never reached the hook.
+    const forwardedJunk = onTerminalEvent.mock.calls.find(
+      ([f]) => (f as TerminalEventFrame).event !== "terminal:session_state",
+    );
+    expect(forwardedJunk, "the corrupt frame must NOT be forwarded as an event").toBeUndefined();
+    // The MR-02 crash-lifecycle frame IS emitted for the (now-lost) running session.
+    const lifecycle = onTerminalEvent.mock.calls.find(
+      ([f]) => (f as TerminalEventFrame).event === "terminal:session_state",
+    );
+    expect(lifecycle, "the crash path must re-publish a lost-lifecycle frame (MR-02)").toBeDefined();
+    expect((lifecycle![0] as TerminalEventFrame).sessionId).toBe(sessionId);
+    expect(((lifecycle![0] as TerminalEventFrame).payload as { state?: string }).state).toBe("lost");
   });
 
   it("an oversized HR-01 length prefix on fd3 is caught (FrameTooLargeError), not rethrown — daemon survives", async () => {
@@ -1734,5 +1847,655 @@ describe("createTerminalSessionRegistry — 124-05 fd3 events-push reader (TR-11
     await expect(
       registry.create({ allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }, OWNER),
     ).resolves.toBeDefined();
+  });
+});
+
+// ===========================================================================
+// 163-03 (CLASS-02 status half): the classifier `confidence` + `reason` thread
+// through the worker->registry status round-trip — the documented field-plumbing
+// bug class (project_mcp_field_plumbing). `classifyFrame` already computes both;
+// composeStatusView must fold them through and notFoundStatus must supply a safe
+// total default (high/exited) so the widened TerminalStatusView is never partial.
+//
+// RED on pre-patch: TerminalStatusView/WorkerStatusPerception carry NEITHER field,
+// so the perception literal below is a tsc error and the view assertions read
+// `undefined`. The source-introspection layer (esbuild strips type annotations, so
+// a bare interface widen is not runtime-RED — the events-terminal.test.ts precedent)
+// pins the two interfaces declare the fields.
+// ===========================================================================
+
+/** The src `terminal-status-view.ts` read for the type-only source-introspection RED. */
+const STATUS_VIEW_SRC = readFileSync(
+  fileURLToPath(new URL("./terminal-status-view.ts", import.meta.url)),
+  "utf8",
+);
+
+describe("163-03 — composeStatusView/notFoundStatus thread confidence + reason (CLASS-02)", () => {
+  it("composeStatusView passes perception.confidence + perception.reason through verbatim (pure fold)", () => {
+    const perception: WorkerStatusPerception = {
+      state: "awaiting-input",
+      cursorParked: true,
+      screenDiffEmpty: true,
+      interactions: 4,
+      confidence: "high",
+      reason: "settled_cursor_parked",
+    };
+    const view = composeStatusView(perception, { lastActivity: 123 });
+    expect(view.confidence).toBe(perception.confidence);
+    expect(view.reason).toBe(perception.reason);
+    // The pre-existing fold is unchanged for the other fields.
+    expect(view.state).toBe("awaiting-input");
+    expect(view.lastActivity).toBe(123);
+    expect(view.interactions).toBe(4);
+  });
+
+  it("notFoundStatus(undefined) supplies a safe total default (state/confidence:high/reason:exited) — no undefined field", () => {
+    const view = notFoundStatus(undefined);
+    expect(view.state).toBe("exited");
+    expect(view.confidence).toBe("high");
+    expect(view.reason).toBe("exited");
+    // The not-found degrade is the T-124-15 safe shape, never a real classifier verdict.
+    expect(view.cursorParked).toBe(false);
+    expect(view.screenDiffEmpty).toBe(true);
+  });
+
+  it("round-trip: a dialog perception {confidence:'medium', reason:'dialog_detected'} survives the worker->registry hop", () => {
+    // The field-plumbing pin: a perception the worker would emit for a dialog frame,
+    // folded through composeStatusView, must carry BOTH fields onto the view verbatim
+    // (a missed seam reads undefined here — the silent no-op this guards).
+    const perception: WorkerStatusPerception = {
+      state: "awaiting-input",
+      cursorParked: false,
+      screenDiffEmpty: true,
+      interactions: 1,
+      confidence: "medium",
+      reason: "dialog_detected",
+    };
+    const view = composeStatusView(perception, { lastActivity: 9000 });
+    expect(view.confidence).toBe("medium");
+    expect(view.reason).toBe("dialog_detected");
+  });
+
+  it("content-free (I3): reason is a structural machine tag — a single-line string with no newline / TUI bytes", () => {
+    // reason is sourced ONLY from Classification.reason (a fixed enum tag), never screen
+    // text; assert it carries no newline (the structural-only doc-promise, T-163-07).
+    const fromCompose = composeStatusView(
+      {
+        state: "stuck",
+        cursorParked: false,
+        screenDiffEmpty: true,
+        interactions: 0,
+        confidence: "medium",
+        reason: "no_progress",
+      },
+      { lastActivity: 1 },
+    );
+    expect(typeof fromCompose.reason).toBe("string");
+    expect(fromCompose.reason).not.toMatch(/[\r\n]/);
+    expect(notFoundStatus(undefined).reason).not.toMatch(/[\r\n]/);
+  });
+
+  it("source-introspection: both status shapes DECLARE confidence + reason (esbuild strips types → this is the runtime-RED layer)", () => {
+    // The two interfaces must both carry the fields. esbuild erases the annotations
+    // at build time, so a bare interface widen is invisible to a runtime assertion —
+    // this source check is the proven guard (events-terminal.test.ts precedent).
+    expect(STATUS_VIEW_SRC).toMatch(/confidence:\s*"high"\s*\|\s*"medium"/);
+    expect(STATUS_VIEW_SRC).toMatch(/reason:\s*string/);
+    // notFoundStatus supplies the safe default + composeStatusView folds the perception.
+    expect(STATUS_VIEW_SRC).toMatch(/reason:\s*"exited"/);
+    expect(STATUS_VIEW_SRC).toMatch(/perception\.confidence/);
+    expect(STATUS_VIEW_SRC).toMatch(/perception\.reason/);
+  });
+
+  // ---------------------------------------------------------------------------
+  // LR-03: composeStatusView is TOTAL against a malformed / version-skewed worker
+  // reply. `registry.status` casts the cross-process IPC `reply.result` with
+  // `as WorkerStatusPerception` (an UNCHECKED cast of untrusted bytes); if the worker
+  // ever omits / mis-types `confidence`/`reason` (a version skew, a corrupt frame),
+  // the cast would propagate `undefined`/a non-enum straight onto the status surface
+  // the autonomous policy reads. Every OTHER untrusted-boundary reader in this phase is
+  // defensively coded (setup-terminal-tools republish narrows p.confidence/p.reason,
+  // T-163-11; makeWakeAdapterBus validates shape, WR-03) — composeStatusView must match,
+  // coalescing an out-of-enum confidence to "medium" and a non-string reason to a safe
+  // tag. RED on pre-patch: the pure pass-through fold copies the bad value verbatim.
+  // ---------------------------------------------------------------------------
+  it("LR-03: composeStatusView coalesces a MISSING confidence/reason to safe defaults (medium / a string tag)", () => {
+    // A version-skewed worker reply that predates CLASS-02: neither field present. The
+    // registry casts reply.result `as WorkerStatusPerception`, so this models the
+    // post-cast runtime value. The fold must NOT surface undefined.
+    const malformed = {
+      state: "awaiting-input",
+      cursorParked: false,
+      screenDiffEmpty: true,
+      interactions: 2,
+    } as unknown as WorkerStatusPerception;
+    const view = composeStatusView(malformed, { lastActivity: 7 });
+    expect(view.confidence).toBe("medium");
+    expect(typeof view.reason).toBe("string");
+    expect(view.reason.length).toBeGreaterThan(0);
+    expect(view.reason).not.toMatch(/[\r\n]/);
+    // The well-formed fields still fold through unchanged.
+    expect(view.state).toBe("awaiting-input");
+    expect(view.interactions).toBe(2);
+  });
+
+  it("LR-03: composeStatusView coalesces an OUT-OF-ENUM confidence + a non-string reason to safe defaults", () => {
+    // A corrupt frame: confidence is a foreign string, reason is a number. The narrow
+    // must reject both (only "high"/"medium" pass for confidence; only a string for
+    // reason) so the status surface is never a type-breaking value.
+    const corrupt = {
+      state: "stuck",
+      cursorParked: false,
+      screenDiffEmpty: true,
+      interactions: 0,
+      confidence: "extreme",
+      reason: 42,
+    } as unknown as WorkerStatusPerception;
+    const view = composeStatusView(corrupt, { lastActivity: 1 });
+    expect(view.confidence).toBe("medium");
+    expect(typeof view.reason).toBe("string");
+    expect(view.reason).not.toMatch(/[\r\n]/);
+  });
+
+  it("LR-03: a WELL-FORMED perception is folded VERBATIM (the narrow only rescues malformed input)", () => {
+    // The defensive narrow must not perturb the happy path — a valid {high, ...} or
+    // {medium, dialog_detected} perception passes through exactly (regression guard so
+    // the coalesce does not silently rewrite good values).
+    const ok: WorkerStatusPerception = {
+      state: "awaiting-input",
+      cursorParked: false,
+      screenDiffEmpty: true,
+      interactions: 1,
+      confidence: "medium",
+      reason: "dialog_detected",
+    };
+    const view = composeStatusView(ok, { lastActivity: 5 });
+    expect(view.confidence).toBe("medium");
+    expect(view.reason).toBe("dialog_detected");
+    const ok2 = composeStatusView(
+      { ...ok, confidence: "high", reason: "settled_cursor_parked" },
+      { lastActivity: 5 },
+    );
+    expect(ok2.confidence).toBe("high");
+    expect(ok2.reason).toBe("settled_cursor_parked");
+  });
+
+  it("LR-03 source-introspection: composeStatusView narrows confidence/reason (esbuild strips the type, so pin the runtime guard)", () => {
+    // The coalesce is a runtime narrow (the cast is `as WorkerStatusPerception`, erased
+    // at build) — assert the source carries the defensive check so a future edit cannot
+    // silently revert to a bare pass-through.
+    expect(STATUS_VIEW_SRC).toMatch(/perception\.confidence === "high" \|\| perception\.confidence === "medium"/);
+    expect(STATUS_VIEW_SRC).toMatch(/typeof perception\.reason === "string"/);
+  });
+});
+
+// ===========================================================================
+// DUR-01 (165-06): recover-on-boot re-attach + durable-aware markRunningSessionsLost.
+//
+// The load-bearing gap: on a daemon restart the new registry's `sessions` Map is
+// EMPTY, so a healthy 40h drive whose `comis-<old-id>` is STILL alive under tmux is
+// wrongly flipped `lost`. The fix: the registry takes an injected descriptorStore +
+// isTmuxAlive and, on construction, recovers each persisted descriptor via the pure
+// reattachDecision (165-01) → re-attaches a live one as `running` WITHOUT a create
+// frame (I10 — never double-drive), maps a genuinely-gone one to the EXISTING
+// terminal:session_state(state:"lost") + a content-free unrecoverable reason (NOT a
+// non-existent state:"failed") while PRESERVING the journal, and leaves a non-durable
+// one to today's lost floor. markRunningSessionsLost becomes durable-aware: a durable
+// + tmux-alive session is NOT flipped lost on a worker close (Q4).
+//
+// All injected → no live tmux. The fake worker's `requestFrames` is the create-frame
+// spy (a recovered session must produce ZERO `method:"create"` frames). The genuinely-
+// gone + re-attach signals ride injected hooks (onUnrecoverable / onReattached) the
+// daemon (165-07) binds to the bus — the registry stays infra-decoupled.
+// ===========================================================================
+
+const DURABLE_OWNER = { agentId: "agent-dur", sessionKey: "" };
+
+/** Build a persisted descriptor for a durable session (the recover-on-boot input). */
+function durableDescriptor(over: Partial<SessionDescriptor> = {}): SessionDescriptor {
+  return {
+    sessionId: "old-sess",
+    tmuxName: "comis-old-sess",
+    allowId: "claude-drive",
+    owner: DURABLE_OWNER,
+    cols: 120,
+    rows: 40,
+    durable: true,
+    createdAt: 1_600_000_000_000,
+    ...over,
+  };
+}
+
+/** An in-memory descriptor store seeded with the descriptors recover() should return. */
+function fakeDescriptorStore(seed: SessionDescriptor[] = []): SessionDescriptorStorePort {
+  const map = new Map<string, SessionDescriptor>(seed.map((d) => [d.sessionId, d]));
+  return {
+    persist: vi.fn((d: SessionDescriptor) => map.set(d.sessionId, d)),
+    recover: vi.fn(() => Array.from(map.values())),
+    remove: vi.fn((id: string) => map.delete(id)),
+  };
+}
+
+/**
+ * A fake worker that auto-replies to the BL-01 recover-on-boot `reattach` frame with the
+ * given `ok`, and to a subsequent `read` with a live pane (so a test can drive a read
+ * AGAINST the recovered session and prove it is NOT a zombie). The reattach-vs-read replies
+ * are correlated by method.
+ */
+function makeReattachWorker(reattachOk: boolean): {
+  child: FakeWorkerChild;
+  requestFrames: TerminalRequestFrame[];
+} {
+  const fake = makeFakeWorker((frame) => {
+    if (frame.method === "reattach") {
+      return { sessionId: frame.sessionId, requestId: frame.requestId, ok: reattachOk, result: { backend: "tmux" } };
+    }
+    if (frame.method === "read") {
+      return {
+        sessionId: frame.sessionId,
+        requestId: frame.requestId,
+        ok: true,
+        result: { screen: "resumed-pane", cursor: { x: 0, y: 0 }, cols: 120, rows: 40, alt: false, alive: true },
+      };
+    }
+    return undefined;
+  });
+  return { child: fake.child, requestFrames: fake.requestFrames };
+}
+
+describe("createTerminalSessionRegistry — DUR-01 recover-on-boot re-attach", () => {
+  it("re-attaches a durable session whose tmux is ALIVE as 'running' with ZERO create frames (I10 — never double-drive)", () => {
+    const fake = makeFakeWorker();
+    const store = fakeDescriptorStore([durableDescriptor()]);
+    const registry = createTerminalSessionRegistry(
+      baseDeps(() => fake.child, { durability: { descriptorStore: store, isTmuxAlive: (n) => n === "comis-old-sess" } }),
+    );
+
+    // The recovered session is visible + running under its ORIGINAL owner (identity verbatim, I5).
+    const handle = registry.get("old-sess", DURABLE_OWNER);
+    expect(handle?.status, "a live recovered session is running, not lost").toBe("running");
+    expect(handle?.allowId).toBe("claude-drive");
+    expect(handle?.cols).toBe(120);
+    expect(handle?.rows).toBe(40);
+
+    // I10 — the load-bearing assertion: recover-on-boot issues NO create frame. A fresh
+    // create would spawn a SECOND CLI; the worker's has-session-gated backend re-attaches
+    // the surviving pane on the next read instead.
+    const createFrames = fake.requestFrames.filter((f) => f.method === "create");
+    expect(createFrames, "recover-on-boot must NOT issue a create frame (I10)").toHaveLength(0);
+  });
+
+  it("BL-01 (the gap the originals missed): recover-on-boot fires ONE reattach frame + a subsequent read returns the LIVE pane (alive:true), ZERO create frames", async () => {
+    const fake = makeReattachWorker(true);
+    const store = fakeDescriptorStore([durableDescriptor()]);
+    const onReattached = vi.fn();
+    const onUnrecoverable = vi.fn();
+    const registry = createTerminalSessionRegistry(
+      baseDeps(() => fake.child, {
+        durability: { descriptorStore: store, isTmuxAlive: (n) => n === "comis-old-sess", onReattached, onUnrecoverable },
+      }),
+    );
+
+    // Let the eager recover-on-boot reattach round-trip settle (the worker confirms ok:true).
+    await vi.waitFor(() => expect(onReattached).toHaveBeenCalledTimes(1));
+
+    // EXACTLY ONE reattach frame, ZERO create frames (I10 — re-attach, never re-spawn).
+    expect(fake.requestFrames.filter((f) => f.method === "reattach"), "exactly one reattach frame").toHaveLength(1);
+    expect(fake.requestFrames.filter((f) => f.method === "create"), "ZERO create frames (I10)").toHaveLength(0);
+    expect(onUnrecoverable, "a confirmed re-attach is NOT unrecoverable").not.toHaveBeenCalled();
+
+    // THE LOAD-BEARING ASSERTION: a read against the recovered session returns the LIVE
+    // pane (alive:true) — NOT the zombie alive:false the registry-only test never caught.
+    const view = await registry.read("old-sess", DURABLE_OWNER);
+    expect(view.alive, "a re-attached session is ALIVE, not a zombie").toBe(true);
+    expect(view.screen).toContain("resumed-pane");
+  });
+
+  it("BL-01: a worker that re-attach-rejects (tmux died between the boot probe and the worker spawn) flips the session lost + fires onUnrecoverable (honest death, never a zombie)", async () => {
+    const fake = makeReattachWorker(false); // boot probe said alive, but the worker reattach replies ok:false
+    const store = fakeDescriptorStore([durableDescriptor()]);
+    const onReattached = vi.fn();
+    const onUnrecoverable = vi.fn();
+    const registry = createTerminalSessionRegistry(
+      baseDeps(() => fake.child, {
+        durability: { descriptorStore: store, isTmuxAlive: () => true, onReattached, onUnrecoverable },
+      }),
+    );
+
+    // The boot probe said alive, so a reattach frame is sent; the worker rejects it.
+    await vi.waitFor(() => expect(onUnrecoverable).toHaveBeenCalledTimes(1));
+    expect(onReattached, "a rejected re-attach is NOT a successful re-attach").not.toHaveBeenCalled();
+    // The handle is flipped lost (honest death) — a read is alive:false, never a zombie running.
+    expect(registry.get("old-sess", DURABLE_OWNER)?.status).toBe("lost");
+  });
+
+  it("a genuinely-gone durable session emits terminal:session_state(state:'lost') + a content-free unrecoverable reason — NOT a state:'failed', journal PRESERVED", () => {
+    const fake = makeFakeWorker();
+    const store = fakeDescriptorStore([durableDescriptor()]);
+    const onUnrecoverable = vi.fn();
+    const registry = createTerminalSessionRegistry(
+      baseDeps(() => fake.child, {
+        durability: {
+          descriptorStore: store,
+          isTmuxAlive: () => false, // the tmux session did NOT survive — genuinely gone
+          onUnrecoverable,
+        },
+      }),
+    );
+
+    // The genuinely-gone path fires the injected hook the daemon binds to the bus.
+    expect(onUnrecoverable).toHaveBeenCalledTimes(1);
+    const info = onUnrecoverable.mock.calls[0]![0] as {
+      sessionId: string;
+      agentId: string;
+      reason: string;
+      errorKind: string;
+    };
+    expect(info.sessionId).toBe("old-sess");
+    expect(info.agentId).toBe("agent-dur"); // the agentId rides the content-free hook
+    expect(info.reason).toBe("tmux_session_gone"); // the content-free unrecoverable reason
+    expect(info.errorKind, "§2.7 — a failure branch carries an errorKind").toBeTruthy();
+    // The unrecoverable hook carries ONLY ids/enum (content-free, I3) — no screen/text.
+    expect(Object.keys(info).sort()).toEqual(["agentId", "errorKind", "reason", "sessionId"]);
+
+    // BL-03 (165-REVIEW): the genuinely-gone path REMOVES the dead DESCRIPTOR (a stale
+    // descriptor with a dead tmuxName has no recovery value — keeping it re-scans + re-probes
+    // + re-emits `lost` EVERY boot, an unbounded boot regression). The JOURNAL is preserved
+    // SEPARATELY by the daemon holder (I10 — distinct from the descriptor store; the
+    // user-facing `failed` outcome is derived downstream in Phase 166).
+    expect(store.remove, "the genuinely-gone path drops the dead descriptor (BL-03)").toHaveBeenCalledTimes(1);
+    expect(store.remove).toHaveBeenCalledWith("old-sess");
+
+    // It is NOT re-attached (not in the live session map).
+    expect(registry.get("old-sess", DURABLE_OWNER)).toBeUndefined();
+    // Still no create frame on the gone path.
+    expect(fake.requestFrames.filter((f) => f.method === "create")).toHaveLength(0);
+  });
+
+  it("a worker-CONFIRMED re-attach fires ONE content-free terminal:drive_reattached signal (the obs INFO record)", async () => {
+    const fake = makeReattachWorker(true);
+    const store = fakeDescriptorStore([durableDescriptor()]);
+    const onReattached = vi.fn();
+    createTerminalSessionRegistry(
+      baseDeps(() => fake.child, {
+        durability: { descriptorStore: store, isTmuxAlive: () => true, onReattached },
+      }),
+    );
+
+    // BL-01: onReattached fires only after the WORKER confirms the re-attach (ok:true),
+    // not blindly at recover-time (a tmux that died post-probe must not emit a re-attach).
+    await vi.waitFor(() => expect(onReattached).toHaveBeenCalledTimes(1));
+    const info = onReattached.mock.calls[0]![0] as { sessionId: string; agentId: string };
+    expect(info.sessionId).toBe("old-sess");
+    expect(info.agentId).toBe("agent-dur");
+    // Content-free (I3): the re-attach signal carries ids only — no screen/text.
+    expect(Object.keys(info).sort()).toEqual(["agentId", "sessionId"]);
+  });
+
+  it("a NON-durable persisted descriptor is skipped on recover (today's lost floor — not re-attached, no hook)", () => {
+    const fake = makeFakeWorker();
+    const store = fakeDescriptorStore([durableDescriptor({ sessionId: "nd", durable: false })]);
+    const onReattached = vi.fn();
+    const onUnrecoverable = vi.fn();
+    const registry = createTerminalSessionRegistry(
+      baseDeps(() => fake.child, { durability: { descriptorStore: store, isTmuxAlive: () => true, onReattached, onUnrecoverable } }),
+    );
+    expect(registry.get("nd", DURABLE_OWNER)).toBeUndefined();
+    expect(onReattached).not.toHaveBeenCalled();
+    expect(onUnrecoverable).not.toHaveBeenCalled();
+  });
+
+  it("I1: with NO descriptorStore injected (today's wiring), construction recovers nothing + issues no create frame", () => {
+    const fake = makeFakeWorker();
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child));
+    expect(registry.size()).toBe(0);
+    expect(fake.requestFrames.filter((f) => f.method === "create")).toHaveLength(0);
+  });
+
+  it("persists a descriptor at CREATE-time for a durable session BEFORE the create frame (Pitfall 6 — no orphan window)", async () => {
+    const fake = makeFakeWorker();
+    const store = fakeDescriptorStore();
+    const registry = createTerminalSessionRegistry(
+      baseDeps(() => fake.child, { durability: { descriptorStore: store } }),
+    );
+
+    await registry.create(
+      { allowId: "claude-drive", bin: "/usr/bin/claude", argv: [], cols: 80, rows: 24, durable: true, tmuxName: "comis-x" },
+      DURABLE_OWNER,
+    );
+
+    // The descriptor was persisted (so a SIGKILL mid-create cannot orphan tmux without a record).
+    expect(store.persist).toHaveBeenCalledTimes(1);
+    const persisted = store.persist.mock.calls[0]![0] as SessionDescriptor;
+    expect(persisted.durable).toBe(true);
+    expect(persisted.allowId).toBe("claude-drive");
+    expect(persisted.owner).toEqual(DURABLE_OWNER);
+    expect(persisted.tmuxName).toBe("comis-x");
+  });
+
+  it("I1: create does NOT persist a descriptor for a NON-durable session (today's spawn floor unchanged)", async () => {
+    const fake = makeFakeWorker();
+    const store = fakeDescriptorStore();
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, { durability: { descriptorStore: store } }));
+    await registry.create({ allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }, OWNER);
+    expect(store.persist).not.toHaveBeenCalled();
+  });
+
+  it("BL-03: a worker-reattach-FAILED session (ok:false) drops its dead descriptor (a second boot recovers nothing)", async () => {
+    // The boot probe said alive (a reattach frame is sent), but the worker rejects it —
+    // the descriptor is now dead (its tmuxName no longer resolves) and must be dropped so
+    // the next boot does not re-scan + re-probe + re-emit lost for it forever.
+    const fake = makeReattachWorker(false);
+    const store = fakeDescriptorStore([durableDescriptor()]);
+    createTerminalSessionRegistry(
+      baseDeps(() => fake.child, { durability: { descriptorStore: store, isTmuxAlive: () => true } }),
+    );
+    await vi.waitFor(() => expect(store.remove).toHaveBeenCalledWith("old-sess"));
+
+    // A SECOND boot (a fresh registry on the SAME store) recovers nothing — the leak is closed.
+    const fake2 = makeReattachWorker(false);
+    const onUnrecoverable2 = vi.fn();
+    createTerminalSessionRegistry(
+      baseDeps(() => fake2.child, { durability: { descriptorStore: store, isTmuxAlive: () => true, onUnrecoverable: onUnrecoverable2 } }),
+    );
+    // No descriptor left → nothing to re-attach, nothing to fail, no reattach frame.
+    expect(fake2.requestFrames.filter((f) => f.method === "reattach")).toHaveLength(0);
+    expect(onUnrecoverable2).not.toHaveBeenCalled();
+  });
+});
+
+// ===========================================================================
+// BL-03 (165-REVIEW): the descriptor leak — descriptorStore.remove had ZERO
+// callers, so every durable descriptor file leaked forever + inflated every boot
+// (re-scan + a blocking tmux has-session probe + a spurious `lost` per dead one).
+// The fix wires remove at BOTH ends of the descriptor lifecycle: the genuinely-gone
+// recover path (above) AND clean exit/evict (here — the registry's end-of-life site).
+// The journal-vs-descriptor split holds: the journal is preserved on a crash/lost
+// (I10, the daemon holder's job), but the DESCRIPTOR is dropped whenever the session
+// is no longer re-attachable (clean-exit AND confirmed-gone).
+// ===========================================================================
+describe("createTerminalSessionRegistry — BL-03 descriptor removal on clean exit/evict", () => {
+  it("evicting a durable session removes its descriptor (the re-attach key for a session that no longer exists)", async () => {
+    const fake = makeFakeWorker();
+    const store = fakeDescriptorStore();
+    const registry = createTerminalSessionRegistry(
+      baseDeps(() => fake.child, {
+        // A reaper-composed registry so evict() runs the full end-of-life path.
+        maxSessions: 4,
+        timers: createFakeTimers(),
+        durability: { descriptorStore: store, isTmuxAlive: () => true },
+      }),
+    );
+    const { sessionId } = await registry.create(
+      { allowId: "claude-drive", bin: "/usr/bin/claude", argv: [], cols: 80, rows: 24, durable: true, tmuxName: "comis-ev" },
+      DURABLE_OWNER,
+    );
+    store.remove.mockClear(); // ignore any create-path churn; assert ONLY the evict removal.
+
+    await registry.evict(sessionId, DURABLE_OWNER, "max_interactions");
+
+    expect(store.remove, "a cleanly-evicted durable session drops its descriptor (BL-03)").toHaveBeenCalledWith(sessionId);
+  });
+
+  it("killing a durable session removes its descriptor (the shared end-of-life site)", async () => {
+    const fake = makeFakeWorker();
+    const store = fakeDescriptorStore();
+    const registry = createTerminalSessionRegistry(
+      baseDeps(() => fake.child, { durability: { descriptorStore: store, isTmuxAlive: () => true } }),
+    );
+    const { sessionId } = await registry.create(
+      { allowId: "claude-drive", bin: "/usr/bin/claude", argv: [], cols: 80, rows: 24, durable: true, tmuxName: "comis-kill" },
+      DURABLE_OWNER,
+    );
+    store.remove.mockClear();
+
+    await registry.kill(sessionId, DURABLE_OWNER);
+
+    expect(store.remove, "a cleanly-killed durable session drops its descriptor (BL-03)").toHaveBeenCalledWith(sessionId);
+  });
+
+  it("I1: a NON-durable session's kill does NOT touch the descriptor store (nothing was persisted)", async () => {
+    const fake = makeFakeWorker();
+    const store = fakeDescriptorStore();
+    const registry = createTerminalSessionRegistry(
+      baseDeps(() => fake.child, { durability: { descriptorStore: store, isTmuxAlive: () => true } }),
+    );
+    const { sessionId } = await registry.create({ allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }, OWNER);
+    store.remove.mockClear();
+    await registry.kill(sessionId, OWNER);
+    expect(store.remove).not.toHaveBeenCalled();
+  });
+});
+
+describe("createTerminalSessionRegistry — DUR-01 durable-aware markRunningSessionsLost (Q4)", () => {
+  it("does NOT flip a durable + tmux-ALIVE session 'lost' on a worker close (it stays recoverable)", async () => {
+    const fake = makeFakeWorker();
+    const store = fakeDescriptorStore();
+    const registry = createTerminalSessionRegistry(
+      baseDeps(() => fake.child, { durability: { descriptorStore: store, isTmuxAlive: (n) => n === "comis-x" } }),
+    );
+    const { sessionId } = await registry.create(
+      { allowId: "claude-drive", bin: "/usr/bin/claude", argv: [], cols: 80, rows: 24, durable: true, tmuxName: "comis-x" },
+      DURABLE_OWNER,
+    );
+
+    fake.emitError(); // the worker crashed — but the detached tmux server lives on.
+
+    // Q4: the durable session is NOT lost (its tmux is alive → still recoverable as running).
+    expect(registry.get(sessionId, DURABLE_OWNER)?.status).toBe("running");
+  });
+
+  it("DOES flip a durable + tmux-GONE session 'lost' on a worker close (a genuine death)", async () => {
+    const fake = makeFakeWorker();
+    const store = fakeDescriptorStore();
+    const registry = createTerminalSessionRegistry(
+      baseDeps(() => fake.child, { durability: { descriptorStore: store, isTmuxAlive: () => false } }),
+    );
+    const { sessionId } = await registry.create(
+      { allowId: "claude-drive", bin: "/usr/bin/claude", argv: [], cols: 80, rows: 24, durable: true, tmuxName: "comis-gone" },
+      DURABLE_OWNER,
+    );
+
+    fake.emitError();
+
+    expect(registry.get(sessionId, DURABLE_OWNER)?.status).toBe("lost");
+  });
+
+  it("a NON-durable spawn session keeps today's 'lost' flip on a worker close (I1 — floor unchanged)", async () => {
+    const fake = makeFakeWorker();
+    const registry = createTerminalSessionRegistry(
+      baseDeps(() => fake.child, { durability: { isTmuxAlive: () => true } }), // even with a live probe, a non-durable session is lost
+    );
+    const { sessionId } = await registry.create({ allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }, OWNER);
+
+    fake.emitError();
+
+    expect(registry.get(sessionId, OWNER)?.status).toBe("lost");
+  });
+
+  it("I1: with NO isTmuxAlive injected, markRunningSessionsLost flips ALL running → lost (byte-identical to today)", async () => {
+    const fake = makeFakeWorker();
+    // A durable session but NO isTmuxAlive dep → the durable-aware branch cannot confirm
+    // liveness, so it falls through to today's lost flip (the safe default).
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child));
+    const a = await registry.create(
+      { allowId: "claude-drive", bin: "/usr/bin/claude", argv: [], cols: 80, rows: 24, durable: true, tmuxName: "comis-x" },
+      DURABLE_OWNER,
+    );
+    const b = await registry.create({ allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }, OWNER);
+
+    fake.emitError();
+
+    expect(registry.get(a.sessionId, DURABLE_OWNER)?.status).toBe("lost");
+    expect(registry.get(b.sessionId, OWNER)?.status).toBe("lost");
+  });
+});
+
+describe("createTerminalSessionRegistry — getOwner (ISSUE-3 daemon recovery seam)", () => {
+  it("returns the session's STAMPED owner by id WITHOUT an owner arg (owner-agnostic); undefined for an absent session", async () => {
+    // The daemon wake path recovers the (userId, sessionKey) the worker→event re-publish drops
+    // (setup-terminal-tools.ts emits agentId only) so a detached channel/API drive's woken turns
+    // resolve the LIVE session instead of dropping cross-owner. getOwner returns the IDENTITY only.
+    const fake = makeFakeWorker();
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child));
+    const channelOwner = { agentId: "openai-api", sessionKey: "default:openai-api:openai" };
+    const { sessionId } = await registry.create({ allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }, channelOwner);
+    expect(registry.getOwner?.(sessionId)).toEqual(channelOwner);
+    expect(registry.getOwner?.("no-such-session")).toBeUndefined();
+  });
+});
+
+describe("createTerminalSessionRegistry — DUR-01: a durable create engages the tmux backend (FINDING-B)", () => {
+  it("a req.durable create stamps the handle durable + derives tmuxName comis-<id> + sets the create FRAME backend:'tmux'", async () => {
+    // Live VPS finding 2026-06-16: drive.durable:true never engaged tmux — the create tool never set
+    // req.durable, and even when set the registry used req.tmuxName (which the tool can't supply, since
+    // sessionId is generated HERE) and the create frame carried NO backend, so the worker always picked
+    // pty. The registry must derive the deterministic re-attach name from its own sessionId AND tell the
+    // worker to use tmux via the frame `backend` param (terminal-worker-entry.ts reads p["backend"]).
+    const fake = makeFakeWorker();
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child));
+    const { sessionId } = await registry.create(
+      { allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24, durable: true },
+      OWNER,
+    );
+    const handle = registry.get(sessionId, OWNER);
+    expect(handle?.durable, "a durable create stamps the handle durable").toBe(true);
+    expect(handle?.tmuxName, "the registry derives comis-<sessionId> (the tool cannot — it does not know sessionId)").toBe(`comis-${sessionId}`);
+    const createFrame = fake.requestFrames.find((f) => f.method === "create");
+    expect(createFrame?.params.backend, "the create frame MUST carry backend:'tmux' so the worker selects the tmux backend").toBe("tmux");
+  });
+
+  it("a non-durable create leaves the handle spawn (no durable/tmuxName) + the frame backend unset (I1)", async () => {
+    const fake = makeFakeWorker();
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child));
+    const { sessionId } = await registry.create({ allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }, OWNER);
+    const handle = registry.get(sessionId, OWNER);
+    expect(handle?.durable).toBeUndefined();
+    expect(handle?.tmuxName).toBeUndefined();
+    const createFrame = fake.requestFrames.find((f) => f.method === "create");
+    expect(createFrame?.params.backend).toBeUndefined();
+  });
+});
+
+describe("createTerminalSessionRegistry — DUR-01 FINDING-C: cleanup PRESERVES a durable session (survive-restart)", () => {
+  it("a graceful cleanup does NOT kill a durable session's tmux + KEEPS its descriptor (recover-on-boot re-attaches)", async () => {
+    // Live VPS finding 2026-06-16: cleanup() evicted EVERY session (kill frame + descriptorStore.remove),
+    // so a graceful daemon shutdown DESTROYED durable sessions instead of leaving the detached tmux +
+    // descriptor for recover-on-boot. A durable session must be preserved on cleanup.
+    const fake = makeFakeWorker();
+    const store = fakeDescriptorStore();
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, { durability: { descriptorStore: store, isTmuxAlive: () => true } }));
+    await registry.create({ allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24, durable: true }, DURABLE_OWNER);
+    await registry.cleanup();
+    expect(fake.requestFrames.filter((f) => f.method === "kill"), "a durable session's tmux must NOT be killed on a graceful cleanup").toHaveLength(0);
+    expect(store.remove, "the durable descriptor must be PRESERVED on cleanup (recover-on-boot needs it)").not.toHaveBeenCalled();
+  });
+
+  it("a graceful cleanup STILL evicts a non-durable session (kill frame sent) — I1 unchanged", async () => {
+    const fake = makeFakeWorker();
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child));
+    await registry.create({ allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }, OWNER);
+    await registry.cleanup();
+    expect(fake.requestFrames.filter((f) => f.method === "kill"), "a non-durable session is evicted on cleanup as before").toHaveLength(1);
   });
 });

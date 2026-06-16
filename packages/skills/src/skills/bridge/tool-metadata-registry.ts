@@ -676,11 +676,13 @@ export function registerAllToolMetadata(): void {
   // Terminal driver (9) — never-export; inside Comis's trust boundary, NOT an MCP-exported surface.
   registerToolMetadata("terminal_session_create",    { mcpExportPolicy: "never-export" });
   registerToolMetadata("terminal_session_list",      { mcpExportPolicy: "never-export" });
-  registerToolMetadata("terminal_session_read",      { mcpExportPolicy: "never-export" });
+  // read/wait/status surface the DRIVEN session's exitCode (informational) — flag them so the
+  // bridge's exit-code failure heuristic never misreads a non-zero driven exit as a TOOL failure.
+  registerToolMetadata("terminal_session_read",      { mcpExportPolicy: "never-export", exitCodeIsDrivenSession: true });
   registerToolMetadata("terminal_session_send_text", { mcpExportPolicy: "never-export" });
   registerToolMetadata("terminal_session_send_key",  { mcpExportPolicy: "never-export" });
-  registerToolMetadata("terminal_session_wait",      { mcpExportPolicy: "never-export" });
-  registerToolMetadata("terminal_session_status",    { mcpExportPolicy: "never-export" });
+  registerToolMetadata("terminal_session_wait",      { mcpExportPolicy: "never-export", exitCodeIsDrivenSession: true });
+  registerToolMetadata("terminal_session_status",    { mcpExportPolicy: "never-export", exitCodeIsDrivenSession: true });
   registerToolMetadata("terminal_session_resize",    { mcpExportPolicy: "never-export" });
   registerToolMetadata("terminal_session_kill",      { mcpExportPolicy: "never-export" });
   // Context expansion (3) — never-export; in-session lossless-store recovery (E1/E2),

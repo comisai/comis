@@ -275,6 +275,252 @@ function corpusAuthExpired() {
   return s;
 }
 
+// ---------------------------------------------------------------------------
+// Plan 163-02 (CLASS-02): the per-CLI corpus extension — claude RED dialogs +
+// codex/aider × six states {idle-working, awaiting-text-input, full-screen menu,
+// permission dialog, completed, hung}. CONTENT-FREE UI CHROME ONLY (I3): generic
+// prompt text ("Do you want to proceed?"), numbered options, the `(y/n)` selector,
+// ASCII box-drawing — NO host paths, NO tokens, NO secrets, NO real keystrokes.
+// Hand-authored synthetic byte streams (a live capture of any of these CLIs is
+// non-deterministic + auth-gated + cannot posix_spawnp in-harness on macOS), exactly
+// like the 124-03 claude corpus above.
+//
+// ENCODING NOTE (load-bearing): the test reads each fixture `latin1` (the golden-frame
+// round-trip contract). A multi-byte UTF-8 glyph (`╭`, `❯`) is therefore decoded as 3
+// separate latin1 cells — so a wide Unicode box row OVERFLOWS the 80-col grid and wraps,
+// and a `❯`-prefixed enumerator no longer matches the line-start ENUMERATOR regex. These
+// fixtures consequently use PURE-ASCII structural cues that survive the latin1 decode 1:1:
+//   - an ASCII border row  `+----+` / `| … |`  (detectsFullScreenDialog ASCII_BORDER), OR
+//   - a `(y/n)` confirmation token            (SELECTOR), OR
+//   - ≥2 line-start `1.` / `2.` option rows   (ENUMERATOR, ≥2 required).
+// (The 124-03 claude fixtures use `╭`/`❯` safely because they assert via isCursorParked —
+// a parked cursor — never via the structural dialog predicate, so the glyph width is moot.)
+//
+// The LOAD-BEARING shape (the documented claude-2.1.x misread, RESEARCH Pitfall 1):
+// the prompt block (box / enumerated menu / selector) renders ABOVE, and the cursor
+// is parked on a BLANK input line WELL BELOW the last non-blank row — so isCursorParked
+// (correctly) returns false and the classifier reaches the CLASS-01 dialog_detected
+// branch (→ awaiting-input / medium). This is the RED shape Plan 01 closed; do NOT
+// copy corpusTrustDialog (its cursor parks ON the affordance row → high, GREEN already).
+//
+// The HUNG shape carries NO box / NO menu / NO selector and leaves the cursor
+// mid-screen above stale content → the dialog branch must NOT steal it, so it falls
+// through to the stuck-by-progress branch (the corpus row supplies noProgressMs >
+// stuckMs). The COMPLETED shape returns to a parked shell prompt (cursor on the last
+// non-blank prompt row → awaiting-input / high).
+// ---------------------------------------------------------------------------
+
+// --- claude: the RED misread shapes (structure above, cursor on a blank row below) ---
+
+/**
+ * Claude permission dialog (the RED misread): an ASCII-bordered permission prompt with
+ * two numbered option rows at the TOP, then the cursor parked on the EMPTY bottom grid
+ * row (row 24) — well below the box's last non-blank row. isCursorParked returns false
+ * (cursor far below content); the dialog branch reads the ASCII border → awaiting-input.
+ */
+function corpusClaudePermissionDialog() {
+  let s = clearHome;
+  s += "+------------------------------------------+\r\n"; // row 1 (ASCII border)
+  s += "| Claude needs your permission to run a    |\r\n"; // row 2
+  s += "| command. Do you want to proceed?         |\r\n"; // row 3
+  s += "|   1. Yes, allow this command             |\r\n"; // row 4
+  s += "|   2. No, and tell Claude what to do      |\r\n"; // row 5
+  s += "+------------------------------------------+\r\n"; // row 6 (ASCII border)
+  // Park the cursor on the EMPTY bottom row (row 24, 1-based) — the misread shape:
+  // the box is the last non-blank content (row 6), the cursor sits far below it.
+  s += cup(24, 1);
+  return s;
+}
+
+/**
+ * Claude full-screen menu (same misread family): an enumerated menu (≥2 line-start
+ * numbered rows) at the TOP, cursor on a blank row below. No box — the ≥2-item
+ * enumerated list IS the structural cue.
+ */
+function corpusClaudeMenu() {
+  let s = clearHome;
+  s += "Which approach should I take?\r\n"; // row 1
+  s += "\r\n"; // row 2
+  s += "1. Refactor incrementally\r\n"; // row 3 (line-start enumerator)
+  s += "2. Rewrite the module\r\n"; // row 4 (line-start enumerator — ≥2 ⇒ a menu)
+  s += "3. Leave the code as-is\r\n"; // row 5
+  // Cursor parked on the EMPTY bottom grid row (row 24) — far below the menu (row 5).
+  s += cup(24, 1);
+  return s;
+}
+
+// --- codex: the six states (shape reference; synthetic content-free ASCII chrome) ---
+
+/** Codex working: a streaming/spinner line, cursor trailing mid-stream (corpus row marks settled:false ⇒ working). */
+function corpusCodexWorking() {
+  let s = clearHome;
+  s += "Working on your request...\r\n"; // row 1
+  const frames = ["|", "/", "-", "\\", "|", "/"];
+  let line = "  ";
+  for (const f of frames) line += `\r  ${f} thinking`;
+  s += line + "\r\n"; // row 2 (spinner redraw)
+  s += "  reading the project files...\r\n"; // row 3
+  s += cup(4, 1); // cursor trailing the live output (unsettled)
+  return s;
+}
+
+/** Codex awaiting text input: a parked input prompt; cursor PARKED at the bottom affordance (→ high). */
+function corpusCodexAwaitingInput() {
+  let s = clearHome;
+  s += "Codex is ready.\r\n"; // row 1
+  s += "Type a message and press Enter.\r\n"; // row 2
+  s += "> "; // row 3 — the input affordance
+  // After writing "> " the cursor trails it on the last non-blank row (row 3) — parked.
+  return s;
+}
+
+/** Codex full-screen menu: an ASCII-boxed enumerated menu; cursor on a blank row below (→ dialog_detected/medium). */
+function corpusCodexMenu() {
+  let s = clearHome;
+  s += "+------------------------------------------+\r\n"; // row 1 (ASCII border)
+  s += "| Select an option:                        |\r\n"; // row 2
+  s += "|   1. Continue                            |\r\n"; // row 3
+  s += "|   2. Edit instructions                   |\r\n"; // row 4
+  s += "|   3. Quit                                |\r\n"; // row 5
+  s += "+------------------------------------------+\r\n"; // row 6 (ASCII border)
+  s += cup(24, 1); // cursor on the empty bottom row, below the box
+  return s;
+}
+
+/** Codex permission dialog: an ASCII-boxed (y/n) permission gate; cursor on a blank row below (→ dialog_detected/medium). */
+function corpusCodexPermissionDialog() {
+  let s = clearHome;
+  s += "+------------------------------------------+\r\n"; // row 1 (ASCII border)
+  s += "| Allow the agent to edit this file?       |\r\n"; // row 2
+  s += "| Do you want to proceed? (y/n)            |\r\n"; // row 3 ((y/n) selector)
+  s += "+------------------------------------------+\r\n"; // row 4 (ASCII border)
+  s += cup(24, 1); // cursor on the empty bottom row, below the box
+  return s;
+}
+
+/** Codex completed: the turn finished and returned to a parked input prompt (→ awaiting-input/high). */
+function corpusCodexCompleted() {
+  let s = clearHome;
+  s += "Done. Applied the changes and ran the checks.\r\n"; // row 1
+  s += "\r\n"; // row 2
+  s += "> "; // row 3 — back at the input prompt
+  // Cursor trails "> " on the last non-blank row (row 3) — parked.
+  return s;
+}
+
+/** Codex hung: frozen prose, NO box/menu/selector, cursor mid-screen above stale content (→ stuck when noProgressMs > stuckMs). */
+function corpusCodexHung() {
+  let s = clearHome;
+  s += "Applying the requested edits to the module.\r\n"; // row 1
+  s += "\r\n"; // row 2
+  s += "  still working on the diff below this line\r\n"; // row 3 (stale content below the cursor)
+  // Move the cursor UP to a mid-screen row (row 1) with stale content rendered below
+  // it (row 3) — NOT parked, and there is no dialog structure → stuck-by-progress.
+  s += cup(1, 44);
+  return s;
+}
+
+// --- aider: the six states (shape reference; synthetic content-free ASCII chrome) ---
+
+/** Aider working: a streaming line, cursor trailing mid-stream (corpus row marks settled:false ⇒ working). */
+function corpusAiderWorking() {
+  let s = clearHome;
+  s += "Thinking...\r\n"; // row 1
+  const frames = ["|", "/", "-", "\\", "|", "/"];
+  let line = "  ";
+  for (const f of frames) line += `\r  ${f} editing files`;
+  s += line + "\r\n"; // row 2 (spinner redraw)
+  s += "  applying the diff...\r\n"; // row 3
+  s += cup(4, 1); // cursor trailing the live output (unsettled)
+  return s;
+}
+
+/** Aider awaiting text input: the parked `>` chat prompt; cursor PARKED at the bottom (→ high). */
+function corpusAiderAwaitingInput() {
+  let s = clearHome;
+  s += "Added main.py to the chat.\r\n"; // row 1
+  s += "Use /help for help, or just type a message.\r\n"; // row 2
+  s += "> "; // row 3 — the aider chat prompt
+  // After writing "> " the cursor trails it on the last non-blank row (row 3) — parked.
+  return s;
+}
+
+/** Aider full-screen menu: an enumerated menu (≥2 line-start numbered rows); cursor on a blank row below (→ dialog_detected/medium). */
+function corpusAiderMenu() {
+  let s = clearHome;
+  s += "Which files would you like to add?\r\n"; // row 1
+  s += "\r\n"; // row 2
+  s += "1. main.py\r\n"; // row 3 (line-start enumerator)
+  s += "2. utils.py\r\n"; // row 4 (line-start enumerator — ≥2 ⇒ a menu)
+  s += "3. None of these\r\n"; // row 5
+  s += cup(24, 1); // cursor on the empty bottom row, below the menu
+  return s;
+}
+
+/** Aider permission dialog: a (y/n) confirmation gate; cursor on a blank row below (→ dialog_detected/medium). */
+function corpusAiderPermissionDialog() {
+  let s = clearHome;
+  s += "Aider wants to apply an edit.\r\n"; // row 1
+  s += "\r\n"; // row 2
+  s += "Do you want to proceed? (y/n)\r\n"; // row 3 — the (y/n) selector affordance
+  s += cup(24, 1); // cursor on the empty bottom row, below the prompt block
+  return s;
+}
+
+/** Aider completed: the edits landed and aider returned to the parked `>` prompt (→ awaiting-input/high). */
+function corpusAiderCompleted() {
+  let s = clearHome;
+  s += "Applied edit to main.py\r\n"; // row 1
+  s += "Commit 1a2b3c4 add feature\r\n"; // row 2 (a synthetic 7-char hash, no host data)
+  s += "> "; // row 3 — back at the chat prompt
+  // Cursor trails "> " on the last non-blank row (row 3) — parked.
+  return s;
+}
+
+/** Aider hung: frozen prose, NO box/menu/selector, cursor mid-screen above stale content (→ stuck when noProgressMs > stuckMs). */
+function corpusAiderHung() {
+  let s = clearHome;
+  s += "Sending the request to the model.\r\n"; // row 1
+  s += "\r\n"; // row 2
+  s += "  waiting for a response from the model\r\n"; // row 3 (stale content below the cursor)
+  // Cursor moved UP to a mid-screen row (row 1) with stale content below it (row 3) —
+  // NOT parked, and no dialog structure → stuck-by-progress.
+  s += cup(1, 34);
+  return s;
+}
+
+// --- the NEGATIVE-SPACE regression lock (MR-01 / LR-02): generation OUTPUT that
+//     STRUCTURALLY resembles a dialog but is NOT one — must classify working/stuck,
+//     NEVER awaiting-input. A coding CLI routinely ends a *completed* response with a
+//     markdown table or a numbered list; the over-broad pre-fix predicate read those
+//     as `dialog_detected` → a spurious wake. The frame is settled+diff∅ with the
+//     cursor MID-SCREEN (output rendered BELOW it, so isCursorParked is false) — the
+//     exact gate that reaches the dialog branch. CONTENT-FREE chrome only (I3). ---
+
+/**
+ * Claude completion ending in a MARKDOWN TABLE (the MR-01 false-positive shape): a
+ * `| col | col |` table is generation output, NOT dialog chrome. The table's pipe rows
+ * have NO `+---+` border, so the tightened ASCII_BORDER must not fire; the cursor is
+ * moved UP into the prose region with the table rendered BELOW it (NOT parked), so the
+ * frame reaches the dialog branch and must fall through to `working` (no real
+ * structure). The corpus row uses a no-stuck history ⇒ working.
+ */
+function corpusClaudeCompletionTable() {
+  let s = clearHome;
+  s += "Here is a comparison of the options:\r\n"; // row 1 (lead-in prose)
+  s += "\r\n"; // row 2
+  s += "| Option | Cost | Notes              |\r\n"; // row 3 (markdown table — NOT a border)
+  s += "| Fast   | low  | fewer guarantees   |\r\n"; // row 4
+  s += "| Slow   | high | fully verified     |\r\n"; // row 5
+  s += "\r\n"; // row 6
+  s += "Let me know which one you would prefer.\r\n"; // row 7 (prose CONTINUES below)
+  // Move the cursor UP into the prose region (row 1) with the table + trailing prose
+  // rendered BELOW it — the mid-screen-cursor shape (NOT parked) that reaches the dialog
+  // branch. A markdown table is NOT a dialog ⇒ working, NEVER awaiting-input.
+  s += cup(1, 37);
+  return s;
+}
+
 const SYNTHETIC = {
   spinner: syntheticSpinner,
   altscreen: syntheticAltScreen,
@@ -287,6 +533,25 @@ const SYNTHETIC = {
   "thinking-pause": corpusThinkingPause,
   completion: corpusCompletion,
   "auth-expired": corpusAuthExpired,
+  // The 163-02 (CLASS-02) per-CLI corpus extension — claude RED dialogs + codex/aider
+  // × six states. Refresh on a claude/codex/aider version bump (see fixtures/README.md).
+  "claude-permission-dialog": corpusClaudePermissionDialog,
+  "claude-menu": corpusClaudeMenu,
+  "codex-working": corpusCodexWorking,
+  "codex-awaiting-input": corpusCodexAwaitingInput,
+  "codex-menu": corpusCodexMenu,
+  "codex-permission-dialog": corpusCodexPermissionDialog,
+  "codex-completed": corpusCodexCompleted,
+  "codex-hung": corpusCodexHung,
+  "aider-working": corpusAiderWorking,
+  "aider-awaiting-input": corpusAiderAwaitingInput,
+  "aider-menu": corpusAiderMenu,
+  "aider-permission-dialog": corpusAiderPermissionDialog,
+  "aider-completed": corpusAiderCompleted,
+  "aider-hung": corpusAiderHung,
+  // The MR-01 / LR-02 negative-space regression lock — generation output (a markdown
+  // table) that structurally resembles a dialog but is NOT one (must be working).
+  "claude-completion-table": corpusClaudeCompletionTable,
 };
 
 // ---------------------------------------------------------------------------

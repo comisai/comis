@@ -475,6 +475,119 @@ describe("createTerminalWorker — backend selection", () => {
   });
 });
 
+// ===========================================================================
+// BL-01 (165-REVIEW): the worker `reattach` frame — the load-bearing fix for the
+// recover-on-boot ZOMBIE. The registry rehydrates a recovered durable session
+// `running` but the worker (freshly spawned, EMPTY sessions map) only re-attaches a
+// tmux pane inside `handleCreate`. So a recovered session's first `read`/`status`
+// returned alive:false — a zombie. The fix: a distinct `reattach` method that
+// ATTACHES to an EXISTING tmux session by name (hasSession true → register + attach;
+// hasSession false → ok:false, NEVER a fresh new-session/create — I10 no-double-drive).
+//
+// THE GAP THE ORIGINALS MISSED: drive a `read` AGAINST the reattached session and
+// assert it returns the LIVE pane (alive:true), with exactly one reattach (no spawn).
+// ===========================================================================
+describe("createTerminalWorker — reattach frame (BL-01: recover-on-boot is not a zombie)", () => {
+  /** A fake tmux loader whose `reattach` returns a live pane handle iff `alive`. */
+  function makeReattachLoader(alive: boolean): {
+    loadTmux: { spawn: ReturnType<typeof vi.fn>; reattach: ReturnType<typeof vi.fn> };
+    emit: (chunk: string) => void;
+  } {
+    let onData: ((d: string) => void) | undefined;
+    const reattach = vi.fn(
+      (a: { sessionId: string; cols: number; rows: number }): FakePtyLike | undefined => {
+        void a;
+        if (!alive) return undefined; // the tmux session did NOT survive — gone.
+        return {
+          pid: 8181,
+          onData: (cb: (d: string) => void) => {
+            onData = cb;
+          },
+          onExit: vi.fn(),
+          write: vi.fn(),
+          resize: vi.fn(),
+          kill: vi.fn(),
+        };
+      },
+    );
+    // spawn must NEVER be called on the reattach path (that would be a fresh CLI → double-drive).
+    const spawn = vi.fn(() => {
+      throw new Error("reattach must NOT call spawn (I10 — no double-drive)");
+    });
+    return { loadTmux: { spawn, reattach }, emit: (chunk: string) => onData?.(chunk) };
+  }
+
+  function reattachFrame(sessionId: string): TerminalRequestFrame {
+    return {
+      sessionId,
+      requestId: `rq-reattach-${sessionId}`,
+      traceId: TRACE_ID,
+      method: "reattach",
+      params: { sessionId, cols: 120, rows: 40 },
+    };
+  }
+
+  it("re-attaches a LIVE tmux session (ok:true) so a subsequent read returns the LIVE pane (alive:true), with ZERO spawn (I10)", async () => {
+    const tmux = makeReattachLoader(true);
+    const worker = createTerminalWorker(
+      baseDeps({
+        loadPty: () => {
+          throw new Error("reattach must not touch node-pty");
+        },
+        loadTmux: tmux.loadTmux,
+      }),
+    );
+
+    // The recover-on-boot reattach frame (no prior create — the worker's sessions map is empty).
+    const reattach = await worker.handle(reattachFrame("old-sess"));
+    expect(reattach.ok, "a live tmux session re-attaches ok").toBe(true);
+    expect(tmux.loadTmux.reattach).toHaveBeenCalledTimes(1);
+    expect(tmux.loadTmux.spawn, "reattach must NOT spawn a fresh CLI (I10)").not.toHaveBeenCalled();
+
+    // THE LOAD-BEARING ASSERTION (the gap the originals skipped): a read against the
+    // reattached session returns the LIVE pane — alive:true + the surviving pane bytes —
+    // NOT the zombie alive:false the registry-only test never caught.
+    tmux.emit("resumed-pane-output\n");
+    await flushEmulator();
+    const read = await worker.handle({
+      sessionId: "old-sess",
+      requestId: "rq-read-resumed",
+      traceId: TRACE_ID,
+      method: "read",
+      params: { sessionId: "old-sess" },
+    });
+    expect((read.result as { alive: boolean }).alive, "a re-attached session is ALIVE, not a zombie").toBe(true);
+    expect((read.result as { screen: string }).screen).toContain("resumed-pane-output");
+  });
+
+  it("a GONE tmux session replies ok:false and registers NOTHING (a later read is alive:false — honest death, never a zombie)", async () => {
+    const tmux = makeReattachLoader(false); // hasSession false → reattach returns undefined
+    const worker = createTerminalWorker(
+      baseDeps({ loadPty: () => ({ spawn: vi.fn() }), loadTmux: tmux.loadTmux }),
+    );
+
+    const reattach = await worker.handle(reattachFrame("gone-sess"));
+    expect(reattach.ok, "a genuinely-gone tmux session re-attaches NOT-ok").toBe(false);
+    expect(tmux.loadTmux.spawn, "a gone session must NEVER fall back to a fresh spawn").not.toHaveBeenCalled();
+
+    // No session was registered — a read is the honest not-found alive:false (NOT a zombie running).
+    const read = await worker.handle({
+      sessionId: "gone-sess",
+      requestId: "rq-read-gone",
+      traceId: TRACE_ID,
+      method: "read",
+      params: { sessionId: "gone-sess" },
+    });
+    expect((read.result as { alive: boolean }).alive).toBe(false);
+  });
+
+  it("a reattach with NO loadTmux wired replies ok:false (cannot re-attach without the tmux backend)", async () => {
+    const worker = createTerminalWorker(baseDeps({ loadPty: () => ({ spawn: vi.fn() }) }));
+    const reattach = await worker.handle(reattachFrame("no-tmux"));
+    expect(reattach.ok).toBe(false);
+  });
+});
+
 describe("createTerminalWorker — ALS traceId re-establishment", () => {
   it("dispatches each frame inside runWithContext so the frame traceId is the live ALS context", async () => {
     let seenTraceId: string | undefined;
@@ -2119,7 +2232,7 @@ function makeFd3Capture(): {
 }
 
 describe("createTerminalWorker — TR-11 fd3 attention emit on a settled frame (no poll)", () => {
-  it("driving a session to a settled, cursor-parked prompt emits exactly one terminal:input_needed frame on fd3", async () => {
+  it("a foreground `wait` settle on a cursor-parked prompt SUPPRESSES the fd3 emit (LIVE-04 #4 — the wait reply is the agent's attention signal)", async () => {
     const sched = makeFakeScheduler();
     const rec = makeRecordingBackend();
     const fd3 = makeFd3Capture();
@@ -2138,8 +2251,13 @@ describe("createTerminalWorker — TR-11 fd3 attention emit on a settled frame (
     rec.emit("boot output line\n");
     rec.emit("Do you trust this? (y/n) ");
 
-    // A `wait` settle resolves idle on the now-quiet, parked frame; the worker runs
-    // classifyFrame on the settled snapshot and the emitter fires the transition.
+    // A `wait` settle resolves idle on the now-quiet, parked frame. LIVE-04 (#4): this is the
+    // agent's FOREGROUND wait — its REPLY (the resolved WaitResult) is the agent's attention signal
+    // (it unblocks + drives), so the worker SUPPRESSES the fd3 emit for a wait settle. A fd3 woken
+    // turn here would RACE the agent (the launch escalation: at launch claude's welcome screen
+    // settles DURING the wait → a spurious "waiting for input" before the agent sends its first
+    // keystroke). The emit mechanism itself is proven in terminal-attention-emitter.test.ts; a
+    // backgrounded drive is attended by the daemon backstop, not this fd3.
     const p = worker.handle(waitFrame({ forIdleMs: 50 }));
     await Promise.resolve();
     await Promise.resolve();
@@ -2148,13 +2266,10 @@ describe("createTerminalWorker — TR-11 fd3 attention emit on a settled frame (
     await p;
     await flushEmulator();
 
-    const frames = fd3.frames();
-    expect(frames).toHaveLength(1);
-    expect(frames[0].sessionId).toBe("s1");
-    expect(frames[0].event).toBe("terminal:input_needed");
-    expect(frames[0].payload).toMatchObject({ state: "awaiting-input" });
-    // Redaction-safe: no screen/text on the wire.
-    expect(frames[0].payload).not.toHaveProperty("screen");
+    expect(
+      fd3.frames(),
+      "a foreground wait settle writes NO fd3 frame (LIVE-04 — the wait reply is the agent's attention signal)",
+    ).toHaveLength(0);
   });
 
   it("a settled working stream that never parks (cursor mid-screen, content below) emits NO input_needed frame", async () => {
@@ -2324,10 +2439,17 @@ describe("createTerminalWorker — 124-06 status frame (classifier single-homed 
       cursorParked: boolean;
       screenDiffEmpty: boolean;
       interactions: number;
+      confidence: string;
+      reason: string;
     };
     expect(view.state).toBe("awaiting-input");
     expect(view.cursorParked).toBe(true);
     expect(view.screenDiffEmpty).toBe(true);
+    // 163-03 (CLASS-02): the classifier confidence + reason ride the worker reply
+    // end-to-end (statusReplyFromState -> the `status` frame result). A cursor-parked
+    // prompt is the high-confidence structural certainty.
+    expect(view.confidence).toBe("high");
+    expect(view.reason).toBe("settled_cursor_parked");
     // Redaction-safe: the status reply carries NO raw screen text (structural only).
     expect(reply.result).not.toHaveProperty("screen");
     expect(typeof view.interactions).toBe("number");
@@ -2349,6 +2471,25 @@ describe("createTerminalWorker — 124-06 status frame (classifier single-homed 
     const view = reply.result as { state: string; exitCode?: number };
     expect(view.state).toBe("exited");
     expect(view.exitCode).toBe(7);
+  });
+
+  it("an ABSENT session → status degrades to the safe total default (state:'exited', confidence:'high', reason:'exited') — the 5th plumbing seam (163-03)", async () => {
+    // handleStatus has its OWN absent-session degrade (separate from statusReplyFromState):
+    // a `status` frame for an unknown session id is gone → `exited`. The widened
+    // WorkerStatusPerception must stay total here too — confidence/reason cannot be
+    // undefined (the field-plumbing bug class: a missed seam reads undefined downstream).
+    const sched = makeFakeScheduler();
+    const rec = makeRecordingBackend();
+    const worker = createTerminalWorker(
+      baseDeps({ loadPty: () => ({ spawn: rec.spawn }), setTimer: sched.setTimer, clearTimer: sched.clearTimer }),
+    );
+    // No create — the session id "s1" the statusFrame() references does not exist.
+    const reply = await worker.handle(statusFrame());
+    expect(reply.ok).toBe(true);
+    const view = reply.result as { state: string; confidence: string; reason: string };
+    expect(view.state).toBe("exited");
+    expect(view.confidence).toBe("high");
+    expect(view.reason).toBe("exited");
   });
 
   it("interactions counts the session's send/read/wait/resize interactions", async () => {

@@ -60,6 +60,11 @@ const OWNED_VIEW: TerminalStatusView = {
   interactions: 2,
   cursorParked: true,
   screenDiffEmpty: true,
+  // 163-03 (CLASS-02): the classifier confidence + reason ride the view; a dialog
+  // verdict is {medium, dialog_detected}. Once TerminalStatusView widened (163-03
+  // Task 1) this fixture is a tsc error without them — the type-level RED.
+  confidence: "medium",
+  reason: "dialog_detected",
 };
 
 describe("terminal_session_status — the real classifier-backed tool (124-06)", () => {
@@ -75,6 +80,11 @@ describe("terminal_session_status — the real classifier-backed tool (124-06)",
     expect(view.state).toBe("awaiting-input");
     expect(view.cursorParked).toBe(true);
     expect(view.interactions).toBe(2);
+    // 163-03 (CLASS-02): the serialized view surfaces the classifier confidence +
+    // reason — the WHY/HOW-SURE the autonomous policy + `comis explain` read; the
+    // richer view flows through the tool's jsonResult verbatim (no tool edit).
+    expect(view.confidence).toBe("medium");
+    expect(view.reason).toBe("dialog_detected");
     expect(statusCalls).toEqual(["s1"]);
   });
 
@@ -86,6 +96,10 @@ describe("terminal_session_status — the real classifier-backed tool (124-06)",
       interactions: 0,
       cursorParked: false,
       screenDiffEmpty: true,
+      // The not-found degrade carries the safe total default (high/exited) — never a
+      // real classifier verdict (T-124-15 / T-163-08).
+      confidence: "high",
+      reason: "exited",
     };
     const { deps } = makeStatusDeps(async () => notFound);
     const tool = createTerminalSessionStatusTool(deps);
@@ -95,6 +109,9 @@ describe("terminal_session_status — the real classifier-backed tool (124-06)",
     const view = JSON.parse(block.text) as TerminalStatusView;
     expect(view.state).not.toBe("awaiting-input");
     expect(view.cursorParked).toBe(false);
+    // The degrade default surfaces verbatim through the tool.
+    expect(view.confidence).toBe("high");
+    expect(view.reason).toBe("exited");
   });
 
   it("stays mcpExportPolicy 'never-export' — never exposed to a remote MCP client (T-124-16, SEC-08)", () => {

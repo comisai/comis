@@ -34,6 +34,12 @@ export interface TerminalInputNeededEvent {
   state: "awaiting-input" | "stuck";
   /** A short structural classification tag (e.g. "settled_cursor_parked") — NEVER screen text. */
   reason: string;
+  /**
+   * Classifier confidence (CLASS-02) — `high` for the structural certainties,
+   * `medium` for the heuristics. A 2-value enum, content-free. Mirrors the core
+   * `TerminalEvents["terminal:input_needed"]` field one-for-one.
+   */
+  confidence: "high" | "medium";
   timestamp: number;
 }
 
@@ -46,6 +52,14 @@ export interface TerminalStuckEvent {
   agentId: string;
   /** Elapsed no-progress window in ms (settled, no affordance) — a duration, not content. */
   noProgressMs: number;
+  /**
+   * The classifier's structural reason tag (e.g. "no_progress") — surface-only for
+   * observability symmetry (CLASS-02). A machine tag, NEVER screen text. Mirrors the
+   * core `TerminalEvents["terminal:stuck"]` field one-for-one.
+   */
+  reason: string;
+  /** Classifier confidence (CLASS-02) — a 2-value enum, content-free (see input_needed). */
+  confidence: "high" | "medium";
   timestamp: number;
 }
 
@@ -80,5 +94,30 @@ export interface TerminalAutoAnsweredEvent {
   matchedPatternIndex: number;
   /** Count of keystrokes the canned answer sent — a size signal, not the content. */
   keystrokeCount: number;
+  timestamp: number;
+}
+
+/**
+ * Autonomous-drive promotion (DRIVE-02, Phase 164, v2.24): a drive crossed the
+ * inline→detached threshold. The wait tool (Context A) emits it on a qualifying wait
+ * (`shouldPromoteDrive(out, mode) === true`); the daemon wake dispatcher (Context B)
+ * consumes it into a closure-local promoted-Set + fires ONE "drive started
+ * (backgrounded)" notification (promote-once). Mirrors the core
+ * `TerminalEvents["terminal:drive_promoted"]` field one-for-one.
+ *
+ * CONTENT-FREE BY CONSTRUCTION (I3 / T-164-11): carries sessionId/agentId + a typed
+ * `reason` enum (the WHY) + `timestamp` ONLY — there is NO `screen`/`text`/`keys`/
+ * `payload` field, so an emit site cannot leak the screen onto the bus even by mistake.
+ * The screen digest that drove the wait rides the structured LOG, never the bus.
+ */
+export interface TerminalDrivePromotedEvent {
+  sessionId: string;
+  agentId: string;
+  /**
+   * Why the drive promoted (a closed enum, NEVER screen text): `producing` = the honest
+   * `isComplete:false,producing:true` settle signal under `mode:"auto"`; `mode_detached`
+   * = the operator set `drive.mode:"detached"` (promote-at-first-wait).
+   */
+  reason: "producing" | "mode_detached";
   timestamp: number;
 }

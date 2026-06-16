@@ -248,3 +248,229 @@ describe("TerminalDriverConfigSchema -- worker.tasksMax cgroup ceiling (OPS-05)"
     }
   });
 });
+
+/**
+ * v2.24 (164-05, DRIVE-02/READ-01): the additive strict `drive{}` block on the
+ * CLOSED `TerminalDriverConfig` schema. This phase introduces `drive.mode`
+ * (`auto` default — auto-promote a genuinely-long drive; `attached` = today's
+ * inline behavior; `detached` = promote at the first wait) and `drive.readMode`
+ * (`digest` default — a bounded digest of the current screen; `diff` — only
+ * changed rows; `full` — the whole screen, bounded). The block is OPTIONAL +
+ * `z.strictObject`, so:
+ *   - I1: a config with NO `drive` block parses byte-identical to today
+ *     (`parsed.drive` is `undefined` — no behavior change for an unconfigured operator).
+ *   - The per-field defaults preserve today's effective behavior (`mode:"auto"`
+ *     only promotes a genuinely-long drive; `readMode:"digest"` is already the
+ *     tool's effective default).
+ *   - OPS-02: an unknown/typo'd `drive.*` key REJECTS at config load (a
+ *     restriction the operator believes is in effect must actually be parsed).
+ * Phases 165/166 extend this SAME block (durable/notify/heartbeat/maxCostUsd);
+ * the optional-block + per-field-default discipline lets each phase's additions
+ * be independent. Changing/adding a default regenerates the section-registry-parity
+ * snapshot (a validate-only gate).
+ */
+describe("TerminalDriverConfigSchema -- additive strict drive{} block (DRIVE-02/READ-01)", () => {
+  // The minimal-but-valid base config the drive tests vary.
+  const baseCfg = {
+    enabled: true,
+    worker: {
+      maxSessions: 8,
+      idleTtlMs: 900_000,
+      ringBytes: 262_144,
+      stuckMs: 30_000,
+      maxConcurrentAttentionTurns: 2,
+    },
+    defaults: { cols: 120, rows: 40, scrollback: 1000 },
+    redactSecrets: true,
+    audit: { enabled: true },
+  };
+
+  it("round-trips an explicit drive block (mode + readMode parse to the supplied values)", () => {
+    const parsed = TerminalDriverConfigSchema.parse({
+      ...baseCfg,
+      drive: { mode: "detached", readMode: "diff" },
+    });
+    expect(parsed.drive?.mode).toBe("detached");
+    expect(parsed.drive?.readMode).toBe("diff");
+  });
+
+  it("fills the per-field defaults on an EMPTY drive block (mode:auto, readMode:digest)", () => {
+    const parsed = TerminalDriverConfigSchema.parse({ ...baseCfg, drive: {} });
+    expect(parsed.drive?.mode).toBe("auto");
+    expect(parsed.drive?.readMode).toBe("digest");
+  });
+
+  it("parses with the drive block ABSENT (I1 — byte-identical to today; parsed.drive is undefined)", () => {
+    const parsed = TerminalDriverConfigSchema.parse(baseCfg);
+    expect(parsed.drive).toBeUndefined();
+  });
+
+  it("REJECTS an unknown drive.* key (the block is a closed strictObject, OPS-02)", () => {
+    const result = TerminalDriverConfigSchema.safeParse({
+      ...baseCfg,
+      drive: { mode: "auto", bogusDriveKnob: 1 },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      // The unrecognized key is reported under the drive path (strictObject closed).
+      expect(result.error.issues.some((i) => i.path.includes("drive"))).toBe(true);
+    }
+  });
+
+  it("REJECTS an out-of-enum drive.mode (only auto/attached/detached are valid)", () => {
+    const result = TerminalDriverConfigSchema.safeParse({
+      ...baseCfg,
+      drive: { mode: "sideways" },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("REJECTS an out-of-enum drive.readMode (only digest/diff/full are valid)", () => {
+    const result = TerminalDriverConfigSchema.safeParse({
+      ...baseCfg,
+      drive: { readMode: "verbose" },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  // -------------------------------------------------------------------------
+  // Phase 165 (165-05, DUR-01/LIVE-01/ENDURE-01): the SAME additive strict
+  // drive{} block gains three endurance/durability fields —
+  //   durable     (bool,        DEFAULT true)   — DUR-01: detached tmux + re-attach (the
+  //                                               default working setup since 2026-06-16 —
+  //                                               driveable via node-pty attach + survive-
+  //                                               restart via KillMode=process + data-dir socket)
+  //   heartbeatMs (int>0,       default 90_000) — LIVE-01: internal liveness backstop interval
+  //   maxCostUsd  (number|null, default null)   — ENDURE-01: per-drive spend ceiling
+  // An EMPTY drive block fills durable:TRUE (the default backend), heartbeatMs:90000,
+  // maxCostUsd:null. The block stays a closed strictObject (a typo'd key still
+  // rejects). §7.1.5 LOCKED: drive.durable:true is ACCEPTED at config-validation —
+  // tmux availability is a RUNTIME property (degrade + WARN at runtime), NOT a
+  // config-time hard-require; a RED test pins durable:true parses with NO tmux check.
+  it("round-trips durable/heartbeatMs/maxCostUsd (the three Phase-165 fields parse to the supplied values)", () => {
+    const parsed = TerminalDriverConfigSchema.parse({
+      ...baseCfg,
+      drive: { durable: true, heartbeatMs: 90_000, maxCostUsd: 5 },
+    });
+    expect(parsed.drive?.durable).toBe(true);
+    expect(parsed.drive?.heartbeatMs).toBe(90_000);
+    expect(parsed.drive?.maxCostUsd).toBe(5);
+  });
+
+  it("fills the Phase-165 defaults on an EMPTY drive block (durable:TRUE the default backend, heartbeatMs:90000, maxCostUsd:null)", () => {
+    const parsed = TerminalDriverConfigSchema.parse({ ...baseCfg, drive: {} });
+    expect(parsed.drive?.durable).toBe(true);
+    expect(parsed.drive?.heartbeatMs).toBe(90_000);
+    expect(parsed.drive?.maxCostUsd).toBeNull();
+  });
+
+  it("respects an explicit drive.durable:false opt-out (non-durable pty drive)", () => {
+    const parsed = TerminalDriverConfigSchema.parse({ ...baseCfg, drive: { durable: false } });
+    expect(parsed.drive?.durable).toBe(false);
+  });
+
+  it("ACCEPTS drive.durable:true with NO config-time tmux check (§7.1.5 LOCKED — tmux is a runtime property; the OTHER fields still default)", () => {
+    // The locked decision: config-validation ACCEPTS durable:true even on a
+    // tmux-less host; the drive degrades to non-durable + a WARN at RUNTIME.
+    // Do NOT hard-require tmux here (that would fail a whole config on a
+    // tmux-less host — T-165-15). Assert it parses and the others default.
+    const parsed = TerminalDriverConfigSchema.parse({ ...baseCfg, drive: { durable: true } });
+    expect(parsed.drive?.durable).toBe(true);
+    expect(parsed.drive?.heartbeatMs).toBe(90_000);
+    expect(parsed.drive?.maxCostUsd).toBeNull();
+  });
+
+  it("REJECTS heartbeatMs <= 0 (int>0 — .positive(); zero, negative, and a float all reject)", () => {
+    expect(TerminalDriverConfigSchema.safeParse({ ...baseCfg, drive: { heartbeatMs: 0 } }).success).toBe(false);
+    expect(TerminalDriverConfigSchema.safeParse({ ...baseCfg, drive: { heartbeatMs: -1 } }).success).toBe(false);
+    expect(TerminalDriverConfigSchema.safeParse({ ...baseCfg, drive: { heartbeatMs: 1.5 } }).success).toBe(false);
+  });
+
+  it("maxCostUsd accepts a number OR null but REJECTS a string (number|null)", () => {
+    expect(TerminalDriverConfigSchema.parse({ ...baseCfg, drive: { maxCostUsd: 12.5 } }).drive?.maxCostUsd).toBe(12.5);
+    expect(TerminalDriverConfigSchema.parse({ ...baseCfg, drive: { maxCostUsd: null } }).drive?.maxCostUsd).toBeNull();
+    expect(TerminalDriverConfigSchema.safeParse({ ...baseCfg, drive: { maxCostUsd: "5" } }).success).toBe(false);
+  });
+
+  it("REJECTS a typo'd Phase-165 drive key (the block stays a closed strictObject after the additions, T-165-14)", () => {
+    const result = TerminalDriverConfigSchema.safeParse({
+      ...baseCfg,
+      drive: { durable: true, hartbeatMs: 90_000 }, // typo: hartbeatMs
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.some((i) => i.path.includes("drive"))).toBe(true);
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // Phase 166 (166-02, NOTIFY-01/NOTIFY-02): the SAME additive strict drive{}
+  // block gains the two user-facing notification fields that COMPLETE the
+  // v2.24 drive block —
+  //   notify            (enum terminal/all/none, default "terminal") — NOTIFY-01:
+  //     which terminal outcomes reach the user. "none" still escalates (I4).
+  //   heartbeatNotifyMs (int>=0, default 3_600_000 / 1h) — NOTIFY-02 (§7.1.4):
+  //     the coarse user-facing progress-heartbeat cadence for a promoted long
+  //     drive. `0` is a VALID value = terminal-only (distinct from `heartbeatMs`
+  //     the INTERNAL liveness backstop which is .positive()).
+  // Both defaults preserve today's behavior (I1): a config with no drive block,
+  // or an empty drive block, is byte-identical to today. The block stays a
+  // closed strictObject (a typo'd key still rejects, OPS-02).
+  it("round-trips notify + heartbeatNotifyMs (the two Phase-166 fields parse to the supplied values)", () => {
+    const parsed = TerminalDriverConfigSchema.parse({
+      ...baseCfg,
+      drive: { notify: "all", heartbeatNotifyMs: 7_200_000 },
+    });
+    expect(parsed.drive?.notify).toBe("all");
+    expect(parsed.drive?.heartbeatNotifyMs).toBe(7_200_000);
+  });
+
+  it("fills the Phase-166 defaults on an EMPTY drive block (notify:terminal, heartbeatNotifyMs:3_600_000 — I1)", () => {
+    const parsed = TerminalDriverConfigSchema.parse({ ...baseCfg, drive: {} });
+    expect(parsed.drive?.notify).toBe("terminal");
+    expect(parsed.drive?.heartbeatNotifyMs).toBe(3_600_000);
+  });
+
+  it("parses with the drive block ABSENT (I1 — the Phase-166 fields add NO new behavior; parsed.drive is undefined)", () => {
+    const parsed = TerminalDriverConfigSchema.parse(baseCfg);
+    expect(parsed.drive).toBeUndefined();
+  });
+
+  it("ACCEPTS each notify enum member (terminal/all/none)", () => {
+    expect(TerminalDriverConfigSchema.parse({ ...baseCfg, drive: { notify: "terminal" } }).drive?.notify).toBe(
+      "terminal",
+    );
+    expect(TerminalDriverConfigSchema.parse({ ...baseCfg, drive: { notify: "all" } }).drive?.notify).toBe("all");
+    expect(TerminalDriverConfigSchema.parse({ ...baseCfg, drive: { notify: "none" } }).drive?.notify).toBe("none");
+  });
+
+  it("REJECTS an out-of-enum drive.notify (only terminal/all/none are valid — the enum is closed)", () => {
+    const result = TerminalDriverConfigSchema.safeParse({ ...baseCfg, drive: { notify: "loud" } });
+    expect(result.success).toBe(false);
+  });
+
+  it("ACCEPTS heartbeatNotifyMs:0 (terminal-only is a VALID value — .nonnegative(), DISTINCT from heartbeatMs which is .positive())", () => {
+    const parsed = TerminalDriverConfigSchema.parse({ ...baseCfg, drive: { heartbeatNotifyMs: 0 } });
+    expect(parsed.drive?.heartbeatNotifyMs).toBe(0);
+  });
+
+  it("REJECTS a negative or non-integer heartbeatNotifyMs (.int().nonnegative(); -1 and 1.5 both reject)", () => {
+    expect(
+      TerminalDriverConfigSchema.safeParse({ ...baseCfg, drive: { heartbeatNotifyMs: -1 } }).success,
+    ).toBe(false);
+    expect(
+      TerminalDriverConfigSchema.safeParse({ ...baseCfg, drive: { heartbeatNotifyMs: 1.5 } }).success,
+    ).toBe(false);
+  });
+
+  it("REJECTS a typo'd Phase-166 drive key (the block stays a closed strictObject after the additions, OPS-02)", () => {
+    const result = TerminalDriverConfigSchema.safeParse({
+      ...baseCfg,
+      drive: { notify: "terminal", heartbeatNotifyMls: 3_600_000 }, // typo: heartbeatNotifyMls
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.some((i) => i.path.includes("drive"))).toBe(true);
+    }
+  });
+});

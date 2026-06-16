@@ -129,6 +129,10 @@ Before setting up the systemd service, make sure you have:
     # Shutdown: allow 45s for graceful shutdown (app timeout is 30s)
     TimeoutStopSec=45
 
+    # On stop, signal only the main daemon process (not the whole cgroup) so a
+    # durable terminal session's detached tmux server survives a restart (see below).
+    KillMode=process
+
     # Resource limits
     MemoryMax=2G
     TasksMax=100
@@ -249,6 +253,24 @@ If the daemon crashes (exits with a non-zero code), systemd waits 5 seconds
 and then starts it again automatically. This covers unexpected errors, out-of-memory
 kills, and unhandled exceptions. Normal stops (via `systemctl stop`) do not trigger
 a restart.
+
+### KillMode=process
+
+On stop, systemd signals **only the main daemon process**, not the entire control
+group (the default `KillMode=control-group` would `SIGKILL` every process in the
+cgroup). This is required for **durable terminal drives**
+([`drive.durable`](/agent-tools/terminal-driver)): a durable session runs its child
+inside a detached `tmux` server that, although reparented to init, stays a member of
+the daemon's cgroup. Under the default `control-group` kill, every `systemctl restart`
+would destroy that tmux server and the session could never survive a restart. With
+`KillMode=process`, the detached tmux server is left running and a restarted daemon
+re-attaches to it by name.
+
+Non-durable sessions are still cleaned up on stop: graceful shutdown runs the daemon's
+own teardown, and the Terminal Worker exits as soon as its stdin closes (its sandboxed
+children carry `--die-with-parent`). The trade-off is that after a **hard** daemon crash
+(no graceful shutdown), other long-lived children such as MCP servers or the browser may
+linger for a few seconds until `Restart=on-failure` respawns the daemon.
 
 ### MemoryMax=2G + TasksMax=100
 

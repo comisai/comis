@@ -2159,7 +2159,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
   // shutdownBackgroundProcesses returned from setupTools — the
   // previous eventBus.on("system:shutdown", ...) inline closure is now a
   // hoisted function threaded through ShutdownDeps.
-  const { assembleToolsForAgent, preprocessMessageText, shutdownBackgroundProcesses, terminalRegistries, getTerminalAttentionConfig } = setupTools({
+  const { assembleToolsForAgent, preprocessMessageText, shutdownBackgroundProcesses, terminalRegistries, getTerminalAttentionConfig, terminalDurability } = setupTools({
     rpcCall, agents, defaultAgentId, workspaceDirs, defaultWorkspaceDir,
     // WR-04 (Phase 174-04): resolve the per-provider operator capabilityClass override so
     // ctx_expand's walk depth honors a pinned tier (the same providers.entries source the
@@ -2289,6 +2289,12 @@ async function bootChannels(boot: BootContext): Promise<void> {
     getTerminalAttentionConfig,
     notify: bgNotifyFn,
     dataDir: container.config.dataDir || ".",
+    // 165-07 DUR-02 / LIVE-01 / ENDURE-01: the durable wake deps — the journal store
+    // (persist-on-set + resume-on-re-attach), the liveness backstop (timers + heartbeatMs +
+    // checkLiveness via the worker status round-trip, whose lastActivity stamp IS the I9 reaper
+    // unify — LO-03), and the spend ceiling (maxCostUsd). timers = the reaper's TimerPort.
+    ...terminalDurability,
+    timers: handle.timers,
     logger: daemonLogger,
   });
   // 6.6.8.0.3. Recover background tasks NOW (after the runner is subscribed)

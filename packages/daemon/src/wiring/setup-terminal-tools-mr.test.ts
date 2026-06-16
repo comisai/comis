@@ -46,6 +46,8 @@ vi.mock("@comis/skills/tools", () => ({
   }),
   buildProductionSpawnWorker: vi.fn(() => () => ({})),
   resolveWorkerMainPath: vi.fn(() => "/tmp/terminal-worker-main.js"),
+  terminalWorkerDir: (dataDir: string) => `${dataDir}/terminal-worker`,
+  resolveTmuxSocketPath: (dir: string) => `${dir}/tmux.sock`,
   createTerminalEgressProxy: vi.fn(() => ({ materialize: vi.fn(async () => ({ socketPath: "/tmp/egress.sock", dispose: vi.fn() })) })),
   detectSandboxProvider: detectSandboxProviderSpy,
   createTerminalSessionCreateTool: vi.fn((deps: Record<string, unknown>) => {

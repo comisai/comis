@@ -39,6 +39,15 @@ export interface WorkerLogger {
   error(obj: Record<string, unknown>, msg: string): void;
 }
 
+/** The durable-fs ops the worker uses — injected so the fsync-thrower test runs on macOS. Moved to this neutral leaf (165-REVIEW) so the worker-defaults sibling can type the default fs port without an import cycle back through the entry. */
+export interface WorkerFsPort {
+  writeFileSync(path: string, data: string): void;
+  renameSync(from: string, to: string): void;
+  openSync(path: string, flags: string): number;
+  fsyncSync(fd: number): void;
+  closeSync(fd: number): void;
+}
+
 /** Structural node-pty session handle (subset of `IPty`): `onData`→ring, `onExit`→markExited (payload ignored — only the exit signal matters), write/resize/kill forwarded. */
 export interface FakePtyLike {
   pid: number;
@@ -95,6 +104,26 @@ export interface TmuxBackendLike {
     rows: number;
     env: NodeJS.ProcessEnv;
   }): FakePtyLike;
+  /**
+   * BL-01 (165-REVIEW): RE-ATTACH to an EXISTING tmux session by name on
+   * recover-on-boot — the load-bearing fix for the recover zombie. The registry
+   * rehydrates a recovered durable session `running`, but the freshly-spawned worker
+   * has an EMPTY sessions map; without this it re-attaches a pane ONLY inside
+   * `handleCreate`, so a recovered session's first `read`/`status` returns
+   * `alive:false` (a zombie). `reattach` is `has-session`-gated to NEVER create: a
+   * LIVE session (`hasSession` true) returns the {@link FakePtyLike} pane reader
+   * (onData→ring, onExit→markExited) WITHOUT a `new-session`; a GONE session
+   * (`hasSession` false) returns `undefined` so the worker replies `ok:false` (the
+   * registry then flips `lost` + fires `onUnrecoverable` — honest death, never a
+   * fresh CLI / double-drive, I10). Distinct from {@link spawn} (which creates-OR-
+   * attaches) so the no-double-create is structural, not conventional.
+   */
+  reattach(args: {
+    sessionId: string;
+    cols: number;
+    rows: number;
+    env: NodeJS.ProcessEnv;
+  }): FakePtyLike | undefined;
 }
 
 /**

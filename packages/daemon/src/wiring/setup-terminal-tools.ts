@@ -92,6 +92,7 @@ import {
   type EgressControlPort,
   type TimerPort,
 } from "@comis/core";
+import { buildAgentTerminalDurability, type DurabilityEventBus } from "./terminal-durable-wiring.js";
 
 /** Dependencies the terminal-driver wiring needs from the composition root. */
 export interface TerminalWiringDeps {
@@ -288,9 +289,13 @@ export function buildTerminalEventHook(
           // classifier's structural tag (e.g. "settled_cursor_parked") — never screen text.
           const state = p.state === "stuck" ? "stuck" : "awaiting-input";
           const reason = typeof p.reason === "string" ? p.reason : "input_needed";
-          deps.eventBus.emit("terminal:input_needed", { sessionId: frame.sessionId, agentId, state, reason, timestamp });
+          // CLASS-02: the classifier confidence rides the wake event (for the autonomous
+          // policy 164–166 + a future `comis explain`). Read DEFENSIVELY off the untrusted
+          // frame (T-163-11) — an out-of-enum value falls back to "medium", never raw.
+          const confidence = p.confidence === "high" || p.confidence === "medium" ? p.confidence : "medium";
+          deps.eventBus.emit("terminal:input_needed", { sessionId: frame.sessionId, agentId, state, reason, confidence, timestamp });
           deps.skillsLogger.info(
-            { sessionId: frame.sessionId, agentId, state, reason, step: "terminal_input_needed" },
+            { sessionId: frame.sessionId, agentId, state, reason, confidence, step: "terminal_input_needed" },
             "terminal session needs input (re-published from fd3)",
           );
           break;
@@ -298,9 +303,14 @@ export function buildTerminalEventHook(
         case "terminal:stuck": {
           // Settled, no affordance, no progress past stuckMs (OPS-04) — a duration signal.
           const noProgressMs = typeof p.noProgressMs === "number" ? p.noProgressMs : 0;
-          deps.eventBus.emit("terminal:stuck", { sessionId: frame.sessionId, agentId, noProgressMs, timestamp });
+          // CLASS-02: stuck now carries the classifier reason + confidence (observability
+          // symmetry with input_needed). Both read DEFENSIVELY off the untrusted frame
+          // (T-163-11), mirroring the existing noProgressMs narrow — never a raw value.
+          const reason = typeof p.reason === "string" ? p.reason : "no_progress";
+          const confidence = p.confidence === "high" || p.confidence === "medium" ? p.confidence : "medium";
+          deps.eventBus.emit("terminal:stuck", { sessionId: frame.sessionId, agentId, noProgressMs, reason, confidence, timestamp });
           deps.skillsLogger.info(
-            { sessionId: frame.sessionId, agentId, noProgressMs, step: "terminal_stuck" },
+            { sessionId: frame.sessionId, agentId, noProgressMs, reason, confidence, step: "terminal_stuck" },
             "terminal session stuck (re-published from fd3)",
           );
           break;
@@ -362,6 +372,24 @@ function getOrCreateTerminalRegistry(
     // Thread the SHARED per-agent caps instance into the reaper hooks so onCapForget
     // forgets the SAME cap-state map the tool deps consume (one instance for both).
     const reaperHooks = buildTerminalReaperHooks(agentId, { ...deps, caps });
+    // DUR-01 / ENDURE-01 (165-07): the per-agent durability wiring — the descriptor store +
+    // has-session probe + recover/unrecoverable hooks (the registry's recover-on-boot, 165-06)
+    // + the reaper isBusy idle-exclusion predicate (165-08's seam, bound to busyOrHung). The
+    // isBusy reads the live handle via the registries map (resolved by agentId at sweep time);
+    // it is constructed BEFORE the registry but only invoked AFTER it is in the map (the reaper
+    // sweep runs on a timer post-construction), so the lazy `registries.get(agentId)` resolves.
+    const { durability, isBusy } = buildAgentTerminalDurability({
+      dataDir: deps.dataDir,
+      agentId,
+      // The runtime eventBus is the daemon's full TypedEventBus (it supports
+      // terminal:drive_reattached, which the narrow skills-side TerminalEventBus static type
+      // omits); bridge to the DurabilityEventBus contract the hooks emit on.
+      eventBus: deps.eventBus as unknown as DurabilityEventBus,
+      logger: deps.skillsLogger,
+      registries,
+      workerStuckMs: deps.workerCaps?.stuckMs ?? 0,
+      nowMs: systemNowMs,
+    });
     // The agent's OWN workspace, captured for the allocator closure (const ⇒ TS narrows
     // it to string inside the arrow). Present ⇒ sessions are PERSISTENT + agent-scoped.
     const agentWs = deps.agentWorkspaceDir;
@@ -418,6 +446,15 @@ function getOrCreateTerminalRegistry(
       timers: deps.timers,
       onEvict: reaperHooks.onEvict,
       onCapForget: reaperHooks.onCapForget,
+      // ENDURE-01 / I9 (165-08's seam): the alive-busy idle-exclusion predicate (bound to
+      // busyOrHung). A quiet-but-busy multi-hour compile is excluded from idle eviction; the
+      // deliberate wall_clock/max_interactions caps still fire (a named bound, not a mystery).
+      isBusy,
+      // DUR-01 (165-06/165-07): the durability seams — descriptor store + has-session probe +
+      // the content-free re-attach / unrecoverable hooks. Recover-on-boot re-attaches a
+      // surviving detached tmux session instead of flipping it lost (I10); absent tmux ⇒ the
+      // lost floor at runtime (I1). The descriptor is persisted at create-time (Pitfall 6).
+      durability,
     });
     registries.set(agentId, registry);
   }
@@ -603,6 +640,20 @@ export function buildTerminalSharedDeps(
     // tryGetContext().sessionKey ?? "") — derived PER CALL inside the tool (resolveOwner),
     // so the daemon needs no new owner arg. This agentId is the fallback half of that key.
     agentId,
+    // DRIVE-02 (164-04) / DELIVER-02: thread the operator's RAW promotion mode (`drive.mode`, may be
+    // undefined). The skills wait tool resolves the EFFECTIVE mode via resolveDriveMode(mode, durable):
+    // an explicit mode wins; ABSENT, a DURABLE drive (the default long backgrounded drive) defaults to
+    // `detached` (it backgrounds at the first wait → the backstop tracks it → a completion notification
+    // fires when the CLI idles), a pty one-shot to `auto` (inline, I1 — byte-identical to today). The
+    // skills layer reads no config (layer purity) — it only applies the pure resolver to these
+    // daemon-supplied values (`driveMode` + `durable` below). Closes the un-promoted short-build gap.
+    driveMode: deps.config?.drive?.mode,
+    // READ-01 (164-06): the operator-resolved read mode for the read tool's bounded digest.
+    // Same layer-purity posture as driveMode; `?? "digest"` is the schema default (plan 05's
+    // drive.readMode) + the safe pre-block posture (the bounded current screen).
+    readMode: deps.config?.drive?.readMode ?? "digest",
+    // DUR-01 (FINDING-B): drive.durable threaded to the create tool → create stamps req.durable:true → the registry derives the tmux name + selects the tmux backend (the survive-a-daemon-restart drive). DEFAULT-ON (`?? true`): the tmux backend is now both DRIVEABLE (the node-pty `attach` rework) and SURVIVE-A-RESTART (KillMode=process + the data-dir socket), so it is the default working setup. Explicit `drive.durable:false` opts out to the non-durable pty backend; a tmux-less host degrades to pty + a logged WARN (§7.1.5).
+    durable: deps.config?.drive?.durable ?? true,
     // The operator approval gate — consulted only when a matched entry sets
     // approveOnCreate (else the create path is unchanged); a demanding entry with no
     // gate fail-closes in the tool.
@@ -648,6 +699,24 @@ export function deriveTerminalAttentionConfig(
     maxHops: Math.max(1, maxConcurrentAttentionTurns * 4),
     maxConcurrentAttentionTurns,
   };
+}
+
+/**
+ * The per-agent terminal-driver wiring entry point the composition root (`setup-tools.ts`)
+ * calls — folds the base deps + the operator config into the registry + nine tools in ONE
+ * call, keeping `setup-tools.ts` under its 800-line cap. `buildTerminalWiringDeps` folds the
+ * operator config (allow-set + caps + reaper + autoAnswer/backend; absent ⇒ empty set + no
+ * reaper); the 165-07 durability (descriptor store + has-session probe + isBusy + recover-on-
+ * boot hooks) is wired inside `getOrCreateTerminalRegistry`.
+ */
+export function wireAgentTerminalTools(
+  tools: AgentToolArray,
+  registries: Map<string, TerminalSessionRegistry>,
+  agentId: string,
+  base: TerminalWiringBaseDeps,
+  config: TerminalDriverConfig | undefined,
+): void {
+  wireTerminalTools(tools, registries, agentId, buildTerminalWiringDeps(base, config));
 }
 
 export function wireTerminalTools(

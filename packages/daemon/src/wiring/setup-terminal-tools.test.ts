@@ -397,14 +397,14 @@ describe("buildTerminalEventHook — re-publish the fd3 frame onto the TypedEven
     return { deps, emitted, skillsLogger };
   }
 
-  it("input_needed frame → emit('terminal:input_needed', {sessionId, agentId, state, reason, timestamp}) + an INFO", () => {
+  it("input_needed frame → emit('terminal:input_needed', {sessionId, agentId, state, reason, confidence, timestamp}) + an INFO carrying confidence", () => {
     const { deps, emitted, skillsLogger } = makeEventDeps();
     const hook = buildTerminalEventHook("agent-a", deps as never);
 
     hook.onTerminalEvent({
       sessionId: "s-1",
       event: "terminal:input_needed",
-      payload: { state: "awaiting-input", reason: "settled_cursor_parked" },
+      payload: { state: "awaiting-input", reason: "settled_cursor_parked", confidence: "high" },
     });
 
     const ev = emitted.find((e) => e.event === "terminal:input_needed");
@@ -414,22 +414,86 @@ describe("buildTerminalEventHook — re-publish the fd3 frame onto the TypedEven
       agentId: "agent-a",
       state: "awaiting-input",
       reason: "settled_cursor_parked",
+      // CLASS-02: the classifier confidence rides the re-published event.
+      confidence: "high",
     });
     expect(typeof ev!.payload.timestamp).toBe("number");
-    // §2.7: a wake is an INFO completion-style line (step-tagged).
-    expect(skillsLogger.info).toHaveBeenCalled();
+    // §2.7: a wake is an INFO completion-style line (step-tagged) — now carrying confidence.
+    expect(skillsLogger.info).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: "s-1", confidence: "high", step: "terminal_input_needed" }),
+      expect.any(String),
+    );
   });
 
-  it("stuck frame → emit('terminal:stuck', {sessionId, agentId, noProgressMs, timestamp})", () => {
+  it("input_needed frame with a medium-confidence dialog detection → confidence 'medium' rides through", () => {
     const { deps, emitted } = makeEventDeps();
     const hook = buildTerminalEventHook("agent-a", deps as never);
 
-    hook.onTerminalEvent({ sessionId: "s-2", event: "terminal:stuck", payload: { noProgressMs: 45_000 } });
+    hook.onTerminalEvent({
+      sessionId: "s-1b",
+      event: "terminal:input_needed",
+      payload: { state: "awaiting-input", reason: "dialog_detected", confidence: "medium" },
+    });
+
+    const ev = emitted.find((e) => e.event === "terminal:input_needed");
+    expect(ev!.payload).toMatchObject({ reason: "dialog_detected", confidence: "medium" });
+  });
+
+  it("stuck frame → emit('terminal:stuck', {sessionId, agentId, noProgressMs, reason, confidence, timestamp})", () => {
+    const { deps, emitted, skillsLogger } = makeEventDeps();
+    const hook = buildTerminalEventHook("agent-a", deps as never);
+
+    hook.onTerminalEvent({
+      sessionId: "s-2",
+      event: "terminal:stuck",
+      payload: { noProgressMs: 45_000, reason: "no_progress", confidence: "medium" },
+    });
 
     const ev = emitted.find((e) => e.event === "terminal:stuck");
     expect(ev).toBeDefined();
-    expect(ev!.payload).toMatchObject({ sessionId: "s-2", agentId: "agent-a", noProgressMs: 45_000 });
+    expect(ev!.payload).toMatchObject({
+      sessionId: "s-2",
+      agentId: "agent-a",
+      noProgressMs: 45_000,
+      // CLASS-02: stuck now re-publishes the classifier reason + confidence.
+      reason: "no_progress",
+      confidence: "medium",
+    });
     expect(typeof ev!.payload.timestamp).toBe("number");
+    expect(skillsLogger.info).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: "s-2", reason: "no_progress", confidence: "medium", step: "terminal_stuck" }),
+      expect.any(String),
+    );
+  });
+
+  it("a frame whose payload OMITS confidence defaults to 'medium' on both events (defensive, mirroring the reason/state narrows) — never undefined, never a throw", () => {
+    const { deps, emitted } = makeEventDeps();
+    const hook = buildTerminalEventHook("agent-a", deps as never);
+
+    // input_needed with no confidence in the (untrusted) frame payload.
+    hook.onTerminalEvent({ sessionId: "s-d1", event: "terminal:input_needed", payload: { state: "awaiting-input" } });
+    // stuck with no confidence/reason in the frame payload.
+    hook.onTerminalEvent({ sessionId: "s-d2", event: "terminal:stuck", payload: { noProgressMs: 10_000 } });
+
+    const inputNeeded = emitted.find((e) => e.event === "terminal:input_needed");
+    expect(inputNeeded!.payload.confidence).toBe("medium");
+    const stuck = emitted.find((e) => e.event === "terminal:stuck");
+    expect(stuck!.payload.confidence).toBe("medium");
+    expect(stuck!.payload.reason).toBe("no_progress");
+  });
+
+  it("an out-of-enum confidence on the (untrusted) frame falls back to 'medium' — never propagates raw (T-163-11)", () => {
+    const { deps, emitted } = makeEventDeps();
+    const hook = buildTerminalEventHook("agent-a", deps as never);
+
+    hook.onTerminalEvent({
+      sessionId: "s-d3",
+      event: "terminal:input_needed",
+      payload: { state: "awaiting-input", reason: "r", confidence: "ATTACKER_VALUE" },
+    });
+
+    const ev = emitted.find((e) => e.event === "terminal:input_needed");
+    expect(ev!.payload.confidence).toBe("medium");
   });
 
   it("session_state(exited) frame → emit('terminal:session_state', {state:'exited', ...})", () => {
@@ -441,6 +505,20 @@ describe("buildTerminalEventHook — re-publish the fd3 frame onto the TypedEven
     const ev = emitted.find((e) => e.event === "terminal:session_state");
     expect(ev).toBeDefined();
     expect(ev!.payload).toMatchObject({ sessionId: "s-3", agentId: "agent-a", state: "exited" });
+  });
+
+  it("MR-02: a worker-crash session_state(lost) frame re-publishes onto the bus → drives onSessionGone reclaim", () => {
+    // The supervisor's crash path (terminal-worker-supervisor.ts) emits exactly this frame
+    // shape per running session; this hook re-publishes it onto the bus, where onSessionGone
+    // (setup-terminal-wake.ts) reclaims the per-session drive-state. Closes the MR-02 chain.
+    const { deps, emitted } = makeEventDeps();
+    const hook = buildTerminalEventHook("agent-a", deps as never);
+
+    hook.onTerminalEvent({ sessionId: "s-crash", event: "terminal:session_state", payload: { state: "lost" } });
+
+    const ev = emitted.find((e) => e.event === "terminal:session_state");
+    expect(ev).toBeDefined();
+    expect(ev!.payload).toMatchObject({ sessionId: "s-crash", agentId: "agent-a", state: "lost" });
   });
 
   it("escalated frame → emit('terminal:escalated', {reason, ...}) + a WARN (hint + errorKind)", () => {
@@ -468,7 +546,13 @@ describe("buildTerminalEventHook — re-publish the fd3 frame onto the TypedEven
     hook.onTerminalEvent({
       sessionId: "s-5",
       event: "terminal:input_needed",
-      payload: { state: "awaiting-input", reason: "settled_cursor_parked", screen: "SECRET ON SCREEN", text: "leak" },
+      payload: {
+        state: "awaiting-input",
+        reason: "settled_cursor_parked",
+        confidence: "high",
+        screen: "SECRET ON SCREEN",
+        text: "leak",
+      },
     });
 
     const ev = emitted.find((e) => e.event === "terminal:input_needed");
@@ -476,7 +560,15 @@ describe("buildTerminalEventHook — re-publish the fd3 frame onto the TypedEven
     expect(ev!.payload).not.toHaveProperty("screen");
     expect(ev!.payload).not.toHaveProperty("text");
     expect(ev!.payload).not.toHaveProperty("payload");
-    expect(Object.keys(ev!.payload).sort()).toEqual(["agentId", "reason", "sessionId", "state", "timestamp"]);
+    // The re-published key-set: structural fields + confidence (CLASS-02), no leak field.
+    expect(Object.keys(ev!.payload).sort()).toEqual([
+      "agentId",
+      "confidence",
+      "reason",
+      "sessionId",
+      "state",
+      "timestamp",
+    ]);
   });
 
   it("an unknown event kind is dropped (no emit) — the hook never forwards an unmodeled frame", () => {
@@ -549,6 +641,21 @@ describe("buildTerminalSharedDeps — the WR-01 closure: populate the allow-set 
     // The operator scope survived the daemon-boundary map (SEC-02, no silent drop).
     expect(shared.allowEntries[0]!.scope.filesystem).toBe("home");
     expect(shared.allowEntries[0]!.limits).toMatchObject({ maxInteractions: 200 });
+  });
+
+  it("FINDING-B/DUR-01: threads config.drive.durable → sharedDeps.durable; DEFAULT-ON (tmux is the default backend), explicit opt-out respected", () => {
+    // Live VPS 2026-06-16: drive.durable was parsed but NEVER threaded to the create tool (Finding B,
+    // fixed). The tmux backend was then made driveable (the node-pty `attach` rework) + survive-a-restart
+    // (KillMode=process + data-dir socket), so the durable/tmux path is now the DEFAULT working setup —
+    // the runtime fallback flipped `?? false` → `?? true`. Explicit `durable:false` still opts out to pty.
+    const registries = new Map<string, TerminalSessionRegistry>();
+    const durableDeps = { ...makeDepsWithConfig(), config: { ...makeConfig(), drive: { durable: true } } };
+    expect(buildTerminalSharedDeps(registries, "agent-a", durableDeps as never).durable, "drive.durable:true → true").toBe(true);
+    // No drive block (the default config) → TRUE: durable/tmux is the DEFAULT backend now.
+    expect(buildTerminalSharedDeps(registries, "agent-a", makeDepsWithConfig() as never).durable, "no drive block → default-on").toBe(true);
+    // Explicit opt-OUT is respected → false (the non-durable pty backend).
+    const optOut = { ...makeDepsWithConfig(), config: { ...makeConfig(), drive: { durable: false } } };
+    expect(buildTerminalSharedDeps(registries, "agent-a", optOut as never).durable, "drive.durable:false → opt-out").toBe(false);
   });
 
   it("a populated allow-set with limits feeds the per-session caps (caps go LIVE)", () => {

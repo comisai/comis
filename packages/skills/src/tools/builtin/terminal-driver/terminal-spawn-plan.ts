@@ -306,6 +306,15 @@ export async function buildSpawnPlan(
   const env: NodeJS.ProcessEnv = {
     ...scrubChildEnv(input.env),
     ...(relay?.proxyEnv ?? {}),
+    // We ALWAYS run the CLI inside THIS bwrap jail (the spawn throws JailUnavailableError
+    // otherwise), so tell a sandbox-aware CLI it is already bubblewrapped → it skips nesting
+    // its OWN sandbox. claude reads CLAUDE_CODE_BUBBLEWRAP; absent it, its Bash tool nests a
+    // second bubblewrap that remounts $HOME ro and then EROFSes on `mkdir ~/.claude/session-env`
+    // (real-VPS 2026-06-16, session a7c44a66: claude authored files but every Bash command was
+    // dead) — a redundant layer, since OUR jail is already the security boundary. Injected
+    // POST-scrub: scrubChildEnv blanket-strips CLAUDE_CODE_* (so it would erase this otherwise —
+    // which is exactly why the jailed claude never detected the outer jail and nested).
+    CLAUDE_CODE_BUBBLEWRAP: "1",
   };
 
   return {

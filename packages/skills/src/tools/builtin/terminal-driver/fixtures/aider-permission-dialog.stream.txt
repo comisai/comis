@@ -1,0 +1,4 @@
+[2J[1;1HAider wants to apply an edit.
+
+Do you want to proceed? (y/n)
+[24;1H

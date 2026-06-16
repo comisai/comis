@@ -29,8 +29,11 @@ import { createFakeTimers } from "../../../../../../test/support/fake-timers.js"
 import { createFakeClock } from "../../../../../../test/support/fake-clock.js";
 import {
   createTerminalReaper,
+  wireRegistryReaper,
   type ReaperDeps,
+  type ReaperSession,
   type EvictReason,
+  type ReaperSessionHandle,
 } from "./terminal-reaper.js";
 
 /** A session snapshot row — the shape `listSessions()` returns to the reaper. */
@@ -46,7 +49,12 @@ interface Row {
  */
 function makeDeps(
   rows: Row[],
-  over: Partial<ReaperDeps> = {},
+  // `isBusy` is widened here (not yet on `ReaperDeps` in the RED commit) so the
+  // alive-busy exclusion test compiles and yields a BEHAVIORAL RED: the spread
+  // carries `isBusy` onto `deps` at runtime, but today's `sweep()` does not read
+  // it, so the busy session is wrongly evicted → the assertion fails. Once the
+  // GREEN commit adds `ReaperDeps.isBusy`, this intersection is a redundant no-op.
+  over: Partial<ReaperDeps> & { isBusy?: (s: ReaperSession) => boolean } = {},
 ): { deps: ReaperDeps; onEvict: ReturnType<typeof vi.fn>; timers: ReturnType<typeof createFakeTimers>; clock: ReturnType<typeof createFakeClock> } {
   const clock = createFakeClock(1_000_000);
   const timers = createFakeTimers(0);
@@ -207,5 +215,175 @@ describe("createTerminalReaper — no module-global / injected clock", () => {
 
     r1.stop();
     r2.stop();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ENDURE-01 (I9): the idle sweep EXCLUDES an alive-and-busy session — a
+// quiet-but-busy multi-hour compile is NEVER idle-evicted. The exclusion
+// consumes the injected `isBusy` predicate (the daemon binds it to
+// `busyOrHung(...) === "busy"`, 165-02). A genuinely-idle (not busy) session
+// is STILL reaped; the deliberate wall_clock/max_interactions caps STILL fire
+// and NAME the cap on the reason; the no-isBusy path is byte-identical (I1).
+// ---------------------------------------------------------------------------
+describe("createTerminalReaper — ENDURE-01 alive-busy idle exclusion (I9)", () => {
+  it("does NOT idle-evict a session quiet past idleTtlMs but alive+busy (seeds the BUSY signal, not just lastActivity — Pitfall 2)", () => {
+    const now0 = 1_000_000;
+    // The CRITICAL row (Pitfall 2): lastActivity is STALE (10min ago, well past
+    // idleTtlMs) because a backgrounded compile makes no tool round-trip — yet
+    // the WORKER is making progress, so `isBusy` returns true. A naive idle sweep
+    // (lastActivity-only) would evict it; the I9 exclusion must NOT.
+    const rows: Row[] = [
+      { sessionId: "busy-compile", lastActivity: now0 - 600_000, startedAtMs: now0 - 600_000 },
+    ];
+    // Seed the BUSY signal EXPLICITLY — a test that only seeded lastActivity would
+    // pass a wrong impl that never consults isBusy.
+    const isBusy = vi.fn<(s: ReaperSession) => boolean>((s) => s.sessionId === "busy-compile");
+    const { deps, onEvict, timers } = makeDeps(rows, {
+      idleTtlMs: 5000, // the compile is 600_000ms "idle" by lastActivity — far past TTL
+      wallClockMs: 0, // disabled — only the idle path is under test (the exclusion)
+      maxSessions: 10,
+      sweepIntervalMs: 1000,
+      isBusy,
+    });
+    const reaper = createTerminalReaper(deps);
+    reaper.start();
+
+    timers.advance(1000); // one sweep — the clock stays at now0
+
+    // The I9 exclusion: the busy compile is NOT idle-evicted despite a stale lastActivity.
+    expect(onEvict).not.toHaveBeenCalledWith("busy-compile", "idle");
+    expect(onEvict).not.toHaveBeenCalled();
+    // And the predicate was actually consulted on the idle row (not a lastActivity-only impl).
+    expect(isBusy).toHaveBeenCalled();
+    reaper.stop();
+  });
+
+  it("STILL idle-evicts a genuinely-idle (not busy) session past idleTtlMs (the exclusion is busy-only)", () => {
+    const now0 = 1_000_000;
+    const rows: Row[] = [
+      // Stale AND not busy → the exclusion does NOT apply; it is still reaped.
+      { sessionId: "genuinely-idle", lastActivity: now0 - 6000, startedAtMs: now0 - 6000 },
+    ];
+    const isBusy = vi.fn<(s: ReaperSession) => boolean>(() => false); // nothing is busy
+    const { deps, onEvict, timers } = makeDeps(rows, {
+      idleTtlMs: 5000,
+      wallClockMs: 0,
+      maxSessions: 10,
+      sweepIntervalMs: 1000,
+      isBusy,
+    });
+    const reaper = createTerminalReaper(deps);
+    reaper.start();
+
+    timers.advance(1000);
+
+    // A genuinely-idle session is reaped exactly as today (reason idle).
+    expect(onEvict).toHaveBeenCalledTimes(1);
+    expect(onEvict).toHaveBeenCalledWith("genuinely-idle", "idle");
+    reaper.stop();
+  });
+
+  it("a wall_clock cap-eviction NAMES the cap verbatim even for an alive+busy session (a deliberate operator bound, not a mystery)", () => {
+    const now0 = 1_000_000;
+    const rows: Row[] = [
+      // Busy AND over the wall-clock budget: the busy exclusion is IDLE-only — the
+      // deliberate wall_clock cap STILL fires and NAMES the cap.
+      { sessionId: "aged-but-busy", lastActivity: now0, startedAtMs: now0 - 11_000 },
+    ];
+    const isBusy = vi.fn<(s: ReaperSession) => boolean>(() => true); // legitimately busy
+    const { deps, onEvict, timers } = makeDeps(rows, {
+      idleTtlMs: 5000, // would NOT trip anyway (recent lastActivity) — proves wall_clock is independent
+      wallClockMs: 10_000,
+      maxSessions: 10,
+      sweepIntervalMs: 1000,
+      isBusy,
+    });
+    const reaper = createTerminalReaper(deps);
+    reaper.start();
+
+    timers.advance(1000);
+
+    // The cap NAME is carried verbatim onto onEvict (the daemon surfaces it onto the failed reason).
+    expect(onEvict).toHaveBeenCalledTimes(1);
+    expect(onEvict).toHaveBeenCalledWith("aged-but-busy", "wall_clock");
+    reaper.stop();
+  });
+
+  it("I1: with isBusy ABSENT the idle sweep is byte-identical to today (eviction on quietness alone)", () => {
+    const now0 = 1_000_000;
+    const rows: Row[] = [
+      { sessionId: "stale", lastActivity: now0 - 6000, startedAtMs: now0 - 6000 },
+      { sessionId: "fresh", lastActivity: now0, startedAtMs: now0 },
+    ];
+    // No isBusy supplied → today's wiring; the sweep behaves EXACTLY as the first test in this file.
+    const { deps, onEvict, timers } = makeDeps(rows, {
+      idleTtlMs: 5000,
+      wallClockMs: 0,
+      maxSessions: 10,
+      sweepIntervalMs: 1000,
+    });
+    // No isBusy was injected (read via a cast so this compiles whether or not
+    // `ReaperDeps.isBusy` exists yet — RED before the field is added, GREEN after).
+    expect((deps as { isBusy?: unknown }).isBusy).toBeUndefined();
+    const reaper = createTerminalReaper(deps);
+    reaper.start();
+
+    timers.advance(1000);
+
+    expect(onEvict).toHaveBeenCalledTimes(1);
+    expect(onEvict).toHaveBeenCalledWith("stale", "idle");
+    expect(onEvict).not.toHaveBeenCalledWith("fresh", expect.anything());
+    reaper.stop();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ENDURE-01: a max_interactions cap-eviction NAMES its cap verbatim on the
+// SINGLE audited eviction site (`wireRegistryReaper.evict`) — the same path the
+// daemon's max-interactions check calls. The reason rides onto onEvict + the
+// WARN, so the NOTIFY-01 failed outcome (Phase 166) reads a deliberate bound,
+// not a mystery.
+// ---------------------------------------------------------------------------
+describe("wireRegistryReaper — cap-eviction names the cap (max_interactions)", () => {
+  interface Handle extends ReaperSessionHandle {
+    sessionId: string;
+    lastActivity: number;
+    startedAt: number;
+  }
+
+  it("evict(sid, 'max_interactions') carries the cap name verbatim onto onEvict AND the audited WARN", () => {
+    const now0 = 2_000_000;
+    const sessions = new Map<string, Handle>([
+      ["heavy", { sessionId: "heavy", lastActivity: now0 - 1000, startedAt: now0 - 50_000 }],
+    ]);
+    const onEvict = vi.fn<(info: { sessionId: string; reason: EvictReason; durationMs: number }) => void>();
+    const warn = vi.fn<(obj: Record<string, unknown>, msg: string) => void>();
+    const evictInternal = vi.fn<(h: Handle) => void>();
+
+    const { evict } = wireRegistryReaper<Handle>({
+      sessions,
+      nowMs: () => now0,
+      evictInternal,
+      logger: { warn },
+      caps: { onEvict },
+    });
+
+    // The daemon's max-interactions check calls this exact evict with the cap name.
+    evict("heavy", "max_interactions");
+
+    // The cap name is surfaced verbatim onto the emitted eviction info...
+    expect(onEvict).toHaveBeenCalledTimes(1);
+    expect(onEvict).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: "heavy", reason: "max_interactions" }),
+    );
+    // ...and onto the audited WARN (so the failed reason names the cap, errorKind resource).
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: "heavy", reason: "max_interactions", errorKind: "resource" }),
+      expect.any(String),
+    );
+    // The single audited site still reuses the registry drop (no duplicated cleanup).
+    expect(evictInternal).toHaveBeenCalledTimes(1);
   });
 });
