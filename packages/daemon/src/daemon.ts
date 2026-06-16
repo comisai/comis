@@ -223,6 +223,7 @@ import { createConversationReset } from "./wiring/conversation-reset.js";
 import { setupSecretManager } from "./wiring/setup-secret-manager.js";
 import { restoreApprovalState, resolveGatewayTokens, setupChannelHealthMonitor, resolveModelHealthMultilingual, buildImageGenBundle, buildImageHandlerDeps, buildVideoGenBundle, buildVideoHandlerDeps, buildVideoStatusHandlerDeps, buildMediaVisionBundle } from "./wiring/main-helpers.js";
 import { hardenDataDirPermissions } from "./wiring/harden-data-dir.js";
+import { buildAudioResolverDeps } from "./wiring/setup-audio-provider.js";
 import { createInboundMessageIdResolver, type InboundMessageIdResolver } from "./wiring/inbound-message-id-resolver.js";
 import { logOperationModelDryRun } from "./wiring/startup-dry-run.js";
 import { emitDockerRestartPolicyWarn } from "./setup-docker-restart-warn.js";
@@ -2008,11 +2009,15 @@ async function bootAgents(
   };
 
   // 6.6.7. Media (moved up from 6.6.8 -- media infrastructure must be ready before channels)
+  // Phase 193 keyless-first audio steering: setup-media gates STT/TTS construction
+  // on this selector (resolveStt/resolveTts) BEFORE building any adapter — a
+  // Codex/OAuth-only main never builds the empty-bearer OpenAI adapter (no 401).
+  const audioSelector = buildAudioResolverDeps(container, defaultAgentId, skillsLogger);
   const {
     ttsAdapter, visionRegistry, visionRegistryHolder, linkRunner,
     mediaTempManager, mediaSemaphore, audioConverter,
     transcriber, ssrfFetcher, fileExtractor,
-  } = await _setupMedia({ container, skillsLogger, onSuspiciousContent });
+  } = await _setupMedia({ container, skillsLogger, onSuspiciousContent, audioSelector });
 
   // 6.6.7.5. RPC bridge (deferred dispatch) -- moved before setupChannels so rpcCall
   // can be threaded into channel config command handling.

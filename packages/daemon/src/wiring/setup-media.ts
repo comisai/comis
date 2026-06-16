@@ -9,7 +9,9 @@
  */
 
 import type { AppContainer, TTSPort, TranscriptionPort, VisionProvider, FileExtractionPort, WrapExternalContentOptions, SecretManager, ImageGenerationConfig, TranscriptionConfig, TtsConfig } from "@comis/core";
+import { STT_ERR_TO_LOG } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
+import type { createAudioProviderSelector } from "./setup-audio-provider.js";
 import {
   createTTSProvider,
   createSTTProvider,
@@ -149,6 +151,16 @@ export async function setupMedia(deps: {
   skillsLogger: ComisLogger;
   /** Optional callback for suspicious content detection */
   onSuspiciousContent?: WrapExternalContentOptions["onSuspiciousContent"];
+  /**
+   * The keyless-first audio selector (Phase 193, built in the daemon via
+   * `createAudioProviderSelector`). When present, STT/TTS construction is GATED
+   * on `resolveStt()`/`resolveTts()` BEFORE `createSTTProvider`/`createTTSProvider`
+   * — an honest-unavailable resolution (`sel.ok===false`) constructs NO adapter
+   * (so a Codex/OAuth-only main never builds the empty-bearer OpenAI adapter →
+   * 401; the inbound path skip-don't-throws). Absent (test harnesses) → the
+   * pre-193 behavior (construct directly from config).
+   */
+  audioSelector?: ReturnType<typeof createAudioProviderSelector>;
 }): Promise<MediaResult> {
   const { container, skillsLogger } = deps;
   const mediaConfig = container.config.integrations.media;
@@ -216,83 +228,129 @@ export async function setupMedia(deps: {
   );
   skillsLogger.debug({ maxBytes: infraConfig.maxRemoteFetchBytes }, "SSRF-guarded fetcher initialized");
 
-  // 6.6.8.pre5. STT provider — factory selects from config
-  // Use a lazy-delegation wrapper so that each transcribe() call
-  // re-invokes createSTTProviderFactory at invocation time, reading the current
-  // secretManager value. This makes a rotated STT API key take effect on the
-  // LIVE path without a daemon restart.
+  // 6.6.8.pre5. STT provider — keyless-first resolution THEN factory construction.
+  //
+  // Phase 193 (RES-05 / STEER-01): when the daemon supplies the audio selector,
+  // resolve the provider BEFORE constructing any adapter. An honest-unavailable
+  // resolution (`!sel.ok` — e.g. a Codex/OAuth-only main with no audio key, or
+  // STT `auto` before the local engine lands in Phase 194) constructs NO adapter:
+  // `transcriber` stays undefined, the honest-unavailable is logged once, and the
+  // downstream inbound path skip-don't-throws (audio-preflight returns
+  // {transcribed:false} — the message still reaches the agent). This replaces the
+  // empty-bearer `createOpenAISttAdapter({ apiKey: secretManager.get(...) ?? "" })`
+  // → 401 that today's hardcoded `provider:"openai"` default produced. Use a
+  // lazy-delegation wrapper for the rotated-key read-on-use invariant.
   let transcriber: TranscriptionPort | undefined;
-  const sttResult = createSTTProvider(mediaConfig.transcription, container.secretManager);
-  if (sttResult.ok) {
-    // Build the lazy factory for the primary provider
-    const sttFactory = createSTTProviderFactory(mediaConfig.transcription, container.secretManager);
-
-    // Build fallback factories if configured
-    const fallbackFactories: Array<() => ReturnType<typeof createSTTProvider>> = [];
-    for (const fbProvider of mediaConfig.transcription.fallbackProviders) {
-      const fbConfig = { ...mediaConfig.transcription, provider: fbProvider };
-      const fbResult = createSTTProvider(fbConfig, container.secretManager);
-      if (fbResult.ok) {
-        fallbackFactories.push(createSTTProviderFactory(fbConfig, container.secretManager));
-      }
-    }
-    const hasFallback = fallbackFactories.length > 0;
-
-    // Lazy-delegation wrapper: delegates transcribe() to a fresh provider on
-    // each call so a rotated key is observed without a daemon restart.
-    transcriber = {
-      transcribe: async (audio, options) => {
-        const primaryResult = sttFactory();
-        if (!primaryResult.ok) return primaryResult;
-        if (!hasFallback) {
-          return primaryResult.value.transcribe(audio, options);
-        }
-        const chain: TranscriptionPort[] = [primaryResult.value];
-        for (const fbFactory of fallbackFactories) {
-          const fbResult = fbFactory();
-          if (fbResult.ok) chain.push(fbResult.value);
-        }
-        return createFallbackTranscription(chain, skillsLogger).transcribe(audio, options);
+  const sttSel = deps.audioSelector?.resolveStt();
+  // `sttBlocked` is true ONLY when the selector ran and returned honest-unavailable
+  // — that gates construction OFF (no empty-bearer adapter). When no selector was
+  // supplied (test harnesses / pre-193 callers) it is false (construct directly).
+  const sttBlocked = sttSel !== undefined && !sttSel.ok;
+  if (sttSel && !sttSel.ok) {
+    skillsLogger.warn(
+      {
+        err: sttSel.errorKind,
+        errorKind: STT_ERR_TO_LOG[sttSel.errorKind],
+        hint: sttSel.hint,
+        step: "stt_unavailable",
       },
-    };
+      "STT unavailable — keyless-first resolution (no adapter constructed)",
+    );
+  }
+  // Construct only when NOT blocked by the resolver. For 193 an approved
+  // `sttSel.provider` is openai/groq/deepgram (keyed cases the factory handles) —
+  // `local` resolves only when localEngineAvailable() is true (false in 193, the
+  // Phase 194 seam), so the factory never sees `local` yet; `edge` is TTS-only.
+  if (!sttBlocked) {
+    const sttResult = createSTTProvider(mediaConfig.transcription, container.secretManager);
+    if (sttResult.ok) {
+      // Build the lazy factory for the primary provider
+      const sttFactory = createSTTProviderFactory(mediaConfig.transcription, container.secretManager);
 
-    if (hasFallback) {
-      skillsLogger.info({
-        provider: mediaConfig.transcription.provider,
-        fallbackCount: fallbackFactories.length,
-      }, "STT service initialized with fallback chain");
+      // Build fallback factories if configured
+      const fallbackFactories: Array<() => ReturnType<typeof createSTTProvider>> = [];
+      for (const fbProvider of mediaConfig.transcription.fallbackProviders) {
+        const fbConfig = { ...mediaConfig.transcription, provider: fbProvider };
+        const fbResult = createSTTProvider(fbConfig, container.secretManager);
+        if (fbResult.ok) {
+          fallbackFactories.push(createSTTProviderFactory(fbConfig, container.secretManager));
+        }
+      }
+      const hasFallback = fallbackFactories.length > 0;
+
+      // Lazy-delegation wrapper: delegates transcribe() to a fresh provider on
+      // each call so a rotated key is observed without a daemon restart.
+      transcriber = {
+        transcribe: async (audio, options) => {
+          const primaryResult = sttFactory();
+          if (!primaryResult.ok) return primaryResult;
+          if (!hasFallback) {
+            return primaryResult.value.transcribe(audio, options);
+          }
+          const chain: TranscriptionPort[] = [primaryResult.value];
+          for (const fbFactory of fallbackFactories) {
+            const fbResult = fbFactory();
+            if (fbResult.ok) chain.push(fbResult.value);
+          }
+          return createFallbackTranscription(chain, skillsLogger).transcribe(audio, options);
+        },
+      };
+
+      if (hasFallback) {
+        skillsLogger.info({
+          provider: mediaConfig.transcription.provider,
+          fallbackCount: fallbackFactories.length,
+        }, "STT service initialized with fallback chain");
+      } else {
+        skillsLogger.info({ provider: mediaConfig.transcription.provider }, "STT service initialized");
+      }
     } else {
-      skillsLogger.info({ provider: mediaConfig.transcription.provider }, "STT service initialized");
+      skillsLogger.warn({
+        err: sttResult.error.message,
+        hint: "Configure STT provider in integrations.media.transcription section",
+        errorKind: "config" as const,
+      }, "STT service not configured");
     }
-  } else {
-    skillsLogger.warn({
-      err: sttResult.error.message,
-      hint: "Configure STT provider in integrations.media.transcription section",
-      errorKind: "config" as const,
-    }, "STT service not configured");
   }
 
-  // 6.6.8. TTS adapter — factory selects provider from config
-  // Use a lazy-delegation wrapper so that each synthesize() call
-  // re-invokes createTTSProviderFactory at invocation time, reading the current
-  // secretManager value. This makes a rotated TTS API key take effect on the
-  // LIVE path without a daemon restart.
+  // 6.6.8. TTS adapter — keyless-first resolution THEN factory construction.
+  //
+  // Phase 193 (RES-02 / RES-05): when the daemon supplies the audio selector,
+  // resolve TTS BEFORE constructing any adapter. `auto`/default resolves to the
+  // keyless Edge adapter (no key); an explicit keyed provider with a present key
+  // resolves explicit; honest-unavailable (`!sel.ok`) constructs NO adapter +
+  // logs once. Use a lazy-delegation wrapper for the rotated-key read-on-use.
   let ttsAdapter: TTSPort | undefined;
-  const ttsResult = createTTSProvider(mediaConfig.tts, container.secretManager);
-  if (ttsResult.ok) {
-    const ttsFactory = createTTSProviderFactory(mediaConfig.tts, container.secretManager);
-    // Lazy-delegation wrapper: delegates synthesize() to a fresh provider on
-    // each call so a rotated key is observed without a daemon restart.
-    ttsAdapter = {
-      synthesize: async (text, options) => {
-        const result = ttsFactory();
-        if (!result.ok) return result;
-        return result.value.synthesize(text, options);
+  const ttsSel = deps.audioSelector?.resolveTts();
+  const ttsBlocked = ttsSel !== undefined && !ttsSel.ok;
+  if (ttsSel && !ttsSel.ok) {
+    skillsLogger.warn(
+      {
+        err: ttsSel.errorKind,
+        errorKind: STT_ERR_TO_LOG[ttsSel.errorKind],
+        hint: ttsSel.hint,
+        step: "tts_unavailable",
       },
-    };
-    skillsLogger.debug({ provider: mediaConfig.tts.provider }, "TTS service initialized");
-  } else {
-    skillsLogger.warn({ err: ttsResult.error.message, hint: "Configure TTS provider in integrations.media.tts section", errorKind: "config" as const }, "TTS service not configured");
+      "TTS unavailable — keyless-first resolution (no adapter constructed)",
+    );
+  }
+  if (!ttsBlocked) {
+    const ttsResult = createTTSProvider(mediaConfig.tts, container.secretManager);
+    if (ttsResult.ok) {
+      const ttsFactory = createTTSProviderFactory(mediaConfig.tts, container.secretManager);
+      // Lazy-delegation wrapper: delegates synthesize() to a fresh provider on
+      // each call so a rotated key is observed without a daemon restart.
+      ttsAdapter = {
+        synthesize: async (text, options) => {
+          const result = ttsFactory();
+          if (!result.ok) return result;
+          return result.value.synthesize(text, options);
+        },
+      };
+      skillsLogger.debug({ provider: mediaConfig.tts.provider }, "TTS service initialized");
+    } else {
+      skillsLogger.warn({ err: ttsResult.error.message, hint: "Configure TTS provider in integrations.media.tts section", errorKind: "config" as const }, "TTS service not configured");
+    }
   }
 
   // 6.6.8.1. Vision provider registry — auto-discover providers by API key
