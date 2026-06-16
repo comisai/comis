@@ -11,7 +11,7 @@ export { classifyAction, requiresConfirmation } from "../security/index.js";
 export type { ActionClassification } from "../security/index.js";
 export { AuditEventSchema, createAuditEvent } from "../security/index.js";
 export type { AuditEvent, CreateAuditEventParams } from "../security/index.js";
-export { sanitizeLogString } from "../security/index.js";
+export { sanitizeLogString, redactErrorMessage } from "../security/index.js";
 // Bounded redaction primitive (security/redact-value.ts) — surfaced on the
 // @comis/core barrel for the template engine and emit sites.
 export { redactValue, REDACT_LIMITS } from "../security/index.js";

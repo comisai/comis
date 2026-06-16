@@ -8,27 +8,17 @@
  * @module media-adapter-shared
  */
 
+import { redactErrorMessage } from "@comis/core";
+
 /**
- * Redact a free-text error/diagnostic string: strip URLs (`[URL]`) and long
- * tokens (`[REDACTED]`). The single source of truth for the SEC-01 redaction
- * regex — reused by {@link sanitizeApiError} (adapter API-error bodies) and by
- * the inbound voice handler's structured-log lines (so a credential can never
- * reach a log line even if an upstream message was not pre-sanitized; the
- * §2.7 "never log a secret at any level" floor / defense-in-depth).
+ * Re-export of the SEC-01 free-text error scrubber, relocated to
+ * `@comis/core/security` in Phase 197 so `@comis/channels` (the voice-OUT
+ * pipeline, which deliberately does NOT import `@comis/skills`) can share the
+ * SINGLE definition. This re-export keeps the ~6 existing adapter callers
+ * (`media-handler-audio.ts`) and {@link sanitizeApiError} below importing it
+ * from this module unchanged — there is no second copy of the regex.
  */
-export function redactErrorMessage(body: string): string {
-  return (
-    body
-      .replace(/https?:\/\/[^\s"')]+/g, "[URL]")
-      // Drop the bare `Authorization:`/`Bearer` credential-scheme markers (the
-      // token that follows is already caught by the long-token rule below) so
-      // the line carries no credential context at all.
-      .replace(/\bAuthorization:/gi, "")
-      .replace(/\bBearer\b/gi, "")
-      // eslint-disable-next-line no-restricted-syntax -- media adapter API-error sanitization (not the Pino censor literal)
-      .replace(/[A-Za-z0-9_-]{20,}/g, "[REDACTED]")
-  );
-}
+export { redactErrorMessage } from "@comis/core";
 
 /** Truncate and sanitize an API error body for user-facing error messages. */
 export function sanitizeApiError(status: number, body: string, provider: string): string {

@@ -111,3 +111,39 @@ export function sanitizeLogString(input: string): string {
 
   return result;
 }
+
+/**
+ * Redact a free-text error/diagnostic string: strip URLs (`[URL]`), the bare
+ * `Authorization:`/`Bearer` credential-scheme markers, and any long token
+ * (`[REDACTED]`). The single source of truth for the SEC-01 redaction regex —
+ * reused by `sanitizeApiError` (adapter API-error bodies in `@comis/skills`),
+ * the inbound voice handler's structured-log lines, AND the voice-OUT pipeline's
+ * WARN branches in `@comis/channels`.
+ *
+ * Relocated here from `@comis/skills` (media-adapter-shared.ts) in Phase 197 so
+ * BOTH `@comis/skills` and `@comis/channels` resolve ONE definition: channels
+ * deliberately does NOT import skills (structural-typing boundary), so the pure
+ * primitive lives DOWN in core where both packages already depend. The redaction
+ * SEMANTICS are unchanged from the original — only the location moved.
+ *
+ * This is intentionally narrower than {@link sanitizeLogString} (which matches a
+ * catalog of known credential FORMATS): `redactErrorMessage` is the coarser
+ * URL/scheme/long-token scrubber for opaque adapter error bodies where the exact
+ * credential shape is unknown.
+ *
+ * @param body - The free-text error/diagnostic string to redact
+ * @returns The redacted string (URLs, credential schemes, and long tokens scrubbed)
+ */
+export function redactErrorMessage(body: string): string {
+  return (
+    body
+      .replace(/https?:\/\/[^\s"')]+/g, "[URL]")
+      // Drop the bare `Authorization:`/`Bearer` credential-scheme markers (the
+      // token that follows is already caught by the long-token rule below) so
+      // the line carries no credential context at all.
+      .replace(/\bAuthorization:/gi, "")
+      .replace(/\bBearer\b/gi, "")
+      // eslint-disable-next-line no-restricted-syntax -- media adapter API-error sanitization (not the Pino censor literal)
+      .replace(/[A-Za-z0-9_-]{20,}/g, "[REDACTED]")
+  );
+}

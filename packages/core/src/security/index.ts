@@ -36,7 +36,7 @@ export { AuditEventSchema, createAuditEvent } from "./audit.js";
 export type { AuditEvent, CreateAuditEventParams } from "./audit.js";
 
 // Log sanitizer
-export { sanitizeLogString } from "./log-sanitizer.js";
+export { sanitizeLogString, redactErrorMessage } from "./log-sanitizer.js";
 
 // Bounded redaction primitive (activity transparency)
 export { redactValue, REDACT_LIMITS } from "./redact-value.js";
