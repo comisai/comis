@@ -40,6 +40,28 @@ import {
 
 // ---------- Constants ----------
 
+/**
+ * Prompt shown when NO daemon is currently running.
+ *
+ * Exported so the NonInteractivePrompter can recognize it and route the
+ * decision through `--start-daemon` instead of the generic first-option
+ * fallback. Sharing the literal keeps the two in lockstep — if this string
+ * changes, headless behavior can't silently drift.
+ */
+export const DAEMON_START_PROMPT = "Start the Comis daemon now?";
+
+/**
+ * Prompt shown when a daemon already holds the gateway port.
+ *
+ * Same contract as {@link DAEMON_START_PROMPT}: the NonInteractivePrompter
+ * keys off this literal so `comis init --non-interactive` WITHOUT
+ * `--start-daemon` answers "no" (leave running) instead of "restart" — the
+ * generic fallback used to pick the first option ("restart") and silently
+ * bounce an unrelated running daemon.
+ */
+export const DAEMON_RESTART_PROMPT =
+  "Daemon is already running. What would you like to do?";
+
 /** Max time to wait for daemon gateway to become ready (ms). */
 const READY_TIMEOUT_MS = 15_000;
 /** Interval between readiness polls (ms). */
@@ -435,7 +457,7 @@ export const daemonStartStep: WizardStep = {
       prompter.log.info(themeSuccess(`Daemon is running on ${host}:${port}`));
 
       choice = await prompter.select<string>({
-        message: "Daemon is already running. What would you like to do?",
+        message: DAEMON_RESTART_PROMPT,
         options: [
           { value: "restart", label: "Restart (recommended)", hint: "Apply new configuration" },
           { value: "no", label: "Leave running", hint: "Config changes apply on next restart" },
@@ -443,7 +465,7 @@ export const daemonStartStep: WizardStep = {
       });
     } else {
       choice = await prompter.select<string>({
-        message: "Start the Comis daemon now?",
+        message: DAEMON_START_PROMPT,
         options: [
           { value: "yes", label: "Yes (recommended)" },
           { value: "no", label: "No -- I'll start it manually later" },

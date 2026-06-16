@@ -43,6 +43,7 @@ import type {
 } from "./prompter.js";
 import { validatePort } from "./validators/port.js";
 import { validateAgentName } from "./validators/agent-name.js";
+import { DAEMON_START_PROMPT, DAEMON_RESTART_PROMPT } from "./steps/11-daemon-start.js";
 
 // ---------- Types ----------
 
@@ -497,10 +498,22 @@ export class NonInteractivePrompter implements WizardPrompter {
   }
 
   async select<T>(opts: SelectOpts<T>): Promise<T> {
-    // Handle daemon start prompt specifically -- it uses select() with
-    // "yes"/"no" string values, NOT confirm() with boolean.
-    if (opts.message === "Start the Comis daemon now?") {
-      const value = this.opts.startDaemon ? "yes" : "no";
+    // Daemon start/restart prompts (step 11) MUST respect --start-daemon. Both
+    // use select() with string values, not confirm(). Without this, the generic
+    // first-option fallback below picks "yes"/"restart" and a plain
+    // `comis init --non-interactive` (startDaemon defaults false) silently
+    // spawns — or, when a daemon already holds the gateway port, STOPS+RESPAWNS
+    // an unrelated running daemon (observed live). We key off the exact prompt
+    // literals the step exports so the two can never drift.
+    if (
+      opts.message === DAEMON_START_PROMPT ||
+      opts.message === DAEMON_RESTART_PROMPT
+    ) {
+      const value = this.opts.startDaemon
+        ? opts.message === DAEMON_RESTART_PROMPT
+          ? "restart"
+          : "yes"
+        : "no";
       // Find the matching option to return the correctly-typed value
       const match = opts.options.find(
         (o) => String(o.value) === value,

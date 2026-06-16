@@ -649,6 +649,34 @@ describe("NonInteractivePrompter", () => {
       expect(result).toBe("no");
     });
 
+    // Regression: the "Daemon is already running…" restart prompt fell through
+    // to the generic first-option fallback (= "restart"), so a plain
+    // `comis init --non-interactive` (startDaemon defaults false) silently
+    // stopped + respawned whatever daemon held the gateway port.
+    it("returns 'no' for the restart prompt when startDaemon=false (does NOT restart)", async () => {
+      const p = new NonInteractivePrompter(validOpts({ startDaemon: false }));
+      const result = await p.select({
+        message: "Daemon is already running. What would you like to do?",
+        options: [
+          { value: "restart", label: "Restart" },
+          { value: "no", label: "Leave running" },
+        ],
+      });
+      expect(result).toBe("no");
+    });
+
+    it("returns 'restart' for the restart prompt when startDaemon=true", async () => {
+      const p = new NonInteractivePrompter(validOpts({ startDaemon: true }));
+      const result = await p.select({
+        message: "Daemon is already running. What would you like to do?",
+        options: [
+          { value: "restart", label: "Restart" },
+          { value: "no", label: "Leave running" },
+        ],
+      });
+      expect(result).toBe("restart");
+    });
+
     it("returns initialValue if set for other prompts", async () => {
       const p = new NonInteractivePrompter(validOpts());
       const result = await p.select({
