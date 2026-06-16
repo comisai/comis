@@ -109,6 +109,23 @@ describe("tool-metadata-registry -- terminal driver never-export", () => {
     expect(meta!.mcpExportPolicy).toBe("never-export");
   });
 
+  // The perception tools surface the DRIVEN session's exitCode → flagged so the bridge's
+  // exit-code failure heuristic never misreads a non-zero driven exit as a TOOL failure
+  // (real-VPS 2026-06-16: a bash `exit 1` misclassified a successful terminal_session_status).
+  it.each(["terminal_session_read", "terminal_session_wait", "terminal_session_status"] as const)(
+    "%s is flagged exitCodeIsDrivenSession (non-zero driven exit is not a tool failure)",
+    (name) => {
+      expect(getToolMetadata(name)!.exitCodeIsDrivenSession).toBe(true);
+    },
+  );
+
+  it.each(["terminal_session_send_text", "terminal_session_create", "terminal_session_kill"] as const)(
+    "%s does NOT set exitCodeIsDrivenSession (its result carries no driven exitCode)",
+    (name) => {
+      expect(getToolMetadata(name)!.exitCodeIsDrivenSession).toBeUndefined();
+    },
+  );
+
   it("registers exactly nine terminal_session_* names", () => {
     const all = getAllToolMetadata();
     const terminalNames = [...all.keys()].filter((k) => k.startsWith("terminal_session_"));

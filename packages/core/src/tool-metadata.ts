@@ -102,6 +102,15 @@ export interface ComisToolMetadata {
    *  activity pipeline skips it). Lifecycle reactions + final delivery are
    *  unaffected. Read by the activity layer (§16.11). */
   suppressActivity?: boolean;
+  /** When true, a non-zero `details.exitCode` in this tool's RESULT is the DRIVEN
+   *  subject's exit code (informational), NOT the tool's own outcome — so the bridge's
+   *  exit-code failure heuristic (§D1) must NOT flag the call as failed. Set on the
+   *  terminal-driver perception tools (status/read/wait), whose result reports the driven
+   *  session's `exitCode`. Without it a driven program exiting non-zero (e.g. bash `exit 1`)
+   *  misclassifies a perfectly-successful `terminal_session_status` as a tool failure
+   *  (real-VPS 2026-06-16). Default (absent) ⇒ the heuristic applies (exec/process, where
+   *  the exit code IS the tool's outcome). */
+  exitCodeIsDrivenSession?: boolean;
   /** Tool-specific failure classifier consulted *before* the `tool:executed`
    *  emit (§16.10), so observability never sees the raw result. Receives the
    *  tool result and the SDK `isError` flag; returns `true`/`false` (failed or
