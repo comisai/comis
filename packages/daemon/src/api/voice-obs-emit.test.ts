@@ -319,6 +319,44 @@ describe("wireVoiceObs — the handler-wiring helper (emitter + §2.7 logger clo
     expect(JSON.stringify(rec!.data)).not.toContain("Bearer");
   });
 
+  // CR-02 (Phase 196 review): SEC-01 leak — an OPAQUE bearer token (NOT sk-/hex/
+  // a known-prefix shape — e.g. a Deepgram/ElevenLabs/custom STT-TTS provider
+  // token) must not survive in the WARN err: line. The only sanitizeLogString
+  // rule that catches a generic opaque bearer is BEARER_TOKEN_LOG, which is
+  // ANCHORED on the literal `Bearer `. The pre-fix redactVoiceLogMessage stripped
+  // `Bearer` BEFORE calling sanitizeLogString, destroying that anchor → the
+  // opaque token leaked verbatim. The single sk-proj- token in the test above is
+  // caught by the bare-sk- pattern, masking the gap; these opaque/16-char tokens
+  // expose it. Reproduced RED on the strip-before-sanitize order.
+  it("SEC-01 no-leak: an OPAQUE (non-sk-/non-hex) Bearer token from a custom STT/TTS provider never survives in the WARN err: line", () => {
+    const recorder = captureRecorder();
+    const logger = captureLogger();
+    const w = wireVoiceObs({
+      sessionKey: "s",
+      trajectoryRegistry: { getRecorder: () => recorder } as never,
+      logger,
+      agentId: "a",
+      kind: "stt",
+      requested: { provider: "deepgram", mainProvider: "openai", source: "explicit" },
+    });
+    // A long opaque token (Deepgram-style) AND a shorter 16-char one — neither
+    // matches sk-/hex-40+/a known prefix, so only the Bearer anchor catches them.
+    const opaqueLong = "abc123XYZ_shortish_token99";
+    const opaqueShort = "DG0123456789abcd";
+    const leaky =
+      `401 from provider: Authorization: Bearer ${opaqueLong}; retry header Bearer ${opaqueShort}`;
+    w.failed({ sttErrorKind: "auth_required", provider: "deepgram", source: "explicit", errMessage: leaky });
+    const errField = String(logger.warn.mock.calls[0]![0].err);
+    expect(errField).not.toContain(opaqueLong);
+    expect(errField).not.toContain(opaqueShort);
+    // No raw bearer token of any kind should ride a trailing `Bearer <token>`.
+    expect(errField).not.toMatch(/Bearer\s+[A-Za-z0-9._~+/=-]{10,}/i);
+    // The trajectory record never carries the opaque token.
+    const rec = recorder.calls.find((c) => c.type === "media.stt.failed");
+    expect(JSON.stringify(rec!.data)).not.toContain(opaqueLong);
+    expect(JSON.stringify(rec!.data)).not.toContain(opaqueShort);
+  });
+
   it("wireVoiceObs is off-turn-safe: no recorder → no throw, but the §2.7 log lines STILL fire", () => {
     const logger = captureLogger();
     const w = wireVoiceObs({
