@@ -105,9 +105,23 @@ export function createAudioProviderSelector(deps: {
 }): {
   resolveStt: () => ReturnType<typeof resolveTranscriptionProvider>;
   resolveTts: () => ReturnType<typeof resolveTtsProvider>;
+  /** OBS-03 (196): the skip reasons collected during the LAST `resolveStt()` /
+   *  `resolveTts()` call (the same closed rung-list the logging closures emit).
+   *  The boot caller (`setupMedia`) reads these AFTER resolving and threads them
+   *  onto the handler's `media.stt.requested`/`media.tts.requested` trajectory
+   *  record so `comis explain` shows WHY `auto` picked the rung — beyond the chosen
+   *  `source`. Content (a closed rung-list), never free text or a secret. */
+  sttSkips: () => string[];
+  ttsSkips: () => string[];
 } {
   const localEngineAvailable = deps.localEngineAvailable ?? (() => false);
   const edgeAvailable = deps.edgeAvailable ?? (() => true);
+  // OBS-03 (196): accumulate the skip reasons emitted during resolution so the
+  // boot caller can thread them onto the handler emit (the producer already rides
+  // them on *:requested — this captures them at the daemon resolution site). Reset
+  // at the head of each resolve so a re-resolution does not accrue stale reasons.
+  let sttSkipReasons: string[] = [];
+  let ttsSkipReasons: string[] = [];
 
   // The key-presence predicate: a closure over SecretManager (NEVER process.env).
   // Mirrors setup-image-provider.ts's credsAvailable, minus the codex branch —
@@ -139,6 +153,7 @@ export function createAudioProviderSelector(deps: {
   // log level (§2.7). Per-fallback-entry skips stay DEBUG (they only matter when
   // a chain is configured). Mirrors setup-image-provider.ts:162-169.
   const onSttSkip = (reason: string): void => {
+    sttSkipReasons.push(reason);
     if (reason.startsWith("fallback ")) {
       deps.logger.debug({ reason, step: "stt_fallback_skip" }, "STT fallback entry skipped");
     } else {
@@ -146,6 +161,7 @@ export function createAudioProviderSelector(deps: {
     }
   };
   const onTtsSkip = (reason: string): void => {
+    ttsSkipReasons.push(reason);
     if (reason.startsWith("fallback ")) {
       deps.logger.debug({ reason, step: "tts_fallback_skip" }, "TTS fallback entry skipped");
     } else {
@@ -154,22 +170,28 @@ export function createAudioProviderSelector(deps: {
   };
 
   return {
-    resolveStt: () =>
-      resolveTranscriptionProvider(
+    resolveStt: () => {
+      sttSkipReasons = [];
+      return resolveTranscriptionProvider(
         deps.transcriptionConfig,
         deps.mainProviderId,
         localEngineAvailable,
         audioKeyAvailable,
         onSttSkip,
-      ),
-    resolveTts: () =>
-      resolveTtsProvider(
+      );
+    },
+    resolveTts: () => {
+      ttsSkipReasons = [];
+      return resolveTtsProvider(
         deps.ttsConfig,
         deps.mainProviderId,
         edgeAvailable,
         audioKeyAvailable,
         onTtsSkip,
-      ),
+      );
+    },
+    sttSkips: () => [...sttSkipReasons],
+    ttsSkips: () => [...ttsSkipReasons],
   };
 }
 

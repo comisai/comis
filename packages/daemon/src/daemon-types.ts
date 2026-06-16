@@ -580,6 +580,9 @@ export interface BootContext {
   transcriber?: Awaited<ReturnType<typeof setupMedia>>["transcriber"];
   ssrfFetcher?: Awaited<ReturnType<typeof setupMedia>>["ssrfFetcher"];
   fileExtractor?: Awaited<ReturnType<typeof setupMedia>>["fileExtractor"];
+  /** OBS-03 (196): the boot-resolved STT/TTS selections threaded to the media RPC
+   *  handlers for the trajectory `source`/`onSkip` emit. */
+  voiceSelection?: Awaited<ReturnType<typeof setupMedia>>["voiceSelection"];
   // RPC bridge (deferred-dispatch)
   rpcCall?: ReturnType<typeof setupRpcBridge>["rpcCall"];
   wireDispatch?: ReturnType<typeof setupRpcBridge>["wireDispatch"];

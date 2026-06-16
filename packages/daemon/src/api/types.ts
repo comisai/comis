@@ -521,6 +521,23 @@ export interface AuthApiDeps {
  * Dependencies for media-handlers + image-handlers
  * (media.transcribe/extract_document/tts, image.generate).
  */
+/** OBS-03 (196): the boot-resolved voice (STT/TTS) selection threaded to the
+ *  daemon RPC handlers (`media.transcribe`/`tts.synthesize`) for the trajectory
+ *  emit. Carries the resolved `provider`, the `keyless` flag, the selection
+ *  `source` rung, and the collected `onSkip` reasons — the OBS-03 selection
+ *  observability the handler rides onto every `media.stt.*`/`media.tts.*` record
+ *  via `wireVoiceObs`. Resolved ONCE at boot by `setupMedia` from the same
+ *  `SttSelection`/`TtsSelection` the adapter construction used (no second source
+ *  of truth — never re-derived in the handler). Optional: a boot mode without the
+ *  audio selector (test harnesses / pre-193 callers) leaves it undefined and the
+ *  handler falls back to the config-derived provider + keyless. */
+export interface ResolvedVoiceSelection {
+  provider: string;
+  keyless: boolean;
+  source: "explicit" | "keyless-local" | "follow-main-key" | "fallback";
+  onSkip?: string[];
+}
+
 export interface MediaApiDeps {
   visionRegistry?: Map<string, VisionProvider>;
   mediaConfig: {
@@ -529,6 +546,15 @@ export interface MediaApiDeps {
       scopeRules: ReadonlyArray<VisionScopeRule>;
       defaultScopeAction: "allow" | "deny";
       defaultProvider?: string;
+    };
+    /** OBS-03 (196): the STT (transcription) config slice. The runtime object is
+     *  the full `integrations.media` config (daemon.ts passes
+     *  `c.container.config.integrations.media`), so `transcription` is already
+     *  present; declared here so `media.test.stt` reports the STT provider (the
+     *  :595 reads-TTS RED-proof fix) instead of the TTS one. */
+    transcription: {
+      provider?: string;
+      model?: string;
     };
     tts: {
       provider?: string;
@@ -654,6 +680,15 @@ export interface MediaApiDeps {
    *  precedent — no eventBus bridge in the daemon RPC context). Declared now;
    *  the emits land in Plan 03. */
   trajectoryRegistry?: import("@comis/observability").SessionTrajectoryHandleRegistry;
+  /** OBS-03 (196): the boot-resolved voice selections (STT/TTS) — `source`/
+   *  `keyless`/`provider` + the `onSkip` reasons the daemon `media.transcribe`/
+   *  `tts.synthesize` handlers thread onto the `media.stt.*`/`media.tts.*`
+   *  trajectory records via `wireVoiceObs`. Resolved ONCE at boot by `setupMedia`
+   *  from the construction-time `SttSelection`/`TtsSelection` (no re-derivation).
+   *  Optional — undefined on a boot mode without the audio selector (the handler
+   *  then derives provider+keyless from `mediaConfig`, source defaults to
+   *  "explicit"). */
+  voiceSelection?: { stt?: ResolvedVoiceSelection; tts?: ResolvedVoiceSelection };
   /** media-handlers reads deps.workspaceDirs / deps.defaultWorkspaceDir
    *  / deps.defaultAgentId for STT / vision / link-processing file paths.
    *  Same shape as ChannelsApiDeps + WorkspaceApiDeps for ApiDispatchDeps multi-extends parity. */

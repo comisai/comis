@@ -13,6 +13,9 @@ import type { AppContainer, TTSPort, TranscriptionPort, VisionProvider, FileExtr
 import { STT_ERR_TO_LOG, safePath } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { createAudioProviderSelector } from "./setup-audio-provider.js";
+// OBS-03 (196): the resolved-voice-selection shape the daemon RPC handlers consume.
+// Type-only (erased at runtime — no madge edge); same-package, so no project-ref cycle.
+import type { ResolvedVoiceSelection } from "../api/types.js";
 import {
   createTTSProvider,
   createSTTProvider,
@@ -79,6 +82,11 @@ export interface MediaResult {
   ssrfFetcher: SsrfGuardedFetcher;
   /** File extractor for document attachment processing (optional -- disabled by config). */
   fileExtractor?: FileExtractionPort;
+  /** OBS-03 (196): the boot-resolved STT/TTS selections (`source`/`keyless`/
+   *  `provider` + the `onSkip` reasons), threaded to the daemon RPC handlers for
+   *  the `media.stt.*`/`media.tts.*` trajectory emit. Present only when the audio
+   *  selector ran AND resolved (`sel.ok`); undefined otherwise. */
+  voiceSelection?: { stt?: ResolvedVoiceSelection; tts?: ResolvedVoiceSelection };
 }
 
 // ---------------------------------------------------------------------------
@@ -527,9 +535,39 @@ export async function setupMedia(deps: {
     );
   }
 
+  // OBS-03 (196): surface the boot-resolved STT/TTS selections so the daemon RPC
+  // handlers thread `source`/`keyless`/`provider` + the collected `onSkip` reasons
+  // onto the `media.stt.*`/`media.tts.*` trajectory (no re-derivation — the SAME
+  // SttSelection/TtsSelection the adapter construction above used). Present only
+  // when the selector ran AND resolved (`sel.ok`); an honest-unavailable or
+  // selector-less boot leaves the slice undefined (the handler falls back to the
+  // config-derived provider + keyless).
+  const voiceSelection: { stt?: ResolvedVoiceSelection; tts?: ResolvedVoiceSelection } = {};
+  if (sttSel?.ok) {
+    const skips = deps.audioSelector?.sttSkips() ?? [];
+    voiceSelection.stt = {
+      provider: sttSel.provider,
+      keyless: sttSel.keyless,
+      source: sttSel.source,
+      ...(skips.length > 0 ? { onSkip: skips } : {}),
+    };
+  }
+  if (ttsSel?.ok) {
+    const skips = deps.audioSelector?.ttsSkips() ?? [];
+    voiceSelection.tts = {
+      provider: ttsSel.provider,
+      keyless: ttsSel.keyless,
+      source: ttsSel.source,
+      ...(skips.length > 0 ? { onSkip: skips } : {}),
+    };
+  }
+
   return {
     ttsAdapter, visionRegistry, visionRegistryHolder, linkRunner,
     ffmpegCapabilities, mediaTempManager, mediaSemaphore, audioConverter,
     transcriber, ssrfFetcher, fileExtractor,
+    ...(voiceSelection.stt !== undefined || voiceSelection.tts !== undefined
+      ? { voiceSelection }
+      : {}),
   };
 }

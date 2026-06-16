@@ -964,7 +964,7 @@ function buildRpcDispatchDeps(deps: {
     configWebhook: c.container.config.daemon.configWebhook as { url?: string; timeoutMs?: number; secret?: string },
     secretStore: c.secretStore, mutableSecretManager: c.mutableHandle, envFilePath: c.envPath, logLevelManager: c.logLevelManager,
     getAgentBrowserService: c.getAgentBrowserService,
-    resolveAttachment: c.resolveAttachment, transcriber: c.transcriber, fileExtractor: c.fileExtractor,
+    resolveAttachment: c.resolveAttachment, transcriber: c.transcriber, fileExtractor: c.fileExtractor, voiceSelection: c.voiceSelection,
     approvalGate: c.approvalGate, suspendedAgents: c.suspendedAgents,
     hotAdd: g.hotAdd, hotRemove: g.hotRemove,
     diagnosticCollector: c.diagnosticCollector, billingEstimator: c.billingEstimator,
@@ -2017,7 +2017,7 @@ async function bootAgents(
   const {
     ttsAdapter, visionRegistry, visionRegistryHolder, linkRunner,
     mediaTempManager, mediaSemaphore, audioConverter,
-    transcriber, ssrfFetcher, fileExtractor,
+    transcriber, ssrfFetcher, fileExtractor, voiceSelection,
   } = await _setupMedia({ container, skillsLogger, onSuspiciousContent, audioSelector });
 
   // 6.6.7.5. RPC bridge (deferred dispatch) -- moved before setupChannels so rpcCall
@@ -2076,7 +2076,7 @@ async function bootAgents(
     getAgentCronScheduler, getAgentBrowserService,
     sessionTrackerRegistry, auditAggregator, onSuspiciousContent,
     ttsAdapter, visionRegistry, visionRegistryHolder, linkRunner, mediaTempManager, mediaSemaphore, audioConverter,
-    transcriber, ssrfFetcher, fileExtractor,
+    transcriber, ssrfFetcher, fileExtractor, voiceSelection,
     rpcCall, wireDispatch, approvalGate, interactiveCallbackWiring,
     channelAdaptersRef, deliveryQueue, drainAndStartDeliveryPrune, shutdownDeliveryQueue,
     cronWakeCallbackRef, trajectoryRegistry, executionPlanPorts, oauthManagers, servedWindowComparisons, agentBootWindowInfo,
