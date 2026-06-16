@@ -87,8 +87,9 @@ export type DriveMode = "auto" | "attached" | "detached";
  * never promoted → was untracked → delivered no completion (real-VPS 2026-06-16: gpt-5.5 did a single
  * idle wait + replied "Kicked off" on short builds). Pure + total; never throws.
  */
-export function resolveDriveMode(mode: DriveMode | undefined, _durable: boolean): DriveMode {
-  return mode ?? "auto"; // RED stub: ignores durability — the GREEN fix defaults a durable drive to detached.
+export function resolveDriveMode(mode: DriveMode | undefined, durable: boolean): DriveMode {
+  if (mode !== undefined) return mode; // an EXPLICIT operator mode always wins.
+  return durable ? "detached" : "auto"; // a durable drive backgrounds; a pty one-shot stays inline (I1).
 }
 
 /**

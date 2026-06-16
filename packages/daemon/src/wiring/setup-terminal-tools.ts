@@ -640,12 +640,14 @@ export function buildTerminalSharedDeps(
     // tryGetContext().sessionKey ?? "") — derived PER CALL inside the tool (resolveOwner),
     // so the daemon needs no new owner arg. This agentId is the fallback half of that key.
     agentId,
-    // DRIVE-02 (164-04): thread the operator-resolved autonomous-drive promotion mode so the
-    // wait tool can emit terminal:drive_promoted on a qualifying wait. The skills layer never
-    // reads config (layer purity) — the daemon supplies the resolved mode here. The `drive`
-    // block is OPTIONAL (schema-skills.ts, plan 05); `?? "auto"` is the schema default + the
-    // safe pre-`drive`-block posture (an absent block only promotes a genuinely-long drive, I1).
-    driveMode: deps.config?.drive?.mode ?? "auto",
+    // DRIVE-02 (164-04) / DELIVER-02: thread the operator's RAW promotion mode (`drive.mode`, may be
+    // undefined). The skills wait tool resolves the EFFECTIVE mode via resolveDriveMode(mode, durable):
+    // an explicit mode wins; ABSENT, a DURABLE drive (the default long backgrounded drive) defaults to
+    // `detached` (it backgrounds at the first wait → the backstop tracks it → a completion notification
+    // fires when the CLI idles), a pty one-shot to `auto` (inline, I1 — byte-identical to today). The
+    // skills layer reads no config (layer purity) — it only applies the pure resolver to these
+    // daemon-supplied values (`driveMode` + `durable` below). Closes the un-promoted short-build gap.
+    driveMode: deps.config?.drive?.mode,
     // READ-01 (164-06): the operator-resolved read mode for the read tool's bounded digest.
     // Same layer-purity posture as driveMode; `?? "digest"` is the schema default (plan 05's
     // drive.readMode) + the safe pre-block posture (the bounded current screen).

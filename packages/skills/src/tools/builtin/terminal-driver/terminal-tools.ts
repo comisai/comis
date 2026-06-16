@@ -46,7 +46,7 @@ export type {
   TerminalAutoAnsweredEvent,
   TerminalDrivePromotedEvent,
 } from "./terminal-events-attention.js";
-import { shouldPromoteDrive, emitDrivePromoted, type DriveMode } from "./terminal-drive-promote.js";
+import { shouldPromoteDrive, emitDrivePromoted, resolveDriveMode, type DriveMode } from "./terminal-drive-promote.js";
 import { boundedReadDigest, READ_DIGEST_BYTE_CAP, type DriveReadMode } from "./terminal-read-digest.js";
 import { matchAllowEntry, buildDirectSpawn, allowedCommandNames, type AllowEntryLike } from "./allowlist-matcher.js";
 import type { SessionCaps } from "./terminal-caps.js";
@@ -784,7 +784,12 @@ export function createTerminalSessionWaitTool(deps: TerminalToolDeps): AgentTool
       // (the daemon dispatcher dedupes to one notify). `out` is UNCHANGED. The skills layer is
       // STATELESS (emits per-qualifying-wait); the predicate decides, the helper emits. reason
       // is the WHY enum, never the screen (I3).
-      const driveMode = deps.driveMode ?? "auto";
+      // DELIVER-02: resolve the EFFECTIVE mode — an explicit `drive.mode` wins; absent, a DURABLE
+      // drive (the default long backgrounded drive) → `detached` (promote at the first wait → the
+      // backstop tracks it → a completion notification fires when the CLI idles), a pty one-shot →
+      // `auto` (inline, I1). Closes the gap where a short durable build whose wait resolved `idle`
+      // (claude paused, never a `producing` timeout) never promoted → was untracked → no completion.
+      const driveMode = resolveDriveMode(deps.driveMode, deps.durable === true);
       if (shouldPromoteDrive(out, driveMode)) {
         emitDrivePromoted(
           { emit: deps.eventBus.emit.bind(deps.eventBus), info: deps.logger.info.bind(deps.logger), nowMs: deps.nowMs },
