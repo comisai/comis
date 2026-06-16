@@ -26,10 +26,13 @@ import type {
   GatewayConfig,
   ProviderConfig,
   VideoProviderConfig,
+  ImageProviderConfig,
 } from "./types.js";
 import {
   SUPPORTED_VIDEO_PROVIDERS,
   VIDEO_PROVIDER_ENV_KEYS,
+  SUPPORTED_IMAGE_PROVIDERS,
+  IMAGE_PROVIDER_ENV_KEYS,
   PROVIDER_ENV_KEYS,
 } from "./types.js";
 import type {
@@ -74,6 +77,8 @@ export type NonInteractiveOptions = {
   lineToken?: string;
   lineSecret?: string;
   // Media generation
+  imageProvider?: string;
+  imageApiKey?: string;
   videoProvider?: string;
   videoApiKey?: string;
   // Paths
@@ -216,10 +221,19 @@ export function validateNonInteractiveOptions(
     );
   }
 
-  // --video-provider, when provided, must be one of the closed video vocabulary
-  // (auto|fal|google|xai). Unlike LLM providers (an evolving pi-ai catalog), this
-  // is a fixed config enum, so a typo would FATAL the daemon at config parse —
-  // reject it early with a clear hint.
+  // --image-provider / --video-provider, when provided, must be one of the
+  // closed media vocabulary. Unlike LLM providers (an evolving pi-ai catalog),
+  // these are fixed config enums, so a typo would FATAL the daemon at config
+  // parse — reject early with a clear hint.
+  if (opts.imageProvider !== undefined) {
+    const known = SUPPORTED_IMAGE_PROVIDERS.map((ip) => ip.id);
+    if (!known.includes(opts.imageProvider)) {
+      throw new NonInteractiveError(
+        `--image-provider must be one of: ${known.join(", ")}`,
+        "imageProvider",
+      );
+    }
+  }
   if (opts.videoProvider !== undefined) {
     const known = SUPPORTED_VIDEO_PROVIDERS.map((vp) => vp.id);
     if (!known.includes(opts.videoProvider)) {
@@ -368,6 +382,28 @@ export function buildNonInteractiveState(
     }
   }
 
+  // Image-generation provider (step 08d, skipped in non-interactive mode).
+  // Mirrors the interactive step (CRED-01): an openai/google/openrouter choice
+  // that matches the main provider reuses --api-key; fal or a cross-provider
+  // choice uses --image-api-key; auto and openai-codex (OAuth) take no key.
+  let imageProvider: ImageProviderConfig | undefined;
+  if (opts.imageProvider !== undefined) {
+    const requiredEnvKey = IMAGE_PROVIDER_ENV_KEYS[opts.imageProvider];
+    if (!requiredEnvKey) {
+      // auto or openai-codex — no static key collected here.
+      imageProvider = { provider: opts.imageProvider };
+    } else if (
+      opts.apiKey !== undefined &&
+      PROVIDER_ENV_KEYS[opts.provider!] === requiredEnvKey
+    ) {
+      imageProvider = { provider: opts.imageProvider };
+    } else if (opts.imageApiKey !== undefined) {
+      imageProvider = { provider: opts.imageProvider, apiKey: opts.imageApiKey };
+    } else {
+      imageProvider = { provider: opts.imageProvider };
+    }
+  }
+
   // Video-generation provider (step 08c, skipped in non-interactive mode).
   // Build the state the step would have produced from --video-provider. The
   // credential resolution mirrors the interactive step (CRED-01): a google/xai
@@ -441,6 +477,7 @@ export function buildNonInteractiveState(
     "gateway",
     "workspace",
     "tool-providers",
+    "image-providers",
     "video-providers",
     "review",
   ];
@@ -455,6 +492,7 @@ export function buildNonInteractiveState(
     agentName: opts.agentName ?? "comis-agent",
     model,
     channels,
+    ...(imageProvider !== undefined && { imageProvider }),
     ...(videoProvider !== undefined && { videoProvider }),
     gateway,
     dataDir,

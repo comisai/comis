@@ -68,7 +68,9 @@ describe("registerInitCommand", () => {
     expect(optionLongs).toContain("--line-token");
     expect(optionLongs).toContain("--line-secret");
 
-    // Media generation (2)
+    // Media generation (4)
+    expect(optionLongs).toContain("--image-provider");
+    expect(optionLongs).toContain("--image-api-key");
     expect(optionLongs).toContain("--video-provider");
     expect(optionLongs).toContain("--video-api-key");
 
@@ -89,11 +91,11 @@ describe("registerInitCommand", () => {
     expect(optionLongs).toContain("--reset-scope");
   });
 
-  it("has exactly 28 options", () => {
+  it("has exactly 30 options", () => {
     const program = new Command();
     registerInitCommand(program);
     const initCmd = program.commands.find((c) => c.name() === "init")!;
-    expect(initCmd.options).toHaveLength(28);
+    expect(initCmd.options).toHaveLength(30);
   });
 
   it("parses --channels as comma-separated list", () => {

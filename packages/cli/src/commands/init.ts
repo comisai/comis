@@ -38,6 +38,7 @@ import { gatewayStep } from "../wizard/steps/07-gateway.js";
 import { workspaceStep } from "../wizard/steps/08-workspace.js";
 import { toolProvidersStep } from "../wizard/steps/08b-tool-providers.js";
 import { videoProvidersStep } from "../wizard/steps/08c-video-providers.js";
+import { imageProvidersStep } from "../wizard/steps/08d-image-providers.js";
 import { reviewStep } from "../wizard/steps/09-review.js";
 import { writeConfigStep } from "../wizard/steps/10-write-config.js";
 import { daemonStartStep } from "../wizard/steps/11-daemon-start.js";
@@ -46,7 +47,7 @@ import { finishStep } from "../wizard/steps/12-finish.js";
 // ---------- Step Registry ----------
 
 /**
- * Build the full step registry with all 16 wizard steps.
+ * Build the full step registry with all 17 wizard steps.
  *
  * Used by both interactive and non-interactive modes to provide
  * the same step implementations to the wizard runner.
@@ -64,6 +65,7 @@ export function buildStepRegistry(): StepRegistry {
   registry.set("gateway", gatewayStep);
   registry.set("workspace", workspaceStep);
   registry.set("tool-providers", toolProvidersStep);
+  registry.set("image-providers", imageProvidersStep);
   registry.set("video-providers", videoProvidersStep);
   registry.set("review", reviewStep);
   registry.set("write-config", writeConfigStep);
@@ -105,6 +107,8 @@ function buildNonInteractiveOptionsFromCommander(
     slackAppToken: options.slackAppToken as string | undefined,
     lineToken: options.lineToken as string | undefined,
     lineSecret: options.lineSecret as string | undefined,
+    imageProvider: options.imageProvider as string | undefined,
+    imageApiKey: options.imageApiKey as string | undefined,
     videoProvider: options.videoProvider as string | undefined,
     videoApiKey: options.videoApiKey as string | undefined,
     dataDir: options.dataDir as string | undefined,
@@ -174,6 +178,8 @@ export function registerInitCommand(program: Command): void {
     .option("--line-token <tok>", "LINE channel token")
     .option("--line-secret <sec>", "LINE channel secret")
     // Media generation
+    .option("--image-provider <id>", "Image generation provider: auto|fal|openai|openai-codex|google|openrouter")
+    .option("--image-api-key <key>", "Image provider API key (e.g. FAL_KEY; reuses --api-key for a matching main provider)")
     .option("--video-provider <id>", "Video generation provider: auto|fal|google|xai")
     .option("--video-api-key <key>", "Video provider API key (e.g. FAL_KEY; reuses --api-key for a matching main provider)")
     // Paths

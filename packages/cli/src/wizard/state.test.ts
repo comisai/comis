@@ -56,11 +56,12 @@ describe("FLOW_STEPS", () => {
     expect(FLOW_STEPS.quickstart).toHaveLength(11);
   });
 
-  it("advanced has 16 steps", () => {
-    expect(FLOW_STEPS.advanced).toHaveLength(16);
+  it("advanced has 17 steps", () => {
+    expect(FLOW_STEPS.advanced).toHaveLength(17);
   });
 
-  it("advanced includes the video-providers step", () => {
+  it("advanced includes the image-providers and video-providers steps", () => {
+    expect(FLOW_STEPS.advanced).toContain("image-providers");
     expect(FLOW_STEPS.advanced).toContain("video-providers");
   });
 
@@ -380,7 +381,7 @@ describe("getCompletedStepCount", () => {
   it("returns 0/total for initial state", () => {
     const result = getCompletedStepCount(INITIAL_STATE, "advanced");
     expect(result.completed).toBe(0);
-    expect(result.total).toBe(16);
+    expect(result.total).toBe(17);
   });
 
   it("returns total/total when all complete", () => {

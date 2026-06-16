@@ -311,6 +311,24 @@ describe("validateNonInteractiveOptions", () => {
       ).not.toThrow();
     }
   });
+
+  it("rejects an unknown --image-provider (closed config vocabulary)", () => {
+    const opts = validOpts({ imageProvider: "midjourney" });
+    expect(() => validateNonInteractiveOptions(opts)).toThrow(NonInteractiveError);
+    try {
+      validateNonInteractiveOptions(opts);
+    } catch (e) {
+      expect((e as NonInteractiveError).field).toBe("imageProvider");
+    }
+  });
+
+  it("accepts each valid --image-provider value", () => {
+    for (const id of ["auto", "fal", "openai", "openai-codex", "google", "openrouter"]) {
+      expect(() =>
+        validateNonInteractiveOptions(validOpts({ imageProvider: id })),
+      ).not.toThrow();
+    }
+  });
 });
 
 // ==========================================================================
@@ -463,9 +481,37 @@ describe("buildNonInteractiveState", () => {
     expect(state.channels![2]).toEqual({ type: "irc", validated: false });
   });
 
-  it("omits videoProvider when --video-provider is not set", () => {
+  it("omits image/video provider when the flags are not set", () => {
     const state = buildNonInteractiveState(validOpts());
+    expect(state.imageProvider).toBeUndefined();
     expect(state.videoProvider).toBeUndefined();
+  });
+
+  it("records auto image provider without a credential", () => {
+    const state = buildNonInteractiveState(validOpts({ imageProvider: "auto" }));
+    expect(state.imageProvider).toEqual({ provider: "auto" });
+  });
+
+  it("records openai-codex image provider without a credential (OAuth)", () => {
+    const state = buildNonInteractiveState(validOpts({ imageProvider: "openai-codex" }));
+    expect(state.imageProvider).toEqual({ provider: "openai-codex" });
+  });
+
+  it("reuses the main provider key for a matching openai image provider", () => {
+    const state = buildNonInteractiveState(
+      validOpts({ provider: "openai", apiKey: "sk-openai-main-123456", imageProvider: "openai" }),
+    );
+    expect(state.imageProvider).toEqual({ provider: "openai" });
+  });
+
+  it("uses --image-api-key for fal image generation", () => {
+    const state = buildNonInteractiveState(
+      validOpts({ imageProvider: "fal", imageApiKey: "fal-img-key-1234567890" }),
+    );
+    expect(state.imageProvider).toEqual({
+      provider: "fal",
+      apiKey: "fal-img-key-1234567890",
+    });
   });
 
   it("records auto video provider without a credential", () => {
@@ -501,7 +547,7 @@ describe("buildNonInteractiveState", () => {
     expect(state.dataDir).toBe("/custom/data");
   });
 
-  it("includes all interactive steps (incl. storage + tool-providers + video-providers) in completedSteps", () => {
+  it("includes all interactive steps (incl. storage + tool/image/video-providers) in completedSteps", () => {
     const state = buildNonInteractiveState(validOpts());
     expect(state.completedSteps).toEqual([
       "welcome",
@@ -515,6 +561,7 @@ describe("buildNonInteractiveState", () => {
       "gateway",
       "workspace",
       "tool-providers",
+      "image-providers",
       "video-providers",
       "review",
     ]);

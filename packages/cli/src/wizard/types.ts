@@ -30,6 +30,7 @@ export type WizardStepId =
   | "workspace"
   | "tool-providers"
   | "video-providers"
+  | "image-providers"
   | "review"
   | "write-config"
   | "daemon-start"
@@ -108,6 +109,24 @@ export type VideoProviderConfig = {
   apiKey?: string;
 };
 
+/**
+ * Image-generation provider selection collected at the `image-providers` step.
+ *
+ * `provider` is one of the operator-configurable image vocabulary ids
+ * (`auto` | `fal` | `openai` | `openai-codex` | `google` | `openrouter`,
+ * mirroring core's `IMAGE_PROVIDER_VALUES`) written to
+ * `integrations.media.imageGeneration.provider`. `apiKey` is present ONLY when
+ * the choice needs a STATIC credential the wizard doesn't already collect: `fal`
+ * always (`FAL_KEY`), or `openai`/`google`/`openrouter` when the agent's MAIN
+ * provider doesn't already supply the matching key. `auto` (follow-main) and
+ * `openai-codex` (OAuth bearer, set up via `comis auth login`) carry no `apiKey`
+ * — CRED-01: image reuses the main provider's secret, no image-specific key.
+ */
+export type ImageProviderConfig = {
+  provider: string;
+  apiKey?: string;
+};
+
 /** Gateway settings collected during the wizard. Token is the only supported
  *  gateway auth method (the daemon's GatewayConfigSchema is a z.strictObject
  *  whose only auth keys are tokens[]/tls — there is no password field). */
@@ -172,6 +191,8 @@ export type WizardState = {
   readonly toolProviders?: readonly ToolProviderConfig[];
   /** Video-generation provider selection from the `video-providers` step. */
   readonly videoProvider?: VideoProviderConfig;
+  /** Image-generation provider selection from the `image-providers` step. */
+  readonly imageProvider?: ImageProviderConfig;
   readonly dataDir?: string;
   /** When true, skip post-setup health checks (set by --skip-health in non-interactive mode). */
   readonly skipHealth?: boolean;
@@ -327,6 +348,57 @@ export const VIDEO_PROVIDER_ENV_KEYS: Record<string, string> = {
   fal: "FAL_KEY",
   google: "GOOGLE_API_KEY",
   xai: "XAI_API_KEY",
+};
+
+// ---------- Image Provider Constants ----------
+
+/** Supported image-generation provider entry for the selection prompt. */
+export type SupportedImageProvider = {
+  id: string;
+  label: string;
+  hint: string;
+  /**
+   * Env-var key for the STATIC credential this provider needs. Absent for
+   * `auto` (follow-main) and `openai-codex` (OAuth bearer — set up via
+   * `comis auth login`, not a key the wizard can prompt for).
+   */
+  envKey?: string;
+};
+
+/**
+ * All operator-selectable image-generation providers, mirroring core's
+ * `IMAGE_PROVIDER_VALUES` (`auto` | `fal` | `openai` | `openai-codex` |
+ * `google` | `openrouter`). The drift guard in `08d-image-providers.test.ts`
+ * parses each id through `ImageGenerationConfigSchema` so this list can never
+ * diverge from the config vocabulary the daemon accepts.
+ *
+ * `auto` is the recommended default (provider-following): image generation
+ * follows the agent's main provider and reuses its credentials (CRED-01).
+ * `openai`/`google`/`openrouter` reuse `OPENAI_API_KEY`/`GOOGLE_API_KEY`/
+ * `OPENROUTER_API_KEY` (the same key the completion path uses); `fal` needs a
+ * dedicated `FAL_KEY`; `openai-codex` uses the Codex OAuth login (no static key).
+ */
+export const SUPPORTED_IMAGE_PROVIDERS: readonly SupportedImageProvider[] = [
+  { id: "auto", label: "Auto (follow main provider)", hint: "Reuse your agent's provider + key (recommended)" },
+  { id: "fal", label: "FAL", hint: "fal.ai queue API — needs a FAL_KEY" },
+  { id: "openai", label: "OpenAI Images", hint: "gpt-image-1 via OPENAI_API_KEY", envKey: "OPENAI_API_KEY" },
+  { id: "openai-codex", label: "OpenAI Codex (OAuth)", hint: "gpt-image-1 via your Codex login", },
+  { id: "google", label: "Google Gemini", hint: "Gemini image via GOOGLE_API_KEY", envKey: "GOOGLE_API_KEY" },
+  { id: "openrouter", label: "OpenRouter", hint: "FLUX via OPENROUTER_API_KEY", envKey: "OPENROUTER_API_KEY" },
+] as const;
+
+/**
+ * Map an image-generation provider id to the env-var key its STATIC credential
+ * is stored under. `auto` and `openai-codex` are absent (follow-main / OAuth).
+ * `openai`/`google`/`openrouter` reuse the SAME env keys as the matching LLM
+ * provider (`PROVIDER_ENV_KEYS`), so a matching main agent needs no extra
+ * credential (CRED-01).
+ */
+export const IMAGE_PROVIDER_ENV_KEYS: Record<string, string> = {
+  fal: "FAL_KEY",
+  openai: "OPENAI_API_KEY",
+  google: "GOOGLE_API_KEY",
+  openrouter: "OPENROUTER_API_KEY",
 };
 
 /** Map channel type to required credential environment variable names. */

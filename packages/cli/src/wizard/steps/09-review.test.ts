@@ -202,6 +202,37 @@ describe("reviewStep", () => {
     expect(summaryCall).toBeDefined();
   });
 
+  it("summary includes the image provider when imageProvider is set", async () => {
+    const state: WizardState = {
+      ...populatedState(),
+      imageProvider: { provider: "openrouter" },
+    };
+    const prompter = createMockPrompter({ select: ["confirm"] });
+
+    await reviewStep.execute(state, prompter);
+
+    const noteCalls = vi.mocked(prompter.note).mock.calls;
+    const summaryCall = noteCalls.find(
+      ([msg]) => typeof msg === "string" && msg.includes("Image:") && msg.includes("openrouter"),
+    );
+    expect(summaryCall).toBeDefined();
+  });
+
+  it("edit options include image-providers when imageProvider state exists", async () => {
+    const state: WizardState = {
+      ...populatedState(),
+      imageProvider: { provider: "auto" },
+    };
+    const prompter = createMockPrompter({ select: ["edit", "image-providers"] });
+
+    const result = await reviewStep.execute(state, prompter);
+
+    const secondSelectCall = vi.mocked(prompter.select).mock.calls[1];
+    const options = secondSelectCall[0].options as { value: string; label: string }[];
+    expect(options.find((o) => o.value === "image-providers")).toBeDefined();
+    expect(result._jumpTo).toBe("image-providers");
+  });
+
   it("summary includes the video provider when videoProvider is set", async () => {
     const state: WizardState = {
       ...populatedState(),

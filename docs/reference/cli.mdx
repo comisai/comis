@@ -640,14 +640,16 @@ Interactive setup wizard for first-time configuration. Supports three modes: int
 
 #### Media Generation
 
-The interactive **advanced** flow includes a **Video Generation** step that offers every supported provider for [`integrations.media.videoGeneration.provider`](/reference/config-yaml): `auto` (follow the agent's main provider — the recommended default), `fal`, `google` (Veo), and `xai` (Grok Imagine). The same selection is available non-interactively via the flags below.
+The interactive **advanced** flow includes **Image Generation** and **Video Generation** steps that offer every supported provider for [`integrations.media.imageGeneration.provider`](/reference/config-yaml) and [`integrations.media.videoGeneration.provider`](/reference/config-yaml). The same selections are available non-interactively via the flags below.
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
+| `--image-provider <id>` | `auto` \| `fal` \| `openai` \| `openai-codex` \| `google` \| `openrouter` | `auto` | Image generation provider |
+| `--image-api-key <key>` | `string` | - | Image provider credential (e.g. `FAL_KEY`) |
 | `--video-provider <id>` | `auto` \| `fal` \| `google` \| `xai` | `auto` | Video generation provider |
 | `--video-api-key <key>` | `string` | - | Video provider credential (e.g. `FAL_KEY`) |
 
-Credentials follow the provider-following model: `auto` reuses the agent's main provider key, and `google`/`xai` reuse `GOOGLE_API_KEY`/`XAI_API_KEY` when the main provider already supplies them — so `--video-api-key` is only needed for `fal` or a cross-provider `google`/`xai` choice. See [Environment Variables](/reference/environment-variables#llm-provider-keys) for the key reuse rules.
+Credentials follow the provider-following model: `auto` reuses the agent's main provider key; `openai`/`google`/`openrouter`/`xai` reuse `OPENAI_API_KEY`/`GOOGLE_API_KEY`/`OPENROUTER_API_KEY`/`XAI_API_KEY` when the main provider already supplies them; and `openai-codex` (image) uses your Codex OAuth login rather than a static key. So `--image-api-key`/`--video-api-key` are only needed for `fal` or a cross-provider static-key choice. See [Environment Variables](/reference/environment-variables#llm-provider-keys) for the key reuse rules.
 
 #### Paths and Behavior
 

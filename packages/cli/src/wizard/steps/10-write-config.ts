@@ -26,6 +26,7 @@ import {
   CHANNEL_ENV_KEYS,
   TOOL_PROVIDER_ENV_KEYS,
   VIDEO_PROVIDER_ENV_KEYS,
+  IMAGE_PROVIDER_ENV_KEYS,
 } from "../types.js";
 import type { WizardPrompter } from "../prompter.js";
 import { updateState } from "../state.js";
@@ -194,19 +195,23 @@ function buildConfigObject(state: WizardState): Record<string, unknown> {
     config.channels = channels;
   }
 
-  // Integrations section — video generation provider selection (step 08c).
-  // Emit the explicit operator choice (even "auto") so the configured backend
-  // is auditable in config.yaml; omitted entirely when the step never ran (the
-  // daemon then applies its own "auto" default). The credential itself lives in
-  // .env / the secrets store (collectManagedSecrets) — NOT a ${VAR} ref here,
-  // because the daemon resolves video keys (FAL_KEY / GOOGLE_API_KEY / XAI_API_KEY)
-  // straight from the SecretManager, mirroring image generation.
+  // Integrations section — media generation provider selections (steps 08c/08d).
+  // Emit the explicit operator choice (even "auto") so the configured backend is
+  // auditable in config.yaml; each sub-key is omitted when its step never ran
+  // (the daemon then applies its own "auto" default). The credentials live in
+  // .env / the secrets store (collectManagedSecrets) — NOT ${VAR} refs here,
+  // because the daemon resolves media keys (FAL_KEY / OPENAI_API_KEY /
+  // GOOGLE_API_KEY / OPENROUTER_API_KEY / XAI_API_KEY) straight from the
+  // SecretManager.
+  const media: Record<string, unknown> = {};
+  if (state.imageProvider?.provider) {
+    media.imageGeneration = { provider: state.imageProvider.provider };
+  }
   if (state.videoProvider?.provider) {
-    config.integrations = {
-      media: {
-        videoGeneration: { provider: state.videoProvider.provider },
-      },
-    };
+    media.videoGeneration = { provider: state.videoProvider.provider };
+  }
+  if (Object.keys(media).length > 0) {
+    config.integrations = { media };
   }
 
   return config;
@@ -251,6 +256,16 @@ function collectManagedSecrets(state: WizardState): Map<string, string> {
       const envKey = TOOL_PROVIDER_ENV_KEYS[tp.id];
       if (envKey && tp.apiKey) managed.set(envKey, tp.apiKey);
     }
+  }
+
+  // Image-generation credential (step 08d). Only present when the wizard
+  // collected a STATIC key (fal always; cross-provider openai/google/openrouter).
+  // A key-reusing choice, `auto`, or `openai-codex` (OAuth) carries no apiKey
+  // here — the matching key is already in the map from the provider section
+  // (CRED-01). Set() is idempotent, so a duplicate same-value write is harmless.
+  if (state.imageProvider?.apiKey) {
+    const envKey = IMAGE_PROVIDER_ENV_KEYS[state.imageProvider.provider];
+    if (envKey) managed.set(envKey, state.imageProvider.apiKey);
   }
 
   // Video-generation credential (step 08c). Only present when the wizard
