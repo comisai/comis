@@ -30,6 +30,10 @@ const SETUP_AUDIO_PROVIDER_TS = resolve(
   REPO_ROOT,
   "packages/daemon/src/wiring/setup-audio-provider.ts",
 );
+const TTS_FACTORY_TS = resolve(
+  REPO_ROOT,
+  "packages/skills/src/tools/integrations/tts-factory.ts",
+);
 
 /** Strip line + block comments so a token inside a comment cannot satisfy a
  *  wiring assertion (a comment naming buildAudioResolverDeps is NOT the wiring). */
@@ -91,6 +95,26 @@ describe("keyless-first audio built-but-not-wired source guard", () => {
     expect(resolveIdx).toBeGreaterThanOrEqual(0);
     expect(constructIdx).toBeGreaterThanOrEqual(0);
     expect(resolveIdx).toBeLessThan(constructIdx);
+  });
+
+  it("tts-factory.ts routes the local/piper case to createLocalTtsAdapter BEFORE the default 'Unknown TTS provider' error (TTS-02 built-but-not-wired guard)", () => {
+    // The program's #1 recurring blocker is built-but-not-wired: the offline TTS
+    // adapter (createLocalTtsAdapter) can exist + pass its own unit tests while
+    // the factory still falls `provider:"local"` through to the raw "Unknown TTS
+    // provider: local" default — a silent stub behind a wizard option (195). This
+    // pins the live routing with the SAME indexOf-ordering construct the existing
+    // TTS construct guard uses: the local/piper case must reach the adapter BEFORE
+    // the default error. A refactor that drops the case turns this red. NO
+    // allowlist add (allowlists are shrink-only).
+    const code = stripComments(readFileSync(TTS_FACTORY_TS, "utf8"));
+    const caseIdx = code.search(/case\s+"piper"|case\s+"local"/);
+    const adapterIdx = code.indexOf("createLocalTtsAdapter");
+    const defaultIdx = code.indexOf("Unknown TTS provider");
+    expect(caseIdx).toBeGreaterThanOrEqual(0);
+    expect(adapterIdx).toBeGreaterThanOrEqual(0);
+    expect(defaultIdx).toBeGreaterThanOrEqual(0);
+    // The adapter is reached BEFORE the default error (the case routes away from it).
+    expect(adapterIdx).toBeLessThan(defaultIdx);
   });
 
   it("setup-audio-provider.ts threads the Plan-01 resolvers + the SecretManager-backed audioKeyAvailable predicate (no codex branch)", () => {
