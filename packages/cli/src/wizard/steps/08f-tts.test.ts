@@ -97,6 +97,15 @@ describe("ttsStep", () => {
     );
   });
 
+  it("password validates minimum length", async () => {
+    const prompter = createMockPrompter({ select: ["elevenlabs"], password: ["el-key-123456"] });
+    await ttsStep.execute(baseState(), prompter);
+    const validate = vi.mocked(prompter.password).mock.calls[0][0].validate!;
+    expect(validate("")).toBeDefined();
+    expect(validate("short")).toBeDefined();
+    expect(validate("a-valid-api-key-1234")).toBeUndefined();
+  });
+
   it("every offered provider id is accepted by TtsConfigSchema (drift guard)", () => {
     for (const tp of SUPPORTED_TTS_PROVIDERS) {
       const parsed = TtsConfigSchema.parse({ provider: tp.id });

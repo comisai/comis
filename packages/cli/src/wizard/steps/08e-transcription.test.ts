@@ -91,6 +91,15 @@ describe("transcriptionStep", () => {
     );
   });
 
+  it("password validates minimum length", async () => {
+    const prompter = createMockPrompter({ select: ["deepgram"], password: ["dg-key-123456"] });
+    await transcriptionStep.execute(baseState(), prompter);
+    const validate = vi.mocked(prompter.password).mock.calls[0][0].validate!;
+    expect(validate("")).toBeDefined();
+    expect(validate("short")).toBeDefined();
+    expect(validate("a-valid-api-key-1234")).toBeUndefined();
+  });
+
   it("every offered provider id is accepted by TranscriptionConfigSchema (drift guard)", () => {
     for (const tp of SUPPORTED_TRANSCRIPTION_PROVIDERS) {
       const parsed = TranscriptionConfigSchema.parse({ provider: tp.id });
