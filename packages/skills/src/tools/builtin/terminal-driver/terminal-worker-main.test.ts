@@ -16,6 +16,7 @@ import { resolve } from "node:path";
 import {
   parseStuckMs,
   durableDir,
+  resolveTmuxSocketPath,
   buildLoadTmux,
   createFileLogger,
   warnIfDurableTmuxUnavailable,
@@ -46,6 +47,18 @@ describe("terminal-worker-main helpers", () => {
   it("durableDir = <COMIS_TERMINAL_DATA_DIR>/terminal-worker (matches the --allow-fs-write scope)", () => {
     process.env.COMIS_TERMINAL_DATA_DIR = "/data/x";
     expect(durableDir()).toBe(resolve("/data/x", "terminal-worker"));
+  });
+
+  it("resolveTmuxSocketPath = <durableDir>/tmux.sock — a STABLE socket under the data dir, NEVER /tmp (DUR-01 PrivateTmp survival)", () => {
+    // The tmux server's socket MUST live on the persistent, shared data dir — NOT the
+    // default /tmp. systemd `PrivateTmp=yes` gives every daemon start a FRESH private
+    // /tmp, so a /tmp socket is unreachable from the restarted daemon and re-attach
+    // fails even when KillMode=process keeps the tmux server process alive (proven live
+    // on the VPS 2026-06-16). The data-dir socket is reachable by both generations.
+    const sock = resolveTmuxSocketPath("/data/x/terminal-worker");
+    expect(sock).toBe(resolve("/data/x/terminal-worker", "tmux.sock"));
+    expect(sock.startsWith("/tmp")).toBe(false);
+    expect(sock).not.toContain("/tmp/");
   });
 
   it("createFileLogger appends JSONL with level+msg and is best-effort (never throws on a bad path)", () => {

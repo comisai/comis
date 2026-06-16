@@ -81,6 +81,7 @@ function makeFakeTmux(over: { hasSession?: boolean } = {}): {
       rows: 40,
       env: { PATH: "/usr/bin" } as NodeJS.ProcessEnv,
       tmuxPath: "/opt/homebrew/bin/tmux",
+      socketPath: "/data/x/terminal-worker/tmux.sock",
       hasSession: () => over.hasSession ?? false,
       runTmux,
       ...extra,
@@ -179,6 +180,49 @@ describe("terminal-tmux-backend — pure command builders (the spawn-posture ana
     expect(argv).toContain("100");
     expect(argv).toContain("-y");
     expect(argv).toContain("30");
+  });
+});
+
+describe("terminal-tmux-backend — DUR-01 PrivateTmp survival: every command targets the stable -S socket", () => {
+  const sock = "/data/x/terminal-worker/tmux.sock";
+  const tmuxPath = "/usr/bin/tmux";
+  const head = (argv: string[]): string[] => argv.slice(0, 3);
+
+  it("buildTmuxSpawnArgv puts -S <socket> right after tmux (the SERVER binds the stable, non-/tmp socket)", () => {
+    const argv = buildTmuxSpawnArgv({ tmuxPath, socketPath: sock, name: "comis-abc", bin: "/x", binArgv: [], cols: 80, rows: 24 });
+    expect(head(argv)).toEqual([tmuxPath, "-S", sock]);
+    expect(argv).toContain("new-session");
+  });
+
+  it("buildTmuxHasSessionArgv puts -S <socket> first — the re-attach probe MUST hit the same socket the server bound", () => {
+    expect(buildTmuxHasSessionArgv({ tmuxPath, socketPath: sock, name: "comis-abc" })).toEqual([
+      tmuxPath,
+      "-S",
+      sock,
+      "has-session",
+      "-t",
+      "comis-abc",
+    ]);
+  });
+
+  it("kill / send-keys / capture / resize all carry the -S <socket> prefix (one server, one socket)", () => {
+    expect(head(buildTmuxKillArgv({ tmuxPath, socketPath: sock, name: "comis-abc" }))).toEqual([tmuxPath, "-S", sock]);
+    expect(head(buildTmuxSendKeysArgv({ tmuxPath, socketPath: sock, name: "comis-abc", bytes: "y" }))).toEqual([tmuxPath, "-S", sock]);
+    expect(head(buildTmuxCaptureArgv({ tmuxPath, socketPath: sock, name: "comis-abc" }))).toEqual([tmuxPath, "-S", sock]);
+    expect(head(buildTmuxResizeArgv({ tmuxPath, socketPath: sock, name: "comis-abc", cols: 80, rows: 24 }))).toEqual([
+      tmuxPath,
+      "-S",
+      sock,
+    ]);
+  });
+
+  it("createTmuxBackend threads deps.socketPath onto BOTH the new-session and the capture commands", () => {
+    const tmux = makeFakeTmux({ hasSession: false });
+    createTmuxBackend(tmux.deps({ socketPath: sock }));
+    const created = tmux.spawned().find((a) => a.includes("new-session"));
+    const capture = tmux.spawned().find((a) => a.includes("capture-pane"));
+    expect(created?.slice(0, 3)).toEqual(["/opt/homebrew/bin/tmux", "-S", sock]);
+    expect(capture?.slice(0, 3)).toEqual(["/opt/homebrew/bin/tmux", "-S", sock]);
   });
 });
 

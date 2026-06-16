@@ -14,7 +14,7 @@
  * @module
  */
 import { describe, it, expect, vi } from "vitest";
-import { buildWakeDurabilityDeps } from "./terminal-durable-wiring.js";
+import { buildWakeDurabilityDeps, buildIsTmuxAlive } from "./terminal-durable-wiring.js";
 
 function makeLogger() {
   return { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn(), child: vi.fn(function (this: unknown) { return this; }) };
@@ -90,5 +90,34 @@ describe("buildWakeDurabilityDeps — LO-03: checkLiveness refreshes lastActivit
     // LO-03: the redundant explicit refresh hook is gone — checkLiveness's status round-trip
     // refreshes lastActivity, so the bundle is {driveJournalStore, checkLiveness} only.
     expect(Object.keys(deps).sort()).toEqual(["checkLiveness", "driveJournalStore"]);
+  });
+});
+
+describe("buildIsTmuxAlive — DUR-01: the daemon liveness probe targets the worker's -S data-dir socket", () => {
+  const socketPath = "/home/comis/.comis/terminal-worker/tmux.sock";
+
+  it("probes `tmux -S <dataDir socket> has-session -t comis-<id>` — NOT tmux's default /tmp socket", () => {
+    const calls: Array<{ bin: string; args: string[] }> = [];
+    const isAlive = buildIsTmuxAlive("/usr/bin/tmux", socketPath, (bin, args) => {
+      calls.push({ bin, args });
+    });
+    expect(isAlive("comis-abc")).toBe(true); // run() did not throw ⇒ exit 0 ⇒ alive
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.bin).toBe("/usr/bin/tmux");
+    // -S must lead the args so the probe hits the SAME socket the worker bound; a default
+    // /tmp socket is unreachable from a restarted daemon under PrivateTmp=yes.
+    expect(calls[0]!.args.slice(0, 2)).toEqual(["-S", socketPath]);
+    expect(calls[0]!.args).toEqual(["-S", socketPath, "has-session", "-t", "comis-abc"]);
+  });
+
+  it("returns false (the SAFE direction) when the probe throws — a probe that can't confirm alive must not assert it", () => {
+    const isAlive = buildIsTmuxAlive("/usr/bin/tmux", socketPath, () => {
+      throw new Error("exit 1: no such session");
+    });
+    expect(isAlive("comis-gone")).toBe(false);
+  });
+
+  it("absent tmuxPath ⇒ always-false (durable falls back to the lost floor, I1)", () => {
+    expect(buildIsTmuxAlive(undefined, socketPath)("comis-abc")).toBe(false);
   });
 });
