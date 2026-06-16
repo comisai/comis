@@ -33,6 +33,8 @@ Here's everything Comis keeps on disk — and why.
 ├── traces/                  # per-session JSONL execution traces
 ├── workspace/               # default agent workspace (files, git, skills, terminal/)
 ├── workspace-<agentId>/     # named-agent workspaces (one per extra agent)
+├── models/                  # auto-downloaded ML model caches
+│   └── whisper/             # local STT whisper model (downloaded once on first use, reused)
 ├── agents/                  # per-agent RPC state (subagent results, etc.)
 ├── background-tasks/        # background task state files
 ├── identity/
@@ -50,6 +52,7 @@ Some entries only appear under specific conditions.
 - `broker.sock` — present only when the credential broker is active (`executor.broker.enabled: true` in `config.yaml`). Ephemeral — deleted and recreated on each daemon start.
 - `ecosystem.config.js` — created only by `comis pm2 setup`.
 - Named workspaces like `workspace-myagent/` — appear only when you define more than one agent.
+- `models/whisper/` — created only after the **first** voice transcription that uses the keyless in-process local STT engine (when `integrations.media.transcription.provider` resolves to `local` without a `local.baseUrl` server). Absent on a fresh install and whenever local STT never runs.
 </Note>
 
 ## File-by-file reference
@@ -215,6 +218,17 @@ The `video_generate` tool (v2.24) persists generated videos to `media/videos/` i
 
 **Written by:** the daemon on first startup for each agent.
 **Safe to delete?** Deleting a workspace erases the agent's identity files, cron job definitions, and skill configurations. The daemon recreates the directory structure but not the content you or the agent wrote there.
+
+---
+
+### `models/whisper/`
+
+The on-disk cache for the **keyless in-process local STT engine** (whisper, run via Transformers.js / ONNX Runtime). When voice transcription resolves to the `local` provider without a `local.baseUrl` server, the engine lazy-downloads a small model (`integrations.media.transcription.local.model`, default `base`) **once** over TLS from the model hub on the first voice note, writes it here, and reuses it for the rest of the process. The directory lives under the data dir, so it is already inside the daemon's `--allow-fs-write=${COMIS_DATA_DIR}` scope — no extra permission grant is required (see [Voice](/media/voice#transcription-speech-to-text) and [Node Permissions](/reference/node-permissions#keyless-local-stt-whisper-engine)).
+
+It holds model weights only — **no secret, no credential**, nothing user-specific.
+
+**Written by:** the local STT adapter, on the first transcription that uses the in-process engine.
+**Safe to delete?** Yes. It re-downloads on the next local transcription; deleting it only forces one slower first call afterward. Never created (or needed) when you use a `local.baseUrl` server or a keyed cloud provider instead.
 
 ---
 

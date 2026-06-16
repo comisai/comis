@@ -71,7 +71,7 @@ multiple via `fallbackProviders` for automatic failover.
 | Provider | Default Model | API Key | Notes |
 |----------|--------------|---------|-------|
 | `auto` | -- | None needed | **Default.** Keyless-first: resolves to the local engine when available, else follows the agent's main provider key, else honest-unavailable |
-| `local` | base | None needed | Keyless local whisper engine (the engine itself lands in a later release; configure a local whisper server via `local.baseUrl`) |
+| `local` | base | None needed | Keyless **in-process** whisper engine — auto-downloads a small model (default `base`) once to `~/.comis/models/whisper/` on first use, then reuses it. Or point `local.baseUrl` at an OpenAI-compatible local whisper server. |
 | `openai` | gpt-4o-mini-transcribe | `OPENAI_API_KEY` | Explicit opt-in; fast |
 | `groq` | whisper-large-v3-turbo | `GROQ_API_KEY` | Explicit opt-in; returns language detection and duration |
 | `deepgram` | nova-3 | `DEEPGRAM_API_KEY` | Explicit opt-in; high accuracy, real-time streaming |
@@ -80,10 +80,13 @@ multiple via `fallbackProviders` for automatic failover.
 **Behavioral change (no backward-compat constraint):** earlier releases defaulted
 STT to `openai` and required `OPENAI_API_KEY`. The default is now `auto` (keyless).
 An install that relied on the implicit `openai` default plus a present
-`OPENAI_API_KEY` will resolve to `auto` → honest-unavailable until a local engine is
-configured — **or** set `provider: openai` explicitly to restore the previous
-behavior. This is intentional: voice now works with zero credentials, and an
-OAuth-only main is never sent an empty-bearer request.
+`OPENAI_API_KEY` will resolve to `auto` → the keyless **local** whisper engine (it
+auto-downloads its model on the first voice note when ffmpeg is present and the host
+can reach the model hub), and honest-degrades to "not available" only if neither the
+local engine nor a reusable main-provider audio key can serve — **or** set
+`provider: openai` explicitly to restore the previous behavior. This is intentional:
+voice now works with zero credentials, and an OAuth-only main is never sent an
+empty-bearer request.
 </Note>
 
 <AccordionGroup>
@@ -97,12 +100,25 @@ OAuth-only main is never sent an empty-bearer request.
   </Accordion>
 
   <Accordion title="local (keyless)">
-    A keyless local whisper engine — no API key, no cloud round-trip. Configure the
-    model via `transcription.local.model` (default `base`) and, to point at an
-    OpenAI-compatible local whisper **server**, `transcription.local.baseUrl`. The
-    bundled in-process engine arrives in a later release; until then `auto` honest-
-    degrades to "not available" when no `local.baseUrl` server and no keyed provider
-    are configured.
+    A keyless local whisper engine — no API key, no cloud round-trip. Two modes:
+
+    - **In-process (default, zero-config).** When `local.baseUrl` is unset, Comis runs
+      whisper in-process via [Transformers.js](https://huggingface.co/docs/transformers.js).
+      The engine lazy-loads on the first voice note: it auto-downloads a small model
+      (`transcription.local.model`, default `base`) once over TLS from the model hub to
+      the scoped cache `~/.comis/models/whisper/`, then reuses the cached model for the
+      life of the process — so the **first** transcription is slower (it pays the
+      download + load) and every subsequent one is fast. The engine runs on ONNX
+      Runtime, which the daemon's existing `--allow-addons` flag already covers — no new
+      permission flag is needed (see [Node Permissions](/reference/node-permissions#keyless-local-stt-whisper-engine)).
+      If the engine or model can't load, or ffmpeg is absent, transcription
+      honest-degrades to "not available" (so `auto` falls through to the next rung) —
+      it never crashes the inbound message.
+    - **`local.baseUrl` server (escape hatch).** Set `transcription.local.baseUrl` to an
+      OpenAI-compatible local whisper **server** (faster-whisper-server, Speaches,
+      whisper.cpp-server, …) and Comis talks to it keyless — no in-process model
+      download, fully offline-capable, and GPU-accelerated if the server is. A reachable
+      server makes `local` available without the in-process engine.
   </Accordion>
 
   <Accordion title="OpenAI">
@@ -295,8 +311,8 @@ integrations:
       provider: auto                  # auto (keyless-first), local, openai, groq, deepgram
       model: gpt-4o-mini-transcribe   # Model override (provider-dependent)
       local:                          # Keyless local whisper engine (used by auto/local)
-        model: base                   # Local model name
-        baseUrl: ""                   # Optional OpenAI-compatible local whisper server
+        model: base                   # In-process model (auto-downloads once to ~/.comis/models/whisper/)
+        baseUrl: ""                   # Set → OpenAI-compatible local whisper server (no in-process download)
         # engine: ""                  # Engine selector (reserved for a later release)
       maxFileSizeMb: 25               # Max audio file size
       timeoutMs: 60000                # API timeout (1 min)
@@ -333,14 +349,16 @@ Voice features degrade gracefully — and the keyless defaults mean "no provider
 is increasingly rare. You do not need every provider configured for the system to
 work.
 
-**When transcription resolves to honest-unavailable** (STT `auto` with no local
-engine and no reusable main-provider audio key — the common case for a
-Codex/OAuth-only main today), voice messages are not auto-transcribed and **no
-adapter is constructed** (so there is no empty-bearer 401). Instead, your agent
-still receives the message with a hint to use the [transcribe_audio](/agent-tools/media)
-on-demand tool. The honest-unavailable reason is logged once, naming the exact
-remedy (enable the local engine, set `local.baseUrl`, or set `GROQ_API_KEY` /
-`OPENAI_API_KEY`). The agent's text reply is never blocked.
+**When transcription resolves to honest-unavailable** (STT `auto` when the keyless
+local engine cannot serve — e.g. ffmpeg is absent or the host has no egress to the
+model hub and no `local.baseUrl` server — and there is no reusable main-provider
+audio key, which is also the case for a Codex/OAuth-only main with none of the
+above), voice messages are not auto-transcribed and **no adapter is constructed**
+(so there is no empty-bearer 401). Instead, your agent still receives the message
+with a hint to use the [transcribe_audio](/agent-tools/media) on-demand tool. The
+honest-unavailable reason is logged once, naming the exact remedy (install ffmpeg,
+set `local.baseUrl`, or set `GROQ_API_KEY` / `OPENAI_API_KEY`). The agent's text
+reply is never blocked.
 
 **TTS defaults to keyless Edge**, so auto-reply works without any key. If you set
 a keyed TTS provider without its key, the resolution is honest-unavailable and text
