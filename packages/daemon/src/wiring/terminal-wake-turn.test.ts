@@ -22,7 +22,7 @@
 
 import { describe, it, expect, vi } from "vitest";
 
-import { buildWokenTurnDriver, type WokenTurnDriverDeps, type TerminalAttentionConfig, type DriveJournalStore } from "./terminal-wake-turn.js";
+import { buildWokenTurnDriver, buildEscalationMessage, type WokenTurnDriverDeps, type TerminalAttentionConfig, type DriveJournalStore } from "./terminal-wake-turn.js";
 import type { PersistedWakeOwner } from "./terminal-wake-persistence.js";
 import { DRIVE_SCOPE_PREFIX } from "./terminal-drive-scope.js";
 import type { DriveJournal } from "@comis/skills/tools";
@@ -758,5 +758,31 @@ describe("terminal-wake-turn — ISSUE-3: a channel/API-stamped session drives v
     expect(registry.sendText, "the woken turn must DRIVE the live channel/API session, not the not-found view").toHaveBeenCalledTimes(1);
     const readOwner = registry.read.mock.calls[0]?.[1];
     expect(readOwner, "read must use the recovered STAMPED owner, not (realAgentId,'')").toMatchObject(STAMPED);
+  });
+});
+
+describe("buildEscalationMessage — actionable, redaction-safe escalation text (real-VPS 2026-06-16)", () => {
+  // Live Telegram drive: the escalation delivered the BARE "Terminal session X needs a human:
+  // <reason>." — the user could not tell what was wanted or how to unblock the drive. The message
+  // must be reason-aware + tell the user HOW to respond (reply to drive it, or stop), while
+  // staying redaction-safe (the structural reason ONLY, never the attacker-influenceable screen).
+  it("is reason-aware + tells the user how to respond (not the bare 'needs a human: <reason>')", () => {
+    const m = buildEscalationMessage("sess-1", "no_safe_match");
+    expect(m).toContain("sess-1");
+    expect(m.toLowerCase()).toContain("waiting for input");
+    expect(m.toLowerCase()).toContain("reply"); // actionable: how to respond
+    expect(m.toLowerCase()).toContain("stop"); // how to end it
+    expect(m.toLowerCase()).not.toContain("needs a human"); // not the old cryptic form
+  });
+
+  it("differentiates a destructive / auth prompt from a plain wait", () => {
+    expect(buildEscalationMessage("s", "destructive").toLowerCase()).toContain("destructive");
+    expect(buildEscalationMessage("s", "auth_login").toLowerCase()).toMatch(/sign-in|credential/);
+    expect(buildEscalationMessage("s", "loop_detected").toLowerCase()).toContain("repeat");
+  });
+
+  it("is redaction-safe: built from ONLY (sessionId, reason) — there is no screen param to leak", () => {
+    expect(buildEscalationMessage.length).toBe(2);
+    expect(buildEscalationMessage("sess-xyz", "approval")).toContain("sess-xyz");
   });
 });
