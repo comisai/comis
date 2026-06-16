@@ -837,14 +837,17 @@ describe("setupMedia — construction follows the resolver's chosen provider (WR
     // the resolved openai provider.
     expect(result.transcriber).toBeDefined();
     // createSTTProvider must have been called with the RESOLVED provider, not "auto".
+    // Plan 02: a third arg — the scoped dataDir — is threaded through.
     expect(mockCreateSTTProvider).toHaveBeenCalledWith(
       expect.objectContaining({ provider: "openai" }),
       expect.anything(),
+      expect.any(String),
     );
     // It must NEVER be called with the raw "auto" once a selector approved openai.
     expect(mockCreateSTTProvider).not.toHaveBeenCalledWith(
       expect.objectContaining({ provider: "auto" }),
       expect.anything(),
+      expect.any(String),
     );
   });
 
@@ -863,6 +866,7 @@ describe("setupMedia — construction follows the resolver's chosen provider (WR
     expect(mockCreateSTTProvider).toHaveBeenCalledWith(
       expect.objectContaining({ provider: "openai", model: "whisper-resolved" }),
       expect.anything(),
+      expect.any(String),
     );
   });
 
@@ -900,6 +904,40 @@ describe("setupMedia — construction follows the resolver's chosen provider (WR
     expect(mockCreateSTTProvider).toHaveBeenCalledWith(
       expect.objectContaining({ provider: "openai" }),
       expect.anything(),
+      expect.any(String),
+    );
+  });
+
+  // Plan 02 (LOCAL-01): the scoped container.config.dataDir is threaded into every
+  // createSTTProvider call site so the in-process `local` adapter writes its model
+  // cache to <dataDir>/models/whisper/. process.env is NOT used.
+  it("threads the scoped container.config.dataDir into the local STT provider construction", async () => {
+    const setupMedia = await getSetupMedia();
+    const container = createMinimalMediaConfig({
+      transcription: { provider: "local", fallbackProviders: [] },
+    });
+    // The in-process local adapter must cache under THIS dataDir.
+    container.config.dataDir = "/var/lib/comis-test";
+    // Mirror the real factory: the local provider constructs successfully.
+    mockCreateSTTProvider.mockReturnValue({
+      ok: true,
+      value: { transcribe: vi.fn(), name: "local-stt" },
+    });
+
+    await setupMedia({
+      container,
+      skillsLogger: createMockLogger() as any,
+      audioSelector: fakeSelector(
+        { ok: true, provider: "local", keyless: true, source: "keyless-local" },
+        { ok: true, provider: "edge", keyless: true, source: "keyless-local" },
+      ),
+    });
+
+    // The resolved 'local' provider AND the scoped dataDir reach the factory.
+    expect(mockCreateSTTProvider).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "local" }),
+      expect.anything(),
+      "/var/lib/comis-test",
     );
   });
 });
