@@ -2232,7 +2232,7 @@ function makeFd3Capture(): {
 }
 
 describe("createTerminalWorker — TR-11 fd3 attention emit on a settled frame (no poll)", () => {
-  it("driving a session to a settled, cursor-parked prompt emits exactly one terminal:input_needed frame on fd3", async () => {
+  it("a foreground `wait` settle on a cursor-parked prompt SUPPRESSES the fd3 emit (LIVE-04 #4 — the wait reply is the agent's attention signal)", async () => {
     const sched = makeFakeScheduler();
     const rec = makeRecordingBackend();
     const fd3 = makeFd3Capture();
@@ -2251,8 +2251,13 @@ describe("createTerminalWorker — TR-11 fd3 attention emit on a settled frame (
     rec.emit("boot output line\n");
     rec.emit("Do you trust this? (y/n) ");
 
-    // A `wait` settle resolves idle on the now-quiet, parked frame; the worker runs
-    // classifyFrame on the settled snapshot and the emitter fires the transition.
+    // A `wait` settle resolves idle on the now-quiet, parked frame. LIVE-04 (#4): this is the
+    // agent's FOREGROUND wait — its REPLY (the resolved WaitResult) is the agent's attention signal
+    // (it unblocks + drives), so the worker SUPPRESSES the fd3 emit for a wait settle. A fd3 woken
+    // turn here would RACE the agent (the launch escalation: at launch claude's welcome screen
+    // settles DURING the wait → a spurious "waiting for input" before the agent sends its first
+    // keystroke). The emit mechanism itself is proven in terminal-attention-emitter.test.ts; a
+    // backgrounded drive is attended by the daemon backstop, not this fd3.
     const p = worker.handle(waitFrame({ forIdleMs: 50 }));
     await Promise.resolve();
     await Promise.resolve();
@@ -2261,13 +2266,10 @@ describe("createTerminalWorker — TR-11 fd3 attention emit on a settled frame (
     await p;
     await flushEmulator();
 
-    const frames = fd3.frames();
-    expect(frames).toHaveLength(1);
-    expect(frames[0].sessionId).toBe("s1");
-    expect(frames[0].event).toBe("terminal:input_needed");
-    expect(frames[0].payload).toMatchObject({ state: "awaiting-input" });
-    // Redaction-safe: no screen/text on the wire.
-    expect(frames[0].payload).not.toHaveProperty("screen");
+    expect(
+      fd3.frames(),
+      "a foreground wait settle writes NO fd3 frame (LIVE-04 — the wait reply is the agent's attention signal)",
+    ).toHaveLength(0);
   });
 
   it("a settled working stream that never parks (cursor mid-screen, content below) emits NO input_needed frame", async () => {

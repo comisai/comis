@@ -52,6 +52,14 @@ export interface ObserveSettledFrameArgs {
   stuckMs: number;
   /** Optional operator prompt cues (reinforce the cursor-parked gate only; never override structure). */
   hintPatterns?: readonly string[];
+  /**
+   * LIVE-04 (#4): suppress the fd3 ATTENTION write for this frame while still updating the
+   * progress clock + the emitter's edge-state. The worker sets it when the settle was the
+   * agent's explicit foreground `wait` — that wait's reply is the agent's attention signal, so a
+   * fd3 woken turn would race it (the launch escalation). Default `false` (act-then-return settles
+   * + the exit path emit normally; a backgrounded drive is attended by the daemon backstop, not fd3).
+   */
+  suppressEmit?: boolean;
 }
 
 /**
@@ -64,7 +72,7 @@ export interface ObserveSettledFrameArgs {
  * @param args - The session record + emitter + the settle verdict + the injected clock + stuckMs.
  */
 export async function observeSettledFrame(args: ObserveSettledFrameArgs): Promise<void> {
-  const { state, emitter, settled, nowMs, stuckMs, hintPatterns } = args;
+  const { state, emitter, settled, nowMs, stuckMs, hintPatterns, suppressEmit } = args;
 
   // Await the pending @xterm parse so the snapshot reflects the just-emitted bytes
   // (the same stability flush handleRead awaits before serializing a settled frame).
@@ -105,8 +113,10 @@ export async function observeSettledFrame(args: ObserveSettledFrameArgs): Promis
     { noProgressMs, stuckMs },
   );
 
-  // Edge-triggered fd3 emit (the emitter writes only on a state transition).
-  emitter.observe(classification, { noProgressMs });
+  // Edge-triggered fd3 emit (the emitter writes only on a state transition). LIVE-04 (#4): on a
+  // foreground `wait` settle, suppress the write (the wait reply is the agent's attention signal)
+  // while the emitter still advances its edge-state so the transition never re-fires later.
+  emitter.observe(classification, { noProgressMs, suppressEmit });
 }
 
 /** Explicit dependencies for {@link statusReplyFromState} — a read-only query, so (unlike {@link ObserveSettledFrameArgs}) it takes NO emitter. */

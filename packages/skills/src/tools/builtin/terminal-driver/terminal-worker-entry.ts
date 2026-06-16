@@ -275,7 +275,7 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
    * heart of every act-then-return-SETTLED handler + the explicit `wait`. `params`
    * passes through to {@link runSettle}.
    */
-  async function settleSession(state: SessionState, params: SettleParams): Promise<SettleResult> {
+  async function settleSession(state: SessionState, params: SettleParams, suppressAttentionEmit = false): Promise<SettleResult> {
     const settleDeps: SettleDeps = {
       setTimer,
       clearTimer,
@@ -309,6 +309,9 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
         settled: result.reason !== "timeout",
         nowMs,
         stuckMs,
+        // LIVE-04 (#4): a foreground `wait` settle suppresses the fd3 attention write (the wait
+        // reply is the agent's signal); act-then-return settles (create/send) emit normally.
+        suppressEmit: suppressAttentionEmit,
       });
     }
     return result;
@@ -603,7 +606,10 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
       forExit: frame.params["forExit"] === true ? true : undefined,
       timeoutMs: typeof frame.params["timeoutMs"] === "number" ? frame.params["timeoutMs"] : undefined,
     };
-    const r = await settleSession(state, params);
+    // LIVE-04 (#4): suppress the fd3 attention emit for this foreground `wait` settle — the wait
+    // reply below IS the agent's attention signal (it unblocks + drives), so a fd3 woken turn would
+    // race it (the launch escalation). The progress clock + the emitter's edge-state still advance.
+    const r = await settleSession(state, params, true);
 
     logInteraction(sessionId, "wait", startedAt, { reason: r.reason, isComplete: r.isComplete });
     await state.writeFlush; // perceive the SETTLED grid, not a mid-parse snapshot

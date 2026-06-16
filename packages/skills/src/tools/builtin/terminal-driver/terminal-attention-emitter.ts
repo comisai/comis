@@ -159,6 +159,12 @@ export function createAttentionEmitter(deps: AttentionEmitterDeps): AttentionEmi
       if (c.state === lastState) return;
       lastState = c.state;
 
+      // LIVE-04 (#4): a foreground `wait` settle ADVANCES lastState (above) — so the transition is
+      // recorded and never re-fires on a later settle — but writes NO fd3 frame. The agent's wait
+      // REPLY is its attention signal (it unblocks and drives); a fd3 woken turn here would race it
+      // (the launch escalation). A backgrounded drive is attended by the daemon backstop, not fd3.
+      if (opts?.suppressEmit === true) return;
+
       const frame = frameForState(sessionId, c, opts?.noProgressMs ?? 0);
       // A non-attention state (`working`) records the transition but emits no frame.
       if (frame === undefined) return;
