@@ -695,6 +695,21 @@ export interface AgentEvents {
   };
 
   /**
+   * OUTCOME-08: a finished trajectory's resolved net task-outcome (WS1). Emitted daemon-side after
+   * `OutcomeSignalPort.resolve`, `learningOutcome.enabled`-gated (default OFF), bridged for `comis explain` (OBS-02). Counts/ids/closed-enums ONLY — no bodies/alpha (SEC-01 §7); adding one is a compile error.
+   */
+  "learning:outcome_observed": {
+    agentId: string;
+    sessionKey?: string;
+    traceId: string;
+    trajectoryId: string;
+    outcome: "success" | "failure" | "corrected" | "unknown";
+    source: "tool" | "pipeline" | "correction" | "judge" | "reaction" | "explicit";
+    confidence: number;
+    timestamp: number;
+  };
+
+  /**
    * GENQ-01: a memory-generation pass produced output whose quality diverged from
    * its source — the generalization of `context:summary_language_mismatch` to the
    * consolidation / reasoning / user-representation passes (the F-ML1 regression

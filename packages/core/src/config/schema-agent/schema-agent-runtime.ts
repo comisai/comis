@@ -28,6 +28,7 @@ import { MemoryUserRepresentationConfigSchema } from "../schema-memory-user-repr
 import { SocialModelingConfigSchema } from "../schema-social-modeling.js";
 import { DialecticConfigSchema } from "../schema-dialectic.js";
 import { MemoryUsefulnessJudgeConfigSchema } from "../schema-memory-usefulness-judge.js";
+import { LearningOutcomeConfigSchema } from "../schema-learning-outcome.js";
 import { MemoryOnlineTuningConfigSchema } from "../schema-memory-online-tuning.js";
 import { MemoryLifecycleConfigSchema } from "../schema-memory-lifecycle.js";
 import { validateProfileId } from "../../security/profile-id.js";
@@ -408,6 +409,11 @@ export const PerAgentConfigSchema = AgentConfigSchema.extend({
   /** Offline usefulness-judge configuration (an OFFLINE cron, never the
    *  recall path). Opt-out posture: default-ON; a COST feature gated by the kill switch. */
   memoryUsefulnessJudge: MemoryUsefulnessJudgeConfigSchema.default(() => MemoryUsefulnessJudgeConfigSchema.parse({})),
+  /** Outcome-signal (Verified Learning WS1) configuration. Opt-IN posture:
+   *  default-OFF (the lone OFF-by-default memory-adjacent feature). Because the
+   *  default is disabled, `.parse({})` produces a dormant block — force-disable on
+   *  the master switch lands in Plan 04. */
+  learningOutcome: LearningOutcomeConfigSchema.default(() => LearningOutcomeConfigSchema.parse({})),
   /** Offline tuned-alpha bandit cron (an OFFLINE, DETERMINISTIC, KEYLESS
    *  cron, never the recall path). Opt-out posture: default-ON; in the operator-facing
    *  cost-feature set, so gated by the kill switch at its registration site. */

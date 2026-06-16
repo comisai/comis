@@ -58,6 +58,10 @@ export type { SocialModelingConfig } from "./schema-social-modeling.js";
 export { MemoryUsefulnessJudgeConfigSchema } from "./schema-memory-usefulness-judge.js";
 export type { MemoryUsefulnessJudgeConfig } from "./schema-memory-usefulness-judge.js";
 
+// Outcome-signal (Verified Learning WS1) schema — per-agent, default-OFF
+export { LearningOutcomeConfigSchema } from "./schema-learning-outcome.js";
+export type { LearningOutcomeConfig } from "./schema-learning-outcome.js";
+
 // Offline tuned-alpha bandit schema (default-OFF, KEYLESS cron)
 export { MemoryOnlineTuningConfigSchema } from "./schema-memory-online-tuning.js";
 export type { MemoryOnlineTuningConfig } from "./schema-memory-online-tuning.js";
