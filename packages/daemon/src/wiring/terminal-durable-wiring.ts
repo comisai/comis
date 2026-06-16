@@ -234,15 +234,16 @@ export function buildTerminalWakeDurability(i: {
  * - `checkLiveness(sessionId, agentId)`: the LIVE-01 single liveness check — the registry
  *   `status` round-trip (the worker's CLASSIFIER perception — `working`/`stuck`/`exited` — NOT a
  *   screen read, I2) mapped to a `BusySignal`. A `stuck` classifier verdict → `noProgressMs >
- *   stuckMs` → hung; `working`/`awaiting-input` → busy; `exited`/gone → not alive → hung.
- * - `refreshLastActivity(sessionId, agentId)`: advances the live handle's `lastActivity` (via
- *   the owner-scoped `get`, which returns the live handle reference) so a busy backstop verdict
- *   unifies with the ENDURE-01 idle exclusion (I9). Tolerant of an unknown session (no-op).
+ *   stuckMs` → hung; `working`/`awaiting-input` → busy; `exited`/gone → not alive → hung. The
+ *   `status` round-trip ALSO stamps the handle's `lastActivity` as a side effect (the registry's
+ *   status method) — that IS the ENDURE-01 idle-reaper unify (I9): a busy verdict's liveness
+ *   check refreshes lastActivity, so the idle sweep never evicts a quiet-but-busy compile. No
+ *   SEPARATE refresh hook is needed (165-REVIEW LO-03 removed the redundant `refreshLastActivity`
+ *   dep that double-stamped what `status` already does).
  */
 export function buildWakeDurabilityDeps(i: WakeDurabilityInputs): {
   driveJournalStore: DriveJournalStorePort;
   checkLiveness: (sessionId: string, agentId: string) => Promise<BusySignal | undefined>;
-  refreshLastActivity: (sessionId: string, agentId: string) => void;
 } {
   const isTmuxAlive = buildIsTmuxAlive(resolveDaemonTmuxPath());
 
@@ -272,13 +273,10 @@ export function buildWakeDurabilityDeps(i: WakeDurabilityInputs): {
     return { alive: true, noProgressMs: 0, stuckMs };
   };
 
-  const refreshLastActivity = (sessionId: string, agentId: string): void => {
-    // The owner-scoped get returns the LIVE handle reference into the registry's map; advancing
-    // its lastActivity is the ENDURE-01 unify (a busy backstop verdict keeps the idle sweep off
-    // a quiet compile, I9). A no-op for an unknown/cross-owner session.
-    const handle = i.registries.get(agentId)?.get(sessionId, driveOwner(agentId));
-    if (handle !== undefined) handle.lastActivity = i.nowMs();
-  };
+  // LO-03 (165-REVIEW): NO separate refreshLastActivity — checkLiveness's `registry.status`
+  // round-trip already stamps the handle's lastActivity (the registry's status side effect), so
+  // a busy backstop verdict's liveness check IS the ENDURE-01 idle-reaper unify (I9). A separate
+  // refresh hook double-stamped what status already does (dead weight) and is removed.
 
-  return { driveJournalStore, checkLiveness, refreshLastActivity };
+  return { driveJournalStore, checkLiveness };
 }

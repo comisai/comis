@@ -227,8 +227,8 @@ export interface ToolsResult {
   /** 124-09: resolve the per-agent terminal attention config (allow-entry autoAnswer/
    *  hintPatterns + caps); read per-wake so a config swap applies; undefined ⇒ escalate. */
   getTerminalAttentionConfig: (agentId: string) => ReturnType<typeof deriveTerminalAttentionConfig>;
-  /** 165-07: the durable wake deps (journal store + checkLiveness/refreshLastActivity +
-   *  heartbeatMs/maxCostUsd) the composition root spreads into setupTerminalWake. */
+  /** 165-07: the durable wake deps (journal store + checkLiveness + heartbeatMs/maxCostUsd)
+   *  the composition root spreads into setupTerminalWake. */
   terminalDurability: ReturnType<typeof buildTerminalWakeDurability>;
 }
 

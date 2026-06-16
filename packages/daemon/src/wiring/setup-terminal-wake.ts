@@ -109,16 +109,10 @@ export interface SetupTerminalWakeDeps {
    * Task 4) binds it; a test injects a fake. ABSENT ⇒ no backstop (I1).
    */
   checkLiveness?: (sessionId: string, agentId: string) => Promise<BusySignal | undefined> | BusySignal | undefined;
-  /**
-   * LIVE-01 / ENDURE-01 unify (165-07 / I9): the hook the backstop calls on a `"busy"`
-   * verdict to advance the session's reaper `lastActivity` — the load-bearing fix for the
-   * documented pitfall that `lastActivity` does NOT advance for a quiet-but-busy compile (no
-   * tool round-trip lands), so a naive idle reaper would evict a healthy 2h build. The daemon
-   * (165-07 Task 4) binds it to the registry handle's `lastActivity` (resolved by agentId); a
-   * test injects a spy. Optional; absent ⇒ the busy verdict is still not-stuck but the reaper
-   * unify is inert (I1).
-   */
-  refreshLastActivity?: (sessionId: string, agentId: string) => void;
+  // LO-03 (165-REVIEW): NO refreshLastActivity dep — checkLiveness's `registry.status`
+  // round-trip already stamps the handle's lastActivity (the registry status side effect), so a
+  // busy verdict's liveness check IS the ENDURE-01 idle-reaper unify (I9). A separate refresh
+  // hook double-stamped what status already does (dead weight) and was removed.
   /** Injected clock (no raw global). Default `systemNowMs`. */
   nowMs?: () => number;
   logger: ComisLogger;
@@ -448,8 +442,8 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
   // (the backstop guards drives, not plain sessions): if a wake landed within heartbeatMs SKIP
   // (a normally-progressing drive never triggers it, Pitfall 7); else run the SINGLE injected
   // checkLiveness (has-session + noProgressMs — NO screen) → busyOrHung:
-  //   - "busy" → refreshLastActivity (the ENDURE-01 reaper unify — a quiet-but-busy compile's
-  //     lastActivity is refreshed so the idle sweep never evicts it, I9) + NOT stuck.
+  //   - "busy" → NOT stuck (the ENDURE-01 reaper unify is the checkLiveness round-trip's
+  //     `registry.status` lastActivity stamp — LO-03; no separate refresh hook).
   //   - "hung" → synthesize a state:"stuck" wake through the EXISTING terminal:input_needed
   //     seam (NOT a new event) + a §2.7 WARN; the stamp above makes this at-most-once per stretch.
   let backstopHandle: TimerHandle | undefined;
@@ -466,9 +460,10 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
     const signal = await deps.checkLiveness(sessionId, agentId);
     if (signal === undefined) return;
     if (busyOrHung(signal) === "busy") {
-      // The ENDURE-01 unify (I9): a quiet-but-busy compile is NOT stuck, and its busy verdict
-      // refreshes lastActivity so the idle reaper never evicts it for its quietness alone.
-      deps.refreshLastActivity?.(sessionId, agentId);
+      // The ENDURE-01 unify (I9): a quiet-but-busy compile is NOT stuck. Its lastActivity is
+      // ALREADY refreshed by the checkLiveness round-trip's `registry.status` stamp (LO-03 — no
+      // separate refresh hook is needed; the status side effect IS the unify), so the idle
+      // reaper never evicts it for its quietness alone.
       return;
     }
     // "hung": synthesize a stuck wake through the EXISTING seam (the wake adapter translates

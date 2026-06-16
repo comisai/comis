@@ -811,7 +811,7 @@ describe("setupTerminalWake — the keystone subscribe + woken-turn driver (124-
   // event-driven wake purely as a safety net: a deps.timers.setInterval(...).unref()
   // that, per tick, for each PROMOTED session, fires ONE liveness check ONLY in the
   // ABSENCE of a wake within the heartbeat window (I2 — no per-tick screen read), then
-  //   - busyOrHung → "busy"  ⇒ refreshLastActivity (the ENDURE-01 reaper unify, I9) + continue
+  //   - busyOrHung → "busy"  ⇒ NOT stuck (the ENDURE-01 unify is the check's status stamp, LO-03)
   //   - busyOrHung → "hung"  ⇒ synth state:"stuck" via the EXISTING terminal:input_needed seam
   // A normally-progressing drive (a transition inside heartbeatMs every tick) NEVER triggers it.
   // RED on pre-patch: no backstop exists — deps.timers is never armed, so a silent+hung
@@ -854,7 +854,7 @@ describe("setupTerminalWake — the keystone subscribe + woken-turn driver (124-
   /**
    * Build with the LIVE-01 backstop wired: a fake TimerPort, a controllable clock, an
    * injected checkLiveness probe (has-session + noProgressMs + stuckMs — NO screen), and a
-   * refreshLastActivity spy. `liveness` maps a sessionId → its BusySignal-shaped probe.
+   * injected checkLiveness probe. `liveness` maps a sessionId → its BusySignal-shaped probe.
    */
   function buildBackstop(
     dataDir: string,
@@ -868,7 +868,6 @@ describe("setupTerminalWake — the keystone subscribe + woken-turn driver (124-
   ): Built & {
     fake: ReturnType<typeof makeFakeTimers>;
     clock: { now: number };
-    refreshCalls: string[];
     checkLiveness: ReturnType<typeof vi.fn>;
     js: ReturnType<typeof makeJournalStore>;
   } {
@@ -878,7 +877,6 @@ describe("setupTerminalWake — the keystone subscribe + woken-turn driver (124-
     const notify = vi.fn(async () => undefined);
     const fake = makeFakeTimers();
     const clock = { now: 100_000 };
-    const refreshCalls: string[] = [];
     const checkLiveness = vi.fn((sessionId: string) => opts.liveness[sessionId]);
     const js = makeJournalStore(opts.seed);
     const registries = new Map<string, ReturnType<typeof makeRegistry>>([["a", registry]]);
@@ -892,12 +890,13 @@ describe("setupTerminalWake — the keystone subscribe + woken-turn driver (124-
       logger: logger as unknown as SetupTerminalWakeDeps["logger"],
       timers: fake.timers,
       heartbeatMs: opts.heartbeatMs ?? 90_000,
+      // LO-03 (165-REVIEW): NO refreshLastActivity dep — checkLiveness's status round-trip stamps
+      // lastActivity (the I9 unify); the backstop's busy verdict relies on that, not a separate hook.
       checkLiveness,
-      refreshLastActivity: (sessionId: string) => refreshCalls.push(sessionId),
       driveJournalStore: js.store,
     } as unknown as SetupTerminalWakeDeps;
     const handle = setupTerminalWake(deps);
-    return { bus, registry, logger, notify, handle, fake, clock, refreshCalls, checkLiveness, js };
+    return { bus, registry, logger, notify, handle, fake, clock, checkLiveness, js };
   }
 
   /** The synth-stuck wakes the backstop emits through the existing terminal:input_needed seam. */
@@ -959,7 +958,7 @@ describe("setupTerminalWake — the keystone subscribe + woken-turn driver (124-
     expect(typeof (warn![0] as { hint?: string }).hint).toBe("string");
   });
 
-  it("LIVE-01 / ENDURE-01 unify (I9): a SILENT + BUSY drive (a quiet compile) synthesizes 0 stuck + REFRESHES lastActivity", async () => {
+  it("LIVE-01 / ENDURE-01 unify (I9): a SILENT + BUSY drive (a quiet compile) runs the liveness check + synthesizes 0 stuck (lastActivity is refreshed by the check's status round-trip — LO-03)", async () => {
     const b = buildBackstop(dataDir, { screen: "Compiling…", heartbeatMs: 90_000, liveness: { "s-busy": { alive: true, noProgressMs: 1_000, stuckMs: 600_000 } } });
     built = b;
     b.bus.fireDrivePromoted("s-busy", "a", "producing");
@@ -969,10 +968,11 @@ describe("setupTerminalWake — the keystone subscribe + woken-turn driver (124-
     b.fake.tick();
     await flush();
 
-    // busyOrHung → "busy": NOT stuck, and the busy verdict REFRESHES lastActivity so the
-    // ENDURE-01 idle reaper never evicts a quiet-but-busy compile (the documented pitfall).
+    // busyOrHung → "busy": NOT stuck. The ENDURE-01 idle-reaper unify is the checkLiveness
+    // round-trip's `registry.status` lastActivity stamp (LO-03 — no separate refresh hook); here
+    // we pin that the busy verdict ran the liveness check + declared no stuck (the unify behavior).
+    expect(b.checkLiveness, "a busy verdict must run the liveness check (whose status stamp is the I9 unify)").toHaveBeenCalledWith("s-busy", "a");
     expect(synthStuckEmits(b), "a busy compile must NOT be declared stuck").toHaveLength(0);
-    expect(b.refreshCalls, "a busy verdict must refresh lastActivity (the ENDURE-01 unify, I9)").toContain("s-busy");
   });
 
   it("LIVE-01: a DEAD backend (alive:false) is hung → synth stuck (busyOrHung biases dead→hung regardless of timing)", async () => {
