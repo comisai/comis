@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { TranscriptionPort, TranscriptionConfig, SecretManager } from "@comis/core";
+import { KEYLESS_API_KEY_SENTINEL } from "@comis/core";
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
 import { createOpenAISttAdapter } from "./openai-stt-adapter.js";
 import { createGroqSttAdapter } from "./groq-stt-adapter.js";
 import { createDeepgramSttAdapter } from "./deepgram-stt-adapter.js";
+import { createLocalWhisperAdapter } from "./local-stt-adapter.js";
 
 /**
  * Logger interface for the fallback transcription wrapper.
@@ -23,14 +25,25 @@ export interface SttFallbackLogger {
  * - "openai": OpenAI gpt-4o-mini-transcribe (requires OPENAI_API_KEY)
  * - "groq": Groq whisper-large-v3-turbo (requires GROQ_API_KEY)
  * - "deepgram": Deepgram nova-3 (requires DEEPGRAM_API_KEY)
+ * - "local": keyless local whisper (LOCAL-01/03). Two branches:
+ *     • `transcription.local.baseUrl` set → reuse the OpenAI-compatible adapter
+ *       against the local server with the KEYLESS sentinel bearer
+ *       ("ollama-no-auth"), NEVER an empty string (an empty bearer re-introduces
+ *       the 401 this milestone fixes);
+ *     • otherwise → the in-process `createLocalWhisperAdapter` (Transformers.js),
+ *       which auto-downloads a small ONNX model into the scoped `dataDir` cache.
  *
- * @param config - Transcription configuration with provider, model, timeoutMs, maxFileSizeMb
+ * @param config - Transcription configuration with provider, model, timeoutMs, maxFileSizeMb, local
  * @param secretManager - Credential access for API keys
+ * @param dataDir - Data directory root; the in-process `local` adapter caches its
+ *   model under `<dataDir>/models/whisper/`. Required (the daemon always has
+ *   `container.config.dataDir`) so a caller cannot silently drop the cache scope.
  * @returns The configured TranscriptionPort adapter, or an error for unknown providers
  */
 export function createSTTProvider(
   config: TranscriptionConfig,
   secretManager: SecretManager,
+  dataDir: string,
 ): Result<TranscriptionPort, Error> {
   switch (config.provider) {
     case "openai":
@@ -62,6 +75,34 @@ export function createSTTProvider(
           maxFileSizeMb: config.maxFileSizeMb,
         }),
       );
+
+    case "local": {
+      const local = config.local;
+      if (local?.baseUrl) {
+        // LOCAL-03: an OpenAI-compatible local whisper server, keyless. The
+        // bearer is the KEYLESS sentinel — NEVER apiKey:"" (Pitfall 5 → an empty
+        // bearer re-introduces the 401 this milestone fixes). The trailing slash
+        // is trimmed so the adapter's `${baseUrl}/audio/transcriptions` join is clean.
+        return ok(
+          createOpenAISttAdapter({
+            apiKey: KEYLESS_API_KEY_SENTINEL,
+            baseUrl: local.baseUrl.replace(/\/$/, ""),
+            model: config.model,
+            timeoutMs: config.timeoutMs,
+            maxFileSizeMb: config.maxFileSizeMb,
+          }),
+        );
+      }
+      // LOCAL-01: in-process WASM/ONNX whisper. The scoped `dataDir` is threaded
+      // through as the model-cache root (`<dataDir>/models/whisper/`).
+      return ok(
+        createLocalWhisperAdapter({
+          model: local?.model ?? "base",
+          dataDir,
+          maxFileSizeMb: config.maxFileSizeMb,
+        }),
+      );
+    }
 
     default:
       return err(new Error(`Unknown STT provider: ${config.provider as string}`));
