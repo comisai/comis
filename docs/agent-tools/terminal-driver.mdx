@@ -34,7 +34,7 @@ All nine are `mcpExportPolicy: "never-export"` (never exposed to external MCP) a
 |-------------|-----|-------|
 | **bwrap** (bubblewrap) + unprivileged user namespaces | The driven child runs in a bwrap jail; without it `create` fails closed (never an unsandboxed child). | `bwrap --version`; `cat /proc/sys/user/max_user_namespaces` (> 0) |
 | **node-pty** built | The real-PTY backend (full-screen TUIs). Absent ⇒ a degraded pipe backend (no TUI). | shipped + built by the installer |
-| **tmux** (optional) | The long-run backend (`backend: "tmux"`): a session survives a worker restart and is re-attachable. Absent ⇒ `tmux` requests fall back to the PTY backend. | `tmux -V` |
+| **tmux** (optional) | The long-run backend (`backend: "tmux"`): a session survives a worker restart and is re-attachable. Required for a **durable drive** (`drive.durable: true`) to survive a *daemon* restart. Absent ⇒ `tmux` requests fall back to the PTY backend, and a durable drive degrades to non-durable + a `WARN` at runtime (it is **not** rejected at config load). | `tmux -V` |
 | The driven CLI installed **and authenticated for the daemon's user** | Comis is credential-agnostic -- the CLI authenticates itself (e.g. `claude` reads its own `~/.claude.json`). | run it once as the `comis` user |
 
 ## Configuration
@@ -94,6 +94,9 @@ agents:
         drive:                          # autonomous-drive policy (optional; omit ⇒ today's behavior)
           mode: auto                    # auto (default) | attached (never promote) | detached (promote at first wait)
           readMode: digest              # digest (default) | diff | full — the woken-turn read shape
+          durable: false                # true ⇒ detached tmux: survive a daemon restart, re-attach + resume
+          heartbeatMs: 90000            # internal liveness backstop (default 90s) — not a poll, not a user message
+          maxCostUsd: null              # per-drive spend ceiling in USD (null = uncapped)
 ```
 
 The whole `drive:` block is **optional** and additive: a config with no `drive` block behaves **exactly as before** (no auto-promotion change, the digest read is already the effective default). An unknown key under `drive:` (a typo) is rejected at config load, like every other terminal key.
@@ -114,7 +117,7 @@ The agent then drives it: `terminal_session_create({ allowId: "claude", command:
 | `consent` | Required informed-consent record (`acknowledgedRisk: true` + a timestamp). |
 | `limits` | Optional per-session caps: `wallClockMs`, `maxInteractions`, `maxRequestsPerSession`, `maxSessions`. |
 | `approveOnCreate` | Require the approval gate at `session_create`. |
-| `backend` | `spawn` (default) or `tmux` (long-run survival). |
+| `backend` | `spawn` (default, non-durable) or `tmux` (long-run survival). A **durable drive** (`drive.durable: true`) implies `tmux` at runtime — see [Durability & resume](#durability--resume). |
 
 ## Security model
 
@@ -154,6 +157,7 @@ A driven session runs in the **agent's own workspace**, not a throwaway temp dir
 - **Session lifetime is decoupled from a turn.** `session_create` returns immediately; the PTY lives in the worker across turns. Aborting the spawning turn does **not** kill the session.
 - **The agent is woken by attention events**, never polling: the worker classifies each session and emits a `terminal:*` event on a state transition; a short woken turn does `status -> read -> decide -> send -> ends`. The `terminal:input_needed` and `terminal:stuck` wake events carry the classification `confidence` and `reason` alongside the state (consumed by the autonomous-drive policy and surfaced in a `comis explain` of a drive) -- both are redaction-safe machine tags, never raw screen bytes.
 - **Worker crash isolation:** the worker is a separate supervised process -- a PTY/emulator crash restarts the worker, not the daemon. For milestone-length runs use `backend: "tmux"` so the session survives a worker restart and a human can `tmux attach` to take over.
+- **Surviving a *daemon* restart** (not just a worker crash) is the job of a **durable drive** (`drive.durable: true`): the driven CLI runs in a detached tmux server that outlives the daemon, and on restart the drive **re-attaches** to the live session and **resumes from its journal** instead of being lost. See [Durability & resume](#durability--resume) below.
 
 ### Autonomous drive (`drive` config)
 
@@ -175,7 +179,57 @@ A genuinely long drive (driving Claude Code to build a project for hours) should
   - `full` -- the whole screen, still bounded (opt-in, for diagnosis).
   - Every mode is capped at a byte limit; an over-cap read writes a `truncations` breadcrumb (a count of dropped bytes) rather than silently trimming.
 
-The `drive` block will grow in later releases (durable resume across a daemon restart, a spend ceiling, a notification/heartbeat policy); those fields are not configurable yet. For now `mode` and `readMode` are the only keys, and -- as a closed schema -- any other key under `drive:` is rejected at config load.
+Beyond `mode` and `readMode`, the `drive` block carries the endurance/durability keys covered next: `durable`, `heartbeatMs`, and `maxCostUsd`. The block remains a **closed schema** -- any unknown key under `drive:` (a typo) is rejected at config load. (A further notification/heartbeat policy to the *user* lands in a later release and is not configurable yet.)
+
+### Durability & resume
+
+A multi-hour-to-40-hour drive has to outlive the daemon restarting under it. By default it does **not**: the `spawn` backend ties the driven CLI's lifetime to the worker, so a daemon/worker exit kills it. A **durable drive** decouples the two.
+
+- **`drive.durable`** -- `false` (default) / `true`. Setting `true` makes the drive **durable**: the driven CLI is launched inside a **detached tmux server** (a process independent of the worker, implying `backend: "tmux"` at runtime), so a worker or daemon exit leaves the CLI + its PTY **running**. On daemon restart the session registry **re-attaches** to the live tmux session -- matched by a stable per-drive name persisted in the journal -- instead of flipping it `lost`. Re-attach never starts a second copy of the CLI (no double-drive).
+  - **Resume, don't restart.** A durable drive persists a compact, **content-free** rolling journal (the objective, the last classification, the prompts it has already answered, and the steps it has tried -- never screen bytes or secrets) beside the agent's workspace. On re-attach the drive **resumes from that journal**: it picks up where it left off and does **not** re-run from the top or re-answer a prompt it already answered. The journal files live under `<dataDir>/terminal-drive/<agentId>/journals/` (see [the data-directory reference](/operations/data-directory)).
+  - **A genuinely-gone session is reported `failed`, never silently restarted.** If the tmux session is truly gone on restart (not merely detached), the drive surfaces as `failed` with its **journal preserved** for inspection -- it is never quietly started over.
+
+- **`spawn` is non-durable (and that's fine for short drives).** The default backend dies with the daemon. A short or one-shot drive needs nothing more. A **non-durable** drive that is interrupted by a restart is honestly reported `failed` (with its journal preserved); it does not silently resume.
+
+- **Runtime fallback when tmux is unavailable.** `drive.durable: true` is **accepted at config load even on a host without tmux** -- tmux availability is a runtime property, not a config error. If tmux is missing (or a re-attach fails) at runtime, the drive **degrades to a non-durable drive and logs a `WARN`**; a subsequent restart then reports `failed` with the journal preserved, rather than a silent double-drive. It is never rejected at config-validation time, and it never silently widens scope.
+
+<Note>
+The real-fork tmux **survive-a-daemon-restart** path (a detached tmux server outliving a forced daemon restart, then the live re-attach inside the bwrap jail with a real CLI) is validated on the VPS operator harness, not in the macOS-dev CI run. The deterministic re-attach-by-name match, the journal round-trip, the busy-vs-hung verdict, and the spend-ceiling check are unit-locked; the real-fork survive-restart is corroboration.
+</Note>
+
+### Endurance & liveness
+
+The per-session caps and the reaper are **endurance-aware** and dialable to a 40h+ horizon. The governing rule: a session that is **alive and either progressing or legitimately busy** (a long compile/test that just isn't producing fresh output) is **never** evicted, declared `stuck`, or reported `failed` for its *duration* or its *quietness* alone.
+
+- **Dialable caps -- and a cap-eviction names the cap.** `limits.wallClockMs` and `limits.maxInteractions` (under each `allow` entry) are operator-dialable; both are **uncapped by default** (`undefined` ⇒ no cap), so today's behavior is unchanged and a long drive is not capped unless you set one. If you *do* set a cap and a drive reaches it, the eviction **names the cap that fired** in the `failed` reason (a deliberate operator bound, not a mystery) -- and the idle reaper **excludes a busy session**, so quietness alone never evicts it.
+
+- **`drive.maxCostUsd`** -- a number / `null` (default `null` = uncapped). An optional **per-drive spend ceiling** in USD over the whole run. On breach the drive **escalates and stops** -- never a silent overspend. It bounds cost only (it grants no privilege, path, or credential). Leave it `null` to run uncapped.
+
+- **`drive.heartbeatMs`** -- the **internal liveness backstop** interval in milliseconds (default `90000`, i.e. 90s). This is a **safety net under** the event-driven wake, not a poll: on a tick where **no wake intervened**, it performs **one** liveness check (is the worker/tmux alive? is the child genuinely idle vs. CPU-busy or trickling output?) and synthesizes `stuck` **only when the child is genuinely hung**. A legitimately-busy multi-hour compile is **busy, not `stuck`**. It reads **no screen** (it is not a per-tick screen read), it fires **only in the absence of a wake**, and it resolves to a single check.
+
+  <Note>
+  `drive.heartbeatMs` is the **internal liveness tick** -- not a message to the user. A periodic progress *notification* to the user is a separate, later feature and is not this knob.
+  </Note>
+
+These three keys are additive and default to today's behavior, so a config with no `drive` block (or with only `mode`/`readMode`) is unaffected:
+
+```yaml
+agents:
+  default:
+    skills:
+      terminal:
+        allow:
+          - id: claude
+            # ... match / scope / consent as above ...
+            # Endurance-dialable per-session caps (omit ⇒ uncapped):
+            limits: { wallClockMs: 144000000, maxInteractions: 20000 }   # ~40h horizon
+        drive:
+          mode: auto
+          readMode: digest
+          durable: true            # detached tmux: survive a daemon restart, re-attach + resume
+          heartbeatMs: 90000       # internal liveness backstop (90s) — not a user message, not a poll
+          maxCostUsd: 25.0         # per-drive spend ceiling (null ⇒ uncapped)
+```
 
 ### Classifier reliability
 
