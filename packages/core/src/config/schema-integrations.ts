@@ -225,11 +225,38 @@ export const McpConfigSchema = z.strictObject({
   });
 
 /**
+ * The operator-configurable STT (speech-to-text) provider vocabulary (CFG-01).
+ *
+ * NOTE: this is a DIFFERENT vocabulary from the MAIN_PROVIDER_AUDIO keys (resolved
+ * main-provider ids in `@comis/core/media`). "auto" = keyless-first then follow the
+ * agent's main provider (the new default, I1/I2); "local" = the keyless local whisper
+ * engine (the adapter lands Phase 194). Keeping "openai"/"groq"/"deepgram" preserves
+ * every existing config (the additive guarantee, I9). `fallbackProviders` entries
+ * validate against this same closed set, so an injected/typo'd provider fails at
+ * parse rather than reaching a transport (T-193-05 / T-183-05 backstop).
+ */
+const TRANSCRIPTION_PROVIDER_VALUES = ["auto", "local", "openai", "groq", "deepgram"] as const;
+
+/**
+ * Local (keyless) STT engine configuration (CFG-01). The in-process engine +
+ * `baseUrl` local-server escape hatch land in Phase 194 — the shape lands here
+ * now so the resolver + daemon wiring compile against it. `model` defaults to "base".
+ */
+export const LocalTranscriptionConfigSchema = z.strictObject({
+    /** Whisper model size to load/download (default "base"; "tiny"/"small"/… are Phase 194). */
+    model: z.string().default("base"),
+    /** OpenAI-compatible local whisper server URL (Phase 194 LOCAL-03 seam; loopback-default, SSRF-guarded in 197). */
+    baseUrl: z.string().optional(),
+    /** Engine mechanism override (Phase 194 LOCAL-04 seam: wasm/native/subprocess/server). */
+    engine: z.string().optional(),
+  });
+
+/**
  * Transcription service configuration.
  */
 export const TranscriptionConfigSchema = z.strictObject({
-    /** Primary STT provider (default: "openai") */
-    provider: z.enum(["openai", "groq", "deepgram"]).default("openai"),
+    /** Primary STT provider (default: "auto" — keyless-first then follows the agent's main provider; I1/I2). */
+    provider: z.enum(TRANSCRIPTION_PROVIDER_VALUES).default("auto"),
     /** Provider-specific model ID (e.g., "gpt-4o-mini-transcribe", "whisper-large-v3-turbo", "nova-3") */
     model: z.string().optional(),
     /** Maximum file size in megabytes (default: 25) */
@@ -243,7 +270,9 @@ export const TranscriptionConfigSchema = z.strictObject({
     /** Enable preflight STT for mention detection in voice messages (default: true) */
     preflight: z.boolean().default(true),
     /** Ordered fallback providers to try when primary fails (default: []) */
-    fallbackProviders: z.array(z.enum(["openai", "groq", "deepgram"])).default([]),
+    fallbackProviders: z.array(z.enum(TRANSCRIPTION_PROVIDER_VALUES)).default([]),
+    /** Local (keyless) STT engine settings (CFG-01; the engine lands Phase 194). */
+    local: LocalTranscriptionConfigSchema.default(() => LocalTranscriptionConfigSchema.parse({})),
   });
 
 /**
@@ -299,11 +328,22 @@ export const TtsOutputFormatSchema = z.strictObject({
   });
 
 /**
+ * The operator-configurable TTS (text-to-speech) provider vocabulary (CFG-01).
+ *
+ * "edge" = the keyless Microsoft Edge TTS default (zero credentials, the new
+ * default per I1); "openai"/"elevenlabs" are keyed cloud opt-ins; "local" = an
+ * offline keyless engine (Piper) whose adapter lands Phase 197 — the value lands
+ * here now so the resolver compiles against it. Closed enum so an injected/typo'd
+ * provider fails at parse, not at a transport (T-193-05 / T-183-05 backstop).
+ */
+const TTS_PROVIDER_VALUES = ["edge", "openai", "elevenlabs", "local"] as const;
+
+/**
  * Text-to-speech service configuration.
  */
 export const TtsConfigSchema = z.strictObject({
-    /** TTS provider (default: "openai") */
-    provider: z.enum(["openai", "elevenlabs", "edge"]).default("openai"),
+    /** TTS provider (default: "edge" — the keyless Edge TTS default; I1). */
+    provider: z.enum(TTS_PROVIDER_VALUES).default("edge"),
     /** Voice identifier (default: "alloy") */
     voice: z.string().default("alloy"),
     /** Output audio format (default: "opus") */
