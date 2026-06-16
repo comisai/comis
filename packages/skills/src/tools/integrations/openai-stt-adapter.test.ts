@@ -183,4 +183,83 @@ describe("createOpenAISttAdapter", () => {
     const formData = fetchMock.mock.calls[0]![1]?.body as FormData;
     expect(formData.get("response_format")).toBe("json");
   });
+
+  // ---------------------------------------------------------------------------
+  // SEC-02 Surface B: the validate-then-fetch SSRF guard, OPT-IN via
+  // `localServerGuard`. It is set ONLY by the stt-factory local.baseUrl branch
+  // (an explicit transcription.provider:"local" bypasses the boot probe, so the
+  // runtime fetch is the SSRF surface). The guard fires inside the already-async
+  // transcribe(), BEFORE the runtime fetch. createOpenAISttAdapter is SHARED with
+  // the cloud OpenAI path — the flag MUST NOT fire on api.openai.com.
+  // ---------------------------------------------------------------------------
+  describe("SEC-02 local-server SSRF guard (localServerGuard) — Surface B", () => {
+    it("BLOCKS a non-loopback/metadata baseUrl and never invokes the runtime fetch (the BLOCKER RED-proof)", async () => {
+      const fetchSpy = vi.fn<typeof globalThis.fetch>();
+      globalThis.fetch = fetchSpy;
+
+      const adapter = createOpenAISttAdapter({
+        apiKey: "ollama-no-auth",
+        baseUrl: "http://169.254.169.254",
+        localServerGuard: true,
+      });
+      const result = await adapter.transcribe(Buffer.from("audio"), { mimeType: "audio/ogg" });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        // A structured SSRF rejection — not a network/timeout error.
+        expect(result.error.message).toMatch(/local STT server|cloud metadata|not a loopback/i);
+      }
+      // The validate-then-fetch rejected BEFORE the fetch fired.
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it("BLOCKS an arbitrary public baseUrl with localServerGuard set (no arbitrary egress)", async () => {
+      const fetchSpy = vi.fn<typeof globalThis.fetch>();
+      globalThis.fetch = fetchSpy;
+
+      const adapter = createOpenAISttAdapter({
+        apiKey: "ollama-no-auth",
+        baseUrl: "http://attacker.example.com:9000/v1",
+        localServerGuard: true,
+      });
+      const result = await adapter.transcribe(Buffer.from("audio"), { mimeType: "audio/ogg" });
+
+      expect(result.ok).toBe(false);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it("ALLOWS a loopback baseUrl with localServerGuard set — the fetch proceeds (the legitimate local server)", async () => {
+      const fetchSpy = mockFetch(200, { text: "local hello" });
+
+      const adapter = createOpenAISttAdapter({
+        apiKey: "ollama-no-auth",
+        baseUrl: "http://127.0.0.1:9000/v1",
+        localServerGuard: true,
+      });
+      const result = await adapter.transcribe(Buffer.from("audio"), { mimeType: "audio/ogg" });
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value.text).toBe("local hello");
+      }
+      // Loopback passed the guard → the runtime fetch ran against the local server.
+      expect(fetchSpy).toHaveBeenCalledOnce();
+      const [url] = fetchSpy.mock.calls[0]!;
+      expect(url).toBe("http://127.0.0.1:9000/v1/audio/transcriptions");
+    });
+
+    it("does NOT block the DEFAULT cloud config (api.openai.com, no localServerGuard) — the fetch IS invoked (the guard-scoping no-regression)", async () => {
+      const fetchSpy = mockFetch(200, { text: "cloud hello" });
+
+      // The cloud path: no localServerGuard flag, baseUrl defaults to api.openai.com.
+      const adapter = createOpenAISttAdapter({ apiKey: "sk-test" });
+      const result = await adapter.transcribe(Buffer.from("audio"), { mimeType: "audio/ogg" });
+
+      expect(result.ok).toBe(true);
+      // The local guard is NEVER applied to the cloud path — the fetch ran.
+      expect(fetchSpy).toHaveBeenCalledOnce();
+      const [url] = fetchSpy.mock.calls[0]!;
+      expect(url).toBe("https://api.openai.com/v1/audio/transcriptions");
+    });
+  });
 });

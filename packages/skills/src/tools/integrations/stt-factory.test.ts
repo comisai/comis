@@ -193,8 +193,27 @@ describe("createSTTProvider", () => {
     expect(callArg.apiKey).not.toBe("");
     // Trailing slash trimmed.
     expect(callArg.baseUrl).toBe("http://127.0.0.1:9000/v1");
+    // SEC-02 Surface B: the local-baseUrl branch opts the adapter into the
+    // validate-then-fetch SSRF guard. Mutation: dropping this flag fails here.
+    expect(callArg.localServerGuard).toBe(true);
     // The baseUrl branch must NOT construct the in-process whisper adapter.
     expect(createLocalWhisperAdapter).not.toHaveBeenCalled();
+  });
+
+  // SEC-02 Surface B no-regression: the cloud OpenAI branch SHARES
+  // createOpenAISttAdapter but must NOT carry the local guard — it reaches
+  // api.openai.com legitimately and the guard would wrongly block it.
+  it("does NOT set localServerGuard on the cloud 'openai' branch (the guard is scoped to local.baseUrl only)", () => {
+    const sm = createMockSecretManager({ OPENAI_API_KEY: "sk-openai-123" });
+    const config = createBaseConfig("openai");
+
+    const result = createSTTProvider(config, sm, DUMMY_DATA_DIR);
+
+    expect(result.ok).toBe(true);
+    expect(createOpenAISttAdapter).toHaveBeenCalledTimes(1);
+    const callArg = (createOpenAISttAdapter as unknown as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    // The cloud adapter is NOT guarded — localServerGuard is absent/falsy.
+    expect(callArg.localServerGuard).toBeFalsy();
   });
 
   it("calls SecretManager.get() with correct key names", () => {
