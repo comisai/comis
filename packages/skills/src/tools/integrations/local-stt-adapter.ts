@@ -118,19 +118,53 @@ export function __resetLocalWhisperPipelineForTests(): void {
   pipelinePromise = undefined;
 }
 
-/** Build a redacted, hint-bearing Error for a surfaced failure branch. */
-function degraded(hint: string, cause: unknown, _kind: SttErrorKind): Error {
+/**
+ * A surfaced STT failure that CARRIES its domain `SttErrorKind` (WR-02).
+ *
+ * The adapter selects a `SttErrorKind` at each failure branch; attaching it to
+ * the returned `Error` (rather than discarding it) lets the Phase-196 obs bridge
+ * read `error.kind` directly instead of re-deriving it. Mirrors `VideoGenError`
+ * (packages/core/src/media/video-error.ts) but kept adapter-local: this is not a
+ * cross-package contract, so a lightweight `Error & { kind }` suffices and no
+ * raw `throw` is introduced (the helper RETURNS the error to `Result.err`).
+ */
+export interface SttDegradeError extends Error {
+  readonly kind: SttErrorKind;
+}
+
+/**
+ * Attach a domain `SttErrorKind` onto an Error and brand it as a
+ * `SttDegradeError` (WR-02). Used for the clean-message guard branches
+ * (empty buffer / oversize) where the message needs no third-party
+ * sanitization — only the kind. Writable assign; public shape is readonly.
+ */
+function withKind(error: Error, kind: SttErrorKind): SttDegradeError {
+  (error as { kind: SttErrorKind }).kind = kind;
+  return error as SttDegradeError;
+}
+
+/**
+ * Build a redacted, hint-bearing, kind-carrying Error for a surfaced failure
+ * branch that wraps a third-party `cause` (WR-02). The `kind` is attached so the
+ * Phase-196 obs path can read it without re-deriving; the free-text `detail` is
+ * run through `sanitizeApiError` (strips URLs → `[URL]`, long tokens →
+ * `[REDACTED]`) so no credential-bearing `baseUrl`/token leaks.
+ */
+function degraded(hint: string, cause: unknown, kind: SttErrorKind): SttDegradeError {
   const detail = cause instanceof Error ? cause.message : String(cause);
-  // sanitizeApiError strips URLs ([URL]) and long tokens ([REDACTED]) from the
-  // free-text detail; the hint is operator-actionable.
-  return new Error(`${hint} — ${sanitizeApiError(0, detail, "Local Whisper")}`);
+  return withKind(
+    new Error(`${hint} — ${sanitizeApiError(0, detail, "Local Whisper")}`),
+    kind,
+  );
 }
 
 /**
  * Default ffmpeg decode: shells ffmpeg to raw 16 kHz mono f32 PCM, then reads it
  * into a Float32Array. Mirrors `audio-converter.ts:extractWaveform` (s16le/8000
- * → f32le/16000). Returns `err` (kind `dependency`) on any ffmpeg failure;
- * never throws. The temp file is always cleaned up.
+ * → f32le/16000). Returns a `degraded(...)` `err` carrying kind `dependency`
+ * (IN-02: the kind is now ATTACHED to the surfaced error, not discarded — see
+ * `degraded`) on any ffmpeg failure OR an empty / non-4-byte-multiple decode
+ * (WR-04). Never throws. The temp file is always cleaned up.
  */
 async function defaultDecodeToPcm16kF32(
   audio: Buffer,
@@ -199,15 +233,20 @@ export function createLocalWhisperAdapter(cfg: LocalWhisperConfig): Transcriptio
     ): Promise<Result<TranscriptionResult, Error>> {
       // 1. Empty-buffer guard — runs before any engine load or decode.
       if (audio.byteLength === 0) {
-        return err(new Error("Audio buffer is empty"));
+        // WR-02: carry the kind like every other branch (clean message, no
+        // third-party cause to sanitize → withKind, not degraded).
+        return err(withKind(new Error("Audio buffer is empty"), "dependency"));
       }
 
       // 2. Size cap.
       const fileSizeMb = audio.byteLength / (1024 * 1024);
       if (fileSizeMb > maxFileSizeMb) {
         return err(
-          new Error(
-            `Audio file size ${fileSizeMb.toFixed(1)}MB exceeds limit of ${maxFileSizeMb}MB`,
+          withKind(
+            new Error(
+              `Audio file size ${fileSizeMb.toFixed(1)}MB exceeds limit of ${maxFileSizeMb}MB`,
+            ),
+            "dependency",
           ),
         );
       }
