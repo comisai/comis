@@ -131,6 +131,21 @@ describe("createOutcomeJudgeSeam", () => {
     );
   });
 
+  it("is non-fatal: getModel returning a falsy model yields undefined + WARNs (no completeSimple call)", async () => {
+    // Distinct from getModel THROWING: a provider can resolve to no model
+    // (undefined). The seam must degrade non-fatally on this branch too.
+    (getModel as ReturnType<typeof vi.fn>).mockReturnValue(undefined);
+    const deps = makeDeps();
+    const judge = createOutcomeJudgeSeam(deps as never);
+    const out = await judge("trajectory text");
+    expect(out).toBeUndefined();
+    expect(completeSimple).not.toHaveBeenCalled();
+    expect((deps.logger as never as { warn: ReturnType<typeof vi.fn> }).warn).toHaveBeenCalledWith(
+      expect.objectContaining({ errorKind: "dependency", step: "outcome-judge", hint: expect.any(String) }),
+      expect.any(String),
+    );
+  });
+
   it("is non-fatal on timeout: the abort fires and the timer is cleared (returns undefined)", async () => {
     vi.useFakeTimers();
     // completeSimple never resolves → the systemSetTimeout-armed AbortController
