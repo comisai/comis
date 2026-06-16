@@ -12,8 +12,10 @@
  * `SttSelection`/`TtsSelection` the adapter construction used — NO second source
  * of truth). When `voiceSelection` is absent (a boot mode without the audio
  * selector / a pre-193 test harness) it falls back to the config provider +
- * a keyless heuristic (`local`/`edge`), `source:"explicit"` — an honest best
- * effort, never a crash. It then delegates to Plan-02's `wireVoiceObs` (the
+ * a keyless heuristic (`local`/`edge`) — an honest best effort, never a crash:
+ * a concrete config provider is labeled `source:"explicit"`, but an unpinned
+ * `auto`/`configured` is labeled `source:"fallback"` (WR-03 — never fabricate an
+ * explicit rung the resolver never produced). It then delegates to `wireVoiceObs` (the
  * record + the §2.7 INFO/WARN line + the SEC-01 host-only redaction), so this
  * module adds NO logging/redaction of its own.
  *
@@ -107,13 +109,21 @@ function resolveVoiceRequested(
       ...(resolved.onSkip !== undefined ? { onSkip: resolved.onSkip } : {}),
     };
   }
-  // Fallback (no selector ran): derive from config. `source:"explicit"` is the
-  // honest label when the resolver did not run (the config provider is used
-  // verbatim). Defensive `?.` — the obs path must never crash the handler even if
-  // a config slice is unexpectedly absent.
+  // Fallback (no selector ran): derive from config. Defensive `?.` — the obs path
+  // must never crash the handler even if a config slice is unexpectedly absent.
   const provider =
     (kind === "stt" ? deps.mediaConfig.transcription?.provider : deps.mediaConfig.tts?.provider) ?? "configured";
-  return { provider, keyless: KEYLESS_VOICE_PROVIDERS.has(provider), source: "explicit" };
+  // WR-03 (196 review): be HONEST about the rung. A concrete config provider
+  // (e.g. `local`/`edge`/`openai`) was used verbatim → that IS an explicit pin.
+  // But `auto` / the `?? "configured"` placeholder is NOT an explicit choice —
+  // the resolver never ran, so labeling it `explicit` would fabricate a selection
+  // rung. Use `fallback` ("no resolver ran, derived from config") for those.
+  // `keyless` is a best-effort heuristic on this degraded path (the resolver
+  // carries the real value otherwise); `auto`/`configured` aren't in the keyless
+  // set, so they default to keyed — honest as a conservative best effort.
+  const isUnpinned = provider === "auto" || provider === "configured";
+  const source: VoiceSource = isUnpinned ? "fallback" : "explicit";
+  return { provider, keyless: KEYLESS_VOICE_PROVIDERS.has(provider), source };
 }
 
 /**
