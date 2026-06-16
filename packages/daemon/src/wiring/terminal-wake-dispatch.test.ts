@@ -154,6 +154,35 @@ describe("terminal-wake-dispatch (recurring wake-FSM)", () => {
     expect(h.logger.warn).toHaveBeenCalled();
   });
 
+  it("FOREGROUND-DRIVE GUARD (#4): an input_needed for a NON-backgrounded (foreground-driven) session does NOT wake a turn", async () => {
+    // Real-VPS 2026-06-16: at launch claude's welcome screen settled and fired input_needed
+    // a beat before the foreground agent turn sent the build prompt, so the woken turn
+    // escalated "waiting for input" to Telegram BEFORE "Kicked off". While the owning
+    // foreground turn drives (the drive is not yet promoted/backgrounded) it handles its own
+    // settles, so the fd3 woken turn must be SKIPPED — deferred to the foreground turn.
+    const h = makeHarness(dataDir, { isDriveBackgrounded: () => false });
+    fsm = createTerminalWakeDispatcher(h.deps);
+
+    h.bus.fire(wake("sess-fg", "req-1"));
+    await Promise.resolve();
+
+    expect(h.wakeOneTurn).not.toHaveBeenCalled();
+    expect(h.escalate).not.toHaveBeenCalled();
+  });
+
+  it("FOREGROUND-DRIVE GUARD (#4): once the drive is backgrounded (promoted), input_needed DOES wake a turn", async () => {
+    // The post-promotion attention (a genuine prompt / completion) still wakes normally — the
+    // guard only suppresses the redundant foreground-launch wake.
+    const h = makeHarness(dataDir, { isDriveBackgrounded: () => true });
+    fsm = createTerminalWakeDispatcher(h.deps);
+
+    h.bus.fire(wake("sess-bg", "req-1"));
+    await Promise.resolve();
+
+    expect(h.wakeOneTurn).toHaveBeenCalledTimes(1);
+    expect(h.wakeOneTurn).toHaveBeenCalledWith("sess-bg", OWNER);
+  });
+
   it("a SUCCESSFUL turn resets the consecutive run so a later failure run starts from zero — not a lifetime cap (WR-01)", async () => {
     // The discriminating WR-01 contract: a settled turn moves the goalpost. Drive a
     // FAILING wake (hop→1), then a SUCCEEDING wake (resets hop→0), then a fresh

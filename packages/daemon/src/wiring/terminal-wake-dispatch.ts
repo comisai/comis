@@ -114,6 +114,18 @@ export interface TerminalWakeDispatcherDeps {
   /** Active-session check — owner-scoped (the P4 registry). A wake for a session
    *  this reports false (killed/evicted/cross-owner) is dropped + audited. */
   isSessionActive: (sessionId: string, owner: PersistedWakeOwner) => boolean;
+  /**
+   * Is the drive BACKGROUNDED (promoted via DRIVE-02)? — the foreground-drive guard
+   * (LIVE-03 / #4). The fd3 woken turn is the BACKGROUND attention mechanism (it runs the
+   * deterministic auto-answer/escalate when NO agent turn is processing the session). While
+   * the OWNING FOREGROUND turn is still driving — the drive has not yet been promoted — that
+   * turn handles every settle itself via its own `terminal_session_wait`, so a woken turn here
+   * is REDUNDANT and RACES it (at launch claude's welcome screen fires input_needed a beat
+   * before the foreground turn sends its first keystroke → a spurious "waiting for input"
+   * escalation). When this returns false the wake is SKIPPED (deferred to the foreground turn).
+   * Optional: an isolated FSM/test omits it ⇒ NO gate (the unit's default — every wake dispatches).
+   */
+  isDriveBackgrounded?: (sessionId: string) => boolean;
   /** The woken-turn driver (124-09 wires it to the agent turn). */
   wakeOneTurn: (sessionId: string, owner: PersistedWakeOwner) => Promise<void>;
   /** Hop-limit / drop escalation (124-09 binds it to terminal:escalated). */
