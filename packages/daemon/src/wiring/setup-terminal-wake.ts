@@ -40,7 +40,7 @@
  */
 
 import { systemNowMs, type TypedEventBus, type ComisLogger, type TimerPort, type TimerHandle } from "@comis/core";
-import { createLoopGuard, busyOrHung, type TerminalSessionRegistry, type DriveJournal, type BusySignal, type NotifyPolicy, type EvictReason } from "@comis/skills/tools";
+import { createLoopGuard, type TerminalSessionRegistry, type DriveJournal, type NotifyPolicy, type EvictReason } from "@comis/skills/tools";
 
 import {
   createTerminalWakeDispatcher,
@@ -51,22 +51,10 @@ import {
 import { buildWokenTurnDriver, type TerminalAttentionConfig, type WokenTurnNotify } from "./terminal-wake-turn.js";
 import { removeWakeStateFile, type PersistedWakeOwner } from "./terminal-wake-persistence.js";
 import { driveScopeKeyFor, registryOwnerFor } from "./terminal-drive-scope.js";
-import { emitTerminalOutcome, runHeartbeatTick, shouldFailOnLost, type TerminalNotifyDeps } from "./terminal-wake-notify.js";
+import { emitTerminalOutcome, runHeartbeatTick, runBackstopSessionCheck, shouldFailOnLost, type TerminalNotifyDeps } from "./terminal-wake-notify.js";
+import type { LivenessSignal } from "./terminal-wake-types.js";
 
 /** Dependencies for the keystone wake wiring. */
-/**
- * The liveness-probe result the backstop consumes — a {@link BusySignal} (the busy/hung verdict
- * the reaper + backstop read) PLUS the DELIVER-01 (#2) completion signal `awaitingInput`: `true`
- * iff the classifier reported `awaiting-input` (a settled prompt — a backgrounded claude that
- * finished its current work and is now idle at its `❯` box). `busyOrHung` IGNORES it (an
- * awaiting-input drive is `busy`, not hung), so the field is purely additive; the backstop reads
- * it to fire a ONE-TIME "drive finished — waiting for input" notification a backgrounded drive
- * would otherwise never deliver (it emits no fd3 attention once promoted, and the backstop acted
- * only on `hung`). Defined here (the upstream module) so terminal-durable-wiring imports it in the
- * SAME direction it already imports {@link DriveJournalStorePort} — no new type cycle.
- */
-export type LivenessSignal = BusySignal & { awaitingInput?: boolean };
-
 export interface SetupTerminalWakeDeps {
   /** The daemon's typed event bus (the Task-1 hook publishes `terminal:input_needed` here). */
   eventBus: TypedEventBus;
@@ -112,8 +100,9 @@ export interface SetupTerminalWakeDeps {
   heartbeatMs?: number;
   /**
    * LIVE-01 (165-07): the injected SINGLE liveness check the backstop performs on a tick —
-   * the worker's `has-session` + `noProgressMs` + the `stuckMs` window (the {@link BusySignal}
-   * the pure `busyOrHung` predicate consumes), with NO per-tick SCREEN read (I2 — the
+   * the worker's `has-session` + `noProgressMs` + the `stuckMs` window (the {@link LivenessSignal}
+   * the pure `busyOrHung` predicate consumes; `awaitingInput` rides it for DELIVER-01), with NO
+   * per-tick SCREEN read (I2 — the
    * signature carries no grid/cursor; the daemon binds it to the registry's `status`
    * round-trip, which returns the worker's CLASSIFIER perception — `working`/`stuck`/`exited` —
    * never the screen bytes). Async: the single check is a worker round-trip, awaited inside the
@@ -222,6 +211,12 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
   // + notify-once); 164-06 reads promotedSessions here (via driveScopeKey below) to flip the
   // drive-scope sessionKey for a promoted session's woken turns.
   const promotedSessions = new Set<string>();
+  // DELIVER-01 (#2): the once-per-idle-stretch completion-notification latch. The backstop adds a
+  // promoted session here when it FIRST observes it awaiting-input (finished its work + idle at the
+  // prompt) and delivers the "drive finished — waiting for input" notification; the latch is cleared
+  // when the drive resumes working, so a fresh idle after the user replies re-notifies. Reclaimed
+  // on end-of-life alongside promotedSessions.
+  const completionNotified = new Set<string>();
 
   // DRIVE-01 (164-06): the drive-scope attribution key for a session's woken turns. A
   // PROMOTED session routes to `drive:<sessionId>` (isolating its woken turns from the
@@ -510,50 +505,32 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
   let backstopHandle: TimerHandle | undefined;
   // Process one promoted session's backstop check (async — the liveness check is a worker
   // round-trip). Separated from the loop so a per-session fault is isolated + awaited cleanly.
-  const backstopCheckSession = async (sessionId: string, now: number, heartbeatMs: number): Promise<void> => {
-    if (!deps.checkLiveness) return;
-    // I2: a wake landed within the heartbeat window → a normally-progressing drive; SKIP
-    // (no liveness check, no screen read). The backstop fires ONLY in the absence of a wake.
-    const lastWake = lastTransitionMs.get(sessionId);
-    if (lastWake !== undefined && now - lastWake < heartbeatMs) return;
-    // ONE liveness check — has-session + noProgressMs (NO screen, I2). A gone session → skip.
-    const agentId = sessionAgent.get(sessionId) ?? "";
-    const signal = await deps.checkLiveness(sessionId, agentId);
-    if (signal === undefined) return;
-    if (busyOrHung(signal) === "busy") {
-      // The ENDURE-01 unify (I9): a quiet-but-busy compile is NOT stuck. Its lastActivity is
-      // ALREADY refreshed by the checkLiveness round-trip's `registry.status` stamp (LO-03 — no
-      // separate refresh hook is needed; the status side effect IS the unify), so the idle
-      // reaper never evicts it for its quietness alone.
-      return;
-    }
-    // "hung": synthesize a stuck wake through the EXISTING seam (the wake adapter translates
-    // terminal:input_needed{state:"stuck"} → a stuck-classified woken turn). NOT a new event.
-    // The onWakeTransition listener re-stamps lastTransitionMs off this emit → the synth fires
-    // at most once per silent stretch (never per tick). `agentId` resolved above.
-    deps.eventBus.emit("terminal:input_needed", {
-      sessionId,
-      agentId,
-      state: "stuck",
-      reason: "liveness_backstop",
-      confidence: "high",
-      timestamp: now,
-    });
-    log.warn(
-      { sessionId, agentId, noProgressMs: signal.noProgressMs, hint: "liveness backstop found a promoted drive hung (alive-but-no-progress past the stuck window, or a dead backend); synthesized a stuck for escalation", errorKind: "timeout" as const, step: "liveness_backstop" },
-      "terminal liveness backstop synthesized a stuck",
-    );
-  };
   const runBackstopTick = (): void => {
-    if (!deps.checkLiveness) return;
+    const checkLiveness = deps.checkLiveness;
+    if (!checkLiveness) return;
     const now = nowMs();
     const heartbeatMs = deps.heartbeatMs ?? 90_000;
-    // Snapshot the promoted set (a synth-stuck-triggered woken turn could mutate it mid-tick).
+    // Snapshot the promoted set (a synth-stuck-triggered woken turn could mutate it mid-tick). The
+    // per-session body is the extracted runBackstopSessionCheck (terminal-wake-notify.ts) — this
+    // holder keeps ONLY the timer + the loop (800-line cap). It runs the I2 liveness probe (NO
+    // screen) and acts: hung → synth-stuck through the EXISTING input_needed seam; DELIVER-01 (#2)
+    // awaiting-input (finished + idle) → a ONE-TIME completion notification (de-duped via
+    // completionNotified); still-working → clears the latch. Fire-and-forget per session.
     for (const sessionId of [...promotedSessions]) {
-      // Fire-and-forget per session; isolate a per-session fault so one bad check never throws
-      // out of the interval callback (which would be an unhandled rejection). The backstop is a
-      // best-effort safety net — a faulting liveness probe degrades to "no check this tick".
-      void backstopCheckSession(sessionId, now, heartbeatMs).catch((err: unknown) => {
+      void runBackstopSessionCheck({
+        sessionId,
+        agentId: sessionAgent.get(sessionId) ?? "",
+        now,
+        heartbeatMs,
+        lastWakeMs: lastTransitionMs.get(sessionId),
+        checkLiveness,
+        emitStuck: (ev) => deps.eventBus.emit("terminal:input_needed", ev),
+        completionNotified,
+        notify: deps.notify,
+        notifyPolicy,
+        info: (obj, msg) => log.info(obj, msg),
+        warn: (obj, msg) => log.warn(obj, msg),
+      }).catch((err: unknown) => {
         log.warn(
           { sessionId, err, hint: "liveness backstop check faulted; skipped this tick (the next tick retries)", errorKind: "resource" as const, step: "liveness_backstop_failed" },
           "terminal liveness backstop check faulted",
@@ -602,11 +579,6 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
   const dispatcher: TerminalWakeDispatcher = createTerminalWakeDispatcher({
     eventBus: makeWakeAdapterBus(deps.eventBus, log, driveScopeKey),
     isSessionActive,
-    // LIVE-03 (#4): the foreground-drive guard. The daemon owns the DRIVE-02 promotion state
-    // (promotedSessions); a session is "backgrounded" once its owning foreground turn handed
-    // off via auto-promotion. While still foreground (unpromoted) that turn handles its own
-    // settles, so the fd3 woken turn is suppressed — no spurious launch escalation.
-    isDriveBackgrounded: (sessionId) => promotedSessions.has(sessionId),
     wakeOneTurn,
     escalate,
     dataDir: deps.dataDir,
@@ -633,6 +605,7 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
     // DRIVE-02 (164-04): reclaim the promoted-state so a recycled sessionId never inherits a
     // stale promotion (mirrors loopGuard.forget — wired to the SAME end-of-life signals below).
     promotedSessions.delete(sessionId);
+    completionNotified.delete(sessionId); // DELIVER-01 (#2): reclaim the completion latch (same lifecycle).
     // DUR-02 (165-07): reclaim the DURABLE journal file FIRST (while the owning agent is still
     // known) — but ONLY on a clean exit/evict. On a lost/crash it is PRESERVED (I10).
     const agentId = sessionAgent.get(sessionId);

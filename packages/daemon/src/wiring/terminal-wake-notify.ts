@@ -34,9 +34,10 @@
  * @module
  */
 
-import { mapTerminalOutcome, shouldNotifyOutcome, heartbeatLine, type NotifyPolicy, type EvictReason, type DriveJournal } from "@comis/skills/tools";
+import { busyOrHung, mapTerminalOutcome, shouldNotifyOutcome, heartbeatLine, type NotifyPolicy, type EvictReason, type DriveJournal } from "@comis/skills/tools";
 
 import type { WokenTurnNotify } from "./terminal-wake-turn.js";
+import type { LivenessSignal } from "./terminal-wake-types.js";
 
 /**
  * WR-04 (Phase 166): the explicit "unknown cap" sentinel for an `evicted` outcome that arrives
@@ -283,4 +284,87 @@ export function runHeartbeatTick(args: HeartbeatTickArgs): void {
         );
       });
   }
+}
+
+/**
+ * The LIVE-01 backstop's per-session check — extracted from `setup-terminal-wake.ts` (the timer +
+ * the `promotedSessions` loop stay there) to keep that holder under the 800-line cap. It runs the
+ * single injected liveness probe for ONE promoted session (NO screen read, I2) and acts on the
+ * verdict:
+ *   - a wake within the heartbeat window (a normally-progressing drive) → SKIP (Pitfall 7).
+ *   - `hung` → synthesize a `state:"stuck"` wake through the EXISTING terminal:input_needed seam
+ *     (NOT a new event) + a §2.7 WARN — at-most-once per silent stretch (the onWakeTransition
+ *     listener re-stamps `lastTransitionMs` off the synth).
+ *   - DELIVER-01 (#2): `busy` + `awaitingInput` (the drive FINISHED its current work + is idle at
+ *     its prompt) → deliver a ONE-TIME completion notification (a backgrounded drive emits no fd3
+ *     attention, so the backstop is the only place this is observed), de-duped via
+ *     `completionNotified`; the latch is CLEARED when the drive resumes working so a fresh idle
+ *     after the user replies re-notifies.
+ *   - `busy` + working (still producing) → nothing (the ENDURE-01 unify: the `checkLiveness` status
+ *     round-trip already refreshed `lastActivity`, LO-03).
+ * Fire-and-forget + total: the caller isolates a per-session fault.
+ */
+export interface BackstopSessionCheckArgs {
+  sessionId: string;
+  agentId: string;
+  now: number;
+  heartbeatMs: number;
+  /** `lastTransitionMs.get(sessionId)` — the I2 "a wake landed within the window" skip. */
+  lastWakeMs: number | undefined;
+  checkLiveness: (sessionId: string, agentId: string) => Promise<LivenessSignal | undefined> | LivenessSignal | undefined;
+  /** Synthesize a stuck through the EXISTING `terminal:input_needed` seam (the caller wraps the typed bus). */
+  emitStuck: (ev: { sessionId: string; agentId: string; state: "stuck"; reason: string; confidence: "high"; timestamp: number }) => void;
+  /** The DELIVER-01 once-per-idle-stretch latch (caller-owned; reclaimed on session end). */
+  completionNotified: Set<string>;
+  notify?: WokenTurnNotify;
+  notifyPolicy: NotifyPolicy;
+  info: (obj: Record<string, unknown>, msg: string) => void;
+  warn: (obj: Record<string, unknown>, msg: string) => void;
+}
+
+export async function runBackstopSessionCheck(a: BackstopSessionCheckArgs): Promise<void> {
+  // I2: a wake landed within the heartbeat window → a normally-progressing drive; SKIP (no probe).
+  if (a.lastWakeMs !== undefined && a.now - a.lastWakeMs < a.heartbeatMs) return;
+  const signal = await a.checkLiveness(a.sessionId, a.agentId);
+  if (signal === undefined) return; // a gone session → skip.
+  if (busyOrHung(signal) === "busy") {
+    if (signal.awaitingInput === true) {
+      // DELIVER-01 (#2): the drive finished its current work + is idle at its prompt → deliver ONCE.
+      if (!a.completionNotified.has(a.sessionId)) {
+        a.completionNotified.add(a.sessionId);
+        if (a.notify && a.notifyPolicy !== "none") {
+          a.info(
+            { sessionId: a.sessionId, agentId: a.agentId, step: "drive_completion_notified" },
+            "terminal drive finished its current work and is awaiting input; delivered a one-time completion notification",
+          );
+          void a
+            .notify({
+              agentId: a.agentId,
+              message: `Terminal session ${a.sessionId} has finished its current task and is now idle, waiting for input. Reply with the next step, ask me to "show the terminal", or say "stop" to end the drive.`,
+              priority: "normal",
+              origin: "background_task",
+            })
+            .catch((err: unknown) => {
+              a.warn(
+                { sessionId: a.sessionId, agentId: a.agentId, err, hint: "drive completion notification failed; the drive continues idle (bus-only)", errorKind: "resource" as const, step: "drive_completion_notify_failed" },
+                "terminal drive completion notification failed",
+              );
+            });
+        }
+      }
+      return;
+    }
+    // Still working (not at a prompt) — clear the completion latch so the NEXT idle re-notifies.
+    // ENDURE-01 unify (I9): lastActivity is already refreshed by the checkLiveness status stamp (LO-03).
+    a.completionNotified.delete(a.sessionId);
+    return;
+  }
+  // "hung": synthesize a stuck wake through the EXISTING terminal:input_needed seam (NOT a new
+  // event). The onWakeTransition listener re-stamps lastTransitionMs off this emit → at most once
+  // per silent stretch (never per tick).
+  a.emitStuck({ sessionId: a.sessionId, agentId: a.agentId, state: "stuck", reason: "liveness_backstop", confidence: "high", timestamp: a.now });
+  a.warn(
+    { sessionId: a.sessionId, agentId: a.agentId, noProgressMs: signal.noProgressMs, hint: "liveness backstop found a promoted drive hung (alive-but-no-progress past the stuck window, or a dead backend); synthesized a stuck for escalation", errorKind: "timeout" as const, step: "liveness_backstop" },
+    "terminal liveness backstop synthesized a stuck",
+  );
 }

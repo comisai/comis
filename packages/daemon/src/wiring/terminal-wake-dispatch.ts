@@ -114,18 +114,6 @@ export interface TerminalWakeDispatcherDeps {
   /** Active-session check — owner-scoped (the P4 registry). A wake for a session
    *  this reports false (killed/evicted/cross-owner) is dropped + audited. */
   isSessionActive: (sessionId: string, owner: PersistedWakeOwner) => boolean;
-  /**
-   * Is the drive BACKGROUNDED (promoted via DRIVE-02)? — the foreground-drive guard
-   * (LIVE-03 / #4). The fd3 woken turn is the BACKGROUND attention mechanism (it runs the
-   * deterministic auto-answer/escalate when NO agent turn is processing the session). While
-   * the OWNING FOREGROUND turn is still driving — the drive has not yet been promoted — that
-   * turn handles every settle itself via its own `terminal_session_wait`, so a woken turn here
-   * is REDUNDANT and RACES it (at launch claude's welcome screen fires input_needed a beat
-   * before the foreground turn sends its first keystroke → a spurious "waiting for input"
-   * escalation). When this returns false the wake is SKIPPED (deferred to the foreground turn).
-   * Optional: an isolated FSM/test omits it ⇒ NO gate (the unit's default — every wake dispatches).
-   */
-  isDriveBackgrounded?: (sessionId: string) => boolean;
   /** The woken-turn driver (124-09 wires it to the agent turn). */
   wakeOneTurn: (sessionId: string, owner: PersistedWakeOwner) => Promise<void>;
   /** Hop-limit / drop escalation (124-09 binds it to terminal:escalated). */
@@ -250,24 +238,6 @@ export function createTerminalWakeDispatcher(
       );
       // The session is gone; forget any stale in-memory state for it.
       states.delete(ev.sessionId);
-      return;
-    }
-
-    // (2.5) FOREGROUND-DRIVE GUARD (LIVE-03 / #4) — the fd3 woken turn is the BACKGROUND
-    // attention mechanism. While the OWNING FOREGROUND turn is still driving (the drive has not
-    // been promoted/backgrounded via DRIVE-02), it handles every settle itself through its own
-    // terminal_session_wait, so a woken turn here is REDUNDANT and RACES it: at launch claude's
-    // welcome screen settles + fires input_needed a beat before the foreground turn sends its
-    // first keystroke, so the woken turn escalates "waiting for input" to the channel even
-    // though the agent is about to drive autonomously (real-VPS 2026-06-16: a Telegram
-    // "build a snake game" drive got a spurious "waiting for input" before "Kicked off"). Skip
-    // until the drive is backgrounded; a promoted drive's attention (a genuine prompt /
-    // completion) still wakes normally. Unwired (an isolated FSM / test) ⇒ no gate.
-    if (deps.isDriveBackgrounded !== undefined && !deps.isDriveBackgrounded(ev.sessionId)) {
-      log.debug(
-        { sessionId: ev.sessionId, requestId: ev.requestId, agentId: ev.owner.agentId, step: "wake_foreground_skip" },
-        "Wake dispatch: input_needed while the owning foreground turn drives; deferred to it (no woken turn)",
-      );
       return;
     }
 

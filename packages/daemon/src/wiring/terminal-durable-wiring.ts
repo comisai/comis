@@ -40,7 +40,8 @@ import {
   loadDriveJournal,
   removeDriveJournal,
 } from "./terminal-drive-journal-persistence.js";
-import type { DriveJournalStorePort, LivenessSignal } from "./setup-terminal-wake.js";
+import type { DriveJournalStorePort } from "./setup-terminal-wake.js";
+import type { LivenessSignal } from "./terminal-wake-types.js";
 import {
   busyOrHung,
   buildTmuxHasSessionArgv,
@@ -345,7 +346,12 @@ export function buildWakeDurabilityDeps(i: WakeDurabilityInputs): {
     if (!tmuxOk) return { alive: false, noProgressMs: 0, stuckMs };
     if (status.state === "stuck") return { alive: true, noProgressMs: stuckMs + 1, stuckMs };
     // working / awaiting-input → busy (recent progress; the classifier did not flag no-progress).
-    return { alive: true, noProgressMs: 0, stuckMs };
+    // DELIVER-01 (#2): surface `awaiting-input` (a settled prompt — a backgrounded drive that
+    // finished its current work and is idle at its prompt) so the backstop can deliver a one-time
+    // "finished — waiting for input" notification. A backgrounded drive emits no fd3 attention
+    // once promoted, so without this the completion is never delivered. Purely additive — the
+    // busy verdict is unchanged (awaiting-input is busy, never hung).
+    return { alive: true, noProgressMs: 0, stuckMs, ...(status.state === "awaiting-input" ? { awaitingInput: true } : {}) };
   };
 
   // LO-03 (165-REVIEW): NO separate refreshLastActivity — checkLiveness's `registry.status`
