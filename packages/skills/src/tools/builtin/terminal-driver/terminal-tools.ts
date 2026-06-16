@@ -789,7 +789,7 @@ export function createTerminalSessionWaitTool(deps: TerminalToolDeps): AgentTool
         emitDrivePromoted(
           { emit: deps.eventBus.emit.bind(deps.eventBus), info: deps.logger.info.bind(deps.logger), nowMs: deps.nowMs },
           sessionId,
-          owner.agentId,
+          deps.agentId, // REAL agent, not the userId owner-key — daemon routes journal + drive-owner by agentId (live VPS 260616)
           driveMode === "detached" ? "mode_detached" : "producing",
         );
       }
