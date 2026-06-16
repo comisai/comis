@@ -25,6 +25,12 @@ import type {
   ChannelConfig,
   GatewayConfig,
   ProviderConfig,
+  VideoProviderConfig,
+} from "./types.js";
+import {
+  SUPPORTED_VIDEO_PROVIDERS,
+  VIDEO_PROVIDER_ENV_KEYS,
+  PROVIDER_ENV_KEYS,
 } from "./types.js";
 import type {
   WizardPrompter,
@@ -66,6 +72,9 @@ export type NonInteractiveOptions = {
   slackAppToken?: string;
   lineToken?: string;
   lineSecret?: string;
+  // Media generation
+  videoProvider?: string;
+  videoApiKey?: string;
   // Paths
   dataDir?: string;
   configDir?: string;
@@ -206,6 +215,20 @@ export function validateNonInteractiveOptions(
     );
   }
 
+  // --video-provider, when provided, must be one of the closed video vocabulary
+  // (auto|fal|google|xai). Unlike LLM providers (an evolving pi-ai catalog), this
+  // is a fixed config enum, so a typo would FATAL the daemon at config parse —
+  // reject it early with a clear hint.
+  if (opts.videoProvider !== undefined) {
+    const known = SUPPORTED_VIDEO_PROVIDERS.map((vp) => vp.id);
+    if (!known.includes(opts.videoProvider)) {
+      throw new NonInteractiveError(
+        `--video-provider must be one of: ${known.join(", ")}`,
+        "videoProvider",
+      );
+    }
+  }
+
   // Validate channel credentials
   if (opts.channels && opts.channels.length > 0) {
     for (const channel of opts.channels) {
@@ -344,6 +367,33 @@ export function buildNonInteractiveState(
     }
   }
 
+  // Video-generation provider (step 08c, skipped in non-interactive mode).
+  // Build the state the step would have produced from --video-provider. The
+  // credential resolution mirrors the interactive step (CRED-01): a google/xai
+  // choice that matches the main provider reuses --api-key (no extra key); fal
+  // or a cross-provider google/xai uses --video-api-key.
+  let videoProvider: VideoProviderConfig | undefined;
+  if (opts.videoProvider !== undefined) {
+    const requiredEnvKey = VIDEO_PROVIDER_ENV_KEYS[opts.videoProvider];
+    if (!requiredEnvKey) {
+      // auto — follow the main provider; no credential.
+      videoProvider = { provider: opts.videoProvider };
+    } else if (
+      opts.apiKey !== undefined &&
+      PROVIDER_ENV_KEYS[opts.provider!] === requiredEnvKey
+    ) {
+      // Main provider already supplies the matching key (e.g. google main + Veo).
+      videoProvider = { provider: opts.videoProvider };
+    } else if (opts.videoApiKey !== undefined) {
+      videoProvider = { provider: opts.videoProvider, apiKey: opts.videoApiKey };
+    } else {
+      // No key available to satisfy this provider — record the selection so the
+      // config is written; the daemon surfaces an honest auth_required at use
+      // time (no video-specific ${VAR} ref to crash boot).
+      videoProvider = { provider: opts.videoProvider };
+    }
+  }
+
   // Gateway config — token is the only supported gateway auth method.
   // Auto-generate a 48-char hex token when none provided (same as step 07).
   const gatewayToken = opts.gatewayToken ?? randomBytes(24).toString("hex");
@@ -390,6 +440,7 @@ export function buildNonInteractiveState(
     "gateway",
     "workspace",
     "tool-providers",
+    "video-providers",
     "review",
   ];
 
@@ -403,6 +454,7 @@ export function buildNonInteractiveState(
     agentName: opts.agentName ?? "comis-agent",
     model,
     channels,
+    ...(videoProvider !== undefined && { videoProvider }),
     gateway,
     dataDir,
     skipHealth: opts.skipHealth ?? false,

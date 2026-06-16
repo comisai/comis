@@ -95,6 +95,12 @@ function buildSummary(state: WizardState): string {
     lines.push(`Tools:      ${names.join(", ")}`);
   }
 
+  // Video generation section
+  if (state.videoProvider?.provider) {
+    lines.push("");
+    lines.push(`Video:      ${state.videoProvider.provider}`);
+  }
+
   // Workspace section
   if (state.dataDir) {
     lines.push("");
@@ -131,6 +137,10 @@ function buildEditOptions(state: WizardState): { value: string; label: string }[
 
   if (state.toolProviders) {
     options.push({ value: "tool-providers", label: "Tool Providers" });
+  }
+
+  if (state.videoProvider) {
+    options.push({ value: "video-providers", label: "Video Generation" });
   }
 
   if (state.dataDir) {

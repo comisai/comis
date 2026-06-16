@@ -25,6 +25,7 @@ import {
   PROVIDER_ENV_KEYS,
   CHANNEL_ENV_KEYS,
   TOOL_PROVIDER_ENV_KEYS,
+  VIDEO_PROVIDER_ENV_KEYS,
 } from "../types.js";
 import type { WizardPrompter } from "../prompter.js";
 import { updateState } from "../state.js";
@@ -193,6 +194,21 @@ function buildConfigObject(state: WizardState): Record<string, unknown> {
     config.channels = channels;
   }
 
+  // Integrations section — video generation provider selection (step 08c).
+  // Emit the explicit operator choice (even "auto") so the configured backend
+  // is auditable in config.yaml; omitted entirely when the step never ran (the
+  // daemon then applies its own "auto" default). The credential itself lives in
+  // .env / the secrets store (collectManagedSecrets) — NOT a ${VAR} ref here,
+  // because the daemon resolves video keys (FAL_KEY / GOOGLE_API_KEY / XAI_API_KEY)
+  // straight from the SecretManager, mirroring image generation.
+  if (state.videoProvider?.provider) {
+    config.integrations = {
+      media: {
+        videoGeneration: { provider: state.videoProvider.provider },
+      },
+    };
+  }
+
   return config;
 }
 
@@ -235,6 +251,16 @@ function collectManagedSecrets(state: WizardState): Map<string, string> {
       const envKey = TOOL_PROVIDER_ENV_KEYS[tp.id];
       if (envKey && tp.apiKey) managed.set(envKey, tp.apiKey);
     }
+  }
+
+  // Video-generation credential (step 08c). Only present when the wizard
+  // collected a key (fal always; cross-provider google/xai). A key-reusing
+  // google/xai or `auto` carries no apiKey here — the GOOGLE_API_KEY/XAI_API_KEY
+  // is already in the map from the provider section (CRED-01). Set() is
+  // idempotent, so a duplicate same-value write is harmless.
+  if (state.videoProvider?.apiKey) {
+    const envKey = VIDEO_PROVIDER_ENV_KEYS[state.videoProvider.provider];
+    if (envKey) managed.set(envKey, state.videoProvider.apiKey);
   }
 
   // Gateway credentials -- token is the only supported gateway auth method.

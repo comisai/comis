@@ -94,6 +94,7 @@ export {
   DocumentationConfigSchema,
   DocumentationLinkSchema,
   ImageGenerationConfigSchema,
+  VideoGenerationConfigSchema,
   NotificationConfigSchema,
   VerbosityConfigSchema,
   VerbosityLevelSchema,

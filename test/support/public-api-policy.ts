@@ -1296,6 +1296,12 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "DocumentationConfigSchema",
       "DocumentationLinkSchema",
       "ImageGenerationConfigSchema",
+      // Video-generation config schema (v2.24). Documented config-API surface,
+      // parity sibling of ImageGenerationConfigSchema: out-of-package consumers
+      // (daemon, CLI wizard) use the inferred VideoGenerationConfig TYPE, so the
+      // schema VALUE is a baseline orphan here. The CLI init-wizard drift-guard
+      // test parses it to keep SUPPORTED_VIDEO_PROVIDERS aligned with the enum.
+      "VideoGenerationConfigSchema",
       "NotificationConfigSchema",
       "VerbosityConfigSchema",
       "VerbosityLevelSchema",

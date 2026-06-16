@@ -9,7 +9,9 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
+import { VideoGenerationConfigSchema } from "@comis/core";
 import type { WizardPrompter, WizardState, Spinner } from "../index.js";
+import { SUPPORTED_VIDEO_PROVIDERS } from "../index.js";
 import { videoProvidersStep } from "./08c-video-providers.js";
 
 // ---------- Mock Prompter Helper ----------
@@ -182,6 +184,13 @@ describe("videoProvidersStep", () => {
     expect(validate("")).toBeDefined();
     expect(validate("short")).toBeDefined();
     expect(validate("a-valid-api-key-1234")).toBeUndefined();
+  });
+
+  it("every offered provider id is accepted by the daemon's VideoGenerationConfigSchema (drift guard)", () => {
+    for (const vp of SUPPORTED_VIDEO_PROVIDERS) {
+      const parsed = VideoGenerationConfigSchema.parse({ provider: vp.id });
+      expect(parsed.provider).toBe(vp.id);
+    }
   });
 
   it("select defaults to the previously chosen provider", async () => {

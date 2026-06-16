@@ -293,6 +293,24 @@ describe("validateNonInteractiveOptions", () => {
     };
     expect(() => validateNonInteractiveOptions(opts)).not.toThrow();
   });
+
+  it("rejects an unknown --video-provider (closed config vocabulary)", () => {
+    const opts = validOpts({ videoProvider: "runway" });
+    expect(() => validateNonInteractiveOptions(opts)).toThrow(NonInteractiveError);
+    try {
+      validateNonInteractiveOptions(opts);
+    } catch (e) {
+      expect((e as NonInteractiveError).field).toBe("videoProvider");
+    }
+  });
+
+  it("accepts each valid --video-provider value", () => {
+    for (const id of ["auto", "fal", "google", "xai"]) {
+      expect(() =>
+        validateNonInteractiveOptions(validOpts({ videoProvider: id })),
+      ).not.toThrow();
+    }
+  });
 });
 
 // ==========================================================================
@@ -445,6 +463,34 @@ describe("buildNonInteractiveState", () => {
     expect(state.channels![2]).toEqual({ type: "irc", validated: false });
   });
 
+  it("omits videoProvider when --video-provider is not set", () => {
+    const state = buildNonInteractiveState(validOpts());
+    expect(state.videoProvider).toBeUndefined();
+  });
+
+  it("records auto video provider without a credential", () => {
+    const state = buildNonInteractiveState(validOpts({ videoProvider: "auto" }));
+    expect(state.videoProvider).toEqual({ provider: "auto" });
+  });
+
+  it("reuses the main provider key for a matching google video provider", () => {
+    const state = buildNonInteractiveState(
+      validOpts({ provider: "google", apiKey: "AIza-main-1234567890", videoProvider: "google" }),
+    );
+    // CRED-01: no extra key — GOOGLE_API_KEY already covered by the main provider.
+    expect(state.videoProvider).toEqual({ provider: "google" });
+  });
+
+  it("uses --video-api-key for fal", () => {
+    const state = buildNonInteractiveState(
+      validOpts({ videoProvider: "fal", videoApiKey: "fal-secret-key-1234567890" }),
+    );
+    expect(state.videoProvider).toEqual({
+      provider: "fal",
+      apiKey: "fal-secret-key-1234567890",
+    });
+  });
+
   it("defaults dataDir to homedir/.comis/data", () => {
     const state = buildNonInteractiveState(validOpts());
     expect(state.dataDir).toBe("/home/test/.comis/data");
@@ -455,7 +501,7 @@ describe("buildNonInteractiveState", () => {
     expect(state.dataDir).toBe("/custom/data");
   });
 
-  it("includes all interactive steps (incl. storage + tool-providers) in completedSteps", () => {
+  it("includes all interactive steps (incl. storage + tool-providers + video-providers) in completedSteps", () => {
     const state = buildNonInteractiveState(validOpts());
     expect(state.completedSteps).toEqual([
       "welcome",
@@ -469,6 +515,7 @@ describe("buildNonInteractiveState", () => {
       "gateway",
       "workspace",
       "tool-providers",
+      "video-providers",
       "review",
     ]);
   });

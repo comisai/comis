@@ -29,15 +29,19 @@ export type {
   ProviderConfig,
   ToolProviderConfig,
   SupportedToolProvider,
+  VideoProviderConfig,
+  SupportedVideoProvider,
 } from "./types.js";
 
 export {
   INITIAL_STATE,
   SUPPORTED_CHANNELS,
   SUPPORTED_TOOL_PROVIDERS,
+  SUPPORTED_VIDEO_PROVIDERS,
   PROVIDER_ENV_KEYS,
   CHANNEL_ENV_KEYS,
   TOOL_PROVIDER_ENV_KEYS,
+  VIDEO_PROVIDER_ENV_KEYS,
 } from "./types.js";
 
 // ---------- Prompter ----------
@@ -110,6 +114,7 @@ export { channelsStep } from "./steps/06-channels.js";
 export { gatewayStep } from "./steps/07-gateway.js";
 export { workspaceStep } from "./steps/08-workspace.js";
 export { toolProvidersStep } from "./steps/08b-tool-providers.js";
+export { videoProvidersStep } from "./steps/08c-video-providers.js";
 export { reviewStep } from "./steps/09-review.js";
 export { writeConfigStep } from "./steps/10-write-config.js";
 export { daemonStartStep } from "./steps/11-daemon-start.js";

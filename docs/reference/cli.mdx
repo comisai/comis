@@ -638,6 +638,17 @@ Interactive setup wizard for first-time configuration. Supports three modes: int
 | `--line-token <tok>` | `string` | - | LINE channel token |
 | `--line-secret <sec>` | `string` | - | LINE channel secret |
 
+#### Media Generation
+
+The interactive **advanced** flow includes a **Video Generation** step that offers every supported provider for [`integrations.media.videoGeneration.provider`](/reference/config-yaml): `auto` (follow the agent's main provider — the recommended default), `fal`, `google` (Veo), and `xai` (Grok Imagine). The same selection is available non-interactively via the flags below.
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--video-provider <id>` | `auto` \| `fal` \| `google` \| `xai` | `auto` | Video generation provider |
+| `--video-api-key <key>` | `string` | - | Video provider credential (e.g. `FAL_KEY`) |
+
+Credentials follow the provider-following model: `auto` reuses the agent's main provider key, and `google`/`xai` reuse `GOOGLE_API_KEY`/`XAI_API_KEY` when the main provider already supplies them — so `--video-api-key` is only needed for `fal` or a cross-provider `google`/`xai` choice. See [Environment Variables](/reference/environment-variables#llm-provider-keys) for the key reuse rules.
+
 #### Paths and Behavior
 
 | Flag | Type | Default | Description |

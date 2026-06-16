@@ -56,8 +56,12 @@ describe("FLOW_STEPS", () => {
     expect(FLOW_STEPS.quickstart).toHaveLength(11);
   });
 
-  it("advanced has 15 steps", () => {
-    expect(FLOW_STEPS.advanced).toHaveLength(15);
+  it("advanced has 16 steps", () => {
+    expect(FLOW_STEPS.advanced).toHaveLength(16);
+  });
+
+  it("advanced includes the video-providers step", () => {
+    expect(FLOW_STEPS.advanced).toContain("video-providers");
   });
 
   it("declares the remote wizard flow has exactly 7 step transitions", () => {
@@ -376,7 +380,7 @@ describe("getCompletedStepCount", () => {
   it("returns 0/total for initial state", () => {
     const result = getCompletedStepCount(INITIAL_STATE, "advanced");
     expect(result.completed).toBe(0);
-    expect(result.total).toBe(15);
+    expect(result.total).toBe(16);
   });
 
   it("returns total/total when all complete", () => {

@@ -29,6 +29,7 @@ export type WizardStepId =
   | "gateway"
   | "workspace"
   | "tool-providers"
+  | "video-providers"
   | "review"
   | "write-config"
   | "daemon-start"
@@ -88,6 +89,23 @@ export type ToolProviderConfig = {
   id: string;
   apiKey: string;
   validated?: boolean;
+};
+
+/**
+ * Video-generation provider selection collected at the `video-providers` step.
+ *
+ * `provider` is one of the operator-configurable video vocabulary ids
+ * (`auto` | `fal` | `google` | `xai`, mirroring core's `VIDEO_PROVIDER_VALUES`)
+ * written to `integrations.media.videoGeneration.provider`. `apiKey` is present
+ * ONLY when the choice needs a credential the rest of the wizard doesn't already
+ * collect: `fal` always (`FAL_KEY`), or `google`/`xai` when the agent's MAIN
+ * provider doesn't already supply the matching key. `auto` (follow-main, the
+ * recommended default) and a key-reusing `google`/`xai` carry no `apiKey` —
+ * CRED-01: video reuses the main provider's secret, no video-specific key (I9).
+ */
+export type VideoProviderConfig = {
+  provider: string;
+  apiKey?: string;
 };
 
 /** Gateway settings collected during the wizard. Token is the only supported
@@ -152,6 +170,8 @@ export type WizardState = {
   readonly senderTrustEntries?: readonly { senderId: string; level: string }[];
   readonly gateway?: GatewayConfig;
   readonly toolProviders?: readonly ToolProviderConfig[];
+  /** Video-generation provider selection from the `video-providers` step. */
+  readonly videoProvider?: VideoProviderConfig;
   readonly dataDir?: string;
   /** When true, skip post-setup health checks (set by --skip-health in non-interactive mode). */
   readonly skipHealth?: boolean;
@@ -262,6 +282,51 @@ export const TOOL_PROVIDER_ENV_KEYS: Record<string, string> = {
   tavily: "TAVILY_API_KEY",
   exa: "EXA_API_KEY",
   jina: "JINA_API_KEY",
+};
+
+// ---------- Video Provider Constants ----------
+
+/** Supported video-generation provider entry for the selection prompt. */
+export type SupportedVideoProvider = {
+  id: string;
+  label: string;
+  hint: string;
+  /**
+   * Env-var key for the credential this provider needs. Absent for `auto`
+   * (which follows the agent's main provider and reuses its key — no
+   * video-specific secret).
+   */
+  envKey?: string;
+};
+
+/**
+ * All operator-selectable video-generation providers, mirroring core's
+ * `VIDEO_PROVIDER_VALUES` (`auto` | `fal` | `google` | `xai`). The drift guard
+ * in `08c-video-providers.test.ts` parses each id through `VideoGenerationConfigSchema`
+ * so this list can never diverge from the config vocabulary the daemon accepts.
+ *
+ * `auto` is the recommended default (provider-following): video generation
+ * follows the agent's main provider and reuses its credentials (CRED-01/I9).
+ * `google` → Veo and `xai` → Grok Imagine reuse `GOOGLE_API_KEY`/`XAI_API_KEY`
+ * (the same key the completion path uses); only `fal` needs a dedicated `FAL_KEY`.
+ */
+export const SUPPORTED_VIDEO_PROVIDERS: readonly SupportedVideoProvider[] = [
+  { id: "auto", label: "Auto (follow main provider)", hint: "Reuse your agent's provider + key (recommended)" },
+  { id: "fal", label: "FAL", hint: "fal.ai queue API — needs a FAL_KEY" },
+  { id: "google", label: "Google Veo", hint: "Veo via GOOGLE_API_KEY", envKey: "GOOGLE_API_KEY" },
+  { id: "xai", label: "xAI Grok Imagine", hint: "Grok Imagine via XAI_API_KEY", envKey: "XAI_API_KEY" },
+] as const;
+
+/**
+ * Map a video-generation provider id to the env-var key its credential is
+ * stored under. `auto` is absent (follow-main, no dedicated key). `google`/`xai`
+ * reuse the SAME env keys as the matching LLM provider (`PROVIDER_ENV_KEYS`), so
+ * a `google`/`xai` main agent needs no extra credential (CRED-01).
+ */
+export const VIDEO_PROVIDER_ENV_KEYS: Record<string, string> = {
+  fal: "FAL_KEY",
+  google: "GOOGLE_API_KEY",
+  xai: "XAI_API_KEY",
 };
 
 /** Map channel type to required credential environment variable names. */
