@@ -451,6 +451,30 @@ describe("writeConfigStep", () => {
     expect(envContent).toContain("FAL_KEY=fal-img-secret-7890");
   });
 
+  it("emits transcription + tts providers and the deepgram/elevenlabs keys", async () => {
+    const state: WizardState = {
+      ...populatedState(),
+      transcriptionProvider: { provider: "deepgram", apiKey: "dg-secret-123456" },
+      ttsProvider: { provider: "elevenlabs", apiKey: "el-secret-123456" },
+    };
+    const prompter = createMockPrompter();
+
+    await writeConfigStep.execute(state, prompter);
+
+    const writeCalls = vi.mocked(writeFileSync).mock.calls;
+    const configContent = JSON.parse(
+      writeCalls.find(([p]) => typeof p === "string" && p.includes(".tmp"))![1] as string,
+    );
+    expect(configContent.integrations.media.transcription.provider).toBe("deepgram");
+    expect(configContent.integrations.media.tts.provider).toBe("elevenlabs");
+
+    const envContent = writeCalls.find(
+      ([p]) => typeof p === "string" && p.includes(".env"),
+    )![1] as string;
+    expect(envContent).toContain("DEEPGRAM_API_KEY=dg-secret-123456");
+    expect(envContent).toContain("ELEVENLABS_API_KEY=el-secret-123456");
+  });
+
   it("omits integrations from config.yaml when no media provider is set", async () => {
     const prompter = createMockPrompter();
 

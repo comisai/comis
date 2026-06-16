@@ -33,6 +33,10 @@ export type {
   SupportedVideoProvider,
   ImageProviderConfig,
   SupportedImageProvider,
+  TranscriptionProviderConfig,
+  SupportedTranscriptionProvider,
+  TtsProviderConfig,
+  SupportedTtsProvider,
 } from "./types.js";
 
 export {
@@ -41,11 +45,15 @@ export {
   SUPPORTED_TOOL_PROVIDERS,
   SUPPORTED_VIDEO_PROVIDERS,
   SUPPORTED_IMAGE_PROVIDERS,
+  SUPPORTED_TRANSCRIPTION_PROVIDERS,
+  SUPPORTED_TTS_PROVIDERS,
   PROVIDER_ENV_KEYS,
   CHANNEL_ENV_KEYS,
   TOOL_PROVIDER_ENV_KEYS,
   VIDEO_PROVIDER_ENV_KEYS,
   IMAGE_PROVIDER_ENV_KEYS,
+  TRANSCRIPTION_PROVIDER_ENV_KEYS,
+  TTS_PROVIDER_ENV_KEYS,
 } from "./types.js";
 
 // ---------- Prompter ----------
@@ -120,6 +128,8 @@ export { workspaceStep } from "./steps/08-workspace.js";
 export { toolProvidersStep } from "./steps/08b-tool-providers.js";
 export { videoProvidersStep } from "./steps/08c-video-providers.js";
 export { imageProvidersStep } from "./steps/08d-image-providers.js";
+export { transcriptionStep } from "./steps/08e-transcription.js";
+export { ttsStep } from "./steps/08f-tts.js";
 export { reviewStep } from "./steps/09-review.js";
 export { writeConfigStep } from "./steps/10-write-config.js";
 export { daemonStartStep } from "./steps/11-daemon-start.js";

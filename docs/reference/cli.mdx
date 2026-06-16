@@ -638,9 +638,9 @@ Interactive setup wizard for first-time configuration. Supports three modes: int
 | `--line-token <tok>` | `string` | - | LINE channel token |
 | `--line-secret <sec>` | `string` | - | LINE channel secret |
 
-#### Media Generation
+#### Media Generation and Processing
 
-The interactive **advanced** flow includes **Image Generation** and **Video Generation** steps that offer every supported provider for [`integrations.media.imageGeneration.provider`](/reference/config-yaml) and [`integrations.media.videoGeneration.provider`](/reference/config-yaml). The same selections are available non-interactively via the flags below.
+The interactive **advanced** flow includes dedicated steps that offer every supported provider for each media feature: **Image Generation** ([`integrations.media.imageGeneration.provider`](/reference/config-yaml)), **Video Generation** ([`...videoGeneration.provider`](/reference/config-yaml)), **Voice Transcription** ([`...transcription.provider`](/reference/config-yaml)), and **Text-to-Speech** ([`...tts.provider`](/reference/config-yaml)). The same selections are available non-interactively via the flags below. (TTS provider setup moved here from the tool-providers step, which is now web-search only, so a key is never requested twice.)
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
@@ -648,8 +648,12 @@ The interactive **advanced** flow includes **Image Generation** and **Video Gene
 | `--image-api-key <key>` | `string` | - | Image provider credential (e.g. `FAL_KEY`) |
 | `--video-provider <id>` | `auto` \| `fal` \| `google` \| `xai` | `auto` | Video generation provider |
 | `--video-api-key <key>` | `string` | - | Video provider credential (e.g. `FAL_KEY`) |
+| `--stt-provider <id>` | `openai` \| `groq` \| `deepgram` | `openai` | Voice transcription provider |
+| `--stt-api-key <key>` | `string` | - | Transcription provider credential (e.g. `DEEPGRAM_API_KEY`) |
+| `--tts-provider <id>` | `openai` \| `elevenlabs` \| `edge` | `openai` | Text-to-speech provider |
+| `--tts-api-key <key>` | `string` | - | TTS provider credential (e.g. `ELEVENLABS_API_KEY`) |
 
-Credentials follow the provider-following model: `auto` reuses the agent's main provider key; `openai`/`google`/`openrouter`/`xai` reuse `OPENAI_API_KEY`/`GOOGLE_API_KEY`/`OPENROUTER_API_KEY`/`XAI_API_KEY` when the main provider already supplies them; and `openai-codex` (image) uses your Codex OAuth login rather than a static key. So `--image-api-key`/`--video-api-key` are only needed for `fal` or a cross-provider static-key choice. See [Environment Variables](/reference/environment-variables#llm-provider-keys) for the key reuse rules.
+Credentials follow the provider-following model: `auto` (image/video) reuses the agent's main provider key; `openai`/`google`/`openrouter`/`xai`/`groq` reuse `OPENAI_API_KEY`/`GOOGLE_API_KEY`/`OPENROUTER_API_KEY`/`XAI_API_KEY`/`GROQ_API_KEY` when the main provider already supplies them; `openai-codex` (image) uses your Codex OAuth login; and `edge` (TTS) is free. So the `--*-api-key` flags are only needed for a dedicated backend (`fal`, `deepgram`, `elevenlabs`) or a cross-provider static-key choice. See [Environment Variables](/reference/environment-variables#llm-provider-keys) for the key reuse rules.
 
 #### Paths and Behavior
 

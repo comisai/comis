@@ -107,6 +107,18 @@ function buildSummary(state: WizardState): string {
     lines.push(`Video:      ${state.videoProvider.provider}`);
   }
 
+  // Transcription (STT) section
+  if (state.transcriptionProvider?.provider) {
+    lines.push("");
+    lines.push(`Transcribe: ${state.transcriptionProvider.provider}`);
+  }
+
+  // Text-to-speech section
+  if (state.ttsProvider?.provider) {
+    lines.push("");
+    lines.push(`TTS:        ${state.ttsProvider.provider}`);
+  }
+
   // Workspace section
   if (state.dataDir) {
     lines.push("");
@@ -151,6 +163,14 @@ function buildEditOptions(state: WizardState): { value: string; label: string }[
 
   if (state.videoProvider) {
     options.push({ value: "video-providers", label: "Video Generation" });
+  }
+
+  if (state.transcriptionProvider) {
+    options.push({ value: "transcription", label: "Voice Transcription" });
+  }
+
+  if (state.ttsProvider) {
+    options.push({ value: "tts", label: "Text-to-Speech" });
   }
 
   if (state.dataDir) {

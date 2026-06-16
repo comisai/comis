@@ -329,6 +329,28 @@ describe("validateNonInteractiveOptions", () => {
       ).not.toThrow();
     }
   });
+
+  it("rejects an unknown --stt-provider / --tts-provider", () => {
+    expect(() =>
+      validateNonInteractiveOptions(validOpts({ sttProvider: "assemblyai" })),
+    ).toThrow(NonInteractiveError);
+    expect(() =>
+      validateNonInteractiveOptions(validOpts({ ttsProvider: "playht" })),
+    ).toThrow(NonInteractiveError);
+  });
+
+  it("accepts each valid --stt-provider and --tts-provider value", () => {
+    for (const id of ["openai", "groq", "deepgram"]) {
+      expect(() =>
+        validateNonInteractiveOptions(validOpts({ sttProvider: id })),
+      ).not.toThrow();
+    }
+    for (const id of ["openai", "elevenlabs", "edge"]) {
+      expect(() =>
+        validateNonInteractiveOptions(validOpts({ ttsProvider: id })),
+      ).not.toThrow();
+    }
+  });
 });
 
 // ==========================================================================
@@ -514,6 +536,34 @@ describe("buildNonInteractiveState", () => {
     });
   });
 
+  it("records edge TTS with no credential and deepgram STT with --stt-api-key", () => {
+    const state = buildNonInteractiveState(
+      validOpts({
+        sttProvider: "deepgram",
+        sttApiKey: "dg-key-1234567890",
+        ttsProvider: "edge",
+      }),
+    );
+    expect(state.transcriptionProvider).toEqual({
+      provider: "deepgram",
+      apiKey: "dg-key-1234567890",
+    });
+    expect(state.ttsProvider).toEqual({ provider: "edge" });
+  });
+
+  it("reuses the main openai key for openai STT/TTS (no extra credential)", () => {
+    const state = buildNonInteractiveState(
+      validOpts({
+        provider: "openai",
+        apiKey: "sk-openai-main-123456",
+        sttProvider: "openai",
+        ttsProvider: "openai",
+      }),
+    );
+    expect(state.transcriptionProvider).toEqual({ provider: "openai" });
+    expect(state.ttsProvider).toEqual({ provider: "openai" });
+  });
+
   it("records auto video provider without a credential", () => {
     const state = buildNonInteractiveState(validOpts({ videoProvider: "auto" }));
     expect(state.videoProvider).toEqual({ provider: "auto" });
@@ -563,6 +613,8 @@ describe("buildNonInteractiveState", () => {
       "tool-providers",
       "image-providers",
       "video-providers",
+      "transcription",
+      "tts",
       "review",
     ]);
   });

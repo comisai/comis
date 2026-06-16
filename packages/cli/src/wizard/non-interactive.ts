@@ -27,12 +27,18 @@ import type {
   ProviderConfig,
   VideoProviderConfig,
   ImageProviderConfig,
+  TranscriptionProviderConfig,
+  TtsProviderConfig,
 } from "./types.js";
 import {
   SUPPORTED_VIDEO_PROVIDERS,
   VIDEO_PROVIDER_ENV_KEYS,
   SUPPORTED_IMAGE_PROVIDERS,
   IMAGE_PROVIDER_ENV_KEYS,
+  SUPPORTED_TRANSCRIPTION_PROVIDERS,
+  TRANSCRIPTION_PROVIDER_ENV_KEYS,
+  SUPPORTED_TTS_PROVIDERS,
+  TTS_PROVIDER_ENV_KEYS,
   PROVIDER_ENV_KEYS,
 } from "./types.js";
 import type {
@@ -81,6 +87,11 @@ export type NonInteractiveOptions = {
   imageApiKey?: string;
   videoProvider?: string;
   videoApiKey?: string;
+  // Media processing
+  sttProvider?: string;
+  sttApiKey?: string;
+  ttsProvider?: string;
+  ttsApiKey?: string;
   // Paths
   dataDir?: string;
   configDir?: string;
@@ -240,6 +251,24 @@ export function validateNonInteractiveOptions(
       throw new NonInteractiveError(
         `--video-provider must be one of: ${known.join(", ")}`,
         "videoProvider",
+      );
+    }
+  }
+  if (opts.sttProvider !== undefined) {
+    const known = SUPPORTED_TRANSCRIPTION_PROVIDERS.map((tp) => tp.id);
+    if (!known.includes(opts.sttProvider)) {
+      throw new NonInteractiveError(
+        `--stt-provider must be one of: ${known.join(", ")}`,
+        "sttProvider",
+      );
+    }
+  }
+  if (opts.ttsProvider !== undefined) {
+    const known = SUPPORTED_TTS_PROVIDERS.map((tp) => tp.id);
+    if (!known.includes(opts.ttsProvider)) {
+      throw new NonInteractiveError(
+        `--tts-provider must be one of: ${known.join(", ")}`,
+        "ttsProvider",
       );
     }
   }
@@ -431,6 +460,45 @@ export function buildNonInteractiveState(
     }
   }
 
+  // Transcription (STT) provider (step 08e, skipped in non-interactive mode).
+  // openai/groq reuse --api-key when it matches the main provider; deepgram (and
+  // any cross-provider choice) uses --stt-api-key.
+  let transcriptionProvider: TranscriptionProviderConfig | undefined;
+  if (opts.sttProvider !== undefined) {
+    const requiredEnvKey = TRANSCRIPTION_PROVIDER_ENV_KEYS[opts.sttProvider];
+    if (
+      opts.apiKey !== undefined &&
+      PROVIDER_ENV_KEYS[opts.provider!] === requiredEnvKey
+    ) {
+      transcriptionProvider = { provider: opts.sttProvider };
+    } else if (opts.sttApiKey !== undefined) {
+      transcriptionProvider = { provider: opts.sttProvider, apiKey: opts.sttApiKey };
+    } else {
+      transcriptionProvider = { provider: opts.sttProvider };
+    }
+  }
+
+  // TTS provider (step 08f, skipped in non-interactive mode). edge needs no key;
+  // openai reuses --api-key when the main provider is openai; elevenlabs (and any
+  // cross-provider openai) uses --tts-api-key.
+  let ttsProvider: TtsProviderConfig | undefined;
+  if (opts.ttsProvider !== undefined) {
+    const requiredEnvKey = TTS_PROVIDER_ENV_KEYS[opts.ttsProvider];
+    if (!requiredEnvKey) {
+      // edge — free, no key.
+      ttsProvider = { provider: opts.ttsProvider };
+    } else if (
+      opts.apiKey !== undefined &&
+      PROVIDER_ENV_KEYS[opts.provider!] === requiredEnvKey
+    ) {
+      ttsProvider = { provider: opts.ttsProvider };
+    } else if (opts.ttsApiKey !== undefined) {
+      ttsProvider = { provider: opts.ttsProvider, apiKey: opts.ttsApiKey };
+    } else {
+      ttsProvider = { provider: opts.ttsProvider };
+    }
+  }
+
   // Gateway config — token is the only supported gateway auth method.
   // Auto-generate a 48-char hex token when none provided (same as step 07).
   const gatewayToken = opts.gatewayToken ?? randomBytes(24).toString("hex");
@@ -479,6 +547,8 @@ export function buildNonInteractiveState(
     "tool-providers",
     "image-providers",
     "video-providers",
+    "transcription",
+    "tts",
     "review",
   ];
 
@@ -494,6 +564,8 @@ export function buildNonInteractiveState(
     channels,
     ...(imageProvider !== undefined && { imageProvider }),
     ...(videoProvider !== undefined && { videoProvider }),
+    ...(transcriptionProvider !== undefined && { transcriptionProvider }),
+    ...(ttsProvider !== undefined && { ttsProvider }),
     gateway,
     dataDir,
     skipHealth: opts.skipHealth ?? false,

@@ -29,8 +29,10 @@ export type WizardStepId =
   | "gateway"
   | "workspace"
   | "tool-providers"
-  | "video-providers"
   | "image-providers"
+  | "video-providers"
+  | "transcription"
+  | "tts"
   | "review"
   | "write-config"
   | "daemon-start"
@@ -127,6 +129,32 @@ export type ImageProviderConfig = {
   apiKey?: string;
 };
 
+/**
+ * Speech-to-text (transcription) provider selection from the `transcription`
+ * step. `provider` is one of core's `TranscriptionConfigSchema` enum values
+ * (`openai` | `groq` | `deepgram`) written to
+ * `integrations.media.transcription.provider`. `apiKey` is present unless the
+ * agent's MAIN provider already supplies the matching key (CRED-01) —
+ * `deepgram` always needs its own `DEEPGRAM_API_KEY`.
+ */
+export type TranscriptionProviderConfig = {
+  provider: string;
+  apiKey?: string;
+};
+
+/**
+ * Text-to-speech provider selection from the `tts` step. `provider` is one of
+ * core's `TtsConfigSchema` enum values (`openai` | `elevenlabs` | `edge`)
+ * written to `integrations.media.tts.provider`. `apiKey` is present unless the
+ * provider needs no key (`edge` is free) or the main provider already supplies
+ * it (`openai` → `OPENAI_API_KEY`); `elevenlabs` always needs
+ * `ELEVENLABS_API_KEY`.
+ */
+export type TtsProviderConfig = {
+  provider: string;
+  apiKey?: string;
+};
+
 /** Gateway settings collected during the wizard. Token is the only supported
  *  gateway auth method (the daemon's GatewayConfigSchema is a z.strictObject
  *  whose only auth keys are tokens[]/tls — there is no password field). */
@@ -193,6 +221,10 @@ export type WizardState = {
   readonly videoProvider?: VideoProviderConfig;
   /** Image-generation provider selection from the `image-providers` step. */
   readonly imageProvider?: ImageProviderConfig;
+  /** Speech-to-text provider selection from the `transcription` step. */
+  readonly transcriptionProvider?: TranscriptionProviderConfig;
+  /** Text-to-speech provider selection from the `tts` step. */
+  readonly ttsProvider?: TtsProviderConfig;
   readonly dataDir?: string;
   /** When true, skip post-setup health checks (set by --skip-health in non-interactive mode). */
   readonly skipHealth?: boolean;
@@ -283,11 +315,15 @@ export type SupportedToolProvider = {
   envKey: string;
 };
 
-/** All supported tool providers with credential guidance. */
+/**
+ * All supported web-search tool providers with credential guidance.
+ *
+ * TTS (ElevenLabs / OpenAI) moved to the dedicated `tts` step so the wizard
+ * writes `integrations.media.tts.provider` and never asks for the same key
+ * twice — this list is now search-only.
+ */
 export const SUPPORTED_TOOL_PROVIDERS: readonly SupportedToolProvider[] = [
   { id: "brave", label: "Brave Search", hint: "Web search capability", envKey: "SEARCH_API_KEY" },
-  { id: "elevenlabs", label: "ElevenLabs", hint: "Text-to-speech", envKey: "ELEVENLABS_API_KEY" },
-  { id: "openai-tts", label: "OpenAI TTS", hint: "Text-to-speech", envKey: "OPENAI_API_KEY" },
   { id: "perplexity", label: "Perplexity", hint: "AI-powered search", envKey: "PERPLEXITY_API_KEY" },
   { id: "tavily", label: "Tavily", hint: "AI search for agents", envKey: "TAVILY_API_KEY" },
   { id: "exa", label: "Exa", hint: "Neural web search", envKey: "EXA_API_KEY" },
@@ -297,8 +333,6 @@ export const SUPPORTED_TOOL_PROVIDERS: readonly SupportedToolProvider[] = [
 /** Map tool provider identifier to environment variable key. */
 export const TOOL_PROVIDER_ENV_KEYS: Record<string, string> = {
   brave: "SEARCH_API_KEY",
-  elevenlabs: "ELEVENLABS_API_KEY",
-  "openai-tts": "OPENAI_API_KEY",
   perplexity: "PERPLEXITY_API_KEY",
   tavily: "TAVILY_API_KEY",
   exa: "EXA_API_KEY",
@@ -399,6 +433,70 @@ export const IMAGE_PROVIDER_ENV_KEYS: Record<string, string> = {
   openai: "OPENAI_API_KEY",
   google: "GOOGLE_API_KEY",
   openrouter: "OPENROUTER_API_KEY",
+};
+
+// ---------- Transcription (STT) Provider Constants ----------
+
+/** Supported speech-to-text provider entry for the selection prompt. */
+export type SupportedTranscriptionProvider = {
+  id: string;
+  label: string;
+  hint: string;
+  /** Env-var key for the credential this provider needs (all STT providers need one). */
+  envKey: string;
+};
+
+/**
+ * All operator-selectable speech-to-text providers, mirroring core's
+ * `TranscriptionConfigSchema` enum (`openai` | `groq` | `deepgram`). Drift-guarded
+ * in `08e-transcription.test.ts` against `TranscriptionConfigSchema`. Voice
+ * auto-transcription is ON by default, so the provider choice is meaningful even
+ * for a non-OpenAI main. `openai`/`groq` reuse the matching LLM key (CRED-01);
+ * `deepgram` always needs its own `DEEPGRAM_API_KEY`.
+ */
+export const SUPPORTED_TRANSCRIPTION_PROVIDERS: readonly SupportedTranscriptionProvider[] = [
+  { id: "openai", label: "OpenAI Whisper", hint: "whisper via OPENAI_API_KEY", envKey: "OPENAI_API_KEY" },
+  { id: "groq", label: "Groq Whisper", hint: "fast whisper via GROQ_API_KEY", envKey: "GROQ_API_KEY" },
+  { id: "deepgram", label: "Deepgram", hint: "Nova-3 via DEEPGRAM_API_KEY", envKey: "DEEPGRAM_API_KEY" },
+] as const;
+
+/** Map a transcription provider id to the env-var key its credential is stored under. */
+export const TRANSCRIPTION_PROVIDER_ENV_KEYS: Record<string, string> = {
+  openai: "OPENAI_API_KEY",
+  groq: "GROQ_API_KEY",
+  deepgram: "DEEPGRAM_API_KEY",
+};
+
+// ---------- TTS Provider Constants ----------
+
+/** Supported text-to-speech provider entry for the selection prompt. */
+export type SupportedTtsProvider = {
+  id: string;
+  label: string;
+  hint: string;
+  /** Env-var key for the credential; absent for `edge` (free, no key). */
+  envKey?: string;
+};
+
+/**
+ * All operator-selectable text-to-speech providers, mirroring core's
+ * `TtsConfigSchema` enum (`openai` | `elevenlabs` | `edge`). Drift-guarded in
+ * `08f-tts.test.ts` against `TtsConfigSchema`. `openai` reuses `OPENAI_API_KEY`
+ * (CRED-01); `elevenlabs` needs `ELEVENLABS_API_KEY`; `edge` is free (no key).
+ */
+export const SUPPORTED_TTS_PROVIDERS: readonly SupportedTtsProvider[] = [
+  { id: "openai", label: "OpenAI TTS", hint: "via OPENAI_API_KEY", envKey: "OPENAI_API_KEY" },
+  { id: "elevenlabs", label: "ElevenLabs", hint: "via ELEVENLABS_API_KEY", envKey: "ELEVENLABS_API_KEY" },
+  { id: "edge", label: "Edge TTS", hint: "Microsoft Edge — free, no key", },
+] as const;
+
+/**
+ * Map a TTS provider id to the env-var key its credential is stored under.
+ * `edge` is absent (free, no credential).
+ */
+export const TTS_PROVIDER_ENV_KEYS: Record<string, string> = {
+  openai: "OPENAI_API_KEY",
+  elevenlabs: "ELEVENLABS_API_KEY",
 };
 
 /** Map channel type to required credential environment variable names. */

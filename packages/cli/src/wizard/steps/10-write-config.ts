@@ -27,6 +27,8 @@ import {
   TOOL_PROVIDER_ENV_KEYS,
   VIDEO_PROVIDER_ENV_KEYS,
   IMAGE_PROVIDER_ENV_KEYS,
+  TRANSCRIPTION_PROVIDER_ENV_KEYS,
+  TTS_PROVIDER_ENV_KEYS,
 } from "../types.js";
 import type { WizardPrompter } from "../prompter.js";
 import { updateState } from "../state.js";
@@ -210,6 +212,12 @@ function buildConfigObject(state: WizardState): Record<string, unknown> {
   if (state.videoProvider?.provider) {
     media.videoGeneration = { provider: state.videoProvider.provider };
   }
+  if (state.transcriptionProvider?.provider) {
+    media.transcription = { provider: state.transcriptionProvider.provider };
+  }
+  if (state.ttsProvider?.provider) {
+    media.tts = { provider: state.ttsProvider.provider };
+  }
   if (Object.keys(media).length > 0) {
     config.integrations = { media };
   }
@@ -276,6 +284,20 @@ function collectManagedSecrets(state: WizardState): Map<string, string> {
   if (state.videoProvider?.apiKey) {
     const envKey = VIDEO_PROVIDER_ENV_KEYS[state.videoProvider.provider];
     if (envKey) managed.set(envKey, state.videoProvider.apiKey);
+  }
+
+  // Transcription (STT) credential (step 08e). Present unless reused from the
+  // main provider (openai/groq) — deepgram always carries its own key here.
+  if (state.transcriptionProvider?.apiKey) {
+    const envKey = TRANSCRIPTION_PROVIDER_ENV_KEYS[state.transcriptionProvider.provider];
+    if (envKey) managed.set(envKey, state.transcriptionProvider.apiKey);
+  }
+
+  // TTS credential (step 08f). Present unless reused (openai) or keyless (edge);
+  // elevenlabs always carries its own ELEVENLABS_API_KEY here.
+  if (state.ttsProvider?.apiKey) {
+    const envKey = TTS_PROVIDER_ENV_KEYS[state.ttsProvider.provider];
+    if (envKey) managed.set(envKey, state.ttsProvider.apiKey);
   }
 
   // Gateway credentials -- token is the only supported gateway auth method.
