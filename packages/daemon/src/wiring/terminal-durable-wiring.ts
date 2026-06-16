@@ -44,6 +44,8 @@ import type { DriveJournalStorePort } from "./setup-terminal-wake.js";
 import {
   busyOrHung,
   buildTmuxHasSessionArgv,
+  terminalWorkerDir,
+  resolveTmuxSocketPath,
   type TerminalDurabilityDeps,
   type TerminalSessionRegistry,
   type DriveJournal,
@@ -105,18 +107,31 @@ export function resolveDaemonTmuxPath(): string | undefined {
 }
 
 /**
- * Build the daemon-side `has-session` liveness probe: `tmux has-session -t comis-<id>` (exit
- * 0 ⇒ alive). Returns `false` on ANY non-zero exit / throw (the SAFE direction — a probe that
- * cannot confirm alive must never assert it, mirroring 165-01's bias). Absent `tmuxPath` ⇒
- * always-false (a durable session falls back to the lost floor at runtime, I1).
+ * Build the daemon-side `has-session` liveness probe: `tmux -S <socket> has-session -t
+ * comis-<id>` (exit 0 ⇒ alive). Returns `false` on ANY non-zero exit / throw (the SAFE
+ * direction — a probe that cannot confirm alive must never assert it, mirroring 165-01's
+ * bias). Absent `tmuxPath` ⇒ always-false (a durable session falls back to the lost floor
+ * at runtime, I1).
+ *
+ * DUR-01: the probe MUST target the SAME `-S` socket the worker binds
+ * (`<dataDir>/terminal-worker/tmux.sock`) — NOT tmux's default /tmp socket. systemd
+ * `PrivateTmp=yes` privatizes /tmp per daemon start, so a default-socket probe in the
+ * restarted daemon would find NOTHING and falsely declare every survived durable session
+ * lost. `run` is injected ONLY for the unit test; production keeps the bounded execFileSync.
  */
-export function buildIsTmuxAlive(tmuxPath: string | undefined): (name: string) => boolean {
+export function buildIsTmuxAlive(
+  tmuxPath: string | undefined,
+  socketPath: string,
+  run: (bin: string, args: string[]) => void = (bin, args) => {
+    // eslint-disable-next-line no-restricted-syntax -- bounded has-session liveness probe (recover-on-boot + backstop)
+    execFileSync(bin, args, { stdio: "ignore" });
+  },
+): (name: string) => boolean {
   if (tmuxPath === undefined) return (): boolean => false;
   return (name: string): boolean => {
     try {
-      const [bin, ...args] = buildTmuxHasSessionArgv({ tmuxPath, name });
-      // eslint-disable-next-line no-restricted-syntax -- bounded has-session liveness probe (recover-on-boot + backstop)
-      execFileSync(bin!, args, { stdio: "ignore" });
+      const [bin, ...args] = buildTmuxHasSessionArgv({ tmuxPath, socketPath, name });
+      run(bin!, args);
       return true; // exit 0 ⇒ the named detached session is alive
     } catch {
       return false; // non-zero exit (gone) / spawn fault ⇒ the SAFE direction is "not alive"
@@ -157,7 +172,10 @@ export function buildAgentTerminalDurability(i: AgentTerminalDurabilityInputs): 
   durability: TerminalDurabilityDeps;
   isBusy: (s: { sessionId: string; lastActivity: number }) => boolean;
 } {
-  const isTmuxAlive = buildIsTmuxAlive(resolveDaemonTmuxPath());
+  const isTmuxAlive = buildIsTmuxAlive(
+    resolveDaemonTmuxPath(),
+    resolveTmuxSocketPath(terminalWorkerDir(i.dataDir)),
+  );
   const storeDeps: SessionDescriptorPersistenceDeps = { dataDir: i.dataDir, agentId: i.agentId };
   const descriptorStore = createSessionDescriptorStore(storeDeps);
 
@@ -298,7 +316,10 @@ export function buildWakeDurabilityDeps(i: WakeDurabilityInputs): {
   driveJournalStore: DriveJournalStorePort;
   checkLiveness: (sessionId: string, agentId: string) => Promise<BusySignal | undefined>;
 } {
-  const isTmuxAlive = buildIsTmuxAlive(resolveDaemonTmuxPath());
+  const isTmuxAlive = buildIsTmuxAlive(
+    resolveDaemonTmuxPath(),
+    resolveTmuxSocketPath(terminalWorkerDir(i.dataDir)),
+  );
 
   const driveJournalStore: DriveJournalStorePort = {
     persist: (agentId, sessionId, journal) => persistDriveJournal({ dataDir: i.dataDir }, agentId, sessionId, journal),

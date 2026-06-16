@@ -68,6 +68,8 @@ export {
   createTerminalSessionRegistry,
   buildProductionSpawnWorker,
   resolveWorkerMainPath,
+  terminalWorkerDir,
+  resolveTmuxSocketPath,
   createTerminalEgressProxy,
   prepareAgentTerminalWorkspace,
   matchAllowEntry,

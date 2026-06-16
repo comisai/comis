@@ -50,10 +50,35 @@ import type { TmuxBackendLike } from "./terminal-worker-types.js";
  * `COMIS_TERMINAL_DATA_DIR=<dataDir>` so this matches the write scope exactly;
  * the home fallback is for a direct (non-daemon) launch.
  */
+/**
+ * Map a data dir to the worker's durable-state dir `<dataDir>/terminal-worker`. Exported
+ * + single-sourced so BOTH the worker ({@link durableDir}) AND the daemon's recover-on-boot
+ * liveness probe (`buildIsTmuxAlive`) derive the SAME tmux socket path from a data dir — a
+ * drifted literal there would probe the wrong socket and falsely declare durable sessions lost.
+ */
+export function terminalWorkerDir(dataDir: string): string {
+  return pathResolve(dataDir, "terminal-worker");
+}
+
 export function durableDir(): string {
   // eslint-disable-next-line no-restricted-syntax -- worker PROCESS entry: the daemon threads the (non-secret) data dir via env when forking; not a SecretManager value.
   const dataDir = process.env.COMIS_TERMINAL_DATA_DIR ?? pathResolve(homedir(), ".comis");
-  return pathResolve(dataDir, "terminal-worker");
+  return terminalWorkerDir(dataDir);
+}
+
+/**
+ * The explicit tmux `-S` socket path: `<durableDir>/tmux.sock`. DUR-01 survival key —
+ * the socket lives on the PERSISTENT, shared data dir, NOT tmux's default
+ * `/tmp/tmux-<uid>/default`. systemd `PrivateTmp=yes` gives every daemon START a fresh
+ * private /tmp, so a /tmp socket is unreachable from the restarted daemon and re-attach
+ * fails even though `KillMode=process` keeps the tmux server process alive (proven live
+ * on the VPS 2026-06-16). The data-dir socket is reachable by BOTH daemon generations, so
+ * the restarted daemon re-attaches by name. Short path by design (well under the ~108-char
+ * AF_UNIX `sun_path` limit). The dir is `mkdir`'d in {@link main} (the `--allow-fs-write`
+ * scope), so the socket's parent always exists before the tmux server binds it.
+ */
+export function resolveTmuxSocketPath(dir: string): string {
+  return pathResolve(dir, "tmux.sock");
 }
 
 /**
@@ -141,9 +166,13 @@ export function warnIfDurableTmuxUnavailable(tmuxPath: string | undefined, logge
  * never a fresh `new-session`).
  */
 export function buildLoadTmux(tmuxPath: string): TmuxBackendLike {
+  // DUR-01: the STABLE data-dir socket every tmux command targets via `-S` — so the
+  // server binds it and a restarted daemon re-attaches to the SAME socket (NOT the
+  // PrivateTmp-private /tmp default, which the new daemon generation cannot reach).
+  const socketPath = resolveTmuxSocketPath(durableDir());
   const hasSession = (name: string): boolean => {
     try {
-      execFileSync(tmuxPath, ["has-session", "-t", name], { stdio: "ignore" });
+      execFileSync(tmuxPath, ["-S", socketPath, "has-session", "-t", name], { stdio: "ignore" });
       return true;
     } catch {
       return false;
@@ -165,6 +194,7 @@ export function buildLoadTmux(tmuxPath: string): TmuxBackendLike {
         rows: a.rows,
         env: a.env,
         tmuxPath,
+        socketPath,
         hasSession,
         runTmux: runTmux(a.env),
       })!,
@@ -180,6 +210,7 @@ export function buildLoadTmux(tmuxPath: string): TmuxBackendLike {
         rows: a.rows,
         env: a.env,
         tmuxPath,
+        socketPath,
         hasSession,
         runTmux: runTmux(a.env),
         forceAttachOnly: true,

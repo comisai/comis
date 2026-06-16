@@ -61,6 +61,11 @@ export {
   WORKER_PERMISSION_ARGS,
 } from "./terminal-worker-launch.js";
 
+// DUR-01 socket-path helpers (PURE) — re-exported so the daemon's recover-on-boot
+// liveness probe derives the SAME `<dataDir>/terminal-worker/tmux.sock` the worker binds.
+// Importing for the re-export runs no side effect: worker-main's `main()` is `isEntryScript`-guarded.
+export { terminalWorkerDir, resolveTmuxSocketPath } from "./terminal-worker-main.js";
+
 // The no-secret host-allowlist egress proxy (EgressControlPort impl, spec §3.5),
 // moved here from @comis/daemon so the standalone worker process can construct
 // its OWN egress for `network: listed-hosts` (the worker runs outside the jail

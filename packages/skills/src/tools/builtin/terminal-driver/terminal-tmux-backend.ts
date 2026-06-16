@@ -60,6 +60,22 @@ export function tmuxSessionName(sessionId: string): string {
 // ---------------------------------------------------------------------------
 
 /**
+ * The `tmux -S <socket> …` prefix shared by EVERY command builder. DUR-01 survival: the
+ * socket MUST be an explicit, STABLE path under the data dir — NOT tmux's default
+ * `$TMUX_TMPDIR|/tmp/tmux-<uid>/default`. systemd `PrivateTmp=yes` gives each daemon
+ * START a FRESH private /tmp, so a /tmp socket is UNREACHABLE from the restarted daemon
+ * and re-attach fails even when `KillMode=process` keeps the tmux SERVER process alive
+ * (proven live on the VPS 2026-06-16: server pid survived, new daemon's /tmp was empty).
+ * `-S` must LEAD so the server (`new-session`) binds it AND every later client
+ * (`has-session`/`capture`/`send-keys`/`kill`/`resize`) connects to the SAME socket.
+ * Optional only for the standalone pure-builder unit tests; the production
+ * {@link TmuxBackendDeps.socketPath} always supplies it.
+ */
+function tmuxSocketHead(tmuxPath: string, socketPath: string | undefined): string[] {
+  return socketPath === undefined ? [tmuxPath] : [tmuxPath, "-S", socketPath];
+}
+
+/**
  * Build `tmux new-session -d -s <name> -x <cols> -y <rows> -- <bin> <binArgv…>`: a
  * DETACHED named session whose command is the driven CLI. Detached (`-d`) so the tmux
  * server owns the PTY and the session outlives the worker (survival). The driven
@@ -67,6 +83,7 @@ export function tmuxSessionName(sessionId: string): string {
  */
 export function buildTmuxSpawnArgv(opts: {
   tmuxPath: string;
+  socketPath?: string;
   name: string;
   bin: string;
   binArgv: readonly string[];
@@ -74,7 +91,7 @@ export function buildTmuxSpawnArgv(opts: {
   rows: number;
 }): string[] {
   return [
-    opts.tmuxPath,
+    ...tmuxSocketHead(opts.tmuxPath, opts.socketPath),
     "new-session",
     "-d",
     "-s",
@@ -89,14 +106,14 @@ export function buildTmuxSpawnArgv(opts: {
   ];
 }
 
-/** Build `tmux has-session -t <name>` — the re-attach decision probe (exit 0 ⇒ alive). */
-export function buildTmuxHasSessionArgv(opts: { tmuxPath: string; name: string }): string[] {
-  return [opts.tmuxPath, "has-session", "-t", opts.name];
+/** Build `tmux -S <socket> has-session -t <name>` — the re-attach decision probe (exit 0 ⇒ alive). */
+export function buildTmuxHasSessionArgv(opts: { tmuxPath: string; socketPath?: string; name: string }): string[] {
+  return [...tmuxSocketHead(opts.tmuxPath, opts.socketPath), "has-session", "-t", opts.name];
 }
 
-/** Build `tmux kill-session -t <name>` — the reaper evict path (deterministic, by name). */
-export function buildTmuxKillArgv(opts: { tmuxPath: string; name: string }): string[] {
-  return [opts.tmuxPath, "kill-session", "-t", opts.name];
+/** Build `tmux -S <socket> kill-session -t <name>` — the reaper evict path (deterministic, by name). */
+export function buildTmuxKillArgv(opts: { tmuxPath: string; socketPath?: string; name: string }): string[] {
+  return [...tmuxSocketHead(opts.tmuxPath, opts.socketPath), "kill-session", "-t", opts.name];
 }
 
 /**
@@ -105,8 +122,8 @@ export function buildTmuxKillArgv(opts: { tmuxPath: string; name: string }): str
  * key NAMES (the worker's key grammar already produced the exact control bytes; a second
  * tmux-side key-name expansion would corrupt them — the keystroke-injection guard).
  */
-export function buildTmuxSendKeysArgv(opts: { tmuxPath: string; name: string; bytes: string }): string[] {
-  return [opts.tmuxPath, "send-keys", "-t", opts.name, "-l", opts.bytes];
+export function buildTmuxSendKeysArgv(opts: { tmuxPath: string; socketPath?: string; name: string; bytes: string }): string[] {
+  return [...tmuxSocketHead(opts.tmuxPath, opts.socketPath), "send-keys", "-t", opts.name, "-l", opts.bytes];
 }
 
 /**
@@ -114,18 +131,28 @@ export function buildTmuxSendKeysArgv(opts: { tmuxPath: string; name: string; by
  * (`-p`). The backend spawns this (and re-spawns to follow) to feed onData; on a
  * re-attach it is the SOLE read path (the session already exists, only its output is read).
  */
-export function buildTmuxCaptureArgv(opts: { tmuxPath: string; name: string }): string[] {
-  return [opts.tmuxPath, "capture-pane", "-p", "-t", opts.name];
+export function buildTmuxCaptureArgv(opts: { tmuxPath: string; socketPath?: string; name: string }): string[] {
+  return [...tmuxSocketHead(opts.tmuxPath, opts.socketPath), "capture-pane", "-p", "-t", opts.name];
 }
 
 /** Build `tmux resize-window -t <name> -x <cols> -y <rows>` — TR-03 reflow on the tmux backend. */
 export function buildTmuxResizeArgv(opts: {
   tmuxPath: string;
+  socketPath?: string;
   name: string;
   cols: number;
   rows: number;
 }): string[] {
-  return [opts.tmuxPath, "resize-window", "-t", opts.name, "-x", String(opts.cols), "-y", String(opts.rows)];
+  return [
+    ...tmuxSocketHead(opts.tmuxPath, opts.socketPath),
+    "resize-window",
+    "-t",
+    opts.name,
+    "-x",
+    String(opts.cols),
+    "-y",
+    String(opts.rows),
+  ];
 }
 
 // ---------------------------------------------------------------------------
@@ -162,6 +189,14 @@ export interface TmuxBackendDeps {
   env: NodeJS.ProcessEnv;
   /** Absolute tmux path (operator/daemon-resolved — like the resolved bwrapPath). */
   tmuxPath: string;
+  /**
+   * The explicit `-S` socket path — a STABLE file under the data dir (e.g.
+   * `<dataDir>/terminal-worker/tmux.sock`), NOT tmux's default /tmp socket. DUR-01
+   * survival key: systemd `PrivateTmp=yes` privatizes /tmp per daemon start, so the
+   * default socket is unreachable after a restart; the data-dir socket is reachable by
+   * both daemon generations so the restarted daemon re-attaches. See {@link tmuxSocketHead}.
+   */
+  socketPath: string;
   /**
    * Probe whether the named session already exists (the re-attach decision). Production
    * runs {@link buildTmuxHasSessionArgv} synchronously and maps exit 0 → true; the test
@@ -201,7 +236,7 @@ export interface TmuxBackendDeps {
  * caller (the worker's `reattach` handler) then replies `ok:false`, NEVER a fresh CLI.
  */
 export function createTmuxBackend(deps: TmuxBackendDeps): FakePtyLike | undefined {
-  const { sessionId, bin, argv, cols, rows, tmuxPath, hasSession, runTmux, forceAttachOnly } = deps;
+  const { sessionId, bin, argv, cols, rows, tmuxPath, socketPath, hasSession, runTmux, forceAttachOnly } = deps;
   const name = tmuxSessionName(sessionId);
 
   // The OPS-05 decision (RESEARCH Pitfall 6), made ONCE at construction.
@@ -214,13 +249,13 @@ export function createTmuxBackend(deps: TmuxBackendDeps): FakePtyLike | undefine
     // Fresh session: create it DETACHED (the tmux server takes ownership of the PTY so
     // it outlives this worker). One-shot — its own lifetime is the create command, not
     // the session; the long-lived read child below follows the pane.
-    runTmux(buildTmuxSpawnArgv({ tmuxPath, name, bin, binArgv: argv, cols, rows }));
+    runTmux(buildTmuxSpawnArgv({ tmuxPath, socketPath, name, bin, binArgv: argv, cols, rows }));
   }
   // Whether created-now or surviving-from-before, READ the named session's pane. This is
   // the SOLE read path on the re-attach branch (the session already exists; we only
   // resume reading it) and the post-create read path on the fresh branch. Its stdout is
   // the ring feed (onData) and its close is the session-gone signal (onExit).
-  const reader = runTmux(buildTmuxCaptureArgv({ tmuxPath, name }));
+  const reader = runTmux(buildTmuxCaptureArgv({ tmuxPath, socketPath, name }));
 
   return {
     pid: reader.pid ?? 0,
@@ -237,17 +272,17 @@ export function createTmuxBackend(deps: TmuxBackendDeps): FakePtyLike | undefine
     write(data: string): void {
       // Send the worker's already-encoded bytes to the named session LITERALLY (-l) — the
       // worker's key grammar produced the exact control bytes; tmux must not re-parse them.
-      const child = runTmux(buildTmuxSendKeysArgv({ tmuxPath, name, bytes: data }));
+      const child = runTmux(buildTmuxSendKeysArgv({ tmuxPath, socketPath, name, bytes: data }));
       child.kill(); // one-shot send; do not leak the send-keys child
     },
     resize(nextCols: number, nextRows: number): void {
-      const child = runTmux(buildTmuxResizeArgv({ tmuxPath, name, cols: nextCols, rows: nextRows }));
+      const child = runTmux(buildTmuxResizeArgv({ tmuxPath, socketPath, name, cols: nextCols, rows: nextRows }));
       child.kill(); // one-shot resize
     },
     kill(): void {
       // Deterministic evict by name (the reaper path) — kill the SERVER-side session, then
       // drop the local read child.
-      const child = runTmux(buildTmuxKillArgv({ tmuxPath, name }));
+      const child = runTmux(buildTmuxKillArgv({ tmuxPath, socketPath, name }));
       child.kill(); // one-shot kill-session command
       reader.kill();
     },
