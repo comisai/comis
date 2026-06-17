@@ -1,12 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Result } from "@comis/shared";
 import type { NormalizedMessage } from "../domain/normalized-message.js";
+import type { NormalizedReaction } from "../domain/normalized-reaction.js";
 import type { RichButton, RichCard, RichEffect } from "../domain/rich-message.js";
 
 /**
  * Callback signature for incoming messages from a channel.
  */
 export type MessageHandler = (message: NormalizedMessage) => void | Promise<void>;
+
+/**
+ * Callback signature for incoming reactions from a channel (REACT-01, WS1).
+ */
+export type ReactionHandler = (reaction: NormalizedReaction) => void | Promise<void>;
 
 /**
  * ChannelStatus: Runtime status snapshot of a connected channel adapter.
@@ -110,6 +116,17 @@ export interface ChannelPort {
    * Multiple handlers can be registered; all will be called.
    */
   onMessage(handler: MessageHandler): void;
+
+  /**
+   * Register a handler for incoming reactions (REACT-01, Verified Learning WS1).
+   *
+   * OPTIONAL capability. Adapters whose platform exposes an inbound reaction-add
+   * event WITH the reactor's id implement it (Discord/Slack/Telegram); the rest
+   * OMIT the method — an honest no-op (NOT a gap), exactly like `reactToMessage?`.
+   * - iMessage, LINE, IRC, Email, Echo: method omitted (no reactor-id surface).
+   * Multiple handlers can be registered; all will be called.
+   */
+  onReaction?(handler: ReactionHandler): void;
 
   /**
    * Add a reaction emoji to a message.
