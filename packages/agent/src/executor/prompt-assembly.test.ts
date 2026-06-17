@@ -121,7 +121,7 @@ vi.mock("node:os", async (importOriginal) => {
   };
 });
 
-import { assembleExecutionPrompt, extractUserLanguage, resolvePromptModeForProfile, clearSessionToolNameSnapshot, clearSessionBootstrapFileSnapshot, clearSessionPromptSkillsXmlSnapshot, clearWr02SenderTrustWarned, getCacheSafeParams, clearCacheSafeParams, buildRecallTrace, parseSkillLocationIndex, type PromptAssemblyParams, type CacheSafeParams } from "./prompt-assembly.js";
+import { assembleExecutionPrompt, extractUserLanguage, resolvePromptModeForProfile, clearSessionToolNameSnapshot, clearSessionBootstrapFileSnapshot, clearSessionPromptSkillsXmlSnapshot, clearWr02SenderTrustWarned, getCacheSafeParams, clearCacheSafeParams, buildRecallTrace, parseSkillLocationIndex, getSessionPromptSkillLocations, type PromptAssemblyParams, type CacheSafeParams } from "./prompt-assembly.js";
 import { resolveRecallTraceFilePath } from "@comis/observability";
 // node:fs (sync) is NOT mocked here (only node:fs/promises is) — safe for the
 // GEN-03 source-grep chokepoint below.
@@ -3942,6 +3942,57 @@ describe("parent prefix reuse", () => {
     expect(result.dynamicPreamble).toContain("SAFETY-REMINDER"); // safety reinforcement
     expect(result.dynamicPreamble).toContain("test-mcp"); // MCP instructions
     expect(result.inlineMemory).toBeUndefined();
+  });
+
+  it("WR-06: populates the ATTR-01 skill-location index on the parent-cache reuse path", async () => {
+    // The reuse path re-emits `## Available Skills\n${promptSkillsXml}` into the
+    // dynamic preamble, so a learned-skill <location> is visible to the model —
+    // but pre-fix it never populated sessionPromptSkillLocations, so the bridge's
+    // getSessionPromptSkillLocations() returned undefined and skill-use
+    // attribution silently no-op'd for cache-reuse sub-agents (the dominant path).
+    const distinctKey = { agentId: "agent-attr-reuse", channelType: "telegram", channelId: "chat-attr" } as any;
+    const formattedKey = formatSessionKey(distinctKey);
+    clearSessionToolNameSnapshot(formattedKey);
+    clearSessionBootstrapFileSnapshot(formattedKey);
+    clearSessionPromptSkillsXmlSnapshot(formattedKey);
+    clearCacheSafeParams(formattedKey);
+
+    const skillsXml =
+      "<available_skills>\n" +
+      "  <skill>\n" +
+      "    <name>rotate-key</name>\n" +
+      "    <description>Use when rotating a key</description>\n" +
+      "    <location>/home/user/.comis/skills/rotate-key/SKILL.md</location>\n" +
+      "  </skill>\n" +
+      "</available_skills>";
+
+    const params = makeParams({
+      config: makeConfig({ model: "claude-3-opus", provider: "anthropic" }),
+      deps: {
+        workspaceDir: "/workspace",
+        spawnPacket: makeSpawnPacketWithCache(),
+        getPromptSkillsXml: () => skillsXml,
+      },
+      sessionKey: distinctKey,
+      resolvedModelId: "claude-3-opus",
+      resolvedModelProvider: "anthropic",
+    });
+
+    const result = await assembleExecutionPrompt(params);
+
+    // Early-return reuse path (no full assembly).
+    expect(mockAssembleRichSystemPrompt).not.toHaveBeenCalled();
+    expect(result.dynamicPreamble).toContain("/home/user/.comis/skills/rotate-key/SKILL.md");
+
+    // The keystone assertion: the bridge can now attribute a read of that location.
+    const index = getSessionPromptSkillLocations(formattedKey);
+    expect(index).toBeDefined();
+    expect(index?.get("/home/user/.comis/skills/rotate-key/SKILL.md")).toBe("rotate-key");
+
+    clearSessionToolNameSnapshot(formattedKey);
+    clearSessionBootstrapFileSnapshot(formattedKey);
+    clearSessionPromptSkillsXmlSnapshot(formattedKey);
+    clearCacheSafeParams(formattedKey);
   });
 
   it("does NOT populate sessionToolNameSnapshots on reuse path", async () => {

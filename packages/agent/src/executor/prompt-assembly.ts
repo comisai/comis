@@ -836,6 +836,22 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
     if (promptSkillsXml) {
       dynamicPreambleParts.push(`## Available Skills\n${promptSkillsXml}`);
     }
+    // WR-06 (ATTR-01): this reuse path re-emits the `## Available Skills` block
+    // (a learned-skill <location> can be visible to the model), so it MUST also
+    // populate the location→skillName index the bridge reads — otherwise
+    // getSessionPromptSkillLocations() returns undefined and skill-use
+    // attribution silently no-ops for the DOMINANT cache-reuse (sub-agent) path
+    // (the precise seam-mismatch class that bit Phase 200). The full-assembly
+    // path freezes this in lockstep with its XML snapshot (see the
+    // sessionPromptSkillLocations.set below); here we key on the same
+    // formatSessionKey(sessionKey) and freeze once (don't clobber an index a
+    // prior full assembly already froze for this session).
+    if (sessionKey) {
+      const reuseSnapshotKey = formatSessionKey(sessionKey);
+      if (!sessionPromptSkillLocations.has(reuseSnapshotKey)) {
+        sessionPromptSkillLocations.set(reuseSnapshotKey, parseSkillLocationIndex(promptSkillsXml));
+      }
+    }
 
     // Active prompt skill
     const activePromptSkillContent = msg.metadata?.promptSkillContent as string | undefined;
