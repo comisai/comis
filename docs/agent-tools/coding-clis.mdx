@@ -1,0 +1,165 @@
+---
+title: "Coding CLIs: Claude Code & Codex"
+description: "Drive Claude Code and OpenAI Codex as first-class coding agents through the terminal driver — config examples and how it works."
+---
+
+The [terminal driver](/agent-tools/terminal-driver) drives **any** interactive TUI, but two coding
+CLIs are supported **first-class**: **Claude Code** (Anthropic) and **OpenAI Codex**. The agent
+operates them the way a developer does — launches the interactive CLI, gives it a task, answers its
+prompts, and verifies the result — inside the operator-controlled sandbox.
+
+A CLI is "first-class" when it has all **three** pieces below. Adding a third (aider, gemini-cli, …)
+is a drop-in profile + skill with no engine change — see [Adding a platform](/agent-tools/terminal-driver#platform-profiles).
+
+## How it works — three layers
+
+| Layer | What it does | Where it lives | Who controls it |
+|-------|--------------|----------------|-----------------|
+| **Skill** | Teaches the agent **how to drive** the CLI — launch, named project folders, slash commands, completion detection, verification. | A bundled `SKILL.md`, seeded to `~/.comis/skills/<id>/`. Auto-loaded when relevant (progressive disclosure). | Comis (shipped) |
+| **Platform profile** | Tunes how the driver **perceives** the CLI — render clean-up, classifier patterns, dialog safe-answers. Read-side only. | `platforms/<id>/profile.ts`, selected by the operator `allowId`. See [Platform profiles](/agent-tools/terminal-driver#platform-profiles). | Comis (shipped) |
+| **Sandbox** | The bwrap **jail** the CLI runs in — filesystem/network/credential/uid scope. | The allowlist entry's `scope` (below). See [Security model](/agent-tools/terminal-driver#security-model). | **You** (operator) |
+
+The skill and profile ship with Comis; **your only job is the sandbox** — one allowlist entry per
+CLI, plus installing and authenticating the CLI on the host. The profile is **read-side only**: it
+never widens the jail or the launch — that stays your allowlist entry.
+
+## Prerequisites (once, per host)
+
+<Steps>
+<Step title="Install the CLI as the service user">
+Install Claude Code / Codex for the user the daemon runs as (the standard install puts the binary at
+`~/.local/bin/claude` / `~/.local/bin/codex`).
+</Step>
+<Step title="Authenticate it OUTSIDE the jail">
+Run `claude` / `codex login` as the service user once so credentials are written to `~/.claude` /
+`~/.codex`. The driver never logs a CLI in — an unauthenticated CLI escalates to you. Under
+`filesystem: home` those dirs are bound **read-write**, so the CLI refreshes its own token across drives.
+</Step>
+<Step title="Accept the first-run gates once">
+Launch the CLI once by hand and clear its startup gates — Claude Code's "trust this folder" prompt
+and, under `--permission-mode bypassPermissions`, the "Bypass Permissions" warning (whose default
+highlight is **"No, exit"**, so a reflexive Enter quits). Once accepted, the state is recorded in
+`~/.claude.json` (bound RW), so later drives open straight to the prompt.
+</Step>
+</Steps>
+
+## Claude Code
+
+```yaml
+agents:
+  default:
+    skills:
+      terminal:
+        enabled: true
+        allow:
+          - id: claude
+            match:
+              path: /home/comis/.local/bin/claude   # the service user's home-installed binary
+              argsPrefix:                            # operator-pinned: the agent CANNOT change the permission mode
+                - --permission-mode
+                - bypassPermissions
+            scope:
+              filesystem: home        # binds the home-installed binary + RW ~/.claude state/token
+              network: full           # reach the model API directly
+              credentialPaths: []      # not needed — filesystem: home already exposes ~/.claude (RW)
+              uid: daemon              # run as the daemon user so it owns its (comis-owned) creds
+            autoAnswer: safe-only      # auto-answer only known-safe dialogs (the trust gate); everything else escalates
+            consent: { acknowledgedRisk: true, acknowledgedAt: "2026-06-17T00:00:00Z" }
+            limits: { wallClockMs: 7200000, maxInteractions: 800 }
+```
+
+**Why these settings**
+
+- **`filesystem: home`** — Claude Code is home-installed (`~/.local/bin/claude` → `~/.local/share/...`),
+  which `filesystem: workspace` cannot exec; and it **writes** `~/.claude` (session state + OAuth refresh),
+  which a read-only `credentialPaths` bind would block.
+- **`argsPrefix` pins `--permission-mode bypassPermissions`** — the agent drives an *allowlisted* command,
+  so pinning the permission mode in the operator entry means the agent can never select a weaker/different
+  mode. The jail (uid/network/`~/.comis` mask) is the real boundary, not Claude's own permission prompts.
+- **`uid: daemon`** — Claude's creds under `~/.claude` are owned by the daemon user; running as that uid lets
+  it read/refresh them.
+
+**How the agent drives it** — the agent calls
+`terminal_session_create({ allowId: "claude", command: "claude", project: "<short-kebab-name>" })`
+(the `argsPrefix` is prepended automatically), then drives the session per the bundled skill. The
+`project` opens a persistent, retrievable folder `~/.comis/workspace/projects/<name>` — see
+[Per-project folders](/agent-tools/terminal-driver#configuration).
+
+**The `claude-code` profile** makes the perception clean:
+- **Render** — strips Claude's dim autocomplete "ghost-text" from the captured screen, so the driving
+  model never mistakes a suggestion (e.g. `commit this`) for queued input.
+- **Perception** — Claude's spinner reads `working`; a `/model`-style picker reads `awaiting-input`
+  (not `stuck`).
+- **Dialogs** — the "trust this folder" gate is answered with the safe keystroke under `autoAnswer: safe-only`;
+  any destructive/approval prompt always escalates.
+
+<Note>
+**Claude Code's Bash tool inside the jail.** Claude wraps each Bash-tool command in a *second* bubblewrap
+that remounts `$HOME` read-only — which would break its per-command state dir. The driver handles this
+automatically (a writable `tmpfs` carve-out at `~/.claude/session-env`); no configuration needed. Details:
+[Nested sandboxes](/agent-tools/terminal-driver#configuration).
+</Note>
+
+## OpenAI Codex
+
+```yaml
+agents:
+  default:
+    skills:
+      terminal:
+        enabled: true
+        allow:
+          - id: codex
+            match:
+              path: /home/comis/.local/bin/codex
+              argsPrefix:                                    # operator-pinned
+                - --dangerously-bypass-approvals-and-sandbox  # disable Codex's OWN approvals + sandbox (it already runs in Comis's jail)
+            scope:
+              filesystem: home        # binds the home-installed binary + RW ~/.codex state/auth
+              network: full           # reach the model API directly
+              credentialPaths: []
+              uid: daemon
+            autoAnswer: safe-only      # the approval overlay is destructive ⇒ ALWAYS escalates (never auto-answered)
+            consent: { acknowledgedRisk: true, acknowledgedAt: "2026-06-17T00:00:00Z" }
+            limits: { wallClockMs: 7200000, maxInteractions: 800 }
+```
+
+**Why these settings**
+
+- **`--dangerously-bypass-approvals-and-sandbox`** — Codex would otherwise start its **own** nested
+  sandbox (landlock/seccomp) and per-command approval prompts. Nested inside this driver's bwrap jail,
+  Codex's sandbox **fails to initialize** (`bwrap: loopback … not permitted` / `seccomp/landlock … not
+  supported`). The flag disables Codex's redundant layer — **Comis's jail is the sandbox**. Without it,
+  a driven Codex session dies at startup.
+- **`filesystem: home`** — same as Claude: a home-installed binary plus a writable cred/state dir (`~/.codex`).
+- **`autoAnswer: safe-only`** — Codex's run-command **approval overlay** is declared `destructive` in the
+  codex profile, so it **always escalates** to you and is never auto-answered.
+
+**How the agent drives it** — `terminal_session_create({ allowId: "codex", command: "codex", project: "<name>" })`.
+Use Codex when you specifically want it; otherwise the agent prefers Claude Code for general coding.
+
+**The `codex` profile** — perception only (Codex's `Working (Ns)` line reads `working`; the `/model`
+picker reads `awaiting-input`); the run-command approval is the escalate-always dialog above. Codex has
+**no `/context`** command (its `/status` is the usage view), and the skill exits with `/quit`.
+
+## The bundled skills
+
+The agent's "how to drive it" knowledge ships as two markdown skills, **seeded on boot** to
+`~/.comis/skills/claude-code/` and `~/.comis/skills/codex/` (re-seeded when the bundled version changes).
+The agent **auto-discovers** them by description (progressive disclosure) and loads the right one for the
+task — no per-agent skill config is required. Each teaches:
+
+- **Launch + named project folders** — always pass `project: "<name>"` for retrievable, parallel-safe work.
+- **In-session slash commands** — the ones a developer uses: `/compact` (free context on a long build),
+  `/model` (a picker — navigate with arrows/number + Enter), `/status`, `/diff`, `/clear` (⚠️ wipes), etc.
+- **Completion detection + verification** — read the screen, require a stable idle prompt, then verify the
+  tests actually passed (never assume success).
+- **Ghost-text rule** — in a driven session the agent is the *sole* input source, so any text it didn't
+  type is the CLI's autocomplete suggestion — ignore it, never act on it.
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Terminal Driver" icon="terminal" href="/agent-tools/terminal-driver">The full driver reference — tools, sandbox scope, durability, platform profiles</Card>
+  <Card title="Tool Policy" icon="shield-halved" href="/skills/tool-policy">Control which tools each agent can use</Card>
+</CardGroup>

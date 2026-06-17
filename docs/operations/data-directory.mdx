@@ -39,6 +39,8 @@ Here's everything Comis keeps on disk — and why.
 │   └── whisper/             # local STT whisper model (downloaded once on first use, reused)
 ├── agents/                  # per-agent RPC state (subagent results, etc.)
 ├── background-tasks/        # background task state files
+├── skills/                  # seeded skill library — bundled claude-code/codex/skill-creator skills (re-seeded on version change) + any added skills
+│   └── <name>/SKILL.md      # one dir per skill (the agent auto-discovers these by description)
 ├── identity/
 │   └── device.json          # Ed25519 device identity (auto-generated)
 └── devices/                 # paired device records (if pairing is used)

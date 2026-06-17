@@ -80,7 +80,11 @@ agents:
           # credentialPaths bind would block. credentialPaths (RO) instead suits a CLI that is
           # system-installed AND only reads its creds -- see the credentialPaths note below.
           - id: claude
-            match: { path: /home/comis/.local/bin/claude }
+            match:
+              path: /home/comis/.local/bin/claude   # canonical binary (realpath/hash-pinned)
+              argsPrefix:                            # operator-pinned: the agent cannot change the permission mode
+                - --permission-mode
+                - bypassPermissions
             scope:
               filesystem: home                 # binds the home-installed binary + RW ~/.claude state
               network: full                    # reach the model API
@@ -103,7 +107,7 @@ agents:
 
 The whole `drive:` block is **optional** and additive: a config with no `drive` block behaves **exactly as before** (no auto-promotion change, the digest read is already the effective default). An unknown key under `drive:` (a typo) is rejected at config load, like every other terminal key.
 
-The agent then drives it: `terminal_session_create({ allowId: "claude", command: "/home/comis/.local/bin/claude", args: ["--permission-mode", "bypassPermissions"] })` -> wait -> `terminal_session_send_text(...)` -> `terminal_session_read(...)`.
+The agent then drives it: `terminal_session_create({ allowId: "claude", command: "claude", project: "<name>" })` (the operator-pinned `argsPrefix` above is prepended automatically) -> wait -> `terminal_session_send_text(...)` -> `terminal_session_read(...)`. For the full per-CLI setup (Claude Code **and** Codex), see [Coding CLIs](/agent-tools/coding-clis).
 
 **Per-project folders — always name a coding project.** Pass `project: "<name>"` to `terminal_session_create` and the session opens in a dedicated, auto-created folder `<agent-workspace>/projects/<name>` (e.g. `~/.comis/workspace/projects/<name>` for the default agent). **Any coding project you may revisit should be named this way** — it makes the work persistent and **retrievable**: to fix a bug or add a feature later, start a new session with the **same** `project` name and it reopens in the same folder. **Different** names give isolated folders — that is how multiple projects run **in parallel** (each its own session + folder, no collisions). The agent is instructed (in the `terminal_session_create` tool description) to set `project` automatically for coding work. Two things that do **not** create a project folder: the display `name` param (just a listing label), and `cwd` (an explicit working dir, honored only if *within* the session workspace — a path outside is silently clamped to the workspace, the jail-escape guard). So `project` is the only path-free, retrievable way to organize project work.
 
@@ -286,6 +290,7 @@ No edit to `terminal-render.ts`, `terminal-classifier.ts`, `terminal-dialog-dete
 ## Related
 
 <CardGroup cols={2}>
+  <Card title="Coding CLIs: Claude Code & Codex" icon="robot" href="/agent-tools/coding-clis">Per-CLI config + how the skill/profile/sandbox fit together</Card>
   <Card title="Tool Policy" icon="shield-halved" href="/skills/tool-policy">Control which tools each agent can use</Card>
   <Card title="Built-in Tools" icon="puzzle-piece" href="/skills/built-in-tools">The full built-in tool surface</Card>
 </CardGroup>
