@@ -51,6 +51,28 @@ describe("MemoryConsolidationConfigSchema", () => {
   it("rejects a non-positive maxCandidatesPerRun", () => {
     expect(() => MemoryConsolidationConfigSchema.parse({ maxCandidatesPerRun: 0 })).toThrow();
   });
+
+  it("defaults the generalize block OFF with minDistinctContexts 3 (GENERAL-01/02)", () => {
+    // GENERAL-01/02 (v2.26 Phase 203): higher-order generalization synthesis is
+    // default-OFF (opt-in additive); the diversity gate needs ≥3 distinct contexts.
+    const result = MemoryConsolidationConfigSchema.parse({});
+    expect(result.generalize).toEqual({ enabled: false, minDistinctContexts: 3 });
+  });
+
+  it("rejects a non-positive / fractional generalize.minDistinctContexts (the diversity gate is a positive int)", () => {
+    expect(() =>
+      MemoryConsolidationConfigSchema.parse({ generalize: { minDistinctContexts: 0 } }),
+    ).toThrow();
+    expect(() =>
+      MemoryConsolidationConfigSchema.parse({ generalize: { minDistinctContexts: 1.5 } }),
+    ).toThrow();
+  });
+
+  it("rejects an unknown key inside the generalize block (z.strictObject guards drift)", () => {
+    expect(() =>
+      MemoryConsolidationConfigSchema.parse({ generalize: { bogus: true } }),
+    ).toThrow();
+  });
 });
 
 describe("PerAgentConfigSchema memoryConsolidation field", () => {

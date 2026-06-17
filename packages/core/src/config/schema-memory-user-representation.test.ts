@@ -57,6 +57,17 @@ describe("MemoryUserRepresentationConfigSchema", () => {
   it("rejects a fractional maxEntriesPerRun (the per-run write cap is an integer)", () => {
     expect(() => MemoryUserRepresentationConfigSchema.parse({ maxEntriesPerRun: 2.5 })).toThrow();
   });
+
+  it("defaults historyCap to 10 (REVISE-02 bounded per-record asOf history)", () => {
+    // REVISE-02 (v2.26 Phase 203): superseded rows for a (user, entryType) slot
+    // beyond this cap are trimmed oldest-first by the adapter (anti-unbounded-growth).
+    expect(MemoryUserRepresentationConfigSchema.parse({}).historyCap).toBe(10);
+  });
+
+  it("rejects a non-positive / fractional historyCap (the bounded-history cap is a positive int)", () => {
+    expect(() => MemoryUserRepresentationConfigSchema.parse({ historyCap: 0 })).toThrow();
+    expect(() => MemoryUserRepresentationConfigSchema.parse({ historyCap: 2.5 })).toThrow();
+  });
 });
 
 describe("PerAgentConfigSchema memoryUserRepresentation field", () => {
