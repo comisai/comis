@@ -325,6 +325,36 @@ describe("wireLearningOutcome — tool/pipeline → observe/resolve → emit", (
     expect(observe).toHaveBeenCalledTimes(1);
   });
 
+  it("graph:driver_lifecycle does NOT observe — graph:completed is the single pipeline signal (WR-02)", async () => {
+    // In P0 the per-node driver lifecycle is NOT a trajectory-level signal: a
+    // multi-node DAG emits graph:driver_lifecycle per node, which would flood the
+    // ledger with O(nodes) same-tier `pipeline` rows and amplify the WR-01 fusion
+    // non-determinism. Only graph:completed (gated on status==="completed") writes
+    // the single trajectory-level pipeline outcome. A terminal driver phase must
+    // therefore trigger ZERO observe calls.
+    const bus = new TypedEventBus();
+    const { store, observe } = makeStubStore();
+    wireLearningOutcome({
+      eventBus: bus,
+      outcomeStore: store,
+      clock: createFakeClock(NOW),
+      logger: createMockLogger(),
+      learningOutcomeEnabled: () => true,
+    });
+
+    withCtx(() =>
+      bus.emit("graph:driver_lifecycle", {
+        graphId: "g-1",
+        nodeId: "node-a",
+        typeId: "agent",
+        phase: "completed",
+      }),
+    );
+    await flushMicrotasks();
+
+    expect(observe).not.toHaveBeenCalled();
+  });
+
   it("skips when no agentId is resolvable from the event OR the ambient context (cannot scope)", async () => {
     const bus = new TypedEventBus();
     const { store, observe } = makeStubStore();
