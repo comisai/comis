@@ -1,7 +1,7 @@
 ---
 name: claude-code
 type: prompt
-version: "1.0.0"
+version: "1.1.0"
 description: Drive the Claude Code CLI interactively in a terminal session to build, fix, or extend software — launch it in a NAMED project folder, give it the task, handle its interactive prompts via keystrokes, detect completion, and verify the result. Use whenever the user wants to write, build, debug, refactor, or test code or work on a software project, or asks to "use Claude" / "Claude Code" — even if they don't name the tool. This is for INTERACTIVE sessions only; never the headless one-shot mode.
 ---
 
@@ -41,6 +41,7 @@ Claude works autonomously with its own tools (edit, bash, tests, git). Give it t
 `read` on an interval; do not type while it is working.
 - **Working** — a spinner line: a glyph (`✶ ✳ ✻ ✽ ·`) + a gerund (`Brewing…`, `Calculating…`) often with `(esc to interrupt)` or a tool line ending `⎿ Waiting…`. Keep waiting (`wait`, then `read` again). Claude is slow — a real task is minutes of spinner, that is normal.
 - To **steer** without stopping, `send_text` a correction + Enter; Claude reads it after the current step. To **interrupt**, `send_key` Esc.
+- **Context filling on a long build?** Free it and keep going with `/compact` (see *Slash commands* below) — don't let a long task stall on a full context window.
 
 ## 5. If a permission prompt appears
 
@@ -66,6 +67,30 @@ For "fix the bug in <name>" / "add a feature to <name>": `terminal_session_creat
 ## 8. Finish
 
 Leave the session running if more follow-ups are likely; otherwise `terminal_session_kill` it when the user is done.
+
+## Slash commands (in-session)
+
+Type these into Claude's `❯` composer (`send_text` then Enter, like any prompt) to manage the session — the same ones a developer uses. They run **inside Claude**, not the shell.
+
+**Context — the ones that matter on a long build:**
+- **`/compact [focus]`** — summarize the conversation to free context and KEEP working. This is the recovery move when a long build slows, warns about context, or you want headroom before a big step. Optionally steer what to keep: `/compact keep the API design and the failing test`. (Claude also auto-compacts, but issue it yourself when a long task is dragging.)
+- `/context` — show what's filling the window (a usage grid); read it to decide whether to `/compact`.
+- `/clear` — ⚠️ **WIPES the conversation** (fresh start). Only between UNRELATED tasks in the same session — **never mid-task** (you lose all the build context). Prefer `/compact`.
+
+**Model / cost / status:**
+- `/model` — switch model. Opens a **picker** → the session is now awaiting input: `send_key` ↑/↓ (or type a number) to choose, then Enter, then `read` to confirm.
+- `/usage` (alias `/cost`) — token spend + plan limits this session.
+- `/status` — model, account, connectivity (use it when something seems off).
+
+**Project / work:**
+- `/init` — scaffold a `CLAUDE.md` for the project (a good first step in a fresh repo).
+- `/diff` — view the working-tree changes.
+- `/plan [description]` — enter plan mode (Claude plans before editing). Usually unneeded here (the operator runs bypass mode to just do the work), but available for an explicit "plan it first" request.
+- `/resume` — resume Claude's OWN prior conversation (a picker). Usually NOT needed: to continue a project you relaunch in the same `project` folder (§7) — that's the durable path. Use `/resume` only when you specifically want Claude's earlier chat back.
+
+**Never type these — they need a human:** `/login`, `/logout`, `/config`, `/upgrade`. If the session needs one (e.g. an auth screen), STOP and tell the user; don't try to drive it.
+
+**Picker rule:** any command that opens a menu (`/model`, `/resume`) leaves the session **awaiting input** — navigate with arrows or a number + Enter and `read` back to confirm BEFORE doing anything else; a single Enter won't dismiss it.
 
 ## Gotchas
 

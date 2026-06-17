@@ -1,7 +1,7 @@
 ---
 name: codex
 type: prompt
-version: "1.0.0"
+version: "1.1.0"
 description: Drive the OpenAI Codex CLI interactively in a terminal session to build, fix, or extend software — launch it in a NAMED project folder, give it the task, detect completion, and verify. Use this when the user explicitly wants to use Codex (the OpenAI coding CLI) for a software task. For general coding without a named tool, prefer the claude-code skill. This is for INTERACTIVE sessions only; never the headless exec mode.
 ---
 
@@ -36,6 +36,7 @@ IMPORTANT — Enter is contextual: it submits only from idle. **Mid-turn, Enter 
 `read` on an interval; do not type while working.
 - **Working** — a line like `• Working (1s • esc to interrupt)` with an **incrementing seconds counter**. Keep waiting.
 - To interrupt, `send_key` Esc.
+- **Context filling on a long build?** Free it with `/compact` (see §8) and keep going.
 
 ## 5. Detect completion, then verify
 
@@ -55,13 +56,23 @@ If a `read` shows either of these, Codex tried to start its own sandbox inside C
 - `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`
 - `seccomp/landlock ... is not supported in this environment`
 
-## 8. Slash commands
+## 8. Slash commands (in-session)
 
-Useful: `/init` (scaffold AGENTS.md), `/plan`, `/compact` (free context), `/status`, `/diff`, `/model`. Codex does NOT have `/undo`, `/help`, or `/context` — do not type those.
+Type these into Codex's composer (`send_text` then Enter) — they run **inside Codex**, not the shell.
+- **`/compact`** — summarize the conversation to free context and keep working; use it on a long build before you hit the limit (Codex also auto-compacts).
+- `/status` — session config + token usage. Codex has **no `/context`** — `/status` is how you check context/usage.
+- `/diff` — show the git diff (including untracked files).
+- `/usage` — account usage activity.
+- `/init` — scaffold an `AGENTS.md` for the project.
+- `/review` — have Codex review its current changes for issues before you finish.
+- `/plan [description]` — switch to Plan mode (plans before editing).
+- `/model` and `/permissions` open a **picker** → the session is awaiting input: navigate with arrows or a number + Enter, then `read` to confirm (a single Enter won't do it). The command is `/permissions`, **not** `/approvals` (which no longer exists).
+- ⚠️ `/new` and `/clear` **WIPE the conversation** (fresh chat) — only between unrelated tasks, never mid-build; prefer `/compact`.
+- Codex does NOT have `/undo`, `/help`, or `/context` — do not type those.
 
 ## 9. Revisit / finish
 
-Continue a project with the same `project` name. Exit with `send_key` Ctrl+C twice, or `send_text` `/quit` + Enter. `terminal_session_kill` when done.
+Continue a project with the same `project` name. Exit by `send_text` **`/quit`** (or `/exit`) + Enter — the reliable way; don't depend on a Ctrl+C-twice confirmation (not a guaranteed contract). `terminal_session_kill` when done.
 
 ## Gotchas
 
