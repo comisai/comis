@@ -9,6 +9,16 @@
  * each homogeneous sub-cluster via a cheap-model LLM call (MERGE-only contract),
  * and applies each consolidation ATOMICALLY through the store port.
  *
+ * GENERAL-01/02 (design §WS6): when `generalize.enabled`, a SECOND pass over the
+ * same sub-clusters ABSTRACTS any cluster that recurs across `minDistinctContexts`
+ * DISTINCT (sessionKey, sender) contexts into ONE higher-order `semantic` memory
+ * ("user prefers X in general") at the `minTrust` ceiling, `proofCount = |cluster|`,
+ * sources KEPT (a NEW non-destructive node, `observationKind: "generalization"`).
+ * The cluster input is `wrapExternalContent`-wrapped before the synthesis LLM
+ * (SEC-01 new stage — see `memory-consolidation-llm.ts`). Default-OFF →
+ * byte-identical consolidation when disabled. The abstain gate (small/nano →
+ * skip) precedes BOTH passes, so a weak model never fabricates a generalization.
+ *
  * Security posture (this is the security-critical path, design §9):
  * - Trust is computed in CODE (`minTrust`, the ceiling), NEVER chosen
  *   by the LLM. Consolidating lower-trust sources can never mint a higher-trust
@@ -34,7 +44,7 @@
  */
 
 import { ok, err, fromPromise, type Result } from "@comis/shared";
-import { systemSetTimeout, systemClearTimeout, validateMemoryWrite } from "@comis/core";
+import { validateMemoryWrite } from "@comis/core";
 import type {
   MemoryConsolidationConfig,
   MemoryConsolidationStore,
@@ -43,7 +53,6 @@ import type {
   TrustLevel,
   ClockPort,
 } from "@comis/core";
-import { completeSimple, getModel } from "@earendil-works/pi-ai";
 import { resolveMemoryOpsStrategy } from "./memory-capability-router.js";
 import type { CapabilityClass } from "../executor/model-profile.js";
 import { randomUUID } from "node:crypto";
@@ -54,8 +63,10 @@ import {
   minTrustLevel,
   deterministicDedupKey,
   contentSimilarity,
+  countDistinctContexts,
 } from "./memory-consolidation-clustering.js";
-import { CONSOLIDATION_PROMPT, parseConsolidationResult } from "./memory-consolidation-prompt.js";
+import { mergeCluster, synthesizeGeneralization } from "./memory-consolidation-llm.js";
+import { parseConsolidationResult } from "./memory-consolidation-prompt.js";
 import { emitGenerationQuality } from "./emit-generation-quality.js";
 
 // ---------------------------------------------------------------------------
@@ -104,48 +115,12 @@ export interface MemoryConsolidationDeps {
 // Constants
 // ---------------------------------------------------------------------------
 
-const LLM_TIMEOUT_MS = 120_000;
-
 /**
  * How many existing observations to fetch for the dedup pre-check. The same
  * candidate cap is reused — a re-run's would-be duplicate is one of the recent
  * observations created by a prior run over the same sources.
  */
 const DEDUP_OBSERVATION_LIMIT = 200;
-
-/**
- * Per-member content cap (chars) fed into the merge prompt — a
- * prompt-size DoS guard. `maxConsolidationTokens` bounds only the LLM OUTPUT; the
- * INPUT was previously unbounded — every member's full `content` was
- * concatenated (`MemoryEntrySchema.content` is `z.string().min(1)`, no max), so
- * `maxClusterSize` members of arbitrary length could build an arbitrarily large
- * prompt. The merge only needs the GIST of each member, so each is sliced to
- * this cap before assembly — making the input cost bounded by
- * `maxClusterSize × MAX_MEMORY_CHARS` rather than uncontrolled member length.
- */
-const MAX_MEMORY_CHARS = 2_000;
-
-// ---------------------------------------------------------------------------
-// LLM response parsing
-// ---------------------------------------------------------------------------
-
-function extractResponseText(response: { content?: unknown[] }): string {
-  let text = "";
-  if (response.content && Array.isArray(response.content)) {
-    for (const part of response.content) {
-      if (
-        typeof part === "object" &&
-        part !== null &&
-        "type" in part &&
-        (part as Record<string, unknown>).type === "text" &&
-        "text" in part
-      ) {
-        text += (part as Record<string, unknown>).text;
-      }
-    }
-  }
-  return text;
-}
 
 // ---------------------------------------------------------------------------
 // Cluster helpers
@@ -166,19 +141,6 @@ function maxOccurredAt(cluster: MemoryEntry[]): number {
     if (t > max) max = t;
   }
   return max;
-}
-
-/**
- * Build the user-message text fed to the merge LLM call for one sub-cluster.
- * Each member's content is sliced to {@link MAX_MEMORY_CHARS} so the INPUT
- * prompt is bounded — not just the output (`maxTokens`).
- */
-function buildClusterPrompt(cluster: MemoryEntry[]): string {
-  let text = "Memories to merge:\n\n";
-  for (const e of cluster) {
-    text += `- (${e.id}) ${e.content.slice(0, MAX_MEMORY_CHARS)}\n`;
-  }
-  return text;
 }
 
 // ---------------------------------------------------------------------------
@@ -229,6 +191,8 @@ export async function runMemoryConsolidation(
       observationsCreated: 0,
       dedupHits: 0,
       foldsApplied: 0,
+      generalized: 0,
+      clustersConsidered: 0,
       durationMs: clock.now() - startMs,
       timestamp: clock.now(),
     });
@@ -250,6 +214,8 @@ export async function runMemoryConsolidation(
       observationsCreated: 0,
       dedupHits: 0,
       foldsApplied: 0,
+      generalized: 0,
+      clustersConsidered: 0,
       durationMs: clock.now() - startMs,
       timestamp: clock.now(),
     });
@@ -329,10 +295,20 @@ export async function runMemoryConsolidation(
   // Pre-index existing observations by their source-id dedup key (primary, O(1)
   // lookup). Same-run mints ARE added here so a later sub-cluster with the SAME
   // source set in this run still dedups (exact-source double-create guard).
+  //
+  // GENERALIZATIONS use a SEPARATE namespace: a merge observation and a
+  // higher-order generalization over the SAME source set are DISTINCT artifacts
+  // (different observationKind), so they must NOT collide on the shared
+  // source-id key — otherwise the merge that runs first would block the
+  // generalization. Prior-run generalizations index here so a re-run is still a
+  // dedup hit (Pitfall 3); merge-kind observations index in `existingKeys`.
   const existingKeys = new Set<string>();
+  const existingGeneralizationKeys = new Set<string>();
   for (const obs of existing) {
     if (obs.sourceIds && obs.sourceIds.length > 0) {
-      existingKeys.add(deterministicDedupKey(obs.sourceIds));
+      const k = deterministicDedupKey(obs.sourceIds);
+      if (obs.observationKind === "generalization") existingGeneralizationKeys.add(k);
+      else existingKeys.add(k);
     }
   }
 
@@ -342,6 +318,11 @@ export async function runMemoryConsolidation(
   // Corroborating clusters folded into an existing observation (proof
   // accrual) instead of creating a second one. Counts only (the event field).
   let foldsApplied = 0;
+  // GENERAL-01/02 counts (the daemon-side learning:memory_generalized event,
+  // Plan 05): higher-order memories created this run + the diversity-clearing
+  // clusters considered. Counts ONLY — never the synthesized content (§2.7).
+  let generalized = 0;
+  let clustersConsidered = 0;
 
   for (const cluster of subClusters) {
     // The trust CEILING — computed in CODE, never the LLM.
@@ -559,11 +540,124 @@ export async function runMemoryConsolidation(
     existingKeys.add(key);
   }
 
+  // 7. GENERAL-01/02: the diversity-gated, wrapExternalContent-wrapped
+  // generalization synthesis pass — abstract a cluster that recurs across MANY
+  // distinct contexts into ONE higher-order `semantic` memory ("user prefers X
+  // in general") instead of copying near-dups verbatim. Behind
+  // `generalize.enabled` → byte-identical consolidation when off. The abstain
+  // early-return (above) PRECEDES this pass, so small/nano never reach it. The
+  // higher-order memory is a NEW non-destructive node at the `minTrust(cluster)`
+  // ceiling (NEVER raised), `proofCount = |cluster|`, sources KEPT — written via
+  // the EXISTING applyConsolidation (no new adapter method).
+  if (config.generalize.enabled) {
+    for (const cluster of subClusters) {
+      // Anti-domination: only a cluster spanning >= minDistinctContexts DISTINCT
+      // (sessionKey, sender) contexts generalizes — one chatty session cannot
+      // forge a "general" preference.
+      if (countDistinctContexts(cluster) < config.generalize.minDistinctContexts) continue;
+
+      // Re-run double-create guard (Pitfall 3): the same source set yields the
+      // same key — a prior-run generalization over this cluster is a dedup hit.
+      // Checked against the SEPARATE generalization namespace so the merge that
+      // ran first over the same sources does NOT block this generalization.
+      const genKey = deterministicDedupKey(cluster.map((e) => e.id));
+      if (existingGeneralizationKeys.has(genKey)) {
+        dedupHits++;
+        continue;
+      }
+
+      logger.debug(
+        { agentId, step: "memory-generalization" as const },
+        "Generalizing a cross-context cluster (diversity threshold met)",
+      );
+
+      // Synthesize the higher-order content (LLM; the cluster input is
+      // wrapExternalContent-wrapped INSIDE synthesizeGeneralization — SEC-01).
+      // A model failure / empty parse is undefined = a non-fatal skip.
+      const higherOrder = await synthesizeGeneralization(deps, cluster);
+      if (higherOrder === undefined) continue;
+
+      // Defense-in-depth (AGENTS.md §2.2): scan the synthesized content BEFORE
+      // store. A non-clean generalization is skipped (counts-only), never stored
+      // (the profile/observation store has no external down-tier for a higher-order
+      // memory). The cluster WAS considered (it cleared the diversity gate).
+      const verdict = validateMemoryWrite(higherOrder.content);
+      if (verdict.severity !== "clean") {
+        logger.warn(
+          {
+            agentId,
+            step: "memory-generalization" as const,
+            errorKind: "validation" as const,
+            hint: "synthesized generalization matched a non-clean pattern — blocked from store",
+          },
+          "Skipping generalization that failed the memory-write security scan",
+        );
+        clustersConsidered++;
+        continue;
+      }
+
+      const genNow = clock.now();
+      const genSourceIds = cluster.map((e) => e.id);
+      const genSource: MemorySource = { who: "system", channel: "memory-generalization" };
+      const generalization: MemoryEntry = {
+        id: randomUUID(),
+        tenantId,
+        agentId,
+        userId: "system",
+        content: higherOrder.content,
+        trustLevel: minTrust(cluster), // the learned ceiling — NEVER raised
+        source: genSource,
+        tags: [...uniqueTagsOf(cluster), ...config.autoTags],
+        proofCount: cluster.length,
+        sourceIds: genSourceIds,
+        confidence: higherOrder.confidence ?? 1,
+        occurredAt: maxOccurredAt(cluster),
+        createdAt: genNow,
+        sourceType: "conversation",
+        memoryType: "semantic",
+        observationKind: "generalization",
+      };
+
+      const applied = await fromPromise(
+        consolidationStore.applyConsolidation({
+          observation: generalization,
+          markConsolidated: genSourceIds,
+          tenantId,
+          now: genNow,
+        }),
+      );
+      if (applied.ok && applied.value.ok) {
+        generalized++;
+        existingGeneralizationKeys.add(genKey);
+      } else {
+        logger.warn(
+          {
+            agentId,
+            step: "memory-generalization" as const,
+            errorKind: "dependency" as const,
+            hint: "applyConsolidation failed/rejected for the generalization — sources unchanged, retried next run",
+          },
+          "Failed to write generalization (non-fatal)",
+        );
+      }
+      clustersConsidered++;
+    }
+  }
+
   // APPLY stage: report what the merge/apply loop produced. O(1)/run →
   // INFO (per-cluster skip/dedup detail stays DEBUG via the step:"consolidate"
   // lines above).
   logger.info(
-    { agentId, step: "apply" as const, observationsCreated, dedupHits, foldsApplied, durationMs: clock.now() - startMs },
+    {
+      agentId,
+      step: "apply" as const,
+      observationsCreated,
+      dedupHits,
+      foldsApplied,
+      generalized,
+      clustersConsidered,
+      durationMs: clock.now() - startMs,
+    },
     "consolidation applied",
   );
 
@@ -573,91 +667,25 @@ export async function runMemoryConsolidation(
     observationsCreated,
     dedupHits,
     foldsApplied,
+    generalized,
+    clustersConsidered,
     durationMs: clock.now() - startMs,
     timestamp: clock.now(),
   });
 
   logger.info(
-    { agentId, clustersProcessed, observationsCreated, dedupHits, foldsApplied, durationMs: clock.now() - startMs },
+    {
+      agentId,
+      clustersProcessed,
+      observationsCreated,
+      dedupHits,
+      foldsApplied,
+      generalized,
+      clustersConsidered,
+      durationMs: clock.now() - startMs,
+    },
     "Memory consolidation completed",
   );
 
   return ok(undefined);
-}
-
-// ---------------------------------------------------------------------------
-// LLM merge call (mirrors memory-review-job's completeSimple scaffold)
-// ---------------------------------------------------------------------------
-
-/**
- * Merge one homogeneous sub-cluster via a cheap-model LLM call. Returns the raw
- * response text, or `undefined` on any failure (model resolution, abort/timeout,
- * thrown call) — the caller treats `undefined` as a non-fatal skip (mirrors the
- * review-job posture). Bounded by `config.maxConsolidationTokens`.
- */
-async function mergeCluster(
-  deps: MemoryConsolidationDeps,
-  cluster: MemoryEntry[],
-): Promise<string | undefined> {
-  const { config, agentId, clock, logger } = deps;
-
-  let model;
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- provider/modelId are dynamic strings
-    model = getModel(deps.provider as any, deps.modelId as any);
-  } catch (modelErr) {
-    logger.warn(
-      {
-        agentId,
-        err: modelErr,
-        errorKind: "dependency" as const,
-        hint: `could not resolve model ${deps.provider}/${deps.modelId} — skipping cluster`,
-      },
-      "Consolidation model resolution failed (non-fatal)",
-    );
-    return undefined;
-  }
-  if (!model) {
-    logger.warn(
-      {
-        agentId,
-        errorKind: "dependency" as const,
-        hint: `model not found ${deps.provider}/${deps.modelId} — skipping cluster`,
-      },
-      "Consolidation model not found (non-fatal)",
-    );
-    return undefined;
-  }
-
-  const controller = new AbortController();
-  const timer = systemSetTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
-  try {
-    const response = await completeSimple(
-      model,
-      {
-        systemPrompt: CONSOLIDATION_PROMPT,
-        messages: [{ role: "user" as const, content: buildClusterPrompt(cluster), timestamp: clock.now() }],
-      },
-      {
-        apiKey: deps.apiKey,
-        temperature: 0.2,
-        maxTokens: config.maxConsolidationTokens,
-        signal: controller.signal,
-      },
-    );
-    return extractResponseText(response);
-  } catch (llmErr) {
-    logger.warn(
-      {
-        agentId,
-        err: llmErr,
-        errorKind: "dependency" as const,
-        hint: "consolidation merge LLM call failed/aborted — skipping cluster",
-      },
-      "Consolidation merge LLM call failed (non-fatal)",
-    );
-    return undefined;
-  } finally {
-    systemClearTimeout(timer);
-  }
 }

@@ -51,6 +51,38 @@ Do NOT include a trust level. Do NOT mark anything as superseded or deleted.
 Output the merged statement only. No markdown fences, no commentary.
 ${MEMORY_LANGUAGE_PRESERVATION_INSTRUCTION}`;
 
+/**
+ * The GENERALIZE-only synthesis system prompt (GENERAL-01, design §WS6).
+ *
+ * DISTINCT from {@link CONSOLIDATION_PROMPT}: where consolidation MERGES
+ * near-duplicates of the SAME fact into one statement, generalization ABSTRACTS
+ * a cluster that recurs across MULTIPLE distinct contexts into one HIGHER-ORDER
+ * statement of the general pattern ("the user prefers concise answers in
+ * general") — not a verbatim copy. Same MERGE-style output contract (`{ content,
+ * confidence? }`, no trust field, no supersede field — trust is computed in CODE
+ * via `minTrust`, and the higher-order memory is a NEW non-destructive node), so
+ * the existing {@link parseConsolidationResult} parses it.
+ *
+ * The cluster input fed to this prompt is UNTRUSTED and MUST be
+ * `wrapExternalContent`-wrapped by the caller before the LLM (SEC-01 new stage).
+ */
+export const GENERALIZATION_PROMPT = `You synthesize ONE higher-order general statement from several memories that share a pattern across DIFFERENT situations.
+
+You receive a small set of memories already known to recur across multiple distinct contexts.
+Output a SINGLE higher-order statement that captures the GENERAL pattern they share — what is true "in general"
+— rather than restating any one of them verbatim. Abstract the shared preference/fact; do not invent specifics
+that are not supported by the inputs.
+
+Return ONLY valid JSON of the form:
+{ "content": "the higher-order general statement", "confidence": 0.0-1.0 }
+
+- "content": the general statement, stated once.
+- "confidence": your confidence (0.0-1.0) that the generalization is faithful to the inputs.
+
+Do NOT include a trust level. Do NOT mark anything as superseded or deleted.
+Output the general statement only. No markdown fences, no commentary.
+${MEMORY_LANGUAGE_PRESERVATION_INSTRUCTION}`;
+
 // ---------------------------------------------------------------------------
 // Parsing
 // ---------------------------------------------------------------------------
