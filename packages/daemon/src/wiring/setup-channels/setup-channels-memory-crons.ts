@@ -105,18 +105,11 @@ export async function handleMemoryCronSentinel(
       // GENERAL-01/OBS-01: an INFO completion line + the daemon-side learning:memory_generalized
       // emit (counts-only, mirrors FORGET-06; generalize defaults OFF → counts 0). PLAIN emit
       // (never ?.) so EMIT_REGEX sees it; the memory body NEVER crosses the bus (SEC-01 / T-203-leak).
+      // Defensive ?? 0: a value-less result (older job build) emits benign zero counts, never throws.
       const c = consolidationResult.value;
-      logger.child({ agentId, submodule: "memory-consolidation" }).info(
-        { agentId, generalized: c.generalized, clustersConsidered: c.clustersConsidered, durationMs: c.durationMs },
-        "Memory consolidation generalization summary",
-      );
-      container.eventBus.emit("learning:memory_generalized", {
-        agentId,
-        generalized: c.generalized,
-        clustersConsidered: c.clustersConsidered,
-        durationMs: c.durationMs,
-        timestamp: clock.now(),
-      });
+      const gen = { generalized: c?.generalized ?? 0, clustersConsidered: c?.clustersConsidered ?? 0, durationMs: c?.durationMs ?? 0 };
+      logger.child({ agentId, submodule: "memory-consolidation" }).info({ agentId, ...gen }, "Memory consolidation generalization summary");
+      container.eventBus.emit("learning:memory_generalized", { agentId, ...gen, timestamp: clock.now() });
     }
     payload.onComplete?.({ status: consolidationResult.ok ? "ok" : "error", error: consolidationResult.ok ? undefined : consolidationResult.error?.message });
     return true;
