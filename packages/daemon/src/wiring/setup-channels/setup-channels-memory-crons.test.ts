@@ -34,6 +34,9 @@ const mockCreateRelationshipSeam = vi.hoisted(() => vi.fn(() => mockRelationship
 const mockJudgeSeam = vi.hoisted(() => vi.fn(async () => ({ usedIds: [] as string[], ignoredIds: [] as string[] })));
 const mockCreateUsefulnessJudgeSeam = vi.hoisted(() => vi.fn(() => mockJudgeSeam));
 const mockRunMemoryTripleExtraction = vi.hoisted(() => vi.fn(async () => ({ ok: true as const, value: { extracted: 0, written: 0, blocked: 0, downgraded: 0, skippedOverCap: 0 } })));
+// RANK-02/03: the per-intent bandit job. Mocked so the cron's per-intent iteration +
+// learner/gate threading is asserted via the captured deps (not the math).
+const mockRunOnlineTuning = vi.hoisted(() => vi.fn(async () => ({ ok: true as const, value: { updated: false, clampHits: 0, signalCount: 0 } })));
 const mockResolveOperationModel = vi.hoisted(() => vi.fn(() => ({
   provider: "anthropic",
   modelId: "anthropic:claude-haiku",
@@ -69,6 +72,7 @@ vi.mock("@comis/agent", () => ({
   createRelationshipSeam: mockCreateRelationshipSeam,
   createUsefulnessJudgeSeam: mockCreateUsefulnessJudgeSeam,
   runMemoryTripleExtraction: mockRunMemoryTripleExtraction,
+  runOnlineTuning: mockRunOnlineTuning,
 }));
 
 import { handleMemoryCronSentinel, type MemoryCronContext } from "./setup-channels-memory-crons.js";
@@ -154,6 +158,7 @@ beforeEach(() => {
   mockCreateUsefulnessJudgeSeam.mockReturnValue(mockJudgeSeam);
   mockJudgeSeam.mockResolvedValue({ usedIds: [], ignoredIds: [] });
   mockRunMemoryTripleExtraction.mockResolvedValue({ ok: true as const, value: { extracted: 0, written: 0, blocked: 0, downgraded: 0, skippedOverCap: 0 } });
+  mockRunOnlineTuning.mockResolvedValue({ ok: true as const, value: { updated: false, clampHits: 0, signalCount: 0 } });
 });
 
 describe("handleMemoryCronSentinel", () => {
@@ -343,6 +348,96 @@ describe("handleMemoryCronSentinel", () => {
     const onComplete = vi.fn();
     await handleMemoryCronSentinel("__MEMORY_CONSOLIDATION__", { agentId: "agent-1", onComplete }, ctx);
     expect(mockRunMemoryConsolidation).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// __ONLINE_TUNING__ sentinel (RANK-02/03, Phase 200 Plan 06): the KEYLESS bandit.
+// The cron gate composes `memoryOnlineTuning.enabled` (schedule) AND
+// `learningTuning.enabled` (the bandit/per-intent/outcome-reward behavior). When the
+// behavior is on it iterates the INTENT buckets (global '' + the 4 deterministic intents),
+// running runOnlineTuning per bucket with the config-selected learner + exploration. When
+// learningTuning is OFF it falls back to a SINGLE legacy nudge run (byte-identical).
+// ---------------------------------------------------------------------------
+describe("handleMemoryCronSentinel __ONLINE_TUNING__", () => {
+  it("short-circuits ok and runs NOTHING when memoryOnlineTuning is disabled (the cron gate)", async () => {
+    const ctx = makeCtx({ agents: { "agent-1": { name: "Agent 1" } } });
+    const onComplete = vi.fn();
+    const handled = await handleMemoryCronSentinel("__ONLINE_TUNING__", { agentId: "agent-1", onComplete }, ctx);
+    expect(handled).toBe(true);
+    expect(mockRunOnlineTuning).not.toHaveBeenCalled();
+    expect(onComplete).toHaveBeenCalledWith({ status: "ok" });
+  });
+
+  it("RANK-02: with memoryOnlineTuning + learningTuning ON, iterates ALL intent buckets (global '' + the 4 intents) — one bandit run per bucket", async () => {
+    const ctx = makeCtx({
+      agents: {
+        "agent-1": {
+          name: "Agent 1",
+          memoryOnlineTuning: { enabled: true },
+          learningTuning: { enabled: true, learner: "bandit", perIntent: true, exploration: 0.1 },
+        },
+      },
+    });
+    const onComplete = vi.fn();
+    await handleMemoryCronSentinel("__ONLINE_TUNING__", { agentId: "agent-1", onComplete }, ctx);
+    // 5 buckets: the global '' + factual + temporal + preference + enumeration.
+    expect(mockRunOnlineTuning).toHaveBeenCalledTimes(5);
+    const intents = mockRunOnlineTuning.mock.calls.map((c) => (c[0] as any).config.intent);
+    expect(new Set(intents)).toEqual(new Set(["", "factual", "temporal", "preference", "enumeration"]));
+    expect(onComplete).toHaveBeenCalledWith({ status: "ok", error: undefined });
+  });
+
+  it("RANK-03: threads learner:'bandit' + exploration from learningTuning into each bandit run", async () => {
+    const ctx = makeCtx({
+      agents: {
+        "agent-1": {
+          name: "Agent 1",
+          memoryOnlineTuning: { enabled: true },
+          learningTuning: { enabled: true, learner: "bandit", perIntent: true, exploration: 0.25 },
+        },
+      },
+    });
+    await handleMemoryCronSentinel("__ONLINE_TUNING__", { agentId: "agent-1", onComplete: vi.fn() }, ctx);
+    for (const call of mockRunOnlineTuning.mock.calls) {
+      const cfg = (call[0] as any).config;
+      expect(cfg.learner).toBe("bandit");
+      expect(cfg.exploration).toBe(0.25);
+      expect(cfg.enabled).toBe(true);
+    }
+  });
+
+  it("byte-identity: with learningTuning OFF (default), runs the LEGACY single-bucket nudge (one run, no per-intent, no bandit)", async () => {
+    const ctx = makeCtx({
+      agents: { "agent-1": { name: "Agent 1", memoryOnlineTuning: { enabled: true } } }, // no learningTuning
+    });
+    await handleMemoryCronSentinel("__ONLINE_TUNING__", { agentId: "agent-1", onComplete: vi.fn() }, ctx);
+    // The legacy path: ONE run, no intent (global ''), no bandit learner.
+    expect(mockRunOnlineTuning).toHaveBeenCalledTimes(1);
+    const cfg = (mockRunOnlineTuning.mock.calls[0][0] as any).config;
+    expect(cfg.intent).toBeUndefined();
+    expect(cfg.learner).not.toBe("bandit");
+  });
+
+  it("reads the per-intent FEED scoped to (tenant, agent, intent) — the readUsefulness seam carries intent", async () => {
+    const readUsefulness = vi.fn(async () => ({ ok: true as const, value: new Map() }));
+    const ctx = makeCtx({
+      agents: {
+        "agent-1": {
+          name: "Agent 1",
+          memoryOnlineTuning: { enabled: true },
+          learningTuning: { enabled: true, learner: "bandit", perIntent: true, exploration: 0.1 },
+        },
+      },
+      usefulnessStore: { recordUsage: vi.fn(async () => ({ ok: true as const, value: undefined })), readUsefulness },
+    });
+    await handleMemoryCronSentinel("__ONLINE_TUNING__", { agentId: "agent-1", onComplete: vi.fn() }, ctx);
+    // Each bucket's readUsefulness seam is invoked by the job (mocked here), so assert the
+    // seam exists per call and the per-intent scope is threaded by exercising one seam.
+    const temporalCall = mockRunOnlineTuning.mock.calls.find((c) => (c[0] as any).config.intent === "temporal");
+    expect(temporalCall).toBeDefined();
+    await (temporalCall![0] as any).readUsefulness();
+    expect(readUsefulness).toHaveBeenCalledWith(expect.any(Array), expect.objectContaining({ tenantId: "tenant-a", agentId: "agent-1", intent: "temporal" }));
   });
 });
 
