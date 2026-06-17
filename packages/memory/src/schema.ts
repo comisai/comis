@@ -223,6 +223,11 @@ export function ensureUsefulnessTable(db: Database.Database): void {
   db.exec(
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_usefulness_intent ON memory_usefulness(tenant_id, agent_id, memory_id, intent)`,
   );
+  // The `failure_count` column is part of this table's complete contract (the
+  // adapter's recordFailure upsert references it eagerly at construction) — add it
+  // here so EVERY caller that ensures the usefulness table gets it, not only
+  // initSchema (v2.26 WS4, FORGET-02; distinct from ignored_count).
+  ensureUsefulnessFailureColumn(db);
 }
 
 /**
@@ -566,8 +571,7 @@ export function initSchema(db: Database.Database, embeddingDimensions: number): 
   // the `PRAGMA foreign_keys = ON` already set by `openSqliteDatabase`. Per-table contracts (schema shape, isolation scope, trust floor) live in each fn JSDoc.
   ensureMemoryColumns(db); // additive memory columns (forward-only; design §4.1)
   ensureEntityTables(db); // entity junction tables
-  ensureUsefulnessTable(db); // recall-utility usefulness + intent bucket
-  ensureUsefulnessFailureColumn(db); // memory_usefulness.failure_count (v2.26 WS4, FORGET-02) — distinct from ignored_count
+  ensureUsefulnessTable(db); // recall-utility usefulness + intent bucket + failure_count (v2.26 WS4, FORGET-02)
   ensureCausalTables(db); // causal-edge table
   ensureTripleTable(db); // bi-temporal KG triples
   ensureUserRepresentationTable(db); // per-user representation

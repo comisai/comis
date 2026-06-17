@@ -100,6 +100,16 @@ export function createSqliteMemoryUsefulnessStore(
       "VALUES (?, ?, ?, ?, 0, 1, NULL) " +
       "ON CONFLICT(tenant_id, agent_id, memory_id, intent) DO UPDATE SET ignored_count = ignored_count + 1",
   );
+  // Failure per-intent upsert (FORGET-02): first touch INSERTs failure_count=1
+  // (used/ignored=0, last_useful_at NULL — a failure is NEITHER a use NOR an
+  // ignore), later touches bump failure_count within the SAME (…, intent) bucket.
+  // failure_count is a DISTINCT signal from ignored_count (outcome-attributed task
+  // failure vs recalled-but-not-cited) — they never touch each other's column.
+  const upsertFailure = db.prepare(
+    "INSERT INTO memory_usefulness (tenant_id, agent_id, memory_id, intent, used_count, ignored_count, last_useful_at, failure_count) " +
+      "VALUES (?, ?, ?, ?, 0, 0, NULL, 1) " +
+      "ON CONFLICT(tenant_id, agent_id, memory_id, intent) DO UPDATE SET failure_count = failure_count + 1",
+  );
 
   return {
     async recordUsage(
@@ -160,6 +170,41 @@ export function createSqliteMemoryUsefulnessStore(
             hint: "usefulness recordUsage failed — check DB integrity",
           },
           "Usefulness record failed",
+        );
+        return err(error);
+      }
+    },
+
+    async recordFailure(
+      memoryId: string,
+      scope: UsefulnessScope,
+    ): Promise<Result<void, Error>> {
+      const startMs = systemNowMs();
+      const { tenantId, agentId } = scope;
+      // GLOBAL bucket when no intent supplied (omitted === '' === byte-identical).
+      // intent is an ADDITIONAL key, never a relaxation of the (tenant, agent)
+      // isolation scope.
+      const intent = scope.intent ?? "";
+      try {
+        upsertFailure.run(tenantId, agentId, memoryId, intent);
+        const durationMs = systemNowMs() - startMs;
+        logger?.debug(
+          { step: "usefulness-failure", failureCount: 1, durationMs },
+          "Usefulness recordFailure complete",
+        );
+        return ok(undefined);
+      } catch (e: unknown) {
+        const durationMs = systemNowMs() - startMs;
+        const error = e instanceof Error ? e : new Error(String(e));
+        logger?.warn(
+          {
+            step: "usefulness-failure",
+            durationMs,
+            err: error,
+            errorKind: "internal" as const,
+            hint: "usefulness recordFailure failed — failure_count not accrued",
+          },
+          "Usefulness recordFailure failed",
         );
         return err(error);
       }

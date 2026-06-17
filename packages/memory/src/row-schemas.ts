@@ -121,6 +121,8 @@ export const MemoryUsefulnessRowSchema = z.strictObject({
   ignored_count: z.number(),
   /** Epoch ms of the last "used" attribution; NULL until first use. */
   last_useful_at: z.number().nullable(),
+  /** Outcome-attributed task-failure count (DEFAULT 0; FORGET-02) — DISTINCT from ignored_count. `.optional()`: the readUsefulness projection omits it (the lifecycle sweep reads it separately). */
+  failure_count: z.number().optional(),
 });
 
 /**
@@ -233,17 +235,12 @@ export const RelationshipRowSchema = z.strictObject({
   updated_at: z.number().nullable().optional(),
 });
 
-// Schema for a `tuned_alpha` row projection. The scoped read
-// projects 5 columns (NOT tenant_id/agent_id — the WHERE pins them): the 4 REAL
-// tunable boost alphas + updated_at. NO fifth (trust-weight) column (the structural
-// trust-freeze belt #3). Maps snake_case -> camelCase `TunedAlphaVector`. Via createRowMapper.
-export const TunedAlphaRowSchema = z.strictObject({
-  recency_alpha: z.number(),
-  temporal_alpha: z.number(),
-  proof_alpha: z.number(),
-  usefulness_alpha: z.number(),
-  updated_at: z.number(),
-});
+// The `tuned_alpha` read-projection schema is co-located in
+// `tuned-alpha-row-schema.ts` (this file is at the 800-line cap; the
+// outcome-event-row-schema.ts precedent) and re-exported here so existing
+// importers keep their import site (the scoped read projects the 4 alphas +
+// updated_at only — belt #3).
+export { TunedAlphaRowSchema } from "./tuned-alpha-row-schema.js";
 
 /**
  * Schema for the graph-spread recursive-CTE node projection. The
