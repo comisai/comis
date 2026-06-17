@@ -485,6 +485,94 @@ describe("runSkillSynthesis — admission predicate (SKILL-08, the first-RED)", 
   });
 });
 
+describe("runSkillSynthesis — WR-01 surfaces per-candidate validation verdicts", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("returns a validations[] entry (booleans + coverage) for an ADMITTED read-only candidate", async () => {
+    const mocks: Partial<Mocks> = {};
+    const validate = vi.fn(async () => ok(cleanValidation({ staticOk: true })));
+    const deps = makeDeps([traj()], { validationAdapter: { validate } }, mocks);
+
+    const res = await runSkillSynthesis(deps);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.value.validations).toEqual([
+      { staticOk: true, dynamicOk: false, coverage: "static-only" },
+    ]);
+  });
+
+  it("returns a validations[] entry for a FAILED (staticOk:false) candidate — the failure path is reachable", async () => {
+    const mocks: Partial<Mocks> = {};
+    // A candidate that fails the static scan is still VALIDATED (the adapter
+    // returned a verdict) — it must surface a validations[] entry so the daemon
+    // emits learning:skill_validated{staticOk:false} (the learned_skill_failing
+    // obs path).
+    const validate = vi.fn(async () => ok(cleanValidation({ staticOk: false })));
+    const deps = makeDeps([traj()], { validationAdapter: { validate } }, mocks);
+
+    const res = await runSkillSynthesis(deps);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.value.admitted).toBe(0); // not admitted (failed static)
+    expect(res.value.validations).toEqual([
+      { staticOk: false, dynamicOk: false, coverage: "static-only" },
+    ]);
+  });
+
+  it("returns an empty validations[] on a nothing-selected run (no candidate validated)", async () => {
+    const mocks: Partial<Mocks> = {};
+    const resolve = vi.fn(async () => ok(failure())); // nothing selected
+    const deps = makeDeps([traj()], { outcomeSignal: { resolve } }, mocks);
+
+    const res = await runSkillSynthesis(deps);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.value.validations).toEqual([]);
+  });
+});
+
+describe("runSkillSynthesis — IN-01 admission confidence is verdict-derived (not a hardcoded 1)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("seeds a static-only read-only admit at 0.7 (NOT 1)", async () => {
+    const mocks: Partial<Mocks> = {};
+    const validate = vi.fn(async () => ok(cleanValidation())); // static-only, read-only
+    const deps = makeDeps([traj()], { validationAdapter: { validate } }, mocks);
+
+    const res = await runSkillSynthesis(deps);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(mocks.admit).toHaveBeenCalledTimes(1);
+    const admitArg = (mocks.admit as Mock).mock.calls[0][0];
+    expect(admitArg.confidence).toBe(0.7); // verdict-derived seed, not the old literal 1
+    expect(admitArg.proofCount).toBe(1); // the LOW cap is unchanged
+  });
+
+  it("seeds a dynamically-reproduced mutating admit at 1.0 (full reproduction)", async () => {
+    const mocks: Partial<Mocks> = {};
+    const synthesize = vi.fn(async () => ok([mutatingCandidate()]));
+    const validate = vi.fn(async () => ok(reproducedValidation())); // dynamicOk + reproduced + full
+    const requestApproval = vi.fn(async () => ({ approved: true }));
+    const deps = makeDeps(
+      [traj()],
+      { synthesisAdapter: { synthesize }, validationAdapter: { validate }, approvalGate: { requestApproval } },
+      mocks,
+    );
+
+    const res = await runSkillSynthesis(deps);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(mocks.admit).toHaveBeenCalledTimes(1);
+    const admitArg = (mocks.admit as Mock).mock.calls[0][0];
+    expect(admitArg.confidence).toBe(1.0); // reproduced effect → full confidence
+  });
+});
+
 describe("runSkillSynthesis — proof_count cap holds at admission (SKILL-04 adversarial)", () => {
   beforeEach(() => vi.clearAllMocks());
 

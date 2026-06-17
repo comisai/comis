@@ -398,7 +398,23 @@ export async function handleWireMemoryCronSentinel(
       // disabled default this branch is unreachable (the no-op short-circuits above).
       const v = r.value;
       skillLogger.info({ agentId, synthesized: v.synthesized, admitted: v.admitted, validated: v.validated, approvalRequested: v.approvalRequested, abstained: v.abstained, durationMs: clock.now() - skillStartMs }, "Skill synthesis complete");
-      container.eventBus.emit("learning:skill_synthesized", { agentId, count: v.synthesized, timestamp: clock.now() });
+      // WR-02: the `learning:skill_synthesized.count` contract is "how many were
+      // ADMITTED this run" (events-learning.ts) — emit v.admitted, NOT v.synthesized
+      // (synthesized >= admitted; a synthesized candidate may fail validation/admission).
+      container.eventBus.emit("learning:skill_synthesized", { agentId, count: v.admitted, timestamp: clock.now() });
+      // WR-01: emit one learning:skill_validated per validated candidate (booleans +
+      // coverage ONLY) so the learned_skill_failing validation-failure obs path is
+      // reachable (it was consumed by the verdict but never emitted). DAEMON-SIDE,
+      // plain emit (the trajectory-bridge entry lands with the emit).
+      for (const verdict of v.validations) {
+        container.eventBus.emit("learning:skill_validated", {
+          agentId,
+          staticOk: verdict.staticOk,
+          dynamicOk: verdict.dynamicOk,
+          coverage: verdict.coverage,
+          timestamp: clock.now(),
+        });
+      }
     } else {
       skillLogger.error({ agentId, err: r.error, hint: "Skill synthesis failed -- will retry next cycle", errorKind: "internal" as const }, "Skill synthesis error");
     }

@@ -174,7 +174,20 @@ export interface SkillSynthesisJobDeps {
   onBreakerTrip?: (info: { errorKind: string }) => void;
 }
 
-/** What `runSkillSynthesis` returns — counts/ids only; the daemon emits the events. */
+/**
+ * Per-candidate validation verdict SUMMARY surfaced for the daemon's
+ * `learning:skill_validated` emit (WR-01). BOOLEANS + the closed `coverage` enum
+ * ONLY — never a field name, finding body, or script (the SEC-01 firewall; the
+ * daemon emit carries exactly these three scalars). One entry per VALIDATED
+ * candidate (i.e. the validation adapter returned a verdict, pass or fail).
+ */
+export interface SkillValidationSummary {
+  staticOk: boolean;
+  dynamicOk: boolean;
+  coverage: "full" | "static-only";
+}
+
+/** What `runSkillSynthesis` returns — counts/ids/closed-scalars only; the daemon emits the events. */
 export interface SkillSynthesisJobResult {
   /** True when the run abstained (weak model, benign skip). */
   abstained: boolean;
@@ -186,6 +199,13 @@ export interface SkillSynthesisJobResult {
   validated: number;
   /** How many were routed to the approval gate (mutating). */
   approvalRequested: number;
+  /**
+   * Per-validated-candidate verdict summaries (WR-01). The daemon emits one
+   * `learning:skill_validated` per entry AFTER the job returns (booleans +
+   * coverage only), so the `learned_skill_failing` validation-failure obs path is
+   * reachable. Empty on an abstained / nothing-selected run.
+   */
+  validations: SkillValidationSummary[];
   /** The largest distinct-(sessionId, sender) cardinality across the clusters (anti-domination telemetry). */
   maxClusterCardinality: number;
   /** Which bound terminated the synthesis loop, if any (`undefined` when unbounded this run). */
@@ -345,6 +365,7 @@ export async function runSkillSynthesis(
       admitted: 0,
       validated: 0,
       approvalRequested: 0,
+      validations: [],
       maxClusterCardinality: 0,
     });
   }
@@ -386,6 +407,7 @@ export async function runSkillSynthesis(
       admitted: 0,
       validated: 0,
       approvalRequested: 0,
+      validations: [],
       maxClusterCardinality: 0,
     });
   }
@@ -405,6 +427,9 @@ export async function runSkillSynthesis(
   let approvalRequested = 0;
   let contextTokens = 0;
   let boundedBy: SkillSynthesisJobResult["boundedBy"];
+  // WR-01: collect per-validated-candidate verdict summaries so the daemon can
+  // emit one `learning:skill_validated` per entry after this returns.
+  const validations: SkillValidationSummary[] = [];
 
   for (let i = 0; i < clusters.length; i++) {
     // Triple-cap: terminate at whichever bound is hit first.
@@ -472,6 +497,10 @@ export async function runSkillSynthesis(
       if (r.validated) validated += 1;
       if (r.admitted) admitted += 1;
       if (r.approvalRequested) approvalRequested += 1;
+      // WR-01: a validated candidate (the adapter returned a verdict, pass OR
+      // fail) contributes a summary the daemon turns into a
+      // `learning:skill_validated` event — booleans + coverage only.
+      if (r.validationSummary) validations.push(r.validationSummary);
     }
   }
 
@@ -496,6 +525,7 @@ export async function runSkillSynthesis(
     admitted,
     validated,
     approvalRequested,
+    validations,
     maxClusterCardinality,
     ...(boundedBy ? { boundedBy } : {}),
   });
@@ -523,6 +553,8 @@ interface AdmitCandidateOutcome {
   validated: boolean;
   admitted: boolean;
   approvalRequested: boolean;
+  /** The verdict summary (WR-01) — present iff the candidate was validated. */
+  validationSummary?: SkillValidationSummary;
 }
 
 /**
@@ -569,6 +601,14 @@ async function admitCandidate(args: AdmitCandidateArgs): Promise<AdmitCandidateO
   }
   out.validated = true;
   const verdict = validateResult.value.value;
+  // WR-01: surface the verdict booleans + coverage for the daemon emit (counts
+  // only — never a finding/body). Carried for EVERY validated candidate (admit or
+  // not), so the daemon's learning:skill_validated covers the failure path too.
+  out.validationSummary = { staticOk: verdict.staticOk, dynamicOk: verdict.dynamicOk, coverage: verdict.coverage };
+  // IN-01: derive the admission confidence from the validation verdict (NOT a
+  // hardcoded 1). A dynamically-reproduced candidate is highest-confidence; a
+  // clean full-coverage run is high; a static-only read-only admit seeds lower.
+  const admissionConfidence = confidenceFromVerdict(verdict);
 
   const readOnly = isReadOnly(candidate);
   if (!isAdmissible(verdict, candidate, readOnly)) {
@@ -593,7 +633,7 @@ async function admitCandidate(args: AdmitCandidateArgs): Promise<AdmitCandidateO
       logger.debug({ agentId, step: "admit" as const, name: candidate.name }, "read-only auto-admit disabled by config");
       return out;
     }
-    const admitR = await doAdmit(learnedSkillStore, candidate, clusterTrajIds, scope, nowMs);
+    const admitR = await doAdmit(learnedSkillStore, candidate, clusterTrajIds, scope, nowMs, admissionConfidence);
     out.admitted = admitR;
     return out;
   }
@@ -612,7 +652,7 @@ async function admitCandidate(args: AdmitCandidateArgs): Promise<AdmitCandidateO
     trustLevel: "learned",
   });
   if (resolution.approved) {
-    const admitR = await doAdmit(learnedSkillStore, candidate, clusterTrajIds, scope, nowMs);
+    const admitR = await doAdmit(learnedSkillStore, candidate, clusterTrajIds, scope, nowMs, admissionConfidence);
     out.admitted = admitR;
   } else {
     logger.debug(
@@ -650,6 +690,24 @@ function candidateMutates(candidate: CandidateSkill): boolean {
 /** The small set of unambiguously read-only built-in tools. */
 const READ_ONLY_TOOLS = new Set(["read", "list", "glob", "grep", "search", "get"]);
 
+/**
+ * Map a validation verdict to the admission confidence seed (IN-01). The
+ * verdict is the only per-candidate trust signal available at admission in P2:
+ *  - a dynamically REPRODUCED candidate (jail ran, scripts passed, effect
+ *    reproduced) is the strongest evidence → 1.0;
+ *  - a clean FULL-coverage run with no checkable effect → 0.9;
+ *  - a static-only admit (read-only, script-free — the common case) seeds at
+ *    0.7 (it passed the poison scan but obtained no dynamic proof).
+ * The Phase 202 promote/demote/strength math refines this from real outcomes;
+ * this replaces the hardcoded `1` so a static-only admit no longer enters at
+ * full strength. The LOW proof_count cap is unchanged (anti-domination).
+ */
+function confidenceFromVerdict(verdict: SkillValidationResult): number {
+  if (verdict.reproducedEffect && verdict.dynamicOk && verdict.coverage === "full") return 1.0;
+  if (verdict.dynamicOk && verdict.coverage === "full") return 0.9;
+  return 0.7;
+}
+
 /** Write the admitted candidate at trust=learned / state=candidate / low proof_count. */
 async function doAdmit(
   store: Pick<LearnedSkillStorePort, "admit">,
@@ -657,6 +715,7 @@ async function doAdmit(
   clusterTrajIds: string[],
   scope: LearningScope,
   nowMs: number,
+  confidence: number,
 ): Promise<boolean> {
   const admitR = await fromPromise(
     store.admit(
@@ -667,7 +726,9 @@ async function doAdmit(
         mutating: candidateMutates(candidate),
         // The SKILL-04 anti-domination cap: LOW regardless of cluster size.
         proofCount: LOW_PROOF_COUNT,
-        confidence: 1,
+        // IN-01: the validation-derived seed (not a hardcoded 1); strength
+        // seeds from this at the store.
+        confidence,
         sourceTrajIds: clusterTrajIds,
         createdAt: nowMs,
       },

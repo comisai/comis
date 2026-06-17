@@ -21,7 +21,7 @@ const mockCreateReasoningSeam = vi.hoisted(() => vi.fn(() => mockReasonSeam));
 const mockRunMemoryTripleExtraction = vi.hoisted(() => vi.fn(async () => ({ ok: true as const, value: { extracted: 0, written: 0, blocked: 0, downgraded: 0, skippedOverCap: 0 } })));
 const mockResolveOperationModel = vi.hoisted(() => vi.fn(() => ({ provider: "anthropic", modelId: "anthropic:claude-haiku", model: "anthropic:claude-haiku", timeoutMs: 60_000, source: "default" })));
 // SKILL-09: the synthesis job + adapter the __SKILL_SYNTHESIS__ handler injects/calls.
-const mockRunSkillSynthesis = vi.hoisted(() => vi.fn(async () => ({ ok: true as const, value: { abstained: false, synthesized: 2, admitted: 1, validated: 2, approvalRequested: 0, maxClusterCardinality: 1 } })));
+const mockRunSkillSynthesis = vi.hoisted(() => vi.fn(async () => ({ ok: true as const, value: { abstained: false, synthesized: 2, admitted: 1, validated: 2, approvalRequested: 0, validations: [{ staticOk: true, dynamicOk: false, coverage: "static-only" as const }, { staticOk: false, dynamicOk: false, coverage: "static-only" as const }], maxClusterCardinality: 1 } })));
 const mockCreateLlmSkillSynthesisAdapter = vi.hoisted(() => vi.fn(() => ({ synthesize: vi.fn() })));
 
 vi.mock("@comis/agent", () => ({
@@ -85,7 +85,7 @@ beforeEach(() => {
   mockJudgeSeam.mockResolvedValue({ usedIds: [], ignoredIds: [] });
   mockCreateReasoningSeam.mockReturnValue(mockReasonSeam);
   mockRunMemoryTripleExtraction.mockResolvedValue({ ok: true as const, value: { extracted: 0, written: 0, blocked: 0, downgraded: 0, skippedOverCap: 0 } });
-  mockRunSkillSynthesis.mockResolvedValue({ ok: true as const, value: { abstained: false, synthesized: 2, admitted: 1, validated: 2, approvalRequested: 0, maxClusterCardinality: 1 } });
+  mockRunSkillSynthesis.mockResolvedValue({ ok: true as const, value: { abstained: false, synthesized: 2, admitted: 1, validated: 2, approvalRequested: 0, validations: [{ staticOk: true, dynamicOk: false, coverage: "static-only" as const }, { staticOk: false, dynamicOk: false, coverage: "static-only" as const }], maxClusterCardinality: 1 } });
   mockCreateLlmSkillSynthesisAdapter.mockReturnValue({ synthesize: vi.fn() });
 });
 
@@ -245,9 +245,20 @@ describe("handleWireMemoryCronSentinel", () => {
     // The LCD-merged source the daemon built (NOT sessionStore.listDetailed — DAG-empty).
     expect(bundle!.buildSourceTrajectories).toHaveBeenCalledOnce();
     expect(Array.isArray(arg.sourceTrajectories)).toBe(true);
-    // The daemon emits the counts DAEMON-SIDE after the job returns (synthesized: 2).
-    const emitted = (ctx.container.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]);
+    // The daemon emits the counts DAEMON-SIDE after the job returns.
+    const emitCalls = (ctx.container.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls;
+    const emitted = emitCalls.map((c) => c[0]);
     expect(emitted).toContain("learning:skill_synthesized");
+    // WR-02: learning:skill_synthesized.count is the ADMITTED count (1), NOT
+    // synthesized (2) — the contract says "admitted".
+    const synthEmit = emitCalls.find((c) => c[0] === "learning:skill_synthesized");
+    expect((synthEmit?.[1] as { count: number }).count).toBe(1);
+    // WR-01: one learning:skill_validated per validated candidate (2), carrying
+    // the booleans + coverage — including the staticOk:false failure verdict.
+    const validatedEmits = emitCalls.filter((c) => c[0] === "learning:skill_validated");
+    expect(validatedEmits).toHaveLength(2);
+    expect(validatedEmits.map((c) => (c[1] as { staticOk: boolean }).staticOk)).toEqual([true, false]);
+    expect((validatedEmits[0][1] as { coverage: string }).coverage).toBe("static-only");
     expect(onComplete).toHaveBeenCalledWith({ status: "ok", error: undefined });
   });
 
