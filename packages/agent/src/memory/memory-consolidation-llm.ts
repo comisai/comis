@@ -99,13 +99,25 @@ export function extractResponseText(response: { content?: unknown[] }): string {
   return text;
 }
 
+/** Default {@link buildClusterPrompt} preamble — the MERGE task header. */
+const MERGE_PREAMBLE = "Memories to merge:";
+
+/**
+ * The GENERALIZE preamble (IN-01) — the generalize pass abstracts a cross-context
+ * pattern, so its user-message header must describe THAT, not a merge, or it
+ * conflicts with the GENERALIZATION system prompt (degrading weak cheap models).
+ */
+const GENERALIZE_PREAMBLE = "Memories that recur across contexts:";
+
 /**
  * Build the user-message text fed to a cluster LLM call. Each member's content is
  * sliced to {@link MAX_MEMORY_CHARS} so the INPUT prompt is bounded — not just the
- * output (`maxTokens`). Shared by the MERGE + GENERALIZE calls.
+ * output (`maxTokens`). Shared by the MERGE + GENERALIZE calls; the `preamble`
+ * matches the task (defaults to the MERGE header; the generalize call passes
+ * {@link GENERALIZE_PREAMBLE}).
  */
-export function buildClusterPrompt(cluster: MemoryEntry[]): string {
-  let text = "Memories to merge:\n\n";
+export function buildClusterPrompt(cluster: MemoryEntry[], preamble: string = MERGE_PREAMBLE): string {
+  let text = `${preamble}\n\n`;
   for (const e of cluster) {
     text += `- (${e.id}) ${e.content.slice(0, MAX_MEMORY_CHARS)}\n`;
   }
@@ -224,7 +236,7 @@ export async function synthesizeGeneralization(
   deps: LlmClusterDeps,
   cluster: MemoryEntry[],
 ): Promise<{ content: string; confidence?: number } | undefined> {
-  const wrapped = wrapExternalContent(buildClusterPrompt(cluster), { source: "memory_generalization" });
+  const wrapped = wrapExternalContent(buildClusterPrompt(cluster, GENERALIZE_PREAMBLE), { source: "memory_generalization" });
   const text = await runClusterCompletion(
     deps,
     GENERALIZATION_PROMPT,

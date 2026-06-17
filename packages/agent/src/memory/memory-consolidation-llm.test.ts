@@ -101,6 +101,16 @@ describe("buildClusterPrompt — bounded per-member input", () => {
     const prompt = buildClusterPrompt([makeEntry({ content: "the sky is blue" })]);
     expect(prompt).toContain("the sky is blue");
   });
+
+  it("defaults to the MERGE preamble but accepts a task-appropriate override (IN-01)", () => {
+    // The shared builder serves both the MERGE and the GENERALIZE calls; the preamble
+    // must match the task so the LLM user-message is not at odds with the system prompt.
+    const merge = buildClusterPrompt([makeEntry({ content: "fact" })]);
+    expect(merge).toContain("Memories to merge:");
+    const generalize = buildClusterPrompt([makeEntry({ content: "fact" })], "Memories that recur across contexts:");
+    expect(generalize).toContain("Memories that recur across contexts:");
+    expect(generalize).not.toContain("Memories to merge:");
+  });
 });
 
 describe("extractResponseText — total, guarded part extraction", () => {
@@ -174,6 +184,21 @@ describe("synthesizeGeneralization — the GENERALIZE call (SEC-01 wrapped input
     expect(userContent).toMatch(/<<<UNTRUSTED_[a-f0-9]{24}>>>/);
     expect(userContent).toMatch(/<<<END_UNTRUSTED_[a-f0-9]{24}>>>/);
     expect(userContent).toContain("Source: Memory generalization cluster input");
+  });
+
+  it("uses a GENERALIZE-appropriate preamble, not the MERGE 'Memories to merge:' header (IN-01)", async () => {
+    // The generalize pass abstracts a cross-context pattern; the user message must not
+    // tell the model to MERGE (which conflicts with the GENERALIZATION system prompt).
+    (completeSimple as ReturnType<typeof vi.fn>).mockResolvedValue(
+      llmText('{"content":"prefers concise answers in general"}'),
+    );
+    await synthesizeGeneralization(makeDeps(), [
+      makeEntry({ content: "alice asked for short replies" }),
+      makeEntry({ content: "alice wanted a brief answer" }),
+    ]);
+    const userContent = (completeSimple as ReturnType<typeof vi.fn>).mock.calls[0][1].messages[0].content as string;
+    expect(userContent).not.toContain("Memories to merge:");
+    expect(userContent).toContain("Memories that recur across contexts:");
   });
 
   it("returns undefined when the synthesized output fails to parse (non-fatal skip)", async () => {
