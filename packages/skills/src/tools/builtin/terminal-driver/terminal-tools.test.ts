@@ -943,13 +943,16 @@ describe("terminal-tools — wait delegation", () => {
       sessionId: "s1",
       args: { forIdleMs: 120, forText: undefined, forExit: undefined, timeoutMs: 5000 },
     });
-    expect(res.details).toEqual({
+    expect(res.details).toMatchObject({
       matched: true,
       isComplete: true,
       reason: "idle",
       screen: "quiet",
       cursor: { x: 2, y: 2 },
     });
+    // FINDING-3: a settle-COMPLETE result carries the model-facing scope note (so the driver does
+    // not over-read `isComplete:true` as "task done" and drop later steps).
+    expect((res.details as { note?: string }).note).toMatch(/SETTLED.*not.*overall task is done/is);
   });
 
   it("forwards a timeout result UNCHANGED — isComplete:false survives (the tool never coerces it to true)", async () => {

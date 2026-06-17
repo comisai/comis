@@ -55,6 +55,7 @@ import {
   type SessionListing,
   type SessionOwner,
 } from "./terminal-session-registry.js";
+import { withCompleteNote } from "./terminal-wait-reply.js";
 
 // Injected dependency contracts
 
@@ -792,7 +793,7 @@ export function createTerminalSessionWaitTool(deps: TerminalToolDeps): AgentTool
           driveMode === "detached" ? "mode_detached" : "producing",
         );
       }
-      return jsonResult(out);
+      return jsonResult(withCompleteNote(out)); // FINDING-3: scope `isComplete` for the model (registry `out` unchanged)
     },
   };
 }
