@@ -14,7 +14,12 @@
  * @module
  */
 import { describe, it, expect, vi } from "vitest";
-import { buildWakeDurabilityDeps, buildIsTmuxAlive } from "./terminal-durable-wiring.js";
+import {
+  buildWakeDurabilityDeps,
+  buildIsTmuxAlive,
+  isTmuxServerStranded,
+  recreateStrandedTmuxServerOnBoot,
+} from "./terminal-durable-wiring.js";
 
 function makeLogger() {
   return { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn(), child: vi.fn(function (this: unknown) { return this; }) };
@@ -144,5 +149,88 @@ describe("buildIsTmuxAlive — DUR-01: the daemon liveness probe targets the wor
 
   it("absent tmuxPath ⇒ always-false (durable falls back to the lost floor, I1)", () => {
     expect(buildIsTmuxAlive(undefined, socketPath)("comis-abc")).toBe(false);
+  });
+});
+
+// RECUR-02 (live VPS 2026-06-17): a durable tmux server that SURVIVES a daemon restart
+// (KillMode=process) is STRANDED in the prior daemon generation's mount namespace — systemd
+// PrivateTmp/ProtectHome give every daemon START a fresh mount ns, so the surviving server
+// (forked by the OLD daemon) sits in a now-dismantled ns. Its EXISTING sessions keep running
+// (their bwrap was set up when the ns was healthy) but EVERY NEW `bwrap` session it forks dies
+// ~2.5s (exit 1 — mount setup runs in the torn-down ns). PROVEN: server mnt ns 4026532294 ≠
+// restarted daemon mnt ns 4026532302; a new claude AND a plain `sh` new-session both die while
+// the re-attached durable one survives. The fix recreates the stranded server on boot.
+describe("isTmuxServerStranded — the stranded-mount-namespace detector (RECUR-02)", () => {
+  it("STRANDED when the surviving server's mnt ns differs from this daemon's (the post-restart strand)", () => {
+    expect(isTmuxServerStranded("mnt:[4026532294]", "mnt:[4026532302]")).toBe(true);
+  });
+
+  it("NOT stranded when the server shares THIS daemon's mnt ns (a healthy first-boot server)", () => {
+    expect(isTmuxServerStranded("mnt:[4026532302]", "mnt:[4026532302]")).toBe(false);
+  });
+
+  it("NOT stranded (the SAFE direction) when the server ns is unknowable — no server / unreadable", () => {
+    // A probe that cannot confirm STRANDED must never assert it (never needlessly kill a server).
+    expect(isTmuxServerStranded(undefined, "mnt:[4026532302]")).toBe(false);
+  });
+
+  it("NOT stranded (the SAFE direction) when THIS daemon's own mnt ns is unreadable", () => {
+    expect(isTmuxServerStranded("mnt:[4026532294]", undefined)).toBe(false);
+  });
+});
+
+describe("recreateStrandedTmuxServerOnBoot — kill the stranded server so new sessions get a fresh one (RECUR-02)", () => {
+  const base = (over: Record<string, unknown> = {}) => ({
+    socketPath: "/data/x/terminal-worker/tmux.sock",
+    tmuxPath: "/usr/bin/tmux",
+    logger: makeLogger(),
+    ...over,
+  });
+
+  it("kills the server when it is stranded (ns mismatch) — new sessions then fork a fresh server in the live ns", () => {
+    const killServer = vi.fn();
+    const r = recreateStrandedTmuxServerOnBoot(
+      base({
+        readServerMntNs: () => "mnt:[4026532294]", // the surviving prior-generation server
+        readDaemonMntNs: () => "mnt:[4026532302]", // THIS daemon
+        killServer,
+      }) as never,
+    );
+    expect(r.stranded).toBe(true);
+    expect(r.killed).toBe(true);
+    expect(killServer).toHaveBeenCalledTimes(1);
+    expect(killServer).toHaveBeenCalledWith("/data/x/terminal-worker/tmux.sock");
+  });
+
+  it("does NOT kill a healthy server sharing this daemon's ns (durable sessions survive a no-op boot)", () => {
+    const killServer = vi.fn();
+    const r = recreateStrandedTmuxServerOnBoot(
+      base({
+        readServerMntNs: () => "mnt:[4026532302]",
+        readDaemonMntNs: () => "mnt:[4026532302]",
+        killServer,
+      }) as never,
+    );
+    expect(r.stranded).toBe(false);
+    expect(r.killed).toBe(false);
+    expect(killServer).not.toHaveBeenCalled();
+  });
+
+  it("does NOT kill when there is no server / the ns is unreadable (nothing to recreate, SAFE)", () => {
+    const killServer = vi.fn();
+    const r = recreateStrandedTmuxServerOnBoot(
+      base({ readServerMntNs: () => undefined, readDaemonMntNs: () => "mnt:[4026532302]", killServer }) as never,
+    );
+    expect(r.killed).toBe(false);
+    expect(killServer).not.toHaveBeenCalled();
+  });
+
+  it("absent tmuxPath ⇒ no-op (no tmux on this host — durable already degrades to the lost floor)", () => {
+    const killServer = vi.fn();
+    const r = recreateStrandedTmuxServerOnBoot(
+      base({ tmuxPath: undefined, readServerMntNs: () => "mnt:[4026532294]", readDaemonMntNs: () => "mnt:[4026532302]", killServer }) as never,
+    );
+    expect(r.killed).toBe(false);
+    expect(killServer).not.toHaveBeenCalled();
   });
 });
