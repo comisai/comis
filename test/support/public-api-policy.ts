@@ -831,6 +831,19 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // getMessageTraceId: typed accessor for NormalizedMessage.metadata.traceId.
       // Consumers: orchestrator channel-manager.ts will read msg.metadata.traceId via this helper.
       "getMessageTraceId",
+      // ── Verified Learning WS1: inbound-reaction contracts (Phase 199, REACT-01) ──
+      // The interface-first wave (Plan 01) ships the NormalizedReaction domain
+      // shape + parse + the ReactionHandler port type AHEAD of their consumers so
+      // later plans receive the contract rather than scavenge for it. Consumers
+      // land later: the reaction-capable adapters (Discord/Slack/Telegram, Plan 02)
+      // produce a NormalizedReaction via parseReaction and register a
+      // ReactionHandler through ChannelPort.onReaction?; the orchestrator
+      // channel-manager fans out to it (Plan 04); the daemon resolves trust +
+      // observes the outcome. Shrink each entry as its real in-repo consumer lands.
+      "NormalizedReactionSchema",
+      "parseReaction",
+      "NormalizedReaction",
+      "ReactionHandler",
       "TrustLevelSchema",
       "MemorySourceSchema",
       "MemoryEntrySchema",
