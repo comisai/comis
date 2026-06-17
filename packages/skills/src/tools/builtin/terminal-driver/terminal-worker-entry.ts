@@ -78,9 +78,11 @@ import {
   diffSnapshot,
   perceptionScreen,
   readSnapshotParams,
+  type EmulatorSnapshot,
   type ReadResult,
   type SessionEmulator,
 } from "./terminal-render.js";
+import { getPlatformProfile } from "./platforms/index.js";
 import {
   runSettle,
   settleHint,
@@ -139,8 +141,13 @@ export interface TerminalWorkerDeps {
   setTimer?: (cb: () => void, ms: number) => unknown;
   /** Cancel a `setTimer` handle (default: `systemClearTimeout`). */
   clearTimer?: (handle: unknown) => void;
-  /** Construct a per-session @xterm emulator. Default: `createSessionEmulator`. Injectable so a test can assert the wiring (mirrors loadPty/spawnPipe). */
-  createEmulator?: (opts: { cols: number; rows: number; scrollback: number }) => SessionEmulator;
+  /** Construct a per-session @xterm emulator. Default: `createSessionEmulator`. Injectable so a test can assert the wiring (mirrors loadPty/spawnPipe). `transformSnapshot` is the selected platform profile's read-side render hook (RENDER-01), passed through verbatim. */
+  createEmulator?: (opts: {
+    cols: number;
+    rows: number;
+    scrollback: number;
+    transformSnapshot?: (snap: EmulatorSnapshot) => EmulatorSnapshot;
+  }) => SessionEmulator;
   /**
    * Write a length-prefixed frame to fd3 — the no-poll attention push channel (124-05,
    * TR-11). Production wraps `fs.writeSync(3, b)` (the worker spawns with fd3 reserved,
@@ -344,6 +351,11 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     const scope = (p["scope"] as TerminalScope | undefined) ?? LEAST_PRIVILEGE_SCOPE;
     const workspace = typeof p["workspace"] === "string" ? p["workspace"] : undefined;
     const cwd = typeof p["cwd"] === "string" ? p["cwd"] : undefined;
+    // The operator-declared allowId (registry-threaded from the create request). It selects the
+    // read-side platform profile (RENDER-01 / §5/INV-3) — by allowId ONLY, never content-sniffed,
+    // so the driven program cannot choose its own profile. `undefined` ⇒ the agnostic default.
+    const allowId = typeof p["allowId"] === "string" ? p["allowId"] : undefined;
+    const profile = allowId !== undefined ? getPlatformProfile(allowId) : undefined;
 
     const state: SessionState = {
       backend: "pty",
@@ -357,12 +369,15 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
       scope,
       workspace,
       cwd,
+      allowId,
     };
 
     // Construct the per-session @xterm emulator BEFORE wiring the backend's onData
     // (so the first chunk is rendered). Built for BOTH backends; the
     // scrollback is threaded from the create frame (DEFAULT_SCROLLBACK / config, never agent input).
-    state.emu = createEmulator({ cols, rows, scrollback });
+    // The selected profile's read-side `transformSnapshot` (e.g. the Claude ghost-strip) is injected
+    // as a GENERIC hook — the emulator stays platform-agnostic; identity when no profile (INV-1).
+    state.emu = createEmulator({ cols, rows, scrollback, transformSnapshot: profile?.transformSnapshot });
 
     // 124-05 (TR-11): a per-session transition-only attention emitter over the injected
     // fd3 push channel. Built only when `writeFd3` is wired (the production worker; tests

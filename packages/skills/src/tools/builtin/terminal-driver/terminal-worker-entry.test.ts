@@ -1826,11 +1826,11 @@ function readFrame(): TerminalRequestFrame {
  * not need real parsing — the real-emulator tests cover that).
  */
 function makeRecordingEmulator(): {
-  createEmulator: (opts: { cols: number; rows: number; scrollback: number }) => unknown;
+  createEmulator: (opts: { cols: number; rows: number; scrollback: number; transformSnapshot?: unknown }) => unknown;
   writes: string[];
   resizes: Array<[number, number]>;
   disposes: number;
-  lastConstruct: () => { cols: number; rows: number; scrollback: number } | undefined;
+  lastConstruct: () => { cols: number; rows: number; scrollback: number; transformSnapshot?: unknown } | undefined;
   /** Toggle the (canned) hasContentBelowFold() return for the settle-gate test. */
   setBelowFold: (v: boolean) => void;
   /** Override the (canned) snapshot().screen for the diff test. */
@@ -1841,7 +1841,7 @@ function makeRecordingEmulator(): {
   let disposes = 0;
   let belowFold = false;
   let screen = "CANNED";
-  let lastOpts: { cols: number; rows: number; scrollback: number } | undefined;
+  let lastOpts: { cols: number; rows: number; scrollback: number; transformSnapshot?: unknown } | undefined;
   return {
     writes,
     resizes,
@@ -1855,7 +1855,7 @@ function makeRecordingEmulator(): {
     setScreen: (s: string) => {
       screen = s;
     },
-    createEmulator: (opts: { cols: number; rows: number; scrollback: number }) => {
+    createEmulator: (opts: { cols: number; rows: number; scrollback: number; transformSnapshot?: unknown }) => {
       lastOpts = opts;
       let curCols = opts.cols;
       let curRows = opts.rows;
@@ -1971,6 +1971,32 @@ describe("createTerminalWorker — read serializes the REAL @xterm grid", () => 
     expect(recEmu.lastConstruct()?.cols).toBe(80);
     expect(recEmu.lastConstruct()?.rows).toBe(24);
     expect(recEmu.lastConstruct()?.scrollback).toBeGreaterThan(0);
+  });
+
+  it("selects the claude-code profile by allowId and injects its render transform (RENDER-01)", async () => {
+    // §5/INV-3: the worker selects the read-side profile by the operator-declared allowId
+    // (never content-sniffed) and threads its transformSnapshot into the emulator construction.
+    const rec = makeRecordingBackend();
+    const recEmu = makeRecordingEmulator();
+    const worker = createTerminalWorker(
+      baseDeps({ loadPty: () => ({ spawn: rec.spawn }), createEmulator: recEmu.createEmulator }),
+    );
+    await worker.handle(
+      createFrame({ sessionId: "s1", bin: "/usr/bin/claude", argv: [], cols: 80, rows: 24, allowId: "claude" }),
+    );
+    expect(typeof recEmu.lastConstruct()?.transformSnapshot).toBe("function");
+  });
+
+  it("leaves the emulator transform undefined for an unknown allowId (the agnostic default)", async () => {
+    const rec = makeRecordingBackend();
+    const recEmu = makeRecordingEmulator();
+    const worker = createTerminalWorker(
+      baseDeps({ loadPty: () => ({ spawn: rec.spawn }), createEmulator: recEmu.createEmulator }),
+    );
+    await worker.handle(
+      createFrame({ sessionId: "s1", bin: "/bin/vim", argv: [], cols: 80, rows: 24, allowId: "vim" }),
+    );
+    expect(recEmu.lastConstruct()?.transformSnapshot).toBeUndefined();
   });
 
   it("constructs the emulator with the scrollback carried on the create frame", async () => {

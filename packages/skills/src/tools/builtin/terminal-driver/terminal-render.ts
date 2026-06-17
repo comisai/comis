@@ -61,7 +61,7 @@ import { createRequire } from "node:module";
 // `import type { … }` lines below are type-only (erased at emit, ESM-safe) so the
 // `Terminal` / `SerializeAddon` TYPE annotations stay correct; the runtime
 // constructors come from the `require` below.
-import type { Terminal as XtermTerminal } from "@xterm/headless";
+import type { Terminal as XtermTerminal, IBufferLine } from "@xterm/headless";
 
 const xtermRequire = createRequire(import.meta.url);
 const { Terminal } = xtermRequire("@xterm/headless") as typeof import("@xterm/headless");
@@ -81,11 +81,20 @@ export interface SessionEmulatorOptions {
   rows: number;
   /**
    * Retained rows ABOVE the viewport (the scrollback depth). Bounds per-session
-   * memory to `(rows + scrollback) × cols` cells — @xterm discards older lines
+   * memory to `(rows + scrollback) × cells` cells — @xterm discards older lines
    * past this depth (a ring buffer). These rows back the off-screen
    * `scrollback:N` perception; the depth is config-driven.
    */
   scrollback: number;
+  /**
+   * An OPTIONAL read-side render transform — a selected platform profile's `transformSnapshot`
+   * (RENDER-01). Applied to TEXT-format snapshots AFTER the agnostic grid is built; the emulator
+   * attaches the viewport cell `grid` so the transform can read cell-level attributes (e.g. `dim`).
+   * GENERIC (the engine knows nothing of the profile) and identity by default — absent ⇒ the plain
+   * `translateToString` grid, byte-identical to today (INV-1). The Claude ghost-strip is one such
+   * transform, living in `platforms/claude-code/profile.ts` — never here.
+   */
+  transformSnapshot?: (snap: EmulatorSnapshot) => EmulatorSnapshot;
 }
 
 /** The render format for `snapshot().screen` (spec §2.4 / §5 `read` formats). */
@@ -136,6 +145,15 @@ export interface EmulatorSnapshot {
   rows: number;
   /** True when the alternate screen buffer is active (a full-screen TUI). */
   alt: boolean;
+  /**
+   * The viewport cell grid (rows × cells, each `{chars,dim,width}`) — the structured input a
+   * read-side platform-profile `transformSnapshot` needs for the cell-level attributes the
+   * flattened `screen` string has lost (e.g. SGR-2 `dim` for the Claude ghost-strip, RENDER-01).
+   * Populated by the emulator ONLY for `format:"text"` snapshots AND only when a profile transform
+   * is wired (the agnostic path never builds it — zero added cost, INV-1). Absent ⇒ a transform
+   * must no-op (it has no cell attributes to act on).
+   */
+  grid?: readonly (readonly RenderCell[])[];
 }
 
 /**
@@ -198,29 +216,27 @@ export interface RenderCell {
 }
 
 /**
- * Render one terminal row to text while STRIPPING the dim autocomplete ghost-text (FINDING-3,
- * live VPS 2026-06-17). A driven CLI (Claude Code) shows a DIM suggestion in its composer (e.g.
- * `commit this`); the plain-text `read()` capture can't convey the dim styling, so the driving
- * model can't tell the suggestion from real queued input — it halts to ask about it and drops
- * later steps. On the cursor's row, a cell at column `>= cursorX` that is DIM is autocomplete
- * (real input is NON-dim and at/left of the cursor), so it is omitted; everything else (the
- * non-dim prompt, real input, dim cells LEFT of the cursor) is kept. Trailing whitespace is
- * trimmed to match `translateToString(true)`. Pure + total. The caller applies this to the cursor
- * row REGARDLESS of the alt-screen flag (the tmux backend's `tmux attach` renders in the alt screen,
- * so the flag can't gate it); the (also-dim) status bar on other rows is never touched.
+ * Read one viewport row's cells (chars + SGR-2 `dim` + display width) — the structured input a
+ * read-side profile `transformSnapshot` needs (the flat `screen` string loses `dim`). Mirrors the
+ * cell-attribute extraction `translateToString` would do, exposing the per-cell `dim` flag.
  */
-export function stripGhostFromRow(cells: readonly RenderCell[], cursorX: number): string {
-  let out = "";
-  for (let x = 0; x < cells.length; x++) {
-    const c = cells[x];
-    if (c.width === 0) continue; // wide-char trailing / combining slot — translateToString skips it
-    if (x >= cursorX && c.dim) continue; // the dim autocomplete ghost-text right of the cursor
-    out += c.chars.length > 0 ? c.chars : " ";
+function readRowCells(line: IBufferLine | undefined): RenderCell[] {
+  const cells: RenderCell[] = [];
+  if (line === undefined) return cells;
+  for (let x = 0; x < line.length; x++) {
+    const cell = line.getCell(x);
+    // xterm's cell attribute getters return a number (0/non-0), not boolean — coerce.
+    cells.push(
+      cell
+        ? { chars: cell.getChars(), dim: cell.isDim() !== 0, width: cell.getWidth() }
+        : { chars: "", dim: false, width: 1 },
+    );
   }
-  return out.replace(/\s+$/u, "");
+  return cells;
 }
 
 export function createSessionEmulator(opts: SessionEmulatorOptions): SessionEmulator {
+  const transformSnapshot = opts.transformSnapshot;
   const term = new Terminal({
     cols: opts.cols,
     rows: opts.rows,
@@ -252,27 +268,26 @@ export function createSessionEmulator(opts: SessionEmulatorOptions): SessionEmul
         lines.push(buf.getLine(i)?.translateToString(true) ?? "");
       }
     }
+    // The AGNOSTIC grid: every viewport row is the plain `translateToString(true)` — no platform
+    // transforms (RENDER-01 / INV-1). A profile's read-side `transformSnapshot` (e.g. the Claude
+    // ghost-strip) is applied later, in `snapshot()`, using the cell `grid` — never woven in here.
     for (let y = 0; y < term.rows; y++) {
-      const line = buf.getLine(buf.baseY + y);
-      // FINDING-3: on the cursor's row, strip the dim autocomplete ghost-text (a driven CLI's
-      // composer suggestion) so the plain-text capture isn't mistaken for real input. This applies
-      // REGARDLESS of the alt-screen flag: the durable/tmux backend drives via `tmux attach`, which
-      // renders in the ALTERNATE screen, so every AI-CLI session reads as `alt` — the flag can't
-      // gate this. The dim-after-cursor targeting IS the safety: real input is non-dim and at/left
-      // of the cursor, and the also-dim status bar is on OTHER rows. Other rows use translateToString.
-      if (line && y === buf.cursorY) {
-        const cells: RenderCell[] = [];
-        for (let x = 0; x < line.length; x++) {
-          const cell = line.getCell(x);
-          // xterm's cell attribute getters return a number (0/non-0), not boolean — coerce.
-          cells.push(cell ? { chars: cell.getChars(), dim: cell.isDim() !== 0, width: cell.getWidth() } : { chars: "", dim: false, width: 1 });
-        }
-        lines.push(stripGhostFromRow(cells, buf.cursorX));
-      } else {
-        lines.push(line?.translateToString(true) ?? "");
-      }
+      lines.push(buf.getLine(buf.baseY + y)?.translateToString(true) ?? "");
     }
     return lines.join("\n");
+  }
+
+  /**
+   * Build the viewport cell grid (rows × cells) for a read-side profile transform. Read on demand
+   * (text format + a wired transform only) so the agnostic path pays nothing (INV-1).
+   */
+  function readViewportGrid(): RenderCell[][] {
+    const buf = term.buffer.active;
+    const grid: RenderCell[][] = [];
+    for (let y = 0; y < term.rows; y++) {
+      grid.push(readRowCells(buf.getLine(buf.baseY + y)));
+    }
+    return grid;
   }
 
   /**
@@ -307,13 +322,23 @@ export function createSessionEmulator(opts: SessionEmulatorOptions): SessionEmul
       const buf = term.buffer.active;
       const format = opts?.format ?? "text";
       const scrollback = opts?.scrollback ?? 0;
-      return {
+      const base: EmulatorSnapshot = {
         screen: renderScreen(format, scrollback),
         cursor: { x: buf.cursorX, y: buf.cursorY },
         cols: term.cols,
         rows: term.rows,
         alt: buf.type === "alternate",
       };
+      // Apply the selected profile's read-side transform (RENDER-01) AFTER the agnostic snapshot.
+      // ONLY for `text` (the sole format whose `screen` is the plain row grid the transform rewrites)
+      // and ONLY when a transform is wired — the engine attaches the viewport cell `grid` so the
+      // transform can read cell attributes (`dim`) the flat `screen` lost. No transform / non-text ⇒
+      // the plain grid is returned untouched (INV-1). The engine stays platform-agnostic: it applies
+      // a generic hook, never a Claude-specific branch.
+      if (transformSnapshot !== undefined && format === "text") {
+        return transformSnapshot({ ...base, grid: readViewportGrid() });
+      }
+      return base;
     },
 
     resize(cols: number, rows: number): void {

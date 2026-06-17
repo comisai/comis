@@ -488,6 +488,10 @@ export function createTerminalSessionRegistry(
       sessionId,
       bin: req.bin,
       argv: req.argv,
+      // The operator-declared allowId — selects the read-side platform profile in the worker
+      // (RENDER-01 / §5/INV-3: by allowId only). Already on the descriptor; threaded to the worker
+      // so the emulator's render transform + the classifier's perception pick the right profile.
+      allowId: req.allowId,
       cols: req.cols,
       rows: req.rows,
       // Thread the per-session scrollback ceiling so handleCreate builds
