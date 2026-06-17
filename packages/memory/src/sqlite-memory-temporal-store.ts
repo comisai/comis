@@ -80,10 +80,16 @@ export function createSqliteMemoryTemporalStore(deps: MemoryTemporalStoreDeps): 
   // min-distance is computed, so a tighter `LIMIT` here would risk dropping a nearer row
   // that sorts after a farther one by raw occurred_at — fetch generously, cap in TS).
   // Placeholders only — no string-built SQL.
+  // FORGET-01 (CR-01): the ALWAYS-ON `evicted_at IS NULL` recall exclusion. This windowed
+  // read is a RECALL-side hydration (spreadLane → MemorySearchResult[] → createMemoryRecall
+  // → the prompt), so a soft-evicted in-window memory MUST be omitted here exactly as on the
+  // adapter's recall paths. The inspect/asOf raw reads stay UNFILTERED (eviction soft +
+  // asOf-resolvable).
   const selectWindow = db.prepare(
     "SELECT * FROM memories " +
       "WHERE tenant_id = ? AND agent_id = ? " +
       "  AND occurred_at IS NOT NULL " +
+      "  AND evicted_at IS NULL " +
       "  AND occurred_at BETWEEN ? AND ? " +
       "ORDER BY occurred_at",
   );

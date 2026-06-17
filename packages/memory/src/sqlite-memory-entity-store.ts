@@ -104,8 +104,13 @@ export function createSqliteMemoryEntityStore(deps: MemoryEntityStoreDeps): Memo
   // isolation boundary then depends on two statements agreeing, with the agent
   // dimension enforced in only one. Re-asserting the full scope here makes the
   // hydrate self-sufficient (no fail-open if the lane query is ever refactored).
+  // FORGET-01 (CR-01): the ALWAYS-ON `evicted_at IS NULL` recall exclusion. This is a
+  // RECALL-side hydration (associativeLane → MemorySearchResult[] → createMemoryRecall →
+  // the prompt), so a soft-evicted shared-entity memory MUST be omitted here exactly as on
+  // the adapter's recall paths. The inspect/asOf raw reads stay UNFILTERED (eviction soft +
+  // asOf-resolvable). The entity LINK rows survive (CASCADE only on a hard delete).
   const hydrateMemory = db.prepare(
-    "SELECT * FROM memories WHERE id = ? AND tenant_id = ? AND agent_id = ?",
+    "SELECT * FROM memories WHERE id = ? AND tenant_id = ? AND agent_id = ? AND evicted_at IS NULL",
   );
   // Diagnostic read: the scoped entity list, most-mentioned-first. The
   // `WHERE tenant_id = ? AND agent_id = ?` is the SAME load-bearing isolation
