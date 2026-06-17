@@ -505,6 +505,29 @@ describe("obs-explain-heuristics", () => {
     expect(r!.suggestedNextSteps.join(" ")).toMatch(/comis memory skills/);
   });
 
+  it("OBS-02: learned_skill_failing fires on a REPEATEDLY-failing procedure → its hint is now ACTIONABLE (demote is real, Phase 202)", () => {
+    // A procedure used across several failed/corrected trajectories (the
+    // repeatedly-failing case): the verdict surfaces every implicated skill id.
+    // Phase 202 (Plan 05) makes the hint's "the procedure will demote on
+    // continued failure" promise actionable — the resolve-seam loop now demotes
+    // a corroborated+weakening surfaced skill (active→stale, then evict→archived),
+    // which drops it from the read-only surface. The verdict itself is UNCHANGED
+    // (still BENIGN, still counts/ids-only) — this asserts the actionable hint.
+    const r = rootCause(
+      makeSignals({
+        learning: { outcomeResolved: true, outcome: "failure", sources: ["tool", "correction"], skillsUsed: ["flaky", "shaky"], skillFailures: ["flaky", "shaky"], synthesisAbstained: false },
+      }),
+    );
+    expect(r).not.toBeNull();
+    expect(r!.code).toBe("learned_skill_failing");
+    // Names the failing skill ids (content-free) and points at the funnel + obs.explain.
+    expect(r!.detail).toContain("flaky");
+    expect(r!.detail).toContain("shaky");
+    expect(r!.suggestedNextSteps.join(" ")).toMatch(/comis memory skills/);
+    // The hint's demote promise (now fulfilled by Plan 05's resolve-seam loop).
+    expect(r!.suggestedNextSteps.join(" ")).toMatch(/demote on continued failure/);
+  });
+
   it("OBS-02: learned_skill_failing ranks BELOW an acute tool failure", () => {
     const r = rootCause(
       makeSignals({
