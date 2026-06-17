@@ -21,7 +21,10 @@
 import { describe, it, expect } from "vitest";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { CandidateSkill, LearningScope, ReplayContext } from "@comis/core";
-import { createSandboxSkillValidationAdapter } from "./sandbox-skill-validation-adapter.js";
+import {
+  createSandboxSkillValidationAdapter,
+  classifyMutating,
+} from "./sandbox-skill-validation-adapter.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -184,5 +187,89 @@ describe("SandboxSkillValidationAdapter — static per-field validateMemoryWrite
       expect(r.value.staticOk).toBe(false);
       expect(r.value.findings.some((f) => f.field === "params_schema" && f.kind === "static")).toBe(true);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 2 — mutating classification (the mcp__ branch) + tool-policy check
+//          (the mutating-mcp-auto-admit first-RED)
+// ---------------------------------------------------------------------------
+
+describe("classifyMutating — the load-bearing mcp__ OR-branch (SKILL-06 / SEC-01)", () => {
+  it("classifies a candidate requiring a mcp__ tool as mutating:true (NOT auto-admitted)", () => {
+    // The adversarial first-RED: WITHOUT the explicit `mcp__` branch, isReadOnlyTool
+    // returns true for ANY mcp__ tool, so a mutating MCP tool would auto-admit past
+    // the ApprovalGate. The explicit branch forces mutating:true.
+    expect(classifyMutating(["mcp__github__create_issue"])).toBe(true);
+  });
+
+  it("classifies a read-only tool as mutating:false", () => {
+    expect(classifyMutating(["read"])).toBe(false);
+  });
+
+  it("is mutating if ANY required tool is mutating (mcp__ wins even mixed with read)", () => {
+    expect(classifyMutating(["read", "mcp__slack__post_message"])).toBe(true);
+  });
+
+  it("classifies an unknown (non-mcp__, no metadata) tool as mutating:true (default-mutating for safety)", () => {
+    expect(classifyMutating(["some_unknown_write_tool"])).toBe(true);
+  });
+
+  it("classifies an empty required-tools list as mutating:false (a no-tool procedure is read-only)", () => {
+    expect(classifyMutating([])).toBe(false);
+  });
+});
+
+describe("SandboxSkillValidationAdapter — required_tool ∈ effective tool set (applyToolPolicy, T-201-26)", () => {
+  it("REJECTS a candidate whose required tool is denied by policy (staticOk:false, tool-policy finding)", async () => {
+    // The effective set is `full` over [read, write] MINUS the deny [write] → only `read`.
+    const adapter = createSandboxSkillValidationAdapter({
+      allTools: [tool("read"), tool("write")],
+      policy: { profile: "full", allow: [], deny: ["write"] },
+    });
+    const candidate = cleanCandidate({ requiredTools: ["write"] }); // denied → out of policy
+
+    const r = await adapter.validate(candidate, NO_REPLAY, SCOPE);
+
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value.staticOk).toBe(false);
+    const f = r.value.findings.find((x) => x.field === "required_tools" && x.kind === "tool-policy");
+    expect(f).toBeDefined();
+    expect(f?.tool).toBe("write");
+  });
+
+  it("REJECTS a candidate whose required tool is not in the agent's tool set at all", async () => {
+    const adapter = createSandboxSkillValidationAdapter({
+      allTools: [tool("read")],
+      policy: { profile: "full", allow: [], deny: [] },
+    });
+    const candidate = cleanCandidate({ requiredTools: ["read", "nonexistent_tool"] });
+
+    const r = await adapter.validate(candidate, NO_REPLAY, SCOPE);
+
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value.staticOk).toBe(false);
+    expect(
+      r.value.findings.some((x) => x.kind === "tool-policy" && x.tool === "nonexistent_tool"),
+    ).toBe(true);
+    // The in-policy `read` does NOT produce a finding.
+    expect(r.value.findings.some((x) => x.kind === "tool-policy" && x.tool === "read")).toBe(false);
+  });
+
+  it("ADMITS a candidate whose every required tool is in the effective set (no tool-policy finding)", async () => {
+    const adapter = createSandboxSkillValidationAdapter({
+      allTools: [tool("read"), tool("grep")],
+      policy: { profile: "full", allow: [], deny: [] },
+    });
+    const candidate = cleanCandidate({ requiredTools: ["read", "grep"] });
+
+    const r = await adapter.validate(candidate, NO_REPLAY, SCOPE);
+
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value.staticOk).toBe(true);
+    expect(r.value.findings.some((x) => x.kind === "tool-policy")).toBe(false);
   });
 });
