@@ -3,8 +3,8 @@
  * Outcome-signal (Verified Learning WS1) write-back wiring.
  *
  * The composition-root glue between the deterministic tool/pipeline completion
- * bus events (`tool:executed`, `graph:completed`, `graph:driver_lifecycle`) and
- * the `OutcomeSignalPort` (the @comis/memory adapter). The daemon is the ONLY
+ * bus events (`tool:executed`, `graph:completed`) and the `OutcomeSignalPort`
+ * (the @comis/memory adapter). The daemon is the ONLY
  * place holding BOTH the bus AND the adapter — the agent↛memory build cut means
  * the agent emits ids+counts on the bus and the daemon does the observe/resolve.
  * Mirrors `wireMemoryUsefulness` (setup-memory-usefulness-wiring.ts). Counts + ids
@@ -151,11 +151,12 @@ function observeNonFatal(
  *
  * Wiring:
  *  - `tool:executed`            → observe a `tool` outcome (`success===false` → failure).
- *  - `graph:driver_lifecycle`   → observe a `pipeline` outcome on a terminal driver phase.
  *  - `graph:completed`          → observe a `pipeline` outcome (status `completed` → success,
  *                                 else failure) AND, as the trajectory-completion signal,
  *                                 resolve the fused verdict, emit `learning:outcome_observed`
  *                                 (counts/ids only), and update coverage telemetry.
+ *                                 (`graph:driver_lifecycle` is deliberately NOT observed —
+ *                                 it is per-node and would flood the ledger; WR-02.)
  *
  * Coverage telemetry: a daemon-lifetime gauge of % finished trajectories with a
  * RESOLVABLE outcome. `total` increments per completion; `resolved` increments
@@ -189,22 +190,12 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
     void observeNonFatal(deps, scope, outcome, "tool", confidence);
   });
 
-  // ---- Deterministic pipeline signal: a node driver reached a terminal phase ----
-  deps.eventBus.on("graph:driver_lifecycle", (p) => {
-    // Only the terminal phases carry an outcome; progress/initialized are no-ops.
-    if (p.phase !== "completed" && p.phase !== "failed" && p.phase !== "aborted") return;
-
-    const ctx = tryGetContext();
-    const agentId = ctx?.agentId;
-    if (agentId === undefined || !deps.learningOutcomeEnabled(agentId)) return;
-
-    // The driver lifecycle payload carries no scope — recover it from ALS.
-    const scope = resolveScope({});
-    if (scope === undefined) return;
-
-    const outcome: "success" | "failure" = p.phase === "completed" ? "success" : "failure";
-    void observeNonFatal(deps, scope, outcome, "pipeline", DETERMINISTIC_CONFIDENCE);
-  });
+  // NB: `graph:driver_lifecycle` is intentionally NOT subscribed (WR-02). It is
+  // emitted PER NODE, so observing it would write O(nodes) same-tier `pipeline`
+  // rows per DAG turn (each at a distinct observedAt, so idempotency does not
+  // collapse them) — flooding the append-only ledger and amplifying the WR-01
+  // intra-tier fusion non-determinism. `graph:completed` (gated on the clean
+  // GraphStatus below) is the SINGLE trajectory-level pipeline signal.
 
   // ---- Deterministic pipeline signal + trajectory-completion resolve/emit ----
   deps.eventBus.on("graph:completed", (p) => {
