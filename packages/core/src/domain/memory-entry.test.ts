@@ -291,10 +291,19 @@ describe("MemoryEntry", () => {
     });
 
     it("accepts all valid observationKind values (the closed reasoning-kind set)", () => {
-      for (const observationKind of ["merge", "deductive", "inductive"] as const) {
+      for (const observationKind of ["merge", "deductive", "inductive", "generalization"] as const) {
         const result = parseMemoryEntry(validEntry({ observationKind }));
         expect(result.ok).toBe(true);
       }
+    });
+
+    it("accepts the generalization observationKind (GENERAL-01 higher-order synthesis kind)", () => {
+      // GENERAL-01 (v2.26 Phase 203): the higher-order generalization kind — a
+      // semantic memory abstracting a cross-context cluster, written by
+      // runMemoryConsolidation. RED on pre-patch HEAD (the closed enum rejects it).
+      const result = parseMemoryEntry(validEntry({ observationKind: "generalization" }));
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.value.observationKind).toBe("generalization");
     });
 
     it("accepts all valid patternType values (the Honcho-derived inductive pattern class set)", () => {
