@@ -7,6 +7,9 @@ export {
   NormalizedMessageSchema,
   parseMessage,
   getMessageTraceId,
+  // NormalizedReaction
+  NormalizedReactionSchema,
+  parseReaction,
   // MemoryEntry
   TrustLevelSchema,
   // Per-user representation prefix-type enum
@@ -98,6 +101,7 @@ export { KEYLESS_PROVIDER_TYPES, KEYLESS_API_KEY_SENTINEL } from "../provider/ke
 export type {
   Attachment,
   NormalizedMessage,
+  NormalizedReaction,
   TrustLevel,
   // Per-user representation prefix type
   UserRepresentationType,

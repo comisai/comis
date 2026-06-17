@@ -12,6 +12,7 @@ export { validateProfileId, PROFILE_ID_RE } from "../security/profile-id.js";
 export type {
   ChannelPort,
   MessageHandler,
+  ReactionHandler,
   SendMessageOptions,
   FetchMessagesOptions,
   FetchedMessage,

@@ -34,6 +34,9 @@ import { z } from "zod";
  *   199 reaction source; declared here so the config shape is stable).
  * - judge: the OPTIONAL cost-gated `fast`-tier LLM judge (default disabled — no
  *   LLM call, no cost; enabling it is a second, separate opt-in).
+ * - correction: the OPTIONAL cost-gated correction detector (Phase 199,
+ *   CORRECT-01). Default disabled — an LLM over untrusted follow-up text is a
+ *   net-new attack surface; force-disabled under `memory.costFeatures.enabled`.
  * - minConfidenceToLearn: the floor a resolved outcome must clear before any
  *   learning is derived (range [0, 1]).
  * - retentionDays: age-based prune horizon for the append-only ledger (anti-DoS,
@@ -54,6 +57,10 @@ export const LearningOutcomeConfigSchema = z.strictObject({
     .default(() => ({ success: ["👍", "✅"], failure: ["👎", "❌"] })),
   /** OPTIONAL cost-gated `fast`-tier LLM judge. Default disabled — no LLM call, no cost. */
   judge: z.strictObject({ enabled: z.boolean().default(false) }).default(() => ({ enabled: false })),
+  /** OPTIONAL cost-gated correction detector (Phase 199, CORRECT-01). Default disabled — no LLM call, no cost.
+   *  A follow-up "no, do X instead" turn is classified via the cheap `fast`-tier judge and emits a `corrected`
+   *  soft-failure of the prior trajectory. Force-disabled when `memory.costFeatures.enabled: false`. */
+  correction: z.strictObject({ enabled: z.boolean().default(false) }).default(() => ({ enabled: false })),
   /** Confidence floor [0,1] a resolved outcome must clear before learning is derived. */
   minConfidenceToLearn: z.number().min(0).max(1).default(0.6),
   /** Age-based prune horizon (days) for the append-only ledger. Positive integer. */
