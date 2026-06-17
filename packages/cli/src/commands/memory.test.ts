@@ -82,6 +82,7 @@ describe("registerMemoryCommand", () => {
       "pin",
       "recall-trace",
       "search",
+      "skills",
       "stats",
       "unpin",
     ]);

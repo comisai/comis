@@ -36,6 +36,7 @@ import { renderTable, renderKeyValue } from "../output/table.js";
 import { confirm } from "../util/confirm.js";
 import { resolveOfflineDataDir } from "../util/offline-obs.js";
 import { readLearningStatsOffline } from "../util/offline-learning.js";
+import { readSkillStatsOffline } from "../util/offline-skills.js";
 
 /**
  * Register the `memory` subcommand group on the program.
@@ -244,6 +245,52 @@ export function registerMemoryCommand(program: Command): void {
           pct(a.coverage),
           Object.entries(a.outcomes).map(([k, v]) => `${k}:${v}`).join(" "),
           Object.entries(a.sources).map(([k, v]) => `${k}:${v}`).join(" "),
+        ]),
+      );
+    });
+
+  // memory skills — OBS-02 (Phase 201, P2 skills) procedural-learning telemetry:
+  // the learned-skill admission funnel (synthesized/admitted counts by state, per
+  // agent). Read OFFLINE from the local learned_skills table (~/.comis/memory.db):
+  // the CLI cannot import @comis/agent/@comis/skills (closed graph), so the offline
+  // @comis/memory read is the sanctioned path (mirrors `memory learning`).
+  // Counts/ids/closed-enums only — NEVER a procedure body/script/description.
+  memory
+    .command("skills")
+    .description("Procedural-learning telemetry: synthesized/validated counts, admission funnel")
+    .option("--format <format>", "Output format (table|json)", "table")
+    .action((options: { format: string }) => {
+      const stats = readSkillStatsOffline(resolveOfflineDataDir());
+      // Honest empty: learningSkills is per-agent default-OFF (and force-disabled
+      // by memory.costFeatures.enabled:false) — say WHY it is empty rather than
+      // render a misleading zeroed table.
+      if (stats === undefined || stats.total === 0) {
+        if (options.format === "json") {
+          json({ total: 0, byState: {}, perAgent: [] });
+          return;
+        }
+        info(
+          "No learned skills yet — learningSkills is default-off " +
+            "(enable agents.<id>.learningSkills.enabled, gated by memory.costFeatures.enabled, to populate).",
+        );
+        return;
+      }
+      if (options.format === "json") {
+        json(stats);
+        return;
+      }
+      const byStateStr = (m: Record<string, number>): string =>
+        Object.entries(m).map(([k, v]) => `${k}:${v}`).join(" ");
+      info(`Learned skills: ${stats.total} (${byStateStr(stats.byState)})`);
+      renderTable(
+        ["Tenant", "Agent", "Total", "Funnel", "Skills (state·proof)"],
+        stats.perAgent.map((a) => [
+          a.tenantId,
+          a.agentId,
+          String(a.total),
+          byStateStr(a.byState),
+          // ids/counts only — name + state + proofCount; NEVER a body.
+          a.skills.map((s) => `${s.name}:${s.state}·${s.proofCount}`).join(" "),
         ]),
       );
     });
