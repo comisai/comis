@@ -102,6 +102,15 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // reconstruct it. Content-free: ids/counts/closed-enums ONLY (no body/alpha — SEC-01).
   "learning:outcome_observed": "learning.outcome_observed",
 
+  // RANK-06 / FORGET-06 (v2.26 Verified Learning WS3/WS4, Phase 200): the bandit-applied +
+  // soft-eviction telemetry. memory:online_tuning_applied is PROMOTED from an optional-chained
+  // emit to a plain typed one (agent-side, so EMIT_REGEX sees it); learning:memory_* are NEW
+  // (daemon emit, NOT arch-scanned). All counts/ids/closed-enums ONLY — never an alpha value or
+  // memory body (SEC-01). Mapped here so OBS-02 `comis explain` can reconstruct them.
+  "memory:online_tuning_applied": "memory.online_tuning_applied",
+  "learning:memory_demoted": "learning.memory_demoted",
+  "learning:memory_evicted": "learning.memory_evicted",
+
   // ---- Background task lifecycle (T2.2 / F9) ----
   // The promote/complete/fail transitions of a long-running tool detached past the
   // execute() boundary — previously emitted but UNMAPPED (invisible to comis explain; a

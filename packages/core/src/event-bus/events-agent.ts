@@ -267,14 +267,10 @@ export interface AgentEvents {
       longTtl: number;
     };
     /**
-     * Cost-correction breadcrumb. When the pi-ai SDK underprices 1h
-     * cache writes at the 5m rate, the bridge surfaces the correction
-     * here as a forensics aid for operators querying token_usage
-     * events. `delta` is signed (`corrected - sdkRaw`), `sdkRaw` is the
-     * SDK-reported total before correction, `corrected` is the
-     * post-correction total ultimately recorded by the costTracker. The
-     * field is OMITTED when delta === 0 — the absence is the "no
-     * correction was needed" signal, not a zero delta.
+     * Cost-correction breadcrumb (forensics aid). Set when the pi-ai SDK underprices 1h
+     * cache writes at the 5m rate: `delta` = signed `corrected - sdkRaw`, `sdkRaw` = the
+     * SDK total before correction, `corrected` = the post-correction total recorded. OMITTED
+     * when delta === 0 (absence is the "no correction needed" signal, not a zero delta).
      */
     costCorrection?: {
       delta: number;
@@ -282,21 +278,16 @@ export interface AgentEvents {
       corrected: number;
     };
     /**
-     * Warmup-turn flag. True when this turn wrote cache tokens without
-     * reading any (`cacheReadTokens === 0 && cacheWriteTokens > 0`) —
-     * the first cache-write turn of a session. Reporting
-     * `cacheSavedUsd: -X, cacheSavingsRate: -91%` on this turn is
-     * misleading because the "loss" is a deferred investment, not a
-     * regression. Consumers should filter `warmupTurn === true` out of
-     * cost-regression dashboards. Always populated.
+     * Warmup-turn flag — true when this turn wrote cache tokens without reading any
+     * (`cacheReadTokens === 0 && cacheWriteTokens > 0`, the first cache-write turn). A
+     * negative `cacheSavedUsd` here is a deferred investment, not a regression — consumers
+     * filter `warmupTurn === true` out of cost-regression dashboards. Always populated.
      */
     warmupTurn: boolean;
     /**
-     * Positive-signed counterpart to `savedVsUncached` for warmup turns.
-     * On `warmupTurn === true && savedVsUncached < 0`, this is
-     * `-savedVsUncached` (the deferred investment that subsequent
-     * cached reads will recoup). Zero otherwise. Always populated so
-     * consumers can sum without conditional schema checks.
+     * Positive-signed counterpart to `savedVsUncached` for warmup turns: on
+     * `warmupTurn === true && savedVsUncached < 0` this is `-savedVsUncached` (the deferred
+     * investment subsequent cached reads recoup); zero otherwise. Always populated.
      */
     pendingCacheInvestmentUsd: number;
     /** SDK per-turn stop signal (e.g. "stop"|"length"|"tool_use"|"refusal").
@@ -580,15 +571,11 @@ export interface AgentEvents {
   };
 
   /**
-   * Hybrid memory recall completed for one turn. MINIMAL payload by design —
-   * counts/booleans/ids ONLY, NEVER the query text, memory bodies, or entity
-   * names (AGENTS.md §2.7). The per-recall ranking detail lives in the opt-in
-   * `diagnostics.recallTrace` JSONL artifact, not on the bus. Drives the
-   * in-process recall counters (lane-usage + hit-rate).
-   *
-   * Emit site: `createMemoryRecall` in
-   * `packages/agent/src/rag/memory-recall.ts`, at the single one-per-recall
-   * site after fuse/rerank/score.
+   * Hybrid memory recall completed for one turn. MINIMAL payload — counts/booleans/ids
+   * ONLY, NEVER query text, memory bodies, or entity names (§2.7); the per-recall ranking
+   * detail lives in the opt-in `diagnostics.recallTrace` artifact. Drives the in-process
+   * recall counters. Emit site: `createMemoryRecall` (memory-recall.ts), one-per-recall
+   * after fuse/rerank/score.
    */
   "memory:recalled": {
     agentId: string;
@@ -611,15 +598,11 @@ export interface AgentEvents {
   };
 
   /**
-   * Cross-encoder rerank stage completed for one recall. MINIMAL payload by
-   * design — counts/booleans ONLY, NEVER memory bodies or query text
-   * (AGENTS.md §2.7). The `fellBack` / `timedOut` flags make the
-   * graceful-degradation paths (reranker err / budget exceeded → fusion order)
-   * queryable; they feed the rerank-fallback-rate counter.
-   *
-   * Emit site: `createMemoryRecall` in
-   * `packages/agent/src/rag/memory-recall.ts`, alongside `memory:recalled`
-   * whenever a rerank stage ran.
+   * Cross-encoder rerank stage completed for one recall. MINIMAL payload —
+   * counts/booleans ONLY, NEVER memory bodies or query text (§2.7). The `fellBack` /
+   * `timedOut` flags make the graceful-degradation paths queryable (rerank-fallback-rate
+   * counter). Emit site: `createMemoryRecall` (memory-recall.ts), alongside
+   * `memory:recalled` when a rerank stage ran.
    */
   "memory:reranked": {
     agentId: string;
@@ -658,17 +641,12 @@ export interface AgentEvents {
   };
 
   /**
-   * Recall-usage attribution complete for one turn. MINIMAL payload —
-   * counts + memory IDS only, NEVER memory content, the agent response, or the
-   * query (AGENTS.md §2.7, matching the whole memory:* family). The overlap
-   * heuristic (recall-attribution.ts) reads memory content in-process at the
-   * turn-end site and discards it; only the resulting ids cross the bus.
-   *
-   * Emit site: `postExecution` in
-   * `packages/agent/src/executor/executor-post-execution.ts`,
-   * flag-gated on `rag.feedback.enabled` (default OFF → no emit). The daemon
-   * subscriber (setup-memory-usefulness-wiring.ts) writes the signal through the
-   * `MemoryUsefulnessStore.recordUsage` port.
+   * Recall-usage attribution complete for one turn. MINIMAL payload — counts + memory
+   * IDS only, NEVER memory content, the agent response, or the query (§2.7, the whole
+   * memory:* family). The overlap heuristic (recall-attribution.ts) reads memory content
+   * in-process and discards it; only the ids cross the bus. Emit site: `postExecution`
+   * (executor-post-execution.ts), flag-gated on `rag.feedback.enabled` (default OFF). The
+   * daemon subscriber (setup-memory-usefulness-wiring.ts) writes via `recordUsage`.
    */
   "memory:recall_used": {
     agentId: string;
@@ -683,12 +661,10 @@ export interface AgentEvents {
     /** == ignoredIds.length. */
     ignoredCount: number;
     /**
-     * Optional query-INTENT bucket — the deterministic classifyIntent
-     * result for the recall that produced these ids. When present the daemon
-     * write-back records the per-intent bucket; when OMITTED it records the GLOBAL
-     * bucket (byte-identical to the prior behaviour). A closed-union string (factual|temporal|
-     * preference|enumeration), NOT memory content — ids/counts/intent ONLY ever
-     * cross the bus (AGENTS.md §2.7), never bodies/query/response.
+     * Optional query-INTENT bucket (the deterministic classifyIntent result). Present →
+     * the daemon write-back records the per-intent bucket; omitted → the GLOBAL bucket
+     * (byte-identical). A closed-union string (factual|temporal|preference|enumeration),
+     * NOT memory content — ids/counts/intent ONLY cross the bus (§2.7), never bodies/query.
      */
     intent?: string;
     timestamp: number;
@@ -710,18 +686,47 @@ export interface AgentEvents {
   };
 
   /**
-   * GENQ-01: a memory-generation pass produced output whose quality diverged from
-   * its source — the generalization of `context:summary_language_mismatch` to the
-   * consolidation / reasoning / user-representation passes (the F-ML1 regression
-   * class: a weak local model silently translating non-Latin source memories into
-   * a Latin output). VISIBILITY ONLY — never gated (I8; a mixed code-heavy source
-   * legitimately skews Latin via `dominantScript`'s 0.3 threshold, so this is a
-   * count an operator reviews, not an error to block). Emitted ONLY when an issue
-   * is detected (`languageMismatch || emptyOutput || formatViolation`); a clean
-   * pass emits nothing. Bridged to the trajectory as `memory.generation_quality`
-   * AND persisted as a `health_signal` row. Payload is the closed `GenerationPass`
-   * + closed `ScriptClass` enums + booleans + ids ONLY — NEVER the source or the
-   * generated body (§2.7); the classifier reads the text locally and nothing leaks.
+   * RANK-06 (v2.26 WS3): the OFFLINE tuned-alpha bandit applied a (possibly per-intent)
+   * update. PROMOTED from an optional-chained `eventBus?.emit` (which evaded the type
+   * system, the trajectory, AND the EMIT_REGEX gate) to a typed key emitted via PLAIN
+   * `eventBus.emit` (online-tuning-job.ts). Counts/booleans + the closed-union per-intent
+   * dim ONLY — NEVER an alpha VALUE or FEED content (§2.7 / SEC-01; the `.not.toMatch(/alpha/i)`
+   * belt). `intent` = the `classifyIntent` bucket tuned (omitted → global ''). Bridged for
+   * `comis explain` (OBS-02). Adding one is a compile error.
+   */
+  "memory:online_tuning_applied": {
+    agentId: string;
+    /** A next tuned vector was upserted (false when off / no signal / failed). */
+    updated: boolean;
+    /** How many of the four alphas hit a clamp bound (0/1) this run. */
+    clampHits: number;
+    /** Number of FEED-signal ids aggregated this run. */
+    signalCount: number;
+    /** The per-intent bucket tuned (closed-union string); omitted → global ''. */
+    intent?: string;
+    durationMs: number;
+    timestamp: number;
+  };
+
+  /**
+   * FORGET-06 (v2.26 WS4): the lifecycle sweep demoted (`learning:memory_demoted`) /
+   * SOFT-evicted (`learning:memory_evicted`, set `evicted_at`, never DELETE) N memories
+   * this run. Emitted DAEMON-SIDE (the lifecycle store has no bus) from the real sweep
+   * report `demoted`/`evicted` counts. Counts ONLY — never an id-list or body (§2.7 /
+   * SEC-01). Bridged for `comis explain` (OBS-02).
+   */
+  "learning:memory_demoted": { agentId: string; count: number; timestamp: number };
+  "learning:memory_evicted": { agentId: string; count: number; timestamp: number };
+
+  /**
+   * GENQ-01: a memory-generation pass produced output whose quality diverged from its
+   * source (the F-ML1 class — a weak local model silently translating non-Latin source
+   * memories into Latin output; the generalization of `context:summary_language_mismatch`
+   * to the consolidation/reasoning/user-representation passes). VISIBILITY ONLY, never
+   * gated (I8). Emitted only on an issue (`languageMismatch || emptyOutput ||
+   * formatViolation`). Bridged to `memory.generation_quality` + persisted as a
+   * `health_signal`. Closed `GenerationPass` + `ScriptClass` enums + booleans + ids ONLY
+   * — NEVER the source or generated body (§2.7); the classifier reads text locally.
    */
   "memory:generation_quality": {
     agentId: string;
@@ -751,19 +756,14 @@ export interface AgentEvents {
     timestamp: number;
   };
 
-  // ---------------------------------------------------------------------------
-  // Phase 172 (DIST-01..04): LCD→LTM distillation observability events.
-  // Content-free: ids/counts/reasons only — NEVER summary or memory text
-  // (T-130-09 + §2.7 logging matrix). Both events are emitted by the
-  // distillation runner in lcd-distillation-runner.ts.
-  // ---------------------------------------------------------------------------
+  // Phase 172 (DIST-01..04): LCD→LTM distillation observability events. Content-free:
+  // ids/counts/reasons only — NEVER summary/memory text (T-130-09 + §2.7). Emitted by
+  // the distillation runner (lcd-distillation-runner.ts).
 
   /**
-   * Emitted when the distillation runner skips writing to LTM.
-   * `reason` encodes the gate that fired: "fallback_marker" |
-   * "subagent_session" | "depth_below_min" | "weak_model_no_override" |
-   * "near_duplicate" | "validation" (from validateMemoryWrite).
-   * Content-free: ids, agentId, sessionKey, reason, optional score/depth only.
+   * Distillation runner SKIPPED writing to LTM. `reason` is the gate that fired
+   * ("fallback_marker" | "subagent_session" | "depth_below_min" | "weak_model_no_override"
+   * | "near_duplicate" | "validation"). Content-free: ids/reason/optional score/depth only.
    */
   "memory:distillation_skipped": {
     reason: string;

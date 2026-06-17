@@ -123,9 +123,8 @@ export function translatePayload(
         cacheCreationTokens: payload.cacheWriteTokens,
         durationMs: payload.latencyMs,
         // B3 (D8): forward the stop/finish dispositions presence-conditionally so
-        // refusals/length-stops appear on model.completed (no undefined keys —
-        // same pattern Phase 150 used for provenance). This is a FIELD-ONLY add
-        // to the already-mapped token_usage case (no new mapping key / case).
+        // refusals/length-stops appear on model.completed (no undefined keys). A FIELD-ONLY
+        // add to the already-mapped token_usage case (no new mapping key / case).
         ...(payload.stopReason !== undefined ? { stopReason: payload.stopReason } : {}),
         ...(payload.finishReason !== undefined ? { finishReason: payload.finishReason } : {}),
       };
@@ -271,6 +270,21 @@ export function translatePayload(
         confidence: payload.confidence,
       };
 
+    case "memory:online_tuning_applied":
+      // RANK-06: bandit-applied COUNTS + the per-intent dim ONLY — NEVER an alpha value or FEED content (§2.7 / SEC-01); agentId/timestamp are envelope ids.
+      return {
+        updated: payload.updated,
+        clampHits: payload.clampHits,
+        signalCount: payload.signalCount,
+        intent: payload.intent,
+        durationMs: payload.durationMs,
+      };
+
+    case "learning:memory_demoted":
+    case "learning:memory_evicted":
+      // FORGET-06: the soft-eviction transition COUNT ONLY — never an id-list or body (§2.7 / SEC-01); agentId/timestamp are envelope ids; the record TYPE conveys demoted vs evicted.
+      return { count: payload.count };
+
     // T2.2 (F9): closed ids + durationMs ONLY — agentId/origin are envelope ids; no result/
     // error body crosses the bus (§2.7 / H1); the record TYPE conveys promoted/completed/failed.
     case "background_task:promoted":
@@ -385,12 +399,10 @@ export function translatePayload(
       };
 
     case "execution:prompt_timeout":
-      // LAT-04 (177): stall/makespan attribution fields forward verbatim — the
-      // emit site is content-free (numbers + closed enums + the config-KEY
-      // bindingKnob string, never delta text or env values; I7). The signals
-      // reader (obs-explain-signals.ts) safeParses the row wholesale, so the
-      // explain verdict can name the binding knob with the actual numbers.
-      // agentId/sessionKey/timestamp are envelope-only and stripped.
+      // LAT-04 (177): stall/makespan attribution fields forward verbatim — content-free
+      // (numbers + closed enums + the config-KEY bindingKnob string, never delta text or env
+      // values; I7). The signals reader safeParses the row wholesale so the explain verdict
+      // names the binding knob with actual numbers. agentId/sessionKey/timestamp stripped.
       return {
         timeoutMs: payload.timeoutMs,
         ...(payload.durationMs !== undefined ? { durationMs: payload.durationMs } : {}),
@@ -416,11 +428,9 @@ export function translatePayload(
       };
 
     case "execution:tool_schema_unsupported":
-      // GBNF-02 strip-retry self-heal. The emit site is already content-free
-      // (tool + keyword NAMES only, never schema bodies — I7), so all five
-      // diagnostic fields forward verbatim — `reason` (WR-05) is the closed
-      // branch discriminator (stripped | nothing_to_strip | gate_closed) that
-      // keeps the two terminal branches distinguishable in obs verdicts.
+      // GBNF-02 strip-retry self-heal. Content-free (tool + keyword NAMES only, never schema
+      // bodies — I7), so all five diagnostic fields forward verbatim — `reason` (WR-05) is the
+      // closed branch discriminator (stripped | nothing_to_strip | gate_closed).
       // agentId/sessionKey/timestamp are envelope-only and stripped.
       return {
         toolNames: payload.toolNames,
@@ -431,10 +441,9 @@ export function translatePayload(
       };
 
     // ---- Security + Sender (scanned subset) ----
-    // SECURITY INVARIANT: patterns[] (verbatim injection strings) and
-    // senderId (user identifier) are intentionally NOT forwarded.
-    // sanitizeForPersistence is a defense-in-depth backstop but the
-    // translator is the primary control.
+    // SECURITY INVARIANT: patterns[] (verbatim injection strings) and senderId (user id) are
+    // intentionally NOT forwarded — the translator is the primary control (sanitizeForPersistence
+    // is a defense-in-depth backstop).
 
     case "security:injection_detected":
       // patterns[] must NEVER be forwarded — they are verbatim attacker
@@ -452,10 +461,9 @@ export function translatePayload(
       };
 
     // ---- Delivery retry ----
-    // SECURITY INVARIANT: chatId (Telegram long-decimal ID) and
-    // channelId are intentionally NOT forwarded. Only retry telemetry enters the
-    // trajectory. sanitizeForPersistence is a defense-in-depth backstop for the
-    // error strings, but translator omission is the primary control.
+    // SECURITY INVARIANT: chatId (Telegram long-decimal ID) and channelId are intentionally
+    // NOT forwarded — only retry telemetry enters the trajectory (translator omission is the
+    // primary control; sanitizeForPersistence backstops the error strings).
 
     case "retry:attempted":
       return {
@@ -550,9 +558,8 @@ export function translatePayload(
       };
 
     // ---- Security rest (non-scanned subset) ----
-    // SECURITY INVARIANT: patterns[] (verbatim taint strings) and
-    // message (may reference secret names/config paths) are intentionally
-    // NOT forwarded. sanitizeForPersistence is a defense-in-depth backstop.
+    // SECURITY INVARIANT: patterns[] (verbatim taint strings) and message (may reference
+    // secret names/config paths) are intentionally NOT forwarded (sanitizeForPersistence backstops).
 
     case "security:memory_tainted":
       // patterns[] must NEVER be forwarded — they are verbatim injection strings.
@@ -679,12 +686,10 @@ export function translatePayload(
       };
 
     // ---- Approval / human-in-the-loop ----
-    // SECURITY INVARIANT: approval:requested.params is raw unconstrained
-    // tool arguments — file paths, message bodies, or credentials. MUST be omitted
-    // entirely. agentId, sessionKey, createdAt are envelope-only — stripped from data.
-    // channelType is optional on the source event — conditional spread.
-    // approval:resolved.reason is optional — conditional spread.
-    // resolvedAt is envelope noise — stripped from data.
+    // SECURITY INVARIANT: approval:requested.params is raw unconstrained tool arguments
+    // (file paths, message bodies, credentials) — MUST be omitted entirely. agentId/
+    // sessionKey/createdAt/resolvedAt are envelope-only (stripped); channelType +
+    // approval:resolved.reason are optional (conditional spread).
 
     case "approval:requested":
       return {
@@ -727,15 +732,10 @@ export function translatePayload(
       };
 
     // ---- Image generation (OBS-04, Phase 186) ----
-    // CONTENT-FREE (T-186-08): ids/labels/numbers/booleans ONLY — NEVER the
-    // prompt, the generated image bytes, a credential, or a raw provider
-    // message. `costUsd` rides image.generated so `comis explain` reconstructs
-    // the image turn's cost (OBS-03 Route a — the cost-carry precedent is the
-    // observability:token_usage → model.completed translator above). agentId +
-    // sessionKey + timestamp are envelope-only and stripped (the
-    // context:script_zero_hit precedent). Optional fields (model/costUsd/
-    // sizeBytes) spread presence-conditionally so absent values never appear as
-    // undefined keys (the tool:executed provenance convention).
+    // CONTENT-FREE (T-186-08): ids/labels/numbers/booleans ONLY — never the prompt, image
+    // bytes, a credential, or a raw provider message. `costUsd` rides image.generated so
+    // `comis explain` reconstructs the cost (OBS-03 Route a). agentId/sessionKey/timestamp
+    // are envelope-only + stripped; optional fields spread presence-conditionally.
 
     case "image:requested":
       return {

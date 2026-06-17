@@ -81,6 +81,13 @@ export const TRAJECTORY_EVENT_TYPES = [
   // task-outcome (daemon-side emit, learningOutcome.enabled-gated). Counts/ids/closed-enums
   // ONLY — no bodies/alpha (SEC-01). Bridged so `comis explain` can reconstruct it (OBS-02).
   "learning.outcome_observed",
+  // RANK-06 (v2.26 WS3): the bandit applied a (per-intent) tuned-alpha update — counts +
+  // the per-intent dim ONLY, NEVER an alpha value (SEC-01). FORGET-06 (WS4): the lifecycle
+  // sweep demoted / soft-evicted N memories — counts ONLY (daemon-side emit). All bridged
+  // for `comis explain` (OBS-02).
+  "memory.online_tuning_applied",
+  "learning.memory_demoted",
+  "learning.memory_evicted",
 
   // Background task lifecycle (T2.2 / F9): promote/complete/fail of a long-running tool
   // detached past the execute() boundary (content-free — ids + durationMs only).
