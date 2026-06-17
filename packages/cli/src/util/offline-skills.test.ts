@@ -104,6 +104,63 @@ describe("readSkillStatsOffline", () => {
     expect(stats!.byState).toMatchObject({ candidate: 2, active: 1, stale: 1, archived: 1 });
   });
 
+  it("a store with only candidates → promoted/demoted roll-ups are 0", async () => {
+    const dir = tmpDataDir();
+    await seed(dir, [{ input: { name: "cand_1" } }, { input: { name: "cand_2" } }]);
+    const stats = readSkillStatsOffline(dir)!;
+    expect(stats.promoted).toBe(0);
+    expect(stats.demoted).toBe(0);
+    expect(stats.perAgent[0].promoted).toBe(0);
+    expect(stats.perAgent[0].demoted).toBe(0);
+  });
+
+  it("derives promotion/demotion roll-ups from byState (SURFACE-06; counts only)", async () => {
+    const dir = tmpDataDir();
+    await seed(dir, [
+      { input: { name: "cand_1" } }, // candidate (not yet promoted)
+      { input: { name: "act_1" }, to: "active" }, // promoted → active
+      { input: { name: "act_2" }, to: "active" }, // promoted → active
+      { input: { name: "stale_1" }, to: "stale" }, // demoted → stale
+      { input: { name: "arch_1" }, to: "archived" }, // demoted → archived
+    ]);
+    const stats = readSkillStatsOffline(dir)!;
+    // promoted = active count; demoted = stale + archived count — DERIVED from byState.
+    expect(stats.promoted).toBe(2); // act_1, act_2
+    expect(stats.demoted).toBe(2); // stale_1 + arch_1
+  });
+
+  it("rolls promotion/demotion per agent (DERIVED from each agent's byState)", async () => {
+    const dir = tmpDataDir();
+    const bob: LearningScope = { tenantId: "default", agentId: "bob", now: 1_000 };
+    await seed(dir, [
+      { input: { name: "a_act" }, to: "active" }, // alice: 1 promoted
+      { input: { name: "a_stale" }, to: "stale" }, // alice: 1 demoted
+      { input: { name: "b_arch" }, to: "archived", scope: bob }, // bob: 1 demoted
+    ]);
+    const stats = readSkillStatsOffline(dir)!;
+    const alice = stats.perAgent.find((a) => a.agentId === "alice")!;
+    const bobStats = stats.perAgent.find((a) => a.agentId === "bob")!;
+    expect(alice.promoted).toBe(1);
+    expect(alice.demoted).toBe(1);
+    expect(bobStats.promoted).toBe(0);
+    expect(bobStats.demoted).toBe(1);
+  });
+
+  it("promotion/demotion roll-ups carry NO procedure body (counts-only firewall holds)", async () => {
+    const dir = tmpDataDir();
+    await seed(dir, [
+      { input: { name: "deploy", body: "SECRET-PROCEDURE rm -rf /", description: "DESC-LEAK" }, to: "active" },
+    ]);
+    const stats = readSkillStatsOffline(dir)!;
+    expect(stats.promoted).toBe(1);
+    expect(stats.demoted).toBe(0);
+    // The new DERIVED roll-up fields add no body/description columns to the projection.
+    const json = JSON.stringify(stats);
+    expect(json).not.toContain("SECRET-PROCEDURE");
+    expect(json).not.toContain("rm -rf");
+    expect(json).not.toContain("DESC-LEAK");
+  });
+
   it("reports per-agent funnels scoped by (tenant, agent)", async () => {
     const dir = tmpDataDir();
     await seed(dir, [
