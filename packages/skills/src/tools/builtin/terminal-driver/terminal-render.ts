@@ -205,8 +205,9 @@ export interface RenderCell {
  * later steps. On the cursor's row, a cell at column `>= cursorX` that is DIM is autocomplete
  * (real input is NON-dim and at/left of the cursor), so it is omitted; everything else (the
  * non-dim prompt, real input, dim cells LEFT of the cursor) is kept. Trailing whitespace is
- * trimmed to match `translateToString(true)`. Pure + total. The caller applies this ONLY to the
- * cursor row of the NORMAL buffer, so the (also-dim) status bar on other rows is never touched.
+ * trimmed to match `translateToString(true)`. Pure + total. The caller applies this to the cursor
+ * row REGARDLESS of the alt-screen flag (the tmux backend's `tmux attach` renders in the alt screen,
+ * so the flag can't gate it); the (also-dim) status bar on other rows is never touched.
  */
 export function stripGhostFromRow(cells: readonly RenderCell[], cursorX: number): string {
   let out = "";
@@ -244,7 +245,6 @@ export function createSessionEmulator(opts: SessionEmulatorOptions): SessionEmul
    */
   function readText(scrollback: number): string {
     const buf = term.buffer.active;
-    const isAlt = buf.type === "alternate";
     const lines: string[] = [];
     if (scrollback > 0) {
       const from = Math.max(0, buf.baseY - scrollback);
@@ -254,10 +254,13 @@ export function createSessionEmulator(opts: SessionEmulatorOptions): SessionEmul
     }
     for (let y = 0; y < term.rows; y++) {
       const line = buf.getLine(buf.baseY + y);
-      // FINDING-3: on the cursor's row of the NORMAL buffer, strip the dim autocomplete ghost-text
-      // (a driven CLI's composer suggestion) so the plain-text capture isn't mistaken for real
-      // input. Other rows (incl. the also-dim status bar) and the alt buffer use translateToString.
-      if (line && !isAlt && y === buf.cursorY) {
+      // FINDING-3: on the cursor's row, strip the dim autocomplete ghost-text (a driven CLI's
+      // composer suggestion) so the plain-text capture isn't mistaken for real input. This applies
+      // REGARDLESS of the alt-screen flag: the durable/tmux backend drives via `tmux attach`, which
+      // renders in the ALTERNATE screen, so every AI-CLI session reads as `alt` — the flag can't
+      // gate this. The dim-after-cursor targeting IS the safety: real input is non-dim and at/left
+      // of the cursor, and the also-dim status bar is on OTHER rows. Other rows use translateToString.
+      if (line && y === buf.cursorY) {
         const cells: RenderCell[] = [];
         for (let x = 0; x < line.length; x++) {
           const cell = line.getCell(x);

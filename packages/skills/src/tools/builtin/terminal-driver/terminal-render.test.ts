@@ -320,14 +320,20 @@ describe("createSessionEmulator — text render strips Claude's composer ghost-t
     emu.dispose();
   });
 
-  it("does NOT strip dim text on the cursor row in the ALT buffer (full-screen TUIs own their cells)", async () => {
+  it("ALSO strips the ghost on the cursor row in the ALT buffer (tmux-attach sessions are alt-screen)", async () => {
+    // The durable/tmux backend drives via `tmux attach`, which renders in the alternate screen —
+    // so every AI-CLI composer (and its ghost-text) reads as `alt`. The strip must NOT be gated on
+    // the alt flag, or it would never fire for the default backend. (This was the live-VPS bug.)
     const emu = createSessionEmulator({ cols: 80, rows: 6, scrollback: 0 });
-    await emu.write("\x1b[?1049h"); // enter alt screen
-    await emu.write("\x1b[1;1H\x1b[2mDIMTUI\x1b[0m");
-    await emu.write("\x1b[1;1H"); // cursor at row1 col1 (cursorX=0) — DIMTUI is at/after it
+    await emu.write("\x1b[?1049h"); // enter alt screen (as `tmux attach` does)
+    await emu.write("\x1b[2;1H❯ \x1b[2mcommit this\x1b[0m"); // composer + dim ghost in the alt buffer
+    await emu.write("\x1b[5;1H\x1b[2mSonnet 4.6\x1b[0m"); // dim status-bar text on another row
+    await emu.write("\x1b[2;3H"); // cursor to row2 col3 (0-based cursorX=2, cursorY=1)
     const snap = emu.snapshot({ format: "text" });
     expect(snap.alt).toBe(true);
-    expect(snap.screen).toContain("DIMTUI"); // alt-buffer dim cells are NOT stripped
+    expect(snap.screen).not.toContain("commit this"); // ghost stripped EVEN in alt
+    expect(snap.screen).toContain("❯"); // prompt kept
+    expect(snap.screen).toContain("Sonnet 4.6"); // dim text on another row kept
     emu.dispose();
   });
 });
