@@ -727,3 +727,51 @@ describe("SandboxSkillValidationAdapter — DYNAMIC spawn+capture in the jail (S
     expect(killed).toHaveBeenCalled(); // the hung child was killed at the timeout
   });
 });
+
+// ---------------------------------------------------------------------------
+// WR-03 — reproducedEffect / mutating-admission seam is a LABELED FORWARD SEAM.
+//
+// The synthesis job admits with an EMPTY ReplayContext (`{}`), so
+// `hasCheckableEffect` is false → `reproducedEffect` is structurally false →
+// a mutating candidate is NEVER admitted (fail-closed-safe). This is deliberately
+// DEFERRED to the surface/execute phase (202+): genuine mutating admission needs
+// a real effect-capture-and-compare harness (capture the procedure's expected
+// observable effect from the source trajectory, assert the sandbox run
+// reproduces it). The apparatus (ApprovalGate, DENY_ALL_GATE, requireForMutating,
+// isNonDeterministic) is kept as the forward seam. These tests PIN that:
+//   (a) the empty ReplayContext the job passes ⇒ reproducedEffect:false (the
+//       documented deferral — mutating admission is unreachable today), and
+//   (b) the seam WORKS when captured inputs are present (it is dormant, not
+//       broken) — so wiring a real ReplayContext in 202+ flips it on.
+// ---------------------------------------------------------------------------
+describe("SandboxSkillValidationAdapter — WR-03 reproducedEffect deferral (labeled forward seam)", () => {
+  it("reproducedEffect is FALSE for an empty ReplayContext even when all scripts pass (the documented deferral)", async () => {
+    const spawnFn = vi.fn(() => fakeSpawn({ exitCode: 0 }));
+    const adapter = createSandboxSkillValidationAdapter(
+      dynamicDeps({ provider: BWRAP_PROVIDER, spawn: spawnFn }),
+    );
+
+    // NO_REPLAY ({}) is exactly what the synthesis job passes today.
+    const r = await adapter.validate(scriptedCandidate("echo ok"), NO_REPLAY, SCOPE);
+
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value.dynamicOk).toBe(true); // the script ran clean in the jail
+    expect(r.value.reproducedEffect).toBe(false); // …but no checkable effect ⇒ no reproduction
+  });
+
+  it("reproducedEffect becomes TRUE when capturedInputs ARE present (the seam is dormant, not broken)", async () => {
+    const spawnFn = vi.fn(() => fakeSpawn({ exitCode: 0 }));
+    const adapter = createSandboxSkillValidationAdapter(
+      dynamicDeps({ provider: BWRAP_PROVIDER, spawn: spawnFn }),
+    );
+
+    // A real ReplayContext (what 202+ would thread from the source trajectory).
+    const replay: ReplayContext = { capturedInputs: { target: "abc" } };
+    const r = await adapter.validate(scriptedCandidate("echo ok"), replay, SCOPE);
+
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value.reproducedEffect).toBe(true); // the seam works once inputs exist
+  });
+});

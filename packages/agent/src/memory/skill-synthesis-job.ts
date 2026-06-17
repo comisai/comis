@@ -76,7 +76,11 @@ const DEFAULT_WALL_CLOCK_MS = 300_000;
  */
 const LOW_PROOF_COUNT = 1;
 
-/** Rough chars-per-token estimate for the context-token bound (no tokenizer in-loop). */
+/** Rough chars-per-token estimate for the context-token bound (no tokenizer in-loop).
+ *  IN-03: this UNDER-counts CJK/multi-byte content, but the EFFECTIVE cap is
+ *  `maxIterations` (the hard per-run cluster ceiling); the token bound is only a
+ *  secondary, deliberately-conservative DoS ceiling, so the under-count merely
+ *  caps sooner — never looser. No behavior change needed. */
 const CHARS_PER_TOKEN = 4;
 
 /** Cosine threshold above which two success trajectories are clustered. */
@@ -563,7 +567,17 @@ interface AdmitCandidateOutcome {
  *    `trust=learned`/`state=candidate`/low `proof_count`;
  *  - mutating → ApprovalGate.requestApproval → admit ONLY on approval;
  *  - NON-DETERMINISTIC mutating → approval-only, NEVER auto-admit.
- * Returns counts (the daemon emits the learning:skill_* events, Plan 07).
+ *
+ * WR-03 — the mutating arms are a LABELED FORWARD SEAM, currently DORMANT. With
+ * the empty ReplayContext this passes (see below), `reproducedEffect` is
+ * structurally false, so a mutating candidate fails the admission predicate and
+ * returns BEFORE the ApprovalGate branch — no mutating procedure can admit in P2
+ * (fail-closed-safe). The ApprovalGate path is wired and unit-tested (assuming a
+ * reproduced verdict), so threading a real ReplayContext in the surface/execute
+ * phase (202+) activates it. It is NOT dead-by-mistake; it is deferred-by-design.
+ *
+ * Returns counts + the per-candidate verdict summary (the daemon emits the
+ * learning:skill_* events, Plan 07).
  */
 async function admitCandidate(args: AdmitCandidateArgs): Promise<AdmitCandidateOutcome> {
   const {
@@ -582,6 +596,17 @@ async function admitCandidate(args: AdmitCandidateArgs): Promise<AdmitCandidateO
 
   const out: AdmitCandidateOutcome = { validated: false, admitted: false, approvalRequested: false };
 
+  // WR-03 (labeled forward seam — DEFERRED to the surface/execute phase 202+):
+  // we pass an EMPTY ReplayContext (`{}`). The validator's `hasCheckableEffect`
+  // is therefore false → `reproducedEffect` is structurally false → a MUTATING
+  // candidate is NEVER admitted (the predicate requires `reproducedEffect ||
+  // readOnly`, and a mutating candidate is not read-only). This is
+  // fail-closed-safe and intentional for P2: genuine mutating admission needs a
+  // real effect-capture-and-compare harness (capture the procedure's expected
+  // observable effect from the source trajectory + assert the sandbox run
+  // reproduces it), which is a 202+ concern. The mutating→ApprovalGate apparatus
+  // below is kept as the forward seam (it is DORMANT, not broken — it activates
+  // once a real ReplayContext is threaded here). See deferred-items.md.
   const validateResult = await fromPromise(
     validationAdapter.validate(candidate, {}, scope),
   );

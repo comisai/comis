@@ -411,6 +411,14 @@ async function runDynamicReplay(
     // checkable against the trajectory's captured inputs. With no checkable
     // effect (the §14-D2 read-only / non-deterministic classes), it stays false —
     // the admission gate then requires the candidate to be read-only (Plan 04).
+    //
+    // WR-03: the synthesis job (the only caller) passes an EMPTY ReplayContext
+    // today, so `hasCheckableEffect` is false and `reproducedEffect` is
+    // structurally false ⇒ no mutating candidate admits (fail-closed-safe). This
+    // is a LABELED FORWARD SEAM deferred to 202+ (a real effect-capture-and-
+    // compare harness), NOT a broken path: when a non-empty `capturedInputs` IS
+    // threaded, this becomes true (pinned in the WR-03 deferral tests). See
+    // deferred-items.md.
     const reproducedEffect = allOk && hasCheckableEffect(_replay);
 
     logger?.debug(
