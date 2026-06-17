@@ -192,12 +192,24 @@ describe("materializeLearnedSkills — derive wholesale", () => {
     expect(existsSync(safePath(workDir, ".learned-skills", "stale", "SKILL.md"))).toBe(false);
   });
 
-  it("rejects a path-traversal name via safePath (never escapes the workspace)", () => {
-    // A malicious skill name must be rejected by safePath, never written above
-    // the workspace as `<tmp>/escape/SKILL.md`.
-    expect(() => materializeLearnedSkills(workDir, [learned({ name: "../escape" })])).toThrow();
-    const escaped = safePath(tmpdir(), "escape", "SKILL.md");
-    expect(existsSync(escaped)).toBe(false);
+  it("WR-04: one poison (path-traversal) skill name is SKIPPED — the other skills still materialize, no throw, no escape", () => {
+    // A single malformed `name` (a `..` traversal that makes safePath throw) must
+    // NOT abort the whole batch after the wholesale rmSync (which would leave
+    // `.current` empty + a half-written subtree). Each skill is materialized under
+    // its own try/catch: the bad one is dropped, the good ones survive. Pre-WR-04
+    // the throw propagates out of materializeLearnedSkills → the batch is poisoned.
+    expect(() =>
+      materializeLearnedSkills(workDir, [
+        learned({ name: "good-before" }),
+        learned({ name: "../escape" }), // safePath throws on this one
+        learned({ name: "good-after" }),
+      ]),
+    ).not.toThrow();
+    // Both well-named skills are materialized (the poison one did not abort the loop).
+    expect(existsSync(safePath(workDir, ".learned-skills", "good-before", "SKILL.md"))).toBe(true);
+    expect(existsSync(safePath(workDir, ".learned-skills", "good-after", "SKILL.md"))).toBe(true);
+    // The traversal name never escaped the workspace.
+    expect(existsSync(safePath(tmpdir(), "escape", "SKILL.md"))).toBe(false);
   });
 });
 

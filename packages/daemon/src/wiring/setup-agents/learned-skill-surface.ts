@@ -28,7 +28,7 @@
 
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { suppressError } from "@comis/shared";
-import { safePath, type LearnedSkill, type LearnedSkillStorePort, type LearningScope } from "@comis/core";
+import { safePath, PathTraversalError, type LearnedSkill, type LearnedSkillStorePort, type LearningScope } from "@comis/core";
 import { formatAvailableSkillsXml, type PromptSkillDescription, type SkillRegistry } from "@comis/skills";
 import type { ComisLogger } from "@comis/infra";
 
@@ -91,10 +91,18 @@ export function mergeLearnedSkillsXml(
  * demoted/archived procedure's file does NOT survive (anti-Tampering). Every
  * dynamic path segment goes through `safePath` (no `path.join`); a `..`/absolute
  * `name` is rejected before any write.
+ *
+ * WR-04: each skill is materialized under its OWN try/catch, so a single poison
+ * `name` (a traversal that makes `safePath` throw) or a single write failure
+ * (EACCES / ENOSPC / a name colliding with a file already created this loop) is
+ * SKIPPED + WARNed rather than aborting the whole batch after the wholesale
+ * `rmSync` (which would otherwise leave `.current` empty + a half-written subtree
+ * — one bad skill disabling the entire learned surface for the agent).
  */
 export function materializeLearnedSkills(
   workspaceDir: string,
   learnedSkills: readonly LearnedSkill[],
+  logger?: ComisLogger,
 ): void {
   const root = safePath(workspaceDir, LEARNED_SKILLS_DIRNAME);
   // Wholesale rebuild: drop the existing subtree so a removed skill's file is gone.
@@ -105,11 +113,29 @@ export function materializeLearnedSkills(
 
   mkdirSync(root, { recursive: true, mode: 0o700 });
   for (const skill of surfaceable) {
-    // safePath validates `name` (rejects traversal) and pins the file under root.
-    const skillDir = safePath(root, skill.name);
-    const file = safePath(skillDir, "SKILL.md");
-    mkdirSync(skillDir, { recursive: true, mode: 0o700 });
-    writeFileSync(file, renderSkillFile(skill), { mode: 0o600 });
+    try {
+      // safePath validates `name` (rejects traversal) and pins the file under root.
+      const skillDir = safePath(root, skill.name);
+      const file = safePath(skillDir, "SKILL.md");
+      mkdirSync(skillDir, { recursive: true, mode: 0o700 });
+      writeFileSync(file, renderSkillFile(skill), { mode: 0o600 });
+    } catch (e: unknown) {
+      // A traversal `name` is a validation problem (a corrupt/forged row); any other
+      // failure is a resource problem (fs). Skip the ONE bad skill; the batch goes on.
+      const isTraversal = e instanceof PathTraversalError;
+      const errorKind: "validation" | "resource" = isTraversal ? "validation" : "resource";
+      logger?.warn(
+        {
+          submodule: "learned-skill-surface",
+          errorKind,
+          err: e instanceof Error ? e : new Error(String(e)),
+          hint: isTraversal
+            ? "a learned skill name failed path validation (traversal/absolute) — skipped; check the learned_skills row"
+            : "writing a learned skill SKILL.md failed (disk full / permissions / collision) — skipped",
+        },
+        "Learned-skill materialize skipped one skill (non-fatal)",
+      );
+    }
   }
 }
 
@@ -184,7 +210,7 @@ export async function refreshLearnedSkillSurface(args: {
     return [];
   }
 
-  materializeLearnedSkills(workspaceDir, result.value);
+  materializeLearnedSkills(workspaceDir, result.value, logger);
   const surfaced = result.value.filter(isSurfaceable);
   logger.debug(
     {
