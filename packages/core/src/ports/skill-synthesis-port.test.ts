@@ -38,13 +38,22 @@ describe("the three NEW port source files exist and honor the closed-graph impor
   });
 
   it("NONE import @comis/memory or @comis/skills (the agent↛memory/skills build cut — SEC-01)", () => {
+    // Import-scoped (a `from "@comis/…"` specifier), NOT a bare substring — the
+    // closed-graph rule forbids the IMPORT, and the port docs legitimately NAME
+    // these packages in prose to explain the cut (the 198 outcome-signal-port.ts
+    // doc does the same). A `from "@comis/memory"` / `from "@comis/skills"` edge
+    // is what fails the architecture gate downstream.
+    const importsForbidden = (src: string): boolean =>
+      /from\s+["']@comis\/(?:memory|skills)["']/.test(src) ||
+      /import\s*\(\s*["']@comis\/(?:memory|skills)["']\s*\)/.test(src);
     for (const [name, src] of [
       ["skill-synthesis-port.ts", read(synthesisSrc)],
       ["skill-validation-port.ts", read(validationSrc)],
       ["learned-skill-store.ts", read(storeSrc)],
     ] as const) {
-      expect(src, `${name} must not import @comis/memory`).not.toMatch(/@comis\/memory/);
-      expect(src, `${name} must not import @comis/skills`).not.toMatch(/@comis\/skills/);
+      expect(importsForbidden(src), `${name} must not import @comis/memory|@comis/skills`).toBe(
+        false,
+      );
     }
   });
 
