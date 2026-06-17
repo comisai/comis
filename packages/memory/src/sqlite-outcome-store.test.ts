@@ -171,6 +171,72 @@ describe("createSqliteOutcomeStore", () => {
       expect(res.value.confidence).toBe(0.6); // the winning tier's contributing observation
     });
 
+    // --- REACT-04: spoof-weight + corroboration + cross-tenant (Phase 199) ---
+    // The fusion production code is UNCHANGED (198 ranks tool/pipeline=0 > judge=1
+    // > reaction/correction=2). These cases assert the SPOOF + corroboration
+    // properties on top of the precedence keystone: a maxed external reaction is
+    // corroboration ONLY, never an override; a reaction-only trajectory resolves
+    // weakly; reaction rows are (tenant, agent)-isolated; a correction never
+    // outranks a deterministic success.
+
+    it("a 0.99 external-trust reaction never overrides a 0.6 tool failure (spoof corroboration, not override)", async () => {
+      // A spoofed external 👍 (max self-report) plus a deterministic tool failure
+      // at a LOWER confidence. The tool tier still wins; the reaction is in the
+      // sources[] as CORROBORATION only — it cannot flip the verdict (T-199-16).
+      await store.observe(makeObs({ source: "tool", outcome: "failure", confidence: 0.6, observedAt: 1_000 }));
+      await store.observe(
+        makeObs({ source: "reaction", outcome: "success", confidence: 0.99, senderTrust: "external", observedAt: 1_100 }),
+      );
+      const res = await store.resolve(TRAJ, SCOPE_A);
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      expect(res.value.outcome).toBe("failure"); // the deterministic tool result holds
+      expect(res.value.confidence).toBe(0.6);
+      expect(res.value.sources).toContain("tool");
+      expect(res.value.sources).toContain("reaction"); // reaction visible as corroboration
+    });
+
+    it("a reaction-only trajectory resolves to the reaction outcome at its low confidence (weak, corroboration-visible)", async () => {
+      // No deterministic or judge tier: a reaction alone IS resolvable, but only
+      // weakly (its low trust-scaled confidence) — it is a corroborating signal,
+      // never a strong reward.
+      await store.observe(
+        makeObs({ source: "reaction", outcome: "success", confidence: 0.03, senderTrust: "external", observedAt: 1_000 }),
+      );
+      const res = await store.resolve(TRAJ, SCOPE_A);
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      expect(res.value.outcome).toBe("success");
+      expect(res.value.confidence).toBe(0.03); // the weak trust-scaled confidence
+      expect(res.value.sources).toEqual(["reaction"]);
+    });
+
+    it("a reaction row under (tenantA, agentA) is invisible to a resolve under (tenantB, agentB) (SEC-01 cross-tenant)", async () => {
+      await store.observe(
+        makeObs({ tenantId: "tenant_a", agentId: "agent_a", source: "reaction", outcome: "success", confidence: 0.9, senderTrust: "admin" }),
+      );
+      const res = await store.resolve(TRAJ, { tenantId: "tenant_b", agentId: "agent_b" });
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      // The other (tenant, agent) sees no rows → fail-closed unknown, never a leak.
+      expect(res.value.outcome).toBe("unknown");
+      expect(res.value.sources).toEqual([]);
+    });
+
+    it("a corrected (correction-source) row never overrides a deterministic tool success (deterministic outranks correction)", async () => {
+      // A follow-up "correction" soft-failure at a capped confidence, plus a
+      // deterministic tool SUCCESS. The tool tier outranks correction (T-199-18) —
+      // the verdict stays success; the correction is corroboration only.
+      await store.observe(makeObs({ source: "tool", outcome: "success", confidence: 0.9, observedAt: 1_000 }));
+      await store.observe(makeObs({ source: "correction", outcome: "corrected", confidence: 0.6, observedAt: 1_100 }));
+      const res = await store.resolve(TRAJ, SCOPE_A);
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      expect(res.value.outcome).toBe("success"); // the deterministic tool result holds
+      expect(res.value.sources).toContain("tool");
+      expect(res.value.sources).toContain("correction");
+    });
+
     it("picks the max-confidence row within the winning tier", async () => {
       // Two tool rows: success@0.7 and failure@0.8 → the max-confidence row wins.
       await store.observe(makeObs({ source: "tool", outcome: "success", confidence: 0.7, observedAt: 1_000 }));
