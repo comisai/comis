@@ -18,9 +18,10 @@
  *
  * @module
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { CandidateSkill, LearningScope, ReplayContext } from "@comis/core";
+import type { SandboxProvider } from "../tools/builtin/sandbox/types.js";
 import {
   createSandboxSkillValidationAdapter,
   classifyMutating,
@@ -60,6 +61,80 @@ function fullPolicyDeps(allToolNames: string[]) {
     allTools: allToolNames.map(tool),
     policy: { profile: "full", allow: [] as string[], deny: [] as string[] },
   };
+}
+
+// ---------------------------------------------------------------------------
+// DYNAMIC fixtures (Plan 06) — the sandbox provider + spawn are INJECTED so the
+// fail-closed (darwin / no-bwrap) AND the available (Linux bwrap) branches are
+// both exercised deterministically on this `darwin` dev box (bwrap is Linux-only).
+// ---------------------------------------------------------------------------
+
+/** A fake Linux bwrap provider (the available branch). */
+const BWRAP_PROVIDER: SandboxProvider = {
+  name: "bwrap",
+  available: () => true,
+  buildArgs: () => ["/usr/bin/bwrap", "--unshare-all"],
+};
+
+/** A fake darwin sandbox-exec provider — NOT a bwrap jail → the fail-closed branch. */
+const SANDBOX_EXEC_PROVIDER: SandboxProvider = {
+  name: "sandbox-exec",
+  available: () => true,
+  buildArgs: () => ["/usr/bin/sandbox-exec"],
+};
+
+/**
+ * A minimal fake child process for the injected `spawnFn`. `exitCode` drives the
+ * `close` event (the sandbox VERDICT: 0 = clean, non-zero = jail-denied / escape
+ * blocked); `spawnError` makes the spawn itself reject (a hard denial). `hang:true`
+ * never closes (the anti-DoS timeout must kill it).
+ */
+function fakeSpawn(opts: { exitCode?: number; spawnError?: Error; hang?: boolean }) {
+  const listeners: Record<string, Array<(...a: unknown[]) => void>> = {};
+  const child = {
+    pid: 4242,
+    stdout: { on: () => undefined, removeAllListeners: () => undefined },
+    stderr: { on: () => undefined, removeAllListeners: () => undefined },
+    stdin: { write: () => undefined, end: () => undefined },
+    on(event: string, cb: (...a: unknown[]) => void) {
+      (listeners[event] ??= []).push(cb);
+      return child;
+    },
+    kill: () => undefined,
+  };
+  // Emit the terminal event on the next microtask (after the adapter wires listeners).
+  queueMicrotask(() => {
+    if (opts.hang) return; // never closes — the timeout path must fire
+    if (opts.spawnError) {
+      for (const cb of listeners["error"] ?? []) cb(opts.spawnError);
+      return;
+    }
+    for (const cb of listeners["close"] ?? []) cb(opts.exitCode ?? 0, null);
+  });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test stub for the injected spawnFn
+  return child as any;
+}
+
+/** Build the full dynamic deps: full tool-policy + an injected provider + spawn + a synchronous fake clock. */
+function dynamicDeps(opts: {
+  toolNames?: string[];
+  provider?: SandboxProvider | undefined;
+  spawn?: ReturnType<typeof vi.fn>;
+}) {
+  return {
+    ...fullPolicyDeps(opts.toolNames ?? ["read"]),
+    detectProvider: () => opts.provider,
+    spawnFn: opts.spawn ?? vi.fn(() => fakeSpawn({ exitCode: 0 })),
+    // A synchronous fake timer: never auto-fires (the spawn resolves first); returns a no-op cancel.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- handle shape is opaque to the adapter
+    setTimeoutFn: (_cb: () => void, _ms: number) => ({ unref: () => undefined }) as any,
+    clearTimeoutFn: () => undefined,
+  };
+}
+
+/** A candidate WITH an embedded script (so the dynamic run is attempted). */
+function scriptedCandidate(content = "echo all good"): CandidateSkill {
+  return cleanCandidate({ scripts: [{ path: "step.sh", lang: "bash", content }] });
 }
 
 // ---------------------------------------------------------------------------
@@ -271,5 +346,102 @@ describe("SandboxSkillValidationAdapter — required_tool ∈ effective tool set
     if (!r.ok) return;
     expect(r.value.staticOk).toBe(true);
     expect(r.value.findings.some((x) => x.kind === "tool-policy")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 1 (Plan 06) — DYNAMIC fail-closed bwrap gate (the static-only-without-bwrap first-RED)
+//
+// THE MOST DANGEROUS TRAP in the milestone: the exec path normally degrades OPEN
+// (buildSpawnCommand(sandboxConfig=undefined) → bare /bin/bash -c). The validator
+// MUST invert that to fail-CLOSED — when no Linux bwrap jail is materializable,
+// embedded scripts NEVER run; the run honestly degrades to coverage:"static-only".
+// ---------------------------------------------------------------------------
+
+describe("SandboxSkillValidationAdapter — DYNAMIC fail-closed bwrap gate (SKILL-07 / SEC-01)", () => {
+  it("FAILS CLOSED to static-only when NO sandbox provider exists (no jail) — and NEVER spawns", async () => {
+    // The static-only-without-bwrap first-RED: a candidate WITH embedded scripts +
+    // detectProvider returning undefined → dynamicOk:false, coverage:"static-only",
+    // sandboxProvider:"none" AND the script is NOT spawned (no open /bin/bash -c run).
+    const spawnFn = vi.fn(() => fakeSpawn({ exitCode: 0 }));
+    const adapter = createSandboxSkillValidationAdapter(
+      dynamicDeps({ provider: undefined, spawn: spawnFn }),
+    );
+
+    const r = await adapter.validate(scriptedCandidate(), NO_REPLAY, SCOPE);
+
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value.dynamicOk).toBe(false);
+    expect(r.value.reproducedEffect).toBe(false);
+    expect(r.value.coverage).toBe("static-only");
+    expect(r.value.sandboxProvider).toBe("none");
+    // THE keystone assertion: the embedded script was NEVER spawned (no unsandboxed exec).
+    expect(spawnFn).not.toHaveBeenCalled();
+  });
+
+  it("FAILS CLOSED to static-only on darwin sandbox-exec (NOT bwrap → no Linux jail) — never spawns", async () => {
+    // sandbox-exec exists on macOS but is NOT the bwrap jail the gate requires
+    // (Linux-only). A non-bwrap provider must still degrade to static-only.
+    const spawnFn = vi.fn(() => fakeSpawn({ exitCode: 0 }));
+    const adapter = createSandboxSkillValidationAdapter(
+      dynamicDeps({ provider: SANDBOX_EXEC_PROVIDER, spawn: spawnFn }),
+    );
+
+    const r = await adapter.validate(scriptedCandidate(), NO_REPLAY, SCOPE);
+
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value.dynamicOk).toBe(false);
+    expect(r.value.coverage).toBe("static-only");
+    // sandboxProvider records WHICH provider was present (sandbox-exec), but no jail ran.
+    expect(r.value.sandboxProvider).toBe("sandbox-exec");
+    expect(spawnFn).not.toHaveBeenCalled();
+  });
+
+  it("FAILS CLOSED to static-only when bwrap is present but NOT available() (kernel-rejected)", async () => {
+    const spawnFn = vi.fn(() => fakeSpawn({ exitCode: 0 }));
+    const unavailableBwrap: SandboxProvider = { name: "bwrap", available: () => false, buildArgs: () => [] };
+    const adapter = createSandboxSkillValidationAdapter(
+      dynamicDeps({ provider: unavailableBwrap, spawn: spawnFn }),
+    );
+
+    const r = await adapter.validate(scriptedCandidate(), NO_REPLAY, SCOPE);
+
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value.dynamicOk).toBe(false);
+    expect(r.value.coverage).toBe("static-only");
+    expect(spawnFn).not.toHaveBeenCalled();
+  });
+
+  it("emits the honest-degradation WARN with errorKind:'sandbox_unavailable' (NOT a failure metric)", async () => {
+    const warn = vi.fn();
+    const adapter = createSandboxSkillValidationAdapter({
+      ...dynamicDeps({ provider: undefined }),
+      logger: { warn, debug: vi.fn() },
+    });
+
+    await adapter.validate(scriptedCandidate(), NO_REPLAY, SCOPE);
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    const [obj] = warn.mock.calls[0] as [Record<string, unknown>, string];
+    expect(obj["errorKind"]).toBe("sandbox_unavailable");
+    expect(obj["step"]).toBe("skill_validation_dynamic");
+  });
+
+  it("does NOT attempt a dynamic run for a script-free candidate — even when a bwrap jail IS available", async () => {
+    // No embedded scripts → nothing to execute → no spawn (the noEmbeddedScripts branch).
+    const spawnFn = vi.fn(() => fakeSpawn({ exitCode: 0 }));
+    const adapter = createSandboxSkillValidationAdapter(
+      dynamicDeps({ provider: BWRAP_PROVIDER, spawn: spawnFn }),
+    );
+
+    const r = await adapter.validate(cleanCandidate({ scripts: [] }), NO_REPLAY, SCOPE);
+
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(spawnFn).not.toHaveBeenCalled();
+    expect(r.value.dynamicOk).toBe(false); // no scripts ran
   });
 });
