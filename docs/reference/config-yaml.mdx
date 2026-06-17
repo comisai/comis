@@ -714,11 +714,18 @@ The **Verified Learning** outcome signal (v2.26 WS1): a durable record of each f
 |-----|------|---------|-------------|
 | `enabled` | `boolean` | `false` | Enable outcome capture for this agent (opt-in; additionally force-disabled when `memory.costFeatures.enabled` is `false`) |
 | `sources` | `string[]` | `["tool", "pipeline"]` | Which signal sources may contribute observations (closed set: `tool` / `pipeline` / `correction` / `judge` / `reaction` / `explicit`) |
-| `reactionMap` | `object` | `{}` | Maps a reaction/feedback token to an outcome (reaction source; later phases) |
+| `reactionMap` | `object` | `{ success: ["👍", "✅"], failure: ["👎", "❌"] }` | Maps an inbound-reaction emoji to an outcome. **Now consumed** (v2.26 WS1 P0.5): a reaction added to one of this agent's own outbound messages on Discord/Slack/Telegram is matched against this map and recorded as a `reaction`-source observation (see the note below). Slack short names (`thumbsup`/`white_check_mark`/`thumbsdown`/`x` and the `+1`/`-1` aliases) reconcile to the Unicode defaults automatically. |
 | `judge.enabled` | `boolean` | `false` | Enable the optional cost-gated LLM judge as a fallback outcome source (off in P0; routed via the `outcomeJudge` model tier, below) |
 | `correction.enabled` | `boolean` | `false` | Enable the optional cost-gated correction detector: a follow-up "no, do X instead" turn is classified (via the `outcomeJudge` tier) and emits a `corrected` soft-failure of the prior trajectory. Default off — an LLM over untrusted follow-up text is a net-new surface; also force-disabled by `memory.costFeatures.enabled: false` |
 | `minConfidenceToLearn` | `number` (0–1) | `0.6` | Minimum fused confidence required before a resolved outcome drives learning |
 | `retentionDays` | `number` | `30` | Age horizon for the `outcome_events` ledger; rows older than this are pruned at daemon startup (anti-DoS, runs regardless of the enable flag) |
+
+> **Inbound reactions as a corroborating source (v2.26 WS1 P0.5).** When `learningOutcome.enabled` is on, Comis captures emoji reactions added to the agent's **own outbound messages** on Discord, Slack, and Telegram and records them through the `reaction` source. This is **corroboration, not control**: a reaction can only *weight* an outcome the deterministic tool/pipeline signal already resolved — it never overrides it. Three safeguards bound the signal:
+> - **Fail-closed scope.** A reaction is observed only when its `message_id` maps to an agent-authored outbound trajectory. A reaction on a user's message, or on an id the daemon never sent, is silently ignored.
+> - **Reactor trust-weighting.** The confidence is scaled by the reactor's channel-sender trust (`elevatedReply.senderTrustMap[reactorId]`, falling back to `elevatedReply.defaultTrustLevel`). An **unknown / external** reactor is capped near zero (~0.05) — a stranger's 👍 barely moves the needle.
+> - **Per-sender rate limit.** Reaction-spam from one reactor is throttled so it cannot flood the ledger.
+>
+> No reaction-specific config keys exist beyond `reactionMap`: the trust map and rate limiter are reused/daemon-constructed. Capturing reactions on the silent platforms needs operator setup (Slack `reactions:read` scope; Telegram `allowed_updates`) — see [Reactions and Corrections in messaging](/agent-tools/messaging#inbound-reactions-corroborating-learning-signal).
 
 #### Memory Triple Extraction (agents.*.memoryTripleExtraction)
 
