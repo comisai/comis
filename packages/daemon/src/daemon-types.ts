@@ -473,12 +473,9 @@ export interface BootContext {
    *  so `memory.recall_stats` reads the live gauge. */
   recallCounters: Awaited<ReturnType<typeof setupMemory>>["recallCounters"];
   maintenanceTick: Awaited<ReturnType<typeof setupMemory>>["maintenanceTick"];
-  /** REACT-02 (Verified Learning, Phase 199): outbound-message → trajectory capture (built in
-   *  setup-memory behind the byte-identity gate); threaded into setupDeliveryQueue in bootAgents.
-   *  `undefined` when learning-outcome is off for all agents (zero extra drain work). */
+  /** REACT-02 (Phase 199): outbound-message → trajectory capture (built in setup-memory behind the byte-identity gate); threaded into setupDeliveryQueue. `undefined` when learning-outcome is off for all agents. */
   recordOutboundMessage?: Awaited<ReturnType<typeof setupMemory>>["recordOutboundMessage"];
-  /** WR-01 (Phase 199): tear down the reaction/session trajectory maps + the dedicated reaction
-   *  rate limiter on shutdown (cancels their unref'd TTL timers). Threaded into setupShutdown. */
+  /** WR-01 (Phase 199): tear down the reaction/session trajectory maps + dedicated reaction rate limiter on shutdown (cancels their unref'd TTL timers). Threaded into setupShutdown. */
   destroyReactionWiring?: Awaited<ReturnType<typeof setupMemory>>["destroyReactionWiring"];
   obsStore: ObservabilityStore | undefined;
   obsPersistence: ObsPersistenceResult | undefined;

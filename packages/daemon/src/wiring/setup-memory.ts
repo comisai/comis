@@ -189,11 +189,9 @@ export interface MemoryResult {
    *  no model/IO cost; gated at observe/resolve (agent never receives it — SEC-01). Returned so the
    *  daemon can `prune(retentionDays)` at startup (OUTCOME-07); the observe/resolve subscriber is wired here. */
   outcomeStore: import("@comis/core").OutcomeSignalPort;
-  /** REACT-02 (Verified Learning, Phase 199): outbound-message → trajectory capture callback, threaded into
-   *  the delivery drain. `undefined` when learning-outcome is off for all agents (byte-identity: zero extra work). */
+  /** REACT-02 (Phase 199): outbound-message → trajectory capture callback, threaded into the delivery drain. `undefined` when learning-outcome is off for all agents (byte-identity: zero extra work). */
   recordOutboundMessage?: (messageId: string, scope: { traceId: string; tenantId: string; agentId: string; sessionId: string }) => void;
-  /** WR-01 (Phase 199): tear down the reaction/session trajectory maps + the dedicated reaction rate limiter
-   *  (cancels their unref'd TTL timers). Invoked from the daemon shutdown path beside injectionRateLimiter.destroy(). */
+  /** WR-01 (Phase 199): tear down the reaction/session trajectory maps + the dedicated reaction rate limiter (cancels their unref'd TTL timers). Invoked from the daemon shutdown path. */
   destroyReactionWiring: () => void;
   /** Memory-lifecycle sweep store. SOLE `MemoryLifecyclePort` adapter; shared `db`, no model/IO cost. DORMANT
    *  (0 rows swept even when enabled); the KEYLESS __MEMORY_LIFECYCLE__ cron registers only when `memoryLifecycle.enabled`. */
@@ -643,10 +641,7 @@ export async function setupMemory(deps: {
   });
 
   // 6.5.2f''. Reaction + correction outcome wiring (Verified Learning WS1, Phase 199 — the
-  // corroborating sources). buildReactionWiringDeps constructs the messageId→trajectory map +
-  // a dedicated reaction rate limiter + (cost-gated) the correction detector behind the byte-
-  // identity gate; `recordOutboundMessage` is undefined when learning-outcome is off for all
-  // agents (zero extra drain work). Bulk lives in the co-located helper to hold this file's cap.
+  // corroborating sources) behind the byte-identity gate; bulk lives in the co-located helper.
   const reactionWiring = buildReactionWiringDeps(
     { config: container.config, secretManager: container.secretManager, eventBus: container.eventBus, outcomeStore, logger: memoryLogger },
     clock, timers,
@@ -654,9 +649,7 @@ export async function setupMemory(deps: {
   wireLearningReactions(reactionWiring.deps);
   wireLearningCorrection(reactionWiring.deps);
   const recordOutboundMessage = reactionWiring.recordOutboundMessage;
-  // WR-01: surface the reaction-wiring teardown so the daemon shutdown path can
-  // cancel the trajectory maps' + the dedicated rate limiter's unref'd TTL timers.
-  const destroyReactionWiring = reactionWiring.destroyReactionWiring;
+  const destroyReactionWiring = reactionWiring.destroyReactionWiring; // WR-01: teardown for the daemon shutdown path
 
   // 6.5.3. Wire caching: L1(L2(provider)) when persistent, L1(provider) otherwise
   let cachedPort: EmbeddingPort | undefined;
