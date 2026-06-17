@@ -83,6 +83,26 @@ export interface UserRepresentationInput {
 }
 
 /**
+ * The decided branch of a {@link UserRepresentationStore.revise} call — the
+ * AUTHORITATIVE per-slot resolution the adapter actually took, returned so the
+ * caller's telemetry counts what was PERSISTED (REVISE-01/OBS-01) rather than
+ * re-deriving the classification with a divergent heuristic:
+ * - `inserted`              — no same-slot incumbent (or a topic-distinct coexist):
+ *                             a NEW current-truth row was written.
+ * - `corroborated`          — a same-belief near-restatement: the incumbent's
+ *                             confidence was bumped IN PLACE; NO new row was written.
+ * - `superseded`            — a higher/equal-trust contradiction: the incumbent was
+ *                             soft-closed and `entry` written as the new current-truth.
+ * - `recorded-not-believed` — a LOWER-trust contradiction (anti-poison): the
+ *                             incumbent stays current; `entry` was NOT persisted.
+ *
+ * The agent cannot import the adapter (the agent↛memory build cut); this shared
+ * type is how the adapter's real decision crosses the port boundary so the offline
+ * builder's `learning:user_model_revised` counts match the action exactly.
+ */
+export type ReviseOutcome = "inserted" | "corroborated" | "superseded" | "recorded-not-believed";
+
+/**
  * A representation entry read back — the input shape plus the
  * adapter-assigned identity + bookkeeping timestamps.
  */
@@ -150,11 +170,16 @@ export interface UserRepresentationStore {
    * (anti-poison). One synchronous db.transaction (throw → rollback). Same high-trust
    * floor + validateMemoryWrite boundary as upsert(). Bounded per-record history
    * (oldest superseded rows beyond historyCap trimmed). Type contract only.
+   *
+   * Returns the AUTHORITATIVE {@link ReviseOutcome} the adapter took (the decided
+   * branch), so the caller's telemetry counts what was actually PERSISTED instead of
+   * re-deriving the classification — the single source of truth for the
+   * `learning:user_model_revised` counts (REVISE-01/OBS-01).
    */
   revise(
     entry: UserRepresentationInput,
     scope: UserRepresentationScope,
-  ): Promise<Result<void, Error>>;
+  ): Promise<Result<ReviseOutcome, Error>>;
 
   /**
    * REVISE-02 bi-temporal AS-OF read. Returns the entries BELIEVED true at epoch `t`

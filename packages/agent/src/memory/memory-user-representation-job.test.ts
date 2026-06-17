@@ -35,6 +35,7 @@ import type {
   UserRepresentationInput,
   UserRepresentationScope,
   UserRepresentationEntry,
+  ReviseOutcome,
   ClockPort,
 } from "@comis/core";
 
@@ -194,31 +195,150 @@ function makeFakeStore(seed: UserRepresentationEntry[] = []): {
     async read(): Promise<Result<UserRepresentationEntry[], Error>> {
       return ok([...rows]);
     },
-    async revise(entry: UserRepresentationInput, scope: UserRepresentationScope): Promise<Result<void, Error>> {
+    async revise(entry: UserRepresentationInput, scope: UserRepresentationScope): Promise<Result<ReviseOutcome, Error>> {
       reviseCalls.push(entry);
-      const key = `${entry.entryType}::${entry.content}`;
-      const existing = rows.find((r) => `${r.entryType}::${r.content}` === key);
-      if (existing) {
-        existing.trust = entry.trust;
-        existing.updatedAt = scope.now;
-        return ok(undefined);
+      // Classify EXACTLY like the @comis/memory adapter (the agent↛memory cut means
+      // we mirror, not import) and RETURN the decided outcome — the job counts THIS
+      // authoritative result (WR-01), never its own re-derivation. The fake stays a
+      // simple in-memory current-truth store; the classification is the adapter's.
+      const incumbent = rows.find((r) => r.entryType === entry.entryType && r.validTo === undefined);
+      const pushCurrent = (): void => {
+        rows.push({
+          id: `row-${rows.length}`,
+          entryType: entry.entryType,
+          content: entry.content,
+          trust: entry.trust,
+          ...(entry.sourceMemoryId !== undefined ? { sourceMemoryId: entry.sourceMemoryId } : {}),
+          createdAt: scope.now,
+          validFrom: scope.now,
+        });
+      };
+      if (incumbent === undefined) {
+        pushCurrent();
+        return ok("inserted");
       }
-      rows.push({
-        id: `row-${rows.length}`,
-        entryType: entry.entryType,
-        content: entry.content,
-        trust: entry.trust,
-        ...(entry.sourceMemoryId !== undefined ? { sourceMemoryId: entry.sourceMemoryId } : {}),
-        createdAt: scope.now,
-        validFrom: scope.now,
-      });
-      return ok(undefined);
+      const relation = adapterClassify(incumbent.content, entry.content);
+      if (relation === "corroborate") return ok("corroborated"); // in-place bump, no row
+      if (relation === "coexist") {
+        pushCurrent();
+        return ok("inserted");
+      }
+      if (ADAPTER_TRUST_RANK[entry.trust] >= ADAPTER_TRUST_RANK[incumbent.trust]) {
+        incumbent.validTo = scope.now; // soft-close the loser
+        pushCurrent();
+        return ok("superseded");
+      }
+      return ok("recorded-not-believed"); // lower-trust contradiction (anti-poison)
     },
     async asOf(): Promise<Result<UserRepresentationEntry[], Error>> {
       return ok([...rows]);
     },
   };
   return { store, rows, upsertCalls, reviseCalls };
+}
+
+// ---------------------------------------------------------------------------
+// WR-01 fixture: a FAITHFUL stand-in for the @comis/memory adapter's AUTHORITATIVE
+// per-slot classifier.
+//
+// The agent cannot import @comis/memory (the agent↛memory build cut), so this test
+// mirrors the adapter's `classifyAgainstIncumbent` byte-for-byte
+// (`packages/memory/src/sqlite-user-representation-store.ts`): normalize =
+// trim+collapse-whitespace+lowercase; SET-based char-bigram Sørensen–Dice;
+// normalized-equal OR Dice >= 0.9 → corroborate; 0.5 <= Dice < 0.9 → contradict
+// (supersede); Dice < 0.5 → coexist (insert). These are the SAME thresholds + the
+// SAME counting (set, not multiset) as the real adapter — so a fake store built on
+// it returns the outcome the real adapter WOULD persist. The WR-01 contract is that
+// the job's emitted counts equal THIS authoritative outcome, never the job's own
+// (divergent) re-derivation.
+function adapterNormalize(s: string): string {
+  return s.trim().replace(/\s+/g, " ").toLowerCase();
+}
+function adapterBigrams(s: string): Set<string> {
+  const grams = new Set<string>();
+  for (let i = 0; i < s.length - 1; i++) grams.add(s.slice(i, i + 2));
+  return grams;
+}
+function adapterBigramDice(a: string, b: string): number {
+  if (a === b) return 1;
+  const aGrams = adapterBigrams(a);
+  const bGrams = adapterBigrams(b);
+  const total = aGrams.size + bGrams.size;
+  if (total === 0) return a === b ? 1 : 0;
+  let overlap = 0;
+  for (const g of aGrams) if (bGrams.has(g)) overlap++;
+  return (2 * overlap) / total;
+}
+type AdapterRelation = "corroborate" | "contradict" | "coexist";
+function adapterClassify(incumbent: string, candidate: string): AdapterRelation {
+  const ni = adapterNormalize(incumbent);
+  const nc = adapterNormalize(candidate);
+  if (ni === nc) return "corroborate";
+  const d = adapterBigramDice(ni, nc);
+  if (d >= 0.9) return "corroborate";
+  if (d >= 0.5) return "contradict";
+  return "coexist";
+}
+
+/** The four authoritative outcome labels the @comis/core port's `revise()` returns. */
+type AdapterOutcome = "inserted" | "corroborated" | "superseded" | "recorded-not-believed";
+
+const ADAPTER_TRUST_RANK: Record<"system" | "learned", number> = { system: 2, learned: 1 };
+
+/**
+ * A FAKE store that classifies a candidate EXACTLY like the @comis/memory adapter
+ * and RETURNS the decided outcome from `revise()` (the WR-01 single-source-of-truth
+ * fix: the job counts the adapter's returned outcome, not its own re-derivation).
+ * It records each decided outcome in `decidedOutcomes` so a test can assert the
+ * job's emitted counts equal the authoritative classification. `seed` pre-loads the
+ * current-truth profile the candidate is classified against.
+ */
+function makeFakeAdapterStore(seed: UserRepresentationEntry[] = []): {
+  store: UserRepresentationStore;
+  rows: UserRepresentationEntry[];
+  reviseCalls: UserRepresentationInput[];
+  decidedOutcomes: AdapterOutcome[];
+} {
+  const rows: UserRepresentationEntry[] = [...seed];
+  const reviseCalls: UserRepresentationInput[] = [];
+  const decidedOutcomes: AdapterOutcome[] = [];
+  const store: UserRepresentationStore = {
+    async upsert(): Promise<Result<void, Error>> {
+      return ok(undefined);
+    },
+    async read(): Promise<Result<UserRepresentationEntry[], Error>> {
+      return ok([...rows]);
+    },
+    async revise(entry: UserRepresentationInput, scope: UserRepresentationScope): Promise<Result<ReviseOutcome, Error>> {
+      reviseCalls.push(entry);
+      const incumbent = rows.find((r) => r.entryType === entry.entryType && r.validTo === undefined);
+      let outcome: AdapterOutcome;
+      if (incumbent === undefined) {
+        outcome = "inserted";
+        rows.push({ id: `row-${rows.length}`, entryType: entry.entryType, content: entry.content, trust: entry.trust, createdAt: scope.now, validFrom: scope.now });
+      } else {
+        const relation = adapterClassify(incumbent.content, entry.content);
+        if (relation === "corroborate") {
+          outcome = "corroborated"; // confidence bump in place — NO new row
+        } else if (relation === "coexist") {
+          outcome = "inserted";
+          rows.push({ id: `row-${rows.length}`, entryType: entry.entryType, content: entry.content, trust: entry.trust, createdAt: scope.now, validFrom: scope.now });
+        } else if (ADAPTER_TRUST_RANK[entry.trust] >= ADAPTER_TRUST_RANK[incumbent.trust]) {
+          outcome = "superseded";
+          incumbent.validTo = scope.now; // soft-close the incumbent
+          rows.push({ id: `row-${rows.length}`, entryType: entry.entryType, content: entry.content, trust: entry.trust, createdAt: scope.now, validFrom: scope.now });
+        } else {
+          outcome = "recorded-not-believed"; // lower-trust contradiction — anti-poison, nothing persisted
+        }
+      }
+      decidedOutcomes.push(outcome);
+      return ok(outcome);
+    },
+    async asOf(): Promise<Result<UserRepresentationEntry[], Error>> {
+      return ok([...rows]);
+    },
+  };
+  return { store, rows, reviseCalls, decidedOutcomes };
 }
 
 /** A current-truth profile row the job classifies a candidate against (a `read()` seed). */
@@ -941,5 +1061,123 @@ describe("runUserRepresentationBuild — Task 4: revise()-based write path + con
     expect(serialized).not.toContain("Alice");
     expect(serialized).not.toContain("Rex");
     expect(serialized).not.toContain(SECRET_CONTENT);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 4b (WR-01): the emitted counts MUST match the adapter's AUTHORITATIVE
+// persisted outcome — never the job's own divergent re-derivation.
+//
+// The job used to re-classify each candidate with its OWN `contentSimilarity`
+// (multiset bigrams, threshold 0.6, no near-paraphrase band), which DISAGREES with
+// the @comis/memory adapter's authoritative `classifyAgainstIncumbent` (set bigrams,
+// threshold 0.5, a 0.9 corroborate floor). So in the [0.5, 0.6) and [0.9, 1.0) Dice
+// bands the emitted `superseded`/`corroborated`/`inserted` MIS-reported what the
+// adapter actually did to the profile.
+//
+// Single-source-of-truth fix: `revise()` returns the adapter's decided outcome and
+// the job counts THAT. These tests pin the contract on the two real divergence
+// pairs — the job's emitted counts equal the adapter's `decidedOutcomes`, by
+// construction. RED on the pre-fix code (the job counted its own classification).
+// ---------------------------------------------------------------------------
+
+describe("runUserRepresentationBuild — Task 4b: emitted counts mirror the adapter's AUTHORITATIVE outcome (WR-01)", () => {
+  it("[0.5, 0.6) band: \"likes tea\" → \"likes tea in the morning\" — the adapter SUPERSEDES (Dice 0.552 ≥ 0.5); the job MUST count superseded, not inserted", async () => {
+    // Job's contentSimilarity = 0.516 (< 0.6 → it would say `inserted`); the adapter's
+    // bigramDice = 0.552 (≥ 0.5, < 0.9 → contradict → supersede). The persisted action
+    // is a supersession, so the emitted count MUST be superseded:1 / inserted:0.
+    const seed = [makeEntry({ id: "inc-band-low", entryType: "preference", content: "likes tea", trust: "learned" })];
+    const fake = makeFakeAdapterStore(seed);
+    const buildSpy = makeBuildSpy(() => [{ entryType: "preference", content: "likes tea in the morning" }]);
+    const bus = makeEventBus();
+    const deps = makeDeps({
+      build: buildSpy.build,
+      userRepresentationStore: fake.store,
+      eventBus: bus,
+      sources: [makeSource({ content: "user now says they like tea in the morning", trustLevel: "learned" })],
+    });
+
+    const result = await runUserRepresentationBuild(deps);
+
+    expect(result.ok).toBe(true);
+    // The fake-adapter actually superseded the incumbent (the authoritative outcome).
+    expect(fake.decidedOutcomes).toEqual(["superseded"]);
+    // The emitted counts MUST mirror that authoritative outcome (not the job's 0.6 call).
+    if (result.ok) {
+      expect(result.value.superseded).toBe(1);
+      expect(result.value.inserted).toBe(0);
+      expect(result.value.corroborated).toBe(0);
+    }
+    const ev = bus.events.find((e) => e.event === "memory:user_representation_built");
+    const payload = ev?.payload as { superseded: number; corroborated: number; inserted: number };
+    expect(payload.superseded).toBe(1);
+    expect(payload.inserted).toBe(0);
+  });
+
+  it("[0.9, 1.0) band: \"the user prefers dark mode\" → \"the user prefers dark modes\" — the adapter CORROBORATES (Dice 0.98 ≥ 0.9); the job MUST count corroborated, not superseded", async () => {
+    // Job's contentSimilarity = 0.980 (≥ 0.6, NOT normalized-equal → it would say
+    // `superseded`); the adapter's bigramDice = 0.980 (≥ 0.9 → corroborate, an in-place
+    // confidence bump, NO new row). The emitted count MUST be corroborated:1 /
+    // superseded:0 — and `written` MUST exclude the in-place corroboration (IN-02).
+    const seed = [makeEntry({ id: "inc-band-high", entryType: "preference", content: "the user prefers dark mode", trust: "learned" })];
+    const fake = makeFakeAdapterStore(seed);
+    const buildSpy = makeBuildSpy(() => [{ entryType: "preference", content: "the user prefers dark modes" }]);
+    const bus = makeEventBus();
+    const deps = makeDeps({
+      build: buildSpy.build,
+      userRepresentationStore: fake.store,
+      eventBus: bus,
+      sources: [makeSource({ content: "user reconfirmed they prefer dark modes", trustLevel: "learned" })],
+    });
+
+    const result = await runUserRepresentationBuild(deps);
+
+    expect(result.ok).toBe(true);
+    // The fake-adapter actually corroborated in place (the authoritative outcome).
+    expect(fake.decidedOutcomes).toEqual(["corroborated"]);
+    if (result.ok) {
+      expect(result.value.corroborated).toBe(1);
+      expect(result.value.superseded).toBe(0);
+      expect(result.value.inserted).toBe(0);
+      // IN-02: an in-place corroboration is NOT a row written.
+      expect(result.value.written).toBe(0);
+    }
+    const ev = bus.events.find((e) => e.event === "memory:user_representation_built");
+    const payload = ev?.payload as { superseded: number; corroborated: number; inserted: number; written: number };
+    expect(payload.corroborated).toBe(1);
+    expect(payload.superseded).toBe(0);
+    expect(payload.written).toBe(0);
+  });
+
+  it("IN-02: written counts only rows actually written — supersede + insert count, an in-place corroboration does not", async () => {
+    // One supersede (new current-truth row), one insert (new row), one corroborate
+    // (in-place bump, no row). written MUST be 2 (the two row writes), NOT 3.
+    const seed = [
+      makeEntry({ id: "inc-sup", entryType: "preference", content: "prefers coffee", trust: "learned" }),
+      makeEntry({ id: "inc-cor", entryType: "instruction", content: "always greet the user warmly", trust: "learned" }),
+    ];
+    const fake = makeFakeAdapterStore(seed);
+    const buildSpy = makeBuildSpy(() => [
+      { entryType: "preference", content: "prefers tea" }, // supersede ("prefers coffee", Dice 0.636) → row written
+      { entryType: "instruction", content: "Always greet the user warmly" }, // normalized-equal → corroborate, NO row
+      { entryType: "identity", content: "the user's name is Alice" }, // no incumbent → insert → row written
+    ]);
+    const deps = makeDeps({
+      build: buildSpy.build,
+      userRepresentationStore: fake.store,
+      sources: [makeSource({ content: "user prefers tea, name is Alice", trustLevel: "learned" })],
+    });
+
+    const result = await runUserRepresentationBuild(deps);
+
+    expect(result.ok).toBe(true);
+    expect(fake.decidedOutcomes).toEqual(["superseded", "corroborated", "inserted"]);
+    if (result.ok) {
+      expect(result.value.superseded).toBe(1);
+      expect(result.value.corroborated).toBe(1);
+      expect(result.value.inserted).toBe(1);
+      // The headline IN-02 assertion: written excludes the in-place corroboration.
+      expect(result.value.written).toBe(2);
+    }
   });
 });

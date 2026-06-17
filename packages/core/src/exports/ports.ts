@@ -42,6 +42,7 @@ export type {
   UserRepresentationTrust,
   UserRepresentationEntry,
   UserRepresentationInput,
+  ReviseOutcome,
   TunedAlphaStore,
   TunedAlphaScope,
   TunedAlphaVector,

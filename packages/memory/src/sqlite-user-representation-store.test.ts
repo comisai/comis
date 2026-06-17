@@ -571,6 +571,57 @@ describe("createSqliteUserRepresentationStore", () => {
       expect(currentTruthCount("tenant_a", "agent_x", "user_a", "identity")).toBe(1);
     });
 
+    it("revise() RETURNS the authoritative decided outcome for each branch (the single source of truth for the builder's REVISE-01/OBS-01 counts)", async () => {
+      // WR-01: the offline builder counts the outcome `revise()` RETURNS, not its own
+      // re-derivation. Pin the returned value for all four branches so a future
+      // threshold tweak in classifyAgainstIncumbent can never silently drift the
+      // builder's emitted superseded/corroborated/inserted counts.
+
+      // 1. No incumbent → inserted.
+      const inserted = await store.revise(
+        { entryType: "preference", content: "prefers coffee", trust: "learned" },
+        SCOPE_SEED,
+      );
+      expect(inserted.ok).toBe(true);
+      if (inserted.ok) expect(inserted.value).toBe("inserted");
+
+      // 2. Same belief slot, different value, equal trust → superseded.
+      const superseded = await store.revise(
+        { entryType: "preference", content: "prefers tea", trust: "learned" },
+        SCOPE_REVISE,
+      );
+      expect(superseded.ok).toBe(true);
+      if (superseded.ok) expect(superseded.value).toBe("superseded");
+
+      // 3. Near-restatement of the current belief → corroborated (in-place bump).
+      const corroborated = await store.revise(
+        { entryType: "preference", content: "  Prefers Tea  ", trust: "learned" },
+        { ...SCOPE_A, now: T_REVISE + 60_000 },
+      );
+      expect(corroborated.ok).toBe(true);
+      if (corroborated.ok) expect(corroborated.value).toBe("corroborated");
+
+      // 4. Lower-trust contradiction of a higher-trust incumbent → recorded-not-believed.
+      await store.revise(
+        { entryType: "identity", content: "name is Ada", trust: "system" },
+        SCOPE_SEED,
+      );
+      const notBelieved = await store.revise(
+        { entryType: "identity", content: "name is Bob", trust: "learned" },
+        SCOPE_REVISE,
+      );
+      expect(notBelieved.ok).toBe(true);
+      if (notBelieved.ok) expect(notBelieved.value).toBe("recorded-not-believed");
+
+      // 5. Topic-distinct same-type fact → inserted (coexist, never collapse).
+      const coexist = await store.revise(
+        { entryType: "preference", content: "enjoys hiking on weekends", trust: "learned" },
+        { ...SCOPE_A, now: T_REVISE + 120_000 },
+      );
+      expect(coexist.ok).toBe(true);
+      if (coexist.ok) expect(coexist.value).toBe("inserted");
+    });
+
     it("REJECTS trust='external' on the revise() path (REVISE-03 — the high-trust floor reject runs before the txn)", async () => {
       const r = await store.revise(
         { entryType: "preference", content: "x", trust: "external" as unknown as UserRepresentationTrust },

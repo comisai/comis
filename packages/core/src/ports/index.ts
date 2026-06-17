@@ -38,6 +38,7 @@ export type {
   UserRepresentationTrust,
   UserRepresentationEntry,
   UserRepresentationInput,
+  ReviseOutcome,
 } from "./user-representation-store.js";
 export type {
   TunedAlphaStore,

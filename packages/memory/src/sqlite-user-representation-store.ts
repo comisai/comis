@@ -90,6 +90,7 @@ import type {
   UserRepresentationScope,
   UserRepresentationInput,
   UserRepresentationEntry,
+  ReviseOutcome,
 } from "@comis/core";
 import { randomUUID } from "node:crypto";
 import { systemNowMs, validateMemoryWrite } from "@comis/core";
@@ -164,12 +165,16 @@ const TRUST_RANK: Record<"system" | "learned", number> = {
 
 /**
  * The decided branch of a `revise` transaction, logged as metadata (never the
- * content body). `inserted` = no incumbent; `corroborated` = same belief
- * (confidence bumped in place, no new row); `superseded` = a higher/equal-trust
- * contradiction soft-closed the incumbent; `recorded-not-believed` = a lower-trust
- * contradiction was rejected (the incumbent stays current).
+ * content body) AND returned to the caller (the single source of truth for the
+ * offline builder's revision telemetry — REVISE-01/OBS-01). `inserted` = no
+ * incumbent (or a topic-distinct coexist); `corroborated` = same belief (confidence
+ * bumped in place, no new row); `superseded` = a higher/equal-trust contradiction
+ * soft-closed the incumbent; `recorded-not-believed` = a lower-trust contradiction
+ * was rejected (the incumbent stays current). The canonical type is owned by the
+ * @comis/core port (`ReviseOutcome`) so the agent counts EXACTLY this — mirrored
+ * here only as the in-adapter alias.
  */
-type ReviseOutcome = "inserted" | "corroborated" | "superseded" | "recorded-not-believed";
+type ReviseOutcomeLocal = ReviseOutcome;
 
 /**
  * Normalize a belief content for the same-slot comparison: trim + collapse inner
@@ -488,7 +493,7 @@ export function createSqliteUserRepresentationStore(
     async revise(
       entry: UserRepresentationInput,
       scope: UserRepresentationScope,
-    ): Promise<Result<void, Error>> {
+    ): Promise<Result<ReviseOutcome, Error>> {
       const startMs = systemNowMs();
       const { tenantId, agentId, userId, now } = scope;
 
@@ -524,7 +529,7 @@ export function createSqliteUserRepresentationStore(
         // (mirror upsertTriple). better-sqlite3 auto-ROLLBACKs on ANY throw, so the
         // SELECT-incumbent → (corroborate | soft-close-loser + INSERT) unit is
         // atomic. The decided branch is returned for the metadata log.
-        const tx = db.transaction((): ReviseOutcome => {
+        const tx = db.transaction((): ReviseOutcomeLocal => {
           // 1. SELECT the current-truth incumbent for the slot (scoped). SELECT * →
           //    full-row mapper; a parse fault THROWS to ROLLBACK (caught below → err).
           const raw = selectCurrentEntry.get(tenantId, agentId, userId, entry.entryType);
@@ -599,7 +604,10 @@ export function createSqliteUserRepresentationStore(
           },
           "User-representation revise complete",
         );
-        return ok(undefined);
+        // Return the AUTHORITATIVE decided branch so the offline builder counts what
+        // was actually persisted (REVISE-01/OBS-01) — the single source of truth for
+        // the `learning:user_model_revised` superseded/corroborated/inserted counts.
+        return ok(outcome);
       } catch (e: unknown) {
         const durationMs = systemNowMs() - startMs;
         const error = e instanceof Error ? e : new Error(String(e));
