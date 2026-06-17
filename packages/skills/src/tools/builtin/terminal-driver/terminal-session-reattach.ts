@@ -230,6 +230,9 @@ export function markRunningSessionsLost(
 export interface DurableCreateInputs {
   sessionId: string;
   tmuxName?: string;
+  /** RECUR-03: the per-boot `-S` socket this durable session's tmux server is bound to (persisted
+   *  so a restart re-attaches it from its OWN server while new sessions get a fresh per-boot one). */
+  tmuxSocket?: string;
   allowId: string;
   owner: SessionOwner;
   cols: number;
@@ -256,6 +259,7 @@ export function buildSessionDescriptor(i: DurableCreateInputs): SessionDescripto
     createdAt: i.createdAt,
   };
   if (i.scope !== undefined) descriptor.scope = i.scope;
+  if (i.tmuxSocket !== undefined) descriptor.tmuxSocket = i.tmuxSocket;
   return descriptor;
 }
 

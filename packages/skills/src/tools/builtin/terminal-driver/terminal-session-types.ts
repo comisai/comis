@@ -98,4 +98,13 @@ export interface SessionHandle {
    * `lost`). Present only for a durable session (set at create-time + on rehydrate).
    */
   tmuxName?: string;
+  /**
+   * RECUR-03 (option A): the explicit `-S` socket path this durable session's tmux server is bound
+   * to — the PER-BOOT socket of the daemon generation that created it. The daemon's per-session
+   * `isTmuxAlive` probe + the worker's re-attach target THIS socket, so a restart re-attaches the
+   * surviving session from its OWN (prior-boot) server while new sessions get a fresh per-boot
+   * server in the live mount namespace (RECUR-02). Set at create-time + rehydrated on recover;
+   * absent ⇒ the boot socket fallback. Present only for a durable tmux session.
+   */
+  tmuxSocket?: string;
 }

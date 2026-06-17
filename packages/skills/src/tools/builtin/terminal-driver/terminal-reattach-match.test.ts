@@ -194,6 +194,30 @@ describe("terminal-reattach-match — serialize/deserialize round-trip (the dura
     expect(round).toEqual(desc);
   });
 
+  // RECUR-03 (option A, per-generation tmux server): a durable session is created on a PER-BOOT
+  // socket so a daemon restart's NEW sessions get a fresh server in the live mount namespace while
+  // the surviving durable one re-attaches from its OWN (prior-boot) socket and keeps running. The
+  // socket is persisted ON the descriptor so recover-on-boot probes/attaches the RIGHT server.
+  it("round-trips the per-session tmuxSocket (RECUR-03 — the per-boot server the session lives on)", () => {
+    const desc = makeDescriptor({ sessionId: "rt-sock", tmuxName: "comis-rt-sock", tmuxSocket: "/data/x/terminal-worker/tmux-77.sock" });
+    const round = deserializeDescriptor(serializeDescriptor(desc));
+    expect(round).toEqual(desc);
+    expect(round?.tmuxSocket).toBe("/data/x/terminal-worker/tmux-77.sock");
+  });
+
+  it("a legacy descriptor with NO tmuxSocket still deserializes (optional — pre-RECUR-03 / non-durable falls back to the boot socket)", () => {
+    const desc = makeDescriptor({ sessionId: "rt-legacy" });
+    delete (desc as { tmuxSocket?: string }).tmuxSocket;
+    const round = deserializeDescriptor(serializeDescriptor(desc));
+    expect(round).toBeDefined();
+    expect(round?.tmuxSocket).toBeUndefined();
+  });
+
+  it("REJECTS a non-string tmuxSocket (a smuggled-after-crash socket must not reach the probe)", () => {
+    const bad = { ...makeDescriptor(), tmuxSocket: 42 };
+    expect(deserializeDescriptor(bad)).toBeUndefined();
+  });
+
   it("accepts an already-parsed object (DUR-01 recover-on-boot may hand a parsed value)", () => {
     const desc = makeDescriptor();
     // Pass the object directly (not a JSON string) — the registry may deserialize once.
