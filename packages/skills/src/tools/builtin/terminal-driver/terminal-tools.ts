@@ -56,9 +56,7 @@ import {
   type SessionOwner,
 } from "./terminal-session-registry.js";
 
-// ---------------------------------------------------------------------------
 // Injected dependency contracts
-// ---------------------------------------------------------------------------
 
 /** Minimal pino-compatible structural logger — NOT `getLogger` from `@comis/infra`. */
 export interface ToolLogger {
@@ -186,16 +184,12 @@ export interface TerminalToolDeps {
   readonly approvalGate?: ApprovalGate;
 }
 
-// ---------------------------------------------------------------------------
 // Defaults (spec §5)
-// ---------------------------------------------------------------------------
 
 const DEFAULT_COLS = 120;
 const DEFAULT_ROWS = 40;
 
-// ---------------------------------------------------------------------------
 // Parameter schemas (spec §5 — the final signatures)
-// ---------------------------------------------------------------------------
 
 const CreateParams = Type.Object({
   allowId: Type.String({ description: "Allowlist entry id to spawn under" }),
@@ -261,9 +255,7 @@ const ResizeParams = Type.Object({
   rows: Type.Integer({ description: "New row count" }),
 });
 
-// ---------------------------------------------------------------------------
 // Param readers (typed, local — params arrive as Record<string,unknown>)
-// ---------------------------------------------------------------------------
 
 function readString(p: Record<string, unknown>, key: string): string | undefined {
   const v = p[key];
@@ -292,9 +284,7 @@ function readOptInt(p: Record<string, unknown>, key: string): number | undefined
   return typeof v === "number" && Number.isFinite(v) ? v : undefined;
 }
 
-// ---------------------------------------------------------------------------
 // Origin-keying: derive the (agentId, sessionKey) owner per call
-// ---------------------------------------------------------------------------
 
 /**
  * Derive the calling origin `(agentId, sessionKey)` for the owner-scoped registry calls from
@@ -311,9 +301,7 @@ export function resolveOwner(deps: TerminalToolDeps): SessionOwner {
 /** The degraded `{screen,cursor}` snapshot a send_text/send_key returns when the turn signal already aborted. */
 const ABORTED_SEND: SendResult = { screen: "", cursor: { x: 0, y: 0 } };
 
-// ---------------------------------------------------------------------------
 // create (the gate — allowlist / fail-closed / canonicalize / observe)
-// ---------------------------------------------------------------------------
 
 /**
  * `terminal_session_create` — gate on the allowlist, fail closed on a
@@ -502,9 +490,7 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
   };
 }
 
-// ---------------------------------------------------------------------------
 // read / list / kill (thin delegations)
-// ---------------------------------------------------------------------------
 
 /** `terminal_session_read` — return the settled `{screen,cursor,cols,rows,alt,alive}` view. */
 export function createTerminalSessionReadTool(deps: TerminalToolDeps): AgentTool<typeof ReadParams> {
@@ -609,7 +595,6 @@ export function createTerminalSessionKillTool(deps: TerminalToolDeps): AgentTool
   };
 }
 
-// ---------------------------------------------------------------------------
 // Interaction tools (send_text / send_key / resize / wait).
 //
 // Each is a thin delegation to the matching registry forwarding method,
@@ -618,7 +603,6 @@ export function createTerminalSessionKillTool(deps: TerminalToolDeps): AgentTool
 // session was gated at create) and never touch detectProvider — exactly the
 // read/list/kill posture. They take the full TerminalToolDeps so the daemon hands
 // one sharedDeps to all eight implemented tools.
-// ---------------------------------------------------------------------------
 
 /**
  * `terminal_session_send_text` — type `text` into the session; with `submit` the

@@ -42,7 +42,7 @@ import {
   type TerminalReplyFrame,
   type TerminalRequestFrame,
 } from "./terminal-ipc.js";
-import type { ReadOptions, SnapshotDiff } from "./terminal-render.js";
+import type { ReadOptions } from "./terminal-render.js";
 import {
   notFoundStatus,
   composeStatusView,
@@ -73,6 +73,11 @@ import type {
   FakeWorkerChild,
   RegistryLogger,
   SessionHandle,
+  SpawnFailureInfo,
+  CreateResult,
+  TerminalView,
+  SendResult,
+  SessionListing,
 } from "./terminal-session-types.js";
 
 export type { SessionOwner } from "./terminal-session-owner.js";
@@ -86,6 +91,11 @@ export type {
   RegistryLogger,
   SessionHandle,
   SessionStatus,
+  SpawnFailureInfo,
+  CreateResult,
+  TerminalView,
+  SendResult,
+  SessionListing,
 } from "./terminal-session-types.js";
 
 /**
@@ -94,21 +104,11 @@ export type {
  */
 export const DEFAULT_SCROLLBACK = 1000;
 
-// ---------------------------------------------------------------------------
 // Injected dependency contracts
-// ---------------------------------------------------------------------------
 //
 // RegistryLogger + FakeWorkerChild moved to the neutral leaf terminal-session-types.ts
 // (124-01) to break the worker-supervisor import cycle; type-imported above and
 // re-exported so the public surface is unchanged.
-
-/** Details handed to `onSpawnFailed` when the worker reports a failed backend spawn. */
-export interface SpawnFailureInfo {
-  /** The session whose backend spawn failed in the worker. */
-  sessionId: string;
-  /** The worker-reported error message (e.g. `spawn ENOENT`), if any. */
-  error?: string;
-}
 
 /**
  * Default reply timeout: a `request()` with no correlated reply in this window
@@ -170,9 +170,7 @@ export interface TerminalSessionRegistryDeps extends ReaperCaps {
   durability?: TerminalDurabilityDeps;
 }
 
-// ---------------------------------------------------------------------------
 // Public types
-// ---------------------------------------------------------------------------
 //
 // SessionStatus + SessionHandle moved to the neutral leaf terminal-session-types.ts
 // (124-01, closure of the worker-supervisor cycle break); type-imported above and
@@ -208,41 +206,6 @@ export interface CreateRequest {
   tmuxName?: string;
 }
 
-/** The `create` result handed back to the tool layer. */
-export interface CreateResult {
-  sessionId: string;
-  allowId: string;
-  cols: number;
-  rows: number;
-}
-
-/** The terminal view returned by `read` — the round-trip shape. */
-export interface TerminalView {
-  screen: string;
-  cursor: { x: number; y: number };
-  cols: number;
-  rows: number;
-  alt: boolean;
-  alive: boolean;
-  /** The per-read screen-diff vs the prior read. ADDITIVE: present when an emulator snapshot exists; the not-found/degraded early returns omit it. */
-  diff?: SnapshotDiff;
-}
-
-/** The post-action snapshot subset returned by `sendText`/`sendKey` (spec §5) — `{screen,cursor}`, a strict subset of {@link TerminalView}. */
-export interface SendResult {
-  screen: string;
-  cursor: { x: number; y: number };
-  /**
-   * Whether the send was actually FORWARDED to a live worker (WR-05). `true` only
-   * when the owned, running session round-tripped an `ok` reply; absent/falsy on the
-   * degraded path (absent/cross-owner/not-running session OR a wedged worker — the
-   * `{screen:"",cursor:{0,0}}` not-delivered shape). The woken-turn audit reads this
-   * so a keystroke that reached nothing is recorded `outcome:"rejected"`, never
-   * `attempted` — keeping the §2.7 audit trail honest about delivery.
-   */
-  delivered?: boolean;
-}
-
 // The §5 `status` view + its pure composition live in the leaf `terminal-status-view.ts`
 // (extracted to keep this file under the 800-line cap). Re-export the view type (imported
 // above) so the registry's public surface is unchanged.
@@ -251,15 +214,6 @@ export type { TerminalStatusView };
 // The wait reply shape + its defensive worker→daemon mapping live in terminal-wait-reply
 // (extracted to keep this file under the 800-line cap + make the mapping a tested unit).
 export type { WaitResult };
-
-/** A `list` row — the create-time + liveness summary. */
-export interface SessionListing {
-  sessionId: string;
-  allowId: string;
-  command: string;
-  alive: boolean;
-  lastActivity: number;
-}
 
 /**
  * The registry's public surface. Every session-scoped method takes a REQUIRED
@@ -307,9 +261,7 @@ export interface TerminalSessionRegistry {
 // buildProductionSpawnWorker) is in ./terminal-worker-launch.ts — extracted so this
 // file stays under the 800-line cap; the barrel re-exports it from there.
 
-// ---------------------------------------------------------------------------
 // Factory
-// ---------------------------------------------------------------------------
 
 /** Generate a unique session id (mirrors process-registry's `generateSessionId`). */
 function generateSessionId(): string {

@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tool assembly setup: assembleToolsForAgent and preprocessMessageText.
- * Isolates per-agent tool creation and message preprocessing from the
- * main wiring sequence.
+ * Tool assembly setup: per-agent tool creation (assembleToolsForAgent) + message
+ * preprocessing (preprocessMessageText), isolated from the main wiring sequence.
  * @module
  */
 
@@ -21,7 +20,6 @@ import {
 import { sessionKeyToPath } from "@comis/agent";
 import type { SessionTrackerRegistry, CapabilityClass } from "@comis/agent";
 import { toolResultsDirFromSessionPath } from "./tool-results-dir.js";
-// Workspace helpers live in @comis/core.
 import {
   WORKSPACE_FILE_NAMES,
   DEFAULT_TEMPLATES,
@@ -90,9 +88,7 @@ export type { BrokerContextDeps } from "./setup-broker-activation.js";
 import { buildBrokerSpawnEnv, type BrokerContextDeps } from "./setup-broker-activation.js";
 
 
-// ---------------------------------------------------------------------------
 // Deps / Result types
-// ---------------------------------------------------------------------------
 
 /** Dependencies for tool assembly setup. */
 export interface ToolsDeps {
@@ -238,18 +234,12 @@ export interface ToolsResult {
   terminalDurability: ReturnType<typeof buildTerminalWakeDurability>;
 }
 
-// ---------------------------------------------------------------------------
 // Setup function
-// ---------------------------------------------------------------------------
 
 /**
- * Create per-agent tool assembly and message preprocessing closures.
- * Synchronous -- just creates closures over the injected dependencies.
- * rpcCall is passed as a dep (not imported directly) because
- * assembleToolsForAgent creates tools that call rpcCall, and rpcCall's
- * gateway path calls assembleToolsForAgent -- this circular dependency
- * is broken by callback injection.
- * @param deps - Tool assembly dependencies
+ * Create per-agent tool-assembly + message-preprocessing closures over the injected deps.
+ * `rpcCall` is injected (not imported) to break a cycle: assembleToolsForAgent builds tools
+ * that call rpcCall, whose gateway path calls assembleToolsForAgent back.
  */
 export function setupTools(deps: ToolsDeps): ToolsResult {
   const {
