@@ -274,6 +274,35 @@ describe("createSqliteMemoryEntityStore", () => {
       expect(only?.score).toBeLessThanOrEqual(1);
     });
 
+    // CR-01 (lane gap): the entity associative lane hydrates a full memory row that
+    // flows straight into createMemoryRecall → the prompt with NO downstream
+    // evicted_at re-validation. A soft-evicted shared-entity memory MUST be excluded
+    // here exactly as on the adapter's recall paths; the inspect/asOf raw read still
+    // resolves it (soft eviction is reversible).
+    it("CR-01: a soft-evicted shared-entity memory is EXCLUDED from the lane (asOf raw read still resolves it)", async () => {
+      const m1 = await seedMemory({ id: "m1", content: "seed body" });
+      const m2 = await seedMemory({ id: "m2", content: "shared but evicted" });
+      await store.resolveAndLink(m1, "Shared Co", SCOPE_A);
+      await store.resolveAndLink(m2, "Shared Co", { ...SCOPE_A, now: 1_100 });
+
+      // Soft-evict m2 (the lifecycle sweep's marker; NULL = live).
+      db.prepare("UPDATE memories SET evicted_at = ? WHERE id = ?").run(1_700_000_000_000, "m2");
+
+      const res = await store.associativeLane([m1], LANE_SCOPE, 50);
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      // m2 is evicted → it must NOT surface in the lane (was leaking on HEAD).
+      expect(res.value.map((r) => r.entry.id)).not.toContain("m2");
+
+      // Reversibility: the raw inspect/asOf read does NOT add the evicted_at filter.
+      const raw = db.prepare("SELECT id, evicted_at FROM memories WHERE id = 'm2'").get() as {
+        id: string;
+        evicted_at: number | null;
+      };
+      expect(raw.id).toBe("m2");
+      expect(raw.evicted_at).not.toBeNull();
+    });
+
     it("orders most-shared-first: a memory sharing 2 entities ranks before one sharing 1", async () => {
       const seed = await seedMemory({ id: "seed" });
       const two = await seedMemory({ id: "two" }); // shares E1 + E2
