@@ -14,7 +14,8 @@ import { z } from "zod";
  * MemoryReviewConfigSchema: Zod schema for per-agent memory review settings.
  *
  * Fields:
- * - enabled: opt-in (default false)
+ * - enabled: default true (opt-out); a COST feature force-disabled by the master
+ *   switch `memory.costFeatures.enabled`
  * - schedule: cron expression for review timing
  * - minMessages: minimum session messages to qualify for review
  * - maxSessionsPerRun: cap on sessions processed per cycle

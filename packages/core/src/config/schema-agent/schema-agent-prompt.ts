@@ -110,8 +110,9 @@ export const RagConfigSchema = z.strictObject({
          *  the recall-side gate `rag.forget` carries only the on/off toggle, NOT a magnitude).
          *  Bounded small (same magnitude as trust/proof/usefulness) so a stale memory's decay
          *  RANKS but CANNOT overturn trust-first ordering — Pitfall 2. The factor only ever
-         *  demotes (∈ [0.5,1], wrapped by this alpha), and is neutral (factor 1.0) whenever
-         *  forget is OFF (default) OR at event-age 0 (the neutral-in-time byte-identity point). */
+         *  demotes (∈ [0.5,1], wrapped by this alpha), and is neutral (factor 1.0) at
+         *  event-age 0 (the neutral-in-time byte-identity point), regardless of the
+         *  `rag.forget` toggle (which defaults ON), OR when forget is explicitly disabled. */
         forgetAlpha: z.number().min(0).max(1).default(0.1),
       })
       .default(() => ({

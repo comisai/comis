@@ -4,10 +4,12 @@
  *
  * Controls the periodic background job that clusters repeated/near-duplicate
  * raw memories into a single observation row (`proof_count IS NOT NULL`) via a
- * cheap-model LLM merge. The job is OFF by default — enabling it is a COST
- * opt-in (it runs an LLM cron), a deliberate operator choice, not a
- * default behavior. Every per-run cost axis is bounded here so an operator cannot
- * accidentally unbound the LLM spend (bounds defined here, enforced by the job).
+ * cheap-model LLM merge. The per-feature `enabled` flag defaults ON (opt-out); the
+ * job is a COST feature gated by the master switch `memory.costFeatures.enabled`
+ * (default `true` = opt-out) — turning that master switch OFF force-disables this
+ * cron (and the other five cost crons) at its registration site. Every per-run cost
+ * axis is bounded here so an operator cannot accidentally unbound the LLM spend
+ * (bounds defined here, enforced by the job).
  *
  * Mirrors {@link MemoryReviewConfigSchema}'s shape and conventions.
  *
@@ -21,7 +23,7 @@ import { z } from "zod";
  * settings (design §6.4).
  *
  * Fields:
- * - enabled: opt-in (default false — a cost gate)
+ * - enabled: default true (opt-out); a cost gate force-disabled by the master switch
  * - schedule: cron expression, after memory-review's "0 2" daily slot
  * - similarityThreshold: cluster neighbour cosine (greedy single-link)
  * - dedupThreshold: secondary content-similarity dedup guard

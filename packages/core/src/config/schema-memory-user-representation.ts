@@ -4,10 +4,11 @@
  *
  * Controls the offline per-user profile-builder job (`runUserRepresentationBuild`)
  * that distills a durable, prefix-typed profile of each user from their HIGH-TRUST
- * source memories on a cron. The job is OFF by default — enabling it is a COST
- * opt-in (it runs an LLM cron), a deliberate operator choice, NOT a default
- * behavior (no back-compat fallback). The per-run write cap (`maxEntriesPerRun`)
- * is the DoS cost bound — an operator cannot accidentally unbound the LLM spend.
+ * source memories on a cron. The per-feature `enabled` flag defaults ON (opt-out); the
+ * job is a COST feature gated by the master switch `memory.costFeatures.enabled`
+ * (default `true` = opt-out) — turning that master switch OFF force-disables it. The
+ * per-run write cap (`maxEntriesPerRun`) is the DoS cost bound — an operator cannot
+ * accidentally unbound the LLM spend.
  *
  * Mirrors {@link MemoryReasoningConfigSchema}'s shape and conventions (the cost-gate
  * cron pattern); kept deliberately small — the per-user profile has no surprisal
@@ -23,7 +24,7 @@ import { z } from "zod";
  * settings.
  *
  * Fields:
- * - enabled: opt-in (default false — a cost gate, not back-compat)
+ * - enabled: default true (opt-out); a cost gate force-disabled by the master switch
  * - schedule: cron expression, after reasoning's "0 4" daily slot so the profile
  *   is built over freshly-reasoned/consolidated memories the same night
  * - maxEntriesPerRun: max profile entries WRITTEN per run (the DoS cost bound, write axis)

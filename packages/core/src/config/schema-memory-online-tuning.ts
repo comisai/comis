@@ -2,14 +2,16 @@
 /**
  * Offline online-tuning (learning-to-rank bandit) configuration schema.
  *
- * The CRON knob for the OFFLINE, DETERMINISTIC, LLM-FREE tuned-alpha bandit. OFF
- * by default — enabling it is a deliberate operator choice, NOT a default behavior
- * (no back-compat fallback). Unlike {@link MemoryUsefulnessJudgeConfigSchema} (an
+ * The CRON knob for the OFFLINE, DETERMINISTIC, LLM-FREE tuned-alpha bandit. The
+ * per-feature `enabled` flag defaults ON (opt-out); it is in the operator-facing
+ * cost-feature set, so the master switch `memory.costFeatures.enabled` (default
+ * `true` = opt-out) force-disables it alongside the LLM crons for a single off-switch.
+ * Unlike {@link MemoryUsefulnessJudgeConfigSchema} (an
  * LLM cron), this bandit is KEYLESS: the cron dispatch makes NO model call and
  * needs NO API key (the deletion vs the judge — the bandit reads the already-accrued
  * FEED signal, runs a pure clamped step, and upserts a 4-alpha vector). So enabling
- * it costs nothing in LLM spend; the gate exists for behavior-opt-in + a bounded
- * write, not cost.
+ * it costs nothing in LLM spend; the per-feature gate exists for behavior-opt-in + a
+ * bounded write, not cost.
  *
  * OFFLINE only: the bandit runs on a cron and NEVER touches the recall read path
  * (the recall hot path stays LLM-free + deterministic — binding constraint #1). The
@@ -35,8 +37,9 @@ import { z } from "zod";
  * bandit cron.
  *
  * Fields:
- * - enabled: opt-in (default false — a behavior gate, NOT back-compat). The bandit
- *   is keyless/deterministic, so this is not a COST gate like the LLM-cron knobs.
+ * - enabled: default true (opt-out); a behavior gate force-disabled by the master
+ *   switch. The bandit is keyless/deterministic, so this is not a COST gate like the
+ *   LLM-cron knobs — but it sits in the cost-feature set for a single off-switch.
  * - schedule: cron expression, default daily at 08:00 UTC — AFTER the usefulness
  *   judge's "0 7" slot so the FEED signal it reads is fully settled (the judge's
  *   recordUsage write, if enabled, has run; review/consolidation/reasoning/user-repr/

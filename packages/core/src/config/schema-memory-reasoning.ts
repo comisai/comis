@@ -3,10 +3,11 @@
  * Memory reasoning configuration schema.
  *
  * Controls the offline reasoning job (deductive + inductive observation
- * generation) that runs over consolidated memories on a cron. The job is OFF by
- * default — enabling it is a COST opt-in (it runs an LLM cron), a deliberate
- * operator choice, not a default behavior. Every per-run cost axis
- * is bounded here — the surprisal gate (`surprisalTopFraction`) plus
+ * generation) that runs over consolidated memories on a cron. The per-feature
+ * `enabled` flag defaults ON (opt-out); the job is a COST feature gated by the master
+ * switch `memory.costFeatures.enabled` (default `true` = opt-out) — turning that master
+ * switch OFF force-disables it. Every per-run cost axis is bounded here — the surprisal
+ * gate (`surprisalTopFraction`) plus
  * `maxCandidatesPerRun` / `maxObservationsPerRun` / `maxReasoningTokens` — so an
  * operator cannot accidentally unbound the LLM spend (the unbounded-spend threat —
  * bounds defined here, enforced by the job in a later plan).
@@ -22,7 +23,7 @@ import { z } from "zod";
  * MemoryReasoningConfigSchema: Zod schema for per-agent reasoning-job settings.
  *
  * Fields:
- * - enabled: opt-in (default false — a cost gate)
+ * - enabled: default true (opt-out); a cost gate force-disabled by the master switch
  * - schedule: cron expression, after consolidation's "30 3" daily slot so
  *   reasoning runs over freshly-consolidated observations
  * - maxCandidatesPerRun: candidate pool cap (cost bound)

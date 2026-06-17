@@ -61,8 +61,10 @@ const TIE_EPSILON = 1e-9;
  * concern (RESEARCH: the breakdown is safe to persist). Invariant:
  *   final === base * recency * temporal * proof * trust * usefulness * forget
  * A neutral sub-signal contributes a factor of exactly 1.0 (recency/temporal/proof/
- * trust/usefulness are each centered on 0.5; forget is centered on its 1.0 neutral and
- * gated default-OFF), so a raw memory's proof + temporal + usefulness + forget factors are 1.0.
+ * trust/usefulness are each centered on 0.5; forget is centered on its 1.0 neutral and is
+ * byte-identical at event-age Δt=0 regardless of the enable flag — which itself defaults ON,
+ * gated only by the master cost switch `memory.costFeatures.enabled`), so a raw memory's
+ * proof + temporal + usefulness + forget factors are 1.0.
  */
 export interface ScoreBreakdown {
   /** The un-boosted relevance score (`result.score ?? 0`). */
@@ -77,8 +79,9 @@ export interface ScoreBreakdown {
   trust: number;
   /** Usefulness factor `1 + usefulnessAlpha * (usefulnessNorm - 0.5)`; 1.0 when the signal is absent. */
   usefulness: number;
-  /** FadeMem decay factor `1 + forgetAlpha * (fadeMemFactor - 1.0)`; EXACTLY 1.0 when
-   *  forget is OFF (the default) OR at event-age 0 (the neutral-in-time byte-identity point). */
+  /** FadeMem decay factor `1 + forgetAlpha * (fadeMemFactor - 1.0)`; EXACTLY 1.0 at
+   *  event-age 0 (the neutral-in-time byte-identity point), regardless of the enable flag
+   *  (which defaults ON), OR when forget is explicitly disabled. */
   forget: number;
   /** The boosted score = base × recency × temporal × proof × trust × usefulness × forget. */
   final: number;
@@ -172,7 +175,8 @@ const CONFIDENCE_HALF_LIFE_DAYS = 30;
 
 // ─── The per-type FadeMem decay factor (RESEARCH "## FadeMem Math") ───
 // A 6th 0.5-centered bounded multiplicand `0.5 + 0.5·exp(−λ·Δt^β)` ∈ [0.5,1] (neutral → 1.0),
-// gated default-OFF by `cfg.forget?.enabled`. λ = λ_base·exp(−μ·imp); imp is the Comis
+// gated by `cfg.forget?.enabled` (which defaults ON; the only off-switch is the master cost
+// switch). λ = λ_base·exp(−μ·imp); imp is the Comis
 // superset over the 5 EXISTING scoring signals (relevance/used-rate/recency/trust/proof) —
 // NO new store, NO new I/O on the recall path (the agent↛memory cut: this file imports only
 // @comis/core types). Lazy-at-read: pure over the INJECTED nowMs (never Date.now). Decay
@@ -405,9 +409,11 @@ function compareBoosted(a: MemorySearchResult, b: MemorySearchResult): number {
  * behaviour (`MemorySearchResult` is unchanged — the signal rides this side map, not the result).
  *
  * `forget` (optional) is the recall-side gate for the FadeMem decay factor (the 6th
- * multiplicand). ABSENT or `{ enabled: false }` → the factor is forced to EXACTLY 1.0 (the
- * default-OFF byte-identity, way #1). When `{ enabled: true }` the factor decays an aged memory
- * (per-type β, importance-modulated λ) but at event-age 0 it is still EXACTLY 1.0 (way #2). The
+ * multiplicand). ABSENT or `{ enabled: false }` → the factor is forced to EXACTLY 1.0
+ * (byte-identity way #1 — the disabled gate; note `rag.forget.enabled` itself defaults ON,
+ * so the absent case is the test/legacy path, not the production default). When
+ * `{ enabled: true }` the factor decays an aged memory (per-type β, importance-modulated λ)
+ * but at event-age 0 it is still EXACTLY 1.0 (way #2). The
  * factor only ever demotes (∈ [0.5,1] wrapped by `forgetAlpha`); it RANKS, never GATES (no
  * result is dropped). `forget` is config-sourced (RagConfig.forget) — NOT a store.
  *
@@ -422,7 +428,7 @@ export function scoreWithBreakdown(
   usefulnessById?: ReadonlyMap<string, UsefulnessSignal>,
   forget?: { enabled: boolean },
 ): ScoredWithBreakdown[] {
-  const forgetEnabled = forget?.enabled === true; // default-OFF gate (way #1 byte-identity)
+  const forgetEnabled = forget?.enabled === true; // explicit-disable gate (way #1 byte-identity); rag.forget.enabled defaults ON
   const boosted: ScoredWithBreakdown[] = results.map((result) => {
     const base = result.score ?? 0;
     const recencyFactor = 1 + alphas.recencyAlpha * (recency(result.entry.createdAt, nowMs) - 0.5);
@@ -435,7 +441,8 @@ export function scoreWithBreakdown(
     // Absent signal → usefulnessNorm 0.5 → usefulnessFactor exactly 1.0 (byte-identity).
     const usefulnessSignal = usefulnessById?.get(result.entry.id);
     const usefulnessFactor = 1 + alphas.usefulnessAlpha * (usefulnessNorm(usefulnessSignal) - 0.5);
-    // FadeMem decay: the 6th multiplicand, gated default-OFF. The factor is
+    // FadeMem decay: the 6th multiplicand, gated by the explicit forget toggle (which
+    // defaults ON). The factor is
     // centered on its 1.0 neutral (fadeMemFactor ∈ [0.5,1]), so `forgetFactor = 1 +
     // forgetAlpha·(fadeMemFactor − 1)` ∈ [1 − forgetAlpha·0.5, 1] — it only ever demotes a
     // STALE memory. OFF ⇒ forced to EXACTLY 1.0 (way #1); ON at event-age 0 ⇒ fadeMemFactor
