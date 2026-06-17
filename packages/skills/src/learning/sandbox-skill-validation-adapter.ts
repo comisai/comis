@@ -4,9 +4,11 @@
  * @comis/core {@link SkillValidationPort} (v2.26 Verified Learning, WS2 step 5).
  *
  * This file holds the STATIC half (Phase 201 Plan 05):
- *   - per-field `validateMemoryWrite` safety scan over body / each scripts[].content
- *     / description — `staticOk = severity !== "critical"` PER FIELD (a CRITICAL on
- *     ANY field rejects: the memory-poison `injection-trajectory` defense, SKILL-06);
+ *   - per-field `validateMemoryWrite` safety scan over name / body / description /
+ *     stringified paramsSchema / each scripts[].content — `staticOk =
+ *     severity !== "critical"` PER FIELD (a CRITICAL on ANY field rejects: the
+ *     memory-poison `injection-trajectory` defense, SKILL-06); plus a length bound
+ *     on the attacker-influenced primary-key `name` (WR-05);
  *   - `params_schema` compiled via TypeBox `Compile` in a try/catch — a malformed
  *     schema becomes a finding, never a throw;
  *   - `mutating` classification with the LOAD-BEARING `mcp__` OR-branch (the
@@ -128,6 +130,18 @@ export interface SandboxSkillValidationAdapterDeps {
  * and counts as a clean fail (`dynamicOk:false`), never a hang.
  */
 export const DEFAULT_SCRIPT_TIMEOUT_MS = 30_000;
+
+/**
+ * The maximum byte/char length allowed for a synthesized `name` (WR-05). `name`
+ * is attacker-influenced (LLM output distilled from an UNTRUSTED trajectory),
+ * becomes the `learned_skills.name` PRIMARY-KEY input + the `UNIQUE` lookup key,
+ * is embedded in the approval `action` string and prompts, and is the one
+ * untrusted text field that — pre-fix — had neither a poison scan nor a length
+ * bound. A sane cap rejects a megabyte-name DoS at validation. 120 chars matches
+ * the prompt's "short, stable, kebab-case" instruction (the schema enforces the
+ * charset; this enforces the ceiling regardless of how the candidate arrived).
+ */
+export const MAX_SKILL_NAME_LENGTH = 120;
 
 /**
  * The small set of unambiguously read-only built-in tools (lowercased). MIRRORS
@@ -510,15 +524,34 @@ function hasCheckableEffect(replay: ReplayContext): boolean {
 }
 
 /**
- * Run EACH text field through `validateMemoryWrite`, pushing a static finding for
- * any field that classifies CRITICAL. The field tuple covers `body`, `description`,
- * and EVERY `scripts[i].content` (so a critical in scripts[1] is caught and tagged
+ * Run EACH untrusted text field through `validateMemoryWrite`, pushing a static
+ * finding for any field that classifies CRITICAL. The field tuple covers `name`,
+ * `body`, `description`, the stringified `paramsSchema`, and EVERY
+ * `scripts[i].content` (so a critical in scripts[1] is caught and tagged
  * `scripts[1]`, not lumped under a single "scripts" field).
+ *
+ * `name` (WR-05) and `paramsSchema` (IN-02) are attacker-influenced LLM output
+ * (distilled from an UNTRUSTED trajectory) that persist to `learned_skills` and,
+ * for `name`, flow into the PRIMARY KEY / prompts / approval action — so they MUST
+ * be poison-scanned like every other text field. `name` is ALSO length-bounded
+ * (a {@link MAX_SKILL_NAME_LENGTH} ceiling) to reject a megabyte-name DoS before
+ * the scan runs over it.
  */
 function scanFields(skill: CandidateSkill, findings: SkillValidationFinding[]): void {
+  // Length bound on the PRIMARY-KEY-input `name` (WR-05). An over-cap name is a
+  // static finding (→ staticOk:false) — never silently truncated, so a poisoned
+  // oversized name can never enter the store.
+  if (skill.name.length > MAX_SKILL_NAME_LENGTH) {
+    findings.push({ field: "name", kind: "static", patterns: ["name-too-long"] });
+  }
   const allTextFields: ReadonlyArray<readonly [string, string]> = [
+    ["name", skill.name],
     ["body", skill.body],
     ["description", skill.description],
+    // The stringified params schema is untrusted persisted text — scan it too
+    // (it compiles cleanly via TypeBox but the raw string can still smuggle a
+    // critical pattern, IN-02). Empty/absent → "" (validateMemoryWrite is clean).
+    ["params_schema", skill.paramsSchema ?? ""],
     ...skill.scripts.map((s, i): readonly [string, string] => [`scripts[${i}]`, s.content]),
   ];
   for (const [field, content] of allTextFields) {

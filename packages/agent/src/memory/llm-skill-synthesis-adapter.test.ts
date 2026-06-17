@@ -152,4 +152,61 @@ describe("createLlmSkillSynthesisAdapter (SKILL-02)", () => {
 
     expect(res.ok).toBe(false);
   });
+
+  // WR-05 (schema layer, defense-in-depth): the `name` charset + length bound
+  // drops a malformed/oversized name at parse time so a poisoned name never
+  // reaches the store or the validator. The validator scans `name` too (the
+  // load-bearing layer); this is the cheap early reject for the kebab-case
+  // contract the prompt already asks for.
+
+  it("drops a candidate whose name is not kebab-case (schema rejects non-id names)", async () => {
+    (completeSimple as Mock).mockResolvedValue(
+      textResponse(
+        JSON.stringify({
+          skills: [{ ...VALID_SKILL.skills[0], name: "Has Spaces And Caps!" }],
+        }),
+      ),
+    );
+    const adapter = makeAdapter();
+
+    const res = await adapter.synthesize(makeInput());
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.value).toEqual([]); // non-kebab name → element salvaged out
+  });
+
+  it("drops a candidate whose name exceeds the length cap (schema rejects an oversized name)", async () => {
+    (completeSimple as Mock).mockResolvedValue(
+      textResponse(
+        JSON.stringify({
+          skills: [{ ...VALID_SKILL.skills[0], name: "a".repeat(200) }],
+        }),
+      ),
+    );
+    const adapter = makeAdapter();
+
+    const res = await adapter.synthesize(makeInput());
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.value).toEqual([]); // over-long name → element salvaged out
+  });
+
+  it("keeps a valid kebab-case name at the cap boundary", async () => {
+    (completeSimple as Mock).mockResolvedValue(
+      textResponse(
+        JSON.stringify({
+          skills: [{ ...VALID_SKILL.skills[0], name: "a".repeat(120) }],
+        }),
+      ),
+    );
+    const adapter = makeAdapter();
+
+    const res = await adapter.synthesize(makeInput());
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.value).toHaveLength(1);
+  });
 });

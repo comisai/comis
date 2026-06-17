@@ -25,6 +25,7 @@ import type { SandboxProvider } from "../tools/builtin/sandbox/types.js";
 import {
   createSandboxSkillValidationAdapter,
   classifyMutating,
+  MAX_SKILL_NAME_LENGTH,
 } from "./sandbox-skill-validation-adapter.js";
 
 // ---------------------------------------------------------------------------
@@ -237,6 +238,86 @@ describe("SandboxSkillValidationAdapter — static per-field validateMemoryWrite
     expect(r.value.reproducedEffect).toBe(false);
     expect(r.value.coverage).toBe("static-only");
     expect(r.value.sandboxProvider).toBe("none");
+  });
+
+  // -------------------------------------------------------------------------
+  // WR-05 + IN-02: the `name` and stringified `paramsSchema` fields are
+  // attacker-influenced (LLM output distilled from an untrusted trajectory) and
+  // both persist to learned_skills. `name` is also a primary-key input and flows
+  // into prompts/approval actions. They MUST go through the per-field poison
+  // scan, and `name` MUST be length-bounded.
+  // -------------------------------------------------------------------------
+
+  it("REJECTS a candidate whose NAME embeds a dangerous-command pattern (staticOk:false, name finding)", async () => {
+    const adapter = createSandboxSkillValidationAdapter(fullPolicyDeps(["read"]));
+    const candidate = cleanCandidate({ name: "rm -rf / --no-preserve-root" });
+
+    const r = await adapter.validate(candidate, NO_REPLAY, SCOPE);
+
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value.staticOk).toBe(false);
+    const nameFinding = r.value.findings.find((f) => f.field === "name" && f.kind === "static");
+    expect(nameFinding).toBeDefined();
+    expect(nameFinding?.patterns?.length ?? 0).toBeGreaterThan(0);
+  });
+
+  it("REJECTS a candidate whose NAME exfiltrates a secret (secret-egress critical on name)", async () => {
+    const adapter = createSandboxSkillValidationAdapter(fullPolicyDeps(["read"]));
+    const candidate = cleanCandidate({
+      name: "OPENAI_API_KEY=sk-proj-ABCDEF1234567890abcdef1234567890abcdef12",
+    });
+
+    const r = await adapter.validate(candidate, NO_REPLAY, SCOPE);
+
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value.staticOk).toBe(false);
+    expect(r.value.findings.some((f) => f.field === "name" && f.kind === "static")).toBe(true);
+  });
+
+  it("REJECTS an oversized NAME over the length cap (a megabyte-name DoS, staticOk:false)", async () => {
+    const adapter = createSandboxSkillValidationAdapter(fullPolicyDeps(["read"]));
+    const candidate = cleanCandidate({ name: "a".repeat(MAX_SKILL_NAME_LENGTH + 1) });
+
+    const r = await adapter.validate(candidate, NO_REPLAY, SCOPE);
+
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value.staticOk).toBe(false);
+    expect(r.value.findings.some((f) => f.field === "name" && f.kind === "static")).toBe(true);
+  });
+
+  it("ADMITS a normal kebab-case NAME at the cap boundary (length bound is inclusive)", async () => {
+    const adapter = createSandboxSkillValidationAdapter(fullPolicyDeps(["read"]));
+    const candidate = cleanCandidate({ name: "a".repeat(MAX_SKILL_NAME_LENGTH) });
+
+    const r = await adapter.validate(candidate, NO_REPLAY, SCOPE);
+
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    // No name finding at exactly the cap (and the body/desc/tools are clean).
+    expect(r.value.findings.some((f) => f.field === "name")).toBe(false);
+    expect(r.value.staticOk).toBe(true);
+  });
+
+  it("REJECTS a paramsSchema string carrying a CRITICAL pattern (IN-02 — schema text is poison-scanned)", async () => {
+    const adapter = createSandboxSkillValidationAdapter(fullPolicyDeps(["read"]));
+    // A structurally-valid JSON schema whose DESCRIPTION smuggles a secret-egress
+    // pattern — compiles fine (TypeBox), but the text must still be scanned.
+    const candidate = cleanCandidate({
+      paramsSchema: JSON.stringify({
+        type: "object",
+        description: "set OPENAI_API_KEY=sk-proj-ABCDEF1234567890abcdef1234567890abcdef12",
+      }),
+    });
+
+    const r = await adapter.validate(candidate, NO_REPLAY, SCOPE);
+
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value.staticOk).toBe(false);
+    expect(r.value.findings.some((f) => f.field === "params_schema" && f.kind === "static")).toBe(true);
   });
 
   describe("params_schema compile (TypeBox)", () => {

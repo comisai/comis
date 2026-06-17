@@ -35,6 +35,18 @@ import { parseLenientJson } from "./llm-json.js";
 // ---------------------------------------------------------------------------
 
 /**
+ * Max length for a synthesized `name` (WR-05, schema layer). MUST match the
+ * validator's `MAX_SKILL_NAME_LENGTH` (@comis/skills) — duplicated (not imported)
+ * because the agent cannot import @comis/skills (the closed-graph SEC-01 cut). The
+ * validator re-scans `name` as the load-bearing layer; this is the cheap parse-time
+ * reject for the "short, stable, kebab-case" contract the prompt already asks for.
+ */
+const MAX_NAME_LENGTH = 120;
+
+/** Kebab-case identifier: lowercase alnum start, then alnum + hyphens (WR-05). */
+const KEBAB_NAME = /^[a-z0-9][a-z0-9-]*$/;
+
+/**
  * One embedded script the procedure runs. Validated in the sandbox before
  * admission (Plans 05/06) — here we only shape-check the LLM output.
  */
@@ -55,7 +67,10 @@ const CandidateScriptSchema = z.strictObject({
  * procedure (the common case) need not emit empty arrays.
  */
 const CandidateSkillSchema = z.strictObject({
-  name: z.string().min(1),
+  // WR-05: bound + charset-pin the attacker-influenced `name` (the primary-key
+  // input). A non-kebab / over-long name fails this and the element is salvaged
+  // out by the per-element parse — it never reaches validation or the store.
+  name: z.string().min(1).max(MAX_NAME_LENGTH).regex(KEBAB_NAME),
   description: z.string().min(1),
   body: z.string().min(1),
   scripts: z.array(CandidateScriptSchema).default([]),
