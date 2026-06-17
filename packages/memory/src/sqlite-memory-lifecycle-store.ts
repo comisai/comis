@@ -25,8 +25,11 @@
  * stays DORMANT — it computes but APPLIES NOTHING (report `evicted`/`demoted` = 0,
  * no UPDATE, no DELETE) — the byte-identity guarantee. Tier demote/promote moves
  * remain a deferred step (`promoted`/`demoted` are still 0 in this build). The
- * recall-side exclusion of evicted rows is enforced by `hybrid-search.ts`
- * (`evicted_at IS NULL`), not here.
+ * recall-side exclusion of evicted rows is enforced on EVERY live recall path (CR-01),
+ * not here: `hybrid-search.ts` (the post-fusion `evicted_at IS NULL`) AND
+ * `sqlite-memory-adapter.ts` (`hydrateLane`/`searchLanes` + the vector-only `search()`
+ * per-id reads). The inspect/asOf raw reads stay UNFILTERED so an evicted row is still
+ * audit/asOf-resolvable.
  *
  * ## Isolation is the load-bearing security boundary (the §5.2 invariant)
  *
