@@ -725,6 +725,93 @@ describe("WR-01: failureCorroborated tally is bounded (no daemon-lifetime growth
   });
 });
 
+// ---------------------------------------------------------------------------
+// ATTR-02 (Plan 07): memory:skill_used → observe(usedSkillIds) DAEMON-SIDE.
+// The agent EMITS the per-turn used-skill ids on memory:skill_used (Plan 03,
+// mirroring memory:recall_used); the daemon SUBSCRIBES + threads usedSkillIds
+// into an observe() call so the used_skill_ids COLUMN is written (the loop is no
+// longer write-only). The agent never touches the store — closed graph.
+// ---------------------------------------------------------------------------
+
+function skillUsedPayload(over?: Partial<EventMap["memory:skill_used"]>): EventMap["memory:skill_used"] {
+  return {
+    agentId: AGENT,
+    sessionKey: SESSION_KEY,
+    traceId: TRACE,
+    usedSkillIds: ["deploy"],
+    usedCount: 1,
+    timestamp: NOW,
+    ...over,
+  };
+}
+
+describe("wireLearningOutcome — memory:skill_used → observe(usedSkillIds) (ATTR-02 loop close)", () => {
+  it("threads usedSkillIds into an observe() call so the used_skill_ids column is written", async () => {
+    const bus = new TypedEventBus();
+    const { store, observe } = makeStubStore();
+    wireLearningOutcome({
+      eventBus: bus,
+      outcomeStore: store,
+      usefulnessStore: mockUsefulnessStore().store,
+      learningTuningEnabled: () => false,
+      learningForgettingEnabled: () => false,
+      clock: createFakeClock(NOW),
+      logger: createMockLogger(),
+      learningOutcomeEnabled: () => true,
+    });
+
+    bus.emit("memory:skill_used", skillUsedPayload({ usedSkillIds: ["deploy", "backup"], usedCount: 2 }));
+    await flushMicrotasks();
+
+    expect(observe).toHaveBeenCalledTimes(1);
+    const obs = observe.mock.calls[0]![0];
+    expect(obs.usedSkillIds).toEqual(["deploy", "backup"]);
+    expect(obs.trajectoryId).toBe(TRACE); // trajectory identity = traceId
+    expect(obs.agentId).toBe(AGENT);
+    expect(obs.observedAt).toBe(NOW);
+  });
+
+  it("byte-identity: learningOutcomeEnabled => false → memory:skill_used triggers ZERO observe calls", async () => {
+    const bus = new TypedEventBus();
+    const { store, observe } = makeStubStore();
+    wireLearningOutcome({
+      eventBus: bus,
+      outcomeStore: store,
+      usefulnessStore: mockUsefulnessStore().store,
+      learningTuningEnabled: () => false,
+      learningForgettingEnabled: () => false,
+      clock: createFakeClock(NOW),
+      logger: createMockLogger(),
+      learningOutcomeEnabled: () => false,
+    });
+
+    bus.emit("memory:skill_used", skillUsedPayload());
+    await flushMicrotasks();
+
+    expect(observe).not.toHaveBeenCalled();
+  });
+
+  it("an empty usedSkillIds carrier writes NOTHING (no attribution → no observe)", async () => {
+    const bus = new TypedEventBus();
+    const { store, observe } = makeStubStore();
+    wireLearningOutcome({
+      eventBus: bus,
+      outcomeStore: store,
+      usefulnessStore: mockUsefulnessStore().store,
+      learningTuningEnabled: () => false,
+      learningForgettingEnabled: () => false,
+      clock: createFakeClock(NOW),
+      logger: createMockLogger(),
+      learningOutcomeEnabled: () => true,
+    });
+
+    bus.emit("memory:skill_used", skillUsedPayload({ usedSkillIds: [], usedCount: 0 }));
+    await flushMicrotasks();
+
+    expect(observe).not.toHaveBeenCalled();
+  });
+});
+
 /** Flush enough microtask turns to settle the observe→resolve→emit chain. */
 async function flushMicrotasks(): Promise<void> {
   for (let i = 0; i < 5; i++) await Promise.resolve();
