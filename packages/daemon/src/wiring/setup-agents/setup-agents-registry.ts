@@ -192,11 +192,9 @@ export async function setupAgents(deps: {
    *  into each per-agent createPiExecutor -> setupContextEngine (the getSummarizerDeps
    *  leaf-seam gate). ONE daemon instance, partitions by tenantId. */
   summarizerSpendBreaker?: import("@comis/agent").SummarizerSpendBreaker;
-  /** Temporal-spread store. Threaded into each per-agent createPiExecutor
-   *  like entityStore (the recall temporal-spread read path). Built in setup-memory on the shared db. */
+  /** Temporal-spread store. Threaded into each per-agent createPiExecutor like entityStore (the recall temporal-spread read path). Built in setup-memory on the shared db. */
   temporalStore?: import("@comis/core").MemoryTemporalStore;
-  /** Causal store. Threaded into each per-agent createPiExecutor
-   *  like entityStore (the recall 5th causal lane read path). Built in setup-memory on the shared db. */
+  /** Causal store. Threaded into each per-agent createPiExecutor like entityStore (the recall 5th causal lane read path). Built in setup-memory on the shared db. */
   causalStore?: import("@comis/core").MemoryCausalStore;
   /** Triple store. Threaded into each per-agent createPiExecutor like
    *  entityStore (the recall 6th graph-spread lane read path). Built in setup-memory on the shared db. */
@@ -226,6 +224,7 @@ export async function setupAgents(deps: {
    *  like relationshipStore (the recall buildScoringAlphas tuned-vector read path). Built in
    *  setup-memory on the shared db. */
   tunedAlphaStore?: import("@comis/core").TunedAlphaStore;
+  learnedSkillStore?: import("@comis/core").LearnedSkillStorePort; // v2.26 SURFACE-01/03: forwarded into each SingleAgentDeps -> the getPromptSkillsXml surface seam; segregated port TYPE (agent↛memory cut); default-OFF
   /** Delivery mirror port for session mirroring injection */
   deliveryMirror?: import("@comis/core").DeliveryMirrorPort;
   /** Delivery mirror config for injection budget */
@@ -468,6 +467,7 @@ export async function setupAgents(deps: {
     userRepresentationStore: deps.userRepresentationStore,
     relationshipStore: deps.relationshipStore,
     tunedAlphaStore: deps.tunedAlphaStore,
+    learnedSkillStore: deps.learnedSkillStore,
     deliveryMirror: deps.deliveryMirror,
     deliveryMirrorConfig: deps.deliveryMirrorConfig,
     geminiCacheManager: deps.geminiCacheManager,
