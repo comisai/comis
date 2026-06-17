@@ -257,7 +257,9 @@ export function registerMemoryCommand(program: Command): void {
   // Counts/ids/closed-enums only — NEVER a procedure body/script/description.
   memory
     .command("skills")
-    .description("Procedural-learning telemetry: synthesized/validated counts, admission funnel")
+    .description(
+      "Procedural-learning telemetry: synthesized/validated counts, admission funnel, promotion/demotion rates",
+    )
     .option("--format <format>", "Output format (table|json)", "table")
     .action((options: { format: string }) => {
       const stats = readSkillStatsOffline(resolveOfflineDataDir());
@@ -282,13 +284,18 @@ export function registerMemoryCommand(program: Command): void {
       const byStateStr = (m: Record<string, number>): string =>
         Object.entries(m).map(([k, v]) => `${k}:${v}`).join(" ");
       info(`Learned skills: ${stats.total} (${byStateStr(stats.byState)})`);
+      // SURFACE-06 promotion/demotion roll-up — counts only (DERIVED from byState):
+      // promoted = active, demoted = stale+archived. Never a per-procedure body.
+      info(`Promoted (active): ${stats.promoted} · Demoted (stale+archived): ${stats.demoted}`);
       renderTable(
-        ["Tenant", "Agent", "Total", "Funnel", "Skills (state·proof)"],
+        ["Tenant", "Agent", "Total", "Funnel", "Promoted", "Demoted", "Skills (state·proof)"],
         stats.perAgent.map((a) => [
           a.tenantId,
           a.agentId,
           String(a.total),
           byStateStr(a.byState),
+          String(a.promoted),
+          String(a.demoted),
           // ids/counts only — name + state + proofCount; NEVER a body.
           a.skills.map((s) => `${s.name}:${s.state}·${s.proofCount}`).join(" "),
         ]),

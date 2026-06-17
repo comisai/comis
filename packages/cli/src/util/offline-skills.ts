@@ -56,6 +56,10 @@ export interface SkillAgentStats {
   total: number;
   /** Row counts per closed-enum state. */
   byState: Record<string, number>;
+  /** Promotion roll-up (= `byState.active`) — DERIVED, a count, never a body. */
+  promoted: number;
+  /** Demotion roll-up (= `byState.stale` + `byState.archived`) — DERIVED, a count. */
+  demoted: number;
   /** Per-skill ids/counts (NEVER bodies). */
   skills: SkillFunnelEntry[];
 }
@@ -66,7 +70,35 @@ export interface SkillStats {
   total: number;
   /** Row counts per closed-enum state, store-wide. */
   byState: Record<string, number>;
+  /**
+   * Promotion roll-up (SURFACE-06) — the count of skills that reached `active`
+   * (= `byState.active`). DERIVED from the existing `byState` tally: a count,
+   * NEVER a body. The funnel's "how many candidates were promoted" lens.
+   */
+  promoted: number;
+  /**
+   * Demotion roll-up (SURFACE-06) — the count of skills that left `active` for
+   * `stale`/`archived` (= `byState.stale` + `byState.archived`). DERIVED from
+   * `byState`: a count, never a body. The "how many were demoted" lens.
+   */
+  demoted: number;
   perAgent: SkillAgentStats[];
+}
+
+/**
+ * Promotion roll-up: skills that reached `active` (DERIVED — a count from the
+ * existing per-state tally; adds NO body columns to the projection).
+ */
+function promotedFrom(byState: Record<string, number>): number {
+  return byState.active ?? 0;
+}
+
+/**
+ * Demotion roll-up: skills that left `active` for `stale`/`archived` (DERIVED —
+ * a count from the existing per-state tally; adds NO body columns).
+ */
+function demotedFrom(byState: Record<string, number>): number {
+  return (byState.stale ?? 0) + (byState.archived ?? 0);
 }
 
 /** One raw `learned_skills` row — the counts/ids projection ONLY (no body columns). */
@@ -134,7 +166,8 @@ export function readSkillStatsOffline(dataDir: string): SkillStats | undefined {
       const k = keyOf(r.tenant_id, r.agent_id);
       let agent = byAgent.get(k);
       if (agent === undefined) {
-        agent = { tenantId: r.tenant_id, agentId: r.agent_id, total: 0, byState: zeroByState(), skills: [] };
+        // promoted/demoted are DERIVED from byState below (after the scan).
+        agent = { tenantId: r.tenant_id, agentId: r.agent_id, total: 0, byState: zeroByState(), promoted: 0, demoted: 0, skills: [] };
         byAgent.set(k, agent);
       }
       agent.total += 1;
@@ -149,7 +182,21 @@ export function readSkillStatsOffline(dataDir: string): SkillStats | undefined {
     }
 
     if (total === 0) return undefined; // every row dropped (all off-vocabulary) → honest empty
-    return { total, byState: storeByState, perAgent: [...byAgent.values()] };
+
+    // Derive the promotion/demotion roll-ups (SURFACE-06) from the per-state
+    // tallies — counts only, no new SELECT columns, no body egress.
+    const perAgent = [...byAgent.values()];
+    for (const a of perAgent) {
+      a.promoted = promotedFrom(a.byState);
+      a.demoted = demotedFrom(a.byState);
+    }
+    return {
+      total,
+      byState: storeByState,
+      promoted: promotedFrom(storeByState),
+      demoted: demotedFrom(storeByState),
+      perAgent,
+    };
   } catch {
     return undefined;
   } finally {
