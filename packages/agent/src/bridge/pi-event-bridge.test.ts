@@ -27,6 +27,23 @@ vi.mock("@comis/observability", async (importOriginal) => {
 import { appendSessionIndexEntry as mockAppendSessionIndexEntry } from "@comis/observability";
 
 // ---------------------------------------------------------------------------
+// Mock the prompt-assembly location-index reader (ATTR-01). The bridge
+// cross-references a `read` path against the frozen location→skillName index;
+// seeding it through the real freeze path is heavy, so the reader is mocked.
+// Partial mock preserves every other prompt-assembly export.
+// ---------------------------------------------------------------------------
+const mockGetSessionPromptSkillLocations = vi.hoisted(() =>
+  vi.fn<(snapshotKey: string) => ReadonlyMap<string, string> | undefined>(() => undefined),
+);
+vi.mock("../executor/prompt-assembly.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../executor/prompt-assembly.js")>();
+  return {
+    ...actual,
+    getSessionPromptSkillLocations: mockGetSessionPromptSkillLocations,
+  };
+});
+
+// ---------------------------------------------------------------------------
 // Mock deps factory
 // ---------------------------------------------------------------------------
 
@@ -5880,5 +5897,105 @@ describe("session-index emit sites", () => {
       // It should preserve the MCP-classified kind (dependency or similar)
       expect(toolFailWarn![0].errorKind).not.toBe("validation");
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ATTR-01: read-path ↔ frozen skill-location cross-reference → skill:prompt_invoked
+// + the named per-turn carrier write (m.turnUsedSkillIds, read back via
+// bridge.getUsedSkillIds()). The P2 BLOCKER — without it the skill loop is
+// write-only.
+// ---------------------------------------------------------------------------
+describe("ATTR-01 skill-use attribution (read-path → skill:prompt_invoked + carrier)", () => {
+  let deps: PiEventBridgeDeps;
+
+  beforeEach(() => {
+    deps = createMockDeps();
+    mockGetSessionPromptSkillLocations.mockReset();
+    mockGetSessionPromptSkillLocations.mockReturnValue(undefined);
+  });
+
+  function makeReadStart(path: string, toolCallId = "tc-skill-1") {
+    return {
+      type: "tool_execution_start" as const,
+      toolCallId,
+      toolName: "read",
+      args: { path },
+    };
+  }
+  function makeReadEnd(toolCallId = "tc-skill-1") {
+    return {
+      type: "tool_execution_end" as const,
+      toolCallId,
+      toolName: "read",
+      result: { content: [{ type: "text", text: "ok" }] },
+      isError: false,
+    };
+  }
+
+  it("a read of a path matching a frozen skill <location> emits skill:prompt_invoked{invokedBy:'model'} and writes the carrier", () => {
+    // sessionKey {t1,c1,u1} → formatSessionKey → "t1:u1:c1"
+    const skillPath = "/home/user/.comis/skills/deploy/SKILL.md";
+    mockGetSessionPromptSkillLocations.mockImplementation((snapshotKey) =>
+      snapshotKey === "t1:u1:c1"
+        ? new Map<string, string>([[skillPath, "deploy"]])
+        : undefined,
+    );
+
+    const bridge = createPiEventBridge(deps);
+    bridge.listener(makeReadStart(skillPath) as any);
+    bridge.listener(makeReadEnd() as any);
+
+    const emit = deps.eventBus.emit as ReturnType<typeof vi.fn>;
+    const invokedCalls = emit.mock.calls.filter((c) => c[0] === "skill:prompt_invoked");
+    expect(invokedCalls).toHaveLength(1);
+    const payload = invokedCalls[0]![1] as { skillName: string; invokedBy: string; args: string; timestamp: number };
+    expect(payload.skillName).toBe("deploy");
+    expect(payload.invokedBy).toBe("model");
+    expect(payload.args).toBe("");
+    expect(typeof payload.timestamp).toBe("number");
+
+    // The named per-turn carrier, read back through the bridge accessor.
+    expect([...bridge.getUsedSkillIds()]).toEqual(["deploy"]);
+  });
+
+  it("a read of an UNMATCHED path emits no skill:prompt_invoked and leaves the carrier empty", () => {
+    mockGetSessionPromptSkillLocations.mockReturnValue(
+      new Map<string, string>([["/home/user/.comis/skills/deploy/SKILL.md", "deploy"]]),
+    );
+
+    const bridge = createPiEventBridge(deps);
+    bridge.listener(makeReadStart("/tmp/some-other-file.txt") as any);
+    bridge.listener(makeReadEnd() as any);
+
+    const emit = deps.eventBus.emit as ReturnType<typeof vi.fn>;
+    expect(emit.mock.calls.filter((c) => c[0] === "skill:prompt_invoked")).toHaveLength(0);
+    expect([...bridge.getUsedSkillIds()]).toEqual([]);
+  });
+
+  it("a non-read tool that happens to share a path with a skill location does NOT attribute a skill", () => {
+    const skillPath = "/home/user/.comis/skills/deploy/SKILL.md";
+    mockGetSessionPromptSkillLocations.mockReturnValue(new Map<string, string>([[skillPath, "deploy"]]));
+
+    const bridge = createPiEventBridge(deps);
+    // edit (not read) of the same path — attribution is read-scoped.
+    bridge.listener({ type: "tool_execution_start", toolCallId: "tc-e", toolName: "edit", args: { path: skillPath } } as any);
+    bridge.listener({ type: "tool_execution_end", toolCallId: "tc-e", toolName: "edit", result: { content: [] }, isError: false } as any);
+
+    const emit = deps.eventBus.emit as ReturnType<typeof vi.fn>;
+    expect(emit.mock.calls.filter((c) => c[0] === "skill:prompt_invoked")).toHaveLength(0);
+    expect([...bridge.getUsedSkillIds()]).toEqual([]);
+  });
+
+  it("with no frozen skill locations (the default), a read is a no-op (zero behavior change)", () => {
+    mockGetSessionPromptSkillLocations.mockReturnValue(undefined);
+
+    const bridge = createPiEventBridge(deps);
+    bridge.listener(makeReadStart("/home/user/.comis/skills/deploy/SKILL.md") as any);
+    bridge.listener(makeReadEnd() as any);
+
+    const emit = deps.eventBus.emit as ReturnType<typeof vi.fn>;
+    expect(emit.mock.calls.filter((c) => c[0] === "skill:prompt_invoked")).toHaveLength(0);
+    expect([...bridge.getUsedSkillIds()]).toEqual([]);
   });
 });

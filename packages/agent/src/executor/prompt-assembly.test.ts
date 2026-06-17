@@ -121,7 +121,7 @@ vi.mock("node:os", async (importOriginal) => {
   };
 });
 
-import { assembleExecutionPrompt, extractUserLanguage, resolvePromptModeForProfile, clearSessionToolNameSnapshot, clearSessionBootstrapFileSnapshot, clearSessionPromptSkillsXmlSnapshot, clearWr02SenderTrustWarned, getCacheSafeParams, clearCacheSafeParams, buildRecallTrace, type PromptAssemblyParams, type CacheSafeParams } from "./prompt-assembly.js";
+import { assembleExecutionPrompt, extractUserLanguage, resolvePromptModeForProfile, clearSessionToolNameSnapshot, clearSessionBootstrapFileSnapshot, clearSessionPromptSkillsXmlSnapshot, clearWr02SenderTrustWarned, getCacheSafeParams, clearCacheSafeParams, buildRecallTrace, parseSkillLocationIndex, type PromptAssemblyParams, type CacheSafeParams } from "./prompt-assembly.js";
 import { resolveRecallTraceFilePath } from "@comis/observability";
 // node:fs (sync) is NOT mocked here (only node:fs/promises is) — safe for the
 // GEN-03 source-grep chokepoint below.
@@ -4737,5 +4737,57 @@ describe("assembleExecutionPrompt — CR-03: pinnedSet identified by entry.pinne
       // Nano profile caps chars at 1000
       expect(splitMaxChars).toBeLessThanOrEqual(1000);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ATTR-01: parseSkillLocationIndex — parse the frozen <available_skills> XML
+// (the exact processor.ts formatAvailableSkillsXml shape) into a
+// location→skillName Map, unescaping XML entities so the key matches the raw
+// read path.
+// ---------------------------------------------------------------------------
+describe("parseSkillLocationIndex (ATTR-01 frozen-XML location→skillName index)", () => {
+  it("parses a two-<skill> block into the exact location→name map", () => {
+    const xml =
+      "<available_skills>\n" +
+      "  <skill>\n" +
+      "    <name>deploy</name>\n" +
+      "    <description>Deploy the app</description>\n" +
+      "    <location>/home/user/.comis/skills/deploy/SKILL.md</location>\n" +
+      "  </skill>\n" +
+      "  <skill>\n" +
+      "    <name>backup</name>\n" +
+      "    <description>Back up data</description>\n" +
+      "    <location>/home/user/.comis/skills/backup/SKILL.md</location>\n" +
+      "  </skill>\n" +
+      "</available_skills>";
+
+    const index = parseSkillLocationIndex(xml);
+    expect(index.get("/home/user/.comis/skills/deploy/SKILL.md")).toBe("deploy");
+    expect(index.get("/home/user/.comis/skills/backup/SKILL.md")).toBe("backup");
+    expect(index.size).toBe(2);
+  });
+
+  it("unescapes XML entities in BOTH the location and the name (inverse of escapeXml)", () => {
+    // escapeXml turns & < > " ' into entities; a real path/name with those chars
+    // is stored escaped in the frozen XML and must round-trip back to raw.
+    const xml =
+      "<available_skills>\n" +
+      "  <skill>\n" +
+      "    <name>a&amp;b &lt;tag&gt;</name>\n" +
+      "    <description>d</description>\n" +
+      "    <location>/tmp/a &amp; b/&quot;x&apos;.md</location>\n" +
+      "  </skill>\n" +
+      "</available_skills>";
+
+    const index = parseSkillLocationIndex(xml);
+    // raw location key (unescaped) → raw name (unescaped)
+    expect(index.get("/tmp/a & b/\"x'.md")).toBe("a&b <tag>");
+  });
+
+  it("returns an empty map for undefined / empty / no-skill input", () => {
+    expect(parseSkillLocationIndex(undefined).size).toBe(0);
+    expect(parseSkillLocationIndex("").size).toBe(0);
+    expect(parseSkillLocationIndex("<available_skills>\n</available_skills>").size).toBe(0);
   });
 });
