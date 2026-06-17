@@ -31,6 +31,8 @@ import { z } from "zod";
  * - maxSourceMemories / maxSourceChars: the per-build INPUT bound — the most
  *   source memories / total chars fed into ONE distillation prompt, so an over-context
  *   prompt can never silently fail the build (the same DoS-bound intent on the read axis)
+ * - historyCap: REVISE-02 bounded per-record asOf history — superseded rows for a
+ *   (user, entryType) slot beyond this many are trimmed oldest-first (anti-unbounded-growth)
  */
 export const MemoryUserRepresentationConfigSchema = z.strictObject({
   /** Enable the periodic per-user profile build for this agent. Default: true (v1 opt-out
@@ -45,6 +47,9 @@ export const MemoryUserRepresentationConfigSchema = z.strictObject({
   maxSourceMemories: z.number().int().positive().default(200),
   /** INPUT bound: max total chars of the concatenated build() source text. */
   maxSourceChars: z.number().int().positive().default(24_000),
+  /** REVISE-02: bounded per-record asOf history — superseded rows for a (user, entryType)
+   *  slot beyond this many are trimmed oldest-first (anti-unbounded-growth, design §6 / Pitfall 2). */
+  historyCap: z.number().int().positive().default(10),
 });
 
 export type MemoryUserRepresentationConfig = z.infer<typeof MemoryUserRepresentationConfigSchema>;

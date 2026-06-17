@@ -19,6 +19,8 @@ describe("MemoryConsolidationConfigSchema", () => {
       maxConsolidationTokens: 1024,
       consolidateExternal: false,
       autoTags: [],
+      // GENERAL-01/02 higher-order generalization (Phase 203) — default-OFF, byte-identical when off.
+      generalize: { enabled: false, minDistinctContexts: 3 },
     });
   });
 

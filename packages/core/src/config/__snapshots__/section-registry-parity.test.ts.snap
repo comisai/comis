@@ -1220,6 +1220,10 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
       "consolidateExternal": false,
       "dedupThreshold": 0.9,
       "enabled": true,
+      "generalize": {
+        "enabled": false,
+        "minDistinctContexts": 3
+      },
       "maxCandidatesPerRun": 200,
       "maxClusterSize": 12,
       "maxClustersPerRun": 25,
@@ -1254,6 +1258,27 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "immutable": true,
     "path": "agents.memoryConsolidation.enabled",
     "type": "boolean"
+  },
+  {
+    "default": {
+      "enabled": false,
+      "minDistinctContexts": 3
+    },
+    "immutable": true,
+    "path": "agents.memoryConsolidation.generalize",
+    "type": "object"
+  },
+  {
+    "default": false,
+    "immutable": true,
+    "path": "agents.memoryConsolidation.generalize.enabled",
+    "type": "boolean"
+  },
+  {
+    "default": 3,
+    "immutable": true,
+    "path": "agents.memoryConsolidation.generalize.minDistinctContexts",
+    "type": "integer"
   },
   {
     "default": 200,
@@ -1564,6 +1589,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   {
     "default": {
       "enabled": true,
+      "historyCap": 10,
       "maxEntriesPerRun": 50,
       "maxSourceChars": 24000,
       "maxSourceMemories": 200,
@@ -1578,6 +1604,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "immutable": true,
     "path": "agents.memoryUserRepresentation.enabled",
     "type": "boolean"
+  },
+  {
+    "default": 10,
+    "immutable": true,
+    "path": "agents.memoryUserRepresentation.historyCap",
+    "type": "integer"
   },
   {
     "default": 50,
@@ -8417,6 +8449,10 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
           "consolidateExternal": false,
           "dedupThreshold": 0.9,
           "enabled": true,
+          "generalize": {
+            "enabled": false,
+            "minDistinctContexts": 3
+          },
           "maxCandidatesPerRun": 200,
           "maxClusterSize": 12,
           "maxClustersPerRun": 25,
@@ -8462,6 +8498,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
         },
         "memoryUserRepresentation": {
           "enabled": true,
+          "historyCap": 10,
           "maxEntriesPerRun": 50,
           "maxSourceChars": 24000,
           "maxSourceMemories": 200,
@@ -16877,6 +16914,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         "consolidateExternal": false,
         "dedupThreshold": 0.9,
         "enabled": true,
+        "generalize": {
+          "enabled": false,
+          "minDistinctContexts": 3
+        },
         "maxCandidatesPerRun": 200,
         "maxClusterSize": 12,
         "maxClustersPerRun": 25,
@@ -16905,6 +16946,30 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         "enabled": {
           "default": true,
           "type": "boolean"
+        },
+        "generalize": {
+          "additionalProperties": false,
+          "default": {
+            "enabled": false,
+            "minDistinctContexts": 3
+          },
+          "properties": {
+            "enabled": {
+              "default": false,
+              "type": "boolean"
+            },
+            "minDistinctContexts": {
+              "default": 3,
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "enabled",
+            "minDistinctContexts"
+          ],
+          "type": "object"
         },
         "maxCandidatesPerRun": {
           "default": 200,
@@ -16951,7 +17016,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         "maxClustersPerRun",
         "maxConsolidationTokens",
         "consolidateExternal",
-        "autoTags"
+        "autoTags",
+        "generalize"
       ],
       "type": "object"
     },
@@ -17257,6 +17323,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
       "additionalProperties": false,
       "default": {
         "enabled": true,
+        "historyCap": 10,
         "maxEntriesPerRun": 50,
         "maxSourceChars": 24000,
         "maxSourceMemories": 200,
@@ -17266,6 +17333,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         "enabled": {
           "default": true,
           "type": "boolean"
+        },
+        "historyCap": {
+          "default": 10,
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
         },
         "maxEntriesPerRun": {
           "default": 50,
@@ -17295,7 +17368,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         "schedule",
         "maxEntriesPerRun",
         "maxSourceMemories",
-        "maxSourceChars"
+        "maxSourceChars",
+        "historyCap"
       ],
       "type": "object"
     },
@@ -27852,6 +27926,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "consolidateExternal": false,
               "dedupThreshold": 0.9,
               "enabled": true,
+              "generalize": {
+                "enabled": false,
+                "minDistinctContexts": 3
+              },
               "maxCandidatesPerRun": 200,
               "maxClusterSize": 12,
               "maxClustersPerRun": 25,
@@ -27880,6 +27958,30 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "enabled": {
                 "default": true,
                 "type": "boolean"
+              },
+              "generalize": {
+                "additionalProperties": false,
+                "default": {
+                  "enabled": false,
+                  "minDistinctContexts": 3
+                },
+                "properties": {
+                  "enabled": {
+                    "default": false,
+                    "type": "boolean"
+                  },
+                  "minDistinctContexts": {
+                    "default": 3,
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "enabled",
+                  "minDistinctContexts"
+                ],
+                "type": "object"
               },
               "maxCandidatesPerRun": {
                 "default": 200,
@@ -27926,7 +28028,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "maxClustersPerRun",
               "maxConsolidationTokens",
               "consolidateExternal",
-              "autoTags"
+              "autoTags",
+              "generalize"
             ],
             "type": "object"
           },
@@ -28232,6 +28335,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "additionalProperties": false,
             "default": {
               "enabled": true,
+              "historyCap": 10,
               "maxEntriesPerRun": 50,
               "maxSourceChars": 24000,
               "maxSourceMemories": 200,
@@ -28241,6 +28345,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "enabled": {
                 "default": true,
                 "type": "boolean"
+              },
+              "historyCap": {
+                "default": 10,
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
               },
               "maxEntriesPerRun": {
                 "default": 50,
@@ -28270,7 +28380,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "schedule",
               "maxEntriesPerRun",
               "maxSourceMemories",
-              "maxSourceChars"
+              "maxSourceChars",
+              "historyCap"
             ],
             "type": "object"
           },
@@ -30952,6 +31063,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "consolidateExternal": false,
             "dedupThreshold": 0.9,
             "enabled": true,
+            "generalize": {
+              "enabled": false,
+              "minDistinctContexts": 3
+            },
             "maxCandidatesPerRun": 200,
             "maxClusterSize": 12,
             "maxClustersPerRun": 25,
@@ -30997,6 +31112,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           },
           "memoryUserRepresentation": {
             "enabled": true,
+            "historyCap": 10,
             "maxEntriesPerRun": 50,
             "maxSourceChars": 24000,
             "maxSourceMemories": 200,

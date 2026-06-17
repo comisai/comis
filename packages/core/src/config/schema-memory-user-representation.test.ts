@@ -15,6 +15,8 @@ describe("MemoryUserRepresentationConfigSchema", () => {
       // Per-build INPUT bounds (default-bounded so the prompt is never unbounded).
       maxSourceMemories: 200,
       maxSourceChars: 24_000,
+      // REVISE-02 bounded per-record asOf history (Phase 203).
+      historyCap: 10,
     });
   });
 

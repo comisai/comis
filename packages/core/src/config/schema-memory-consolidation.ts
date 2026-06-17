@@ -32,6 +32,9 @@ import { z } from "zod";
  * - consolidateExternal: include external-trust memories (default false — the
  *   trust-hardening default; external excluded)
  * - autoTags: extra tags applied to created observations
+ * - generalize: GENERAL-01/02 higher-order generalization synthesis block
+ *   (enabled default-OFF + minDistinctContexts diversity gate) — opt-in additive
+ *   to the merge loop, default behaviour byte-identical when off
  *
  * A fold-into-existing threshold is intentionally OMITTED — fold-into-existing
  * is deferred; this schema is create-only.
@@ -58,6 +61,17 @@ export const MemoryConsolidationConfigSchema = z.strictObject({
   consolidateExternal: z.boolean().default(false),
   /** Extra tags applied to every created observation. */
   autoTags: z.array(z.string()).default([]),
+  /** GENERAL-01/02: higher-order generalization synthesis (cluster → one "user prefers X in general"
+   *  semantic memory). Default-OFF — opt-in additive to the merge loop; rides the same abstain gate.
+   *  The block default is the explicit populated object (Zod v4 does NOT re-run inner field defaults
+   *  for a bare `.default({})`), so a config omitting `generalize` still parses to the full shape. */
+  generalize: z
+    .strictObject({
+      enabled: z.boolean().default(false),
+      /** Min distinct (sessionKey, sender) contexts in a cluster before it generalizes (anti-domination). */
+      minDistinctContexts: z.number().int().positive().default(3),
+    })
+    .default({ enabled: false, minDistinctContexts: 3 }),
 });
 
 export type MemoryConsolidationConfig = z.infer<typeof MemoryConsolidationConfigSchema>;
