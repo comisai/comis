@@ -79,4 +79,28 @@ export interface LearningEvents {
     coverage: "full" | "static-only";
     timestamp: number;
   };
+
+  /**
+   * SURFACE-06: an attributed successful reuse promoted N candidate skills this
+   * resolve (candidate→active past promoteAtProofCount). Emitted DAEMON-SIDE
+   * (setup-learning.ts, Plan 05) — counts ONLY, never a procedure body/script/id-list.
+   * Bridged for comis explain / OBS-02.
+   */
+  "learning:skill_promoted": {
+    agentId: string;
+    /** How many candidate skills were promoted to active this resolve (count only). */
+    count: number;
+    timestamp: number;
+  };
+
+  /**
+   * SURFACE-06: a corroboration-gated decay-aware-trend WEAKENING demoted N skills
+   * this resolve (active→stale→archived). Emitted DAEMON-SIDE — counts ONLY.
+   */
+  "learning:skill_demoted": {
+    agentId: string;
+    /** How many skills were demoted (active→stale→archived) this resolve (count only). */
+    count: number;
+    timestamp: number;
+  };
 }
