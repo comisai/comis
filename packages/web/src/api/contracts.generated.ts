@@ -7993,6 +7993,60 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
           ],
           "additionalProperties": false
         },
+        "learning": {
+          "type": "object",
+          "properties": {
+            "outcomeResolved": {
+              "type": "boolean"
+            },
+            "outcome": {
+              "type": "string",
+              "enum": [
+                "success",
+                "failure",
+                "corrected",
+                "unknown"
+              ]
+            },
+            "sources": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "tool",
+                  "pipeline",
+                  "correction",
+                  "judge",
+                  "reaction",
+                  "explicit"
+                ]
+              }
+            },
+            "skillsUsed": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "skillFailures": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "synthesisAbstained": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "outcomeResolved",
+            "sources",
+            "skillsUsed",
+            "skillFailures",
+            "synthesisAbstained"
+          ],
+          "additionalProperties": false
+        },
         "summary": {
           "type": "string"
         },

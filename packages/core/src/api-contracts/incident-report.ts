@@ -323,6 +323,27 @@ export const IncidentReportSchema = z.object({
       errorKind: z.string().optional(),
     })
     .optional(),
+  /** OBS-02 (Phase 198): the Verified-Learning outcome signal reconstructed from
+   *  the session's `learning.outcome_observed` trajectory records (the fused
+   *  terminal verdict wins). Counts/ids/closed-enums ONLY — no body/alpha/recalled
+   *  ids (SEC-01). `outcomeResolved` is false ⇒ a finished trajectory with no
+   *  resolvable outcome (the `outcome_unresolved` verdict's trigger; distinct from
+   *  an explicit `unknown` resolution). `skillsUsed`/`skillFailures` empty +
+   *  `synthesisAbstained` false in P0 (attribution/synthesis → Phase 201).
+   *  Optional + additive (present only when the trajectory carries learning
+   *  records; schemaVersion stays 1) — the `recall`/`voice` precedent. */
+  learning: z
+    .object({
+      outcomeResolved: z.boolean(),
+      outcome: z.enum(["success", "failure", "corrected", "unknown"]).optional(),
+      sources: z.array(
+        z.enum(["tool", "pipeline", "correction", "judge", "reaction", "explicit"]),
+      ),
+      skillsUsed: z.array(z.string()),
+      skillFailures: z.array(z.string()),
+      synthesisAbstained: z.boolean(),
+    })
+    .optional(),
   summary: z.string(),
   likelyRootCause: z
     .object({
