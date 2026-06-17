@@ -272,7 +272,16 @@ The driver is **agnostic** -- it drives any TUI with the generic perception abov
 - **Perception** -- it feeds the classifier the platform's working-line (Claude's spinner, Codex's `Working (Ns)`) and picker/menu signatures, so a busy frame reads `working` and a `/model`-style picker reads `awaiting-input` rather than `stuck`.
 - **Dialogs** -- it declares the platform's known interactive dialogs and their **safe** answer. Under `autoAnswer: safe-only` a non-destructive dialog (Claude's "trust this folder" gate) is answered with the canned keystroke; a `destructive` dialog (Codex's run-command approval) **always escalates** to you. The operator safe-only policy and the escalate-always veto still gate every answer -- a profile only *proposes*.
 
-A profile is **read-side only**: it never widens the sandbox, the env, or the launch (those stay operator-controlled). With no matching profile (any other `allowId`) the driver's perception/render/auto-answer is **byte-identical** to the agnostic default. Adding a new platform is a drop-in profile + bundled skill -- no engine change.
+A profile is **read-side only**: it never widens the sandbox, the env, or the launch (those stay operator-controlled). With no matching profile (any other `allowId`) the driver's perception/render/auto-answer is **byte-identical** to the agnostic default.
+
+**Adding a platform is engine-free** -- a drop-in profile + bundled skill, no change to the agnostic render/classifier/dialog code:
+
+1. Create `packages/skills/src/tools/builtin/terminal-driver/platforms/<id>/profile.ts` exporting a `TerminalPlatformProfile` -- `id`, the operator `allowIds` it claims, a `platformVersion`, and any of the optional read-side fields (`transformSnapshot` for render, `perception` pattern lists, `dialogs`).
+2. Register it in `platforms/index.ts` (`ALL_PROFILES`). The load-time guards reject a duplicate `allowId` or a ReDoS-prone pattern.
+3. Add the paired bundled skill `packages/daemon/bundled-skills/<id>/SKILL.md` with a frontmatter `version` **equal** to the profile's `platformVersion` (a build-time architecture test enforces the match).
+4. Capture golden frames and assert the profile's transform/perception/dialogs against them (live with the profile, e.g. `platforms/<id>/profile.test.ts`).
+
+No edit to `terminal-render.ts`, `terminal-classifier.ts`, `terminal-dialog-detector.ts`, or `terminal-auto-answer.ts` is required -- they consume whatever the selected profile provides, with the agnostic fallback when no profile matches.
 
 ## Related
 
