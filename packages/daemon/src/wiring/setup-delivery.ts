@@ -271,17 +271,23 @@ export async function drainDeliveryQueue(deps: {
       await deliveryQueue.ack(entry.id, sendResult.value);
       delivered++;
 
-      // REACT-02: capture (platform messageId → trajectory scope) for inbound-
-      // reaction resolution. Agent-authored OUTBOUND only (the delivery queue is
-      // outbound); entry.traceId === trajectoryId, set from the request ALS at
-      // enqueue (delivery-service.ts). A null traceId (no trajectory) is NOT
-      // mapped. The callback is undefined when learning-outcome is disabled for all
-      // agents → zero extra work (byte-identity).
-      if (entry.traceId !== null && recordOutboundMessage !== undefined) {
+      // REACT-02 (CR-01): capture (platform messageId → trajectory scope) for
+      // inbound-reaction resolution. Agent-authored OUTBOUND only (the delivery
+      // queue is outbound); entry.traceId === trajectoryId AND options.agentId are
+      // both set from the request ALS at enqueue (delivery-service.ts). The
+      // agentId is the load-bearing (tenant, agent) isolation partition the
+      // reaction observe()s under — it must be the REAL agent, NEVER the tenantId.
+      // A null traceId (no trajectory) OR an absent agentId (a pre-executor /
+      // non-agent send) is a FAIL-CLOSED skip: mis-attributing a reaction to the
+      // tenantId would corrupt cross-agent isolation (T-198-16), so we record
+      // nothing rather than fall back. The callback is undefined when
+      // learning-outcome is disabled for all agents → zero extra work (byte-identity).
+      const recordAgentId = typeof options.agentId === "string" ? options.agentId : undefined;
+      if (entry.traceId !== null && recordAgentId !== undefined && recordOutboundMessage !== undefined) {
         recordOutboundMessage(sendResult.value, {
           traceId: entry.traceId,
           tenantId: entry.tenantId,
-          agentId: (options.agentId as string) ?? entry.tenantId,
+          agentId: recordAgentId,
           sessionId: entry.traceId, // session identity falls back to the trajectory id (scope-consistent)
         });
       }

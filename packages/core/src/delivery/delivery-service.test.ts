@@ -940,6 +940,62 @@ describe("DeliveryService — full pipeline behavior", () => {
       expect(queue.fail).not.toHaveBeenCalled();
     });
 
+    it("REACT-02 (CR-01): persists the request-context agentId into the enqueued optionsJson (so the drain attributes the reaction to the REAL agent, not the tenant)", async () => {
+      const adapter = createMockAdapter("telegram");
+      // Construct via the SOURCE factory so the SUT reads the SAME source
+      // AsyncLocalStorage module the test's runWithContext writes to (the dist-
+      // backed makeDeliveryService would observe a different context instance).
+      const service = createDeliveryService(makeDeps({ deliveryQueue: queue, eventBus }));
+
+      // The agent's reply is produced INSIDE the agent's request context; the
+      // ALS carries the resolved agentId. A NON-"default" agent (mldag) is the
+      // common multi-agent case the tenantId fallback mis-attributes.
+      await runWithContext(
+        {
+          traceId: "11111111-1111-4111-8111-111111111111",
+          tenantId: "default",
+          agentId: "mldag",
+          sessionKey: "default:user-1:chat-1",
+          startedAt: Date.now(),
+          trustLevel: "admin",
+        },
+        async () => {
+          await service.deliverToChannel(adapter, "chat-1", "agent reply", { origin: "agent" });
+        },
+      );
+
+      expect(queue.enqueueInFlight).toHaveBeenCalledTimes(1);
+      const enqueueArg = queue.enqueueInFlight.mock.calls[0][0];
+      const persistedOptions = JSON.parse(enqueueArg.optionsJson) as Record<string, unknown>;
+      // The drain (setup-delivery.ts) reads options.agentId; it must be the REAL
+      // agent, never absent (which would force the tenantId fallback).
+      expect(persistedOptions.agentId).toBe("mldag");
+    });
+
+    it("REACT-02 (CR-01): does NOT leak agentId into the SendMessageOptions handed to the channel adapter (persistence-only metadata)", async () => {
+      const adapter = createMockAdapter("telegram");
+      const service = createDeliveryService(makeDeps({ deliveryQueue: queue, eventBus }));
+
+      await runWithContext(
+        {
+          traceId: "22222222-2222-4222-8222-222222222222",
+          tenantId: "default",
+          agentId: "mldag",
+          sessionKey: "default:user-1:chat-1",
+          startedAt: Date.now(),
+          trustLevel: "admin",
+        },
+        async () => {
+          await service.deliverToChannel(adapter, "chat-1", "agent reply", { origin: "agent" });
+        },
+      );
+
+      // agentId is queue-persistence metadata for the reaction trajectory map;
+      // it must NOT ride into the platform send options.
+      const sendOpts = adapter.sendMessage.mock.calls[0]?.[2] as Record<string, unknown> | undefined;
+      expect(sendOpts?.agentId).toBeUndefined();
+    });
+
     it("calls fail with permanent_error when send fails permanently", async () => {
       const adapter = createMockAdapter("telegram");
       adapter.sendMessage.mockResolvedValue(err(new Error("Bad Request: chat not found")));

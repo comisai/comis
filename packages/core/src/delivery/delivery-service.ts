@@ -301,6 +301,14 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
         const ctx = tryGetContext();
         const tenantId = ctx?.tenantId ?? "default";
         const traceId = ctx?.traceId ?? null;
+        // REACT-02 (CR-01): the resolved agentId for the turn rides on the
+        // request ALS (executor entry, context.ts:49). It is the partition the
+        // reaction trajectory map + the byte-identity gate key on downstream —
+        // NEVER the tenantId. Persisted into the queue entry's optionsJson below
+        // so the drain (setup-delivery.ts) attributes a reaction on this outbound
+        // to the REAL agent. `null` when absent (pre-executor paths) → the drain
+        // fails closed and does not map the message.
+        const agentId = ctx?.agentId ?? null;
 
         // Resolve delivery strategy
         const strategy: DeliveryStrategy = options?.strategy ?? "all-or-abort";
@@ -383,12 +391,20 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
           // deps.deliveryQueue is REQUIRED in DeliveryServiceDeps (was
           // optional in the standalone DeliverToChannelDeps).
           {
+            // REACT-02 (CR-01): persist agentId into the serialized options so
+            // the drain reads the REAL agent (drain reads options.agentId). It is
+            // added to a SEPARATE persistence object — NOT to `sendOpts` — so it
+            // never rides into the platform `adapter.sendMessage` call. Omitted
+            // entirely when absent (pre-executor paths), keeping the drain
+            // fail-closed rather than mis-attributing to the tenantId.
+            const persistedOptions: Record<string, unknown> =
+              agentId !== null ? { ...sendOpts, agentId } : { ...sendOpts };
             const enqueueResult = await deps.deliveryQueue.enqueueInFlight({
               text: chunk,
               channelType: adapter.channelType,
               channelId,
               tenantId,
-              optionsJson: JSON.stringify(sendOpts),
+              optionsJson: JSON.stringify(persistedOptions),
               origin: options?.origin ?? "unknown",
               maxAttempts: 5,
               createdAt: systemNowMs(),
