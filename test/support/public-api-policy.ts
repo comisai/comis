@@ -1101,6 +1101,35 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "OutcomeObservation",
       "ResolvedOutcome",
       "OutcomePruneResult",
+      // Verified Learning procedural-learning ports (v2.26 Phase 201 Plan 01, Wave 1)
+      // — the three greenfield type-only ports (SkillSynthesisPort,
+      // SkillValidationPort, LearnedSkillStorePort) + their DTOs, surfaced on the
+      // public @comis/core barrel (exports/ports.ts) so the LATER-wave plans can
+      // import them BY TYPE. This is interface-first Wave 1 (the OutcomeSignalPort /
+      // TunedAlphaStore precedent directly above): the contracts land FIRST, the
+      // cross-package consumers land in later waves —
+      //   - Plan 04 (@comis/agent skill-synthesis-job) consumes SkillSynthesisPort
+      //     + SynthesisInput + CandidateSkill,
+      //   - Plans 05/06 (@comis/skills sandbox-validation adapter) consume
+      //     SkillValidationPort + SkillValidationResult + SkillValidationFinding +
+      //     ReplayContext,
+      //   - Plan 04/07 (@comis/memory store + @comis/daemon wiring) consume
+      //     LearnedSkillStorePort + LearnedSkill + AdmitSkillInput.
+      // Defining the contracts in @comis/core first is the closed-graph SEC-01 cut
+      // (agent↛memory / agent↛skills) — the synthesis job imports PORT TYPES only.
+      // Each SHRINKS out of this baseline when its real cross-package NAME-import
+      // consumer lands (the shrink-only ratchet, AGENTS.md §2.8 — never under-listed,
+      // closed by deletion).
+      "SkillSynthesisPort",
+      "SynthesisInput",
+      "CandidateSkill",
+      "SkillValidationPort",
+      "SkillValidationResult",
+      "SkillValidationFinding",
+      "ReplayContext",
+      "LearnedSkillStorePort",
+      "LearnedSkill",
+      "AdmitSkillInput",
       // MemoryLifecyclePort + MemoryLifecycleScope +
       // MemoryTier + LifecycleSweepReport were tracked here as SCAFFOLD-DORMANT
       // ahead-of-consumer planned-orphans. REMOVED:
