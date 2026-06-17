@@ -43,4 +43,40 @@ export interface LearningEvents {
     usedCount: number;
     timestamp: number;
   };
+
+  /**
+   * SKILL-09: a procedural-synthesis run admitted N candidate skills. Emitted
+   * DAEMON-SIDE (plain `eventBus.emit`, never `?.`) by the __SKILL_SYNTHESIS__ cron
+   * handler (setup-channels-memory-crons-wire.ts, Plan 07) AFTER `runSkillSynthesis`
+   * returns — the daemon emit (not the agent job) keeps the trajectory-bridge entry
+   * landing with the emit (no agent-side gate trip). COUNT ONLY — the synthesized
+   * procedure body/script content is a compile error here (the §2.7 / SEC-01
+   * firewall). Bridged (TRAJECTORY_BRIDGE_MAPPING) for `comis explain` / OBS-02.
+   */
+  "learning:skill_synthesized": {
+    agentId: string;
+    /** How many candidate skills were admitted this run (count only). */
+    count: number;
+    timestamp: number;
+  };
+
+  /**
+   * SKILL-09: a synthesized candidate cleared (or failed) validation. Emitted
+   * DAEMON-SIDE after the validation adapter returns. The static/dynamic verdict
+   * BOOLEANS + the `coverage` CLOSED-ENUM ONLY — never the offending field name, a
+   * finding body, or a script (the SEC-01 firewall; a body/scripts field is a
+   * compile error). `coverage:'static-only'` means the dynamic sandbox replay did
+   * NOT run (no bwrap jail / a script-free candidate); `'full'` means a jailed
+   * script executed. Bridged for `comis explain` / OBS-02.
+   */
+  "learning:skill_validated": {
+    agentId: string;
+    /** The per-field static memory-poison scan passed (no CRITICAL field). */
+    staticOk: boolean;
+    /** The sandbox replay ran AND every embedded script exited 0 (false when static-only). */
+    dynamicOk: boolean;
+    /** Whether a real jail ran the dynamic replay (closed enum). */
+    coverage: "full" | "static-only";
+    timestamp: number;
+  };
 }

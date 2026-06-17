@@ -1002,6 +1002,19 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       count: 2,
       timestamp: 1000,
     },
+    // SKILL-09: the procedural-synthesis telemetry (daemon-side emit) — count / verdict / coverage ONLY.
+    "learning:skill_synthesized": {
+      agentId: "default",
+      count: 2,
+      timestamp: 1000,
+    },
+    "learning:skill_validated": {
+      agentId: "default",
+      staticOk: true,
+      dynamicOk: false,
+      coverage: "static-only",
+      timestamp: 1000,
+    },
     "background_task:promoted": {
       agentId: "default",
       taskId: "t-1",

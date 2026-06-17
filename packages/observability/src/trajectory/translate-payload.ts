@@ -272,18 +272,15 @@ export function translatePayload(
 
     case "memory:online_tuning_applied":
       // RANK-06: bandit-applied COUNTS + the per-intent dim ONLY — NEVER an alpha value or FEED content (§2.7 / SEC-01); agentId/timestamp are envelope ids.
-      return {
-        updated: payload.updated,
-        clampHits: payload.clampHits,
-        signalCount: payload.signalCount,
-        intent: payload.intent,
-        durationMs: payload.durationMs,
-      };
+      return { updated: payload.updated, clampHits: payload.clampHits, signalCount: payload.signalCount, intent: payload.intent, durationMs: payload.durationMs };
 
     case "learning:memory_demoted":
     case "learning:memory_evicted":
-      // FORGET-06: the soft-eviction transition COUNT ONLY — never an id-list or body (§2.7 / SEC-01); agentId/timestamp are envelope ids; the record TYPE conveys demoted vs evicted.
+    case "learning:skill_synthesized":
+      // FORGET-06 / SKILL-09: the soft-eviction / admitted-skill COUNT ONLY — never an id-list, procedure body, or script (§2.7 / SEC-01); the record TYPE conveys demoted vs evicted vs synthesized.
       return { count: payload.count };
+    case "learning:skill_validated": // SKILL-09: the verdict BOOLEANS + coverage CLOSED-ENUM ONLY — NEVER a field name/finding/script (SEC-01).
+      return { staticOk: payload.staticOk, dynamicOk: payload.dynamicOk, coverage: payload.coverage };
 
     // T2.2 (F9): closed ids + durationMs ONLY — agentId/origin are envelope ids; no result/
     // error body crosses the bus (§2.7 / H1); the record TYPE conveys promoted/completed/failed.
