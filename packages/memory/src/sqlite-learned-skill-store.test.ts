@@ -228,3 +228,146 @@ describe("createSqliteLearnedSkillStore", () => {
     void SCOPE_B;
   });
 });
+
+// ===========================================================================
+// SEC-01 isolation matrix + fail-closed scope + soft lifecycle (Task 2)
+// ===========================================================================
+describe("createSqliteLearnedSkillStore — (tenant, agent) isolation + lifecycle", () => {
+  let db: Database.Database;
+  let store: ReturnType<typeof createSqliteLearnedSkillStore>;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    initSchema(db, 384);
+    store = createSqliteLearnedSkillStore({ db });
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  // --- T-201-06: cross-scope reads see nothing -----------------------------
+
+  it("a skill admitted under (tenantA, agentA) is INVISIBLE to get() under (tenantB, agentB)", async () => {
+    await store.admit(makeInput({ name: "isolated" }), SCOPE_A);
+    const fromB = await store.get("isolated", SCOPE_B);
+    expect(fromB.ok).toBe(true);
+    if (fromB.ok) expect(fromB.value).toBeUndefined(); // never visible cross-scope
+    const fromA = await store.get("isolated", SCOPE_A);
+    expect(fromA.ok).toBe(true);
+    if (fromA.ok) expect(fromA.value?.name).toBe("isolated"); // own scope DOES see it
+  });
+
+  it("list() under (tenantB, agentB) does not return (tenantA, agentA)'s skills", async () => {
+    await store.admit(makeInput({ name: "a-only-1" }), SCOPE_A);
+    await store.admit(makeInput({ name: "a-only-2" }), SCOPE_A);
+    await store.admit(makeInput({ name: "b-only" }), SCOPE_B);
+    const listA = await store.list(SCOPE_A);
+    const listB = await store.list(SCOPE_B);
+    expect(listA.ok).toBe(true);
+    expect(listB.ok).toBe(true);
+    if (listA.ok) expect(listA.value.map((s) => s.name).sort()).toEqual(["a-only-1", "a-only-2"]);
+    if (listB.ok) expect(listB.value.map((s) => s.name)).toEqual(["b-only"]);
+  });
+
+  it("the SAME skill name under different scopes are DISTINCT rows (UNIQUE is per (tenant, agent))", async () => {
+    const a = await store.admit(makeInput({ name: "same-name", body: "A's body" }), SCOPE_A);
+    const b = await store.admit(makeInput({ name: "same-name", body: "B's body" }), SCOPE_B);
+    expect(a.ok && b.ok).toBe(true);
+    if (a.ok && b.ok) expect(a.value.id).not.toBe(b.value.id); // distinct ids → distinct rows
+    const fromA = await store.get("same-name", SCOPE_A);
+    const fromB = await store.get("same-name", SCOPE_B);
+    if (fromA.ok) expect(fromA.value?.body).toBe("A's body");
+    if (fromB.ok) expect(fromB.value?.body).toBe("B's body");
+  });
+
+  // --- T-201-07: unresolved scope fails closed (never widens to a pool) -----
+
+  const EMPTY_TENANT: LearningScope = { tenantId: "", agentId: AGENT_A };
+  const EMPTY_AGENT: LearningScope = { tenantId: TENANT_A, agentId: "" };
+
+  it("admit() with an empty tenantId fails-closed with err (does NOT widen to a shared pool)", async () => {
+    const r = await store.admit(makeInput({ name: "no-scope" }), EMPTY_TENANT);
+    expect(r.ok).toBe(false);
+    // Nothing was written under any scope.
+    const count = db.prepare("SELECT COUNT(*) AS c FROM learned_skills").get() as { c: number };
+    expect(count.c).toBe(0);
+  });
+
+  it("get()/list() with an empty agentId fail-closed with err", async () => {
+    const g = await store.get("anything", EMPTY_AGENT);
+    const l = await store.list(EMPTY_AGENT);
+    expect(g.ok).toBe(false);
+    expect(l.ok).toBe(false);
+  });
+
+  it("promote()/demote()/evict() with an empty scope fail-closed with err", async () => {
+    const p = await store.promote("some-id", EMPTY_TENANT);
+    const d = await store.demote("some-id", EMPTY_AGENT);
+    const e = await store.evict("some-id", EMPTY_TENANT);
+    expect(p.ok).toBe(false);
+    expect(d.ok).toBe(false);
+    expect(e.ok).toBe(false);
+  });
+
+  // --- lifecycle: promote / demote / soft-evict ----------------------------
+
+  it("promote() advances candidate→active and increments proof_count (scoped)", async () => {
+    const admitted = await store.admit(makeInput({ name: "promote-me", proofCount: 1 }), SCOPE_A);
+    expect(admitted.ok).toBe(true);
+    if (!admitted.ok) return;
+    const r = await store.promote(admitted.value.id, { ...SCOPE_A, now: 2_000 });
+    expect(r.ok).toBe(true);
+    const after = await store.get("promote-me", SCOPE_A);
+    if (after.ok) {
+      expect(after.value?.state).toBe("active");
+      expect(after.value?.proofCount).toBe(2);
+    }
+  });
+
+  it("promote() is (tenant, agent)-scoped — a foreign scope cannot mutate another's skill", async () => {
+    const admitted = await store.admit(makeInput({ name: "guarded" }), SCOPE_A);
+    if (!admitted.ok) return;
+    // Promote under SCOPE_B (same id, wrong scope) — the WHERE pins (tenant, agent),
+    // so it matches 0 rows and A's skill is untouched.
+    await store.promote(admitted.value.id, SCOPE_B);
+    const a = await store.get("guarded", SCOPE_A);
+    if (a.ok) {
+      expect(a.value?.state).toBe("candidate"); // unchanged — cross-scope UPDATE matched nothing
+      expect(a.value?.proofCount).toBe(1);
+    }
+  });
+
+  it("demote() steps an active skill back toward stale (scoped)", async () => {
+    const admitted = await store.admit(makeInput({ name: "demote-me" }), SCOPE_A);
+    if (!admitted.ok) return;
+    await store.promote(admitted.value.id, SCOPE_A); // → active
+    const r = await store.demote(admitted.value.id, SCOPE_A); // active → stale
+    expect(r.ok).toBe(true);
+    const after = await store.get("demote-me", SCOPE_A);
+    if (after.ok) expect(after.value?.state).toBe("stale");
+  });
+
+  it("evict() is SOFT — sets evicted_at, NEVER a hard DELETE (the row + provenance survive)", async () => {
+    const admitted = await store.admit(makeInput({ name: "evict-me", sourceTrajIds: ["t1", "t2"] }), SCOPE_A);
+    if (!admitted.ok) return;
+    const r = await store.evict(admitted.value.id, { ...SCOPE_A, now: 5_000 });
+    expect(r.ok).toBe(true);
+    // The row STILL EXISTS in the table (soft-close).
+    const rawCount = db
+      .prepare("SELECT COUNT(*) AS c FROM learned_skills WHERE tenant_id = ? AND agent_id = ? AND name = ?")
+      .get(TENANT_A, AGENT_A, "evict-me") as { c: number };
+    expect(rawCount.c).toBe(1);
+    const raw = db
+      .prepare("SELECT evicted_at, state, source_traj_ids FROM learned_skills WHERE tenant_id = ? AND agent_id = ? AND name = ?")
+      .get(TENANT_A, AGENT_A, "evict-me") as { evicted_at: number; state: string; source_traj_ids: string };
+    expect(raw.evicted_at).toBe(5_000);
+    expect(raw.state).toBe("archived");
+    expect(raw.source_traj_ids).toBe(JSON.stringify(["t1", "t2"])); // provenance survives
+    // But it no longer SURFACES through get()/list() (evicted_at IS NULL filter).
+    const g = await store.get("evict-me", SCOPE_A);
+    if (g.ok) expect(g.value).toBeUndefined();
+    const l = await store.list(SCOPE_A);
+    if (l.ok) expect(l.value.find((s) => s.name === "evict-me")).toBeUndefined();
+  });
+});
