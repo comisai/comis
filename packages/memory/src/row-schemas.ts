@@ -211,27 +211,13 @@ export const MemoryTripleRowSchema = z.strictObject({
   confidence: z.number().nullable(),
 });
 
-// Schema for a `user_representation` row projection. The scoped
-// read projects the columns below (NOT tenant_id/agent_id/user_id — the WHERE pins
-// them); trust/entry_type z.enum match the DDL CHECKs ('external' absent);
-// source_memory_id/updated_at nullable. Parsed via createRowMapper.
-// v2.26 WS5 REVISE-02: the four bi-temporal columns (t_valid_start/t_valid_end/
-// expired_at/confidence) added via ensureUserRepresentationBitemporalColumns are
-// projected here as z.number().nullable().optional() for the asOf read + the
-// supersession incumbent SELECT * (rows predating the column-add read NULL).
-export const UserRepresentationRowSchema = z.strictObject({
-  id: z.string(),
-  entry_type: z.enum(["identity", "preference", "relationship", "instruction"]),
-  content: z.string(),
-  trust: z.enum(["system", "learned"]),
-  source_memory_id: z.string().nullable().optional(),
-  created_at: z.number(),
-  updated_at: z.number().nullable().optional(),
-  t_valid_start: z.number().nullable().optional(),
-  t_valid_end: z.number().nullable().optional(),
-  expired_at: z.number().nullable().optional(),
-  confidence: z.number().nullable().optional(),
-});
+// The `user_representation` read-projection schema is co-located in
+// `user-representation-row-schema.ts` (this file is at the 800-line cap; the
+// tuned-alpha-row-schema.ts / outcome-event-row-schema.ts precedent) and re-exported
+// here so existing importers keep their import site. v2.26 WS5 REVISE-02: it carries
+// the four bi-temporal columns (t_valid_start/t_valid_end/expired_at/confidence) for
+// the asOf read + the supersession incumbent SELECT.
+export { UserRepresentationRowSchema } from "./user-representation-row-schema.js";
 
 // Schema for a `relationship` row projection. The scoped read
 // projects 8 columns (NOT tenant_id/agent_id/channel_id — the WHERE pins them); the
