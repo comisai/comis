@@ -16,7 +16,7 @@
 
 import { describe, it, expect } from "vitest";
 
-import { createSessionEmulator, diffSnapshot } from "./terminal-render.js";
+import { createSessionEmulator, diffSnapshot, stripGhostFromRow, type RenderCell } from "./terminal-render.js";
 
 describe("createSessionEmulator — construct + plain grid", () => {
   it("renders written text into the grid and reports cols/rows/alt", async () => {
@@ -261,6 +261,73 @@ describe("createSessionEmulator — diffSnapshot (the per-read screen-diff)", ()
 
     expect(diff.changed).toBe(true);
     expect(diff.firstChangedRow).toBe(0);
+    emu.dispose();
+  });
+});
+
+// ===========================================================================
+// FINDING-3 (live VPS 2026-06-17): a driven CLI (Claude Code) shows a DIM
+// autocomplete "ghost-text" suggestion in its composer (e.g. `commit this`).
+// The plain-text `read()` capture can't convey the dim styling, so the driving
+// model can't tell the suggestion from real queued input — it halts to ask
+// about it and drops later steps. The text render STRIPS the ghost: on the
+// cursor's row (normal buffer), a cell at col >= cursorX that is DIM is
+// autocomplete (real input is non-dim, at/left of the cursor); status-bar dim
+// text is on OTHER rows and is untouched.
+// ===========================================================================
+
+describe("stripGhostFromRow — strip the dim autocomplete ghost-text right of the cursor", () => {
+  const cell = (chars: string, dim = false, width = 1): RenderCell => ({ chars, dim, width });
+
+  it("strips the dim ghost at/after the cursor, keeps the non-dim prompt before it", () => {
+    // `❯ ` (cols 0-1, non-dim) + cursor at col 2 + dim "commit this" (the ghost) at col 2+
+    const cells = [cell("❯"), cell(" "), ...[..."commit this"].map((ch) => cell(ch, true))];
+    expect(stripGhostFromRow(cells, 2)).toBe("❯");
+  });
+
+  it("keeps real (non-dim) input before the cursor; strips only the dim continuation after it", () => {
+    // input "comm" (non-dim) cols 2-5 + cursor at col 6 + dim ghost "it this" at col 6+
+    const cells = [cell("❯"), cell(" "), ...[..."comm"].map((ch) => cell(ch)), ...[..."it this"].map((ch) => cell(ch, true))];
+    expect(stripGhostFromRow(cells, 6)).toBe("❯ comm");
+  });
+
+  it("keeps dim cells BEFORE the cursor (those are not autocomplete)", () => {
+    const cells = [cell("a", true), cell("b", true), cell("c")];
+    expect(stripGhostFromRow(cells, 3)).toBe("abc");
+  });
+
+  it("skips width-0 (wide-char trailing / combining) slots, matching translateToString", () => {
+    const cells = [cell("世", false, 2), cell("", false, 0), cell("x")];
+    expect(stripGhostFromRow(cells, 0)).toBe("世x");
+  });
+});
+
+describe("createSessionEmulator — text render strips Claude's composer ghost-text (FINDING-3)", () => {
+  it("omits the dim ghost on the cursor row but keeps the dim status-bar text on another row", async () => {
+    const emu = createSessionEmulator({ cols: 80, rows: 6, scrollback: 0 });
+    // row 2: `❯ ` then a DIM ghost suggestion "commit this"
+    await emu.write("\x1b[2;1H❯ \x1b[2mcommit this\x1b[0m");
+    // row 5: a DIM status-bar element on a DIFFERENT row (must be retained)
+    await emu.write("\x1b[5;1H\x1b[2mSonnet 4.6\x1b[0m");
+    // move the cursor back to the input position (row 2, col 3 → 0-based cursorX=2, cursorY=1)
+    await emu.write("\x1b[2;3H");
+
+    const snap = emu.snapshot({ format: "text" });
+    expect(snap.cursor).toEqual({ x: 2, y: 1 });
+    expect(snap.screen).not.toContain("commit this"); // ghost stripped from the cursor row
+    expect(snap.screen).toContain("❯"); // the prompt survives
+    expect(snap.screen).toContain("Sonnet 4.6"); // dim text on another row is untouched
+    emu.dispose();
+  });
+
+  it("does NOT strip dim text on the cursor row in the ALT buffer (full-screen TUIs own their cells)", async () => {
+    const emu = createSessionEmulator({ cols: 80, rows: 6, scrollback: 0 });
+    await emu.write("\x1b[?1049h"); // enter alt screen
+    await emu.write("\x1b[1;1H\x1b[2mDIMTUI\x1b[0m");
+    await emu.write("\x1b[1;1H"); // cursor at row1 col1 (cursorX=0) — DIMTUI is at/after it
+    const snap = emu.snapshot({ format: "text" });
+    expect(snap.alt).toBe(true);
+    expect(snap.screen).toContain("DIMTUI"); // alt-buffer dim cells are NOT stripped
     emu.dispose();
   });
 });

@@ -186,6 +186,39 @@ export interface SessionEmulator {
  * @param opts - The grid geometry + scrollback depth.
  * @returns The {@link SessionEmulator} surface.
  */
+
+/** One cell's render-relevant attributes (extracted from an `@xterm` buffer cell). */
+export interface RenderCell {
+  /** The cell's character(s); empty for a blank/spacer cell. */
+  chars: string;
+  /** SGR-2 (faint/dim) — the styling a CLI uses for autocomplete ghost-text. */
+  dim: boolean;
+  /** Display width: 0 for a wide-char trailing slot / combining mark (skipped, as `translateToString` does). */
+  width: number;
+}
+
+/**
+ * Render one terminal row to text while STRIPPING the dim autocomplete ghost-text (FINDING-3,
+ * live VPS 2026-06-17). A driven CLI (Claude Code) shows a DIM suggestion in its composer (e.g.
+ * `commit this`); the plain-text `read()` capture can't convey the dim styling, so the driving
+ * model can't tell the suggestion from real queued input — it halts to ask about it and drops
+ * later steps. On the cursor's row, a cell at column `>= cursorX` that is DIM is autocomplete
+ * (real input is NON-dim and at/left of the cursor), so it is omitted; everything else (the
+ * non-dim prompt, real input, dim cells LEFT of the cursor) is kept. Trailing whitespace is
+ * trimmed to match `translateToString(true)`. Pure + total. The caller applies this ONLY to the
+ * cursor row of the NORMAL buffer, so the (also-dim) status bar on other rows is never touched.
+ */
+export function stripGhostFromRow(cells: readonly RenderCell[], cursorX: number): string {
+  let out = "";
+  for (let x = 0; x < cells.length; x++) {
+    const c = cells[x];
+    if (c.width === 0) continue; // wide-char trailing / combining slot — translateToString skips it
+    if (x >= cursorX && c.dim) continue; // the dim autocomplete ghost-text right of the cursor
+    out += c.chars.length > 0 ? c.chars : " ";
+  }
+  return out.replace(/\s+$/u, "");
+}
+
 export function createSessionEmulator(opts: SessionEmulatorOptions): SessionEmulator {
   const term = new Terminal({
     cols: opts.cols,
@@ -211,6 +244,7 @@ export function createSessionEmulator(opts: SessionEmulatorOptions): SessionEmul
    */
   function readText(scrollback: number): string {
     const buf = term.buffer.active;
+    const isAlt = buf.type === "alternate";
     const lines: string[] = [];
     if (scrollback > 0) {
       const from = Math.max(0, buf.baseY - scrollback);
@@ -219,7 +253,21 @@ export function createSessionEmulator(opts: SessionEmulatorOptions): SessionEmul
       }
     }
     for (let y = 0; y < term.rows; y++) {
-      lines.push(buf.getLine(buf.baseY + y)?.translateToString(true) ?? "");
+      const line = buf.getLine(buf.baseY + y);
+      // FINDING-3: on the cursor's row of the NORMAL buffer, strip the dim autocomplete ghost-text
+      // (a driven CLI's composer suggestion) so the plain-text capture isn't mistaken for real
+      // input. Other rows (incl. the also-dim status bar) and the alt buffer use translateToString.
+      if (line && !isAlt && y === buf.cursorY) {
+        const cells: RenderCell[] = [];
+        for (let x = 0; x < line.length; x++) {
+          const cell = line.getCell(x);
+          // xterm's cell attribute getters return a number (0/non-0), not boolean — coerce.
+          cells.push(cell ? { chars: cell.getChars(), dim: cell.isDim() !== 0, width: cell.getWidth() } : { chars: "", dim: false, width: 1 });
+        }
+        lines.push(stripGhostFromRow(cells, buf.cursorX));
+      } else {
+        lines.push(line?.translateToString(true) ?? "");
+      }
     }
     return lines.join("\n");
   }
