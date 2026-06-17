@@ -111,6 +111,16 @@ export interface OnlineTuningFeedEntry {
   usedCount: number;
   /** Times recalled but NOT used. */
   ignoredCount: number;
+  /**
+   * WR-03 (RANK-01): outcome-attributed task FAILURE count for this memory — the
+   * NEGATIVE-reward term. A memory in the `recalled_ids` of a `failure`/`corrected`
+   * trajectory accrues `failure_count` (daemon reward seam, corroboration-gated). The
+   * bandit projects it into the posterior as a negative reward so a failure-implicated
+   * memory is DOWN-weighted per intent (RANK-01: "negative reward to feed the ranker").
+   * Optional: an older feed seam / a clean memory omits it → treated as 0 (byte-identical
+   * to the positive-only behaviour). NEVER touches the recall hot-path `usefulnessNorm`.
+   */
+  failureCount?: number;
 }
 
 /** Dependencies injected into the offline bandit handler. NO LLM/key seam (keyless). */

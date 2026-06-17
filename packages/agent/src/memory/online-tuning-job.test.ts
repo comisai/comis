@@ -395,4 +395,64 @@ describe("runOnlineTuning — RANK-03 bandit vs nudge selection", () => {
     expect(store.upsert).not.toHaveBeenCalled();
     expect(emit).toHaveBeenCalledWith("memory:online_tuning_applied", expect.objectContaining({ updated: false, intent: "temporal" }));
   });
+
+  // ── WR-03: failures must feed the bandit as a NEGATIVE reward term ──
+  // RANK-01 requires "a memory in recalled_ids of a failure/corrected trajectory gets
+  // NEGATIVE reward" to feed the ranker. On HEAD the reward seam routes failures to
+  // memory_usefulness.failure_count, but the bandit feed (OnlineTuningFeedEntry) carries
+  // only used/ignored, so the posterior is positive-only — failures contribute nothing.
+  // The fix projects failure_count into the feed and subtracts it from the reward, so a
+  // failure-implicated memory learns a LOWER usefulnessAlpha per intent. Trust stays frozen.
+  it("WR-03: a memory with failures learns a LOWER usefulnessAlpha than an identical one without (failures feed the bandit)", async () => {
+    // Identical used/ignored on both runs; the ONLY difference is failureCount. The
+    // failure-laden feed must drive usefulnessAlpha strictly lower than the clean feed.
+    const seed: TunedAlphaVector = { recencyAlpha: 0.5, temporalAlpha: 0.5, proofAlpha: 0.5, usefulnessAlpha: 0.5 };
+
+    const cleanStore = makeStore(seed);
+    const cleanFeed = new Map<string, OnlineTuningFeedEntry>([
+      ["m1", { usedCount: 6, ignoredCount: 2, failureCount: 0 }],
+    ]);
+    await runOnlineTuning(makeDeps({
+      config: { enabled: true, learner: "bandit", exploration: 0 }, // exploration 0 isolates the reward sign
+      tunedAlphaStore: cleanStore as unknown as MemoryOnlineTuningDeps["tunedAlphaStore"],
+      readUsefulness: async () => ok(cleanFeed),
+    }));
+
+    const failStore = makeStore(seed);
+    const failFeed = new Map<string, OnlineTuningFeedEntry>([
+      ["m1", { usedCount: 6, ignoredCount: 2, failureCount: 8 }], // same used/ignored, but failures accrued
+    ]);
+    await runOnlineTuning(makeDeps({
+      config: { enabled: true, learner: "bandit", exploration: 0 },
+      tunedAlphaStore: failStore as unknown as MemoryOnlineTuningDeps["tunedAlphaStore"],
+      readUsefulness: async () => ok(failFeed),
+    }));
+
+    const clean = cleanStore.stored!;
+    const failed = failStore.stored!;
+    // The failure-implicated memory drags usefulnessAlpha strictly lower (the bandit
+    // down-weights it per intent) — failures are no longer invisible to the learner.
+    expect(failed.usefulnessAlpha).toBeLessThan(clean.usefulnessAlpha);
+    // Determinism + clamp preserved on both.
+    for (const a of [failed.recencyAlpha, failed.temporalAlpha, failed.proofAlpha, failed.usefulnessAlpha]) {
+      expect(a).toBeGreaterThanOrEqual(0);
+      expect(a).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it("WR-03: failureCount with no used/ignored signal still registers a NEGATIVE reward (a pure-failure memory)", async () => {
+    const seed: TunedAlphaVector = { recencyAlpha: 0.5, temporalAlpha: 0.5, proofAlpha: 0.5, usefulnessAlpha: 0.5 };
+    const store = makeStore(seed);
+    // No used, no ignored — but failures accrued. A pure-failure memory must push the
+    // posterior NEGATIVE (not be skipped as "never recalled"), so usefulnessAlpha drops.
+    const feed = new Map<string, OnlineTuningFeedEntry>([
+      ["m1", { usedCount: 0, ignoredCount: 0, failureCount: 5 }],
+    ]);
+    await runOnlineTuning(makeDeps({
+      config: { enabled: true, learner: "bandit", exploration: 0 },
+      tunedAlphaStore: store as unknown as MemoryOnlineTuningDeps["tunedAlphaStore"],
+      readUsefulness: async () => ok(feed),
+    }));
+    expect(store.stored!.usefulnessAlpha).toBeLessThan(0.5);
+  });
 });
