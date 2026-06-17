@@ -925,6 +925,9 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   },
   {
     "default": {
+      "correction": {
+        "enabled": false
+      },
       "enabled": false,
       "judge": {
         "enabled": false
@@ -949,6 +952,20 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "immutable": true,
     "path": "agents.learningOutcome",
     "type": "object"
+  },
+  {
+    "default": {
+      "enabled": false
+    },
+    "immutable": true,
+    "path": "agents.learningOutcome.correction",
+    "type": "object"
+  },
+  {
+    "default": false,
+    "immutable": true,
+    "path": "agents.learningOutcome.correction.enabled",
+    "type": "boolean"
   },
   {
     "default": false,
@@ -8192,6 +8209,9 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
           "maxActiveCaches": 20
         },
         "learningOutcome": {
+          "correction": {
+            "enabled": false
+          },
           "enabled": false,
           "judge": {
             "enabled": false
@@ -16341,6 +16361,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
     "learningOutcome": {
       "additionalProperties": false,
       "default": {
+        "correction": {
+          "enabled": false
+        },
         "enabled": false,
         "judge": {
           "enabled": false
@@ -16363,6 +16386,22 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         ]
       },
       "properties": {
+        "correction": {
+          "additionalProperties": false,
+          "default": {
+            "enabled": false
+          },
+          "properties": {
+            "enabled": {
+              "default": false,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "enabled"
+          ],
+          "type": "object"
+        },
         "enabled": {
           "default": false,
           "type": "boolean"
@@ -16455,6 +16494,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         "sources",
         "reactionMap",
         "judge",
+        "correction",
         "minConfidenceToLearn",
         "retentionDays"
       ],
@@ -27122,6 +27162,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "learningOutcome": {
             "additionalProperties": false,
             "default": {
+              "correction": {
+                "enabled": false
+              },
               "enabled": false,
               "judge": {
                 "enabled": false
@@ -27144,6 +27187,22 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               ]
             },
             "properties": {
+              "correction": {
+                "additionalProperties": false,
+                "default": {
+                  "enabled": false
+                },
+                "properties": {
+                  "enabled": {
+                    "default": false,
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "enabled"
+                ],
+                "type": "object"
+              },
               "enabled": {
                 "default": false,
                 "type": "boolean"
@@ -27236,6 +27295,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "sources",
               "reactionMap",
               "judge",
+              "correction",
               "minConfidenceToLearn",
               "retentionDays"
             ],
@@ -30310,6 +30370,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "maxActiveCaches": 20
           },
           "learningOutcome": {
+            "correction": {
+              "enabled": false
+            },
             "enabled": false,
             "judge": {
               "enabled": false
