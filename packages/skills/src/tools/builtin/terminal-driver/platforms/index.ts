@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: fail-closed load-time validation — `assertUniqueAllowIds` + `assertSafeProfilePatterns`
+// throw ONCE at module import over the static, developer-authored profile set. A throw means a
+// developer shipped a malformed profile (an allowId collision or a ReDoS-prone hot-path pattern) —
+// caught at load / by the registry test, NEVER a runtime user path and never a silent mis-selection.
 /**
  * The platform-profile REGISTRY (design §4/§7) — `getPlatformProfile(allowId)`.
  *
