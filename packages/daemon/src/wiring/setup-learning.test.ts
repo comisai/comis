@@ -1272,6 +1272,30 @@ describe("CR-01: promote/demote drive the REAL learned-skill store via name→id
     await flushMicrotasks();
   }
 
+  /**
+   * Drive the graph then DETERMINISTICALLY wait for the REAL store row to reach the
+   * predicate. The skill promote/demote loop (applySkillOutcomeTransitions) is
+   * fire-and-forget from the resolve `.then` and AWAITs a SQLite write, so a fixed
+   * microtask-flush count is timing-fragile under coverage instrumentation (the
+   * symptom the full `pnpm test:coverage` caught). Polling the observable store
+   * state removes that fragility — it asserts the END STATE, not a flush count.
+   */
+  async function driveGraphThenAwait(
+    bus: TypedEventBus,
+    store: ReturnType<typeof createSqliteLearnedSkillStore>,
+    name: string,
+    scope: { tenantId: string; agentId: string },
+    until: (s: { state: string; proofCount: number } | undefined) => boolean,
+  ): Promise<void> {
+    await driveGraph(bus, TRACE);
+    for (let i = 0; i < 50; i++) {
+      const r = await store.get(name, scope);
+      const row = r.ok && r.value ? { state: r.value.state, proofCount: r.value.proofCount } : undefined;
+      if (until(row)) return;
+      await flushMicrotasks();
+    }
+  }
+
   let db: import("better-sqlite3").Database;
   beforeEach(() => {
     db = new Database(":memory:");
@@ -1299,19 +1323,48 @@ describe("CR-01: promote/demote drive the REAL learned-skill store via name→id
     );
     expect(admitted.ok).toBe(true);
 
-    // The verdict carries the skill NAME (as ATTR-01 produces), threshold 1.
+    // The verdict carries the skill NAME (as ATTR-01 produces). Threshold 1 so a single
+    // success from proofCount=0 CROSSES the D2 proof bar (0 + 1 >= 1) → candidate→active,
+    // isolating the name→id resolution from a multi-call proof ladder.
     const { bus, store } = wireRealSkillSeam(
       db,
       baseVerdict({ outcome: "success", sources: ["pipeline"], usedSkillIds: ["deploy-the-thing"] }),
       { promoteAt: 1 },
     );
-    await driveGraph(bus, TRACE);
+    // Deterministically wait for the REAL row to flip (the loop is fire-and-forget +
+    // awaits a SQLite write — a fixed flush count is fragile under coverage).
+    await driveGraphThenAwait(bus, store, "deploy-the-thing", scope, (s) => s?.state === "active");
 
-    // The REAL row must have transitioned: a name-as-id promote would leave it candidate.
+    // The REAL row transitioned: a name-as-id promote would leave it candidate at proof 0.
     const after = await store.get("deploy-the-thing", scope);
     expect(after.ok).toBe(true);
-    expect(after.ok ? after.value?.state : undefined).toBe("active"); // RED on HEAD (stays candidate)
+    expect(after.ok ? after.value?.state : undefined).toBe("active"); // RED on name-as-id (stays candidate)
+    // proof_count actually incremented → the row was FOUND by name→id (not a 0-row no-op).
     expect(after.ok ? after.value?.proofCount : undefined).toBe(1);
+  });
+
+  it("a SUCCESS verdict below the proof bar bumps proof_count but the REAL row stays candidate (name→id found the row; D2 gate holds)", async () => {
+    // A second positive case that proves name→id resolution found the row WITHOUT
+    // crossing the threshold: admit at proofCount 0, threshold 3 → one success bumps
+    // proof_count to 1 (the row WAS found + reinforced) but 0+1 >= 3 is false → still
+    // candidate. This isolates "the row was located by name" from "it was activated".
+    const scope = { tenantId: SKILL_TENANT, agentId: SKILL_AGENT };
+    const seed = createSqliteLearnedSkillStore({ db });
+    await seed.admit(
+      { name: "below-bar", description: "d", body: "b", mutating: false, proofCount: 0, confidence: 0.8, sourceTrajIds: ["t"], createdAt: NOW },
+      scope,
+    );
+    const { bus, store } = wireRealSkillSeam(
+      db,
+      baseVerdict({ outcome: "success", sources: ["pipeline"], usedSkillIds: ["below-bar"] }),
+      { promoteAt: 3 },
+    );
+    // Wait until the proof_count actually bumps (the observable proof the row was found).
+    await driveGraphThenAwait(bus, store, "below-bar", scope, (s) => (s?.proofCount ?? 0) >= 1);
+
+    const after = await store.get("below-bar", scope);
+    expect(after.ok ? after.value?.proofCount : undefined).toBe(1); // reinforced (found by name→id)
+    expect(after.ok ? after.value?.state : undefined).toBe("candidate"); // but D2 bar (3) not crossed
   });
 
   it("a success verdict naming a SKILL THAT DOES NOT EXIST emits count 0 and no learning:skill_promoted (telemetry stops lying)", async () => {
@@ -1324,10 +1377,17 @@ describe("CR-01: promote/demote drive the REAL learned-skill store via name→id
       { bus },
     );
     await driveGraph(bus, TRACE);
+    // Deterministically wait for the resolve chain to FINISH (learning:outcome_observed
+    // is emitted at the end of the resolve .then), so a missing learning:skill_promoted
+    // is a true negative — not a "not yet". Then drain the parallel fire-and-forget skill
+    // loop so its (absent) emit would have landed.
+    const emitted = (name: string): boolean => emitSpy.mock.calls.some((c) => c[0] === name);
+    for (let i = 0; i < 50 && !emitted("learning:outcome_observed"); i++) await flushMicrotasks();
+    await flushMicrotasks();
 
-    // A 0-row promote must NOT emit a non-zero count (RED on HEAD: emits count 1).
-    const promoted = emitSpy.mock.calls.find((c) => c[0] === "learning:skill_promoted");
-    expect(promoted, "an unmatched name must not emit learning:skill_promoted").toBeUndefined();
+    expect(emitted("learning:outcome_observed"), "the resolve must have completed").toBe(true);
+    // A 0-row promoteByName must NOT emit a non-zero count (RED on name-as-id: emits count 1).
+    expect(emitted("learning:skill_promoted"), "an unmatched name must not emit learning:skill_promoted").toBe(false);
   });
 });
 
