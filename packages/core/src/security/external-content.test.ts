@@ -429,3 +429,29 @@ describe("wrapWebContent - includeWarning parameter", () => {
     expect(EXTERNAL_CONTENT_WARNING.length).toBeGreaterThan(50);
   });
 });
+
+describe("ExternalContentSource - learned_skill_synthesis source (v2.26 SKILL-02)", () => {
+  // The synthesis adapter wraps the UNTRUSTED trajectory under this NEW label
+  // before the synthesis LLM (the injection-defense keystone). Mirrors the
+  // outcome_judge member+label precedent — additive, no behavior change.
+  it("wrapExternalContent accepts source: 'learned_skill_synthesis'", () => {
+    const result = wrapExternalContent("trajectory text", { source: "learned_skill_synthesis" });
+    expect(typeof result).toBe("string");
+  });
+
+  it("resolves the 'Learned-skill synthesis input' source label in wrapped output", () => {
+    const result = wrapExternalContent("trajectory text", { source: "learned_skill_synthesis" });
+    expect(result).toContain("Source: Learned-skill synthesis input");
+  });
+
+  it("includes the security warning by default for the synthesis source", () => {
+    const result = wrapExternalContent("trajectory text", { source: "learned_skill_synthesis" });
+    expect(result).toContain("SECURITY NOTICE");
+  });
+
+  it("wraps the trajectory with delimiter markers (the boundary the injection cannot cross)", () => {
+    const result = wrapExternalContent("trajectory text", { source: "learned_skill_synthesis" });
+    expect(result).toMatch(/<<<UNTRUSTED_[a-f0-9]{24}>>>/);
+    expect(result).toMatch(/<<<END_UNTRUSTED_[a-f0-9]{24}>>>/);
+  });
+});
