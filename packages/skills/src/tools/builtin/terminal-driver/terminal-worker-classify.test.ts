@@ -23,6 +23,7 @@
 import { describe, it, expect, vi } from "vitest";
 
 import { statusReplyFromState } from "./terminal-worker-classify.js";
+import { composeStatusView, type WorkerStatusPerception } from "./terminal-status-view.js";
 import type { EmulatorSnapshot } from "./terminal-render.js";
 import type { SessionState } from "./terminal-worker-types.js";
 
@@ -155,5 +156,26 @@ describe("statusReplyFromState — resolves profile.perception by the session al
     const state = makeState({ allowId: "vim", lastProgressMs: 0 }, menuSnapshot());
     const reply = await statusReplyFromState({ state, settled: true, nowMs: () => 10_000, stuckMs: 5_000 });
     expect(reply.state).toBe("stuck");
+  });
+});
+
+describe("composeStatusView — carries the session allowId for the DIALOG-01 profile resolution", () => {
+  const perception: WorkerStatusPerception = {
+    state: "awaiting-input",
+    cursorParked: true,
+    screenDiffEmpty: true,
+    interactions: 2,
+    confidence: "high",
+    reason: "settled_cursor_parked",
+  };
+
+  it("folds handle.allowId onto the status view (the woken turn resolves the profile from it)", () => {
+    const view = composeStatusView(perception, { lastActivity: 5, allowId: "claude" });
+    expect(view.allowId).toBe("claude");
+  });
+
+  it("omits allowId when the handle has none (a not-found / pre-v2.26 session) — no profile, the safe default", () => {
+    const view = composeStatusView(perception, { lastActivity: 5 });
+    expect(view.allowId).toBeUndefined();
   });
 });

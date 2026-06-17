@@ -48,6 +48,10 @@ export interface TerminalStatusView {
   confidence: "high" | "medium";
   /** The classifier's stable machine-readable reason tag (e.g. `dialog_detected`/`settled_cursor_parked`/`no_progress`/`exited`) — a structural tag for logs/the autonomous policy, NEVER screen text (I3, T-163-07). */
   reason: string;
+  /** The session's operator-declared allowId (v2.26 DIALOG-01) — the daemon woken turn resolves the
+   *  platform profile from it to feed `decideAutoAnswer` the profile's dialogs. Absent for a
+   *  not-found / cross-owner session (⇒ no profile ⇒ the safe escalate-only default). */
+  allowId?: string;
 }
 
 /** The structural perception the worker replies to a `status` frame (124-06) — the §5 subset minus `lastActivity` (the worker is owner-agnostic; the registry adds it). */
@@ -63,10 +67,12 @@ export interface WorkerStatusPerception {
   reason: string;
 }
 
-/** The minimal `lastActivity`/`exitCode` carrier the composition reads off a daemon-side handle (a structural subset of `SessionHandle`). */
+/** The minimal `lastActivity`/`exitCode`/`allowId` carrier the composition reads off a daemon-side handle (a structural subset of `SessionHandle`). */
 export interface StatusHandleFields {
   lastActivity: number;
   exitCode?: number;
+  /** The session's operator-declared allowId (for the DIALOG-01 profile resolution in the woken turn). */
+  allowId?: string;
 }
 
 /**
@@ -149,5 +155,6 @@ export function composeStatusView(
     confidence,
     reason,
     ...(exitCode !== undefined ? { exitCode } : {}),
+    ...(handle.allowId !== undefined ? { allowId: handle.allowId } : {}),
   };
 }

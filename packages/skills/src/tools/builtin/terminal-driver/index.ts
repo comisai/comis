@@ -180,6 +180,18 @@ export {
   type AutoAnswerDecision,
 } from "./terminal-auto-answer.js";
 
+// v2.26 (Terminal Platform Profiles): the read-side per-platform perception/render profile
+// registry. The daemon woken turn resolves a session's profile by its operator-declared allowId
+// to feed `decideAutoAnswer` the profile's dialogs (DIALOG-01); the worker/classifier consume the
+// render transform + perception package-internally. Selection is by allowId only (§5/INV-3).
+export {
+  getPlatformProfile,
+  type TerminalPlatformProfile,
+  type PlatformPerception,
+  type PlatformDialog,
+  type KeySpec,
+} from "./platforms/index.js";
+
 // P5 124-04 (spec §4.6, SEC-11): the normalized region-scoped loop guard. The woken
 // turn (124-09) calls observe() on a settled prompt region — a repeated NORMALIZED
 // prompt (spinner/timestamp/progress-only diff) escalates (terminal:escalated, reason

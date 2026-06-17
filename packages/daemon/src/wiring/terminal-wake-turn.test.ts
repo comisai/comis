@@ -61,7 +61,7 @@ function makeLogger() {
  * proves the woken-turn driver strips the drive: scope (registryOwnerFor) — without the
  * strip, a promoted turn (wake owner drive:<id>) reads the empty not-found view.
  */
-function makeRegistry(opts: { screen: string; sendResult: { screen: string; cursor: { x: number; y: number }; delivered?: boolean } }) {
+function makeRegistry(opts: { screen: string; sendResult: { screen: string; cursor: { x: number; y: number }; delivered?: boolean }; allowId?: string }) {
   const sendText = vi.fn(async () => opts.sendResult);
   const stamped = (owner: { sessionKey?: string }): boolean => owner?.sessionKey === "";
   const liveView = { screen: opts.screen, cursor: { x: 0, y: 0 }, cols: 80, rows: 24, alt: false, alive: true };
@@ -71,7 +71,7 @@ function makeRegistry(opts: { screen: string; sendResult: { screen: string; curs
     get: vi.fn(() => ({ sessionId: "s", owner: OWNER }) as never),
     status: vi.fn(async (_id: string, owner: { sessionKey?: string }) =>
       stamped(owner)
-        ? { state: "awaiting-input" as const, lastActivity: 0, interactions: 1, cursorParked: true, screenDiffEmpty: true }
+        ? { state: "awaiting-input" as const, lastActivity: 0, interactions: 1, cursorParked: true, screenDiffEmpty: true, ...(opts.allowId !== undefined ? { allowId: opts.allowId } : {}) }
         : { state: "exited" as const, lastActivity: 0, interactions: 0, cursorParked: false, screenDiffEmpty: true },
     ),
     read: vi.fn(async (_id: string, owner: { sessionKey?: string }) => (stamped(owner) ? liveView : notFoundView)),
@@ -108,6 +108,8 @@ function build(opts: {
   loopRepeat?: boolean;
   autoAnswer?: "none" | "safe-only" | "all";
   hintPatterns?: string[];
+  /** v2.26 DIALOG-01: the session's operator-declared allowId (selects the platform profile). */
+  allowId?: string;
   /** A controllable clock — MR-01 elapsedMs-advances pins drive it forward across wakes. */
   nowMs?: () => number;
   /** The drive's start ms (MR-01) — `elapsedMs = nowMs() - driveStartMs`. */
@@ -784,5 +786,40 @@ describe("buildEscalationMessage — actionable, redaction-safe escalation text 
   it("is redaction-safe: built from ONLY (sessionId, reason) — there is no screen param to leak", () => {
     expect(buildEscalationMessage.length).toBe(2);
     expect(buildEscalationMessage("sess-xyz", "approval")).toContain("sess-xyz");
+  });
+});
+
+describe("terminal-wake-turn — profile dialogs feed the safe-only policy (v2.26 DIALOG-01)", () => {
+  it("ESCALATES a codex approval-overlay (a destructive profile dialog) instead of auto-answering", async () => {
+    // The session's allowId resolves the codex profile; its approval-overlay dialog is destructive,
+    // so decideAutoAnswer escalates (command execution is never auto-approved) — proves the wake-turn
+    // resolves profile.dialogs by allowId and threads them into the policy.
+    const { wakeOneTurn, registry, emitted } = build({
+      screen: "Allow Codex to run command: rm -rf dist",
+      allowId: "codex",
+      autoAnswer: "safe-only",
+      sendResult: { screen: "ok", cursor: { x: 1, y: 1 }, delivered: true },
+    });
+    await wakeOneTurn("s-1", OWNER);
+    expect(registry.sendText).not.toHaveBeenCalled(); // never auto-answered
+    const esc = emitted.find((e) => e.event === "terminal:escalated");
+    expect(esc?.payload.reason).toBe("destructive");
+  });
+
+  it("no allowId ⇒ no profile ⇒ today's hintPattern-only behavior (INV-1)", async () => {
+    // Without an allowId the wake-turn passes no dialogs; the same screen falls through to the
+    // operator hintPattern path. With no hint match it escalates `no_safe_match` (the escalate-always
+    // veto is gated on an actual safe match — the narration-false-positive fix — so it does NOT fire
+    // here). This is byte-identical to today's no-profile behavior.
+    const { wakeOneTurn, registry, emitted } = build({
+      screen: "Allow Codex to run command: rm -rf dist",
+      autoAnswer: "safe-only",
+      hintPatterns: [],
+      sendResult: { screen: "ok", cursor: { x: 1, y: 1 }, delivered: true },
+    });
+    await wakeOneTurn("s-1", OWNER);
+    expect(registry.sendText).not.toHaveBeenCalled();
+    const esc = emitted.find((e) => e.event === "terminal:escalated");
+    expect(esc?.payload.reason).toBe("no_safe_match");
   });
 });

@@ -28,6 +28,7 @@
 import { scrubSecretsFromText, type ComisLogger } from "@comis/core";
 import {
   decideAutoAnswer,
+  getPlatformProfile,
   emptyJournal,
   appendStep,
   appendAnswered,
@@ -356,7 +357,13 @@ export function buildWokenTurnDriver(
       await escalate(sessionId, owner, "no_safe_match");
       return;
     }
-    const decision = decideAutoAnswer(cfg.autoAnswer, screen, cfg.hintPatterns);
+    // DIALOG-01 (v2.26): resolve the session's read-side platform profile by its operator-declared
+    // allowId (from the status view; INV-3, never content-sniffed) and feed its dialogs to the
+    // safe-only policy. A profile PROPOSES a safe answer; decideAutoAnswer DISPOSES — a destructive
+    // dialog escalates, and the escalate-always veto still wins. No profile / no allowId ⇒ exactly
+    // today's hintPattern-only behavior.
+    const profile = status.allowId !== undefined ? getPlatformProfile(status.allowId) : undefined;
+    const decision = decideAutoAnswer(cfg.autoAnswer, screen, cfg.hintPatterns, profile?.dialogs);
 
     if (decision.action === "escalate") {
       // A destructive/approval/auth-login prompt OR a non-match — send NOTHING, escalate.
