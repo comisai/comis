@@ -22,8 +22,10 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import Database from "better-sqlite3";
 import { TypedEventBus, runWithContext } from "@comis/core";
+import { createSqliteLearnedSkillStore, initSchema } from "@comis/memory";
 import type { EventMap, OutcomeObservation, ResolvedOutcome, LearningScope } from "@comis/core";
 import type { UsefulnessScope, MemoryUsefulnessStore, UsefulnessSignal } from "@comis/core";
 import type { LearnedSkillStorePort } from "@comis/core";
@@ -1140,6 +1142,115 @@ describe("SURFACE-07 / SEC-01: the 202 daemon files add no execution path + no t
     // paths, not the reuse-outcome loop).
     expect(/learnedSkillStore[^;]*\.admit\(/.test(src)).toBe(false);
     expect(/learnedSkillStore[^;]*\.evict\(/.test(src)).toBe(false);
+  });
+});
+
+// ── CR-01: the promote/demote loop must drive the REAL store end-to-end ──
+//
+// The loop iterates verdict.usedSkillIds — which carries skill NAMES (ATTR-01),
+// not the store's hash `id`. The store keys lifecycle transitions on
+// `learnedSkillId() = sha256(tenant+agent+name)` via `WHERE id = ?`. Passing a
+// NAME as the `id` matches 0 rows, so promote/demote are silent no-ops AND the
+// 0-row write is reported as success (the counters/telemetry then lie). These
+// tests drive the FULL loop against a REAL @comis/memory store (not the vi.fn()
+// stub that only records the string arg) and assert the actual row transitioned
+// AND the emitted count matches the REAL number of transitions.
+//
+// RED on pre-patch HEAD: the loop calls store.promote("<name>", …) → 0 rows →
+// the row stays `candidate` and learning:skill_promoted still emits count>0.
+describe("CR-01: promote/demote drive the REAL learned-skill store via name→id (not name-as-id)", () => {
+  const SKILL_TENANT = "tenant-x"; // must match the ALS tenant resolved from SESSION_KEY
+  const SKILL_AGENT = AGENT;
+
+  /** Build the wiring over a REAL store + a resolve verdict carrying skill NAMES. */
+  function wireRealSkillSeam(
+    db: import("better-sqlite3").Database,
+    verdict: ResolvedOutcome,
+    opts?: { promoteAt?: number; bus?: TypedEventBus; logger?: ReturnType<typeof createMockLogger> },
+  ): { bus: TypedEventBus; store: ReturnType<typeof createSqliteLearnedSkillStore> } {
+    const bus = opts?.bus ?? new TypedEventBus();
+    const { store: outcomeStore } = makeStubStore(verdict);
+    const skillStore = createSqliteLearnedSkillStore({ db });
+    wireLearningOutcome({
+      eventBus: bus,
+      outcomeStore,
+      usefulnessStore: mockUsefulnessStore().store,
+      learnedSkillStore: skillStore,
+      learningTuningEnabled: () => false,
+      learningForgettingEnabled: () => false,
+      learningSkillsEnabled: () => true,
+      learningSkillsPromoteAt: () => opts?.promoteAt ?? 1,
+      clock: createFakeClock(NOW),
+      logger: opts?.logger ?? createMockLogger(),
+      learningOutcomeEnabled: () => true,
+    });
+    return { bus, store: skillStore };
+  }
+
+  async function driveGraph(bus: TypedEventBus, trace: string): Promise<void> {
+    runWithContext(
+      { tenantId: SKILL_TENANT, agentId: SKILL_AGENT, sessionKey: SESSION_KEY, traceId: trace } as never,
+      () => bus.emit("graph:completed", graphPayload({ status: "completed" })),
+    );
+    await flushMicrotasks();
+  }
+
+  let db: import("better-sqlite3").Database;
+  beforeEach(() => {
+    db = new Database(":memory:");
+    initSchema(db, 384);
+  });
+  afterEach(() => {
+    db.close();
+  });
+
+  it("a SUCCESS verdict whose usedSkillIds are admitted NAMES actually flips the real row candidate→active", async () => {
+    const scope = { tenantId: SKILL_TENANT, agentId: SKILL_AGENT };
+    const seed = createSqliteLearnedSkillStore({ db });
+    const admitted = await seed.admit(
+      {
+        name: "deploy-the-thing",
+        description: "deploy safely",
+        body: "1. read 2. report",
+        mutating: false,
+        proofCount: 0,
+        confidence: 0.8,
+        sourceTrajIds: ["traj_1"],
+        createdAt: NOW,
+      },
+      scope,
+    );
+    expect(admitted.ok).toBe(true);
+
+    // The verdict carries the skill NAME (as ATTR-01 produces), threshold 1.
+    const { bus, store } = wireRealSkillSeam(
+      db,
+      baseVerdict({ outcome: "success", sources: ["pipeline"], usedSkillIds: ["deploy-the-thing"] }),
+      { promoteAt: 1 },
+    );
+    await driveGraph(bus, TRACE);
+
+    // The REAL row must have transitioned: a name-as-id promote would leave it candidate.
+    const after = await store.get("deploy-the-thing", scope);
+    expect(after.ok).toBe(true);
+    expect(after.ok ? after.value?.state : undefined).toBe("active"); // RED on HEAD (stays candidate)
+    expect(after.ok ? after.value?.proofCount : undefined).toBe(1);
+  });
+
+  it("a success verdict naming a SKILL THAT DOES NOT EXIST emits count 0 and no learning:skill_promoted (telemetry stops lying)", async () => {
+    const bus = new TypedEventBus();
+    const emitSpy = vi.spyOn(bus, "emit");
+    // No admit → the name resolves to no row.
+    wireRealSkillSeam(
+      db,
+      baseVerdict({ outcome: "success", sources: ["pipeline"], usedSkillIds: ["ghost-skill"] }),
+      { bus },
+    );
+    await driveGraph(bus, TRACE);
+
+    // A 0-row promote must NOT emit a non-zero count (RED on HEAD: emits count 1).
+    const promoted = emitSpy.mock.calls.find((c) => c[0] === "learning:skill_promoted");
+    expect(promoted, "an unmatched name must not emit learning:skill_promoted").toBeUndefined();
   });
 });
 
