@@ -72,6 +72,7 @@ import { createHybridMemoryInjector } from "../rag/hybrid-memory-injector.js";
 import { createMemoryRecall } from "../rag/memory-recall.js";
 import { formatMemorySection } from "../rag/rag-retriever.js";
 import { buildScoringAlphas } from "../rag/scoring-overlay.js";
+import { classifyIntent } from "../rag/query-understanding.js";
 import { buildTemporalGuidanceBlock } from "../rag/temporal-guidance.js";
 import { buildUserRepresentationBlock } from "./user-representation-block.js";
 import { buildRelationshipBlock } from "./relationship-block.js";
@@ -973,9 +974,16 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
         (config.rag as typeof config.rag & { onlineTuning?: { enabled: boolean } }).onlineTuning
           ?.enabled === true;
       if (onlineTuningEnabled && deps.tunedAlphaStore) {
+        // RANK-02: read the PER-INTENT tuned vector for THIS turn's query intent. The
+        // deterministic, LLM-free classifyIntent (same `msg.text` that feeds the recall
+        // below) keeps the recall hot path deterministic; the adapter resolves the global
+        // '' bucket when no per-intent row exists. intent is an ADDITIONAL key, never a
+        // relaxation of the (tenant, agent) isolation scope (belt #2 still sources trust
+        // from config at the overlay).
         const tr = await deps.tunedAlphaStore.read({
           tenantId: deps.tenantId ?? sessionKey.tenantId,
           agentId: agentId ?? config.name,
+          intent: classifyIntent(msg.text),
         });
         if (tr.ok) tunedVector = tr.value;
       }

@@ -117,6 +117,8 @@ function makeCtx(overrides: {
     consolidationStore: { listConsolidationCandidates: vi.fn() } as any,
     tripleStore: { upsertTriple: vi.fn(), currentTruth: vi.fn() } as any,
     relationshipStore: { upsert: vi.fn(), read: vi.fn() } as any,
+    // The tuned-alpha write store the __ONLINE_TUNING__ bandit upserts through (port TYPE only).
+    tunedAlphaStore: { upsert: vi.fn(async () => ({ ok: true as const, value: undefined })), read: vi.fn(async () => ({ ok: true as const, value: undefined })) } as any,
     memoryApi: memoryApi as any,
     memoryLifecycleStore: (overrides.memoryLifecycleStore ?? {
       // The DORMANT default: scanned some rows, mutated NONE (the scaffold).

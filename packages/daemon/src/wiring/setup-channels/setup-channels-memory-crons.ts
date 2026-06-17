@@ -25,6 +25,16 @@ import type { MemoryCronPayload, MemoryCronContext } from "./setup-channels-memo
 export type { MemoryCronPayload, MemoryCronContext } from "./setup-channels-memory-crons-types.js";
 
 /**
+ * The per-intent tuned-alpha buckets the online-tuning bandit iterates when
+ * `learningTuning.perIntent` is on (RANK-02): the GLOBAL '' bucket + the four deterministic
+ * `classifyIntent` intents (`factual`/`temporal`/`preference`/`enumeration` — @comis/agent's
+ * closed `Intent` union). Kept as a local closed list (the agent's `Intent` type is not on the
+ * barrel and a TYPE cannot be iterated at runtime); a NEW intent on the agent side must be added
+ * here too. The recall apply-site classifies live via `classifyIntent(query)`.
+ */
+const TUNING_INTENT_BUCKETS = ["", "factual", "temporal", "preference", "enumeration"] as const;
+
+/**
  * Handle an LLM-backed memory-cron sentinel (`__MEMORY_CONSOLIDATION__` /
  * `__MEMORY_REASONING__`). Returns `true` when the sentinel was recognized + handled
  * (the caller then returns), `false` when it is neither (the caller falls through to
@@ -336,34 +346,64 @@ export async function handleMemoryCronSentinel(
       proofAlpha: scoring?.proofAlpha ?? 0.1,
       usefulnessAlpha: scoring?.usefulnessAlpha ?? 0.1,
     };
-
-    // The injected FEED-read seam scoped to (tenant, agent) over a bounded recent candidate-id set
-    // (the daemon's existing memory read surface; maxSourceMemories bounds it). A read failure is
-    // non-fatal in the job — the bandit keeps the ranker's current weights.
     const maxSourceMemories = cfg.maxSourceMemories ?? 200;
-    const readUsefulness = async (): Promise<Awaited<ReturnType<typeof usefulnessStore.readUsefulness>>> => {
-      const ids = memoryApi
-        ? memoryApi.inspect({ tenantId: tuningTenantId, agentId, limit: maxSourceMemories }).map((r) => r.id)
-        : [];
-      // readUsefulness returns Map<id, {usedCount, ignoredCount, lastUsefulAt?}>; OnlineTuningFeedEntry
-      // is the counts-only subset the job aggregates (structurally compatible).
-      return usefulnessStore.readUsefulness(ids, { tenantId: tuningTenantId, agentId });
-    };
 
-    const result = await runOnlineTuning({
-      agentId,
-      tenantId: tuningTenantId,
-      config: { enabled: cfg.enabled, maxSourceMemories },
-      // Injected from setup-memory (the composition-root join) — the port TYPE only.
-      tunedAlphaStore,
-      readUsefulness: readUsefulness as () => Promise<import("@comis/shared").Result<Map<string, OnlineTuningFeedEntry>, Error>>,
-      configScoring,
-      clock,
-      logger: tuningLogger,
-      eventBus: container.eventBus,
-    });
+    // The per-intent FEED-read seam scoped to (tenant, agent, intent) over a bounded recent
+    // candidate-id set (the daemon's existing memory read surface; maxSourceMemories bounds it).
+    // Omitted intent → the global '' bucket (byte-identical legacy read). A read failure is
+    // non-fatal in the job — the bandit keeps the ranker's current weights.
+    const makeReadUsefulness = (intent?: string) =>
+      async (): Promise<Awaited<ReturnType<typeof usefulnessStore.readUsefulness>>> => {
+        const ids = memoryApi
+          ? memoryApi.inspect({ tenantId: tuningTenantId, agentId, limit: maxSourceMemories }).map((r) => r.id)
+          : [];
+        return usefulnessStore.readUsefulness(ids, {
+          tenantId: tuningTenantId,
+          agentId,
+          ...(intent !== undefined ? { intent } : {}),
+        });
+      };
 
-    payload.onComplete?.({ status: result.ok ? "ok" : "error", error: result.ok ? undefined : result.error?.message });
+    // RANK-02/03 gate composition (resolved decision #3): `memoryOnlineTuning.enabled` runs the
+    // cron (already checked above); `learningTuning.enabled` SELECTS the bandit + per-intent +
+    // outcome-reward behavior. When OFF → the LEGACY single-bucket nudge (byte-identical). When
+    // ON → per-intent runs (perIntent) selecting bandit-vs-nudge by `learner`.
+    const learningTuning = agentConfig?.learningTuning;
+    const runFor = (intent?: string) =>
+      runOnlineTuning({
+        agentId,
+        tenantId: tuningTenantId,
+        config: {
+          enabled: cfg.enabled,
+          maxSourceMemories,
+          ...(learningTuning?.enabled ? { learner: learningTuning.learner, exploration: learningTuning.exploration } : {}),
+          ...(intent !== undefined ? { intent } : {}),
+        },
+        // Injected from setup-memory (the composition-root join) — the port TYPE only.
+        tunedAlphaStore,
+        readUsefulness: makeReadUsefulness(intent) as () => Promise<import("@comis/shared").Result<Map<string, OnlineTuningFeedEntry>, Error>>,
+        configScoring,
+        clock,
+        logger: tuningLogger,
+        eventBus: container.eventBus,
+      });
+
+    let anyTuningError = false;
+    if (learningTuning?.enabled && learningTuning?.perIntent) {
+      // Per-intent: the global '' bucket + the closed deterministic intents (mirrors the agent's
+      // classifyIntent union). Each bucket tunes its own (tenant, agent, intent) vector.
+      for (const intent of TUNING_INTENT_BUCKETS) {
+        const r = await runFor(intent);
+        if (!r.ok) anyTuningError = true;
+      }
+    } else {
+      // The LEGACY single-bucket path (learningTuning off, or on-but-not-per-intent): the global
+      // '' bucket only — byte-identical to the pre-Plan-06 behaviour when learningTuning is off.
+      const r = await runFor(undefined);
+      if (!r.ok) anyTuningError = true;
+    }
+
+    payload.onComplete?.({ status: anyTuningError ? "error" : "ok", error: anyTuningError ? "one or more online-tuning intent runs failed" : undefined });
     return true;
   }
 
