@@ -277,10 +277,11 @@ describe("runSkillSynthesis — triple-cap (SKILL-05)", () => {
 
   it("terminates the synthesis loop at the iteration cap", async () => {
     const mocks: Partial<Mocks> = {};
-    // 50 distinct-session successes → 50 singleton clusters; the iteration cap
-    // (default ~10) bounds how many reach synthesize.
+    // 50 distinct-session successes with NO embedding → 50 singleton clusters
+    // (no cosine neighbour); the iteration cap (10) bounds how many reach
+    // synthesize, and the loop terminates with boundedBy === "iterations".
     const trajectories = Array.from({ length: 50 }, (_, i) =>
-      traj({ trajectoryId: `t-${i}`, sessionId: `s-${i}`, sender: "user", embedding: [i, 1, 0] }),
+      traj({ trajectoryId: `t-${i}`, sessionId: `s-${i}`, sender: "user" }),
     );
     const deps = makeDeps(trajectories, { maxIterations: 10 }, mocks);
 

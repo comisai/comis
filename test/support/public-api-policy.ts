@@ -536,6 +536,15 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // agent-internal (off the public barrel).
       "createLlmSkillSynthesisAdapter",
       "LlmSkillSynthesisAdapterDeps",
+      // The synthesis JOB (SKILL-03/04/05/08) + its public dep/result/source
+      // types. The daemon `setup-channels-memory-crons` (Plan 07) name-imports
+      // runSkillSynthesis from the `__SKILL_SYNTHESIS__` cron and builds the
+      // SynthesisSourceTrajectory[] from buildReviewSessionSource; all SHRINK out
+      // when that wiring lands. The job consumes @comis/core PORT TYPES only.
+      "runSkillSynthesis",
+      "SkillSynthesisJobDeps",
+      "SkillSynthesisJobResult",
+      "SynthesisSourceTrajectory",
     ])],
     // @comis/channels: baseline orphans tracked here. The 5 delivery
     // helpers + the Markdown IR pipeline (incl. telegram-file-ref-guard)

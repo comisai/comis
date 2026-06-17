@@ -30,3 +30,12 @@ export type { CorrectionDetectorSeamDeps, CorrectionVerdict } from "./correction
 export { createLlmSkillSynthesisAdapter } from "./llm-skill-synthesis-adapter.js";
 export type { LlmSkillSynthesisAdapterDeps, SkillSynthesisLogger } from "./llm-skill-synthesis-adapter.js";
 export { SKILL_SYNTHESIS_PROMPT, parseSynthesisResult } from "./skill-synthesis-prompt.js";
+export { runSkillSynthesis } from "./skill-synthesis-job.js";
+export type {
+  SkillSynthesisJobDeps,
+  SkillSynthesisJobResult,
+  SkillSynthesisJobConfig,
+  SkillSynthesisJobLogger,
+  SynthesisSourceTrajectory,
+  SkillApprovalGate,
+} from "./skill-synthesis-job.js";

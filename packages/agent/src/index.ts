@@ -636,3 +636,15 @@ export type { CorrectionVerdict } from "./memory/index.js";
 // the same plan's later tasks. The synthesis PROMPT + parser stay agent-internal.
 export { createLlmSkillSynthesisAdapter } from "./memory/index.js";
 export type { LlmSkillSynthesisAdapterDeps } from "./memory/index.js";
+
+// The procedural skill-synthesis JOB (SKILL-03/04/05/08) the daemon invokes from
+// the `__SKILL_SYNTHESIS__` cron (Plan 07): select success → abstain → cluster
+// (anti-domination) → synthesize → validate → admit. Consumes @comis/core PORT
+// TYPES only (the agent↛memory / agent↛skills closed-graph cut); the daemon
+// injects the store + validation adapters + the LCD-merged source.
+export { runSkillSynthesis } from "./memory/index.js";
+export type {
+  SkillSynthesisJobDeps,
+  SkillSynthesisJobResult,
+  SynthesisSourceTrajectory,
+} from "./memory/index.js";
