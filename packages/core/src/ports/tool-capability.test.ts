@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from "vitest";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import type {
   ToolCapabilityPort,
   PromptSkillCapability,
@@ -81,6 +83,33 @@ describe("ToolCapabilityPort interface", () => {
     };
     expect(full.cluster).toBe("data-fetching");
     expect(full.source).toBe("bundled");
+  });
+
+  it("PromptSkillCapability.source accepts 'learned' (mirrors the widened SkillSource, SURFACE-01)", () => {
+    // The @comis/skills SkillSource union widened to include 'learned' (v2.26
+    // verified-learning). PromptSkillCapability.source re-declares the literal
+    // union and MUST stay in sync, else a learned skill's SkillMetadata.source
+    // cannot flow into capability metadata (skill-registry-cache.ts). The
+    // literal-assignability check compiles away under esbuild, so we assert the
+    // declaration via source-grep (reproducible RED from pre-patch source).
+    const src = fs.readFileSync(
+      path.join(__dirname, "tool-capability.ts"),
+      "utf-8",
+    );
+    const sourceLine = src
+      .split("\n")
+      .find((l) => l.includes('readonly source?:') && l.includes('"bundled"'));
+    expect(sourceLine, "PromptSkillCapability.source line not found").toBeDefined();
+    expect(sourceLine).toContain('"learned"');
+
+    // Type-level: a learned-source capability literal must compile.
+    const learned: PromptSkillCapability = {
+      name: "learned-proc",
+      description: "a learned procedure",
+      replacesPackages: [],
+      source: "learned",
+    };
+    expect(learned.source).toBe("learned");
   });
 
   it("CapabilitySourceRef discriminates by type", () => {
