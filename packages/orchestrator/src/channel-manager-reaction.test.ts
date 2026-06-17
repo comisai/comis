@@ -176,4 +176,37 @@ describe("channel-manager -- inbound reaction fanout (REACT-01)", () => {
     const reactionEmit = emit.mock.calls.find((c) => c[0] === "channel:reaction_received");
     expect(reactionEmit).toBeUndefined();
   });
+
+  it("WR-02: validates the binder-built reaction through parseReaction at the fanout boundary — an invalid reaction (empty messageId) is REJECTED and NOT emitted", async () => {
+    const adapter = makeReactionAdapter();
+    const deps = makeDeps(adapter);
+    const manager = createChannelManager(deps);
+    await manager.startAll();
+
+    // An untrusted reaction with an empty messageId violates the
+    // NormalizedReaction strictObject (z.string().min(1)). The fanout must run it
+    // through parseReaction and DROP it (fail-closed) rather than emitting an
+    // invalid content-free event onto the bus.
+    await adapter.triggerReaction(makeReaction({ messageId: "" }) as never);
+
+    const emit = vi.mocked(deps.eventBus.emit);
+    const reactionEmit = emit.mock.calls.find((c) => c[0] === "channel:reaction_received");
+    expect(reactionEmit).toBeUndefined();
+  });
+
+  it("WR-02: a VALID binder-built reaction still passes parseReaction and is emitted (no false rejection of well-formed inbound)", async () => {
+    const adapter = makeReactionAdapter();
+    const deps = makeDeps(adapter);
+    const manager = createChannelManager(deps);
+    await manager.startAll();
+
+    await adapter.triggerReaction(makeReaction({ messageId: "msg-ok", emoji: "✅" }));
+
+    const emit = vi.mocked(deps.eventBus.emit);
+    const reactionEmit = emit.mock.calls.find((c) => c[0] === "channel:reaction_received");
+    expect(reactionEmit).toBeDefined();
+    const payload = reactionEmit?.[1] as Record<string, unknown>;
+    expect(payload.messageId).toBe("msg-ok");
+    expect(payload.emoji).toBe("✅");
+  });
 });
