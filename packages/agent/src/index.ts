@@ -221,6 +221,16 @@ export type { ReasoningSeamDeps } from "./memory/memory-reasoning-seam.js";
 export { createUserRepresentationSeam } from "./memory/memory-user-representation-seam.js";
 export type { UserRepresentationSeamDeps } from "./memory/memory-user-representation-seam.js";
 
+// Offline usefulness-judge seam (the OPTIONAL second usefulness signal alongside the
+// keyless citation-marker attribution). The factory the daemon __USEFULNESS_JUDGE__
+// sentinel calls to BUILD judge({ candidateIds, answer }) from a cheap resolved model
+// (the daemon injects it), keeping USEFULNESS_JUDGE_PROMPT + its lenient/total parser
+// agent-internal (mirrors createUserRepresentationSeam). The verdict partition is written
+// through usefulnessStore.recordUsage by the sentinel (WIRE-02). Only the factory is
+// exported — its Deps/Input/Verdict shapes are inferred at the daemon call site (no
+// unconsumed type surface on the public barrel).
+export { createUsefulnessJudgeSeam } from "./memory/memory-usefulness-judge-seam.js";
+
 // Query-time dialectic synthesis seam (the ONE allowed query-time LLM
 // surface). The factory the daemon `memory.ask` handler calls to BUILD the
 // synthesize() seam from a cheap resolved model (the daemon injects it), keeping DIALECTIC_PROMPT
