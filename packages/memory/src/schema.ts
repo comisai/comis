@@ -13,6 +13,7 @@ import { ensureLcdTables } from "./schema-lcd.js";
 import { ensurePinnedColumn } from "./schema-pinned.js";
 import { ensureVideoJobTable } from "./schema-video-jobs.js";
 import { ensureOutcomeEventsTable } from "./schema-outcome-events.js";
+import { ensureLearnedSkillsTable } from "./schema-learned-skills.js";
 import { ensureTunedAlphaIntent, ensureUsefulnessFailureColumn } from "./schema-tuned-alpha.js";
 
 /** Module-level flag tracking whether sqlite-vec loaded successfully. */
@@ -581,6 +582,7 @@ export function initSchema(db: Database.Database, embeddingDimensions: number): 
   ensurePinnedColumn(db); // pinned-memory column + partial index (forward-only; design §4.1)
   ensureVideoJobTable(db); // durable async video-job store (Phase 189, JOB-01/JOB-03)
   ensureOutcomeEventsTable(db); // outcome_events ledger (v2.26 WS1, OUTCOME-01) — no FK, (tenant,agent)-scoped
+  ensureLearnedSkillsTable(db, embeddingDimensions, localVecAvailable); // learned_skills procedural store + FTS/vec/trigram twins (v2.26 WS2, SKILL-01) — trust CHECK IN ('learned'), (tenant,agent)-scoped
 
   // --- Observation partial indexes (design §4.1) --- created AFTER ensureMemoryColumns (indexed columns must exist first).
   // `idx_memories_unconsol` serves the candidate scan (consolidated_at IS NULL); `idx_memories_observations` serves the observation lookup (proof_count IS NOT NULL).

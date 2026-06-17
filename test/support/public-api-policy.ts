@@ -2458,6 +2458,20 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // MemoryLifecycleStoreDeps above).
       "createSqliteOutcomeStore",
       "OutcomeStoreDeps",
+      // Learned-skill store (v2.26 Verified Learning WS2, Phase 201 Plan 02).
+      // createSqliteLearnedSkillStore is the SOLE LearnedSkillStorePort adapter (the
+      // (tenant, agent)-scoped learned_skills procedural store — idempotent
+      // deterministic-id admit(), scoped get()/list(), and the promote()/demote()/
+      // evict() lifecycle, evict being a soft evicted_at set, never a hard DELETE).
+      // It is an AHEAD-OF-CONSUMER factory-orphan: the daemon composition-root
+      // consumer LANDS in Plan 07 (the synthesis-job wiring injects it on the shared
+      // db handle), at which point this factory entry SHRINKS OUT (mirror
+      // createSqliteOutcomeStore above; allowlist-shrink enforces shrink-only).
+      // LearnedSkillStoreDeps is the constructor-deps SHAPE type (referenced via
+      // inline objects only — the daemon calls the factory with an inline
+      // `{ db, logger }`) — PERMANENT baseline orphan (mirror OutcomeStoreDeps above).
+      "createSqliteLearnedSkillStore",
+      "LearnedSkillStoreDeps",
       // Scoped embedding-read store. createSqliteMemoryEmbeddingStore
       // is the sole MemoryEmbeddingStore adapter — the (tenant, agent)-scoped LEFT JOIN
       // vec_memories bulk read that hydrates the MMR diversity re-rank. Its daemon

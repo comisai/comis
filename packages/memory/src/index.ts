@@ -169,6 +169,19 @@ export type { MemoryUsefulnessStoreDeps } from "./sqlite-memory-usefulness-store
 export { createSqliteOutcomeStore } from "./sqlite-outcome-store.js";
 export type { OutcomeStoreDeps } from "./sqlite-outcome-store.js";
 
+// Learned-skill store (sole LearnedSkillStorePort impl — v2.26 Verified Learning WS2).
+// Owns the idempotent `admit()` upsert (deterministic-hash id of the
+// (tenant, agent, name) UNIQUE tuple + ON CONFLICT(id) DO UPDATE), the scoped
+// (tenant, agent)-isolated `get`/`list` reads, and the `promote`/`demote`/`evict`
+// lifecycle transitions (evict is SOFT — sets evicted_at, never a hard DELETE).
+// The DB CHECK (trust_level IN ('learned')) + a code coercion make a synthesized
+// procedure structurally incapable of being `system` (SEC-01). The daemon
+// (composition root) constructs it on the memory adapter's db handle (Plan 07);
+// the LearnedSkillStorePort TYPE lives in @comis/core (the agent↛memory cut — the
+// synthesis job consumes the type only).
+export { createSqliteLearnedSkillStore } from "./sqlite-learned-skill-store.js";
+export type { LearnedSkillStoreDeps } from "./sqlite-learned-skill-store.js";
+
 // Tuned-alpha store (sole TunedAlphaStore impl).
 // Owns the idempotent per-(tenant, agent) tuned-alpha-vector upsert + the scoped
 // read (undefined when absent → the apply-site default-OFF no-op). The daemon
