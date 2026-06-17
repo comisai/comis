@@ -29,12 +29,14 @@ import {
   type TypedEventBus,
   type OutcomeSignalPort,
   type MemoryUsefulnessStore,
+  type LearnedSkillStorePort,
   type ClockPort,
   type ComisLogger,
   type AppConfig,
 } from "@comis/core";
 
 import { deriveTenantFromSessionKey } from "./setup-memory-usefulness-wiring.js";
+import { createSkillTrendTracker } from "./setup-learning-skill-trend.js";
 
 /** Dependencies for {@link wireLearningOutcome}. */
 export interface LearningOutcomeWiringDeps {
@@ -74,6 +76,27 @@ export interface LearningOutcomeWiringDeps {
    * corroboration-gated, FORGET-03). Default-OFF → no failure accrual (byte-identical).
    */
   learningForgettingEnabled: (agentId: string) => boolean;
+  /**
+   * The sole @comis/memory learned-skill adapter (the SURFACE-04/05 promote/demote
+   * write target). The daemon is the ONLY place holding BOTH this AND
+   * `OutcomeSignalPort.resolve()` (the agent↛memory cut). OPTIONAL — when absent (a
+   * pre-Plan-05 caller, or learning disabled) the promote/demote loop is a no-op
+   * (byte-identical). Injected from setup-memory.ts where it is already constructed.
+   */
+  learnedSkillStore?: LearnedSkillStorePort;
+  /**
+   * Per-agent learned-skill promote/demote enable (SURFACE-04/05): true ONLY when the
+   * agent has `learningSkills.enabled` AND the master `memory.costFeatures.enabled`
+   * switch is on. Gates the entire promote/demote loop. DEFAULT-OFF
+   * (`learningSkills.enabled` defaults false) → no promote/demote/emit (byte-identical).
+   */
+  learningSkillsEnabled?: (agentId: string) => boolean;
+  /**
+   * Per-agent `promoteAtProofCount` (the threshold the candidate→active transition
+   * crosses — schema default 3). Passed verbatim into `learnedSkillStore.promote(id,
+   * scope, threshold)` (the Plan 02 D2 store-side CASE gate). Read once per agent.
+   */
+  learningSkillsPromoteAt?: (agentId: string) => number;
 }
 
 /** High-confidence default for a clean deterministic tool/pipeline signal. */
@@ -265,7 +288,7 @@ export function failureCorroborated(
 function recordNonFatal(
   deps: LearningOutcomeWiringDeps,
   agentId: string,
-  kind: "reward" | "failure_accrual",
+  kind: "reward" | "failure_accrual" | "skill_promote" | "skill_demote",
   run: () => Promise<{ ok: boolean }>,
 ): void {
   void Promise.resolve()
@@ -276,7 +299,7 @@ function recordNonFatal(
           {
             agentId,
             errorKind: "internal" as const,
-            hint: `outcome ${kind} write failed; the per-intent ${kind === "reward" ? "reward" : "failure_count"} was not persisted for this trajectory`,
+            hint: `outcome ${kind} write failed; the ${kind} state transition was not persisted for this trajectory`,
           },
           `outcome ${kind} write failed (non-fatal)`,
         );
@@ -288,7 +311,7 @@ function recordNonFatal(
           agentId,
           err: e instanceof Error ? e : new Error(String(e)),
           errorKind: "internal" as const,
-          hint: `outcome ${kind} write threw; the per-intent ${kind === "reward" ? "reward" : "failure_count"} was not persisted for this trajectory`,
+          hint: `outcome ${kind} write threw; the ${kind} state transition was not persisted for this trajectory`,
         },
         `outcome ${kind} write threw (non-fatal)`,
       );
@@ -323,6 +346,15 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
   // failure (tool/pipeline) bypasses it. Mirrors the coverage gauge's in-process
   // counters (resets on restart) — counts/ids only, never bodies.
   const failureCorroborationTally = new Map<string, Set<string>>();
+  // SURFACE-05: a SECOND, independent daemon-lifetime corroboration tally for the
+  // learned-SKILL demote path (skillId → DISTINCT failing sessions). Kept separate
+  // from the memory tally above so the two write paths never alias an id. Reuses the
+  // SAME failureCorroborated() gate (≥2 distinct-session OR 1 deterministic).
+  const skillFailureCorroborationTally = new Map<string, Set<string>>();
+  // SURFACE-05: the in-process, daemon-lifetime decay-aware trend (the WHEN-to-demote
+  // decision). A corroborated failure demotes ONLY when the trend reaches WEAKENING —
+  // so a single induced failure on a well-reused procedure does NOT archive it.
+  const skillTrend = createSkillTrendTracker();
 
   // ---- Deterministic tool signal (the only source that ships ACTIVE, OUTCOME-03) ----
   deps.eventBus.on("tool:executed", (p) => {
@@ -453,6 +485,79 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
           }
         }
 
+        // ---- SURFACE-04/05/06 learned-SKILL promote/demote at resolve() ----
+        // Beside the RANK-01/FORGET-02 block (which iterates verdict.recalledIds),
+        // iterate the ATTR-02 attributed verdict.usedSkillIds. On `success` PROMOTE
+        // each (Plan 02's threshold-gated 3-arg store call); on a corroborated
+        // `failure`/`corrected` DEMOTE only when the decay-aware trend reaches
+        // WEAKENING (anti-induced-demotion). Gated on learningSkillsEnabled +
+        // learnedSkillStore present (default-OFF / no-store ⇒ byte-identical no-op).
+        if (
+          deps.learnedSkillStore !== undefined &&
+          deps.learningSkillsEnabled?.(scope.agentId) === true
+        ) {
+          const skillStore = deps.learnedSkillStore;
+          const skillScope = { tenantId: scope.tenantId, agentId: scope.agentId, now: deps.clock.now() };
+          const threshold = deps.learningSkillsPromoteAt?.(scope.agentId) ?? 3;
+          const skillStart = deps.clock.now();
+          let promoted = 0;
+          let demoted = 0;
+          for (const skillId of verdict.usedSkillIds) {
+            if (verdict.outcome === "success") {
+              // SURFACE-04: bump proof_count; candidate→active at promoteAtProofCount
+              // (the Plan 02 store-side CASE gate). The success also feeds the trend
+              // so a strong recent history resists a later (possibly induced) demote.
+              recordNonFatal(deps, scope.agentId, "skill_promote", () =>
+                skillStore.promote(skillId, skillScope, threshold),
+              );
+              skillTrend.updateSkillTrend(skillId, "success", deps.clock.now());
+              promoted += 1;
+            } else if (verdict.outcome === "failure" || verdict.outcome === "corrected") {
+              // SURFACE-05: corroboration gate (≥2 distinct-session OR 1 deterministic),
+              // THEN the decay-aware trend — demote ONLY on a WEAKENING standing so a
+              // single corroborated failure on a well-reused skill stays put (§12 first-RED).
+              if (failureCorroborated(skillId, scope.sessionId, verdict.sources, skillFailureCorroborationTally)) {
+                const trend = skillTrend.updateSkillTrend(skillId, "failure", deps.clock.now());
+                if (trend === "weakening") {
+                  recordNonFatal(deps, scope.agentId, "skill_demote", () =>
+                    skillStore.demote(skillId, skillScope),
+                  );
+                  demoted += 1;
+                }
+              }
+            }
+          }
+          // SURFACE-06 emits — plain eventBus.emit (Plan 03 typed the keys + bridged
+          // them; never `?.`). COUNTS ONLY — a body/script/id-list field is a compile error.
+          if (promoted > 0) {
+            deps.eventBus.emit("learning:skill_promoted", {
+              agentId: scope.agentId,
+              count: promoted,
+              timestamp: deps.clock.now(),
+            });
+          }
+          if (demoted > 0) {
+            deps.eventBus.emit("learning:skill_demoted", {
+              agentId: scope.agentId,
+              count: demoted,
+              timestamp: deps.clock.now(),
+            });
+          }
+          // OBS-01: one INFO completion line per resolve that moved a skill, with
+          // durationMs (counts/ids only — never a procedure body).
+          if (promoted > 0 || demoted > 0) {
+            deps.logger.info(
+              {
+                agentId: scope.agentId,
+                promoted,
+                demoted,
+                durationMs: deps.clock.now() - skillStart,
+              },
+              "Learned-skill promote/demote complete",
+            );
+          }
+        }
+
         // Emit the resolved outcome (counts/ids/closed-enums ONLY — plain emit so it
         // lands on the trajectory and is type-checked; bridged for comis explain).
         deps.eventBus.emit("learning:outcome_observed", {
@@ -519,6 +624,13 @@ export interface SetupLearningOutcomeDeps {
    * agent never imports the store (closed graph).
    */
   usefulnessStore: MemoryUsefulnessStore;
+  /**
+   * The learned-skill adapter (SURFACE-04/05 promote/demote write target). Already
+   * constructed in setup-memory.ts; threaded through here so the agent never imports
+   * the store (closed graph). Folded onto the existing call so setup-memory.ts stays
+   * net-zero on lines.
+   */
+  learnedSkillStore: LearnedSkillStorePort;
   clock: ClockPort;
   logger: ComisLogger;
   /** The parsed app config — the source of the master cost switch + per-agent flag. */
@@ -549,6 +661,7 @@ export function setupLearningOutcomeWiring(deps: SetupLearningOutcomeDeps): void
     eventBus: deps.eventBus,
     outcomeStore: deps.outcomeStore,
     usefulnessStore: deps.usefulnessStore,
+    learnedSkillStore: deps.learnedSkillStore,
     clock: deps.clock,
     logger: deps.logger,
     learningOutcomeEnabled: (agentId: string): boolean =>
@@ -557,5 +670,11 @@ export function setupLearningOutcomeWiring(deps: SetupLearningOutcomeDeps): void
       costFeaturesEnabled && agents[agentId]?.learningTuning?.enabled === true,
     learningForgettingEnabled: (agentId: string): boolean =>
       costFeaturesEnabled && agents[agentId]?.learningForgetting?.enabled === true,
+    // SURFACE-04/05: the learned-skill promote/demote gate (default-OFF —
+    // `learningSkills.enabled` defaults false) + the per-agent promote threshold.
+    learningSkillsEnabled: (agentId: string): boolean =>
+      costFeaturesEnabled && agents[agentId]?.learningSkills?.enabled === true,
+    learningSkillsPromoteAt: (agentId: string): number =>
+      agents[agentId]?.learningSkills?.promoteAtProofCount ?? 3,
   });
 }

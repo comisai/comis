@@ -632,7 +632,7 @@ export async function setupMemory(deps: {
   // 6.5.2f'. Outcome-signal subscriber (WS1) + the RANK-01/FORGET-02 reward/failure write at resolve() (closed graph; byte-identity-gated per-agent learning{Outcome,Tuning,Forgetting} + the cost master-switch).
   setupLearningOutcomeWiring({
     eventBus: container.eventBus,
-    outcomeStore,
+    outcomeStore, learnedSkillStore,
     usefulnessStore,
     clock,
     logger: memoryLogger,
