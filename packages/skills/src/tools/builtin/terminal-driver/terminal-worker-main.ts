@@ -173,15 +173,25 @@ export function buildLoadTmux(tmuxPath: string, loadPty: () => PtyModuleLike): T
   // DUR-01: the STABLE data-dir socket every tmux command targets via `-S` — so the server
   // binds it and a restarted daemon re-attaches to the SAME socket (NOT the PrivateTmp-private
   // /tmp default, which the new daemon generation cannot reach).
-  const socketPath = resolveTmuxSocketPath(durableDir());
-  const hasSession = (name: string): boolean => {
-    try {
-      execFileSync(tmuxPath, ["-S", socketPath, "has-session", "-t", name], { stdio: "ignore" });
-      return true;
-    } catch {
-      return false;
-    }
-  };
+  // RECUR-03 (option A): NEW sessions are created on this daemon generation's PER-BOOT socket
+  // (the daemon injects COMIS_TERMINAL_TMUX_SOCKET = `<durableDir>/tmux-<gen>.sock`), so a restart's
+  // new sessions get a fresh tmux server in the LIVE mount namespace — a stranded prior-generation
+  // ns never breaks new bwrap sessions (RECUR-02). A RE-ATTACH instead targets the SURVIVING
+  // session's OWN (prior-boot) socket, threaded per-frame from its descriptor (`a.tmuxSocket`). The
+  // legacy single socket is the fallback for both (no env / a pre-RECUR-03 descriptor).
+  const legacySocket = resolveTmuxSocketPath(durableDir());
+  // eslint-disable-next-line no-restricted-syntax -- worker PROCESS entry: the daemon threads the (non-secret) per-boot tmux socket via env when forking; not a SecretManager value.
+  const bootSocket = process.env.COMIS_TERMINAL_TMUX_SOCKET ?? legacySocket;
+  const hasSessionOn =
+    (socket: string) =>
+    (name: string): boolean => {
+      try {
+        execFileSync(tmuxPath, ["-S", socket, "has-session", "-t", name], { stdio: "ignore" });
+        return true;
+      } catch {
+        return false;
+      }
+    };
   // One-shot tmux command runner (new-session / set-option / kill-session): synchronous,
   // inherits the worker's scrubbed env per call; throws on a non-zero exit (the factory wraps
   // the tolerable ones). Distinct from the ATTACH path, which is a long-lived streaming pty.
@@ -192,11 +202,11 @@ export function buildLoadTmux(tmuxPath: string, loadPty: () => PtyModuleLike): T
     };
   // The DRIVING attach pty: node-pty `tmux attach -t <name>` — streams the pane (onData),
   // forwards keystrokes (write), resizes via the pty, exits on session death. TERM is forced
-  // so the tmux client renders (the worker's scrubbed env may omit it).
-  const spawnAttachPty =
-    (a: { cols: number; rows: number; env: NodeJS.ProcessEnv }) =>
+  // so the tmux client renders (the worker's scrubbed env may omit it). Bound to the call's socket.
+  const spawnAttachPtyOn =
+    (socket: string, a: { cols: number; rows: number; env: NodeJS.ProcessEnv }) =>
     (name: string): FakePtyLike =>
-      loadPty().spawn(tmuxPath, ["-S", socketPath, "attach", "-t", name], {
+      loadPty().spawn(tmuxPath, ["-S", socket, "attach", "-t", name], {
         cols: a.cols,
         rows: a.rows,
         env: { ...a.env, TERM: a.env.TERM ?? "xterm-256color" },
@@ -213,16 +223,18 @@ export function buildLoadTmux(tmuxPath: string, loadPty: () => PtyModuleLike): T
         rows: a.rows,
         env: a.env,
         tmuxPath,
-        socketPath,
-        hasSession,
+        socketPath: bootSocket,
+        hasSession: hasSessionOn(bootSocket),
         runOneShot: runOneShot(a.env),
-        spawnAttachPty: spawnAttachPty(a),
+        spawnAttachPty: spawnAttachPtyOn(bootSocket, a),
       })!,
     // BL-01 (165-REVIEW): recover-on-boot re-attach — attach to an EXISTING session ONLY
     // (forceAttachOnly). The driven command is NOT re-spawned (the surviving pane is attached),
     // so bin/argv are empty; a gone session returns undefined → the worker replies ok:false.
-    reattach: (a) =>
-      createTmuxBackend({
+    // RECUR-03: target the SURVIVOR's own per-boot socket (`a.tmuxSocket`), NOT this boot's.
+    reattach: (a) => {
+      const socket = a.tmuxSocket ?? legacySocket;
+      return createTmuxBackend({
         sessionId: a.sessionId,
         bin: "",
         argv: [],
@@ -230,12 +242,13 @@ export function buildLoadTmux(tmuxPath: string, loadPty: () => PtyModuleLike): T
         rows: a.rows,
         env: a.env,
         tmuxPath,
-        socketPath,
-        hasSession,
+        socketPath: socket,
+        hasSession: hasSessionOn(socket),
         runOneShot: runOneShot(a.env),
-        spawnAttachPty: spawnAttachPty(a),
+        spawnAttachPty: spawnAttachPtyOn(socket, a),
         forceAttachOnly: true,
-      }),
+      });
+    },
   };
 }
 

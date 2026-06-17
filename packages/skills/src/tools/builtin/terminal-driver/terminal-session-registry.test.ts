@@ -2273,6 +2273,26 @@ describe("createTerminalSessionRegistry — DUR-01 recover-on-boot re-attach", (
     expect(persisted.tmuxName).toBe("comis-x");
   });
 
+  it("RECUR-03: stamps this boot's currentTmuxSocket on the durable descriptor (so a restart re-attaches it from its OWN per-boot server, not this boot's fresh one)", async () => {
+    const fake = makeFakeWorker();
+    const store = fakeDescriptorStore();
+    const SOCK = "/data/x/terminal-worker/tmux-99.sock";
+    const registry = createTerminalSessionRegistry(
+      baseDeps(() => fake.child, { durability: { descriptorStore: store }, currentTmuxSocket: SOCK }),
+    );
+
+    await registry.create(
+      { allowId: "claude-drive", bin: "/usr/bin/claude", argv: [], cols: 80, rows: 24, durable: true, tmuxName: "comis-x" },
+      DURABLE_OWNER,
+    );
+
+    // The per-boot socket rides the persisted descriptor — recover-on-boot reads it to probe +
+    // re-attach THIS session's surviving server (the live-handle stamp is exercised by the daemon
+    // probe tests + the live VPS reproduction; list() is a sanitized public view without it).
+    const persisted = store.persist.mock.calls[0]![0] as SessionDescriptor;
+    expect(persisted.tmuxSocket).toBe(SOCK);
+  });
+
   it("I1: create does NOT persist a descriptor for a NON-durable session (today's spawn floor unchanged)", async () => {
     const fake = makeFakeWorker();
     const store = fakeDescriptorStore();

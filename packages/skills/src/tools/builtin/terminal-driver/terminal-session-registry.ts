@@ -149,6 +149,12 @@ export interface TerminalSessionRegistryDeps extends ReaperCaps {
   clearTimer?: (handle: unknown) => void;
   /** Daemon-resolved bwrap path (the jail seam): a STRING, forwarded onto the create frame for the worker's fail-closed branch (undefined ⇒ the worker rejects). */
   bwrapPath?: string;
+  /** RECUR-03 (option A): this daemon generation's PER-BOOT tmux `-S` socket — stamped on a durable
+   *  session's handle + descriptor at create so a restart re-attaches it from its OWN server while
+   *  new sessions get a fresh per-boot server in the live mount namespace. MUST equal the worker's
+   *  `COMIS_TERMINAL_TMUX_SOCKET` env (both daemon-supplied from the same source). Absent ⇒ the
+   *  worker/probe legacy single-socket default. */
+  currentTmuxSocket?: string;
   /** Daemon-injected no-secret egress port — the daemon->worker-main seam for `listed-hosts`; a live `net` server, so (unlike bwrapPath) NOT frame-serialized. Type-only from @comis/core. */
   egressControl?: EgressControlPort;
   /** Allocate a real per-session jail workspace dir (gap 2); default {@link allocateSessionWorkspace} (world-rwx mkdtemp under os.tmpdir()). `create` threads it onto the frame as workspace+cwd so the jail binds RW + --chdirs in (else it defaults to HOME, which uid 65534 cannot use). Injectable for a data-dir-rooted daemon allocator; cleanup is the paired {@link cleanupWorkspace}. */
@@ -503,14 +509,22 @@ export function createTerminalSessionRegistry(
       // the HANDLE only — NEVER the worker frame (the worker is owner-agnostic).
       owner,
       // DUR-01: stamp the durable marker + re-attach key (the durable-aware lost gate, Q4); absent for a spawn session (I1). FINDING-B: the registry DERIVES the deterministic comis-<sessionId> name (the tool cannot — sessionId is generated HERE), so durable engages without the caller supplying tmuxName.
-      ...(req.durable ? { durable: true, tmuxName: req.tmuxName ?? tmuxSessionName(sessionId) } : {}),
+      ...(req.durable
+        ? {
+            durable: true,
+            tmuxName: req.tmuxName ?? tmuxSessionName(sessionId),
+            // RECUR-03: stamp this boot's per-boot socket so the daemon probe / reaper target THIS
+            // session's server, and a future restart re-attaches it from this (now prior-boot) socket.
+            ...(deps.currentTmuxSocket !== undefined ? { tmuxSocket: deps.currentTmuxSocket } : {}),
+          }
+        : {}),
     };
     sessions.set(sessionId, handle);
 
     // DUR-01: persist the durable descriptor at CREATE-time, BEFORE the create frame (Pitfall 6 — no orphan window); non-durable persists nothing (I1).
     if (req.durable && deps.durability?.descriptorStore !== undefined) {
       deps.durability.descriptorStore.persist(
-        buildSessionDescriptor({ sessionId, tmuxName: req.tmuxName ?? tmuxSessionName(sessionId), allowId: req.allowId, owner, cols: req.cols, rows: req.rows, createdAt, scope: req.scope }),
+        buildSessionDescriptor({ sessionId, tmuxName: req.tmuxName ?? tmuxSessionName(sessionId), tmuxSocket: deps.currentTmuxSocket, allowId: req.allowId, owner, cols: req.cols, rows: req.rows, createdAt, scope: req.scope }),
       );
     }
 
@@ -797,7 +811,9 @@ export function createTerminalSessionRegistry(
   // the 4th arg is the worker `reattach` round-trip the sibling drives (worker re-attaches
   // the surviving pane, NEVER a create; running status + obs hooks gated on its ok).
   if (deps.durability !== undefined)
-    applyRecoveredSessions(deps.durability, sessions, nowMs, (id, cols, rows) => request(id, "reattach", { sessionId: id, cols, rows }));
+    applyRecoveredSessions(deps.durability, sessions, nowMs, (id, cols, rows, tmuxSocket) =>
+      request(id, "reattach", { sessionId: id, cols, rows, ...(tmuxSocket !== undefined ? { tmuxSocket } : {}) }),
+    );
 
   return { create, read, status, sendText, sendKey, resize, wait, get, list, kill, evict, getOwner: (sessionId: string): SessionOwner | undefined => sessions.get(sessionId)?.owner, size, cleanup };
 }

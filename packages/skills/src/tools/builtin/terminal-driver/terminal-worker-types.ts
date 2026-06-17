@@ -123,6 +123,9 @@ export interface TmuxBackendLike {
     cols: number;
     rows: number;
     env: NodeJS.ProcessEnv;
+    /** RECUR-03: the surviving session's OWN per-boot `-S` socket (from its descriptor) — re-attach
+     *  targets THIS server, not this boot's fresh one. Absent ⇒ the legacy single-socket default. */
+    tmuxSocket?: string;
   }): FakePtyLike | undefined;
 }
 

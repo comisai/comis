@@ -190,6 +190,9 @@ export function rehydrateHandleFromDescriptor(d: SessionDescriptor, nowMs: numbe
     // is NOT flipped lost on a worker close, Q4).
     durable: true,
     tmuxName: d.tmuxName,
+    // RECUR-03: rehydrate the per-boot socket so the daemon probe / reaper target the session's
+    // OWN (prior-boot) server, and the worker re-attaches there (not this boot's fresh server).
+    tmuxSocket: d.tmuxSocket,
   };
 }
 
@@ -289,7 +292,7 @@ export interface TerminalDurabilityDeps {
  * unit tests resolves `true`/`false`. ABSENT ⇒ the legacy synchronous behavior (fire
  * onReattached at recover-time without a worker confirmation) — not used in production.
  */
-export type ReattachWorkerFn = (sessionId: string, cols: number, rows: number) => Promise<{ ok: boolean }>;
+export type ReattachWorkerFn = (sessionId: string, cols: number, rows: number, tmuxSocket?: string) => Promise<{ ok: boolean }>;
 
 /**
  * BL-01 (165-REVIEW): drive ONE recovered session's worker re-attach + gate the obs hooks
@@ -309,7 +312,7 @@ async function driveWorkerReattach(
   reattachWorker: ReattachWorkerFn,
 ): Promise<void> {
   // A faulting round-trip → the SAFE direction (not-ok ⇒ lost), never a zombie running.
-  const ok = await reattachWorker(descriptor.sessionId, descriptor.cols, descriptor.rows)
+  const ok = await reattachWorker(descriptor.sessionId, descriptor.cols, descriptor.rows, descriptor.tmuxSocket)
     .then((r) => r.ok)
     .catch(() => false);
   if (ok) {

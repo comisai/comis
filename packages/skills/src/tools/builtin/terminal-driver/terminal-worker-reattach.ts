@@ -79,6 +79,9 @@ export async function reattachWorkerSession(args: ReattachWorkerArgs): Promise<{
   const sessionId = String(p["sessionId"] ?? frame.sessionId);
   const cols = typeof p["cols"] === "number" ? p["cols"] : 80;
   const rows = typeof p["rows"] === "number" ? p["rows"] : 24;
+  // RECUR-03: the surviving session's OWN per-boot socket (the daemon threads it from the
+  // descriptor onto the reattach frame) — re-attach targets THAT server, not this boot's fresh one.
+  const tmuxSocket = typeof p["tmuxSocket"] === "string" ? (p["tmuxSocket"] as string) : undefined;
 
   const state: SessionState = {
     backend: "tmux",
@@ -116,6 +119,7 @@ export async function reattachWorkerSession(args: ReattachWorkerArgs): Promise<{
     loadTmux: args.loadTmux,
     sessionId,
     attachOnly: true,
+    tmuxSocket,
   });
   if (!attached) {
     logger.warn(
