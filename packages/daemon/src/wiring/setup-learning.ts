@@ -28,6 +28,7 @@ import {
   tryGetContext,
   type TypedEventBus,
   type OutcomeSignalPort,
+  type MemoryUsefulnessStore,
   type ClockPort,
   type ComisLogger,
   type AppConfig,
@@ -41,6 +42,14 @@ export interface LearningOutcomeWiringDeps {
   eventBus: TypedEventBus;
   /** The sole @comis/memory adapter for the outcome port (the observe/resolve target). */
   outcomeStore: OutcomeSignalPort;
+  /**
+   * The sole @comis/memory recall-utility adapter (the reward/failure write target,
+   * RANK-01/FORGET-02). The daemon is the ONLY place holding BOTH this AND
+   * `OutcomeSignalPort.resolve()` — the agent↛memory build cut means the agent
+   * never imports the store (closed graph). Injected from setup-memory.ts where it
+   * is already constructed.
+   */
+  usefulnessStore: MemoryUsefulnessStore;
   /** Injected clock for `observedAt` — the deterministic time source (no ambient wall clock). */
   clock: ClockPort;
   /** Structured logger for the OBS-01 INFO completion line + the non-fatal failure WARN. */
@@ -51,6 +60,20 @@ export interface LearningOutcomeWiringDeps {
    * is on. Default-OFF (no agent opts in) → the subscriber is a no-op.
    */
   learningOutcomeEnabled: (agentId: string) => boolean;
+  /**
+   * Per-agent reward-write enable (RANK-01): true ONLY when the agent has
+   * `learningTuning.enabled` AND the master `memory.costFeatures.enabled` switch is
+   * on. Gates the SUCCESS→`recordUsage` positive-reward write. Default-OFF → no
+   * reward write (byte-identical).
+   */
+  learningTuningEnabled: (agentId: string) => boolean;
+  /**
+   * Per-agent failure-accrual enable (FORGET-02): true ONLY when the agent has
+   * `learningForgetting.enabled` AND the master `memory.costFeatures.enabled`
+   * switch is on. Gates the FAILURE/CORRECTED→`recordFailure` accrual (itself
+   * corroboration-gated, FORGET-03). Default-OFF → no failure accrual (byte-identical).
+   */
+  learningForgettingEnabled: (agentId: string) => boolean;
 }
 
 /** High-confidence default for a clean deterministic tool/pipeline signal. */
@@ -145,6 +168,85 @@ function observeNonFatal(
     });
 }
 
+/** The DETERMINISTIC fused-verdict sources — a single one of these satisfies the FORGET-03 gate. */
+const DETERMINISTIC_FUSION_SOURCES: ReadonlySet<string> = new Set(["tool", "pipeline"]);
+/** Independent (distinct-session) failures required to corroborate a NON-deterministic failure. */
+const CORROBORATION_MIN_INDEPENDENT = 2;
+
+/**
+ * FORGET-03 anti-induced-eviction corroboration gate (a SECURITY control). A
+ * `failure_count` accrual is permitted ONLY when the failure is corroborated:
+ *  - (a) the fused verdict has a DETERMINISTIC source (`tool`/`pipeline`) — one
+ *    deterministic failure suffices (it cannot be spoofed by an external sender), OR
+ *  - (b) the daemon has now seen ≥2 INDEPENDENT failures (distinct sessions) for
+ *    this memory within the subscriber's lifetime.
+ * Below the gate → no accrual (Defer ≠ Retry — a single low-trust/`external`
+ * failure is benign). This is the daemon-side half of the two-layer control; the
+ * high-`proof_count`/`system`/`pinned` EVICTION exemption is enforced store-side
+ * (Plan 05's eviction predicate), so the daemon reads NO per-memory
+ * proof/trust/pinned here (`ResolvedOutcome` carries none — no hot-path DB read).
+ *
+ * Mutates `tally` (memoryId → distinct sessionIds seen failing it) as a side effect
+ * so the across-call distinct-session count accumulates, mirroring the in-process
+ * coverage gauge. Returns true when the accrual should fire.
+ */
+function failureCorroborated(
+  memoryId: string,
+  sessionId: string,
+  sources: ReadonlyArray<string>,
+  tally: Map<string, Set<string>>,
+): boolean {
+  // Record this failure's session BEFORE the decision so the distinct-session
+  // count includes the current occurrence (the 2nd distinct session corroborates).
+  let sessions = tally.get(memoryId);
+  if (sessions === undefined) {
+    sessions = new Set<string>();
+    tally.set(memoryId, sessions);
+  }
+  sessions.add(sessionId);
+  if (sources.some((s) => DETERMINISTIC_FUSION_SOURCES.has(s))) return true;
+  return sessions.size >= CORROBORATION_MIN_INDEPENDENT;
+}
+
+/**
+ * Run one usefulness-store reward/failure write, fire-and-forget / non-fatal.
+ * NEVER throws out of the bus handler. `kind` tags the WARN so an operator sees
+ * which write (reward vs failure-accrual) was dropped. Counts/ids only reach the
+ * store (the (tenant, agent) scope is the load-bearing isolation boundary).
+ */
+function recordNonFatal(
+  deps: LearningOutcomeWiringDeps,
+  agentId: string,
+  kind: "reward" | "failure_accrual",
+  run: () => Promise<{ ok: boolean }>,
+): void {
+  void Promise.resolve()
+    .then(run)
+    .then((r) => {
+      if (!r.ok) {
+        deps.logger.warn(
+          {
+            agentId,
+            errorKind: "internal" as const,
+            hint: `outcome ${kind} write failed; the per-intent ${kind === "reward" ? "reward" : "failure_count"} was not persisted for this trajectory`,
+          },
+          `outcome ${kind} write failed (non-fatal)`,
+        );
+      }
+    })
+    .catch((e: unknown) => {
+      deps.logger.warn(
+        {
+          agentId,
+          err: e instanceof Error ? e : new Error(String(e)),
+          errorKind: "internal" as const,
+          hint: `outcome ${kind} write threw; the per-intent ${kind === "reward" ? "reward" : "failure_count"} was not persisted for this trajectory`,
+        },
+        `outcome ${kind} write threw (non-fatal)`,
+      );
+    });
+}
+
 /**
  * Stand up the deterministic tool/pipeline → observe/resolve subscriber on the
  * daemon's bus. Fire-and-forget / non-fatal; default-OFF via `learningOutcomeEnabled`.
@@ -167,6 +269,12 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
   // Daemon-lifetime coverage gauge (resets on restart). Counts only.
   let total = 0;
   let resolved = 0;
+  // FORGET-03 corroboration tally: memoryId → the DISTINCT sessions that failed it
+  // (within this subscriber's lifetime). A NON-deterministic failure accrues
+  // `failure_count` only once this reaches ≥2 distinct sessions; a deterministic
+  // failure (tool/pipeline) bypasses it. Mirrors the coverage gauge's in-process
+  // counters (resets on restart) — counts/ids only, never bodies.
+  const failureCorroborationTally = new Map<string, Set<string>>();
 
   // ---- Deterministic tool signal (the only source that ships ACTIVE, OUTCOME-03) ----
   deps.eventBus.on("tool:executed", (p) => {
@@ -234,6 +342,42 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
         // Fail-closed coverage: an `unknown` verdict is NOT counted as resolved.
         if (verdict.outcome !== "unknown") resolved += 1;
 
+        // ---- RANK-01 / FORGET-02 reward/failure write at resolve() time ----
+        // The daemon is the only place holding BOTH this resolved verdict AND the
+        // @comis/memory usefulness adapter (the agent↛memory cut). Thread the
+        // resolved recalledIds + outcome into the per-intent reward/failure write,
+        // fire-and-forget / non-fatal (the turn already completed). intent is
+        // OMITTED → the global '' bucket (ResolvedOutcome carries no intent; the
+        // bandit reads per-intent). An `unknown` verdict writes NOTHING (fail-closed).
+        let failureAccrued = 0;
+        if (verdict.outcome === "success") {
+          if (deps.learningTuningEnabled(scope.agentId)) {
+            const rewardScope = { tenantId: scope.tenantId, agentId: scope.agentId, now: deps.clock.now() };
+            for (const mid of verdict.recalledIds) {
+              // Outcome-attributed positive reward = an outcome-`used` for THIS memory.
+              recordNonFatal(deps, scope.agentId, "reward", () =>
+                deps.usefulnessStore.recordUsage([mid], [], rewardScope),
+              );
+            }
+          }
+        } else if (verdict.outcome === "failure" || verdict.outcome === "corrected") {
+          if (deps.learningForgettingEnabled(scope.agentId)) {
+            const failScope = { tenantId: scope.tenantId, agentId: scope.agentId, now: deps.clock.now() };
+            for (const mid of verdict.recalledIds) {
+              // FORGET-03 corroboration gate: accrue ONLY when the failure is
+              // corroborated (≥2 independent sessions OR 1 deterministic source).
+              // Past the gate the accrual is UNCONDITIONAL — no daemon-side
+              // proof/trust/pinned read (the eviction exemption is store-side, Plan 05).
+              if (failureCorroborated(mid, scope.sessionId, verdict.sources, failureCorroborationTally)) {
+                failureAccrued += 1;
+                recordNonFatal(deps, scope.agentId, "failure_accrual", () =>
+                  deps.usefulnessStore.recordFailure(mid, failScope),
+                );
+              }
+            }
+          }
+        }
+
         // Emit the resolved outcome (counts/ids/closed-enums ONLY — plain emit so it
         // lands on the trajectory and is type-checked; bridged for comis explain).
         deps.eventBus.emit("learning:outcome_observed", {
@@ -263,7 +407,16 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
           "Outcome resolved for trajectory",
         );
         deps.logger.debug(
-          { agentId: scope.agentId, step: "outcome-resolve", sources: verdict.sources },
+          {
+            agentId: scope.agentId,
+            step: "outcome-resolve",
+            sources: verdict.sources,
+            // OBS-01: the corroboration outcome (counts only) so the gate decision
+            // is reconstructable — how many recalled memories accrued failure_count
+            // vs how many were recalled. Never alpha values / memory bodies.
+            recalledCount: verdict.recalledIds.length,
+            failureAccrued,
+          },
           "outcome resolve detail",
         );
       })
@@ -285,6 +438,12 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
 export interface SetupLearningOutcomeDeps {
   eventBus: TypedEventBus;
   outcomeStore: OutcomeSignalPort;
+  /**
+   * The recall-utility usefulness adapter (RANK-01/FORGET-02 reward/failure write
+   * target). Already constructed in setup-memory.ts; threaded through here so the
+   * agent never imports the store (closed graph).
+   */
+  usefulnessStore: MemoryUsefulnessStore;
   clock: ClockPort;
   logger: ComisLogger;
   /** The parsed app config — the source of the master cost switch + per-agent flag. */
@@ -292,14 +451,17 @@ export interface SetupLearningOutcomeDeps {
 }
 
 /**
- * Composition helper: compute the per-agent BYTE-IDENTITY enable gate from the
+ * Composition helper: compute the per-agent BYTE-IDENTITY enable gates from the
  * parsed config and stand up {@link wireLearningOutcome}.
  *
- * The gate force-disables on the master cost switch
+ * Every gate force-disables on the master cost switch
  * (`memory.costFeatures.enabled !== false` — exactly like the six cost crons,
- * OUTCOME-09) AND requires the agent's own `learningOutcome.enabled` (default OFF).
- * With the default config the gate is `false` for every agent → the subscriber
- * observes/resolves/emits NOTHING → ranking/recall/replies are byte-identical.
+ * OUTCOME-09) AND requires the agent's own per-feature flag (all default OFF):
+ *  - `learningOutcome.enabled`    → the observe/resolve/emit subscriber (Phase 198).
+ *  - `learningTuning.enabled`     → the SUCCESS→reward write (RANK-01).
+ *  - `learningForgetting.enabled` → the FAILURE/CORRECTED→failure_count accrual (FORGET-02).
+ * With the default config every gate is `false` for every agent → the subscriber
+ * observes/resolves/emits/writes NOTHING → ranking/recall/replies are byte-identical.
  */
 export function setupLearningOutcomeWiring(deps: SetupLearningOutcomeDeps): void {
   // Master cost kill-switch: read defensively (`!== false`) so an absent block
@@ -311,9 +473,14 @@ export function setupLearningOutcomeWiring(deps: SetupLearningOutcomeDeps): void
   wireLearningOutcome({
     eventBus: deps.eventBus,
     outcomeStore: deps.outcomeStore,
+    usefulnessStore: deps.usefulnessStore,
     clock: deps.clock,
     logger: deps.logger,
     learningOutcomeEnabled: (agentId: string): boolean =>
       costFeaturesEnabled && agents[agentId]?.learningOutcome?.enabled === true,
+    learningTuningEnabled: (agentId: string): boolean =>
+      costFeaturesEnabled && agents[agentId]?.learningTuning?.enabled === true,
+    learningForgettingEnabled: (agentId: string): boolean =>
+      costFeaturesEnabled && agents[agentId]?.learningForgetting?.enabled === true,
   });
 }

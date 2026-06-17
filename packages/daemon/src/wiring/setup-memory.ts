@@ -629,12 +629,12 @@ export async function setupMemory(deps: {
       ),
   });
 
-  // 6.5.2f'. Outcome-signal write-back subscriber (Verified Learning WS1). Wired HERE (the
-  // composition root holds BOTH the bus AND the adapter — agent↛memory cut; mirrors
-  // wireMemoryUsefulness). The helper computes the BYTE-IDENTITY gate (master cost switch + per-agent default-OFF flag) and stands up the subscriber.
+  // 6.5.2f'. Outcome-signal subscriber (WS1) + the RANK-01/FORGET-02 reward/failure write at resolve()
+  // (closed graph; byte-identity-gated per-agent learning{Outcome,Tuning,Forgetting} + the cost master-switch).
   setupLearningOutcomeWiring({
     eventBus: container.eventBus,
     outcomeStore,
+    usefulnessStore,
     clock,
     logger: memoryLogger,
     config: container.config,
