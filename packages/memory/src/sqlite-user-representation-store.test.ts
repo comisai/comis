@@ -314,9 +314,12 @@ describe("createSqliteUserRepresentationStore", () => {
       const entry = res.value[0];
       expect(entry).toBeDefined();
       // The exact mapped (camelCase) shape — strictObject rejected any extra column.
+      // v2.26 WS5 REVISE-02: upsert now stamps t_valid_start, so a current-truth
+      // entry carries `validFrom` (validTo stays absent = current truth).
       expect(Object.keys(entry ?? {}).sort()).toEqual(
-        ["content", "createdAt", "entryType", "id", "trust"].sort(),
+        ["content", "createdAt", "entryType", "id", "trust", "validFrom"].sort(),
       );
+      expect(entry?.validFrom).toBe(T0); // the injected-clock now
     });
 
     it("never throws on a forced fault — a read after db.close() returns err", async () => {
@@ -573,24 +576,37 @@ describe("createSqliteUserRepresentationStore", () => {
       const cap = 3;
       const cappedStore = createSqliteUserRepresentationStore({ db, historyCap: cap });
 
-      // Revise the SAME slot cap+2 times with strictly-newer, contradicting content.
-      const total = cap + 2;
-      for (let i = 0; i < total; i++) {
+      // Revise the SAME belief slot cap+2 times with strictly-newer CONTRADICTING
+      // values (same topic "prefers <drink>", different value — the supersede band,
+      // 0.5 ≤ Dice < 0.9), so each revision soft-closes the prior incumbent and the
+      // closed-row history genuinely accumulates (then gets trimmed at the cap).
+      const beliefs = [
+        "prefers coffee",
+        "prefers tea",
+        "prefers cocoa",
+        "prefers cider",
+        "prefers juice",
+      ];
+      expect(beliefs).toHaveLength(cap + 2);
+      for (let i = 0; i < beliefs.length; i++) {
         const r = await cappedStore.revise(
-          { entryType: "preference", content: `belief variant number ${i}`, trust: "learned" },
+          { entryType: "preference", content: beliefs[i] ?? "", trust: "learned" },
           { ...SCOPE_A, now: T0 + i * 1_000 },
         );
         expect(r.ok).toBe(true);
       }
 
-      // Exactly one current-truth; closed history is bounded at historyCap.
+      // Exactly one current-truth (the last belief); closed history is bounded at
+      // historyCap (4 supersessions happened, but only `cap` closed rows are kept).
       expect(currentTruthCount("tenant_a", "agent_x", "user_a", "preference")).toBe(1);
       expect(closedRowCount("tenant_a", "agent_x", "user_a", "preference")).toBeLessThanOrEqual(
         cap,
       );
+      // The trim ACTUALLY fired — without it there would be 4 closed rows.
+      expect(closedRowCount("tenant_a", "agent_x", "user_a", "preference")).toBe(cap);
 
       // A recent asOf (within the retained window) still resolves a believed entry.
-      const recent = await cappedStore.asOf(T0 + (total - 1) * 1_000 + 1, READ_A);
+      const recent = await cappedStore.asOf(T0 + (beliefs.length - 1) * 1_000 + 1, READ_A);
       expect(recent.ok).toBe(true);
       if (!recent.ok) return;
       expect(recent.value.filter((e) => e.entryType === "preference")).toHaveLength(1);
