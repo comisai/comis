@@ -36,6 +36,8 @@ import {
   createUsefulnessJudgeSeam,
   createReasoningSeam,
   runMemoryTripleExtraction,
+  runSkillSynthesis,
+  createLlmSkillSynthesisAdapter,
   type TripleCandidate,
 } from "@comis/agent";
 import type { MemoryCronContext, MemoryCronPayload } from "./setup-channels-memory-crons-types.js";
@@ -57,7 +59,7 @@ export async function handleWireMemoryCronSentinel(
   payload: MemoryCronPayload,
   ctx: MemoryCronContext,
 ): Promise<boolean> {
-  const { container, logger, clock, agents, tenantId, tripleStore, usefulnessStore, memoryApi, memoryLifecycleStore } = ctx;
+  const { container, logger, clock, agents, tenantId, tripleStore, usefulnessStore, memoryApi, memoryLifecycleStore, skillSynthesis } = ctx;
 
   // -- Usefulness-judge sentinel intercept (WIRE-02) --
   // Mirrors the __MEMORY_REASONING__ block: opt-in cost gate + cheap "cron" model/key,
@@ -299,6 +301,108 @@ export async function handleWireMemoryCronSentinel(
       sourceText,
     });
     payload.onComplete?.({ status: result.ok ? "ok" : "error", error: result.ok ? undefined : result.error?.message });
+    return true;
+  }
+
+  // -- Procedural skill-synthesis sentinel intercept (SKILL-08/09) --
+  // The COMPOSITION ROOT for the shadow skill loop: this is where the @comis/agent job
+  // (PORT TYPES only) meets the @comis/memory learned-skill store + the @comis/skills
+  // validation adapter (both assembled daemon-side in credentials.ts, injected via the
+  // `skillSynthesis` bundle — the agent↛memory/skills closed-graph cut). Re-checks
+  // learningSkills.enabled (defence-in-depth — the scheduler already gates it; default
+  // OFF → clean ok no-op, ZERO behavior change). Reads the LCD-merged source (NOT
+  // sessionStore.listDetailed — DAG-empty), constructs the capability-routed synthesis
+  // adapter on the skillSynthesis MID tier, runs runSkillSynthesis, and emits the
+  // counts/coverage learning:skill_* events DAEMON-SIDE (the bridge entry lands with the
+  // emit, so the agent-side trajectory gate is not triggered). Non-fatal + counts-only (§2.7).
+  if (resultText === "__SKILL_SYNTHESIS__") {
+    const { agentId } = payload;
+    if (!agentId) {
+      logger.warn({ hint: "Skill synthesis job fired without agentId", errorKind: "config" as const }, "Skipping skill synthesis -- no agentId");
+      payload.onComplete?.({ status: "error", error: "No agentId for skill synthesis" });
+      return true;
+    }
+
+    const agentConfig = agents[agentId];
+    const cfg = agentConfig?.learningSkills;
+    if (!cfg?.enabled) {
+      // The opt-in gate (defence-in-depth re-check): a disabled (or default-config) agent does
+      // NOTHING — short-circuit ok so the scheduler records a clean run. Byte-identical (shadow OFF).
+      logger.debug({ agentId }, "Skill synthesis disabled for agent, skipping");
+      payload.onComplete?.({ status: "ok" });
+      return true;
+    }
+
+    // The closed-graph injectables MUST be present (assembled daemon-side). Absent => cannot run —
+    // surface a clean error rather than silently no-op (the field-plumbing lesson).
+    if (!skillSynthesis) {
+      logger.warn({ agentId, hint: "skillSynthesis bundle not injected -- cannot run procedural synthesis", errorKind: "config" as const }, "Skipping skill synthesis -- store/validator/source surface not wired");
+      payload.onComplete?.({ status: "error", error: "skill synthesis surface not wired" });
+      return true;
+    }
+
+    // Resolve the capability-routed synthesis model (the skillSynthesis MID tier — a synthesis op,
+    // not a fast classify) + API key by NAME (Pino auto-redacts). NOT the agent's primary.
+    const resolved = resolveOperationModel({
+      operationType: "skillSynthesis",
+      agentProvider: agentConfig.provider ?? "anthropic",
+      agentModel: agentConfig.model ?? "anthropic:claude-sonnet-4-20250514",
+      operationModels: agentConfig.operationModels ?? {},
+      providerFamily: resolveProviderFamily(agentConfig.provider ?? "anthropic"),
+    });
+    const providerEntry = container.config.providers?.entries?.[resolved.provider];
+    const apiKeyName = providerEntry?.apiKeyName || `${resolved.provider.toUpperCase()}_API_KEY`;
+    const apiKey = container.secretManager.get(apiKeyName) ?? (KEYLESS_PROVIDER_TYPES.has(resolved.provider) ? KEYLESS_API_KEY_SENTINEL : "");
+    if (!apiKey) {
+      logger.warn({ agentId, provider: resolved.provider, hint: `Set ${apiKeyName} in secrets for skill synthesis`, errorKind: "config" as const }, "Skipping skill synthesis -- no API key");
+      payload.onComplete?.({ status: "error", error: `No API key for ${resolved.provider}` });
+      return true;
+    }
+
+    const skillTenantId = tenantId ?? container.config.tenantId ?? "default";
+    const scope = { tenantId: skillTenantId, agentId };
+    const skillLogger = logger.child({ agentId, submodule: "skill-synthesis" });
+    const skillStartMs = clock.now();
+
+    // CLOSED-GRAPH CUT: the @comis/agent synthesis adapter (wraps the UNTRUSTED trajectory) is built
+    // HERE on the resolved model; the @comis/memory store + @comis/skills validation adapter + the
+    // LCD-merged source come in via the daemon-assembled bundle. The job consumes PORT TYPES only.
+    const synthesisAdapter = createLlmSkillSynthesisAdapter({ provider: resolved.provider, modelId: resolved.modelId, apiKey, clock, logger: skillLogger });
+    const validationAdapter = await skillSynthesis.buildValidationAdapter(agentId);
+    const sourceTrajectories = await skillSynthesis.buildSourceTrajectories(agentId, skillTenantId);
+
+    const r = await runSkillSynthesis({
+      agentId,
+      tenantId: skillTenantId,
+      scope,
+      config: {
+        enabled: cfg.enabled,
+        autoAdmitReadOnly: cfg.autoAdmitReadOnly,
+        minConfidence: cfg.minConfidence,
+        requireForMutating: cfg.approval?.requireForMutating ?? true,
+      },
+      sourceTrajectories,
+      synthesisAdapter,
+      outcomeSignal: skillSynthesis.outcomeSignal,
+      validationAdapter,
+      learnedSkillStore: skillSynthesis.learnedSkillStore,
+      approvalGate: skillSynthesis.approvalGate,
+      clock,
+      logger: skillLogger,
+      eventBus: container.eventBus,
+    });
+
+    if (r.ok) {
+      // OBS-01/SKILL-09: an INFO completion line (the real counts) + the DAEMON-SIDE telemetry emit.
+      // Counts/coverage ONLY — NEVER a procedure body / script / finding (§2.7 / SEC-01). With the
+      // disabled default this branch is unreachable (the no-op short-circuits above).
+      const v = r.value;
+      skillLogger.info({ agentId, synthesized: v.synthesized, admitted: v.admitted, validated: v.validated, approvalRequested: v.approvalRequested, abstained: v.abstained, durationMs: clock.now() - skillStartMs }, "Skill synthesis complete");
+      container.eventBus.emit("learning:skill_synthesized", { agentId, count: v.synthesized, timestamp: clock.now() });
+    } else {
+      skillLogger.error({ agentId, err: r.error, hint: "Skill synthesis failed -- will retry next cycle", errorKind: "internal" as const }, "Skill synthesis error");
+    }
+    payload.onComplete?.({ status: r.ok ? "ok" : "error", error: r.ok ? undefined : r.error?.message });
     return true;
   }
 

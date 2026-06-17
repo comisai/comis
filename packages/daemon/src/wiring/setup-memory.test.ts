@@ -192,6 +192,17 @@ const mockCreateSqliteOutcomeStore = vi.hoisted(() => vi.fn(() => ({
 const mockCreateSqliteMemoryLifecycleStore = vi.hoisted(() => vi.fn(() => ({
   runLifecycleSweep: vi.fn(async () => ({ ok: true, value: { scanned: 0, promoted: 0, demoted: 0, evicted: 0 } })),
 })));
+// Learned-skill store factory (SKILL-01) — mocked so setup wires it on the shared db without a real DB
+// (mirror the outcome store). Without the mock entry the @comis/memory factory is undefined and EVERY
+// setup call throws `createSqliteLearnedSkillStore is not a function`. The port methods are stubbed.
+const mockCreateSqliteLearnedSkillStore = vi.hoisted(() => vi.fn(() => ({
+  admit: vi.fn(async () => ({ ok: true, value: undefined })),
+  get: vi.fn(async () => ({ ok: true, value: undefined })),
+  list: vi.fn(async () => ({ ok: true, value: [] })),
+  promote: vi.fn(async () => ({ ok: true, value: undefined })),
+  demote: vi.fn(async () => ({ ok: true, value: undefined })),
+  evict: vi.fn(async () => ({ ok: true, value: undefined })),
+})));
 
 vi.mock("@comis/memory", () => ({
   SqliteMemoryAdapter: mockSqliteMemoryAdapter,
@@ -220,6 +231,7 @@ vi.mock("@comis/memory", () => ({
   createSqliteTunedAlphaStore: mockCreateSqliteTunedAlphaStore,
   createSqliteMemoryLifecycleStore: mockCreateSqliteMemoryLifecycleStore,
   createSqliteOutcomeStore: mockCreateSqliteOutcomeStore,
+  createSqliteLearnedSkillStore: mockCreateSqliteLearnedSkillStore,
 }));
 
 const mockSafePath = vi.hoisted(() => vi.fn((...parts: string[]) => parts.join("/")));

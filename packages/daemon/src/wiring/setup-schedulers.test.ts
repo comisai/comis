@@ -1512,4 +1512,72 @@ describe("setupSchedulers", () => {
     const tripleAdds = addJob.mock.calls.filter((c) => (c[0] as any)?.payload?.text === "__MEMORY_TRIPLE_EXTRACTION__");
     expect(tripleAdds.length, "the kill switch force-disables the triple-extraction cron").toBe(0);
   });
+
+  // -------------------------------------------------------------------------
+  // SKILL-08/09 (Plan 07): the __SKILL_SYNTHESIS__ cron. DEFAULT OFF (the
+  // byte-identity guarantee). Registered ONLY when learningSkills.enabled AND the
+  // master cost kill switch is on; the __SKILL_SYNTHESIS__ sentinel dispatches the
+  // procedural-synthesis job (setup-channels-memory-crons-wire.ts).
+  // -------------------------------------------------------------------------
+
+  it("SKILL-09: a DEFAULT agent registers NO skill-synthesis job (default-OFF / byte-identical)", async () => {
+    const { addJob } = withRegistrableScheduler();
+    const agents = {
+      "agent-1": {
+        name: "Agent 1",
+        skills: { builtinTools: { browser: false } },
+        session: { resetPolicy: { mode: "none" } },
+        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
+        // learningSkills undefined => default OFF: NO job, zero cost.
+      },
+    };
+    const setupSchedulers = await getSetupSchedulers();
+    await setupSchedulers(createMinimalDeps({ agents }));
+
+    const skillAdds = addJob.mock.calls.filter((c) => (c[0] as any)?.payload?.text === "__SKILL_SYNTHESIS__");
+    expect(skillAdds.length, "a default agent must add ZERO skill-synthesis jobs").toBe(0);
+  });
+
+  it("SKILL-09: registers the __SKILL_SYNTHESIS__ cron (30 9 * * *) for an opted-in agent", async () => {
+    const { addJob } = withRegistrableScheduler();
+    const agents = {
+      "agent-1": {
+        name: "Agent 1",
+        skills: { builtinTools: { browser: false } },
+        session: { resetPolicy: { mode: "none" } },
+        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
+        learningSkills: { enabled: true },
+      },
+    };
+    const setupSchedulers = await getSetupSchedulers();
+    await setupSchedulers(createMinimalDeps({ agents }));
+
+    const skillAdd = addJob.mock.calls
+      .map((c) => c[0] as any)
+      .find((j) => j?.payload?.text === "__SKILL_SYNTHESIS__");
+    expect(skillAdd, "an opted-in agent registers the skill-synthesis job").toBeDefined();
+    expect(skillAdd.id).toBe("skill-synthesis-agent-1");
+    expect(skillAdd.name).toBe("Skill synthesis");
+    expect(skillAdd.schedule).toEqual({ kind: "cron", expr: "30 9 * * *" });
+    expect(skillAdd.sessionTarget).toBe("isolated");
+    expect(skillAdd.sessionStrategy).toBe("fresh");
+  });
+
+  it("SKILL-09: the master cost kill switch (costFeatures:false) force-disables the skill-synthesis cron even when opted in", async () => {
+    const { addJob } = withRegistrableScheduler();
+    const setupSchedulers = await getSetupSchedulers();
+    const agents = {
+      "agent-1": {
+        name: "Agent 1",
+        skills: { builtinTools: { browser: false } },
+        session: { resetPolicy: { mode: "none" } },
+        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
+        learningSkills: { enabled: true },
+      },
+    };
+    await setupSchedulers(depsWithCostSwitch(agents, false));
+
+    const skillAdds = addJob.mock.calls.filter((c) => (c[0] as any)?.payload?.text === "__SKILL_SYNTHESIS__");
+    expect(skillAdds.length, "the kill switch force-disables the skill-synthesis cron").toBe(0);
+  });
 });

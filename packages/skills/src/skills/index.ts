@@ -143,6 +143,17 @@ export type {
 export { applyToolPolicy, expandGroups, TOOL_PROFILES, TOOL_GROUPS } from "./policy/index.js";
 export type { ToolFilterReason, ToolPolicyResult } from "./policy/index.js";
 
+// Procedural-learning sandbox validation (SKILL-06/07, v2.26 WS2). The package `.` entry
+// is THIS file (see package.json exports["."] → dist/skills/index.d.ts), so the daemon's
+// `import { createSandboxSkillValidationAdapter } from "@comis/skills"` (Plan 07) resolves
+// here. (The top-level src/index.ts also re-exports it, but that barrel is NOT the package
+// public entry — this is the consumed path.)
+export {
+  createSandboxSkillValidationAdapter,
+  classifyMutating,
+  type SandboxSkillValidationAdapterDeps,
+} from "../learning/sandbox-skill-validation-adapter.js";
+
 // ===========================================================================
 // Transitional `./tools` re-exports (kept for daemon/agent import
 // compatibility until consumers retarget to the appropriate subpath).

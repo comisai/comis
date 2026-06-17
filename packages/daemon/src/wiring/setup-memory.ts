@@ -40,7 +40,7 @@ import {
   createSqliteRelationshipStore,
   createSqliteTunedAlphaStore,
   createSqliteMemoryLifecycleStore,
-  createSqliteOutcomeStore,
+  createSqliteOutcomeStore, createSqliteLearnedSkillStore,
   type MemoryApi,
 } from "@comis/memory";
 import {
@@ -189,6 +189,7 @@ export interface MemoryResult {
    *  no model/IO cost; gated at observe/resolve (agent never receives it — SEC-01). Returned so the
    *  daemon can `prune(retentionDays)` at startup (OUTCOME-07); the observe/resolve subscriber is wired here. */
   outcomeStore: import("@comis/core").OutcomeSignalPort;
+  learnedSkillStore: import("@comis/core").LearnedSkillStorePort; // WS2/skills (SKILL-01): SOLE LearnedSkillStorePort adapter, shared db (trust=learned); the daemon injects it into the __SKILL_SYNTHESIS__ cron admit (DORMANT until learningSkills.enabled).
   /** REACT-02 (Phase 199): outbound-message → trajectory capture callback, threaded into the delivery drain. `undefined` when learning-outcome is off for all agents (byte-identity: zero extra work). */
   recordOutboundMessage?: (messageId: string, scope: { traceId: string; tenantId: string; agentId: string; sessionId: string }) => void;
   /** WR-01 (Phase 199): tear down the reaction/session trajectory maps + the dedicated reaction rate limiter (cancels their unref'd TTL timers). Invoked from the daemon shutdown path. */
@@ -587,16 +588,15 @@ export async function setupMemory(deps: {
   // -> createPiExecutor -> prompt-assembly's buildScoringAlphas) AND the __ONLINE_TUNING__
   // cron (setup-channels) — the agent receives the port TYPE only (the agent↛memory cut).
   const tunedAlphaStore = createSqliteTunedAlphaStore({ db, logger: memoryLogger });
-
   // 6.5.2d-quater. Outcome-signal store (Verified Learning WS1, OUTCOME-01). UNCONDITIONAL on the shared `db` (no model/IO cost; gated at observe/resolve). SOLE OutcomeSignalPort adapter; agent never receives it (SEC-01); only wireLearningOutcome + the startup prune consume it (closed-graph).
   const outcomeStore = createSqliteOutcomeStore({ db, logger: memoryLogger });
+  // 6.5.2d-quinquies. Learned-skill store (WS2/skills, SKILL-01). UNCONDITIONAL on the shared `db` (DB-CHECK forces trust=learned). SOLE LearnedSkillStorePort adapter; agent↛memory cut — the daemon injects it into the __SKILL_SYNTHESIS__ cron. DORMANT until learningSkills.enabled.
+  const learnedSkillStore = createSqliteLearnedSkillStore({ db, logger: memoryLogger });
 
-  // 6.5.2d-ter. Memory-lifecycle sweep store. Built on the SAME shared `db` the memory adapter owns
-  // (NOT a second Database) so the sweep scans the SAME `memories` rows + the additive NON-DESTRUCTIVE
-  // marker columns under one (tenant, agent)-scoped, FK-enabled connection. Always constructed (no
-  // model/IO cost); DORMANT — even with the KEYLESS __MEMORY_LIFECYCLE__ cron (default OFF) on, it
-  // evicts/demotes/promotes 0 rows. Threaded as the port TYPE into the cron sentinel (setup-channels),
-  // NOT createPiExecutor (daemon-cron-side; the agent↛memory cut).
+  // 6.5.2d-ter. Memory-lifecycle sweep store. Built on the SAME shared `db` (NOT a second Database) so the sweep
+  // scans the SAME `memories` rows under one (tenant, agent)-scoped FK-enabled connection. Always constructed (no
+  // model/IO cost); DORMANT (the KEYLESS __MEMORY_LIFECYCLE__ cron, default OFF, evicts/demotes 0 rows). Threaded as
+  // the port TYPE into the cron sentinel (setup-channels), NOT createPiExecutor (the agent↛memory cut).
   const memoryLifecycleStore = createSqliteMemoryLifecycleStore({ db, logger: memoryLogger });
 
   // 6.5.2e. Recall-counter composition. Stand up the SINGLE in-process recall-counter registry +
@@ -629,8 +629,7 @@ export async function setupMemory(deps: {
       ),
   });
 
-  // 6.5.2f'. Outcome-signal subscriber (WS1) + the RANK-01/FORGET-02 reward/failure write at resolve()
-  // (closed graph; byte-identity-gated per-agent learning{Outcome,Tuning,Forgetting} + the cost master-switch).
+  // 6.5.2f'. Outcome-signal subscriber (WS1) + the RANK-01/FORGET-02 reward/failure write at resolve() (closed graph; byte-identity-gated per-agent learning{Outcome,Tuning,Forgetting} + the cost master-switch).
   setupLearningOutcomeWiring({
     eventBus: container.eventBus,
     outcomeStore,
@@ -790,6 +789,7 @@ export async function setupMemory(deps: {
     usefulnessStore,
     tunedAlphaStore,
     outcomeStore,
+    learnedSkillStore,
     recordOutboundMessage,
     destroyReactionWiring,
     memoryLifecycleStore,

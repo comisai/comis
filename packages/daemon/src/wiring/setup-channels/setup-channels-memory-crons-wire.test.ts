@@ -93,6 +93,7 @@ beforeEach(() => {
 function makeSkillSynthesisBundle(over: Partial<MemoryCronContext["skillSynthesis"]> = {}): NonNullable<MemoryCronContext["skillSynthesis"]> {
   return {
     learnedSkillStore: { admit: vi.fn(async () => ({ ok: true as const, value: undefined })) } as any,
+    outcomeSignal: { resolve: vi.fn(async () => ({ ok: true as const, value: { outcome: "unknown", confidence: 0, sources: [], recalledIds: [], usedSkillIds: [] } })) } as any,
     buildValidationAdapter: vi.fn(async () => ({ validate: vi.fn() })) as any,
     buildSourceTrajectories: vi.fn(async () => [
       { trajectoryId: "t1", sessionId: "s1", sender: "u1", text: "did X then Y" },

@@ -13,7 +13,7 @@
  * @module
  */
 
-import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, ExecutionPlanPort, NormalizedMessage, SessionKey, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore, RelationshipStore, TunedAlphaStore, MemoryUsefulnessStore, MemoryLifecyclePort, QueueConfig, DeliveryService, WrapExternalContentOptions, ClockPort, TimerPort, ActivityStreamPort } from "@comis/core";
+import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, ExecutionPlanPort, NormalizedMessage, SessionKey, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore, RelationshipStore, TunedAlphaStore, MemoryUsefulnessStore, MemoryLifecyclePort, OutcomeSignalPort, LearnedSkillStorePort, QueueConfig, DeliveryService, WrapExternalContentOptions, ClockPort, TimerPort, ActivityStreamPort } from "@comis/core";
 import { createDeliveryService, createNoOpDeliveryQueue } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
@@ -241,6 +241,12 @@ export interface ChannelsDeps {
    *  the __ONLINE_TUNING__ sentinel scopes the bandit's FEED signal over it. Built in setup-memory
    *  on the shared db handle; injected as the port TYPE (agent↛memory cut). */
   usefulnessStore?: MemoryUsefulnessStore;
+  /** Outcome-signal store (WS1) — forwarded to the __SKILL_SYNTHESIS__ cron path (runSkillSynthesis
+   *  fail-closed success gate). Built in setup-memory; port TYPE only (agent↛memory cut). */
+  outcomeStore?: OutcomeSignalPort;
+  /** Learned-skill store (WS2/skills) — forwarded to the __SKILL_SYNTHESIS__ cron path (runSkillSynthesis
+   *  admit). Built in setup-memory on the shared db; port TYPE only (the agent↛memory closed-graph cut). */
+  learnedSkillStore?: LearnedSkillStorePort;
   /** Default tenant ID for memory storage. */
   tenantId?: string;
   /** Embedding queue for new memory entries (optional). */
@@ -401,6 +407,11 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
     tunedAlphaStore: deps.tunedAlphaStore,
     memoryLifecycleStore: deps.memoryLifecycleStore,
     usefulnessStore: deps.usefulnessStore,
+    // SKILL-08/09: the outcome gate + learned-skill admit target + the mutating-admission approval gate
+    // ride the SAME cron-deps chain → the __SKILL_SYNTHESIS__ sentinel assembles the closed-graph bundle.
+    outcomeStore: deps.outcomeStore,
+    learnedSkillStore: deps.learnedSkillStore,
+    approvalGate: deps.approvalGate,
     memoryApi: deps.memoryApi,
     tenantId: deps.tenantId,
     piSessionAdapters: deps.piSessionAdapters,

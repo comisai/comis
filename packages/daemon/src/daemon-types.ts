@@ -468,9 +468,9 @@ export interface BootContext {
   /** Consolidation store — cron path ONLY (registerCronEventListeners → runMemoryConsolidation
    *  sentinel; NOT the executor recall path). Shared db; port TYPE only (agent↛memory cut). */
   consolidationStore: Awaited<ReturnType<typeof setupMemory>>["consolidationStore"];
-  /** Live recall-counter wiring — the single `wireRecallCounters(eventBus)` subscriber, stood up in
-   *  setup-memory (the composition site holding the bus). Threaded into MemoryApiDeps.recallCounters
-   *  so `memory.recall_stats` reads the live gauge. */
+  outcomeStore: Awaited<ReturnType<typeof setupMemory>>["outcomeStore"]; // WS1 — the __SKILL_SYNTHESIS__ cron success gate (agent↛memory cut)
+  learnedSkillStore: Awaited<ReturnType<typeof setupMemory>>["learnedSkillStore"]; // WS2/skills — the __SKILL_SYNTHESIS__ admit target
+  /** Live recall-counter wiring — the single `wireRecallCounters(eventBus)` subscriber (setup-memory holds the bus); threaded into MemoryApiDeps.recallCounters so `memory.recall_stats` reads the live gauge. */
   recallCounters: Awaited<ReturnType<typeof setupMemory>>["recallCounters"];
   maintenanceTick: Awaited<ReturnType<typeof setupMemory>>["maintenanceTick"];
   /** REACT-02 (Phase 199): outbound-message → trajectory capture (built in setup-memory behind the byte-identity gate); threaded into setupDeliveryQueue. `undefined` when learning-outcome is off for all agents. */

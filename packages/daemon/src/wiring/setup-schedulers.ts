@@ -598,6 +598,37 @@ export async function setupSchedulers(deps: {
         schedulerLogger.info({ agentId, schedule: tripleCfg.schedule ?? "0 6 * * *" }, "Registered memory triple-extraction cron job");
       }
     }
+
+    // -- Procedural skill-synthesis cron job (SKILL-08/09, v2.26 Verified Learning WS2) --
+    // OPT-IN, DEFAULT OFF (the byte-identity guarantee depends on it). Registered ONLY when the
+    // operator sets learningSkills.enabled AND the master cost kill switch is on; a default agent
+    // registers NO job → byte-identical with the config absent. Default schedule 30 9 * * * runs
+    // AFTER the lifecycle sweep's 0 9 (so the outcome/skill-used signals it selects on have
+    // settled). Job options mirror the other memory crons 1:1 (isolated / next-heartbeat / no
+    // forward-to-main / fresh). The __SKILL_SYNTHESIS__ sentinel (setup-channels-memory-crons-wire.ts)
+    // re-checks the knob + injects the @comis/memory store + @comis/skills validation adapter. SHADOW:
+    // even when enabled the synthesized candidate is admitted but NOT surfaced (Phase 202 surfaces it).
+    const learningSkillsCfg = agentConfig.learningSkills;
+    if (costFeaturesEnabled && learningSkillsCfg?.enabled) {
+      const skillSynthJobId = `skill-synthesis-${agentId}`;
+      if (!scheduler.getJobs().some((j) => j.id === skillSynthJobId)) {
+        await scheduler.addJob({
+          id: skillSynthJobId,
+          name: "Skill synthesis",
+          agentId,
+          schedule: { kind: "cron", expr: "30 9 * * *" },
+          payload: { kind: "system_event", text: "__SKILL_SYNTHESIS__" },
+          sessionTarget: "isolated",
+          wakeMode: "next-heartbeat",
+          forwardToMain: false,
+          sessionStrategy: "fresh",
+          consecutiveErrors: 0,
+          enabled: true,
+          createdAtMs: systemNowMs(),
+        });
+        schedulerLogger.info({ agentId, schedule: "30 9 * * *" }, "Registered skill synthesis cron job");
+      }
+    }
   }
 
   // First-run cost-disclosure notice (opt-out posture). Once per startup, right after the

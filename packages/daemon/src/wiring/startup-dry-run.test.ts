@@ -36,13 +36,14 @@ describe("logOperationModelDryRun", () => {
     expect(logObj.agentId).toBe("myAgent");
 
     const ops = logObj.operationModels as Array<{ op: string }>;
-    expect(ops).toHaveLength(10);
+    expect(ops).toHaveLength(11);
 
     const opNames = ops.map((o) => o.op).sort();
     expect(opNames).toEqual(
       // Phase 154 (R4/R5) added "verification" + "planning"; Phase 198 Plan 01 (OUTCOME-04)
-      // added "outcomeJudge" (the optional cost-gated outcome judge, fast tier).
-      ["compaction", "condensation", "cron", "heartbeat", "interactive", "outcomeJudge", "planning", "subagent", "taskExtraction", "verification"].sort(),
+      // added "outcomeJudge" (the optional cost-gated outcome judge, fast tier); Phase 201 Plan 01
+      // (SKILL-09) added "skillSynthesis" (the procedural-synthesis op, mid tier).
+      ["compaction", "condensation", "cron", "heartbeat", "interactive", "outcomeJudge", "planning", "skillSynthesis", "subagent", "taskExtraction", "verification"].sort(),
     );
   });
 

@@ -524,27 +524,17 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // consume it via the local module path, which the walker skips as a
       // self-import.
       "MinViableEquation",
-      // Verified Learning WS2 (P2 Skills, Phase 201 Plan 04). The LLM-backed
-      // procedural-synthesis adapter (SKILL-02) + its deps type, surfaced on the
-      // @comis/agent barrel ahead-of-consumer. The real cross-package consumer is
-      // the daemon `setup-learning` wiring (Plan 07), which constructs the adapter
-      // on the `skillSynthesis` mid tier and injects it into `runSkillSynthesis`
-      // from the `__SKILL_SYNTHESIS__` cron. Both SHRINK out when Plan 07's
-      // setup-learning.ts name-imports createLlmSkillSynthesisAdapter. The
-      // synthesis JOB (`runSkillSynthesis`) is added in this plan's later tasks
-      // with its own ahead-of-consumer entry; the PROMPT + parser stay
-      // agent-internal (off the public barrel).
-      "createLlmSkillSynthesisAdapter",
+      // Verified Learning WS2 (P2 Skills, Phase 201). The synthesis adapter
+      // (createLlmSkillSynthesisAdapter), the JOB (runSkillSynthesis) + its source
+      // type (SynthesisSourceTrajectory), and the approval-gate structural subset
+      // (SkillApprovalGate) are now CONSUMED by the daemon Plan 07 wiring
+      // (setup-channels-memory-crons-wire.ts / setup-channels-skill-synthesis-deps.ts
+      // / setup-channels-memory-crons-types.ts) — they SHRANK out of this allowlist
+      // (the shrink-only ratchet). Only the deps/result SHAPE types stay
+      // ahead-of-consumer (referenced via Parameters<>/ReturnType<>, not name-imported).
       "LlmSkillSynthesisAdapterDeps",
-      // The synthesis JOB (SKILL-03/04/05/08) + its public dep/result/source
-      // types. The daemon `setup-channels-memory-crons` (Plan 07) name-imports
-      // runSkillSynthesis from the `__SKILL_SYNTHESIS__` cron and builds the
-      // SynthesisSourceTrajectory[] from buildReviewSessionSource; all SHRINK out
-      // when that wiring lands. The job consumes @comis/core PORT TYPES only.
-      "runSkillSynthesis",
       "SkillSynthesisJobDeps",
       "SkillSynthesisJobResult",
-      "SynthesisSourceTrajectory",
     ])],
     // @comis/channels: baseline orphans tracked here. The 5 delivery
     // helpers + the Markdown IR pipeline (incl. telegram-file-ref-guard)
@@ -2484,14 +2474,12 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // (tenant, agent)-scoped learned_skills procedural store — idempotent
       // deterministic-id admit(), scoped get()/list(), and the promote()/demote()/
       // evict() lifecycle, evict being a soft evicted_at set, never a hard DELETE).
-      // It is an AHEAD-OF-CONSUMER factory-orphan: the daemon composition-root
-      // consumer LANDS in Plan 07 (the synthesis-job wiring injects it on the shared
-      // db handle), at which point this factory entry SHRINKS OUT (mirror
-      // createSqliteOutcomeStore above; allowlist-shrink enforces shrink-only).
-      // LearnedSkillStoreDeps is the constructor-deps SHAPE type (referenced via
-      // inline objects only — the daemon calls the factory with an inline
-      // `{ db, logger }`) — PERMANENT baseline orphan (mirror OutcomeStoreDeps above).
-      "createSqliteLearnedSkillStore",
+      // The daemon composition-root consumer LANDED (Plan 07: setup-memory.ts builds
+      // it on the shared db handle, threaded into the __SKILL_SYNTHESIS__ cron), so the
+      // FACTORY orphan createSqliteLearnedSkillStore was REMOVED here (the shrink-only
+      // ratchet fired on schedule; mirror createSqliteMemoryEmbeddingStore below).
+      // LearnedSkillStoreDeps is the constructor-deps SHAPE type (the daemon calls the
+      // factory with an inline `{ db, logger }`) — PERMANENT baseline orphan (mirror OutcomeStoreDeps above).
       "LearnedSkillStoreDeps",
       // Scoped embedding-read store. createSqliteMemoryEmbeddingStore
       // is the sole MemoryEmbeddingStore adapter — the (tenant, agent)-scoped LEFT JOIN
@@ -2938,13 +2926,12 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // mutating classifier + its deps type. The whole adapter lives in
       // @comis/skills because applyToolPolicy + the bwrap sandbox provider are
       // @comis/skills symbols (the synthesis job in @comis/agent consumes only the
-      // @comis/core SkillValidationPort TYPE — the closed-graph cut). The real
-      // cross-package consumer is the daemon `setup-learning` wiring (Plan 07),
-      // which constructs the adapter and injects it into runSkillSynthesis via the
-      // SkillValidationPort type; all three SHRINK out when that wiring
-      // name-imports createSandboxSkillValidationAdapter. Ahead-of-consumer
-      // orphans (mirror createLlmSkillSynthesisAdapter / runSkillSynthesis above).
-      "createSandboxSkillValidationAdapter",
+      // @comis/core SkillValidationPort TYPE — the closed-graph cut). The FACTORY
+      // createSandboxSkillValidationAdapter is now CONSUMED by the daemon Plan 07
+      // wiring (setup-channels-skill-synthesis-deps.ts builds it with the agent's tool
+      // list + policy), so it SHRANK out here (the shrink-only ratchet). classifyMutating
+      // (the exported predicate, no name-import consumer yet) + SandboxSkillValidationAdapterDeps
+      // (the constructor-deps SHAPE, called inline) stay ahead-of-consumer.
       "classifyMutating",
       "SandboxSkillValidationAdapterDeps",
     ])],

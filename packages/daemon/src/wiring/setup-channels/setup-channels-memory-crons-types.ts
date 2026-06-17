@@ -11,7 +11,7 @@
  * @module
  */
 
-import type { AppContainer, ClockPort, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore, RelationshipStore, TunedAlphaStore, MemoryUsefulnessStore, MemoryLifecyclePort, LearnedSkillStorePort, SkillValidationPort } from "@comis/core";
+import type { AppContainer, ClockPort, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore, RelationshipStore, TunedAlphaStore, MemoryUsefulnessStore, MemoryLifecyclePort, LearnedSkillStorePort, SkillValidationPort, OutcomeSignalPort } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { MemoryApi } from "@comis/memory";
 import type { SynthesisSourceTrajectory, SkillApprovalGate } from "@comis/agent";
@@ -28,6 +28,8 @@ import type { SynthesisSourceTrajectory, SkillApprovalGate } from "@comis/agent"
 export interface SkillSynthesisCronDeps {
   /** The @comis/memory learned-skill store (the admit target), built on the shared db handle. */
   learnedSkillStore: Pick<LearnedSkillStorePort, "admit">;
+  /** The @comis/memory outcome-signal store (the fail-closed success gate the job selects on). */
+  outcomeSignal: Pick<OutcomeSignalPort, "resolve">;
   /** Build the @comis/skills sandbox validation adapter for an agent (injects its tool list + policy). */
   buildValidationAdapter: (agentId: string) => Promise<Pick<SkillValidationPort, "validate">>;
   /** Build the LCD-merged source trajectories (buildReviewSessionSource — NOT sessionStore.listDetailed). */
