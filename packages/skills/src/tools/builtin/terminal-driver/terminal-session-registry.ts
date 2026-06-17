@@ -767,8 +767,11 @@ export function createTerminalSessionRegistry(
   // the 4th arg is the worker `reattach` round-trip the sibling drives (worker re-attaches
   // the surviving pane, NEVER a create; running status + obs hooks gated on its ok).
   if (deps.durability !== undefined)
-    applyRecoveredSessions(deps.durability, sessions, nowMs, (id, cols, rows, tmuxSocket) =>
-      request(id, "reattach", { sessionId: id, cols, rows, ...(tmuxSocket !== undefined ? { tmuxSocket } : {}) }),
+    applyRecoveredSessions(deps.durability, sessions, nowMs, (id, cols, rows, allowId, tmuxSocket) =>
+      // v2.26: thread the recovered session's allowId so the worker re-resolves its platform profile
+      // (render transform + perception) on reattach — without it a durable claude drive reverts to the
+      // agnostic path after a restart (FINDING-3 ghost-strip + perception silently lost).
+      request(id, "reattach", { sessionId: id, cols, rows, allowId, ...(tmuxSocket !== undefined ? { tmuxSocket } : {}) }),
     );
 
   return { create, read, status, sendText, sendKey, resize, wait, get, list, kill, evict, getOwner: (sessionId: string): SessionOwner | undefined => sessions.get(sessionId)?.owner, size, cleanup };

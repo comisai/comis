@@ -560,6 +560,41 @@ describe("createTerminalWorker — reattach frame (BL-01: recover-on-boot is not
     expect((read.result as { screen: string }).screen).toContain("resumed-pane-output");
   });
 
+  it("re-attaches a durable claude session WITH the profile render transform — FINDING-3 survives a restart (RENDER-01)", async () => {
+    // The integration-checker BLOCKER: a recovered durable session must re-resolve its platform
+    // profile by allowId, or the ghost-strip (and perception) silently revert to the agnostic path
+    // after a daemon restart — reviving FINDING-3 on the DEFAULT durable deployment.
+    const tmux = makeReattachLoader(true);
+    const recEmu = makeRecordingEmulator();
+    const worker = createTerminalWorker(
+      baseDeps({ loadPty: () => ({ spawn: vi.fn() }), loadTmux: tmux.loadTmux, createEmulator: recEmu.createEmulator }),
+    );
+    await worker.handle({
+      sessionId: "claude-sess",
+      requestId: "rq-re-claude",
+      traceId: TRACE_ID,
+      method: "reattach",
+      params: { sessionId: "claude-sess", cols: 120, rows: 40, allowId: "claude" },
+    });
+    expect(typeof recEmu.lastConstruct()?.transformSnapshot).toBe("function");
+  });
+
+  it("re-attaches with NO render transform for an unknown allowId (the agnostic default, INV-1)", async () => {
+    const tmux = makeReattachLoader(true);
+    const recEmu = makeRecordingEmulator();
+    const worker = createTerminalWorker(
+      baseDeps({ loadPty: () => ({ spawn: vi.fn() }), loadTmux: tmux.loadTmux, createEmulator: recEmu.createEmulator }),
+    );
+    await worker.handle({
+      sessionId: "vim-sess",
+      requestId: "rq-re-vim",
+      traceId: TRACE_ID,
+      method: "reattach",
+      params: { sessionId: "vim-sess", cols: 120, rows: 40, allowId: "vim" },
+    });
+    expect(recEmu.lastConstruct()?.transformSnapshot).toBeUndefined();
+  });
+
   it("a GONE tmux session replies ok:false and registers NOTHING (a later read is alive:false — honest death, never a zombie)", async () => {
     const tmux = makeReattachLoader(false); // hasSession false → reattach returns undefined
     const worker = createTerminalWorker(

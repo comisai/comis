@@ -30,7 +30,8 @@ import { suppressError } from "@comis/shared";
 import { attachBackend } from "./terminal-worker-backend-attach.js";
 import { createAttentionEmitter } from "./terminal-attention-emitter.js";
 import { observeSettledFrame } from "./terminal-worker-classify.js";
-import type { SessionEmulator } from "./terminal-render.js";
+import { getPlatformProfile } from "./platforms/index.js";
+import type { EmulatorSnapshot, SessionEmulator } from "./terminal-render.js";
 import type { TerminalRequestFrame } from "./terminal-ipc.js";
 import type {
   PtyModuleLike,
@@ -46,8 +47,15 @@ export interface ReattachWorkerArgs {
   frame: TerminalRequestFrame;
   /** The worker's closure-local per-session map (the re-attached session is registered here). */
   sessions: Map<string, SessionState>;
-  /** The worker's @xterm emulator factory. */
-  createEmulator: (opts: { cols: number; rows: number; scrollback: number }) => SessionEmulator;
+  /** The worker's @xterm emulator factory. `transformSnapshot` is the selected platform profile's
+   *  read-side render hook (RENDER-01) — passed through verbatim so a recovered durable session
+   *  keeps its ghost-strip after a daemon restart. */
+  createEmulator: (opts: {
+    cols: number;
+    rows: number;
+    scrollback: number;
+    transformSnapshot?: (snap: EmulatorSnapshot) => EmulatorSnapshot;
+  }) => SessionEmulator;
   /** The worker's fd3 attention writer (absent ⇒ no emitter). */
   writeFd3?: (b: Buffer) => void;
   /** The worker's injected clock. */
@@ -82,6 +90,12 @@ export async function reattachWorkerSession(args: ReattachWorkerArgs): Promise<{
   // RECUR-03: the surviving session's OWN per-boot socket (the daemon threads it from the
   // descriptor onto the reattach frame) — re-attach targets THAT server, not this boot's fresh one.
   const tmuxSocket = typeof p["tmuxSocket"] === "string" ? (p["tmuxSocket"] as string) : undefined;
+  // v2.26: the operator-declared allowId rides the reattach frame (threaded from the recovered
+  // descriptor) so a recovered durable session RE-RESOLVES its platform profile — without this, a
+  // recovered claude drive reverts to the agnostic render/classify after a restart, reviving FINDING-3
+  // (the ghost-strip) and dropping perception. Selection is by allowId only (§5/INV-3).
+  const allowId = typeof p["allowId"] === "string" ? (p["allowId"] as string) : undefined;
+  const profile = allowId !== undefined ? getPlatformProfile(allowId) : undefined;
 
   const state: SessionState = {
     backend: "tmux",
@@ -92,8 +106,9 @@ export async function reattachWorkerSession(args: ReattachWorkerArgs): Promise<{
     interactions: 0,
     ringListeners: new Set(),
     exitListeners: new Set(),
+    allowId,
   };
-  state.emu = createEmulator({ cols, rows, scrollback: args.scrollbackDefault });
+  state.emu = createEmulator({ cols, rows, scrollback: args.scrollbackDefault, transformSnapshot: profile?.transformSnapshot });
   if (writeFd3 !== undefined) {
     const emitter = createAttentionEmitter({ sessionId, writeFd3 });
     state.emitter = emitter;
