@@ -108,6 +108,28 @@ function tierRank(source: string): number {
 }
 
 /**
+ * Outcome-severity ordering for the same-tier EQUAL-confidence tie-break (WR-01):
+ * HIGHER value wins a tie. A `failure` (then a `corrected` soft-failure) beats a
+ * `success`/`unknown` of equal confidence within the SAME tier — the conservative
+ * verdict, so a real tool/node failure is NEVER silently masked by an
+ * equal-confidence sibling success (the multi-tool / multi-node DAG case). This
+ * ONLY breaks ties: precedence (tier) and then strict confidence still decide
+ * first, so a higher-confidence success still wins over a lower-confidence failure.
+ *
+ * A `Map` (not a plain object) avoids the dynamic object-index lint while the key
+ * is a DB-CHECK-constrained closed enum.
+ */
+const OUTCOME_SEVERITY = new Map<string, number>([
+  ["failure", 3],
+  ["corrected", 2],
+  ["unknown", 1],
+  ["success", 0],
+]);
+function outcomeSeverity(outcome: string): number {
+  return OUTCOME_SEVERITY.get(outcome) ?? 0;
+}
+
+/**
  * Compute the deterministic row id from the UNIQUE tuple. A stable sha256 hex of
  * the space-joined `(tenant_id, agent_id, trajectory_id, source, observed_at)` —
  * NEVER `Date.now()`/`Math.random()`. The `createHash` precedent is
@@ -144,9 +166,13 @@ export function createSqliteOutcomeStore(deps: OutcomeStoreDeps): OutcomeSignalP
 
   // Scoped read for resolve(): the `tenant_id = ? AND agent_id = ?` filter is the
   // load-bearing isolation boundary (SEC-01); every value is a bound `?` param.
+  // `ORDER BY observed_at ASC, id ASC` makes the multi-row scan STABLE across runs
+  // (WR-01): without it an unindexed scan can return same-tier rows in any order, so
+  // an equal-confidence tie-break that keyed on `rows[0]` flipped run-to-run.
   const readStmt = db.prepare(
     "SELECT id, session_id, trajectory_id, outcome, source, confidence, sender_trust, recalled_ids, used_skill_ids, observed_at " +
-      "FROM outcome_events WHERE tenant_id = ? AND agent_id = ? AND trajectory_id = ?",
+      "FROM outcome_events WHERE tenant_id = ? AND agent_id = ? AND trajectory_id = ? " +
+      "ORDER BY observed_at ASC, id ASC",
   );
 
   // Age-based prune: DELETE every row older than the cutoff, wrapped in a
@@ -237,14 +263,22 @@ export function createSqliteOutcomeStore(deps: OutcomeStoreDeps): OutcomeSignalP
           return ok({ outcome: "unknown", confidence: 0, sources: [], recalledIds: [], usedSkillIds: [] });
         }
 
-        // Precedence-first then confidence (OUTCOME-05): pick the highest-precedence
-        // tier present, then the MAX-confidence row WITHIN that tier. A
-        // high-confidence reaction never overrides a deterministic tool result.
+        // Precedence-first, then confidence, then outcome-severity (OUTCOME-05 /
+        // WR-01): pick the highest-precedence tier present, then the MAX-confidence
+        // row WITHIN that tier, and on a same-tier EQUAL-confidence TIE prefer the
+        // more-severe outcome (`failure` > `corrected` > `unknown` > `success`) so a
+        // failure is never masked by an equal-confidence sibling success. A
+        // high-confidence reaction still never overrides a deterministic tool result.
         let winner = rows[0]!;
         for (const row of rows) {
+          const rt = tierRank(row.source);
+          const wt = tierRank(winner.source);
           const better =
-            tierRank(row.source) < tierRank(winner.source) ||
-            (tierRank(row.source) === tierRank(winner.source) && row.confidence > winner.confidence);
+            rt < wt ||
+            (rt === wt && row.confidence > winner.confidence) ||
+            (rt === wt &&
+              row.confidence === winner.confidence &&
+              outcomeSeverity(row.outcome) > outcomeSeverity(winner.outcome));
           if (better) winner = row;
         }
 
