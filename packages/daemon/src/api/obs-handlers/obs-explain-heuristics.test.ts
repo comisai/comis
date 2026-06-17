@@ -457,6 +457,76 @@ describe("obs-explain-heuristics", () => {
     expect(r503!.code).toBe("breaker_opened_repeated_failure");
   });
 
+  // ------------------------------------------------------------------------
+  // OBS-02 (Phase 201, P2 skills): the two BENIGN procedural-skill verdicts —
+  // synthesis_abstained_low_capability + learned_skill_failing. Both dead-last
+  // (after the catch-all tool-failure rule); Defer ≠ Retry — an abstain never
+  // ranks as an acute failure.
+  // ------------------------------------------------------------------------
+
+  const ABSTAINED_LEARNING: IncidentSignals["learning"] = {
+    outcomeResolved: false,
+    sources: ["pipeline"],
+    skillsUsed: [],
+    skillFailures: [],
+    synthesisAbstained: true,
+  };
+
+  it("OBS-02: synthesisAbstained:true with no acute cause → synthesis_abstained_low_capability", () => {
+    const r = rootCause(makeSignals({ learning: ABSTAINED_LEARNING }));
+    expect(r).not.toBeNull();
+    expect(r!.code).toBe("synthesis_abstained_low_capability");
+    expect(r!.detail).toMatch(/abstain/i);
+    expect(r!.detail).toMatch(/benign|defer/i);
+    expect(r!.suggestedNextSteps.length).toBeGreaterThan(0);
+  });
+
+  it("OBS-02: synthesis_abstained is BENIGN — it ranks BELOW an acute tool failure (Defer ≠ Retry)", () => {
+    const r = rootCause(
+      makeSignals({
+        learning: ABSTAINED_LEARNING,
+        endReason: "completed_with_tool_errors",
+        failures: [
+          { seq: 1, toolName: "web_fetch", classifiedFailureBy: "sdk_iserror", transportOk: false, errorKind: "dependency", resultDigest: "d", resultBytes: 0, errorPreview: "" },
+        ],
+      }),
+    );
+    expect(r!.code).toBe("completed_with_tool_errors");
+  });
+
+  it("OBS-02: skillFailures non-empty (no acute cause) → learned_skill_failing", () => {
+    const r = rootCause(
+      makeSignals({
+        learning: { outcomeResolved: true, outcome: "corrected", sources: ["correction"], skillsUsed: ["flaky"], skillFailures: ["flaky"], synthesisAbstained: false },
+      }),
+    );
+    expect(r).not.toBeNull();
+    expect(r!.code).toBe("learned_skill_failing");
+    expect(r!.suggestedNextSteps.join(" ")).toMatch(/comis memory skills/);
+  });
+
+  it("OBS-02: learned_skill_failing ranks BELOW an acute tool failure", () => {
+    const r = rootCause(
+      makeSignals({
+        learning: { outcomeResolved: false, outcome: "failure", sources: ["tool"], skillsUsed: ["flaky"], skillFailures: ["flaky"], synthesisAbstained: false },
+        failures: [
+          { seq: 1, toolName: "web_fetch", classifiedFailureBy: "sdk_iserror", transportOk: false, errorKind: "dependency", resultDigest: "d", resultBytes: 0, errorPreview: "" },
+        ],
+      }),
+    );
+    expect(r!.code).toBe("completed_with_tool_errors");
+  });
+
+  it("OBS-02: neither skill verdict fires on an absent learning block (no fixture regression)", () => {
+    expect(rootCause(makeSignals())).toBeNull();
+    // A resolved, no-skill learning block fires NEITHER skill verdict.
+    expect(
+      rootCause(
+        makeSignals({ learning: { outcomeResolved: true, outcome: "success", sources: ["tool"], skillsUsed: [], skillFailures: [], synthesisAbstained: false } }),
+      ),
+    ).toBeNull();
+  });
+
   it("detail strings never contain a literal '${' (interpolation-bug guard)", () => {
     const r = rootCause(
       makeSignals({ breakerOpenedTool: "web_fetch", hasDoNotRetrySignal: true, mostFailedTool: "web_fetch", repeatedFailureCount: { web_fetch: 5 } }),
