@@ -673,5 +673,36 @@ describe("createSqliteMemoryLifecycleStore", () => {
       if (res.ok) expect(res.value.evicted).toBe(0);
       expect(evictedAtOf(db, "would-evict"), "default policy must not evict").toBeNull();
     });
+
+    it("FORGET-06 per-call policy: a scope.policy override activates eviction on a DORMANT-constructed store (the daemon's per-agent path)", async () => {
+      // The store is built DORMANT (no constructor policy), but the daemon threads the
+      // per-agent learningForgetting policy on the SWEEP CALL. The per-call policy must
+      // activate eviction so a different agent on the SAME shared store can run with its
+      // own policy (per-agent, not a constructor-frozen global).
+      const dormantStore = createSqliteMemoryLifecycleStore({ db });
+      insertMemory(db, { id: "evict-via-call", content: "weak", memoryType: "working", occurredAt: T0 - 1 * DAY_MS, proofCount: null });
+      seedFailureCount(db, { memoryId: "evict-via-call", failureCount: 8 });
+
+      const res = await dormantStore.runLifecycleSweep({
+        tenantId: "tenant_a",
+        agentId: "agent_x",
+        now: T0,
+        policy: { evictionEnabled: true, strengthThreshold: 0.99, failurePenalty: 0.5 },
+      });
+      expect(res.ok).toBe(true);
+      if (res.ok) expect(res.value.evicted).toBeGreaterThanOrEqual(1);
+      expect(evictedAtOf(db, "evict-via-call"), "per-call policy must evict").not.toBeNull();
+    });
+
+    it("FORGET-06 per-call policy absent → the DORMANT-constructed store still evicts NOTHING (byte-identity preserved)", async () => {
+      const dormantStore = createSqliteMemoryLifecycleStore({ db });
+      insertMemory(db, { id: "stays-live", content: "weak", memoryType: "working", occurredAt: T0 - 1 * DAY_MS, proofCount: null });
+      seedFailureCount(db, { memoryId: "stays-live", failureCount: 9 });
+      // No scope.policy → falls back to the constructor (DORMANT) policy → evicts nothing.
+      const res = await dormantStore.runLifecycleSweep({ tenantId: "tenant_a", agentId: "agent_x", now: T0 });
+      expect(res.ok).toBe(true);
+      if (res.ok) expect(res.value.evicted).toBe(0);
+      expect(evictedAtOf(db, "stays-live")).toBeNull();
+    });
   });
 });

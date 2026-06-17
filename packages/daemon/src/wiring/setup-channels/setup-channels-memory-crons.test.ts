@@ -616,6 +616,68 @@ describe("handleMemoryCronSentinel __MEMORY_LIFECYCLE__", () => {
   });
 
   // -------------------------------------------------------------------------
+  // FORGET-06 (Phase 200 Plan 06): the daemon emits learning:memory_demoted /
+  // learning:memory_evicted (COUNTS ONLY) from the real sweep report, and threads the
+  // learningForgetting eviction policy into runLifecycleSweep's per-call scope so the
+  // store activates eviction. The store itself emits nothing (counts-only convention).
+  // -------------------------------------------------------------------------
+  it("FORGET-06: emits learning:memory_demoted + learning:memory_evicted (counts only) from the sweep report", async () => {
+    const sweep = vi.fn(async () => ({ ok: true as const, value: { scanned: 9, promoted: 0, demoted: 2, evicted: 3 } }));
+    const ctx = makeCtx({
+      agents: {
+        "agent-1": {
+          name: "Agent 1",
+          memoryLifecycle: { enabled: true },
+          learningForgetting: { enabled: true, eviction: { enabled: true, strengthThreshold: 0.2 }, failurePenalty: 0.5 },
+        },
+      },
+      memoryLifecycleStore: { runLifecycleSweep: sweep },
+    });
+    const emit = (ctx.container as any).eventBus.emit as ReturnType<typeof vi.fn>;
+    await handleMemoryCronSentinel("__MEMORY_LIFECYCLE__", { agentId: "agent-1", onComplete: vi.fn() }, ctx);
+    expect(emit).toHaveBeenCalledWith("learning:memory_demoted", expect.objectContaining({ agentId: "agent-1", count: 2 }));
+    expect(emit).toHaveBeenCalledWith("learning:memory_evicted", expect.objectContaining({ agentId: "agent-1", count: 3 }));
+    // Counts only — the payloads carry no memory ids/bodies.
+    const evictPayload = emit.mock.calls.find((c) => c[0] === "learning:memory_evicted")![1] as Record<string, unknown>;
+    expect(Object.keys(evictPayload).sort()).toEqual(["agentId", "count", "timestamp"]);
+  });
+
+  it("FORGET-06: threads learningForgetting.eviction policy (evictionEnabled/strengthThreshold/failurePenalty) into the sweep scope", async () => {
+    const sweep = vi.fn(async () => ({ ok: true as const, value: { scanned: 5, promoted: 0, demoted: 0, evicted: 1 } }));
+    const ctx = makeCtx({
+      agents: {
+        "agent-1": {
+          name: "Agent 1",
+          memoryLifecycle: { enabled: true },
+          learningForgetting: { enabled: true, eviction: { enabled: true, strengthThreshold: 0.25 }, failurePenalty: 0.6 },
+        },
+      },
+      memoryLifecycleStore: { runLifecycleSweep: sweep },
+    });
+    await handleMemoryCronSentinel("__MEMORY_LIFECYCLE__", { agentId: "agent-1", onComplete: vi.fn() }, ctx);
+    const scope = sweep.mock.calls[0][0] as { tenantId: string; agentId: string; now: number; policy?: any };
+    expect(scope.policy).toBeDefined();
+    expect(scope.policy.evictionEnabled).toBe(true);
+    expect(scope.policy.strengthThreshold).toBe(0.25);
+    expect(scope.policy.failurePenalty).toBe(0.6);
+  });
+
+  it("byte-identity: with learningForgetting OFF (default), the sweep runs with eviction OFF and emits counts of 0 (no behavior change)", async () => {
+    const sweep = vi.fn(async () => ({ ok: true as const, value: { scanned: 5, promoted: 0, demoted: 0, evicted: 0 } }));
+    const ctx = makeCtx({
+      agents: { "agent-1": { name: "Agent 1", memoryLifecycle: { enabled: true } } }, // no learningForgetting
+      memoryLifecycleStore: { runLifecycleSweep: sweep },
+    });
+    const emit = (ctx.container as any).eventBus.emit as ReturnType<typeof vi.fn>;
+    await handleMemoryCronSentinel("__MEMORY_LIFECYCLE__", { agentId: "agent-1", onComplete: vi.fn() }, ctx);
+    // The sweep scope carries no eviction-enabled policy (DORMANT — byte-identical).
+    const scope = sweep.mock.calls[0][0] as { policy?: { evictionEnabled?: boolean } };
+    expect(scope.policy?.evictionEnabled ?? false).toBe(false);
+    // The emits carry count 0 (DORMANT report) — the eviction did nothing.
+    expect(emit).toHaveBeenCalledWith("learning:memory_evicted", expect.objectContaining({ count: 0 }));
+  });
+
+  // -------------------------------------------------------------------------
   // WIRE-02 (the WS7 first-RED): the __USEFULNESS_JUDGE__ cron was registered at
   // setup-schedulers.ts:489 but had NO dispatch handler — it fired nightly as a
   // NO-OP. These pin that the handler now constructs the seam and WRITES through
