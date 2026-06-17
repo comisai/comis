@@ -2945,6 +2945,7 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // name-imports createSandboxSkillValidationAdapter. Ahead-of-consumer
       // orphans (mirror createLlmSkillSynthesisAdapter / runSkillSynthesis above).
       "createSandboxSkillValidationAdapter",
+      "classifyMutating",
       "SandboxSkillValidationAdapterDeps",
     ])],
   ]);

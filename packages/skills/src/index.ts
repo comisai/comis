@@ -22,5 +22,6 @@ export * from "./skills/index.js";
 // (planned-orphan in test/support/public-api-policy.ts) until that wiring lands.
 export {
   createSandboxSkillValidationAdapter,
+  classifyMutating,
   type SandboxSkillValidationAdapterDeps,
 } from "./learning/sandbox-skill-validation-adapter.js";
