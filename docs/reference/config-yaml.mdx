@@ -716,6 +716,7 @@ The **Verified Learning** outcome signal (v2.26 WS1): a durable record of each f
 | `sources` | `string[]` | `["tool", "pipeline"]` | Which signal sources may contribute observations (closed set: `tool` / `pipeline` / `correction` / `judge` / `reaction` / `explicit`) |
 | `reactionMap` | `object` | `{}` | Maps a reaction/feedback token to an outcome (reaction source; later phases) |
 | `judge.enabled` | `boolean` | `false` | Enable the optional cost-gated LLM judge as a fallback outcome source (off in P0; routed via the `outcomeJudge` model tier, below) |
+| `correction.enabled` | `boolean` | `false` | Enable the optional cost-gated correction detector: a follow-up "no, do X instead" turn is classified (via the `outcomeJudge` tier) and emits a `corrected` soft-failure of the prior trajectory. Default off — an LLM over untrusted follow-up text is a net-new surface; also force-disabled by `memory.costFeatures.enabled: false` |
 | `minConfidenceToLearn` | `number` (0–1) | `0.6` | Minimum fused confidence required before a resolved outcome drives learning |
 | `retentionDays` | `number` | `30` | Age horizon for the `outcome_events` ledger; rows older than this are pruned at daemon startup (anti-DoS, runs regardless of the enable flag) |
 
