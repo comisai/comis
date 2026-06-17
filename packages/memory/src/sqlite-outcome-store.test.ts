@@ -297,15 +297,19 @@ describe("createSqliteOutcomeStore", () => {
       });
     });
 
-    it("surfaces recalledIds (attribution) and an empty usedSkillIds sink (P0)", async () => {
+    it("surfaces recalledIds (attribution) AND usedSkillIds — the loop is no longer write-only (ATTR-02, Plan 07)", async () => {
+      // The P0 hardcoded `usedSkillIds: []` sink is REPLACED with a union-dedup of the
+      // used_skill_ids column (mirroring recalled_ids). A row written WITH usedSkillIds
+      // resolves to those ids — on pre-patch HEAD this returned [] regardless (the :299
+      // hardcode), so this is the genuine first-RED for the BLOCKER fix.
       await store.observe(
-        makeObs({ source: "tool", outcome: "success", confidence: 0.9, recalledIds: ["m1", "m2"] }),
+        makeObs({ source: "tool", outcome: "success", confidence: 0.9, recalledIds: ["m1", "m2"], usedSkillIds: ["s1", "s2"] }),
       );
       const res = await store.resolve(TRAJ, SCOPE_A);
       expect(res.ok).toBe(true);
       if (!res.ok) return;
       expect(res.value.recalledIds).toEqual(expect.arrayContaining(["m1", "m2"]));
-      expect(res.value.usedSkillIds).toEqual([]);
+      expect(res.value.usedSkillIds).toEqual(expect.arrayContaining(["s1", "s2"]));
     });
 
     it("merges (union, dedup) recalledIds across multiple observations", async () => {
@@ -315,6 +319,16 @@ describe("createSqliteOutcomeStore", () => {
       expect(res.ok).toBe(true);
       if (!res.ok) return;
       expect([...res.value.recalledIds].sort()).toEqual(["m1", "m2", "m3"]);
+    });
+
+    it("merges (union, dedup) usedSkillIds across multiple observations (mirrors recalled_ids)", async () => {
+      await store.observe(makeObs({ source: "tool", outcome: "success", confidence: 0.9, usedSkillIds: ["s1", "s2"], observedAt: 1_000 }));
+      await store.observe(makeObs({ source: "judge", outcome: "success", confidence: 0.8, usedSkillIds: ["s2", "s3"], observedAt: 1_100 }));
+      const res = await store.resolve(TRAJ, SCOPE_A);
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      // s2 appears in BOTH rows — the union dedups it to a single entry.
+      expect([...res.value.usedSkillIds].sort()).toEqual(["s1", "s2", "s3"]);
     });
 
     it("does NOT return a row under (t1, a1) for a resolve scoped to (t2, a1) (isolation)", async () => {
