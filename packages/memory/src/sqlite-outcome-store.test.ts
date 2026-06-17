@@ -182,6 +182,33 @@ describe("createSqliteOutcomeStore", () => {
       expect(res.value.confidence).toBe(0.8);
     });
 
+    it("breaks a same-tier EQUAL-confidence tie toward 'failure' deterministically (WR-01)", async () => {
+      // The real multi-tool case: one tool succeeds and a sibling tool transport-fails,
+      // BOTH written at DETERMINISTIC_CONFIDENCE (0.9) on the same `tool` tier. The
+      // resolved verdict must be a STABLE `failure` — a real failure must never be
+      // masked by an equal-confidence success, and the verdict must not depend on the
+      // unindexed scan order. Insertion order: success FIRST.
+      await store.observe(makeObs({ source: "tool", outcome: "success", confidence: 0.9, observedAt: 1_000 }));
+      await store.observe(makeObs({ source: "tool", outcome: "failure", confidence: 0.9, observedAt: 2_000 }));
+      const res = await store.resolve(TRAJ, SCOPE_A);
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      expect(res.value.outcome).toBe("failure");
+      expect(res.value.confidence).toBe(0.9);
+    });
+
+    it("breaks the same tie toward 'failure' regardless of insertion order (WR-01 determinism)", async () => {
+      // Same two same-tier same-confidence rows, but the FAILURE is observed FIRST.
+      // The verdict must still be `failure` — proving the tie-break is on outcome
+      // severity, not on whichever row the scan returned first (`rows[0]`).
+      await store.observe(makeObs({ source: "tool", outcome: "failure", confidence: 0.9, observedAt: 1_000 }));
+      await store.observe(makeObs({ source: "tool", outcome: "success", confidence: 0.9, observedAt: 2_000 }));
+      const res = await store.resolve(TRAJ, SCOPE_A);
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      expect(res.value.outcome).toBe("failure");
+    });
+
     it("ranks judge above reaction when no deterministic tier is present", async () => {
       await store.observe(makeObs({ source: "reaction", outcome: "success", confidence: 0.99, observedAt: 1_000 }));
       await store.observe(makeObs({ source: "judge", outcome: "failure", confidence: 0.5, observedAt: 1_100 }));
