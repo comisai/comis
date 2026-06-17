@@ -1333,6 +1333,34 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   },
   {
     "default": {
+      "enabled": false,
+      "maxCandidatesPerRun": 200,
+      "schedule": "0 6 * * *"
+    },
+    "immutable": true,
+    "path": "agents.memoryTripleExtraction",
+    "type": "object"
+  },
+  {
+    "default": false,
+    "immutable": true,
+    "path": "agents.memoryTripleExtraction.enabled",
+    "type": "boolean"
+  },
+  {
+    "default": 200,
+    "immutable": true,
+    "path": "agents.memoryTripleExtraction.maxCandidatesPerRun",
+    "type": "integer"
+  },
+  {
+    "default": "0 6 * * *",
+    "immutable": true,
+    "path": "agents.memoryTripleExtraction.schedule",
+    "type": "string"
+  },
+  {
+    "default": {
       "enabled": true,
       "maxSourceChars": 24000,
       "maxSourceMemories": 200,
@@ -8224,6 +8252,11 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
           "maxSessionsPerRun": 10,
           "minMessages": 5,
           "schedule": "0 2 * * *"
+        },
+        "memoryTripleExtraction": {
+          "enabled": false,
+          "maxCandidatesPerRun": 200,
+          "schedule": "0 6 * * *"
         },
         "memoryUsefulnessJudge": {
           "enabled": true,
@@ -16765,6 +16798,36 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
       ],
       "type": "object"
     },
+    "memoryTripleExtraction": {
+      "additionalProperties": false,
+      "default": {
+        "enabled": false,
+        "maxCandidatesPerRun": 200,
+        "schedule": "0 6 * * *"
+      },
+      "properties": {
+        "enabled": {
+          "default": false,
+          "type": "boolean"
+        },
+        "maxCandidatesPerRun": {
+          "default": 200,
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "schedule": {
+          "default": "0 6 * * *",
+          "type": "string"
+        }
+      },
+      "required": [
+        "enabled",
+        "schedule",
+        "maxCandidatesPerRun"
+      ],
+      "type": "object"
+    },
     "memoryUsefulnessJudge": {
       "additionalProperties": false,
       "default": {
@@ -19395,6 +19458,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
     "dialectic",
     "memoryUsefulnessJudge",
     "learningOutcome",
+    "memoryTripleExtraction",
     "memoryOnlineTuning"
   ],
   "type": "object"
@@ -27515,6 +27579,36 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             ],
             "type": "object"
           },
+          "memoryTripleExtraction": {
+            "additionalProperties": false,
+            "default": {
+              "enabled": false,
+              "maxCandidatesPerRun": 200,
+              "schedule": "0 6 * * *"
+            },
+            "properties": {
+              "enabled": {
+                "default": false,
+                "type": "boolean"
+              },
+              "maxCandidatesPerRun": {
+                "default": 200,
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "schedule": {
+                "default": "0 6 * * *",
+                "type": "string"
+              }
+            },
+            "required": [
+              "enabled",
+              "schedule",
+              "maxCandidatesPerRun"
+            ],
+            "type": "object"
+          },
           "memoryUsefulnessJudge": {
             "additionalProperties": false,
             "default": {
@@ -30145,6 +30239,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "dialectic",
           "memoryUsefulnessJudge",
           "learningOutcome",
+          "memoryTripleExtraction",
           "memoryOnlineTuning"
         ],
         "type": "object"
@@ -30275,6 +30370,11 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "maxSessionsPerRun": 10,
             "minMessages": 5,
             "schedule": "0 2 * * *"
+          },
+          "memoryTripleExtraction": {
+            "enabled": false,
+            "maxCandidatesPerRun": 200,
+            "schedule": "0 6 * * *"
           },
           "memoryUsefulnessJudge": {
             "enabled": true,

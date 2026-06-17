@@ -568,6 +568,36 @@ export async function setupSchedulers(deps: {
         schedulerLogger.info({ agentId, schedule: memoryLifecycleConfig.schedule ?? "0 9 * * *" }, "Registered memory lifecycle cron job");
       }
     }
+
+    // -- Memory triple-extraction cron job (WIRE-01) --
+    // OPT-IN, DEFAULT OFF — the lone OFF-by-default learning seam alongside learningOutcome.
+    // Schedules the exported-but-never-wired runMemoryTripleExtraction (S/P/O from raw turns,
+    // COMPLEMENTARY to __MEMORY_REASONING__). A DEFAULT agent registers NO job → zero added cost,
+    // byte-identical with the config absent. Gated by BOTH the master cost kill switch AND the
+    // per-agent opt-in (force-disabled when memory.costFeatures.enabled is false). Default schedule
+    // 0 6 * * *. The __MEMORY_TRIPLE_EXTRACTION__ sentinel is dispatched in
+    // setup-channels-memory-crons-wire.ts → runMemoryTripleExtraction (trust-first upsertTriple).
+    const tripleCfg = agentConfig.memoryTripleExtraction;
+    if (costFeaturesEnabled && tripleCfg?.enabled) {
+      const tripleJobId = `memory-triple-extraction-${agentId}`;
+      if (!scheduler.getJobs().some((j) => j.id === tripleJobId)) {
+        await scheduler.addJob({
+          id: tripleJobId,
+          name: "Memory triple extraction",
+          agentId,
+          schedule: { kind: "cron", expr: tripleCfg.schedule ?? "0 6 * * *" },
+          payload: { kind: "system_event", text: "__MEMORY_TRIPLE_EXTRACTION__" },
+          sessionTarget: "isolated",
+          wakeMode: "next-heartbeat",
+          forwardToMain: false,
+          sessionStrategy: "fresh",
+          consecutiveErrors: 0,
+          enabled: true,
+          createdAtMs: systemNowMs(),
+        });
+        schedulerLogger.info({ agentId, schedule: tripleCfg.schedule ?? "0 6 * * *" }, "Registered memory triple-extraction cron job");
+      }
+    }
   }
 
   // First-run cost-disclosure notice (opt-out posture). Once per startup, right after the

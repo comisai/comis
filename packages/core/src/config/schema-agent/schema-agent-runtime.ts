@@ -29,6 +29,7 @@ import { SocialModelingConfigSchema } from "../schema-social-modeling.js";
 import { DialecticConfigSchema } from "../schema-dialectic.js";
 import { MemoryUsefulnessJudgeConfigSchema } from "../schema-memory-usefulness-judge.js";
 import { LearningOutcomeConfigSchema } from "../schema-learning-outcome.js";
+import { MemoryTripleExtractionConfigSchema } from "../schema-memory-triple-extraction.js";
 import { MemoryOnlineTuningConfigSchema } from "../schema-memory-online-tuning.js";
 import { MemoryLifecycleConfigSchema } from "../schema-memory-lifecycle.js";
 import { validateProfileId } from "../../security/profile-id.js";
@@ -414,6 +415,10 @@ export const PerAgentConfigSchema = AgentConfigSchema.extend({
    *  default is disabled, `.parse({})` produces a dormant block — force-disable on
    *  the master switch lands in Plan 04. */
   learningOutcome: LearningOutcomeConfigSchema.default(() => LearningOutcomeConfigSchema.parse({})),
+  /** Offline triple-extraction cron (Verified Learning WS7). Opt-IN posture: default-OFF
+   *  (the lone OFF-by-default learning seam alongside learningOutcome). `.parse({})` yields a
+   *  dormant block; the master cost switch force-disables it at the registration site. */
+  memoryTripleExtraction: MemoryTripleExtractionConfigSchema.default(() => MemoryTripleExtractionConfigSchema.parse({})),
   /** Offline tuned-alpha bandit cron (an OFFLINE, DETERMINISTIC, KEYLESS
    *  cron, never the recall path). Opt-out posture: default-ON; in the operator-facing
    *  cost-feature set, so gated by the kill switch at its registration site. */
