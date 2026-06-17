@@ -102,8 +102,30 @@ describe("assertSafeProfilePatterns — hot-path ReDoS guard on profile regexes 
     expect(() => assertSafeProfilePatterns(profile)).toThrow();
   });
 
+  it("rejects an overlapping-alternation quantified group like (a|a)* (WR-01)", () => {
+    expect(() => assertSafeProfilePatterns(withPerception([/(a|a)*/]))).toThrow();
+  });
+
+  it("rejects an unbounded {n,} brace-quantifier inside a quantified group like (a{2,})+ (WR-01)", () => {
+    expect(() => assertSafeProfilePatterns(withPerception([/(a{2,})+/]))).toThrow();
+  });
+
+  it("rejects nested quantified groups like ((a)*)* that the naive single-level scan missed (WR-01)", () => {
+    expect(() => assertSafeProfilePatterns(withPerception([/((a)*)*/]))).toThrow();
+  });
+
   it("accepts a bounded literal pattern such as the Codex working line", () => {
     expect(() => assertSafeProfilePatterns(withPerception([/Working \(\d+s\)/]))).not.toThrow();
+  });
+
+  it("accepts escaped literal parens, unquantified alternation groups, and char classes (real perception shapes)", () => {
+    // Escaped parens are literals (not groups); an UNquantified (?:a|b) alternation + a quantified
+    // char class are linear — the guard must not reject the patterns Phases 168/169 actually use.
+    expect(() =>
+      assertSafeProfilePatterns(
+        withPerception([/Working \(\d+s\)/, /Esc to (?:cancel|interrupt)/, /[✻✶✷·]\s+\w+ing\b/, /(?:^|\s)❯/]),
+      ),
+    ).not.toThrow();
   });
 
   it("accepts every pattern in the real shipped profiles", () => {

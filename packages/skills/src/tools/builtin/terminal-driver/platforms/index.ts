@@ -50,17 +50,53 @@ export function assertUniqueAllowIds(profiles: readonly TerminalPlatformProfile[
 }
 
 /**
- * A conservative ReDoS heuristic: reject a regex with a QUANTIFIED group/class that itself contains
- * an unbounded quantifier (the catastrophic-backtracking shapes `(a+)+`, `(\w+)*`, `(a*){2}`,
- * `[a-z]+]*`-style). Profile patterns are hot-path; a pathological one could stall the worker per
- * frame, so the registry rejects it at LOAD rather than at the first hostile screen. Anchoring is
- * NOT forced (legitimate substring perception patterns like `Working \(\d+s\)` match mid-screen).
+ * A conservative ReDoS heuristic: reject a regex with a QUANTIFIED group whose body can itself match
+ * its input more than one way — the catastrophic-backtracking shapes `(a+)+`, `(\w+)*`, `(a{2,})+`,
+ * `((a)*)*`, `(a|a)*`. Profile patterns are hot-path (run per read/settle frame); a pathological one
+ * could stall the worker, so the registry rejects it at LOAD rather than at the first hostile screen.
+ *
+ * Implemented as a paren-matching scan (not a single-level regex — which misses nested and brace/
+ * alternation shapes, WR-01): walk the source skipping escaped chars + character classes, and for each
+ * group whose CLOSING paren is followed by an unbounded quantifier (`*`/`+`/`{`), flag it if its BODY
+ * contains an inner unbounded quantifier (`*`/`+`/`{n,}`) OR an alternation (`|`). Conservative by
+ * design — it favors rejection (an author rewrites a flagged pattern), but it does NOT trip on the
+ * shapes real perception patterns use: escaped literal parens (`Working \(\d+s\)`), `?`-quantified
+ * optional groups, UNquantified alternation groups (`Esc to (?:cancel|interrupt)`), or char classes.
+ * Anchoring is NOT forced (substring perception patterns match mid-screen).
  */
 function isReDoSProne(source: string): boolean {
-  // A group `(...)` whose body contains `*`/`+`, immediately followed by another `*`/`+`/`{`.
-  if (/\([^)]*[*+][^)]*\)[*+{]/.test(source)) return true;
-  // A character class `[...]` immediately followed by two-or-more chained quantifiers.
-  if (/\[[^\]]*\][*+]{2,}/.test(source)) return true;
+  const groupStarts: number[] = [];
+  for (let i = 0; i < source.length; i++) {
+    const ch = source[i];
+    if (ch === "\\") {
+      i++; // skip the escaped char so `\(` `\)` `\[` are literals, not structure
+      continue;
+    }
+    if (ch === "[") {
+      // skip the whole character class wholesale (its unescaped `]` closes it)
+      i++;
+      while (i < source.length && source[i] !== "]") {
+        if (source[i] === "\\") i++;
+        i++;
+      }
+      continue;
+    }
+    if (ch === "(") {
+      groupStarts.push(i);
+      continue;
+    }
+    if (ch === ")") {
+      const start = groupStarts.pop();
+      if (start === undefined) continue; // unbalanced — the RegExp ctor already rejected it
+      const next = source[i + 1];
+      const quantified = next === "*" || next === "+" || next === "{";
+      if (!quantified) continue; // `?` / no quantifier ⇒ bounded ⇒ safe
+      const body = source.slice(start + 1, i);
+      // A quantified group whose body has an inner unbounded quantifier, an unbounded `{n,}` brace,
+      // or an alternation is the catastrophic shape (nested / overlapping repetition).
+      if (/[*+]/.test(body) || /\{\d+,\}/.test(body) || body.includes("|")) return true;
+    }
+  }
   return false;
 }
 
