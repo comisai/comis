@@ -11,8 +11,10 @@
  *
  *  1. **Abstain** (FIRST, cheapest): a small/nano model without a capable
  *     override → `resolveMemoryOpsStrategy` returns `"abstain"` → SKIP. BENIGN
- *     (Defer ≠ Retry): increments NO failure metric and trips NO breaker
- *     (`errorKind:"synthesis_abstained"` is informational only, SKILL-05).
+ *     (Defer ≠ Retry): increments NO failure metric and trips NO breaker. It logs
+ *     `errorKind:"precondition"` (an unmet capability precondition — the
+ *     consolidation-abstain precedent) with a synthesis-abstained `hint`, NOT a
+ *     failure (SKILL-05).
  *  2. **Select** (fail-closed, SKILL-03): for each injected source trajectory,
  *     call `OutcomeSignalPort.resolve`; keep ONLY `outcome === "success" &&
  *     confidence >= minConfidence`. `failure`/`unknown`/low-confidence are
@@ -327,9 +329,12 @@ export async function runSkillSynthesis(
         agentId,
         submodule: "skill-synthesis-job",
         step: "abstain" as const,
-        errorKind: "synthesis_abstained" as const,
+        // Closed-union errorKind (the consolidation-abstain precedent): an unmet
+        // capability precondition. The `hint` carries the synthesis-abstained
+        // semantics; this is BENIGN (no failure metric / no breaker), not a fault.
+        errorKind: "precondition" as const,
         capabilityClass,
-        hint: "skill synthesis skipped: capabilityClass requires a capableModel override (benign)",
+        hint: "skill synthesis abstained: capabilityClass requires a capableModel override (benign, Defer != Retry)",
       },
       "skill synthesis abstained",
     );
@@ -350,7 +355,15 @@ export async function runSkillSynthesis(
     const resolved = await fromPromise(outcomeSignal.resolve(t.trajectoryId, scope));
     if (!resolved.ok || !resolved.value.ok) {
       logger.debug(
-        { agentId, step: "select" as const, trajectoryId: t.trajectoryId, errorKind: "outcome_unresolved" as const },
+        {
+          agentId,
+          step: "select" as const,
+          trajectoryId: t.trajectoryId,
+          // Closed-union: an unresolved outcome is an unmet precondition for
+          // selection (fail-closed) — not a fault. Hint names the cause.
+          errorKind: "precondition" as const,
+          hint: "outcome unresolved (unknown/error) — skipped, fail-closed",
+        },
         "skill synthesis: outcome unresolved, skipping trajectory",
       );
       continue; // fail-closed: an unresolved outcome is NOT a success
@@ -405,6 +418,10 @@ export async function runSkillSynthesis(
     }
     const cluster = clusters[i];
     const text = clusterText(cluster);
+    // A coarse DoS UPPER-BOUND on accumulated synthesis context — the load-bearing
+    // bound is maxIterations; a CJK under-count only makes this secondary ceiling
+    // MORE conservative (caps sooner), never less.
+    // flat-by-design: coarse aggregate DoS ceiling, no per-script accuracy needed (TOK-01)
     const nextTokens = contextTokens + Math.ceil(text.length / CHARS_PER_TOKEN);
     if (nextTokens > maxContextTokens) {
       boundedBy = "contextTokens";
@@ -419,9 +436,17 @@ export async function runSkillSynthesis(
     if (!synthResult.ok || !synthResult.value.ok) {
       // A genuine synthesis FAULT (transport / adapter error) — this DOES count
       // as a failure (Defer ≠ Retry only excuses the abstain path, not a fault).
-      deps.onSynthesisFailure?.({ errorKind: "synthesis_failed", trajectoryCount: clusterTrajIds.length });
+      // Closed-union errorKind `dependency` (a downstream LLM dependency call
+      // faulted) — the consolidation/outcome-judge precedent.
+      deps.onSynthesisFailure?.({ errorKind: "dependency", trajectoryCount: clusterTrajIds.length });
       logger.warn(
-        { agentId, step: "synthesize" as const, errorKind: "synthesis_failed" as const, clusterTrajIds: clusterTrajIds.length },
+        {
+          agentId,
+          step: "synthesize" as const,
+          errorKind: "dependency" as const,
+          clusterTrajIds: clusterTrajIds.length,
+          hint: "synthesis LLM call faulted for this cluster — skipped (no partial admit)",
+        },
         "skill synthesis call failed for cluster, skipping",
       );
       continue;
@@ -530,7 +555,14 @@ async function admitCandidate(args: AdmitCandidateArgs): Promise<AdmitCandidateO
   );
   if (!validateResult.ok || !validateResult.value.ok) {
     logger.warn(
-      { agentId, step: "validate" as const, errorKind: "validation_failed" as const, name: candidate.name },
+      {
+        agentId,
+        step: "validate" as const,
+        // Closed-union: the validation adapter (a downstream dependency) faulted.
+        errorKind: "dependency" as const,
+        name: candidate.name,
+        hint: "validation adapter faulted — candidate skipped (not admitted)",
+      },
       "skill validation faulted, skipping candidate",
     );
     return out;

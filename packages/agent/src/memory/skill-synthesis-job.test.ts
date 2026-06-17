@@ -29,6 +29,7 @@ import type {
 import {
   runSkillSynthesis,
   type SkillSynthesisJobDeps,
+  type SkillSynthesisJobConfig,
   type SynthesisSourceTrajectory,
 } from "./skill-synthesis-job.js";
 
@@ -66,6 +67,24 @@ function cleanValidation(over: Partial<SkillValidationResult> = {}): SkillValida
     findings: [],
     sandboxProvider: "none",
     coverage: "static-only",
+    ...over,
+  };
+}
+
+/**
+ * A clean DYNAMIC verdict — the sandbox ran the procedure AND reproduced its
+ * effect. A MUTATING candidate is only admissible with this (the predicate
+ * requires `reproducedEffect` when not read-only); approval is then the
+ * additional gate on top.
+ */
+function reproducedValidation(over: Partial<SkillValidationResult> = {}): SkillValidationResult {
+  return {
+    staticOk: true,
+    dynamicOk: true,
+    reproducedEffect: true,
+    findings: [],
+    sandboxProvider: "bwrap",
+    coverage: "full",
     ...over,
   };
 }
@@ -118,17 +137,20 @@ function makeDeps(
     mocksOut.logger = logger;
   }
 
+  // Merge config carefully (a partial `over.config` must NOT drop the defaults).
+  const config: SkillSynthesisJobConfig = {
+    enabled: true,
+    autoAdmitReadOnly: true,
+    minConfidence: 0.7,
+    requireForMutating: true,
+    ...(over.config ?? {}),
+  };
+
   return {
     agentId: "a1",
     tenantId: "t1",
     scope: SCOPE,
-    config: {
-      enabled: true,
-      autoAdmitReadOnly: true,
-      minConfidence: 0.7,
-      requireForMutating: true,
-      ...(over.config ?? {}),
-    },
+    config,
     capabilityClass: over.capabilityClass ?? "frontier",
     hasCapableModelOverride: over.hasCapableModelOverride ?? false,
     sourceTrajectories: trajectories,
@@ -137,12 +159,15 @@ function makeDeps(
     validationAdapter: { validate },
     learnedSkillStore: { admit },
     approvalGate: { requestApproval },
-    clock: { now: () => NOW },
-    eventBus: { emit: vi.fn() },
+    clock: over.clock ?? { now: () => NOW },
+    eventBus: over.eventBus ?? { emit: vi.fn() },
     logger,
     onSynthesisFailure: failureMetric,
     onBreakerTrip: breakerTrip,
-    ...over,
+    maxIterations: over.maxIterations,
+    maxContextTokens: over.maxContextTokens,
+    wallClockMs: over.wallClockMs,
+    similarityThreshold: over.similarityThreshold,
   } as SkillSynthesisJobDeps;
 }
 
@@ -292,5 +317,204 @@ describe("runSkillSynthesis — triple-cap (SKILL-05)", () => {
     expect((mocks.synthesize as Mock).mock.calls.length).toBeLessThanOrEqual(10);
     if (!res.ok) throw new Error("expected ok");
     expect(res.value.boundedBy).toBe("iterations");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 3 — validate + admission gate (SKILL-08)
+// ---------------------------------------------------------------------------
+
+/** A mutating candidate (a write tool ⇒ not read-only). */
+function mutatingCandidate(name = "write-x"): CandidateSkill {
+  return {
+    name,
+    description: "Use when the user asks to write X.",
+    body: "1. write the file.",
+    scripts: [],
+    requiredTools: ["write"],
+  };
+}
+
+/** A non-deterministic mutating candidate (a network tool). */
+function networkMutatingCandidate(name = "post-x"): CandidateSkill {
+  return {
+    name,
+    description: "Use when the user asks to post X to a webhook.",
+    body: "1. POST to the webhook.",
+    scripts: [],
+    requiredTools: ["web_fetch", "write"],
+  };
+}
+
+describe("runSkillSynthesis — admission predicate (SKILL-08, the first-RED)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("AUTO-ADMITS a clean read-only candidate at low proof_count (autoAdmitReadOnly:true)", async () => {
+    const mocks: Partial<Mocks> = {};
+    const synthesize = vi.fn(async () => ok([readOnlyCandidate("read-only-skill")]));
+    const validate = vi.fn(async () => ok(cleanValidation())); // staticOk, no scripts, read-only
+    const deps = makeDeps(
+      [traj()],
+      { synthesisAdapter: { synthesize }, validationAdapter: { validate }, config: { autoAdmitReadOnly: true } as never },
+      mocks,
+    );
+
+    const res = await runSkillSynthesis(deps);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.value.admitted).toBe(1);
+    expect(mocks.admit).toHaveBeenCalledTimes(1);
+    const admitArg = (mocks.admit as Mock).mock.calls[0][0];
+    // The SKILL-04 anti-domination cap: proofCount is LOW (1), not the cluster size.
+    expect(admitArg.proofCount).toBe(1);
+    // trust=learned / state=candidate are FORCED by the store (verified in 201-02);
+    // the caller supplies neither (AdmitSkillInput omits trustLevel + id).
+    expect(admitArg).not.toHaveProperty("trustLevel");
+    // The approval gate is NOT consulted for a read-only candidate.
+    expect(mocks.requestApproval).not.toHaveBeenCalled();
+  });
+
+  it("does NOT admit a read-only candidate when autoAdmitReadOnly is false", async () => {
+    const mocks: Partial<Mocks> = {};
+    const deps = makeDeps([traj()], { config: { autoAdmitReadOnly: false } as never }, mocks);
+    const res = await runSkillSynthesis(deps);
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.value.admitted).toBe(0);
+    expect(mocks.admit).not.toHaveBeenCalled();
+  });
+
+  it("routes a MUTATING candidate to the ApprovalGate — NOT admitted when the gate denies", async () => {
+    const mocks: Partial<Mocks> = {};
+    const synthesize = vi.fn(async () => ok([mutatingCandidate()]));
+    // A mutating candidate is only ADMISSIBLE with a reproduced dynamic verdict
+    // (the predicate requires reproducedEffect when not read-only); approval is
+    // the additional gate on top.
+    const validate = vi.fn(async () => ok(reproducedValidation()));
+    const requestApproval = vi.fn(async () => ({ approved: false }));
+    const deps = makeDeps(
+      [traj()],
+      { synthesisAdapter: { synthesize }, validationAdapter: { validate }, approvalGate: { requestApproval } },
+      mocks,
+    );
+
+    const res = await runSkillSynthesis(deps);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(mocks.requestApproval).toHaveBeenCalledTimes(1);
+    expect(res.value.admitted).toBe(0); // denied → not admitted
+    expect(mocks.admit).not.toHaveBeenCalled();
+  });
+
+  it("admits a MUTATING candidate ONLY after the ApprovalGate approves", async () => {
+    const mocks: Partial<Mocks> = {};
+    const synthesize = vi.fn(async () => ok([mutatingCandidate()]));
+    const validate = vi.fn(async () => ok(reproducedValidation()));
+    const requestApproval = vi.fn(async () => ({ approved: true }));
+    const deps = makeDeps(
+      [traj()],
+      { synthesisAdapter: { synthesize }, validationAdapter: { validate }, approvalGate: { requestApproval } },
+      mocks,
+    );
+
+    const res = await runSkillSynthesis(deps);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(mocks.requestApproval).toHaveBeenCalledTimes(1);
+    expect(res.value.admitted).toBe(1);
+    expect(mocks.admit).toHaveBeenCalledTimes(1);
+  });
+
+  it("NEVER auto-admits a NON-DETERMINISTIC mutating candidate — approval-only even when admissible", async () => {
+    const mocks: Partial<Mocks> = {};
+    const synthesize = vi.fn(async () => ok([networkMutatingCandidate()]));
+    // Even with a reproduced dynamic verdict (admissible), a non-deterministic
+    // mutating candidate must route through approval, never auto-admit.
+    const validate = vi.fn(async () => ok(reproducedValidation()));
+    const requestApproval = vi.fn(async () => ({ approved: false }));
+    const deps = makeDeps(
+      [traj()],
+      { synthesisAdapter: { synthesize }, validationAdapter: { validate }, approvalGate: { requestApproval } },
+      mocks,
+    );
+
+    const res = await runSkillSynthesis(deps);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(mocks.requestApproval).toHaveBeenCalledTimes(1);
+    const approvalParams = (mocks.requestApproval as Mock).mock.calls[0][0];
+    expect(approvalParams.params.nonDeterministic).toBe(true);
+    expect(res.value.admitted).toBe(0);
+    expect(mocks.admit).not.toHaveBeenCalled();
+  });
+
+  it("does NOT admit a candidate that fails the static scan (staticOk:false)", async () => {
+    const mocks: Partial<Mocks> = {};
+    const validate = vi.fn(async () => ok(cleanValidation({ staticOk: false })));
+    const deps = makeDeps([traj()], { validationAdapter: { validate } }, mocks);
+    const res = await runSkillSynthesis(deps);
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.value.admitted).toBe(0);
+    expect(mocks.admit).not.toHaveBeenCalled();
+  });
+
+  it("does NOT admit a read-only candidate WITH embedded scripts that the sandbox could not run (dynamicOk:false, coverage static-only)", async () => {
+    const mocks: Partial<Mocks> = {};
+    // A candidate with embedded scripts but no clean dynamic run: noEmbeddedScripts
+    // is false AND dynamicOk is false → (dynamicOk || noEmbeddedScripts) is false
+    // → NOT admissible (fail-closed).
+    const withScripts: CandidateSkill = {
+      ...readOnlyCandidate("scripted"),
+      scripts: [{ path: "run.sh", lang: "bash", content: "echo hi" }],
+    };
+    const synthesize = vi.fn(async () => ok([withScripts]));
+    const validate = vi.fn(async () => ok(cleanValidation({ staticOk: true, dynamicOk: false })));
+    const deps = makeDeps([traj()], { synthesisAdapter: { synthesize }, validationAdapter: { validate } }, mocks);
+
+    const res = await runSkillSynthesis(deps);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.value.admitted).toBe(0);
+    expect(mocks.admit).not.toHaveBeenCalled();
+  });
+});
+
+describe("runSkillSynthesis — proof_count cap holds at admission (SKILL-04 adversarial)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("admits at the LOW cap even from a cluster of 50 near-identical successes", async () => {
+    const mocks: Partial<Mocks> = {};
+    const emb = [1, 0, 0];
+    // 50 near-identical successes from ONE sender — they cluster into ONE cluster
+    // of 50 members, cardinality 1. The synthesized candidate must admit at the
+    // LOW proof_count cap, NOT 50 (the real anti-domination belt).
+    const trajectories = Array.from({ length: 50 }, (_, i) =>
+      traj({ trajectoryId: `dom-${i}`, sessionId: "sess-A", sender: "user", embedding: emb }),
+    );
+    const synthesize = vi.fn(async () => ok([readOnlyCandidate("dominated-skill")]));
+    const deps = makeDeps(trajectories, { synthesisAdapter: { synthesize } }, mocks);
+
+    const res = await runSkillSynthesis(deps);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.value.maxClusterCardinality).toBe(1);
+    expect(mocks.admit).toHaveBeenCalledTimes(1);
+    const admitArg = (mocks.admit as Mock).mock.calls[0][0];
+    expect(admitArg.proofCount).toBe(1); // LOW cap, NOT 50
+  });
+
+  it("does NOT emit any learning:skill_* event from the job (the daemon emits, Plan 07)", async () => {
+    const emit = vi.fn();
+    const deps = makeDeps([traj()], { eventBus: { emit } });
+    await runSkillSynthesis(deps);
+    const learningSkillEmits = emit.mock.calls.filter((c) => String(c[0]).startsWith("learning:skill_"));
+    expect(learningSkillEmits).toHaveLength(0);
   });
 });

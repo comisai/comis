@@ -157,7 +157,8 @@ export function createLlmSkillSynthesisAdapter(deps: LlmSkillSynthesisAdapterDep
         {
           submodule: "llm-skill-synthesis-adapter",
           step: "synthesize" as const,
-          errorKind: "transport" as const,
+          // Closed-union errorKind: a network-class transport fault on the LLM call.
+          errorKind: "network" as const,
           clusterSize: clusterTrajIds.length,
           hint: "synthesis LLM call failed; the cluster is skipped this run (no partial admit)",
         },
