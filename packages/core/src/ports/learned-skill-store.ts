@@ -143,10 +143,12 @@ export interface LearnedSkillStorePort {
   /**
    * WRITE (name-keyed demote — the reuse-outcome loop entry point). Resolve the
    * skill NAME to its hash id INTERNALLY and apply {@link demote}, returning whether
-   * a row actually changed. `changed === false` means NO row matched (an
-   * unknown/evicted name, OR a skill already at a terminal state the demote CASE
-   * leaves untouched) — the caller must NOT count it or emit. Scoped to
-   * `(tenant, agent)`; unresolved scope fails-closed with `err(...)`.
+   * a row's STATE actually moved. A demote only transitions `active`/`candidate` →
+   * `stale`; the UPDATE's WHERE pins `state IN ('active','candidate')` (WR-06) so a
+   * row in a TERMINAL state (`stale`/`archived`) — like an unknown/evicted name —
+   * matches 0 rows and yields `changed === false` (the `updated_at` rewrite never
+   * fakes a transition). The caller must NOT count or emit when `changed === false`.
+   * Scoped to `(tenant, agent)`; unresolved scope fails-closed with `err(...)`.
    */
   demoteByName(name: string, scope: LearningScope): Promise<Result<{ changed: boolean }, Error>>;
 

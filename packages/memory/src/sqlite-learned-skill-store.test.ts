@@ -526,6 +526,12 @@ describe("createSqliteLearnedSkillStore — promoteByName / demoteByName (name�
     db.close();
   });
 
+  /** Read just the lifecycle state of a named skill under SCOPE_A (block-local helper). */
+  async function stateOf(name: string): Promise<string | undefined> {
+    const r = await store.get(name, SCOPE_A);
+    return r.ok ? r.value?.state : undefined;
+  }
+
   it("promoteByName resolves the NAME to the same id admit() derived and flips candidate→active at the bar", async () => {
     const admitted = await store.admit(makeInput({ name: "by-name", proofCount: 0 }), SCOPE_A);
     expect(admitted.ok).toBe(true);
@@ -572,6 +578,45 @@ describe("createSqliteLearnedSkillStore — promoteByName / demoteByName (name�
     const r = await store.demoteByName("ghost", SCOPE_A);
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.value.changed).toBe(false);
+  });
+
+  it("WR-06: demoteByName of an ALREADY-stale skill reports changed=false (no state delta → telemetry must not over-count)", async () => {
+    await store.admit(makeInput({ name: "already-stale", proofCount: 0 }), SCOPE_A);
+    await store.promoteByName("already-stale", SCOPE_A, 1); // → active
+    const first = await store.demoteByName("already-stale", SCOPE_A); // active → stale (a REAL transition)
+    expect(first.ok && first.value.changed).toBe(true);
+    expect(await stateOf("already-stale")).toBe("stale");
+    // A SECOND demote of the now-stale skill changes NO state → changed must be false
+    // (the demote UPDATE rewriting only updated_at must NOT be reported as a transition).
+    const second = await store.demoteByName("already-stale", SCOPE_A);
+    expect(second.ok).toBe(true);
+    if (second.ok) expect(second.value.changed).toBe(false); // RED on HEAD: changes===1 from updated_at rewrite
+    expect(await stateOf("already-stale")).toBe("stale"); // state unchanged
+  });
+
+  it("WR-06: demoteByName of an ALREADY-archived (evicted) skill reports changed=false", async () => {
+    await store.admit(makeInput({ name: "already-archived", proofCount: 0 }), SCOPE_A);
+    const id = expectedId(TENANT_A, AGENT_A, "already-archived");
+    await store.evict(id, SCOPE_A); // → archived (+ evicted_at set)
+    // demoteByName resolves the same id; the row is archived/evicted → no state delta.
+    const r = await store.demoteByName("already-archived", SCOPE_A);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value.changed).toBe(false);
+  });
+
+  it("WR-06: the active→stale demote DOES report changed=true (the real transition still works)", async () => {
+    await store.admit(makeInput({ name: "real-demote", proofCount: 0 }), SCOPE_A);
+    await store.promoteByName("real-demote", SCOPE_A, 1); // → active
+    const r = await store.demoteByName("real-demote", SCOPE_A); // active → stale
+    expect(r.ok && r.value.changed).toBe(true);
+    expect(await stateOf("real-demote")).toBe("stale");
+  });
+
+  it("WR-06: a candidate→stale demote reports changed=true (candidate is a non-terminal demote source)", async () => {
+    await store.admit(makeInput({ name: "cand-demote", proofCount: 0 }), SCOPE_A); // stays candidate
+    const r = await store.demoteByName("cand-demote", SCOPE_A); // candidate → stale
+    expect(r.ok && r.value.changed).toBe(true);
+    expect(await stateOf("cand-demote")).toBe("stale");
   });
 
   it("promoteByName / demoteByName with an unresolved (empty) scope fail-closed with err", async () => {

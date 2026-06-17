@@ -189,11 +189,16 @@ export function createSqliteLearnedSkillStore(
       "updated_at = ? WHERE tenant_id = ? AND agent_id = ? AND id = ?",
   );
   // demote: step state back toward stale on a verified failure (soft, monotone).
+  // WR-06: the WHERE pins `state IN ('active','candidate')` — the ONLY states a demote
+  // moves. A terminal-state row (stale/archived) therefore matches 0 rows, so the
+  // `updated_at` rewrite never inflates `info.changes` into a phantom transition and
+  // demoteByName's `changed` reflects a REAL state delta (not a no-op write). The CASE
+  // is now redundant with the guard but kept for defence-in-depth / readability.
   const demoteStmt = db.prepare(
     "UPDATE learned_skills SET " +
       "state = CASE WHEN state = 'active' THEN 'stale' WHEN state = 'candidate' THEN 'stale' ELSE state END, " +
       "strength = CASE WHEN strength > 0 THEN strength - 1 ELSE strength END, " +
-      "updated_at = ? WHERE tenant_id = ? AND agent_id = ? AND id = ?",
+      "updated_at = ? WHERE tenant_id = ? AND agent_id = ? AND id = ? AND state IN ('active', 'candidate')",
   );
   // evict: SOFT — set evicted_at + archive; NEVER a hard DELETE (provenance survives).
   const evictStmt = db.prepare(
