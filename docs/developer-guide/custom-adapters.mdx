@@ -14,6 +14,8 @@ The `ChannelPort` interface defines the contract that every channel adapter must
 import type { Result } from "@comis/shared";
 import type {
   NormalizedMessage,
+  NormalizedReaction,
+  ReactionHandler,
   SendMessageOptions,
   AttachmentPayload,
   FetchMessagesOptions,
@@ -40,8 +42,10 @@ export interface ChannelPort {
   fetchMessages(channelId: string, options?: FetchMessagesOptions): Promise<Result<FetchedMessage[], Error>>;
   sendAttachment(channelId: string, attachment: AttachmentPayload, options?: SendMessageOptions): Promise<Result<string, Error>>;
 
-  // Handler
+  // Handlers
   onMessage(handler: (msg: NormalizedMessage) => void): void;
+  /** OPTIONAL — capture inbound reactions. Omit it if your platform exposes none. */
+  onReaction?(handler: ReactionHandler): void;
 
   // Extension
   platformAction(action: string, params: Record<string, unknown>): Promise<Result<unknown, Error>>;
@@ -52,6 +56,26 @@ export interface ChannelPort {
 <Info>
 You do not need to implement every method fully. Methods like `editMessage`, `reactToMessage`, `fetchMessages`, and `platformAction` can return `err(new Error("Not supported"))` if your platform does not support them. The system uses `ChannelCapability` metadata to know which features are available.
 </Info>
+
+### Capturing inbound reactions (optional)
+
+`onReaction?` is an **optional** capability — like `getStatus?`, an adapter may omit it entirely and the system treats it as an honest no-op (the orchestrator calls it as `adapter.onReaction?.(handler)`, which does nothing when absent). Implement it **only** if your platform delivers an inbound reaction-add event that carries the **reactor's identity**. The reference adapters do: Discord (`MessageReactionAdd`), Slack (`reaction_added`), and Telegram (`message_reaction`) all implement it; iMessage, LINE, IRC, Email, and Echo omit it because their inbound APIs expose no reactor id.
+
+When you implement it, convert each inbound reaction-add into a `NormalizedReaction` and pass it to the handler, mirroring how `onMessage` mints a `NormalizedMessage`:
+
+```typescript
+import type { NormalizedReaction, ReactionHandler } from "@comis/core";
+
+export interface NormalizedReaction {
+  messageId: string;    // the message that was reacted to
+  reactorId: string;    // who added the reaction (same identity space as NormalizedMessage.senderId)
+  emoji: string;        // the reaction emoji (a Unicode emoji, or a platform short name)
+  channelType: string;  // e.g. "discord"
+  channelId: string;    // the channel the message lives in
+}
+```
+
+`NormalizedReaction` is deliberately **trust-free** — it carries no authority field. It is untrusted inbound data; the daemon resolves the reactor's trust downstream (from config) and a reaction can only *weight* a learning outcome, never assert one. Filter out the bot's **own** reactions before dispatching (so the agent does not learn from itself), and keep the handler dispatch non-fatal — a throwing handler must not crash your platform's event loop.
 
 ## File Structure
 
