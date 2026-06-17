@@ -79,11 +79,26 @@ export interface ScoreBreakdown {
   trust: number;
   /** Usefulness factor `1 + usefulnessAlpha * (usefulnessNorm - 0.5)`; 1.0 when the signal is absent. */
   usefulness: number;
+  /**
+   * OBS-02 (Verified Learning WS3): the OUTCOME-attributed usefulness CONTRIBUTION,
+   * surfaced as a DISTINCT annotation so `comis explain` can show how much of a memory's
+   * rank came from the learned recall-utility / outcome feedback (the per-id reward the
+   * daemon reward seam accrues into `memory_usefulness` on a `success`/`failure`/`corrected`
+   * trajectory) — separate from the lexical relevance `base`. It is the SIGNED deviation of
+   * the `usefulness` factor from its 1.0 neutral (`usefulness - 1`): `+` boosts a proven-useful
+   * memory, `-` demotes a recalled-but-ignored one, and EXACTLY `0` when no usefulness signal
+   * is present (the no-reorder-when-absent point). This is an ANNOTATION, **not** a multiplicand
+   * — it is ABSENT from `final` (which stays the six-factor product), so adding it is byte-identical.
+   * A derived FACTOR share — never a raw tuned-alpha value (T-200-23: the breakdown is a per-memory
+   * trace artifact carrying normalized shares, not the learner's alpha state).
+   */
+  usefulnessOutcomeShare: number;
   /** FadeMem decay factor `1 + forgetAlpha * (fadeMemFactor - 1.0)`; EXACTLY 1.0 at
    *  event-age 0 (the neutral-in-time byte-identity point), regardless of the enable flag
    *  (which defaults ON), OR when forget is explicitly disabled. */
   forget: number;
-  /** The boosted score = base × recency × temporal × proof × trust × usefulness × forget. */
+  /** The boosted score = base × recency × temporal × proof × trust × usefulness × forget.
+   *  NOTE: `usefulnessOutcomeShare` is an annotation, NOT a factor — it does NOT enter this product. */
   final: number;
 }
 
@@ -441,6 +456,11 @@ export function scoreWithBreakdown(
     // Absent signal → usefulnessNorm 0.5 → usefulnessFactor exactly 1.0 (byte-identity).
     const usefulnessSignal = usefulnessById?.get(result.entry.id);
     const usefulnessFactor = 1 + alphas.usefulnessAlpha * (usefulnessNorm(usefulnessSignal) - 0.5);
+    // OBS-02: the outcome-attributed usefulness CONTRIBUTION = the signed deviation of the
+    // usefulness factor from its 1.0 neutral. An annotation for the trace (NOT a multiplicand):
+    // exactly 0 when the signal is absent (factor 1.0 → no reorder), positive for a proven-useful
+    // memory, negative for a recalled-but-ignored one. It is NOT folded into `final` below.
+    const usefulnessOutcomeShare = usefulnessFactor - 1;
     // FadeMem decay: the 6th multiplicand, gated by the explicit forget toggle (which
     // defaults ON). The factor is
     // centered on its 1.0 neutral (fadeMemFactor ∈ [0.5,1]), so `forgetFactor = 1 +
@@ -463,6 +483,7 @@ export function scoreWithBreakdown(
         proof: proofFactor,
         trust: trustFactor,
         usefulness: usefulnessFactor,
+        usefulnessOutcomeShare,
         forget: forgetFactor,
         final: next,
       },

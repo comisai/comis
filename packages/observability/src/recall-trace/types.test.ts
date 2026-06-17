@@ -119,6 +119,29 @@ describe("RecallTraceEventSchema -- well-formed record", () => {
     delete b.usefulness;
     expect(RecallTraceEventSchema.safeParse(missingUsefulness).success).toBe(false);
   });
+
+  it("carries the OBS-02 usefulnessOutcomeShare annotation through the round-trip (and tolerates its absence)", () => {
+    // OBS-02: the outcome-attributed usefulness contribution surfaced on score.ts's breakdown must
+    // SURVIVE the persistence parse so `comis explain` can read it — a z.object would otherwise
+    // strip it. It is OPTIONAL: an older trace line without it still parses (back-compat), and a
+    // line carrying it preserves the value (forget likewise optional).
+    const withShare = makeValidRecord();
+    const b = (withShare.ranked as Array<Record<string, unknown>>)[0]!.breakdown as Record<
+      string,
+      unknown
+    >;
+    b.usefulnessOutcomeShare = 0.05; // a proven-useful memory's positive outcome contribution
+    b.forget = 1.0;
+    const parsed = RecallTraceEventSchema.safeParse(withShare);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.ranked[0]!.breakdown?.usefulnessOutcomeShare).toBe(0.05); // not stripped
+      expect(parsed.data.ranked[0]!.breakdown?.forget).toBe(1.0);
+    }
+    // Absent → still valid (the annotation is optional; older lines predate it).
+    const withoutShare = makeValidRecord();
+    expect(RecallTraceEventSchema.safeParse(withoutShare).success).toBe(true);
+  });
 });
 
 describe("RecallTraceEventSchema -- parser fences", () => {
