@@ -80,6 +80,12 @@ export interface LearningOutcomeWiringDeps {
 const DETERMINISTIC_CONFIDENCE = 0.9;
 /** Slightly lower confidence for a content/detector-classified (non-transport) tool failure. */
 const CLASSIFIED_FAILURE_CONFIDENCE = 0.8;
+/**
+ * ATTR-02: confidence for a pure skill-attribution row (memory:skill_used → observe).
+ * Deliberately LOW + paired with `outcome:"unknown"` so the row NEVER wins resolve()
+ * fusion — it carries the `used_skill_ids` column only, asserting no outcome verdict.
+ */
+const ATTRIBUTION_CONFIDENCE = 0;
 
 /** A resolved outcome scope keyed off the event/ALS context. */
 interface OutcomeScope {
@@ -126,9 +132,10 @@ function resolveScope(payload: {
 function observeNonFatal(
   deps: LearningOutcomeWiringDeps,
   scope: OutcomeScope,
-  outcome: "success" | "failure",
-  source: "tool" | "pipeline",
+  outcome: "success" | "failure" | "unknown",
+  source: "tool" | "pipeline" | "explicit",
   confidence: number,
+  usedSkillIds?: ReadonlyArray<string>,
 ): Promise<void> {
   return deps.outcomeStore
     .observe({
@@ -139,6 +146,11 @@ function observeNonFatal(
       outcome,
       source,
       confidence,
+      // ATTR-02: the per-turn used-skill ids (Plan 03's memory:skill_used carrier)
+      // thread onto the observe() so the used_skill_ids COLUMN is written; resolve()
+      // union-dedups it across rows. Omitted (the deterministic tool/pipeline paths)
+      // ⇒ the column stays NULL, byte-identical to pre-ATTR-02.
+      ...(usedSkillIds !== undefined && usedSkillIds.length > 0 ? { usedSkillIds: [...usedSkillIds] } : {}),
       observedAt: deps.clock.now(),
     })
     .then((r) => {
@@ -332,6 +344,32 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
         : DETERMINISTIC_CONFIDENCE;
 
     void observeNonFatal(deps, scope, outcome, "tool", confidence);
+  });
+
+  // ---- ATTR-02 skill-use attribution write-back (the loop-close, Plan 07) ----
+  // The agent emits `memory:skill_used` (Plan 03) after a turn whose `read` matched a
+  // frozen learned-skill `<location>` — the per-turn used-skill ids (counts/ids only,
+  // the memory:recall_used precedent). The daemon is the ONLY place holding BOTH the
+  // bus AND the @comis/memory store (the agent↛memory cut), so the daemon does the
+  // observe() write here: a neutral `explicit`/`unknown` attribution row carrying the
+  // `usedSkillIds` so the `used_skill_ids` COLUMN is written. The `unknown` outcome +
+  // low confidence means this row NEVER wins the resolve() fusion (the deterministic
+  // tool/pipeline rows outrank it) — it is a pure attribution carrier; resolve()
+  // union-dedups the column across ALL the trajectory's rows. Default-OFF via
+  // `learningOutcomeEnabled` (byte-identical when off); a non-empty carrier is required.
+  deps.eventBus.on("memory:skill_used", (p) => {
+    const agentId = p.agentId ?? tryGetContext()?.agentId;
+    if (agentId === undefined || !deps.learningOutcomeEnabled(agentId)) return;
+    // Nothing attributed this turn → no write (avoids an empty attribution row).
+    if (p.usedSkillIds.length === 0) return;
+
+    const scope = resolveScope({ agentId: p.agentId, traceId: p.traceId, sessionKey: p.sessionKey });
+    if (scope === undefined) return;
+
+    // ATTRIBUTION_CONFIDENCE: a neutral, low-confidence `explicit`/`unknown` carrier —
+    // it threads the used-skill ids onto the column WITHOUT asserting an outcome verdict
+    // (resolve() fuses the real tool/pipeline outcome; this row only carries ids).
+    void observeNonFatal(deps, scope, "unknown", "explicit", ATTRIBUTION_CONFIDENCE, p.usedSkillIds);
   });
 
   // NB: `graph:driver_lifecycle` is intentionally NOT subscribed (WR-02). It is
