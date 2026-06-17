@@ -57,10 +57,22 @@ describe("codexProfile.perception — patterns + end-to-end classification (CLAS
     expect(matches(perc.menuOrPicker, "Select sandbox")).toBe(true);
   });
 
-  it("classifies a `Working (Ns)` frame (unparked, past stuck) → working, not stuck (the Codex fix)", () => {
-    const c = classifyCodex(["Working (12s)", "reading the project files", "more output", "and more"], { x: 4, y: 0 }, 10_000);
+  it("classifies a RECENT `Working (Ns)` frame (unparked) → working via the workingLine path (the Codex fix)", () => {
+    const c = classifyCodex(["Working (12s)", "reading the project files", "more output", "and more"], { x: 4, y: 0 }, 0);
     expect(c.state).toBe("working");
     expect(c.reason).toBe("working_line");
+  });
+
+  it("does NOT suppress stuck: a frozen `Working (Ns)` PAST the stuck window stays stuck (WR-02 hang hole)", () => {
+    const c = classifyCodex(["Working (12s)", "reading the project files", "more output", "and more"], { x: 4, y: 0 }, 10_000);
+    expect(c.state).toBe("stuck");
+  });
+
+  it("does NOT over-match a markdown `- thinking` bullet into a false working past the stuck window (WR-03/WR-02b)", () => {
+    // The anchored ascii-spinner can still match a leading `- thinking` bullet, but the WR-02b
+    // noProgressMs<=stuckMs gate means a frame frozen for the whole window is stuck regardless.
+    const c = classifyCodex(["- thinking about the design", "still", "more", "and more"], { x: 4, y: 0 }, 10_000);
+    expect(c.state).toBe("stuck");
   });
 
   it("classifies a text-only Codex approval menu → awaiting-input", () => {

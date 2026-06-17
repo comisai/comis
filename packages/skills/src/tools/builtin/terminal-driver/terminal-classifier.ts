@@ -112,10 +112,12 @@ export interface ClassifierFrame {
    * OPTIONAL selected-platform perception (the `TerminalPlatformProfile.perception` for the
    * session's operator-declared allowId, fed by the worker — v2.26 CLASSIFY-01). The classifier
    * stays the SOLE owner of `activity` (D4): these patterns FEED the generic decision —
-   * `workingLine` biases a settled-unparked frame to `working` (the Codex `Working (Ns)` /
-   * Claude spinner case); `menuOrPicker`/`promptAffordance`/`turnEnd` feed the structural
-   * dialog detector (the D5 v2.11 menu fix + LIVE-02 idle-`❯`). Absent ⇒ the purely generic
-   * path, byte-identical to today (INV-1).
+   * `workingLine` biases a settled-unparked frame WITH recent progress to `working` (the Codex
+   * `Working (Ns)` / Claude spinner case); `menuOrPicker` + `promptAffordance` feed the structural
+   * dialog detector (the D5 v2.11 menu fix + LIVE-02 idle-`❯`). `turnEnd` is populated but reserved
+   * for the §6-v2 structured-perception layer (NOT routed into the activity decision — it would
+   * over-fire on Claude's per-tool-action `⏺` bullet). Absent ⇒ the purely generic path,
+   * byte-identical to today (INV-1).
    */
   perception?: PlatformPerception;
 }
@@ -256,15 +258,14 @@ function matchesAnyPattern(text: string, patterns?: readonly RegExp[]): boolean 
  * @returns The typed {@link Classification}.
  */
 export function classifyFrame(frame: ClassifierFrame, history: FrameHistory): Classification {
-  // CLASSIFY-01: the selected platform profile's perception (or none — the generic path). The
-  // affordance patterns (menu/picker/prompt/turn-end) FEED the structural dialog detector; the
-  // classifier remains the sole owner of `activity` (D4). Empty when no profile (INV-1).
+  // CLASSIFY-01: the selected platform profile's awaiting-input affordance patterns (or none — the
+  // generic path). `menuOrPicker` + `promptAffordance` FEED the structural dialog detector; the
+  // classifier remains the sole owner of `activity` (D4). `turnEnd` is deliberately EXCLUDED here
+  // (review WR-01): Claude's `⏺` turn bullet is also its per-tool-action bullet, so feeding it would
+  // over-fire awaiting-input on a mid-turn pause — the idle `❯` (promptAffordance) is the real cue;
+  // `turnEnd` stays populated for the §6-v2 structured-perception layer. Empty when no profile (INV-1).
   const perceptionAffordances: readonly RegExp[] = frame.perception
-    ? [
-        ...(frame.perception.menuOrPicker ?? []),
-        ...(frame.perception.promptAffordance ?? []),
-        ...(frame.perception.turnEnd ?? []),
-      ]
+    ? [...(frame.perception.menuOrPicker ?? []), ...(frame.perception.promptAffordance ?? [])]
     : [];
   // 1. PTY exit — terminal; nothing more can render.
   if (!frame.alive) {
@@ -292,12 +293,18 @@ export function classifyFrame(frame: ClassifierFrame, history: FrameHistory): Cl
   }
 
   // 3.5. CLASSIFY-01: a SELECTED-platform working-line indicator (Claude spinner glyph+gerund /
-  //      Codex `Working (Ns)`) on a settled-but-UNPARKED frame means the CLI is mid-work — a
-  //      render that briefly stopped changing, NOT a prompt or a hang. Bias to `working` (the #1
-  //      de-risk safe direction); this pre-empts the dialog/stuck branches below. A genuinely
-  //      parked prompt already returned `awaiting-input` at step 3, so a real prompt still wins;
-  //      with no profile this is a no-op (INV-1).
-  if (matchesAnyPattern(frame.snapshot.screen, frame.perception?.workingLine)) {
+  //      Codex `Working (Ns)`) on a settled-but-UNPARKED frame that has made progress WITHIN the
+  //      stuck window means the CLI is mid-work — a render that briefly stopped, NOT a prompt or a
+  //      hang. Bias to `working` (pre-empts the dialog branch below). GATED on
+  //      `noProgressMs <= stuckMs` (review WR-02): a frame static for the WHOLE stuck window is hung
+  //      regardless of a leftover spinner glyph — letting it fall through to the stuck branch closes
+  //      the hang-suppression hole (the daemon backstop derives `stuck` from this verdict and has no
+  //      independent wall-clock timeout). A genuinely parked prompt already won at step 3; with no
+  //      profile this is a no-op (INV-1).
+  if (
+    history.noProgressMs <= history.stuckMs &&
+    matchesAnyPattern(frame.snapshot.screen, frame.perception?.workingLine)
+  ) {
     return { state: "working", confidence: "medium", reason: "working_line" };
   }
 

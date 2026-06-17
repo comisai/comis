@@ -25,9 +25,10 @@ export const codexProfile: TerminalPlatformProfile = {
   perception: {
     // The Codex composer caret.
     promptAffordance: [/(?:^|\s)›\s/u],
-    // The canonical Codex working line `Working (Ns)`, the working banner, and the ascii spinner —
-    // a settled-but-unparked frame showing one of these is mid-work, not a hang (the Codex case).
-    workingLine: [/Working \(\d+s\)/u, /Working on your request/iu, /[|/\\-]\s+thinking\b/iu],
+    // The canonical Codex working line `Working (Ns)`, the working banner, and the ascii spinner
+    // (ANCHORED to line-start so a markdown bullet `- thinking` / table cell does not match — review
+    // WR-03) — a settled-but-RECENT frame showing one of these is mid-work, not a hang.
+    workingLine: [/Working \(\d+s\)/u, /Working on your request/iu, /^\s*[|/\\-]\s+thinking\b/iu],
     // A Codex selection menu (approval/sandbox/model). Boxed Codex menus are also caught generically.
     menuOrPicker: [/Select\s+(?:approval|sandbox|model)\b/iu],
     // The composer-return banner after a turn completes.

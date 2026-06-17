@@ -122,22 +122,37 @@ describe("statusReplyFromState — emits the classification's confidence + reaso
 });
 
 describe("statusReplyFromState — resolves profile.perception by the session allowId (CLASSIFY-01)", () => {
-  // A `Working (Ns)` frame, cursor mid-screen above content (unparked), no progress past stuckMs.
+  // A RECENT `Working (Ns)` frame, cursor mid-screen above content (unparked).
   function workingSnapshot(): EmulatorSnapshot {
     const lines = ["Working (12s)", "reading the project files", "more output", "and more"];
     while (lines.length < ROWS) lines.push("");
     return { screen: lines.join("\n"), cursor: { x: 4, y: 0 }, cols: COLS, rows: ROWS, alt: false };
   }
+  // A text-only Codex approval menu (no box/enumerator), cursor on a blank line below.
+  function menuSnapshot(): EmulatorSnapshot {
+    const lines = ["Select approval mode", "auto", "manual", ""];
+    while (lines.length < ROWS) lines.push("");
+    return { screen: lines.join("\n"), cursor: { x: 0, y: 3 }, cols: COLS, rows: ROWS, alt: false };
+  }
 
-  it("a codex-allowId session reads a `Working (Ns)` frame as working (the profile workingLine, INV-3 by allowId)", async () => {
-    const state = makeState({ allowId: "codex", lastProgressMs: 0 }, workingSnapshot());
+  it("a codex-allowId session reads a RECENT `Working (Ns)` frame via the profile workingLine (reason working_line)", async () => {
+    // RECENT (noProgressMs 1000 <= stuckMs 5000): the workingLine path fires (reason proves it — a
+    // generic unparked frame would be settled_cursor_unparked, not working_line).
+    const state = makeState({ allowId: "codex", lastProgressMs: 9_000 }, workingSnapshot());
     const reply = await statusReplyFromState({ state, settled: true, nowMs: () => 10_000, stuckMs: 5_000 });
     expect(reply.state).toBe("working");
     expect(reply.reason).toBe("working_line");
   });
 
-  it("the SAME frame under an unknown allowId takes the generic path → stuck (INV-1, no profile)", async () => {
-    const state = makeState({ allowId: "vim", lastProgressMs: 0 }, workingSnapshot());
+  it("a codex-allowId session reads a text-only approval menu (past stuck) → awaiting-input (the profile menuOrPicker)", async () => {
+    const state = makeState({ allowId: "codex", lastProgressMs: 0 }, menuSnapshot());
+    const reply = await statusReplyFromState({ state, settled: true, nowMs: () => 10_000, stuckMs: 5_000 });
+    expect(reply.state).toBe("awaiting-input");
+    expect(reply.reason).toBe("dialog_detected");
+  });
+
+  it("the SAME menu frame under an unknown allowId takes the generic path → stuck (INV-1, no profile)", async () => {
+    const state = makeState({ allowId: "vim", lastProgressMs: 0 }, menuSnapshot());
     const reply = await statusReplyFromState({ state, settled: true, nowMs: () => 10_000, stuckMs: 5_000 });
     expect(reply.state).toBe("stuck");
   });

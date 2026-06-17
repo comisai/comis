@@ -81,17 +81,26 @@ const pastStuck: FrameHistory = { noProgressMs: 10_000, stuckMs: 5_000 };
 // ---------------------------------------------------------------------------
 
 describe("classifyFrame — consumes profile.perception (CLASSIFY-01/02)", () => {
-  it("a workingLine match rescues a past-stuck unparked frame from a false stuck → working", () => {
-    // Codex `Working (Ns)` shape: settled, cursor mid-screen ABOVE streaming content (unparked), no
-    // progress past stuckMs. WITHOUT perception this is `stuck` (step 4b); WITH a workingLine pattern → `working`.
+  it("a workingLine match on a RECENT unparked frame keeps it working (pre-empts a stale menu)", () => {
+    // Within the stuck window: a workingLine indicator wins over a stale on-screen menu → working.
+    const snapshot = snap(["Working (5s)", "Select Model", "the fast one", ""], { x: 4, y: 0 });
+    const c = classifyFrame(
+      frame({ snapshot, perception: { workingLine: [/Working \(\d+s\)/], menuOrPicker: [/Select Model/] } }),
+      noStuck,
+    );
+    expect(c.state).toBe("working");
+    expect(c.reason).toBe("working_line");
+  });
+
+  it("a STATIC workingLine PAST the stuck window is NOT rescued → stuck (no hang suppression, WR-02)", () => {
+    // A frame frozen for the WHOLE stuck window is hung regardless of a leftover spinner glyph — the
+    // workingLine guard is gated on noProgressMs <= stuckMs, so genuine stuck detection still fires.
     const snapshot = snap(["Working (5s)", "reading the project files", "more output here", "and more"], { x: 4, y: 0 });
-    expect(classifyFrame(frame({ snapshot }), pastStuck).state).toBe("stuck"); // profile-free baseline
     const c = classifyFrame(
       frame({ snapshot, perception: { workingLine: [/Working \(\d+s\)/] } }),
       pastStuck,
     );
-    expect(c.state).toBe("working");
-    expect(c.reason).toBe("working_line");
+    expect(c.state).toBe("stuck");
   });
 
   it("a menuOrPicker match makes a text-only menu (no box/enumerator/caret) → awaiting-input", () => {

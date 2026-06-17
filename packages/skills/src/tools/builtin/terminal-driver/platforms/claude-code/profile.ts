@@ -76,13 +76,17 @@ export const claudeCodeProfile: TerminalPlatformProfile = {
   perception: {
     // The composer input caret — Claude's `❯ ` prompt box (the LIVE-02 idle-`❯` awaiting-input cue).
     promptAffordance: [/(?:^|\s)❯\s/u],
-    // The working spinner: a glyph + a gerund (e.g. `✻ Crunching`), or the `(esc to interrupt)` hint
-    // Claude renders while busy — a settled-but-unparked frame showing this is mid-work, not a hang.
-    workingLine: [/[·✢✳✶✻✽]\s+\w+ing\b/u, /\(esc to interrupt\)/iu],
+    // The working spinner: a SPINNER GLYPH (not the generic `·` middot — review WR-02, it over-matches
+    // prose `· Building`) + a gerund (e.g. `✻ Crunching`), or the `(esc to interrupt)` hint Claude
+    // renders while busy — a settled-but-RECENT frame showing this is mid-work, not a prompt.
+    workingLine: [/[✢✳✶✻✽]\s+\w+ing\b/u, /\(esc to interrupt\)/iu],
     // Pickers/menus: the `/model` picker, a dismiss affordance, or a `❯`/`›` selector on an
     // enumerated option — the D5 fix for the v2.11 full-screen menu → awaiting-input misread.
     menuOrPicker: [/Select\s+(?:a\s+)?Model/iu, /\bEsc to (?:cancel|exit|go back)\b/iu, /(?:^|\s)[›❯]\s+\d+[.)]/u],
-    // A completed-action bullet — the turn produced a result and is now awaiting input.
+    // A completed-action bullet. POPULATED (the §6-v2 structured-perception field) but NOT routed into
+    // the classifier's awaiting-input branch: `⏺` is Claude's per-tool-action bullet (`⏺ Read(…)`), so
+    // feeding it would over-fire awaiting-input on a mid-turn tool-use pause (review WR-01). The idle
+    // `❯` composer (promptAffordance) is the real awaiting-input cue.
     turnEnd: [/⏺\s+\S/u],
   },
 };

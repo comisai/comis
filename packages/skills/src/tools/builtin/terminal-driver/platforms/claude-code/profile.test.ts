@@ -171,9 +171,27 @@ describe("claudeCodeProfile.perception — patterns + end-to-end classification 
     expect(c.state).toBe("awaiting-input");
   });
 
-  it("classifies a working spinner frame (unparked, past stuck) → working, not stuck", () => {
-    const c = classifyClaude(["✻ Crunching… (esc to interrupt)", "reading files", "more", "and more"], { x: 4, y: 0 }, 10_000);
+  it("classifies a RECENT working spinner frame (unparked) → working via the workingLine path", () => {
+    const c = classifyClaude(["✻ Crunching the request", "reading files", "more", "and more"], { x: 4, y: 0 }, 0);
     expect(c.state).toBe("working");
     expect(c.reason).toBe("working_line");
+  });
+
+  it("does NOT suppress stuck: a frozen spinner PAST the stuck window stays stuck (WR-02 hang hole)", () => {
+    const c = classifyClaude(["✻ Crunching the request", "reading files", "more", "and more"], { x: 4, y: 0 }, 10_000);
+    expect(c.state).toBe("stuck");
+  });
+
+  it("does NOT over-fire awaiting-input on a mid-turn `⏺` tool-action line (WR-01 — turnEnd excluded)", () => {
+    // `⏺` is Claude's per-tool-action bullet, not only a turn end. A settled unparked tool-use pause
+    // showing it must stay working (settled_cursor_unparked), NOT awaiting-input/dialog_detected.
+    const c = classifyClaude(["⏺ Read(src/index.ts)", "reading the file", "more output", "and more"], { x: 4, y: 0 }, 0);
+    expect(c.state).toBe("working");
+  });
+
+  it("does NOT mark a `·`+gerund prose line working (WR-02a — the middot is dropped from workingLine)", () => {
+    // A generic middot bullet + gerund is prose, not the spinner — past the stuck window it stays stuck.
+    const c = classifyClaude(["· Building the parser", "still going", "more", "and more"], { x: 4, y: 0 }, 10_000);
+    expect(c.state).toBe("stuck");
   });
 });
