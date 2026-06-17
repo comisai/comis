@@ -1206,6 +1206,112 @@ describe("SqliteMemoryAdapter.searchLanes (un-fused split)", () => {
   });
 });
 
+// ── The ALWAYS-ON evicted_at IS NULL exclusion on the LIVE recall paths (CR-01) ──
+//
+// FORGET-01's central guarantee — "a soft-evicted memory (evicted_at set) is
+// EXCLUDED from EVERY recall path" — was enforced ONLY in hybridSearch (the
+// search() string-query fallback), but the agent's LIVE recall pipeline PREFERS
+// searchLanes → hydrateLane (memory-recall.ts:183), which had NO evicted_at guard,
+// and the vector-only search() per-id read (:137) was likewise unfiltered. So a
+// soft-evicted memory kept being recalled+injected on the dominant path. These
+// tests RED on the pre-patch hydrateLane / vector-only read and GREEN once the
+// `AND evicted_at IS NULL` exclusion is applied to BOTH live reads — while the
+// inspect/asOf raw read stays UNFILTERED (eviction is soft + asOf-resolvable).
+describe("SqliteMemoryAdapter recall excludes soft-evicted rows on the LIVE paths (CR-01)", () => {
+  let adapter: SqliteMemoryAdapter;
+
+  /** Set the evicted_at soft-close marker (NULL = live). Mirrors the lifecycle sweep's softEvict. */
+  function markEvicted(memoryId: string, at: number): void {
+    adapter.getDb().prepare("UPDATE memories SET evicted_at = ? WHERE id = ?").run(at, memoryId);
+  }
+
+  afterEach(() => {
+    try { adapter.close(); } catch { /* already closed */ }
+  });
+
+  it("searchLanes (the LIVE createMemoryRecall path) omits a soft-evicted FTS row", async () => {
+    adapter = new SqliteMemoryAdapter(testConfig);
+    await adapter.store(makeEntry({ id: "live", content: "the quick brown fox jumps" }));
+    await adapter.store(makeEntry({ id: "evicted", content: "the quick brown fox runs" }));
+    markEvicted("evicted", Date.now());
+
+    const lanes = await adapter.searchLanes!(testSessionKey, "fox", { limit: 10 });
+    expect(lanes.ok).toBe(true);
+    if (lanes.ok) {
+      const ids = lanes.value.fts.map((r) => r.entry.id);
+      expect(ids).toContain("live");
+      expect(ids).not.toContain("evicted"); // ← the always-on evicted_at IS NULL exclusion
+    }
+  });
+
+  it("searchLanes omits a soft-evicted row from the VECTOR lane too", async () => {
+    if (!isVecAvailable()) return; // the vector lane requires sqlite-vec
+    const embeddingPort = createMockEmbeddingPort(4);
+    adapter = new SqliteMemoryAdapter(testConfig, embeddingPort);
+    await adapter.store(makeEntry({ id: "live", content: "cat sat on the mat", embedding: [0.9, 0.1, 0, 0] }));
+    await adapter.store(makeEntry({ id: "evicted", content: "cat chased the mouse", embedding: [0.9, 0.1, 0, 0] }));
+    markEvicted("evicted", Date.now());
+
+    const lanes = await adapter.searchLanes!(testSessionKey, [0.9, 0.1, 0, 0], { limit: 10 });
+    expect(lanes.ok).toBe(true);
+    if (lanes.ok) {
+      const ids = lanes.value.vector.map((r) => r.entry.id);
+      expect(ids).toContain("live");
+      expect(ids).not.toContain("evicted");
+    }
+  });
+
+  it("vector-only search() (the fallback per-id read) omits a soft-evicted row", async () => {
+    if (!isVecAvailable()) return; // vector-only search requires sqlite-vec
+    const embeddingPort = createMockEmbeddingPort(4);
+    adapter = new SqliteMemoryAdapter(testConfig, embeddingPort);
+    await adapter.store(makeEntry({ id: "live", content: "dog naps in the sun", embedding: [0.1, 0.9, 0, 0] }));
+    await adapter.store(makeEntry({ id: "evicted", content: "dog barks at noon", embedding: [0.1, 0.9, 0, 0] }));
+    markEvicted("evicted", Date.now());
+
+    // A number[] query exercises the vector-only branch (search :122-164).
+    const res = await adapter.search(testSessionKey, [0.1, 0.9, 0, 0], { limit: 10 });
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      const ids = res.value.map((r) => r.entry.id);
+      expect(ids).toContain("live");
+      expect(ids).not.toContain("evicted");
+    }
+  });
+
+  it("the evicted row is STILL resolvable via an unfiltered inspect/asOf raw read (soft eviction)", async () => {
+    adapter = new SqliteMemoryAdapter(testConfig);
+    await adapter.store(makeEntry({ id: "evicted", content: "an audited but evicted fact about foxes" }));
+    markEvicted("evicted", Date.now());
+
+    // Recall (the live searchLanes path) excludes it…
+    const lanes = await adapter.searchLanes!(testSessionKey, "foxes", { limit: 10 });
+    expect(lanes.ok).toBe(true);
+    if (lanes.ok) {
+      expect(lanes.value.fts.map((r) => r.entry.id)).not.toContain("evicted");
+    }
+    // …but the raw inspect/asOf read does NOT add the filter, so the row survives.
+    const raw = adapter
+      .getDb()
+      .prepare("SELECT id, evicted_at FROM memories WHERE id = 'evicted'")
+      .get() as { id: string; evicted_at: number | null };
+    expect(raw.id).toBe("evicted");
+    expect(raw.evicted_at).not.toBeNull();
+  });
+
+  it("a NON-evicted row is recalled normally on searchLanes (no regression)", async () => {
+    adapter = new SqliteMemoryAdapter(testConfig);
+    await adapter.store(makeEntry({ id: "m1", content: "rabbit hops over the log" }));
+    await adapter.store(makeEntry({ id: "m2", content: "rabbit nibbles the carrot" }));
+
+    const lanes = await adapter.searchLanes!(testSessionKey, "rabbit", { limit: 10 });
+    expect(lanes.ok).toBe(true);
+    if (lanes.ok) {
+      expect(lanes.value.fts.map((r) => r.entry.id).sort()).toEqual(["m1", "m2"]);
+    }
+  });
+});
+
 // ── occurredAtRange filter threaded into search + searchLanes ────
 //
 // The MemorySearchOptions.occurredAtRange field ANDs an `occurred_at BETWEEN`
