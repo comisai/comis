@@ -70,6 +70,10 @@ export type { LearningTuningConfig } from "./schema-learning-tuning.js";
 export { LearningForgettingConfigSchema } from "./schema-learning-forgetting.js";
 export type { LearningForgettingConfig } from "./schema-learning-forgetting.js";
 
+// Procedural-learning (Verified Learning WS2 / skills) schema — per-agent, default-OFF
+export { LearningSkillsConfigSchema } from "./schema-learning-skills.js";
+export type { LearningSkillsConfig } from "./schema-learning-skills.js";
+
 // Memory triple-extraction schema (Verified Learning WS7) — per-agent, default-OFF
 export { MemoryTripleExtractionConfigSchema } from "./schema-memory-triple-extraction.js";
 export type { MemoryTripleExtractionConfig } from "./schema-memory-triple-extraction.js";

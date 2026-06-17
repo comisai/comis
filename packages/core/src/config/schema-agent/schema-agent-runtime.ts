@@ -31,6 +31,7 @@ import { MemoryUsefulnessJudgeConfigSchema } from "../schema-memory-usefulness-j
 import { LearningOutcomeConfigSchema } from "../schema-learning-outcome.js";
 import { LearningTuningConfigSchema } from "../schema-learning-tuning.js";
 import { LearningForgettingConfigSchema } from "../schema-learning-forgetting.js";
+import { LearningSkillsConfigSchema } from "../schema-learning-skills.js";
 import { MemoryTripleExtractionConfigSchema } from "../schema-memory-triple-extraction.js";
 import { MemoryOnlineTuningConfigSchema } from "../schema-memory-online-tuning.js";
 import { MemoryLifecycleConfigSchema } from "../schema-memory-lifecycle.js";
@@ -430,6 +431,13 @@ export const PerAgentConfigSchema = AgentConfigSchema.extend({
   learningForgetting: LearningForgettingConfigSchema.default(() =>
     LearningForgettingConfigSchema.parse({}),
   ),
+  /** Procedural-learning loop (Verified Learning WS2 / skills). Opt-IN posture:
+   *  default-OFF (the lone OFF-by-default learning seam alongside learningOutcome).
+   *  `.parse({})` yields a dormant block; the master cost switch force-disables it
+   *  at the registration site (a later plan). The on/off switch + validation /
+   *  approval / minConfidence / promoteAtProofCount knobs the synthesis job,
+   *  sandbox-validation adapter, and admission gate read. */
+  learningSkills: LearningSkillsConfigSchema.default(() => LearningSkillsConfigSchema.parse({})),
   /** Offline triple-extraction cron (Verified Learning WS7). Opt-IN posture: default-OFF
    *  (the lone OFF-by-default learning seam alongside learningOutcome). `.parse({})` yields a
    *  dormant block; the master cost switch force-disables it at the registration site. */

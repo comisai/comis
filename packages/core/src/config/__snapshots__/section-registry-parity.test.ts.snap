@@ -1089,6 +1089,75 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   },
   {
     "default": {
+      "approval": {
+        "requireForMutating": true
+      },
+      "autoAdmitReadOnly": true,
+      "enabled": false,
+      "minConfidence": 0.7,
+      "promoteAtProofCount": 3,
+      "validation": {
+        "requireReproduction": true
+      }
+    },
+    "immutable": true,
+    "path": "agents.learningSkills",
+    "type": "object"
+  },
+  {
+    "default": {
+      "requireForMutating": true
+    },
+    "immutable": true,
+    "path": "agents.learningSkills.approval",
+    "type": "object"
+  },
+  {
+    "default": true,
+    "immutable": true,
+    "path": "agents.learningSkills.approval.requireForMutating",
+    "type": "boolean"
+  },
+  {
+    "default": true,
+    "immutable": true,
+    "path": "agents.learningSkills.autoAdmitReadOnly",
+    "type": "boolean"
+  },
+  {
+    "default": false,
+    "immutable": true,
+    "path": "agents.learningSkills.enabled",
+    "type": "boolean"
+  },
+  {
+    "default": 0.7,
+    "immutable": true,
+    "path": "agents.learningSkills.minConfidence",
+    "type": "number"
+  },
+  {
+    "default": 3,
+    "immutable": true,
+    "path": "agents.learningSkills.promoteAtProofCount",
+    "type": "integer"
+  },
+  {
+    "default": {
+      "requireReproduction": true
+    },
+    "immutable": true,
+    "path": "agents.learningSkills.validation",
+    "type": "object"
+  },
+  {
+    "default": true,
+    "immutable": true,
+    "path": "agents.learningSkills.validation.requireReproduction",
+    "type": "boolean"
+  },
+  {
+    "default": {
       "enabled": false,
       "exploration": 0.1,
       "learner": "bandit",
@@ -8321,6 +8390,18 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
             "tool",
             "pipeline"
           ]
+        },
+        "learningSkills": {
+          "approval": {
+            "requireForMutating": true
+          },
+          "autoAdmitReadOnly": true,
+          "enabled": false,
+          "minConfidence": 0.7,
+          "promoteAtProofCount": 3,
+          "validation": {
+            "requireReproduction": true
+          }
         },
         "learningTuning": {
           "enabled": false,
@@ -16648,6 +16729,84 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
       ],
       "type": "object"
     },
+    "learningSkills": {
+      "additionalProperties": false,
+      "default": {
+        "approval": {
+          "requireForMutating": true
+        },
+        "autoAdmitReadOnly": true,
+        "enabled": false,
+        "minConfidence": 0.7,
+        "promoteAtProofCount": 3,
+        "validation": {
+          "requireReproduction": true
+        }
+      },
+      "properties": {
+        "approval": {
+          "additionalProperties": false,
+          "default": {
+            "requireForMutating": true
+          },
+          "properties": {
+            "requireForMutating": {
+              "default": true,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "requireForMutating"
+          ],
+          "type": "object"
+        },
+        "autoAdmitReadOnly": {
+          "default": true,
+          "type": "boolean"
+        },
+        "enabled": {
+          "default": false,
+          "type": "boolean"
+        },
+        "minConfidence": {
+          "default": 0.7,
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        "promoteAtProofCount": {
+          "default": 3,
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "validation": {
+          "additionalProperties": false,
+          "default": {
+            "requireReproduction": true
+          },
+          "properties": {
+            "requireReproduction": {
+              "default": true,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "requireReproduction"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "enabled",
+        "validation",
+        "autoAdmitReadOnly",
+        "approval",
+        "minConfidence",
+        "promoteAtProofCount"
+      ],
+      "type": "object"
+    },
     "learningTuning": {
       "additionalProperties": false,
       "default": {
@@ -19688,6 +19847,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
     "learningOutcome",
     "learningTuning",
     "learningForgetting",
+    "learningSkills",
     "memoryTripleExtraction",
     "memoryOnlineTuning"
   ],
@@ -27544,6 +27704,84 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             ],
             "type": "object"
           },
+          "learningSkills": {
+            "additionalProperties": false,
+            "default": {
+              "approval": {
+                "requireForMutating": true
+              },
+              "autoAdmitReadOnly": true,
+              "enabled": false,
+              "minConfidence": 0.7,
+              "promoteAtProofCount": 3,
+              "validation": {
+                "requireReproduction": true
+              }
+            },
+            "properties": {
+              "approval": {
+                "additionalProperties": false,
+                "default": {
+                  "requireForMutating": true
+                },
+                "properties": {
+                  "requireForMutating": {
+                    "default": true,
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "requireForMutating"
+                ],
+                "type": "object"
+              },
+              "autoAdmitReadOnly": {
+                "default": true,
+                "type": "boolean"
+              },
+              "enabled": {
+                "default": false,
+                "type": "boolean"
+              },
+              "minConfidence": {
+                "default": 0.7,
+                "maximum": 1,
+                "minimum": 0,
+                "type": "number"
+              },
+              "promoteAtProofCount": {
+                "default": 3,
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "validation": {
+                "additionalProperties": false,
+                "default": {
+                  "requireReproduction": true
+                },
+                "properties": {
+                  "requireReproduction": {
+                    "default": true,
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "requireReproduction"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "enabled",
+              "validation",
+              "autoAdmitReadOnly",
+              "approval",
+              "minConfidence",
+              "promoteAtProofCount"
+            ],
+            "type": "object"
+          },
           "learningTuning": {
             "additionalProperties": false,
             "default": {
@@ -30584,6 +30822,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "learningOutcome",
           "learningTuning",
           "learningForgetting",
+          "learningSkills",
           "memoryTripleExtraction",
           "memoryOnlineTuning"
         ],
@@ -30686,6 +30925,18 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "tool",
               "pipeline"
             ]
+          },
+          "learningSkills": {
+            "approval": {
+              "requireForMutating": true
+            },
+            "autoAdmitReadOnly": true,
+            "enabled": false,
+            "minConfidence": 0.7,
+            "promoteAtProofCount": 3,
+            "validation": {
+              "requireReproduction": true
+            }
           },
           "learningTuning": {
             "enabled": false,
