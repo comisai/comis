@@ -996,6 +996,77 @@ describe("recall-usage attribution + memory:recall_used emit", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// ATTR-02: postExecution emits a NEW counts/ids-only memory:skill_used event
+// carrying the per-turn usedSkillIds (the carrier the bridge wrote in ATTR-01),
+// mirroring the memory:recall_used write-back precedent. The daemon (Plan 07)
+// consumes it → observe(usedSkillIds) → the used_skill_ids column. It is NOT
+// routed onto learning:outcome_observed (no usedSkillIds field, daemon-emitted).
+// Source-grep is the load-bearing mode here (same as the recall family above —
+// scaffolding 30+ postExecution deps is impractical).
+// ---------------------------------------------------------------------------
+describe("ATTR-02 skill-use threading + memory:skill_used emit", () => {
+  function readPostExec(): { src: string; stripped: string } {
+    const src = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
+    const stripped = src
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("*"))
+      .join("\n");
+    return { src, stripped };
+  }
+
+  it("PostExecutionParams carries an optional usedSkillIds param (beside recalledMemories)", () => {
+    const { stripped } = readPostExec();
+    expect(stripped).toMatch(/usedSkillIds\?\s*:\s*ReadonlyArray<string>/);
+  });
+
+  it("emits memory:skill_used with usedSkillIds + usedCount (counts/ids only)", () => {
+    const { stripped } = readPostExec();
+    expect(stripped).toMatch(/emit\(\s*"memory:skill_used"/);
+    const emitBlock = stripped.match(/emit\(\s*"memory:skill_used"[\s\S]*?\}\s*\);/);
+    expect(emitBlock, "memory:skill_used emit call must exist").not.toBeNull();
+    const block = emitBlock![0];
+    expect(block).toMatch(/usedSkillIds/);
+    expect(block).toMatch(/usedCount/);
+  });
+
+  it("the memory:skill_used emit carries NO body/content/procedure field", () => {
+    const { stripped } = readPostExec();
+    const emitBlock = stripped.match(/emit\(\s*"memory:skill_used"[\s\S]*?\}\s*\);/);
+    expect(emitBlock).not.toBeNull();
+    const block = emitBlock![0];
+    expect(block, "no body: field").not.toMatch(/\bbody:/);
+    expect(block, "no content: field").not.toMatch(/\bcontent:/);
+    expect(block, "no scripts field").not.toMatch(/\bscripts\b/);
+  });
+
+  it("does NOT route usedSkillIds onto learning:outcome_observed (the WRONG target)", () => {
+    const { stripped } = readPostExec();
+    // The corrected mechanism never touches learning:outcome_observed in post-execution.
+    expect(stripped).not.toMatch(/learning:outcome_observed/);
+  });
+
+  it("emits only when usedSkillIds is non-empty (default-absent → no emit, byte-identical)", () => {
+    const { stripped } = readPostExec();
+    // The emit is guarded on a non-empty usedSkillIds (length > 0) so the no-skill
+    // default path is byte-identical to pre-patch.
+    expect(stripped).toMatch(/usedSkillIds[\s\S]{0,80}length\s*>\s*0/);
+  });
+
+  it("pi-executor reads the carrier back via bridge.getUsedSkillIds() at the postExecution call site (the round-trip)", () => {
+    const piSrc = readFileSync(resolve(here, "pi-executor", "pi-executor.ts"), "utf-8");
+    const stripped = piSrc
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("*"))
+      .join("\n");
+    // The bridge accessor is read back and threaded onto the postExecution call.
+    expect(stripped).toMatch(/getUsedSkillIds\(\)/);
+    expect(stripped).toMatch(/usedSkillIds/);
+  });
+});
+
 describe("modelAcknowledgedFailure word-boundary regression", () => {
   function readPostExecSource(): string {
     return readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
