@@ -36,6 +36,21 @@
  * RNG/clock-free property here too — so their literal API names are deliberately
  * never written in this file).
  *
+ * TWO LEARNERS, one clamp/determinism/trust-freeze contract (RANK-03, a FORWARD
+ * choice — NOT back-compat, I8):
+ *  - {@link computeTunedAlphas} — the conservative `learner:'nudge'` fallback: a
+ *    bounded `STEP=0.05` step in the gradient's direction. PRESERVED verbatim.
+ *  - {@link computeBanditAlphas} — the DEFAULT `learner:'bandit'`: a deterministic
+ *    UCB learner (optimism-under-uncertainty — a `sqrt(ln(n)/n)` confidence-width
+ *    exploration bonus, NO RNG) that learns the FULL alpha vector from per-id
+ *    outcome attribution (the recency/temporal/proof gradients — hardcoded `0`
+ *    under the raw used-rate feed — become computable once an outcome-attributed
+ *    reward mean rides the exploit term). UCB (not Thompson) is mandatory: an RNG
+ *    sample would break the determinism source-grep + the bench.
+ * The job (Plan 06's online-tuning-job) selects between them by
+ * `learningTuning.learner`. BOTH share `clampAlpha` `[0,1]` and the trust-freeze
+ * (neither names nor returns a trust weight — belts #1/#4).
+ *
  * @module
  */
 
@@ -120,5 +135,84 @@ export function computeTunedAlphas(cur: TunedAlphaVector, sig: FeedAggregate): T
     temporalAlpha: clampAlpha(cur.temporalAlpha + STEP * sig.temporalGradient),
     proofAlpha: clampAlpha(cur.proofAlpha + STEP * sig.proofGradient),
     usefulnessAlpha: clampAlpha(cur.usefulnessAlpha + STEP * sig.usefulnessGradient),
+  };
+}
+
+/**
+ * The accrued outcome-attribution posterior for ONE `(tenant, agent, intent)`
+ * bucket — the plain-number substrate the bandit reads (mirrors the
+ * `tuned_alpha.outcome_reward_sum` / `outcome_n` columns Plan 02 added). Kept as
+ * two scalars (not a store row) so the math stays pure and `@comis/core`-types-only
+ * — the offline job reads the columns and passes them here.
+ */
+export interface BanditPosterior {
+  /** Signed sum of outcome-attributed rewards (success → +, failure/corrected → −). */
+  rewardSum: number;
+  /** Number of outcome attributions accrued (the arm pull count for UCB). */
+  n: number;
+}
+
+/**
+ * The deterministic UCB confidence width — optimism under uncertainty. Shrinks
+ * monotonically as `n` grows (a rarely-pulled arm gets a wider exploration
+ * bonus). `+1` guards `n=0` (an unseen arm: `sqrt(ln(1)/1) = 0`, so a fresh arm
+ * relies on the exploit term — the bonus grows then decays as evidence
+ * accumulates). NO randomness — the exploration is this deterministic bonus, NOT a
+ * sample (a Thompson sample would break the determinism source-grep + the keyless
+ * learning-lift bench; Pitfall 4). A non-finite `n` collapses to `0` so the
+ * downstream `clampAlpha` total-clamp keeps every output in range.
+ */
+function ucbConfidenceWidth(n: number): number {
+  if (!Number.isFinite(n) || n < 0) return 0;
+  const denom = n + 1;
+  return Math.sqrt(Math.log(denom) / denom);
+}
+
+/**
+ * The DEFAULT `learner:'bandit'` (RANK-03): a bounded, deterministic UCB step over
+ * the FULL 4-alpha vector. Returns a NEW {@link TunedAlphaVector}; the input is
+ * never mutated.
+ *
+ * For each alpha axis the next value is
+ * `clampAlpha(cur.axisAlpha + STEP * (exploit + exploration * confidenceWidth))`
+ * where:
+ *  - `exploit` = the axis gradient PLUS the outcome-attributed reward mean
+ *    (`rewardSum / max(1, n)`). A `success`-attributed reward (positive sum) pushes
+ *    every axis UP; a `failure`/`corrected`-attributed reward (negative sum) pushes
+ *    DOWN (reward sign correct — ROADMAP criterion 1). This reward mean is what
+ *    makes the recency/temporal/proof axes — hardcoded `0` under the bare used-rate
+ *    feed — actually MOVE (the full vector becomes learnable from per-id
+ *    attribution; the RANK-04 keystone).
+ *  - `confidenceWidth` = {@link ucbConfidenceWidth} — the deterministic UCB bonus,
+ *    weighted by the `exploration` knob (`learningTuning.exploration`, default 0.1).
+ *
+ * INVARIANTS (shared with the nudge):
+ *  - CLAMP (T-200-09): every output is `clampAlpha`-ed to `[0,1]` (NaN → 0) — a
+ *    pathological/poisoned reward can never invert a boost (<0) or run an alpha
+ *    away (>1, overturning trust-first via the usefulness factor — score.ts
+ *    Pitfall 5).
+ *  - TRUST-FREEZE (T-200-08, belts #1/#4): the trust weight is NEVER an input or an
+ *    output. This fn takes/returns ONLY the 4-alpha {@link TunedAlphaVector} and the
+ *    {@link FeedAggregate} (which has no trust gradient); the trust-weight field name
+ *    is deliberately never written here (the grep-0 source belt). The bandit is
+ *    STRUCTURALLY unable to move the trust weight.
+ *  - DETERMINISM: UCB, no RNG, no wall-clock — same input yields a byte-identical
+ *    output (the reproducible bench; an RNG-sampling Thompson is rejected by the
+ *    determinism source-grep, Pitfall 4).
+ */
+export function computeBanditAlphas(
+  cur: TunedAlphaVector,
+  sig: FeedAggregate,
+  posterior: BanditPosterior,
+  exploration: number,
+): TunedAlphaVector {
+  const rewardMean = posterior.rewardSum / Math.max(1, posterior.n);
+  const explore = exploration * ucbConfidenceWidth(posterior.n);
+  const step = (axisGradient: number): number => STEP * (axisGradient + rewardMean + explore);
+  return {
+    recencyAlpha: clampAlpha(cur.recencyAlpha + step(sig.recencyGradient)),
+    temporalAlpha: clampAlpha(cur.temporalAlpha + step(sig.temporalGradient)),
+    proofAlpha: clampAlpha(cur.proofAlpha + step(sig.proofGradient)),
+    usefulnessAlpha: clampAlpha(cur.usefulnessAlpha + step(sig.usefulnessGradient)),
   };
 }
