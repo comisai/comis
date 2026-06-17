@@ -101,8 +101,14 @@ export const MemoryEntrySchema = z.strictObject({
      * is unaffected; the enum is enforced HERE + the lenient LLM parser,
      * NOT a SQLite CHECK (the occurred_at/proof_count ALTER-ADD-COLUMN no-CHECK
      * precedent — a post-hoc enum CHECK is unreliable across existing rows).
+     * "generalization" is the GENERAL-01 (v2.26 Phase 203) higher-order synthesis
+     * kind — a `semantic` memory abstracting a cross-context cluster ("user prefers
+     * X in general"), written by `runMemoryConsolidation` (Plan 03) with
+     * `proofCount = |cluster|` and `sourceIds` retained. The enum stays CLOSED
+     * (widened, not `z.string()`); the SQLite `observation_kind` column remains
+     * unchecked nullable TEXT, so this is a pure domain-layer widen with NO migration.
      */
-    observationKind: z.enum(["merge", "deductive", "inductive"]).optional(),
+    observationKind: z.enum(["merge", "deductive", "inductive", "generalization"]).optional(),
     /**
      * Inductive pattern class (Honcho-derived). Only set when
      * observationKind="inductive". Additive `.optional()` closed enum.
