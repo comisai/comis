@@ -129,6 +129,17 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   "learning:skill_promoted": "learning.skill_promoted",
   "learning:skill_demoted": "learning.skill_demoted",
 
+  // REVISE-/GENERAL- (v2.26 Verified Learning WS6/WS7, Phase 203 Plan 05): the
+  // user-model-revision + generalization telemetry. Both DAEMON-emitted (the
+  // __USER_REPRESENTATION__ + __MEMORY_CONSOLIDATION__ cron handlers — NOT agent/
+  // orchestrator) so the arch emit-scanner does not require them; mapped here so
+  // OBS-02 `comis explain` can reconstruct a revision/generalization run.
+  // Content-free: the COUNTS ONLY (superseded/corroborated/inserted +
+  // generalized/clustersConsidered + durationMs) — NEVER a profile/memory body,
+  // an entryType, or a source id (SEC-01 §7).
+  "learning:user_model_revised": "learning.user_model_revised",
+  "learning:memory_generalized": "learning.memory_generalized",
+
   // ---- Background task lifecycle (T2.2 / F9) ----
   // The promote/complete/fail transitions of a long-running tool detached past the
   // execute() boundary — previously emitted but UNMAPPED (invisible to comis explain; a

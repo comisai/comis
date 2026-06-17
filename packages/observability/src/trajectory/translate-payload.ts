@@ -284,6 +284,13 @@ export function translatePayload(
     case "learning:skill_validated": // SKILL-09: the verdict BOOLEANS + coverage CLOSED-ENUM ONLY — NEVER a field name/finding/script (SEC-01).
       return { staticOk: payload.staticOk, dynamicOk: payload.dynamicOk, coverage: payload.coverage };
 
+    case "learning:user_model_revised":
+      // REVISE- (Phase 203): the per-slot revision COUNTS + durationMs ONLY — NEVER a profile entry's content/entryType/source id (§2.7 / SEC-01 / T-203-leak); agentId/timestamp are envelope ids.
+      return { superseded: payload.superseded, corroborated: payload.corroborated, inserted: payload.inserted, durationMs: payload.durationMs };
+    case "learning:memory_generalized":
+      // GENERAL- (Phase 203): the generalization COUNTS + durationMs ONLY — NEVER a synthesized memory body / source ids (§2.7 / SEC-01 / T-203-leak); agentId/timestamp are envelope ids.
+      return { generalized: payload.generalized, clustersConsidered: payload.clustersConsidered, durationMs: payload.durationMs };
+
     // T2.2 (F9): closed ids + durationMs ONLY — agentId/origin are envelope ids; no result/
     // error body crosses the bus (§2.7 / H1); the record TYPE conveys promoted/completed/failed.
     case "background_task:promoted":

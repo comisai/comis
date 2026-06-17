@@ -98,6 +98,13 @@ export const TRAJECTORY_EVENT_TYPES = [
   // bridged for `comis explain` (OBS-02).
   "learning.skill_promoted",
   "learning.skill_demoted",
+  // REVISE-/GENERAL- (v2.26 WS6/WS7, Phase 203): the user-model-revision +
+  // generalization telemetry — the COUNTS ONLY (superseded/corroborated/inserted +
+  // generalized/clustersConsidered + durationMs), NEVER a profile/memory body, an
+  // entryType, or a source id (SEC-01). Daemon-side emit (Plan 05); bridged for
+  // `comis explain` (OBS-02).
+  "learning.user_model_revised",
+  "learning.memory_generalized",
 
   // Background task lifecycle (T2.2 / F9): promote/complete/fail of a long-running tool
   // detached past the execute() boundary (content-free — ids + durationMs only).
