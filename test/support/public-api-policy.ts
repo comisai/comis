@@ -2932,5 +2932,19 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // not a baseline orphan.
       "SkillManifestSchema",
       "SkillManifestParsed",
+      // v2.26 Verified Learning WS2 (P2 Skills, Phase 201 Plan 05/06). The
+      // SkillValidationPort adapter (STATIC half this plan; Plan 06 extends it
+      // with the DYNAMIC bwrap sandbox replay) + the canonical `mcp__`-aware
+      // mutating classifier + its deps type. The whole adapter lives in
+      // @comis/skills because applyToolPolicy + the bwrap sandbox provider are
+      // @comis/skills symbols (the synthesis job in @comis/agent consumes only the
+      // @comis/core SkillValidationPort TYPE — the closed-graph cut). The real
+      // cross-package consumer is the daemon `setup-learning` wiring (Plan 07),
+      // which constructs the adapter and injects it into runSkillSynthesis via the
+      // SkillValidationPort type; all three SHRINK out when that wiring
+      // name-imports createSandboxSkillValidationAdapter. Ahead-of-consumer
+      // orphans (mirror createLlmSkillSynthesisAdapter / runSkillSynthesis above).
+      "createSandboxSkillValidationAdapter",
+      "SandboxSkillValidationAdapterDeps",
     ])],
   ]);
