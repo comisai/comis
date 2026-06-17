@@ -35,6 +35,7 @@ import {
   createReactionTrajectoryMap,
   wireLearningReactions,
   wireLearningCorrection,
+  buildReactionWiringDeps,
   type LearningReactionsWiringDeps,
 } from "./setup-learning-reactions.js";
 import type { CorrectionVerdict } from "@comis/agent";
@@ -502,5 +503,105 @@ describe("wireLearningCorrection — correction → prior-trajectory observe (CO
 
     expect(detector).toHaveBeenCalledTimes(1);
     expect(observe).not.toHaveBeenCalled();
+  });
+});
+
+// ===========================================================================
+// 4. buildReactionWiringDeps — daemon composition (construct map/limiter/detector + gate)
+// ===========================================================================
+
+describe("buildReactionWiringDeps — daemon construction behind the byte-identity gate", () => {
+  function makeContainer(over: { agents?: Record<string, unknown>; costFeatures?: boolean; secrets?: Record<string, string> } = {}) {
+    const secrets = over.secrets ?? {};
+    return {
+      config: {
+        agents: over.agents ?? {},
+        memory: { costFeatures: { enabled: over.costFeatures ?? true } },
+        providers: { entries: {} },
+      },
+      secretManager: { get: (name: string): string | undefined => secrets[name] },
+    } as never;
+  }
+
+  it("byte-identity: NO agent has learningOutcome.enabled → recordOutboundMessage is undefined (the drain does zero extra work)", () => {
+    const built = buildReactionWiringDeps(
+      makeContainer({ agents: { a1: { learningOutcome: { enabled: false } } } }),
+      createFakeClock(NOW),
+      createFakeTimers(NOW),
+    );
+    expect(built.recordOutboundMessage).toBeUndefined();
+  });
+
+  it("an agent with learningOutcome.enabled → recordOutboundMessage is a function that records into the trajectory map", () => {
+    const built = buildReactionWiringDeps(
+      makeContainer({ agents: { a1: { learningOutcome: { enabled: true } } } }),
+      createFakeClock(NOW),
+      createFakeTimers(NOW),
+    );
+    expect(typeof built.recordOutboundMessage).toBe("function");
+    built.recordOutboundMessage!("msg-1", { traceId: TRACE, tenantId: TENANT, agentId: "a1", sessionId: TRACE });
+    expect(built.deps.reactionTrajectoryMap.lookup("msg-1")).toEqual({ traceId: TRACE, tenantId: TENANT, agentId: "a1", sessionId: TRACE });
+  });
+
+  it("the learningOutcomeEnabled gate force-disables on the master cost switch (costFeatures.enabled=false)", () => {
+    const built = buildReactionWiringDeps(
+      makeContainer({ agents: { a1: { learningOutcome: { enabled: true } } }, costFeatures: false }),
+      createFakeClock(NOW),
+      createFakeTimers(NOW),
+    );
+    expect(built.deps.learningOutcomeEnabled("a1")).toBe(false); // master switch off → gate closed
+    expect(built.recordOutboundMessage).toBeUndefined(); // and the capture is off
+  });
+
+  it("resolveSenderTrust reads senderTrustMap[reactorId] ?? defaultTrustLevel (RAW channel-sender string, default external)", () => {
+    const built = buildReactionWiringDeps(
+      makeContainer({
+        agents: {
+          a1: {
+            learningOutcome: { enabled: true },
+            elevatedReply: { senderTrustMap: { boss: "admin" }, defaultTrustLevel: "external" },
+          },
+        },
+      }),
+      createFakeClock(NOW),
+      createFakeTimers(NOW),
+    );
+    expect(built.deps.resolveSenderTrust("a1", "boss")).toBe("admin"); // mapped
+    expect(built.deps.resolveSenderTrust("a1", "stranger")).toBe("external"); // default
+  });
+
+  it("the correction detector is UNDEFINED when no agent has correction.enabled (no LLM construction)", () => {
+    const built = buildReactionWiringDeps(
+      makeContainer({ agents: { a1: { learningOutcome: { enabled: true, correction: { enabled: false } } } } }),
+      createFakeClock(NOW),
+      createFakeTimers(NOW),
+    );
+    expect(built.deps.correctionDetector).toBeUndefined();
+  });
+
+  it("the correction detector is UNDEFINED when correction.enabled but the cheap-model API key is missing (Defer != Retry)", () => {
+    // anthropic (non-keyless) with no ANTHROPIC_API_KEY in secrets → no key → undefined detector.
+    const built = buildReactionWiringDeps(
+      makeContainer({
+        agents: { a1: { provider: "anthropic", learningOutcome: { enabled: true, correction: { enabled: true } } } },
+        secrets: {},
+      }),
+      createFakeClock(NOW),
+      createFakeTimers(NOW),
+    );
+    expect(built.deps.correctionDetector).toBeUndefined();
+  });
+
+  it("the correction detector is BUILT when correction.enabled AND a cheap-model API key resolves", () => {
+    const built = buildReactionWiringDeps(
+      makeContainer({
+        agents: { a1: { provider: "anthropic", learningOutcome: { enabled: true, correction: { enabled: true } } } },
+        secrets: { ANTHROPIC_API_KEY: "sk-test-key" },
+      }),
+      createFakeClock(NOW),
+      createFakeTimers(NOW),
+    );
+    expect(typeof built.deps.correctionDetector).toBe("function");
+    expect(built.deps.correctionEnabled("a1")).toBe(true);
   });
 });
