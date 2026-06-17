@@ -105,10 +105,17 @@ export interface LearnedSkillStorePort {
   list(scope: LearningScope): Promise<Result<LearnedSkill[], Error>>;
 
   /**
-   * WRITE. Reinforce the skill `id` (increment proof count / advance state toward
-   * `active` once the proof threshold is met). Scoped to `(tenant, agent)`.
+   * WRITE. Reinforce the skill `id`: `proof_count` is incremented on EVERY call,
+   * but the `candidate → active` transition fires ONLY when crossing the proof
+   * bar — i.e. when `proof_count + 1 >= promoteAtProofCount` (the caller-supplied
+   * threshold; default policy 3). A single attributed success bumps the count
+   * without activating (the D2 / T-202-04 premature-trust mitigation): a candidate
+   * at `promoteAtProofCount=3` stays `candidate` after the 1st and 2nd promote and
+   * becomes `active` on the 3rd. An already-`active` skill keeps bumping
+   * `proof_count` but never changes state. `trust_level` is never touched. Scoped
+   * to `(tenant, agent)`; unresolved scope fails-closed with `err(...)`.
    */
-  promote(id: string, scope: LearningScope): Promise<Result<void, Error>>;
+  promote(id: string, scope: LearningScope, promoteAtProofCount: number): Promise<Result<void, Error>>;
 
   /**
    * WRITE. Penalize the skill `id` on a verified failure (decrement strength /

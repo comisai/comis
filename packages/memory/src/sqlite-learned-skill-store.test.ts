@@ -329,7 +329,7 @@ describe("createSqliteLearnedSkillStore — (tenant, agent) isolation + lifecycl
   });
 
   it("promote()/demote()/evict() with an empty scope fail-closed with err", async () => {
-    const p = await store.promote("some-id", EMPTY_TENANT);
+    const p = await store.promote("some-id", EMPTY_TENANT, 3);
     const d = await store.demote("some-id", EMPTY_AGENT);
     const e = await store.evict("some-id", EMPTY_TENANT);
     expect(p.ok).toBe(false);
@@ -339,11 +339,12 @@ describe("createSqliteLearnedSkillStore — (tenant, agent) isolation + lifecycl
 
   // --- lifecycle: promote / demote / soft-evict ----------------------------
 
-  it("promote() advances candidate→active and increments proof_count (scoped)", async () => {
+  it("promote() advances candidate→active and increments proof_count when the threshold is crossed (scoped)", async () => {
+    // proofCount seeds 1; threshold 2 → proof_count + 1 = 2 >= 2 activates on this single call.
     const admitted = await store.admit(makeInput({ name: "promote-me", proofCount: 1 }), SCOPE_A);
     expect(admitted.ok).toBe(true);
     if (!admitted.ok) return;
-    const r = await store.promote(admitted.value.id, { ...SCOPE_A, now: 2_000 });
+    const r = await store.promote(admitted.value.id, { ...SCOPE_A, now: 2_000 }, 2);
     expect(r.ok).toBe(true);
     const after = await store.get("promote-me", SCOPE_A);
     if (after.ok) {
@@ -357,7 +358,7 @@ describe("createSqliteLearnedSkillStore — (tenant, agent) isolation + lifecycl
     if (!admitted.ok) return;
     // Promote under SCOPE_B (same id, wrong scope) — the WHERE pins (tenant, agent),
     // so it matches 0 rows and A's skill is untouched.
-    await store.promote(admitted.value.id, SCOPE_B);
+    await store.promote(admitted.value.id, SCOPE_B, 1);
     const a = await store.get("guarded", SCOPE_A);
     if (a.ok) {
       expect(a.value?.state).toBe("candidate"); // unchanged — cross-scope UPDATE matched nothing
@@ -368,7 +369,7 @@ describe("createSqliteLearnedSkillStore — (tenant, agent) isolation + lifecycl
   it("demote() steps an active skill back toward stale (scoped)", async () => {
     const admitted = await store.admit(makeInput({ name: "demote-me" }), SCOPE_A);
     if (!admitted.ok) return;
-    await store.promote(admitted.value.id, SCOPE_A); // → active
+    await store.promote(admitted.value.id, SCOPE_A, 1); // threshold 1 → active on the first promote
     const r = await store.demote(admitted.value.id, SCOPE_A); // active → stale
     expect(r.ok).toBe(true);
     const after = await store.get("demote-me", SCOPE_A);
@@ -399,6 +400,111 @@ describe("createSqliteLearnedSkillStore — (tenant, agent) isolation + lifecycl
   });
 });
 
+// ===========================================================================
+// D2 / SURFACE-04 / T-202-04: promote() threshold gate — proof_count bumps every
+// call but candidate→active fires ONLY when proof_count + 1 >= promoteAtProofCount
+// (NOT on the first call). The §12 first-RED: today's unconditional CASE flips on
+// call 1, so the "stays candidate after call 1" assertions are RED on pre-patch.
+// ===========================================================================
+describe("createSqliteLearnedSkillStore — promote() proof-bar threshold gate (D2)", () => {
+  let db: Database.Database;
+  let store: ReturnType<typeof createSqliteLearnedSkillStore>;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    initSchema(db, 384);
+    store = createSqliteLearnedSkillStore({ db });
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  /** Admit a candidate seeded at proof_count=0 and return its id. */
+  async function admitCandidate(name: string): Promise<string> {
+    const r = await store.admit(makeInput({ name, proofCount: 0 }), SCOPE_A);
+    expect(r.ok).toBe(true);
+    return r.ok ? r.value.id : "";
+  }
+
+  it("the FIRST promote(id, scope, 3) bumps proof_count to 1 but the skill STAYS 'candidate' (not activated on call 1)", async () => {
+    const id = await admitCandidate("threshold-3");
+    const r = await store.promote(id, SCOPE_A, 3);
+    expect(r.ok).toBe(true);
+    const after = await store.get("threshold-3", SCOPE_A);
+    expect(after.ok).toBe(true);
+    if (after.ok) {
+      expect(after.value?.state).toBe("candidate"); // RED today: the unconditional CASE flips to 'active' here
+      expect(after.value?.proofCount).toBe(1);
+    }
+  });
+
+  it("the SECOND promote(id, scope, 3) bumps proof_count to 2 and the skill STILL STAYS 'candidate'", async () => {
+    const id = await admitCandidate("threshold-3-twice");
+    await store.promote(id, SCOPE_A, 3);
+    await store.promote(id, SCOPE_A, 3);
+    const after = await store.get("threshold-3-twice", SCOPE_A);
+    if (after.ok) {
+      expect(after.value?.state).toBe("candidate"); // proof_count + 1 = 2, still < 3
+      expect(after.value?.proofCount).toBe(2);
+    }
+  });
+
+  it("the THIRD promote(id, scope, 3) crosses the bar (proof_count + 1 = 3 >= 3) and activates → 'active', proofCount 3", async () => {
+    const id = await admitCandidate("threshold-3-thrice");
+    await store.promote(id, SCOPE_A, 3);
+    await store.promote(id, SCOPE_A, 3);
+    await store.promote(id, SCOPE_A, 3);
+    const after = await store.get("threshold-3-thrice", SCOPE_A);
+    if (after.ok) {
+      expect(after.value?.state).toBe("active"); // the activation call
+      expect(after.value?.proofCount).toBe(3);
+    }
+  });
+
+  it("promote(id, scope, 1) on a fresh candidate activates on the FIRST call (boundary: proof_count + 1 = 1 >= 1)", async () => {
+    const id = await admitCandidate("threshold-1");
+    const r = await store.promote(id, SCOPE_A, 1);
+    expect(r.ok).toBe(true);
+    const after = await store.get("threshold-1", SCOPE_A);
+    if (after.ok) {
+      expect(after.value?.state).toBe("active");
+      expect(after.value?.proofCount).toBe(1);
+    }
+  });
+
+  it("a promote(id, scope, 3) on an ALREADY-active skill keeps it 'active' and keeps bumping proof_count (the state='candidate' guard)", async () => {
+    const id = await admitCandidate("already-active");
+    // Activate at threshold 1, then promote 3 more times at threshold 3.
+    await store.promote(id, SCOPE_A, 1); // → active, proofCount 1
+    await store.promote(id, SCOPE_A, 3); // proofCount 2, stays active
+    await store.promote(id, SCOPE_A, 3); // proofCount 3, stays active
+    await store.promote(id, SCOPE_A, 3); // proofCount 4, stays active
+    const after = await store.get("already-active", SCOPE_A);
+    if (after.ok) {
+      expect(after.value?.state).toBe("active"); // an active skill's state never moves
+      expect(after.value?.proofCount).toBe(4); // proof_count keeps accumulating
+    }
+  });
+
+  it("promote() NEVER touches trust_level — it stays 'learned' across the whole proof ladder (SEC-01 / T-202-05)", async () => {
+    const id = await admitCandidate("trust-untouched");
+    await store.promote(id, SCOPE_A, 3);
+    await store.promote(id, SCOPE_A, 3);
+    await store.promote(id, SCOPE_A, 3); // crosses to active
+    const raw = db
+      .prepare("SELECT trust_level FROM learned_skills WHERE tenant_id = ? AND agent_id = ? AND name = ?")
+      .get(TENANT_A, AGENT_A, "trust-untouched") as { trust_level: string };
+    expect(raw.trust_level).toBe("learned"); // no promote path raises trust
+  });
+
+  it("promote() with an unresolved (empty) scope fails-closed on the widened 3-arg signature (T-202-06)", async () => {
+    const r = await store.promote("some-id", { tenantId: "", agentId: AGENT_A }, 3);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toBeInstanceOf(Error);
+  });
+});
+
 describe("createSqliteLearnedSkillStore — error handling (catch branches)", () => {
   // evict()/promote()/demote() must NEVER throw — a DB failure mid-operation is
   // caught and surfaced as err() with a WARN (errorKind + hint, the §2.7 bar). We
@@ -425,9 +531,9 @@ describe("createSqliteLearnedSkillStore — error handling (catch branches)", ()
     if (!r.ok) expect(r.error).toBeInstanceOf(Error);
   });
 
-  it("promote() returns err (not throw) when the underlying UPDATE fails (runTransition catch)", async () => {
+  it("promote() returns err (not throw) when the underlying UPDATE fails (dedicated-body catch)", async () => {
     db.exec("DROP TABLE learned_skills");
-    const r = await store.promote("any-id", SCOPE_A);
+    const r = await store.promote("any-id", SCOPE_A, 3);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toBeInstanceOf(Error);
   });
