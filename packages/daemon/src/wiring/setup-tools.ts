@@ -66,7 +66,11 @@ import {
 } from "@comis/skills/tools";
 // Terminal-driver (v2.11) wiring extracted to setup-terminal-tools.ts (file-size cap).
 import { wireAgentTerminalTools, buildTerminalEgressDeps, deriveTerminalAttentionConfig } from "./setup-terminal-tools.js";
-import { buildTerminalWakeDurability, type WakeDurabilityConfig } from "./terminal-durable-wiring.js";
+import {
+  buildTerminalWakeDurability,
+  recreateStrandedTmuxServerForDataDir,
+  type WakeDurabilityConfig,
+} from "./terminal-durable-wiring.js";
 // In-session expansion-loop (v2.12 Phase 131, E1/E2) dag-gated ctx_* wiring.
 import { maybeWireContextTools } from "./setup-context-tools.js";
 // Tool-audit DEBUG-line subscription extracted to setup-tool-audit.ts (file-size cap).
@@ -779,6 +783,14 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
     }
     processRegistries.clear();
   }
+
+  // RECUR-02 (live VPS 2026-06-17): BEFORE any registry's recover-on-boot, recreate the durable
+  // tmux server if it survived the restart into the PRIOR daemon generation's now-dismantled mount
+  // namespace (systemd PrivateTmp/ProtectHome give each start a fresh ns; KillMode=process keeps the
+  // old server). New `bwrap` sessions in that stranded ns die ~2.5s, so the server is torn down here;
+  // the recover-on-boot then finds its sessions gone and flips them `lost` with the journal preserved
+  // (resumed on a fresh server in the live ns). A no-op on a normal first boot / a healthy server.
+  recreateStrandedTmuxServerForDataDir(dataDir, skillsLogger);
 
   // 165-07: the daemon-wide wake durability bundle spread into setupTerminalWake (built in the helper).
   const terminalDurability = buildTerminalWakeDurability({ dataDir, registries: terminalRegistries, nowMs: systemNowMs, config: agents[defaultAgentId]?.skills?.terminal as WakeDurabilityConfig | undefined });
