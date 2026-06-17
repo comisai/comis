@@ -647,4 +647,5 @@ export type {
   SkillSynthesisJobDeps,
   SkillSynthesisJobResult,
   SynthesisSourceTrajectory,
+  SkillApprovalGate,
 } from "./memory/index.js";

@@ -11,9 +11,30 @@
  * @module
  */
 
-import type { AppContainer, ClockPort, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore, RelationshipStore, TunedAlphaStore, MemoryUsefulnessStore, MemoryLifecyclePort } from "@comis/core";
+import type { AppContainer, ClockPort, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore, RelationshipStore, TunedAlphaStore, MemoryUsefulnessStore, MemoryLifecyclePort, LearnedSkillStorePort, SkillValidationPort } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { MemoryApi } from "@comis/memory";
+import type { SynthesisSourceTrajectory, SkillApprovalGate } from "@comis/agent";
+
+/**
+ * The closed-graph skill-synthesis injectables for the __SKILL_SYNTHESIS__ sentinel
+ * (SKILL-08/09). Assembled DAEMON-SIDE (registerCronEventListeners, setup-channels-
+ * credentials.ts — the SOLE composition root that may import @comis/memory +
+ * @comis/skills + @comis/agent together) and threaded here so the handler injects
+ * the real adapters into `runSkillSynthesis` (which consumes @comis/core PORT TYPES
+ * only — the agent↛memory/skills build cut). Absent ⇒ the sentinel cannot run
+ * (off-by-default, so a default-config agent never reaches it).
+ */
+export interface SkillSynthesisCronDeps {
+  /** The @comis/memory learned-skill store (the admit target), built on the shared db handle. */
+  learnedSkillStore: Pick<LearnedSkillStorePort, "admit">;
+  /** Build the @comis/skills sandbox validation adapter for an agent (injects its tool list + policy). */
+  buildValidationAdapter: (agentId: string) => Promise<Pick<SkillValidationPort, "validate">>;
+  /** Build the LCD-merged source trajectories (buildReviewSessionSource — NOT sessionStore.listDetailed). */
+  buildSourceTrajectories: (agentId: string, tenantId: string) => Promise<SynthesisSourceTrajectory[]>;
+  /** The mutating-admission approval gate (the daemon's shared ApprovalGate). */
+  approvalGate: SkillApprovalGate;
+}
 
 /** The minimal `scheduler:job_result` payload shape the sentinel handlers read. */
 export interface MemoryCronPayload {
@@ -55,4 +76,8 @@ export interface MemoryCronContext {
    *  __USEFULNESS_JUDGE__ + __MEMORY_TRIPLE_EXTRACTION__ sentinels
    *  scope their per-(tenant, agent[, user/channel]) high-trust source reads over. */
   memoryApi?: MemoryApi;
+  /** The closed-graph skill-synthesis injectables (the __SKILL_SYNTHESIS__ sentinel, SKILL-08/09).
+   *  Assembled daemon-side; the handler injects the store + validation adapter + LCD source into
+   *  runSkillSynthesis. Absent ⇒ off-by-default (a default-config agent never reaches the sentinel). */
+  skillSynthesis?: SkillSynthesisCronDeps;
 }

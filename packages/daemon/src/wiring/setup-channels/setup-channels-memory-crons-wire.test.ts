@@ -20,6 +20,9 @@ const mockReasonSeam = vi.hoisted(() => vi.fn(async () => ({ deductive: [], indu
 const mockCreateReasoningSeam = vi.hoisted(() => vi.fn(() => mockReasonSeam));
 const mockRunMemoryTripleExtraction = vi.hoisted(() => vi.fn(async () => ({ ok: true as const, value: { extracted: 0, written: 0, blocked: 0, downgraded: 0, skippedOverCap: 0 } })));
 const mockResolveOperationModel = vi.hoisted(() => vi.fn(() => ({ provider: "anthropic", modelId: "anthropic:claude-haiku", model: "anthropic:claude-haiku", timeoutMs: 60_000, source: "default" })));
+// SKILL-09: the synthesis job + adapter the __SKILL_SYNTHESIS__ handler injects/calls.
+const mockRunSkillSynthesis = vi.hoisted(() => vi.fn(async () => ({ ok: true as const, value: { abstained: false, synthesized: 2, admitted: 1, validated: 2, approvalRequested: 0, maxClusterCardinality: 1 } })));
+const mockCreateLlmSkillSynthesisAdapter = vi.hoisted(() => vi.fn(() => ({ synthesize: vi.fn() })));
 
 vi.mock("@comis/agent", () => ({
   resolveOperationModel: mockResolveOperationModel,
@@ -27,6 +30,8 @@ vi.mock("@comis/agent", () => ({
   createUsefulnessJudgeSeam: mockCreateUsefulnessJudgeSeam,
   createReasoningSeam: mockCreateReasoningSeam,
   runMemoryTripleExtraction: mockRunMemoryTripleExtraction,
+  runSkillSynthesis: mockRunSkillSynthesis,
+  createLlmSkillSynthesisAdapter: mockCreateLlmSkillSynthesisAdapter,
   // The other named imports the module pulls (consolidation/reasoning/userrep/social/tuning)
   // are not on this leaf's code path, but the wholesale mock must satisfy the import list of
   // any transitively-imported module — keep them present as no-op spies.
@@ -48,6 +53,7 @@ function makeCtx(overrides: {
   apiKey?: string | undefined;
   inspectRows?: Array<{ id: string; content: string }>;
   recordUsage?: ReturnType<typeof vi.fn>;
+  skillSynthesis?: MemoryCronContext["skillSynthesis"];
 } = {}): MemoryCronContext {
   const logger = { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn(), child: vi.fn(() => logger) };
   const container = {
@@ -68,6 +74,7 @@ function makeCtx(overrides: {
       readUsefulness: vi.fn(async () => ({ ok: true as const, value: new Map() })),
     } as any,
     memoryApi: memoryApi as any,
+    ...(overrides.skillSynthesis !== undefined ? { skillSynthesis: overrides.skillSynthesis } : {}),
   };
 }
 
@@ -78,7 +85,22 @@ beforeEach(() => {
   mockJudgeSeam.mockResolvedValue({ usedIds: [], ignoredIds: [] });
   mockCreateReasoningSeam.mockReturnValue(mockReasonSeam);
   mockRunMemoryTripleExtraction.mockResolvedValue({ ok: true as const, value: { extracted: 0, written: 0, blocked: 0, downgraded: 0, skippedOverCap: 0 } });
+  mockRunSkillSynthesis.mockResolvedValue({ ok: true as const, value: { abstained: false, synthesized: 2, admitted: 1, validated: 2, approvalRequested: 0, maxClusterCardinality: 1 } });
+  mockCreateLlmSkillSynthesisAdapter.mockReturnValue({ synthesize: vi.fn() });
 });
+
+/** A skillSynthesis cron bundle for the enabled-path tests (the daemon assembles this in credentials.ts). */
+function makeSkillSynthesisBundle(over: Partial<MemoryCronContext["skillSynthesis"]> = {}): NonNullable<MemoryCronContext["skillSynthesis"]> {
+  return {
+    learnedSkillStore: { admit: vi.fn(async () => ({ ok: true as const, value: undefined })) } as any,
+    buildValidationAdapter: vi.fn(async () => ({ validate: vi.fn() })) as any,
+    buildSourceTrajectories: vi.fn(async () => [
+      { trajectoryId: "t1", sessionId: "s1", sender: "u1", text: "did X then Y" },
+    ]) as any,
+    approvalGate: { requestApproval: vi.fn(async () => ({ approved: false })) } as any,
+    ...over,
+  };
+}
 
 describe("handleWireMemoryCronSentinel", () => {
   it("returns false for an unrecognized sentinel (the caller falls through to delivery)", async () => {
@@ -183,5 +205,56 @@ describe("handleWireMemoryCronSentinel", () => {
     await handleWireMemoryCronSentinel("__MEMORY_TRIPLE_EXTRACTION__", { agentId: undefined, onComplete }, ctx);
     expect(mockRunMemoryTripleExtraction).not.toHaveBeenCalled();
     expect(onComplete).toHaveBeenCalledWith({ status: "error", error: "No agentId for triple extraction" });
+  });
+
+  // -------------------------------------------------------------------------
+  // SKILL-08/09 (Plan 07): the __SKILL_SYNTHESIS__ sentinel. DEFAULT OFF — with
+  // learningSkills.enabled:false the handler is a clean ok no-op (NO synthesize,
+  // NO admit, ZERO behavior change). When enabled it injects the @comis/memory
+  // store + the @comis/skills validation adapter + the LCD-merged source and runs
+  // runSkillSynthesis, then emits learning:skill_synthesized DAEMON-SIDE.
+  // -------------------------------------------------------------------------
+  it("__SKILL_SYNTHESIS__ disabled-default → clean ok no-op (NO synthesize, NO admit, ZERO behavior change)", async () => {
+    const ctx = makeCtx({ agents: { "agent-1": { name: "Agent 1" } }, skillSynthesis: makeSkillSynthesisBundle() });
+    const onComplete = vi.fn();
+    const handled = await handleWireMemoryCronSentinel("__SKILL_SYNTHESIS__", { agentId: "agent-1", onComplete }, ctx);
+    expect(handled).toBe(true);
+    expect(mockRunSkillSynthesis).not.toHaveBeenCalled();
+    expect(mockCreateLlmSkillSynthesisAdapter).not.toHaveBeenCalled();
+    expect(onComplete).toHaveBeenCalledWith({ status: "ok" });
+  });
+
+  it("__SKILL_SYNTHESIS__ enabled → injects the adapters + source and runs runSkillSynthesis, emits learning:skill_synthesized", async () => {
+    const bundle = makeSkillSynthesisBundle();
+    const ctx = makeCtx({
+      agents: { "agent-1": { name: "Agent 1", provider: "anthropic", learningSkills: { enabled: true, autoAdmitReadOnly: true, minConfidence: 0.7, approval: { requireForMutating: true }, validation: { requireReproduction: true } } } },
+      apiKey: "test-key",
+      skillSynthesis: bundle,
+    });
+    const onComplete = vi.fn();
+    const handled = await handleWireMemoryCronSentinel("__SKILL_SYNTHESIS__", { agentId: "agent-1", onComplete }, ctx);
+    expect(handled).toBe(true);
+    expect(mockRunSkillSynthesis).toHaveBeenCalledOnce();
+    const arg = mockRunSkillSynthesis.mock.calls[0][0] as Record<string, unknown>;
+    // The injected closed-graph adapters (the daemon is the SOLE composition root).
+    expect(arg.learnedSkillStore).toBe(bundle!.learnedSkillStore);
+    expect(arg.approvalGate).toBe(bundle!.approvalGate);
+    expect(arg.synthesisAdapter).toBeDefined();
+    expect(arg.validationAdapter).toBeDefined();
+    // The LCD-merged source the daemon built (NOT sessionStore.listDetailed — DAG-empty).
+    expect(bundle!.buildSourceTrajectories).toHaveBeenCalledOnce();
+    expect(Array.isArray(arg.sourceTrajectories)).toBe(true);
+    // The daemon emits the counts DAEMON-SIDE after the job returns (synthesized: 2).
+    const emitted = (ctx.container.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]);
+    expect(emitted).toContain("learning:skill_synthesized");
+    expect(onComplete).toHaveBeenCalledWith({ status: "ok", error: undefined });
+  });
+
+  it("__SKILL_SYNTHESIS__ errors (no run) when fired without an agentId", async () => {
+    const ctx = makeCtx({ skillSynthesis: makeSkillSynthesisBundle() });
+    const onComplete = vi.fn();
+    await handleWireMemoryCronSentinel("__SKILL_SYNTHESIS__", { agentId: undefined, onComplete }, ctx);
+    expect(mockRunSkillSynthesis).not.toHaveBeenCalled();
+    expect(onComplete).toHaveBeenCalledWith({ status: "error", error: "No agentId for skill synthesis" });
   });
 });
