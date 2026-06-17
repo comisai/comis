@@ -34,6 +34,8 @@ import { success, error, info, json } from "../output/format.js";
 import { withSpinner } from "../output/spinner.js";
 import { renderTable, renderKeyValue } from "../output/table.js";
 import { confirm } from "../util/confirm.js";
+import { resolveOfflineDataDir } from "../util/offline-obs.js";
+import { readLearningStatsOffline } from "../util/offline-learning.js";
 
 /**
  * Register the `memory` subcommand group on the program.
@@ -196,6 +198,54 @@ export function registerMemoryCommand(program: Command): void {
         error(`Failed to fetch memory stats: ${msg}`);
         process.exit(1);
       }
+    });
+
+  // memory learning — OBS-02 (Phase 198) outcome-learning telemetry (coverage,
+  // volume by source, success/failure ratio per agent). Read OFFLINE from the
+  // local outcome_events ledger (~/.comis/memory.db): the CLI cannot import
+  // @comis/agent/@comis/skills (closed graph) and the daemon coverage gauge is
+  // not yet a queryable RPC, so the offline @comis/memory read is the sanctioned
+  // path. Counts/ids/closed-enums only — never a body/confidence/recalled id.
+  memory
+    .command("learning")
+    .description("Outcome-learning telemetry: coverage, volume by source, success/failure ratio")
+    .option("--format <format>", "Output format (table|json)", "table")
+    .action((options: { format: string }) => {
+      const stats = readLearningStatsOffline(resolveOfflineDataDir());
+      // Honest empty: learningOutcome is per-agent default-OFF — say WHY it is
+      // empty rather than render a misleading zeroed table.
+      if (stats === undefined || stats.totalRows === 0) {
+        if (options.format === "json") {
+          json({ totalRows: 0, totalTrajectories: 0, coverage: 0, perAgent: [] });
+          return;
+        }
+        info(
+          "No outcome events recorded yet — learningOutcome is default-off " +
+            "(enable agents.<id>.learningOutcome.enabled, gated by memory.costFeatures.enabled, to populate).",
+        );
+        return;
+      }
+      if (options.format === "json") {
+        json(stats);
+        return;
+      }
+      const pct = (n: number): string => `${(n * 100).toFixed(0)}%`;
+      info(
+        `Coverage: ${pct(stats.coverage)} (${stats.totalResolved}/${stats.totalTrajectories} ` +
+          `trajectories resolved · ${stats.totalRows} outcome rows)`,
+      );
+      renderTable(
+        ["Tenant", "Agent", "Trajectories", "Resolved", "Coverage", "Outcomes", "Sources"],
+        stats.perAgent.map((a) => [
+          a.tenantId,
+          a.agentId,
+          String(a.trajectories),
+          String(a.resolved),
+          pct(a.coverage),
+          Object.entries(a.outcomes).map(([k, v]) => `${k}:${v}`).join(" "),
+          Object.entries(a.sources).map(([k, v]) => `${k}:${v}`).join(" "),
+        ]),
+      );
     });
 
   // memory recall-trace <session> — inspect a session's recall trace.

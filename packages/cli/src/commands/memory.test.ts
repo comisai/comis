@@ -77,6 +77,7 @@ describe("registerMemoryCommand", () => {
       "export",
       "import",
       "inspect",
+      "learning",
       "observations",
       "pin",
       "recall-trace",
