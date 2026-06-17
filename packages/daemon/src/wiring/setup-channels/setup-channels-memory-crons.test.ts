@@ -18,11 +18,11 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const mockRunMemoryConsolidation = vi.hoisted(() => vi.fn(async () => ({ ok: true as const, value: undefined })));
+const mockRunMemoryConsolidation = vi.hoisted(() => vi.fn(async () => ({ ok: true as const, value: { generalized: 0, clustersConsidered: 0, durationMs: 0 } })));
 const mockReasonSeam = vi.hoisted(() => vi.fn(async () => ({ deductive: [], inductive: [] })));
 const mockCreateReasoningSeam = vi.hoisted(() => vi.fn(() => mockReasonSeam));
 const mockRunMemoryReasoning = vi.hoisted(() => vi.fn(async () => ({ ok: true as const, value: undefined })));
-const mockRunUserRepresentationBuild = vi.hoisted(() => vi.fn(async () => ({ ok: true as const, value: { built: 0, written: 0, blocked: 0 } })));
+const mockRunUserRepresentationBuild = vi.hoisted(() => vi.fn(async () => ({ ok: true as const, value: { built: 0, written: 0, blocked: 0, superseded: 0, corroborated: 0, inserted: 0, durationMs: 0 } })));
 const mockUserReprSeam = vi.hoisted(() => vi.fn(async () => []));
 const mockCreateUserRepresentationSeam = vi.hoisted(() => vi.fn(() => mockUserReprSeam));
 const mockRunRelationshipBuild = vi.hoisted(() => vi.fn(async () => ({ ok: true as const, value: { built: 0, written: 0, blocked: 0 } })));
@@ -150,10 +150,10 @@ beforeEach(() => {
     }
     return { capabilityClass } as any;
   });
-  mockRunMemoryConsolidation.mockResolvedValue({ ok: true as const, value: undefined });
+  mockRunMemoryConsolidation.mockResolvedValue({ ok: true as const, value: { generalized: 0, clustersConsidered: 0, durationMs: 0 } });
   mockRunMemoryReasoning.mockResolvedValue({ ok: true as const, value: undefined });
   mockCreateReasoningSeam.mockReturnValue(mockReasonSeam);
-  mockRunUserRepresentationBuild.mockResolvedValue({ ok: true as const, value: { built: 0, written: 0, blocked: 0 } });
+  mockRunUserRepresentationBuild.mockResolvedValue({ ok: true as const, value: { built: 0, written: 0, blocked: 0, superseded: 0, corroborated: 0, inserted: 0, durationMs: 0 } });
   mockCreateUserRepresentationSeam.mockReturnValue(mockUserReprSeam);
   mockRunRelationshipBuild.mockResolvedValue({ ok: true as const, value: { built: 0, written: 0, blocked: 0 } });
   mockCreateRelationshipSeam.mockReturnValue(mockRelationshipSeam);
@@ -760,5 +760,89 @@ describe("handleMemoryCronSentinel __MEMORY_LIFECYCLE__", () => {
     expect(mockCreateUsefulnessJudgeSeam).not.toHaveBeenCalled();
     expect(recordUsage).not.toHaveBeenCalled();
     expect(onComplete).toHaveBeenCalledWith({ status: "error", error: "No API key for anthropic" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// OBS-01/OBS-02 (Phase 203 Plan 05): the daemon-side learning:* emits +
+// config forwarding for user-model REVISION (__USER_REPRESENTATION__) and
+// GENERALIZATION (__MEMORY_CONSOLIDATION__). Mirrors the FORGET-06 daemon-emit
+// precedent (learning:memory_demoted/evicted): the job RETURNS counts in its
+// .value; the handler emits a PLAIN counts-only learning:* event + an INFO
+// completion line. COUNTS ONLY — no profile/memory body, entryType, or id ever
+// crosses the bus (§2.7 / SEC-01 / T-203-leak). PLAIN emit (never ?.) so the
+// EMIT_REGEX arch gate sees it (T-203-emit-evasion).
+// ---------------------------------------------------------------------------
+describe("handleMemoryCronSentinel — OBS-01/02 learning:* daemon emit + config forward (Phase 203)", () => {
+  it("REVISE/OBS-01: emits learning:user_model_revised (superseded/corroborated/inserted COUNTS only) from the user-rep build result", async () => {
+    mockRunUserRepresentationBuild.mockResolvedValue({
+      ok: true as const,
+      value: { built: 5, written: 4, blocked: 0, superseded: 2, corroborated: 1, inserted: 1, durationMs: 13 },
+    });
+    const ctx = makeCtx({
+      agents: { "agent-1": { name: "Agent 1", provider: "anthropic", memoryUserRepresentation: { enabled: true } } },
+      apiKey: "test-key",
+      inspectRows: [{ id: "m1", userId: "u1", content: "fact", trustLevel: "learned", source: { sessionKey: "s1" } }],
+    });
+    (ctx as any).userRepresentationStore = { upsert: vi.fn(), read: vi.fn(), revise: vi.fn(), asOf: vi.fn() };
+    const emit = (ctx.container as any).eventBus.emit as ReturnType<typeof vi.fn>;
+    await handleMemoryCronSentinel("__USER_REPRESENTATION__", { agentId: "agent-1", onComplete: vi.fn() }, ctx);
+    expect(emit).toHaveBeenCalledWith(
+      "learning:user_model_revised",
+      expect.objectContaining({ agentId: "agent-1", superseded: 2, corroborated: 1, inserted: 1 }),
+    );
+    // Counts only — the payload carries no profile content/entryType/source ids.
+    const payload = emit.mock.calls.find((c) => c[0] === "learning:user_model_revised")![1] as Record<string, unknown>;
+    expect(Object.keys(payload).sort()).toEqual(["agentId", "corroborated", "durationMs", "inserted", "superseded", "timestamp"]);
+  });
+
+  it("REVISE: forwards historyCap from memoryUserRepresentation config into the user-rep build call", async () => {
+    const ctx = makeCtx({
+      agents: { "agent-1": { name: "Agent 1", provider: "anthropic", memoryUserRepresentation: { enabled: true, historyCap: 25 } } },
+      apiKey: "test-key",
+      inspectRows: [{ id: "m1", userId: "u1", content: "fact", trustLevel: "learned", source: { sessionKey: "s1" } }],
+    });
+    (ctx as any).userRepresentationStore = { upsert: vi.fn(), read: vi.fn(), revise: vi.fn(), asOf: vi.fn() };
+    await handleMemoryCronSentinel("__USER_REPRESENTATION__", { agentId: "agent-1", onComplete: vi.fn() }, ctx);
+    expect(mockRunUserRepresentationBuild).toHaveBeenCalled();
+    const arg = mockRunUserRepresentationBuild.mock.calls[0][0] as { config: Record<string, unknown> };
+    expect(arg.config.historyCap).toBe(25);
+  });
+
+  it("GENERAL/OBS-01: emits learning:memory_generalized (generalized/clustersConsidered COUNTS only) from the consolidation result", async () => {
+    mockRunMemoryConsolidation.mockResolvedValue({
+      ok: true as const,
+      value: { generalized: 2, clustersConsidered: 5, durationMs: 21 },
+    });
+    const ctx = makeCtx({
+      agents: { "agent-1": { name: "Agent 1", provider: "anthropic", memoryConsolidation: { enabled: true } } },
+      apiKey: "test-key",
+    });
+    const emit = (ctx.container as any).eventBus.emit as ReturnType<typeof vi.fn>;
+    await handleMemoryCronSentinel("__MEMORY_CONSOLIDATION__", { agentId: "agent-1", onComplete: vi.fn() }, ctx);
+    expect(emit).toHaveBeenCalledWith(
+      "learning:memory_generalized",
+      expect.objectContaining({ agentId: "agent-1", generalized: 2, clustersConsidered: 5 }),
+    );
+    // Counts only — the payload carries no memory body/source ids.
+    const payload = emit.mock.calls.find((c) => c[0] === "learning:memory_generalized")![1] as Record<string, unknown>;
+    expect(Object.keys(payload).sort()).toEqual(["agentId", "clustersConsidered", "durationMs", "generalized", "timestamp"]);
+  });
+
+  it("GENERAL: forwards the full memoryConsolidation config (incl. generalize) into runMemoryConsolidation", async () => {
+    const ctx = makeCtx({
+      agents: {
+        "agent-1": {
+          name: "Agent 1",
+          provider: "anthropic",
+          memoryConsolidation: { enabled: true, generalize: { enabled: true, minDistinctContexts: 3 } },
+        },
+      },
+      apiKey: "test-key",
+    });
+    await handleMemoryCronSentinel("__MEMORY_CONSOLIDATION__", { agentId: "agent-1", onComplete: vi.fn() }, ctx);
+    expect(mockRunMemoryConsolidation).toHaveBeenCalled();
+    const arg = mockRunMemoryConsolidation.mock.calls[0][0] as { config: Record<string, unknown> };
+    expect(arg.config).toEqual(expect.objectContaining({ generalize: { enabled: true, minDistinctContexts: 3 } }));
   });
 });

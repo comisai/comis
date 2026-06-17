@@ -21,6 +21,8 @@ import {
   accumulateSkillInvokedRecord,
   accumulateSkillValidatedRecord,
   accumulateSkillSynthesizedRecord,
+  accumulateUserModelRevisedRecord,
+  accumulateMemoryGeneralizedRecord,
   buildLearningSignal,
 } from "./obs-explain-signal-folds.js";
 
@@ -132,5 +134,71 @@ describe("obs-explain-signal-folds — EXTENDED learning fold (OBS-02, P2 skills
     expect(json).not.toContain("secret-procedure");
     expect(json).not.toContain("hunter2");
     expect(json).not.toContain("leak-me");
+  });
+
+  // -------------------------------------------------------------------------
+  // OBS-02 (Phase 203 Plan 05): the user-model-revision + generalization counts
+  // fold into IncidentSignals.learning.{userModelRevised, memoriesGeneralized}
+  // from the bridged learning.user_model_revised / learning.memory_generalized
+  // trajectory records. COUNTS ONLY — a profile/memory body never crosses.
+  // -------------------------------------------------------------------------
+  it("REVISE/OBS-02: a learning.user_model_revised record folds superseded+corroborated+inserted into userModelRevised", () => {
+    const state = emptyLearningFold();
+    accumulateUserModelRevisedRecord(state, { superseded: 2, corroborated: 1, inserted: 3, durationMs: 11 });
+    const sig = buildLearningSignal(state);
+    expect(sig).toBeDefined();
+    // The revision activity count = the total slots touched this run (2 + 1 + 3).
+    expect(sig!.userModelRevised).toBe(6);
+  });
+
+  it("GENERAL/OBS-02: a learning.memory_generalized record folds generalized into memoriesGeneralized", () => {
+    const state = emptyLearningFold();
+    accumulateMemoryGeneralizedRecord(state, { generalized: 2, clustersConsidered: 5, durationMs: 9 });
+    const sig = buildLearningSignal(state);
+    expect(sig).toBeDefined();
+    expect(sig!.memoriesGeneralized).toBe(2);
+  });
+
+  it("a revision/generalization record alone (no outcome) STILL yields a learning block (count bumped)", () => {
+    const revOnly = emptyLearningFold();
+    accumulateUserModelRevisedRecord(revOnly, { superseded: 1, corroborated: 0, inserted: 0 });
+    expect(buildLearningSignal(revOnly)).toBeDefined();
+    const genOnly = emptyLearningFold();
+    accumulateMemoryGeneralizedRecord(genOnly, { generalized: 1, clustersConsidered: 2 });
+    expect(buildLearningSignal(genOnly)).toBeDefined();
+  });
+
+  it("the revision/generalization counts are omitted when zero (no field churn on the frozen fixtures)", () => {
+    // A non-revision learning session (only a skill record) must NOT gain the new
+    // optional counts — they are present only when the activity actually happened.
+    const state = emptyLearningFold();
+    accumulateSkillInvokedRecord(state, { skillName: "s1" });
+    accumulateLearningRecord(state, { outcome: "success", source: "tool" });
+    const sig = buildLearningSignal(state);
+    expect(sig).toBeDefined();
+    expect(sig!.userModelRevised).toBeUndefined();
+    expect(sig!.memoriesGeneralized).toBeUndefined();
+  });
+
+  it("the revision/generalization fold is content-free — a smuggled body/entryType never reaches the block (SEC-01)", () => {
+    const state = emptyLearningFold();
+    accumulateUserModelRevisedRecord(state, {
+      superseded: 1,
+      corroborated: 0,
+      inserted: 0,
+      content: "prefers espresso every morning",
+      entryType: "preference",
+      sourceIds: ["mem-42"],
+    } as Record<string, unknown>);
+    accumulateMemoryGeneralizedRecord(state, {
+      generalized: 1,
+      clustersConsidered: 2,
+      body: "the generalized semantic memory",
+    } as Record<string, unknown>);
+    const json = JSON.stringify(buildLearningSignal(state));
+    expect(json).not.toContain("espresso");
+    expect(json).not.toContain("preference");
+    expect(json).not.toContain("mem-42");
+    expect(json).not.toContain("semantic memory");
   });
 });

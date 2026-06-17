@@ -1026,6 +1026,24 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       count: 1,
       timestamp: 1000,
     },
+    // REVISE-/GENERAL- (Phase 203): the user-model-revision + generalization telemetry
+    // (daemon-side emit) — COUNTS ONLY (superseded/corroborated/inserted + generalized/
+    // clustersConsidered + durationMs); never a profile/memory body or an entry id.
+    "learning:user_model_revised": {
+      agentId: "default",
+      superseded: 1,
+      corroborated: 2,
+      inserted: 3,
+      durationMs: 7,
+      timestamp: 1000,
+    },
+    "learning:memory_generalized": {
+      agentId: "default",
+      generalized: 1,
+      clustersConsidered: 4,
+      durationMs: 9,
+      timestamp: 1000,
+    },
     "background_task:promoted": {
       agentId: "default",
       taskId: "t-1",
@@ -3151,7 +3169,7 @@ describe("attachTrajectoryToEventBus -- dedup events", () => {
 // ---------------------------------------------------------------------------
 
 describe("health:budget_exceeded entry (bridge entry count guard)", () => {
-  it("bridge entry count is exactly 95 (+3 T2.2 background_task promoted/completed/failed; +2 D3 breaker + 1 D7 offload Phase 151; +1 session:summary Phase 152; +1 context:budget_computed W2; +1 execution:tool_schema_unsupported Phase 175; +2 OBS-01 script signals Phase 180; +2 RECALL-01 memory:recalled/reranked; +1 GENQ-01 memory:generation_quality; +4 OBS-04 image:* Phase 186; +3 media.vision:* VIS-04 Phase 187; +5 video:* OBS-04 Phase 192; +6 voice media.stt/tts:* OBS-02/03 Phase 196; +1 OUTCOME-08 learning:outcome_observed v2.26 Phase 198; +3 RANK-06/FORGET-06 memory:online_tuning_applied + learning:memory_demoted/evicted v2.26 Phase 200; +2 SKILL-09 learning:skill_synthesized/skill_validated v2.26 Phase 201; +2 SURFACE-06 learning:skill_promoted/demoted v2.26 Phase 202)", () => {
+  it("bridge entry count is exactly 97 (+3 T2.2 background_task promoted/completed/failed; +2 D3 breaker + 1 D7 offload Phase 151; +1 session:summary Phase 152; +1 context:budget_computed W2; +1 execution:tool_schema_unsupported Phase 175; +2 OBS-01 script signals Phase 180; +2 RECALL-01 memory:recalled/reranked; +1 GENQ-01 memory:generation_quality; +4 OBS-04 image:* Phase 186; +3 media.vision:* VIS-04 Phase 187; +5 video:* OBS-04 Phase 192; +6 voice media.stt/tts:* OBS-02/03 Phase 196; +1 OUTCOME-08 learning:outcome_observed v2.26 Phase 198; +3 RANK-06/FORGET-06 memory:online_tuning_applied + learning:memory_demoted/evicted v2.26 Phase 200; +2 SKILL-09 learning:skill_synthesized/skill_validated v2.26 Phase 201; +2 SURFACE-06 learning:skill_promoted/demoted v2.26 Phase 202; +2 REVISE-/GENERAL- learning:user_model_revised/memory_generalized v2.26 Phase 203)", () => {
     // 55 + tool:breaker_opened + tool:breaker_reset (D3) + tool:result_offloaded (D7)
     // + session:summary (F2/D5, Phase 152)
     // + execution:tool_schema_unsupported (GBNF-02, Phase 175 Plan 05)
@@ -3179,7 +3197,11 @@ describe("health:budget_exceeded entry (bridge entry count guard)", () => {
     // + learning:skill_promoted + learning:skill_demoted (SURFACE-06, v2.26 Verified Learning
     //   WS2, Phase 202 Plan 03 — APPEND-ONLY; the daemon-side promote/demote telemetry, count
     //   ONLY, NEVER an id-list / procedure body / script — SEC-01).
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(95);
+    // + learning:user_model_revised + learning:memory_generalized (REVISE-/GENERAL-, v2.26
+    //   Verified Learning WS6/WS7, Phase 203 Plan 05 — APPEND-ONLY; the daemon-side user-model-
+    //   revision + generalization telemetry, COUNTS ONLY (superseded/corroborated/inserted +
+    //   generalized/clustersConsidered), NEVER a profile / memory body / entry id — SEC-01).
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(97);
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {
@@ -3438,6 +3460,94 @@ describe("SURFACE-06 learning:skill_promoted / skill_demoted (counts-only, bridg
     expect(Object.keys(data)).toEqual(["count"]);
     for (const k of Object.keys(data)) {
       expect(k, `payload key ${k} must not name a body/script/id-list`).not.toMatch(/body|script|skillids|finding|content/i);
+    }
+  });
+});
+
+describe("REVISE-/GENERAL- learning:user_model_revised / memory_generalized (counts-only, bridged)", () => {
+  it("both keys are in TRAJECTORY_BRIDGE_MAPPING with the canonical dotted names", () => {
+    const mapping = TRAJECTORY_BRIDGE_MAPPING as Record<string, string>;
+    expect(mapping["learning:user_model_revised"]).toBe("learning.user_model_revised");
+    expect(mapping["learning:memory_generalized"]).toBe("learning.memory_generalized");
+  });
+
+  it("TRAJECTORY_EVENT_TYPES includes both new dotted trajectory types", () => {
+    const types = Array.from(TRAJECTORY_EVENT_TYPES as readonly string[]);
+    expect(types).toContain("learning.user_model_revised");
+    expect(types).toContain("learning.memory_generalized");
+  });
+
+  it("learning:user_model_revised → learning.user_model_revised carries the revision COUNTS only (correlation ids stripped, no profile body)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("learning:user_model_revised", {
+      agentId: "default",
+      superseded: 1,
+      corroborated: 2,
+      inserted: 3,
+      durationMs: 7,
+      timestamp: 1000,
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("learning.user_model_revised");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data).toEqual({ superseded: 1, corroborated: 2, inserted: 3, durationMs: 7 });
+    // Correlation ids are envelope-only — never echoed into data.
+    expect(data.agentId).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("learning:memory_generalized → learning.memory_generalized carries the generalization COUNTS only (correlation ids stripped, no memory body)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("learning:memory_generalized", {
+      agentId: "default",
+      generalized: 1,
+      clustersConsidered: 4,
+      durationMs: 9,
+      timestamp: 1000,
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("learning.memory_generalized");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data).toEqual({ generalized: 1, clustersConsidered: 4, durationMs: 9 });
+    expect(data.agentId).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("never forwards a profile/memory body, entryType, or sourceId even if present on the payload (SEC-01 firewall)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("learning:user_model_revised", {
+      agentId: "default",
+      superseded: 1,
+      corroborated: 0,
+      inserted: 0,
+      durationMs: 5,
+      // hostile extras that MUST NOT cross into the trajectory:
+      content: "prefers espresso every morning",
+      body: "the revised profile entry",
+      entryType: "preference",
+      sourceId: "mem-42",
+      sourceIds: ["mem-42", "mem-43"],
+      timestamp: 1000,
+    } as never);
+
+    expect(recorder.calls).toHaveLength(1);
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data).toEqual({ superseded: 1, corroborated: 0, inserted: 0, durationMs: 5 });
+    for (const k of Object.keys(data)) {
+      expect(k, `payload key ${k} must not name a body/content/entryType/sourceId`).not.toMatch(
+        /body|content|entrytype|sourceid/i,
+      );
     }
   });
 });
