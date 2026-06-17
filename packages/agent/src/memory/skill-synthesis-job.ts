@@ -232,7 +232,7 @@ function distinctSenderCardinality(members: SynthesisSourceTrajectory[]): number
   const seen = new Set<string>();
   for (const m of members) {
     // session_id + sender — repeating one (session, sender) N times counts once.
-    seen.add(`${m.sessionId} ${m.sender}`);
+    seen.add(`${m.sessionId} ${m.sender}`);
   }
   return seen.size;
 }
