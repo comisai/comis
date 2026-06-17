@@ -225,6 +225,7 @@ export async function setupAgents(deps: {
    *  setup-memory on the shared db. */
   tunedAlphaStore?: import("@comis/core").TunedAlphaStore;
   learnedSkillStore?: import("@comis/core").LearnedSkillStorePort; // v2.26 SURFACE-01/03: forwarded into each SingleAgentDeps -> the getPromptSkillsXml surface seam; segregated port TYPE (agent↛memory cut); default-OFF
+  learnedSkillSurfaceRegistry?: import("./learned-skill-surface-registry.js").LearnedSkillSurfaceRegistry; // WR-01: shared per-agent surface registry; each agent registers its refresh closure so the promote/demote loop re-refreshes it (next-session pickup)
   /** Delivery mirror port for session mirroring injection */
   deliveryMirror?: import("@comis/core").DeliveryMirrorPort;
   /** Delivery mirror config for injection budget */
@@ -465,9 +466,8 @@ export async function setupAgents(deps: {
     pinnedStore: deps.pinnedStore,
     provenanceStore: deps.provenanceStore,
     userRepresentationStore: deps.userRepresentationStore,
-    relationshipStore: deps.relationshipStore,
-    tunedAlphaStore: deps.tunedAlphaStore,
-    learnedSkillStore: deps.learnedSkillStore,
+    relationshipStore: deps.relationshipStore, tunedAlphaStore: deps.tunedAlphaStore,
+    learnedSkillStore: deps.learnedSkillStore, learnedSkillSurfaceRegistry: deps.learnedSkillSurfaceRegistry,
     deliveryMirror: deps.deliveryMirror,
     deliveryMirrorConfig: deps.deliveryMirrorConfig,
     geminiCacheManager: deps.geminiCacheManager,

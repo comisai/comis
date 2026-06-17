@@ -277,6 +277,8 @@ export async function setupMemory(deps: {
   clock: import("@comis/core").ClockPort;
   /** setTimeout scheduling (TimerPort) — the reaction trajectory map + rate limiter need it (REACT-02/03). */
   timers: import("@comis/core").TimerPort;
+  /** WR-01: shared per-agent learned-skill SURFACE registry — forwarded into setupLearningOutcomeWiring so the promote/demote loop can re-refresh an agent's surface (next-session pickup). */
+  learnedSkillSurfaceRegistry?: import("./setup-agents/learned-skill-surface-registry.js").LearnedSkillSurfaceRegistry;
 }): Promise<MemoryResult> {
   const { container, memoryLogger, clock, timers } = deps;
   const memoryConfig = container.config.memory;
@@ -633,18 +635,16 @@ export async function setupMemory(deps: {
   setupLearningOutcomeWiring({
     eventBus: container.eventBus,
     outcomeStore, learnedSkillStore,
-    usefulnessStore,
-    clock,
+    usefulnessStore, clock,
     logger: memoryLogger,
     config: container.config,
+    learnedSkillSurfaceRegistry: deps.learnedSkillSurfaceRegistry,
   });
 
-  // 6.5.2f''. Reaction + correction outcome wiring (Verified Learning WS1, Phase 199 — the
-  // corroborating sources) behind the byte-identity gate; bulk lives in the co-located helper.
+  // 6.5.2f''. Reaction + correction outcome wiring (Verified Learning WS1, Phase 199 — the corroborating sources) behind the byte-identity gate; bulk lives in the co-located helper.
   const reactionWiring = buildReactionWiringDeps(
     { config: container.config, secretManager: container.secretManager, eventBus: container.eventBus, outcomeStore, logger: memoryLogger },
-    clock, timers,
-  );
+    clock, timers);
   wireLearningReactions(reactionWiring.deps);
   wireLearningCorrection(reactionWiring.deps);
   const recordOutboundMessage = reactionWiring.recordOutboundMessage;

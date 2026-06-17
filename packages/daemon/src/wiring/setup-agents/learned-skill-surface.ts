@@ -240,12 +240,30 @@ export function createLearnedSkillSurfaceCache(args: {
   workspaceDir: string;
   logger: ComisLogger;
 }): { readonly current: readonly LearnedSkill[] } {
+  return createRefreshableLearnedSkillSurface(args).cache;
+}
+
+/**
+ * WR-01: the cache PLUS a reusable `refresh()` that re-runs the async
+ * list→materialize→cache and updates `cache.current` in place. The boot refresh
+ * fires once here (fire-and-forget); the resolve-seam loop calls `refresh()` again
+ * after a promote/demote moved a row, so the NEXT session's freeze captures the new
+ * active set (SURFACE-03: it mutates `cache.current`, NOT an already-frozen
+ * snapshot). Default-off / no store ⇒ each refresh resolves to `[]` and writes
+ * nothing (byte-identical). Both the boot refresh and `refresh()` are non-fatal.
+ */
+export function createRefreshableLearnedSkillSurface(args: {
+  learnedSkillStore: LearnedSkillStorePort | undefined;
+  scope: LearningScope;
+  workspaceDir: string;
+  logger: ComisLogger;
+}): { cache: { readonly current: readonly LearnedSkill[] }; refresh: () => Promise<void> } {
   const cache: { current: readonly LearnedSkill[] } = { current: [] };
-  suppressError(
-    refreshLearnedSkillSurface(args).then((surfaced) => {
-      cache.current = surfaced;
-    }),
-    "learned-skill surface boot refresh",
-  );
-  return cache;
+  const refresh = async (): Promise<void> => {
+    cache.current = await refreshLearnedSkillSurface(args);
+  };
+  // Boot refresh (fire-and-forget): until it resolves (and when it fails-closed)
+  // `.current` is `[]`, so the listing is platform-only (byte-identical).
+  suppressError(refresh(), "learned-skill surface boot refresh");
+  return { cache, refresh };
 }

@@ -24,7 +24,9 @@ import {
   materializeLearnedSkills,
   renderLearnedSkillsXml,
   refreshLearnedSkillSurface,
+  createRefreshableLearnedSkillSurface,
 } from "./learned-skill-surface.js";
+import { createLearnedSkillSurfaceRegistry, wireAgentLearnedSkillSurface } from "./learned-skill-surface-registry.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -326,5 +328,172 @@ describe("refreshLearnedSkillSurface — async list + materialize + cache", () =
     const absent = makeStore(ok([]));
     await refreshLearnedSkillSurface({ learnedSkillStore: absent, scope, workspaceDir: workDir, logger: noopLogger });
     expect(existsSync(file)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WR-01: createRefreshableLearnedSkillSurface — a re-refresh after a promote
+// picks up the newly-active skill on the NEXT listing (SURFACE-03: it updates
+// cache.current; the next freeze reads it). Without the re-refresh the boot
+// snapshot is the only one a daemon ever sees → a promoted skill never surfaces.
+// ---------------------------------------------------------------------------
+
+/** A registry-backed SkillRegistry stub so renderLearnedSkillsXml can merge. */
+function makeRegistryForSurface(): import("@comis/skills").SkillRegistry {
+  return makeRegistry([platform("P1")]);
+}
+
+describe("WR-01: createRefreshableLearnedSkillSurface re-refresh picks up a promoted skill", () => {
+  it("a promote (list() now returns the skill active) surfaces it on a subsequent refresh()", async () => {
+    // list() starts empty (the skill is candidate → filtered), then returns it ACTIVE
+    // after a 'promote' — exactly the transition the resolve-seam loop drives.
+    let listed: LearnedSkill[] = [];
+    const store = {
+      admit: async () => ok({ id: "x", admitted: true }),
+      get: async () => ok(undefined),
+      list: async () => ok(listed),
+      promote: async () => ok(undefined),
+      demote: async () => ok(undefined),
+      promoteByName: async () => ok({ changed: true }),
+      demoteByName: async () => ok({ changed: true }),
+      evict: async () => ok(undefined),
+    } as unknown as LearnedSkillStorePort;
+
+    const reg = makeRegistryForSurface();
+    const { cache, refresh } = createRefreshableLearnedSkillSurface({
+      learnedSkillStore: store,
+      scope,
+      workspaceDir: workDir,
+      logger: noopLogger,
+    });
+    await refresh(); // boot-equivalent: nothing active yet
+    expect(renderLearnedSkillsXml({ skillRegistry: reg, learnedSkills: cache.current, workspaceDir: workDir })).not.toContain(
+      "<name>promoted-skill</name>",
+    );
+
+    // The promote happens (the skill is now active in the store) → re-refresh.
+    listed = [learned({ name: "promoted-skill", state: "active" })];
+    await refresh();
+
+    // The NEXT listing now includes the promoted skill (cache.current was updated).
+    const xml = renderLearnedSkillsXml({ skillRegistry: reg, learnedSkills: cache.current, workspaceDir: workDir });
+    expect(xml).toContain("<name>promoted-skill</name>");
+    expect(cache.current.some((s) => s.name === "promoted-skill")).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WR-01: the surface registry routes a refresh(agentId) to the registered
+// agent's refresh closure; an unregistered (default-off) agent is a no-op.
+// ---------------------------------------------------------------------------
+
+describe("createLearnedSkillSurfaceRegistry — per-agent refresh routing", () => {
+  it("refresh(agentId) fires the registered agent's refresh closure", async () => {
+    const registry = createLearnedSkillSurfaceRegistry();
+    let refreshed = 0;
+    registry.register("agent-A", { refresh: async () => void (refreshed += 1) });
+    registry.refresh("agent-A");
+    // refresh is fire-and-forget — let the microtask settle.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(refreshed).toBe(1);
+  });
+
+  it("refresh(agentId) for an UNREGISTERED (default-off) agent is a no-op (never throws)", () => {
+    const registry = createLearnedSkillSurfaceRegistry();
+    expect(() => registry.refresh("unknown-agent")).not.toThrow();
+  });
+
+  it("unregister(agentId) drops the agent so a later refresh is a no-op", async () => {
+    const registry = createLearnedSkillSurfaceRegistry();
+    let refreshed = 0;
+    registry.register("agent-B", { refresh: async () => void (refreshed += 1) });
+    registry.unregister("agent-B");
+    registry.refresh("agent-B");
+    await Promise.resolve();
+    expect(refreshed).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WR-03: wireAgentLearnedSkillSurface gating — default-off (enabled:false) does
+// ZERO surface work: NO store list(), NO .learned-skills materialize/rmSync, and
+// .current is []. Enabled wires the cache + registers it.
+// ---------------------------------------------------------------------------
+
+describe("wireAgentLearnedSkillSurface — WR-03 default-off does no surface work", () => {
+  it("enabled:false → no list() call, no .learned-skills dir touched, .current is []", async () => {
+    let listCalls = 0;
+    const store = {
+      admit: async () => ok({ id: "x", admitted: true }),
+      get: async () => ok(undefined),
+      list: async () => {
+        listCalls += 1;
+        return ok([learned({ name: "would-surface", state: "active" })]);
+      },
+      promote: async () => ok(undefined),
+      demote: async () => ok(undefined),
+      promoteByName: async () => ok({ changed: true }),
+      demoteByName: async () => ok({ changed: true }),
+      evict: async () => ok(undefined),
+    } as unknown as LearnedSkillStorePort;
+    const registry = createLearnedSkillSurfaceRegistry();
+
+    const cache = wireAgentLearnedSkillSurface({
+      enabled: false, // WR-03: gated OFF
+      agentId: "a1",
+      learnedSkillStore: store,
+      scope,
+      workspaceDir: workDir,
+      logger: noopLogger,
+      registry,
+    });
+    // Let any (erroneous) async boot refresh settle.
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(listCalls).toBe(0); // NO store read when default-off
+    expect(cache.current).toEqual([]); // platform-only (byte-identical)
+    expect(existsSync(safePath(workDir, ".learned-skills"))).toBe(false); // NO rmSync/materialize of the dir
+    // An unregistered (default-off) agent → refresh is a no-op (it never registered).
+    expect(() => registry.refresh("a1")).not.toThrow();
+  });
+
+  it("enabled:true → wires the cache (boot refresh runs list()) and registers it for re-refresh", async () => {
+    let listCalls = 0;
+    const store = {
+      admit: async () => ok({ id: "x", admitted: true }),
+      get: async () => ok(undefined),
+      list: async () => {
+        listCalls += 1;
+        return ok([learned({ name: "surfaced", state: "active" })]);
+      },
+      promote: async () => ok(undefined),
+      demote: async () => ok(undefined),
+      promoteByName: async () => ok({ changed: true }),
+      demoteByName: async () => ok({ changed: true }),
+      evict: async () => ok(undefined),
+    } as unknown as LearnedSkillStorePort;
+    const registry = createLearnedSkillSurfaceRegistry();
+
+    const cache = wireAgentLearnedSkillSurface({
+      enabled: true,
+      agentId: "a1",
+      learnedSkillStore: store,
+      scope,
+      workspaceDir: workDir,
+      logger: noopLogger,
+      registry,
+    });
+    // Settle the boot refresh.
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+
+    expect(listCalls).toBeGreaterThanOrEqual(1); // boot refresh read the store
+    expect(cache.current.some((s) => s.name === "surfaced")).toBe(true);
+    // Registered → a registry refresh fires the agent's closure (re-reads list()).
+    const before = listCalls;
+    registry.refresh("a1");
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    expect(listCalls).toBeGreaterThan(before);
   });
 });

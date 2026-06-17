@@ -352,24 +352,20 @@ interface SkillOutcomeDeps {
   skillFailureCorroborationTally: Map<string, Set<string>>;
   /** WR-05: the decay-aware trend tracker (keyed on the SAME scope-qualified key). */
   skillTrend: SkillTrendTracker;
-  /**
-   * WR-01: refresh the per-agent surface cache after a promote/demote actually moved a
-   * row, so the NEXT session's prompt-skills freeze captures the new active set
-   * (SURFACE-03: next-SESSION pickup, never a mid-session mutation of a frozen
-   * snapshot). Absent (a pre-Plan-05 caller / no registry) ⇒ no refresh.
-   */
+  /** WR-01: refresh the per-agent surface cache after a promote/demote moved a row, so
+   *  the NEXT session's freeze captures the new active set (SURFACE-03 next-session
+   *  pickup, never a frozen-snapshot mutation). Absent ⇒ no refresh. */
   refreshSurface?: (agentId: string) => void;
 }
 
 /**
  * SURFACE-04/05/06 + OBS-01 — the resolve-seam learned-skill promote/demote body,
  * fire-and-forget / non-fatal. AWAITS the name-keyed store transition to read
- * rows-changed (CR-01: the loop holds skill NAMES, not the hash id; the store
- * resolves name→id internally AND reports whether a row moved) and increments the
- * counter + emits ONLY when a row actually transitioned (so the telemetry stops
- * lying about 0-row writes). Scope-qualifies the corroboration/trend keys (WR-05).
- * On a real transition it refreshes the per-agent surface cache (WR-01) so the next
- * session sees the change. NEVER throws out of the handler (each store call is
+ * rows-changed (CR-01: the loop holds skill NAMES, not the hash id; the store resolves
+ * name→id internally AND reports whether a row moved) and increments the counter +
+ * emits ONLY when a row actually transitioned (the telemetry stops lying about 0-row
+ * writes). Scope-qualifies the corroboration/trend keys (WR-05). On a real transition
+ * it refreshes the per-agent surface cache (WR-01). NEVER throws (each store call is
  * wrapped; a reject/err WARNs and is skipped).
  */
 async function applySkillOutcomeTransitions(
@@ -416,12 +412,8 @@ async function applySkillOutcomeTransitions(
   // SURFACE-06 emits — plain eventBus.emit (Plan 03 typed the keys + bridged them).
   // COUNTS ONLY — a body/script/id-list field is a compile error. Emitted ONLY on a
   // REAL transition count (CR-01: a 0-row write never reaches here).
-  if (promoted > 0) {
-    deps.eventBus.emit("learning:skill_promoted", { agentId: scope.agentId, count: promoted, timestamp: deps.clock.now() });
-  }
-  if (demoted > 0) {
-    deps.eventBus.emit("learning:skill_demoted", { agentId: scope.agentId, count: demoted, timestamp: deps.clock.now() });
-  }
+  if (promoted > 0) deps.eventBus.emit("learning:skill_promoted", { agentId: scope.agentId, count: promoted, timestamp: deps.clock.now() });
+  if (demoted > 0) deps.eventBus.emit("learning:skill_demoted", { agentId: scope.agentId, count: demoted, timestamp: deps.clock.now() });
   // OBS-01: one INFO completion line per resolve that moved a skill, with durationMs
   // (counts/ids only — never a procedure body).
   if (promoted > 0 || demoted > 0) {
@@ -437,9 +429,9 @@ async function applySkillOutcomeTransitions(
 
 /**
  * Run one name-keyed skill transition, non-fatal, returning whether a row changed.
- * Mirrors {@link recordNonFatal} (WARNs with hint+errorKind on err/reject) but reads
- * the `{ changed }` result so the caller can gate the counter/emit on a REAL row
- * move. A reject or err yields `false` (treated as "did not transition").
+ * Mirrors {@link recordNonFatal} (WARNs with hint+errorKind on err/reject) but reads the
+ * `{ changed }` result so the caller gates the counter/emit on a REAL row move. A
+ * reject or err yields `false` (treated as "did not transition").
  */
 async function runSkillTransition(
   deps: LearningOutcomeWiringDeps,
@@ -746,6 +738,14 @@ export interface SetupLearningOutcomeDeps {
   logger: ComisLogger;
   /** The parsed app config — the source of the master cost switch + per-agent flag. */
   config: AppConfig;
+  /**
+   * WR-01: the shared per-agent learned-skill SURFACE registry (created in daemon.ts,
+   * also threaded into setupAgents where each agent registers its refresh closure). The
+   * resolve-seam promote/demote loop calls `refresh(agentId)` on it after a real
+   * transition so the next session sees the new active set. OPTIONAL — absent ⇒ no
+   * re-refresh (the boot snapshot stands; byte-identical for non-surfacing agents).
+   */
+  learnedSkillSurfaceRegistry?: import("./setup-agents/learned-skill-surface-registry.js").LearnedSkillSurfaceRegistry;
 }
 
 /**
@@ -787,5 +787,10 @@ export function setupLearningOutcomeWiring(deps: SetupLearningOutcomeDeps): void
       costFeaturesEnabled && agents[agentId]?.learningSkills?.enabled === true,
     learningSkillsPromoteAt: (agentId: string): number =>
       agents[agentId]?.learningSkills?.promoteAtProofCount ?? 3,
+    // WR-01: route a post-transition re-refresh to the agent's surface cache (a no-op
+    // for an unregistered/default-off agent). Undefined registry ⇒ undefined closure.
+    refreshLearnedSkillSurface: deps.learnedSkillSurfaceRegistry
+      ? (agentId: string): void => deps.learnedSkillSurfaceRegistry!.refresh(agentId)
+      : undefined,
   });
 }

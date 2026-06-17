@@ -54,7 +54,8 @@ import { resolveLeanDescriptionsForAgent, buildSharedConvertTools } from "./setu
 import { runBootWindowHonestyChecks } from "./setup-agents-boot-window.js";
 import { createAcpWiring } from "./setup-acp-wiring.js";
 import { wireAuthProvider } from "./setup-agents-oauth.js";
-import { renderLearnedSkillsXml, createLearnedSkillSurfaceCache } from "./learned-skill-surface.js";
+import { renderLearnedSkillsXml } from "./learned-skill-surface.js";
+import { wireAgentLearnedSkillSurface } from "./learned-skill-surface-registry.js";
 import type { SingleAgentDeps, SingleAgentResult } from "./setup-agents-types.js";
 // Re-export types so consumers preserve the historic import shape (parity-tests + setup-agents.test.ts inspect by name).
 export type { SingleAgentDeps, SingleAgentResult } from "./setup-agents-types.js";
@@ -326,9 +327,8 @@ export async function setupSingleAgent(
     eligibilityContext,  // Runtime eligibility context
   );
   skillRegistry.init();
-
-  // SURFACE-01/03 (v2.26): per-agent cache of promoted read-only learned procedures, refreshed out-of-band (the sync seam reads `.current`); default-OFF byte-identity.
-  const learnedSurface = createLearnedSkillSurfaceCache({ learnedSkillStore: deps.learnedSkillStore, scope: { tenantId: container.config.tenantId, agentId }, workspaceDir: dir, logger: perAgentLogger });
+  // SURFACE-01/03 (v2.26): per-agent cache of promoted read-only learned procedures, refreshed out-of-band (the sync seam reads `.current`). WR-03: gated on learningSkills.enabled × the master cost switch so default-OFF does ZERO surface work (no list()/rmSync) and stays byte-identical; WR-01: registers its refresh so the promote/demote loop re-refreshes it (next-session pickup).
+  const learnedSurface = wireAgentLearnedSkillSurface({ enabled: container.config.memory?.costFeatures?.enabled !== false && effectiveConfig.learningSkills?.enabled === true, agentId, learnedSkillStore: deps.learnedSkillStore, scope: { tenantId: container.config.tenantId, agentId }, workspaceDir: dir, logger: perAgentLogger, registry: deps.learnedSkillSurfaceRegistry });
 
   // Per-agent ToolCapabilityPort adapter. Construction sits here so the adapter can close
   // over this agent's skillRegistry; reused by pi-executor (capability-index renderer) AND

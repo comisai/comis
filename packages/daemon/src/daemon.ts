@@ -217,7 +217,7 @@ import {
   loadContinuations,
   buildMcpStatusLine,
 } from "./wiring/restart-continuation.js";
-import { setupSingleAgent } from "./wiring/setup-agents/index.js";
+import { setupSingleAgent, createLearnedSkillSurfaceRegistry } from "./wiring/setup-agents/index.js";
 import { buildDialecticWiring, dialecticWiringDepsFromBoot } from "./wiring/setup-dialectic.js";
 import { createConversationReset } from "./wiring/conversation-reset.js";
 import { setupSecretManager } from "./wiring/setup-secret-manager.js";
@@ -1475,6 +1475,11 @@ async function bootFoundation(
     container, logger, daemonLogger, _createProcessMonitor,
   });
 
+  // WR-01: the shared per-agent learned-skill SURFACE registry — created BEFORE the memory
+  // wiring (which stands up the promote/demote loop) and threaded into BOTH it and setupAgents,
+  // so a promote/demote can re-refresh the agent that registered its surface cache.
+  const learnedSkillSurfaceRegistry = createLearnedSkillSurfaceRegistry();
+
   // 6.5. Memory + embedding
   const {
     disposeEmbedding, cachedPort, memoryAdapter, db,
@@ -1482,7 +1487,7 @@ async function bootFoundation(
     embeddingCacheStats, embeddingCircuitBreakerState, maintenanceTick,
     summarizerSpendBreaker,
     rerankerPort, rerankerModelPresent, disposeReranker, entityStore, lcdStore, provenanceStore, contextBrowse, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, userRepresentationStore, relationshipStore, tunedAlphaStore, outcomeStore, learnedSkillStore, recordOutboundMessage, destroyReactionWiring, memoryLifecycleStore, consolidationStore, recallCounters,
-  } = await setupMemory({ container, memoryLogger, clock, timers });
+  } = await setupMemory({ container, memoryLogger, clock, timers, learnedSkillSurfaceRegistry });
 
   // Observability persistence (dual-write to SQLite). obsStore +
   // obsPersistence via const+IIFE.
@@ -1666,7 +1671,7 @@ async function bootFoundation(
     processMonitor,
     disposeEmbedding, cachedPort, memoryAdapter, db, sessionStore, memoryApi,
     embeddingQueue, backgroundIndexingPromise, embeddingCacheStats,
-    embeddingCircuitBreakerState, summarizerSpendBreaker, rerankerPort, rerankerModelPresent, disposeReranker, entityStore, lcdStore, provenanceStore, contextBrowse, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, userRepresentationStore, relationshipStore, tunedAlphaStore, outcomeStore, learnedSkillStore, recordOutboundMessage, destroyReactionWiring, memoryLifecycleStore, consolidationStore, recallCounters, maintenanceTick,
+    embeddingCircuitBreakerState, summarizerSpendBreaker, rerankerPort, rerankerModelPresent, disposeReranker, entityStore, lcdStore, provenanceStore, contextBrowse, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, userRepresentationStore, relationshipStore, tunedAlphaStore, outcomeStore, learnedSkillStore, learnedSkillSurfaceRegistry, recordOutboundMessage, destroyReactionWiring, memoryLifecycleStore, consolidationStore, recallCounters, maintenanceTick,
     obsStore, obsPersistence,
     activeRunRegistry, sessionResolver, canaryFallbackSecret, injectionRateLimiter,
     deliveryMirror, startMirrorPrune, shutdownMirror,
@@ -1731,7 +1736,7 @@ async function bootAgents(
     causalStore, // threaded into setupAgents -> createPiExecutor -> createMemoryRecall (the 5th causal read lane, dormant until rag.lanes.causal.enabled) AND the cron review -> runMemoryReview -> linkCausal (the write path) — one segregated port, both halves
     tripleStore, // threaded into setupAgents -> createPiExecutor -> createMemoryRecall (the 6th graph-spread read lane, dormant until rag.lanes.graphSpread.enabled); the agent receives the port TYPE only (the agent↛memory cut)
     embeddingStore, usefulnessStore, userRepresentationStore, relationshipStore, tunedAlphaStore, // the MMR re-rank's scoped embedding read + recall usefulness read + the LLM-free <user_profile> standing-block read + the LLM-free <channel_relationships> standing-block read (dormant until the offline builder writes rows + the social-modeling sign-off) + the buildScoringAlphas tuned-vector read (dormant until rag.onlineTuning.enabled + the bandit cron) -> setupAgents -> createPiExecutor -> prompt-assembly; the agent receives the port TYPEs only (the agent↛memory cut)
-    activeRunRegistry, canaryFallbackSecret, injectionRateLimiter, learnedSkillStore, // learnedSkillStore (v2.26 SURFACE-01/03) -> setupAgents -> the getPromptSkillsXml surface seam
+    activeRunRegistry, canaryFallbackSecret, injectionRateLimiter, learnedSkillStore, learnedSkillSurfaceRegistry, // learnedSkillStore (v2.26 SURFACE-01/03) -> setupAgents -> getPromptSkillsXml; learnedSkillSurfaceRegistry (WR-01) -> setupAgents register + the promote/demote re-refresh
     deliveryMirror, geminiCacheManager,
     channelPluginsRef, backgroundTaskManager,
     secretsCrypto, secretsDb, obsStore, // thread into setupAgents
@@ -1875,7 +1880,7 @@ async function bootAgents(
     // from the SAME object SEP publishes into (Pitfall 1).
     executionPlanPorts, oauthManagers, // oauthManagers (184): DEFAULT agent's → buildImageGenBundle (CDX-01)
   } = await setupAgents({
-    container, memoryAdapter, sessionStore, agentLogger, rerankerPort, rerankerModelPresent, entityStore, lcdStore, provenanceStore, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, pinnedStore: memoryAdapter, userRepresentationStore, relationshipStore, tunedAlphaStore, learnedSkillStore, summarizerSpendBreaker, outboundMediaEnabled: true,
+    container, memoryAdapter, sessionStore, agentLogger, rerankerPort, rerankerModelPresent, entityStore, lcdStore, provenanceStore, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, pinnedStore: memoryAdapter, userRepresentationStore, relationshipStore, tunedAlphaStore, learnedSkillStore, learnedSkillSurfaceRegistry, summarizerSpendBreaker, outboundMediaEnabled: true,
     autonomousMediaEnabled: !container.config.integrations.media.transcription.autoTranscribe
       || !container.config.integrations.media.vision.enabled
       || !container.config.integrations.media.documentExtraction.enabled,
