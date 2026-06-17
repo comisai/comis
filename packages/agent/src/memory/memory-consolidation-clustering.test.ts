@@ -21,6 +21,7 @@ import {
   groupByTrustAndTagScope,
   deterministicDedupKey,
   contentSimilarity,
+  countDistinctContexts,
   surprisal,
   surprisalSelect,
 } from "./memory-consolidation-clustering.js";
@@ -414,5 +415,85 @@ describe("surprisalSelect — the deterministic top-fraction novelty gate", () =
 
   it("returns an empty selection when there are no candidates at all", () => {
     expect(surprisalSelect([], new Map(), 768, 0.5)).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// countDistinctContexts — the GENERAL-02 anti-domination diversity counter.
+//
+// Counts the number of distinct (sessionKey, sender) CONTEXTS a cluster spans,
+// NOT its raw member count. This is the discipline that stops one repeated
+// session from forging a "general" preference (the WS6 below-threshold guard):
+// three near-duplicate memories all minted in ONE conversation are ONE context,
+// not three, so they never clear a diversity threshold of 3.
+//
+// The context key derives from entry.source.sessionKey (the most
+// session-discriminating field on MemorySource), falling back to source.channel
+// when no sessionKey is present, combined with the userId as the sender. Pure,
+// deterministic, no RNG — two runs over the same cluster return the same count.
+// ---------------------------------------------------------------------------
+describe("countDistinctContexts — the anti-domination diversity counter (GENERAL-02)", () => {
+  /** A member in a specific (sessionKey, sender) context. */
+  function memberIn(sessionKey: string, sender: string, id: string): MemoryEntry {
+    return makeEntry({
+      id,
+      userId: sender,
+      source: { who: sender, channel: "telegram", sessionKey },
+    });
+  }
+
+  it("counts THREE distinct contexts for three members each from a different session", () => {
+    const cluster = [
+      memberIn("session-a", "user_a", "00000000-0000-4000-8000-000000000201"),
+      memberIn("session-b", "user_a", "00000000-0000-4000-8000-000000000202"),
+      memberIn("session-c", "user_a", "00000000-0000-4000-8000-000000000203"),
+    ];
+    expect(countDistinctContexts(cluster)).toBe(3);
+  });
+
+  it("counts ONE context for three members all minted in the SAME session (anti-domination)", () => {
+    const cluster = [
+      memberIn("session-a", "user_a", "00000000-0000-4000-8000-000000000211"),
+      memberIn("session-a", "user_a", "00000000-0000-4000-8000-000000000212"),
+      memberIn("session-a", "user_a", "00000000-0000-4000-8000-000000000213"),
+    ];
+    expect(countDistinctContexts(cluster)).toBe(1);
+  });
+
+  it("treats a different SENDER in the same session as a distinct context", () => {
+    const cluster = [
+      memberIn("session-a", "user_a", "00000000-0000-4000-8000-000000000221"),
+      memberIn("session-a", "user_b", "00000000-0000-4000-8000-000000000222"),
+    ];
+    expect(countDistinctContexts(cluster)).toBe(2);
+  });
+
+  it("falls back to source.channel when a member carries no sessionKey", () => {
+    const cluster = [
+      makeEntry({
+        id: "00000000-0000-4000-8000-000000000231",
+        userId: "user_a",
+        source: { who: "user_a", channel: "discord" },
+      }),
+      makeEntry({
+        id: "00000000-0000-4000-8000-000000000232",
+        userId: "user_a",
+        source: { who: "user_a", channel: "telegram" },
+      }),
+    ];
+    // Distinct channels (discord vs telegram) → two distinct fallback contexts.
+    expect(countDistinctContexts(cluster)).toBe(2);
+  });
+
+  it("is deterministic — repeated calls on the same cluster return the same count", () => {
+    const cluster = [
+      memberIn("session-a", "user_a", "00000000-0000-4000-8000-000000000241"),
+      memberIn("session-b", "user_a", "00000000-0000-4000-8000-000000000242"),
+      memberIn("session-a", "user_a", "00000000-0000-4000-8000-000000000243"),
+    ];
+    const first = countDistinctContexts(cluster);
+    const second = countDistinctContexts(cluster);
+    expect(first).toBe(second);
+    expect(first).toBe(2); // session-a (×2 → one context) + session-b
   });
 });

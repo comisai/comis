@@ -84,6 +84,8 @@ function makeConfig(overrides: Partial<MemoryConsolidationConfig> = {}): MemoryC
     maxConsolidationTokens: 1024,
     consolidateExternal: false,
     autoTags: [],
+    // GENERAL-01/02 default-OFF — byte-identical consolidation unless a test opts in.
+    generalize: { enabled: false, minDistinctContexts: 3 },
     ...overrides,
   };
 }
@@ -881,5 +883,216 @@ describe("runMemoryConsolidation — step-tagged stage logs", () => {
     expect(apply).toBeDefined();
     expect(apply?.observationsCreated).toBe(1);
     expect(typeof apply?.durationMs).toBe("number");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GENERAL-01/02: the diversity-gated, wrapExternalContent-wrapped generalization
+// synthesis pass (the §12 WS6 first-RED).
+//
+// When `generalize.enabled` and a sub-cluster spans >= minDistinctContexts
+// distinct (sessionKey, sender) contexts, the job synthesizes EXACTLY ONE
+// higher-order `semantic` MemoryEntry via the EXISTING applyConsolidation:
+//   - observationKind: "generalization"
+//   - trustLevel: minTrust(cluster) (the learned ceiling — NEVER raised)
+//   - proofCount: cluster.length, sourceIds = the member ids (sources kept,
+//     non-destructive — a NEW node, never a replacement)
+//
+// Below the diversity threshold (members from ONE session) → NO generalization.
+// small/nano abstain (the existing gate) → NO generalization, benign. The cluster
+// input is wrapExternalContent-wrapped before the synthesis LLM (SEC-01). A re-run
+// over the same cluster does NOT double-create (deterministic dedup key). When
+// disabled → byte-identical consolidation (no generalization MemoryEntry).
+// ---------------------------------------------------------------------------
+describe("runMemoryConsolidation — diversity-gated generalization synthesis (GENERAL-01/02, SEC-01)", () => {
+  const NEUTRAL_CHANNEL = "telegram";
+
+  /** A candidate in a specific (sessionKey, sender) context with a clustering embedding. */
+  function candInContext(
+    sessionKey: string,
+    sender: string,
+    id: string,
+    embedding: number[],
+  ): ConsolidationCandidate {
+    return makeCand(
+      {
+        id,
+        trustLevel: "learned",
+        tags: ["t"],
+        userId: sender,
+        source: { who: sender, channel: NEUTRAL_CHANNEL, sessionKey },
+      },
+      embedding,
+    );
+  }
+
+  /** The CREATE plans whose observation is a higher-order generalization. */
+  function generalizations(store: StubStore): ConsolidationPlan[] {
+    return store.applied.filter((p) => p.observation.observationKind === "generalization");
+  }
+
+  /** Three near-parallel embeddings so the members cluster into ONE sub-cluster. */
+  const E1 = [1, 0, 0];
+  const E2 = [0.9999, 0.0001, 0];
+  const E3 = [0.9998, 0.0002, 0];
+
+  it("synthesizes EXACTLY ONE higher-order generalization memory for a >=3 distinct-context cluster (proofCount=|cluster|, sources kept, learned ceiling)", async () => {
+    mockMerge("alice prefers concise answers in general");
+    const ids = [
+      "00000000-0000-4000-8000-0000000003a1",
+      "00000000-0000-4000-8000-0000000003a2",
+      "00000000-0000-4000-8000-0000000003a3",
+    ];
+    // Three members, three DISTINCT sessions → distinctContexts 3 >= threshold 3.
+    const store = makeStore([
+      candInContext("session-a", "user_a", ids[0], E1),
+      candInContext("session-b", "user_a", ids[1], E2),
+      candInContext("session-c", "user_a", ids[2], E3),
+    ]);
+    const deps = makeDeps(store, { generalize: { enabled: true, minDistinctContexts: 3 } });
+    const result = await runMemoryConsolidation(deps);
+    expect(result.ok).toBe(true);
+
+    const gens = generalizations(store);
+    expect(gens).toHaveLength(1);
+    const obs = gens[0].observation;
+    expect(obs.observationKind).toBe("generalization");
+    // proofCount = |cluster| (3 members).
+    expect(obs.proofCount).toBe(3);
+    // Sources RETAINED + linked (non-destructive — the new node keeps its sources).
+    expect([...(obs.sourceIds ?? [])].sort()).toEqual([...ids].sort());
+    expect(gens[0].markConsolidated).toHaveLength(3);
+    // Trust = minTrust(cluster) = learned ceiling, NEVER raised.
+    expect(obs.trustLevel).toBe("learned");
+    // It is a NEW semantic node (memory-generalization channel), never a replacement.
+    expect(obs.source.channel).toBe("memory-generalization");
+  });
+
+  it("does NOT generalize when the SAME three members all come from ONE session (below the diversity threshold)", async () => {
+    mockMerge("alice prefers concise answers in general");
+    const ids = [
+      "00000000-0000-4000-8000-0000000003b1",
+      "00000000-0000-4000-8000-0000000003b2",
+      "00000000-0000-4000-8000-0000000003b3",
+    ];
+    // Three members, but all ONE session → distinctContexts 1 < threshold 3.
+    const store = makeStore([
+      candInContext("session-a", "user_a", ids[0], E1),
+      candInContext("session-a", "user_a", ids[1], E2),
+      candInContext("session-a", "user_a", ids[2], E3),
+    ]);
+    const deps = makeDeps(store, { generalize: { enabled: true, minDistinctContexts: 3 } });
+    const result = await runMemoryConsolidation(deps);
+    expect(result.ok).toBe(true);
+    // The normal merge still fires, but NO generalization is written.
+    expect(generalizations(store)).toHaveLength(0);
+  });
+
+  it("ABSTAINS on a small-capability model with no capable override — no generalization, benign (no failure inflation)", async () => {
+    mockMerge("alice prefers concise answers in general");
+    const store = makeStore([
+      candInContext("session-a", "user_a", "00000000-0000-4000-8000-0000000003c1", E1),
+      candInContext("session-b", "user_a", "00000000-0000-4000-8000-0000000003c2", E2),
+      candInContext("session-c", "user_a", "00000000-0000-4000-8000-0000000003c3", E3),
+    ]);
+    const deps: MemoryConsolidationDeps = {
+      ...makeDeps(store, { generalize: { enabled: true, minDistinctContexts: 3 } }),
+      capabilityClass: "small",
+      hasCapableModelOverride: false,
+    };
+    const result = await runMemoryConsolidation(deps);
+    expect(result.ok).toBe(true);
+    // Abstain early-return PRECEDES the generalization pass — nothing written, no LLM call.
+    expect(generalizations(store)).toHaveLength(0);
+    expect(store.applied).toHaveLength(0);
+    expect(completeSimple).not.toHaveBeenCalled();
+    // Benign: no error log (Defer != Retry) — only the precondition WARN heartbeat.
+    expect(deps.logger.error).not.toHaveBeenCalled();
+  });
+
+  it("wraps the cluster input with wrapExternalContent BEFORE the synthesis LLM (SEC-01 injection boundary)", async () => {
+    mockMerge("alice prefers concise answers in general");
+    const store = makeStore([
+      candInContext("session-a", "user_a", "00000000-0000-4000-8000-0000000003d1", E1),
+      candInContext("session-b", "user_a", "00000000-0000-4000-8000-0000000003d2", E2),
+      candInContext("session-c", "user_a", "00000000-0000-4000-8000-0000000003d3", E3),
+    ]);
+    const deps = makeDeps(store, { generalize: { enabled: true, minDistinctContexts: 3 } });
+    await runMemoryConsolidation(deps);
+
+    // The synthesis call is the SECOND completeSimple call (the first is the merge).
+    // Its user message must carry the wrapExternalContent boundary sentinel.
+    const calls = (completeSimple as ReturnType<typeof vi.fn>).mock.calls;
+    const wrappedPrompt = calls
+      .map((c) => (c[1] as { messages: { content: string }[] }).messages[0].content)
+      .find((content) => content.includes("<<<UNTRUSTED_"));
+    expect(wrappedPrompt).toBeDefined();
+    expect(wrappedPrompt).toContain("<<<END_UNTRUSTED_");
+  });
+
+  it("does NOT double-create the same generalization on a re-run (deterministic dedup key already present)", async () => {
+    mockMerge("alice prefers concise answers in general");
+    const ids = [
+      "00000000-0000-4000-8000-0000000003e1",
+      "00000000-0000-4000-8000-0000000003e2",
+      "00000000-0000-4000-8000-0000000003e3",
+    ];
+    // A prior-run generalization observation already covers this exact source set
+    // (its deterministicDedupKey is in existingKeys) → the re-run must skip it.
+    const prior = makeEntry({
+      content: "alice prefers concise answers in general",
+      trustLevel: "learned",
+      proofCount: 3,
+      sourceIds: ids,
+      observationKind: "generalization",
+    });
+    const store = makeStore(
+      [
+        candInContext("session-a", "user_a", ids[0], E1),
+        candInContext("session-b", "user_a", ids[1], E2),
+        candInContext("session-c", "user_a", ids[2], E3),
+      ],
+      [prior],
+    );
+    const deps = makeDeps(store, { generalize: { enabled: true, minDistinctContexts: 3 } });
+    const result = await runMemoryConsolidation(deps);
+    expect(result.ok).toBe(true);
+    // No second generalization created (the source-set dedup key already exists).
+    expect(generalizations(store)).toHaveLength(0);
+  });
+
+  it("is byte-identical when generalize.enabled is false (no generalization MemoryEntry, same observation count as pre-patch)", async () => {
+    mockMerge("alice prefers concise answers in general");
+    const store = makeStore([
+      candInContext("session-a", "user_a", "00000000-0000-4000-8000-0000000003f1", E1),
+      candInContext("session-b", "user_a", "00000000-0000-4000-8000-0000000003f2", E2),
+      candInContext("session-c", "user_a", "00000000-0000-4000-8000-0000000003f3", E3),
+    ]);
+    // generalize disabled (the default) → only the normal merge observation.
+    const deps = makeDeps(store, { generalize: { enabled: false, minDistinctContexts: 3 } });
+    const result = await runMemoryConsolidation(deps);
+    expect(result.ok).toBe(true);
+    expect(generalizations(store)).toHaveLength(0);
+    // Exactly one (the merge) observation — the pre-patch behavior.
+    expect(store.applied).toHaveLength(1);
+    expect(store.applied[0].observation.observationKind).toBeUndefined();
+  });
+
+  it("returns generalized/clustersConsidered counts on the memory:consolidated event payload", async () => {
+    mockMerge("alice prefers concise answers in general");
+    const store = makeStore([
+      candInContext("session-a", "user_a", "00000000-0000-4000-8000-00000000040a", E1),
+      candInContext("session-b", "user_a", "00000000-0000-4000-8000-00000000040b", E2),
+      candInContext("session-c", "user_a", "00000000-0000-4000-8000-00000000040c", E3),
+    ]);
+    const deps = makeDeps(store, { generalize: { enabled: true, minDistinctContexts: 3 } });
+    await runMemoryConsolidation(deps);
+    const emit = deps.eventBus.emit as ReturnType<typeof vi.fn>;
+    const payload = emit.mock.calls.find((c) => c[0] === "memory:consolidated")?.[1] as {
+      generalized: number;
+      clustersConsidered: number;
+    };
+    expect(payload.generalized).toBe(1);
+    expect(payload.clustersConsidered).toBeGreaterThanOrEqual(1);
   });
 });
