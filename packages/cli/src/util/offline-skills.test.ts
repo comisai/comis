@@ -62,7 +62,8 @@ async function seed(
       const admitR = await store.admit(admission(r.input), scope);
       expect(admitR.ok).toBe(true);
       const id = admitR.ok ? admitR.value.id : "";
-      if (r.to === "active") expect((await store.promote(id, scope)).ok).toBe(true);
+      // threshold 1 → activate on the single promote (the seed wants the row 'active')
+      if (r.to === "active") expect((await store.promote(id, scope, 1)).ok).toBe(true);
       if (r.to === "stale") expect((await store.demote(id, scope)).ok).toBe(true);
       if (r.to === "archived") expect((await store.evict(id, scope)).ok).toBe(true);
     }

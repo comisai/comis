@@ -177,11 +177,15 @@ export function createSqliteLearnedSkillStore(
   );
 
   // Lifecycle transitions — all scoped to (tenant, agent) AND id (bound params).
-  // promote: candidate→active once the proof bar is met (the threshold is the
-  // policy's job in Phase 202; here we increment proof_count + advance state).
+  // promote: proof_count bumps on EVERY call, but the candidate→active flip is
+  // GATED on the caller's proof bar — `proof_count + 1 >= promoteAtProofCount`
+  // (D2 / T-202-04: a single attributed success must NOT mint an active
+  // procedure). The threshold is the FIRST bound `?` (promote runs its own bind
+  // path, not the shared runTransition); an already-active skill keeps bumping
+  // proof_count but the `state = 'candidate'` guard means its state never moves.
   const promoteStmt = db.prepare(
     "UPDATE learned_skills SET proof_count = proof_count + 1, " +
-      "state = CASE WHEN state = 'candidate' THEN 'active' ELSE state END, " +
+      "state = CASE WHEN state = 'candidate' AND proof_count + 1 >= ? THEN 'active' ELSE state END, " +
       "updated_at = ? WHERE tenant_id = ? AND agent_id = ? AND id = ?",
   );
   // demote: step state back toward stale on a verified failure (soft, monotone).
@@ -305,8 +309,33 @@ export function createSqliteLearnedSkillStore(
       }
     },
 
-    async promote(id: string, scope: LearningScope): Promise<Result<void, Error>> {
-      return runTransition("learned-skill-promote", promoteStmt, id, scope);
+    async promote(
+      id: string,
+      scope: LearningScope,
+      promoteAtProofCount: number,
+    ): Promise<Result<void, Error>> {
+      // Dedicated bind path (NOT runTransition): the threshold is the FIRST `?`,
+      // then (now, tenant, agent, id). proof_count bumps unconditionally; the
+      // candidate→active flip gates on proof_count + 1 >= promoteAtProofCount (D2).
+      const rejected = rejectUnresolvedScope(scope);
+      if (rejected) return rejected;
+      const startMs = systemNowMs();
+      try {
+        const now = scope.now ?? systemNowMs();
+        promoteStmt.run(promoteAtProofCount, now, scope.tenantId, scope.agentId, id);
+        logger?.debug(
+          { step: "learned-skill-promote", id, promoteAtProofCount, durationMs: systemNowMs() - startMs },
+          "Learned-skill promote complete",
+        );
+        return ok(undefined);
+      } catch (e: unknown) {
+        const error = e instanceof Error ? e : new Error(String(e));
+        logger?.warn(
+          { step: "learned-skill-promote", id, err: error, errorKind: "internal" as const, hint: "learned-skill promote failed" },
+          "Learned-skill promote failed",
+        );
+        return err(error);
+      }
     },
 
     async demote(id: string, scope: LearningScope): Promise<Result<void, Error>> {
@@ -334,7 +363,8 @@ export function createSqliteLearnedSkillStore(
     },
   };
 
-  /** Shared scoped-UPDATE runner for promote/demote (updated_at = injected clock). */
+  /** Shared scoped-UPDATE runner for demote (updated_at = injected clock). promote
+   *  has its own bind path because it binds the proof-bar threshold first. */
   function runTransition(
     step: string,
     stmt: Database.Statement,
