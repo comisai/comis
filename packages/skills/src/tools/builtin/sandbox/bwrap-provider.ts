@@ -206,6 +206,12 @@ export class BwrapProvider implements SandboxProvider {
       args.push("--unshare-net");
       const { brokerSocketPath } = opts.network as { mode: "broker-only"; brokerSocketPath: string };
       args.push("--bind", brokerSocketPath, brokerSocketPath);
+    } else if (networkMode === "none") {
+      // none: kernel-enforced deny-all egress — --unshare-all already dropped the
+      // netns; we simply do NOT re-share it (no --share-net, no socket, no proxy).
+      // The skill-validation jail uses this so a synthesized script cannot reach
+      // the network during dynamic validation (T-201-35).
+      args.push("--unshare-net");
     } else {
       // exhaustiveness guard — TypeScript will flag this if the
       // SandboxOptions.network union gains a new member without updating here.

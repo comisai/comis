@@ -151,14 +151,15 @@ The exec sandbox provides **filesystem isolation only**. It does not restrict ot
 
 ## Network Modes and Credential Broker
 
-The exec sandbox supports two network modes via `SandboxOptions.network`:
+The exec sandbox supports three network modes via `SandboxOptions.network`:
 
 | Mode | bwrap args | Description |
 |------|-----------|-------------|
 | `open` (default) | `--unshare-all --share-net` | Standard sandbox; full network access |
 | `broker-only` | `--unshare-all --unshare-net --bind <socketPath> <socketPath>` | Driven-CLI sandbox; only the broker unix socket is reachable via bind-mount |
+| `none` | `--unshare-all --unshare-net` | Kernel-enforced deny-all egress (no socket, no proxy). Used by the verified-learning skill-validation jail so a synthesized script cannot reach the network during dynamic validation. |
 
-The `broker-only` mode is set automatically for driven API-key CLI spawns. It is not a user-configurable option — the daemon sets it when it launches a credentialed CLI through the broker.
+The `broker-only` mode is set automatically for driven API-key CLI spawns. It is not a user-configurable option — the daemon sets it when it launches a credentialed CLI through the broker. The `none` mode is set automatically by the skill-validation sandbox (it is likewise not user-configurable).
 
 **Secure credential home** (`secureCredentialHome: true`): When set, the following bind mounts are omitted from the sandbox, so credential files are unreachable inside:
 

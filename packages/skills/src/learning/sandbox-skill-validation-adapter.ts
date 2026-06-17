@@ -30,6 +30,9 @@
  */
 
 import { spawn as nodeSpawn } from "node:child_process";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import * as TypeCompiler from "typebox/compile";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { Result } from "@comis/shared";
@@ -45,7 +48,8 @@ import type {
 } from "@comis/core";
 import { applyToolPolicy } from "../skills/policy/index.js";
 import { detectSandboxProvider } from "../tools/builtin/sandbox/detect-provider.js";
-import type { SandboxProvider } from "../tools/builtin/sandbox/types.js";
+import type { SandboxProvider, ExecSandboxConfig } from "../tools/builtin/sandbox/types.js";
+import { buildSpawnCommand } from "../tools/builtin/exec-tool/exec-shared.js";
 
 /**
  * The minimal `spawn` surface the dynamic replay needs (the `node:child_process`
@@ -248,11 +252,11 @@ export function createSandboxSkillValidationAdapter(
 
       // --- 5. DYNAMIC sandbox replay (the fail-closed bwrap gate) --------------
       // THE MOST DANGEROUS TRAP (§0.1-C6 / Pitfall 4): the exec path normally
-      // degrades OPEN (buildSpawnCommand(sandboxConfig=undefined) → bare
-      // /bin/bash -c). The validator INVERTS that to fail-CLOSED — mirroring the
-      // terminal-driver's JailUnavailableError posture — so an embedded script
-      // NEVER runs unsandboxed: a real Linux bwrap jail is required, else the run
-      // honestly degrades to coverage:"static-only".
+      // degrades OPEN — an absent (undefined) sandboxConfig makes buildSpawnCommand
+      // return a bare `/bin/bash -c`. The validator INVERTS that to fail-CLOSED —
+      // mirroring the terminal-driver's JailUnavailableError posture — so an
+      // embedded script NEVER runs unsandboxed: a real Linux bwrap jail is
+      // required, else the run honestly degrades to coverage:"static-only".
       const dynamic = await runDynamicReplay(skill, replay, scope, {
         detectProvider,
         spawnFn,
@@ -322,7 +326,7 @@ async function runDynamicReplay(
         step: "skill_validation_dynamic",
         tenantId: scope.tenantId,
         agentId: scope.agentId,
-        errorKind: "sandbox_unavailable",
+        errorKind: "sandbox_unavailable" as const,
         sandboxProvider: provider?.name ?? "none",
         hint:
           "no bwrap jail (Linux-only) — dynamic validation degraded to static-only; " +
@@ -347,8 +351,162 @@ async function runDynamicReplay(
     return { dynamicOk: false, reproducedEffect: false, sandboxProvider: "bwrap", coverage: "static-only", findings: [] };
   }
 
-  // The scripted spawn+capture branch lands in Plan 06 Task 2.
-  return { dynamicOk: false, reproducedEffect: false, sandboxProvider: "bwrap", coverage: "static-only", findings: [] };
+  // --- The scripted spawn+capture branch (§0.1-C6) ------------------------
+  // Materialize each script into a jail workspace, then execute it via
+  // buildSpawnCommand → spawn → capture — the EXECUTOR. The sandbox is applied
+  // INSIDE buildSpawnCommand (it calls sandboxConfig.sandbox.buildArgs itself);
+  // we pass a REAL bwrap ExecSandboxConfig (NEVER undefined → never the open
+  // /bin/bash -c fallback). A non-zero exit / spawn-error (e.g. a sandbox-escape
+  // attempt the jail denies) → that script fails → dynamicOk:false.
+  const jailWorkspace = mkdtempSync(join(tmpdir(), "comis-skill-validate-"));
+  try {
+    const sandboxConfig = buildValidationSandboxConfig(provider as SandboxProvider);
+    const findings: SkillValidationFinding[] = [];
+    let allOk = true;
+
+    for (let i = 0; i < skill.scripts.length; i++) {
+      const script = skill.scripts[i];
+      // Write the script into the jail workspace (bounded, jail-only).
+      const scriptPath = join(jailWorkspace, `skill-script-${i}.${scriptExt(script.lang)}`);
+      writeFileSync(scriptPath, script.content, { mode: 0o600 });
+      const scriptCmd = runnerFor(script.lang, scriptPath);
+
+      const exitCode = await spawnAndCapture(scriptCmd, jailWorkspace, sandboxConfig, deps);
+      if (exitCode !== 0) {
+        allOk = false;
+        // counts/ids only — never the script content (SEC-01 §7).
+        findings.push({ field: `scripts[${i}]`, kind: "dynamic", patterns: [`exit-${exitCode}`] });
+      }
+    }
+
+    // reproducedEffect: only assert reproduction where an observable effect is
+    // checkable against the trajectory's captured inputs. With no checkable
+    // effect (the §14-D2 read-only / non-deterministic classes), it stays false —
+    // the admission gate then requires the candidate to be read-only (Plan 04).
+    const reproducedEffect = allOk && hasCheckableEffect(_replay);
+
+    logger?.debug(
+      {
+        step: "skill_validation_dynamic",
+        tenantId: scope.tenantId,
+        agentId: scope.agentId,
+        scriptCount: skill.scripts.length,
+        dynamicOk: allOk,
+        reproducedEffect,
+        sandboxProvider: "bwrap",
+      },
+      "skill candidate dynamic validation complete",
+    );
+
+    return { dynamicOk: allOk, reproducedEffect, sandboxProvider: "bwrap", coverage: "full", findings };
+  } finally {
+    // Always tear down the jail workspace (bounded, no leak).
+    rmSync(jailWorkspace, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Build a REAL bwrap {@link ExecSandboxConfig} for the validation jail: the jail
+ * workspace is the only RW path, network is `none` (kernel-enforced deny-all
+ * egress — a script cannot exfiltrate during validation, T-201-35), and no
+ * credential home is exposed. NEVER `undefined` (that is the open `/bin/bash -c`
+ * fallback — the exact thing SEC-01 forbids).
+ */
+function buildValidationSandboxConfig(provider: SandboxProvider): ExecSandboxConfig {
+  // The jail workspace itself is passed to buildSpawnCommand as `workspacePath`
+  // (the only RW path) — NOT a sharedPaths bind here; this config carries the
+  // isolation posture (deny-all egress + no credential home).
+  return {
+    sandbox: provider,
+    sharedPaths: [], // no extra RW binds beyond the jail workspace
+    readOnlyPaths: [], // captured-inputs RO binds added when a ReplayContext.workspacePath is wired
+    configReadOnlyPaths: [],
+    network: { mode: "none" }, // deny-all egress (the validation jail is offline) — T-201-35
+    secureCredentialHome: true, // do not RW-expose ~/.local/share credential material
+  };
+}
+
+/**
+ * Spawn one materialized script in the jail via the VERIFIED exec spawn+capture
+ * path and resolve its exit code. A per-spawn wall-clock timeout (anti-DoS,
+ * T-201-33) kills a runaway/hanging script and resolves a non-zero (124) code.
+ * Capture is exit-code only here — stdout/stderr are drained but never logged
+ * (SEC-01 §7: never the script content / full output in a log line).
+ */
+function spawnAndCapture(
+  scriptCmd: string,
+  jailCwd: string,
+  sandboxConfig: ExecSandboxConfig,
+  deps: DynamicDeps,
+): Promise<number> {
+  const { spawnFn, setTimeoutFn, clearTimeoutFn, scriptTimeoutMs } = deps;
+  return new Promise<number>((resolve) => {
+    // buildSpawnCommand applies the sandbox INSIDE (it calls sandbox.buildArgs);
+    // passing a REAL bwrap config returns { bin: "<bwrap>", args: [...jail, "/bin/bash", "-c", cmd] }.
+    const { bin, args, cwd } = buildSpawnCommand(scriptCmd, jailCwd, sandboxConfig, jailCwd, jailCwd);
+    const child = spawnFn(bin, args, {
+      cwd,
+      // Hermetic minimal env — never forward the daemon's process.env into the jail
+      // (no secrets, no host PATH leakage); bwrap also strips the netns (network:none).
+      env: { PATH: "/usr/bin:/bin" },
+      detached: true,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    let settled = false;
+    // A mutable holder so the (possibly synchronous, in tests) timer callback can
+    // clear the timer without a temporal-dead-zone reference to its own binding.
+    const timerRef: { handle: TimeoutHandle | undefined } = { handle: undefined };
+    const settle = (code: number): void => {
+      if (settled) return;
+      settled = true;
+      if (timerRef.handle !== undefined) clearTimeoutFn(timerRef.handle);
+      child.stdout?.removeAllListeners("data");
+      child.stderr?.removeAllListeners("data");
+      resolve(code);
+    };
+
+    // Drain streams (bounded) so the pipe does not back-pressure; never log the bytes.
+    child.stdout?.on("data", () => undefined);
+    child.stderr?.on("data", () => undefined);
+    child.stdin?.end();
+
+    // Anti-DoS wall-clock timeout — kill a hanging script, resolve 124 (timeout).
+    timerRef.handle = setTimeoutFn(() => {
+      if (settled) return;
+      child.kill();
+      settle(124);
+    }, scriptTimeoutMs);
+
+    child.on("error", () => settle(127)); // jail refused to spawn → treat as denied
+    child.on("close", (code) => settle(code ?? 1));
+  });
+}
+
+/** The file extension for a materialized script of the given lang (best-effort). */
+function scriptExt(lang: string): string {
+  const l = lang.toLowerCase();
+  if (l === "python" || l === "py") return "py";
+  if (l === "node" || l === "javascript" || l === "js") return "js";
+  return "sh";
+}
+
+/** The in-jail runner command for a materialized script of the given lang. */
+function runnerFor(lang: string, scriptPath: string): string {
+  const l = lang.toLowerCase();
+  if (l === "python" || l === "py") return `python3 ${scriptPath}`;
+  if (l === "node" || l === "javascript" || l === "js") return `node ${scriptPath}`;
+  return `bash ${scriptPath}`;
+}
+
+/**
+ * Whether the replay has a checkable observable effect to assert reproduction
+ * against. Conservative: only `true` when captured inputs are present (an effect
+ * the run can compare). Absent captured inputs (read-only / non-deterministic
+ * §14-D2 classes) → `false`, so admission requires the candidate be read-only.
+ */
+function hasCheckableEffect(replay: ReplayContext): boolean {
+  return replay.capturedInputs !== undefined && Object.keys(replay.capturedInputs).length > 0;
 }
 
 /**
