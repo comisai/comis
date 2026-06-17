@@ -64,6 +64,13 @@ export interface BridgeMetricsState {
    *  snapshot); deleted in lockstep with `toolArgSnapshots` at tool_execution_end. */
   toolRawArgs: Map<string, unknown>;
   toolExecResults: Array<{ toolName: string; success: boolean; durationMs: number; errorText?: string; errorKind?: ErrorKind }>;
+  /** ATTR-01 (skill-use attribution): the named per-turn carrier. The bridge
+   *  adds a skillName here when a `read`'s path matches a frozen learned-skill
+   *  `<location>` (resolved via getSessionPromptSkillLocations). The executor
+   *  reads it back at the postExecution call site and threads it onto the
+   *  `memory:skill_used` write-back event. Empty by default (no skill match) →
+   *  zero behavior change. Bounded by reads-per-turn; reset at turn start. */
+  turnUsedSkillIds: Set<string>;
   failedToolCount: number;
   failedToolNames: string[];
   /** Per-execution count of breaker-open transitions (`tool:breaker_opened`).
@@ -218,6 +225,7 @@ export function createBridgeMetrics(): BridgeMetricsState {
     lastActiveToolName: undefined,
     toolArgSnapshots: new Map(),
     toolRawArgs: new Map(),
+    turnUsedSkillIds: new Set<string>(),
     toolExecResults: [],
     failedToolCount: 0,
     failedToolNames: [],

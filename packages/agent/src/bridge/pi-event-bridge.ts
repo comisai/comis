@@ -43,6 +43,7 @@ import { resolveModelPricing } from "@comis/core";
 import { getCacheProviderInfo } from "../executor/cache-usage-helpers.js";
 import { sanitizeMcpToolNameForAnalytics } from "../executor/cache-detection/index.js";
 import { classifyError } from "../executor/error-classifier.js";
+import { getSessionPromptSkillLocations } from "../executor/prompt-assembly.js";
 import { suggestClosestTool } from "./tool-name-suggest.js";
 import type { BudgetGuard } from "../budget/budget-guard.js";
 import type { CostTracker } from "../budget/cost-tracker.js";
@@ -358,6 +359,15 @@ export interface PiEventBridgeResult {
    * adding/removing entries).
    */
   getDrainState: () => DrainInflightState;
+  /**
+   * ATTR-01: a ReadonlySet view of the per-turn skill ids attributed this run
+   * (skillNames whose `<location>` a `read` matched). The executor reads this
+   * back at the postExecution call site and threads it onto the counts/ids-only
+   * `memory:skill_used` write-back event. Read-only view — encapsulation
+   * preserved (the underlying `m` object is never exported), mirroring
+   * getThinkingBlockStores. Empty when no skill was attributed.
+   */
+  getUsedSkillIds: () => ReadonlySet<string>;
 }
 
 // ---------------------------------------------------------------------------
@@ -1022,6 +1032,30 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             ...(resultBytes !== undefined && { resultBytes }),
             ...(resultDigest !== undefined && { resultDigest }),
           });
+
+          // ATTR-01: skill-use attribution. A `read` whose path equals a frozen
+          // learned-skill `<location>` means the model invoked that skill. Map
+          // the read path → skillName via the per-session location index
+          // (parsed once at prompt-assembly freeze time), emit the EXISTING
+          // observable `skill:prompt_invoked` (model-invoked), and record the
+          // skillName in the named per-turn carrier (m.turnUsedSkillIds) which
+          // the executor reads back into the `memory:skill_used` write-back.
+          // No match (the default — no learned-skill locations) → no-op.
+          if (endEvent.toolName === "read") {
+            const readPath = (rawArgsForParams as { path?: string } | undefined)?.path;
+            if (typeof readPath === "string" && readPath !== "") {
+              const skillName = getSessionPromptSkillLocations(formatSessionKey(deps.sessionKey))?.get(readPath);
+              if (skillName !== undefined) {
+                m.turnUsedSkillIds.add(skillName);
+                deps.eventBus.emit("skill:prompt_invoked", {
+                  skillName,
+                  invokedBy: "model",
+                  args: "",
+                  timestamp: systemNowMs(),
+                });
+              }
+            }
+          }
 
           // Explicit tool:timeout emit when the tool was classified as
           // timed-out. Fires alongside tool:executed for the same
@@ -2259,5 +2293,10 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
     drainInflightByKey: m.drainInflightByKey,
   });
 
-  return { listener, getResult, addGhostCost, getThinkingBlockStores, getDrainState };
+  // ATTR-01: ReadonlySet view of the per-turn attributed skill ids. The
+  // executor reads this back at the postExecution call site (carrier → the
+  // memory:skill_used write-back). Read-only — `m` is never exported.
+  const getUsedSkillIds = (): ReadonlySet<string> => m.turnUsedSkillIds;
+
+  return { listener, getResult, addGhostCost, getThinkingBlockStores, getDrainState, getUsedSkillIds };
 }

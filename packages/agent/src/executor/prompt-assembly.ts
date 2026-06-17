@@ -187,6 +187,74 @@ const sessionCacheSafeParams = new Map<string, CacheSafeParams>();
  *  preventing cache-invalidating changes when the agent creates skills mid-session. */
 const sessionPromptSkillsXmlSnapshots = new Map<string, string | undefined>();
 
+/** Per-session location→skillName index, parsed once from the frozen prompt
+ *  skills XML snapshot at the same freeze point as
+ *  `sessionPromptSkillsXmlSnapshots`. ATTR-01 (skill-use attribution): the
+ *  pi-event-bridge consults this index to map a `read` tool's path back to the
+ *  skill the model invoked. Empty when no visible skills are listed (the
+ *  default until learned skills exist), so the attribution path is a no-op. */
+const sessionPromptSkillLocations = new Map<string, ReadonlyMap<string, string>>();
+
+/**
+ * Parse a frozen `<available_skills>` XML block (the exact shape emitted by
+ * `formatAvailableSkillsXml` in @comis/skills: a sequence of `<skill>` blocks
+ * each carrying `<name>`, `<description>`, `<location>`) into a
+ * `location → skillName` Map. The location is the raw absolute path the `read`
+ * tool reports, so XML entities are unescaped (the inverse of `escapeXml`) to
+ * make the keys/values match raw text. ATTR-01.
+ *
+ * Pure + total: never throws. `undefined`/empty/no-`<skill>` input yields an
+ * empty Map. A `<skill>` block missing either `<name>` or `<location>` is
+ * skipped (defensive — the producer always emits both).
+ *
+ * @param xml - The frozen prompt-skills XML snapshot, or undefined.
+ * @returns location→skillName Map (empty when nothing to index).
+ */
+export function parseSkillLocationIndex(xml: string | undefined): Map<string, string> {
+  const index = new Map<string, string>();
+  if (!xml) return index;
+  // Match each <skill>…</skill> block, then pull <name> + <location> from it.
+  const blockRe = /<skill>([\s\S]*?)<\/skill>/g;
+  let block: RegExpExecArray | null;
+  while ((block = blockRe.exec(xml)) !== null) {
+    const body = block[1] ?? "";
+    const nameMatch = /<name>([\s\S]*?)<\/name>/.exec(body);
+    const locationMatch = /<location>([\s\S]*?)<\/location>/.exec(body);
+    if (!nameMatch || !locationMatch) continue;
+    const name = unescapeXml(nameMatch[1] ?? "");
+    const location = unescapeXml(locationMatch[1] ?? "");
+    if (location === "") continue;
+    index.set(location, name);
+  }
+  return index;
+}
+
+/**
+ * Inverse of `escapeXml` (@comis/skills processor.ts). `&amp;` is decoded LAST
+ * so an escaped literal like `&amp;lt;` round-trips to `&lt;` (not `<`).
+ */
+function unescapeXml(str: string): string {
+  return str
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&");
+}
+
+/**
+ * Read the frozen location→skillName index for a session. The pi-event-bridge
+ * calls this on a `read` tool execution to attribute skill use (ATTR-01).
+ * Returns undefined when no snapshot has been frozen for the session yet.
+ *
+ * @param snapshotKey - The formatted session key used at the freeze point.
+ */
+export function getSessionPromptSkillLocations(
+  snapshotKey: string,
+): ReadonlyMap<string, string> | undefined {
+  return sessionPromptSkillLocations.get(snapshotKey);
+}
+
 /** Per-agent dedup for the WR-02 "S1: sender-trust not injected in compact-secure"
  *  WARN. The trigger (compact-secure promptMode + senderTrustDisplayConfig disabled)
  *  is STATIC per agent, so emitting it once-per-prompt-assembly spams the log on every
@@ -240,6 +308,8 @@ export function clearSessionBootstrapFileSnapshot(sessionKey: string): void {
  */
 export function clearSessionPromptSkillsXmlSnapshot(sessionKey: string): void {
   sessionPromptSkillsXmlSnapshots.delete(sessionKey);
+  // ATTR-01: clear the parsed location index in lockstep with the XML snapshot.
+  sessionPromptSkillLocations.delete(sessionKey);
 }
 
 /**
@@ -1379,6 +1449,10 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
   if (promptSkillsXml === undefined && !sessionPromptSkillsXmlSnapshots.has(snapshotKey)) {
     promptSkillsXml = deps.getPromptSkillsXml?.() ?? undefined;
     sessionPromptSkillsXmlSnapshots.set(snapshotKey, promptSkillsXml);
+    // ATTR-01: parse the frozen XML into the location→skillName index ONCE,
+    // in lockstep with the XML snapshot, so the bridge can attribute skill use
+    // from a `read` path. Empty when no skills are listed (the default).
+    sessionPromptSkillLocations.set(snapshotKey, parseSkillLocationIndex(promptSkillsXml));
   }
   const activePromptSkillContent = msg.metadata?.promptSkillContent as string | undefined;
 
