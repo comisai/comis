@@ -102,9 +102,20 @@ export async function startLifecycle(
   // Wire grammy event handlers (message / edited_message / poll / callback_query)
   bindInboundHandlers(state, deps);
 
-  // Start polling (webhook mode deferred)
+  // Start polling (webhook mode deferred).
+  // REACT-01 (Pitfall 1): once allowed_updates is set it must enumerate EVERY
+  // update bindInboundHandlers consumes (message, edited_message,
+  // callback_query, poll) PLUS message_reaction — omitting an existing one
+  // silently stops its delivery. Telegram excludes message_reaction from the
+  // default update set, so the opt-in is required for inbound reactions.
   if (shouldUseRunner(deps)) {
-    state.runnerHandle = run(state.bot);
+    state.runnerHandle = run(state.bot, {
+      runner: {
+        fetch: {
+          allowed_updates: ["message", "edited_message", "callback_query", "poll", "message_reaction"],
+        },
+      },
+    });
   }
 
   state.connected = true;
