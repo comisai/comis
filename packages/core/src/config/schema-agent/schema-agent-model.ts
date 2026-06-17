@@ -156,7 +156,8 @@ export type ModelOperationType =
   | "condensation"
   | "verification"    // R4: pre-delivery critic (Phase 154)
   | "planning"        // R5: pre-execution planner (Phase 154, deferrable on M2)
-  | "outcomeJudge";   // OUTCOME-04: the optional cost-gated outcome judge (fast tier, Phase 198)
+  | "outcomeJudge"    // OUTCOME-04: the optional cost-gated outcome judge (fast tier, Phase 198)
+  | "skillSynthesis"; // SKILL-09: the procedural-synthesis op (mid tier — a synthesis op, not a fast classify; Phase 201)
 
 /**
  * Per-operation model entry: groups model override and timeout for a single

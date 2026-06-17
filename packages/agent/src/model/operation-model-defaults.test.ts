@@ -241,15 +241,16 @@ describe("resolveOperationDefaults — top-of-cohort selection", () => {
 // ---------------------------------------------------------------------------
 
 describe("OPERATION_TIER_MAP", () => {
-  it("covers all 10 ModelOperationType values (including verification, planning + outcomeJudge)", () => {
+  it("covers all 11 ModelOperationType values (including verification, planning, outcomeJudge + skillSynthesis)", () => {
     const expectedOps = [
       "interactive", "cron", "heartbeat", "subagent", "compaction",
       "taskExtraction", "condensation", "verification", "planning", "outcomeJudge",
+      "skillSynthesis",
     ];
     for (const op of expectedOps) {
       expect(OPERATION_TIER_MAP).toHaveProperty(op);
     }
-    expect(Object.keys(OPERATION_TIER_MAP)).toHaveLength(10);
+    expect(Object.keys(OPERATION_TIER_MAP)).toHaveLength(11);
   });
 
   it("interactive is mapped to primary tier", () => {
@@ -258,6 +259,10 @@ describe("OPERATION_TIER_MAP", () => {
 
   it("outcomeJudge is mapped to the fast tier (OUTCOME-04: optional cost-gated judge)", () => {
     expect(OPERATION_TIER_MAP.outcomeJudge).toBe("fast");
+  });
+
+  it("skillSynthesis is mapped to the mid tier (SKILL-09: a synthesis op, not a fast classify)", () => {
+    expect(OPERATION_TIER_MAP.skillSynthesis).toBe("mid");
   });
 
   it("heartbeat is mapped to fast tier", () => {

@@ -142,6 +142,7 @@ export const OPERATION_TIER_MAP: Record<ModelOperationType, "primary" | "mid" | 
   verification: "primary",  // R4: local-only self-check; configured: cheap model via Level 2
   planning: "primary",       // R5: same resolution path; deferrable on M2
   outcomeJudge: "fast",      // OUTCOME-04: optional cost-gated outcome judge — a fast classification op
+  skillSynthesis: "mid",     // SKILL-09: offline procedural synthesis — a mid-tier synthesis op (NOT a fast classify)
 };
 
 /**
@@ -160,6 +161,7 @@ export const OPERATION_TIMEOUT_DEFAULTS: Partial<Record<ModelOperationType, numb
   condensation: 30_000,
   verification: 120_000,  // R4: same ceiling as the critic LLM_TIMEOUT_MS (Phase 154)
   outcomeJudge: 30_000,   // OUTCOME-04: mirrors condensation — a fast classification op
+  skillSynthesis: 150_000, // SKILL-09: mirrors cron — an offline batch op (Phase 201)
 };
 
 /**
@@ -177,4 +179,5 @@ export const OPERATION_CACHE_DEFAULTS: Partial<Record<ModelOperationType, "none"
   verification: "none",  // R4: critic responses consume the reviewed response and must not be cached (Phase 154)
   planning: "none",       // R5: planner responses are request-specific; caching wastes storage (Phase 154)
   outcomeJudge: "none",   // OUTCOME-04: judge responses are request-specific (like verification)
+  skillSynthesis: "short", // SKILL-09: offline reuse within a run, like cron (Phase 201)
 };
