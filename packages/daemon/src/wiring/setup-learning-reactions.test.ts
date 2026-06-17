@@ -144,6 +144,27 @@ describe("createReactionTrajectoryMap — bounded outbound trajectory map", () =
     expect(map.lookup("c")).toBeDefined();
   });
 
+  it("WR-05: re-recording an existing key REFRESHES its recency so eviction drops the genuinely-oldest key (LRU invariant the O(1) eviction must preserve)", () => {
+    const clock = createFakeClock(NOW);
+    const map = createReactionTrajectoryMap(
+      { clock, timers: createFakeTimers(NOW) },
+      { maxEntries: 2 },
+    );
+    map.record("a", { traceId: "ta", tenantId: TENANT, agentId: AGENT, sessionId: "ta" });
+    clock.advance(10);
+    map.record("b", { traceId: "tb", tenantId: TENANT, agentId: AGENT, sessionId: "tb" });
+    clock.advance(10);
+    // Re-record "a" (the session map does this every turn for a live session) —
+    // "a" is now the MOST-recent, "b" the oldest.
+    map.record("a", { traceId: "ta2", tenantId: TENANT, agentId: AGENT, sessionId: "ta2" });
+    clock.advance(10);
+    // Over cap → evict the genuine oldest, which is now "b", NOT the refreshed "a".
+    map.record("c", { traceId: "tc", tenantId: TENANT, agentId: AGENT, sessionId: "tc" });
+    expect(map.lookup("b")).toBeUndefined(); // genuine oldest evicted
+    expect(map.lookup("a")?.traceId).toBe("ta2"); // refreshed key survived (and kept its new value)
+    expect(map.lookup("c")).toBeDefined();
+  });
+
   it("a TTL timer deletes an entry after entryTtlMs (timer is unref'd, no process pin)", () => {
     const timers = createFakeTimers(NOW);
     const map = createReactionTrajectoryMap({ clock: createFakeClock(NOW), timers }, { entryTtlMs: 1_000 });
@@ -221,7 +242,7 @@ describe("wireLearningReactions — reaction → trust-scaled observe (REACT-02/
     expect(observe.mock.calls[0]![0].outcome).toBe("failure");
   });
 
-  it("REACT-03/04: an EXTERNAL reactor observes a near-zero confidence", async () => {
+  it("WR-03: an EXTERNAL reactor's near-zero confidence is BELOW the write floor → NO ledger row written (skip)", async () => {
     const bus = new TypedEventBus();
     const map = createReactionTrajectoryMap({ clock: createFakeClock(NOW), timers: createFakeTimers(NOW) });
     map.record("msg-out-1", { traceId: TRACE, tenantId: TENANT, agentId: AGENT, sessionId: "sess-1" });
@@ -232,13 +253,35 @@ describe("wireLearningReactions — reaction → trust-scaled observe (REACT-02/
     });
     wireLearningReactions(deps);
 
+    // external → 0.6 * 0.05 = 0.03, below the min-confidence-to-write floor. The
+    // reaction is inert (deterministic outranks it anyway), so rather than amplify
+    // the append-only ledger with near-zero rows from untrusted senders, it is
+    // skipped entirely — no observe, no row.
     bus.emit("channel:reaction_received", reactionPayload({ emoji: "👍", reactorId: "stranger" }));
+    await flush();
+
+    expect(observe).not.toHaveBeenCalled();
+  });
+
+  it("WR-03: a KNOWN reactor's confidence is ABOVE the write floor → the reaction IS observed (the floor only drops near-zero external)", async () => {
+    const bus = new TypedEventBus();
+    const map = createReactionTrajectoryMap({ clock: createFakeClock(NOW), timers: createFakeTimers(NOW) });
+    map.record("msg-out-1", { traceId: TRACE, tenantId: TENANT, agentId: AGENT, sessionId: "sess-1" });
+    const { deps, observe } = makeDeps({
+      eventBus: bus,
+      reactionTrajectoryMap: map,
+      resolveSenderTrust: () => "known",
+    });
+    wireLearningReactions(deps);
+
+    // known → 0.6 * 0.4 = 0.24, comfortably above the floor → persisted.
+    bus.emit("channel:reaction_received", reactionPayload({ emoji: "👍", reactorId: "regular" }));
     await flush();
 
     expect(observe).toHaveBeenCalledTimes(1);
     const obs = observe.mock.calls[0]![0];
-    expect(obs.senderTrust).toBe("external");
-    expect(obs.confidence).toBeLessThan(0.1); // near-zero for an external reactor (spoof-resistant)
+    expect(obs.senderTrust).toBe("known");
+    expect(obs.confidence).toBeCloseTo(0.24, 5);
   });
 
   it("an UNMAPPED emoji (not in reactionMap) records NOTHING (skip)", async () => {
@@ -659,5 +702,45 @@ describe("buildReactionWiringDeps — daemon construction behind the byte-identi
     // After shutdown EVERY scheduled timer is cancelled (no leaked unref'd timers
     // accumulating across SIGUSR2 hot-reload cycles).
     expect(timers.unrefRecord().every((e) => e.cancelled)).toBe(true);
+  });
+
+  it("WR-04: the DEDICATED reaction rate limiter caps a per-sender flood TIGHTLY (the Nth+ reaction in a window is skipped, not 9-through-then-skip)", async () => {
+    // Drive the REAL reaction rate limiter (constructed inside buildReactionWiringDeps)
+    // through the wired handler. A trusted sender clears the WR-03 write floor, so the
+    // ONLY thing that should stop a flood is the per-sender rate cap.
+    const observe = vi.fn(async (): Promise<Result<void, Error>> => ok(undefined));
+    const bus = new TypedEventBus();
+    const container = {
+      config: {
+        agents: {
+          a1: {
+            learningOutcome: { enabled: true },
+            elevatedReply: { senderTrustMap: { flooder: "admin" }, defaultTrustLevel: "external" },
+          },
+        },
+        memory: { costFeatures: { enabled: true } },
+        providers: { entries: {} },
+      },
+      secretManager: { get: (): string | undefined => undefined },
+      eventBus: bus,
+      outcomeStore: { observe, resolve: vi.fn(), prune: vi.fn() },
+      logger: createMockLogger(),
+    } as never;
+    const built = buildReactionWiringDeps(container, createFakeClock(NOW), createFakeTimers(NOW));
+    // Seed the outbound trajectory so each reaction resolves (REACT-02).
+    built.recordOutboundMessage!("msg-out-1", { traceId: TRACE, tenantId: TENANT, agentId: "a1", sessionId: "sess-1" });
+    wireLearningReactions(built.deps);
+
+    // Fire a burst of admin-trust 👍 reactions from ONE sender at the SAME messageId
+    // within the window. A tight cap drops the flood well before 9 land.
+    for (let i = 0; i < 9; i++) {
+      bus.emit("channel:reaction_received", reactionPayload({ messageId: "msg-out-1", reactorId: "flooder", emoji: "👍" }));
+    }
+    await flush();
+
+    // The effective per-sender allowance must be tight (≤ 4), NOT the old
+    // 9-through-then-skip. Asserts the dedicated limiter's auditThreshold was lowered.
+    expect(observe.mock.calls.length).toBeLessThanOrEqual(4);
+    expect(observe.mock.calls.length).toBeGreaterThan(0); // the first few still land (the signal is real)
   });
 });

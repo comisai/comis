@@ -97,20 +97,20 @@ export interface ReactionTrajectoryMap {
 
 interface MapBucket {
   entry: OutboundTrajectoryEntry;
-  insertedAt: number;
   timer: TimerHandle;
 }
 
-/** Evict the entry whose insert timestamp is the oldest (bounded growth). */
+/**
+ * Evict the oldest-by-recency entry (bounded growth). WR-05: O(1) — `record()`
+ * deletes-then-re-sets an updated key so the Map's insertion order IS the recency
+ * order (most-recently-recorded last), making the FIRST key the genuine oldest.
+ * `Map.keys().next().value` is O(1), replacing the prior O(n) min-`insertedAt`
+ * scan on the hot outbound-ack path. (A bare `Map.set` on an existing key keeps
+ * its original position, which would desync order from recency — hence the
+ * delete-before-set in `record()`.)
+ */
 function evictOldestMapEntry(buckets: Map<string, MapBucket>): void {
-  let oldestKey: string | undefined;
-  let oldest = Infinity;
-  for (const [key, b] of buckets) {
-    if (b.insertedAt < oldest) {
-      oldest = b.insertedAt;
-      oldestKey = key;
-    }
-  }
+  const oldestKey: string | undefined = buckets.keys().next().value;
   if (oldestKey !== undefined) {
     buckets.get(oldestKey)!.timer.cancel();
     buckets.delete(oldestKey);
@@ -139,9 +139,16 @@ export function createReactionTrajectoryMap(
   return {
     record(messageId: string, entry: OutboundTrajectoryEntry): void {
       const existing = buckets.get(messageId);
-      if (existing) existing.timer.cancel();
-      else if (buckets.size >= maxEntries) evictOldestMapEntry(buckets);
-      buckets.set(messageId, { entry, insertedAt: deps.clock.now(), timer: createTtlTimer(messageId) });
+      if (existing) {
+        existing.timer.cancel();
+        // WR-05: delete BEFORE re-setting so the refreshed key moves to the Map's
+        // tail — keeps insertion order == recency order, which the O(1)
+        // `evictOldestMapEntry` (first key = oldest) depends on.
+        buckets.delete(messageId);
+      } else if (buckets.size >= maxEntries) {
+        evictOldestMapEntry(buckets);
+      }
+      buckets.set(messageId, { entry, timer: createTtlTimer(messageId) });
     },
     lookup(messageId: string): OutboundTrajectoryEntry | undefined {
       return buckets.get(messageId)?.entry;
@@ -165,6 +172,17 @@ export interface ReactionEmojiMap {
 
 /** Base confidence for a clean reaction before trust scaling (REACT-03). */
 const REACTION_BASE_CONFIDENCE = 0.6;
+
+/**
+ * WR-03: the minimum trust-scaled confidence a reaction must clear to be written
+ * to the append-only ledger. An `external`/unknown reactor yields
+ * `REACTION_BASE_CONFIDENCE (0.6) * trustWeight("external") (0.05) = 0.03` — inert
+ * (the deterministic tool/pipeline signal always outranks it at fusion), so rather
+ * than let an untrusted flood amplify the ledger with near-zero rows, those
+ * reactions are skipped entirely (no observe, no row). `known` and above
+ * (`0.6 * 0.4 = 0.24` …) clear the floor and persist as corroborating signal.
+ */
+const REACTION_MIN_CONFIDENCE_TO_WRITE = 0.05;
 
 /**
  * Channel-sender trust → confidence weight (REACT-03/04). The vocabulary is the
@@ -391,6 +409,11 @@ export function wireLearningReactions(deps: LearningReactionsWiringDeps): void {
     const trust = deps.resolveSenderTrust(entry.agentId, p.reactorId);
     const confidence = REACTION_BASE_CONFIDENCE * trustWeight(trust);
 
+    // 4b. WR-03: a near-zero (external/unknown) reaction is below the write floor →
+    // skip entirely (no observe, no ledger row). The deterministic signal outranks
+    // it regardless, so writing it only amplifies the append-only ledger.
+    if (confidence < REACTION_MIN_CONFIDENCE_TO_WRITE) return;
+
     // 5. per-sender rate limit (anti-spoof-flood DoS) — past audit → skip.
     const rl = deps.reactionRateLimiter.record(entry.tenantId, p.reactorId);
     if (rl.level === "audit") {
@@ -546,8 +569,16 @@ export interface BuildReactionWiringResult {
 const DEFAULT_REACTION_MAP: ReactionEmojiMap = { success: ["👍", "✅"], failure: ["👎", "❌"] };
 /** Per-call output bound for the cheap correction classification (a tiny JSON verdict). */
 const CORRECTION_MAX_OUTPUT_TOKENS = 1024;
-/** Reaction-tuned rate-limit thresholds (a flood of reactions from one sender is downweighted/skipped). */
-const REACTION_RATE_LIMIT = { windowMs: 300_000, warnThreshold: 5, auditThreshold: 10, entryTtlMs: 600_000, maxEntries: 50_000 };
+/**
+ * Reaction-tuned rate-limit thresholds. WR-04: a TIGHT per-sender cap — the
+ * handler skips at `audit` (count >= auditThreshold), so the effective per-sender
+ * allowance is `auditThreshold - 1 = 3` reactions per 5-minute window. The prior
+ * `auditThreshold: 10` let 9 reactions through per sender before skipping, which
+ * understated "the per-sender rate limit caps a flood". (Reaction influence is
+ * already inert-or-corroborating at fusion; a low ceiling keeps even a trusted
+ * sender from amplifying the ledger.)
+ */
+const REACTION_RATE_LIMIT = { windowMs: 300_000, warnThreshold: 2, auditThreshold: 4, entryTtlMs: 600_000, maxEntries: 50_000 };
 
 /**
  * Resolve + construct the cheap `fast`-tier correction detector for one agent
