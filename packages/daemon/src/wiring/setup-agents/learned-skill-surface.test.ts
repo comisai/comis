@@ -128,8 +128,15 @@ describe("mergeLearnedSkillsXml — append after platform", () => {
     const xml = mergeLearnedSkillsXml([platform("P1")], [learned({ name: "L1" })], workDir);
     // Platform default source is bundled; learned explicitly carries learned.
     expect(xml).toContain("<source>learned</source>");
-    // The learned <location> points at the workspace-relative materialized SKILL.md.
-    expect(xml).toContain("<location>.learned-skills/L1/SKILL.md</location>");
+    // WR-02: the learned <location> is the ABSOLUTE materialized SKILL.md path —
+    // consistent with platform skills (which emit metadata.path, an absolute path)
+    // so the ATTR-01 attribution index (keyed on the exact <location> string the
+    // model reads with) matches a `read` of that same absolute path. A relative
+    // location mixed into an absolute-location block is the WR-02 attribution smell.
+    const expectedAbs = safePath(workDir, ".learned-skills", "L1", "SKILL.md");
+    expect(xml).toContain(`<location>${expectedAbs}</location>`);
+    // It must NOT be the workspace-relative form (the pre-fix asymmetry).
+    expect(xml).not.toContain("<location>.learned-skills/L1/SKILL.md</location>");
   });
 
   it("filters to active ∧ !mutating — mutating/stale/candidate/archived NEVER surface", () => {

@@ -8,10 +8,12 @@
  * keystone: the cached byte-prefix never shifts, so a newly-promoted skill is
  * picked up on the NEXT session via the per-session prompt-skills freeze, never
  * mid-session). Each surfaced procedure is MATERIALIZED to a read-tool-openable
- * `<workspace>/.learned-skills/<name>/SKILL.md` (D1) — a SIBLING dot-dir the read
- * tool resolves workspace-first but the skill registry never discovers (no
- * double-listing), derived WHOLESALE from `list()` on every refresh so a demoted
- * procedure's file is gone (derive-on-refresh, never a stale file).
+ * `<workspace>/.learned-skills/<name>/SKILL.md` (D1) — a SIBLING dot-dir the skill
+ * registry never discovers (no double-listing), derived WHOLESALE from `list()` on
+ * every refresh so a demoted procedure's file is gone (derive-on-refresh, never a
+ * stale file). Its `<location>` is emitted ABSOLUTE (WR-02) — the same shape
+ * platform skills use and the `read` tool reports — so ATTR-01 skill-use
+ * attribution (exact `<location>`-string match) fires on a `read` of that path.
  *
  * Only the daemon may touch BOTH the skills registry AND the learned-skills store
  * (the closed graph). The seam (`getPromptSkillsXml`, `setup-agents-runtime.ts`)
@@ -24,14 +26,13 @@
  * @module
  */
 
-import { relative } from "node:path";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { suppressError } from "@comis/shared";
 import { safePath, type LearnedSkill, type LearnedSkillStorePort, type LearningScope } from "@comis/core";
 import { formatAvailableSkillsXml, type PromptSkillDescription, type SkillRegistry } from "@comis/skills";
 import type { ComisLogger } from "@comis/infra";
 
-/** The sibling dot-dir (NOT a skill discoveryPath) the read tool resolves workspace-first. */
+/** The sibling dot-dir (NOT a skill discoveryPath; the registry skips dot-dirs). */
 const LEARNED_SKILLS_DIRNAME = ".learned-skills";
 
 /**
@@ -45,14 +46,18 @@ function isSurfaceable(skill: LearnedSkill): boolean {
 }
 
 /**
- * The workspace-relative `<location>` of a surfaced skill's materialized SKILL.md.
+ * The ABSOLUTE `<location>` of a surfaced skill's materialized SKILL.md (WR-02).
  * Derived through `safePath` so a path-traversal `name` is rejected (never escapes
- * the workspace), then made relative so the read tool resolves it workspace-first.
+ * the workspace). Emitted ABSOLUTE — the SAME shape platform skills use
+ * (`metadata.path`) and the `read` tool reports — so the ATTR-01 attribution index
+ * (keyed on the exact `<location>` string the model reads with) matches a `read` of
+ * this path. A workspace-RELATIVE location here would (a) never match an absolute
+ * read path and (b) be an inconsistent mixed-format block within one
+ * `<available_skills>` listing that the model may "normalize", silently breaking
+ * skill-use attribution.
  */
 function materializedLocation(workspaceDir: string, name: string): string {
-  const abs = safePath(workspaceDir, LEARNED_SKILLS_DIRNAME, name, "SKILL.md");
-  // POSIX-style relative path for the listing (read tool joins it onto the workspace).
-  return relative(workspaceDir, abs).split(/[\\/]/).join("/");
+  return safePath(workspaceDir, LEARNED_SKILLS_DIRNAME, name, "SKILL.md");
 }
 
 /**

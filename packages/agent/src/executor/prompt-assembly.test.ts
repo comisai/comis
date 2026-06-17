@@ -4841,4 +4841,38 @@ describe("parseSkillLocationIndex (ATTR-01 frozen-XML location→skillName index
     expect(parseSkillLocationIndex("").size).toBe(0);
     expect(parseSkillLocationIndex("<available_skills>\n</available_skills>").size).toBe(0);
   });
+
+  it("WR-02: an ABSOLUTE learned-skill <location> (mixed with a platform skill) is indexed → name, so a `read` of that path attributes", () => {
+    // The learned surface (mergeLearnedSkillsXml) now emits an ABSOLUTE materialized
+    // SKILL.md path for the learned <location> — the SAME absolute shape platform
+    // skills use (metadata.path) and the read tool reports. A `read` whose path
+    // equals that absolute location must attribute the learned skill. Pre-WR-02 the
+    // learned location was workspace-RELATIVE (.learned-skills/deploy/SKILL.md),
+    // which (a) does NOT match an absolute read path and (b) is an inconsistent
+    // mixed-format block the model may "normalize", silently breaking attribution.
+    const platformLoc = "/home/user/.comis/skills/build/SKILL.md";
+    const learnedLoc = "/home/user/workspace/.learned-skills/deploy/SKILL.md"; // absolute, as WR-02 emits
+    const xml =
+      "<available_skills>\n" +
+      "  <skill>\n" +
+      "    <name>build</name>\n" +
+      "    <description>Build it</description>\n" +
+      `    <location>${platformLoc}</location>\n` +
+      "    <source>bundled</source>\n" +
+      "  </skill>\n" +
+      "  <skill>\n" +
+      "    <name>deploy</name>\n" +
+      "    <description>Deploy it</description>\n" +
+      `    <location>${learnedLoc}</location>\n` +
+      "    <source>learned</source>\n" +
+      "  </skill>\n" +
+      "</available_skills>";
+
+    const index = parseSkillLocationIndex(xml);
+    // A `read` of the absolute learned location attributes the learned skill.
+    expect(index.get(learnedLoc)).toBe("deploy");
+    // Both locations are absolute — the block is format-consistent (no relative key).
+    expect([...index.keys()].every((k) => k.startsWith("/"))).toBe(true);
+    expect(index.get(platformLoc)).toBe("build");
+  });
 });
