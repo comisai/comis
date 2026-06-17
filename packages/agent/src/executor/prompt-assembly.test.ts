@@ -482,13 +482,13 @@ describe("assembleExecutionPrompt", () => {
     ): {
       store: import("@comis/core").TunedAlphaStore;
       reads: () => number;
-      lastScope: () => { tenantId: string; agentId: string } | undefined;
+      lastScope: () => { tenantId: string; agentId: string; intent?: string } | undefined;
     } {
       let readCalls = 0;
-      let scope: { tenantId: string; agentId: string } | undefined;
+      let scope: { tenantId: string; agentId: string; intent?: string } | undefined;
       const store = {
         upsert: vi.fn(),
-        read: vi.fn(async (s: { tenantId: string; agentId: string }) => {
+        read: vi.fn(async (s: { tenantId: string; agentId: string; intent?: string }) => {
           readCalls += 1;
           scope = s;
           return { ok: true as const, value: vector };
@@ -579,9 +579,31 @@ describe("assembleExecutionPrompt", () => {
       expect(scoring.temporalAlpha).toBe(0.82);
       expect(scoring.proofAlpha).toBe(0.73);
       expect(scoring.usefulnessAlpha).toBe(0.64);
-      // The read fired exactly once, scoped to the live (tenant, agent).
+      // The read fired exactly once, scoped to the live (tenant, agent) + the per-intent
+      // bucket (RANK-02): the default "Hello" message classifies to the "factual" intent.
       expect(spy.reads()).toBe(1);
-      expect(spy.lastScope()).toEqual({ tenantId: "t", agentId: "agent-1" });
+      expect(spy.lastScope()).toEqual({ tenantId: "t", agentId: "agent-1", intent: "factual" });
+    });
+
+    it("Test 2b (RANK-02 per-intent read): the read scope carries classifyIntent(query) — a temporal query reads the 'temporal' bucket", async () => {
+      const spy = makeTunedSpy({
+        recencyAlpha: 0.91,
+        temporalAlpha: 0.82,
+        proofAlpha: 0.73,
+        usefulnessAlpha: 0.64,
+      });
+      await assembleExecutionPrompt(
+        makeParams({
+          config: tuningConfig({ enabled: true }),
+          deps: { workspaceDir: "/workspace", memoryPort: ragMemoryPort(), tunedAlphaStore: spy.store },
+          sessionKey: { tenantId: "t", agentId: "agent-1", channelType: "telegram", channelId: "chat-1" } as any,
+          agentId: "agent-1",
+          // A temporal query → classifyIntent → "temporal" → the per-intent bucket read.
+          msg: makeMsg({ text: "what happened yesterday" }),
+        }),
+      );
+      expect(spy.reads()).toBe(1);
+      expect(spy.lastScope()).toEqual({ tenantId: "t", agentId: "agent-1", intent: "temporal" });
     });
 
     it("Test 3 (belt #2 at the apply site): under tuning ON with ANY learned vector, scoring.trustAlpha is byte-identical to config", async () => {
