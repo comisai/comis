@@ -22,6 +22,7 @@ import type {
   FetchMessagesOptions,
   MessageHandler,
   NormalizedMessage,
+  ReactionHandler,
   SendMessageOptions,
 } from "@comis/core";
 import type { ComisLogger } from "@comis/core";
@@ -37,6 +38,7 @@ import { randomUUID } from "node:crypto";
 import { validateDiscordToken } from "./credential-validator.js";
 import { chunkDiscordText } from "./format-discord.js";
 import { mapDiscordToNormalized } from "./message-mapper.js";
+import { bindDiscordReactions } from "./discord-reaction-binder.js";
 import { renderDiscordButtons, renderDiscordCards } from "./rich-renderer.js";
 import { createDiscordVoiceSender } from "./voice-sender.js";
 // Adjacent untyped-cast sites in editMessage / reactToMessage / removeReaction
@@ -96,6 +98,9 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
   });
 
   const handlers: MessageHandler[] = [];
+  // REACT-01: inbound reaction-add handlers (the binder logic is co-located in
+  // discord-reaction-binder.ts to hold the 800-line cap).
+  const reactionHandlers: ReactionHandler[] = [];
   let _channelId = "discord-pending";
   let reconnectAttempt = 0;
 
@@ -195,6 +200,10 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
           },
         );
       });
+
+      // REACT-01: bind the inbound reaction-add listener (intents already held
+      // at :92-93). Co-located in discord-reaction-binder.ts (800-line cap).
+      bindDiscordReactions(client, reactionHandlers, deps.logger);
 
       // Shard lifecycle event handlers for reconnection visibility
       client.on("shardDisconnect", (event, shardId) => {
@@ -652,6 +661,10 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
 
     onMessage(handler: MessageHandler): void {
       handlers.push(handler);
+    },
+
+    onReaction(handler: ReactionHandler): void {
+      reactionHandlers.push(handler);
     },
 
     getStatus(): ChannelStatus {

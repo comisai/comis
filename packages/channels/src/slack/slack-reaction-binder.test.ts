@@ -125,7 +125,9 @@ describe("bindSlackReactions -- reaction_added fanout", () => {
     );
 
     const handler = app.handlers.get("reaction_added");
-    await expect(handler!({ event: makeReactionEvent() })).resolves.toBeUndefined();
+    // The binder fire-and-forgets synchronously — a throwing handler must NOT
+    // escape (no sync throw out of the listener).
+    expect(() => handler!({ event: makeReactionEvent() })).not.toThrow();
     await new Promise((r) => setTimeout(r, 5));
 
     expect(good).toHaveLength(1);
