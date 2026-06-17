@@ -12,6 +12,7 @@
 import { describe, it, expect } from "vitest";
 
 import { classifyFrame, type ClassifierFrame } from "../../terminal-classifier.js";
+import { decideAutoAnswer } from "../../terminal-auto-answer.js";
 import type { EmulatorSnapshot } from "../../terminal-render.js";
 import { codexProfile } from "./profile.js";
 
@@ -79,5 +80,25 @@ describe("codexProfile.perception — patterns + end-to-end classification (CLAS
     const c = classifyCodex(["Select approval mode", "auto", "manual", ""], { x: 0, y: 3 }, 10_000);
     expect(c.state).toBe("awaiting-input");
     expect(c.reason).toBe("dialog_detected");
+  });
+});
+
+describe("codexProfile.dialogs — approval overlay is destructive → always escalates (DIALOG-01/02)", () => {
+  const dialogs = codexProfile.dialogs!;
+
+  it("the approval-overlay detect matches a run-command approval and is flagged destructive", () => {
+    const overlay = dialogs.find((d) => d.name === "approval-overlay")!;
+    expect(overlay.detect.test("Allow Codex to run command: npm test")).toBe(true);
+    expect(overlay.destructive).toBe(true);
+  });
+
+  it("ESCALATES the approval overlay under safe-only — command execution is never auto-approved", () => {
+    const screen = "Allow Codex to run command: rm -rf dist";
+    expect(decideAutoAnswer("safe-only", screen, [], dialogs)).toEqual({ action: "escalate", reason: "destructive" });
+  });
+
+  it("ESCALATES the approval overlay even under mode all", () => {
+    const screen = "Approve command execution: git push --force";
+    expect(decideAutoAnswer("all", screen, [], dialogs)).toEqual({ action: "escalate", reason: "destructive" });
   });
 });

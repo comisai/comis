@@ -120,6 +120,14 @@ export interface ClassifierFrame {
    * byte-identical to today (INV-1).
    */
   perception?: PlatformPerception;
+  /**
+   * OPTIONAL selected-platform dialog `detect` patterns (`profile.dialogs[].detect`, v2.26
+   * DIALOG-01) — the trust-gate / permission-prompt / approval-overlay signatures. The dialog
+   * detector consumes these as awaiting-input cues (a profile dialog IS awaiting-input), additive
+   * to the generic structural detection. Absent ⇒ the generic path (INV-1). Detection only; the
+   * safe-only auto-answer (`decideAutoAnswer`) makes the keystroke decision downstream.
+   */
+  dialogDetects?: readonly RegExp[];
 }
 
 /**
@@ -264,9 +272,10 @@ export function classifyFrame(frame: ClassifierFrame, history: FrameHistory): Cl
   // (review WR-01): Claude's `⏺` turn bullet is also its per-tool-action bullet, so feeding it would
   // over-fire awaiting-input on a mid-turn pause — the idle `❯` (promptAffordance) is the real cue;
   // `turnEnd` stays populated for the §6-v2 structured-perception layer. Empty when no profile (INV-1).
-  const perceptionAffordances: readonly RegExp[] = frame.perception
-    ? [...(frame.perception.menuOrPicker ?? []), ...(frame.perception.promptAffordance ?? [])]
-    : [];
+  const perceptionAffordances: readonly RegExp[] = [
+    ...(frame.perception ? [...(frame.perception.menuOrPicker ?? []), ...(frame.perception.promptAffordance ?? [])] : []),
+    ...(frame.dialogDetects ?? []), // DIALOG-01: a profile dialog (trust/permission/approval) IS awaiting-input
+  ];
   // 1. PTY exit — terminal; nothing more can render.
   if (!frame.alive) {
     return { state: "exited", confidence: "high", reason: "pty_exit" };

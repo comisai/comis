@@ -50,6 +50,8 @@
  * @module
  */
 
+import type { PlatformDialog } from "./platforms/index.js";
+
 /** The auto-answer modes — the operator allow-entry `autoAnswer` (default `safe-only`). */
 export type AutoAnswerMode = "none" | "safe-only" | "all";
 
@@ -190,51 +192,86 @@ function firstSafePatternIndex(screen: string, hintPatterns: readonly string[]):
 // The decision
 // ---------------------------------------------------------------------------
 
+/** The first profile dialog whose `detect` matches the screen, with its array index, or `undefined`. */
+function firstMatchingDialog(
+  screen: string,
+  dialogs: readonly PlatformDialog[],
+): { entry: PlatformDialog; index: number } | undefined {
+  for (let i = 0; i < dialogs.length; i++) {
+    const entry = dialogs[i];
+    if (entry !== undefined && entry.detect.test(screen)) return { entry, index: i };
+  }
+  return undefined;
+}
+
 /**
  * Decide whether to auto-answer a settled prompt or escalate it (SEC-12). Pure, total,
  * never throws, never sends — returns a typed {@link AutoAnswerDecision} the woken turn
  * acts on. See the module doc for the full decision order (the escalate-always gate is
- * FIRST and WINS over any operator safe match).
+ * FIRST and WINS over any operator safe match OR profile-dialog safeAnswer).
  *
  * @param mode - The operator `autoAnswer` mode (`none` | `safe-only` | `all`).
  * @param screen - The settled prompt region (attacker-influenceable input).
  * @param hintPatterns - The operator-configured safe prompt cues (NEVER model-supplied).
+ * @param dialogs - The SELECTED platform profile's dialogs (v2.26 DIALOG-01; by operator allowId,
+ *   never content-sniffed). A profile PROPOSES a safe answer; this policy DISPOSES — a `destructive`
+ *   dialog is never auto-answered (escalates, even under `all`), and the escalate-always veto still
+ *   WINS over any dialog safeAnswer. Empty ⇒ exactly today's hintPattern-only behavior (INV-1).
  * @returns The typed decision.
  */
 export function decideAutoAnswer(
   mode: AutoAnswerMode,
   screen: string,
   hintPatterns: readonly string[],
+  dialogs: readonly PlatformDialog[] = [],
 ): AutoAnswerDecision {
   // 1. Policy off ⇒ never auto-answer (the SAFE default).
   if (mode === "none") {
     return { action: "escalate", reason: "no_safe_match" };
   }
 
-  // 2. Find the FIRST matching operator safe pattern — the "we are about to auto-answer" signal.
-  const matchedIndex = firstSafePatternIndex(screen, hintPatterns);
+  // 2. A matched profile dialog flagged `destructive` ALWAYS escalates — never auto-answered, even
+  //    under mode `all`, even if it declares a safeAnswer (DIALOG-01: the safety floor). Checked
+  //    BEFORE the safe-answer paths so the destructive flag can never be bypassed.
+  const dialog = firstMatchingDialog(screen, dialogs);
+  if (dialog !== undefined && dialog.entry.destructive === true) {
+    return { action: "escalate", reason: "destructive" };
+  }
 
-  // 3. ESCALATE-ALWAYS gate (SEC-12) — a VETO on the about-to-answer safe match. It fires ONLY
-  //    when an operator safe pattern matched (we WOULD otherwise send a canned answer): if that
-  //    SAME screen also carries an auth/login, destructive, or approval cue the canned answer is
-  //    VETOED + escalated (a CLI cannot phish a safe match beneath an auth/destructive prompt —
-  //    SEC-12, T-124-08; the phish BY DEFINITION renders a safe-pattern affordance, so it ALWAYS
-  //    matches here, leaving the anti-phishing guard fully intact). A screen with NO safe-pattern
-  //    match is never auto-answered regardless (step 4 → no_safe_match), so running the BROAD
-  //    markers against it is pure downside: on a driven AI CLI they mis-fire on NARRATION
-  //    ("delete a todo", "remove all completed", "gh auth login") — a non-prompt — forcing a
-  //    false escalation that wedges the drive (real-VPS 2026-06-16: claude's TODO-app narration
-  //    forced a false `destructive`). Gating the gate on an actual safe match removes the
-  //    narration false-positives while never weakening the phishing veto.
+  // 3. Find the FIRST matching operator safe pattern — a "we are about to auto-answer" signal.
+  const matchedIndex = firstSafePatternIndex(screen, hintPatterns);
+  // A non-destructive profile dialog with a non-empty safeAnswer is the other "about to auto-answer".
+  const dialogAnswer =
+    dialog !== undefined && dialog.entry.safeAnswer !== undefined && dialog.entry.safeAnswer.length > 0
+      ? dialog
+      : undefined;
+
+  // 4. The ESCALATE-ALWAYS gate (SEC-12) is a VETO that fires ONLY when we WOULD otherwise send a
+  //    canned answer (a profile dialog safeAnswer OR an operator safe pattern matched): if that SAME
+  //    screen also carries an auth/login, destructive, or approval cue the answer is VETOED +
+  //    escalated (a CLI cannot phish a safe affordance beneath an auth/destructive prompt — SEC-12,
+  //    T-124-08; the phish BY DEFINITION renders a safe affordance, so it ALWAYS matches here, leaving
+  //    the anti-phishing guard fully intact). A screen with NO safe match is never auto-answered
+  //    regardless, so running the BROAD markers against it is pure downside (narration false-positives
+  //    that wedge the drive — real-VPS 2026-06-16); gating the veto on an actual safe match removes
+  //    those while keeping the phishing guard. A profile dialog safeAnswer takes precedence over the
+  //    canned-Enter hintPattern (it carries the dialog's explicit keys). The matched index is a
+  //    content-free audit id.
+  if (dialogAnswer !== undefined) {
+    const forced = escalateAlwaysReason(screen);
+    if (forced !== undefined) return { action: "escalate", reason: forced };
+    return {
+      action: "answer",
+      keys: [...(dialogAnswer.entry.safeAnswer ?? [])],
+      matchedPatternIndex: dialogAnswer.index,
+    };
+  }
   if (matchedIndex !== undefined) {
     const forced = escalateAlwaysReason(screen);
-    if (forced !== undefined) {
-      return { action: "escalate", reason: forced };
-    }
-    // A safe match with no auth/destructive/approval veto ⇒ answer (the canned Enter).
+    if (forced !== undefined) return { action: "escalate", reason: forced };
     return { action: "answer", keys: cannedKeysFor(), matchedPatternIndex: matchedIndex };
   }
 
-  // 4. No operator safe pattern matched ⇒ the SAFE default (escalate; no keystroke is invented).
+  // 5. No dialog safeAnswer AND no operator safe pattern matched ⇒ the SAFE default (escalate; no keystroke invented).
   return { action: "escalate", reason: "no_safe_match" };
 }

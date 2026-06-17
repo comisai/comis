@@ -89,4 +89,27 @@ export const claudeCodeProfile: TerminalPlatformProfile = {
     // `❯` composer (promptAffordance) is the real awaiting-input cue.
     turnEnd: [/⏺\s+\S/u],
   },
+  // DIALOG-01 (Phase 169): Claude's interactive dialogs + their SAFE answer. The operator safe-only
+  // policy + the escalate-always veto STILL gate these (a profile proposes; the policy disposes) — a
+  // screen carrying an auth/destructive/approval cue escalates regardless. safeAnswer is RAW text
+  // (Enter), sent via send_text exactly like the canned hintPattern answer.
+  dialogs: [
+    {
+      // The first-launch trust gate ("Do you trust the files in this folder?"). Benign — the operator
+      // launched Claude in their own workspace; Enter accepts the default. NOT destructive.
+      name: "trust-gate",
+      detect: /trust the files in this folder/iu,
+      safeAnswer: ["\r"],
+      destructive: false,
+    },
+    {
+      // A standard permission prompt ("Do you want to proceed?"). Enter accepts the default; a
+      // DESTRUCTIVE action on the same screen (delete/overwrite/…) is caught by the escalate-always
+      // veto and escalated regardless. NOT inherently destructive.
+      name: "permission-prompt",
+      detect: /Do you want to proceed\?/iu,
+      safeAnswer: ["\r"],
+      destructive: false,
+    },
+  ],
 };

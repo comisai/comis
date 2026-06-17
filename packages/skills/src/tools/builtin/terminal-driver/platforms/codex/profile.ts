@@ -34,4 +34,17 @@ export const codexProfile: TerminalPlatformProfile = {
     // The composer-return banner after a turn completes.
     turnEnd: [/(?:^|\s)›\s*$/u],
   },
+  // DIALOG-01 (Phase 169): Codex's approval overlay. Approving COMMAND EXECUTION is privilege-bearing,
+  // so it is flagged `destructive` ⇒ ALWAYS escalates to a human (never auto-answered, even under mode
+  // `all`) — an operator who wants unattended Codex uses Codex's own auto-approve flag, not the driver.
+  // The safeAnswer is declared but moot (destructive wins); even a missed `detect` still escalates
+  // (the boxed overlay → generic awaiting-input → no safeAnswer path → escalate).
+  dialogs: [
+    {
+      name: "approval-overlay",
+      detect: /\b(?:Approve|Allow)\b.{0,40}\b(?:command|run|execute|exec)\b/iu,
+      safeAnswer: ["\r"],
+      destructive: true,
+    },
+  ],
 };

@@ -115,6 +115,17 @@ describe("classifyFrame — consumes profile.perception (CLASSIFY-01/02)", () =>
     expect(c.reason).toBe("dialog_detected");
   });
 
+  it("a dialogDetects match makes a text-only trust-gate (no box) → awaiting-input (DIALOG-01)", () => {
+    const snapshot = snap(["Do you trust the files in this folder?", "1. Yes  2. No", ""], { x: 0, y: 2 });
+    expect(classifyFrame(frame({ snapshot }), noStuck).state).toBe("working"); // profile-free: no structure → unparked working
+    const c = classifyFrame(
+      frame({ snapshot, dialogDetects: [/trust the files in this folder/i] }),
+      noStuck,
+    );
+    expect(c.state).toBe("awaiting-input");
+    expect(c.reason).toBe("dialog_detected");
+  });
+
   it("a promptAffordance match makes a settled idle affordance the generic misses → awaiting-input", () => {
     // A platform-specific affordance the generic SELECTOR/box/enumerator does NOT catch.
     const snapshot = snap(["output above", "▶ ready for input", ""], { x: 0, y: 2 });

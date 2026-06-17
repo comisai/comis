@@ -16,6 +16,7 @@
 import { describe, it, expect } from "vitest";
 
 import { classifyFrame, type ClassifierFrame } from "../../terminal-classifier.js";
+import { decideAutoAnswer } from "../../terminal-auto-answer.js";
 import type { EmulatorSnapshot, RenderCell } from "../../terminal-render.js";
 import { claudeCodeProfile, stripGhostFromRow } from "./profile.js";
 
@@ -193,5 +194,35 @@ describe("claudeCodeProfile.perception — patterns + end-to-end classification 
     // A generic middot bullet + gerund is prose, not the spinner — past the stuck window it stays stuck.
     const c = classifyClaude(["· Building the parser", "still going", "more", "and more"], { x: 4, y: 0 }, 10_000);
     expect(c.state).toBe("stuck");
+  });
+});
+
+describe("claudeCodeProfile.dialogs — golden frames + safe-only auto-answer (DIALOG-01/02)", () => {
+  const dialogs = claudeCodeProfile.dialogs!;
+  const find = (name: string) => dialogs.find((d) => d.name === name)!;
+
+  it("the trust-gate detect matches the first-launch frame and is non-destructive with an Enter answer", () => {
+    const tg = find("trust-gate");
+    expect(tg.detect.test("Do you trust the files in this folder?")).toBe(true);
+    expect(tg.destructive).toBe(false);
+    expect(tg.safeAnswer).toEqual(["\r"]);
+  });
+
+  it("auto-answers the trust-gate under safe-only with the profile dialogs", () => {
+    const screen = ["Do you trust the files in this folder?", "1. Yes, proceed", "2. No, exit"].join("\n");
+    const decision = decideAutoAnswer("safe-only", screen, [], dialogs);
+    expect(decision.action).toBe("answer");
+    if (decision.action === "answer") expect(decision.keys).toEqual(["\r"]);
+  });
+
+  it("escalates a trust-gate frame that ALSO carries an auth cue (the veto wins over the dialog)", () => {
+    const screen = ["Do you trust the files in this folder?", "First, please sign in"].join("\n");
+    expect(decideAutoAnswer("safe-only", screen, [], dialogs)).toEqual({ action: "escalate", reason: "auth_login" });
+  });
+
+  it("auto-answers a `Do you want to proceed?` permission prompt, but escalates a destructive one (the veto)", () => {
+    expect(decideAutoAnswer("safe-only", "Do you want to proceed?", [], dialogs).action).toBe("answer");
+    const destructive = decideAutoAnswer("safe-only", "This will delete the branch. Do you want to proceed?", [], dialogs);
+    expect(destructive).toEqual({ action: "escalate", reason: "destructive" });
   });
 });

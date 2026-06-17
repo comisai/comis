@@ -95,10 +95,12 @@ export async function observeSettledFrame(args: ObserveSettledFrameArgs): Promis
   const noProgressMs = now - state.lastProgressMs;
   state.lastClassifiedSnapshot = snapshot;
 
-  // CLASSIFY-01: the selected platform profile's perception (by the session's operator-declared
-  // allowId — never content-sniffed; INV-3). Fed to the classifier, which stays the sole owner of
-  // `activity` (D4). Absent (no allowId / no profile) ⇒ the generic path, unchanged (INV-1).
-  const perception = state.allowId !== undefined ? getPlatformProfile(state.allowId)?.perception : undefined;
+  // CLASSIFY-01/DIALOG-01: the selected platform profile (by the session's operator-declared allowId
+  // — never content-sniffed; INV-3). The classifier stays the sole owner of `activity` (D4): it
+  // consumes the profile's perception + the dialog `detect` patterns. Absent ⇒ generic path (INV-1).
+  const profile = state.allowId !== undefined ? getPlatformProfile(state.allowId) : undefined;
+  const perception = profile?.perception;
+  const dialogDetects = profile?.dialogs?.map((d) => d.detect);
 
   // `diffEmpty` (the spec §4.3 prerequisite for awaiting-input) means the SETTLED screen
   // is stable. This path runs only AFTER `runSettle` resolved, so on a non-timeout settle
@@ -116,6 +118,7 @@ export async function observeSettledFrame(args: ObserveSettledFrameArgs): Promis
       snapshot,
       hintPatterns,
       perception,
+      dialogDetects,
     },
     { noProgressMs, stuckMs },
   );
@@ -190,12 +193,14 @@ export async function statusReplyFromState(args: StatusReplyArgs): Promise<Worke
   const screenDiffEmpty = isFirst ? true : !diff.changed;
   const noProgressMs = state.lastProgressMs === undefined ? 0 : nowMs() - state.lastProgressMs;
 
-  // CLASSIFY-01: the selected platform profile's perception (by allowId; INV-3). Same generic
-  // fallback as the settle path — absent ⇒ unchanged (INV-1).
-  const perception = state.allowId !== undefined ? getPlatformProfile(state.allowId)?.perception : undefined;
+  // CLASSIFY-01/DIALOG-01: the selected platform profile (by allowId; INV-3). Same generic fallback
+  // as the settle path — absent ⇒ unchanged (INV-1).
+  const profile = state.allowId !== undefined ? getPlatformProfile(state.allowId) : undefined;
+  const perception = profile?.perception;
+  const dialogDetects = profile?.dialogs?.map((d) => d.detect);
 
   const classification: Classification = classifyFrame(
-    { alive: state.alive, settled, diffEmpty: screenDiffEmpty, snapshot, hintPatterns, perception },
+    { alive: state.alive, settled, diffEmpty: screenDiffEmpty, snapshot, hintPatterns, perception, dialogDetects },
     { noProgressMs, stuckMs },
   );
   const cursorParked = isCursorParked(snapshot.cursor, snapshot.screen, snapshot.cols, snapshot.rows, hintPatterns);
