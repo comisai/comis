@@ -422,64 +422,64 @@ export function hybridSearch(
   const maxRrfScore = (weightFts + weightVec) / (k + 1);
 
   // ── Post-fusion filtering ──
+  //
+  // `evicted_at IS NULL` is an ALWAYS-APPLIED base condition (FORGET-01): a
+  // soft-evicted memory (evicted_at set by the lifecycle sweep) is EXCLUDED from
+  // EVERY recall path. This is the single most overlookable correctness gap — the
+  // lifecycle sweep marking evicted_at is a silent no-op unless recall actually
+  // filters on it. There is NO unfiltered branch: even with no caller-supplied
+  // option, the post-fusion SELECT runs with `evicted_at IS NULL` as the sole
+  // condition (a literal — binds no param). This is a recall-side exclusion only;
+  // the inspect/asOf audit reads do NOT add it, so an evicted row stays resolvable.
   let filteredIds: string[];
 
-  if (
-    options.trustLevel ||
-    options.memoryType ||
-    options.tenantId ||
-    options.agentId ||
-    options.occurredAtRange
-  ) {
-    // Build a WHERE clause for post-fusion filtering
-    const conditions: string[] = [];
-    const params: unknown[] = [];
+  const candidateIds = rrfResults.map((r) => r.id);
+  if (candidateIds.length === 0) return [];
 
-    if (options.trustLevel) {
-      conditions.push("trust_level = ?");
-      params.push(options.trustLevel);
-    }
-    if (options.memoryType) {
-      conditions.push("memory_type = ?");
-      params.push(options.memoryType);
-    }
-    if (options.tenantId) {
-      conditions.push("tenant_id = ?");
-      params.push(options.tenantId);
-    }
-    if (options.agentId) {
-      conditions.push("agent_id = ?");
-      params.push(options.agentId);
-    }
-    if (options.occurredAtRange) {
-      // ANDed onto the scoped clause (never widens). Bound params, never
-      // concat. NULL occurred_at fails BETWEEN → drops out (no event time ⇒ not
-      // in any range).
-      conditions.push("occurred_at BETWEEN ? AND ?");
-      params.push(options.occurredAtRange.start, options.occurredAtRange.end);
-    }
+  // The always-applied base condition + any caller-supplied narrowing conditions.
+  const conditions: string[] = ["evicted_at IS NULL"];
+  const params: unknown[] = [];
 
-    const candidateIds = rrfResults.map((r) => r.id);
-    if (candidateIds.length === 0) return [];
-
-    // Use IN clause with placeholders
-    const placeholders = candidateIds.map(() => "?").join(",");
-    const whereClause = conditions.join(" AND ");
-
-    const stmt = db.prepare(
-      `SELECT id FROM memories WHERE id IN (${placeholders}) AND ${whereClause}`,
-    );
-
-    const parsed = idProjectionMapper.parseRows(stmt.all(...candidateIds, ...params));
-    // Degrade-on-validation-error: filter step is non-fatal; return empty
-    // → no rows pass filter → caller falls through to "no results".
-    const rows = parsed.ok ? parsed.value : [];
-    const allowedSet = new Set(rows.map((r) => r.id));
-
-    filteredIds = rrfResults.filter((r) => allowedSet.has(r.id)).map((r) => r.id);
-  } else {
-    filteredIds = rrfResults.map((r) => r.id);
+  if (options.trustLevel) {
+    conditions.push("trust_level = ?");
+    params.push(options.trustLevel);
   }
+  if (options.memoryType) {
+    conditions.push("memory_type = ?");
+    params.push(options.memoryType);
+  }
+  if (options.tenantId) {
+    conditions.push("tenant_id = ?");
+    params.push(options.tenantId);
+  }
+  if (options.agentId) {
+    conditions.push("agent_id = ?");
+    params.push(options.agentId);
+  }
+  if (options.occurredAtRange) {
+    // ANDed onto the scoped clause (never widens). Bound params, never
+    // concat. NULL occurred_at fails BETWEEN → drops out (no event time ⇒ not
+    // in any range).
+    conditions.push("occurred_at BETWEEN ? AND ?");
+    params.push(options.occurredAtRange.start, options.occurredAtRange.end);
+  }
+
+  // Use IN clause with placeholders. The WHERE ALWAYS carries `evicted_at IS NULL`
+  // (the base condition) ANDed with any caller conditions — no unfiltered path.
+  const placeholders = candidateIds.map(() => "?").join(",");
+  const whereClause = conditions.join(" AND ");
+
+  const stmt = db.prepare(
+    `SELECT id FROM memories WHERE id IN (${placeholders}) AND ${whereClause}`,
+  );
+
+  const parsed = idProjectionMapper.parseRows(stmt.all(...candidateIds, ...params));
+  // Degrade-on-validation-error: filter step is non-fatal; return empty
+  // → no rows pass filter → caller falls through to "no results".
+  const rows = parsed.ok ? parsed.value : [];
+  const allowedSet = new Set(rows.map((r) => r.id));
+
+  filteredIds = rrfResults.filter((r) => allowedSet.has(r.id)).map((r) => r.id);
 
   // ── Return top results with normalized scores ──
   const rrfMap = new Map(rrfResults.map((r) => [r.id, r.rrfScore]));

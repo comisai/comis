@@ -8,20 +8,25 @@
  * for this capability. The agent package never imports it (the agent↛memory cut);
  * it consumes the `MemoryLifecyclePort` TYPE from @comis/core.
  *
- * ## SCAFFOLD-DORMANT
+ * ## LIVE soft eviction (gated; default-OFF)
  *
  * `runLifecycleSweep(scope)` is the cron-driven maintenance pass. It SELECTs the
- * scoped candidate rows, computes each one's importance-decayed `strength` + its
- * hysteresis-banded tier — and then APPLIES NOTHING. The demote/evict/promote step
- * is a NO-OP: no row is DELETEd, no marker column is UPDATEd, and the report's
- * `promoted`/`demoted`/`evicted` are ALWAYS 0 — whether the live policy WOULD touch
- * a row or not. Live eviction is the deferred operator step. The apply branch
- * is dead BY CONSTRUCTION behind `LIVE_EVICTION = false as const` (so the
- * eviction-candidacy computation stays exercised + documented, while the mutation
- * is statically unreachable — RED-proven by the off-policy fixture test). When the
- * live policy lands it will set `lifecycle_demoted_at` / `evicted_at`
- * NON-DESTRUCTIVELY (a marker, never a hard DELETE — the `consolidated_at`
- * precedent), preserving the raw row + provenance for audit.
+ * scoped candidate rows and computes each one's importance-decayed `strength`
+ * (FORGET-02-coupled: a memory's SUMmed `failure_count` lowers its strength via a
+ * bounded, monotone `failurePenalty`). When the policy is EVICTION-ENABLED
+ * (`evictionEnabled` — the daemon threads `learningForgetting.eviction.enabled` ∧
+ * `.enabled`), a candidate whose strength falls below `strengthThreshold` AND is
+ * NOT exempt (not pinned, `trust_level != 'system'`, `proof_count < highProofFloor`
+ * — the FORGET-03 anti-induced-eviction floors) is SOFT-evicted: `evicted_at` is
+ * set NON-DESTRUCTIVELY (a marker, never a hard DELETE — the `consolidated_at`
+ * precedent), preserving the raw row + provenance for audit/`asOf`. The eviction is
+ * REVERSIBLE via {@link MemoryLifecyclePort.unevict} (clear `evicted_at` on renewed
+ * usefulness). When the policy is NOT eviction-enabled (the default), the sweep
+ * stays DORMANT — it computes but APPLIES NOTHING (report `evicted`/`demoted` = 0,
+ * no UPDATE, no DELETE) — the byte-identity guarantee. Tier demote/promote moves
+ * remain a deferred step (`promoted`/`demoted` are still 0 in this build). The
+ * recall-side exclusion of evicted rows is enforced by `hybrid-search.ts`
+ * (`evicted_at IS NULL`), not here.
  *
  * ## Isolation is the load-bearing security boundary (the §5.2 invariant)
  *
@@ -162,10 +167,13 @@ export interface MemoryLifecycleStoreDeps {
   /** Optional structured logger. */
   logger?: MemoryLogger;
   /**
-   * The DORMANT policy constants (defaults to {@link DEFAULT_POLICY}). The daemon
-   * passes the operator-configured `MemoryLifecycleConfigSchema` values;
-   * the unit adapter uses the defaults. Even with these set, the SCAFFOLD applies
-   * NOTHING (LIVE_EVICTION is false).
+   * The lifecycle policy: the dormant decay/tier constants (default
+   * {@link DEFAULT_POLICY}) PLUS the optional LIVE soft-eviction behavior
+   * (`evictionEnabled`/`strengthThreshold`/`failurePenalty`/`highProofFloor`). The
+   * daemon passes the operator-configured `MemoryLifecycleConfigSchema` +
+   * `learningForgetting` values; the unit adapter uses the dormant defaults. With
+   * the eviction behavior UNSET (the default), the sweep applies NOTHING (the
+   * byte-identity guarantee); it soft-evicts ONLY when `evictionEnabled` is true.
    */
   policy?: MemoryLifecyclePolicy;
 }

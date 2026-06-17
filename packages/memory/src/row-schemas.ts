@@ -126,15 +126,14 @@ export const MemoryUsefulnessRowSchema = z.strictObject({
 });
 
 /**
- * Schema for the lifecycle-sweep candidate-scan projection.
- * The scoped `SELECT id, memory_type, occurred_at, created_at, proof_count,
- * lifecycle_demoted_at, evicted_at, strength FROM memories WHERE tenant_id=? AND
- * agent_id=?` read the DORMANT sweep uses to compute each candidate's decayed
- * strength + hysteresis-banded tier; tenant_id/agent_id NOT projected (the WHERE
- * pins them). The three markers + occurred_at + proof_count are `.nullable()` (NULL
- * = not demoted / not evicted / no strength yet / event-time unknown / raw);
- * `memory_type` is NOT NULL (DEFAULT 'semantic'), drives the per-type β. Via
- * `createRowMapper`. SCAFFOLD-DORMANT: the sweep READS these markers but writes NONE.
+ * Schema for the lifecycle-sweep candidate-scan projection — the scoped
+ * `SELECT m.id, …, m.pinned, m.trust_level, SUM(u.failure_count) FROM memories m
+ * LEFT JOIN memory_usefulness u … WHERE m.tenant_id=? AND m.agent_id=?` the sweep
+ * uses to compute each candidate's decayed strength (failure_count-coupled) + tier
+ * + eviction candidacy (tenant_id/agent_id NOT projected — the WHERE pins them).
+ * Markers + occurred_at + proof_count + failure_count are `.nullable()` (NULL =
+ * absent/raw); `memory_type` NOT NULL (DEFAULT 'semantic') drives β; `pinned`/
+ * `trust_level` feed the FORGET-03 exemptions. Via `createRowMapper`.
  */
 export const MemoryLifecycleRowSchema = z.strictObject({
   id: z.string(),
@@ -152,12 +151,11 @@ export const MemoryLifecycleRowSchema = z.strictObject({
   evicted_at: z.number().nullable(),
   /** Computed strength side-column (REAL 0..1); NULL = not yet computed. */
   strength: z.number().nullable(),
-  /** Pinned flag (NOT NULL DEFAULT 0) — a hard eviction exemption (FORGET-03). */
+  /** Pinned flag (NOT NULL DEFAULT 0); pinned=1 is a hard eviction exemption (FORGET-03). */
   pinned: z.number(),
-  /** Trust tier ('system'|'learned'|'external') — 'system' is exempt (FORGET-03). */
+  /** Trust tier ('system'|'learned'|'external'); 'system' is exempt (FORGET-03). */
   trust_level: z.string(),
-  /** SUM(failure_count) across intents (LEFT JOIN; NULL/absent → 0). Drives the
-   *  failurePenalty strength coupling (FORGET-02 — more failures → earlier eviction). */
+  /** SUM(failure_count) across intents (LEFT JOIN; NULL→0) — the failurePenalty coupling (FORGET-02). */
   failure_count: z.number().nullable(),
 });
 
