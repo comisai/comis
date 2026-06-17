@@ -774,7 +774,7 @@ The v2.26 **ranking & forgetting** loops emit their own **counts-only** trajecto
 
 #### `memory skills`
 
-Procedural-learning telemetry for the v2.26 Verified Learning skill loop: the **learned-skill admission funnel** — the total count and the per-state breakdown (`candidate` / `active` / `stale` / `archived`), broken down per agent, plus the per-skill `name·state·proof-count`. Read **offline** from the local [`learned_skills` table](/operations/data-directory) in `~/.comis/memory.db` (no gateway required). **Counts and ids only** — never a procedure body, script, or description (the same closed-graph firewall as the trajectory signals).
+Procedural-learning telemetry for the v2.26 Verified Learning skill loop: the **learned-skill admission funnel** — the total count and the per-state breakdown (`candidate` / `active` / `stale` / `archived`), broken down per agent, plus the per-skill `name·state·proof-count` (with `confidence` and a `mutating` flag). Read **offline** from the local [`learned_skills` table](/operations/data-directory) in `~/.comis/memory.db` (no gateway required). **Counts, ids, and closed enums only** — never a procedure body, script, or description (the same closed-graph firewall as the trajectory signals). The loop is **shadow** in this phase — an admitted procedure is stored but NOT surfaced to the agent (a later phase surfaces it) — so the funnel reflects what was *admitted*, not what the agent can yet use. See [Learning Skills in config-yaml](/reference/config-yaml#learning-skills-agents-learningskills).
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
