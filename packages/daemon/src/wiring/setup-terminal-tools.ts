@@ -139,7 +139,7 @@ export interface TerminalWiringDeps {
   readonly bwrapPath?: string;
   /**
    * The resolved per-agent workspace dir (see {@link TerminalWiringBaseDeps.agentWorkspaceDir}).
-   * Present ⇒ the per-agent registry roots sessions in `<agentWorkspaceDir>/terminal`
+   * Present ⇒ the per-agent registry roots sessions in `<agentWorkspaceDir>/projects`
    * (persistent, agent-scoped) with a no-op cleanup; absent ⇒ the throwaway `/tmp`
    * default. The injected workspace is re-bound RW after the `~/.comis` carve-out by
    * `buildScopeArgs`, so it is writable in the jail while secrets stay masked.
@@ -426,7 +426,7 @@ function getOrCreateTerminalRegistry(
       bwrapPath: deps.bwrapPath,
       egressControl: deps.egressControl,
       // Agent-workspace persistence: root each session in the agent's OWN workspace
-      // (`<agentWorkspaceDir>/terminal`) with a NO-OP cleanup, so a driven session's
+      // (`<agentWorkspaceDir>/projects`) with a NO-OP cleanup, so a driven session's
       // work (e.g. a full GSD milestone's app) survives the session end and the agent
       // sees it under its workspace — instead of a throwaway /tmp dir rm'd on kill.
       // `buildScopeArgs` re-binds ONLY this subtree RW after the ~/.comis carve-out,
@@ -553,7 +553,7 @@ export interface TerminalWiringBaseDeps {
   /**
    * The resolved per-agent workspace dir (`workspaceDirs.get(agentId) ?? default`,
    * the same dir the agent's read/write/exec tools use). When present, the registry
-   * roots each session in `<agentWorkspaceDir>/terminal` (PERSISTENT, no-op cleanup)
+   * roots each session in `<agentWorkspaceDir>/projects` (PERSISTENT, no-op cleanup)
    * instead of a throwaway `/tmp` dir — so a driven milestone's work survives the
    * session and the agent can see it. Absent ⇒ the ephemeral default (test paths).
    */

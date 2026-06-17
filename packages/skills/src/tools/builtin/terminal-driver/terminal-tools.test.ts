@@ -505,7 +505,7 @@ describe("terminal-tools — scope is sourced from the entry, never the agent pa
 
   it("PROJECTS-02: the create tool STEERS a coding project to the `project` param (named, retrievable <workspace>/projects/<name> folder) — not cwd/name", () => {
     // Live Telegram drive 2026-06-17: the agent built a full snake game but passed cwd+name and
-    // NOT `project`, so it landed FLAT in <workspace>/terminal/ (no retrievable projects/<name>
+    // NOT `project`, so it landed FLAT in the session workspace (no retrievable projects/<name>
     // folder). The mechanism (PROJECTS-01) works — the agent just never invoked it. The fix is
     // guidance: the tool description + cwd/name param hints must point coding work at `project`.
     const tool = createTerminalSessionCreateTool(baseDeps(makeFakeRegistry()));

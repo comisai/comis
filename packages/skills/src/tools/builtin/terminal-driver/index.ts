@@ -76,7 +76,7 @@ export {
   type EgressProxyLogger,
 } from "./terminal-egress-proxy.js";
 
-// The PERSISTENT, agent-scoped workspace allocator (`<agentWorkspaceDir>/terminal`).
+// The PERSISTENT, agent-scoped projects-root allocator (`<agentWorkspaceDir>/projects`).
 // The daemon injects it as the registry's `allocateWorkspace` with a no-op
 // `cleanupWorkspace`, so a driven session's work persists in the agent's own
 // workspace instead of a throwaway /tmp dir. See its doc + buildScopeArgs' carve-out

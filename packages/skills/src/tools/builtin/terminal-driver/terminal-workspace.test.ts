@@ -29,7 +29,6 @@ import {
   allocateSessionWorkspace,
   cleanupSessionWorkspace,
   prepareAgentTerminalWorkspace,
-  AGENT_TERMINAL_SUBDIR,
   resolveCreateWorkspace,
 } from "./terminal-workspace.js";
 import {
@@ -129,14 +128,19 @@ describe("allocateSessionWorkspace — a real per-session jail workspace (gap 2)
 });
 
 describe("prepareAgentTerminalWorkspace — the PERSISTENT, agent-scoped workspace (daemon allocator)", () => {
-  it("returns <agentWorkspaceDir>/terminal and creates it world-rwx + recursive (reusable across sessions)", () => {
+  // PROJECTS-MOVE (live VPS 2026-06-17): the persistent bind-root is `<agentWorkspaceDir>/projects`
+  // (was `<agentWorkspaceDir>/terminal`) so a driven project lands at `<agentWorkspaceDir>/projects/
+  // <slug>` — operator-legible, with NO redundant `terminal/projects` nesting. The sibling `sessions/`
+  // (conversation trajectories) is outside this subtree → stays masked by the jail's ~/.comis tmpfs.
+  it("returns <agentWorkspaceDir>/projects and creates it world-rwx + recursive (reusable across sessions)", () => {
     const calls: { mkdir: string[]; chmod: Array<[string, number]> } = { mkdir: [], chmod: [] };
     const ws = prepareAgentTerminalWorkspace("/home/u/.comis/workspace/agent-a", {
       mkdir: (p) => calls.mkdir.push(p),
       chmod: (p, m) => calls.chmod.push([p, m]),
     });
-    const expected = `/home/u/.comis/workspace/agent-a/${AGENT_TERMINAL_SUBDIR}`;
+    const expected = `/home/u/.comis/workspace/agent-a/projects`;
     expect(ws).toBe(expected);
+    expect(ws).not.toMatch(/\/terminal(\/|$)/); // no legacy `terminal` segment
     // mkdir is recursive (idempotent across the agent's sessions) + chmod is world-rwx
     // (a jailed dedicated-uid child must be able to write the daemon-owned dir).
     expect(calls.mkdir).toEqual([expected]);
@@ -148,7 +152,7 @@ describe("prepareAgentTerminalWorkspace — the PERSISTENT, agent-scoped workspa
     try {
       const ws1 = prepareAgentTerminalWorkspace(base);
       expect(existsSync(ws1)).toBe(true);
-      expect(ws1.endsWith(`/${AGENT_TERMINAL_SUBDIR}`)).toBe(true);
+      expect(ws1.endsWith(`/projects`)).toBe(true);
       expect(statSync(ws1).mode & 0o007).toBe(0o007); // world rwx
       // Idempotent: a second prepare on the same agent dir does not throw (recursive mkdir).
       expect(() => prepareAgentTerminalWorkspace(base)).not.toThrow();
@@ -159,11 +163,12 @@ describe("prepareAgentTerminalWorkspace — the PERSISTENT, agent-scoped workspa
 });
 
 describe("resolveCreateWorkspace — cwd ~ expansion + clamp-to-workspace", () => {
-  const WS = "/home/u/.comis/workspace/terminal";
+  // The injected workspace IS the agent's projects root (`<agentWorkspaceDir>/projects`).
+  const WS = "/home/u/.comis/workspace/projects";
   const allocate = () => WS;
 
   it("clamps a literal-tilde cwd that resolves OUTSIDE the workspace to the workspace", () => {
-    // The agent's `~/.comis/workspace` expands to the PARENT of the session workspace
+    // The agent's `~/.comis/workspace` expands to an ANCESTOR of the session workspace
     // → not within → clamped (it would otherwise break bwrap --chdir / escape the jail).
     const r = resolveCreateWorkspace({ cwd: "~/.comis/workspace" }, allocate, "s1", "/home/u");
     expect(r.workspace).toBe(WS);
@@ -171,7 +176,7 @@ describe("resolveCreateWorkspace — cwd ~ expansion + clamp-to-workspace", () =
   });
 
   it("honors a cwd that (after ~ expansion) is WITHIN the workspace", () => {
-    const r = resolveCreateWorkspace({ cwd: "~/.comis/workspace/terminal/proj" }, allocate, "s1", "/home/u");
+    const r = resolveCreateWorkspace({ cwd: "~/.comis/workspace/projects/proj" }, allocate, "s1", "/home/u");
     expect(r.cwd).toBe(`${WS}/proj`);
   });
 
@@ -187,43 +192,46 @@ describe("resolveCreateWorkspace — cwd ~ expansion + clamp-to-workspace", () =
 });
 
 describe("resolveCreateWorkspace — project param (per-project folder under the agent workspace)", () => {
-  // Real-VPS 2026-06-17 multi-project parallel test: the agent passed cwd=…/workspace/projects/<p>
-  // (a SIBLING of the agent workspace …/workspace/terminal) → clamped to the workspace → both
-  // projects collided in one dir. A `project` SLUG lets the driver OWN the in-workspace path:
-  // <workspace>/projects/<slug>, auto-created — the agent just names the project, never guesses a
-  // path that the jail-escape clamp would reject.
-  const WS = "/home/u/.comis/workspace/terminal";
+  // PROJECTS-MOVE (live VPS 2026-06-17): the injected workspace IS the agent's projects root
+  // (`<agentWorkspaceDir>/projects` — the jail's bind-root). A `project` SLUG lands DIRECTLY in it
+  // (`<workspace>/<slug>`), so the on-disk path is `<agentWorkspaceDir>/projects/<slug>` — operator-
+  // legible, with NO redundant `terminal/projects` nesting and NO double `projects/projects/`. The
+  // agent just names the project; the driver owns the path so the jail-escape clamp never rejects it.
+  const AGENT_WS = "/home/comis/.comis/workspace";
+  const WS = `${AGENT_WS}/projects`; // what the daemon injects as the session workspace
   const allocate = () => WS;
 
-  it("resolves a project slug to <workspace>/projects/<slug> and ensure-creates that dir", () => {
+  it("lands a project at <agentWorkspaceDir>/projects/<slug> — no `terminal/`, no double `projects/`", () => {
     const ensured: string[] = [];
-    const r = resolveCreateWorkspace({ project: "snake-game" }, allocate, "s1", "/home/u", (p) =>
+    const r = resolveCreateWorkspace({ project: "todo-app" }, allocate, "s1", "/home/comis", (p) =>
       ensured.push(p),
     );
-    expect(r.cwd).toBe(`${WS}/projects/snake-game`);
-    expect(ensured).toContain(`${WS}/projects/snake-game`); // the driver creates the folder
+    expect(r.cwd).toBe(`${AGENT_WS}/projects/todo-app`);
+    expect(r.cwd).not.toContain("/terminal/"); // the `terminal/` wart is gone
+    expect(r.cwd).not.toContain("/projects/projects/"); // not double-nested
+    expect(ensured).toContain(`${AGENT_WS}/projects/todo-app`); // the driver creates the folder
   });
 
-  it("sanitizes a traversal/odd project slug so it can never escape projects/", () => {
-    const r = resolveCreateWorkspace({ project: "../../etc/passwd" }, allocate, "s1", "/home/u", () => {});
-    expect(r.cwd.startsWith(`${WS}/projects/`)).toBe(true);
+  it("sanitizes a traversal/odd project slug so it can never escape the projects root", () => {
+    const r = resolveCreateWorkspace({ project: "../../etc/passwd" }, allocate, "s1", "/home/comis", () => {});
+    expect(r.cwd.startsWith(`${WS}/`)).toBe(true);
     expect(r.cwd).not.toContain("..");
   });
 
   it("project takes precedence over an explicit cwd", () => {
     const r = resolveCreateWorkspace(
-      { project: "p1", cwd: "~/.comis/workspace/terminal/other" },
+      { project: "p1", cwd: "~/.comis/workspace/projects/other" },
       allocate,
       "s1",
-      "/home/u",
+      "/home/comis",
       () => {},
     );
-    expect(r.cwd).toBe(`${WS}/projects/p1`);
+    expect(r.cwd).toBe(`${WS}/p1`);
   });
 
   it("does NOT ensure-create when no project is given (existing cwd/default path unchanged)", () => {
     const ensured: string[] = [];
-    const r = resolveCreateWorkspace({ cwd: "~/.comis/workspace/terminal/x" }, allocate, "s1", "/home/u", (p) =>
+    const r = resolveCreateWorkspace({ cwd: "~/.comis/workspace/projects/x" }, allocate, "s1", "/home/comis", (p) =>
       ensured.push(p),
     );
     expect(r.cwd).toBe(`${WS}/x`); // still honored

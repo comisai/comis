@@ -123,11 +123,13 @@ export function resolveCreateWorkspace(
   let cwd = workspace;
   // A `project` SLUG wins: the driver OWNS the in-workspace path so the agent never has to guess
   // one the jail-escape clamp would reject (real-VPS 2026-06-17: the agent passed a SIBLING-of-the-
-  // workspace path → clamped → projects collided). It lands at <workspace>/projects/<slug> (slug
-  // sanitized to defeat `../`/absolute-path traversal) and is auto-created (ensureDir) so the jail
-  // `--chdir` always succeeds and each project gets its own folder under the agent's workspace.
+  // workspace path → clamped → projects collided). The injected `workspace` IS the agent's projects
+  // root (`<agentWorkspaceDir>/projects`, see prepareAgentTerminalWorkspace), so the slug lands
+  // DIRECTLY in it — `<workspace>/<slug>` = `<agentWorkspaceDir>/projects/<slug>` (slug sanitized to
+  // defeat `../`/absolute-path traversal), auto-created (ensureDir) so the jail `--chdir` always
+  // succeeds and each project gets its own operator-legible folder under the agent's workspace.
   if (req.project !== undefined && req.project !== "") {
-    cwd = join(resolve(workspace), "projects", sanitizeProjectSlug(req.project));
+    cwd = join(resolve(workspace), sanitizeProjectSlug(req.project));
     ensureDir(cwd);
   } else if (req.cwd !== undefined) {
     const candidate = resolve(expandHome(req.cwd, home));
@@ -149,12 +151,12 @@ function defaultEnsureDir(path: string): void {
 }
 
 /**
- * Reduce a `project` arg to a SINGLE safe path segment for `<workspace>/projects/<slug>`: every
- * char outside `[A-Za-z0-9_-]` (so `/`, `.`, `~`, whitespace — anything that could form `../` or
- * an absolute path) becomes `-`, dash-runs collapse, edges trim, and the result is truncated. A
- * scrubbed-to-empty slug falls back to `project` so a session always gets a valid folder. The
- * sanitized slug can never escape `projects/` (it has no separators), so an injectable workspace
- * is never a traversal surface.
+ * Reduce a `project` arg to a SINGLE safe path segment for `<workspace>/<slug>` (the workspace is
+ * the agent's projects root): every char outside `[A-Za-z0-9_-]` (so `/`, `.`, `~`, whitespace —
+ * anything that could form `../` or an absolute path) becomes `-`, dash-runs collapse, edges trim,
+ * and the result is truncated. A scrubbed-to-empty slug falls back to `project` so a session always
+ * gets a valid folder. The sanitized slug can never escape the workspace (it has no separators), so
+ * an injectable workspace is never a traversal surface.
  */
 function sanitizeProjectSlug(project: string): string {
   const slug = project
@@ -193,11 +195,20 @@ export function allocateSessionWorkspace(
   return { workspace };
 }
 
-/** The stable per-agent terminal-workspace subdir, under the agent's OWN workspace dir. */
-export const AGENT_TERMINAL_SUBDIR = "terminal";
+/**
+ * The stable per-agent terminal projects root, a subdir of the agent's OWN workspace dir.
+ *
+ * PROJECTS-MOVE (live VPS 2026-06-17): renamed `terminal` → `projects` so a driven project lands
+ * at the operator-legible `<agentWorkspaceDir>/projects/<slug>` rather than the redundant
+ * `<agentWorkspaceDir>/terminal/projects/<slug>`. This subtree IS the jail's bind-root (the
+ * registry threads it as the session `workspace`, which `buildScopeArgs` always binds + re-binds),
+ * so the agent's SIBLING `sessions/` (conversation trajectories), `memory.db`, and secrets stay
+ * masked by the `~/.comis` carve-out — least-privilege is preserved by the move, not weakened.
+ */
+export const AGENT_PROJECTS_SUBDIR = "projects";
 
 /**
- * Prepare the PERSISTENT, agent-scoped terminal workspace: `<agentWorkspaceDir>/terminal`
+ * Prepare the PERSISTENT, agent-scoped terminal projects root: `<agentWorkspaceDir>/projects`
  * (a stable subdir of the agent's OWN workspace — the same dir the agent's read/write/exec
  * tools operate on). Unlike {@link allocateSessionWorkspace} (a throwaway `mkdtemp` removed
  * on kill), the daemon injects THIS as `allocateWorkspace` together with a NO-OP
@@ -208,13 +219,13 @@ export const AGENT_TERMINAL_SUBDIR = "terminal";
  * world-rwx ({@link WORKSPACE_MODE}) so a jailed child running as a net-new uid (the
  * `dedicated` default) is not denied write to the daemon-owned dir. Security rests on the
  * jail, not the dir mode: `buildScopeArgs` re-binds ONLY this subtree RW after the
- * `~/.comis` carve-out, so the agent's secrets + its other workspace files (skills/memory)
- * stay masked — the child is confined to its terminal subtree (least-privilege).
+ * `~/.comis` carve-out, so the agent's secrets + its other workspace files (sessions/skills/
+ * memory) stay masked — the child is confined to its projects subtree (least-privilege).
  */
 export function prepareAgentTerminalWorkspace(agentWorkspaceDir: string, deps: WorkspaceDeps = {}): string {
   const mkdir = deps.mkdir ?? ((p: string) => void mkdirSync(p, { recursive: true }));
   const chmod = deps.chmod ?? chmodSync;
-  const workspace = join(agentWorkspaceDir, AGENT_TERMINAL_SUBDIR);
+  const workspace = join(agentWorkspaceDir, AGENT_PROJECTS_SUBDIR);
   mkdir(workspace);
   chmod(workspace, WORKSPACE_MODE);
   return workspace;

@@ -118,7 +118,7 @@ describe("decideAutoAnswer — narration is NOT a prompt: a marker with no safe-
       "I built a small TODO app:",
       "  add a todo, list todos, mark done, delete a todo by id, clear all completed.",
       "Now running the tests:",
-      "❯ ! cd /home/comis/.comis/workspace/terminal && python -m unittest discover -s tests -v",
+      "❯ ! cd /home/comis/.comis/workspace/projects/todo-app && python -m unittest discover -s tests -v",
     ].join("\n");
     // The claude allow-entry configures NO hintPatterns → nothing here is auto-answerable.
     const decision = decideAutoAnswer("safe-only", screen, []);

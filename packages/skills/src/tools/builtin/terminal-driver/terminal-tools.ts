@@ -343,7 +343,7 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
       const cols = readInt(params, "cols", DEFAULT_COLS);
       const rows = readInt(params, "rows", DEFAULT_ROWS);
       // Working dir: an explicit cwd (clamped within the workspace) OR a `project` name → its own
-      // <workspace>/projects/<slug> folder (auto-created). Both resolve in resolveCreateWorkspace.
+      // <agent-workspace>/projects/<slug> folder (auto-created). Both resolve in resolveCreateWorkspace.
       const cwd = readString(params, "cwd");
       const project = readString(params, "project");
 
@@ -439,7 +439,7 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
             scrollback: DEFAULT_SCROLLBACK,
             scope: matched.entry.scope,
             // Agent-supplied working dir / project folder (resolveCreateWorkspace clamps cwd within
-            // the workspace + sanitizes project → <workspace>/projects/<slug>, auto-created).
+            // the workspace + sanitizes project → <agent-workspace>/projects/<slug>, auto-created).
             ...(cwd !== undefined ? { cwd } : {}),
             ...(project !== undefined ? { project } : {}),
             ...(deps.durable ? { durable: true } : {}), // FINDING-B: drive.durable → req.durable → the registry derives the tmux name + selects the tmux backend.
