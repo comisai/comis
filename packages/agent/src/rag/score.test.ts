@@ -869,3 +869,125 @@ describe("scoreWithBreakdown — fadeMemFactor (the 6th decay multiplicand)", ()
 function uMapForForget(id: string, sig: UsefulnessSignal): ReadonlyMap<string, UsefulnessSignal> {
   return new Map([[id, sig]]);
 }
+
+// ---------------------------------------------------------------------------
+// OBS-02 (Verified Learning WS3): the ScoreBreakdown surfaces the OUTCOME-attributed
+// usefulness contribution as a DISTINCT, inspectable annotation (`usefulnessOutcomeShare`)
+// so `comis explain` can show how much of a memory's rank came from the learned recall-
+// utility / outcome feedback, separate from the lexical relevance base. It is an ANNOTATION,
+// NOT a new multiplicand — it does NOT enter `final`, so the multiplicative invariant
+// `final === base × recency × temporal × proof × trust × usefulness × forget` stays
+// byte-identical and every golden score above is unchanged. Counts-only / a derived share —
+// never a raw alpha value (T-200-23: the breakdown carries a normalized factor share, not the
+// tuned alpha).
+// ---------------------------------------------------------------------------
+describe("scoreWithBreakdown — usefulnessOutcomeShare (OBS-02 outcome-usefulness annotation)", () => {
+  /** Build a usefulnessById map carrying a single signal for `id`. */
+  function uMap(id: string, sig: UsefulnessSignal): ReadonlyMap<string, UsefulnessSignal> {
+    return new Map([[id, sig]]);
+  }
+
+  it("exposes usefulnessOutcomeShare as a distinct breakdown field (the outcome-attributed contribution)", () => {
+    // OBS-02 RED — the field does NOT exist on HEAD (ScoreBreakdown has no usefulnessOutcomeShare).
+    // A memory carrying an outcome-attributed usefulness signal surfaces a NON-ZERO share that is
+    // distinguished from the lexical relevance base.
+    const input = [makeResult("o", { base: 0.5, trustLevel: "learned", createdAt: NOW })];
+    const out = scoreWithBreakdown(
+      input,
+      { ...ZERO_ALPHAS, usefulnessAlpha: 0.1 },
+      NOW,
+      uMap("o", { usedCount: 5, ignoredCount: 0 }),
+    );
+    const b = out[0]?.breakdown as ScoreBreakdown;
+    expect(b.usefulnessOutcomeShare).toBeDefined();
+    expect(typeof b.usefulnessOutcomeShare).toBe("number");
+    // used-rate 1.0 → usefulnessFactor 1.05 (> neutral) → the outcome-attributed share is the
+    // factor's signed deviation from neutral (1.0): 1.05 − 1 = +0.05 (a positive contribution).
+    expect(b.usefulnessOutcomeShare).toBeCloseTo(0.05, 10);
+    // and it mirrors the usefulness factor's deviation from neutral exactly.
+    expect(b.usefulnessOutcomeShare).toBeCloseTo(b.usefulness - 1, 10);
+  });
+
+  it("is 0 (neutral) when no outcome-attributed usefulness signal is present — byte-identity at the neutral point", () => {
+    // A raw memory with no usefulness signal: the outcome share is EXACTLY 0 (the no-reorder-
+    // when-absent point), and the boosted score is byte-identical to a run with no usefulness
+    // map at all — adding the annotation changes no score.
+    const input = [makeResult("raw", { base: 0.5, trustLevel: "learned", createdAt: NOW })];
+    const alphas: ScoringAlphas = { ...ZERO_ALPHAS, usefulnessAlpha: 1.0 };
+    const out = scoreWithBreakdown(input, alphas, NOW); // no usefulnessById
+    const baseline = scoreWithBreakdown(input, ZERO_ALPHAS, NOW);
+    const b = out[0]?.breakdown as ScoreBreakdown;
+    expect(b.usefulnessOutcomeShare).toBe(0); // EXACTLY 0 (not toBeCloseTo)
+    expect(b.usefulness).toBeCloseTo(1.0, 10); // the factor itself is neutral
+    expect(out[0]?.score).toBeCloseTo(baseline[0]?.score ?? NaN, 10); // no score change
+  });
+
+  it("is NEGATIVE for a recalled-but-ignored memory (a demoting outcome contribution)", () => {
+    // The outcome share carries SIGN: an ignored memory (used-rate 0) demotes → factor 0.95 →
+    // share 0.95 − 1 = −0.05. The annotation distinguishes a demotion from a boost.
+    const input = [makeResult("ignored", { base: 0.5, createdAt: NOW })];
+    const out = scoreWithBreakdown(
+      input,
+      { ...ZERO_ALPHAS, usefulnessAlpha: 0.1 },
+      NOW,
+      uMap("ignored", { usedCount: 0, ignoredCount: 5 }),
+    );
+    const b = out[0]?.breakdown as ScoreBreakdown;
+    expect(b.usefulnessOutcomeShare).toBeLessThan(0);
+    expect(b.usefulnessOutcomeShare).toBeCloseTo(-0.05, 10);
+  });
+
+  it("PRESERVES the multiplicative invariant: usefulnessOutcomeShare is an annotation, NOT a multiplicand in `final`", () => {
+    // The headline invariant proof — the new field must NOT enter `final`. With every alpha live
+    // AND a real outcome signal, `final` still equals the SIX-factor product (no outcome term),
+    // and `score` still equals `final`. This is what keeps the byte-identity guarantee.
+    const alphas: ScoringAlphas = {
+      recencyAlpha: 0.3,
+      temporalAlpha: 0.2,
+      proofAlpha: 0.4,
+      trustAlpha: 0.1,
+      usefulnessAlpha: 0.1,
+      forgetAlpha: 0.1,
+    };
+    const input = [
+      makeResult("m", {
+        base: 0.7,
+        trustLevel: "system",
+        createdAt: NOW - 40 * DAY_MS,
+        occurredAt: NOW - 40 * DAY_MS,
+        proofCount: 40,
+        confidence: 0.8,
+        memoryType: "episodic",
+      }),
+    ];
+    const out = scoreWithBreakdown(input, alphas, NOW, uMap("m", { usedCount: 4, ignoredCount: 1 }), {
+      enabled: true,
+    });
+    const b = out[0]?.breakdown as ScoreBreakdown;
+    expect(b.usefulnessOutcomeShare).not.toBe(0); // a real outcome signal is present
+    // `final` is the SIX-factor product — the outcome share is ABSENT from it.
+    expect(b.final).toBeCloseTo(
+      b.base * b.recency * b.temporal * b.proof * b.trust * b.usefulness * b.forget,
+      10,
+    );
+    expect(out[0]?.score).toBeCloseTo(b.final, 10);
+  });
+
+  it("does not change ordering or scores vs score() — the annotation is purely additive (characterization)", () => {
+    // Adding usefulnessOutcomeShare must not reorder or rescore relative to the breakdown-stripping
+    // `score()` path. A mixed input with usefulness signals must produce identical id order + scores.
+    const alphas: ScoringAlphas = { ...ZERO_ALPHAS, usefulnessAlpha: 0.1, recencyAlpha: 0.2 };
+    const a = makeResult("provenA", { base: 0.5, createdAt: NOW });
+    const b = makeResult("ignoredB", { base: 0.5, createdAt: NOW });
+    const u = new Map<string, UsefulnessSignal>([
+      ["provenA", { usedCount: 5, ignoredCount: 0 }],
+      ["ignoredB", { usedCount: 0, ignoredCount: 5 }],
+    ]);
+    const plain = score([b, a], alphas, NOW, u);
+    const withB = scoreWithBreakdown([b, a], alphas, NOW, u);
+    expect(plain.map((r) => r.entry.id)).toEqual(withB.map((r) => r.entry.id));
+    for (let i = 0; i < plain.length; i++) {
+      expect(plain[i]?.score).toBeCloseTo(withB[i]?.score ?? NaN, 10);
+    }
+  });
+});
