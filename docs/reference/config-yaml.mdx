@@ -706,6 +706,29 @@ Periodic LLM-driven consolidation of similar memories into observations. Opt-in 
 | `consolidateExternal` | `boolean` | `false` | Include external-trust memories in consolidation (excluded by default) |
 | `autoTags` | `string[]` | `[]` | Extra tags applied to every created observation |
 
+#### Learning Outcome (agents.*.learningOutcome)
+
+The **Verified Learning** outcome signal (v2.26 WS1): a durable record of each finished trajectory's net task-outcome (`success` / `failure` / `corrected` / `unknown`), so learning can gate on a real task-outcome instead of a text-overlap proxy. **Default-OFF** and **gated by the master cost switch** (`memory.costFeatures.enabled` -- when that is `false`, `learningOutcome` is force-disabled regardless of the per-agent flag). In the shadow (P0) phase the only **active** source is the deterministic tool/pipeline signal; the optional LLM judge is itself default-off (`judge.enabled`). The capture is daemon-side and content-free -- ids / closed enums / counts only, never a message body. When enabled, observations are written to the `outcome_events` ledger (see [data-directory.mdx](/operations/data-directory)) and surfaced on the trajectory for `comis explain` (the `learning` obs signal) and via `comis memory learning`.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `false` | Enable outcome capture for this agent (opt-in; additionally force-disabled when `memory.costFeatures.enabled` is `false`) |
+| `sources` | `string[]` | `["tool", "pipeline"]` | Which signal sources may contribute observations (closed set: `tool` / `pipeline` / `correction` / `judge` / `reaction` / `explicit`) |
+| `reactionMap` | `object` | `{}` | Maps a reaction/feedback token to an outcome (reaction source; later phases) |
+| `judge.enabled` | `boolean` | `false` | Enable the optional cost-gated LLM judge as a fallback outcome source (off in P0; routed via the `outcomeJudge` model tier, below) |
+| `minConfidenceToLearn` | `number` (0–1) | `0.6` | Minimum fused confidence required before a resolved outcome drives learning |
+| `retentionDays` | `number` | `30` | Age horizon for the `outcome_events` ledger; rows older than this are pruned at daemon startup (anti-DoS, runs regardless of the enable flag) |
+
+#### Memory Triple Extraction (agents.*.memoryTripleExtraction)
+
+Periodic extraction of `(subject, predicate, object)` knowledge triples from recent memory. **Default-OFF** per-agent cost gate, additionally gated by the master cost switch (`memory.costFeatures.enabled`). A default agent registers no job -- byte-identical with the block absent.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `false` | Enable the scheduled triple-extraction job for this agent (opt-in cost gate; also force-disabled by `memory.costFeatures.enabled: false`) |
+
+> **Model tier `outcomeJudge`.** The optional outcome judge runs on the `fast` model operation tier (`outcomeJudge`), like the other lightweight classification operations -- a cheap model resolved by name and injected daemon-side. It is dormant in P0 (no live LLM call while `judge.enabled` is `false`).
+
 #### Source Gate (agents.*.sourceGate)
 
 | Key | Type | Default | Description |
