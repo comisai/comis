@@ -8,7 +8,8 @@ icon: "sliders"
 exact config option for each. **As of v1 the memory features are ON by default (opt-out)** —
 a fresh install runs them and you edit config to turn them off. Two capabilities deliberately
 stay OFF: **`socialModeling`** (gated on a privacy-review sign-off — it models third parties)
-and **`memoryLifecycle`** (a dormant eviction scaffold). The trust boundary
+and the v2.26 outcome-gated learning loops **`learningTuning`** / **`learningForgetting`**
+(default-off, see [Outcome-gated ranking & forgetting](#outcome-gated-ranking--forgetting-v2-26)). The trust boundary
 (`rag.scoring.trustAlpha`, `rag.includeTrustLevels`) is **frozen** — not a tunable capability.
 
 <Warning>
@@ -150,11 +151,27 @@ agents:
       schedule: "0 8 * * *"
       maxSourceMemories: 200
 
-    memoryLifecycle:                 # FORGET sweep / tier promote-demote (dormant scaffold)
+    memoryLifecycle:                 # FORGET sweep / tier promote-demote (soft eviction gated by learningForgetting, below)
       enabled: true
       schedule: "0 9 * * *"
       thetaPromote: 0.7
       thetaDemote: 0.3
+
+    # ───────────────────────────────────────────────────────────────────
+    # 5. VERIFIED LEARNING — outcome-gated ranking & forgetting (v2.26; default OFF)
+    # ───────────────────────────────────────────────────────────────────
+    learningTuning:                  # LEARN-TUNE — outcome-rewarded, per-intent ranking bandit
+      enabled: false                 # opt-in (also force-disabled by memory.costFeatures.enabled: false)
+      learner: bandit                # bandit (deterministic UCB) | nudge (conservative fallback)
+      perIntent: true                # learn a per-(tenant, agent, intent) vector
+      exploration: 0.1               # UCB confidence weight [0..1]
+
+    learningForgetting:              # LEARN-FORGET — wrongness-based soft eviction
+      enabled: false                 # opt-in (also force-disabled by memory.costFeatures.enabled: false)
+      eviction:
+        enabled: true                # the parent `enabled` is the real gate
+        strengthThreshold: 0.2       # strength floor below which a non-pinned/non-system memory is soft-evicted
+      failurePenalty: 0.5            # weight on a memory's failure_count when decaying strength [0..1]
 ```
 
 ## Capability → config map
@@ -180,7 +197,18 @@ agents:
 | Consolidation | `memoryConsolidation.enabled` | Clusters + folds/dedups memories |
 | Usefulness judge | `memoryUsefulnessJudge.enabled` | Scores recall-utility (the FEED signal source) |
 | Online tuning | `memoryOnlineTuning.enabled` | The bandit cron that learns the alphas for LEARN-RANK |
-| Lifecycle | `memoryLifecycle.enabled` | Tier promote/demote + the FORGET sweep |
+| Lifecycle | `memoryLifecycle.enabled` | Tier promote/demote + the FORGET sweep (the soft-eviction behaviour is gated by `learningForgetting`, below) |
+| **LEARN-TUNE** (v2.26) | `learningTuning.enabled` *(default false)* | Outcome-rewarded, per-query-intent ranking: gates the bandit on a real task outcome + learns a vector per intent. Composes with `memoryOnlineTuning` + `rag.onlineTuning` |
+| **LEARN-FORGET** (v2.26) | `learningForgetting.enabled` *(default false)* | Wrongness-based **soft** eviction: a memory recalled into failed/corrected outcomes decays faster and is soft-evicted (`evicted_at`, reversible, never hard-deleted). Composes with `memoryLifecycle` + `rag.forget` |
+
+## Outcome-gated ranking & forgetting (v2.26)
+
+**Verified Learning** adds two per-agent loops that gate ranking and forgetting on a **real task outcome** (the v2.26 `outcome_events` signal) instead of a text-overlap proxy. Both are **default-OFF** and force-disabled by the master `memory.costFeatures.enabled` switch, so a default install is byte-identical — the tables exist but nothing learns or evicts.
+
+- **Ranking** — `agents.<id>.learningTuning.enabled` turns the tuned-alpha learner into an **outcome-rewarded, per-query-intent** bandit: it learns a separate ranking-weight vector per deterministic `classifyIntent` bucket, rewarded when a recalled memory rides a `success` trajectory and penalised on `failure`/`corrected`. The learner is deterministic, and the **trust weight is never tuned** (it stays config-sourced and provably frozen). It composes with the existing `memoryOnlineTuning` (the cron) + `rag.onlineTuning` (the apply) — all must be on for tuning to be live.
+- **Forgetting** — `agents.<id>.learningForgetting.enabled` couples a memory's decay to its outcome-attributed `failure_count`, so **wrong fades faster than merely old**, and **soft-evicts** a sufficiently weak memory: it is marked `evicted_at` (excluded from recall, still resolvable via `asOf`/inspect, **reversible**, never hard-deleted). A **corroboration gate** (≥2 independent failures, or one deterministic source) and **exemptions** for pinned / `system` / high-`proof_count` memories make induced eviction impractical. It composes with `memoryLifecycle` (the sweep schedule) + `rag.forget` (score-decay).
+
+See [`learningTuning` / `learningForgetting` in config-yaml](/reference/config-yaml#learning-tuning-agents-learningtuning) for every key and default, and the [`tuned_alpha` / `memory_usefulness` / `evicted_at`](/operations/data-directory#ranking--forgetting-verified-learning-v2-26) storage. Both loops emit **counts-only** signals (`memory:online_tuning_applied`, `learning:memory_demoted` / `learning:memory_evicted`) for `comis explain` / `comis fleet`.
 
 ## Dependencies & gotchas
 
@@ -190,8 +218,10 @@ agents:
    - **LEARN-RANK** (`rag.onlineTuning`) only changes recall after the `memoryOnlineTuning`
      bandit has run and learned weights.
    - **FEED** (`rag.feedback`) is meaningful once `memoryUsefulnessJudge` has scored recalls.
-   - **FORGET** demotion (`rag.forget`) shows up at recall; eviction is the `memoryLifecycle`
-     sweep (a dormant scaffold today).
+   - **FORGET** demotion (`rag.forget`) shows up at recall; **eviction** is the `memoryLifecycle`
+     sweep — live as **soft, reversible** eviction (`evicted_at`) when the v2.26
+     `learningForgetting` gate is enabled (default-off), exempting pinned/system/high-proof
+     memories. See [Outcome-gated ranking & forgetting](#outcome-gated-ranking--forgetting-v2-26).
 2. **SOCIAL is double-gated.** `enabled: true` does nothing on its own; it activates only with
    a non-empty `socialModeling.privacyReviewSignedOffBy` operator sign-off.
 3. **`dialectic` (`memory_ask`) spends tokens per ask** — it is the only query-time LLM

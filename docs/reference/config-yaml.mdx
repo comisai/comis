@@ -727,6 +727,32 @@ The **Verified Learning** outcome signal (v2.26 WS1): a durable record of each f
 >
 > No reaction-specific config keys exist beyond `reactionMap`: the trust map and rate limiter are reused/daemon-constructed. Capturing reactions on the silent platforms needs operator setup (Slack `reactions:read` scope; Telegram `allowed_updates`) — see [Reactions and Corrections in messaging](/agent-tools/messaging#inbound-reactions-corroborating-learning-signal).
 
+#### Learning Tuning (agents.*.learningTuning)
+
+The **Verified Learning** outcome-rewarded recall ranking (v2.26 WS3): the per-agent on/off switch and tunables for the tuned-alpha learner that adjusts how much recency / event-time / corroboration / recall-utility weigh in recall, **rewarded by a real task outcome** rather than a text-overlap proxy. **Default-OFF** and **gated by the master cost switch** (`memory.costFeatures.enabled` -- when that is `false`, `learningTuning` is force-disabled regardless of the per-agent flag). With it off the tuned vector is the legacy single bucket and recall is byte-identical. The learner is **deterministic** (no randomness) and the **trust-ladder weight is never tuned** (sourced from config, provably frozen out of the learner). When enabled it learns per-query-**intent** vectors persisted to the `tuned_alpha` table (see [data-directory.mdx](/operations/data-directory#ranking--forgetting-verified-learning-v2-26)) and surfaces each tuning run on the trajectory for `comis explain` (the `memory:online_tuning_applied` signal) and `comis memory learning`.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `false` | Enable outcome-rewarded tuning for this agent (opt-in; additionally force-disabled when `memory.costFeatures.enabled` is `false`) |
+| `learner` | `string` | `"bandit"` | Alpha-update strategy (closed set: `bandit` / `nudge`). `bandit` is a **deterministic UCB** learner that moves the whole alpha vector from per-id outcome attribution; `nudge` is the conservative fixed-step fallback that moves only the usefulness weight |
+| `perIntent` | `boolean` | `true` | Learn a per-`(tenant, agent, intent)` vector (vs one global vector). Intent is the daemon's deterministic, LLM-free `classifyIntent`; it is an additional bucket, never a relaxation of the `(tenant, agent)` isolation boundary |
+| `exploration` | `number` (0–1) | `0.1` | The UCB confidence weight (how strongly an under-explored arm is favoured). **Not** a learning-rate / clamp knob — those are fixed pure-math constants |
+
+> **Gate composition.** `learningTuning` selects the bandit + per-intent + outcome reward; it **composes with** — does not replace — the existing `memoryOnlineTuning.enabled` (the cron that runs the tuning job) and `rag.onlineTuning.enabled` (the recall apply), and all of these are under the master `memory.costFeatures.enabled`. They **AND** together: tuning is live only when every gate in the chain is on. Every layer defaults so that the byte-identical (no-tuning) behaviour is the default.
+
+#### Learning Forgetting (agents.*.learningForgetting)
+
+The **Verified Learning** wrongness-based soft eviction (v2.26 WS4): the per-agent on/off switch and tunables for *forgetting by wrongness* — a memory recalled into failed/corrected outcomes decays faster, and a sufficiently weak one is **soft-evicted** (marked `evicted_at`, excluded from recall, **never hard-deleted** and still resolvable via `asOf`/inspect, reversible). **Default-OFF** and **gated by the master cost switch** (`memory.costFeatures.enabled`). With it off the lifecycle sweep evicts nothing and recall is byte-identical. High-corroboration memories (`pinned`, `trust_level='system'`, high `proof_count`) are **exempt** and never soft-evicted — an anti-induced-eviction safeguard so a single planted failure cannot evict a well-corroborated memory. See the `memories.evicted_at` / `memory_usefulness.failure_count` columns in [data-directory.mdx](/operations/data-directory#ranking--forgetting-verified-learning-v2-26).
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `false` | Enable wrongness-based soft eviction for this agent (opt-in; additionally force-disabled when `memory.costFeatures.enabled` is `false`). This is the real gate — the nested `eviction.enabled` below only narrows it |
+| `eviction.enabled` | `boolean` | `true` | Whether the sweep applies soft eviction at all (the parent `enabled` is the master switch; this defaults on so enabling the parent enables eviction) |
+| `eviction.strengthThreshold` | `number` (0–1) | `0.2` | The strength floor below which a non-pinned, non-`system` candidate is soft-evicted. Deliberately distinct from the lifecycle `epsilonPrune` (0.05) |
+| `failurePenalty` | `number` (0–1) | `0.5` | Weight applied to a recalled memory's `failure_count` when decaying its strength (more corroborated failures → lower strength → earlier eviction). Bounded and saturating, so one stray failure barely moves a strong memory while sustained wrongness drops a weak one below the threshold |
+
+> **Gate composition.** `learningForgetting` drives the soft-eviction **behaviour**; it **composes with** — does not replace — the existing `memoryLifecycle` cron (the schedule that runs the sweep) and the existing `rag.forget` score-decay, all under the master `memory.costFeatures.enabled`. There is **no `halfLifeDays` knob**: v2.26 adds eviction + the failure coupling on top of the existing decay, not a new decay parameter. Eviction is **soft and reversible** — a memory un-evicts on renewed usefulness — and emits counts-only `learning:memory_demoted` / `learning:memory_evicted` signals for `comis explain` / `comis fleet`.
+
 #### Memory Triple Extraction (agents.*.memoryTripleExtraction)
 
 Periodic extraction of `(subject, predicate, object)` knowledge triples from recent memory. **Default-OFF** per-agent cost gate, additionally gated by the master cost switch (`memory.costFeatures.enabled`). A default agent registers no job -- byte-identical with the block absent.
