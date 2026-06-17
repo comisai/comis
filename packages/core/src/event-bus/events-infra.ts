@@ -159,6 +159,15 @@ export interface InfraEvents {
     channelType: string;
     agentId: string;
     sessionKey: string;
+    /**
+     * The turn's trajectory id (=== traceId, the `comis explain` key). OPTIONAL —
+     * present when a request context is active at emit (the common turn path).
+     * Carried on the payload so the Verified Learning correction writer
+     * (setup-learning-reactions.ts) can record the prior completed trajectory for
+     * a single-agent turn WITHOUT reading ALS (the emit runs outside the
+     * executor's runWithContext scope — CR-02).
+     */
+    traceId?: string;
     receivedAt: number;
     executionDurationMs: number;
     deliveryDurationMs: number;

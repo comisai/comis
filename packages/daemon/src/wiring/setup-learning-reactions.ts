@@ -18,11 +18,14 @@
  *
  *  - CORRECTION (`message:received`): a follow-up user turn classified by the
  *    cost-gated detector seam (Plan 03). The prior completed trajectory for the
- *    session is recorded from `graph:completed` keyed on the ALS `sessionKey`
- *    (WARNING-2) — the SAME key the reader formats off the `message:received`
- *    payload (`formatSessionKey(p.sessionKey)`). `observe({ source: "correction",
- *    outcome: "corrected" })` is a SOFT-FAILURE of that prior trajectory; the
- *    deterministic sources always outrank it.
+ *    session is recorded from `diagnostic:message_processed` — the per-turn
+ *    completion event that fires for single-agent turns too and carries
+ *    agentId/sessionKey/traceId on its PAYLOAD (CR-02; the prior `graph:completed`
+ *    + ALS wiring never fired for a single-agent turn and had no ALS at the emit).
+ *    The recorded sessionKey is the SAME `formatSessionKey(...)` string the reader
+ *    formats off the `message:received` payload (`formatSessionKey(p.sessionKey)`).
+ *    `observe({ source: "correction", outcome: "corrected" })` is a SOFT-FAILURE of
+ *    that prior trajectory; the deterministic sources always outrank it.
  *
  * Counts/ids/closed-enums ONLY ever cross the bus or reach the store (AGENTS.md
  * §2.7 / SEC-01) — the emoji is matched against the closed map and never flows
@@ -39,7 +42,6 @@
  */
 
 import {
-  tryGetContext,
   formatSessionKey,
   createInjectionRateLimiter,
   KEYLESS_PROVIDER_TYPES,
@@ -58,6 +60,7 @@ import {
   resolveProviderFamily,
   type CorrectionVerdict,
 } from "@comis/agent";
+import { deriveTenantFromSessionKey } from "./setup-memory-usefulness-wiring.js";
 
 // ===========================================================================
 // 1. messageId → trajectory-scope map (bounded, in-memory daemon-lifetime)
@@ -235,9 +238,10 @@ export interface LearningReactionsWiringDeps {
   correctionEnabled: (agentId: string) => boolean;
   /**
    * Record the most-recent completed trajectory + its scope for a session, keyed
-   * on the ALS sessionKey string (WARNING-2). The full scope is stored so the
-   * reader attributes the correction to the trajectory's OWN (tenant, agent) — not
-   * the follow-up turn's ALS (which may differ / be absent at the bus boundary).
+   * on the `formatSessionKey(...)` string carried by the per-turn completion event
+   * (CR-02). The full scope is stored so the reader attributes the correction to
+   * the trajectory's OWN (tenant, agent) — not the follow-up turn's ALS (which may
+   * differ / be absent at the bus boundary).
    */
   recordSessionTrajectory?: (sessionKey: string, scope: OutboundTrajectoryEntry) => void;
   /** Look up the prior completed trajectory scope for a session (keyed identically to the writer). */
@@ -409,26 +413,33 @@ export function wireLearningReactions(deps: LearningReactionsWiringDeps): void {
 
 /**
  * Stand up the correction path: record the prior completed trajectory per session
- * (`graph:completed`, keyed on the ALS `sessionKey` — WARNING-2) and observe a
- * `corrected` outcome on a classified follow-up turn (`message:received`).
+ * (`diagnostic:message_processed` — the per-turn completion event — CR-02) and
+ * observe a `corrected` outcome on a classified follow-up turn (`message:received`).
  */
 export function wireLearningCorrection(deps: LearningReactionsWiringDeps): void {
-  // WRITER — record the most-recent completed trajectory for the session, keyed
-  // on the ALS `sessionKey` SPECIFICALLY (NOT resolveScope's trajectory-id
-  // fallback), so it matches the reader's `formatSessionKey(p.sessionKey)`. When
-  // the ALS sessionKey is ABSENT, record NOTHING (a later correction for that
-  // session then fails-closed — never mis-joined to the trajectory-id fallback).
-  deps.eventBus.on("graph:completed", () => {
+  // WRITER — record the most-recent completed trajectory for the session.
+  //
+  // CR-02: keys off the `diagnostic:message_processed` PAYLOAD, NOT the ALS. The
+  // prior writer hooked `graph:completed`, which (a) is emitted from the graph
+  // coordinator's async tick loop OUTSIDE any `runWithContext` (so `tryGetContext()`
+  // was always undefined → the writer always early-returned) and (b) only fires for
+  // DAG runs, never the common single-agent turn a correction follows.
+  // `diagnostic:message_processed` fires once per turn for single-agent turns too,
+  // and carries agentId/sessionKey/traceId on its payload (execution-pipeline.ts) —
+  // so no ALS dependency. The sessionKey is already the `formatSessionKey(...)`
+  // string the reader formats the `message:received` payload into. An absent
+  // sessionKey OR traceId records NOTHING (a later correction then fails-closed —
+  // never mis-joined). The tenant is derived from the sessionKey's first segment
+  // (mirrors the 198 `deriveTenantFromSessionKey`).
+  deps.eventBus.on("diagnostic:message_processed", (p) => {
     if (deps.recordSessionTrajectory === undefined) return;
-    const ctx = tryGetContext();
-    const agentId = ctx?.agentId;
-    const sk = ctx?.sessionKey;
-    const trajectoryId = ctx?.traceId;
-    if (agentId === undefined || !deps.correctionEnabled(agentId)) return;
+    if (!deps.correctionEnabled(p.agentId)) return;
+    const sk = p.sessionKey;
+    const trajectoryId = p.traceId;
     if (sk === undefined || sk.length === 0) return; // cannot reliably join → skip
     if (trajectoryId === undefined || trajectoryId.length === 0) return;
-    const tenantId = ctx?.tenantId ?? "default";
-    deps.recordSessionTrajectory(sk, { traceId: trajectoryId, tenantId, agentId, sessionId: sk });
+    const tenantId = deriveTenantFromSessionKey(sk) ?? "default";
+    deps.recordSessionTrajectory(sk, { traceId: trajectoryId, tenantId, agentId: p.agentId, sessionId: sk });
   });
 
   // READER — classify a follow-up user turn and observe a correction against the

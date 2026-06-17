@@ -19,7 +19,7 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { TypedEventBus, runWithContext, formatSessionKey } from "@comis/core";
+import { TypedEventBus, formatSessionKey } from "@comis/core";
 import type {
   EventMap,
   OutcomeObservation,
@@ -342,10 +342,33 @@ describe("wireLearningCorrection — correction → prior-trajectory observe (CO
     map.recordSessionTrajectory(sk, { traceId, tenantId: TENANT, agentId: AGENT, sessionId: sk });
   }
 
-  it("first-GREEN end-to-end join: graph:completed(ALS sessionKey) → message:received(same key) observes a 'corrected' outcome against the prior trajectory", async () => {
+  /** A single-agent turn-completion payload carrying the (agent, session, trajectory) scope. */
+  function diagnosticPayload(
+    over?: Partial<EventMap["diagnostic:message_processed"]>,
+  ): EventMap["diagnostic:message_processed"] {
+    return {
+      messageId: "m1",
+      channelId: "chat-1",
+      channelType: "telegram",
+      agentId: AGENT,
+      sessionKey: formatSessionKey(sessionKey()),
+      traceId: TRACE,
+      receivedAt: NOW,
+      executionDurationMs: 5,
+      deliveryDurationMs: 0,
+      totalDurationMs: 5,
+      tokensUsed: 100,
+      cost: 0,
+      success: true,
+      finishReason: "end_turn",
+      timestamp: NOW,
+      ...over,
+    };
+  }
+
+  it("CR-02 first-GREEN end-to-end join: a SINGLE-AGENT turn completes (diagnostic:message_processed) → message:received(same key) observes a 'corrected' outcome against the prior trajectory", async () => {
     const bus = new TypedEventBus();
     const sk = sessionKey();
-    const skStr = formatSessionKey(sk);
     const sessionMap = makeSessionMap();
     const detector = vi.fn(
       async (_turn: string): Promise<CorrectionVerdict> => ({
@@ -363,11 +386,12 @@ describe("wireLearningCorrection — correction → prior-trajectory observe (CO
     });
     wireLearningCorrection(deps);
 
-    // WRITER: a graph completes INSIDE the ALS scope (sessionKey = formatSessionKey(...)).
-    runWithContext(
-      { tenantId: TENANT, agentId: AGENT, sessionKey: skStr, traceId: TRACE } as never,
-      () => bus.emit("graph:completed", { graphId: "g-1", status: "completed", durationMs: 10, nodeCount: 1, nodesCompleted: 1, nodesFailed: 0, nodesSkipped: 0, timestamp: NOW } as never),
-    );
+    // WRITER: a SINGLE-AGENT turn completes. diagnostic:message_processed fires
+    // for every turn (not just DAG runs) and carries agentId/sessionKey/traceId
+    // on its PAYLOAD — no ALS dependency (the emit runs outside the executor's
+    // runWithContext). On the OLD graph:completed/ALS wiring this records NOTHING
+    // for a single-agent turn, so the correction below is a no-op (RED).
+    bus.emit("diagnostic:message_processed", diagnosticPayload());
     await flush();
 
     // READER: a follow-up correction turn for the SAME session.
@@ -383,6 +407,8 @@ describe("wireLearningCorrection — correction → prior-trajectory observe (CO
     expect(obs.outcome).toBe("corrected");
     expect(obs.source).toBe("correction");
     expect(obs.trajectoryId).toBe(TRACE); // the prior trajectory recorded under the SAME sessionKey
+    expect(obs.tenantId).toBe(TENANT); // tenant derived from the sessionKey's first segment
+    expect(obs.agentId).toBe(AGENT); // the trajectory's OWN agent (from the diagnostic payload)
     expect(obs.confidence).toBe(0.6); // the capped reward
   });
 
@@ -425,7 +451,7 @@ describe("wireLearningCorrection — correction → prior-trajectory observe (CO
     expect(detector).not.toHaveBeenCalled();
   });
 
-  it("WARNING-2 negative: a graph:completed with NO ALS sessionKey records nothing → a later correction observes NOTHING (no mis-join to the trajectory-id fallback)", async () => {
+  it("CR-02 fail-closed: a diagnostic:message_processed with an EMPTY traceId records nothing → a later correction observes NOTHING (no mis-join)", async () => {
     const bus = new TypedEventBus();
     const recordSpy = vi.fn();
     const sessionMap = makeSessionMap();
@@ -441,14 +467,12 @@ describe("wireLearningCorrection — correction → prior-trajectory observe (CO
     });
     wireLearningCorrection(deps);
 
-    // graph completes with agentId/traceId in ALS but NO sessionKey → record NOTHING.
-    runWithContext(
-      { tenantId: TENANT, agentId: AGENT, traceId: TRACE } as never,
-      () => bus.emit("graph:completed", { graphId: "g-1", status: "completed", durationMs: 10, nodeCount: 1, nodesCompleted: 1, nodesFailed: 0, nodesSkipped: 0, timestamp: NOW } as never),
-    );
+    // A turn-completion event carrying agentId/sessionKey but an EMPTY traceId
+    // (cannot reliably identify the trajectory) → record NOTHING (fail-closed).
+    bus.emit("diagnostic:message_processed", diagnosticPayload({ traceId: "" }));
     await flush();
 
-    expect(recordSpy).not.toHaveBeenCalled(); // the writer skipped (no sessionKey to key on)
+    expect(recordSpy).not.toHaveBeenCalled(); // the writer skipped (no trajectory id to key on)
 
     // A later correction for that session → no prior trajectory → fail-closed.
     bus.emit("message:received", {
