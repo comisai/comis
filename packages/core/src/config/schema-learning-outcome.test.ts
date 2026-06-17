@@ -28,6 +28,20 @@ describe("LearningOutcomeConfigSchema — per-agent outcome-signal config (defau
     expect(cfg.reactionMap.failure).toEqual(["👎", "❌"]);
   });
 
+  it("correction is a default-OFF cost-gate sub-block (enabled:false — no LLM call, no cost)", () => {
+    // CORRECT-01: the correction detector runs an LLM over untrusted follow-up
+    // text, so it is a NET-NEW attack surface gated OFF by default.
+    const cfg = LearningOutcomeConfigSchema.parse({});
+    expect(cfg.correction.enabled).toBe(false);
+    // Opting in is explicit, and the sub-block is strict (no smuggled keys).
+    expect(LearningOutcomeConfigSchema.parse({ correction: { enabled: true } }).correction.enabled).toBe(
+      true,
+    );
+    expect(
+      LearningOutcomeConfigSchema.safeParse({ correction: { enabled: false, bogus: 1 } }).success,
+    ).toBe(false);
+  });
+
   it("is strict — an unknown key fails safeParse (no silent passthrough)", () => {
     const result = LearningOutcomeConfigSchema.safeParse({ bogusKey: 1 });
     expect(result.success).toBe(false);
