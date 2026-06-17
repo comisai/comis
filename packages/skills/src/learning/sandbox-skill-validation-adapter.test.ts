@@ -610,6 +610,71 @@ describe("SandboxSkillValidationAdapter — DYNAMIC spawn+capture in the jail (S
     expect(capturedBin).toBe("/usr/bin/bwrap"); // bwrap wraps the command — NOT a bare /bin/bash
   });
 
+  it("REJECTS an unknown script lang as a finding and NEVER spawns it (IN-04 — no defaulted runner)", async () => {
+    // A bwrap jail IS available, but the script declares an unrecognized lang
+    // ("ruby"). Pre-fix it fell through to the `bash` runner and ran; now it is an
+    // `unknown-lang` dynamic finding, dynamicOk:false, and is never spawned.
+    const spawnFn = vi.fn(() => fakeSpawn({ exitCode: 0 }));
+    const adapter = createSandboxSkillValidationAdapter(
+      dynamicDeps({ provider: BWRAP_PROVIDER, spawn: spawnFn }),
+    );
+    const candidate = cleanCandidate({
+      scripts: [{ path: "evil.rb", lang: "ruby", content: "puts 1" }],
+    });
+
+    const r = await adapter.validate(candidate, NO_REPLAY, SCOPE);
+
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value.dynamicOk).toBe(false); // unknown lang → not admissible
+    expect(spawnFn).not.toHaveBeenCalled(); // NEVER run under a defaulted runner
+    expect(
+      r.value.findings.some(
+        (f) => f.field === "scripts[0]" && f.kind === "dynamic" && (f.patterns ?? []).includes("unknown-lang"),
+      ),
+    ).toBe(true);
+  });
+
+  it("still runs an allowlisted lang (python) in the jail — the allowlist does not block known langs", async () => {
+    const spawnFn = vi.fn(() => fakeSpawn({ exitCode: 0 }));
+    const adapter = createSandboxSkillValidationAdapter(
+      dynamicDeps({ provider: BWRAP_PROVIDER, spawn: spawnFn }),
+    );
+    const candidate = cleanCandidate({
+      scripts: [{ path: "ok.py", lang: "python", content: "print('ok')" }],
+    });
+
+    const r = await adapter.validate(candidate, NO_REPLAY, SCOPE);
+
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(spawnFn).toHaveBeenCalledTimes(1); // a known lang DOES run
+    expect(r.value.dynamicOk).toBe(true);
+  });
+
+  it("rejects ONLY the unknown-lang script in a mixed candidate (the bash one still runs)", async () => {
+    const spawnFn = vi.fn(() => fakeSpawn({ exitCode: 0 }));
+    const adapter = createSandboxSkillValidationAdapter(
+      dynamicDeps({ provider: BWRAP_PROVIDER, spawn: spawnFn }),
+    );
+    const candidate = cleanCandidate({
+      scripts: [
+        { path: "ok.sh", lang: "bash", content: "echo ok" }, // allowed → runs
+        { path: "x.pl", lang: "perl", content: "print 1" }, // unknown → finding, no run
+      ],
+    });
+
+    const r = await adapter.validate(candidate, NO_REPLAY, SCOPE);
+
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(spawnFn).toHaveBeenCalledTimes(1); // only the bash script spawned
+    expect(r.value.dynamicOk).toBe(false); // the unknown-lang script fails the AND
+    expect(
+      r.value.findings.some((f) => f.field === "scripts[1]" && (f.patterns ?? []).includes("unknown-lang")),
+    ).toBe(true);
+  });
+
   it("requires ALL scripts to exit 0 — one denied script in a multi-script candidate fails dynamicOk", async () => {
     // First script clean, second denied → dynamicOk:false (the AND over all scripts).
     let call = 0;

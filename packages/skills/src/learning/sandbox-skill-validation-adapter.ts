@@ -380,6 +380,20 @@ async function runDynamicReplay(
 
     for (let i = 0; i < skill.scripts.length; i++) {
       const script = skill.scripts[i];
+
+      // IN-04 (defense-in-depth): allowlist the script lang/runner. An
+      // unrecognized lang used to silently fall through to the `bash` runner
+      // (runnerFor default) — so an attacker-chosen lang ran an arbitrary
+      // interpreter (still jailed, but undeclared). Reject an unknown lang as a
+      // dynamic finding and DO NOT run it (no materialize, no spawn): the
+      // candidate fails dynamicOk instead of executing under a defaulted runner.
+      if (!isAllowedScriptLang(script.lang)) {
+        allOk = false;
+        // counts/ids only — the lang token is a closed-enum signal, never content.
+        findings.push({ field: `scripts[${i}]`, kind: "dynamic", patterns: ["unknown-lang"] });
+        continue;
+      }
+
       // Write the script into the jail workspace (bounded, jail-only).
       const scriptPath = join(jailWorkspace, `skill-script-${i}.${scriptExt(script.lang)}`);
       writeFileSync(scriptPath, script.content, { mode: 0o600 });
@@ -497,7 +511,34 @@ function spawnAndCapture(
   });
 }
 
-/** The file extension for a materialized script of the given lang (best-effort). */
+/**
+ * The closed allowlist of embedded-script langs the validation jail will run
+ * (lowercased), IN-04. Every entry maps to an explicit in-jail runner in
+ * {@link runnerFor} (sh/bash → bash, python/py → python3, node/javascript/js →
+ * node). A lang OUTSIDE this set is rejected as an `unknown-lang` dynamic finding
+ * — it is NEVER materialized or spawned under the `bash` default (which used to
+ * run an arbitrary attacker-chosen lang under a silently-defaulted interpreter).
+ */
+export const ALLOWED_SCRIPT_LANGS: ReadonlySet<string> = new Set([
+  "sh",
+  "bash",
+  "python",
+  "py",
+  "node",
+  "javascript",
+  "js",
+]);
+
+/** Whether `lang` is in the {@link ALLOWED_SCRIPT_LANGS} runner allowlist (case-insensitive). */
+function isAllowedScriptLang(lang: string): boolean {
+  return ALLOWED_SCRIPT_LANGS.has(lang.toLowerCase());
+}
+
+/**
+ * The file extension for a materialized script of the given lang. Only ever
+ * called on an allowlisted lang (the loop rejects unknowns first), so the final
+ * `sh` is the sh/bash case — not an unknown-lang fallback.
+ */
 function scriptExt(lang: string): string {
   const l = lang.toLowerCase();
   if (l === "python" || l === "py") return "py";
@@ -505,7 +546,12 @@ function scriptExt(lang: string): string {
   return "sh";
 }
 
-/** The in-jail runner command for a materialized script of the given lang. */
+/**
+ * The in-jail runner command for a materialized script of the given lang. Only
+ * ever called on an allowlisted lang (the loop rejects unknowns first), so the
+ * final `bash` is the sh/bash case — not an unknown-lang fallback to an arbitrary
+ * runner.
+ */
 function runnerFor(lang: string, scriptPath: string): string {
   const l = lang.toLowerCase();
   if (l === "python" || l === "py") return `python3 ${scriptPath}`;
