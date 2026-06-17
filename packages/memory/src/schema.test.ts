@@ -8,6 +8,7 @@ import {
   ensureEntityTables,
   ensureUsefulnessTable,
   ensureTripleTable,
+  ensureUserRepresentationBitemporalColumns,
 } from "./schema.js";
 import { ensureLcdTables } from "./schema-lcd.js";
 import { createSqliteMemoryUsefulnessStore } from "./sqlite-memory-usefulness-store.js";
@@ -1742,5 +1743,127 @@ describe("ensureUsefulnessTable intent column", () => {
     expect(
       (db.prepare("SELECT COUNT(*) AS c FROM memory_usefulness").get() as { c: number }).c,
     ).toBe(1);
+  });
+});
+
+// =====================================================================
+// ensureUserRepresentationBitemporalColumns (v2.26 WS5 REVISE-02) — the
+// per-column ensure* add (t_valid_start/t_valid_end/expired_at + confidence)
+// over the additive `user_representation` table, deterministic backfill of
+// t_valid_start = created_at, the current-truth partial index, re-run-safe.
+// Mirrors ensurePinnedColumn / the memory_triples bi-temporal shape.
+// =====================================================================
+
+describe("ensureUserRepresentationBitemporalColumns", () => {
+  let db: Database.Database;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    db.pragma("foreign_keys = ON");
+  });
+
+  const reprCols = (): string[] =>
+    (db.prepare("PRAGMA table_info(user_representation)").all() as Array<{ name: string }>).map(
+      (c) => c.name,
+    );
+
+  /** A PRE-bitemporal user_representation table (mirror schema.ts:367-385 WITHOUT the new columns). */
+  function createPreBitemporalTable(): void {
+    db.exec(`
+      CREATE TABLE user_representation (
+        id               TEXT NOT NULL,
+        tenant_id        TEXT NOT NULL,
+        agent_id         TEXT NOT NULL,
+        user_id          TEXT NOT NULL,
+        entry_type       TEXT NOT NULL CHECK(entry_type IN ('identity','preference','relationship','instruction')),
+        content          TEXT NOT NULL,
+        trust            TEXT NOT NULL CHECK(trust IN ('system','learned')),
+        source_memory_id TEXT,
+        created_at       INTEGER NOT NULL,
+        updated_at       INTEGER,
+        PRIMARY KEY (id)
+      );
+    `);
+  }
+
+  it("adds t_valid_start/t_valid_end/expired_at/confidence to a pre-bitemporal table, non-destructively", () => {
+    createPreBitemporalTable();
+    db.prepare(
+      `INSERT INTO user_representation (id, tenant_id, agent_id, user_id, entry_type, content, trust, created_at)
+       VALUES ('pre-1', 'default', 'agent_x', 'user_a', 'preference', 'an existing fact', 'learned', 1700)`,
+    ).run();
+
+    // Pre-condition: the four columns are genuinely absent.
+    const before = reprCols();
+    expect(before).not.toContain("t_valid_start");
+    expect(before).not.toContain("t_valid_end");
+    expect(before).not.toContain("expired_at");
+    expect(before).not.toContain("confidence");
+
+    expect(() => ensureUserRepresentationBitemporalColumns(db)).not.toThrow();
+
+    const after = reprCols();
+    expect(after).toContain("t_valid_start");
+    expect(after).toContain("t_valid_end");
+    expect(after).toContain("expired_at");
+    expect(after).toContain("confidence");
+
+    // The pre-existing row survives.
+    const row = db
+      .prepare("SELECT id, content FROM user_representation WHERE id = 'pre-1'")
+      .get() as { id: string; content: string };
+    expect(row.id).toBe("pre-1");
+    expect(row.content).toBe("an existing fact");
+  });
+
+  it("backfills t_valid_start = created_at deterministically for pre-existing rows", () => {
+    createPreBitemporalTable();
+    db.prepare(
+      `INSERT INTO user_representation (id, tenant_id, agent_id, user_id, entry_type, content, trust, created_at)
+       VALUES ('pre-2', 'default', 'agent_x', 'user_a', 'identity', 'name is Ada', 'system', 1699000000000)`,
+    ).run();
+
+    ensureUserRepresentationBitemporalColumns(db);
+
+    const row = db
+      .prepare("SELECT created_at, t_valid_start, t_valid_end, expired_at FROM user_representation WHERE id = 'pre-2'")
+      .get() as { created_at: number; t_valid_start: number | null; t_valid_end: number | null; expired_at: number | null };
+    // t_valid_start backfilled to created_at; the end-stamps stay NULL (= current truth).
+    expect(row.t_valid_start).toBe(1699000000000);
+    expect(row.t_valid_start).toBe(row.created_at);
+    expect(row.t_valid_end).toBeNull();
+    expect(row.expired_at).toBeNull();
+  });
+
+  it("creates the idx_user_repr_current partial index (WHERE t_valid_end IS NULL)", () => {
+    createPreBitemporalTable();
+    ensureUserRepresentationBitemporalColumns(db);
+    const indexes = (
+      db.prepare("PRAGMA index_list(user_representation)").all() as Array<{ name: string }>
+    ).map((r) => r.name);
+    expect(indexes).toContain("idx_user_repr_current");
+  });
+
+  it("is re-run-safe — a second call on an already-bitemporal table is a no-op (no duplicate-column error)", () => {
+    createPreBitemporalTable();
+    ensureUserRepresentationBitemporalColumns(db); // first add
+    expect(() => ensureUserRepresentationBitemporalColumns(db)).not.toThrow(); // second is a no-op
+    // Each new column appears exactly once.
+    for (const col of ["t_valid_start", "t_valid_end", "expired_at", "confidence"]) {
+      expect(reprCols().filter((c) => c === col)).toHaveLength(1);
+    }
+  });
+
+  it("is wired into initSchema — a fresh DB has the bitemporal columns + the current-truth index on boot", () => {
+    initSchema(db, 1536);
+    const cols = reprCols();
+    expect(cols).toContain("t_valid_start");
+    expect(cols).toContain("t_valid_end");
+    expect(cols).toContain("expired_at");
+    expect(cols).toContain("confidence");
+    const indexes = (
+      db.prepare("PRAGMA index_list(user_representation)").all() as Array<{ name: string }>
+    ).map((r) => r.name);
+    expect(indexes).toContain("idx_user_repr_current");
   });
 });
