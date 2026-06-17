@@ -3127,7 +3127,7 @@ describe("attachTrajectoryToEventBus -- dedup events", () => {
 // ---------------------------------------------------------------------------
 
 describe("health:budget_exceeded entry (bridge entry count guard)", () => {
-  it("bridge entry count is exactly 91 (+3 T2.2 background_task promoted/completed/failed; +2 D3 breaker + 1 D7 offload Phase 151; +1 session:summary Phase 152; +1 context:budget_computed W2; +1 execution:tool_schema_unsupported Phase 175; +2 OBS-01 script signals Phase 180; +2 RECALL-01 memory:recalled/reranked; +1 GENQ-01 memory:generation_quality; +4 OBS-04 image:* Phase 186; +3 media.vision:* VIS-04 Phase 187; +5 video:* OBS-04 Phase 192; +6 voice media.stt/tts:* OBS-02/03 Phase 196; +1 OUTCOME-08 learning:outcome_observed v2.26 Phase 198; +3 RANK-06/FORGET-06 memory:online_tuning_applied + learning:memory_demoted/evicted v2.26 Phase 200)", () => {
+  it("bridge entry count is exactly 93 (+3 T2.2 background_task promoted/completed/failed; +2 D3 breaker + 1 D7 offload Phase 151; +1 session:summary Phase 152; +1 context:budget_computed W2; +1 execution:tool_schema_unsupported Phase 175; +2 OBS-01 script signals Phase 180; +2 RECALL-01 memory:recalled/reranked; +1 GENQ-01 memory:generation_quality; +4 OBS-04 image:* Phase 186; +3 media.vision:* VIS-04 Phase 187; +5 video:* OBS-04 Phase 192; +6 voice media.stt/tts:* OBS-02/03 Phase 196; +1 OUTCOME-08 learning:outcome_observed v2.26 Phase 198; +3 RANK-06/FORGET-06 memory:online_tuning_applied + learning:memory_demoted/evicted v2.26 Phase 200; +2 SKILL-09 learning:skill_synthesized/skill_validated v2.26 Phase 201)", () => {
     // 55 + tool:breaker_opened + tool:breaker_reset (D3) + tool:result_offloaded (D7)
     // + session:summary (F2/D5, Phase 152)
     // + execution:tool_schema_unsupported (GBNF-02, Phase 175 Plan 05)
@@ -3149,7 +3149,10 @@ describe("health:budget_exceeded entry (bridge entry count guard)", () => {
     //   + learning:memory_demoted/evicted (FORGET-06, the soft-eviction counts —
     //   daemon-side emit) (v2.26 Verified Learning WS3/WS4, Phase 200 Plan 06 — APPEND-ONLY;
     //   all three counts/ids/closed-enums ONLY, NEVER an alpha value or memory body — SEC-01).
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(91);
+    // + learning:skill_synthesized + learning:skill_validated (SKILL-09, v2.26 Verified Learning
+    //   WS2, Phase 201 Plan 07 — APPEND-ONLY; the daemon-side procedural-synthesis telemetry,
+    //   counts/coverage-enum ONLY, NEVER a procedure body / script / finding — SEC-01).
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(93);
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {
@@ -3267,5 +3270,68 @@ describe("RANK-06/FORGET-06 learning/tuning events (counts-only, bridged)", () =
     expect(data.count).toBe(2);
     expect(data.agentId).toBeUndefined();
     expect(data.timestamp).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SKILL-09 (Plan 07): the two procedural-synthesis telemetry events. Emitted
+// DAEMON-SIDE (the __SKILL_SYNTHESIS__ cron handler) after runSkillSynthesis.
+// Counts / ids / closed-enums (coverage) ONLY — NEVER a procedure body, a script,
+// or a finding (the SEC-01 firewall; the translator forwards counts/coverage only).
+// ---------------------------------------------------------------------------
+
+describe("SKILL-09 learning:skill_synthesized / skill_validated (counts-only, bridged)", () => {
+  it("both keys are in TRAJECTORY_BRIDGE_MAPPING with the canonical dotted names", () => {
+    const mapping = TRAJECTORY_BRIDGE_MAPPING as Record<string, string>;
+    expect(mapping["learning:skill_synthesized"]).toBe("learning.skill_synthesized");
+    expect(mapping["learning:skill_validated"]).toBe("learning.skill_validated");
+  });
+
+  it("TRAJECTORY_EVENT_TYPES includes both new dotted trajectory types", () => {
+    const types = Array.from(TRAJECTORY_EVENT_TYPES as readonly string[]);
+    expect(types).toContain("learning.skill_synthesized");
+    expect(types).toContain("learning.skill_validated");
+  });
+
+  it("learning:skill_synthesized → learning.skill_synthesized carries the count ONLY (correlation ids stripped)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("learning:skill_synthesized", { agentId: "default", count: 2, timestamp: 1000 });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("learning.skill_synthesized");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.count).toBe(2);
+    expect(data.agentId).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("learning:skill_validated → learning.skill_validated carries the verdict booleans + coverage ONLY (no body/scripts)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("learning:skill_validated", {
+      agentId: "default",
+      staticOk: true,
+      dynamicOk: false,
+      coverage: "static-only",
+      timestamp: 1000,
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("learning.skill_validated");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.staticOk).toBe(true);
+    expect(data.dynamicOk).toBe(false);
+    expect(data.coverage).toBe("static-only");
+    expect(data.agentId).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+    // SEC-01 firewall: NO body / scripts / findings / field-name leak crosses.
+    for (const k of Object.keys(data)) {
+      expect(k, `payload key ${k} must not name a body/script/finding`).not.toMatch(/body|script|finding|content/i);
+    }
   });
 });
