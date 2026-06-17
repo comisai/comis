@@ -29,11 +29,12 @@
  * @module
  */
 
+import { spawn as nodeSpawn } from "node:child_process";
 import * as TypeCompiler from "typebox/compile";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { Result } from "@comis/shared";
 import { ok } from "@comis/shared";
-import { validateMemoryWrite } from "@comis/core";
+import { validateMemoryWrite, systemSetTimeout, systemClearTimeout } from "@comis/core";
 import type {
   CandidateSkill,
   LearningScope,
@@ -43,6 +44,36 @@ import type {
   SkillValidationResult,
 } from "@comis/core";
 import { applyToolPolicy } from "../skills/policy/index.js";
+import { detectSandboxProvider } from "../tools/builtin/sandbox/detect-provider.js";
+import type { SandboxProvider } from "../tools/builtin/sandbox/types.js";
+
+/**
+ * The minimal `spawn` surface the dynamic replay needs (the `node:child_process`
+ * `spawn` is assignable). Injected so the fail-closed (darwin / no-bwrap) AND the
+ * available (Linux bwrap) branches are exercised deterministically off-Linux —
+ * bwrap is Linux-only, so the unit suite on a `darwin` box CANNOT spawn a real jail.
+ */
+export type SpawnFn = (
+  bin: string,
+  args: string[],
+  opts: { cwd: string | undefined; env: NodeJS.ProcessEnv; detached: boolean; stdio: [string, string, string] },
+) => SpawnedChild;
+
+/** The slice of a Node ChildProcess the replay consumes (exit code + stream close). */
+export interface SpawnedChild {
+  pid: number | undefined;
+  stdout: { on(ev: "data", cb: (chunk: Buffer) => void): void; removeAllListeners(ev: "data"): void } | null;
+  stderr: { on(ev: "data", cb: (chunk: Buffer) => void): void; removeAllListeners(ev: "data"): void } | null;
+  stdin: { write(s: string): void; end(): void } | null;
+  on(ev: "close", cb: (code: number | null, signal: string | null) => void): void;
+  on(ev: "error", cb: (err: Error) => void): void;
+  kill(): void;
+}
+
+/** A cancelable one-shot timer handle (the `systemSetTimeout` shape — has `.unref()`). */
+interface TimeoutHandle {
+  unref?(): void;
+}
 
 /** A pino-compatible structural logger (injected — NOT `getLogger`; the daemon passes the real one). */
 interface ValidationLogger {
@@ -65,7 +96,34 @@ export interface SandboxSkillValidationAdapterDeps {
   policy: { profile: string; allow: string[]; deny: string[] };
   /** Optional injected structural logger (counts/ids only — never bodies). */
   logger?: ValidationLogger;
+  // --- DYNAMIC (sandbox replay) injectables (Plan 06) ------------------------
+  /**
+   * Detect the OS sandbox provider. Defaults to the real {@link detectSandboxProvider}
+   * (returns `undefined` off Linux). INJECTED so the unit suite drives both the
+   * fail-closed (no bwrap) and the available (Linux bwrap) branches on this `darwin`
+   * box — bwrap cannot run here, so a real jail can never be materialized in tests.
+   * Takes no argument — the adapter emits its OWN `sandbox_unavailable` WARN, so the
+   * provider's internal detect-logging is not threaded here (it also sidesteps the
+   * `DetectLogger`↔`ValidationLogger` shape mismatch).
+   */
+  detectProvider?: () => SandboxProvider | undefined;
+  /** The process spawner. Defaults to `node:child_process` `spawn` (the executor — NOT `buildArgs`). */
+  spawnFn?: SpawnFn;
+  /** One-shot timer (anti-DoS per-spawn wall-clock). Defaults to {@link systemSetTimeout}. */
+  setTimeoutFn?: (cb: () => void, ms: number) => TimeoutHandle;
+  /** Cancel a pending {@link setTimeoutFn} handle. Defaults to {@link systemClearTimeout}. */
+  clearTimeoutFn?: (handle: TimeoutHandle) => void;
+  /** Per-spawn wall-clock budget (ms). Defaults to {@link DEFAULT_SCRIPT_TIMEOUT_MS}. */
+  scriptTimeoutMs?: number;
 }
+
+/**
+ * Per-embedded-script wall-clock budget (anti-DoS, T-201-33). The synthesis loop
+ * is already triple-capped (Plan 04) and this runs offline (cron), so a generous
+ * but bounded ceiling is correct — a runaway/hanging script is killed at the cap
+ * and counts as a clean fail (`dynamicOk:false`), never a hang.
+ */
+export const DEFAULT_SCRIPT_TIMEOUT_MS = 30_000;
 
 /**
  * The small set of unambiguously read-only built-in tools (lowercased). MIRRORS
@@ -123,11 +181,17 @@ export function createSandboxSkillValidationAdapter(
   deps: SandboxSkillValidationAdapterDeps,
 ): SkillValidationPort {
   const { allTools, policy, logger } = deps;
+  // Dynamic injectables — default to the real OS-sandbox + Node spawn + system clock.
+  const detectProvider: () => SandboxProvider | undefined = deps.detectProvider ?? (() => detectSandboxProvider());
+  const spawnFn: SpawnFn = deps.spawnFn ?? (nodeSpawn as unknown as SpawnFn);
+  const setTimeoutFn = deps.setTimeoutFn ?? ((cb, ms) => systemSetTimeout(cb, ms));
+  const clearTimeoutFn = deps.clearTimeoutFn ?? ((h) => systemClearTimeout(h as never));
+  const scriptTimeoutMs = deps.scriptTimeoutMs ?? DEFAULT_SCRIPT_TIMEOUT_MS;
 
   return {
-    validate(
+    async validate(
       skill: CandidateSkill,
-      _replay: ReplayContext,
+      replay: ReplayContext,
       scope: LearningScope,
     ): Promise<Result<SkillValidationResult, Error>> {
       const findings: SkillValidationFinding[] = [];
@@ -182,18 +246,109 @@ export function createSandboxSkillValidationAdapter(
         "skill candidate static validation complete",
       );
 
-      // --- 5. result (dynamic fields stubbed — Plan 06 fills them) -------------
+      // --- 5. DYNAMIC sandbox replay (the fail-closed bwrap gate) --------------
+      // THE MOST DANGEROUS TRAP (§0.1-C6 / Pitfall 4): the exec path normally
+      // degrades OPEN (buildSpawnCommand(sandboxConfig=undefined) → bare
+      // /bin/bash -c). The validator INVERTS that to fail-CLOSED — mirroring the
+      // terminal-driver's JailUnavailableError posture — so an embedded script
+      // NEVER runs unsandboxed: a real Linux bwrap jail is required, else the run
+      // honestly degrades to coverage:"static-only".
+      const dynamic = await runDynamicReplay(skill, replay, scope, {
+        detectProvider,
+        spawnFn,
+        setTimeoutFn,
+        clearTimeoutFn,
+        scriptTimeoutMs,
+        logger,
+      });
+
       const result: SkillValidationResult = {
         staticOk,
-        dynamicOk: false,
-        reproducedEffect: false,
-        findings,
-        sandboxProvider: "none",
-        coverage: "static-only",
+        dynamicOk: dynamic.dynamicOk,
+        reproducedEffect: dynamic.reproducedEffect,
+        findings: [...findings, ...dynamic.findings],
+        sandboxProvider: dynamic.sandboxProvider,
+        coverage: dynamic.coverage,
       };
-      return Promise.resolve(ok(result));
+      return ok(result);
     },
   };
+}
+
+/** The dynamic-half subset of {@link SkillValidationResult} (+ any dynamic findings). */
+interface DynamicOutcome {
+  dynamicOk: boolean;
+  reproducedEffect: boolean;
+  sandboxProvider: SkillValidationResult["sandboxProvider"];
+  coverage: SkillValidationResult["coverage"];
+  findings: SkillValidationFinding[];
+}
+
+/** The resolved dynamic-replay dependencies (defaults applied at the factory). */
+interface DynamicDeps {
+  detectProvider: () => SandboxProvider | undefined;
+  spawnFn: SpawnFn;
+  setTimeoutFn: (cb: () => void, ms: number) => TimeoutHandle;
+  clearTimeoutFn: (handle: TimeoutHandle) => void;
+  scriptTimeoutMs: number;
+  logger?: ValidationLogger;
+}
+
+/**
+ * Run the candidate's embedded `scripts[]` in a fail-closed bwrap jail and report
+ * the dynamic verdict. Fails CLOSED: no materializable Linux bwrap jail →
+ * `coverage:"static-only"`, `dynamicOk:false` (NEVER an unsandboxed exec — the
+ * SEC-01 / T-201-31 guarantee). Plan 06 Task 2 fills the spawn+capture branch.
+ */
+async function runDynamicReplay(
+  skill: CandidateSkill,
+  _replay: ReplayContext,
+  scope: LearningScope,
+  deps: DynamicDeps,
+): Promise<DynamicOutcome> {
+  const { detectProvider, logger } = deps;
+
+  // Fail-closed jail gate — require a REAL Linux bwrap provider (mirror the
+  // terminal-driver JailUnavailableError posture, NOT the open exec fallback).
+  const provider = detectProvider();
+  const jailable = provider !== undefined && provider.name === "bwrap" && provider.available(); // Linux-only
+
+  if (!jailable) {
+    // Honest degradation — NOT a failure metric (Defer ≠ Retry). Embedded-script
+    // procedures simply do not dynamic-admit here; admission falls to the
+    // read-only / noEmbeddedScripts branch (Plan 04).
+    logger?.warn(
+      {
+        step: "skill_validation_dynamic",
+        tenantId: scope.tenantId,
+        agentId: scope.agentId,
+        errorKind: "sandbox_unavailable",
+        sandboxProvider: provider?.name ?? "none",
+        hint:
+          "no bwrap jail (Linux-only) — dynamic validation degraded to static-only; " +
+          "embedded-script procedures do not dynamic-admit on this host",
+      },
+      "skill validation: sandbox unavailable — static-only",
+    );
+    return {
+      dynamicOk: false,
+      reproducedEffect: false,
+      sandboxProvider: provider?.name === "sandbox-exec" ? "sandbox-exec" : provider?.name === "bwrap" ? "bwrap" : "none",
+      coverage: "static-only",
+      findings: [],
+    };
+  }
+
+  // Script-free candidate: nothing to execute. A jail is available but there is
+  // no embedded procedure to replay — so NO dynamic coverage was obtained
+  // (coverage:"static-only" is honest: `"full"` means the replay actually ran).
+  // Admission falls to the noEmbeddedScripts branch (Plan 04).
+  if (skill.scripts.length === 0) {
+    return { dynamicOk: false, reproducedEffect: false, sandboxProvider: "bwrap", coverage: "static-only", findings: [] };
+  }
+
+  // The scripted spawn+capture branch lands in Plan 06 Task 2.
+  return { dynamicOk: false, reproducedEffect: false, sandboxProvider: "bwrap", coverage: "static-only", findings: [] };
 }
 
 /**

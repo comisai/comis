@@ -220,8 +220,14 @@ describe("SandboxSkillValidationAdapter — static per-field validateMemoryWrite
     expect(r.value.staticOk).toBe(true);
   });
 
-  it("stubs the dynamic fields this plan (coverage:'static-only', dynamicOk:false, sandboxProvider:'none')", async () => {
-    const adapter = createSandboxSkillValidationAdapter(fullPolicyDeps(["read"]));
+  it("reports static-only + none for a script-free candidate with NO sandbox provider (dynamicOk:false)", async () => {
+    // Provider injected as undefined → host-independent (the real detectSandboxProvider
+    // returns sandbox-exec on darwin / undefined off Linux). A script-free read-only
+    // candidate obtains no dynamic coverage regardless of host.
+    const adapter = createSandboxSkillValidationAdapter({
+      ...fullPolicyDeps(["read"]),
+      detectProvider: () => undefined,
+    });
 
     const r = await adapter.validate(cleanCandidate(), NO_REPLAY, SCOPE);
 
