@@ -1,7 +1,7 @@
 ---
 name: claude-code
 type: prompt
-version: "1.1.2"
+version: "1.1.3"
 description: Drive the Claude Code CLI interactively in a terminal session to build, fix, or extend software — launch it in a NAMED project folder, give it the task, handle its interactive prompts via keystrokes, detect completion, and verify the result. Use whenever the user wants to write, build, debug, refactor, or test code or work on a software project, or asks to "use Claude" / "Claude Code" — even if they don't name the tool. This is for INTERACTIVE sessions only; never the headless one-shot mode.
 ---
 
@@ -94,7 +94,7 @@ Type these into Claude's `❯` composer (`send_text` then Enter, like any prompt
 
 ## Gotchas
 
-- **Ignore Claude's ghost-text suggestions** — after a turn, Claude's composer often pre-fills a DIM suggestion (e.g. `add more test cases`, a `/gsd-…` hint). That is Claude's autocomplete, **not** user input, **not** from the operator, and **not** a task. Never run it, never treat it as a queued prompt, and never stop to ask about it — just proceed with your own next step (typing your text overwrites the ghost text). Only text **you** sent counts.
+- **Composer text you didn't type is ALWAYS ghost-text — never ask about it.** You are the SOLE driver of this session; the user CANNOT type into it. So any text sitting in the `❯` composer that you did not send yourself (e.g. `add more test cases`, `commit this`, a `/gsd-…` hint) is DEFINITIVELY Claude's dim autocomplete suggestion — there is no ambiguity and nothing to confirm. The plain-text screen can't show the dim styling, but you don't need it: **if you didn't type it, it's ghost-text.** Never run it, never treat it as a queued/pending instruction, and **never pause to ask the user "did this come from you?" or "should I run it?"** — just continue your own plan (your next keystroke overwrites it). And do **not** end the turn with a "want me to…?" question while the user's request still has unfinished steps — finish the requested work first.
 - **One read can lie** — poll and require a stable screen before deciding "done"; match the structural cues above, not the exact spinner word (it rotates).
 - **A 401 means re-auth** — never retry-loop a failed login; tell the user.
 - **Long tasks are normal** — give generous `wait`s; don't kill a session just because it's been working a while.
