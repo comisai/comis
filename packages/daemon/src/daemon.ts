@@ -1480,7 +1480,7 @@ async function bootFoundation(
     sessionStore, memoryApi, embeddingQueue, backgroundIndexingPromise,
     embeddingCacheStats, embeddingCircuitBreakerState, maintenanceTick,
     summarizerSpendBreaker,
-    rerankerPort, rerankerModelPresent, disposeReranker, entityStore, lcdStore, provenanceStore, contextBrowse, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, userRepresentationStore, relationshipStore, tunedAlphaStore, outcomeStore, recordOutboundMessage, memoryLifecycleStore, consolidationStore, recallCounters,
+    rerankerPort, rerankerModelPresent, disposeReranker, entityStore, lcdStore, provenanceStore, contextBrowse, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, userRepresentationStore, relationshipStore, tunedAlphaStore, outcomeStore, recordOutboundMessage, destroyReactionWiring, memoryLifecycleStore, consolidationStore, recallCounters,
   } = await setupMemory({ container, memoryLogger, clock, timers });
 
   // Observability persistence (dual-write to SQLite). obsStore +
@@ -1665,7 +1665,7 @@ async function bootFoundation(
     processMonitor,
     disposeEmbedding, cachedPort, memoryAdapter, db, sessionStore, memoryApi,
     embeddingQueue, backgroundIndexingPromise, embeddingCacheStats,
-    embeddingCircuitBreakerState, summarizerSpendBreaker, rerankerPort, rerankerModelPresent, disposeReranker, entityStore, lcdStore, provenanceStore, contextBrowse, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, userRepresentationStore, relationshipStore, tunedAlphaStore, recordOutboundMessage, memoryLifecycleStore, consolidationStore, recallCounters, maintenanceTick,
+    embeddingCircuitBreakerState, summarizerSpendBreaker, rerankerPort, rerankerModelPresent, disposeReranker, entityStore, lcdStore, provenanceStore, contextBrowse, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, userRepresentationStore, relationshipStore, tunedAlphaStore, recordOutboundMessage, destroyReactionWiring, memoryLifecycleStore, consolidationStore, recallCounters, maintenanceTick,
     obsStore, obsPersistence,
     activeRunRegistry, sessionResolver, canaryFallbackSecret, injectionRateLimiter,
     deliveryMirror, startMirrorPrune, shutdownMirror,
@@ -2701,7 +2701,7 @@ async function bootShutdown(
     contextPipelineCollector, backgroundIndexingPromise, db,
     disposeEmbedding, disposeReranker, cachedPort, maintenanceTick, obsPersistence,
     disposeActivityStream,
-    injectionRateLimiter, geminiCacheManager, backgroundTaskManager,
+    injectionRateLimiter, destroyReactionWiring, geminiCacheManager, backgroundTaskManager,
     secretStore,
     executors: _execs, cronSchedulers, resetSchedulers, browserServices,
     skillWatcherHandles, lockCleanupTimer, continuationTracker,
@@ -2750,6 +2750,7 @@ async function bootShutdown(
     secretStore,  // close secrets.db on shutdown
     auditAggregator,  // clear pending dedup timers
     injectionRateLimiter,  // clear rate limiter timers on shutdown
+    destroyReactionWiring,  // WR-01: clear reaction/session map + reaction limiter timers on shutdown
     lockCleanupTimer,  // clear periodic lock cleanup timer
     dataDir: container.config.dataDir || dataDir,
     lockDataDir: dataDir,  // D14 lock release — must match acquireDataDirLock's boot path

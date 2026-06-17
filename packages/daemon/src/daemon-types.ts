@@ -477,6 +477,9 @@ export interface BootContext {
    *  setup-memory behind the byte-identity gate); threaded into setupDeliveryQueue in bootAgents.
    *  `undefined` when learning-outcome is off for all agents (zero extra drain work). */
   recordOutboundMessage?: Awaited<ReturnType<typeof setupMemory>>["recordOutboundMessage"];
+  /** WR-01 (Phase 199): tear down the reaction/session trajectory maps + the dedicated reaction
+   *  rate limiter on shutdown (cancels their unref'd TTL timers). Threaded into setupShutdown. */
+  destroyReactionWiring?: Awaited<ReturnType<typeof setupMemory>>["destroyReactionWiring"];
   obsStore: ObservabilityStore | undefined;
   obsPersistence: ObsPersistenceResult | undefined;
   // Runtime registries (4 fields)

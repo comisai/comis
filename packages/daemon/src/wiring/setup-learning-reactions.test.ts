@@ -632,4 +632,32 @@ describe("buildReactionWiringDeps — daemon construction behind the byte-identi
     expect(typeof built.deps.correctionDetector).toBe("function");
     expect(built.deps.correctionEnabled("a1")).toBe(true);
   });
+
+  it("WR-01: exposes destroyReactionWiring() that cancels EVERY timer of the reaction map, session map, and reaction rate limiter (shutdown leak fix)", () => {
+    const clock = createFakeClock(NOW);
+    const timers = createFakeTimers(NOW);
+    const built = buildReactionWiringDeps(
+      makeContainer({ agents: { a1: { learningOutcome: { enabled: true } } } }),
+      clock,
+      timers,
+    );
+
+    // Populate all three bounded-with-timers resources so each schedules a TTL
+    // timer: the reaction trajectory map (via the capture callback), the session
+    // trajectory map (via recordSessionTrajectory), and the reaction rate limiter.
+    built.recordOutboundMessage!("msg-1", { traceId: TRACE, tenantId: TENANT, agentId: "a1", sessionId: TRACE });
+    built.deps.recordSessionTrajectory!("sk-1", { traceId: TRACE, tenantId: TENANT, agentId: "a1", sessionId: "sk-1" });
+    built.deps.reactionRateLimiter.record(TENANT, "reactor-1");
+
+    // Before shutdown there are live (un-cancelled) timers.
+    expect(timers.unrefRecord().some((e) => !e.cancelled)).toBe(true);
+
+    // The result MUST surface a destroy closure (the type promised cleanup).
+    expect(typeof built.destroyReactionWiring).toBe("function");
+    built.destroyReactionWiring();
+
+    // After shutdown EVERY scheduled timer is cancelled (no leaked unref'd timers
+    // accumulating across SIGUSR2 hot-reload cycles).
+    expect(timers.unrefRecord().every((e) => e.cancelled)).toBe(true);
+  });
 });

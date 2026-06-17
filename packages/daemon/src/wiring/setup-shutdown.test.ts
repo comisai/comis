@@ -312,6 +312,21 @@ describe("setupShutdown", () => {
     );
   });
 
+  it("WR-01: invokes destroyReactionWiring() on shutdown (cancels the reaction/session map + reaction limiter timers)", async () => {
+    const destroyReactionWiring = vi.fn();
+    const deps = createMinimalDeps({ destroyReactionWiring });
+
+    const setupShutdown = await getSetupShutdown();
+    const result = setupShutdown(deps);
+    await result.shutdownHandle.trigger("SIGTERM");
+
+    expect(destroyReactionWiring).toHaveBeenCalledTimes(1);
+    expect(deps.daemonLogger.info).toHaveBeenCalledWith(
+      expect.objectContaining({ component: "reaction-wiring" }),
+      "Component stopped",
+    );
+  });
+
   // -------------------------------------------------------------------------
   // 8. SIGUSR2 handler
   // -------------------------------------------------------------------------

@@ -531,6 +531,15 @@ export interface BuildReactionWiringResult {
   ) => void;
   /** The bounded session→trajectory map (returned so the daemon can destroy it on shutdown). */
   sessionTrajectoryMap: ReactionTrajectoryMap;
+  /**
+   * WR-01: tear down EVERY bounded-with-timers resource this wiring owns — the
+   * reaction trajectory map, the session trajectory map, AND the dedicated
+   * reaction rate limiter — cancelling each entry's `unref()`'d TTL timer. Threaded
+   * into the daemon shutdown path beside the existing `injectionRateLimiter.destroy()`
+   * so the maps + their pending timers do not accumulate across SIGUSR2 hot-reload
+   * cycles within a process.
+   */
+  destroyReactionWiring: () => void;
 }
 
 /** Default reaction emoji map (mirrors the schema-learning-outcome.ts defaults). */
@@ -676,5 +685,13 @@ export function buildReactionWiringDeps(
     ? (messageId: string, scope: OutboundTrajectoryEntry): void => reactionTrajectoryMap.record(messageId, scope)
     : undefined;
 
-  return { deps, recordOutboundMessage, sessionTrajectoryMap };
+  // WR-01: one closure that cancels the timers of ALL THREE bounded resources.
+  // The daemon shutdown path invokes it beside injectionRateLimiter.destroy().
+  const destroyReactionWiring = (): void => {
+    reactionTrajectoryMap.destroy();
+    sessionTrajectoryMap.destroy();
+    reactionRateLimiter.destroy();
+  };
+
+  return { deps, recordOutboundMessage, sessionTrajectoryMap, destroyReactionWiring };
 }

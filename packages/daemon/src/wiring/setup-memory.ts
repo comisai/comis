@@ -192,6 +192,9 @@ export interface MemoryResult {
   /** REACT-02 (Verified Learning, Phase 199): outbound-message → trajectory capture callback, threaded into
    *  the delivery drain. `undefined` when learning-outcome is off for all agents (byte-identity: zero extra work). */
   recordOutboundMessage?: (messageId: string, scope: { traceId: string; tenantId: string; agentId: string; sessionId: string }) => void;
+  /** WR-01 (Phase 199): tear down the reaction/session trajectory maps + the dedicated reaction rate limiter
+   *  (cancels their unref'd TTL timers). Invoked from the daemon shutdown path beside injectionRateLimiter.destroy(). */
+  destroyReactionWiring: () => void;
   /** Memory-lifecycle sweep store. SOLE `MemoryLifecyclePort` adapter; shared `db`, no model/IO cost. DORMANT
    *  (0 rows swept even when enabled); the KEYLESS __MEMORY_LIFECYCLE__ cron registers only when `memoryLifecycle.enabled`. */
   memoryLifecycleStore: import("@comis/core").MemoryLifecyclePort;
@@ -651,6 +654,9 @@ export async function setupMemory(deps: {
   wireLearningReactions(reactionWiring.deps);
   wireLearningCorrection(reactionWiring.deps);
   const recordOutboundMessage = reactionWiring.recordOutboundMessage;
+  // WR-01: surface the reaction-wiring teardown so the daemon shutdown path can
+  // cancel the trajectory maps' + the dedicated rate limiter's unref'd TTL timers.
+  const destroyReactionWiring = reactionWiring.destroyReactionWiring;
 
   // 6.5.3. Wire caching: L1(L2(provider)) when persistent, L1(provider) otherwise
   let cachedPort: EmbeddingPort | undefined;
@@ -792,6 +798,7 @@ export async function setupMemory(deps: {
     tunedAlphaStore,
     outcomeStore,
     recordOutboundMessage,
+    destroyReactionWiring,
     memoryLifecycleStore,
     recallCounters,
     maintenanceTick,
