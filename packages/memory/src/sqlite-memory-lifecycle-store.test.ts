@@ -40,7 +40,10 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import type { MemoryConfig } from "@comis/core";
 import { SqliteMemoryAdapter } from "./sqlite-memory-adapter.js";
 import { ensureMemoryColumns } from "./schema.js";
-import { createSqliteMemoryLifecycleStore } from "./sqlite-memory-lifecycle-store.js";
+import {
+  createSqliteMemoryLifecycleStore,
+  type MemoryLifecyclePolicy,
+} from "./sqlite-memory-lifecycle-store.js";
 import { createRowMapper } from "./row-mapper.js";
 import { MemoryLifecycleRowSchema } from "./row-schemas.js";
 import type Database from "better-sqlite3";
@@ -125,13 +128,14 @@ function insertMemory(
     occurredAt: number;
     proofCount?: number | null;
     trustLevel?: string;
+    pinned?: boolean;
   },
 ): void {
   target
     .prepare(
       `INSERT INTO memories
-        (id, tenant_id, agent_id, user_id, content, trust_level, memory_type, source_who, tags, created_at, occurred_at, proof_count)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?)`,
+        (id, tenant_id, agent_id, user_id, content, trust_level, memory_type, source_who, tags, created_at, occurred_at, proof_count, pinned)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?)`,
     )
     .run(
       opts.id,
@@ -145,7 +149,47 @@ function insertMemory(
       opts.occurredAt, // created_at = occurred_at for the fixtures
       opts.occurredAt,
       opts.proofCount ?? null,
+      opts.pinned ? 1 : 0,
     );
+}
+
+/**
+ * Seed `memory_usefulness.failure_count` for a memory (the FORGET-02 wrongness
+ * signal the lifecycle sweep reads). Scoped to the same (tenant, agent) + the
+ * given intent bucket ('' = global). The sweep SUMs failure_count across intents.
+ */
+function seedFailureCount(
+  target: Database.Database,
+  opts: {
+    memoryId: string;
+    tenantId?: string;
+    agentId?: string;
+    intent?: string;
+    failureCount: number;
+  },
+): void {
+  target
+    .prepare(
+      `INSERT INTO memory_usefulness (tenant_id, agent_id, memory_id, intent, used_count, ignored_count, failure_count)
+       VALUES (?, ?, ?, ?, 0, 0, ?)
+       ON CONFLICT(tenant_id, agent_id, memory_id, intent) DO UPDATE SET failure_count = excluded.failure_count`,
+    )
+    .run(
+      opts.tenantId ?? "tenant_a",
+      opts.agentId ?? "agent_x",
+      opts.memoryId,
+      opts.intent ?? "",
+      opts.failureCount,
+    );
+}
+
+/** Read the evicted_at marker for a memory id (NULL = live, non-NULL = soft-evicted). */
+function evictedAtOf(target: Database.Database, id: string): number | null {
+  return (
+    target.prepare("SELECT evicted_at FROM memories WHERE id = ?").get(id) as {
+      evicted_at: number | null;
+    }
+  ).evicted_at;
 }
 
 describe("createSqliteMemoryLifecycleStore", () => {
@@ -434,6 +478,194 @@ describe("createSqliteMemoryLifecycleStore", () => {
       // Re-open for the afterEach close() (idempotent close is fine).
       adapter = new SqliteMemoryAdapter(memoryConfig);
       db = adapter.getDb();
+    });
+  });
+
+  // ── LIVE soft eviction (FORGET-01/02/03/04) — gated on the eviction policy ──
+  // The DORMANT scaffold above acts on nothing. With an EVICTION-ENABLED policy
+  // the sweep applies REAL soft eviction: it sets evicted_at (never DELETE),
+  // couples failure_count into strength (wrong-but-recent evicts before
+  // old-but-correct), exempts high-proof/system/pinned, and is reversible.
+  describe("runLifecycleSweep (LIVE soft eviction — eviction policy enabled)", () => {
+    let adapter: SqliteMemoryAdapter;
+    let db: Database.Database;
+    let store: ReturnType<typeof createSqliteMemoryLifecycleStore>;
+
+    // The eviction-enabled policy: a high strengthThreshold (0.99) so a
+    // candidate's recall-shape strength (∈ [0.5, 1]) sits below it UNLESS its
+    // proof importance keeps it high — making the failure_count coupling the
+    // decisive lever the FORGET-04 keystone needs. failurePenalty drives the
+    // wrongness coupling; highProofFloor exempts well-corroborated memories.
+    const EVICTION_POLICY: MemoryLifecyclePolicy = {
+      thetaPromote: 0.7,
+      thetaDemote: 0.3,
+      epsilonPrune: 0.05,
+      maxDormantDays: 90,
+      evictionEnabled: true,
+      strengthThreshold: 0.99,
+      failurePenalty: 0.5,
+      highProofFloor: 5,
+    };
+
+    beforeEach(() => {
+      adapter = new SqliteMemoryAdapter(memoryConfig);
+      db = adapter.getDb();
+      store = createSqliteMemoryLifecycleStore({ db, policy: EVICTION_POLICY });
+    });
+
+    afterEach(() => {
+      adapter.close();
+    });
+
+    it("FORGET-04 keystone: a wrong-but-RECENT memory evicts BEFORE an old-but-CORRECT one", async () => {
+      // A: RECENT (1 day old → near-max base strength) but WRONG (high failure_count).
+      //    The failurePenalty drives its strength below threshold → evicted.
+      // B: OLD (60 days) but CORRECT (high proof_count, zero failures). Its proof
+      //    importance (above highProofFloor) exempts it → NOT evicted.
+      insertMemory(db, { id: "A-wrong-recent", content: "recent but wrong", memoryType: "semantic", occurredAt: T0 - 1 * DAY_MS, proofCount: 1 });
+      seedFailureCount(db, { memoryId: "A-wrong-recent", failureCount: 8 });
+      insertMemory(db, { id: "B-correct-old", content: "old but correct", memoryType: "semantic", occurredAt: T0 - 60 * DAY_MS, proofCount: 9 });
+
+      const res = await store.runLifecycleSweep({ tenantId: "tenant_a", agentId: "agent_x", now: T0 });
+      expect(res.ok).toBe(true);
+      if (res.ok) {
+        // At least the wrong-but-recent one was evicted; the old-but-correct one survives.
+        expect(res.value.evicted).toBeGreaterThanOrEqual(1);
+      }
+      expect(evictedAtOf(db, "A-wrong-recent"), "wrong-but-recent must be evicted").not.toBeNull();
+      expect(evictedAtOf(db, "B-correct-old"), "old-but-correct must survive").toBeNull();
+    });
+
+    it("recall-exclusion contract: an evicted row is SOFT-closed (evicted_at set, NOT deleted)", async () => {
+      // The store side of the recall-exclusion contract: eviction is a marker, the
+      // raw row remains in the table (resolvable via a direct/asOf read). The
+      // hybrid-search recall filter (its own test) does the recall-exclusion half.
+      insertMemory(db, { id: "evict-soft", content: "weak", memoryType: "working", occurredAt: T0 - 1 * DAY_MS, proofCount: null });
+      seedFailureCount(db, { memoryId: "evict-soft", failureCount: 6 });
+
+      const before = (db.prepare("SELECT COUNT(*) AS c FROM memories WHERE tenant_id='tenant_a' AND agent_id='agent_x'").get() as { c: number }).c;
+      const res = await store.runLifecycleSweep({ tenantId: "tenant_a", agentId: "agent_x", now: T0 });
+      expect(res.ok).toBe(true);
+
+      // SOFT: the row count is UNCHANGED (no DELETE) and evicted_at is set.
+      const after = (db.prepare("SELECT COUNT(*) AS c FROM memories WHERE tenant_id='tenant_a' AND agent_id='agent_x'").get() as { c: number }).c;
+      expect(after).toBe(before);
+      expect(evictedAtOf(db, "evict-soft")).not.toBeNull();
+      // The raw row still resolves via a direct read (the asOf/inspect audit path).
+      const raw = db.prepare("SELECT id, content FROM memories WHERE id = 'evict-soft'").get() as { id: string; content: string };
+      expect(raw.id).toBe("evict-soft");
+      expect(raw.content).toBe("weak");
+    });
+
+    it("FORGET-03 exemption: a single failure does NOT evict a HIGH-proof memory", async () => {
+      // The anti-induced-eviction guarantee: a high proof_count memory is exempt
+      // from eviction even when a failure is recorded against it. A poisoner cannot
+      // evict a well-corroborated memory by inducing one failure.
+      insertMemory(db, { id: "high-proof", content: "well corroborated", memoryType: "semantic", occurredAt: T0 - 1 * DAY_MS, proofCount: 20 });
+      seedFailureCount(db, { memoryId: "high-proof", failureCount: 1 });
+
+      const res = await store.runLifecycleSweep({ tenantId: "tenant_a", agentId: "agent_x", now: T0 });
+      expect(res.ok).toBe(true);
+      expect(evictedAtOf(db, "high-proof"), "high-proof memory must be exempt").toBeNull();
+    });
+
+    it("FORGET-03 exemption: pinned + system memories are NEVER evicted", async () => {
+      // pinned=1 and trust_level='system' are hard exemptions regardless of strength.
+      insertMemory(db, { id: "pinned-weak", content: "pinned", memoryType: "working", occurredAt: T0 - 1 * DAY_MS, proofCount: null, pinned: true });
+      seedFailureCount(db, { memoryId: "pinned-weak", failureCount: 9 });
+      insertMemory(db, { id: "system-weak", content: "system", memoryType: "working", occurredAt: T0 - 1 * DAY_MS, proofCount: null, trustLevel: "system" });
+      seedFailureCount(db, { memoryId: "system-weak", failureCount: 9 });
+
+      const res = await store.runLifecycleSweep({ tenantId: "tenant_a", agentId: "agent_x", now: T0 });
+      expect(res.ok).toBe(true);
+      expect(evictedAtOf(db, "pinned-weak"), "pinned must be exempt").toBeNull();
+      expect(evictedAtOf(db, "system-weak"), "system must be exempt").toBeNull();
+    });
+
+    it("FORGET-02 coupling: two memories identical except failure_count — only the high-failure one evicts", async () => {
+      // Both RECENT (high base strength), same proof_count (below the high-proof
+      // floor). The ONLY difference is failure_count. The failurePenalty drives the
+      // high-failure one below threshold; the zero-failure one survives. Proves the
+      // coupling is monotone (more failures → lower strength → eviction).
+      insertMemory(db, { id: "fc-high", content: "wrong", memoryType: "semantic", occurredAt: T0 - 1 * DAY_MS, proofCount: 1 });
+      seedFailureCount(db, { memoryId: "fc-high", failureCount: 10 });
+      insertMemory(db, { id: "fc-zero", content: "fine", memoryType: "semantic", occurredAt: T0 - 1 * DAY_MS, proofCount: 1 });
+      // fc-zero: no failure row at all → failure_count 0.
+
+      const res = await store.runLifecycleSweep({ tenantId: "tenant_a", agentId: "agent_x", now: T0 });
+      expect(res.ok).toBe(true);
+      expect(evictedAtOf(db, "fc-high"), "high failure_count must evict").not.toBeNull();
+      expect(evictedAtOf(db, "fc-zero"), "zero failure_count must survive (no eviction without wrongness)").toBeNull();
+    });
+
+    it("reversibility (FORGET-04): unevict clears evicted_at, restoring the row", async () => {
+      insertMemory(db, { id: "revivable", content: "weak then useful", memoryType: "working", occurredAt: T0 - 1 * DAY_MS, proofCount: null });
+      seedFailureCount(db, { memoryId: "revivable", failureCount: 6 });
+
+      const res = await store.runLifecycleSweep({ tenantId: "tenant_a", agentId: "agent_x", now: T0 });
+      expect(res.ok).toBe(true);
+      expect(evictedAtOf(db, "revivable")).not.toBeNull();
+
+      // Renewed usefulness → un-evict. The port exposes the reversal.
+      const un = await store.unevict("revivable", { tenantId: "tenant_a", agentId: "agent_x", now: T0 });
+      expect(un.ok).toBe(true);
+      expect(evictedAtOf(db, "revivable"), "evicted_at must be cleared after unevict").toBeNull();
+    });
+
+    it("unevict is (tenant, agent)-scoped: it does NOT clear a foreign-scope eviction", async () => {
+      // A foreign-scope row that is already evicted; an unevict under a different
+      // scope must NOT touch it (the isolation boundary holds on the reversal too).
+      insertMemory(db, { id: "foreign-evicted", content: "theirs", memoryType: "working", occurredAt: T0 - 1 * DAY_MS, proofCount: null, tenantId: "tenant_b", agentId: "agent_x" });
+      db.prepare("UPDATE memories SET evicted_at = ? WHERE id = 'foreign-evicted'").run(T0);
+
+      const un = await store.unevict("foreign-evicted", { tenantId: "tenant_a", agentId: "agent_x", now: T0 });
+      expect(un.ok).toBe(true);
+      // Still evicted — the foreign scope was not reached.
+      expect(evictedAtOf(db, "foreign-evicted")).not.toBeNull();
+    });
+
+    it("dead-branch-live: an off-policy fixture that WAS evicted=0 now evicts >=1 (the c8-ignore branch executes)", async () => {
+      // The exact off-policy fixture the DORMANT Test 2 asserts evicts 0 — under the
+      // eviction-enabled policy it now evicts >=1, proving the previously-dead
+      // LIVE_EVICTION branch executes (coverage of the formerly-/* c8 ignore */ path).
+      insertMemory(db, {
+        id: "evict-me",
+        content: "stale, ignored, ancient — the live policy would prune this",
+        memoryType: "working",
+        occurredAt: T0 - 3650 * DAY_MS,
+        proofCount: null,
+      });
+
+      const res = await store.runLifecycleSweep({ tenantId: "tenant_a", agentId: "agent_x", now: T0 });
+      expect(res.ok).toBe(true);
+      if (res.ok) expect(res.value.evicted).toBeGreaterThanOrEqual(1);
+      expect(evictedAtOf(db, "evict-me")).not.toBeNull();
+    });
+
+    it("eviction is (tenant, agent)-scoped: a foreign-scope weak row is never evicted", async () => {
+      insertMemory(db, { id: "mine-weak", content: "mine", memoryType: "working", occurredAt: T0 - 1 * DAY_MS, proofCount: null, tenantId: "tenant_a", agentId: "agent_x" });
+      seedFailureCount(db, { memoryId: "mine-weak", failureCount: 6 });
+      insertMemory(db, { id: "foreign-weak", content: "theirs", memoryType: "working", occurredAt: T0 - 1 * DAY_MS, proofCount: null, tenantId: "tenant_b", agentId: "agent_x" });
+      // Even seed a failure for the foreign one under ITS scope — still must not be reached.
+      seedFailureCount(db, { memoryId: "foreign-weak", tenantId: "tenant_b", failureCount: 9 });
+
+      const res = await store.runLifecycleSweep({ tenantId: "tenant_a", agentId: "agent_x", now: T0 });
+      expect(res.ok).toBe(true);
+      expect(evictedAtOf(db, "foreign-weak"), "foreign scope must be untouched").toBeNull();
+    });
+
+    it("default policy (no eviction config) stays DORMANT — byte-identity guarantee", async () => {
+      // A store built WITHOUT the eviction policy (the default) must evict NOTHING,
+      // even for a row the eviction-enabled policy would prune. This is the
+      // default-off byte-identity guarantee.
+      const dormantStore = createSqliteMemoryLifecycleStore({ db });
+      insertMemory(db, { id: "would-evict", content: "weak", memoryType: "working", occurredAt: T0 - 1 * DAY_MS, proofCount: null });
+      seedFailureCount(db, { memoryId: "would-evict", failureCount: 9 });
+
+      const res = await dormantStore.runLifecycleSweep({ tenantId: "tenant_a", agentId: "agent_x", now: T0 });
+      expect(res.ok).toBe(true);
+      if (res.ok) expect(res.value.evicted).toBe(0);
+      expect(evictedAtOf(db, "would-evict"), "default policy must not evict").toBeNull();
     });
   });
 });
