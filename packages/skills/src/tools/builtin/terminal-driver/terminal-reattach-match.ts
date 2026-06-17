@@ -148,7 +148,7 @@ function safeSessionId(d: SessionDescriptor | undefined): string {
  */
 export function reattachDecision(
   d: SessionDescriptor,
-  isTmuxAlive: (name: string) => boolean,
+  isTmuxAlive: (name: string, socket?: string) => boolean,
 ): ReattachDecision {
   const sessionId = safeSessionId(d);
 
@@ -169,7 +169,9 @@ export function reattachDecision(
   // direction is `failed`, NEVER `reattach` (a false re-attach would double-drive, I10).
   let alive: boolean;
   try {
-    alive = isTmuxAlive(name) === true;
+    // RECUR-03: probe the session's OWN per-boot server (`d.tmuxSocket`) — a survivor sits on its
+    // prior-boot socket, not this boot's. Absent (pre-RECUR-03 descriptor) ⇒ the probe's default.
+    alive = isTmuxAlive(name, d.tmuxSocket) === true;
   } catch {
     return { action: "failed", sessionId, reason: "tmux_session_gone" };
   }

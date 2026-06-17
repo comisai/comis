@@ -99,7 +99,7 @@ export interface RecoverSessionDescriptorsDeps {
   /** The durable descriptor store (daemon impl in 165-07; a fake in unit tests). */
   store: SessionDescriptorStorePort;
   /** The `has-session` liveness probe (the worker's `has-session`), injected per 165-01. */
-  isTmuxAlive: (name: string) => boolean;
+  isTmuxAlive: (name: string, socket?: string) => boolean;
 }
 
 /**
@@ -203,10 +203,10 @@ export function rehydrateHandleFromDescriptor(d: SessionDescriptor, nowMs: numbe
  * crash-flushed create-reply waiter), so a crash cannot re-flip a live durable session.
  */
 export function staysRecoverable(
-  handle: Pick<SessionHandle, "durable" | "tmuxName">,
-  isTmuxAlive: (name: string) => boolean,
+  handle: Pick<SessionHandle, "durable" | "tmuxName" | "tmuxSocket">,
+  isTmuxAlive: (name: string, socket?: string) => boolean,
 ): boolean {
-  return handle.durable === true && handle.tmuxName !== undefined && isTmuxAlive(handle.tmuxName) === true;
+  return handle.durable === true && handle.tmuxName !== undefined && isTmuxAlive(handle.tmuxName, handle.tmuxSocket) === true;
 }
 
 /**
@@ -219,7 +219,7 @@ export function staysRecoverable(
  */
 export function markRunningSessionsLost(
   sessions: Map<string, SessionHandle>,
-  isTmuxAlive: (name: string) => boolean,
+  isTmuxAlive: (name: string, socket?: string) => boolean,
 ): void {
   for (const handle of sessions.values()) {
     if (handle.status === "running" && !staysRecoverable(handle, isTmuxAlive)) handle.status = "lost";
@@ -277,7 +277,7 @@ export function buildSessionDescriptor(i: DurableCreateInputs): SessionDescripto
  */
 export interface TerminalDurabilityDeps {
   descriptorStore?: SessionDescriptorStorePort;
-  isTmuxAlive?: (name: string) => boolean;
+  isTmuxAlive?: (name: string, socket?: string) => boolean;
   onReattached?: (info: { sessionId: string; agentId: string }) => void;
   onUnrecoverable?: (info: { sessionId: string; agentId: string; reason: string; errorKind: string }) => void;
 }

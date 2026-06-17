@@ -128,11 +128,16 @@ export function buildIsTmuxAlive(
     // eslint-disable-next-line no-restricted-syntax -- bounded has-session liveness probe (recover-on-boot + backstop)
     execFileSync(bin, args, { stdio: "ignore" });
   },
-): (name: string) => boolean {
+): (name: string, socket?: string) => boolean {
   if (tmuxPath === undefined) return (): boolean => false;
-  return (name: string): boolean => {
+  // RECUR-03 (option A): the probe takes an OPTIONAL per-session `socket` — the PER-BOOT server
+  // the session lives on (`handle.tmuxSocket` / `descriptor.tmuxSocket`). A restart's surviving
+  // durable sits on its OWN (prior-boot) socket while a new session is on this boot's socket, so
+  // the probe MUST target the session's own server, not one fixed socket. Absent ⇒ `socketPath`
+  // (the legacy/default — a pre-RECUR-03 descriptor or a non-per-boot caller).
+  return (name: string, socket?: string): boolean => {
     try {
-      const [bin, ...args] = buildTmuxHasSessionArgv({ tmuxPath, socketPath, name });
+      const [bin, ...args] = buildTmuxHasSessionArgv({ tmuxPath, socketPath: socket ?? socketPath, name });
       run(bin!, args);
       return true; // exit 0 ⇒ the named detached session is alive
     } catch {
@@ -351,7 +356,7 @@ export function buildAgentTerminalDurability(i: AgentTerminalDurabilityInputs): 
     const reg = i.registries.get(i.agentId);
     const handle = reg?.get(s.sessionId, resolveStampedOwner(reg, s.sessionId, i.agentId));
     if (handle === undefined) return false; // gone → not busy (let the sweep do its thing)
-    const alive = handle.status === "running" && (handle.durable !== true || (handle.tmuxName !== undefined && isTmuxAlive(handle.tmuxName)));
+    const alive = handle.status === "running" && (handle.durable !== true || (handle.tmuxName !== undefined && isTmuxAlive(handle.tmuxName, handle.tmuxSocket)));
     const signal: BusySignal = { alive, noProgressMs: Math.max(0, i.nowMs() - s.lastActivity), stuckMs: i.workerStuckMs };
     return busyOrHung(signal) === "busy";
   };
@@ -465,7 +470,7 @@ export function buildWakeDurabilityDeps(i: WakeDurabilityInputs): {
     if (status.state === "exited") return { alive: false, noProgressMs: 0, stuckMs };
     // For a durable session also require the detached tmux to be alive (a wedged-but-present
     // worker whose tmux died is hung). `stuck` from the classifier → past the no-progress window.
-    const tmuxOk = handle.durable !== true || (handle.tmuxName !== undefined && isTmuxAlive(handle.tmuxName));
+    const tmuxOk = handle.durable !== true || (handle.tmuxName !== undefined && isTmuxAlive(handle.tmuxName, handle.tmuxSocket));
     if (!tmuxOk) return { alive: false, noProgressMs: 0, stuckMs };
     if (status.state === "stuck") return { alive: true, noProgressMs: stuckMs + 1, stuckMs };
     // working / awaiting-input → busy (recent progress; the classifier did not flag no-progress).

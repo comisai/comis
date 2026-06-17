@@ -88,7 +88,9 @@ describe("terminal-reattach-match — reattachDecision (the DUR-01 re-attach dec
     const r = reattachDecision(desc, isTmuxAlive);
 
     expect(r.action).toBe("reattach");
-    expect(isTmuxAlive).toHaveBeenCalledWith("comis-abc"); // it probed the deterministic name
+    // RECUR-03: probes the deterministic name AND the session's per-boot socket (undefined here —
+    // this fixture has no tmuxSocket, so the probe falls back to its default socket).
+    expect(isTmuxAlive).toHaveBeenCalledWith("comis-abc", undefined);
   });
 
   it("fails a genuinely-gone durable session as tmux_session_gone (journal preserved by caller, I10)", () => {
