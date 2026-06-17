@@ -300,9 +300,10 @@ describe("runUserRepresentationBuild — Task 2: gate / anti-poisoning / validat
     expect(result.ok).toBe(true);
     // The cost gate: the injected build() LLM is NEVER called when off (no spend).
     expect(buildSpy.calls).toHaveLength(0);
-    // No write of any kind.
+    // No write of any kind (neither the legacy upsert nor the revise() path).
     expect(fake.rows).toHaveLength(0);
     expect(fake.upsertCalls).toHaveLength(0);
+    expect(fake.reviseCalls).toHaveLength(0);
     if (result.ok) expect(result.value.written).toBe(0);
     // A counts-only zeros event still fires.
     const ev = bus.events.find((e) => e.event === "memory:user_representation_built");
@@ -331,6 +332,7 @@ describe("runUserRepresentationBuild — Task 2: gate / anti-poisoning / validat
     // 0 profile rows from an external-only source set.
     expect(fake.rows).toHaveLength(0);
     expect(fake.upsertCalls).toHaveLength(0);
+    expect(fake.reviseCalls).toHaveLength(0);
     if (result.ok) expect(result.value.written).toBe(0);
     // The external content NEVER reached the build seam.
     for (const text of buildSpy.calls) {
@@ -383,9 +385,11 @@ describe("runUserRepresentationBuild — Task 2: gate / anti-poisoning / validat
     const result = await runUserRepresentationBuild(deps);
 
     expect(result.ok).toBe(true);
-    // BOTH the warn AND the critical candidate are skipped — 0 rows, 0 upserts.
+    // BOTH the warn AND the critical candidate are skipped — 0 rows, 0 writes
+    // (neither the legacy upsert nor the revise() path).
     expect(fake.rows).toHaveLength(0);
     expect(fake.upsertCalls).toHaveLength(0);
+    expect(fake.reviseCalls).toHaveLength(0);
     if (result.ok) {
       expect(result.value.written).toBe(0);
       expect(result.value.blocked).toBe(2); // warn + critical both blocked
@@ -435,7 +439,9 @@ describe("runUserRepresentationBuild — Task 2: gate / anti-poisoning / validat
 
     expect(result.ok).toBe(true);
     expect(fake.rows).toHaveLength(N);
-    expect(fake.upsertCalls).toHaveLength(N); // no write past the cap
+    // The write path is revise() (REVISE-01) — exactly N reach it, none past the cap.
+    expect(fake.reviseCalls).toHaveLength(N);
+    expect(fake.upsertCalls).toHaveLength(0);
     if (result.ok) {
       expect(result.value.written).toBe(N);
       expect(result.value.skippedOverCap).toBe(2);
@@ -704,9 +710,41 @@ describe("runUserRepresentationBuild — Task 4: revise()-based write path + con
     }
   });
 
-  it("REVISE-01 corroborate → bump: a candidate near-identical to an incumbent calls revise() and surfaces a corroborated count (no inserted)", async () => {
-    // Current profile: a `learned` "prefers dark mode"; the candidate restates it (Dice=1.0).
+  it("REVISE-01 corroborate → bump: a normalized-equal (case/whitespace-variant) candidate escapes the exact-dup pre-skip, calls revise(), and surfaces a corroborated count (no inserted)", async () => {
+    // Current profile: a `learned` "prefers dark mode". The candidate is the SAME
+    // belief restated with a case/whitespace variant ("Prefers Dark Mode ") — it is
+    // normalized-equal (a corroboration), but NOT byte-identical, so it is NOT
+    // caught by the cheap exact-`(entryType, content)` pre-skip and DOES reach
+    // revise() (where the adapter bumps confidence in place).
     const seed = [makeEntry({ id: "inc-2", entryType: "preference", content: "prefers dark mode", trust: "learned" })];
+    const fake = makeFakeStore(seed);
+    const buildSpy = makeBuildSpy(() => [{ entryType: "preference", content: "Prefers Dark Mode " }]);
+    const deps = makeDeps({
+      build: buildSpy.build,
+      userRepresentationStore: fake.store,
+      sources: [makeSource({ content: "user reconfirmed they prefer dark mode", trustLevel: "learned" })],
+    });
+
+    const result = await runUserRepresentationBuild(deps);
+
+    expect(result.ok).toBe(true);
+    // A same-belief corroboration goes through revise() (the adapter bumps
+    // confidence in place); the job counts it as a corroboration, NOT an insert.
+    expect(fake.reviseCalls).toHaveLength(1);
+    expect(fake.upsertCalls).toHaveLength(0);
+    if (result.ok) {
+      expect(result.value.corroborated).toBe(1);
+      expect(result.value.superseded).toBe(0);
+      expect(result.value.inserted).toBe(0);
+    }
+  });
+
+  it("idempotency optimization: a byte-IDENTICAL current-truth candidate is pre-skipped (no revise() txn) and counts as a corroboration without re-writing", async () => {
+    // The cheap exact-`(entryType, content)` pre-skip: a candidate byte-identical to
+    // a current-truth incumbent is a no-op re-distillation — the revise() txn is
+    // saved (written stays 0, idempotency), but it IS the strongest same-slot
+    // corroboration, so it is COUNTED (telemetry for the daemon event).
+    const seed = [makeEntry({ id: "inc-2b", entryType: "preference", content: "prefers dark mode", trust: "learned" })];
     const fake = makeFakeStore(seed);
     const buildSpy = makeBuildSpy(() => [{ entryType: "preference", content: "prefers dark mode" }]);
     const deps = makeDeps({
@@ -718,12 +756,12 @@ describe("runUserRepresentationBuild — Task 4: revise()-based write path + con
     const result = await runUserRepresentationBuild(deps);
 
     expect(result.ok).toBe(true);
-    // A same-belief corroboration still goes through revise() (the adapter bumps
-    // confidence in place); the job counts it as a corroboration, NOT an insert.
-    expect(fake.reviseCalls).toHaveLength(1);
+    // The no-op txn is saved — the exact-dup never reaches revise().
+    expect(fake.reviseCalls).toHaveLength(0);
     expect(fake.upsertCalls).toHaveLength(0);
     if (result.ok) {
-      expect(result.value.corroborated).toBe(1);
+      expect(result.value.written).toBe(0); // idempotency: no re-write
+      expect(result.value.corroborated).toBe(1); // but the corroboration is counted
       expect(result.value.superseded).toBe(0);
       expect(result.value.inserted).toBe(0);
     }
@@ -805,6 +843,41 @@ describe("runUserRepresentationBuild — Task 4: revise()-based write path + con
     if (result.ok) {
       expect(result.value.blocked).toBe(1);
       expect(result.value.inserted).toBe(1);
+    }
+  });
+
+  it("non-fatal revise() rejection: a rejecting store WARNs and continues to the next candidate (the run still returns ok; written excludes the failed one)", async () => {
+    // A rejecting/erroring revise() must NOT abort the run (mirrors the prior
+    // upsert-reject contract). The first candidate's revise() rejects → skipped
+    // (not counted, written unchanged); the second succeeds → written + counted.
+    const fake = makeFakeStore();
+    let call = 0;
+    const rejectingStore: UserRepresentationStore = {
+      ...fake.store,
+      async revise(entry, scope) {
+        call++;
+        if (call === 1) return { ok: false as const, error: new Error("store rejected the revise") };
+        return fake.store.revise(entry, scope);
+      },
+    };
+    const buildSpy = makeBuildSpy(() => [
+      { entryType: "identity", content: "the user's name is Alice" }, // revise rejects
+      { entryType: "preference", content: "prefers tea" }, // revise succeeds
+    ]);
+    const deps = makeDeps({
+      build: buildSpy.build,
+      userRepresentationStore: rejectingStore,
+      sources: [makeSource({ content: "trusted source about the user", trustLevel: "learned" })],
+    });
+
+    const result = await runUserRepresentationBuild(deps);
+
+    // The run still returns ok (a per-candidate write failure is non-fatal).
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      // Only the second candidate was written; the rejected one is not counted.
+      expect(result.value.written).toBe(1);
+      expect(result.value.inserted).toBe(1); // only the successful write's classification
     }
   });
 
