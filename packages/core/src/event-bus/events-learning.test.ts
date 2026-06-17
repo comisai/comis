@@ -191,3 +191,87 @@ describe("learning:skill_synthesized / learning:skill_validated telemetry (count
     expectTypeOf<EventMap["learning:skill_validated"]["coverage"]>().toEqualTypeOf<"full" | "static-only">();
   });
 });
+
+// ---------------------------------------------------------------------------
+// SURFACE-06 (Phase 202 Plan 03): the two promote/demote TELEMETRY events.
+// Emitted DAEMON-SIDE (plain eventBus.emit — never `?.`) by the promote/demote
+// loop (Plan 05) — counts / ids ONLY. A body / script / description / id-list
+// field is a compile error (the §2.7 / SEC-01 firewall). Mirror the 201-07
+// skill_synthesized counts-only + @ts-expect-error precedent exactly. Live in
+// THIS same LearningEvents sibling.
+// ---------------------------------------------------------------------------
+
+describe("learning:skill_promoted / learning:skill_demoted telemetry (counts-only — SURFACE-06)", () => {
+  it("declares BOTH keys on the LearningEvents interface (source grep — reproducible RED)", () => {
+    const src = readFileSync(resolve(here, "events-learning.ts"), "utf8");
+    expect(src).toContain('"learning:skill_promoted"');
+    expect(src).toContain('"learning:skill_demoted"');
+  });
+
+  it("learning:skill_promoted delivers agentId + count + timestamp ONLY", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["learning:skill_promoted"] = {
+      agentId: "agent-1",
+      count: 2,
+      timestamp: 1,
+    };
+    bus.on("learning:skill_promoted", handler);
+    bus.emit("learning:skill_promoted", payload);
+    expect(handler).toHaveBeenCalledWith(payload);
+    const r = handler.mock.calls[0]![0] as EventMap["learning:skill_promoted"];
+    expect(r.count).toBe(2);
+    expect(r.agentId).toBe("agent-1");
+  });
+
+  it("learning:skill_demoted delivers agentId + count + timestamp ONLY", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["learning:skill_demoted"] = {
+      agentId: "agent-1",
+      count: 1,
+      timestamp: 2,
+    };
+    bus.on("learning:skill_demoted", handler);
+    bus.emit("learning:skill_demoted", payload);
+    expect(handler).toHaveBeenCalledWith(payload);
+    const r = handler.mock.calls[0]![0] as EventMap["learning:skill_demoted"];
+    expect(r.count).toBe(1);
+    expect(r.agentId).toBe("agent-1");
+  });
+
+  it("type safety: @ts-expect-error rejects a body/script/description field on either promote/demote payload", () => {
+    const bus = new TypedEventBus();
+
+    bus.emit("learning:skill_promoted", {
+      agentId: "a",
+      count: 1,
+      timestamp: 1,
+      // @ts-expect-error - a promoted procedure body must NEVER ride on the counts-only payload
+      body: "the promoted procedure markdown",
+    });
+
+    bus.emit("learning:skill_demoted", {
+      agentId: "a",
+      count: 1,
+      timestamp: 1,
+      // @ts-expect-error - a demoted procedure script must NEVER ride on the counts-only payload
+      scripts: ["rm -rf /"],
+    });
+
+    bus.emit("learning:skill_promoted", {
+      agentId: "a",
+      count: 1,
+      timestamp: 1,
+      // @ts-expect-error - a description/finding must NEVER ride on the counts-only payload
+      description: "why these skills were promoted",
+    });
+  });
+
+  it("type contract: both promote/demote keys are members of EventMap (counts/ids only)", () => {
+    expectTypeOf<EventMap>().toHaveProperty("learning:skill_promoted");
+    expectTypeOf<EventMap>().toHaveProperty("learning:skill_demoted");
+    expectTypeOf<EventMap["learning:skill_promoted"]["count"]>().toEqualTypeOf<number>();
+    expectTypeOf<EventMap["learning:skill_demoted"]["count"]>().toEqualTypeOf<number>();
+  });
+});
