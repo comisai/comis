@@ -232,7 +232,7 @@ export function registerMemoryCommand(program: Command): void {
       const pct = (n: number): string => `${(n * 100).toFixed(0)}%`;
       info(
         `Coverage: ${pct(stats.coverage)} (${stats.totalResolved}/${stats.totalTrajectories} ` +
-          `trajectories resolved · ${stats.totalRows} outcome rows)`,
+          `trajectories resolved · ${stats.totalRows} outcome signals)`,
       );
       renderTable(
         ["Tenant", "Agent", "Trajectories", "Resolved", "Coverage", "Outcomes", "Sources"],
