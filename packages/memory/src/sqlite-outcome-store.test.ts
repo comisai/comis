@@ -306,5 +306,26 @@ describe("createSqliteOutcomeStore", () => {
     });
   });
 
+  describe("error handling — catch branches (OBS-01 fail paths)", () => {
+    // observe()/resolve() must NEVER throw — a DB failure mid-operation is
+    // caught and surfaced as err() with a WARN carrying errorKind + hint (the
+    // §2.7 logging bar). We force the failure by dropping the table out from
+    // under the eagerly-prepared statements (better-sqlite3 re-validates the
+    // schema at step time, so the prepared INSERT/SELECT throws "no such table").
+    it("observe() returns err (not throw) when the underlying insert fails", async () => {
+      db.exec("DROP TABLE outcome_events");
+      const result = await store.observe(makeObs());
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toBeInstanceOf(Error);
+    });
+
+    it("resolve() returns err (not throw) when the underlying read fails", async () => {
+      db.exec("DROP TABLE outcome_events");
+      const result = await store.resolve(TRAJ, SCOPE_A);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toBeInstanceOf(Error);
+    });
+  });
+
   void SCOPE_A;
 });
