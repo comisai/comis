@@ -29,10 +29,9 @@ import { translateVoicePayload } from "./translate-voice-payload.js";
 /**
  * Translate one EventBus payload into the `data` payload of a trajectory event.
  *
- * Correlation keys (`traceId`, `agentId`, `sessionKey`, `sessionId`) are
- * envelope-only (trajectory envelope shape). Bridge payload translators MUST NOT
- * echo them into `data` — the recorder's envelope already carries them
- * via `TrajectoryRecorderInit` + AsyncLocalStorage.
+ * Correlation keys (`traceId`, `agentId`, `sessionKey`, `sessionId`) are envelope-only;
+ * translators MUST NOT echo them into `data` (the recorder envelope carries them via
+ * `TrajectoryRecorderInit` + AsyncLocalStorage).
  */
 export function translatePayload(
   eventName: TrajectoryBridgedEventName,
@@ -261,6 +260,15 @@ export function translatePayload(
         languageMismatch: payload.languageMismatch,
         emptyOutput: payload.emptyOutput,
         formatViolation: payload.formatViolation,
+      };
+
+    case "learning:outcome_observed":
+      // OUTCOME-08: trajectoryId + closed-enum outcome/source + numeric confidence ONLY (no body/alpha/recalled ids; agentId/sessionKey/traceId are envelope ids — §2.7 / SEC-01).
+      return {
+        trajectoryId: payload.trajectoryId,
+        outcome: payload.outcome,
+        source: payload.source,
+        confidence: payload.confidence,
       };
 
     // T2.2 (F9): closed ids + durationMs ONLY — agentId/origin are envelope ids; no result/

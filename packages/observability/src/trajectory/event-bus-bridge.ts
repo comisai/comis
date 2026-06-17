@@ -95,6 +95,13 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // enums + booleans — H1); the source/generated body never crosses the bus.
   "memory:generation_quality": "memory.generation_quality",
 
+  // OUTCOME-08 (v2.26 Verified Learning WS1): a finished trajectory's resolved net
+  // task-outcome, emitted DAEMON-SIDE after OutcomeSignalPort.resolve (learningOutcome.
+  // enabled-gated, default OFF). DAEMON emit (NOT agent/orchestrator) so the arch
+  // emit-scanner does not require it; mapped here so OBS-02 `comis explain` can
+  // reconstruct it. Content-free: ids/counts/closed-enums ONLY (no body/alpha — SEC-01).
+  "learning:outcome_observed": "learning.outcome_observed",
+
   // ---- Background task lifecycle (T2.2 / F9) ----
   // The promote/complete/fail transitions of a long-running tool detached past the
   // execute() boundary — previously emitted but UNMAPPED (invisible to comis explain; a

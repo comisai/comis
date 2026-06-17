@@ -77,6 +77,10 @@ export const TRAJECTORY_EVENT_TYPES = [
   "memory.reranked",
   // GENQ-01: a memory-generation pass's output diverged from its source (content-free).
   "memory.generation_quality",
+  // OUTCOME-08 (v2.26 Verified Learning WS1): a finished trajectory's resolved net
+  // task-outcome (daemon-side emit, learningOutcome.enabled-gated). Counts/ids/closed-enums
+  // ONLY — no bodies/alpha (SEC-01). Bridged so `comis explain` can reconstruct it (OBS-02).
+  "learning.outcome_observed",
 
   // Background task lifecycle (T2.2 / F9): promote/complete/fail of a long-running tool
   // detached past the execute() boundary (content-free — ids + durationMs only).
