@@ -19,6 +19,9 @@
  * - a failing observe (err) WARNs and does NOT throw out of the handler
  */
 
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import { describe, it, expect, vi } from "vitest";
 import { TypedEventBus, runWithContext } from "@comis/core";
 import type { EventMap, OutcomeObservation, ResolvedOutcome, LearningScope } from "@comis/core";
@@ -1054,6 +1057,89 @@ describe("wireLearningOutcome — learned-skill promote/demote at resolve() (SUR
       (c) => typeof (c[0] as { hint?: string }).hint === "string" && (c[0] as { errorKind?: string }).errorKind !== undefined,
     );
     expect(warn, "a promote write reject must WARN with hint+errorKind").toBeDefined();
+  });
+});
+
+// ── SURFACE-07 / SEC-01: 202 adds NO new mutating-execution path ──
+//
+// The safety the read-only learned-skill surface buys (T-202-16): a surfaced
+// (possibly poisoned) procedure is untrusted INSTRUCTION TEXT — the agent READS it
+// and performs each step via the EXISTING per-tool governance (applyToolPolicy + the
+// tool-call ApprovalGate at run time, §I9). 202 is policy + wiring, NOT a new
+// execution engine: the promote/demote loop only calls store transitions + emits; the
+// surface only reads list()/materializes a read-only SKILL.md/renders XML. This guard
+// asserts the 202 daemon files contain NO tool-execution / spawn / approval-bypass
+// primitive (so a poisoned procedure cannot execute an action the agent is not already
+// authorized for) AND write NO trust level other than the store-owned 'learned'
+// (T-202-18 — promotion touches state/proof_count only; trust is structurally capped).
+describe("SURFACE-07 / SEC-01: the 202 daemon files add no execution path + no trust escalation", () => {
+  const HERE = dirname(fileURLToPath(import.meta.url));
+  /** The 202 daemon source files (the promote/demote loop + the trend + the read-only surface). */
+  const FILES_202 = [
+    join(HERE, "setup-learning.ts"),
+    join(HERE, "setup-learning-skill-trend.ts"),
+    join(HERE, "setup-agents", "learned-skill-surface.ts"),
+  ];
+
+  /** Strip line/block comments so a doc mention of a forbidden token is not a false positive. */
+  function stripComments(src: string): string {
+    return src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  }
+
+  it("contains NO tool-execution / spawn / approval-bypass call (the agent performs steps via the existing tool path)", () => {
+    // The forbidden execution/bypass primitives. The read-only surface MAY write a
+    // SKILL.md (writeFileSync/mkdirSync — materialize is read-only CONTENT the read
+    // tool opens, NOT execution); it MUST NOT spawn a process, execute a tool call,
+    // or bypass the approval gate.
+    const forbidden: RegExp[] = [
+      /\bspawn\b/,
+      /\bspawnSync\b/,
+      /\bbuildSpawnCommand\b/,
+      /\bexecFile\b/,
+      /\bexecSync\b/,
+      /child_process/,
+      /\bexecuteToolCall\b/,
+      /\bdispatchTool\b/,
+      /\brunTool\b/,
+      /\bApprovalGate\b/, // the loop/surface must not even touch the gate (no bypass surface)
+      /\bbypassApproval\b/,
+      /\bautoApprove\b/,
+    ];
+    for (const file of FILES_202) {
+      const src = stripComments(readFileSync(file, "utf8"));
+      for (const pat of forbidden) {
+        expect(
+          pat.test(src),
+          `${file} must not reference ${pat} — 202 adds no execution path (the agent performs steps via the existing applyToolPolicy + ApprovalGate at run time)`,
+        ).toBe(false);
+      }
+    }
+  });
+
+  it("writes NO trust level other than the store-owned 'learned' (promotion never raises trust — T-202-18)", () => {
+    // No 202 daemon file touches trust_level/trustLevel at all (that is the store's
+    // job, and the DB CHECK pins it to 'learned'). Assert there is no trust write of
+    // any other literal here.
+    for (const file of FILES_202) {
+      const src = stripComments(readFileSync(file, "utf8"));
+      // Any assignment/property of a trust field to a NON-'learned' literal is forbidden.
+      const trustWrite = /trust(?:_level|Level)\s*[:=]\s*["']((?!learned)[a-z_]+)["']/i;
+      const m = trustWrite.exec(src);
+      expect(m, `${file} must not write a trust level other than 'learned' (found: ${m?.[0] ?? "none"})`).toBeNull();
+    }
+  });
+
+  it("the promote/demote loop calls ONLY the store transition methods (promote/demote) — no other store mutation", () => {
+    // The loop's only learnedSkillStore calls are promote()/demote() (the surface
+    // calls list() for the read). Assert setup-learning.ts references promote/demote
+    // but NOT admit/evict (which would be a different, un-governed lifecycle write).
+    const src = stripComments(readFileSync(join(HERE, "setup-learning.ts"), "utf8"));
+    expect(src).toMatch(/\.promote\(/);
+    expect(src).toMatch(/\.demote\(/);
+    // The resolve seam never admits or evicts a skill (those are the synthesis/forget
+    // paths, not the reuse-outcome loop).
+    expect(/learnedSkillStore[^;]*\.admit\(/.test(src)).toBe(false);
+    expect(/learnedSkillStore[^;]*\.evict\(/.test(src)).toBe(false);
   });
 });
 
