@@ -311,6 +311,9 @@ describe("createSqliteMemoryLifecycleStore", () => {
           lifecycle_demoted_at: null,
           evicted_at: null,
           strength: null,
+          pinned: 0,
+          trust_level: "learned",
+          failure_count: null,
         },
         {
           id: "m2",
@@ -321,6 +324,9 @@ describe("createSqliteMemoryLifecycleStore", () => {
           lifecycle_demoted_at: 5000,
           evicted_at: 6000,
           strength: 0.42,
+          pinned: 1,
+          trust_level: "system",
+          failure_count: 4,
         },
       ]);
       expect(parsed.ok).toBe(true);

@@ -152,6 +152,13 @@ export const MemoryLifecycleRowSchema = z.strictObject({
   evicted_at: z.number().nullable(),
   /** Computed strength side-column (REAL 0..1); NULL = not yet computed. */
   strength: z.number().nullable(),
+  /** Pinned flag (NOT NULL DEFAULT 0) — a hard eviction exemption (FORGET-03). */
+  pinned: z.number(),
+  /** Trust tier ('system'|'learned'|'external') — 'system' is exempt (FORGET-03). */
+  trust_level: z.string(),
+  /** SUM(failure_count) across intents (LEFT JOIN; NULL/absent → 0). Drives the
+   *  failurePenalty strength coupling (FORGET-02 — more failures → earlier eviction). */
+  failure_count: z.number().nullable(),
 });
 
 /**

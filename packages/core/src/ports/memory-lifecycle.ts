@@ -106,4 +106,17 @@ export interface MemoryLifecyclePort {
    * wiring land in the implementation phases that follow.
    */
   runLifecycleSweep(scope: MemoryLifecycleScope): Promise<Result<LifecycleSweepReport, Error>>;
+
+  /**
+   * REVERSAL PATH (FORGET-04). Un-evict a previously soft-evicted memory on
+   * renewed usefulness: clears its `evicted_at` marker (back to NULL) so the row
+   * returns to recall. Soft eviction is reversible by design — the raw row was
+   * never deleted, only marked. Scoped to the caller's `(tenant, agent)` ONLY:
+   * an un-evict under one scope can NEVER clear another scope's marker (the same
+   * load-bearing isolation boundary as the sweep). Idempotent — un-evicting a
+   * live (or absent) row is a no-op `ok(...)`. Called by the daemon reward seam
+   * when a previously-evicted memory becomes useful again (a later plan wires the
+   * caller); the store exposes the capability here.
+   */
+  unevict(memoryId: string, scope: MemoryLifecycleScope): Promise<Result<void, Error>>;
 }
