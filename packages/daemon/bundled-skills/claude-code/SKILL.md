@@ -1,7 +1,7 @@
 ---
 name: claude-code
 type: prompt
-version: "1.1.0"
+version: "1.1.1"
 description: Drive the Claude Code CLI interactively in a terminal session to build, fix, or extend software — launch it in a NAMED project folder, give it the task, handle its interactive prompts via keystrokes, detect completion, and verify the result. Use whenever the user wants to write, build, debug, refactor, or test code or work on a software project, or asks to "use Claude" / "Claude Code" — even if they don't name the tool. This is for INTERACTIVE sessions only; never the headless one-shot mode.
 ---
 
@@ -51,7 +51,7 @@ It should not (operator config skips it), but if you see `Do you want to proceed
 
 ## 6. Detect completion, then verify
 
-Done when **all** hold on a `read`: no spinner line, a turn-end line is visible (e.g. `✻ Cooked for 3s` or `⏺ Done — …`), and a bare `❯` input box. Read it twice a moment apart to be sure (the screen can blank for one frame mid-render — never trust a single read).
+Done when **all** hold on a `read`: no spinner line, a turn-end line is visible (e.g. `✻ Cooked for 3s` or `⏺ Done — …`), and a bare `❯` input box. Read it twice a moment apart to be sure (the screen can blank for one frame mid-render — never trust a single read). The idle box may show DIM ghost-text (a suggested next prompt like `add more test cases`) — that is autocomplete, NOT queued input; ignore it (see Gotchas) and keep going with your own plan.
 
 Then **verify the work** — do not assume success:
 - `read` the transcript for the test result (`Ran N tests … OK`, or pass/fail counts).
@@ -94,6 +94,7 @@ Type these into Claude's `❯` composer (`send_text` then Enter, like any prompt
 
 ## Gotchas
 
+- **Ignore Claude's ghost-text suggestions** — after a turn, Claude's composer often pre-fills a DIM suggestion (e.g. `add more test cases`, a `/gsd-…` hint). That is Claude's autocomplete, **not** user input, **not** from the operator, and **not** a task. Never run it, never treat it as a queued prompt, and never stop to ask about it — just proceed with your own next step (typing your text overwrites the ghost text). Only text **you** sent counts.
 - **One read can lie** — poll and require a stable screen before deciding "done"; match the structural cues above, not the exact spinner word (it rotates).
 - **A 401 means re-auth** — never retry-loop a failed login; tell the user.
 - **Long tasks are normal** — give generous `wait`s; don't kill a session just because it's been working a while.
