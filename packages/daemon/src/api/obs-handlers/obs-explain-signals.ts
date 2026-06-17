@@ -34,7 +34,6 @@ import type { IncidentContextBudget, IncidentFailure, IncidentPromptTimeout, Inc
 import {
   asString,
   asNumber,
-  asStringArray,
   relativizeDiskPath,
   previewAndDigest,
   applyMediaRecord,
@@ -43,6 +42,13 @@ import {
   type IncidentVideoSignal,
   type IncidentVoiceSignal,
 } from "./obs-explain-signals-fields.js";
+import {
+  accumulateLearningRecord,
+  accumulateToolSchemaRecord,
+  buildLearningSignal,
+  emptyLearningFold,
+  type LearningFoldState,
+} from "./obs-explain-signal-folds.js";
 
 // ---------------------------------------------------------------------------
 // Tunable thresholds (module-top constants per the naming contract).
@@ -93,6 +99,7 @@ interface Acc {
   recallCount: number;
   recallZeroHits: number;
   lastRecall?: { lanes: number; finalCount: number; rerankerAvailable: boolean };
+  learning: LearningFoldState; // OBS-02 (198): see obs-explain-learning-fold.ts
   /** The image (186) / vision (187) / video (192) / voice (196) turns reconstructed
    *  from the session's image.* / media.vision.* / video.* / media.stt / media.tts
    *  records (folded by `applyMediaRecord`). Each is undefined until its record class
@@ -312,27 +319,14 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
       };
       return;
     }
-    case "execution.tool_schema_unsupported": {
-      // GBNF-02 (Phase 175): the strip-retry self-heal record (Plan 05 bridge
-      // mapping). LAST record wins — the terminal repair state explains the
-      // end. Content-free by construction (tool + keyword NAMES only — I7);
-      // the string-array filters + exact-true boolean reads keep smuggled
-      // non-string payload entries out of the verdict text (T-175-17). The
-      // WR-05 reason discriminator is validated against its closed vocabulary
-      // (same trust-boundary posture); absent/off-vocabulary → undefined so
-      // pre-WR-05 trajectory records on disk stay readable.
-      const rawReason = asString(data.reason);
-      acc.toolSchemaUnsupported = {
-        toolNames: asStringArray(data.toolNames),
-        strippedKeywords: asStringArray(data.strippedKeywords),
-        retried: data.retried === true,
-        succeeded: data.succeeded === true,
-        ...(rawReason === "stripped" || rawReason === "nothing_to_strip" || rawReason === "gate_closed"
-          ? { reason: rawReason }
-          : {}),
-      };
+    case "learning.outcome_observed": // OBS-02 (198): fold the shadow record (Plan 04 bridge).
+      accumulateLearningRecord(acc.learning, data);
       return;
-    }
+    case "execution.tool_schema_unsupported":
+      // GBNF-02 (175): the strip-retry self-heal record (LAST wins — terminal
+      // repair state). Content-free fold (see obs-explain-signal-folds.ts).
+      acc.toolSchemaUnsupported = accumulateToolSchemaRecord(data);
+      return;
     // 186/187/192/196: image.* + media.vision.* + video.* + media.stt.*/media.tts.*
     // lifecycles → applyMediaRecord folds each into its reconstructed turn (seq-aware
     // IN-04). The explicit media.stt.*/media.tts.* arms are LOAD-BEARING — without
@@ -387,6 +381,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     seenToolResultCallIds: new Set(),
     recallCount: 0,
     recallZeroHits: 0,
+    learning: emptyLearningFold(),
     sessionKey: "",
     seq: 0,
     // IN-04: -1 so the FIRST real terminal record always sets outcome (seeds do not).
@@ -459,6 +454,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     }
   }
 
+  const learning = buildLearningSignal(acc.learning); // OBS-02 (198): undefined ⇒ omitted below
   return {
     sessionKey: acc.sessionKey,
     toolStats,
@@ -488,6 +484,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
           },
         }
       : {}),
+    ...(learning !== undefined ? { learning } : {}),
     ...(acc.agentId !== undefined ? { agentId: acc.agentId } : {}),
     ...(acc.channel !== undefined ? { channel: acc.channel } : {}),
     // 186/187/192/196: surface the reconstructed image/vision/video/voice turns (presence-conditional; voice = the OBS-02 oracle, keyless costUsd:0 visible).

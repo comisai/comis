@@ -457,6 +457,30 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
       ],
     };
   },
+
+  // 11) outcome_unresolved (OBS-02, Phase 198 — LOWEST-priority, BENIGN). A
+  //     finished trajectory whose learning shadow saw the turn but where NO
+  //     signal tier resolved an outcome (outcomeResolved === false). Defer ≠
+  //     Retry: NOT a failure — dead-last, so every acute cause (and the catch-all
+  //     tool-failure rule) out-ranks it. Distinct from an explicit `unknown`
+  //     OUTCOME (which IS a resolution): this is "never resolvable", the
+  //     shadow-mode default with no deterministic tool/pipeline signal + judge
+  //     off. Absent learning block ⇒ no verdict; a resolved one ⇒ no verdict —
+  //     so it cannot regress the 678/503 fixtures (they carry no learning block).
+  (s) => {
+    if (s.learning === undefined || s.learning.outcomeResolved) return null;
+    return {
+      code: "outcome_unresolved",
+      detail:
+        "outcome unresolved — the learning shadow observed this finished trajectory but no " +
+        "signal tier (tool/pipeline/judge/reaction) produced a resolvable outcome",
+      suggestedNextSteps: [
+        "expected in shadow mode for trajectories with no deterministic tool/pipeline signal — " +
+          "enable the judge source (agents.<id>.learningOutcome.judge.enabled) for fallback coverage",
+        "obs.explain depth=full",
+      ],
+    };
+  },
 ];
 
 /**

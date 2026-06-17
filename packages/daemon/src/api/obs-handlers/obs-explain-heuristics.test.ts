@@ -364,6 +364,99 @@ describe("obs-explain-heuristics", () => {
     for (const h of HEURISTICS) expect(typeof h).toBe("function");
   });
 
+  // ------------------------------------------------------------------------
+  // OBS-02 (Phase 198): outcome_unresolved verdict — BENIGN, lowest priority
+  // (Defer ≠ Retry). Fires on a finished trajectory whose learning shadow saw
+  // the turn but resolved no outcome; ranks BELOW every acute tool-failure cause.
+  // ------------------------------------------------------------------------
+
+  const UNRESOLVED_LEARNING: IncidentSignals["learning"] = {
+    outcomeResolved: false,
+    sources: ["tool"],
+    skillsUsed: [],
+    skillFailures: [],
+    synthesisAbstained: false,
+  };
+
+  it("OBS-02: an unresolved learning signal with NO acute failure → outcome_unresolved", () => {
+    const r = rootCause(makeSignals({ learning: UNRESOLVED_LEARNING }));
+    expect(r).not.toBeNull();
+    expect(r!.code).toBe("outcome_unresolved");
+    expect(r!.detail).toMatch(/no.*resolvable outcome/i);
+    // The hint points at the judge fallback (the shadow-mode coverage lever).
+    expect(r!.suggestedNextSteps.join(" ")).toMatch(/learningOutcome\.judge\.enabled/);
+    expect(r!.suggestedNextSteps).toContain("obs.explain depth=full");
+  });
+
+  it("OBS-02: outcome_unresolved ranks BELOW an acute tool failure (Defer ≠ Retry)", () => {
+    // The SAME unresolved-learning signal, now with a real tool failure, must
+    // report the upstream tool cause — the unresolved outcome is benign and
+    // never masks an acute error.
+    const r = rootCause(
+      makeSignals({
+        learning: UNRESOLVED_LEARNING,
+        endReason: "completed_with_tool_errors",
+        toolStats: { web_fetch: { ok: 0, failed: 1, topErrorKind: "dependency" } },
+        failures: [
+          { seq: 1, toolName: "web_fetch", classifiedFailureBy: "sdk_iserror", transportOk: false, errorKind: "dependency", resultDigest: "d", resultBytes: 0, errorPreview: "" },
+        ],
+      }),
+    );
+    expect(r).not.toBeNull();
+    expect(r!.code).toBe("completed_with_tool_errors");
+  });
+
+  it("OBS-02: a named acute cause (misclassification) out-ranks outcome_unresolved", () => {
+    const r = rootCause(
+      makeSignals({
+        learning: UNRESOLVED_LEARNING,
+        hasMisclassificationSignal: true,
+        misclassifiedTool: "web_fetch",
+        misclassifiedToken: "403",
+      }),
+    );
+    expect(r!.code).toBe("content_heuristic_misclassification");
+  });
+
+  it("OBS-02: a RESOLVED learning outcome (outcomeResolved:true) names NO cause", () => {
+    // A resolved outcome (incl. an explicit `unknown` resolution would set
+    // outcomeResolved per the assembler) is not a degradation — no verdict.
+    const r = rootCause(
+      makeSignals({
+        learning: { outcomeResolved: true, outcome: "success", sources: ["tool"], skillsUsed: [], skillFailures: [], synthesisAbstained: false },
+      }),
+    );
+    expect(r).toBeNull();
+  });
+
+  it("OBS-02: absent learning block names no cause (clean session)", () => {
+    expect(rootCause(makeSignals())).toBeNull();
+  });
+
+  it("OBS-02: the frozen 678/503 fixtures are UNCHANGED (they carry no learning block)", () => {
+    const r678 = rootCause(
+      makeSignals({
+        hasMisclassificationSignal: true,
+        misclassifiedTool: "web_fetch",
+        misclassifiedToken: "403",
+        hasDoNotRetrySignal: true,
+        breakerOpenedTool: "web_fetch",
+        repeatedFailureCount: { web_fetch: 14 },
+        mostFailedTool: "web_fetch",
+      }),
+    );
+    expect(r678!.code).toBe("content_heuristic_misclassification");
+    const r503 = rootCause(
+      makeSignals({
+        hasDoNotRetrySignal: true,
+        breakerOpenedTool: "web_fetch",
+        repeatedFailureCount: { web_fetch: 5 },
+        mostFailedTool: "web_fetch",
+      }),
+    );
+    expect(r503!.code).toBe("breaker_opened_repeated_failure");
+  });
+
   it("detail strings never contain a literal '${' (interpolation-bug guard)", () => {
     const r = rootCause(
       makeSignals({ breakerOpenedTool: "web_fetch", hasDoNotRetrySignal: true, mostFailedTool: "web_fetch", repeatedFailureCount: { web_fetch: 5 } }),

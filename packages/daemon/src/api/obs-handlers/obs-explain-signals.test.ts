@@ -867,3 +867,80 @@ describe("toIncidentSignals — RECALL-01 memory.recalled aggregation", () => {
     expect(JSON.stringify(s.recall)).not.toContain("home address");
   });
 });
+
+describe("toIncidentSignals — OBS-02 learning.outcome_observed aggregation", () => {
+  function learn(
+    seq: number,
+    outcome: string,
+    source: string,
+    extra: Record<string, unknown> = {},
+  ): Record<string, unknown> {
+    return event("learning.outcome_observed", seq, {
+      trajectoryId: "traj-1",
+      outcome,
+      source,
+      confidence: 0.9,
+      ...extra,
+    });
+  }
+
+  it("aggregates the TERMINAL outcome (last wins) + the deduped source set; outcomeResolved on a non-unknown finish", () => {
+    const s = toIncidentSignals([
+      learn(1, "unknown", "pipeline"),
+      learn(2, "success", "tool"),
+    ]);
+    expect(s.learning).toEqual({
+      outcomeResolved: true,
+      outcome: "success", // seq=2 is terminal
+      sources: ["pipeline", "tool"],
+      skillsUsed: [],
+      skillFailures: [],
+      synthesisAbstained: false,
+    });
+  });
+
+  it("outcomeResolved is FALSE when the terminal outcome is `unknown` (the unresolved-shadow case)", () => {
+    const s = toIncidentSignals([learn(1, "success", "tool"), learn(2, "unknown", "pipeline")]);
+    expect(s.learning?.outcomeResolved).toBe(false);
+    expect(s.learning?.outcome).toBe("unknown");
+  });
+
+  it("omits the learning section entirely when the trajectory has no learning records", () => {
+    const s = toIncidentSignals([event("session.started", 0, { channel: { type: "discord", id: "c1" } })]);
+    expect(s.learning).toBeUndefined();
+  });
+
+  it("drops an off-vocabulary outcome/source (defence-in-depth — never enters the verdict surface)", () => {
+    const s = toIncidentSignals([
+      learn(1, "totally-bogus", "evil-source", { trajectoryId: "t" }),
+    ]);
+    // The record counted (learningCount>0 → block present) but the bad enums are dropped.
+    expect(s.learning).toBeDefined();
+    expect(s.learning?.outcome).toBeUndefined();
+    expect(s.learning?.outcomeResolved).toBe(false);
+    expect(s.learning?.sources).toEqual([]);
+  });
+
+  it("carries only ids/counts/closed enums — never a body/alpha/recalled-ids leak (content-free)", () => {
+    const s = toIncidentSignals([
+      learn(1, "failure", "judge", {
+        // A hostile/over-eager producer leaking content must not survive into signals.
+        body: "the user said their password is hunter2",
+        alpha: 0.42,
+        recalledIds: ["mem-7"],
+      }),
+    ]);
+    expect(s.learning).toEqual({
+      outcomeResolved: true,
+      outcome: "failure",
+      sources: ["judge"],
+      skillsUsed: [],
+      skillFailures: [],
+      synthesisAbstained: false,
+    });
+    const json = JSON.stringify(s.learning);
+    expect(json).not.toContain("hunter2");
+    expect(json).not.toContain("0.42");
+    expect(json).not.toContain("mem-7");
+  });
+});
