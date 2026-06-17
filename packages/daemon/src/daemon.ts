@@ -1480,7 +1480,7 @@ async function bootFoundation(
     sessionStore, memoryApi, embeddingQueue, backgroundIndexingPromise,
     embeddingCacheStats, embeddingCircuitBreakerState, maintenanceTick,
     summarizerSpendBreaker,
-    rerankerPort, rerankerModelPresent, disposeReranker, entityStore, lcdStore, provenanceStore, contextBrowse, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, userRepresentationStore, relationshipStore, tunedAlphaStore, memoryLifecycleStore, consolidationStore, recallCounters,
+    rerankerPort, rerankerModelPresent, disposeReranker, entityStore, lcdStore, provenanceStore, contextBrowse, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, userRepresentationStore, relationshipStore, tunedAlphaStore, outcomeStore, memoryLifecycleStore, consolidationStore, recallCounters,
   } = await setupMemory({ container, memoryLogger, clock });
 
   // Observability persistence (dual-write to SQLite). obsStore +
@@ -1508,6 +1508,32 @@ async function bootFoundation(
     : undefined;
   const obsStore = obsBundle?.obsStore; // trajectory recorder is per-session (pi-executor.ts).
   const obsPersistence = obsBundle?.obsPersistence;
+
+  // OUTCOME-07: prune the append-only outcome_events ledger at EVERY boot,
+  // UNCONDITIONALLY — deliberately OUTSIDE the obsConfig.persistence.enabled IIFE
+  // above, because this is anti-DoS housekeeping that must run regardless of obs
+  // persistence OR the learningOutcome enable flag (a ledger that grew while the
+  // signal was briefly enabled must still be bounded after it is turned off). The
+  // ledger is tenant/agent-agnostic, so retain the LONGEST horizon any agent asks
+  // for (default 30 from the Plan-01 schema) — never prune one agent's data early.
+  {
+    const learningOutcomeRetentionDays = Math.max(
+      30,
+      ...Object.values(container.config.agents ?? {}).map(
+        (a) => a?.learningOutcome?.retentionDays ?? 30,
+      ),
+    );
+    const outcomePruneStart = systemNowMs();
+    const outcomePruned = outcomeStore.prune(learningOutcomeRetentionDays);
+    daemonLogger.info(
+      {
+        retentionDays: learningOutcomeRetentionDays,
+        pruned: outcomePruned.changes,
+        durationMs: systemNowMs() - outcomePruneStart,
+      },
+      "Outcome events pruned on startup",
+    );
+  }
 
   // I2: one-shot model_health boot snapshot — embedding/reranker load-level
   // signals as a queryable obs_diagnostics row (no-ops when persistence off).

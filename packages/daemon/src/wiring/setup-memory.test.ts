@@ -171,6 +171,16 @@ const mockCreateSqliteTunedAlphaStore = vi.hoisted(() => vi.fn(() => ({
   upsert: vi.fn(async () => ({ ok: true, value: undefined })),
   read: vi.fn(async () => ({ ok: true, value: undefined })),
 })));
+// Outcome-signal store factory (Verified Learning WS1) — mocked so setupMemory wires it
+// (createSqliteOutcomeStore + wireLearningOutcome) without a real DB. Without the mock entry the
+// @comis/memory factory is undefined and EVERY setup call throws `createSqliteOutcomeStore is not
+// a function` (the MEMORY.md "setup-memory mock" gate). The 3 OutcomeSignalPort methods are
+// stubbed; the subscriber is default-OFF (no agent opts in) so observe/resolve never fire here.
+const mockCreateSqliteOutcomeStore = vi.hoisted(() => vi.fn(() => ({
+  observe: vi.fn(async () => ({ ok: true, value: undefined })),
+  resolve: vi.fn(async () => ({ ok: true, value: { outcome: "unknown", confidence: 0, sources: [], recalledIds: [], usedSkillIds: [] } })),
+  prune: vi.fn(() => ({ changes: 0 })),
+})));
 // Memory-lifecycle sweep store factory — mocked so setup wires
 // it without a real DB. setupMemory builds this on the shared db handle (mirror the tuned-alpha
 // store); without the mock entry the @comis/memory factory is undefined and EVERY setup call
@@ -207,6 +217,7 @@ vi.mock("@comis/memory", () => ({
   createSqliteRelationshipStore: mockCreateSqliteRelationshipStore,
   createSqliteTunedAlphaStore: mockCreateSqliteTunedAlphaStore,
   createSqliteMemoryLifecycleStore: mockCreateSqliteMemoryLifecycleStore,
+  createSqliteOutcomeStore: mockCreateSqliteOutcomeStore,
 }));
 
 const mockSafePath = vi.hoisted(() => vi.fn((...parts: string[]) => parts.join("/")));

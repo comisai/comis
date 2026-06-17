@@ -30,6 +30,7 @@ import {
   type OutcomeSignalPort,
   type ClockPort,
   type ComisLogger,
+  type AppConfig,
 } from "@comis/core";
 
 import { deriveTenantFromSessionKey } from "./setup-memory-usefulness-wiring.js";
@@ -282,5 +283,42 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
           "outcome resolve threw (non-fatal)",
         );
       });
+  });
+}
+
+/** Dependencies for {@link setupLearningOutcomeWiring}. */
+export interface SetupLearningOutcomeDeps {
+  eventBus: TypedEventBus;
+  outcomeStore: OutcomeSignalPort;
+  clock: ClockPort;
+  logger: ComisLogger;
+  /** The parsed app config — the source of the master cost switch + per-agent flag. */
+  config: AppConfig;
+}
+
+/**
+ * Composition helper: compute the per-agent BYTE-IDENTITY enable gate from the
+ * parsed config and stand up {@link wireLearningOutcome}.
+ *
+ * The gate force-disables on the master cost switch
+ * (`memory.costFeatures.enabled !== false` — exactly like the six cost crons,
+ * OUTCOME-09) AND requires the agent's own `learningOutcome.enabled` (default OFF).
+ * With the default config the gate is `false` for every agent → the subscriber
+ * observes/resolves/emits NOTHING → ranking/recall/replies are byte-identical.
+ */
+export function setupLearningOutcomeWiring(deps: SetupLearningOutcomeDeps): void {
+  // Master cost kill-switch: read defensively (`!== false`) so an absent block
+  // fails OPEN to the per-agent flag rather than silently force-disabling.
+  const costFeaturesEnabled = deps.config.memory?.costFeatures?.enabled !== false;
+  // Hoist the typed agents map once (mirrors setup-schedulers.ts:107) so the per-agent
+  // lookup is a bracket access on a known Record (not a dynamic optional-chain sink).
+  const agents = deps.config.agents ?? {};
+  wireLearningOutcome({
+    eventBus: deps.eventBus,
+    outcomeStore: deps.outcomeStore,
+    clock: deps.clock,
+    logger: deps.logger,
+    learningOutcomeEnabled: (agentId: string): boolean =>
+      costFeaturesEnabled && agents[agentId]?.learningOutcome?.enabled === true,
   });
 }

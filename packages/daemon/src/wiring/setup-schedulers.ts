@@ -608,6 +608,24 @@ export async function setupSchedulers(deps: {
   // agents map + config + logger already in scope.
   emitMemoryCostFeatureNotice({ agents, costFeaturesEnabled, logger: schedulerLogger });
 
+  // OUTCOME-09 boot posture: `learningOutcome` (Verified Learning WS1) is NOT a cron — it is the
+  // bus-wired observe/resolve subscriber stood up in setup-memory.ts (wireLearningOutcome). It is
+  // force-disabled by the SAME master cost switch as the six cost crons above: the effective enable
+  // is `costFeaturesEnabled && agents[id].learningOutcome.enabled` (default OFF → byte-identical).
+  // Surface the effective gate state once at boot so an operator can confirm the shadow signal's
+  // posture without a live repro (the gate itself is applied at the wiring site, not here).
+  const learningOutcomeEnabled = (agentId: string): boolean =>
+    costFeaturesEnabled && agents[agentId]?.learningOutcome?.enabled === true;
+  const learningOutcomeAgents = Object.keys(agents).filter((id) => learningOutcomeEnabled(id));
+  schedulerLogger.debug(
+    {
+      costFeaturesEnabled,
+      enabledAgentCount: learningOutcomeAgents.length,
+      enabledAgents: learningOutcomeAgents,
+    },
+    "Outcome-signal (learningOutcome) boot posture",
+  );
+
   /** Resolve the CronScheduler for a given agent ID. Throws descriptive error if not found. */
   function getAgentCronScheduler(agentId: string): CronScheduler {
     const scheduler = cronSchedulers.get(agentId);

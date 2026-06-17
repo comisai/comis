@@ -40,6 +40,7 @@ import {
   createSqliteRelationshipStore,
   createSqliteTunedAlphaStore,
   createSqliteMemoryLifecycleStore,
+  createSqliteOutcomeStore,
   type MemoryApi,
 } from "@comis/memory";
 import {
@@ -47,6 +48,7 @@ import {
   type RecallCountersWiring,
 } from "../observability/recall-counters-wiring.js";
 import { wireMemoryUsefulness } from "./setup-memory-usefulness-wiring.js";
+import { setupLearningOutcomeWiring } from "./setup-learning.js";
 
 // ---------------------------------------------------------------------------
 // Result type
@@ -171,44 +173,26 @@ export interface MemoryResult {
    *  the daemon (composition root) is the one place this memory-package adapter and the agent-package
    *  consumers are joined (the agent↛memory cut). */
   relationshipStore: import("@comis/core").RelationshipStore;
-  /** Consolidation store. The SOLE adapter for the segregated
-   *  `MemoryConsolidationStore` port — built UNCONDITIONALLY on the SAME shared `db` handle
-   *  as the memory adapter + entity store (so the observation columns, the `(tenant, agent)`
-   *  isolation scope, and the FK-enabled connection are all consistent with the memory rows
-   *  it consolidates). Like the entity store there is no model/IO cost to building it, so it
-   *  is always present; the consolidation cron stays dormant until an operator opts in via
-   *  `agents.<id>.memoryConsolidation.enabled` (default OFF, a cost gate). The daemon
-   *  (composition root) is the only place this @comis/memory adapter and the @comis/agent
-   *  `runMemoryConsolidation` job are joined — the agent receives the port TYPE only. */
+  /** Consolidation store. SOLE `MemoryConsolidationStore` adapter; built unconditionally on
+   *  the shared `db` (no model/IO cost). Cron dormant until `memoryConsolidation.enabled`
+   *  (default OFF). Construction-site comment has the full rationale; the agent gets the port TYPE only. */
   consolidationStore: import("@comis/core").MemoryConsolidationStore;
-  /** Recall-utility usefulness store. The SOLE adapter for the segregated
-   *  `MemoryUsefulnessStore` port — built UNCONDITIONALLY on the SAME shared `db` handle as the
-   *  memory adapter + entity/consolidation stores (so the `(tenant, agent)` isolation scope and
-   *  the FK-enabled connection — the `memory_usefulness.memory_id` ON DELETE CASCADE — are all
-   *  consistent with the memory rows it scores). No model/IO cost to building it, so it is always
-   *  present; the feedback loop stays dormant until an operator enables
-   *  `agents.<id>.rag.feedback.enabled` (default OFF). The write-back subscriber is wired
-   *  separately; this site only builds + exposes the store + its read capability. */
+  /** Recall-utility usefulness store. SOLE `MemoryUsefulnessStore` adapter; built unconditionally on
+   *  the shared `db` (no model/IO cost). Feedback loop dormant until `rag.feedback.enabled` (default OFF);
+   *  the write-back subscriber is wired separately. */
   usefulnessStore: import("@comis/core").MemoryUsefulnessStore;
-  /** Tuned-alpha store. The SOLE adapter for the segregated
-   *  `TunedAlphaStore` port — built UNCONDITIONALLY on the SAME shared `db` handle as the
-   *  memory adapter + usefulness store (the (tenant, agent) isolation scope is consistent). No
-   *  model/IO cost to building it, so it is always present; it stays dormant until BOTH the
-   *  recall-side gate (`rag.onlineTuning.enabled` — the gated read) AND the OFFLINE KEYLESS
-   *  bandit cron (`memoryOnlineTuning.enabled` — the __ONLINE_TUNING__ write) are on. Threaded
-   *  into the recall read path (setup-agents-* -> createPiExecutor -> prompt-assembly) AND the
-   *  __ONLINE_TUNING__ cron (setup-channels) — the agent receives the port TYPE only. */
+  /** Tuned-alpha store. SOLE `TunedAlphaStore` adapter; built unconditionally on the shared `db`
+   *  (no model/IO cost). Dormant until BOTH `rag.onlineTuning.enabled` (read) AND
+   *  `memoryOnlineTuning.enabled` (the keyless __ONLINE_TUNING__ write) are on. Agent gets the port TYPE only. */
   tunedAlphaStore: import("@comis/core").TunedAlphaStore;
-  /** Memory-lifecycle sweep store. The SOLE adapter for the
-   *  segregated `MemoryLifecyclePort` port — built UNCONDITIONALLY on the SAME shared `db`
-   *  handle as the memory adapter (so the sweep scans the SAME `memories` rows + the additive
-   *  NON-DESTRUCTIVE marker columns under one (tenant, agent)-scoped, FK-enabled connection;
-   *  a sweep on a DIFFERENT handle would scan an empty/foreign table). No model/IO cost to
-   *  building it, so it is always present; it stays DORMANT (evicts/demotes 0 rows even when
-   *  enabled) and the cron registers ONLY when `memoryLifecycle.enabled` (default OFF,
-   *  KEYLESS). Threaded into the KEYLESS __MEMORY_LIFECYCLE__ cron (setup-channels) — NOT the
-   *  recall executor (the lifecycle port is daemon-cron-side, no 3-hop forwarding). The
-   *  agent receives the port TYPE only (the agent↛memory cut). */
+  /** Outcome-signal store (Verified Learning WS1). SOLE `OutcomeSignalPort` adapter; built
+   *  unconditionally on the shared `db` (no model/IO cost; gated at observe/resolve; agent never
+   *  receives it — SEC-01). Returned so the daemon can `prune(retentionDays)` at startup (OUTCOME-07,
+   *  unconditional anti-DoS); the observe/resolve subscriber is wired here. */
+  outcomeStore: import("@comis/core").OutcomeSignalPort;
+  /** Memory-lifecycle sweep store. SOLE `MemoryLifecyclePort` adapter; built unconditionally on the
+   *  shared `db` (no model/IO cost). DORMANT (0 rows swept even when enabled); the KEYLESS
+   *  __MEMORY_LIFECYCLE__ cron registers only when `memoryLifecycle.enabled` (default OFF). Agent gets the port TYPE only. */
   memoryLifecycleStore: import("@comis/core").MemoryLifecyclePort;
   /** Live in-process recall-counter wiring. The single
    *  `wireRecallCounters(container.eventBus)` subscriber is stood up HERE — the
@@ -604,6 +588,10 @@ export async function setupMemory(deps: {
   // cron (setup-channels) — the agent receives the port TYPE only (the agent↛memory cut).
   const tunedAlphaStore = createSqliteTunedAlphaStore({ db, logger: memoryLogger });
 
+  // 6.5.2d-quater. Outcome-signal store (Verified Learning WS1, OUTCOME-01). UNCONDITIONAL on the
+  // shared `db` (no model/IO cost; gated at observe/resolve). SOLE OutcomeSignalPort adapter; agent never receives it (SEC-01); only wireLearningOutcome + the startup prune consume it (closed-graph).
+  const outcomeStore = createSqliteOutcomeStore({ db, logger: memoryLogger });
+
   // 6.5.2d-ter. Memory-lifecycle sweep store. Built on the
   // SAME shared `db` handle the memory adapter owns — NOT a second Database — so the sweep
   // scans the SAME `memories` rows + the additive NON-DESTRUCTIVE marker columns
@@ -652,6 +640,17 @@ export async function setupMemory(deps: {
           (a?.rag as ({ feedback?: { enabled?: boolean } } | undefined))?.feedback
             ?.enabled === true,
       ),
+  });
+
+  // 6.5.2f'. Outcome-signal write-back subscriber (Verified Learning WS1). Wired HERE (the
+  // composition root holds BOTH the bus AND the adapter — agent↛memory cut; mirrors
+  // wireMemoryUsefulness). The helper computes the BYTE-IDENTITY gate (master cost switch + per-agent default-OFF flag) and stands up the subscriber.
+  setupLearningOutcomeWiring({
+    eventBus: container.eventBus,
+    outcomeStore,
+    clock,
+    logger: memoryLogger,
+    config: container.config,
   });
 
   // 6.5.3. Wire caching: L1(L2(provider)) when persistent, L1(provider) otherwise
@@ -792,6 +791,7 @@ export async function setupMemory(deps: {
     consolidationStore,
     usefulnessStore,
     tunedAlphaStore,
+    outcomeStore,
     memoryLifecycleStore,
     recallCounters,
     maintenanceTick,
