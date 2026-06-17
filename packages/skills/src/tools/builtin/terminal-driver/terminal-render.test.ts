@@ -16,7 +16,8 @@
 
 import { describe, it, expect } from "vitest";
 
-import { createSessionEmulator, diffSnapshot, stripGhostFromRow, type RenderCell } from "./terminal-render.js";
+import { createSessionEmulator, diffSnapshot, type EmulatorSnapshot } from "./terminal-render.js";
+import { claudeCodeProfile } from "./platforms/claude-code/profile.js";
 
 describe("createSessionEmulator — construct + plain grid", () => {
   it("renders written text into the grid and reports cols/rows/alt", async () => {
@@ -266,74 +267,102 @@ describe("createSessionEmulator — diffSnapshot (the per-read screen-diff)", ()
 });
 
 // ===========================================================================
-// FINDING-3 (live VPS 2026-06-17): a driven CLI (Claude Code) shows a DIM
-// autocomplete "ghost-text" suggestion in its composer (e.g. `commit this`).
-// The plain-text `read()` capture can't convey the dim styling, so the driving
-// model can't tell the suggestion from real queued input — it halts to ask
-// about it and drops later steps. The text render STRIPS the ghost: on the
-// cursor's row (normal buffer), a cell at col >= cursorX that is DIM is
-// autocomplete (real input is non-dim, at/left of the cursor); status-bar dim
-// text is on OTHER rows and is untouched.
+// FINDING-3 / RENDER-01 (v2.26): the dim-autocomplete ghost-strip is a Claude
+// SPECIAL-CASE and now lives in the `claude-code` PROFILE (`transformSnapshot`),
+// NOT the agnostic engine. The engine here proves two things: (1) with NO profile
+// the render is the plain `translateToString` grid — the dim ghost is kept (INV-1,
+// byte-identical to today's generic path); (2) `transformSnapshot` is a GENERIC
+// injected hook the engine applies to text reads, feeding it the viewport cell
+// grid (so a profile can read the `dim` attribute the flat `screen` lost). The
+// ghost-strip ITSELF is golden-tested in `platforms/claude-code/profile.test.ts`.
 // ===========================================================================
 
-describe("stripGhostFromRow — strip the dim autocomplete ghost-text right of the cursor", () => {
-  const cell = (chars: string, dim = false, width = 1): RenderCell => ({ chars, dim, width });
-
-  it("strips the dim ghost at/after the cursor, keeps the non-dim prompt before it", () => {
-    // `❯ ` (cols 0-1, non-dim) + cursor at col 2 + dim "commit this" (the ghost) at col 2+
-    const cells = [cell("❯"), cell(" "), ...[..."commit this"].map((ch) => cell(ch, true))];
-    expect(stripGhostFromRow(cells, 2)).toBe("❯");
-  });
-
-  it("keeps real (non-dim) input before the cursor; strips only the dim continuation after it", () => {
-    // input "comm" (non-dim) cols 2-5 + cursor at col 6 + dim ghost "it this" at col 6+
-    const cells = [cell("❯"), cell(" "), ...[..."comm"].map((ch) => cell(ch)), ...[..."it this"].map((ch) => cell(ch, true))];
-    expect(stripGhostFromRow(cells, 6)).toBe("❯ comm");
-  });
-
-  it("keeps dim cells BEFORE the cursor (those are not autocomplete)", () => {
-    const cells = [cell("a", true), cell("b", true), cell("c")];
-    expect(stripGhostFromRow(cells, 3)).toBe("abc");
-  });
-
-  it("skips width-0 (wide-char trailing / combining) slots, matching translateToString", () => {
-    const cells = [cell("世", false, 2), cell("", false, 0), cell("x")];
-    expect(stripGhostFromRow(cells, 0)).toBe("世x");
+describe("createSessionEmulator — agnostic render is the plain grid (no platform strip, INV-1)", () => {
+  it("keeps the dim composer ghost verbatim when no profile transform is wired", async () => {
+    // No transform ⇒ the engine is byte-identical to translateToString: the dim ghost is NOT stripped.
+    const emu = createSessionEmulator({ cols: 80, rows: 6, scrollback: 0 });
+    await emu.write("\x1b[2;1H❯ \x1b[2mcommit this\x1b[0m");
+    await emu.write("\x1b[2;3H");
+    const snap = emu.snapshot({ format: "text" });
+    expect(snap.screen).toContain("commit this"); // agnostic engine carries no platform strip
+    expect(snap.grid).toBeUndefined(); // no transform ⇒ no cell grid built (zero added cost)
+    emu.dispose();
   });
 });
 
-describe("createSessionEmulator — text render strips Claude's composer ghost-text (FINDING-3)", () => {
-  it("omits the dim ghost on the cursor row but keeps the dim status-bar text on another row", async () => {
-    const emu = createSessionEmulator({ cols: 80, rows: 6, scrollback: 0 });
-    // row 2: `❯ ` then a DIM ghost suggestion "commit this"
-    await emu.write("\x1b[2;1H❯ \x1b[2mcommit this\x1b[0m");
-    // row 5: a DIM status-bar element on a DIFFERENT row (must be retained)
-    await emu.write("\x1b[5;1H\x1b[2mSonnet 4.6\x1b[0m");
-    // move the cursor back to the input position (row 2, col 3 → 0-based cursorX=2, cursorY=1)
-    await emu.write("\x1b[2;3H");
-
+describe("createSessionEmulator — transformSnapshot is a generic read-side hook", () => {
+  it("applies an injected transform to text reads and feeds it the viewport cell grid", async () => {
+    let received: EmulatorSnapshot | undefined;
+    const emu = createSessionEmulator({
+      cols: 20,
+      rows: 3,
+      scrollback: 0,
+      transformSnapshot: (snap) => {
+        received = snap;
+        return { ...snap, screen: "TRANSFORMED" };
+      },
+    });
+    await emu.write("hello");
     const snap = emu.snapshot({ format: "text" });
-    expect(snap.cursor).toEqual({ x: 2, y: 1 });
-    expect(snap.screen).not.toContain("commit this"); // ghost stripped from the cursor row
-    expect(snap.screen).toContain("❯"); // the prompt survives
-    expect(snap.screen).toContain("Sonnet 4.6"); // dim text on another row is untouched
+    expect(snap.screen).toBe("TRANSFORMED"); // the transform's output is what the emulator returns
+    expect(received?.grid).toBeDefined(); // the engine attached the viewport cell grid for the hook
+    expect(received?.grid?.length).toBe(3); // one cell-row per viewport row
+    expect(received?.grid?.[0]?.some((c) => c.chars === "h")).toBe(true); // cells carry the real chars
     emu.dispose();
   });
 
-  it("ALSO strips the ghost on the cursor row in the ALT buffer (tmux-attach sessions are alt-screen)", async () => {
-    // The durable/tmux backend drives via `tmux attach`, which renders in the alternate screen —
-    // so every AI-CLI composer (and its ghost-text) reads as `alt`. The strip must NOT be gated on
-    // the alt flag, or it would never fire for the default backend. (This was the live-VPS bug.)
-    const emu = createSessionEmulator({ cols: 80, rows: 6, scrollback: 0 });
+  it("does not build the grid for ansi format, so a transform no-ops on non-text reads", async () => {
+    let received: EmulatorSnapshot | undefined;
+    const emu = createSessionEmulator({
+      cols: 20,
+      rows: 3,
+      scrollback: 0,
+      transformSnapshot: (snap) => {
+        received = snap;
+        return snap;
+      },
+    });
+    await emu.write("hi");
+    emu.snapshot({ format: "ansi" });
+    expect(received?.grid).toBeUndefined(); // ansi screen is not a plain row grid ⇒ no grid attached
+    emu.dispose();
+  });
+});
+
+describe("createSessionEmulator + claudeCodeProfile.transformSnapshot — FINDING-3 end-to-end (design §8)", () => {
+  it("strips the dim composer ghost on the cursor row when the claude-code profile is selected", async () => {
+    const emu = createSessionEmulator({
+      cols: 80,
+      rows: 6,
+      scrollback: 0,
+      transformSnapshot: claudeCodeProfile.transformSnapshot,
+    });
+    await emu.write("\x1b[2;1H❯ \x1b[2mcommit this\x1b[0m"); // composer + dim ghost
+    await emu.write("\x1b[5;1H\x1b[2mSonnet 4.6\x1b[0m"); // dim status bar on another row
+    await emu.write("\x1b[2;3H"); // cursor to the input position (cursorX=2, cursorY=1)
+    const snap = emu.snapshot({ format: "text" });
+    expect(snap.screen).not.toContain("commit this"); // ghost stripped via the profile transform
+    expect(snap.screen).toContain("❯"); // the prompt survives
+    expect(snap.screen).toContain("Sonnet 4.6"); // dim chrome on another row untouched
+    emu.dispose();
+  });
+
+  it("also strips in the alt buffer via the profile (tmux-attach sessions render alt-screen)", async () => {
+    const emu = createSessionEmulator({
+      cols: 80,
+      rows: 6,
+      scrollback: 0,
+      transformSnapshot: claudeCodeProfile.transformSnapshot,
+    });
     await emu.write("\x1b[?1049h"); // enter alt screen (as `tmux attach` does)
-    await emu.write("\x1b[2;1H❯ \x1b[2mcommit this\x1b[0m"); // composer + dim ghost in the alt buffer
-    await emu.write("\x1b[5;1H\x1b[2mSonnet 4.6\x1b[0m"); // dim status-bar text on another row
-    await emu.write("\x1b[2;3H"); // cursor to row2 col3 (0-based cursorX=2, cursorY=1)
+    await emu.write("\x1b[2;1H❯ \x1b[2mcommit this\x1b[0m");
+    await emu.write("\x1b[5;1H\x1b[2mSonnet 4.6\x1b[0m");
+    await emu.write("\x1b[2;3H");
     const snap = emu.snapshot({ format: "text" });
     expect(snap.alt).toBe(true);
     expect(snap.screen).not.toContain("commit this"); // ghost stripped EVEN in alt
-    expect(snap.screen).toContain("❯"); // prompt kept
-    expect(snap.screen).toContain("Sonnet 4.6"); // dim text on another row kept
+    expect(snap.screen).toContain("❯");
+    expect(snap.screen).toContain("Sonnet 4.6");
     emu.dispose();
   });
 });
