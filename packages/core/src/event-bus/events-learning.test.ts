@@ -275,3 +275,105 @@ describe("learning:skill_promoted / learning:skill_demoted telemetry (counts-onl
     expectTypeOf<EventMap["learning:skill_demoted"]["count"]>().toEqualTypeOf<number>();
   });
 });
+
+// ---------------------------------------------------------------------------
+// REVISE-01 / GENERAL-01 (Phase 203 Plan 01): the two P4-deepening TELEMETRY
+// events. Emitted DAEMON-SIDE (plain eventBus.emit — never `?.`) by the
+// user-rep revision + consolidation generalization cron handlers (Plan 05) —
+// counts ONLY. learning:user_model_revised carries superseded/corroborated/
+// inserted; learning:memory_generalized carries generalized/clustersConsidered.
+// A profile-entry content / entry_type / id-list, or a synthesized memory body /
+// source-id, is a compile error (the §2.7 / SEC-01 firewall). Mirror the
+// SURFACE-06 promote/demote counts-only + source-grep RED + @ts-expect-error
+// precedent exactly. Live in THIS same LearningEvents sibling.
+// ---------------------------------------------------------------------------
+
+describe("learning:user_model_revised / learning:memory_generalized telemetry (counts-only — REVISE-01/GENERAL-01)", () => {
+  it("declares BOTH new P4-deepening keys on the LearningEvents interface (source grep — reproducible RED)", () => {
+    const src = readFileSync(resolve(here, "events-learning.ts"), "utf8");
+    expect(src).toContain('"learning:user_model_revised"');
+    expect(src).toContain('"learning:memory_generalized"');
+  });
+
+  it("learning:user_model_revised delivers superseded/corroborated/inserted counts + durationMs + agentId only", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["learning:user_model_revised"] = {
+      agentId: "agent-1",
+      superseded: 2,
+      corroborated: 1,
+      inserted: 3,
+      durationMs: 42,
+      timestamp: 1,
+    };
+    bus.on("learning:user_model_revised", handler);
+    bus.emit("learning:user_model_revised", payload);
+    expect(handler).toHaveBeenCalledWith(payload);
+    const r = handler.mock.calls[0]![0] as EventMap["learning:user_model_revised"];
+    expect(r.superseded).toBe(2);
+    expect(r.corroborated).toBe(1);
+    expect(r.inserted).toBe(3);
+    expect(r.agentId).toBe("agent-1");
+  });
+
+  it("learning:memory_generalized delivers generalized/clustersConsidered counts + durationMs + agentId only", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["learning:memory_generalized"] = {
+      agentId: "agent-1",
+      generalized: 1,
+      clustersConsidered: 4,
+      durationMs: 17,
+      timestamp: 2,
+    };
+    bus.on("learning:memory_generalized", handler);
+    bus.emit("learning:memory_generalized", payload);
+    expect(handler).toHaveBeenCalledWith(payload);
+    const r = handler.mock.calls[0]![0] as EventMap["learning:memory_generalized"];
+    expect(r.generalized).toBe(1);
+    expect(r.clustersConsidered).toBe(4);
+    expect(r.agentId).toBe("agent-1");
+  });
+
+  it("type safety: @ts-expect-error rejects a content/body field on either P4-deepening payload (SEC-01 firewall)", () => {
+    const bus = new TypedEventBus();
+
+    bus.emit("learning:user_model_revised", {
+      agentId: "a",
+      superseded: 1,
+      corroborated: 0,
+      inserted: 0,
+      durationMs: 1,
+      timestamp: 1,
+      // @ts-expect-error - a superseded profile-entry's content must NEVER ride on the counts-only payload
+      content: "the superseded preference text",
+    });
+
+    bus.emit("learning:memory_generalized", {
+      agentId: "a",
+      generalized: 1,
+      clustersConsidered: 1,
+      durationMs: 1,
+      timestamp: 1,
+      // @ts-expect-error - the synthesized higher-order memory body must NEVER ride on the counts-only payload
+      body: "user prefers concise answers in general",
+    });
+
+    // @ts-expect-error - the cluster source-id list must NEVER ride on the counts-only generalization payload
+    bus.emit("learning:memory_generalized", {
+      agentId: "a",
+      generalized: 1,
+      clustersConsidered: 1,
+      durationMs: 1,
+      timestamp: 1,
+      sourceIds: ["mem-1", "mem-2"],
+    });
+  });
+
+  it("type contract: both P4-deepening keys are members of EventMap (counts only)", () => {
+    expectTypeOf<EventMap>().toHaveProperty("learning:user_model_revised");
+    expectTypeOf<EventMap>().toHaveProperty("learning:memory_generalized");
+    expectTypeOf<EventMap["learning:user_model_revised"]["superseded"]>().toEqualTypeOf<number>();
+    expectTypeOf<EventMap["learning:memory_generalized"]["generalized"]>().toEqualTypeOf<number>();
+  });
+});
