@@ -398,3 +398,44 @@ describe("createSqliteLearnedSkillStore — (tenant, agent) isolation + lifecycl
     if (l.ok) expect(l.value.find((s) => s.name === "evict-me")).toBeUndefined();
   });
 });
+
+describe("createSqliteLearnedSkillStore — error handling (catch branches)", () => {
+  // evict()/promote()/demote() must NEVER throw — a DB failure mid-operation is
+  // caught and surfaced as err() with a WARN (errorKind + hint, the §2.7 bar). We
+  // force the failure by dropping the table out from under the eagerly-prepared
+  // UPDATE statements (better-sqlite3 re-validates the schema at step time, so the
+  // prepared UPDATE throws "no such table").
+  let db: Database.Database;
+  let store: ReturnType<typeof createSqliteLearnedSkillStore>;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    initSchema(db, 384);
+    store = createSqliteLearnedSkillStore({ db });
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it("evict() returns err (not throw) when the underlying UPDATE fails", async () => {
+    db.exec("DROP TABLE learned_skills");
+    const r = await store.evict("any-id", SCOPE_A);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toBeInstanceOf(Error);
+  });
+
+  it("promote() returns err (not throw) when the underlying UPDATE fails (runTransition catch)", async () => {
+    db.exec("DROP TABLE learned_skills");
+    const r = await store.promote("any-id", SCOPE_A);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toBeInstanceOf(Error);
+  });
+
+  it("demote() returns err (not throw) when the underlying UPDATE fails (runTransition catch)", async () => {
+    db.exec("DROP TABLE learned_skills");
+    const r = await store.demote("any-id", SCOPE_A);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toBeInstanceOf(Error);
+  });
+});
