@@ -183,6 +183,38 @@ function seedFailureCount(
     );
 }
 
+/**
+ * Seed `memory_usefulness.last_useful_at` (the last-recall recency signal) for a
+ * memory — WR-02: the dormancy branch must key off ACTUAL disuse (last recall),
+ * not `occurred_at` (event time). Scoped to the same (tenant, agent) + intent bucket.
+ */
+function seedLastUseful(
+  target: Database.Database,
+  opts: {
+    memoryId: string;
+    tenantId?: string;
+    agentId?: string;
+    intent?: string;
+    lastUsefulAt: number;
+    usedCount?: number;
+  },
+): void {
+  target
+    .prepare(
+      `INSERT INTO memory_usefulness (tenant_id, agent_id, memory_id, intent, used_count, ignored_count, last_useful_at)
+       VALUES (?, ?, ?, ?, ?, 0, ?)
+       ON CONFLICT(tenant_id, agent_id, memory_id, intent) DO UPDATE SET used_count = excluded.used_count, last_useful_at = excluded.last_useful_at`,
+    )
+    .run(
+      opts.tenantId ?? "tenant_a",
+      opts.agentId ?? "agent_x",
+      opts.memoryId,
+      opts.intent ?? "",
+      opts.usedCount ?? 1,
+      opts.lastUsefulAt,
+    );
+}
+
 /** Read the evicted_at marker for a memory id (NULL = live, non-NULL = soft-evicted). */
 function evictedAtOf(target: Database.Database, id: string): number | null {
   return (
@@ -703,6 +735,60 @@ describe("createSqliteMemoryLifecycleStore", () => {
       expect(res.ok).toBe(true);
       if (res.ok) expect(res.value.evicted).toBe(0);
       expect(evictedAtOf(db, "stays-live")).toBeNull();
+    });
+
+    // ── WR-02: the dormant-AGE branch must key off DISUSE (last recall), not EVENT age ──
+    // FORGET-04 says "wrong fades faster than merely OLD" — a high-strength, recently-
+    // USEFUL memory about an OLD event must NOT be reaped on event-age alone. On HEAD the
+    // candidacy disjunct `dormantDays > maxDormantDays` uses occurred_at (event time), so
+    // a correct, frequently-recalled old-event memory is evicted on its event-age. The fix
+    // bases dormancy on last_useful_at (last-recall recency), so a recently-useful old-event
+    // memory is NOT "dormant". A LOW strengthThreshold here isolates the AGE branch as the
+    // SOLE possible eviction cause (strength stays above it), so the test pins the age path.
+    describe("WR-02: dormant-age eviction keys off DISUSE, not EVENT age", () => {
+      // strengthThreshold 0.05: a recall-shape strength (∈ [0.5, 1]) is always above it, so
+      // the STRENGTH branch never fires — the only candidacy path is the dormant-age disjunct.
+      const AGE_POLICY: MemoryLifecyclePolicy = {
+        thetaPromote: 0.7,
+        thetaDemote: 0.3,
+        epsilonPrune: 0.05,
+        maxDormantDays: 90,
+        evictionEnabled: true,
+        strengthThreshold: 0.05,
+        failurePenalty: 0.5,
+        highProofFloor: 5,
+      };
+
+      it("a RECENTLY-USEFUL memory about an OLD event is NOT evicted by age alone (FORGET-04)", async () => {
+        const ageStore = createSqliteMemoryLifecycleStore({ db, policy: AGE_POLICY });
+        // OLD event (200 days ago → dormantDays-by-occurred_at >> 90) but recalled-useful
+        // YESTERDAY (last_useful_at = T0 - 1 day). proof below the high-proof floor so the
+        // FORGET-03 exemption does NOT mask the fix — the disuse-based dormancy is what saves it.
+        insertMemory(db, { id: "old-event-recently-useful", content: "an old but still-true fact", memoryType: "semantic", occurredAt: T0 - 200 * DAY_MS, proofCount: 2 });
+        seedLastUseful(db, { memoryId: "old-event-recently-useful", lastUsefulAt: T0 - 1 * DAY_MS, usedCount: 12 });
+
+        const res = await ageStore.runLifecycleSweep({ tenantId: "tenant_a", agentId: "agent_x", now: T0 });
+        expect(res.ok).toBe(true);
+        expect(
+          evictedAtOf(db, "old-event-recently-useful"),
+          "a recently-recalled old-event memory must NOT be reaped on event-age alone",
+        ).toBeNull();
+      });
+
+      it("a genuinely DORMANT old memory (never recalled) IS still evicted on age (the branch stays live)", async () => {
+        const ageStore = createSqliteMemoryLifecycleStore({ db, policy: AGE_POLICY });
+        // OLD event AND never recalled (no usefulness row → last_useful_at absent) → it is
+        // genuinely dormant past T_max → still a candidate (the age reaper is not disabled,
+        // only re-based on disuse; an absent last_useful_at falls back to event age).
+        insertMemory(db, { id: "old-and-untouched", content: "an ancient, never-recalled note", memoryType: "semantic", occurredAt: T0 - 200 * DAY_MS, proofCount: 2 });
+
+        const res = await ageStore.runLifecycleSweep({ tenantId: "tenant_a", agentId: "agent_x", now: T0 });
+        expect(res.ok).toBe(true);
+        expect(
+          evictedAtOf(db, "old-and-untouched"),
+          "a genuinely dormant (never-recalled) old memory is still reaped on age",
+        ).not.toBeNull();
+      });
     });
   });
 });
