@@ -1137,6 +1137,232 @@ describe("wireLearningOutcome — learned-skill promote/demote at resolve() (SUR
   });
 });
 
+// ── CR (milestone-close BLOCKER): a SINGLE-AGENT turn must resolve too ──
+//
+// The resolve loop (resolve → reward → forget-accrual → skill promote/demote) fired
+// ONLY inside the `graph:completed` handler — which the graph coordinator emits ONLY
+// for named-graph/DAG runs, NEVER the common single-agent conversational turn. So with
+// learning enabled a single-agent turn WROTE `outcome_events` rows (tool:executed +
+// memory:skill_used, keyed on traceId) but they were NEVER resolved → never rewarded,
+// never accrued failure_count, never promote/demote'd. This mirrors the SAME fix
+// Phase 199 (CR-02) already applied to the correction writer: key the resolve off the
+// per-turn `diagnostic:message_processed` PAYLOAD (which carries agentId/sessionKey/
+// traceId and fires for single-agent turns too — execution-pipeline.ts), NOT the ALS.
+//
+// RED on pre-fix HEAD: only graph:completed resolves, so a single-agent turn (no
+// graph:completed) never calls resolve() / recordUsage / promoteByName.
+describe("wireLearningOutcome — SINGLE-AGENT turn resolve via diagnostic:message_processed (CR)", () => {
+  function diagnosticPayload(
+    over?: Partial<EventMap["diagnostic:message_processed"]>,
+  ): EventMap["diagnostic:message_processed"] {
+    return {
+      messageId: "msg-1",
+      channelId: "chan-1",
+      channelType: "telegram",
+      agentId: AGENT,
+      sessionKey: SESSION_KEY,
+      traceId: TRACE,
+      receivedAt: NOW,
+      executionDurationMs: 10,
+      deliveryDurationMs: 0,
+      totalDurationMs: 10,
+      tokensUsed: 5,
+      cost: 0,
+      success: true,
+      finishReason: "stop",
+      timestamp: NOW,
+      ...over,
+    };
+  }
+
+  it("a single-agent turn (diagnostic:message_processed, NO graph:completed) resolves AND runs the reward + promote consumer", async () => {
+    const bus = new TypedEventBus();
+    // The fused verdict carries a recalled id (RANK reward) AND a used skill (SURFACE
+    // promote) — the downstream consumer chain must run for BOTH on a single-agent turn.
+    const { store, observe, resolve } = makeStubStore(
+      baseVerdict({ outcome: "success", sources: ["tool"], recalledIds: ["m1"], usedSkillIds: ["s1"] }),
+    );
+    const us = mockUsefulnessStore();
+    const ls = mockLearnedSkillStore();
+    wireLearningOutcome({
+      eventBus: bus,
+      outcomeStore: store,
+      usefulnessStore: us.store,
+      learnedSkillStore: ls.store,
+      learningTuningEnabled: () => true,
+      learningForgettingEnabled: () => true,
+      learningSkillsEnabled: () => true,
+      learningSkillsPromoteAt: () => 1,
+      clock: createFakeClock(NOW),
+      logger: createMockLogger(),
+      learningOutcomeEnabled: () => true,
+    });
+
+    // The single-agent turn first writes the deterministic rows (tool success + the
+    // skill-use attribution) keyed on traceId — exactly the writes resolve() must find.
+    bus.emit("tool:executed", toolPayload({ success: true }));
+    bus.emit("memory:skill_used", skillUsedPayload({ usedSkillIds: ["s1"], usedCount: 1 }));
+    await flushMicrotasks();
+    expect(observe).toHaveBeenCalled(); // the rows were written
+
+    // …then the per-turn completion event fires (NO graph:completed for a single-agent
+    // turn). On pre-fix HEAD nothing resolves; with the fix it resolves off the PAYLOAD.
+    bus.emit("diagnostic:message_processed", diagnosticPayload());
+    await flushMicrotasks();
+
+    // resolve() fired keyed on the SAME traceId the rows were written under.
+    expect(resolve).toHaveBeenCalledTimes(1);
+    expect(resolve.mock.calls[0]![0]).toBe(TRACE);
+    const resScope = resolve.mock.calls[0]![1];
+    expect(resScope.agentId).toBe(AGENT);
+    expect(resScope.tenantId).toBe("tenant-x"); // derived from SESSION_KEY's first segment
+
+    // The downstream consumer ran: RANK reward for the recalled id …
+    expect(us.recordUsage).toHaveBeenCalledTimes(1);
+    expect(us.recordUsage.mock.calls[0]![0]).toEqual(["m1"]);
+    // … AND the SURFACE promote for the attributed skill (by NAME).
+    expect(ls.promoteByName).toHaveBeenCalledTimes(1);
+    expect(ls.promoteByName.mock.calls[0]![0]).toBe("s1");
+  });
+
+  it("byte-identity: learningOutcomeEnabled => false → diagnostic:message_processed resolves NOTHING", async () => {
+    const bus = new TypedEventBus();
+    const { store, resolve } = makeStubStore();
+    wireLearningOutcome({
+      eventBus: bus,
+      outcomeStore: store,
+      usefulnessStore: mockUsefulnessStore().store,
+      learningTuningEnabled: () => false,
+      learningForgettingEnabled: () => false,
+      clock: createFakeClock(NOW),
+      logger: createMockLogger(),
+      learningOutcomeEnabled: () => false,
+    });
+
+    bus.emit("diagnostic:message_processed", diagnosticPayload());
+    await flushMicrotasks();
+
+    expect(resolve).not.toHaveBeenCalled();
+  });
+
+  it("skips when the diagnostic payload carries no traceId (cannot key the resolve → fail-closed)", async () => {
+    const bus = new TypedEventBus();
+    const { store, resolve } = makeStubStore();
+    wireLearningOutcome({
+      eventBus: bus,
+      outcomeStore: store,
+      usefulnessStore: mockUsefulnessStore().store,
+      learningTuningEnabled: () => false,
+      learningForgettingEnabled: () => false,
+      clock: createFakeClock(NOW),
+      logger: createMockLogger(),
+      learningOutcomeEnabled: () => true,
+    });
+
+    // No traceId on the payload AND the emit is OUTSIDE any ALS scope (mirrors the real
+    // emit site) → no trajectory identity → skip, never a wrong-trajectory resolve.
+    bus.emit("diagnostic:message_processed", diagnosticPayload({ traceId: undefined }));
+    await flushMicrotasks();
+
+    expect(resolve).not.toHaveBeenCalled();
+  });
+
+  // ── idempotency: a DAG turn fires BOTH events for one trajectory ──
+  //
+  // resolve() is a PURE read+fusion (no "resolved" column / no row-state mutation —
+  // sqlite-outcome-store.ts), so a second resolve for the same trajectory returns the
+  // SAME verdict and would re-run the whole reward/promote chain. A DAG turn fires BOTH
+  // graph:completed AND diagnostic:message_processed (executeAndDeliver emits the
+  // diagnostic at the end; the graph coordinator emits graph:completed during the run),
+  // so the loop MUST resolve/reward/promote a given trajectory exactly ONCE.
+  it("a DAG turn firing BOTH graph:completed AND diagnostic:message_processed resolves/rewards/promotes exactly once", async () => {
+    const bus = new TypedEventBus();
+    const { store, resolve } = makeStubStore(
+      baseVerdict({ outcome: "success", sources: ["pipeline"], recalledIds: ["m1"], usedSkillIds: ["s1"] }),
+    );
+    const us = mockUsefulnessStore();
+    const ls = mockLearnedSkillStore();
+    wireLearningOutcome({
+      eventBus: bus,
+      outcomeStore: store,
+      usefulnessStore: us.store,
+      learnedSkillStore: ls.store,
+      learningTuningEnabled: () => true,
+      learningForgettingEnabled: () => true,
+      learningSkillsEnabled: () => true,
+      learningSkillsPromoteAt: () => 1,
+      clock: createFakeClock(NOW),
+      logger: createMockLogger(),
+      learningOutcomeEnabled: () => true,
+    });
+
+    // BOTH events fire for the SAME trajectory (traceId === TRACE). graph:completed
+    // recovers the scope from ALS; diagnostic:message_processed keys off its payload.
+    withCtx(() => bus.emit("graph:completed", graphPayload({ status: "completed" })));
+    await flushMicrotasks();
+    bus.emit("diagnostic:message_processed", diagnosticPayload());
+    await flushMicrotasks();
+
+    // Exactly ONE resolve + ONE reward + ONE promote for the trajectory (no double-run).
+    expect(resolve).toHaveBeenCalledTimes(1);
+    expect(us.recordUsage).toHaveBeenCalledTimes(1);
+    expect(ls.promoteByName).toHaveBeenCalledTimes(1);
+  });
+
+  it("the dedup is PER-TRAJECTORY: two DISTINCT single-agent turns each resolve once", async () => {
+    const bus = new TypedEventBus();
+    const { store, resolve } = makeStubStore(
+      baseVerdict({ outcome: "success", sources: ["tool"], recalledIds: ["m1"] }),
+    );
+    const us = mockUsefulnessStore();
+    wireLearningOutcome({
+      eventBus: bus,
+      outcomeStore: store,
+      usefulnessStore: us.store,
+      learningTuningEnabled: () => true,
+      learningForgettingEnabled: () => true,
+      clock: createFakeClock(NOW),
+      logger: createMockLogger(),
+      learningOutcomeEnabled: () => true,
+    });
+
+    bus.emit("diagnostic:message_processed", diagnosticPayload({ traceId: "trace-A", sessionKey: "tenant-x:tg:uA" }));
+    await flushMicrotasks();
+    bus.emit("diagnostic:message_processed", diagnosticPayload({ traceId: "trace-B", sessionKey: "tenant-x:tg:uB" }));
+    await flushMicrotasks();
+
+    // Distinct trajectories → the dedup does NOT collapse them; each resolves once.
+    expect(resolve).toHaveBeenCalledTimes(2);
+    expect(resolve.mock.calls.map((c) => c[0]).sort()).toEqual(["trace-A", "trace-B"]);
+    expect(us.recordUsage).toHaveBeenCalledTimes(2);
+  });
+
+  it("is non-fatal: a diagnostic-triggered resolve that REJECTS does not throw out of the handler", async () => {
+    const bus = new TypedEventBus();
+    const observe = vi.fn(async (): Promise<Result<void, Error>> => ok(undefined));
+    const resolve = vi.fn(async () => {
+      throw new Error("db locked");
+    });
+    const prune = vi.fn(() => ({ changes: 0 }));
+    const logger = createMockLogger();
+    wireLearningOutcome({
+      eventBus: bus,
+      outcomeStore: { observe, resolve, prune },
+      usefulnessStore: mockUsefulnessStore().store,
+      learningTuningEnabled: () => false,
+      learningForgettingEnabled: () => false,
+      clock: createFakeClock(NOW),
+      logger,
+      learningOutcomeEnabled: () => true,
+    });
+
+    expect(() => bus.emit("diagnostic:message_processed", diagnosticPayload())).not.toThrow();
+    await flushMicrotasks();
+    expect(resolve).toHaveBeenCalledTimes(1);
+    expect(logger.warn).toHaveBeenCalled();
+  });
+});
+
 // ── SURFACE-07 / SEC-01: 202 adds NO new mutating-execution path ──
 //
 // The safety the read-only learned-skill surface buys (T-202-16): a surfaced
