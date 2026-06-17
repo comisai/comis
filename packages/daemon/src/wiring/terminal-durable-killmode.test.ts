@@ -64,3 +64,28 @@ describe("DUR-01: durable terminal sessions survive a daemon restart (KillMode=p
     expect(daemonUnit).toMatch(KILLMODE_PROCESS);
   });
 });
+
+// TERMRW-01 (live VPS 2026-06-17): the terminal driver's `filesystem: home` scope gives a driven
+// CLI its home READ-WRITE — its binary in `~/.local`, its state/creds in `~/.claude` / `~/.codex`.
+// But the bwrap jail binds the DAEMON's view of `~/`, so the unit's `ProtectHome=read-only` leaked
+// in and read-onlyed exactly those dirs → claude/codex couldn't write their state at launch and
+// EXITED instantly (proven live: read-only `~/.claude` → ~2s exit; `ReadWritePaths=<home>` → claude
+// builds+commits a project). The unit MUST grant the service home read-write (the bwrap jail + the
+// `~/.comis` mask are the real isolation; ProtectHome still hides /root + other users' homes).
+describe("TERMRW-01: the unit grants the service HOME read-write so driven CLIs persist state", () => {
+  // The home as a STANDALONE ReadWritePaths entry (not just `<home>/.npm` subdirs) — so a driven
+  // CLI's own state dirs (`~/.claude`, `~/.codex`, …) are writable. The negative lookahead `(?!/)`
+  // rejects the old subdir-only form (`@SVC_HOME@/.npm`), which left `~/.claude` read-only.
+  it("the canonical comis.service.template ReadWritePaths includes the whole service home", () => {
+    const content = readFileSync(resolve(repoRoot(), "packages/daemon/systemd/comis.service.template"), "utf8");
+    expect(content).toMatch(/ReadWritePaths=[^\n]*@SVC_HOME@(?!\/)/);
+  });
+
+  it("the deployed install.sh daemon unit ReadWritePaths includes the whole service home", () => {
+    const installSh = readFileSync(resolve(repoRoot(), "website/public/install.sh"), "utf8");
+    const start = installSh.indexOf("Description=Comis AI Agent Daemon");
+    const installIdx = installSh.indexOf("[Install]", start);
+    const daemonUnit = installSh.slice(start, installIdx >= 0 ? installIdx : undefined);
+    expect(daemonUnit).toMatch(/ReadWritePaths=[^\n]*\$\{COMIS_SVC_HOME\}(?!\/)/);
+  });
+});

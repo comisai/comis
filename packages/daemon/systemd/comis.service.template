@@ -97,14 +97,17 @@ EnvironmentFile=-@ENV_FILE@
 # --- Security Hardening ---
 
 # Filesystem protection.
-# ProtectHome=read-only hides /root and other users' homes from the service
-# while the explicit ReadWritePaths below punches through to @DATA_DIR@.
+# ProtectHome=read-only hides /root and other users' homes from the service;
+# ReadWritePaths below grants the service's OWN home back read-write.
 ProtectSystem=strict
 ProtectHome=read-only
 PrivateTmp=yes
-# Must match the --allow-fs-write set above — Node's permission model and
-# systemd's kernel-level ProtectHome both have to allow the same paths.
-ReadWritePaths=@DATA_DIR@ @SVC_HOME@/.npm @SVC_HOME@/.pi @SVC_HOME@/.cache @SVC_HOME@/.local/share
+# TERMRW-01: grant the WHOLE service home read-write. The terminal driver's `filesystem: home`
+# scope runs driven CLIs (claude, codex, …) that persist state in their own home dirs
+# (~/.claude, ~/.codex, ~/.local); the bwrap jail binds the DAEMON's view of ~/, so a read-only
+# home read-onlys those dirs and the CLI exits at launch. The bwrap jail (uid/network scope +
+# the ~/.comis secrets mask) is the real isolation; ProtectHome still hides other users' homes.
+ReadWritePaths=@DATA_DIR@ @SVC_HOME@
 
 # Memory protection
 # MemoryDenyWriteExecute intentionally omitted — would break V8 JIT + WebAssembly

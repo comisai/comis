@@ -3791,12 +3791,14 @@ EnvironmentFile=-${COMIS_ENV_FILE}
 ProtectSystem=strict
 ProtectHome=read-only
 ${COMIS_PRIVATE_TMP_LINE}
-# ReadWritePaths punches through ProtectHome=read-only for each of the runtime
-# write paths declared in --allow-fs-write above. Must match them or the Node
-# permission model will pass and the kernel will still deny.
-# ~/.cache is carved out for uv/uvx (Python-based MCP servers) — uv stores its
-# tool cache there and spawns as a non-Node child not subject to --allow-fs-write.
-ReadWritePaths=${COMIS_DATA_DIR} ${COMIS_SVC_HOME}/.npm ${COMIS_SVC_HOME}/.pi ${COMIS_SVC_HOME}/.cache${COMIS_BROWSER_RW_PATHS}
+# ReadWritePaths punches through ProtectHome=read-only. TERMRW-01: it grants the WHOLE
+# service home read-write — the terminal driver's `filesystem: home` scope runs driven CLIs
+# (claude, codex, …) that keep state in their own home dirs (~/.claude, ~/.codex, ~/.local),
+# and the bwrap jail binds the DAEMON's view of ~/, so a read-only home read-onlys exactly
+# those dirs and the CLI exits at launch (can't write its state). The bwrap jail (uid/network
+# scope + the ~/.comis secrets mask) is the real isolation; ProtectHome=read-only still hides
+# /root and OTHER users' homes. (uv/uvx ~/.cache, ~/.npm, etc. are subsumed by the home grant.)
+ReadWritePaths=${COMIS_DATA_DIR} ${COMIS_SVC_HOME}${COMIS_BROWSER_RW_PATHS}
 
 # Privilege escalation prevention
 NoNewPrivileges=yes
