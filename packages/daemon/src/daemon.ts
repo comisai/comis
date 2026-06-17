@@ -170,6 +170,7 @@ import {
 // EXACT completion-path resolveAgentModel (I4 lockstep / RES-01). Imported
 // directly (not via the wiring barrel) to avoid widening the barrel surface.
 import { resolveAgentMainProvider } from "./wiring/setup-agents/setup-agents-tooling.js";
+import { seedBundledSkills, defaultSeedBundledSkillsDeps } from "./wiring/seed-bundled-skills.js";
 // createModelCatalog + resolveWorkspaceDir live in @comis/core.
 import { createModelCatalog, resolveWorkspaceDir } from "@comis/core";
 import {
@@ -1579,45 +1580,16 @@ async function bootFoundation(
       })
     : undefined;
 
-  // 6.5.9. Seed bundled skill-creator into user data dir (version-aware).
-  // Inlined seedBundledSkillCreator: idempotent — only writes if the
-  // destination is missing OR the bundled version is newer.
-  (() => {
-    const skillsTarget = safePath(dataDir, "skills");
-    const skillCreatorDest = safePath(skillsTarget, "skill-creator");
-    const __filename = fileURLToPath(import.meta.url);
-    // Relative path resolves to packages/daemon/bundled-skills/skill-creator
-    // from this file's location in packages/daemon/src/.
-    const bundledSrc = pathResolve(__filename, "../../bundled-skills/skill-creator");
-    if (!existsSync(bundledSrc)) return;
-    const bundledSkillMd = safePath(bundledSrc, "SKILL.md");
-    const installedSkillMd = safePath(skillCreatorDest, "SKILL.md");
-    let shouldSeed = !existsSync(skillCreatorDest);
-    if (!shouldSeed && existsSync(bundledSkillMd) && existsSync(installedSkillMd)) {
-      const extractVersion = (path: string): string | undefined => {
-        try {
-          const head = readFileSync(path, "utf-8").slice(0, 512);
-          const match = head.match(/^version:\s*["']?([^"'\n]+)/m);
-          return match?.[1]?.trim();
-        } catch { return undefined; }
-      };
-      const bundledVersion = extractVersion(bundledSkillMd);
-      const installedVersion = extractVersion(installedSkillMd);
-      if (bundledVersion && bundledVersion !== installedVersion) {
-        shouldSeed = true;
-        agentLogger.info(
-          { skill: "skill-creator", installedVersion: installedVersion ?? "none", bundledVersion },
-          "Bundled skill-creator version newer than installed — updating",
-        );
-      }
-    }
-    if (shouldSeed) {
-      // fs-safe-allowed: bundled-skill seeding into `<dataDir>/skills/`; follow-up plan should migrate to ensureContainedDir (paired with the cpSync recursive copy below which is also outside substrate)
-      mkdirSync(skillsTarget, { recursive: true });
-      cpSync(bundledSrc, skillCreatorDest, { recursive: true });
-      agentLogger.info({ skill: "skill-creator" }, "Bundled skill-creator seeded into data directory");
-    }
-  })();
+  // 6.5.9. Seed ALL bundled skills into the user data dir (version-aware, AUTO-SCANNED).
+  // SKILLS-SEED-01: generalized from the former single skill-creator IIFE — every
+  // `bundled-skills/<name>/` (skill-creator, claude-code, codex, …) is seeded into
+  // `<dataDir>/skills/<name>`, so shipping a bundled skill is ZERO engine code. Idempotent:
+  // re-seeds only when missing or the bundled `version:` differs (see seed-bundled-skills.ts).
+  {
+    // Relative path resolves to packages/daemon/bundled-skills from this file in packages/daemon/src/.
+    const bundledSkillsRoot = pathResolve(fileURLToPath(import.meta.url), "../../bundled-skills");
+    seedBundledSkills(defaultSeedBundledSkillsDeps(bundledSkillsRoot, safePath(dataDir, "skills"), agentLogger));
+  }
 
   // Mutate boot with all Group A foundation fields. The 2 forward-ref slots
   // (channelPluginsRef, bgNotifyRef) were eagerly initialized by
