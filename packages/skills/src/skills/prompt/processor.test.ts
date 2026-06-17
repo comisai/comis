@@ -71,6 +71,7 @@ describe("formatAvailableSkillsXml", () => {
         `    <name>test</name>\n` +
         `    <description>A test</description>\n` +
         `    <location>/skills/test</location>\n` +
+        `    <source>bundled</source>\n` +
         `  </skill>\n` +
         `</available_skills>`,
     );
@@ -493,10 +494,11 @@ describe("SDK format compliance", () => {
     expect(result).toContain("<name>test-skill</name>");
     expect(result).toContain("<description>A test skill</description>");
     expect(result).toContain("<location>/skills/test-skill</location>");
+    expect(result).toContain("<source>bundled</source>");
     expect(result).toContain("</skill>");
 
-    // Verify child element nesting order: <skill> -> <name>, <description>, <location>
-    const skillBlockMatch = result.match(/<skill>\n\s+<name>.*<\/name>\n\s+<description>.*<\/description>\n\s+<location>.*<\/location>\n\s+<\/skill>/);
+    // Verify child element nesting order: <skill> -> <name>, <description>, <location>, <source>
+    const skillBlockMatch = result.match(/<skill>\n\s+<name>.*<\/name>\n\s+<description>.*<\/description>\n\s+<location>.*<\/location>\n\s+<source>.*<\/source>\n\s+<\/skill>/);
     expect(skillBlockMatch).not.toBeNull();
   });
 
