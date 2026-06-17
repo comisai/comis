@@ -108,10 +108,9 @@ export const MemoryEntityRowSchema = z.strictObject({
 /**
  * Schema for the `readUsefulness` projection (per-intent). The scoped `SELECT memory_id, intent, used_count,
  * ignored_count, last_useful_at, failure_count FROM memory_usefulness WHERE tenant_id=? AND
- * agent_id=? AND intent IN (?, '') AND memory_id IN (...)` read; tenant_id/agent_id
- * NOT projected (the WHERE pins them). `intent` IS projected (the per-intent vs
- * global-`''` bucket), NON-nullable (NOT NULL DEFAULT '' — global is `''`, never
- * NULL); `last_useful_at` nullable (NULL until first "used"). Via `createRowMapper`.
+ * agent_id=? AND intent IN (?, '') AND memory_id IN (...)` read; tenant_id/agent_id NOT
+ * projected (the WHERE pins them). `intent` IS projected (per-intent vs global-`''`),
+ * NON-nullable (NOT NULL DEFAULT ''); `last_useful_at` nullable (NULL until first "used"). Via `createRowMapper`.
  */
 export const MemoryUsefulnessRowSchema = z.strictObject({
   memory_id: z.string(),
@@ -127,13 +126,12 @@ export const MemoryUsefulnessRowSchema = z.strictObject({
 
 /**
  * Schema for the lifecycle-sweep candidate-scan projection — the scoped
- * `SELECT m.id, …, m.pinned, m.trust_level, SUM(u.failure_count) FROM memories m
- * LEFT JOIN memory_usefulness u … WHERE m.tenant_id=? AND m.agent_id=?` the sweep
- * uses to compute each candidate's decayed strength (failure_count-coupled) + tier
- * + eviction candidacy (tenant_id/agent_id NOT projected — the WHERE pins them).
- * Markers + occurred_at + proof_count + failure_count are `.nullable()` (NULL =
- * absent/raw); `memory_type` NOT NULL (DEFAULT 'semantic') drives β; `pinned`/
- * `trust_level` feed the FORGET-03 exemptions. Via `createRowMapper`.
+ * `SELECT m.id, …, m.pinned, m.trust_level, SUM(u.failure_count), MAX(u.last_useful_at)
+ * FROM memories m LEFT JOIN memory_usefulness u … WHERE m.tenant_id=? AND m.agent_id=?`
+ * the sweep uses to compute each candidate's decayed strength (failure_count-coupled) +
+ * tier + eviction candidacy (tenant_id/agent_id NOT projected — the WHERE pins them).
+ * Markers + occurred_at + proof_count + failure_count + last_useful_at are `.nullable()`;
+ * `memory_type` NOT NULL drives β; `pinned`/`trust_level` feed the FORGET-03 exemptions. Via `createRowMapper`.
  */
 export const MemoryLifecycleRowSchema = z.strictObject({
   id: z.string(),
