@@ -120,6 +120,15 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   "learning:skill_synthesized": "learning.skill_synthesized",
   "learning:skill_validated": "learning.skill_validated",
 
+  // SURFACE-06 (v2.26 Verified Learning WS2, Phase 202 Plan 03): the promote/demote
+  // telemetry. Both DAEMON-emitted (the promote/demote loop, Plan 05 — NOT agent/
+  // orchestrator) so the arch emit-scanner does not require them; mapped here so OBS-02
+  // `comis explain` can reconstruct a promotion/demotion. Content-free: the COUNT ONLY —
+  // NEVER an id-list, a procedure body, or a script (SEC-01 §7). They fold into the
+  // shared { count } translator case (translate-payload.ts).
+  "learning:skill_promoted": "learning.skill_promoted",
+  "learning:skill_demoted": "learning.skill_demoted",
+
   // ---- Background task lifecycle (T2.2 / F9) ----
   // The promote/complete/fail transitions of a long-running tool detached past the
   // execute() boundary — previously emitted but UNMAPPED (invisible to comis explain; a

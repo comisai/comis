@@ -277,7 +277,9 @@ export function translatePayload(
     case "learning:memory_demoted":
     case "learning:memory_evicted":
     case "learning:skill_synthesized":
-      // FORGET-06 / SKILL-09: the soft-eviction / admitted-skill COUNT ONLY — never an id-list, procedure body, or script (§2.7 / SEC-01); the record TYPE conveys demoted vs evicted vs synthesized.
+    case "learning:skill_promoted": // SURFACE-06: counts ONLY (SEC-01)
+    case "learning:skill_demoted": // SURFACE-06: counts ONLY (SEC-01)
+      // FORGET-06 / SKILL-09 / SURFACE-06: the soft-eviction / admitted / promoted / demoted COUNT ONLY — never an id-list, procedure body, or script (§2.7 / SEC-01); the record TYPE conveys which transition.
       return { count: payload.count };
     case "learning:skill_validated": // SKILL-09: the verdict BOOLEANS + coverage CLOSED-ENUM ONLY — NEVER a field name/finding/script (SEC-01).
       return { staticOk: payload.staticOk, dynamicOk: payload.dynamicOk, coverage: payload.coverage };

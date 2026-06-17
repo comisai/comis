@@ -93,6 +93,11 @@ export const TRAJECTORY_EVENT_TYPES = [
   // body / script / finding (SEC-01). Daemon-side emit; bridged for `comis explain` (OBS-02).
   "learning.skill_synthesized",
   "learning.skill_validated",
+  // SURFACE-06 (v2.26 WS2, Phase 202): the promote/demote telemetry — the COUNT ONLY,
+  // NEVER an id-list / procedure body / script (SEC-01). Daemon-side emit (Plan 05);
+  // bridged for `comis explain` (OBS-02).
+  "learning.skill_promoted",
+  "learning.skill_demoted",
 
   // Background task lifecycle (T2.2 / F9): promote/complete/fail of a long-running tool
   // detached past the execute() boundary (content-free — ids + durationMs only).
