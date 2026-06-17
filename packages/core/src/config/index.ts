@@ -62,6 +62,14 @@ export type { MemoryUsefulnessJudgeConfig } from "./schema-memory-usefulness-jud
 export { LearningOutcomeConfigSchema } from "./schema-learning-outcome.js";
 export type { LearningOutcomeConfig } from "./schema-learning-outcome.js";
 
+// Learning-tuning (Verified Learning WS3 / ranking) schema — per-agent, default-OFF
+export { LearningTuningConfigSchema } from "./schema-learning-tuning.js";
+export type { LearningTuningConfig } from "./schema-learning-tuning.js";
+
+// Learning-forgetting (Verified Learning WS4 / forgetting) schema — per-agent, default-OFF
+export { LearningForgettingConfigSchema } from "./schema-learning-forgetting.js";
+export type { LearningForgettingConfig } from "./schema-learning-forgetting.js";
+
 // Memory triple-extraction schema (Verified Learning WS7) — per-agent, default-OFF
 export { MemoryTripleExtractionConfigSchema } from "./schema-memory-triple-extraction.js";
 export type { MemoryTripleExtractionConfig } from "./schema-memory-triple-extraction.js";

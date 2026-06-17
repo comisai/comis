@@ -29,6 +29,8 @@ import { SocialModelingConfigSchema } from "../schema-social-modeling.js";
 import { DialecticConfigSchema } from "../schema-dialectic.js";
 import { MemoryUsefulnessJudgeConfigSchema } from "../schema-memory-usefulness-judge.js";
 import { LearningOutcomeConfigSchema } from "../schema-learning-outcome.js";
+import { LearningTuningConfigSchema } from "../schema-learning-tuning.js";
+import { LearningForgettingConfigSchema } from "../schema-learning-forgetting.js";
 import { MemoryTripleExtractionConfigSchema } from "../schema-memory-triple-extraction.js";
 import { MemoryOnlineTuningConfigSchema } from "../schema-memory-online-tuning.js";
 import { MemoryLifecycleConfigSchema } from "../schema-memory-lifecycle.js";
@@ -415,6 +417,19 @@ export const PerAgentConfigSchema = AgentConfigSchema.extend({
    *  default is disabled, `.parse({})` produces a dormant block — force-disable on
    *  the master switch lands in Plan 04. */
   learningOutcome: LearningOutcomeConfigSchema.default(() => LearningOutcomeConfigSchema.parse({})),
+  /** Tuned-alpha learner tuning (Verified Learning WS3 / ranking). Opt-IN posture:
+   *  default-OFF. The on/off switch + bandit/per-intent/exploration knobs the daemon
+   *  reward seam, the bandit cron, and the per-intent recall apply all gate on. Composes
+   *  WITH (does not replace) memoryOnlineTuning + rag.onlineTuning; the master cost switch
+   *  force-disables it at the registration site (a later plan). */
+  learningTuning: LearningTuningConfigSchema.default(() => LearningTuningConfigSchema.parse({})),
+  /** Soft-eviction policy (Verified Learning WS4 / forgetting). Opt-IN posture: default-OFF.
+   *  The on/off switch + failurePenalty/strengthThreshold knobs the lifecycle sweep's eviction
+   *  BEHAVIOR reads. Composes WITH (does not replace) memoryLifecycle + rag.forget; the master
+   *  cost switch force-disables it at the registration site (a later plan). */
+  learningForgetting: LearningForgettingConfigSchema.default(() =>
+    LearningForgettingConfigSchema.parse({}),
+  ),
   /** Offline triple-extraction cron (Verified Learning WS7). Opt-IN posture: default-OFF
    *  (the lone OFF-by-default learning seam alongside learningOutcome). `.parse({})` yields a
    *  dormant block; the master cost switch force-disables it at the registration site. */
