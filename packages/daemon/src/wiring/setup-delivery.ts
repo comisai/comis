@@ -58,8 +58,17 @@ export async function setupDeliveryQueue(deps: {
   eventBus: TypedEventBus;
   logger: ComisLogger;
   channelAdapters: Map<string, DeliveryAdapter>;
+  /**
+   * REACT-02 (Verified Learning, Phase 199): OPTIONAL outbound-message → trajectory
+   * capture, threaded into every drain pass. `undefined` when learning-outcome is
+   * disabled for all agents → the drain does ZERO extra work (byte-identity).
+   */
+  recordOutboundMessage?: (
+    messageId: string,
+    scope: { traceId: string; tenantId: string; agentId: string; sessionId: string },
+  ) => void;
 }): Promise<DeliveryQueueResult> {
-  const { db, config, eventBus, logger, channelAdapters } = deps;
+  const { db, config, eventBus, logger, channelAdapters, recordOutboundMessage } = deps;
   const queueConfig = config.deliveryQueue;
 
   // 1. Adapter creation: no-op when disabled
@@ -100,6 +109,7 @@ export async function setupDeliveryQueue(deps: {
       logger,
       drainBudgetMs: queueConfig.drainBudgetMs,
       defaultMaxAttempts: queueConfig.defaultMaxAttempts,
+      recordOutboundMessage,
     });
     if (passResult.hadEntries) {
       lastDrainHadPending = true;
@@ -190,8 +200,19 @@ export async function drainDeliveryQueue(deps: {
   logger: ComisLogger;
   drainBudgetMs: number;
   defaultMaxAttempts: number;
+  /**
+   * REACT-02 (Verified Learning, Phase 199): capture (platform messageId →
+   * trajectory scope) for an agent-authored OUTBOUND message so an inbound
+   * reaction can resolve its trajectory. OPTIONAL — `undefined` when learning-
+   * outcome is disabled for every agent (the byte-identity default → the drain
+   * does ZERO extra work). Called ONLY on a successful ack with a non-null traceId.
+   */
+  recordOutboundMessage?: (
+    messageId: string,
+    scope: { traceId: string; tenantId: string; agentId: string; sessionId: string },
+  ) => void;
 }): Promise<{ hadEntries: boolean }> {
-  const { deliveryQueue, channelAdapters, eventBus, logger, drainBudgetMs, defaultMaxAttempts } = deps;
+  const { deliveryQueue, channelAdapters, eventBus, logger, drainBudgetMs, defaultMaxAttempts, recordOutboundMessage } = deps;
   const drainStart = systemNowMs();
   const deadline = drainStart + drainBudgetMs;
 
@@ -249,6 +270,21 @@ export async function drainDeliveryQueue(deps: {
     if (sendResult.ok) {
       await deliveryQueue.ack(entry.id, sendResult.value);
       delivered++;
+
+      // REACT-02: capture (platform messageId → trajectory scope) for inbound-
+      // reaction resolution. Agent-authored OUTBOUND only (the delivery queue is
+      // outbound); entry.traceId === trajectoryId, set from the request ALS at
+      // enqueue (delivery-service.ts). A null traceId (no trajectory) is NOT
+      // mapped. The callback is undefined when learning-outcome is disabled for all
+      // agents → zero extra work (byte-identity).
+      if (entry.traceId !== null && recordOutboundMessage !== undefined) {
+        recordOutboundMessage(sendResult.value, {
+          traceId: entry.traceId,
+          tenantId: entry.tenantId,
+          agentId: (options.agentId as string) ?? entry.tenantId,
+          sessionId: entry.traceId, // session identity falls back to the trajectory id (scope-consistent)
+        });
+      }
 
       // Emit notification:delivered for notification-origin entries
       if (options.origin === "notification") {

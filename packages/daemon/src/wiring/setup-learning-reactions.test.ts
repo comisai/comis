@@ -330,10 +330,15 @@ describe("wireLearningCorrection — correction → prior-trajectory observe (CO
   function makeSessionMap() {
     const inner = createReactionTrajectoryMap({ clock: createFakeClock(NOW), timers: createFakeTimers(NOW) });
     return {
-      recordSessionTrajectory: (sk: string, trajectoryId: string): void =>
-        inner.record(sk, { traceId: trajectoryId, tenantId: TENANT, agentId: AGENT, sessionId: sk }),
-      lastTrajectoryForSession: (sk: string): string | undefined => inner.lookup(sk)?.traceId,
+      recordSessionTrajectory: (sk: string, scope: { traceId: string; tenantId: string; agentId: string; sessionId: string }): void =>
+        inner.record(sk, scope),
+      lastTrajectoryForSession: (sk: string) => inner.lookup(sk),
     };
+  }
+
+  /** Seed a prior trajectory under a session key with the default scope. */
+  function seedPrior(map: ReturnType<typeof makeSessionMap>, sk: string, traceId = TRACE): void {
+    map.recordSessionTrajectory(sk, { traceId, tenantId: TENANT, agentId: AGENT, sessionId: sk });
   }
 
   it("first-GREEN end-to-end join: graph:completed(ALS sessionKey) → message:received(same key) observes a 'corrected' outcome against the prior trajectory", async () => {
@@ -384,7 +389,7 @@ describe("wireLearningCorrection — correction → prior-trajectory observe (CO
     const bus = new TypedEventBus();
     const sk = sessionKey();
     const sessionMap = makeSessionMap();
-    sessionMap.recordSessionTrajectory(formatSessionKey(sk), TRACE);
+    seedPrior(sessionMap, formatSessionKey(sk));
     const detector = vi.fn(
       async (): Promise<CorrectionVerdict> => ({ isCorrection: false, confidence: 0.1, cappedConfidence: 0.1, outcome: "corrected", source: "correction" }),
     );
@@ -458,7 +463,7 @@ describe("wireLearningCorrection — correction → prior-trajectory observe (CO
     const bus = new TypedEventBus();
     const sk = sessionKey();
     const sessionMap = makeSessionMap();
-    sessionMap.recordSessionTrajectory(formatSessionKey(sk), TRACE);
+    seedPrior(sessionMap, formatSessionKey(sk));
     const detector = vi.fn(async (): Promise<CorrectionVerdict> => ({ isCorrection: true, confidence: 0.9, cappedConfidence: 0.6, outcome: "corrected", source: "correction" }));
     const { deps, observe } = makeDeps({
       eventBus: bus,
@@ -482,7 +487,7 @@ describe("wireLearningCorrection — correction → prior-trajectory observe (CO
     const bus = new TypedEventBus();
     const sk = sessionKey();
     const sessionMap = makeSessionMap();
-    sessionMap.recordSessionTrajectory(formatSessionKey(sk), TRACE);
+    seedPrior(sessionMap, formatSessionKey(sk));
     const detector = vi.fn(async (): Promise<CorrectionVerdict | undefined> => undefined);
     const { deps, observe } = makeDeps({ eventBus: bus, correctionDetector: detector, ...sessionMap });
     wireLearningCorrection(deps);

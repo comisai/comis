@@ -616,3 +616,12 @@ export type { SessionLatch } from "./executor/session-latch.js";
 
 // Background task infrastructure
 export * from "./background/index.js";
+
+// Correction-detector VERDICT type (Verified Learning WS1, Phase 199 P0.5). The
+// daemon reaction/correction wiring (setup-learning-reactions) consumes this type
+// for the detector seam it injects. The `createCorrectionDetectorSeam` factory +
+// `CORRECTION_REWARD_CAP` re-exports land alongside their daemon consumer in the
+// composition helper (Task 3) so the public-export-consumers gate never sees an
+// orphan. The prompt + triple-bound (wrap + reward-cap + strip-parse) stay
+// agent-internal.
+export type { CorrectionVerdict } from "./memory/index.js";
