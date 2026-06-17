@@ -201,7 +201,7 @@ const CreateParams = Type.Object({
   allowId: Type.String({ description: "Allowlist entry id to spawn under" }),
   command: Type.String({ description: "The binary to drive (an absolute/relative path; canonical-matched)" }),
   args: Type.Optional(Type.Array(Type.String(), { description: "Arguments appended after the entry's argsPrefix" })),
-  cwd: Type.Optional(Type.String({ description: "Working directory for the session (honored only if within the session workspace; else clamped to it)" })),
+  cwd: Type.Optional(Type.String({ description: "Working directory for the session (honored only if within the session workspace; else clamped to it). For a CODING PROJECT do NOT use this — pass `project` instead; `cwd` does NOT create a named, retrievable project folder and a path outside the workspace is silently clamped." })),
   project: Type.Optional(
     Type.String({
       description:
@@ -210,7 +210,7 @@ const CreateParams = Type.Object({
   ),
   cols: Type.Optional(Type.Integer({ description: "Terminal columns (default 120)" })),
   rows: Type.Optional(Type.Integer({ description: "Terminal rows (default 40)" })),
-  name: Type.Optional(Type.String({ description: "Human-readable session name" })),
+  name: Type.Optional(Type.String({ description: "Human-readable display label for the session (shown in listings) — this is NOT the project folder. To name a coding project's folder, use `project`." })),
   hintPatterns: Type.Optional(Type.Array(Type.String(), { description: "Safe-interaction hint patterns" })),
 });
 
@@ -325,7 +325,8 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
     name: "terminal_session_create",
     label: "Terminal: create session",
     description:
-      "Start an interactive terminal session driving an allowlisted binary. Rejected unless the canonical command matches an operator allowlist entry.",
+      "Start an interactive terminal session driving an allowlisted binary. Rejected unless the canonical command matches an operator allowlist entry. " +
+      "FOR A CODING PROJECT (anything you may revisit to fix a bug or add a feature), ALWAYS pass `project: <short-kebab-name>` — the work then lives in a persistent, named folder `<workspace>/projects/<name>/` that you can return to later by creating a new session with the SAME `project` name (the folder is reused). Do NOT use `cwd` and do NOT rely on the display `name` for this — only `project` creates a retrievable per-project folder. To see existing projects to continue, list `<workspace>/projects/`.",
     parameters: CreateParams,
 
     // The SDK 4-arg execute — the turn's AbortSignal is arg 3. We OBSERVE it
