@@ -23,6 +23,7 @@ import { describe, it, expect, vi } from "vitest";
 import { TypedEventBus, runWithContext } from "@comis/core";
 import type { EventMap, OutcomeObservation, ResolvedOutcome, LearningScope } from "@comis/core";
 import type { UsefulnessScope, MemoryUsefulnessStore, UsefulnessSignal } from "@comis/core";
+import type { LearnedSkillStorePort } from "@comis/core";
 import { ok, err, type Result } from "@comis/shared";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
@@ -80,6 +81,28 @@ function baseVerdict(over?: Partial<ResolvedOutcome>): ResolvedOutcome {
     usedSkillIds: [],
     ...over,
   };
+}
+
+/**
+ * A controllable LearnedSkillStorePort stub for the SURFACE-04/05 promote/demote
+ * loop. Exposes ONLY the promote/demote write methods the resolve seam calls (the
+ * loop reads NO per-skill proof/trust — the threshold gate is store-side, Plan 02);
+ * the read/admit/evict methods are present (the port shape) but unused by the seam.
+ */
+function mockLearnedSkillStore() {
+  const promote = vi.fn(
+    async (_id: string, _scope: LearningScope, _threshold: number): Promise<Result<void, Error>> => ok(undefined),
+  );
+  const demote = vi.fn(async (_id: string, _scope: LearningScope): Promise<Result<void, Error>> => ok(undefined));
+  const store = {
+    promote,
+    demote,
+    admit: vi.fn(async () => ok({ id: "x", admitted: true })),
+    get: vi.fn(async () => ok(undefined)),
+    list: vi.fn(async () => ok([])),
+    evict: vi.fn(async () => ok(undefined)),
+  } as unknown as LearnedSkillStorePort;
+  return { store, promote, demote };
 }
 
 function toolPayload(over?: Partial<EventMap["tool:executed"]>): EventMap["tool:executed"] {
@@ -809,6 +832,228 @@ describe("wireLearningOutcome — memory:skill_used → observe(usedSkillIds) (A
     await flushMicrotasks();
 
     expect(observe).not.toHaveBeenCalled();
+  });
+});
+
+// ── SURFACE-04/05/06 + OBS-01: the promote/demote loop at the resolve seam ──
+//
+// On a graph:completed → resolve() carrying the ATTR-02 `usedSkillIds`, a `success`
+// verdict PROMOTES each used skill (Plan 02's threshold-gated store call) and a
+// corroborated `failure`/`corrected` verdict DEMOTES it ONLY when the decay-aware
+// trend transitions to WEAKENING — so a single induced failure on a well-reused
+// procedure does NOT archive it. The 2 emits are plain counts-only.
+describe("wireLearningOutcome — learned-skill promote/demote at resolve() (SURFACE-04/05/06, OBS-01)", () => {
+  /** Wire the seam with the learned-skill loop enabled and a controllable verdict. */
+  function wireSkillSeam(
+    verdict: ResolvedOutcome,
+    opts?: {
+      skillsEnabled?: boolean;
+      promoteAt?: number;
+      learnedSkillStore?: ReturnType<typeof mockLearnedSkillStore>;
+      logger?: ReturnType<typeof createMockLogger>;
+      bus?: TypedEventBus;
+    },
+  ): {
+    bus: TypedEventBus;
+    ls: ReturnType<typeof mockLearnedSkillStore>;
+  } {
+    const bus = opts?.bus ?? new TypedEventBus();
+    const { store } = makeStubStore(verdict);
+    const ls = opts?.learnedSkillStore ?? mockLearnedSkillStore();
+    wireLearningOutcome({
+      eventBus: bus,
+      outcomeStore: store,
+      usefulnessStore: mockUsefulnessStore().store,
+      learnedSkillStore: ls.store,
+      learningTuningEnabled: () => false,
+      learningForgettingEnabled: () => false,
+      learningSkillsEnabled: () => opts?.skillsEnabled ?? true,
+      learningSkillsPromoteAt: () => opts?.promoteAt ?? 3,
+      clock: createFakeClock(NOW),
+      logger: opts?.logger ?? createMockLogger(),
+      learningOutcomeEnabled: () => true,
+    });
+    return { bus, ls };
+  }
+
+  async function drive(bus: TypedEventBus, sessionKey: string, trace: string): Promise<void> {
+    runWithContext(
+      { tenantId: "tenant-x", agentId: AGENT, sessionKey, traceId: trace } as never,
+      () => bus.emit("graph:completed", graphPayload({ status: "completed" })),
+    );
+    await flushMicrotasks();
+  }
+
+  it("SURFACE-04: a success verdict promotes EACH attributed usedSkillId with the configured threshold", async () => {
+    const { bus, ls } = wireSkillSeam(
+      baseVerdict({ outcome: "success", sources: ["pipeline"], usedSkillIds: ["s1", "s2"] }),
+      { promoteAt: 3 },
+    );
+    await drive(bus, SESSION_KEY, TRACE);
+
+    expect(ls.promote).toHaveBeenCalledTimes(2);
+    const calls = ls.promote.mock.calls.map((c) => [c[0], c[2]]);
+    expect(calls).toEqual([
+      ["s1", 3],
+      ["s2", 3],
+    ]);
+    // Scoped to the resolved (tenant, agent) — the SEC-01 isolation boundary.
+    const scope = ls.promote.mock.calls[0]![1];
+    expect(scope.tenantId).toBe("tenant-x");
+    expect(scope.agentId).toBe(AGENT);
+    expect(ls.demote).not.toHaveBeenCalled();
+  });
+
+  it("SURFACE-05: a DETERMINISTIC (tool) failure whose SUSTAINED trend reaches weakening demotes the skill", async () => {
+    // A deterministic source satisfies the corroboration gate on the FIRST failure;
+    // sustained failures drive the trend to weakening → demote fires.
+    const ls = mockLearnedSkillStore();
+    const bus = new TypedEventBus();
+    const verdict = baseVerdict({ outcome: "failure", sources: ["tool"], usedSkillIds: ["s1"], confidence: 0.9 });
+    wireSkillSeam(verdict, { learnedSkillStore: ls, bus });
+
+    // The trend needs SUSTAINED corroborated failure to weaken — drive several
+    // resolves; demote fires once the standing crosses the weakening band.
+    for (let i = 0; i < 6; i++) await drive(bus, SESSION_KEY, `${TRACE}-${i}`);
+    expect(ls.demote).toHaveBeenCalled();
+    expect(ls.demote.mock.calls[0]![0]).toBe("s1");
+    // demote scope is (tenant, agent).
+    const scope = ls.demote.mock.calls[0]![1];
+    expect(scope.tenantId).toBe("tenant-x");
+    expect(scope.agentId).toBe(AGENT);
+    expect(ls.promote).not.toHaveBeenCalled();
+  });
+
+  it("SURFACE-05 anti-induced-demotion (§12 first-RED): a SINGLE non-deterministic (reaction-only) failure does NOT demote (corroboration gate blocks)", async () => {
+    const { bus, ls } = wireSkillSeam(
+      baseVerdict({ outcome: "failure", sources: ["reaction"], usedSkillIds: ["s1"], confidence: 0.4 }),
+    );
+    await drive(bus, SESSION_KEY, TRACE);
+    // Single, non-deterministic, one session → the corroboration gate blocks any
+    // trend update → a correct procedure is NOT archived by one induced failure.
+    expect(ls.demote).not.toHaveBeenCalled();
+  });
+
+  it("SURFACE-05 anti-induced-demotion: a corroborated failure whose trend is STILL STABLE does NOT demote (well-reused skill, one failure)", async () => {
+    // A deterministic (corroborated) failure but only ONCE → the trend stays
+    // stable/strengthening (a single failure against a neutral/strong standing) →
+    // NO demote. Only SUSTAINED corroborated failure reaches weakening.
+    const { bus, ls } = wireSkillSeam(
+      baseVerdict({ outcome: "failure", sources: ["tool"], usedSkillIds: ["s1"], confidence: 0.9 }),
+    );
+    await drive(bus, SESSION_KEY, TRACE);
+    expect(ls.demote).not.toHaveBeenCalled();
+  });
+
+  it("SURFACE-06: a promote emits learning:skill_promoted with plain emit, COUNTS ONLY (no body/id-list)", async () => {
+    const bus = new TypedEventBus();
+    const emitSpy = vi.spyOn(bus, "emit");
+    const { ls } = wireSkillSeam(
+      baseVerdict({ outcome: "success", sources: ["pipeline"], usedSkillIds: ["s1", "s2"] }),
+      { bus },
+    );
+    await drive(bus, SESSION_KEY, TRACE);
+
+    expect(ls.promote).toHaveBeenCalledTimes(2);
+    const promoted = emitSpy.mock.calls.find((c) => c[0] === "learning:skill_promoted");
+    expect(promoted, "a promote must emit learning:skill_promoted").toBeDefined();
+    const payload = promoted![1] as { agentId: string; count: number; timestamp: number };
+    expect(payload.count).toBe(2);
+    expect(payload.agentId).toBe(AGENT);
+    // Counts-only firewall: NO body/script/id-list field on the payload.
+    expect(Object.keys(payload).sort()).toEqual(["agentId", "count", "timestamp"]);
+  });
+
+  it("SURFACE-06: a demote emits learning:skill_demoted with plain emit, COUNTS ONLY", async () => {
+    const ls = mockLearnedSkillStore();
+    const bus = new TypedEventBus();
+    const emitSpy = vi.spyOn(bus, "emit");
+    wireSkillSeam(
+      baseVerdict({ outcome: "failure", sources: ["tool"], usedSkillIds: ["s1"], confidence: 0.9 }),
+      { learnedSkillStore: ls, bus },
+    );
+    for (let i = 0; i < 6; i++) await drive(bus, SESSION_KEY, `${TRACE}-${i}`);
+
+    const demoted = emitSpy.mock.calls.find((c) => c[0] === "learning:skill_demoted");
+    expect(demoted, "a demote must emit learning:skill_demoted").toBeDefined();
+    const payload = demoted![1] as { agentId: string; count: number; timestamp: number };
+    expect(payload.count).toBeGreaterThanOrEqual(1);
+    expect(Object.keys(payload).sort()).toEqual(["agentId", "count", "timestamp"]);
+  });
+
+  it("byte-identity: learningSkills disabled (default) → a success/failure resolve calls NEITHER promote/demote NOR the 2 emits", async () => {
+    const bus = new TypedEventBus();
+    const emitSpy = vi.spyOn(bus, "emit");
+    const { ls } = wireSkillSeam(
+      baseVerdict({ outcome: "success", sources: ["pipeline"], usedSkillIds: ["s1"] }),
+      { skillsEnabled: false, bus },
+    );
+    await drive(bus, SESSION_KEY, TRACE);
+    expect(ls.promote).not.toHaveBeenCalled();
+    expect(ls.demote).not.toHaveBeenCalled();
+    expect(emitSpy.mock.calls.some((c) => c[0] === "learning:skill_promoted")).toBe(false);
+    expect(emitSpy.mock.calls.some((c) => c[0] === "learning:skill_demoted")).toBe(false);
+  });
+
+  it("byte-identity: NO learnedSkillStore injected → the loop is a no-op (the field is optional; pre-Plan-05 callers stay byte-identical)", async () => {
+    const bus = new TypedEventBus();
+    const { store } = makeStubStore(baseVerdict({ outcome: "success", usedSkillIds: ["s1"] }));
+    const emitSpy = vi.spyOn(bus, "emit");
+    // No learnedSkillStore / learningSkillsEnabled / learningSkillsPromoteAt deps.
+    wireLearningOutcome({
+      eventBus: bus,
+      outcomeStore: store,
+      usefulnessStore: mockUsefulnessStore().store,
+      learningTuningEnabled: () => false,
+      learningForgettingEnabled: () => false,
+      clock: createFakeClock(NOW),
+      logger: createMockLogger(),
+      learningOutcomeEnabled: () => true,
+    });
+    runWithContext(
+      { tenantId: "tenant-x", agentId: AGENT, sessionKey: SESSION_KEY, traceId: TRACE } as never,
+      () => bus.emit("graph:completed", graphPayload({ status: "completed" })),
+    );
+    await flushMicrotasks();
+    expect(emitSpy.mock.calls.some((c) => c[0] === "learning:skill_promoted")).toBe(false);
+  });
+
+  it("OBS-01: a promote/demote logs one INFO completion line with durationMs (counts/ids only)", async () => {
+    const logger = createMockLogger();
+    const { bus, ls } = wireSkillSeam(
+      baseVerdict({ outcome: "success", sources: ["pipeline"], usedSkillIds: ["s1"] }),
+      { logger },
+    );
+    await drive(bus, SESSION_KEY, TRACE);
+    expect(ls.promote).toHaveBeenCalledTimes(1);
+    const info = logger.info.mock.calls.find(
+      (c) =>
+        typeof (c[0] as { durationMs?: number }).durationMs === "number" &&
+        (c[0] as { promoted?: number }).promoted !== undefined,
+    );
+    expect(info, "a promote/demote must log one INFO completion line with durationMs + promoted/demoted counts").toBeDefined();
+    const fields = info![0] as { promoted: number; demoted: number; durationMs: number; agentId: string };
+    expect(fields.promoted).toBe(1);
+    expect(fields.agentId).toBe(AGENT);
+  });
+
+  it("is non-fatal: a promote that REJECTS WARNs (hint+errorKind) and does not throw out of the handler", async () => {
+    const ls = mockLearnedSkillStore();
+    ls.promote.mockImplementationOnce(async () => {
+      throw new Error("db locked");
+    });
+    const logger = createMockLogger();
+    const bus = new TypedEventBus();
+    wireSkillSeam(baseVerdict({ outcome: "success", sources: ["pipeline"], usedSkillIds: ["s1"] }), {
+      learnedSkillStore: ls,
+      logger,
+      bus,
+    });
+    await expect(drive(bus, SESSION_KEY, TRACE)).resolves.toBeUndefined();
+    const warn = logger.warn.mock.calls.find(
+      (c) => typeof (c[0] as { hint?: string }).hint === "string" && (c[0] as { errorKind?: string }).errorKind !== undefined,
+    );
+    expect(warn, "a promote write reject must WARN with hint+errorKind").toBeDefined();
   });
 });
 
