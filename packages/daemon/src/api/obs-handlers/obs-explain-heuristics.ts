@@ -431,7 +431,8 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
     };
   },
 
-  // 10) completed_with_tool_errors (CATCH-ALL — LAST, lowest priority). A
+  // 10) completed_with_tool_errors (the CATCH-ALL ACUTE cause — last of the acute
+  //     tier, above the BENIGN learning verdicts #11-13 below). A
   //     degraded session whose tool failures matched none of the named rules
   //     above (not misclassification, breaker, schema-strip, context-bloat,
   //     module-not-found, or timeout) used to fall through to a NULL verdict —
@@ -458,15 +459,59 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
     };
   },
 
-  // 11) outcome_unresolved (OBS-02, Phase 198 — LOWEST-priority, BENIGN). A
-  //     finished trajectory whose learning shadow saw the turn but where NO
-  //     signal tier resolved an outcome (outcomeResolved === false). Defer ≠
-  //     Retry: NOT a failure — dead-last, so every acute cause (and the catch-all
-  //     tool-failure rule) out-ranks it. Distinct from an explicit `unknown`
-  //     OUTCOME (which IS a resolution): this is "never resolvable", the
-  //     shadow-mode default with no deterministic tool/pipeline signal + judge
-  //     off. Absent learning block ⇒ no verdict; a resolved one ⇒ no verdict —
-  //     so it cannot regress the 678/503 fixtures (they carry no learning block).
+  // 11) learned_skill_failing (OBS-02, Phase 201 — LOW-priority, BENIGN). A
+  //     learned procedure was USED in a failed/corrected trajectory (skillFailures
+  //     non-empty). Ranks BELOW every acute tool-failure cause (incl. the catch-all
+  //     completed_with_tool_errors at #10) — it explains the LEARNING dimension,
+  //     never masks an acute error — but ABOVE the generic outcome_unresolved (a
+  //     named skill failure is more specific than "no outcome resolved"). Absent
+  //     learning block ⇒ no verdict; an empty skillFailures ⇒ no verdict — so it
+  //     cannot regress the 678/503 fixtures (they carry no learning block).
+  (s) => {
+    if (s.learning === undefined || s.learning.skillFailures.length === 0) return null;
+    return {
+      code: "learned_skill_failing",
+      detail:
+        `a learned procedure was used in failed/corrected trajectories ` +
+        `(${s.learning.skillFailures.length} skill(s): ${s.learning.skillFailures.join(", ")})`,
+      suggestedNextSteps: [
+        "inspect via comis memory skills; the procedure will demote on continued failure (Phase 202)",
+        "obs.explain depth=full",
+      ],
+    };
+  },
+
+  // 12) synthesis_abstained_low_capability (OBS-02, Phase 201 — BENIGN). The
+  //     skill-synthesis cron abstained because the agent's model tier is below the
+  //     capability gate (small/nano without a capable override). Defer ≠ Retry:
+  //     NOT a failure — every acute cause out-ranks it; it ranks ABOVE the generic
+  //     outcome_unresolved because the abstain is the SPECIFIC, named reason the
+  //     learning outcome stayed unresolved (specific-over-generic). Absent learning
+  //     block / a non-abstained run ⇒ no verdict (no fixture regression).
+  (s) => {
+    if (s.learning === undefined || !s.learning.synthesisAbstained) return null;
+    return {
+      code: "synthesis_abstained_low_capability",
+      detail:
+        "synthesis abstained — the agent's model tier is below the capability gate " +
+        "(small/nano without a capable override); this is BENIGN (Defer != Retry), not a failure",
+      suggestedNextSteps: [
+        "set a capable skillSynthesis tier override or raise the agent model tier",
+        "obs.explain depth=full",
+      ],
+    };
+  },
+
+  // 13) outcome_unresolved (OBS-02, Phase 198 — LOWEST-priority, BENIGN, the
+  //     generic learning catch-all). A finished trajectory whose learning shadow
+  //     saw the turn but where NO signal tier resolved an outcome (outcomeResolved
+  //     === false) AND neither named skill verdict above fired. Defer ≠ Retry: NOT
+  //     a failure — dead-last, so every acute cause (and the catch-all tool-failure
+  //     rule, and the two specific skill verdicts) out-ranks it. Distinct from an
+  //     explicit `unknown` OUTCOME (which IS a resolution): this is "never
+  //     resolvable", the shadow-mode default with no deterministic tool/pipeline
+  //     signal + judge off. Absent learning block ⇒ no verdict; a resolved one ⇒ no
+  //     verdict — so it cannot regress the 678/503 fixtures (they carry none).
   (s) => {
     if (s.learning === undefined || s.learning.outcomeResolved) return null;
     return {
