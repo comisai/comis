@@ -1,7 +1,7 @@
 ---
 name: codex
 type: prompt
-version: "1.1.0"
+version: "1.1.1"
 description: Drive the OpenAI Codex CLI interactively in a terminal session to build, fix, or extend software — launch it in a NAMED project folder, give it the task, detect completion, and verify. Use this when the user explicitly wants to use Codex (the OpenAI coding CLI) for a software task. For general coding without a named tool, prefer the claude-code skill. This is for INTERACTIVE sessions only; never the headless exec mode.
 ---
 
@@ -58,7 +58,7 @@ If a `read` shows either of these, Codex tried to start its own sandbox inside C
 
 ## 8. Slash commands (in-session)
 
-Type these into Codex's composer (`send_text` then Enter) — they run **inside Codex**, not the shell.
+Type these into Codex's composer (`send_text` then Enter) — they run **inside Codex**, not the shell. Issue them mid-session whenever the user asks, including **after a build is done** — don't end the turn at "build complete" if the user also asked for a session command.
 - **`/compact`** — summarize the conversation to free context and keep working; use it on a long build before you hit the limit (Codex also auto-compacts).
 - `/status` — session config + token usage. Codex has **no `/context`** — `/status` is how you check context/usage.
 - `/diff` — show the git diff (including untracked files).

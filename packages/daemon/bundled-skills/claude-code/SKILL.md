@@ -1,7 +1,7 @@
 ---
 name: claude-code
 type: prompt
-version: "1.1.1"
+version: "1.1.2"
 description: Drive the Claude Code CLI interactively in a terminal session to build, fix, or extend software — launch it in a NAMED project folder, give it the task, handle its interactive prompts via keystrokes, detect completion, and verify the result. Use whenever the user wants to write, build, debug, refactor, or test code or work on a software project, or asks to "use Claude" / "Claude Code" — even if they don't name the tool. This is for INTERACTIVE sessions only; never the headless one-shot mode.
 ---
 
@@ -70,7 +70,7 @@ Leave the session running if more follow-ups are likely; otherwise `terminal_ses
 
 ## Slash commands (in-session)
 
-Type these into Claude's `❯` composer (`send_text` then Enter, like any prompt) to manage the session — the same ones a developer uses. They run **inside Claude**, not the shell.
+Type these into Claude's `❯` composer (`send_text` then Enter, like any prompt) to manage the session — the same ones a developer uses. They run **inside Claude**, not the shell. Issue them mid-session whenever the user asks — including **after a build is done**; if a request bundles building *and* a session command (e.g. "build it, then switch to Opus"), do BOTH before reporting back — don't end the turn at "build complete".
 
 **Context — the ones that matter on a long build:**
 - **`/compact [focus]`** — summarize the conversation to free context and KEEP working. This is the recovery move when a long build slows, warns about context, or you want headroom before a big step. Optionally steer what to keep: `/compact keep the API design and the failing test`. (Claude also auto-compacts, but issue it yourself when a long task is dragging.)
@@ -78,7 +78,7 @@ Type these into Claude's `❯` composer (`send_text` then Enter, like any prompt
 - `/clear` — ⚠️ **WIPES the conversation** (fresh start). Only between UNRELATED tasks in the same session — **never mid-task** (you lose all the build context). Prefer `/compact`.
 
 **Model / cost / status:**
-- `/model` — switch model. Opens a **picker** → the session is now awaiting input: `send_key` ↑/↓ (or type a number) to choose, then Enter, then `read` to confirm.
+- `/model` — switch model. Opens a **picker** → the session is now awaiting input: `send_key` ↑/↓ (or type a number) to choose. ⚠️ **Enter saves it as the DEFAULT for ALL future sessions** — press **`s`** instead to switch for THIS session only. Only set a new default if the user explicitly wants a permanent change; otherwise use `s`. Then `read` to confirm.
 - `/usage` (alias `/cost`) — token spend + plan limits this session.
 - `/status` — model, account, connectivity (use it when something seems off).
 
