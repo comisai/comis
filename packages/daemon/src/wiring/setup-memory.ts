@@ -49,6 +49,7 @@ import {
 } from "../observability/recall-counters-wiring.js";
 import { wireMemoryUsefulness } from "./setup-memory-usefulness-wiring.js";
 import { setupLearningOutcomeWiring } from "./setup-learning.js";
+import { buildReactionWiringDeps, wireLearningReactions, wireLearningCorrection } from "./setup-learning-reactions.js";
 
 // ---------------------------------------------------------------------------
 // Result type
@@ -181,26 +182,22 @@ export interface MemoryResult {
    *  the shared `db` (no model/IO cost). Feedback loop dormant until `rag.feedback.enabled` (default OFF);
    *  the write-back subscriber is wired separately. */
   usefulnessStore: import("@comis/core").MemoryUsefulnessStore;
-  /** Tuned-alpha store. SOLE `TunedAlphaStore` adapter; built unconditionally on the shared `db`
-   *  (no model/IO cost). Dormant until BOTH `rag.onlineTuning.enabled` (read) AND
-   *  `memoryOnlineTuning.enabled` (the keyless __ONLINE_TUNING__ write) are on. Agent gets the port TYPE only. */
+  /** Tuned-alpha store. SOLE `TunedAlphaStore` adapter; shared `db`, no model/IO cost. Dormant
+   *  until BOTH `rag.onlineTuning.enabled` (read) AND `memoryOnlineTuning.enabled` (keyless write). */
   tunedAlphaStore: import("@comis/core").TunedAlphaStore;
-  /** Outcome-signal store (Verified Learning WS1). SOLE `OutcomeSignalPort` adapter; built
-   *  unconditionally on the shared `db` (no model/IO cost; gated at observe/resolve; agent never
-   *  receives it — SEC-01). Returned so the daemon can `prune(retentionDays)` at startup (OUTCOME-07,
-   *  unconditional anti-DoS); the observe/resolve subscriber is wired here. */
+  /** Outcome-signal store (Verified Learning WS1). SOLE `OutcomeSignalPort` adapter; shared `db`,
+   *  no model/IO cost; gated at observe/resolve (agent never receives it — SEC-01). Returned so the
+   *  daemon can `prune(retentionDays)` at startup (OUTCOME-07); the observe/resolve subscriber is wired here. */
   outcomeStore: import("@comis/core").OutcomeSignalPort;
-  /** Memory-lifecycle sweep store. SOLE `MemoryLifecyclePort` adapter; built unconditionally on the
-   *  shared `db` (no model/IO cost). DORMANT (0 rows swept even when enabled); the KEYLESS
-   *  __MEMORY_LIFECYCLE__ cron registers only when `memoryLifecycle.enabled` (default OFF). Agent gets the port TYPE only. */
+  /** REACT-02 (Verified Learning, Phase 199): outbound-message → trajectory capture callback, threaded into
+   *  the delivery drain. `undefined` when learning-outcome is off for all agents (byte-identity: zero extra work). */
+  recordOutboundMessage?: (messageId: string, scope: { traceId: string; tenantId: string; agentId: string; sessionId: string }) => void;
+  /** Memory-lifecycle sweep store. SOLE `MemoryLifecyclePort` adapter; shared `db`, no model/IO cost. DORMANT
+   *  (0 rows swept even when enabled); the KEYLESS __MEMORY_LIFECYCLE__ cron registers only when `memoryLifecycle.enabled`. */
   memoryLifecycleStore: import("@comis/core").MemoryLifecyclePort;
-  /** Live in-process recall-counter wiring. The single
-   *  `wireRecallCounters(container.eventBus)` subscriber is stood up HERE — the
-   *  memory composition site that already holds the event bus — so there is ONE
-   *  shared registry for the daemon lifetime (resets on restart).
-   *  The daemon threads this `{ snapshot }` into `MemoryApiDeps.recallCounters`
-   *  so the `memory.recall_stats` handler reads the SAME live counters the
-   *  `memory:*` bus events feed (NOT a fresh registry per call). */
+  /** Live in-process recall-counter wiring. The single `wireRecallCounters(container.eventBus)` subscriber is
+   *  stood up HERE (the memory composition site holding the bus) → ONE shared registry for the daemon lifetime.
+   *  Threaded into `MemoryApiDeps.recallCounters` so `memory.recall_stats` reads the SAME live counters. */
   recallCounters: RecallCountersWiring;
   /** Dispose callback for the reranker's native context (ranking ctx -> model -> llama).
    *  Registered in the daemon shutdown path; undefined when no reranker was built. */
@@ -276,8 +273,10 @@ export async function setupMemory(deps: {
   memoryLogger: ComisLogger;
   /** Wall-clock + monotonic time reads. */
   clock: import("@comis/core").ClockPort;
+  /** setTimeout scheduling (TimerPort) — the reaction trajectory map + rate limiter need it (REACT-02/03). */
+  timers: import("@comis/core").TimerPort;
 }): Promise<MemoryResult> {
-  const { container, memoryLogger, clock } = deps;
+  const { container, memoryLogger, clock, timers } = deps;
   const memoryConfig = container.config.memory;
   const embeddingConfig = container.config.embedding;
 
@@ -588,35 +587,22 @@ export async function setupMemory(deps: {
   // cron (setup-channels) — the agent receives the port TYPE only (the agent↛memory cut).
   const tunedAlphaStore = createSqliteTunedAlphaStore({ db, logger: memoryLogger });
 
-  // 6.5.2d-quater. Outcome-signal store (Verified Learning WS1, OUTCOME-01). UNCONDITIONAL on the
-  // shared `db` (no model/IO cost; gated at observe/resolve). SOLE OutcomeSignalPort adapter; agent never receives it (SEC-01); only wireLearningOutcome + the startup prune consume it (closed-graph).
+  // 6.5.2d-quater. Outcome-signal store (Verified Learning WS1, OUTCOME-01). UNCONDITIONAL on the shared `db` (no model/IO cost; gated at observe/resolve). SOLE OutcomeSignalPort adapter; agent never receives it (SEC-01); only wireLearningOutcome + the startup prune consume it (closed-graph).
   const outcomeStore = createSqliteOutcomeStore({ db, logger: memoryLogger });
 
-  // 6.5.2d-ter. Memory-lifecycle sweep store. Built on the
-  // SAME shared `db` handle the memory adapter owns — NOT a second Database — so the sweep
-  // scans the SAME `memories` rows + the additive NON-DESTRUCTIVE marker columns
-  // (lifecycle_demoted_at / evicted_at / strength) under one (tenant, agent)-scoped, FK-enabled
-  // connection (a sweep on a DIFFERENT handle would scan an empty/foreign table). Always
-  // constructed (no model/IO cost, like the tuned-alpha store); it stays DORMANT — even when
-  // the KEYLESS __MEMORY_LIFECYCLE__ cron (`agents.<id>.memoryLifecycle.enabled`, default OFF)
-  // is on, the sweep evicts/demotes/promotes 0 rows (the live policy is the deferred
-  // operator step). This is the composition-root join: the daemon builds the
-  // @comis/memory adapter here and threads the port TYPE into the __MEMORY_LIFECYCLE__ cron
-  // sentinel (setup-channels) — NOT createPiExecutor (the lifecycle port is daemon-cron-
-  // side, no 3-hop store-forwarding through the recall executor). The agent receives the port
-  // TYPE only (the agent↛memory cut).
+  // 6.5.2d-ter. Memory-lifecycle sweep store. Built on the SAME shared `db` the memory adapter owns
+  // (NOT a second Database) so the sweep scans the SAME `memories` rows + the additive NON-DESTRUCTIVE
+  // marker columns under one (tenant, agent)-scoped, FK-enabled connection. Always constructed (no
+  // model/IO cost); DORMANT — even with the KEYLESS __MEMORY_LIFECYCLE__ cron (default OFF) on, it
+  // evicts/demotes/promotes 0 rows. Threaded as the port TYPE into the cron sentinel (setup-channels),
+  // NOT createPiExecutor (daemon-cron-side; the agent↛memory cut).
   const memoryLifecycleStore = createSqliteMemoryLifecycleStore({ db, logger: memoryLogger });
 
-  // 6.5.2e. Recall-counter composition. Stand up the SINGLE
-  // in-process recall-counter registry and subscribe it to the `memory:*` bus
-  // events HERE — the memory composition site already holds `container.eventBus`,
-  // so this is the natural composition root for the counters (it lives alongside
-  // the stores the diagnostic handlers read). The daemon threads the returned
-  // `{ snapshot }` into `MemoryApiDeps.recallCounters`, so the `memory.recall_stats`
-  // handler reads the SAME live registry the agent's `memory:recalled` /
-  // `memory:reranked` (and the consolidation job's `memory:consolidated`) events
-  // feed — never a fresh registry per call. The gauge is daemon-lifetime (resets
-  // on restart). Counts only ever cross the bus (AGENTS.md §2.7).
+  // 6.5.2e. Recall-counter composition. Stand up the SINGLE in-process recall-counter registry +
+  // subscribe it to the `memory:*` bus events HERE (the memory composition site already holds the
+  // bus). The daemon threads the returned `{ snapshot }` into `MemoryApiDeps.recallCounters` so
+  // `memory.recall_stats` reads the SAME live registry the `memory:*` events feed — never a fresh
+  // registry per call. Daemon-lifetime gauge (resets on restart); counts only cross the bus (§2.7).
   const recallCounters = wireRecallCounters(container.eventBus);
 
   // 6.5.2f. Recall-utility write-back subscriber.
@@ -652,6 +638,19 @@ export async function setupMemory(deps: {
     logger: memoryLogger,
     config: container.config,
   });
+
+  // 6.5.2f''. Reaction + correction outcome wiring (Verified Learning WS1, Phase 199 — the
+  // corroborating sources). buildReactionWiringDeps constructs the messageId→trajectory map +
+  // a dedicated reaction rate limiter + (cost-gated) the correction detector behind the byte-
+  // identity gate; `recordOutboundMessage` is undefined when learning-outcome is off for all
+  // agents (zero extra drain work). Bulk lives in the co-located helper to hold this file's cap.
+  const reactionWiring = buildReactionWiringDeps(
+    { config: container.config, secretManager: container.secretManager, eventBus: container.eventBus, outcomeStore, logger: memoryLogger },
+    clock, timers,
+  );
+  wireLearningReactions(reactionWiring.deps);
+  wireLearningCorrection(reactionWiring.deps);
+  const recordOutboundMessage = reactionWiring.recordOutboundMessage;
 
   // 6.5.3. Wire caching: L1(L2(provider)) when persistent, L1(provider) otherwise
   let cachedPort: EmbeddingPort | undefined;
@@ -792,6 +791,7 @@ export async function setupMemory(deps: {
     usefulnessStore,
     tunedAlphaStore,
     outcomeStore,
+    recordOutboundMessage,
     memoryLifecycleStore,
     recallCounters,
     maintenanceTick,

@@ -1480,8 +1480,8 @@ async function bootFoundation(
     sessionStore, memoryApi, embeddingQueue, backgroundIndexingPromise,
     embeddingCacheStats, embeddingCircuitBreakerState, maintenanceTick,
     summarizerSpendBreaker,
-    rerankerPort, rerankerModelPresent, disposeReranker, entityStore, lcdStore, provenanceStore, contextBrowse, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, userRepresentationStore, relationshipStore, tunedAlphaStore, outcomeStore, memoryLifecycleStore, consolidationStore, recallCounters,
-  } = await setupMemory({ container, memoryLogger, clock });
+    rerankerPort, rerankerModelPresent, disposeReranker, entityStore, lcdStore, provenanceStore, contextBrowse, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, userRepresentationStore, relationshipStore, tunedAlphaStore, outcomeStore, recordOutboundMessage, memoryLifecycleStore, consolidationStore, recallCounters,
+  } = await setupMemory({ container, memoryLogger, clock, timers });
 
   // Observability persistence (dual-write to SQLite). obsStore +
   // obsPersistence via const+IIFE.
@@ -1665,7 +1665,7 @@ async function bootFoundation(
     processMonitor,
     disposeEmbedding, cachedPort, memoryAdapter, db, sessionStore, memoryApi,
     embeddingQueue, backgroundIndexingPromise, embeddingCacheStats,
-    embeddingCircuitBreakerState, summarizerSpendBreaker, rerankerPort, rerankerModelPresent, disposeReranker, entityStore, lcdStore, provenanceStore, contextBrowse, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, userRepresentationStore, relationshipStore, tunedAlphaStore, memoryLifecycleStore, consolidationStore, recallCounters, maintenanceTick,
+    embeddingCircuitBreakerState, summarizerSpendBreaker, rerankerPort, rerankerModelPresent, disposeReranker, entityStore, lcdStore, provenanceStore, contextBrowse, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, userRepresentationStore, relationshipStore, tunedAlphaStore, recordOutboundMessage, memoryLifecycleStore, consolidationStore, recallCounters, maintenanceTick,
     obsStore, obsPersistence,
     activeRunRegistry, sessionResolver, canaryFallbackSecret, injectionRateLimiter,
     deliveryMirror, startMirrorPrune, shutdownMirror,
@@ -2043,6 +2043,9 @@ async function bootAgents(
   const channelAdaptersRef = new Map<string, import("@comis/core").DeliveryAdapter>();
   const { deliveryQueue, drainAndStart: drainAndStartDeliveryPrune, shutdown: shutdownDeliveryQueue } = await setupDeliveryQueue({
     db, config: container.config, eventBus: container.eventBus, logger: daemonLogger, channelAdapters: channelAdaptersRef,
+    // REACT-02 (Verified Learning, Phase 199): capture agent-authored outbound (messageId → trajectory).
+    // `undefined` when learning-outcome is off for all agents (byte-identity: zero extra drain work).
+    recordOutboundMessage: foundation.recordOutboundMessage,
   });
 
   Object.assign(boot, {

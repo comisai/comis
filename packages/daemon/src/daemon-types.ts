@@ -461,22 +461,22 @@ export interface BootContext {
    *  injected as the port TYPE (agent↛memory cut). Dormant until BOTH the recall-side gate
    *  (`rag.onlineTuning.enabled`) AND the bandit cron (`memoryOnlineTuning.enabled`) are on. */
   tunedAlphaStore: Awaited<ReturnType<typeof setupMemory>>["tunedAlphaStore"];
-  /** Memory-lifecycle sweep store — threaded into the cron
-   *  path ONLY (the KEYLESS __MEMORY_LIFECYCLE__ sentinel → the DORMANT runLifecycleSweep). NOT
-   *  the executor recall path (daemon-cron-side, no 3-hop forwarding). Built in setup-memory
-   *  on the shared db; injected as the port TYPE (agent↛memory cut). Dormant — even when the cron
-   *  (`memoryLifecycle.enabled`, default OFF) is on the sweep evicts/demotes 0 rows. */
+  /** Memory-lifecycle sweep store — cron path ONLY (KEYLESS __MEMORY_LIFECYCLE__ → DORMANT
+   *  runLifecycleSweep; NOT the executor recall path). Shared db; port TYPE only (agent↛memory cut).
+   *  Dormant — even with `memoryLifecycle.enabled` (default OFF) the sweep evicts/demotes 0 rows. */
   memoryLifecycleStore: Awaited<ReturnType<typeof setupMemory>>["memoryLifecycleStore"];
-  /** Consolidation store — threaded into the cron path ONLY (the
-   *  registerCronEventListeners → runMemoryConsolidation sentinel). NOT the executor recall
-   *  path. Built in setup-memory on the shared db; injected as the port TYPE (agent↛memory cut). */
+  /** Consolidation store — cron path ONLY (registerCronEventListeners → runMemoryConsolidation
+   *  sentinel; NOT the executor recall path). Shared db; port TYPE only (agent↛memory cut). */
   consolidationStore: Awaited<ReturnType<typeof setupMemory>>["consolidationStore"];
-  /** Live recall-counter wiring — the single
-   *  `wireRecallCounters(eventBus)` subscriber, stood up in setup-memory (the
-   *  composition site that holds the event bus). Threaded into
-   *  MemoryApiDeps.recallCounters so `memory.recall_stats` reads the live gauge. */
+  /** Live recall-counter wiring — the single `wireRecallCounters(eventBus)` subscriber, stood up in
+   *  setup-memory (the composition site holding the bus). Threaded into MemoryApiDeps.recallCounters
+   *  so `memory.recall_stats` reads the live gauge. */
   recallCounters: Awaited<ReturnType<typeof setupMemory>>["recallCounters"];
   maintenanceTick: Awaited<ReturnType<typeof setupMemory>>["maintenanceTick"];
+  /** REACT-02 (Verified Learning, Phase 199): outbound-message → trajectory capture (built in
+   *  setup-memory behind the byte-identity gate); threaded into setupDeliveryQueue in bootAgents.
+   *  `undefined` when learning-outcome is off for all agents (zero extra drain work). */
+  recordOutboundMessage?: Awaited<ReturnType<typeof setupMemory>>["recordOutboundMessage"];
   obsStore: ObservabilityStore | undefined;
   obsPersistence: ObsPersistenceResult | undefined;
   // Runtime registries (4 fields)

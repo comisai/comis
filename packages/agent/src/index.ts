@@ -617,11 +617,13 @@ export type { SessionLatch } from "./executor/session-latch.js";
 // Background task infrastructure
 export * from "./background/index.js";
 
-// Correction-detector VERDICT type (Verified Learning WS1, Phase 199 P0.5). The
-// daemon reaction/correction wiring (setup-learning-reactions) consumes this type
-// for the detector seam it injects. The `createCorrectionDetectorSeam` factory +
-// `CORRECTION_REWARD_CAP` re-exports land alongside their daemon consumer in the
-// composition helper (Task 3) so the public-export-consumers gate never sees an
+// Correction-detector seam (Verified Learning WS1, Phase 199 P0.5). The cost-gated
+// `fast`-tier detector the daemon constructs (setup-learning-reactions
+// buildReactionWiringDeps) ONLY when `learningOutcome.correction.enabled` is opted
+// in, then runs over a follow-up user turn → a `corrected`/`correction` soft-
+// failure verdict (CORRECT-01). Re-exported from the memory sub-barrel beside its
+// daemon consumer (this plan) so the public-export-consumers gate never sees an
 // orphan. The prompt + triple-bound (wrap + reward-cap + strip-parse) stay
 // agent-internal.
+export { createCorrectionDetectorSeam } from "./memory/index.js";
 export type { CorrectionVerdict } from "./memory/index.js";

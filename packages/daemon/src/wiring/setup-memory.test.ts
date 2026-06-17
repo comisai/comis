@@ -3,10 +3,12 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { TypedEventBus } from "@comis/core";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
+import { createFakeTimers } from "../../../../test/support/fake-timers.js";
 
 // setupMemory requires a ClockPort (createCircuitBreaker(..., clock)).
 // Inject the project-standard fake so every call exercises the real signature.
 const testClock = createFakeClock(0);
+const testTimers = createFakeTimers(0);
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks
@@ -320,6 +322,7 @@ describe("setupMemory", () => {
       container,
       memoryLogger: createMockLogger() as any,
       clock: testClock,
+      timers: testTimers,
     });
 
     expect(mockSqliteMemoryAdapter).toHaveBeenCalled();
@@ -350,6 +353,7 @@ describe("setupMemory", () => {
       container,
       memoryLogger: createMockLogger() as any,
       clock: testClock,
+      timers: testTimers,
     });
 
     // The factory was called on the SAME db handle as createLcdStore.
@@ -374,6 +378,7 @@ describe("setupMemory", () => {
       container,
       memoryLogger: createMockLogger() as any,
       clock: testClock,
+      timers: testTimers,
     });
 
     expect(mockCreateEmbeddingProvider).toHaveBeenCalled();
@@ -408,6 +413,7 @@ describe("setupMemory", () => {
       container,
       memoryLogger: memoryLogger as any,
       clock: testClock,
+      timers: testTimers,
     });
 
     expect(result.disposeEmbedding).toBeUndefined();
@@ -434,6 +440,7 @@ describe("setupMemory", () => {
       container,
       memoryLogger: createMockLogger() as any,
       clock: testClock,
+      timers: testTimers,
     });
 
     expect(mockCreateCachedEmbeddingPort).toHaveBeenCalledWith(
@@ -458,6 +465,7 @@ describe("setupMemory", () => {
       container,
       memoryLogger: createMockLogger() as any,
       clock: testClock,
+      timers: testTimers,
     });
 
     // SqliteMemoryAdapter should receive adjusted config with provider's dimensions (384)
@@ -487,6 +495,7 @@ describe("setupMemory", () => {
       container,
       memoryLogger: createMockLogger() as any,
       clock: testClock,
+      timers: testTimers,
     });
 
     expect(mockFpMgr.hasChanged).toHaveBeenCalled();
@@ -531,6 +540,7 @@ describe("setupMemory", () => {
       container,
       memoryLogger: createMockLogger() as any,
       clock: testClock,
+      timers: testTimers,
     });
 
     expect(mockBatchIndexer.unembeddedCount).toHaveBeenCalled();
@@ -573,6 +583,7 @@ describe("setupMemory", () => {
       container,
       memoryLogger: createMockLogger() as any,
       clock: testClock,
+      timers: testTimers,
     });
 
     expect(mockBatchIndexer.indexUnembedded).not.toHaveBeenCalled();
@@ -593,6 +604,7 @@ describe("setupMemory", () => {
       container,
       memoryLogger: createMockLogger() as any,
       clock: testClock,
+      timers: testTimers,
     });
 
     expect(mockCreateEmbeddingQueue).toHaveBeenCalled();
@@ -621,6 +633,7 @@ describe("setupMemory", () => {
       container,
       memoryLogger: createMockLogger() as any,
       clock: testClock,
+      timers: testTimers,
     });
 
     expect(mockFpMgr.save).toHaveBeenCalledWith("fp-saved");
@@ -647,6 +660,7 @@ describe("setupMemory", () => {
       container,
       memoryLogger: createMockLogger() as any,
       clock: testClock,
+      timers: testTimers,
     });
 
     expect(container.secretManager.get).toHaveBeenCalledWith("OPENAI_API_KEY");
@@ -674,6 +688,7 @@ describe("setupMemory", () => {
       container,
       memoryLogger: createMockLogger() as any,
       clock: testClock,
+      timers: testTimers,
     });
 
     expect(result.db).toBeDefined();
@@ -697,6 +712,7 @@ describe("setupMemory", () => {
       container,
       memoryLogger: createMockLogger() as any,
       clock: testClock,
+      timers: testTimers,
     });
 
     // L2 should be created with provider and db
@@ -739,6 +755,7 @@ describe("setupMemory", () => {
       container,
       memoryLogger: createMockLogger() as any,
       clock: testClock,
+      timers: testTimers,
     });
 
     // L2 should NOT be created
@@ -769,6 +786,7 @@ describe("setupMemory", () => {
       container,
       memoryLogger: createMockLogger() as any,
       clock: testClock,
+      timers: testTimers,
     });
 
     expect(result.disposeEmbedding).toBeTypeOf("function");
@@ -794,6 +812,7 @@ describe("setupMemory", () => {
       container,
       memoryLogger: createMockLogger() as any,
       clock: testClock,
+      timers: testTimers,
     });
 
     expect(result.disposeEmbedding).toBeUndefined();
@@ -811,6 +830,7 @@ describe("setupMemory", () => {
       container,
       memoryLogger: createMockLogger() as any,
       clock: testClock,
+      timers: testTimers,
     });
 
     for (let i = 0; i < 9; i++) result.maintenanceTick();
@@ -832,6 +852,7 @@ describe("setupMemory", () => {
       container,
       memoryLogger: createMockLogger() as any,
       clock: testClock,
+      timers: testTimers,
     });
 
     for (let i = 0; i < 20; i++) result.maintenanceTick();
@@ -851,6 +872,7 @@ describe("setupMemory", () => {
       container,
       memoryLogger: createMockLogger() as any,
       clock: testClock,
+      timers: testTimers,
     });
 
     for (let i = 0; i < 10; i++) result.maintenanceTick();
@@ -874,6 +896,7 @@ describe("setupMemory", () => {
       container,
       memoryLogger: createMockLogger() as any,
       clock: testClock,
+      timers: testTimers,
     });
 
     // The factory must never be invoked when no agent enabled rerank AND model absent.
@@ -896,6 +919,7 @@ describe("setupMemory", () => {
       container,
       memoryLogger: createMockLogger() as any,
       clock: testClock,
+      timers: testTimers,
     });
 
     expect(mockCreateLocalRerankerProvider).toHaveBeenCalledOnce();
@@ -916,6 +940,7 @@ describe("setupMemory", () => {
       container,
       memoryLogger: createMockLogger() as any,
       clock: testClock,
+      timers: testTimers,
     });
 
     expect(mockRerankerModelPresent).toHaveBeenCalledWith(
@@ -942,6 +967,7 @@ describe("setupMemory", () => {
       container,
       memoryLogger: memoryLogger as any,
       clock: testClock,
+      timers: testTimers,
     });
 
     expect(mockCreateLocalRerankerProvider).not.toHaveBeenCalled();
@@ -975,6 +1001,7 @@ describe("setupMemory", () => {
       container,
       memoryLogger: memoryLogger as any,
       clock: testClock,
+      timers: testTimers,
     });
 
     // Degrades cleanly: no port built, recall falls back to fusion.
@@ -996,6 +1023,7 @@ describe("setupMemory", () => {
       container,
       memoryLogger: createMockLogger() as any,
       clock: testClock,
+      timers: testTimers,
     });
 
     expect(mockRerankerModelPresent).not.toHaveBeenCalled();
@@ -1016,6 +1044,7 @@ describe("setupMemory", () => {
       container,
       memoryLogger: createMockLogger() as any,
       clock: testClock,
+      timers: testTimers,
     });
 
     expect(mockCreateLocalRerankerProvider).toHaveBeenCalledOnce();
@@ -1059,6 +1088,7 @@ describe("setupMemory", () => {
       container,
       memoryLogger: createMockLogger() as any,
       clock: testClock,
+      timers: testTimers,
     });
 
     expect(mockCreateLocalRerankerProvider).toHaveBeenCalledOnce();
@@ -1082,6 +1112,7 @@ describe("setupMemory", () => {
       container,
       memoryLogger: createMockLogger() as any,
       clock: testClock,
+      timers: testTimers,
     });
 
     expect(mockCreateLocalRerankerProvider).not.toHaveBeenCalled();
@@ -1104,6 +1135,7 @@ describe("setupMemory", () => {
       container,
       memoryLogger: memoryLogger as any,
       clock: testClock,
+      timers: testTimers,
     });
 
     expect(result.rerankerPort).toBeUndefined();
@@ -1123,6 +1155,7 @@ describe("setupMemory", () => {
       container,
       memoryLogger: createMockLogger() as any,
       clock: testClock,
+      timers: testTimers,
     });
 
     expect(result.disposeReranker).toBeTypeOf("function");
@@ -1142,6 +1175,7 @@ describe("setupMemory", () => {
       container,
       memoryLogger: createMockLogger() as any,
       clock: testClock,
+      timers: testTimers,
     });
 
     // Built UNCONDITIONALLY (no opt-in gate at build time — only the cron is gated).
@@ -1163,6 +1197,7 @@ describe("setupMemory", () => {
       container,
       memoryLogger: createMockLogger() as any,
       clock: testClock,
+      timers: testTimers,
     });
 
     // Built UNCONDITIONALLY (no opt-in gate at build time — only the
@@ -1186,6 +1221,7 @@ describe("setupMemory", () => {
       container,
       memoryLogger: createMockLogger() as any,
       clock: testClock,
+      timers: testTimers,
     });
 
     // Built UNCONDITIONALLY (no model/IO cost; it stays dormant until BOTH the recall-side
@@ -1207,6 +1243,7 @@ describe("setupMemory", () => {
       container,
       memoryLogger: createMockLogger() as any,
       clock: testClock,
+      timers: testTimers,
     });
 
     // Built UNCONDITIONALLY (no model/IO cost; it stays DORMANT — even when the KEYLESS
@@ -1228,6 +1265,7 @@ describe("setupMemory", () => {
       container,
       memoryLogger: createMockLogger() as any,
       clock: testClock,
+      timers: testTimers,
     });
 
     // Built UNCONDITIONALLY (no opt-in gate at build time — only the lane push in
@@ -1251,6 +1289,7 @@ describe("setupMemory", () => {
       container,
       memoryLogger: createMockLogger() as any,
       clock: testClock,
+      timers: testTimers,
     });
 
     // Built UNCONDITIONALLY (no opt-in gate at build time — only the lane push in
@@ -1277,6 +1316,7 @@ describe("setupMemory", () => {
       container,
       memoryLogger: createMockLogger() as any,
       clock: testClock,
+      timers: testTimers,
     });
 
     // Built UNCONDITIONALLY (no opt-in gate at build time — only the 6th graphSpread lane
@@ -1303,6 +1343,7 @@ describe("setupMemory", () => {
       container,
       memoryLogger: createMockLogger() as any,
       clock: testClock,
+      timers: testTimers,
     });
 
     // Built UNCONDITIONALLY (no opt-in gate at build time — only the MMR slot in
@@ -1331,6 +1372,7 @@ describe("setupMemory", () => {
       container,
       memoryLogger: createMockLogger() as any,
       clock: testClock,
+      timers: testTimers,
     });
 
     // Built UNCONDITIONALLY (no opt-in gate at build time — only the LLM-free <user_profile>
@@ -1409,6 +1451,7 @@ describe("setupMemory recall-counter wiring", () => {
       container: containerWithRealBus(bus),
       memoryLogger: createMockLogger() as any,
       clock: testClock,
+      timers: testTimers,
     });
 
     // The composition-root glue: the result carries the snapshot accessor the
@@ -1427,6 +1470,7 @@ describe("setupMemory recall-counter wiring", () => {
       container: containerWithRealBus(bus),
       memoryLogger: createMockLogger() as any,
       clock: testClock,
+      timers: testTimers,
     });
     expect(result.recallCounters).toBeDefined();
 

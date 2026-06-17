@@ -513,6 +513,7 @@ describe("wireLearningCorrection — correction → prior-trajectory observe (CO
 describe("buildReactionWiringDeps — daemon construction behind the byte-identity gate", () => {
   function makeContainer(over: { agents?: Record<string, unknown>; costFeatures?: boolean; secrets?: Record<string, string> } = {}) {
     const secrets = over.secrets ?? {};
+    const { store } = makeStubStore();
     return {
       config: {
         agents: over.agents ?? {},
@@ -520,6 +521,9 @@ describe("buildReactionWiringDeps — daemon construction behind the byte-identi
         providers: { entries: {} },
       },
       secretManager: { get: (name: string): string | undefined => secrets[name] },
+      eventBus: new TypedEventBus(),
+      outcomeStore: store,
+      logger: createMockLogger(),
     } as never;
   }
 

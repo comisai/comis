@@ -246,12 +246,16 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
           timestamp: deps.clock.now(),
         });
 
-        // OBS-01: one INFO completion line per resolve with durationMs + the running
-        // coverage gauge; a step-tagged DEBUG for the pipeline stage.
+        // OBS-01/02: one INFO completion line per resolve with durationMs + the
+        // running coverage gauge + the corroborating `sources` (so an operator sees
+        // e.g. ["tool","reaction"] — the reaction CORROBORATING the deterministic
+        // winner, NOT replacing it). Counts/ids/closed-enums only.
         deps.logger.info(
           {
             agentId: scope.agentId,
             outcome: verdict.outcome,
+            sources: verdict.sources,
+            corroboratingSourceCount: verdict.sources.length,
             resolvedCount: resolved,
             totalCount: total,
             durationMs: deps.clock.now() - resolveStart,

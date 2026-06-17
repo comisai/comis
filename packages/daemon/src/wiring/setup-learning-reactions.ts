@@ -41,6 +41,9 @@
 import {
   tryGetContext,
   formatSessionKey,
+  createInjectionRateLimiter,
+  KEYLESS_PROVIDER_TYPES,
+  KEYLESS_API_KEY_SENTINEL,
   type TypedEventBus,
   type OutcomeSignalPort,
   type ClockPort,
@@ -49,7 +52,12 @@ import {
   type TimerHandle,
   type InjectionRateLimiter,
 } from "@comis/core";
-import type { CorrectionVerdict } from "@comis/agent";
+import {
+  createCorrectionDetectorSeam,
+  resolveOperationModel,
+  resolveProviderFamily,
+  type CorrectionVerdict,
+} from "@comis/agent";
 
 // ===========================================================================
 // 1. messageId → trajectory-scope map (bounded, in-memory daemon-lifetime)
@@ -464,5 +472,198 @@ export function wireLearningCorrection(deps: LearningReactionsWiringDeps): void 
   });
 }
 
-// (Task 3 appends `buildReactionWiringDeps` — the daemon composition helper —
-//  below this point, keeping the bulk OUT of setup-memory.ts.)
+// ===========================================================================
+// 3. Daemon composition — construct the map/limiter/detector behind the gate
+// ===========================================================================
+
+/** The slice of the daemon container {@link buildReactionWiringDeps} reads. */
+export interface ReactionWiringContainer {
+  config: {
+    agents?: Record<string, AgentReactionConfig | undefined>;
+    memory?: { costFeatures?: { enabled?: boolean } };
+    providers?: { entries?: Record<string, { apiKeyName?: string } | undefined> };
+  };
+  secretManager: { get(name: string): string | undefined };
+  /** The daemon bus (stored on the wiring deps; not invoked at build time). */
+  eventBus: TypedEventBus;
+  /** The sole @comis/memory outcome adapter (the observe target). */
+  outcomeStore: OutcomeSignalPort;
+  /** The structured logger for the wiring + the build-time WARN. */
+  logger: ComisLogger;
+}
+
+/** The per-agent config fields the reaction/correction wiring reads. */
+interface AgentReactionConfig {
+  provider?: string;
+  model?: string;
+  operationModels?: Record<string, unknown>;
+  learningOutcome?: {
+    enabled?: boolean;
+    correction?: { enabled?: boolean };
+    reactionMap?: { success?: string[]; failure?: string[] };
+  };
+  elevatedReply?: { senderTrustMap?: Record<string, string>; defaultTrustLevel?: string };
+}
+
+/** Result of {@link buildReactionWiringDeps}: the wiring deps + the gated capture callback. */
+export interface BuildReactionWiringResult {
+  /** The deps to pass into {@link wireLearningReactions} + {@link wireLearningCorrection}. */
+  deps: LearningReactionsWiringDeps;
+  /**
+   * The outbound-capture callback to thread into the delivery drain — `undefined`
+   * when learning-outcome is disabled for every agent (byte-identity: the drain
+   * does zero extra work). Calls {@link ReactionTrajectoryMap.record}.
+   */
+  recordOutboundMessage?: (
+    messageId: string,
+    scope: OutboundTrajectoryEntry,
+  ) => void;
+  /** The bounded session→trajectory map (returned so the daemon can destroy it on shutdown). */
+  sessionTrajectoryMap: ReactionTrajectoryMap;
+}
+
+/** Default reaction emoji map (mirrors the schema-learning-outcome.ts defaults). */
+const DEFAULT_REACTION_MAP: ReactionEmojiMap = { success: ["👍", "✅"], failure: ["👎", "❌"] };
+/** Per-call output bound for the cheap correction classification (a tiny JSON verdict). */
+const CORRECTION_MAX_OUTPUT_TOKENS = 1024;
+/** Reaction-tuned rate-limit thresholds (a flood of reactions from one sender is downweighted/skipped). */
+const REACTION_RATE_LIMIT = { windowMs: 300_000, warnThreshold: 5, auditThreshold: 10, entryTtlMs: 600_000, maxEntries: 50_000 };
+
+/**
+ * Resolve + construct the cheap `fast`-tier correction detector for one agent
+ * (the `outcomeJudge` operation tier — research A2, no new ModelOperationType).
+ * Resolves the provider/modelId by NAME and the API key from the secret manager
+ * (KEYLESS sentinel for keyless providers); returns `undefined` on a missing key
+ * (a no-op branch — `Defer != Retry`). The seam itself is the Plan-03 clone.
+ */
+function resolveCorrectionDetector(
+  agent: AgentReactionConfig,
+  container: ReactionWiringContainer,
+  agentId: string,
+  clock: ClockPort,
+  logger: ComisLogger,
+): ((turn: string) => Promise<CorrectionVerdict | undefined>) | undefined {
+  const agentProvider = agent.provider ?? "anthropic";
+  const resolved = resolveOperationModel({
+    operationType: "outcomeJudge",
+    agentProvider,
+    agentModel: agent.model ?? "anthropic:claude-sonnet-4-20250514",
+    operationModels: (agent.operationModels ?? {}) as never,
+    providerFamily: resolveProviderFamily(agentProvider),
+  });
+  const providerEntry = container.config.providers?.entries?.[resolved.provider];
+  const apiKeyName = providerEntry?.apiKeyName || `${resolved.provider.toUpperCase()}_API_KEY`;
+  const apiKey =
+    container.secretManager.get(apiKeyName) ??
+    (KEYLESS_PROVIDER_TYPES.has(resolved.provider) ? KEYLESS_API_KEY_SENTINEL : "");
+  if (!apiKey) return undefined; // no key → no-op detector (Defer != Retry)
+  return createCorrectionDetectorSeam({
+    provider: resolved.provider,
+    modelId: resolved.modelId,
+    apiKey,
+    maxOutputTokens: CORRECTION_MAX_OUTPUT_TOKENS,
+    clock,
+    logger,
+    agentId,
+  });
+}
+
+/**
+ * Construct the reaction/correction wiring deps daemon-side, behind the
+ * byte-identity gate. Keeps the bulk OUT of setup-memory.ts (the 800-cap file) —
+ * called in ONE line from the `setupLearningOutcomeWiring` site.
+ *
+ * Gates (mirror the 198 byte-identity computation):
+ *  - `costFeaturesEnabled = memory.costFeatures.enabled !== false` (master switch).
+ *  - `learningOutcomeEnabled(id) = costFeaturesEnabled && agent.learningOutcome.enabled`.
+ *  - `correctionEnabled(id) = learningOutcomeEnabled(id) && agent.learningOutcome.correction.enabled`.
+ *  - `recordOutboundMessage` is built ONLY when SOME agent has learning-outcome on
+ *    (else `undefined` → the delivery drain does zero extra work).
+ *  - the correction detector is built ONLY when SOME agent has correction on AND a
+ *    cheap-model API key resolves (a missing key → `undefined`, a no-op branch:
+ *    `Defer != Retry`).
+ */
+export function buildReactionWiringDeps(
+  container: ReactionWiringContainer,
+  clock: ClockPort,
+  timers: TimerPort,
+): BuildReactionWiringResult {
+  const { eventBus, outcomeStore, logger } = container;
+  const costFeaturesEnabled = container.config.memory?.costFeatures?.enabled !== false;
+  const agents = container.config.agents ?? {};
+
+  const learningOutcomeEnabled = (agentId: string): boolean =>
+    costFeaturesEnabled && agents[agentId]?.learningOutcome?.enabled === true;
+  const correctionEnabled = (agentId: string): boolean =>
+    learningOutcomeEnabled(agentId) && agents[agentId]?.learningOutcome?.correction?.enabled === true;
+
+  const someLearningOn = Object.keys(agents).some((id) => learningOutcomeEnabled(id));
+  const someCorrectionOn = Object.keys(agents).some((id) => correctionEnabled(id));
+
+  const reactionTrajectoryMap = createReactionTrajectoryMap({ clock, timers });
+  // The session→trajectory map for the correction join (same bounded shape).
+  const sessionTrajectoryMap = createReactionTrajectoryMap({ clock, timers });
+  // A DEDICATED reaction rate limiter (separate counters from the injection-detection singleton).
+  const reactionRateLimiter = createInjectionRateLimiter({ clock, timers }, REACTION_RATE_LIMIT);
+
+  // Resolve the RAW channel-sender trust string (senderTrustMap[id] ?? defaultTrustLevel,
+  // default "external") — the channel-sender vocabulary, NOT the tool-gate narrowing.
+  const resolveSenderTrust = (agentId: string, reactorId: string): string => {
+    const elev = agents[agentId]?.elevatedReply;
+    return elev?.senderTrustMap?.[reactorId] ?? elev?.defaultTrustLevel ?? "external";
+  };
+
+  // The correction detector — built ONLY when some agent has correction on. Resolve
+  // the cheap fast-tier model/key for the FIRST correction-enabled agent (the
+  // detector is a shared cheap-tier seam; per-agent re-selection is deferred). A
+  // missing key → undefined (a no-op branch: `Defer != Retry`).
+  let correctionDetector: ((turn: string) => Promise<CorrectionVerdict | undefined>) | undefined;
+  if (someCorrectionOn) {
+    const firstAgentId = Object.keys(agents).find((id) => correctionEnabled(id));
+    const agent = firstAgentId !== undefined ? agents[firstAgentId] : undefined;
+    if (agent !== undefined) {
+      correctionDetector = resolveCorrectionDetector(agent, container, firstAgentId ?? "default", clock, logger);
+    }
+    if (correctionDetector === undefined) {
+      logger.warn(
+        {
+          errorKind: "config" as const,
+          hint: "correction detector enabled but no cheap-model API key resolved; the correction signal is a no-op until a key is set",
+        },
+        "correction detector unavailable (non-fatal, default-deferred)",
+      );
+    }
+  }
+
+  // Pick a representative reactionMap (the FIRST learning-enabled agent's, else the default).
+  const firstLearningAgentId = Object.keys(agents).find((id) => learningOutcomeEnabled(id));
+  const agentMap = firstLearningAgentId !== undefined ? agents[firstLearningAgentId]?.learningOutcome?.reactionMap : undefined;
+  const reactionMap: ReactionEmojiMap = {
+    success: agentMap?.success ?? DEFAULT_REACTION_MAP.success,
+    failure: agentMap?.failure ?? DEFAULT_REACTION_MAP.failure,
+  };
+
+  const deps: LearningReactionsWiringDeps = {
+    eventBus,
+    outcomeStore,
+    clock,
+    logger,
+    learningOutcomeEnabled,
+    reactionTrajectoryMap,
+    reactionRateLimiter,
+    reactionMap,
+    resolveSenderTrust,
+    correctionDetector,
+    correctionEnabled,
+    recordSessionTrajectory: (sessionKey, scope) => sessionTrajectoryMap.record(sessionKey, scope),
+    lastTrajectoryForSession: (sessionKey) => sessionTrajectoryMap.lookup(sessionKey),
+  };
+
+  // Byte-identity: capture ONLY when some agent has learning-outcome on (else the
+  // delivery drain does zero extra work).
+  const recordOutboundMessage = someLearningOn
+    ? (messageId: string, scope: OutboundTrajectoryEntry): void => reactionTrajectoryMap.record(messageId, scope)
+    : undefined;
+
+  return { deps, recordOutboundMessage, sessionTrajectoryMap };
+}
