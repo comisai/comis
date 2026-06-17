@@ -206,7 +206,7 @@ import { createProcessMonitor } from "./process/process-monitor.js";
 import { ok, err, suppressError } from "@comis/shared";
 import { exportTrajectoryBundle } from "@comis/observability";
 import { randomUUID } from "node:crypto";
-import { existsSync, statSync, mkdirSync, readFileSync, cpSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { writeFile as fsWriteFile, rm } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { resolve as pathResolve } from "node:path";
