@@ -43,14 +43,9 @@ import {
   type IncidentVoiceSignal,
 } from "./obs-explain-signals-fields.js";
 import {
-  accumulateLearningRecord,
-  accumulateSkillInvokedRecord,
-  accumulateSkillSynthesizedRecord,
-  accumulateSkillValidatedRecord,
-  accumulateToolSchemaRecord,
-  buildLearningSignal,
-  emptyLearningFold,
-  type LearningFoldState,
+  accumulateLearningRecord, accumulateSkillInvokedRecord, accumulateSkillSynthesizedRecord,
+  accumulateSkillValidatedRecord, accumulateToolSchemaRecord, buildLearningSignal,
+  emptyLearningFold, type LearningFoldState,
 } from "./obs-explain-signal-folds.js";
 
 // ---------------------------------------------------------------------------
@@ -322,22 +317,13 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
       };
       return;
     }
-    case "learning.outcome_observed": // OBS-02 (198): fold the shadow record (Plan 04 bridge).
-      accumulateLearningRecord(acc.learning, data);
-      return;
-    // OBS-02 (Phase 201, P2 skills): the procedural-learning fold extensions —
-    // skillsUsed from the invoked-skill name, skillFailures from a validation
-    // failure, synthesisAbstained from the abstain signal. IDs/counts/closed
-    // enums only (the fold drops a non-string name / a non-boolean verdict).
-    case "skill.prompt_invoked":
-      accumulateSkillInvokedRecord(acc.learning, data);
-      return;
-    case "learning.skill_validated":
-      accumulateSkillValidatedRecord(acc.learning, data);
-      return;
-    case "learning.skill_synthesized":
-      accumulateSkillSynthesizedRecord(acc.learning, data);
-      return;
+    // OBS-02: fold the learning-family records into the learning block. (198) the
+    // outcome shadow; (Phase 201 P2 skills) skillsUsed / skillFailures /
+    // synthesisAbstained from the procedural-skill records — ids/counts only.
+    case "learning.outcome_observed": accumulateLearningRecord(acc.learning, data); return;
+    case "skill.prompt_invoked": accumulateSkillInvokedRecord(acc.learning, data); return;
+    case "learning.skill_validated": accumulateSkillValidatedRecord(acc.learning, data); return;
+    case "learning.skill_synthesized": accumulateSkillSynthesizedRecord(acc.learning, data); return;
     case "execution.tool_schema_unsupported":
       // GBNF-02 (175): the strip-retry self-heal record (LAST wins — terminal
       // repair state). Content-free fold (see obs-explain-signal-folds.ts).
