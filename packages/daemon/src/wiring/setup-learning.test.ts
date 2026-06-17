@@ -498,13 +498,16 @@ describe("wireLearningOutcome — reward/failure write at resolve() (RANK-01/FOR
     await flushMicrotasks();
   }
 
-  it("SUCCESS verdict → recordUsage once per recalled id (outcome-attributed positive reward)", async () => {
+  it("SUCCESS verdict → recordUsage ONCE for all recalled ids (IN-01: batched into a single transaction)", async () => {
     const { bus, us } = wireRewardSeam(
       baseVerdict({ outcome: "success", sources: ["pipeline"], recalledIds: ["m1", "m2"] }),
     );
     await driveTrajectory(bus, SESSION_KEY, TRACE);
 
-    expect(us.recordUsage).toHaveBeenCalledTimes(2);
+    // IN-01: the success reward is now ONE batched recordUsage(recalledIds, [], scope)
+    // call (the store loops internally in one transaction) instead of O(recalledIds)
+    // separate calls — the failure branch stays per-id (corroboration-gated).
+    expect(us.recordUsage).toHaveBeenCalledTimes(1);
     const ids = us.recordUsage.mock.calls.map((c) => c[0]).flat();
     expect(ids.sort()).toEqual(["m1", "m2"]);
     // The reward write is scoped to the resolved (tenant, agent); intent omitted →

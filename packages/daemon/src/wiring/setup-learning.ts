@@ -387,14 +387,15 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
         // bandit reads per-intent). An `unknown` verdict writes NOTHING (fail-closed).
         let failureAccrued = 0;
         if (verdict.outcome === "success") {
-          if (deps.learningTuningEnabled(scope.agentId)) {
+          if (deps.learningTuningEnabled(scope.agentId) && verdict.recalledIds.length > 0) {
             const rewardScope = { tenantId: scope.tenantId, agentId: scope.agentId, now: deps.clock.now() };
-            for (const mid of verdict.recalledIds) {
-              // Outcome-attributed positive reward = an outcome-`used` for THIS memory.
-              recordNonFatal(deps, scope.agentId, "reward", () =>
-                deps.usefulnessStore.recordUsage([mid], [], rewardScope),
-              );
-            }
+            // IN-01: ONE batched reward write for ALL recalled ids — the store's
+            // recordUsage loops internally in a single transaction, so the per-id loop
+            // (O(recalledIds) Promises + transactions) is needless. The FAILURE branch
+            // below stays per-id (it is corroboration-gated per memory).
+            recordNonFatal(deps, scope.agentId, "reward", () =>
+              deps.usefulnessStore.recordUsage(verdict.recalledIds, [], rewardScope),
+            );
           }
         } else if (verdict.outcome === "failure" || verdict.outcome === "corrected") {
           if (deps.learningForgettingEnabled(scope.agentId)) {
