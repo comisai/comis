@@ -210,6 +210,15 @@ agents:
 
 See [`learningTuning` / `learningForgetting` in config-yaml](/reference/config-yaml#learning-tuning-agents-learningtuning) for every key and default, and the [`tuned_alpha` / `memory_usefulness` / `evicted_at`](/operations/data-directory#ranking--forgetting-verified-learning-v2-26) storage. Both loops emit **counts-only** signals (`memory:online_tuning_applied`, `learning:memory_demoted` / `learning:memory_evicted`) for `comis explain` / `comis fleet`.
 
+## Deepened user model: revise & generalize (v2.26)
+
+Two further v2.26 deepenings change how the **USER** representation and **Consolidation** maintain long-term knowledge — both **non-destructive** and **`asOf`-auditable**:
+
+- **The user model revises (it does not rebuild).** With `memoryUserRepresentation.enabled` on, the builder no longer overwrites a profile slot. A contradicting profile fact of **equal-or-higher trust soft-closes** the incumbent belief (bi-temporal `t_valid_end`/`expired_at` — never deleted, still resolvable via `asOf`) and records the new one as current truth; a restatement **bumps confidence** in place; a **lower-trust** contradiction is **recorded-not-believed** (anti-poison); topic-distinct facts **coexist**. The default profile read returns **current truth only**, and per-record history is **bounded** by `memoryUserRepresentation.historyCap` (default 10). See the bi-temporal [`user_representation` columns](/operations/data-directory#user-representation-verified-learning-v2-26) for the storage detail.
+- **Consolidation can generalize (it abstracts, it does not copy).** With `memoryConsolidation.generalize.enabled` on (default off), the consolidation cron adds a second pass that synthesizes **one higher-order `semantic` memory** ("user prefers X in general") from a cluster spanning at least `generalize.minDistinctContexts` distinct `(session, sender)` contexts — an anti-domination gate so one repeated session cannot mint a "general" preference. The generalization is a **new node** (the source memories are kept + linked, trust never raised above `learned`), is **byte-identical when off**, abstains on small/nano models, and is itself **supersedable** by a later contradicting triple.
+
+Both are **default-safe** and surface **counts-only** through `comis explain` / `comis fleet` (the `learning` signal's `userModelRevised` / `memoriesGeneralized` counts and the benign `user_model_revised` verdict). See [`memoryUserRepresentation` / `memoryConsolidation.generalize` in config-yaml](/reference/config-yaml#user-representation-agents-memoryuserrepresentation).
+
 ## Dependencies & gotchas
 
 1. **Some capabilities need built derived state, not just the flag:**
