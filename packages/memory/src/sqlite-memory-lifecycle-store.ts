@@ -277,14 +277,22 @@ export function createSqliteMemoryLifecycleStore(
         if (!parsed.ok) return err(new Error(parsed.error.message));
         const rows = parsed.value;
 
-        // Is the LIVE soft-eviction policy active? Gated on an eviction-enabled
-        // policy (`learningForgetting.eviction.enabled` ∧ `.enabled`, threaded via
-        // deps by the daemon). With it OFF the sweep stays SCAFFOLD-DORMANT —
-        // evicts/demotes nothing, the byte-identity guarantee.
-        const liveEviction = policy.evictionEnabled === true;
+        // The EFFECTIVE policy = the per-call `scope.policy` override (the daemon's per-agent
+        // `learningForgetting`, FORGET-06) layered over the constructor policy. The store is
+        // shared across agents but the eviction behavior is PER-AGENT, so the gate rides the
+        // call: an absent override → the constructor policy (DORMANT by default — byte-identity).
+        const ov = scope.policy;
+        const effEvictionEnabled = ov?.evictionEnabled ?? policy.evictionEnabled;
+        const effStrengthThreshold = ov?.strengthThreshold ?? policy.strengthThreshold;
+        const effFailurePenalty = ov?.failurePenalty ?? policy.failurePenalty;
+
+        // Is the LIVE soft-eviction policy active? Gated on an eviction-enabled policy
+        // (`learningForgetting.eviction.enabled` ∧ `.enabled`). With it OFF the sweep stays
+        // SCAFFOLD-DORMANT — evicts/demotes nothing, the byte-identity guarantee.
+        const liveEviction = effEvictionEnabled === true;
         // The behavior gate's strength floor (DISTINCT from the dormant epsilonPrune).
-        const strengthThreshold = policy.strengthThreshold ?? policy.epsilonPrune;
-        const failurePenalty = policy.failurePenalty ?? 0;
+        const strengthThreshold = effStrengthThreshold ?? policy.epsilonPrune;
+        const failurePenalty = effFailurePenalty ?? 0;
         const highProofFloor = policy.highProofFloor ?? DEFAULT_HIGH_PROOF_FLOOR;
 
         // COMPUTE per-row: the importance-decayed strength + the hysteresis-banded

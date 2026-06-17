@@ -14,10 +14,15 @@
  *   usefulnessStore.recordUsage (the dormant seam goes live). Mirrors the
  *   __MEMORY_REASONING__ block 1:1 (agentId guard → cfg.enabled re-check → resolve a
  *   cheap "cron" model + key by NAME → build the seam → write → onComplete).
+ * - __MEMORY_LIFECYCLE__ (FORGET-01/06, Phase 200 Plan 06): the KEYLESS soft-eviction sweep.
+ *   Threads THIS agent's learningForgetting eviction policy onto the per-call sweep scope
+ *   (the shared store is constructed once; the behavior is per-agent) and emits the
+ *   daemon-side learning:memory_demoted/evicted counts (the store has no bus). OFF by
+ *   default → DORMANT (byte-identical). Moved here for the 600L setup-channels dir cap.
  * - __MEMORY_TRIPLE_EXTRACTION__ (WIRE-01): dispatches the exported-but-never-scheduled
  *   runMemoryTripleExtraction behind the per-agent default-OFF flag.
  *
- * Both re-check cfg.enabled (defence-in-depth — the scheduler already gates, a stale
+ * All re-check cfg.enabled (defence-in-depth — the scheduler already gates, a stale
  * persisted job must not run for a now-disabled agent), inject the segregated store(s)
  * as port TYPES only (the agent↛memory cut), and are NON-FATAL + counts/ids-only (§2.7).
  *
@@ -42,17 +47,17 @@ const USEFULNESS_JUDGE_MAX_OUTPUT_TOKENS = 1024;
 const TRIPLE_EXTRACTION_MAX_OUTPUT_TOKENS = 1024;
 
 /**
- * Handle the WS7-wired memory-cron sentinels (`__USEFULNESS_JUDGE__` /
- * `__MEMORY_TRIPLE_EXTRACTION__`). Returns `true` when the sentinel was recognized +
- * handled (the caller then returns), `false` when it is neither (the original handler
- * falls through to the normal delivery path).
+ * Handle the sibling-hosted memory-cron sentinels (`__USEFULNESS_JUDGE__` /
+ * `__MEMORY_LIFECYCLE__` / `__MEMORY_TRIPLE_EXTRACTION__`). Returns `true` when the sentinel
+ * was recognized + handled (the caller then returns), `false` when it is neither (the
+ * original handler falls through to the normal delivery path).
  */
 export async function handleWireMemoryCronSentinel(
   resultText: string | undefined,
   payload: MemoryCronPayload,
   ctx: MemoryCronContext,
 ): Promise<boolean> {
-  const { container, logger, clock, agents, tenantId, tripleStore, usefulnessStore, memoryApi } = ctx;
+  const { container, logger, clock, agents, tenantId, tripleStore, usefulnessStore, memoryApi, memoryLifecycleStore } = ctx;
 
   // -- Usefulness-judge sentinel intercept (WIRE-02) --
   // Mirrors the __MEMORY_REASONING__ block: opt-in cost gate + cheap "cron" model/key,
@@ -138,6 +143,69 @@ export async function handleWireMemoryCronSentinel(
     }
     judgeLogger.info({ agentId, usedCount: verdict.usedIds.length, ignoredCount: verdict.ignoredIds.length, durationMs: clock.now() - startMs }, "Usefulness judge complete");
     payload.onComplete?.({ status: "ok", error: undefined });
+    return true;
+  }
+
+  // -- Memory lifecycle sentinel intercept (FORGET-01/06) --
+  // KEYLESS: no model/key/build seam. Re-checks memoryLifecycle.enabled (defence-in-depth, the
+  // cron gate) + threads THIS agent's learningForgetting eviction policy onto the sweep CALL
+  // (the shared store is constructed once; the behavior is per-agent — resolved decision #3,
+  // learningForgetting drives eviction while memoryLifecycle is the cron gate). OFF by default →
+  // no override → DORMANT sweep (byte-identical). On the result it emits the daemon-side
+  // learning:memory_demoted/evicted counts (the store has no bus). Non-fatal + counts-only (§2.7).
+  if (resultText === "__MEMORY_LIFECYCLE__") {
+    const { agentId } = payload;
+    if (!agentId) {
+      logger.warn({ hint: "Memory lifecycle job fired without agentId", errorKind: "config" as const }, "Skipping memory lifecycle -- no agentId");
+      payload.onComplete?.({ status: "error", error: "No agentId for memory lifecycle" });
+      return true;
+    }
+
+    const agentConfig = agents[agentId];
+    const cfg = agentConfig?.memoryLifecycle;
+    if (!cfg?.enabled) {
+      // The opt-in gate (defence-in-depth re-check): a disabled agent does NOTHING (clean ok run).
+      logger.debug({ agentId }, "Memory lifecycle disabled for agent, skipping");
+      payload.onComplete?.({ status: "ok" });
+      return true;
+    }
+
+    if (!memoryLifecycleStore) {
+      logger.warn({ agentId, hint: "memoryLifecycleStore not injected -- cannot run the lifecycle sweep", errorKind: "config" as const }, "Skipping memory lifecycle -- lifecycle store not wired");
+      payload.onComplete?.({ status: "error", error: "memory lifecycle store not wired" });
+      return true;
+    }
+
+    const lifecycleTenantId = tenantId ?? container.config.tenantId ?? "default";
+    const lifecycleStartMs = clock.now();
+    // FORGET-06 per-call policy: thread THIS agent's learningForgetting eviction policy onto the
+    // sweep CALL. OFF (the default) → no override → DORMANT sweep (byte-identical).
+    const lf = agentConfig?.learningForgetting;
+    const evictionPolicy = lf?.enabled
+      ? { evictionEnabled: lf.eviction?.enabled !== false, strengthThreshold: lf.eviction?.strengthThreshold, failurePenalty: lf.failurePenalty }
+      : undefined;
+    const lifecycleResult = await memoryLifecycleStore.runLifecycleSweep({
+      tenantId: lifecycleTenantId,
+      agentId,
+      now: clock.now(),
+      ...(evictionPolicy !== undefined ? { policy: evictionPolicy } : {}),
+    });
+
+    if (!lifecycleResult.ok) {
+      logger.error({ agentId, err: lifecycleResult.error, hint: "Memory lifecycle sweep failed -- will retry next cycle", errorKind: "internal" as const }, "Memory lifecycle sweep error");
+    } else {
+      // FORGET-06/OBS-01: an INFO completion line (durationMs + the real counts) + the daemon-side
+      // learning:memory_* emits (counts-only convention). ids/bodies NEVER cross the bus (§2.7 /
+      // SEC-01). With eviction OFF the counts are 0 (DORMANT).
+      const r = lifecycleResult.value;
+      logger.child({ agentId, submodule: "memory-lifecycle" }).info(
+        { agentId, scanned: r.scanned, promoted: r.promoted, demoted: r.demoted, evicted: r.evicted, durationMs: clock.now() - lifecycleStartMs },
+        "Memory lifecycle sweep complete",
+      );
+      container.eventBus.emit("learning:memory_demoted", { agentId, count: r.demoted, timestamp: clock.now() });
+      container.eventBus.emit("learning:memory_evicted", { agentId, count: r.evicted, timestamp: clock.now() });
+    }
+    payload.onComplete?.({ status: lifecycleResult.ok ? "ok" : "error", error: lifecycleResult.ok ? undefined : lifecycleResult.error?.message });
     return true;
   }
 

@@ -4,9 +4,10 @@
  * to keep that leaf under the 600L setup-channels cap. The LLM-backed sentinels
  * (__MEMORY_CONSOLIDATION__, __MEMORY_REASONING__, __USER_REPRESENTATION__,
  * __SOCIAL_MODELING__) resolve a cheap "cron" model + an API key (by NAME, never logged);
- * the KEYLESS sentinels (__ONLINE_TUNING__, __MEMORY_LIFECYCLE__) resolve none. The
- * WS7-wired sentinels (__USEFULNESS_JUDGE__, __MEMORY_TRIPLE_EXTRACTION__) live in the
- * sibling setup-channels-memory-crons-wire.ts; the fall-through delegates there.
+ * the KEYLESS __ONLINE_TUNING__ sentinel resolves none. The sibling-hosted sentinels
+ * (__USEFULNESS_JUDGE__, __MEMORY_TRIPLE_EXTRACTION__ WS7 + the KEYLESS __MEMORY_LIFECYCLE__
+ * FORGET-01/06 sweep) live in setup-channels-memory-crons-wire.ts (the 600L dir cap); the
+ * fall-through delegates there.
  *
  * All mirror the review branch: the cron registers ONLY for an operator-enabled agent
  * (setup-schedulers), but each sentinel ALSO re-checks cfg.enabled + short-circuits ok when
@@ -45,7 +46,7 @@ export async function handleMemoryCronSentinel(
   payload: MemoryCronPayload,
   ctx: MemoryCronContext,
 ): Promise<boolean> {
-  const { container, logger, clock, agents, tenantId, consolidationStore, tripleStore, userRepresentationStore, relationshipStore, tunedAlphaStore, usefulnessStore, memoryLifecycleStore, memoryApi } = ctx;
+  const { container, logger, clock, agents, tenantId, consolidationStore, tripleStore, userRepresentationStore, relationshipStore, tunedAlphaStore, usefulnessStore, memoryApi } = ctx;
 
   // -- Memory consolidation sentinel intercept --
   if (resultText === "__MEMORY_CONSOLIDATION__") {
@@ -299,12 +300,11 @@ export async function handleMemoryCronSentinel(
   }
 
   // -- Online-tuning bandit sentinel intercept --
-  // The OFFLINE tuned-alpha bandit. UNLIKE the consolidation/reasoning/user-rep/social
-  // sentinels above, it is DETERMINISTIC + KEYLESS: there is NO resolveOperationModel, NO
-  // providerEntry, NO apiKey, NO build() seam (it deletes work the LLM crons do). It
-  // reads the accrued FEED signal for a bounded recent candidate-id set, runs the pure clamped
-  // computeTunedAlphas step (inside runOnlineTuning), and upserts a four-alpha vector. The job
-  // is non-fatal + counts-only; trust is never tuned (config-sourced at the apply site).
+  // The OFFLINE tuned-alpha bandit — DETERMINISTIC + KEYLESS (no model/key/build seam; it deletes
+  // the LLM crons' work). Gate: memoryOnlineTuning.enabled (cron) AND learningTuning.enabled
+  // (RANK-02/03: per-intent + bandit/nudge). When learning is on it iterates the intent buckets,
+  // selecting the learner by config; off → the legacy single-bucket nudge (byte-identical). The
+  // job is non-fatal + counts-only; trust is never tuned (config-sourced at the apply site).
   if (resultText === "__ONLINE_TUNING__") {
     const { agentId } = payload;
     if (!agentId) {
@@ -407,51 +407,9 @@ export async function handleMemoryCronSentinel(
     return true;
   }
 
-  // -- Memory lifecycle sentinel intercept --
-  // The DORMANT lifecycle sweep. Like the __ONLINE_TUNING__ bandit (NOT the LLM crons) it is
-  // KEYLESS: NO resolveOperationModel, NO providerEntry, NO apiKey, NO build() seam.
-  // It re-checks memoryLifecycle.enabled (defence-in-depth) + short-circuits ok when off; when
-  // on it invokes runLifecycleSweep per (tenant, agent) with the INJECTED clock.now (never
-  // Date.now). DORMANT: even when on it evicts/demotes/promotes 0 rows (live policy deferred).
-  // Non-fatal + counts-only (the report numbers — NEVER a body/query, §2.7).
-  if (resultText === "__MEMORY_LIFECYCLE__") {
-    const { agentId } = payload;
-    if (!agentId) {
-      logger.warn({ hint: "Memory lifecycle job fired without agentId", errorKind: "config" as const }, "Skipping memory lifecycle -- no agentId");
-      payload.onComplete?.({ status: "error", error: "No agentId for memory lifecycle" });
-      return true;
-    }
-
-    const agentConfig = agents[agentId];
-    const cfg = agentConfig?.memoryLifecycle;
-    if (!cfg?.enabled) {
-      // The opt-in gate (defence-in-depth re-check): a disabled agent does NOTHING (clean ok run).
-      logger.debug({ agentId }, "Memory lifecycle disabled for agent, skipping");
-      payload.onComplete?.({ status: "ok" });
-      return true;
-    }
-
-    // The DORMANT sweep store MUST be present (injected from setup-memory). Absent => clean error.
-    if (!memoryLifecycleStore) {
-      logger.warn({ agentId, hint: "memoryLifecycleStore not injected -- cannot run the lifecycle sweep", errorKind: "config" as const }, "Skipping memory lifecycle -- lifecycle store not wired");
-      payload.onComplete?.({ status: "error", error: "memory lifecycle store not wired" });
-      return true;
-    }
-
-    // KEYLESS: no model, no provider entry, no secret/key, no build seam — deterministic + $0.
-    const lifecycleTenantId = tenantId ?? container.config.tenantId ?? "default";
-    const lifecycleResult = await memoryLifecycleStore.runLifecycleSweep({ tenantId: lifecycleTenantId, agentId, now: clock.now() });
-
-    if (!lifecycleResult.ok) {
-      logger.error({ agentId, err: lifecycleResult.error, hint: "Memory lifecycle sweep failed -- will retry next cycle", errorKind: "internal" as const }, "Memory lifecycle sweep error");
-    } else {
-      // Counts ONLY — the DORMANT report (promoted/demoted/evicted always 0 in the scaffold). §2.7.
-      const r = lifecycleResult.value;
-      logger.child({ agentId, submodule: "memory-lifecycle" }).debug({ agentId, scanned: r.scanned, promoted: r.promoted, demoted: r.demoted, evicted: r.evicted }, "Memory lifecycle sweep complete (DORMANT)");
-    }
-    payload.onComplete?.({ status: lifecycleResult.ok ? "ok" : "error", error: lifecycleResult.ok ? undefined : lifecycleResult.error?.message });
-    return true;
-  }
+  // NOTE: the __MEMORY_LIFECYCLE__ sentinel (FORGET-01/06 — soft eviction + the
+  // learning:memory_* daemon emits) lives in the sibling setup-channels-memory-crons-wire.ts
+  // (the 600L dir cap); the fall-through delegates there.
 
   // -- Social modeling sentinel intercept --
   // The offline DIRECTIONAL relationship builder. Fires per (tenant, agent); groups high-trust

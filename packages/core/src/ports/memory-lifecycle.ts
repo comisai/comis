@@ -48,6 +48,23 @@ import type { Result } from "@comis/shared";
 export type MemoryTier = "durable" | "ephemeral";
 
 /**
+ * The PER-CALL eviction-behavior override the daemon threads from each agent's
+ * `learningForgetting` config (FORGET-06). The lifecycle store is constructed ONCE and
+ * shared across agents, but the eviction policy is PER-AGENT — so the behavior gate rides
+ * the sweep CALL (this override), not the constructor: agent A can sweep eviction-on while
+ * agent B sweeps DORMANT on the same store. Omitted → the store's constructor policy (the
+ * default DORMANT — byte-identity). Counts-only telemetry; carries no memory content.
+ */
+export interface MemoryLifecycleEvictionOverride {
+  /** Activate LIVE soft eviction for THIS sweep (`learningForgetting.eviction.enabled ∧ .enabled`). */
+  evictionEnabled?: boolean;
+  /** The [0,1] strength floor below which a non-exempt candidate is soft-evicted (`learningForgetting.eviction.strengthThreshold`). */
+  strengthThreshold?: number;
+  /** The [0,1] wrongness-coupling weight on `failure_count` (`learningForgetting.failurePenalty`). */
+  failurePenalty?: number;
+}
+
+/**
  * The isolation boundary for every lifecycle sweep. Every statement
  * in the sole adapter filters on `(tenantId, agentId)` — this is a load-bearing
  * SECURITY scope in a multi-agent DB, not a nicety: a sweep run under one
@@ -67,6 +84,13 @@ export interface MemoryLifecycleScope {
    * mirroring `TunedAlphaScope.now`.
    */
   now: number;
+  /**
+   * PER-CALL eviction-behavior override (FORGET-06). The daemon threads the per-agent
+   * `learningForgetting` eviction policy here so the shared store evicts per-agent. When
+   * present its fields take precedence over the store's constructor policy for THIS sweep;
+   * when omitted the constructor policy applies (DORMANT by default — byte-identical).
+   */
+  policy?: MemoryLifecycleEvictionOverride;
 }
 
 /**
