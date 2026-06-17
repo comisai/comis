@@ -140,10 +140,16 @@ export function computeTunedAlphas(cur: TunedAlphaVector, sig: FeedAggregate): T
 
 /**
  * The accrued outcome-attribution posterior for ONE `(tenant, agent, intent)`
- * bucket — the plain-number substrate the bandit reads (mirrors the
- * `tuned_alpha.outcome_reward_sum` / `outcome_n` columns Plan 02 added). Kept as
- * two scalars (not a store row) so the math stays pure and `@comis/core`-types-only
- * — the offline job reads the columns and passes them here.
+ * bucket — the plain-number substrate the bandit reads. Kept as two scalars (not a
+ * store row) so the math stays pure and `@comis/core`-types-only.
+ *
+ * PROVENANCE (WR-04): in v1 this posterior is derived LIVE by the offline job's
+ * `aggregateFeed` from the `memory_usefulness` feed (used/ignored MINUS the WR-03
+ * failure term) — it is NOT persisted. The `tuned_alpha.outcome_reward_sum` /
+ * `outcome_n` columns are RESERVED/INERT in v1 (written 0, read by nobody) — a
+ * forward-compatible slot for a future durable cross-run posterior, NOT the current
+ * reward path. Do not read this type's JSDoc as "the bandit reads those columns"; the
+ * reward flows through `memory_usefulness`.
  */
 export interface BanditPosterior {
   /** Signed sum of outcome-attributed rewards (success → +, failure/corrected → −). */

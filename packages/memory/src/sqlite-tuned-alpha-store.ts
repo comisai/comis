@@ -95,9 +95,10 @@ export function createSqliteTunedAlphaStore(
   // PK (RANK-05). Every value a bound `?` (NEVER concatenated). ON CONFLICT DO
   // UPDATE keeps exactly ONE row per (scope, intent) — a per-intent write touches
   // ONLY its bucket (the global '' row and other intents are never clobbered). The
-  // bandit-posterior columns (outcome_reward_sum/outcome_n) default to 0 here (the
-  // bandit job owns the posterior — this overlay-vector write resets it to 0).
-  // updated_at = scope.now (injected clock, never a wall-clock read).
+  // RESERVED posterior-slot columns (outcome_reward_sum/outcome_n) are written 0 here
+  // and read by nobody (WR-04: INERT in v1 — the bandit derives its posterior LIVE
+  // from the memory_usefulness feed, not these columns; they are a forward-compat
+  // slot). updated_at = scope.now (injected clock, never a wall-clock read).
   const upsertVec = db.prepare(
     "INSERT INTO tuned_alpha " +
       "(tenant_id, agent_id, intent, recency_alpha, temporal_alpha, proof_alpha, usefulness_alpha, outcome_reward_sum, outcome_n, updated_at) " +

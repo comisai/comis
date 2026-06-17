@@ -3,10 +3,19 @@
  * The per-intent `tuned_alpha` migration — the v2.26 Verified Learning (WS3,
  * RANK-05) transactional PK-widening REBUILD that widens the legacy 2-col PK
  * `(tenant_id, agent_id)` to the per-intent 3-col `(tenant_id, agent_id, intent)`
- * and adds the bandit-posterior columns `outcome_reward_sum` / `outcome_n`. Plus
- * the `memory_usefulness.failure_count` per-column add (FORGET-02) — the
+ * and adds the RESERVED posterior-slot columns `outcome_reward_sum` / `outcome_n`.
+ * Plus the `memory_usefulness.failure_count` per-column add (FORGET-02) — the
  * outcome-attributed task-failure signal, DISTINCT from `ignored_count`
  * (recalled-but-not-cited).
+ *
+ * ## The `outcome_reward_sum` / `outcome_n` columns are RESERVED/INERT in v1 (WR-04)
+ *
+ * They are written 0 on every upsert and read by NOBODY. The bandit derives its
+ * posterior LIVE from the `memory_usefulness` feed (used/ignored − the WR-03 failure
+ * term) in the offline job's `aggregateFeed`, NOT from these columns. They are a
+ * forward-compatible slot for a future durable cross-run posterior, kept here so the
+ * PK-widening REBUILD lands them once rather than via a later table churn — NOT the
+ * current reward path. Do NOT build a reader against them expecting a live posterior.
  *
  * Extracted from `schema.ts` (which is at the 800-line cap) — the
  * `schema-outcome-events.ts` co-location precedent. `initSchema` CALLS the two
@@ -41,7 +50,8 @@ import type Database from "better-sqlite3";
 
 /**
  * Idempotently ensure the `tuned_alpha` table is per-intent (3-col PK) with the
- * bandit-posterior columns. A FRESH DB gets the 3-col PK directly from
+ * RESERVED posterior-slot columns (`outcome_reward_sum`/`outcome_n` — INERT in v1,
+ * see the module JSDoc). A FRESH DB gets the 3-col PK directly from
  * `CREATE TABLE`; a pre-intent (legacy 2-col-PK) DB is REBUILT to widen the PK
  * (ADD COLUMN cannot). Re-run-safe: when the 3-col PK is already present the
  * rebuild is skipped, so a second call is a no-op.
