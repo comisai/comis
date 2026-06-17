@@ -177,25 +177,64 @@ export type MemoryOnlineTuningResult = Result<MemoryOnlineTuningStats, Error>;
 // ---------------------------------------------------------------------------
 
 /**
+ * WR-03 failure-reward weight: the max negative reward an all-failure memory
+ * contributes (mirrors the lifecycle store's `failurePenalty` magnitude, 0.5). The
+ * saturating term `failureCount / (failureCount + K)` ∈ [0, 1) scales it, so one
+ * failure costs a little and many failures approach (never reach) the full weight.
+ */
+const FAILURE_REWARD_WEIGHT = 0.5;
+/**
+ * WR-03 failure saturation constant K (mirrors the lifecycle store's
+ * FAILURE_SATURATION_K): ~3 failures reach half the penalty. Keeps the negative
+ * reward bounded + monotone so a poisoned/pathological failure burst cannot run the
+ * posterior away (the downstream `clampAlpha` is the hard floor regardless).
+ */
+const FAILURE_SATURATION_K = 3;
+
+/**
+ * Per-id net reward in [-0.5, 0.5], centered on a neutral 0: the bounded used-RATE
+ * deviation MINUS a saturating failure penalty (WR-03). `usedRate` is
+ * `usedCount/(usedCount+ignoredCount)` in [0,1] (NOT raw counts — Pitfall 2); when a
+ * memory has no used/ignored signal the rate is the neutral 0.5 so a PURE-failure
+ * memory still registers (its failure term pushes it negative rather than being
+ * skipped as "never recalled"). The failure penalty is
+ * `FAILURE_REWARD_WEIGHT * failureCount/(failureCount+K)` ∈ [0, 0.5). Clamped to
+ * [-0.5, 0.5] so the mean stays in the FeedAggregate gradient's documented range.
+ */
+function netCenteredReward(entry: OnlineTuningFeedEntry): number {
+  const used = entry.usedCount;
+  const ignored = entry.ignoredCount;
+  const failures = entry.failureCount ?? 0;
+  const usageTotal = used + ignored;
+  // No used/ignored → neutral 0.5 baseline (so a pure-failure memory is not skipped);
+  // else the genuine used-rate. Centered on 0.5 below.
+  const usedRate = usageTotal > 0 ? used / usageTotal : 0.5;
+  const failurePenalty = failures > 0 ? FAILURE_REWARD_WEIGHT * (failures / (failures + FAILURE_SATURATION_K)) : 0;
+  const centered = usedRate - 0.5 - failurePenalty;
+  // Clamp to the [-0.5, 0.5] band the usefulness gradient + posterior expect.
+  return Math.min(0.5, Math.max(-0.5, centered));
+}
+
+/**
  * Aggregate the FEED counts Map into a bounded {@link FeedAggregate} AND the
- * {@link BanditPosterior} the UCB learner consumes. Each per-memory used-RATE is
- * `usedCount / (usedCount + ignoredCount)` in `[0, 1]` (NOT raw counts — Pitfall 2),
- * centered on `0.5` so a neutral memory contributes `0`. We average the centered rates
- * across the ids and project the mean onto the USEFULNESS gradient — a positive net
- * used-rate nudges `usefulnessAlpha` UP, a net ignored-rate nudges it DOWN; the magnitude
- * is bounded to `[-0.5, 0.5]` (so the nudge moves the weight by at most `STEP * 0.5`). The
- * other three gradients are `0` this run: the bare used/ignored feed has no per-axis
- * recency/temporal/proof attribution — but under the BANDIT learner those axes still MOVE,
- * because the posterior's outcome-attributed reward MEAN rides every axis's exploit term
- * (the RANK-04 keystone mechanism; the recency/temporal/proof gradients become learnable).
+ * {@link BanditPosterior} the UCB learner consumes. Each per-memory NET reward is the
+ * bounded used-RATE deviation MINUS a saturating failure penalty (WR-03 / RANK-01),
+ * in `[-0.5, 0.5]` and centered on `0` so a neutral memory contributes `0`. We average
+ * the net rewards across the ids and project the mean onto the USEFULNESS gradient — a
+ * positive net used-rate nudges `usefulnessAlpha` UP, a net ignored/FAILED signal nudges
+ * it DOWN; the magnitude is bounded (so the nudge moves the weight by at most `STEP * 0.5`).
+ * The other three gradients are `0` this run: the feed has no per-axis recency/temporal/
+ * proof attribution — but under the BANDIT learner those axes still MOVE, because the
+ * posterior's outcome-attributed reward MEAN rides every axis's exploit term (the RANK-04
+ * keystone mechanism; the recency/temporal/proof gradients become learnable).
  *
  * The posterior derives from the SAME outcome-enriched feed (the reward seam — Plan 04 —
- * writes `recordUsage` on a `success` trajectory, so a memory's net used-rate IS its
- * outcome reward, with `failure`/`corrected` reflected as ignored/un-used): `rewardSum` is
- * the SIGNED sum of centered used-rates (success → +, failure-driven-ignore → −) and `n`
- * the count of signal-bearing ids (the UCB arm-pull count). Deterministic — no RNG, no
- * clock. A neutral / empty signal yields the all-zero aggregate + `{rewardSum:0, n:0}` (a
- * no-op — recall unchanged under both learners).
+ * writes `recordUsage` on a `success` trajectory and `recordFailure` on a `failure`/
+ * `corrected` one): `rewardSum` is the SIGNED sum of per-id net rewards (success → +,
+ * ignore/FAILURE → −) and `n` the count of signal-bearing ids (the UCB arm-pull count).
+ * A memory with NO used/ignored/failure signal is skipped (never recalled — no arm pull).
+ * Deterministic — no RNG, no clock. A neutral / empty signal yields the all-zero aggregate
+ * + `{rewardSum:0, n:0}` (a no-op — recall unchanged under both learners).
  */
 function aggregateFeed(feed: Map<string, OnlineTuningFeedEntry>): {
   aggregate: FeedAggregate;
@@ -203,14 +242,14 @@ function aggregateFeed(feed: Map<string, OnlineTuningFeedEntry>): {
 } {
   let sumCentered = 0;
   let counted = 0;
-  for (const { usedCount, ignoredCount } of feed.values()) {
-    const total = usedCount + ignoredCount;
-    if (total <= 0) continue; // never recalled — no signal
-    const usedRate = usedCount / total; // bounded [0, 1]
-    sumCentered += usedRate - 0.5; // centered on neutral
+  for (const entry of feed.values()) {
+    // A signal-bearing id has at least one of used / ignored / failure. A memory with
+    // NONE was never recalled AND never failed — no arm pull, no reward.
+    if (entry.usedCount + entry.ignoredCount + (entry.failureCount ?? 0) <= 0) continue;
+    sumCentered += netCenteredReward(entry); // signed net reward in [-0.5, 0.5]
     counted++;
   }
-  const usefulnessGradient = counted === 0 ? 0 : sumCentered / counted; // mean centered rate, [-0.5, 0.5]
+  const usefulnessGradient = counted === 0 ? 0 : sumCentered / counted; // mean net reward, [-0.5, 0.5]
   return {
     aggregate: {
       recencyGradient: 0,
@@ -218,7 +257,7 @@ function aggregateFeed(feed: Map<string, OnlineTuningFeedEntry>): {
       proofGradient: 0,
       usefulnessGradient,
     },
-    // The outcome-attributed posterior: rewardSum = signed net (success → +, ignore → −),
+    // The outcome-attributed posterior: rewardSum = signed net (success → +, ignore/FAILURE → −),
     // n = the arm-pull count. Both deterministic; the bandit's reward mean = rewardSum/max(1,n).
     posterior: { rewardSum: sumCentered, n: counted },
   };

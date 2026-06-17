@@ -69,6 +69,16 @@ export interface UsefulnessSignal {
   ignoredCount: number;
   /** Epoch ms of the last "used" attribution (absent until first use). */
   lastUsefulAt?: number;
+  /**
+   * WR-03 (RANK-01): outcome-attributed task FAILURE count — surfaced ONLY when > 0
+   * (absent for a clean memory, like `lastUsefulAt`). It is the NEGATIVE-reward signal
+   * the OFFLINE bandit feed consumes (a memory in the `recalled_ids` of a `failure`/
+   * `corrected` trajectory accrues it, corroboration-gated). The recall HOT PATH
+   * (`score.ts` `usefulnessNorm`) reads ONLY `usedCount`/`ignoredCount` and IGNORES this
+   * field, so projecting it is byte-identical for recall ranking — it exists for the
+   * bandit's posterior, not the live score.
+   */
+  failureCount?: number;
 }
 
 export interface MemoryUsefulnessStore {

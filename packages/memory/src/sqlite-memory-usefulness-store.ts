@@ -237,9 +237,13 @@ export function createSqliteMemoryUsefulnessStore(
         // (?, '')` fetches BOTH the requested per-intent bucket AND the global
         // fallback row per id; the per-id preference is resolved below.
         const ph = memoryIds.map(() => "?").join(", ");
+        // WR-03: `failure_count` is now PROJECTED (the bandit feed's negative-reward
+        // signal). It is surfaced onto the signal ONLY when > 0 below, so a clean
+        // memory's signal shape is byte-identical and the recall hot-path usefulnessNorm
+        // (used/ignored only) is unaffected.
         const rows = db
           .prepare(
-            "SELECT memory_id, intent, used_count, ignored_count, last_useful_at FROM memory_usefulness " +
+            "SELECT memory_id, intent, used_count, ignored_count, last_useful_at, failure_count FROM memory_usefulness " +
               `WHERE tenant_id = ? AND agent_id = ? AND intent IN (?, '') AND memory_id IN (${ph})`,
           )
           .all(tenantId, agentId, intent, ...memoryIds);
@@ -265,6 +269,12 @@ export function createSqliteMemoryUsefulnessStore(
             usedCount: row.used_count,
             ignoredCount: row.ignored_count,
             ...(row.last_useful_at !== null ? { lastUsefulAt: row.last_useful_at } : {}),
+            // WR-03: surface failure_count ONLY when > 0 (spread-conditional, like
+            // lastUsefulAt) so a clean memory's signal is byte-identical — the recall
+            // hot path ignores it; the bandit feed reads it as the negative-reward term.
+            ...(row.failure_count !== undefined && row.failure_count > 0
+              ? { failureCount: row.failure_count }
+              : {}),
           });
         }
 

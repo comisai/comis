@@ -107,7 +107,7 @@ export const MemoryEntityRowSchema = z.strictObject({
 
 /**
  * Schema for the `readUsefulness` projection (per-intent). The scoped `SELECT memory_id, intent, used_count,
- * ignored_count, last_useful_at FROM memory_usefulness WHERE tenant_id=? AND
+ * ignored_count, last_useful_at, failure_count FROM memory_usefulness WHERE tenant_id=? AND
  * agent_id=? AND intent IN (?, '') AND memory_id IN (...)` read; tenant_id/agent_id
  * NOT projected (the WHERE pins them). `intent` IS projected (the per-intent vs
  * global-`''` bucket), NON-nullable (NOT NULL DEFAULT '' — global is `''`, never
@@ -121,7 +121,7 @@ export const MemoryUsefulnessRowSchema = z.strictObject({
   ignored_count: z.number(),
   /** Epoch ms of the last "used" attribution; NULL until first use. */
   last_useful_at: z.number().nullable(),
-  /** Outcome-attributed task-failure count (DEFAULT 0; FORGET-02) — DISTINCT from ignored_count. `.optional()`: the readUsefulness projection omits it (the lifecycle sweep reads it separately). */
+  /** Outcome-attributed task-failure count (NOT NULL DEFAULT 0; FORGET-02) — DISTINCT from ignored_count. WR-03: the readUsefulness projection NOW selects it (the bandit feed's negative-reward signal, surfaced onto the signal only when >0); `.optional()` keeps the schema tolerant of the legacy/lifecycle reads that omit it. */
   failure_count: z.number().optional(),
 });
 
