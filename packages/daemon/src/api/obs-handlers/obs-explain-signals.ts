@@ -45,7 +45,8 @@ import {
 import {
   accumulateLearningRecord, accumulateSkillInvokedRecord, accumulateSkillSynthesizedRecord,
   accumulateSkillValidatedRecord, accumulateToolSchemaRecord, buildLearningSignal,
-  emptyLearningFold, type LearningFoldState,
+  accumulateUserModelRevisedRecord, accumulateMemoryGeneralizedRecord, emptyLearningFold,
+  type LearningFoldState,
 } from "./obs-explain-signal-folds.js";
 
 // ---------------------------------------------------------------------------
@@ -317,13 +318,13 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
       };
       return;
     }
-    // OBS-02: fold the learning-family records into the learning block. (198) the
-    // outcome shadow; (Phase 201 P2 skills) skillsUsed / skillFailures /
-    // synthesisAbstained from the procedural-skill records — ids/counts only.
+    // OBS-02: fold learning-family records → the learning block — outcome (198) / skills (201) / revision+generalization (203); ids/counts only (SEC-01).
     case "learning.outcome_observed": accumulateLearningRecord(acc.learning, data); return;
     case "skill.prompt_invoked": accumulateSkillInvokedRecord(acc.learning, data); return;
     case "learning.skill_validated": accumulateSkillValidatedRecord(acc.learning, data); return;
     case "learning.skill_synthesized": accumulateSkillSynthesizedRecord(acc.learning, data); return;
+    case "learning.user_model_revised": accumulateUserModelRevisedRecord(acc.learning, data); return;
+    case "learning.memory_generalized": accumulateMemoryGeneralizedRecord(acc.learning, data); return;
     case "execution.tool_schema_unsupported":
       // GBNF-02 (175): the strip-retry self-heal record (LAST wins — terminal
       // repair state). Content-free fold (see obs-explain-signal-folds.ts).

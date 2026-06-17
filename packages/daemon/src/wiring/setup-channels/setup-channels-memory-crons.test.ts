@@ -796,17 +796,26 @@ describe("handleMemoryCronSentinel — OBS-01/02 learning:* daemon emit + config
     expect(Object.keys(payload).sort()).toEqual(["agentId", "corroborated", "durationMs", "inserted", "superseded", "timestamp"]);
   });
 
-  it("REVISE: forwards historyCap from memoryUserRepresentation config into the user-rep build call", async () => {
+  it("REVISE: a 0-revision build still emits learning:user_model_revised with all-zero counts (Defer != Retry — benign)", async () => {
+    // historyCap forwarding lives at the STORE constructor (setup-memory), not the job config —
+    // the revise() trim is a store concern (Plan 02 constructor option). Here we pin the benign
+    // zero-count emit so a no-op revision run is still observable (not a silent gap).
+    mockRunUserRepresentationBuild.mockResolvedValue({
+      ok: true as const,
+      value: { built: 0, written: 0, blocked: 0, superseded: 0, corroborated: 0, inserted: 0, durationMs: 2 },
+    });
     const ctx = makeCtx({
-      agents: { "agent-1": { name: "Agent 1", provider: "anthropic", memoryUserRepresentation: { enabled: true, historyCap: 25 } } },
+      agents: { "agent-1": { name: "Agent 1", provider: "anthropic", memoryUserRepresentation: { enabled: true } } },
       apiKey: "test-key",
       inspectRows: [{ id: "m1", userId: "u1", content: "fact", trustLevel: "learned", source: { sessionKey: "s1" } }],
     });
     (ctx as any).userRepresentationStore = { upsert: vi.fn(), read: vi.fn(), revise: vi.fn(), asOf: vi.fn() };
+    const emit = (ctx.container as any).eventBus.emit as ReturnType<typeof vi.fn>;
     await handleMemoryCronSentinel("__USER_REPRESENTATION__", { agentId: "agent-1", onComplete: vi.fn() }, ctx);
-    expect(mockRunUserRepresentationBuild).toHaveBeenCalled();
-    const arg = mockRunUserRepresentationBuild.mock.calls[0][0] as { config: Record<string, unknown> };
-    expect(arg.config.historyCap).toBe(25);
+    expect(emit).toHaveBeenCalledWith(
+      "learning:user_model_revised",
+      expect.objectContaining({ agentId: "agent-1", superseded: 0, corroborated: 0, inserted: 0 }),
+    );
   });
 
   it("GENERAL/OBS-01: emits learning:memory_generalized (generalized/clustersConsidered COUNTS only) from the consolidation result", async () => {

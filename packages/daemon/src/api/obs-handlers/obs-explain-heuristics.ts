@@ -62,7 +62,7 @@ import {
   hasModuleNotFound,
 } from "./obs-explain-heuristics-helpers.js";
 // OBS-02 (Phase 201): the two BENIGN learning verdicts (sibling — subdir cap).
-import { learnedSkillFailingVerdict, synthesisAbstainedVerdict } from "./obs-explain-learning-verdicts.js";
+import { learnedSkillFailingVerdict, synthesisAbstainedVerdict, userModelRevisedVerdict } from "./obs-explain-learning-verdicts.js";
 
 // ---------------------------------------------------------------------------
 // Public shape: matches IncidentReport.likelyRootCause 1:1 (Plan 01).
@@ -461,9 +461,11 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
     };
   },
 
-  // 11/12) the two BENIGN skill verdicts (sibling): after the acute tier, before #13.
+  // 11/12/12b) the BENIGN learning verdicts (sibling): after the acute tier, before #13
+  // (specific-over-generic, yet Defer ≠ Retry — never masks an acute error).
   learnedSkillFailingVerdict,
   synthesisAbstainedVerdict,
+  userModelRevisedVerdict, // OBS-02 (Phase 203): routine user-model revision; zero/absent ⇒ no verdict.
 
   // 13) outcome_unresolved (OBS-02, Phase 198 — LOWEST-priority, BENIGN, the
   //     generic learning catch-all). A finished trajectory the learning shadow saw

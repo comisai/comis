@@ -263,12 +263,7 @@ export function translatePayload(
 
     case "learning:outcome_observed":
       // OUTCOME-08: trajectoryId + closed-enum outcome/source + numeric confidence ONLY (no body/alpha/recalled ids; agentId/sessionKey/traceId are envelope ids — §2.7 / SEC-01).
-      return {
-        trajectoryId: payload.trajectoryId,
-        outcome: payload.outcome,
-        source: payload.source,
-        confidence: payload.confidence,
-      };
+      return { trajectoryId: payload.trajectoryId, outcome: payload.outcome, source: payload.source, confidence: payload.confidence };
 
     case "memory:online_tuning_applied":
       // RANK-06: bandit-applied COUNTS + the per-intent dim ONLY — NEVER an alpha value or FEED content (§2.7 / SEC-01); agentId/timestamp are envelope ids.
@@ -283,14 +278,9 @@ export function translatePayload(
       return { count: payload.count };
     case "learning:skill_validated": // SKILL-09: the verdict BOOLEANS + coverage CLOSED-ENUM ONLY — NEVER a field name/finding/script (SEC-01).
       return { staticOk: payload.staticOk, dynamicOk: payload.dynamicOk, coverage: payload.coverage };
-
-    case "learning:user_model_revised":
-      // REVISE- (Phase 203): the per-slot revision COUNTS + durationMs ONLY — NEVER a profile entry's content/entryType/source id (§2.7 / SEC-01 / T-203-leak); agentId/timestamp are envelope ids.
-      return { superseded: payload.superseded, corroborated: payload.corroborated, inserted: payload.inserted, durationMs: payload.durationMs };
-    case "learning:memory_generalized":
-      // GENERAL- (Phase 203): the generalization COUNTS + durationMs ONLY — NEVER a synthesized memory body / source ids (§2.7 / SEC-01 / T-203-leak); agentId/timestamp are envelope ids.
-      return { generalized: payload.generalized, clustersConsidered: payload.clustersConsidered, durationMs: payload.durationMs };
-
+    // REVISE-/GENERAL- (203): COUNTS + durationMs ONLY — never a profile/memory body, entryType, or source id (SEC-01 / T-203-leak).
+    case "learning:user_model_revised": return { superseded: payload.superseded, corroborated: payload.corroborated, inserted: payload.inserted, durationMs: payload.durationMs };
+    case "learning:memory_generalized": return { generalized: payload.generalized, clustersConsidered: payload.clustersConsidered, durationMs: payload.durationMs };
     // T2.2 (F9): closed ids + durationMs ONLY — agentId/origin are envelope ids; no result/
     // error body crosses the bus (§2.7 / H1); the record TYPE conveys promoted/completed/failed.
     case "background_task:promoted":

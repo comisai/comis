@@ -7914,6 +7914,12 @@
             },
             "synthesisAbstained": {
               "type": "boolean"
+            },
+            "userModelRevised": {
+              "type": "number"
+            },
+            "memoriesGeneralized": {
+              "type": "number"
             }
           },
           "required": [

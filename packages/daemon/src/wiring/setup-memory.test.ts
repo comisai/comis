@@ -1407,6 +1407,42 @@ describe("setupMemory", () => {
     expect(result.userRepresentationStore.upsert).toBeTypeOf("function");
     expect(result.userRepresentationStore.read).toBeTypeOf("function");
   });
+
+  it("REVISE-02 (Phase 203): forwards the MAX configured memoryUserRepresentation.historyCap of an ENABLED agent into the user-rep store constructor", async () => {
+    const container = createMinimalContainer({
+      agents: {
+        // disabled agent's cap is ignored even though it is larger
+        ignored: { memoryUserRepresentation: { enabled: false, historyCap: 99 } },
+        a: { memoryUserRepresentation: { enabled: true, historyCap: 7 } },
+        b: { memoryUserRepresentation: { enabled: true, historyCap: 25 } },
+      },
+    });
+    const setupMemory = await getSetupMemory();
+    await setupMemory({
+      container,
+      memoryLogger: createMockLogger() as any,
+      clock: testClock,
+      timers: testTimers,
+    });
+    expect(mockCreateSqliteUserRepresentationStore).toHaveBeenCalledWith(
+      expect.objectContaining({ db: mockDb, historyCap: 25 }),
+    );
+  });
+
+  it("REVISE-02 (Phase 203): omits historyCap (store keeps its default) when no ENABLED agent configures it", async () => {
+    const container = createMinimalContainer({
+      agents: { a: { memoryUserRepresentation: { enabled: false, historyCap: 50 } } },
+    });
+    const setupMemory = await getSetupMemory();
+    await setupMemory({
+      container,
+      memoryLogger: createMockLogger() as any,
+      clock: testClock,
+      timers: testTimers,
+    });
+    const arg = mockCreateSqliteUserRepresentationStore.mock.calls[0][0] as Record<string, unknown>;
+    expect(arg.historyCap).toBeUndefined();
+  });
 });
 
 // ---------------------------------------------------------------------------

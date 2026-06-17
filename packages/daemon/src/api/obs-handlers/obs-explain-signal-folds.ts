@@ -61,6 +61,17 @@ export interface LearningFoldState {
   validationFailed: boolean;
   /** A record carried the BENIGN synthesis-abstain signal (Defer ≠ Retry). */
   synthesisAbstained: boolean;
+  /**
+   * REVISE- (Phase 203): the total user-model belief-slots touched this run
+   * (superseded + corroborated + inserted), summed across the daemon's per-user
+   * `learning.user_model_revised` records. Count only — no profile body.
+   */
+  userModelRevised: number;
+  /**
+   * GENERAL- (Phase 203): higher-order generalizations written this run, from the
+   * daemon's `learning.memory_generalized` records. Count only — no memory body.
+   */
+  memoriesGeneralized: number;
 }
 
 /** A fresh, empty fold state (no learning records seen yet). */
@@ -71,6 +82,8 @@ export function emptyLearningFold(): LearningFoldState {
     skillsUsed: new Set(),
     validationFailed: false,
     synthesisAbstained: false,
+    userModelRevised: 0,
+    memoriesGeneralized: 0,
   };
 }
 
@@ -139,6 +152,34 @@ export function accumulateSkillSynthesizedRecord(state: LearningFoldState, data:
 }
 
 /**
+ * Fold one `learning.user_model_revised` record's `data` into the state
+ * (mutating; REVISE-/OBS-02, Phase 203): the per-slot revision counts
+ * (`superseded` + `corroborated` + `inserted`) SUM into `userModelRevised` (the
+ * total belief-slots the daemon touched this run; the daemon emits one record per
+ * cron firing — additive across firings within a session). Numeric reads ONLY —
+ * a smuggled `content`/`entryType`/`sourceId` is never read (SEC-01 / T-203-leak).
+ * Bumps `count` (a revision-only session still yields a learning block).
+ */
+export function accumulateUserModelRevisedRecord(state: LearningFoldState, data: Record<string, unknown>): void {
+  state.count += 1;
+  const superseded = typeof data.superseded === "number" ? data.superseded : 0;
+  const corroborated = typeof data.corroborated === "number" ? data.corroborated : 0;
+  const inserted = typeof data.inserted === "number" ? data.inserted : 0;
+  state.userModelRevised += superseded + corroborated + inserted;
+}
+
+/**
+ * Fold one `learning.memory_generalized` record's `data` into the state
+ * (mutating; GENERAL-/OBS-02, Phase 203): `generalized` (higher-order memories
+ * written) accumulates into `memoriesGeneralized`. Numeric read ONLY — a smuggled
+ * memory `body` is never read (SEC-01 / T-203-leak). Bumps `count`.
+ */
+export function accumulateMemoryGeneralizedRecord(state: LearningFoldState, data: Record<string, unknown>): void {
+  state.count += 1;
+  if (typeof data.generalized === "number") state.memoriesGeneralized += data.generalized;
+}
+
+/**
  * Build the `IncidentSignals["learning"]` block from the fold, or `undefined`
  * when no learning record was seen (absent ⇒ omitted from the report).
  * `outcomeResolved` is true ONLY when a terminal outcome exists and is NOT
@@ -162,6 +203,11 @@ export function buildLearningSignal(state: LearningFoldState): IncidentLearningS
     skillsUsed,
     skillFailures: outcomeFailed || state.validationFailed ? skillsUsed : [],
     synthesisAbstained: state.synthesisAbstained,
+    // REVISE-/GENERAL- (Phase 203): the optional revision/generalization counts —
+    // present only when the activity happened (zero ⇒ omitted, so the frozen
+    // P0..P2 fixtures gain no field). Counts only (SEC-01).
+    ...(state.userModelRevised > 0 ? { userModelRevised: state.userModelRevised } : {}),
+    ...(state.memoriesGeneralized > 0 ? { memoriesGeneralized: state.memoriesGeneralized } : {}),
   };
 }
 

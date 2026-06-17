@@ -101,6 +101,22 @@ export async function handleMemoryCronSentinel(
 
     if (!consolidationResult.ok) {
       logger.error({ agentId, err: consolidationResult.error, hint: "Memory consolidation failed -- will retry next cycle", errorKind: "internal" as const }, "Memory consolidation error");
+    } else {
+      // GENERAL-01/OBS-01: an INFO completion line + the daemon-side learning:memory_generalized
+      // emit (counts-only, mirrors FORGET-06; generalize defaults OFF → counts 0). PLAIN emit
+      // (never ?.) so EMIT_REGEX sees it; the memory body NEVER crosses the bus (SEC-01 / T-203-leak).
+      const c = consolidationResult.value;
+      logger.child({ agentId, submodule: "memory-consolidation" }).info(
+        { agentId, generalized: c.generalized, clustersConsidered: c.clustersConsidered, durationMs: c.durationMs },
+        "Memory consolidation generalization summary",
+      );
+      container.eventBus.emit("learning:memory_generalized", {
+        agentId,
+        generalized: c.generalized,
+        clustersConsidered: c.clustersConsidered,
+        durationMs: c.durationMs,
+        timestamp: clock.now(),
+      });
     }
     payload.onComplete?.({ status: consolidationResult.ok ? "ok" : "error", error: consolidationResult.ok ? undefined : consolidationResult.error?.message });
     return true;
@@ -269,6 +285,12 @@ export async function handleMemoryCronSentinel(
     });
 
     let anyError = false;
+    // REVISE-01/OBS-01: sum the counts-only revision totals across all per-user builds for ONE
+    // daemon-side learning:user_model_revised emit (mirrors FORGET-06). COUNTS ONLY (no body — SEC-01).
+    let superseded = 0;
+    let corroborated = 0;
+    let inserted = 0;
+    const reprStartMs = clock.now();
     for (const [userId, sources] of sourcesByUser) {
       const result = await runUserRepresentationBuild({
         agentId,
@@ -292,8 +314,28 @@ export async function handleMemoryCronSentinel(
       if (!result.ok) {
         anyError = true;
         reprLogger.error({ agentId, userId, err: result.error, hint: "User representation build failed for user -- will retry next cycle", errorKind: "internal" as const }, "User representation build error");
+      } else {
+        superseded += result.value.superseded;
+        corroborated += result.value.corroborated;
+        inserted += result.value.inserted;
       }
     }
+
+    // REVISE-01/OBS-01: the daemon-side learning:user_model_revised emit (PLAIN — never ?. — so
+    // EMIT_REGEX sees it) + an INFO completion line. COUNTS ONLY (no body/entryType/source ids — SEC-01).
+    const reprDurationMs = clock.now() - reprStartMs;
+    reprLogger.info(
+      { agentId, superseded, corroborated, inserted, durationMs: reprDurationMs },
+      "User representation revision summary",
+    );
+    container.eventBus.emit("learning:user_model_revised", {
+      agentId,
+      superseded,
+      corroborated,
+      inserted,
+      durationMs: reprDurationMs,
+      timestamp: clock.now(),
+    });
 
     payload.onComplete?.({ status: anyError ? "error" : "ok", error: anyError ? "One or more per-user representation builds failed" : undefined });
     return true;

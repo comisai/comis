@@ -48,6 +48,7 @@ import {
   type RecallCountersWiring,
 } from "../observability/recall-counters-wiring.js";
 import { wireMemoryUsefulness } from "./setup-memory-usefulness-wiring.js";
+import { resolveUserRepresentationHistoryCapOption } from "./setup-memory-history-cap.js";
 import { setupLearningOutcomeWiring } from "./setup-learning.js";
 import { buildReactionWiringDeps, wireLearningReactions, wireLearningCorrection } from "./setup-learning-reactions.js";
 
@@ -532,16 +533,15 @@ export async function setupMemory(deps: {
   // only (the agent↛memory cut). Threaded into the recall read path (setup-agents-*).
   const embeddingStore = createSqliteMemoryEmbeddingStore({ db, logger: memoryLogger });
 
-  // 6.5.2b'''''. Per-user representation store. Built on the
-  // SAME shared `db` handle the memory adapter owns — NEVER a second Database: the
-  // `source_memory_id` ON DELETE CASCADE + the `(tenant, agent, user)` 3-way isolation scope must
-  // stay consistent with the memory rows the profile is distilled from; a read on a DIFFERENT
-  // handle would silently return empty (the same hazard as the embedding store above). Always
-  // constructed (no model/IO cost); the LLM-free `<user_profile>` injection stays dormant until the
-  // offline builder writes rows (its own default-OFF cost gate, `memoryUserRepresentation.enabled`).
-  // Composition-root join — the agent receives the port TYPE only (the agent↛memory cut). Threaded
-  // into the recall read path (setup-agents-*) AND the offline-builder cron (setup-channels).
-  const userRepresentationStore = createSqliteUserRepresentationStore({ db, logger: memoryLogger });
+  // 6.5.2b'''''. Per-user representation store. Built on the SAME shared `db` handle the memory
+  // adapter owns — NEVER a second Database: the `source_memory_id` ON DELETE CASCADE + the
+  // `(tenant, agent, user)` 3-way isolation scope must stay consistent with the memory rows the
+  // profile is distilled from (a DIFFERENT handle silently returns empty — the embedding-store hazard).
+  // Always constructed (no model/IO cost); the LLM-free `<user_profile>` injection stays dormant until
+  // the offline builder writes rows (`memoryUserRepresentation.enabled`, default OFF). Composition-root
+  // join — the agent receives the port TYPE only (agent↛memory cut). Threaded into the recall read path
+  // (setup-agents-*) AND the offline-builder cron (setup-channels). REVISE-02 (203): the MAX per-agent historyCap → this SINGLE store (resolver in setup-memory-history-cap.ts; absent ⇒ default 10).
+  const userRepresentationStore = createSqliteUserRepresentationStore({ db, logger: memoryLogger, ...resolveUserRepresentationHistoryCapOption(container.config.agents) });
 
   // 6.5.2b''''''. Directional relationship store. Built on the
   // SAME shared `db` handle the memory adapter owns — NEVER a second Database: the

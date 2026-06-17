@@ -111,6 +111,23 @@ export interface MemoryConsolidationDeps {
   hasCapableModelOverride?: boolean;
 }
 
+/**
+ * The counts-only stats a consolidation pass returns (Phase 203 Plan 05): the
+ * GENERAL- generalization counters the daemon-side `learning:memory_generalized`
+ * emit reads. COUNTS ONLY — no memory body / source ids cross this surface
+ * (SEC-01). The same numbers also ride the `memory:consolidated` event; surfacing
+ * them on the result lets the daemon cron handler emit the learning event
+ * directly (mirrors the user-rep / lifecycle jobs' returned stats — OBS-01).
+ */
+export interface MemoryConsolidationStats {
+  /** Higher-order generalizations written this run (GENERAL-01). */
+  generalized: number;
+  /** Cross-context clusters the generalization pass considered (GENERAL-02 gate input). */
+  clustersConsidered: number;
+  /** Wall-clock duration of the pass (ms; from the injected clock). */
+  durationMs: number;
+}
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -159,12 +176,14 @@ function maxOccurredAt(cluster: MemoryEntry[]): number {
  * bad LLM parse / a failed cluster → WARN + continue; the run returns `ok` even
  * with 0 observations. Only an inability to READ candidates is fatal.
  *
- * @returns `ok` on success (even with 0 observations); `err` only when the
- *   candidate read fails (cannot proceed safely).
+ * @returns `ok` with the counts-only `MemoryConsolidationStats` on success (even
+ *   with 0 observations); `err` only when the candidate read fails (cannot
+ *   proceed safely). The returned `generalized`/`clustersConsidered` are what the
+ *   daemon cron handler emits as `learning:memory_generalized` (OBS-01).
  */
 export async function runMemoryConsolidation(
   deps: MemoryConsolidationDeps,
-): Promise<Result<void, Error>> {
+): Promise<Result<MemoryConsolidationStats, Error>> {
   const { config, agentId, tenantId, consolidationStore, eventBus, logger, clock } = deps;
   const startMs = clock.now();
 
@@ -196,7 +215,7 @@ export async function runMemoryConsolidation(
       durationMs: clock.now() - startMs,
       timestamp: clock.now(),
     });
-    return ok(undefined);
+    return ok({ generalized: 0, clustersConsidered: 0, durationMs: clock.now() - startMs });
   }
 
   // 1. Candidates — a READ failure is fatal (we cannot safely proceed).
@@ -219,7 +238,7 @@ export async function runMemoryConsolidation(
       durationMs: clock.now() - startMs,
       timestamp: clock.now(),
     });
-    return ok(undefined);
+    return ok({ generalized: 0, clustersConsidered: 0, durationMs: clock.now() - startMs });
   }
 
   // The last degradation gap: a candidate arrives with
@@ -687,5 +706,5 @@ export async function runMemoryConsolidation(
     "Memory consolidation completed",
   );
 
-  return ok(undefined);
+  return ok({ generalized, clustersConsidered, durationMs: clock.now() - startMs });
 }
