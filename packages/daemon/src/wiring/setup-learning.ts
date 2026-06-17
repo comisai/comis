@@ -2,24 +2,22 @@
 /**
  * Outcome-signal (Verified Learning WS1) write-back wiring.
  *
- * The composition-root glue between the deterministic tool/pipeline completion
- * bus events (`tool:executed`, `graph:completed`) and the `OutcomeSignalPort`
- * (the @comis/memory adapter). The daemon is the ONLY
- * place holding BOTH the bus AND the adapter — the agent↛memory build cut means
- * the agent emits ids+counts on the bus and the daemon does the observe/resolve.
- * Mirrors `wireMemoryUsefulness` (setup-memory-usefulness-wiring.ts). Counts + ids
- * + closed-enums ONLY ever cross the bus (AGENTS.md §2.7 / SEC-01) — never bodies.
+ * The composition-root glue between the deterministic completion bus events
+ * (`tool:executed`, `graph:completed`, `diagnostic:message_processed`) and the
+ * `OutcomeSignalPort` (@comis/memory adapter). The daemon is the ONLY place holding
+ * BOTH the bus AND the adapter — the agent↛memory build cut means the agent emits
+ * ids+counts on the bus and the daemon does the observe/resolve. Mirrors
+ * `wireMemoryUsefulness`. The resolve→consume chain is shared by the DAG
+ * (`graph:completed`) AND single-agent (`diagnostic:message_processed`) seams and
+ * runs at most ONCE per trajectory (resolve() is a pure read; both events can fire
+ * for one DAG turn). Counts + ids + closed-enums ONLY cross the bus (§2.7 / SEC-01).
  *
- * BYTE-IDENTITY GATE (P0): every handler's FIRST statement is the
- * `learningOutcomeEnabled(agentId)` short-circuit. With the default config
- * (`learningOutcome.enabled:false`, or the master `memory.costFeatures.enabled:false`
- * force-disable) the subscriber observes/resolves/emits NOTHING — the recall/score
- * hot path (`score.ts`/`scoring-overlay.ts`, untouched in P0) is byte-identical.
- *
- * Fire-and-forget / non-fatal: a failing or slow `observe`/`resolve` warns and
- * continues; it NEVER throws out of the bus handler and never blocks the turn
- * (the turn already completed). The `unknown` resolved outcome derives no
- * learning (fail-closed, OUTCOME-05) and is NOT counted as resolved coverage.
+ * BYTE-IDENTITY GATE: every handler's FIRST statement is the
+ * `learningOutcomeEnabled(agentId)` short-circuit — default config observes/resolves/
+ * emits NOTHING (the recall/score hot path is byte-identical). Fire-and-forget /
+ * non-fatal: a failing observe/resolve warns and continues, never throwing out of the
+ * handler or blocking the turn. An `unknown` resolved outcome derives no learning
+ * (fail-closed, OUTCOME-05) and is NOT counted as resolved coverage.
  *
  * @module
  */
@@ -38,6 +36,7 @@ import {
 
 import { deriveTenantFromSessionKey } from "./setup-memory-usefulness-wiring.js";
 import { createSkillTrendTracker, type SkillTrendTracker } from "./setup-learning-skill-trend.js";
+import { markTrajectoryResolved } from "./setup-learning-dedup.js";
 
 /** Dependencies for {@link wireLearningOutcome}. */
 export interface LearningOutcomeWiringDeps {
@@ -116,8 +115,8 @@ const DETERMINISTIC_CONFIDENCE = 0.9;
 const CLASSIFIED_FAILURE_CONFIDENCE = 0.8;
 /**
  * ATTR-02: confidence for a pure skill-attribution row (memory:skill_used → observe).
- * Deliberately LOW + paired with `outcome:"unknown"` so the row NEVER wins resolve()
- * fusion — it carries the `used_skill_ids` column only, asserting no outcome verdict.
+ * LOW + paired with `outcome:"unknown"` so the row NEVER wins resolve() fusion — it
+ * carries the `used_skill_ids` column only, asserting no outcome verdict.
  */
 const ATTRIBUTION_CONFIDENCE = 0;
 
@@ -130,15 +129,12 @@ interface OutcomeScope {
 }
 
 /**
- * Resolve the (tenant, agent, session, trajectory) scope for an observation.
- *
- * The deterministic tool event carries `agentId`/`traceId`/`sessionKey` on its
- * payload; the graph completion events do NOT (only `graphId`), so their scope is
- * recovered from the ambient request context (AsyncLocalStorage). Payload fields
- * win when present; ALS is the fallback. Returns `undefined` when neither source
- * yields an agentId AND a trajectory identity (we cannot scope/attribute then) —
- * the caller skips. The tenant defaults to "default" only when absent; the agentId
- * is NEVER collapsed across agents (cross-agent isolation, T-198-16).
+ * Resolve the (tenant, agent, session, trajectory) scope for an observation. Payload
+ * fields win when present (tool:executed / memory:skill_used / diagnostic:message_
+ * processed all carry agentId/traceId/sessionKey); ALS is the fallback (graph:completed
+ * carries only graphId). Returns `undefined` when neither source yields an agentId AND a
+ * trajectory identity (caller skips). Tenant defaults to "default" only when absent; the
+ * agentId is NEVER collapsed across agents (cross-agent isolation, T-198-16).
  */
 function resolveScope(payload: {
   agentId?: string;
@@ -180,10 +176,9 @@ function observeNonFatal(
       outcome,
       source,
       confidence,
-      // ATTR-02: the per-turn used-skill ids (Plan 03's memory:skill_used carrier)
-      // thread onto the observe() so the used_skill_ids COLUMN is written; resolve()
-      // union-dedups it across rows. Omitted (the deterministic tool/pipeline paths)
-      // ⇒ the column stays NULL, byte-identical to pre-ATTR-02.
+      // ATTR-02: thread the per-turn used-skill ids onto observe() so the
+      // used_skill_ids COLUMN is written; resolve() union-dedups across rows. Omitted
+      // (the tool/pipeline paths) ⇒ the column stays NULL, byte-identical to pre-ATTR-02.
       ...(usedSkillIds !== undefined && usedSkillIds.length > 0 ? { usedSkillIds: [...usedSkillIds] } : {}),
       observedAt: deps.clock.now(),
     })
@@ -221,41 +216,35 @@ export const CORROBORATION_MIN_INDEPENDENT = 2;
 
 /**
  * WR-01 bound on the FORGET-03 corroboration tally — the max distinct memoryIds the
- * `failureCorroborationTally` Map tracks before it evicts the oldest. The tally is a
- * daemon-lifetime in-process gauge (resets on restart); without a cap a busy fleet
- * (or an adversary on rotating session keys) grows it without bound. 50_000 mirrors
- * the reaction/session trajectory maps' `maxEntries` (setup-learning-reactions.ts).
- * Past this many distinct failing memories the oldest-touched id is dropped — a soft
- * forget of the stalest corroboration state, never a correctness loss (the eviction
- * exemption itself is store-side, Plan 05).
+ * `failureCorroborationTally` Map tracks before evicting the oldest. The tally is a
+ * daemon-lifetime in-process gauge (resets on restart); without a cap a busy fleet (or
+ * an adversary on rotating session keys) grows it unbounded. 50_000 mirrors the
+ * reaction/session trajectory maps' `maxEntries`. Past it the oldest-touched id is
+ * dropped — a soft forget of the stalest corroboration state, never a correctness loss.
  */
 export const MAX_TRACKED_FAILURE_MEMORIES = 50_000;
 
 /**
  * FORGET-03 anti-induced-eviction corroboration gate (a SECURITY control). A
- * `failure_count` accrual is permitted ONLY when the failure is corroborated:
+ * `failure_count` accrual is permitted ONLY when corroborated:
  *  - (a) the fused verdict has a DETERMINISTIC source (`tool`/`pipeline`) — one
- *    deterministic failure suffices (it cannot be spoofed by an external sender), OR
- *  - (b) the daemon has now seen ≥2 INDEPENDENT failures (distinct sessions) for
- *    this memory within the subscriber's lifetime.
- * Below the gate → no accrual (Defer ≠ Retry — a single low-trust/`external`
- * failure is benign). This is the daemon-side half of the two-layer control; the
- * high-`proof_count`/`system`/`pinned` EVICTION exemption is enforced store-side
- * (Plan 05's eviction predicate), so the daemon reads NO per-memory
+ *    suffices (it cannot be spoofed by an external sender), OR
+ *  - (b) the daemon has seen ≥2 INDEPENDENT failures (distinct sessions) for this
+ *    memory within the subscriber's lifetime.
+ * Below the gate → no accrual (Defer ≠ Retry — a single low-trust/`external` failure
+ * is benign). Daemon-side half of the two-layer control; the high-proof/system/pinned
+ * EVICTION exemption is store-side (Plan 05), so the daemon reads NO per-memory
  * proof/trust/pinned here (`ResolvedOutcome` carries none — no hot-path DB read).
  *
- * Mutates `tally` (memoryId → distinct sessionIds seen failing it) as a side effect
- * so the across-call distinct-session count accumulates, mirroring the in-process
- * coverage gauge. Returns true when the accrual should fire.
+ * Mutates `tally` (memoryId → distinct sessionIds seen failing it) so the across-call
+ * distinct-session count accumulates. Returns true when the accrual should fire.
  *
  * WR-01 BOUNDED (two caps, no daemon-lifetime growth): (1) the inner per-memory Set
- * STOPS growing at `CORROBORATION_MIN_INDEPENDENT` — once the gate can be met the
- * exact distinct-session count is irrelevant, so we never accumulate every session;
- * (2) the outer Map is capped at `maxTracked` (default {@link MAX_TRACKED_FAILURE_MEMORIES})
- * and evicts the OLDEST-touched memoryId (Map insertion order = recency, refreshed via
- * delete-before-set) when a NEW memoryId would exceed the cap. Both keep the gate
- * decision byte-identical for any realistic workload — the caps only bite the
- * pathological/adversarial unbounded case.
+ * STOPS growing at `CORROBORATION_MIN_INDEPENDENT` (past the gate the exact count is
+ * irrelevant); (2) the outer Map is capped at `maxTracked` (default
+ * {@link MAX_TRACKED_FAILURE_MEMORIES}) and evicts the OLDEST-touched memoryId
+ * (insertion order = recency via delete-before-set). Both keep the gate decision
+ * byte-identical for any realistic workload — the caps only bite the adversarial case.
  */
 export function failureCorroborated(
   memoryId: string,
@@ -468,22 +457,22 @@ async function runSkillTransition(
 }
 
 /**
- * Stand up the deterministic tool/pipeline → observe/resolve subscriber on the
- * daemon's bus. Fire-and-forget / non-fatal; default-OFF via `learningOutcomeEnabled`.
+ * Stand up the observe/resolve subscriber on the daemon's bus. Fire-and-forget /
+ * non-fatal; default-OFF via `learningOutcomeEnabled`.
  *
  * Wiring:
- *  - `tool:executed`            → observe a `tool` outcome (`success===false` → failure).
- *  - `graph:completed`          → observe a `pipeline` outcome (status `completed` → success,
- *                                 else failure) AND, as the trajectory-completion signal,
- *                                 resolve the fused verdict, emit `learning:outcome_observed`
- *                                 (counts/ids only), and update coverage telemetry.
- *                                 (`graph:driver_lifecycle` is deliberately NOT observed —
- *                                 it is per-node and would flood the ledger; WR-02.)
+ *  - `tool:executed`               → observe a `tool` outcome (`success===false`→failure).
+ *  - `memory:skill_used`           → observe the ATTR-02 used-skill ids (attribution row).
+ *  - `graph:completed` (DAG)       → observe a `pipeline` outcome, then the shared
+ *                                    resolve→consume chain. (`graph:driver_lifecycle`
+ *                                    is NOT observed — per-node, floods the ledger; WR-02.)
+ *  - `diagnostic:message_processed` → the single-agent turn's resolve→consume (CR; the
+ *                                    common turn never fires graph:completed).
  *
- * Coverage telemetry: a daemon-lifetime gauge of % finished trajectories with a
- * RESOLVABLE outcome. `total` increments per completion; `resolved` increments
- * ONLY when the fused outcome is NOT `unknown` (fail-closed, T-198-18) — a
- * no-signal trajectory is visibly unresolved.
+ * The shared chain resolves the fused verdict, runs RANK/FORGET/SURFACE consumers,
+ * emits `learning:outcome_observed` (counts/ids only), updates the fail-closed coverage
+ * gauge (`resolved` counts only a non-`unknown` outcome, T-198-18), and runs at most
+ * ONCE per trajectory (a DAG turn fires BOTH completion events).
  */
 export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
   // Daemon-lifetime coverage gauge (resets on restart). Counts only.
@@ -509,6 +498,138 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
   // registry threaded via deps) — fired after a REAL promote/demote so the next
   // session sees the new active set. Undefined ⇒ no refresh (byte-identical).
   const refreshSurface = deps.refreshLearnedSkillSurface;
+  // CR (idempotency): the per-trajectory resolve-dedup set (see setup-learning-dedup.ts).
+  const resolvedTrajectories = new Set<string>();
+
+  /**
+   * CR: the SHARED resolve→consume chain called by BOTH the `graph:completed` (DAG)
+   * and `diagnostic:message_processed` (single-agent turn) handlers — factored out so
+   * the reward/forget-accrual/skill-transition logic is NOT duplicated. Runs AT MOST
+   * ONCE per trajectory ({@link markTrajectoryResolved}). The caller resolves the scope
+   * from its own source (graph: ALS; diagnostic: the payload, mirroring 199 CR-02) and,
+   * for the DAG path, observes the pipeline row FIRST. Non-fatal — never throws.
+   */
+  function resolveAndConsume(scope: OutcomeScope, resolveStart: number): void {
+    // Dedup FIRST (synchronous check-and-mark before the async resolve) so a
+    // both-events DAG turn cannot slip a second chain through.
+    if (!markTrajectoryResolved(scope.trajectoryId, resolvedTrajectories)) return;
+    void deps.outcomeStore
+      .resolve(scope.trajectoryId, { tenantId: scope.tenantId, agentId: scope.agentId })
+      .then((r) => {
+        total += 1;
+        if (!r.ok) {
+          deps.logger.warn(
+            {
+              agentId: scope.agentId,
+              errorKind: "internal" as const,
+              hint: "outcome resolve failed; no learning:outcome_observed emitted for this trajectory",
+            },
+            "outcome resolve failed (non-fatal)",
+          );
+          return;
+        }
+        const verdict = r.value;
+        // Fail-closed coverage: an `unknown` verdict is NOT counted as resolved.
+        if (verdict.outcome !== "unknown") resolved += 1;
+
+        // ---- RANK-01 / FORGET-02 reward/failure write (the agent↛memory cut: the
+        // daemon holds BOTH this verdict AND the usefulness adapter). intent OMITTED →
+        // the global '' bucket; an `unknown` verdict writes NOTHING (fail-closed). ----
+        let failureAccrued = 0;
+        if (verdict.outcome === "success") {
+          if (deps.learningTuningEnabled(scope.agentId) && verdict.recalledIds.length > 0) {
+            const rewardScope = { tenantId: scope.tenantId, agentId: scope.agentId, now: deps.clock.now() };
+            // IN-01: ONE batched reward write for ALL recalled ids (the store loops in
+            // one transaction); the FAILURE branch below stays per-id (gated per memory).
+            recordNonFatal(deps, scope.agentId, "reward", () =>
+              deps.usefulnessStore.recordUsage(verdict.recalledIds, [], rewardScope),
+            );
+          }
+        } else if (verdict.outcome === "failure" || verdict.outcome === "corrected") {
+          if (deps.learningForgettingEnabled(scope.agentId)) {
+            const failScope = { tenantId: scope.tenantId, agentId: scope.agentId, now: deps.clock.now() };
+            for (const mid of verdict.recalledIds) {
+              // FORGET-03 gate: accrue ONLY when corroborated (≥2 independent sessions
+              // OR 1 deterministic source); past it the accrual is UNCONDITIONAL (no
+              // daemon-side proof/trust read — the eviction exemption is store-side).
+              if (failureCorroborated(mid, scope.sessionId, verdict.sources, failureCorroborationTally)) {
+                failureAccrued += 1;
+                recordNonFatal(deps, scope.agentId, "failure_accrual", () =>
+                  deps.usefulnessStore.recordFailure(mid, failScope),
+                );
+              }
+            }
+          }
+        }
+
+        // ---- SURFACE-04/05/06 learned-SKILL promote/demote: iterate the ATTR-02
+        // verdict.usedSkillIds — `success` PROMOTES each; a corroborated failure
+        // DEMOTES only when the decay-aware trend reaches WEAKENING (anti-induced).
+        // Gated default-OFF / no-store ⇒ byte-identical. AWAITS the store to read
+        // rows-changed so a 0-row write does NOT inflate the counters (CR-01). ----
+        if (
+          deps.learnedSkillStore !== undefined &&
+          deps.learningSkillsEnabled?.(scope.agentId) === true
+        ) {
+          void applySkillOutcomeTransitions(deps, scope, verdict, {
+            skillStore: deps.learnedSkillStore,
+            threshold: deps.learningSkillsPromoteAt?.(scope.agentId) ?? 3,
+            skillFailureCorroborationTally,
+            skillTrend,
+            refreshSurface,
+          });
+        }
+
+        // Emit the resolved outcome (counts/ids/closed-enums ONLY — bridged for comis explain).
+        deps.eventBus.emit("learning:outcome_observed", {
+          agentId: scope.agentId,
+          traceId: scope.trajectoryId,
+          trajectoryId: scope.trajectoryId,
+          outcome: verdict.outcome,
+          source: verdict.sources[0] ?? "pipeline",
+          confidence: verdict.confidence,
+          timestamp: deps.clock.now(),
+        });
+
+        // OBS-01/02: one INFO completion line per resolve with durationMs + the
+        // running coverage gauge + the corroborating `sources` (counts/ids only).
+        deps.logger.info(
+          {
+            agentId: scope.agentId,
+            outcome: verdict.outcome,
+            sources: verdict.sources,
+            corroboratingSourceCount: verdict.sources.length,
+            resolvedCount: resolved,
+            totalCount: total,
+            durationMs: deps.clock.now() - resolveStart,
+          },
+          "Outcome resolved for trajectory",
+        );
+        // OBS-01 DEBUG: the corroboration outcome (counts only) so the gate decision is
+        // reconstructable — recalled vs accrued. Never alpha values / memory bodies.
+        deps.logger.debug(
+          {
+            agentId: scope.agentId,
+            step: "outcome-resolve",
+            sources: verdict.sources,
+            recalledCount: verdict.recalledIds.length,
+            failureAccrued,
+          },
+          "outcome resolve detail",
+        );
+      })
+      .catch((e: unknown) => {
+        deps.logger.warn(
+          {
+            agentId: scope.agentId,
+            err: e instanceof Error ? e : new Error(String(e)),
+            errorKind: "internal" as const,
+            hint: "outcome resolve/emit threw; no learning:outcome_observed emitted for this trajectory",
+          },
+          "outcome resolve threw (non-fatal)",
+        );
+      });
+  }
 
   // ---- Deterministic tool signal (the only source that ships ACTIVE, OUTCOME-03) ----
   deps.eventBus.on("tool:executed", (p) => {
@@ -558,14 +679,13 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
     void observeNonFatal(deps, scope, "unknown", "explicit", ATTRIBUTION_CONFIDENCE, p.usedSkillIds);
   });
 
-  // NB: `graph:driver_lifecycle` is intentionally NOT subscribed (WR-02). It is
-  // emitted PER NODE, so observing it would write O(nodes) same-tier `pipeline`
-  // rows per DAG turn (each at a distinct observedAt, so idempotency does not
-  // collapse them) — flooding the append-only ledger and amplifying the WR-01
-  // intra-tier fusion non-determinism. `graph:completed` (gated on the clean
-  // GraphStatus below) is the SINGLE trajectory-level pipeline signal.
+  // NB: `graph:driver_lifecycle` is intentionally NOT subscribed (WR-02) — it is
+  // PER NODE, so observing it floods the ledger with O(nodes) `pipeline` rows and
+  // amplifies the WR-01 fusion non-determinism. `graph:completed` is the SINGLE
+  // trajectory-level pipeline signal.
 
-  // ---- Deterministic pipeline signal + trajectory-completion resolve/emit ----
+  // ---- DAG pipeline signal: observe the pipeline row FIRST (visible to the resolve),
+  // then the SHARED resolve→consume chain. graph:completed fires ONLY for DAG runs. ----
   deps.eventBus.on("graph:completed", (p) => {
     const ctx = tryGetContext();
     const agentId = ctx?.agentId;
@@ -575,145 +695,28 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
     const scope = resolveScope({});
     if (scope === undefined) return;
 
-    // Success ONLY on a CLEAN completion; failed/cancelled/running → failure
-    // (the real GraphStatus field is the signal — gated on an exact "completed").
+    // Success ONLY on a CLEAN completion; failed/cancelled/running → failure.
     const outcome: "success" | "failure" = p.status === "completed" ? "success" : "failure";
     const resolveStart = deps.clock.now();
+    void observeNonFatal(deps, scope, outcome, "pipeline", DETERMINISTIC_CONFIDENCE).then(() =>
+      resolveAndConsume(scope, resolveStart),
+    );
+  });
 
-    // Observe the pipeline outcome FIRST, then resolve the fused verdict (so the
-    // just-written row is visible) and emit. The whole chain is fire-and-forget /
-    // non-fatal — it never throws out of the handler.
-    void observeNonFatal(deps, scope, outcome, "pipeline", DETERMINISTIC_CONFIDENCE)
-      .then(() => deps.outcomeStore.resolve(scope.trajectoryId, { tenantId: scope.tenantId, agentId: scope.agentId }))
-      .then((r) => {
-        total += 1;
-        if (!r.ok) {
-          deps.logger.warn(
-            {
-              agentId: scope.agentId,
-              errorKind: "internal" as const,
-              hint: "outcome resolve failed; no learning:outcome_observed emitted for this trajectory",
-            },
-            "outcome resolve failed (non-fatal)",
-          );
-          return;
-        }
-        const verdict = r.value;
-        // Fail-closed coverage: an `unknown` verdict is NOT counted as resolved.
-        if (verdict.outcome !== "unknown") resolved += 1;
-
-        // ---- RANK-01 / FORGET-02 reward/failure write at resolve() time ----
-        // The daemon is the only place holding BOTH this resolved verdict AND the
-        // @comis/memory usefulness adapter (the agent↛memory cut). Thread the
-        // resolved recalledIds + outcome into the per-intent reward/failure write,
-        // fire-and-forget / non-fatal (the turn already completed). intent is
-        // OMITTED → the global '' bucket (ResolvedOutcome carries no intent; the
-        // bandit reads per-intent). An `unknown` verdict writes NOTHING (fail-closed).
-        let failureAccrued = 0;
-        if (verdict.outcome === "success") {
-          if (deps.learningTuningEnabled(scope.agentId) && verdict.recalledIds.length > 0) {
-            const rewardScope = { tenantId: scope.tenantId, agentId: scope.agentId, now: deps.clock.now() };
-            // IN-01: ONE batched reward write for ALL recalled ids — the store's
-            // recordUsage loops internally in a single transaction, so the per-id loop
-            // (O(recalledIds) Promises + transactions) is needless. The FAILURE branch
-            // below stays per-id (it is corroboration-gated per memory).
-            recordNonFatal(deps, scope.agentId, "reward", () =>
-              deps.usefulnessStore.recordUsage(verdict.recalledIds, [], rewardScope),
-            );
-          }
-        } else if (verdict.outcome === "failure" || verdict.outcome === "corrected") {
-          if (deps.learningForgettingEnabled(scope.agentId)) {
-            const failScope = { tenantId: scope.tenantId, agentId: scope.agentId, now: deps.clock.now() };
-            for (const mid of verdict.recalledIds) {
-              // FORGET-03 corroboration gate: accrue ONLY when the failure is
-              // corroborated (≥2 independent sessions OR 1 deterministic source).
-              // Past the gate the accrual is UNCONDITIONAL — no daemon-side
-              // proof/trust/pinned read (the eviction exemption is store-side, Plan 05).
-              if (failureCorroborated(mid, scope.sessionId, verdict.sources, failureCorroborationTally)) {
-                failureAccrued += 1;
-                recordNonFatal(deps, scope.agentId, "failure_accrual", () =>
-                  deps.usefulnessStore.recordFailure(mid, failScope),
-                );
-              }
-            }
-          }
-        }
-
-        // ---- SURFACE-04/05/06 learned-SKILL promote/demote at resolve() ----
-        // Beside the RANK-01/FORGET-02 block (which iterates verdict.recalledIds),
-        // iterate the ATTR-02 attributed verdict.usedSkillIds. On `success` PROMOTE
-        // each; on a corroborated `failure`/`corrected` DEMOTE only when the
-        // decay-aware trend reaches WEAKENING (anti-induced-demotion). Gated on
-        // learningSkillsEnabled + learnedSkillStore present (default-OFF / no-store
-        // ⇒ byte-identical no-op). Fire-and-forget / non-fatal: it AWAITS the store
-        // transition to read rows-changed (so a 0-row write does NOT inflate the
-        // counters — CR-01), then emits/logs the REAL counts.
-        if (
-          deps.learnedSkillStore !== undefined &&
-          deps.learningSkillsEnabled?.(scope.agentId) === true
-        ) {
-          void applySkillOutcomeTransitions(deps, scope, verdict, {
-            skillStore: deps.learnedSkillStore,
-            threshold: deps.learningSkillsPromoteAt?.(scope.agentId) ?? 3,
-            skillFailureCorroborationTally,
-            skillTrend,
-            refreshSurface,
-          });
-        }
-
-        // Emit the resolved outcome (counts/ids/closed-enums ONLY — plain emit so it
-        // lands on the trajectory and is type-checked; bridged for comis explain).
-        deps.eventBus.emit("learning:outcome_observed", {
-          agentId: scope.agentId,
-          traceId: scope.trajectoryId,
-          trajectoryId: scope.trajectoryId,
-          outcome: verdict.outcome,
-          source: verdict.sources[0] ?? "pipeline",
-          confidence: verdict.confidence,
-          timestamp: deps.clock.now(),
-        });
-
-        // OBS-01/02: one INFO completion line per resolve with durationMs + the
-        // running coverage gauge + the corroborating `sources` (so an operator sees
-        // e.g. ["tool","reaction"] — the reaction CORROBORATING the deterministic
-        // winner, NOT replacing it). Counts/ids/closed-enums only.
-        deps.logger.info(
-          {
-            agentId: scope.agentId,
-            outcome: verdict.outcome,
-            sources: verdict.sources,
-            corroboratingSourceCount: verdict.sources.length,
-            resolvedCount: resolved,
-            totalCount: total,
-            durationMs: deps.clock.now() - resolveStart,
-          },
-          "Outcome resolved for trajectory",
-        );
-        deps.logger.debug(
-          {
-            agentId: scope.agentId,
-            step: "outcome-resolve",
-            sources: verdict.sources,
-            // OBS-01: the corroboration outcome (counts only) so the gate decision
-            // is reconstructable — how many recalled memories accrued failure_count
-            // vs how many were recalled. Never alpha values / memory bodies.
-            recalledCount: verdict.recalledIds.length,
-            failureAccrued,
-          },
-          "outcome resolve detail",
-        );
-      })
-      .catch((e: unknown) => {
-        deps.logger.warn(
-          {
-            agentId: scope.agentId,
-            err: e instanceof Error ? e : new Error(String(e)),
-            errorKind: "internal" as const,
-            hint: "outcome resolve/emit threw; no learning:outcome_observed emitted for this trajectory",
-          },
-          "outcome resolve threw (non-fatal)",
-        );
-      });
+  // ---- CR: single-agent turn completion → resolve via the per-turn PAYLOAD ----
+  // graph:completed fires ONLY for DAG runs, so a single-agent turn never resolved —
+  // its tool:executed + memory:skill_used rows (keyed on traceId) went unresolved.
+  // diagnostic:message_processed fires once per turn for single-agent turns too
+  // (execution-pipeline.ts) and carries agentId/sessionKey/traceId on its PAYLOAD — so
+  // resolve keys off the payload NOT the ALS (the emit is outside runWithContext;
+  // mirrors 199 CR-02). The trajectoryId is the payload traceId = the SAME key the
+  // tool/skill observe() wrote, so resolve finds the rows. NO pipeline observe; an
+  // absent traceId → skip (fail-closed); the dedup makes a both-events DAG turn resolve once.
+  deps.eventBus.on("diagnostic:message_processed", (p) => {
+    if (!deps.learningOutcomeEnabled(p.agentId)) return;
+    const scope = resolveScope({ agentId: p.agentId, traceId: p.traceId, sessionKey: p.sessionKey });
+    if (scope === undefined) return; // no trajectory identity (absent traceId) → skip
+    resolveAndConsume(scope, deps.clock.now());
   });
 }
 
