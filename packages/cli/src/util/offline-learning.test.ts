@@ -104,6 +104,26 @@ describe("readLearningStatsOffline", () => {
     expect(stats!.perAgent.find((a) => a.agentId === "bob")!.outcomes).toEqual({ failure: 1 });
   });
 
+  it("counts per-source volume as DISTINCT trajectories, not raw rows (WR-03 robustness)", async () => {
+    // A single trajectory carrying MULTIPLE same-source rows (the residual of the
+    // WR-02 per-node flood, or any future multi-row source) must NOT inflate the
+    // per-source figure: `sources.pipeline` is "trajectories with a pipeline signal"
+    // (COUNT(DISTINCT trajectory_id)), so three pipeline rows on one trajectory read
+    // as 1, not 3. totalRows is the same distinct-signal sum.
+    const dir = tmpDataDir();
+    await seed(dir, [
+      { trajectoryId: "t1", outcome: "success", source: "pipeline", observedAt: 1 },
+      { trajectoryId: "t1", outcome: "success", source: "pipeline", observedAt: 2 },
+      { trajectoryId: "t1", outcome: "failure", source: "pipeline", observedAt: 3 },
+    ]);
+    const stats = readLearningStatsOffline(dir);
+    expect(stats).toBeDefined();
+    const alice = stats!.perAgent.find((a) => a.agentId === "alice")!;
+    expect(alice.sources).toEqual({ pipeline: 1 }); // one trajectory, not three rows
+    expect(stats!.totalRows).toBe(1); // the distinct-signal headline, not raw row count
+    expect(alice.trajectories).toBe(1);
+  });
+
   it("is content-free: a hostile body/confidence/recalled-id never surfaces (T-198-27)", async () => {
     const dir = tmpDataDir();
     await seed(dir, [
