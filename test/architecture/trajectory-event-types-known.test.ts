@@ -154,6 +154,13 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
   "channel:disconnected",
   "channel:degraded",
   "channel:recovered",
+  // REACT-01 (v2.26 Verified Learning WS1): the RAW inbound reaction-add
+  // capture (counts/ids/emoji only), emitted by channel-manager. NOT a
+  // resolved learning outcome — its effect reaches the trajectory via the
+  // daemon's `learning:outcome_observed` resolve (already bridged), so the
+  // raw capture event does not get its own trajectory entry. Same class as
+  // sender:blocked's raw-signal predecessors.
+  "channel:reaction_received",
 
   // -------------------------------------------------------------------
   // Infra events — system metrics, not turn-scoped.

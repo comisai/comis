@@ -25,7 +25,7 @@ import type { SessionLifecycle } from "@comis/agent";
 import type { CommandQueue } from "./queue/command-queue.js";
 import type { ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
 import type { InteractiveCallbackRouter } from "./approval/index.js";
-import type { ChannelPort, DeliveryQueuePort, NormalizedMessage, SessionKey, TypedEventBus, DeliveryService } from "@comis/core";
+import type { ChannelPort, DeliveryQueuePort, NormalizedMessage, NormalizedReaction, SessionKey, TypedEventBus, DeliveryService } from "@comis/core";
 // Orchestrator imports ONLY the @comis/core activity port + ctx type
 // (never the observability impl — hexagonal boundary). The
 // ActivityTurnCoordinator is a local execution type.
@@ -456,6 +456,25 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
               }
             },
           );
+        });
+
+        // REACT-01: register the inbound-reaction fanout if the adapter exposes
+        // it (Discord/Slack/Telegram). No-op adapters omit onReaction → the
+        // optional-call form registers nothing (honest no-op, NOT a gap).
+        adapter.onReaction?.((reaction: NormalizedReaction) => {
+          // A reaction is NOT an inbound turn — do NOT mint a request context.
+          // Emit the capture event (ids/emoji only); the daemon (Plan 04)
+          // resolves the messageId→trajectory and observes the outcome. PLAIN
+          // emit (not ?.) so the architecture gate's regex + the type system
+          // both see it (RESEARCH Pitfall 6).
+          deps.eventBus.emit("channel:reaction_received", {
+            messageId: reaction.messageId,
+            reactorId: reaction.reactorId,
+            emoji: reaction.emoji,
+            channelType: reaction.channelType,
+            channelId: reaction.channelId,
+            timestamp: systemNowMs(),
+          });
         });
 
         // Start the adapter

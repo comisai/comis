@@ -25,6 +25,26 @@ export interface ChannelEvents {
     timestamp: number;
   };
 
+  /**
+   * REACT-01 (Verified Learning WS1): an inbound reaction-add captured on a
+   * Discord/Slack/Telegram message. Emitted by the orchestrator channel-manager
+   * via the optional adapter.onReaction fanout; the daemon (Plan 04, setup-
+   * learning) subscribes and observes a `reaction`-source outcome IFF the
+   * messageId maps to an agent-authored outbound trajectory (REACT-02 fail-
+   * closed). The reactorId/emoji are UNTRUSTED inbound — no trust is asserted
+   * here. Counts/ids/emoji ONLY — never message bodies or sender display names
+   * (SEC-01 §7); the emoji is matched against a CLOSED reactionMap downstream
+   * (Plan 04) and never flows into a prompt.
+   */
+  "channel:reaction_received": {
+    messageId: string;
+    reactorId: string;
+    emoji: string;
+    channelType: string;
+    channelId: string;
+    timestamp: number;
+  };
+
   /** Sender blocked by allowFrom filter before agent resolution */
   "sender:blocked": {
     channelType: string;
