@@ -212,9 +212,13 @@ export const MemoryTripleRowSchema = z.strictObject({
 });
 
 // Schema for a `user_representation` row projection. The scoped
-// read projects the 7 columns below (NOT tenant_id/agent_id/user_id — the WHERE pins
+// read projects the columns below (NOT tenant_id/agent_id/user_id — the WHERE pins
 // them); trust/entry_type z.enum match the DDL CHECKs ('external' absent);
 // source_memory_id/updated_at nullable. Parsed via createRowMapper.
+// v2.26 WS5 REVISE-02: the four bi-temporal columns (t_valid_start/t_valid_end/
+// expired_at/confidence) added via ensureUserRepresentationBitemporalColumns are
+// projected here as z.number().nullable().optional() for the asOf read + the
+// supersession incumbent SELECT * (rows predating the column-add read NULL).
 export const UserRepresentationRowSchema = z.strictObject({
   id: z.string(),
   entry_type: z.enum(["identity", "preference", "relationship", "instruction"]),
@@ -223,6 +227,10 @@ export const UserRepresentationRowSchema = z.strictObject({
   source_memory_id: z.string().nullable().optional(),
   created_at: z.number(),
   updated_at: z.number().nullable().optional(),
+  t_valid_start: z.number().nullable().optional(),
+  t_valid_end: z.number().nullable().optional(),
+  expired_at: z.number().nullable().optional(),
+  confidence: z.number().nullable().optional(),
 });
 
 // Schema for a `relationship` row projection. The scoped read
