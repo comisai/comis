@@ -13,6 +13,7 @@ import { ensureLcdTables } from "./schema-lcd.js";
 import { ensurePinnedColumn } from "./schema-pinned.js";
 import { ensureVideoJobTable } from "./schema-video-jobs.js";
 import { ensureOutcomeEventsTable } from "./schema-outcome-events.js";
+import { ensureTunedAlphaIntent, ensureUsefulnessFailureColumn } from "./schema-tuned-alpha.js";
 
 /** Module-level flag tracking whether sqlite-vec loaded successfully. */
 let vecAvailable = false;
@@ -421,34 +422,6 @@ export function ensureRelationshipTable(db: Database.Database): void {
 }
 
 /**
- * Create the `tuned_alpha` table — the sole storage for the per-(tenant, agent)
- * LEARNED ranking weights. Additive, forward-only,
- * idempotent; safe on a live DB with NO backfill (an absent `(tenant, agent)` row
- * reads back `undefined` — the recall apply site's default-OFF no-op).
- * Sole adapter: `createSqliteTunedAlphaStore`. Belt #3 (the ship-gate, schema
- * layer): columns for ONLY the 4 tunable boost alphas + `updated_at` — NO fifth
- * (trust-weight) column, so the bandit can never move that weight (it stays
- * config-sourced at the apply site); the `trust_alpha` name is deliberately never
- * written (grep-0, asserted in the adapter test). `PRIMARY KEY (tenant_id,
- * agent_id)` IS the isolation boundary (RED-proven); NO FK to `memories` (per-scope
- * CONFIG state, not per-memory provenance). Call AFTER `ensureRelationshipTable`.
- */
-export function ensureTunedAlphaTable(db: Database.Database): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS tuned_alpha (
-      tenant_id        TEXT NOT NULL,
-      agent_id         TEXT NOT NULL,
-      recency_alpha    REAL NOT NULL,
-      temporal_alpha   REAL NOT NULL,
-      proof_alpha      REAL NOT NULL,
-      usefulness_alpha REAL NOT NULL,
-      updated_at       INTEGER NOT NULL,
-      PRIMARY KEY (tenant_id, agent_id)
-    );
-  `);
-}
-
-/**
  * Initialize the full memory schema on the given SQLite database.
  *
  * Creates:
@@ -594,11 +567,12 @@ export function initSchema(db: Database.Database, embeddingDimensions: number): 
   ensureMemoryColumns(db); // additive memory columns (forward-only; design §4.1)
   ensureEntityTables(db); // entity junction tables
   ensureUsefulnessTable(db); // recall-utility usefulness + intent bucket
+  ensureUsefulnessFailureColumn(db); // memory_usefulness.failure_count (v2.26 WS4, FORGET-02) — distinct from ignored_count
   ensureCausalTables(db); // causal-edge table
   ensureTripleTable(db); // bi-temporal KG triples
   ensureUserRepresentationTable(db); // per-user representation
   ensureRelationshipTable(db); // directional relationships
-  ensureTunedAlphaTable(db); // tuned ranking alphas
+  ensureTunedAlphaIntent(db); // tuned ranking alphas — per-intent 3-col PK + bandit posterior (v2.26 WS3, RANK-05); rebuilds a legacy 2-col-PK table
   ensureLcdTables(db); // LCD lossless message + parts store (Phase 127)
   ensurePinnedColumn(db); // pinned-memory column + partial index (forward-only; design §4.1)
   ensureVideoJobTable(db); // durable async video-job store (Phase 189, JOB-01/JOB-03)

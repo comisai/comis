@@ -97,4 +97,18 @@ export interface MemoryUsefulnessStore {
     memoryIds: string[],
     scope: Omit<UsefulnessScope, "now">,
   ): Promise<Result<Map<string, UsefulnessSignal>, Error>>;
+
+  /**
+   * WRITE (FORGET-02). Accrue an outcome-attributed task FAILURE for `memoryId`
+   * — increment `failure_count` on the (tenant, agent, memory_id, intent) bucket
+   * (first touch INSERTs failure_count=1). `failure_count` is a DISTINCT signal
+   * from `ignored_count`: a correct-but-unused memory accrues `ignored_count`
+   * (recalled-but-not-cited), NEVER `failure_count`; only a memory in the
+   * `recalled_ids` of a `failure`/`corrected` trajectory accrues here — and the
+   * caller (the daemon reward seam) gates that on the anti-induced-eviction
+   * corroboration rule (FORGET-03). Idempotent at the row level
+   * (INSERT ... ON CONFLICT DO UPDATE). The (tenant, agent) filter is the
+   * load-bearing isolation boundary; `intent` is an ADDITIONAL key.
+   */
+  recordFailure(memoryId: string, scope: UsefulnessScope): Promise<Result<void, Error>>;
 }
