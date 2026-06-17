@@ -97,7 +97,7 @@ describe("createSqliteTunedAlphaStore", () => {
       expect(row).toBeDefined();
     });
 
-    it("has exactly the 7 expected columns and NO trust-weight column (belt #3)", () => {
+    it("has exactly the 10 expected columns (intent + bandit posterior) and NO trust-weight column (belt #3)", () => {
       const cols = (
         db.prepare("PRAGMA table_info(tuned_alpha)").all() as { name: string }[]
       ).map((c) => c.name);
@@ -109,11 +109,24 @@ describe("createSqliteTunedAlphaStore", () => {
           "temporal_alpha",
           "proof_alpha",
           "usefulness_alpha",
+          "intent",
+          "outcome_reward_sum",
+          "outcome_n",
           "updated_at",
         ].sort(),
       );
       // Belt #3 at the schema layer: no column name carries a trust weight.
       expect(cols.some((c) => c.includes("trust"))).toBe(false);
+    });
+
+    it("the PK is the 3-col (tenant_id, agent_id, intent) — per-intent partition (RANK-02)", () => {
+      const pkNames = (
+        db.prepare("PRAGMA table_info(tuned_alpha)").all() as { name: string; pk: number }[]
+      )
+        .filter((c) => c.pk > 0)
+        .map((c) => c.name)
+        .sort();
+      expect(pkNames).toEqual(["agent_id", "intent", "tenant_id"]);
     });
   });
 
@@ -262,6 +275,81 @@ describe("createSqliteTunedAlphaStore", () => {
       if (!a.ok || !b.ok) return;
       expect(a.value).toEqual(VEC);
       expect(b.value).toEqual(vecB);
+    });
+  });
+
+  // =====================================================================
+  // Per-intent partition (RANK-02) — the intent key is ADDITIONAL, never a
+  // relaxation of the (tenant, agent) isolation boundary
+  // =====================================================================
+
+  describe("per-intent upsert/read (RANK-02)", () => {
+    // A second 4-alpha vector distinct from VEC (so a clobber would be visible).
+    const VEC_TEMPORAL = {
+      recencyAlpha: 0.9,
+      temporalAlpha: 0.8,
+      proofAlpha: 0.7,
+      usefulnessAlpha: 0.6,
+    } as const;
+    const SCOPE_A_TEMPORAL = { ...SCOPE_A, intent: "temporal" } as const;
+    const READ_A_TEMPORAL = { ...READ_A, intent: "temporal" } as const;
+
+    it("a write to intent='temporal' does NOT clobber the global intent='' bucket", async () => {
+      // Global bucket (omitted intent → '').
+      await store.upsert(VEC, SCOPE_A);
+      // Per-intent bucket — a DISTINCT row, must not overwrite the global one.
+      await store.upsert(VEC_TEMPORAL, SCOPE_A_TEMPORAL);
+
+      // Two rows now exist for the SAME (tenant, agent) — only possible with the
+      // 3-col PK (a 2-col PK would have collapsed/clobbered them).
+      expect(rowCount(SCOPE_A.tenantId, SCOPE_A.agentId)).toBe(2);
+
+      // The global read still returns VEC (un-clobbered).
+      const global = await store.read(READ_A);
+      expect(global.ok).toBe(true);
+      if (!global.ok) return;
+      expect(global.value).toEqual(VEC);
+
+      // The temporal read returns the temporal vector.
+      const temporal = await store.read(READ_A_TEMPORAL);
+      expect(temporal.ok).toBe(true);
+      if (!temporal.ok) return;
+      expect(temporal.value).toEqual(VEC_TEMPORAL);
+    });
+
+    it("a cross-TENANT read of a per-intent vector is ABSENT (isolation holds under intent)", async () => {
+      await store.upsert(VEC_TEMPORAL, SCOPE_A_TEMPORAL);
+      // Same intent, foreign tenant → must be undefined (intent does not relax isolation).
+      const res = await store.read({ ...READ_FOREIGN_TENANT, intent: "temporal" });
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      expect(res.value).toBeUndefined();
+    });
+
+    it("re-upsert of the SAME intent bucket overwrites in place (one row per (tenant, agent, intent))", async () => {
+      await store.upsert(VEC_TEMPORAL, SCOPE_A_TEMPORAL);
+      const updated = {
+        recencyAlpha: 0.15,
+        temporalAlpha: 0.25,
+        proofAlpha: 0.35,
+        usefulnessAlpha: 0.45,
+      } as const;
+      await store.upsert(updated, { ...SCOPE_A_TEMPORAL, now: T0 + 9000 });
+
+      // Still exactly ONE temporal row (idempotent within the intent bucket).
+      const c = (
+        db
+          .prepare(
+            "SELECT COUNT(*) AS c FROM tuned_alpha WHERE tenant_id=? AND agent_id=? AND intent='temporal'",
+          )
+          .get(SCOPE_A.tenantId, SCOPE_A.agentId) as { c: number }
+      ).c;
+      expect(c).toBe(1);
+
+      const res = await store.read(READ_A_TEMPORAL);
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      expect(res.value).toEqual(updated);
     });
   });
 
