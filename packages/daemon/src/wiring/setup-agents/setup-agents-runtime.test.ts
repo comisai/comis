@@ -46,6 +46,54 @@ describe("setup-agents-runtime wiring", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Learned-skill surface seam wiring (SURFACE-01/03)
+//
+// The getPromptSkillsXml seam must delegate to renderLearnedSkillsXml (the
+// merge-INTO-the-seam keystone so the per-session freeze captures the merged
+// listing) reading the per-agent createLearnedSkillSurfaceCache, NOT the bare
+// skillRegistry.getSnapshot().prompt. With learnedSkillStore undefined / no
+// admitted skills the helper returns getSnapshot().prompt UNCHANGED — the
+// default-off byte-identity is proven directly in learned-skill-surface.test.ts.
+// ---------------------------------------------------------------------------
+
+describe("setupSingleAgent learned-skill surface wiring", () => {
+  const source = readRuntimeSource();
+
+  it("delegates the getPromptSkillsXml seam to renderLearnedSkillsXml (not the bare snapshot prompt)", () => {
+    // The old seam returned skillRegistry.getSnapshot().prompt directly — that
+    // bare form must be GONE from the deps block (it bypassed the merge).
+    const depsStart = source.indexOf("createPiExecutor(effectiveConfig, {");
+    const depsEnd = source.indexOf("});", depsStart);
+    const depsBlock = source.slice(depsStart, depsEnd);
+
+    expect(depsBlock).toMatch(/getPromptSkillsXml:\s*\(\)\s*=>\s*renderLearnedSkillsXml\(/);
+    expect(depsBlock).not.toContain("getPromptSkillsXml: () => skillRegistry.getSnapshot().prompt");
+    // The seam reads the per-agent cache's `.current` snapshot (not a fresh async list()).
+    expect(depsBlock).toContain("learnedSkills: learnedSurface.current");
+  });
+
+  it("constructs the per-agent surface cache with the threaded store + the resolved (tenant, agent) scope", () => {
+    const fnStart = source.indexOf("export async function setupSingleAgent(");
+    const fnBody = source.slice(fnStart);
+    // The cache is built from deps.learnedSkillStore (the Task-2 thread) and the
+    // SAME scope the runtime resolves — tenantId from container.config, agentId param.
+    expect(fnBody).toContain("createLearnedSkillSurfaceCache({");
+    const callStart = fnBody.indexOf("createLearnedSkillSurfaceCache({");
+    const callWindow = fnBody.slice(callStart, callStart + 240);
+    expect(callWindow).toContain("learnedSkillStore: deps.learnedSkillStore");
+    expect(callWindow).toContain("tenantId: container.config.tenantId");
+    expect(callWindow).toContain("agentId");
+    expect(callWindow).toContain("workspaceDir: dir");
+  });
+
+  it("imports the surface helpers from ./learned-skill-surface.js", () => {
+    expect(source).toMatch(
+      /import\s*\{[^}]*renderLearnedSkillsXml[^}]*createLearnedSkillSurfaceCache[^}]*\}\s*from\s*"\.\/learned-skill-surface\.js"/s,
+    );
+  });
+});
+
 describe("setupSingleAgent OutputGuard wiring", () => {
   it("passes outputGuard and canaryToken to createPiExecutor deps (OGUARD regression guard)", () => {
     const source = readRuntimeSource();

@@ -26,6 +26,7 @@
 
 import { relative } from "node:path";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { suppressError } from "@comis/shared";
 import { safePath, type LearnedSkill, type LearnedSkillStorePort, type LearningScope } from "@comis/core";
 import { formatAvailableSkillsXml, type PromptSkillDescription, type SkillRegistry } from "@comis/skills";
 import type { ComisLogger } from "@comis/infra";
@@ -97,12 +98,12 @@ export function materializeLearnedSkills(
   const surfaceable = learnedSkills.filter(isSurfaceable);
   if (surfaceable.length === 0) return;
 
-  mkdirSync(root, { recursive: true });
+  mkdirSync(root, { recursive: true, mode: 0o700 });
   for (const skill of surfaceable) {
     // safePath validates `name` (rejects traversal) and pins the file under root.
     const skillDir = safePath(root, skill.name);
     const file = safePath(skillDir, "SKILL.md");
-    mkdirSync(skillDir, { recursive: true });
+    mkdirSync(skillDir, { recursive: true, mode: 0o700 });
     writeFileSync(file, renderSkillFile(skill), { mode: 0o600 });
   }
 }
@@ -190,4 +191,30 @@ export async function refreshLearnedSkillSurface(args: {
     "Learned-skill surface refreshed",
   );
   return surfaced;
+}
+
+/**
+ * Per-agent surfaced-skills cache (the bridge between the async refresh and the
+ * SYNC seam). Holds the latest surfaceable rows; the seam reads `.current`
+ * synchronously every assembly, the freeze captures whatever is current at session
+ * start. Constructed once per agent at boot — it fires ONE `refreshLearnedSkillSurface`
+ * (materialize + cache) fire-and-forget; until it resolves (and when it fails-closed)
+ * `.current` is `[]`, so the listing is platform-only (byte-identical). A
+ * newly-promoted skill is picked up on the NEXT session (the per-session freeze) once
+ * a later refresh updates `.current` (Plan 05 re-refreshes on promote/demote).
+ */
+export function createLearnedSkillSurfaceCache(args: {
+  learnedSkillStore: LearnedSkillStorePort | undefined;
+  scope: LearningScope;
+  workspaceDir: string;
+  logger: ComisLogger;
+}): { readonly current: readonly LearnedSkill[] } {
+  const cache: { current: readonly LearnedSkill[] } = { current: [] };
+  suppressError(
+    refreshLearnedSkillSurface(args).then((surfaced) => {
+      cache.current = surfaced;
+    }),
+    "learned-skill surface boot refresh",
+  );
+  return cache;
 }
