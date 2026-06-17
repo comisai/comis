@@ -705,6 +705,8 @@ Periodic LLM-driven consolidation of similar memories into observations. Opt-in 
 | `maxConsolidationTokens` | `number` | `1024` | Maximum LLM response tokens for one merge call (positive) |
 | `consolidateExternal` | `boolean` | `false` | Include external-trust memories in consolidation (excluded by default) |
 | `autoTags` | `string[]` | `[]` | Extra tags applied to every created observation |
+| `generalize.enabled` | `boolean` | `false` | Verified Learning (v2.26): a second consolidation pass that synthesizes a higher-order "user prefers X in general" `semantic` memory (`observation_kind='generalization'`) from a diverse cluster. Opt-in (default off — consolidation is byte-identical when off); abstains on small/nano models. The synthesized node is non-destructive (sources kept + linked, trust never raised above `learned`) and is supersedable by a later contradicting triple |
+| `generalize.minDistinctContexts` | `number` | `3` | Minimum distinct `(session, sender)` contexts a cluster must span before it generalizes — an anti-domination gate so one repeated session cannot mint a "general" preference |
 
 #### Learning Outcome (agents.*.learningOutcome)
 
@@ -769,6 +771,15 @@ The **Verified Learning** wrongness-based soft eviction (v2.26 WS4): the per-age
 | `failurePenalty` | `number` (0–1) | `0.5` | Weight applied to a recalled memory's `failure_count` when decaying its strength (more corroborated failures → lower strength → earlier eviction). Bounded and saturating, so one stray failure barely moves a strong memory while sustained wrongness drops a weak one below the threshold |
 
 > **Gate composition.** `learningForgetting` drives the soft-eviction **behaviour**; it **composes with** — does not replace — the existing `memoryLifecycle` cron (the schedule that runs the sweep) and the existing `rag.forget` score-decay, all under the master `memory.costFeatures.enabled`. There is **no `halfLifeDays` knob**: v2.26 adds eviction + the failure coupling on top of the existing decay, not a new decay parameter. Eviction is **soft and reversible** — a memory un-evicts on renewed usefulness — and emits counts-only `learning:memory_demoted` / `learning:memory_evicted` signals for `comis explain` / `comis fleet`.
+
+#### User Representation (agents.*.memoryUserRepresentation)
+
+The per-user profile builder. On by default in v1 (`enabled: true`, opt-out — a cost feature, so force-disabled by `memory.costFeatures.enabled: false`). As of **Verified Learning (v2.26)** the builder **revises** the profile instead of rebuilding it: the `user_representation` table is **bi-temporal**, so a contradicting profile fact of **equal-or-higher trust soft-closes** the incumbent belief (`t_valid_end`/`expired_at` — never hard-deleted, still resolvable via `asOf`) while a **lower-trust** contradiction is **recorded-not-believed** (anti-poison) and a restatement bumps confidence in place. The default profile read returns **current truth only**. See the bi-temporal [`user_representation` columns](/operations/data-directory#user-representation-verified-learning-v2-26) for the storage detail; the revision activity surfaces counts-only on `comis explain` (the `learning` signal's `userModelRevised` count).
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `true` | Build a per-user representation for this agent (opt-out; force-disabled by `memory.costFeatures.enabled: false`) |
+| `historyCap` | `number` | `10` | Verified Learning (v2.26): bounded `asOf` history — superseded profile rows for a `(user, entryType)` slot beyond this many are trimmed **oldest-`expired_at`-first** (the one sanctioned delete; anti-unbounded-growth). A recent `asOf` within the cap still resolves |
 
 #### Memory Triple Extraction (agents.*.memoryTripleExtraction)
 
