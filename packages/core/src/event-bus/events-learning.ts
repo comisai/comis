@@ -103,4 +103,37 @@ export interface LearningEvents {
     count: number;
     timestamp: number;
   };
+
+  /**
+   * REVISE-01 (v2.26 Phase 203): the user-model revision run soft-closed `superseded`
+   * incumbents (higher/equal-trust contradiction), bumped `corroborated` confidences,
+   * and `inserted` new current-truth entries. Emitted DAEMON-SIDE (setup-channels-memory-crons.ts,
+   * Plan 05) — counts ONLY, never a profile entry's content/entry_type/id.
+   */
+  "learning:user_model_revised": {
+    agentId: string;
+    /** Incumbent profile entries soft-closed by a higher/equal-trust contradiction (count only). */
+    superseded: number;
+    /** Candidates that corroborated an incumbent — confidence bumped, no new row (count only). */
+    corroborated: number;
+    /** New entries inserted (no incumbent in that belief slot) (count only). */
+    inserted: number;
+    durationMs: number;
+    timestamp: number;
+  };
+
+  /**
+   * GENERAL-01 (v2.26 Phase 203): the consolidation generalization pass created `generalized`
+   * higher-order semantic memories from `clustersConsidered` diversity-passing clusters.
+   * Emitted DAEMON-SIDE — counts ONLY, never the synthesized content or source ids.
+   */
+  "learning:memory_generalized": {
+    agentId: string;
+    /** Higher-order semantic memories created this run (count only). */
+    generalized: number;
+    /** Clusters that met the diversity threshold and were considered (count only). */
+    clustersConsidered: number;
+    durationMs: number;
+    timestamp: number;
+  };
 }
