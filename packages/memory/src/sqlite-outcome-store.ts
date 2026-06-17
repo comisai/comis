@@ -286,17 +286,22 @@ export function createSqliteOutcomeStore(deps: OutcomeStoreDeps): OutcomeSignalP
         // the closed-union element type — the DDL CHECK guarantees in-set values.
         const sources = [...new Set(rows.map((r) => r.source))] as ResolvedOutcome["sources"];
 
-        // Attribution: union+dedup recalledIds across ALL rows (any source may
-        // carry them); usedSkillIds is the EMPTY sink in P0 (populated Phase 201).
+        // Attribution: union+dedup recalledIds AND usedSkillIds across ALL rows (any
+        // source may carry either). The used_skill_ids column is written at observe()
+        // (:199) when the daemon threads a memory:skill_used attribution into the call
+        // (setup-learning.ts, Plan 07) — the loop is no longer write-only. The two loops
+        // are byte-mirrors (same parseIdList graceful-degrade over the JSON TEXT column).
         const recalledSet = new Set<string>();
         for (const row of rows) for (const id of parseIdList(row.recalled_ids)) recalledSet.add(id);
+        const usedSkillSet = new Set<string>();
+        for (const row of rows) for (const id of parseIdList(row.used_skill_ids)) usedSkillSet.add(id);
 
         const resolved: ResolvedOutcome = {
           outcome: winner.outcome as ResolvedOutcome["outcome"],
           confidence: winner.confidence,
           sources,
           recalledIds: [...recalledSet],
-          usedSkillIds: [],
+          usedSkillIds: [...usedSkillSet],
         };
         logger?.debug(
           {
