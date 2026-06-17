@@ -452,6 +452,40 @@ describe("createSqliteUserRepresentationStore", () => {
       );
     });
 
+    it("asOf with mode='txn' queries the TRANSACTION-time axis (created_at/expired_at), distinct from the valid-time axis", async () => {
+      // Seed a `learned` belief at T_SEED, then supersede it with a `system`
+      // contradiction at T_REVISE. The incumbent's TRANSACTION window is
+      // [created_at = T_SEED, expired_at = T_REVISE); the winner's is
+      // [created_at = T_REVISE, expired_at = NULL).
+      const seeded = await store.revise(
+        { entryType: "preference", content: "prefers coffee", trust: "learned" },
+        SCOPE_SEED,
+      );
+      expect(seeded.ok).toBe(true);
+      const revised = await store.revise(
+        { entryType: "preference", content: "prefers tea", trust: "system" },
+        SCOPE_REVISE,
+      );
+      expect(revised.ok).toBe(true);
+
+      // txn-mode asOf a record-time WITHIN the incumbent's transaction window
+      // (before it was closed) resolves the incumbent — the record-time axis.
+      const txnBefore = await store.asOf(T_SEED + 1, READ_A, "txn");
+      expect(txnBefore.ok).toBe(true);
+      if (!txnBefore.ok) return;
+      const txnBeforePref = txnBefore.value.filter((e) => e.entryType === "preference");
+      expect(txnBeforePref).toHaveLength(1);
+      expect(txnBeforePref[0]?.content).toBe("prefers coffee");
+
+      // txn-mode asOf a record-time AFTER the supersession resolves the winner.
+      const txnAfter = await store.asOf(T_REVISE + 1, READ_A, "txn");
+      expect(txnAfter.ok).toBe(true);
+      if (!txnAfter.ok) return;
+      expect(txnAfter.value.filter((e) => e.entryType === "preference")[0]?.content).toBe(
+        "prefers tea",
+      );
+    });
+
     it("a corroborating candidate bumps confidence to a STRICTLY-GREATER value with NO new current-truth row (WS5 first-RED corroboration half)", async () => {
       // Seed with a known confidence (revise inserts at the default seed), then
       // corroborate the SAME belief (normalized-equal content).
@@ -482,6 +516,35 @@ describe("createSqliteUserRepresentationStore", () => {
       const afterRow = currentTruthRow("tenant_a", "agent_x", "user_a", "preference");
       expect(afterRow?.confidence ?? 0).toBeGreaterThan(seedConfidence);
       // The content stays the incumbent's (corroboration UPDATEs confidence, not content).
+      expect(afterRow?.content).toBe("prefers dark mode");
+    });
+
+    it("a NEAR-restatement (bigram-Dice >= 0.9 but NOT normalized-equal) corroborates in place — the 0.9 paraphrase floor, not just a trim/case variant", async () => {
+      // Seed an incumbent, then revise() a near-paraphrase that is NOT normalized-equal
+      // ("prefers dark mode" vs "prefers dark modes", Dice ~0.97 >= the 0.9 corroborate
+      // floor). This exercises the bigram-Dice corroborate band (distinct from the
+      // normalized-equal fast path the prior test covers).
+      const seeded = await store.revise(
+        { entryType: "preference", content: "prefers dark mode", trust: "learned" },
+        SCOPE_SEED,
+      );
+      expect(seeded.ok).toBe(true);
+      const seedConfidence =
+        currentTruthRow("tenant_a", "agent_x", "user_a", "preference")?.confidence ?? 0.5;
+
+      const corroborated = await store.revise(
+        { entryType: "preference", content: "prefers dark modes", trust: "learned" },
+        SCOPE_REVISE,
+      );
+      expect(corroborated.ok).toBe(true);
+
+      // Corroboration (NOT supersession): one current-truth row, no soft-closed row.
+      expect(currentTruthCount("tenant_a", "agent_x", "user_a", "preference")).toBe(1);
+      expect(closedRowCount("tenant_a", "agent_x", "user_a", "preference")).toBe(0);
+
+      // Confidence bumped in place; the incumbent content is retained (not the paraphrase).
+      const afterRow = currentTruthRow("tenant_a", "agent_x", "user_a", "preference");
+      expect(afterRow?.confidence ?? 0).toBeGreaterThan(seedConfidence);
       expect(afterRow?.content).toBe("prefers dark mode");
     });
 
