@@ -22,10 +22,35 @@
 import { describe, it, expect, vi } from "vitest";
 import { TypedEventBus, runWithContext } from "@comis/core";
 import type { EventMap, OutcomeObservation, ResolvedOutcome, LearningScope } from "@comis/core";
+import type { UsefulnessScope, MemoryUsefulnessStore, UsefulnessSignal } from "@comis/core";
 import { ok, err, type Result } from "@comis/shared";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import { wireLearningOutcome } from "./setup-learning.js";
+
+/**
+ * A controllable MemoryUsefulnessStore stub. The daemon reward seam (RANK-01 /
+ * FORGET-02) is the agent↛memory cut enforcement point: the daemon holds BOTH
+ * the bus/`OutcomeSignalPort.resolve()` AND this injected `@comis/memory`
+ * usefulness adapter. Exposes ONLY the three port methods (recordUsage /
+ * readUsefulness / recordFailure) — there is NO proof/trust/pinned lookup, which
+ * is the point (the resolve seam reads no per-memory proof_count/trust_level/
+ * pinned; the eviction exemption is store-side, Plan 05).
+ */
+function mockUsefulnessStore() {
+  const recordUsage = vi.fn(
+    async (_used: string[], _ignored: string[], _scope: UsefulnessScope): Promise<Result<void, Error>> =>
+      ok(undefined),
+  );
+  const recordFailure = vi.fn(
+    async (_id: string, _scope: UsefulnessScope): Promise<Result<void, Error>> => ok(undefined),
+  );
+  const readUsefulness = vi.fn(
+    async (): Promise<Result<Map<string, UsefulnessSignal>, Error>> => ok(new Map()),
+  );
+  const store: MemoryUsefulnessStore = { recordUsage, readUsefulness, recordFailure };
+  return { store, recordUsage, recordFailure, readUsefulness };
+}
 
 const NOW = 1_700_000_000_000;
 const TRACE = "trace-lo-001";
@@ -96,6 +121,9 @@ describe("wireLearningOutcome — tool/pipeline → observe/resolve → emit", (
     wireLearningOutcome({
       eventBus: bus,
       outcomeStore: store,
+      usefulnessStore: mockUsefulnessStore().store,
+      learningTuningEnabled: () => false,
+      learningForgettingEnabled: () => false,
       clock: createFakeClock(NOW),
       logger: createMockLogger(),
       learningOutcomeEnabled: () => false,
@@ -114,6 +142,9 @@ describe("wireLearningOutcome — tool/pipeline → observe/resolve → emit", (
     wireLearningOutcome({
       eventBus: bus,
       outcomeStore: store,
+      usefulnessStore: mockUsefulnessStore().store,
+      learningTuningEnabled: () => false,
+      learningForgettingEnabled: () => false,
       clock: createFakeClock(NOW),
       logger: createMockLogger(),
       learningOutcomeEnabled: () => false,
@@ -136,6 +167,9 @@ describe("wireLearningOutcome — tool/pipeline → observe/resolve → emit", (
     wireLearningOutcome({
       eventBus: bus,
       outcomeStore: store,
+      usefulnessStore: mockUsefulnessStore().store,
+      learningTuningEnabled: () => false,
+      learningForgettingEnabled: () => false,
       clock: createFakeClock(NOW),
       logger: createMockLogger(),
       learningOutcomeEnabled: () => true,
@@ -159,6 +193,9 @@ describe("wireLearningOutcome — tool/pipeline → observe/resolve → emit", (
     wireLearningOutcome({
       eventBus: bus,
       outcomeStore: store,
+      usefulnessStore: mockUsefulnessStore().store,
+      learningTuningEnabled: () => false,
+      learningForgettingEnabled: () => false,
       clock: createFakeClock(NOW),
       logger: createMockLogger(),
       learningOutcomeEnabled: () => true,
@@ -178,6 +215,9 @@ describe("wireLearningOutcome — tool/pipeline → observe/resolve → emit", (
     wireLearningOutcome({
       eventBus: bus,
       outcomeStore: store,
+      usefulnessStore: mockUsefulnessStore().store,
+      learningTuningEnabled: () => false,
+      learningForgettingEnabled: () => false,
       clock: createFakeClock(NOW),
       logger: createMockLogger(),
       learningOutcomeEnabled: () => true,
@@ -208,6 +248,9 @@ describe("wireLearningOutcome — tool/pipeline → observe/resolve → emit", (
     wireLearningOutcome({
       eventBus: bus,
       outcomeStore: store,
+      usefulnessStore: mockUsefulnessStore().store,
+      learningTuningEnabled: () => false,
+      learningForgettingEnabled: () => false,
       clock: createFakeClock(NOW),
       logger: createMockLogger(),
       learningOutcomeEnabled: () => true,
@@ -226,6 +269,9 @@ describe("wireLearningOutcome — tool/pipeline → observe/resolve → emit", (
     wireLearningOutcome({
       eventBus: bus,
       outcomeStore: store,
+      usefulnessStore: mockUsefulnessStore().store,
+      learningTuningEnabled: () => false,
+      learningForgettingEnabled: () => false,
       clock: createFakeClock(NOW),
       logger: createMockLogger(),
       learningOutcomeEnabled: () => true,
@@ -246,6 +292,9 @@ describe("wireLearningOutcome — tool/pipeline → observe/resolve → emit", (
     wireLearningOutcome({
       eventBus: bus,
       outcomeStore: store,
+      usefulnessStore: mockUsefulnessStore().store,
+      learningTuningEnabled: () => false,
+      learningForgettingEnabled: () => false,
       clock: createFakeClock(NOW),
       logger,
       learningOutcomeEnabled: () => true,
@@ -271,6 +320,9 @@ describe("wireLearningOutcome — tool/pipeline → observe/resolve → emit", (
     wireLearningOutcome({
       eventBus: bus,
       outcomeStore: store,
+      usefulnessStore: mockUsefulnessStore().store,
+      learningTuningEnabled: () => false,
+      learningForgettingEnabled: () => false,
       clock: createFakeClock(NOW),
       logger: createMockLogger(),
       learningOutcomeEnabled: () => true,
@@ -294,6 +346,9 @@ describe("wireLearningOutcome — tool/pipeline → observe/resolve → emit", (
     wireLearningOutcome({
       eventBus: bus,
       outcomeStore: { observe, resolve, prune },
+      usefulnessStore: mockUsefulnessStore().store,
+      learningTuningEnabled: () => false,
+      learningForgettingEnabled: () => false,
       clock: createFakeClock(NOW),
       logger,
       learningOutcomeEnabled: () => true,
@@ -315,6 +370,9 @@ describe("wireLearningOutcome — tool/pipeline → observe/resolve → emit", (
     wireLearningOutcome({
       eventBus: bus,
       outcomeStore: { observe, resolve, prune },
+      usefulnessStore: mockUsefulnessStore().store,
+      learningTuningEnabled: () => false,
+      learningForgettingEnabled: () => false,
       clock: createFakeClock(NOW),
       logger: createMockLogger(),
       learningOutcomeEnabled: () => true,
@@ -337,6 +395,9 @@ describe("wireLearningOutcome — tool/pipeline → observe/resolve → emit", (
     wireLearningOutcome({
       eventBus: bus,
       outcomeStore: store,
+      usefulnessStore: mockUsefulnessStore().store,
+      learningTuningEnabled: () => false,
+      learningForgettingEnabled: () => false,
       clock: createFakeClock(NOW),
       logger: createMockLogger(),
       learningOutcomeEnabled: () => true,
@@ -361,6 +422,9 @@ describe("wireLearningOutcome — tool/pipeline → observe/resolve → emit", (
     wireLearningOutcome({
       eventBus: bus,
       outcomeStore: store,
+      usefulnessStore: mockUsefulnessStore().store,
+      learningTuningEnabled: () => false,
+      learningForgettingEnabled: () => false,
       clock: createFakeClock(NOW),
       logger: createMockLogger(),
       learningOutcomeEnabled: () => true,
@@ -372,6 +436,245 @@ describe("wireLearningOutcome — tool/pipeline → observe/resolve → emit", (
     ).not.toThrow();
     await Promise.resolve();
     expect(observe).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * RANK-01 / FORGET-02 / FORGET-03 — the outcome→reward/failure write seam at
+ * resolve() time, corroboration-gated.
+ *
+ * A memory in `verdict.recalledIds` of a SUCCESS trajectory accrues per-intent
+ * positive reward (`recordUsage`); of a FAILURE/CORRECTED trajectory accrues
+ * `failure_count` (`recordFailure`) — but ONLY after the anti-induced-eviction
+ * corroboration gate: ≥2 INDEPENDENT failures (distinct sessions) OR 1
+ * DETERMINISTIC (`tool`/`pipeline`) failure. A single low-trust/`external`
+ * failure accrues NOTHING (Defer ≠ Retry — benign). Once the gate is met the
+ * accrual is UNCONDITIONAL: the daemon reads NO per-memory proof/trust/pinned
+ * (ResolvedOutcome carries none); the high-proof/system/pinned EVICTION exemption
+ * lives store-side (Plan 05). All writes are fire-and-forget / non-fatal and gated
+ * default-OFF on learningTuning/learningForgetting (byte-identical when disabled).
+ */
+describe("wireLearningOutcome — reward/failure write at resolve() (RANK-01/FORGET-02/FORGET-03)", () => {
+  /** Build a wiring whose graph:completed resolve yields the given verdict, with the reward gates on. */
+  function wireRewardSeam(
+    verdict: ResolvedOutcome,
+    opts?: {
+      tuning?: boolean;
+      forgetting?: boolean;
+      usefulnessStore?: ReturnType<typeof mockUsefulnessStore>;
+      logger?: ReturnType<typeof createMockLogger>;
+    },
+  ): {
+    bus: TypedEventBus;
+    us: ReturnType<typeof mockUsefulnessStore>;
+    resolve: ReturnType<typeof makeStubStore>["resolve"];
+  } {
+    const bus = new TypedEventBus();
+    const { store, resolve } = makeStubStore(verdict);
+    const us = opts?.usefulnessStore ?? mockUsefulnessStore();
+    wireLearningOutcome({
+      eventBus: bus,
+      outcomeStore: store,
+      usefulnessStore: us.store,
+      learningTuningEnabled: () => opts?.tuning ?? true,
+      learningForgettingEnabled: () => opts?.forgetting ?? true,
+      clock: createFakeClock(NOW),
+      logger: opts?.logger ?? createMockLogger(),
+      learningOutcomeEnabled: () => true,
+    });
+    return { bus, us, resolve };
+  }
+
+  /** Drive one graph:completed trajectory inside an ALS scope keyed by sessionKey. */
+  async function driveTrajectory(bus: TypedEventBus, sessionKey: string, trace: string): Promise<void> {
+    runWithContext(
+      { tenantId: "tenant-x", agentId: AGENT, sessionKey, traceId: trace } as never,
+      () => bus.emit("graph:completed", graphPayload({ status: "completed" })),
+    );
+    await flushMicrotasks();
+  }
+
+  it("SUCCESS verdict → recordUsage once per recalled id (outcome-attributed positive reward)", async () => {
+    const { bus, us } = wireRewardSeam(
+      baseVerdict({ outcome: "success", sources: ["pipeline"], recalledIds: ["m1", "m2"] }),
+    );
+    await driveTrajectory(bus, SESSION_KEY, TRACE);
+
+    expect(us.recordUsage).toHaveBeenCalledTimes(2);
+    const ids = us.recordUsage.mock.calls.map((c) => c[0]).flat();
+    expect(ids.sort()).toEqual(["m1", "m2"]);
+    // The reward write is scoped to the resolved (tenant, agent); intent omitted →
+    // the global '' bucket (the verdict carries no intent; the bandit reads per-intent).
+    const scope = us.recordUsage.mock.calls[0]![2];
+    expect(scope.agentId).toBe(AGENT);
+    expect(scope.tenantId).toBe("tenant-x");
+    // No failure accrual on a success.
+    expect(us.recordFailure).not.toHaveBeenCalled();
+  });
+
+  it("FAILURE verdict with a DETERMINISTIC source (pipeline) → recordFailure once (1 deterministic satisfies the gate)", async () => {
+    const { bus, us } = wireRewardSeam(
+      baseVerdict({ outcome: "failure", sources: ["pipeline"], recalledIds: ["m1"], confidence: 0.9 }),
+    );
+    await driveTrajectory(bus, SESSION_KEY, TRACE);
+
+    expect(us.recordFailure).toHaveBeenCalledTimes(1);
+    expect(us.recordFailure.mock.calls[0]![0]).toBe("m1");
+    expect(us.recordUsage).not.toHaveBeenCalled();
+  });
+
+  it("CORRECTED verdict with a DETERMINISTIC source (tool) → recordFailure once (corrected = soft-failure)", async () => {
+    const { bus, us } = wireRewardSeam(
+      baseVerdict({ outcome: "corrected", sources: ["tool"], recalledIds: ["m9"], confidence: 0.8 }),
+    );
+    await driveTrajectory(bus, SESSION_KEY, TRACE);
+
+    expect(us.recordFailure).toHaveBeenCalledTimes(1);
+    expect(us.recordFailure.mock.calls[0]![0]).toBe("m9");
+  });
+
+  // ---- FORGET-03 anti-induced-eviction corroboration gate (the SECURITY first-RED) ----
+
+  it("FORGET-03: a single NON-deterministic (reaction-only) failure does NOT accrue failure_count (gate blocks)", async () => {
+    // sources has NO 'tool'/'pipeline' → not deterministic; only ONE occurrence →
+    // < 2 independent. The corroboration gate blocks any accrual (anti-cache-poisoning).
+    const { bus, us } = wireRewardSeam(
+      baseVerdict({ outcome: "failure", sources: ["reaction"], recalledIds: ["m1"], confidence: 0.4 }),
+    );
+    await driveTrajectory(bus, SESSION_KEY, TRACE);
+
+    expect(us.recordFailure).not.toHaveBeenCalled();
+  });
+
+  it("FORGET-03: a single low-confidence correction-only failure does NOT penalize (benign — Defer ≠ Retry)", async () => {
+    const { bus, us } = wireRewardSeam(
+      baseVerdict({ outcome: "corrected", sources: ["correction"], recalledIds: ["m1"], confidence: 0.3 }),
+    );
+    await driveTrajectory(bus, SESSION_KEY, TRACE);
+
+    expect(us.recordFailure).not.toHaveBeenCalled();
+  });
+
+  it("FORGET-03: ≥2 INDEPENDENT failures (distinct sessions) for the same memory → recordFailure fires on the 2nd", async () => {
+    const us = mockUsefulnessStore();
+    // Both verdicts are NON-deterministic (reaction-only) so ONLY the distinct-session
+    // corroboration can satisfy the gate (not a deterministic shortcut).
+    const { bus } = wireRewardSeam(
+      baseVerdict({ outcome: "failure", sources: ["reaction"], recalledIds: ["m1"], confidence: 0.5 }),
+      { usefulnessStore: us },
+    );
+
+    // 1st failure from session A → below the gate (1 independent) → no accrual yet.
+    await driveTrajectory(bus, "tenant-x:telegram:user-A", "trace-A");
+    expect(us.recordFailure).not.toHaveBeenCalled();
+
+    // 2nd failure from a DISTINCT session B → 2 independent → accrual fires.
+    await driveTrajectory(bus, "tenant-x:telegram:user-B", "trace-B");
+    expect(us.recordFailure).toHaveBeenCalledTimes(1);
+    expect(us.recordFailure.mock.calls[0]![0]).toBe("m1");
+  });
+
+  it("FORGET-03: two failures from the SAME session do NOT corroborate (distinct-session count stays 1)", async () => {
+    const us = mockUsefulnessStore();
+    const { bus } = wireRewardSeam(
+      baseVerdict({ outcome: "failure", sources: ["reaction"], recalledIds: ["m1"], confidence: 0.5 }),
+      { usefulnessStore: us },
+    );
+
+    // Same sessionKey twice → distinct-session set stays {A} → never reaches ≥2 → no accrual.
+    await driveTrajectory(bus, "tenant-x:telegram:user-A", "trace-A1");
+    await driveTrajectory(bus, "tenant-x:telegram:user-A", "trace-A2");
+    expect(us.recordFailure).not.toHaveBeenCalled();
+  });
+
+  it("accrual is UNCONDITIONAL once corroborated — the daemon issues NO proof/trust/pinned store read", async () => {
+    // Once the gate passes (a deterministic failure), recordFailure fires for the
+    // recalled id regardless of any proof/trust/pinned attribute. The mock store
+    // exposes ONLY recordUsage/readUsefulness/recordFailure — there is NO proof-lookup
+    // method to call, which is the point (ResolvedOutcome carries no proof/trust/pinned;
+    // the eviction exemption is store-side, Plan 05). Assert recordFailure fires AND
+    // the read path (readUsefulness) is NOT consulted at the resolve seam.
+    const { bus, us } = wireRewardSeam(
+      baseVerdict({ outcome: "failure", sources: ["pipeline"], recalledIds: ["m1"], confidence: 0.9 }),
+    );
+    await driveTrajectory(bus, SESSION_KEY, TRACE);
+
+    expect(us.recordFailure).toHaveBeenCalledTimes(1);
+    // No proof/trust read: the seam never calls readUsefulness (the only read method).
+    expect(us.readUsefulness).not.toHaveBeenCalled();
+  });
+
+  // ---- byte-identity + non-fatal ----
+
+  it("byte-identity: learningTuning AND learningForgetting disabled → NEITHER recordUsage NOR recordFailure", async () => {
+    const usSuccess = mockUsefulnessStore();
+    const { bus: busS } = wireRewardSeam(
+      baseVerdict({ outcome: "success", sources: ["pipeline"], recalledIds: ["m1"] }),
+      { tuning: false, forgetting: false, usefulnessStore: usSuccess },
+    );
+    await driveTrajectory(busS, SESSION_KEY, TRACE);
+    expect(usSuccess.recordUsage).not.toHaveBeenCalled();
+
+    const usFail = mockUsefulnessStore();
+    const { bus: busF } = wireRewardSeam(
+      baseVerdict({ outcome: "failure", sources: ["pipeline"], recalledIds: ["m1"] }),
+      { tuning: false, forgetting: false, usefulnessStore: usFail },
+    );
+    await driveTrajectory(busF, SESSION_KEY, TRACE);
+    expect(usFail.recordFailure).not.toHaveBeenCalled();
+  });
+
+  it("the reward write is independently gated: tuning ON / forgetting OFF → success rewards, failure does NOT accrue", async () => {
+    const usFail = mockUsefulnessStore();
+    const { bus } = wireRewardSeam(
+      baseVerdict({ outcome: "failure", sources: ["pipeline"], recalledIds: ["m1"] }),
+      { tuning: true, forgetting: false, usefulnessStore: usFail },
+    );
+    await driveTrajectory(bus, SESSION_KEY, TRACE);
+    // forgetting OFF → no failure accrual even though the deterministic gate would pass.
+    expect(usFail.recordFailure).not.toHaveBeenCalled();
+  });
+
+  it("an 'unknown' verdict writes NOTHING (no reward, no failure — fail-closed, OUTCOME-05)", async () => {
+    const { bus, us } = wireRewardSeam(
+      baseVerdict({ outcome: "unknown", sources: [], recalledIds: ["m1"], confidence: 0 }),
+    );
+    await driveTrajectory(bus, SESSION_KEY, TRACE);
+    expect(us.recordUsage).not.toHaveBeenCalled();
+    expect(us.recordFailure).not.toHaveBeenCalled();
+  });
+
+  it("is non-fatal: a recordFailure that REJECTS logs a WARN with hint+errorKind and does not throw out of the handler", async () => {
+    const us = mockUsefulnessStore();
+    us.recordFailure.mockImplementationOnce(async () => {
+      throw new Error("db locked");
+    });
+    const logger = createMockLogger();
+    const { bus } = wireRewardSeam(
+      baseVerdict({ outcome: "failure", sources: ["pipeline"], recalledIds: ["m1"], confidence: 0.9 }),
+      { usefulnessStore: us, logger },
+    );
+
+    await expect(driveTrajectory(bus, SESSION_KEY, TRACE)).resolves.toBeUndefined();
+    expect(us.recordFailure).toHaveBeenCalledTimes(1);
+    const warn = logger.warn.mock.calls.find(
+      (c) => typeof (c[0] as { hint?: string }).hint === "string" && (c[0] as { errorKind?: string }).errorKind !== undefined,
+    );
+    expect(warn, "a failure write reject must WARN with hint+errorKind").toBeDefined();
+  });
+
+  it("is non-fatal: a recordUsage that returns err WARNs and does not throw", async () => {
+    const us = mockUsefulnessStore();
+    us.recordUsage.mockImplementationOnce(async () => err(new Error("db locked")));
+    const logger = createMockLogger();
+    const { bus } = wireRewardSeam(
+      baseVerdict({ outcome: "success", sources: ["pipeline"], recalledIds: ["m1"] }),
+      { usefulnessStore: us, logger },
+    );
+
+    await expect(driveTrajectory(bus, SESSION_KEY, TRACE)).resolves.toBeUndefined();
+    expect(us.recordUsage).toHaveBeenCalledTimes(1);
+    expect(logger.warn).toHaveBeenCalled();
   });
 });
 
