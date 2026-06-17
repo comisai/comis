@@ -284,4 +284,19 @@ describe("decideAutoAnswer — consumes profile.dialogs (DIALOG-01/02, v2.26 Pha
     const decision = decideAutoAnswer("safe-only", screen, ["Press enter to continue"], [trustGate]);
     expect(decision.action).toBe("answer"); // the hintPattern path still works (canned Enter)
   });
+
+  it("tags a dialog answer source 'dialog' and a hint answer source 'hint' (audit provenance, M1/L1)", () => {
+    const dialogDec = decideAutoAnswer("safe-only", "Do you trust the files in this folder?", [], [trustGate]);
+    expect(dialogDec.action === "answer" && dialogDec.source).toBe("dialog");
+    const hintDec = decideAutoAnswer("safe-only", "Press enter to continue", ["Press enter to continue"], []);
+    expect(hintDec.action === "answer" && hintDec.source).toBe("hint");
+  });
+
+  it("a destructive dialog escalates even when a non-destructive dialog matches the screen FIRST (order-independent, L2)", () => {
+    const benignFirst: PlatformDialog = { name: "benign", detect: /run command/i, safeAnswer: ["\r"], destructive: false };
+    const destructiveLater: PlatformDialog = { name: "danger", detect: /run command/i, safeAnswer: ["\r"], destructive: true };
+    // Both match; benign is listed FIRST — the destructive floor must still win (not order-dependent).
+    const dec = decideAutoAnswer("safe-only", "run command: rm -rf build", [], [benignFirst, destructiveLater]);
+    expect(dec).toEqual<AutoAnswerDecision>({ action: "escalate", reason: "destructive" });
+  });
 });

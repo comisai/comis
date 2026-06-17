@@ -63,7 +63,7 @@ export type AutoAnswerMode = "none" | "safe-only" | "all";
  * branches can never leak a guessed key.
  */
 export type AutoAnswerDecision =
-  | { action: "answer"; keys: string[]; matchedPatternIndex: number }
+  | { action: "answer"; keys: string[]; matchedPatternIndex: number; source: "hint" | "dialog" }
   | { action: "escalate"; reason: "no_safe_match" | "destructive" | "approval" | "auth_login" };
 
 // ---------------------------------------------------------------------------
@@ -192,16 +192,21 @@ function firstSafePatternIndex(screen: string, hintPatterns: readonly string[]):
 // The decision
 // ---------------------------------------------------------------------------
 
-/** The first profile dialog whose `detect` matches the screen, with its array index, or `undefined`. */
-function firstMatchingDialog(
-  screen: string,
-  dialogs: readonly PlatformDialog[],
-): { entry: PlatformDialog; index: number } | undefined {
-  for (let i = 0; i < dialogs.length; i++) {
-    const entry = dialogs[i];
-    if (entry !== undefined && entry.detect.test(screen)) return { entry, index: i };
-  }
-  return undefined;
+/** Does ANY matching dialog carry `destructive:true`? Order-independent (review L2): a destructive
+ *  match anywhere in `dialogs` escalates, even if a non-destructive dialog matches first. */
+function anyMatchingDestructive(screen: string, dialogs: readonly PlatformDialog[]): boolean {
+  return dialogs.some((d) => d.destructive === true && d.detect.test(screen));
+}
+
+/** The index of the FIRST non-destructive matching dialog that carries a non-empty safeAnswer, or -1. */
+function firstAnswerableDialogIndex(screen: string, dialogs: readonly PlatformDialog[]): number {
+  return dialogs.findIndex(
+    (d) =>
+      d.destructive !== true &&
+      d.safeAnswer !== undefined &&
+      d.safeAnswer.length > 0 &&
+      d.detect.test(screen),
+  );
 }
 
 /**
@@ -231,20 +236,18 @@ export function decideAutoAnswer(
   }
 
   // 2. A matched profile dialog flagged `destructive` ALWAYS escalates — never auto-answered, even
-  //    under mode `all`, even if it declares a safeAnswer (DIALOG-01: the safety floor). Checked
-  //    BEFORE the safe-answer paths so the destructive flag can never be bypassed.
-  const dialog = firstMatchingDialog(screen, dialogs);
-  if (dialog !== undefined && dialog.entry.destructive === true) {
+  //    under mode `all`, even if it declares a safeAnswer (DIALOG-01: the safety floor). Order-
+  //    INDEPENDENT (review L2): ANY matching destructive dialog escalates, so a destructive entry can
+  //    never be shadowed by an earlier non-destructive match. Checked BEFORE the safe-answer paths.
+  if (anyMatchingDestructive(screen, dialogs)) {
     return { action: "escalate", reason: "destructive" };
   }
 
-  // 3. Find the FIRST matching operator safe pattern — a "we are about to auto-answer" signal.
+  // 3. The candidates we WOULD answer: the first answerable (non-destructive, has-safeAnswer) profile
+  //    dialog, and the first operator safe-pattern. Both are "about to auto-answer" signals.
+  const dialogIdx = firstAnswerableDialogIndex(screen, dialogs);
+  const dialogAnswer = dialogIdx >= 0 ? dialogs[dialogIdx] : undefined;
   const matchedIndex = firstSafePatternIndex(screen, hintPatterns);
-  // A non-destructive profile dialog with a non-empty safeAnswer is the other "about to auto-answer".
-  const dialogAnswer =
-    dialog !== undefined && dialog.entry.safeAnswer !== undefined && dialog.entry.safeAnswer.length > 0
-      ? dialog
-      : undefined;
 
   // 4. The ESCALATE-ALWAYS gate (SEC-12) is a VETO that fires ONLY when we WOULD otherwise send a
   //    canned answer (a profile dialog safeAnswer OR an operator safe pattern matched): if that SAME
@@ -255,21 +258,22 @@ export function decideAutoAnswer(
   //    regardless, so running the BROAD markers against it is pure downside (narration false-positives
   //    that wedge the drive — real-VPS 2026-06-16); gating the veto on an actual safe match removes
   //    those while keeping the phishing guard. A profile dialog safeAnswer takes precedence over the
-  //    canned-Enter hintPattern (it carries the dialog's explicit keys). The matched index is a
-  //    content-free audit id.
+  //    canned-Enter hintPattern (it carries the dialog's explicit keys). `source`+index are a
+  //    content-free audit id (the woken turn namespaces the resume-dedup + audit by `source`).
   if (dialogAnswer !== undefined) {
     const forced = escalateAlwaysReason(screen);
     if (forced !== undefined) return { action: "escalate", reason: forced };
     return {
       action: "answer",
-      keys: [...(dialogAnswer.entry.safeAnswer ?? [])],
-      matchedPatternIndex: dialogAnswer.index,
+      source: "dialog",
+      keys: [...(dialogAnswer.safeAnswer ?? [])],
+      matchedPatternIndex: dialogIdx,
     };
   }
   if (matchedIndex !== undefined) {
     const forced = escalateAlwaysReason(screen);
     if (forced !== undefined) return { action: "escalate", reason: forced };
-    return { action: "answer", keys: cannedKeysFor(), matchedPatternIndex: matchedIndex };
+    return { action: "answer", source: "hint", keys: cannedKeysFor(), matchedPatternIndex: matchedIndex };
   }
 
   // 5. No dialog safeAnswer AND no operator safe pattern matched ⇒ the SAFE default (escalate; no keystroke invented).

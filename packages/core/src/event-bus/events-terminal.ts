@@ -202,8 +202,12 @@ export interface TerminalEvents {
   "terminal:auto_answered": {
     sessionId: string;
     agentId: string;
-    /** Index of the matched operator safe-pattern (hintPatterns) — an id, not the prompt. */
+    /** Index of the matched safe affordance (a hintPattern OR a profile dialog — see `source`) — an id, not the prompt. */
     matchedPatternIndex: number;
+    /** WHICH allowlist authorized the keystroke: `"hint"` (operator hintPattern) or `"dialog"` (the
+     *  selected platform profile's safe dialog, v2.26 DIALOG-01) — the audit provenance for a
+     *  security-sensitive auto-answer; content-free. Absent on the worker fd3-republish path. */
+    source?: "hint" | "dialog";
     /** Count of keystrokes the canned answer sent — a size signal, not the content. */
     keystrokeCount: number;
     timestamp: number;

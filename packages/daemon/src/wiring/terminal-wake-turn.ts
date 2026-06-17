@@ -95,7 +95,7 @@ export function buildEscalationMessage(sessionId: string, reason: WokenTurnEscal
 export interface WokenTurnBus {
   emit(
     event: "terminal:auto_answered",
-    payload: { sessionId: string; agentId: string; matchedPatternIndex: number; keystrokeCount: number; timestamp: number },
+    payload: { sessionId: string; agentId: string; matchedPatternIndex: number; source?: "hint" | "dialog"; keystrokeCount: number; timestamp: number },
   ): unknown;
   emit(
     event: "terminal:escalated",
@@ -316,7 +316,7 @@ export function buildWokenTurnDriver(
     // until then 0 is the honest value (I6 — never a fabricated cost).
     const recordJournal = (
       stepTag: "answered" | "escalated" | "waited" | "loop",
-      answeredPatternIndex?: number,
+      answeredKey?: string,
     ): void => {
       if (!promoted || !deps.journal) return;
       try {
@@ -333,13 +333,11 @@ export function buildWokenTurnDriver(
           elapsedMs: computeElapsedMs(),
         });
         const withStep = appendStep(updated, stepTag);
-        // MR-01: a delivered safe answer records WHICH pattern it answered (content-free id),
-        // so a resumed drive can skip an already-answered prompt. The skills journal clamps +
-        // caps this opaquely (I3/I7).
-        const next =
-          typeof answeredPatternIndex === "number"
-            ? appendAnswered(withStep, `pattern:${answeredPatternIndex}`)
-            : withStep;
+        // MR-01: a delivered safe answer records WHICH prompt it answered (a content-free, source-
+        // namespaced id — `pattern:<i>` for a hintPattern, `dialog:<i>` for a profile dialog, so the
+        // two index spaces never alias in the resume-dedup, review M1), so a resumed drive can skip
+        // an already-answered prompt. The skills journal clamps + caps this opaquely (I3/I7).
+        const next = answeredKey !== undefined ? appendAnswered(withStep, answeredKey) : withStep;
         deps.journal.set(sessionId, next);
       } catch (err) {
         log.warn(
@@ -377,6 +375,14 @@ export function buildWokenTurnDriver(
       return;
     }
 
+    // The content-free, SOURCE-NAMESPACED resume-dedup id (review M1): `dialog:<i>` for a profile
+    // dialog answer, `pattern:<i>` for a hintPattern answer — so the two index spaces never alias
+    // in answeredPrompts (a hint-0 answer can't shadow a dialog-0 prompt across a restart).
+    const answeredKey =
+      decision.source === "dialog"
+        ? `dialog:${decision.matchedPatternIndex}`
+        : `pattern:${decision.matchedPatternIndex}`;
+
     // (4) loop-guard (SEC-11) — a re-rendered (normalized) prompt seen again → escalate
     //     loop_detected BEFORE answering, so a tight auto-answer loop can never run.
     const loop = deps.loopGuard.observe(sessionId, screen);
@@ -403,7 +409,7 @@ export function buildWokenTurnDriver(
     if (promoted) resumedFirstTurnSeen.add(sessionId);
     if (firstTurnThisLife && deps.journal) {
       const resumedJournal = deps.journal.get(sessionId);
-      if (resumedJournal?.answeredPrompts.includes(`pattern:${decision.matchedPatternIndex}`)) {
+      if (resumedJournal?.answeredPrompts.includes(answeredKey)) {
         // Already answered in a prior life → record a content-free waited step + do NOT re-send.
         recordJournal("waited");
         log.info(
@@ -423,15 +429,15 @@ export function buildWokenTurnDriver(
     // `attempted` + `auto_answered`. So a keystroke that hit nothing is never logged as
     // a successful answer (§2.7: the failure is reconstructable from logs+events alone).
     const delivered = sent.delivered === true;
-    auditAnswer(deps, sessionId, owner.agentId, text, decision.matchedPatternIndex, decision.keys.length, delivered);
+    auditAnswer(deps, sessionId, owner.agentId, text, decision.matchedPatternIndex, decision.source, decision.keys.length, delivered);
     // DRIVE-01 (164-06) + MR-01: record the cross-wake-memory step — `answered` on a delivered
     // safe auto-answer (also appending the content-free matched-pattern id to answeredPrompts,
     // the resume dedup substrate), `waited` when the send did not land (the FSM will re-wake on
     // a fresh frame, and nothing was actually answered → no answeredPrompts entry, WR-05 parity).
-    recordJournal(delivered ? "answered" : "waited", delivered ? decision.matchedPatternIndex : undefined);
+    recordJournal(delivered ? "answered" : "waited", delivered ? answeredKey : undefined);
     if (delivered) {
       log.info(
-        { sessionId, agentId: owner.agentId, matchedPatternIndex: decision.matchedPatternIndex, keystrokeCount: decision.keys.length, durationMs: deps.nowMs() - startMs, step: "wake_turn_answered" },
+        { sessionId, agentId: owner.agentId, matchedPatternIndex: decision.matchedPatternIndex, answerSource: decision.source, keystrokeCount: decision.keys.length, durationMs: deps.nowMs() - startMs, step: "wake_turn_answered" },
         "terminal woken turn auto-answered a safe prompt",
       );
     } else {
@@ -460,6 +466,9 @@ function auditAnswer(
   agentId: string,
   payload: string,
   matchedPatternIndex: number,
+  /** WHICH allowlist authorized the keystroke — a profile dialog vs an operator hintPattern (review L1
+   *  provenance; content-free). */
+  source: "hint" | "dialog",
   keystrokeCount: number,
   delivered: boolean,
 ): void {
@@ -481,6 +490,6 @@ function auditAnswer(
   });
   // A not-delivered send did not answer the prompt — do not claim an auto-answer (WR-05).
   if (delivered) {
-    deps.eventBus.emit("terminal:auto_answered", { sessionId, agentId, matchedPatternIndex, keystrokeCount, timestamp });
+    deps.eventBus.emit("terminal:auto_answered", { sessionId, agentId, matchedPatternIndex, source, keystrokeCount, timestamp });
   }
 }

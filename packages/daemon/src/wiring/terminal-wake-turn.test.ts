@@ -806,6 +806,20 @@ describe("terminal-wake-turn — profile dialogs feed the safe-only policy (v2.2
     expect(esc?.payload.reason).toBe("destructive");
   });
 
+  it("answers a claude trust-gate (a non-destructive profile dialog) and records the audit source as 'dialog' (L1 provenance)", async () => {
+    const { wakeOneTurn, registry, emitted } = build({
+      screen: "Do you trust the files in this folder?",
+      allowId: "claude",
+      autoAnswer: "safe-only",
+      hintPatterns: [],
+      sendResult: { screen: "ok", cursor: { x: 1, y: 1 }, delivered: true },
+    });
+    await wakeOneTurn("s-1", OWNER);
+    expect(registry.sendText).toHaveBeenCalledTimes(1); // the trust-gate WAS answered (Enter)
+    const aa = emitted.find((e) => e.event === "terminal:auto_answered");
+    expect(aa?.payload.source).toBe("dialog"); // provenance: a profile dialog, not an operator hintPattern
+  });
+
   it("no allowId ⇒ no profile ⇒ today's hintPattern-only behavior (INV-1)", async () => {
     // Without an allowId the wake-turn passes no dialogs; the same screen falls through to the
     // operator hintPattern path. With no hint match it escalates `no_safe_match` (the escalate-always
