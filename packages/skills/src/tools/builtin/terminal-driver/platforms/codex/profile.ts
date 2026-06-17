@@ -20,4 +20,17 @@ export const codexProfile: TerminalPlatformProfile = {
   id: "codex",
   allowIds: ["codex"],
   platformVersion: "1.1.1",
+  // CLASSIFY-01 (Phase 168): Codex perception signatures the classifier consumes (layered on the
+  // generic structural detection). All anchored + ReDoS-safe (the registry guard enforces at load).
+  perception: {
+    // The Codex composer caret.
+    promptAffordance: [/(?:^|\s)›\s/u],
+    // The canonical Codex working line `Working (Ns)`, the working banner, and the ascii spinner —
+    // a settled-but-unparked frame showing one of these is mid-work, not a hang (the Codex case).
+    workingLine: [/Working \(\d+s\)/u, /Working on your request/iu, /[|/\\-]\s+thinking\b/iu],
+    // A Codex selection menu (approval/sandbox/model). Boxed Codex menus are also caught generically.
+    menuOrPicker: [/Select\s+(?:approval|sandbox|model)\b/iu],
+    // The composer-return banner after a turn completes.
+    turnEnd: [/(?:^|\s)›\s*$/u],
+  },
 };

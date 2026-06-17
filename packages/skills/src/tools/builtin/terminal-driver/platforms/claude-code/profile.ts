@@ -71,4 +71,18 @@ export const claudeCodeProfile: TerminalPlatformProfile = {
   allowIds: ["claude", "claude-code"],
   platformVersion: "1.1.3",
   transformSnapshot,
+  // CLASSIFY-01 (Phase 168): Claude Code perception signatures the classifier consumes (layered on
+  // the generic structural detection). All anchored + ReDoS-safe (the registry guard enforces at load).
+  perception: {
+    // The composer input caret — Claude's `❯ ` prompt box (the LIVE-02 idle-`❯` awaiting-input cue).
+    promptAffordance: [/(?:^|\s)❯\s/u],
+    // The working spinner: a glyph + a gerund (e.g. `✻ Crunching`), or the `(esc to interrupt)` hint
+    // Claude renders while busy — a settled-but-unparked frame showing this is mid-work, not a hang.
+    workingLine: [/[·✢✳✶✻✽]\s+\w+ing\b/u, /\(esc to interrupt\)/iu],
+    // Pickers/menus: the `/model` picker, a dismiss affordance, or a `❯`/`›` selector on an
+    // enumerated option — the D5 fix for the v2.11 full-screen menu → awaiting-input misread.
+    menuOrPicker: [/Select\s+(?:a\s+)?Model/iu, /\bEsc to (?:cancel|exit|go back)\b/iu, /(?:^|\s)[›❯]\s+\d+[.)]/u],
+    // A completed-action bullet — the turn produced a result and is now awaiting input.
+    turnEnd: [/⏺\s+\S/u],
+  },
 };

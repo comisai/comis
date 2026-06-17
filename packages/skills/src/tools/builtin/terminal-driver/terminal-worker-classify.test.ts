@@ -120,3 +120,25 @@ describe("statusReplyFromState — emits the classification's confidence + reaso
     expect(state.lastProgressMs).toBe(beforeProgress);
   });
 });
+
+describe("statusReplyFromState — resolves profile.perception by the session allowId (CLASSIFY-01)", () => {
+  // A `Working (Ns)` frame, cursor mid-screen above content (unparked), no progress past stuckMs.
+  function workingSnapshot(): EmulatorSnapshot {
+    const lines = ["Working (12s)", "reading the project files", "more output", "and more"];
+    while (lines.length < ROWS) lines.push("");
+    return { screen: lines.join("\n"), cursor: { x: 4, y: 0 }, cols: COLS, rows: ROWS, alt: false };
+  }
+
+  it("a codex-allowId session reads a `Working (Ns)` frame as working (the profile workingLine, INV-3 by allowId)", async () => {
+    const state = makeState({ allowId: "codex", lastProgressMs: 0 }, workingSnapshot());
+    const reply = await statusReplyFromState({ state, settled: true, nowMs: () => 10_000, stuckMs: 5_000 });
+    expect(reply.state).toBe("working");
+    expect(reply.reason).toBe("working_line");
+  });
+
+  it("the SAME frame under an unknown allowId takes the generic path → stuck (INV-1, no profile)", async () => {
+    const state = makeState({ allowId: "vim", lastProgressMs: 0 }, workingSnapshot());
+    const reply = await statusReplyFromState({ state, settled: true, nowMs: () => 10_000, stuckMs: 5_000 });
+    expect(reply.state).toBe("stuck");
+  });
+});
