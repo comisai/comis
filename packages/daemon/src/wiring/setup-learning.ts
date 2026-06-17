@@ -171,7 +171,19 @@ function observeNonFatal(
 /** The DETERMINISTIC fused-verdict sources — a single one of these satisfies the FORGET-03 gate. */
 const DETERMINISTIC_FUSION_SOURCES: ReadonlySet<string> = new Set(["tool", "pipeline"]);
 /** Independent (distinct-session) failures required to corroborate a NON-deterministic failure. */
-const CORROBORATION_MIN_INDEPENDENT = 2;
+export const CORROBORATION_MIN_INDEPENDENT = 2;
+
+/**
+ * WR-01 bound on the FORGET-03 corroboration tally — the max distinct memoryIds the
+ * `failureCorroborationTally` Map tracks before it evicts the oldest. The tally is a
+ * daemon-lifetime in-process gauge (resets on restart); without a cap a busy fleet
+ * (or an adversary on rotating session keys) grows it without bound. 50_000 mirrors
+ * the reaction/session trajectory maps' `maxEntries` (setup-learning-reactions.ts).
+ * Past this many distinct failing memories the oldest-touched id is dropped — a soft
+ * forget of the stalest corroboration state, never a correctness loss (the eviction
+ * exemption itself is store-side, Plan 05).
+ */
+export const MAX_TRACKED_FAILURE_MEMORIES = 50_000;
 
 /**
  * FORGET-03 anti-induced-eviction corroboration gate (a SECURITY control). A
@@ -189,21 +201,45 @@ const CORROBORATION_MIN_INDEPENDENT = 2;
  * Mutates `tally` (memoryId → distinct sessionIds seen failing it) as a side effect
  * so the across-call distinct-session count accumulates, mirroring the in-process
  * coverage gauge. Returns true when the accrual should fire.
+ *
+ * WR-01 BOUNDED (two caps, no daemon-lifetime growth): (1) the inner per-memory Set
+ * STOPS growing at `CORROBORATION_MIN_INDEPENDENT` — once the gate can be met the
+ * exact distinct-session count is irrelevant, so we never accumulate every session;
+ * (2) the outer Map is capped at `maxTracked` (default {@link MAX_TRACKED_FAILURE_MEMORIES})
+ * and evicts the OLDEST-touched memoryId (Map insertion order = recency, refreshed via
+ * delete-before-set) when a NEW memoryId would exceed the cap. Both keep the gate
+ * decision byte-identical for any realistic workload — the caps only bite the
+ * pathological/adversarial unbounded case.
  */
-function failureCorroborated(
+export function failureCorroborated(
   memoryId: string,
   sessionId: string,
   sources: ReadonlyArray<string>,
   tally: Map<string, Set<string>>,
+  maxTracked: number = MAX_TRACKED_FAILURE_MEMORIES,
 ): boolean {
   // Record this failure's session BEFORE the decision so the distinct-session
   // count includes the current occurrence (the 2nd distinct session corroborates).
   let sessions = tally.get(memoryId);
   if (sessions === undefined) {
+    // Cap the number of tracked memoryIds: when a NEW memoryId would exceed the cap,
+    // evict the OLDEST-touched one (the first key — Map insertion order is recency
+    // because a re-touch deletes-before-re-sets below).
+    if (tally.size >= maxTracked) {
+      const oldestKey = tally.keys().next().value;
+      if (oldestKey !== undefined) tally.delete(oldestKey);
+    }
     sessions = new Set<string>();
     tally.set(memoryId, sessions);
+  } else {
+    // Refresh recency: delete-before-set moves this memoryId to the Map's tail so the
+    // evict-oldest (first key) above stays the genuine least-recently-touched id.
+    tally.delete(memoryId);
+    tally.set(memoryId, sessions);
   }
-  sessions.add(sessionId);
+  // Stop growing the inner Set once the corroboration floor is reachable — past
+  // CORROBORATION_MIN_INDEPENDENT the precise count never changes the gate decision.
+  if (sessions.size < CORROBORATION_MIN_INDEPENDENT) sessions.add(sessionId);
   if (sources.some((s) => DETERMINISTIC_FUSION_SOURCES.has(s))) return true;
   return sessions.size >= CORROBORATION_MIN_INDEPENDENT;
 }

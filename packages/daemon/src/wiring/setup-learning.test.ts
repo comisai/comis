@@ -26,7 +26,11 @@ import type { UsefulnessScope, MemoryUsefulnessStore, UsefulnessSignal } from "@
 import { ok, err, type Result } from "@comis/shared";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
-import { wireLearningOutcome } from "./setup-learning.js";
+import {
+  wireLearningOutcome,
+  failureCorroborated,
+  CORROBORATION_MIN_INDEPENDENT,
+} from "./setup-learning.js";
 
 /**
  * A controllable MemoryUsefulnessStore stub. The daemon reward seam (RANK-01 /
@@ -675,6 +679,46 @@ describe("wireLearningOutcome — reward/failure write at resolve() (RANK-01/FOR
     await expect(driveTrajectory(bus, SESSION_KEY, TRACE)).resolves.toBeUndefined();
     expect(us.recordUsage).toHaveBeenCalledTimes(1);
     expect(logger.warn).toHaveBeenCalled();
+  });
+});
+
+// ── WR-01: the FORGET-03 corroboration tally must be BOUNDED ──
+//
+// failureCorroborationTally is a Map<memoryId, Set<sessionId>> with no cap/TTL on
+// HEAD — a long-running daemon with learningForgetting on and a steady stream of
+// failing trajectories across many memories/sessions grows it without bound (a
+// genuine leak; an adversary on rotating session keys can inflate it). Once the gate
+// can be met (≥ CORROBORATION_MIN_INDEPENDENT distinct sessions) the exact count past
+// that floor is irrelevant, so the inner Set must STOP growing there, and the outer
+// Map must cap the number of tracked memoryIds (evict-oldest). RED on HEAD: the inner
+// Set grows past the floor and the outer Map is unbounded.
+describe("WR-01: failureCorroborated tally is bounded (no daemon-lifetime growth)", () => {
+  it("stops growing the per-memory session Set once the corroboration floor is reachable", () => {
+    const tally = new Map<string, Set<string>>();
+    // Feed FAR more distinct sessions than the floor for one memory (non-deterministic
+    // source so only the distinct-session corroboration matters).
+    for (let i = 0; i < 1000; i++) {
+      failureCorroborated("mem-hot", `session-${i}`, ["reaction"], tally);
+    }
+    const sessions = tally.get("mem-hot");
+    expect(sessions).toBeDefined();
+    // Past the floor the count is irrelevant → the Set must not accumulate all 1000.
+    expect(sessions!.size).toBeLessThanOrEqual(CORROBORATION_MIN_INDEPENDENT);
+    // …and it still corroborates (the gate decision is unaffected by the cap).
+    expect(failureCorroborated("mem-hot", "session-final", ["reaction"], tally)).toBe(true);
+  });
+
+  it("caps the number of tracked memoryIds (outer Map evicts the oldest)", () => {
+    const tally = new Map<string, Set<string>>();
+    const maxTracked = 8; // small explicit cap for the test
+    // Touch FAR more distinct memoryIds than the cap, one session each.
+    for (let i = 0; i < 500; i++) {
+      failureCorroborated(`mem-${i}`, "session-x", ["reaction"], tally, maxTracked);
+    }
+    // The Map is bounded by the cap — it never holds all 500 memoryIds.
+    expect(tally.size).toBeLessThanOrEqual(maxTracked);
+    // The MOST RECENT memoryId is retained (evict-oldest, not evict-newest).
+    expect(tally.has("mem-499")).toBe(true);
   });
 });
 
