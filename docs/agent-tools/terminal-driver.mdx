@@ -119,7 +119,7 @@ The agent then drives it: `terminal_session_create({ allowId: "claude", command:
 | `match.path` | The canonical absolute binary path (resolved via `realpath`; optional `hash` pin). Spawned as direct argv -- never via a shell. |
 | `match.argsPrefix` | Optional pinned argv prefix the agent's `args` must start with. |
 | `scope` | The sandbox the child runs in (below). Sourced **only** from this entry -- the agent cannot supply or widen scope. |
-| `autoAnswer` | `none` / `safe-only` (default) / `all`. `safe-only` auto-answers only prompts matching `hintPatterns`; everything else (destructive, approval, auth/login) escalates. |
+| `autoAnswer` | `none` / `safe-only` (default) / `all`. `safe-only` auto-answers prompts matching `hintPatterns` **and** the selected platform profile's known-safe dialogs (e.g. Claude Code's "trust this folder" gate — see [Platform profiles](#platform-profiles)); everything else — a profile's `destructive` dialog (e.g. Codex's run-command approval), and any destructive/approval/auth-login prompt — escalates. The escalate-always veto wins over any profile/hint answer. |
 | `consent` | Required informed-consent record (`acknowledgedRisk: true` + a timestamp). |
 | `limits` | Optional per-session caps: `wallClockMs`, `maxInteractions`, `maxRequestsPerSession`, `maxSessions`. |
 | `approveOnCreate` | Require the approval gate at `session_create`. |
@@ -263,6 +263,16 @@ A long drive's hundreds of event-woken turns stay **out** of your conversation (
 The classifier distinguishes `awaiting-input` (a prompt is waiting for you) from `stuck` (no progress) **structurally**, not by a per-CLI pattern table. A settled, unchanged frame is read as `awaiting-input` when its structure is unmistakably an interactive dialog -- a bordered region, an enumerated option list (`1.` / `2.`), an arrow/`(y/n)` selector, or an empty input line beneath a non-empty prompt block. This closes the documented misread where a full-screen permission/menu dialog (the prompt rendered above, the cursor parked on a blank input line below) was mistaken for a hung session. A genuinely hung frame -- no box, no menu, no selector, no progress past the `stuckMs` threshold -- still classifies `stuck`. The actual answer is always gated downstream by the auto-answer policy (`safe-only` escalates anything destructive/approval/auth), so a structurally-detected dialog never bypasses an escalation.
 
 **Locking the classifier against a CLI upgrade:** the `awaiting-input`-vs-`stuck` call is pinned by a **versioned fixture corpus** -- content-free synthetic frames for `claude`/`codex`/`aider` across each state (idle-working, awaiting-text-input, full-screen menu, permission dialog, completed, hung) replayed through the real emulator and asserted for both state and confidence. When a `claude`, `codex`, or `aider` release reshapes its TUI (moving where the cursor parks or changing the dialog chrome), the fix is to **add or refresh a fixture** in `packages/skills/src/tools/builtin/terminal-driver/fixtures/` and re-run the corpus suite -- a drift surfaces there as a failing test, **not** as a misread discovered mid-drive in production. See the [classifier corpus README](https://github.com/comisai/comis/blob/main/packages/skills/src/tools/builtin/terminal-driver/fixtures/README.md) for how to author a fixture (synthetic, via `record-fixture.mjs` -- never hand-edited bytes) and bump the pinned CLI versions.
+
+## Platform profiles
+
+The driver is **agnostic** -- it drives any TUI with the generic perception above. For the **first-class** CLIs (Claude Code, Codex), an optional **read-side platform profile** -- selected by the operator-declared `allowId`, never by the program's own output -- tunes how the driver *perceives* the session:
+
+- **Render** -- it strips Claude Code's dim autocomplete "ghost-text" from the captured screen so a driving model never mistakes the suggestion for queued input.
+- **Perception** -- it feeds the classifier the platform's working-line (Claude's spinner, Codex's `Working (Ns)`) and picker/menu signatures, so a busy frame reads `working` and a `/model`-style picker reads `awaiting-input` rather than `stuck`.
+- **Dialogs** -- it declares the platform's known interactive dialogs and their **safe** answer. Under `autoAnswer: safe-only` a non-destructive dialog (Claude's "trust this folder" gate) is answered with the canned keystroke; a `destructive` dialog (Codex's run-command approval) **always escalates** to you. The operator safe-only policy and the escalate-always veto still gate every answer -- a profile only *proposes*.
+
+A profile is **read-side only**: it never widens the sandbox, the env, or the launch (those stay operator-controlled). With no matching profile (any other `allowId`) the driver's perception/render/auto-answer is **byte-identical** to the agnostic default. Adding a new platform is a drop-in profile + bundled skill -- no engine change.
 
 ## Related
 
