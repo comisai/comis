@@ -46,8 +46,14 @@ export interface DiscoveryLogger {
  * "workspace" = middle discovery paths. "local" = last discovery path.
  * Note: "bundled" does not necessarily mean shipped with the repo -- it means
  * the highest-priority discovery path (index 0).
+ *
+ * "learned" is the verified-learning procedural source (v2.26): a procedure
+ * admitted from the `learned_skills` store and materialized read-only per
+ * Phase 202 D1. It is NOT produced by the path-index heuristic (`resolveSource`)
+ * -- the daemon merge helper sets `source: 'learned'` explicitly from
+ * `learnedSkillStore.list()`, never from a discovery path or model assertion.
  */
-export type SkillSource = "bundled" | "workspace" | "local";
+export type SkillSource = "bundled" | "workspace" | "local" | "learned";
 
 /** Metadata extracted from a SKILL.md or root .md frontmatter during discovery. */
 export interface SkillMetadata {

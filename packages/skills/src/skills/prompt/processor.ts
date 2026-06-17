@@ -23,8 +23,13 @@ export interface PromptSkillDescription {
   readonly location: string;
   /** When true, skill is hidden from the model's available skills listing. */
   readonly disableModelInvocation?: boolean;
-  /** Origin of this skill: bundled (shared), workspace, or local (agent-specific). */
-  readonly source?: "bundled" | "workspace" | "local";
+  /**
+   * Origin of this skill: bundled (shared), workspace, local (agent-specific),
+   * or learned (a verified-learning procedure materialized read-only from the
+   * `learned_skills` store -- the trust distinction the model SEES, set by the
+   * daemon merge helper, never model-asserted).
+   */
+  readonly source?: "bundled" | "workspace" | "local" | "learned";
 }
 
 // ---------------------------------------------------------------------------
