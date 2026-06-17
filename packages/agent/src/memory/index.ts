@@ -19,3 +19,14 @@ export { createOutcomeJudgeSeam, JUDGE_REWARD_CAP } from "./outcome-judge-seam.j
 export type { OutcomeJudgeSeamDeps, OutcomeVerdict } from "./outcome-judge-seam.js";
 export { createCorrectionDetectorSeam, CORRECTION_REWARD_CAP } from "./correction-detector-seam.js";
 export type { CorrectionDetectorSeamDeps, CorrectionVerdict } from "./correction-detector-seam.js";
+
+// Verified Learning WS2 (P2 Skills, Phase 201). The LLM-backed synthesis adapter
+// (SKILL-02) + the synthesis job (SKILL-03/04/05/08). Both ship built-but-not-wired:
+// the daemon `setup-learning` wiring (Plan 07) constructs the adapter on the
+// `skillSynthesis` mid tier and invokes `runSkillSynthesis` from the
+// `__SKILL_SYNTHESIS__` cron ONLY when the per-agent `learningSkills.enabled` is
+// turned on (default OFF). The job consumes @comis/core PORT TYPES only — the
+// daemon injects the @comis/memory store + the @comis/skills validation adapter.
+export { createLlmSkillSynthesisAdapter } from "./llm-skill-synthesis-adapter.js";
+export type { LlmSkillSynthesisAdapterDeps, SkillSynthesisLogger } from "./llm-skill-synthesis-adapter.js";
+export { SKILL_SYNTHESIS_PROMPT, parseSynthesisResult } from "./skill-synthesis-prompt.js";

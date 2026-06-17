@@ -524,6 +524,18 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // consume it via the local module path, which the walker skips as a
       // self-import.
       "MinViableEquation",
+      // Verified Learning WS2 (P2 Skills, Phase 201 Plan 04). The LLM-backed
+      // procedural-synthesis adapter (SKILL-02) + its deps type, surfaced on the
+      // @comis/agent barrel ahead-of-consumer. The real cross-package consumer is
+      // the daemon `setup-learning` wiring (Plan 07), which constructs the adapter
+      // on the `skillSynthesis` mid tier and injects it into `runSkillSynthesis`
+      // from the `__SKILL_SYNTHESIS__` cron. Both SHRINK out when Plan 07's
+      // setup-learning.ts name-imports createLlmSkillSynthesisAdapter. The
+      // synthesis JOB (`runSkillSynthesis`) is added in this plan's later tasks
+      // with its own ahead-of-consumer entry; the PROMPT + parser stay
+      // agent-internal (off the public barrel).
+      "createLlmSkillSynthesisAdapter",
+      "LlmSkillSynthesisAdapterDeps",
     ])],
     // @comis/channels: baseline orphans tracked here. The 5 delivery
     // helpers + the Markdown IR pipeline (incl. telegram-file-ref-guard)

@@ -627,3 +627,12 @@ export * from "./background/index.js";
 // agent-internal.
 export { createCorrectionDetectorSeam } from "./memory/index.js";
 export type { CorrectionVerdict } from "./memory/index.js";
+
+// Verified Learning WS2 (P2 Skills, Phase 201 Plan 04). The LLM-backed
+// procedural-synthesis adapter the daemon constructs on the `skillSynthesis` mid
+// tier (SKILL-02). Re-exported from the memory sub-barrel beside its daemon
+// consumer (Plan 07 wiring) so the public-export-consumers gate never sees an
+// orphan once that wiring lands. The synthesis JOB (`runSkillSynthesis`) lands in
+// the same plan's later tasks. The synthesis PROMPT + parser stay agent-internal.
+export { createLlmSkillSynthesisAdapter } from "./memory/index.js";
+export type { LlmSkillSynthesisAdapterDeps } from "./memory/index.js";
