@@ -87,7 +87,13 @@ export interface MemoryLifecyclePolicy {
   thetaDemote: number;
   /** Strength floor (ε_prune): the live step would evict strength < ε. */
   epsilonPrune: number;
-  /** Dormancy window (T_max, days): the live step would evict dormant > T_max. */
+  /**
+   * Dormancy window (T_max, days): a memory UNUSED (not recalled-useful) for longer
+   * than T_max is an eviction candidate. WR-02: "dormant" is measured from
+   * `last_useful_at` (last recall), NOT `occurred_at` (event time) — a recently-
+   * recalled memory about an OLD event is NOT dormant (FORGET-04). A never-recalled
+   * memory falls back to event age, so genuinely-stale rows still reap.
+   */
   maxDormantDays: number;
 
   // ── LIVE soft-eviction behavior (v2.26 WS4 / FORGET-01..04) ──
@@ -232,17 +238,21 @@ export function createSqliteMemoryLifecycleStore(
   //
   // The LEFT JOIN folds in the FORGET-02 wrongness signal: the per-(tenant, agent,
   // memory) `failure_count` SUMmed across intents (a memory may accrue failures in
-  // several intent buckets). The subquery is scoped to the SAME (tenant, agent) as
-  // the outer scan (it cannot leak another scope's failures), and the LEFT JOIN
-  // keeps memories with no usefulness row (NULL → coalesced to 0 below). `pinned`
-  // and `trust_level` feed the FORGET-03 exemptions.
+  // several intent buckets). WR-02: it ALSO folds in the last-recall recency
+  // `MAX(last_useful_at)` across intents — the DISUSE signal the dormant-age branch
+  // keys off (NOT occurred_at, the event time), so a recently-recalled old-event
+  // memory is not "dormant". The subquery is scoped to the SAME (tenant, agent) as
+  // the outer scan (it cannot leak another scope's failures/recency), and the LEFT
+  // JOIN keeps memories with no usefulness row (NULL → coalesced below; an absent
+  // last_useful_at falls back to event age so a never-recalled old memory still
+  // reaps). `pinned` and `trust_level` feed the FORGET-03 exemptions.
   const scanCandidates = db.prepare(
     "SELECT m.id, m.memory_type, m.occurred_at, m.created_at, m.proof_count, " +
       "m.lifecycle_demoted_at, m.evicted_at, m.strength, m.pinned, m.trust_level, " +
-      "u.failure_count AS failure_count " +
+      "u.failure_count AS failure_count, u.last_useful_at AS last_useful_at " +
       "FROM memories m " +
       "LEFT JOIN ( " +
-      "  SELECT memory_id, SUM(failure_count) AS failure_count " +
+      "  SELECT memory_id, SUM(failure_count) AS failure_count, MAX(last_useful_at) AS last_useful_at " +
       "  FROM memory_usefulness " +
       "  WHERE tenant_id = ? AND agent_id = ? " +
       "  GROUP BY memory_id " +
@@ -308,8 +318,19 @@ export function createSqliteMemoryLifecycleStore(
         for (const row of rows) {
           // Event-age in days, EVENT-TIME (occurred_at ?? created_at), clamped at 0
           // for future-dated rows — using the INJECTED scope.now, never Date.now.
+          // This drives the FadeMem strength DECAY shape (which is legitimately a
+          // function of how old the EVENT is) — NOT the dormant-age candidacy below.
           const eventMs = row.occurred_at ?? row.created_at;
           const dormantDays = Math.max(0, (now - eventMs) / DAY_MS);
+          // WR-02: the DISUSE age — days since the memory was last RECALLED-useful
+          // (last_useful_at), falling back to the event age when it was never recalled
+          // (NULL). This — NOT the event age — gates the dormant-age candidacy disjunct,
+          // so a recently-recalled memory about an OLD event is NOT "dormant" (FORGET-04:
+          // wrong fades faster than merely old; a still-useful old fact is not reaped on
+          // event-age alone). A never-recalled old memory falls back to event age, so the
+          // age reaper still prunes genuinely dormant rows.
+          const lastUsefulMs = row.last_useful_at ?? eventMs;
+          const disuseDays = Math.max(0, (now - lastUsefulMs) / DAY_MS);
           const beta = betaForType(row.memory_type);
           // A bounded saturating importance proxy from the corroboration signal
           // (the full FadeMem `imp` superset is computed on the recall hot path in
@@ -358,11 +379,14 @@ export function createSqliteMemoryLifecycleStore(
             row.trust_level === "system" ||
             proof >= highProofFloor;
 
-          // The eviction candidacy: strength below the behavior threshold OR dormant
-          // beyond T_max — minus the exemptions.
+          // The eviction candidacy: strength below the behavior threshold OR DORMANT
+          // (UNUSED) beyond T_max — minus the exemptions. WR-02: the age disjunct uses
+          // `disuseDays` (days since last recall), NOT `dormantDays` (event age), so a
+          // recently-recalled old-event memory survives the age branch (FORGET-04); a
+          // never-recalled old memory still trips it (disuseDays falls back to event age).
           const isEvictionCandidate =
             !exempt &&
-            (strength < strengthThreshold || dormantDays > policy.maxDormantDays);
+            (strength < strengthThreshold || disuseDays > policy.maxDormantDays);
           if (isEvictionCandidate) {
             evictionCandidates += 1;
             // Only mark rows not already evicted (idempotent re-sweeps).

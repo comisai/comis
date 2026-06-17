@@ -346,6 +346,7 @@ describe("createSqliteMemoryLifecycleStore", () => {
           pinned: 0,
           trust_level: "learned",
           failure_count: null,
+          last_useful_at: null,
         },
         {
           id: "m2",
@@ -359,13 +360,16 @@ describe("createSqliteMemoryLifecycleStore", () => {
           pinned: 1,
           trust_level: "system",
           failure_count: 4,
+          last_useful_at: 7000,
         },
       ]);
       expect(parsed.ok).toBe(true);
       if (parsed.ok) {
         expect(parsed.value).toHaveLength(2);
         expect(parsed.value[0]?.evicted_at).toBeNull();
+        expect(parsed.value[0]?.last_useful_at).toBeNull();
         expect(parsed.value[1]?.strength).toBe(0.42);
+        expect(parsed.value[1]?.last_useful_at).toBe(7000);
       }
     });
   });

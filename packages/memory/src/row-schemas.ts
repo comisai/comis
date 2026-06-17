@@ -157,6 +157,8 @@ export const MemoryLifecycleRowSchema = z.strictObject({
   trust_level: z.string(),
   /** SUM(failure_count) across intents (LEFT JOIN; NULL→0) — the failurePenalty coupling (FORGET-02). */
   failure_count: z.number().nullable(),
+  /** MAX(last_useful_at) across intents (LEFT JOIN; NULL = never recalled) — the DISUSE signal the dormant-age branch keys off (WR-02), NOT occurred_at. */
+  last_useful_at: z.number().nullable(),
 });
 
 /**
