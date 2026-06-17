@@ -45,7 +45,7 @@
  * @module
  */
 
-import { ok, err, fromPromise, type Result } from "@comis/shared";
+import { ok, fromPromise, type Result } from "@comis/shared";
 import type {
   LearningScope,
   CandidateSkill,
