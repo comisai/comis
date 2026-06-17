@@ -111,6 +111,33 @@ describe("createSqliteLearnedSkillStore", () => {
   });
 
   // -------------------------------------------------------------------------
+  // WR-04: the learned_skills_fts word-lane twin rebuilds + matches on a body
+  // token. The external-content FTS column must name the REAL source column
+  // (`body`) — naming it `content` (no such column on `learned_skills`) makes
+  // FTS5 'rebuild' throw "no such column: content" on every boot, leaving the
+  // index reliant solely on incremental triggers (stale after an unclean
+  // shutdown — the exact scenario memory_fts's rebuild guards against).
+  // -------------------------------------------------------------------------
+
+  it("rebuilds learned_skills_fts without throwing and a body token MATCHes after rebuild", async () => {
+    // Admit a row whose body carries a distinctive token.
+    await store.admit(makeInput({ name: "fts-rebuild", body: "deploy the zephyrwidget safely" }), SCOPE_A);
+    // Drop the incrementally-maintained index contents, then ask FTS5 to
+    // re-derive the index from the external content table. On the buggy schema
+    // (FTS column 'content' over a table with no 'content' column) this throws
+    // "no such column: content"; the correct schema rebuilds cleanly.
+    expect(() => {
+      db.exec("INSERT INTO learned_skills_fts(learned_skills_fts) VALUES('delete-all')");
+      db.exec("INSERT INTO learned_skills_fts(learned_skills_fts) VALUES('rebuild')");
+    }).not.toThrow();
+    // The rebuilt index finds the body token.
+    const hits = db
+      .prepare("SELECT rowid FROM learned_skills_fts WHERE learned_skills_fts MATCH ?")
+      .all("zephyrwidget") as { rowid: number }[];
+    expect(hits.length).toBe(1);
+  });
+
+  // -------------------------------------------------------------------------
   // SEC-01 trust ceiling: the CHECK rejects any non-'learned' trust_level
   // -------------------------------------------------------------------------
 
