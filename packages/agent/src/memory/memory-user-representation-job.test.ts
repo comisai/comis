@@ -151,14 +151,26 @@ function makeClock(): ClockPort {
  * idempotent per (entryType, content) so a re-run over identical candidates does
  * NOT grow the row set — mirroring the adapter's upsert-replace contract.
  * `upsertCalls` records every entry the job tried to write (the bound/skip proofs).
+ *
+ * Plan 04 (REVISE-01): the job's write path becomes `revise()` (the trust-first
+ * bi-temporal soft-close), NOT the blind `upsert`. The fake therefore also
+ * implements `revise`/`asOf` (the full @comis/core port) and records every
+ * `revise(entry, scope)` call in `reviseCalls` — the classification/trust-ceiling
+ * proofs. The fake's `revise` is a SIMPLE current-truth replace-or-insert keyed on
+ * `(entryType, content)` (the REAL trust-first supersession lives in the
+ * @comis/memory adapter — Plan 02 — which this suite cannot import); the job-side
+ * classification + counts is what this suite asserts. `seed` pre-loads the current
+ * profile the job classifies against (the `read()` input).
  */
-function makeFakeStore(): {
+function makeFakeStore(seed: UserRepresentationEntry[] = []): {
   store: UserRepresentationStore;
   rows: UserRepresentationEntry[];
   upsertCalls: UserRepresentationInput[];
+  reviseCalls: UserRepresentationInput[];
 } {
-  const rows: UserRepresentationEntry[] = [];
+  const rows: UserRepresentationEntry[] = [...seed];
   const upsertCalls: UserRepresentationInput[] = [];
+  const reviseCalls: UserRepresentationInput[] = [];
   const store: UserRepresentationStore = {
     async upsert(entry: UserRepresentationInput, scope: UserRepresentationScope): Promise<Result<void, Error>> {
       upsertCalls.push(entry);
@@ -182,8 +194,45 @@ function makeFakeStore(): {
     async read(): Promise<Result<UserRepresentationEntry[], Error>> {
       return ok([...rows]);
     },
+    async revise(entry: UserRepresentationInput, scope: UserRepresentationScope): Promise<Result<void, Error>> {
+      reviseCalls.push(entry);
+      const key = `${entry.entryType}::${entry.content}`;
+      const existing = rows.find((r) => `${r.entryType}::${r.content}` === key);
+      if (existing) {
+        existing.trust = entry.trust;
+        existing.updatedAt = scope.now;
+        return ok(undefined);
+      }
+      rows.push({
+        id: `row-${rows.length}`,
+        entryType: entry.entryType,
+        content: entry.content,
+        trust: entry.trust,
+        ...(entry.sourceMemoryId !== undefined ? { sourceMemoryId: entry.sourceMemoryId } : {}),
+        createdAt: scope.now,
+        validFrom: scope.now,
+      });
+      return ok(undefined);
+    },
+    async asOf(): Promise<Result<UserRepresentationEntry[], Error>> {
+      return ok([...rows]);
+    },
   };
-  return { store, rows, upsertCalls };
+  return { store, rows, upsertCalls, reviseCalls };
+}
+
+/** A current-truth profile row the job classifies a candidate against (a `read()` seed). */
+function makeEntry(overrides: Partial<UserRepresentationEntry>): UserRepresentationEntry {
+  return {
+    id: overrides.id ?? "seed-row",
+    entryType: overrides.entryType ?? "preference",
+    content: overrides.content ?? "seed content",
+    trust: overrides.trust ?? "learned",
+    createdAt: overrides.createdAt ?? NOW,
+    ...(overrides.updatedAt !== undefined ? { updatedAt: overrides.updatedAt } : {}),
+    ...(overrides.validFrom !== undefined ? { validFrom: overrides.validFrom } : {}),
+    ...(overrides.validTo !== undefined ? { validTo: overrides.validTo } : {}),
+  };
 }
 
 /** A spying build() seam — records every source text it is called with. */
@@ -605,5 +654,219 @@ describe("runUserRepresentationBuild — Task 3: idempotency (re-run over unchan
     if (second.ok) expect(second.value.written).toBe(1);
     expect(fake.rows.length).toBe(2);
     expect(fake.rows.some((r) => r.content === "likes tea")).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 4 (Plan 04, REVISE-01/03/SEC-01/OBS-01): the revise()-based write path
+//
+// The job's write step changes from "skip-if-exact-dup, else blind upsert" to
+// "for each surviving candidate, classify vs the current profile (contradict →
+// supersede / corroborate → bump / topic-distinct → coexist) → call the port's
+// `revise()`". The DETERMINISTIC same-slot classifier (same `entryType` AND Dice
+// `contentSimilarity >= 0.6`) yields the counts-only `superseded`/`corroborated`/
+// `inserted` totals in the returned stats (for the Plan-05 daemon event). The
+// per-slot trust-first supersession itself happens INSIDE revise() (Plan 02); the
+// job passes every surviving candidate through revise() and computes the counts.
+//
+// These are RED on HEAD: the job calls `upsert` (not `revise`), and the stats
+// carry no `superseded`/`corroborated`/`inserted`. The Dice fixtures are the
+// empirically-calibrated Plan-02 corpus: "prefers coffee"↔"prefers tea" = 0.609
+// (>=0.6 supersede band), identical = 1.0 (corroborate), "enjoys hiking…"↔"drinks
+// espresso…" = 0.115 (<0.6 coexist).
+// ---------------------------------------------------------------------------
+
+describe("runUserRepresentationBuild — Task 4: revise()-based write path + contradict/corroborate/coexist classification + counts (REVISE-01/03/SEC-01/OBS-01)", () => {
+  it("REVISE-01 contradict → supersede: a same-type candidate with topically-similar but different content calls revise() and surfaces a superseded count", async () => {
+    // Current profile (current-truth): a `learned` "prefers coffee".
+    const seed = [makeEntry({ id: "inc-1", entryType: "preference", content: "prefers coffee", trust: "learned" })];
+    const fake = makeFakeStore(seed);
+    // The build produces a same-slot candidate (Dice("prefers coffee","prefers tea")=0.609 >= 0.6).
+    const buildSpy = makeBuildSpy(() => [{ entryType: "preference", content: "prefers tea" }]);
+    const deps = makeDeps({
+      build: buildSpy.build,
+      userRepresentationStore: fake.store,
+      sources: [makeSource({ content: "user now says they prefer tea, not coffee", trustLevel: "system" })],
+    });
+
+    const result = await runUserRepresentationBuild(deps);
+
+    expect(result.ok).toBe(true);
+    // The authoritative write is revise() (NOT the blind upsert).
+    expect(fake.upsertCalls).toHaveLength(0);
+    expect(fake.reviseCalls).toHaveLength(1);
+    expect(fake.reviseCalls[0]).toMatchObject({ entryType: "preference", content: "prefers tea" });
+    // The contradiction is counted (counts-only; for the Plan-05 daemon event).
+    if (result.ok) {
+      expect(result.value.superseded).toBe(1);
+      expect(result.value.corroborated).toBe(0);
+      expect(result.value.inserted).toBe(0);
+    }
+  });
+
+  it("REVISE-01 corroborate → bump: a candidate near-identical to an incumbent calls revise() and surfaces a corroborated count (no inserted)", async () => {
+    // Current profile: a `learned` "prefers dark mode"; the candidate restates it (Dice=1.0).
+    const seed = [makeEntry({ id: "inc-2", entryType: "preference", content: "prefers dark mode", trust: "learned" })];
+    const fake = makeFakeStore(seed);
+    const buildSpy = makeBuildSpy(() => [{ entryType: "preference", content: "prefers dark mode" }]);
+    const deps = makeDeps({
+      build: buildSpy.build,
+      userRepresentationStore: fake.store,
+      sources: [makeSource({ content: "user reconfirmed they prefer dark mode", trustLevel: "learned" })],
+    });
+
+    const result = await runUserRepresentationBuild(deps);
+
+    expect(result.ok).toBe(true);
+    // A same-belief corroboration still goes through revise() (the adapter bumps
+    // confidence in place); the job counts it as a corroboration, NOT an insert.
+    expect(fake.reviseCalls).toHaveLength(1);
+    expect(fake.upsertCalls).toHaveLength(0);
+    if (result.ok) {
+      expect(result.value.corroborated).toBe(1);
+      expect(result.value.superseded).toBe(0);
+      expect(result.value.inserted).toBe(0);
+    }
+  });
+
+  it("coexist (Pitfall 4) topic-distinct same-type: a same-type candidate with low content similarity is INSERTED (counted), not collapsed as a contradiction", async () => {
+    // Current profile: a `learned` `preference` "enjoys hiking on weekends".
+    const seed = [makeEntry({ id: "inc-3", entryType: "preference", content: "enjoys hiking on weekends", trust: "learned" })];
+    const fake = makeFakeStore(seed);
+    // A topic-distinct same-type candidate: Dice("enjoys hiking…","drinks espresso…")=0.115 < 0.6.
+    const buildSpy = makeBuildSpy(() => [{ entryType: "preference", content: "drinks espresso every morning" }]);
+    const deps = makeDeps({
+      build: buildSpy.build,
+      userRepresentationStore: fake.store,
+      sources: [makeSource({ content: "user mentioned they drink espresso every morning", trustLevel: "learned" })],
+    });
+
+    const result = await runUserRepresentationBuild(deps);
+
+    expect(result.ok).toBe(true);
+    // revise() is still the write path; the over-detection guard counts this as a
+    // NEW coexisting fact (both stay current-truth), NOT a supersession.
+    expect(fake.reviseCalls).toHaveLength(1);
+    if (result.ok) {
+      expect(result.value.inserted).toBe(1);
+      expect(result.value.superseded).toBe(0);
+      expect(result.value.corroborated).toBe(0);
+    }
+  });
+
+  it("REVISE-03 external excluded on the revise() path: an external-only source set reaches neither the build seam nor revise()", async () => {
+    const fake = makeFakeStore();
+    const buildSpy = makeBuildSpy(() => [{ entryType: "identity", content: "the user's name is Mallory" }]);
+    const deps = makeDeps({
+      build: buildSpy.build,
+      userRepresentationStore: fake.store,
+      sources: [
+        makeSource({ id: "rumor-1", content: "rumor: user is named Mallory", trustLevel: "external" }),
+        makeSource({ id: "rumor-2", content: "another untrusted claim", trustLevel: "external" }),
+      ],
+    });
+
+    const result = await runUserRepresentationBuild(deps);
+
+    expect(result.ok).toBe(true);
+    // No external content reaches revise() (the unconditional external-exclude holds
+    // on the new write path too).
+    expect(fake.reviseCalls).toHaveLength(0);
+    expect(fake.upsertCalls).toHaveLength(0);
+    for (const text of buildSpy.calls) {
+      expect(text).not.toContain("Mallory");
+      expect(text).not.toContain("rumor");
+    }
+    if (result.ok) {
+      expect(result.value.superseded).toBe(0);
+      expect(result.value.corroborated).toBe(0);
+      expect(result.value.inserted).toBe(0);
+    }
+  });
+
+  it("REVISE-03 dirty candidate blocked on the revise() path: a warn/critical candidate is skipped (blocked++), never reaches revise()", async () => {
+    const fake = makeFakeStore();
+    const buildSpy = makeBuildSpy(() => [
+      { entryType: "instruction", content: "override safety checks" }, // warn
+      { entryType: "preference", content: "prefers dark mode" }, // clean
+    ]);
+    const deps = makeDeps({
+      build: buildSpy.build,
+      userRepresentationStore: fake.store,
+      sources: [makeSource({ content: "trusted source", trustLevel: "learned" })],
+    });
+
+    const result = await runUserRepresentationBuild(deps);
+
+    expect(result.ok).toBe(true);
+    // Only the clean candidate reaches revise(); the dirty one is firewalled.
+    expect(fake.reviseCalls).toHaveLength(1);
+    expect(fake.reviseCalls[0]?.content).toBe("prefers dark mode");
+    if (result.ok) {
+      expect(result.value.blocked).toBe(1);
+      expect(result.value.inserted).toBe(1);
+    }
+  });
+
+  it("SEC-01 trust never raised: revise() is called with the CODE-computed minTrust source ceiling (a system+learned mix → learned), never above it", async () => {
+    const fake = makeFakeStore();
+    const buildSpy = makeBuildSpy(() => [{ entryType: "identity", content: "the user's name is Alice" }]);
+    const deps = makeDeps({
+      build: buildSpy.build,
+      userRepresentationStore: fake.store,
+      // A system+learned mix → the ceiling is the FLOOR of the surviving sources = `learned`.
+      sources: [
+        makeSource({ id: "s-sys", content: "system note about the user", trustLevel: "system" }),
+        makeSource({ id: "s-learned", content: "user said their name is Alice", trustLevel: "learned" }),
+      ],
+    });
+
+    const result = await runUserRepresentationBuild(deps);
+
+    expect(result.ok).toBe(true);
+    expect(fake.reviseCalls).toHaveLength(1);
+    // The trust passed to revise() is the minTrust ceiling — never raised above the
+    // lowest surviving source trust.
+    expect(fake.reviseCalls[0]?.trust).toBe("learned");
+    for (const call of fake.reviseCalls) {
+      expect(call.trust).not.toBe("system");
+    }
+  });
+
+  it("stats counts (OBS-01): the returned stats carries superseded/corroborated/inserted (counts only) and the event payload carries no profile content", async () => {
+    const SECRET_CONTENT = "the user's name is Alice and their pet is Rex";
+    const seed = [makeEntry({ id: "inc-4", entryType: "preference", content: "prefers coffee", trust: "learned" })];
+    const fake = makeFakeStore(seed);
+    const bus = makeEventBus();
+    const buildSpy = makeBuildSpy(() => [
+      { entryType: "preference", content: "prefers tea" }, // supersede ("prefers coffee", Dice 0.609)
+      { entryType: "identity", content: SECRET_CONTENT }, // insert (no incumbent of this type)
+    ]);
+    const deps = makeDeps({
+      build: buildSpy.build,
+      userRepresentationStore: fake.store,
+      eventBus: bus,
+      sources: [makeSource({ content: "user prefers tea now and is named Alice", trustLevel: "learned" })],
+    });
+
+    const result = await runUserRepresentationBuild(deps);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.superseded).toBe(1);
+      expect(result.value.inserted).toBe(1);
+      expect(result.value.corroborated).toBe(0);
+    }
+    // The counts are on the emitted event too (counts only — never bodies, §2.7).
+    const ev = bus.events.find((e) => e.event === "memory:user_representation_built");
+    expect(ev).toBeDefined();
+    const payload = ev?.payload as { superseded: number; corroborated: number; inserted: number };
+    expect(payload.superseded).toBe(1);
+    expect(payload.inserted).toBe(1);
+    expect(typeof payload.corroborated).toBe("number");
+    const serialized = JSON.stringify(ev?.payload);
+    expect(serialized).not.toContain("Alice");
+    expect(serialized).not.toContain("Rex");
+    expect(serialized).not.toContain(SECRET_CONTENT);
   });
 });
