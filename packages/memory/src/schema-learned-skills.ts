@@ -119,10 +119,19 @@ export function ensureLearnedSkillsTable(
   // Mirrors `memory_fts` (schema.ts:510-545): external-content config + the
   // _ai/_ad/_au sync triggers; the `rebuild` is wrapped (safe-no-op on an empty
   // table). Best-effort so a host without the FTS5 module still boots.
+  //
+  // The FTS column is named `body` to MATCH the real source column on
+  // `learned_skills` (the body lives in `body`, there is NO `content` column).
+  // `memory_fts` names its column `content` because `memories.content` exists;
+  // for external-content FTS5, the indexed column name MUST equal the source
+  // column so the `'rebuild'` command (which re-reads the external content table)
+  // can find it — naming it `content` here threw "no such column: content" on
+  // every boot, silently leaving the index reliant on incremental triggers and
+  // never re-derivable after an unclean shutdown (WR-04).
   try {
     db.exec(`
       CREATE VIRTUAL TABLE IF NOT EXISTS learned_skills_fts USING fts5(
-        content,
+        body,
         content='learned_skills',
         content_rowid='rowid',
         tokenize='porter unicode61'
@@ -135,16 +144,16 @@ export function ensureLearnedSkillsTable(
     }
     db.exec(`
       CREATE TRIGGER IF NOT EXISTS learned_skills_ai AFTER INSERT ON learned_skills BEGIN
-        INSERT INTO learned_skills_fts(rowid, content) VALUES (new.rowid, new.body);
+        INSERT INTO learned_skills_fts(rowid, body) VALUES (new.rowid, new.body);
       END;
 
       CREATE TRIGGER IF NOT EXISTS learned_skills_ad AFTER DELETE ON learned_skills BEGIN
-        INSERT INTO learned_skills_fts(learned_skills_fts, rowid, content) VALUES('delete', old.rowid, old.body);
+        INSERT INTO learned_skills_fts(learned_skills_fts, rowid, body) VALUES('delete', old.rowid, old.body);
       END;
 
       CREATE TRIGGER IF NOT EXISTS learned_skills_au AFTER UPDATE OF body ON learned_skills BEGIN
-        INSERT INTO learned_skills_fts(learned_skills_fts, rowid, content) VALUES('delete', old.rowid, old.body);
-        INSERT INTO learned_skills_fts(rowid, content) VALUES (new.rowid, new.body);
+        INSERT INTO learned_skills_fts(learned_skills_fts, rowid, body) VALUES('delete', old.rowid, old.body);
+        INSERT INTO learned_skills_fts(rowid, body) VALUES (new.rowid, new.body);
       END;
     `);
   } catch {
