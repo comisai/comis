@@ -103,3 +103,91 @@ describe("memory:skill_used skill-use attribution event (counts/ids only)", () =
     expectTypeOf<EventMap["memory:skill_used"]["usedCount"]>().toEqualTypeOf<number>();
   });
 });
+
+// ---------------------------------------------------------------------------
+// SKILL-09 (Plan 07): the two procedural-synthesis TELEMETRY events. Emitted
+// DAEMON-SIDE (plain eventBus.emit) after runSkillSynthesis returns. Counts /
+// ids / closed-enums (coverage) ONLY — a body/script/finding field is a compile
+// error (the §2.7 / SEC-01 firewall). Live in THIS same LearningEvents sibling.
+// ---------------------------------------------------------------------------
+
+describe("learning:skill_synthesized / learning:skill_validated telemetry (counts-only)", () => {
+  it("declares BOTH keys on the LearningEvents interface (source grep — reproducible RED)", () => {
+    const src = readFileSync(resolve(here, "events-learning.ts"), "utf8");
+    expect(src).toContain('"learning:skill_synthesized"');
+    expect(src).toContain('"learning:skill_validated"');
+  });
+
+  it("learning:skill_synthesized delivers agentId + count + timestamp ONLY", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["learning:skill_synthesized"] = {
+      agentId: "agent-1",
+      count: 3,
+      timestamp: 1,
+    };
+    bus.on("learning:skill_synthesized", handler);
+    bus.emit("learning:skill_synthesized", payload);
+    expect(handler).toHaveBeenCalledWith(payload);
+    const r = handler.mock.calls[0]![0] as EventMap["learning:skill_synthesized"];
+    expect(r.count).toBe(3);
+    expect(r.agentId).toBe("agent-1");
+  });
+
+  it("learning:skill_validated delivers staticOk/dynamicOk + the coverage closed-enum ONLY", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["learning:skill_validated"] = {
+      agentId: "agent-1",
+      staticOk: true,
+      dynamicOk: false,
+      coverage: "static-only",
+      timestamp: 2,
+    };
+    bus.on("learning:skill_validated", handler);
+    bus.emit("learning:skill_validated", payload);
+    expect(handler).toHaveBeenCalledWith(payload);
+    const r = handler.mock.calls[0]![0] as EventMap["learning:skill_validated"];
+    expect(r.staticOk).toBe(true);
+    expect(r.dynamicOk).toBe(false);
+    expect(r.coverage).toBe("static-only");
+  });
+
+  it("type safety: @ts-expect-error rejects a body/script/finding field on either telemetry payload", () => {
+    const bus = new TypedEventBus();
+
+    bus.emit("learning:skill_synthesized", {
+      agentId: "a",
+      count: 1,
+      timestamp: 1,
+      // @ts-expect-error - a synthesized procedure body must NEVER ride on the counts-only payload
+      body: "the synthesized procedure markdown",
+    });
+
+    bus.emit("learning:skill_validated", {
+      agentId: "a",
+      staticOk: true,
+      dynamicOk: true,
+      coverage: "full",
+      timestamp: 1,
+      // @ts-expect-error - validation findings/scripts must NEVER ride on the counts-only payload
+      scripts: ["rm -rf /"],
+    });
+
+    // @ts-expect-error - coverage is a CLOSED enum ("full" | "static-only"), not an arbitrary string
+    bus.emit("learning:skill_validated", {
+      agentId: "a",
+      staticOk: true,
+      dynamicOk: true,
+      coverage: "partial",
+      timestamp: 1,
+    });
+  });
+
+  it("type contract: both telemetry keys are members of EventMap (counts/ids/closed-enums only)", () => {
+    expectTypeOf<EventMap>().toHaveProperty("learning:skill_synthesized");
+    expectTypeOf<EventMap>().toHaveProperty("learning:skill_validated");
+    expectTypeOf<EventMap["learning:skill_synthesized"]["count"]>().toEqualTypeOf<number>();
+    expectTypeOf<EventMap["learning:skill_validated"]["coverage"]>().toEqualTypeOf<"full" | "static-only">();
+  });
+});
