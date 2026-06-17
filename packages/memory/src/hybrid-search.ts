@@ -431,8 +431,6 @@ export function hybridSearch(
   // option, the post-fusion SELECT runs with `evicted_at IS NULL` as the sole
   // condition (a literal — binds no param). This is a recall-side exclusion only;
   // the inspect/asOf audit reads do NOT add it, so an evicted row stays resolvable.
-  let filteredIds: string[];
-
   const candidateIds = rrfResults.map((r) => r.id);
   if (candidateIds.length === 0) return [];
 
@@ -479,7 +477,7 @@ export function hybridSearch(
   const rows = parsed.ok ? parsed.value : [];
   const allowedSet = new Set(rows.map((r) => r.id));
 
-  filteredIds = rrfResults.filter((r) => allowedSet.has(r.id)).map((r) => r.id);
+  const filteredIds = rrfResults.filter((r) => allowedSet.has(r.id)).map((r) => r.id);
 
   // ── Return top results with normalized scores ──
   const rrfMap = new Map(rrfResults.map((r) => [r.id, r.rrfScore]));

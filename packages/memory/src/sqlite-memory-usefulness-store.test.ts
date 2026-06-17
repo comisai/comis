@@ -214,6 +214,28 @@ describe("createSqliteMemoryUsefulnessStore", () => {
       expect(res.ok).toBe(true);
       if (res.ok) expect(res.value.size).toBe(0);
     });
+
+    // WR-03: failure_count must be PROJECTED into the signal so the bandit feed sees it
+    // (RANK-01 negative reward). It is surfaced ONLY when > 0 (spread-conditional, like
+    // lastUsefulAt) so a clean memory's signal shape is byte-identical → the recall
+    // hot-path usefulnessNorm (used/ignored only) is unaffected (the 44 golden scores).
+    it("WR-03: projects failureCount onto the signal when failures accrued (else omits it — byte-identity for clean memories)", async () => {
+      const mFail = await seedMemory({ id: "m-fail" });
+      const mClean = await seedMemory({ id: "m-clean" });
+      await store.recordUsage([mFail], [], SCOPE_A); // used once
+      await store.recordFailure(mFail, SCOPE_A); // …and failed twice
+      await store.recordFailure(mFail, SCOPE_A);
+      await store.recordUsage([mClean], [], SCOPE_A); // clean: used, never failed
+
+      const res = await store.readUsefulness([mFail, mClean], READ_A);
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      // The failure-laden memory surfaces failureCount.
+      expect(res.value.get(mFail)?.failureCount).toBe(2);
+      // The clean memory's signal has NO failureCount key (byte-identical shape).
+      expect(res.value.get(mClean)).toEqual({ usedCount: 1, ignoredCount: 0, lastUsefulAt: SCOPE_A.now });
+      expect("failureCount" in res.value.get(mClean)!).toBe(false);
+    });
   });
 
   // =====================================================================
