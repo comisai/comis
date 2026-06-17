@@ -32,6 +32,7 @@ import {
   decideAutoAnswer,
   type AutoAnswerDecision,
 } from "./terminal-auto-answer.js";
+import type { PlatformDialog } from "./platforms/index.js";
 
 describe("decideAutoAnswer — SEC-12 safe-only allowlist (Test 1: safe match → answer)", () => {
   it("answers an operator safe-pattern prompt with a canned keystroke + the matched index", () => {
@@ -225,5 +226,62 @@ describe("decideAutoAnswer — mode all still escalate-always (trusted-input onl
 
     const destructive = decideAutoAnswer("all", "Permanently delete? (y/n)", ["(y/n)"]);
     expect(destructive).toEqual<AutoAnswerDecision>({ action: "escalate", reason: "destructive" });
+  });
+});
+
+describe("decideAutoAnswer — consumes profile.dialogs (DIALOG-01/02, v2.26 Phase 169)", () => {
+  const trustGate: PlatformDialog = {
+    name: "trust-gate",
+    detect: /Do you trust the files in this folder/i,
+    safeAnswer: ["\r"],
+    destructive: false,
+  };
+  const approval: PlatformDialog = {
+    name: "approval-overlay",
+    detect: /Allow command to run/i,
+    safeAnswer: ["\r"], // present but moot — destructive wins
+    destructive: true,
+  };
+
+  it("answers a non-destructive profile dialog with ITS safeAnswer keys (not just the canned Enter)", () => {
+    const screen = ["Do you trust the files in this folder?", "1. Yes  2. No"].join("\n");
+    const decision = decideAutoAnswer("safe-only", screen, [], [trustGate]);
+    expect(decision.action).toBe("answer");
+    if (decision.action === "answer") expect(decision.keys).toEqual(["\r"]);
+  });
+
+  it("escalates a destructive profile dialog — NEVER auto-answered, even with a safeAnswer present", () => {
+    const screen = "Allow command to run: rm -rf build ?";
+    const decision = decideAutoAnswer("safe-only", screen, [], [approval]);
+    expect(decision).toEqual<AutoAnswerDecision>({ action: "escalate", reason: "destructive" });
+  });
+
+  it("escalates a destructive profile dialog even under mode all", () => {
+    const decision = decideAutoAnswer("all", "Allow command to run something", [], [approval]);
+    expect(decision).toEqual<AutoAnswerDecision>({ action: "escalate", reason: "destructive" });
+  });
+
+  it("the escalate-always veto WINS over a non-destructive dialog safeAnswer (SEC-12 hard floor)", () => {
+    // A trust-gate that ALSO carries an auth cue on the same screen → escalate, never auto-answer.
+    const screen = ["Do you trust the files in this folder?", "Please sign in to continue"].join("\n");
+    const decision = decideAutoAnswer("safe-only", screen, [], [trustGate]);
+    expect(decision).toEqual<AutoAnswerDecision>({ action: "escalate", reason: "auth_login" });
+  });
+
+  it("mode none never auto-answers a profile dialog (policy off)", () => {
+    const screen = "Do you trust the files in this folder?";
+    const decision = decideAutoAnswer("none", screen, [], [trustGate]);
+    expect(decision).toEqual<AutoAnswerDecision>({ action: "escalate", reason: "no_safe_match" });
+  });
+
+  it("no dialogs (default) ⇒ byte-identical to today — a non-matching screen escalates (INV-1)", () => {
+    const decision = decideAutoAnswer("safe-only", "some unrecognized prompt", ["nope"]);
+    expect(decision).toEqual<AutoAnswerDecision>({ action: "escalate", reason: "no_safe_match" });
+  });
+
+  it("a profile dialog that does NOT match the screen falls through to the operator hintPattern path", () => {
+    const screen = "Press enter to continue";
+    const decision = decideAutoAnswer("safe-only", screen, ["Press enter to continue"], [trustGate]);
+    expect(decision.action).toBe("answer"); // the hintPattern path still works (canned Enter)
   });
 });

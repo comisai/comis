@@ -23,9 +23,11 @@
 import type { EmulatorSnapshot } from "../terminal-render.js";
 
 /**
- * A safe auto-answer keystroke chord — named keys in the `terminal-key-grammar` vocabulary
- * (e.g. `["Enter"]` for a trust gate, `["2", "Enter"]` for allow-and-remember). Shaped to
- * `SendKeyParams.keys` so `encodeKeyChord` can encode it directly. Consumed in Phase 169.
+ * A safe auto-answer keystroke — RAW text fragments that the auto-answer path joins
+ * (`keys.join("")`) and sends via `send_text`, EXACTLY like the canned `["\r"]` Enter the
+ * operator-hintPattern path already sends (the woken turn does not name-key-encode these).
+ * E.g. `["\r"]` to accept a default (Enter), `["2", "\r"]` for choice-2-then-Enter. Consumed in
+ * Phase 169. (NOT the named-key `send_key` vocabulary — that path is not used by the auto-answer.)
  */
 export type KeySpec = readonly string[];
 
