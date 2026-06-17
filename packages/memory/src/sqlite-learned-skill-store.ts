@@ -342,6 +342,65 @@ export function createSqliteLearnedSkillStore(
       return runTransition("learned-skill-demote", demoteStmt, id, scope);
     },
 
+    async promoteByName(
+      name: string,
+      scope: LearningScope,
+      promoteAtProofCount: number,
+    ): Promise<Result<{ changed: boolean }, Error>> {
+      // Resolve the NAME → the deterministic hash id the lifecycle WHERE keys on
+      // (the same derivation admit() uses — one place, never duplicated by the
+      // caller). Then run promote's dedicated bind path and report rows-changed so
+      // a 0-row write (an unknown/evicted name) is detectable (not a silent lie).
+      const rejected = rejectUnresolvedScope(scope);
+      if (rejected) return rejected;
+      const startMs = systemNowMs();
+      try {
+        const id = learnedSkillId({ tenantId: scope.tenantId, agentId: scope.agentId, name });
+        const now = scope.now ?? systemNowMs();
+        const info = promoteStmt.run(promoteAtProofCount, now, scope.tenantId, scope.agentId, id);
+        const changed = info.changes > 0;
+        logger?.debug(
+          { step: "learned-skill-promote-by-name", id, changed, promoteAtProofCount, durationMs: systemNowMs() - startMs },
+          "Learned-skill promoteByName complete",
+        );
+        return ok({ changed });
+      } catch (e: unknown) {
+        const error = e instanceof Error ? e : new Error(String(e));
+        logger?.warn(
+          { step: "learned-skill-promote-by-name", err: error, errorKind: "internal" as const, hint: "learned-skill promoteByName failed" },
+          "Learned-skill promoteByName failed",
+        );
+        return err(error);
+      }
+    },
+
+    async demoteByName(name: string, scope: LearningScope): Promise<Result<{ changed: boolean }, Error>> {
+      // Resolve the NAME → the hash id (same derivation as admit/promote), run
+      // demote, and report rows-changed so an unknown/evicted name (0 rows) is
+      // never counted as a real demote.
+      const rejected = rejectUnresolvedScope(scope);
+      if (rejected) return rejected;
+      const startMs = systemNowMs();
+      try {
+        const id = learnedSkillId({ tenantId: scope.tenantId, agentId: scope.agentId, name });
+        const now = scope.now ?? systemNowMs();
+        const info = demoteStmt.run(now, scope.tenantId, scope.agentId, id);
+        const changed = info.changes > 0;
+        logger?.debug(
+          { step: "learned-skill-demote-by-name", id, changed, durationMs: systemNowMs() - startMs },
+          "Learned-skill demoteByName complete",
+        );
+        return ok({ changed });
+      } catch (e: unknown) {
+        const error = e instanceof Error ? e : new Error(String(e));
+        logger?.warn(
+          { step: "learned-skill-demote-by-name", err: error, errorKind: "internal" as const, hint: "learned-skill demoteByName failed" },
+          "Learned-skill demoteByName failed",
+        );
+        return err(error);
+      }
+    },
+
     async evict(id: string, scope: LearningScope): Promise<Result<void, Error>> {
       // Soft-close: evict binds the eviction timestamp first, then the
       // updated_at (both = the injected clock), then the scope+id.

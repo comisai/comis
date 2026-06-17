@@ -94,20 +94,30 @@ function baseVerdict(over?: Partial<ResolvedOutcome>): ResolvedOutcome {
  * loop reads NO per-skill proof/trust — the threshold gate is store-side, Plan 02);
  * the read/admit/evict methods are present (the port shape) but unused by the seam.
  */
-function mockLearnedSkillStore() {
-  const promote = vi.fn(
-    async (_id: string, _scope: LearningScope, _threshold: number): Promise<Result<void, Error>> => ok(undefined),
+function mockLearnedSkillStore(opts?: { promoteChanged?: boolean; demoteChanged?: boolean }) {
+  // CR-01: the resolve seam calls the NAME-keyed promoteByName/demoteByName (the
+  // carrier holds skill NAMES, not the hash id). Default `changed: true` (a real row
+  // moved) so the existing promote/demote assertions hold; a test can force
+  // `changed: false` to assert the 0-row path does NOT count/emit.
+  const promoteByName = vi.fn(
+    async (_name: string, _scope: LearningScope, _threshold: number): Promise<Result<{ changed: boolean }, Error>> =>
+      ok({ changed: opts?.promoteChanged ?? true }),
   );
-  const demote = vi.fn(async (_id: string, _scope: LearningScope): Promise<Result<void, Error>> => ok(undefined));
+  const demoteByName = vi.fn(
+    async (_name: string, _scope: LearningScope): Promise<Result<{ changed: boolean }, Error>> =>
+      ok({ changed: opts?.demoteChanged ?? true }),
+  );
   const store = {
-    promote,
-    demote,
+    promoteByName,
+    demoteByName,
+    promote: vi.fn(async (): Promise<Result<void, Error>> => ok(undefined)),
+    demote: vi.fn(async (): Promise<Result<void, Error>> => ok(undefined)),
     admit: vi.fn(async () => ok({ id: "x", admitted: true })),
     get: vi.fn(async () => ok(undefined)),
     list: vi.fn(async () => ok([])),
     evict: vi.fn(async () => ok(undefined)),
   } as unknown as LearnedSkillStorePort;
-  return { store, promote, demote };
+  return { store, promoteByName, demoteByName };
 }
 
 function toolPayload(over?: Partial<EventMap["tool:executed"]>): EventMap["tool:executed"] {
@@ -889,24 +899,39 @@ describe("wireLearningOutcome — learned-skill promote/demote at resolve() (SUR
     await flushMicrotasks();
   }
 
-  it("SURFACE-04: a success verdict promotes EACH attributed usedSkillId with the configured threshold", async () => {
+  it("SURFACE-04: a success verdict promotes EACH attributed usedSkillId (by NAME) with the configured threshold", async () => {
     const { bus, ls } = wireSkillSeam(
       baseVerdict({ outcome: "success", sources: ["pipeline"], usedSkillIds: ["s1", "s2"] }),
       { promoteAt: 3 },
     );
     await drive(bus, SESSION_KEY, TRACE);
 
-    expect(ls.promote).toHaveBeenCalledTimes(2);
-    const calls = ls.promote.mock.calls.map((c) => [c[0], c[2]]);
+    // CR-01: the seam calls the NAME-keyed promoteByName (the carrier holds NAMES).
+    expect(ls.promoteByName).toHaveBeenCalledTimes(2);
+    const calls = ls.promoteByName.mock.calls.map((c) => [c[0], c[2]]);
     expect(calls).toEqual([
       ["s1", 3],
       ["s2", 3],
     ]);
     // Scoped to the resolved (tenant, agent) — the SEC-01 isolation boundary.
-    const scope = ls.promote.mock.calls[0]![1];
+    const scope = ls.promoteByName.mock.calls[0]![1];
     expect(scope.tenantId).toBe("tenant-x");
     expect(scope.agentId).toBe(AGENT);
-    expect(ls.demote).not.toHaveBeenCalled();
+    expect(ls.demoteByName).not.toHaveBeenCalled();
+  });
+
+  it("CR-01: a promote that changes NO row (changed=false) does NOT count or emit learning:skill_promoted", async () => {
+    const ls = mockLearnedSkillStore({ promoteChanged: false });
+    const bus = new TypedEventBus();
+    const emitSpy = vi.spyOn(bus, "emit");
+    wireSkillSeam(baseVerdict({ outcome: "success", sources: ["pipeline"], usedSkillIds: ["s1"] }), {
+      learnedSkillStore: ls,
+      bus,
+    });
+    await drive(bus, SESSION_KEY, TRACE);
+    // promoteByName WAS called, but it matched 0 rows → the telemetry must not lie.
+    expect(ls.promoteByName).toHaveBeenCalledTimes(1);
+    expect(emitSpy.mock.calls.some((c) => c[0] === "learning:skill_promoted")).toBe(false);
   });
 
   it("SURFACE-05: a DETERMINISTIC (tool) failure whose SUSTAINED trend reaches weakening demotes the skill", async () => {
@@ -920,13 +945,13 @@ describe("wireLearningOutcome — learned-skill promote/demote at resolve() (SUR
     // The trend needs SUSTAINED corroborated failure to weaken — drive several
     // resolves; demote fires once the standing crosses the weakening band.
     for (let i = 0; i < 6; i++) await drive(bus, SESSION_KEY, `${TRACE}-${i}`);
-    expect(ls.demote).toHaveBeenCalled();
-    expect(ls.demote.mock.calls[0]![0]).toBe("s1");
+    expect(ls.demoteByName).toHaveBeenCalled();
+    expect(ls.demoteByName.mock.calls[0]![0]).toBe("s1");
     // demote scope is (tenant, agent).
-    const scope = ls.demote.mock.calls[0]![1];
+    const scope = ls.demoteByName.mock.calls[0]![1];
     expect(scope.tenantId).toBe("tenant-x");
     expect(scope.agentId).toBe(AGENT);
-    expect(ls.promote).not.toHaveBeenCalled();
+    expect(ls.promoteByName).not.toHaveBeenCalled();
   });
 
   it("SURFACE-05 anti-induced-demotion (§12 first-RED): a SINGLE non-deterministic (reaction-only) failure does NOT demote (corroboration gate blocks)", async () => {
@@ -936,7 +961,7 @@ describe("wireLearningOutcome — learned-skill promote/demote at resolve() (SUR
     await drive(bus, SESSION_KEY, TRACE);
     // Single, non-deterministic, one session → the corroboration gate blocks any
     // trend update → a correct procedure is NOT archived by one induced failure.
-    expect(ls.demote).not.toHaveBeenCalled();
+    expect(ls.demoteByName).not.toHaveBeenCalled();
   });
 
   it("SURFACE-05 anti-induced-demotion: a corroborated failure whose trend is STILL STABLE does NOT demote (well-reused skill, one failure)", async () => {
@@ -947,7 +972,57 @@ describe("wireLearningOutcome — learned-skill promote/demote at resolve() (SUR
       baseVerdict({ outcome: "failure", sources: ["tool"], usedSkillIds: ["s1"], confidence: 0.9 }),
     );
     await drive(bus, SESSION_KEY, TRACE);
-    expect(ls.demote).not.toHaveBeenCalled();
+    expect(ls.demoteByName).not.toHaveBeenCalled();
+  });
+
+  it("WR-05 (cross-tenant isolation): tenant A's sustained failures for a skill NAME do NOT drive tenant B's same-named skill toward demotion", async () => {
+    // The corroboration tally + trend tracker are in-process daemon-lifetime maps;
+    // keying them on the BARE skill name aliases two (tenant, agent) scopes that each
+    // surface a skill literally named "deploy" — so A's failures could weaken B's
+    // standing and demote B's skill. With scope-qualified keys (tenant+agent+name)
+    // the two are independent. RED on a bare-name key: B demotes on its FIRST failure
+    // (inheriting A's weakening trend).
+    const ls = mockLearnedSkillStore();
+    const bus = new TypedEventBus();
+    const { store: outcomeStore } = makeStubStore(
+      baseVerdict({ outcome: "failure", sources: ["tool"], usedSkillIds: ["deploy"], confidence: 0.9 }),
+    );
+    wireLearningOutcome({
+      eventBus: bus,
+      outcomeStore,
+      usefulnessStore: mockUsefulnessStore().store,
+      learnedSkillStore: ls.store,
+      learningTuningEnabled: () => false,
+      learningForgettingEnabled: () => false,
+      learningSkillsEnabled: () => true,
+      learningSkillsPromoteAt: () => 3,
+      clock: createFakeClock(NOW),
+      logger: createMockLogger(),
+      learningOutcomeEnabled: () => true,
+    });
+
+    // Drive a sustained corroborated failure history for "deploy" under TENANT A so
+    // A's trend reaches weakening and A's skill demotes.
+    for (let i = 0; i < 6; i++) {
+      runWithContext(
+        { tenantId: "tenant-A", agentId: AGENT, sessionKey: `tenant-A:tg:u${i}`, traceId: `tA-${i}` } as never,
+        () => bus.emit("graph:completed", graphPayload({ status: "completed" })),
+      );
+      await flushMicrotasks();
+    }
+    const demotesUnderA = ls.demoteByName.mock.calls.filter((c) => c[1].tenantId === "tenant-A").length;
+    expect(demotesUnderA).toBeGreaterThanOrEqual(1); // A's own sustained failures DID weaken A
+
+    // Now a SINGLE failure for the same skill NAME under TENANT B. With independent
+    // (scope-qualified) gauges, B's standing is fresh → still stable → NO demote for B.
+    runWithContext(
+      { tenantId: "tenant-B", agentId: AGENT, sessionKey: "tenant-B:tg:u0", traceId: "tB-0" } as never,
+      () => bus.emit("graph:completed", graphPayload({ status: "completed" })),
+    );
+    await flushMicrotasks();
+
+    const demotesUnderB = ls.demoteByName.mock.calls.filter((c) => c[1].tenantId === "tenant-B").length;
+    expect(demotesUnderB).toBe(0); // B's skill is NOT demoted by A's history (independent state)
   });
 
   it("SURFACE-06: a promote emits learning:skill_promoted with plain emit, COUNTS ONLY (no body/id-list)", async () => {
@@ -959,7 +1034,7 @@ describe("wireLearningOutcome — learned-skill promote/demote at resolve() (SUR
     );
     await drive(bus, SESSION_KEY, TRACE);
 
-    expect(ls.promote).toHaveBeenCalledTimes(2);
+    expect(ls.promoteByName).toHaveBeenCalledTimes(2);
     const promoted = emitSpy.mock.calls.find((c) => c[0] === "learning:skill_promoted");
     expect(promoted, "a promote must emit learning:skill_promoted").toBeDefined();
     const payload = promoted![1] as { agentId: string; count: number; timestamp: number };
@@ -994,8 +1069,8 @@ describe("wireLearningOutcome — learned-skill promote/demote at resolve() (SUR
       { skillsEnabled: false, bus },
     );
     await drive(bus, SESSION_KEY, TRACE);
-    expect(ls.promote).not.toHaveBeenCalled();
-    expect(ls.demote).not.toHaveBeenCalled();
+    expect(ls.promoteByName).not.toHaveBeenCalled();
+    expect(ls.demoteByName).not.toHaveBeenCalled();
     expect(emitSpy.mock.calls.some((c) => c[0] === "learning:skill_promoted")).toBe(false);
     expect(emitSpy.mock.calls.some((c) => c[0] === "learning:skill_demoted")).toBe(false);
   });
@@ -1030,7 +1105,7 @@ describe("wireLearningOutcome — learned-skill promote/demote at resolve() (SUR
       { logger },
     );
     await drive(bus, SESSION_KEY, TRACE);
-    expect(ls.promote).toHaveBeenCalledTimes(1);
+    expect(ls.promoteByName).toHaveBeenCalledTimes(1);
     const info = logger.info.mock.calls.find(
       (c) =>
         typeof (c[0] as { durationMs?: number }).durationMs === "number" &&
@@ -1044,7 +1119,7 @@ describe("wireLearningOutcome — learned-skill promote/demote at resolve() (SUR
 
   it("is non-fatal: a promote that REJECTS WARNs (hint+errorKind) and does not throw out of the handler", async () => {
     const ls = mockLearnedSkillStore();
-    ls.promote.mockImplementationOnce(async () => {
+    ls.promoteByName.mockImplementationOnce(async () => {
       throw new Error("db locked");
     });
     const logger = createMockLogger();
@@ -1131,13 +1206,15 @@ describe("SURFACE-07 / SEC-01: the 202 daemon files add no execution path + no t
     }
   });
 
-  it("the promote/demote loop calls ONLY the store transition methods (promote/demote) — no other store mutation", () => {
-    // The loop's only learnedSkillStore calls are promote()/demote() (the surface
-    // calls list() for the read). Assert setup-learning.ts references promote/demote
-    // but NOT admit/evict (which would be a different, un-governed lifecycle write).
+  it("the promote/demote loop calls ONLY the store transition methods (promoteByName/demoteByName) — no other store mutation", () => {
+    // CR-01: the loop's only learnedSkillStore calls are the NAME-keyed
+    // promoteByName()/demoteByName() (the carrier holds skill NAMES; the store
+    // resolves name→id internally). The surface calls list() for the read. Assert
+    // setup-learning.ts references promote/demote (by name) but NOT admit/evict
+    // (which would be a different, un-governed lifecycle write).
     const src = stripComments(readFileSync(join(HERE, "setup-learning.ts"), "utf8"));
-    expect(src).toMatch(/\.promote\(/);
-    expect(src).toMatch(/\.demote\(/);
+    expect(src).toMatch(/\.promoteByName\(/);
+    expect(src).toMatch(/\.demoteByName\(/);
     // The resolve seam never admits or evicts a skill (those are the synthesis/forget
     // paths, not the reuse-outcome loop).
     expect(/learnedSkillStore[^;]*\.admit\(/.test(src)).toBe(false);
@@ -1254,7 +1331,10 @@ describe("CR-01: promote/demote drive the REAL learned-skill store via name→id
   });
 });
 
-/** Flush enough microtask turns to settle the observe→resolve→emit chain. */
+/** Flush enough microtask turns to settle the observe→resolve→emit chain. The skill
+ *  promote/demote loop (applySkillOutcomeTransitions) now AWAITS each name-keyed store
+ *  transition to read rows-changed (CR-01), so a multi-skill verdict adds several extra
+ *  microtask hops before the emit/log — flush generously so the settle is deterministic. */
 async function flushMicrotasks(): Promise<void> {
-  for (let i = 0; i < 5; i++) await Promise.resolve();
+  for (let i = 0; i < 20; i++) await Promise.resolve();
 }

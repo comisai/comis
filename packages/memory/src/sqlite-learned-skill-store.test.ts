@@ -505,6 +505,83 @@ describe("createSqliteLearnedSkillStore — promote() proof-bar threshold gate (
   });
 });
 
+// ===========================================================================
+// CR-01: name-keyed promote/demote — the reuse-outcome loop holds skill NAMES
+// (ATTR-01), not the hash id. promoteByName/demoteByName resolve name→id
+// INTERNALLY (one place — the same derivation admit() uses) and REPORT
+// rows-changed so a 0-row write (an unknown/evicted name) is detectable and the
+// caller can stop the telemetry from lying.
+// ===========================================================================
+describe("createSqliteLearnedSkillStore — promoteByName / demoteByName (name→id + rows-changed)", () => {
+  let db: Database.Database;
+  let store: ReturnType<typeof createSqliteLearnedSkillStore>;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    initSchema(db, 384);
+    store = createSqliteLearnedSkillStore({ db });
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it("promoteByName resolves the NAME to the same id admit() derived and flips candidate→active at the bar", async () => {
+    const admitted = await store.admit(makeInput({ name: "by-name", proofCount: 0 }), SCOPE_A);
+    expect(admitted.ok).toBe(true);
+    // threshold 1 → activates on the first promote.
+    const r = await store.promoteByName("by-name", { ...SCOPE_A, now: 2_000 }, 1);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value.changed).toBe(true); // a real row was matched
+    const after = await store.get("by-name", SCOPE_A);
+    if (after.ok) {
+      expect(after.value?.state).toBe("active");
+      expect(after.value?.proofCount).toBe(1);
+      expect(after.value?.id).toBe(expectedId(TENANT_A, AGENT_A, "by-name"));
+    }
+  });
+
+  it("promoteByName on a NAME with no matching row reports changed=false (the 0-row-lies signal)", async () => {
+    const r = await store.promoteByName("does-not-exist", SCOPE_A, 3);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value.changed).toBe(false); // 0 rows → caller must not count/emit
+  });
+
+  it("promoteByName is (tenant, agent)-scoped — a foreign scope's same name matches a DIFFERENT id → changed=false here, no cross-mutation", async () => {
+    await store.admit(makeInput({ name: "scoped-name", proofCount: 0 }), SCOPE_A);
+    // Promote the SAME name under SCOPE_B: a distinct (tenant, agent) hashes to a
+    // distinct id → 0 rows under B, and A's row is untouched.
+    const r = await store.promoteByName("scoped-name", SCOPE_B, 1);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value.changed).toBe(false);
+    const a = await store.get("scoped-name", SCOPE_A);
+    if (a.ok) expect(a.value?.state).toBe("candidate"); // A unchanged
+  });
+
+  it("demoteByName resolves the NAME and steps an active skill toward stale, reporting changed=true", async () => {
+    await store.admit(makeInput({ name: "demote-by-name", proofCount: 0 }), SCOPE_A);
+    await store.promoteByName("demote-by-name", SCOPE_A, 1); // → active
+    const r = await store.demoteByName("demote-by-name", SCOPE_A);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value.changed).toBe(true);
+    const after = await store.get("demote-by-name", SCOPE_A);
+    if (after.ok) expect(after.value?.state).toBe("stale");
+  });
+
+  it("demoteByName on a NAME with no matching row reports changed=false", async () => {
+    const r = await store.demoteByName("ghost", SCOPE_A);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value.changed).toBe(false);
+  });
+
+  it("promoteByName / demoteByName with an unresolved (empty) scope fail-closed with err", async () => {
+    const p = await store.promoteByName("x", { tenantId: "", agentId: AGENT_A }, 3);
+    const d = await store.demoteByName("x", { tenantId: TENANT_A, agentId: "" });
+    expect(p.ok).toBe(false);
+    expect(d.ok).toBe(false);
+  });
+});
+
 describe("createSqliteLearnedSkillStore — error handling (catch branches)", () => {
   // evict()/promote()/demote() must NEVER throw — a DB failure mid-operation is
   // caught and surfaced as err() with a WARN (errorKind + hint, the §2.7 bar). We
@@ -541,6 +618,20 @@ describe("createSqliteLearnedSkillStore — error handling (catch branches)", ()
   it("demote() returns err (not throw) when the underlying UPDATE fails (runTransition catch)", async () => {
     db.exec("DROP TABLE learned_skills");
     const r = await store.demote("any-id", SCOPE_A);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toBeInstanceOf(Error);
+  });
+
+  it("promoteByName() returns err (not throw) when the underlying UPDATE fails", async () => {
+    db.exec("DROP TABLE learned_skills");
+    const r = await store.promoteByName("any-name", SCOPE_A, 3);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toBeInstanceOf(Error);
+  });
+
+  it("demoteByName() returns err (not throw) when the underlying UPDATE fails", async () => {
+    db.exec("DROP TABLE learned_skills");
+    const r = await store.demoteByName("any-name", SCOPE_A);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toBeInstanceOf(Error);
   });

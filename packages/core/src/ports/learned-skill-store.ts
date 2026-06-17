@@ -124,6 +124,33 @@ export interface LearnedSkillStorePort {
   demote(id: string, scope: LearningScope): Promise<Result<void, Error>>;
 
   /**
+   * WRITE (name-keyed promote — the reuse-outcome loop entry point). Resolve the
+   * skill NAME to its deterministic `(tenant, agent, name)` hash id INTERNALLY and
+   * apply {@link promote}'s proof-bar transition, returning whether a row actually
+   * changed. The reuse-attribution carrier (ATTR-01) holds skill NAMES, not ids;
+   * keeping the id derivation in the adapter (one place) avoids leaking the hash
+   * formula to callers. `changed === false` means NO row matched the
+   * `(tenant, agent, name)` (an unknown/evicted name) — the caller must NOT count
+   * it as a promotion or emit a telemetry event (the 0-row-write-lies fix). Scoped
+   * to `(tenant, agent)`; unresolved scope fails-closed with `err(...)`.
+   */
+  promoteByName(
+    name: string,
+    scope: LearningScope,
+    promoteAtProofCount: number,
+  ): Promise<Result<{ changed: boolean }, Error>>;
+
+  /**
+   * WRITE (name-keyed demote — the reuse-outcome loop entry point). Resolve the
+   * skill NAME to its hash id INTERNALLY and apply {@link demote}, returning whether
+   * a row actually changed. `changed === false` means NO row matched (an
+   * unknown/evicted name, OR a skill already at a terminal state the demote CASE
+   * leaves untouched) — the caller must NOT count it or emit. Scoped to
+   * `(tenant, agent)`; unresolved scope fails-closed with `err(...)`.
+   */
+  demoteByName(name: string, scope: LearningScope): Promise<Result<{ changed: boolean }, Error>>;
+
+  /**
    * WRITE. Soft-evict the skill `id` (mark archived / set `evicted_at`) so it no
    * longer surfaces. Scoped to `(tenant, agent)`.
    */
