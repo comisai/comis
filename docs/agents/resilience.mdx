@@ -45,7 +45,11 @@ flowchart TD
     WD -->|timeout| FAIL_NOTIFY["Failure notification\n(no LLM needed)"]
     WD -->|success| ANNOUNCE["Success announcement"]
 
-    ANNOUNCE -->|delivery fails| DLQ["Dead-letter queue\n5 retries over 1 hour"]
+    ANNOUNCE -->|delivery fails| CLS{"Transient?"}
+    CLS -->|transient| RETRY["Retry w/ backoff\nup to maxRetries"]
+    CLS -->|permanent| DLQ["Dead-letter queue\n5 retries over 1 hour"]
+    RETRY -->|exhausted| DLQ
+    RETRY -->|succeeds| RESP
 
     subgraph "Provider Health Monitor"
         PH["Aggregate failures across agents"]
@@ -171,9 +175,11 @@ recovery.
 
 ## Dead-letter queue
 
-When an announcement delivery fails (for example, the channel is temporarily
-unreachable), the message is saved to a persistent dead-letter queue backed by
-a JSONL file at `~/.comis/dead-letters.jsonl`.
+When an announcement delivery fails terminally — a permanent failure, or a
+transient one whose [retries are exhausted](#self-healing-delivery-retries)
+(for example, the channel stays unreachable) — the message is saved to a
+persistent dead-letter queue backed by a JSONL file at
+`~/.comis/dead-letters.jsonl`.
 
 - **Retry policy:** Up to 5 retries per entry
 - **Maximum age:** 1 hour -- entries older than this are expired and discarded
@@ -197,9 +203,12 @@ This prevents a fallback or retry from double-notifying the parent.
 
 The key is recorded only **after** a successful send, so a failed delivery is
 never suppressed — it remains eligible for retry. The delivered-key set is
-in-memory: a successful delivery before a restart is already complete, and
-re-delivery of a dead-lettered entry across a restart is bounded by the
-dead-letter queue's own retry and age limits above.
+in-memory and resets on a daemon restart, so the documented floor is
+**at-least-once across a restart**: a delivery completed before the restart is
+already done, and re-delivery of a dead-lettered entry across a restart is
+bounded by the dead-letter queue's own per-entry retry cap and max age above.
+Exactly-once *across a restart* is not provided — and is not needed, since a
+duplicate delivery after a restart is harmless next to a lost completion.
 
 The **failure notification** path (the static message sent when a sub-agent
 ends in error — a budget breach, watchdog timeout, ghost sweep, or degraded
@@ -221,21 +230,40 @@ security:
 ### Self-healing delivery retries
 
 When a completion delivery falls back to a direct channel send and that send
-fails, the batcher classifies the failure before deciding what to do:
+fails, the batcher classifies the failure before deciding what to do. The
+classifier does a case-insensitive substring match on the failure message:
 
-- **Transient** (network blips — connection reset/refused, socket hang up,
-  timeouts, HTTP 5xx, rate limits) — retried up to `maxRetries` times with
-  exponential backoff (1s, 2s, 4s, … capped at 30s) before dead-lettering. The
-  common case (a momentary `ECONNRESET`/`ETIMEDOUT`) self-heals on the next
-  attempt instead of being dead-lettered on the first blip.
-- **Permanent** (budget exceeded, context exhausted, step-limit reached,
-  killed) — dead-lettered immediately, with no wasted retries.
+- **Transient** — retried up to
+  `security.agentToAgent.delivery.maxRetries` times (default `3`, range `0`–`10`)
+  with exponential backoff (1s, 2s, 4s, … capped at 30s) before dead-lettering.
+  The common case (a momentary `ECONNRESET`/`ETIMEDOUT`) self-heals on the next
+  attempt instead of being dead-lettered on the first blip. The exact transient
+  set is the transport errnos and connection phrases —
+
+  ```
+  etimedout, econnreset, econnrefused, epipe, enetunreach, eai_again,
+  socket hang up, fetch failed, network request failed,
+  connection reset, connection refused
+  ```
+
+  — plus the pre-existing transient classes: `timeout` / "timed out",
+  `rate limit` / `429`, provider or HTTP 5xx (any bare `5xx` code), and
+  `circuit` / `breaker`.
+- **Permanent** — dead-lettered immediately, with no wasted retries:
+  `budget` / "cost limit", `killed`, context-exhausted (`context` + `exhaust`) /
+  `loop`, `max steps` / "step limit", and anything otherwise unclassified.
 
 - **What the operator sees:** a `subagent:delivery_retried` event per retry
   attempt and a `subagent:delivery_deadlettered` event when a delivery is finally
   dead-lettered (its `transient` flag records whether retries were exhausted or
   the failure was permanent). Both carry counts and ids only — never the
-  announcement text or the error string.
+  announcement text or the error string. See the
+  [Event Bus reference](/developer-guide/event-bus) for the exact payloads.
+
+This is a two-tier delivery path — announcement through the parent, then a
+direct channel send with classify-and-retry. It deliberately stops there: there
+is no further steer/handoff/external-delivery escalation tier beyond the
+dead-letter queue.
 
 ## Ghost sweep
 
