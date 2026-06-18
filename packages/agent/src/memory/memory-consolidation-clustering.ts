@@ -350,6 +350,43 @@ export function deterministicDedupKey(sourceIds: string[]): string {
     .digest("hex");
 }
 
+// ---------------------------------------------------------------------------
+// Distinct-context diversity counter (the GENERAL-02 anti-domination gate)
+// ---------------------------------------------------------------------------
+
+/**
+ * The number of distinct `(sessionKey, sender)` CONTEXTS a cluster spans — the
+ * anti-domination diversity count for GENERAL-02, NOT the raw member count.
+ *
+ * The generalization synthesis (`runMemoryConsolidation`) only abstracts a
+ * cluster into a higher-order "user prefers X in general" memory when it spans
+ * `generalize.minDistinctContexts` DISTINCT contexts. Counting distinct contexts
+ * — rather than members — is what stops ONE chatty session from forging a
+ * "general" preference: three near-duplicate memories all minted in a single
+ * conversation are ONE context (count 1), never three, so they never clear the
+ * threshold. Mirrors the SKILL-04 cardinality discipline (distinct
+ * `(session_id, sender)`, design §WS2 step 3).
+ *
+ * The context key is derived from the most session-discriminating stable field
+ * present on {@link MemorySource}: `source.sessionKey` when set, else
+ * `source.channel` (the documented fallback when a memory predates session-key
+ * provenance), combined with the entry's `userId` as the sender. The two parts
+ * are NUL-joined so a channel/sender boundary can never collide with content.
+ *
+ * Deterministic: a `Set<string>` of the per-member keys — no nondeterministic
+ * RNG, order-independent, identical across runs (mirrors
+ * {@link deterministicDedupKey}'s no-RNG discipline).
+ */
+export function countDistinctContexts(entries: MemoryEntry[]): number {
+  const contexts = new Set<string>();
+  for (const e of entries) {
+    const sessionKey = e.source.sessionKey ?? e.source.channel ?? "";
+    // NUL-join so a channel/sender boundary can never collide with content.
+    contexts.add(`${sessionKey}\u0000${e.userId}`);
+  }
+  return contexts.size;
+}
+
 /** Lowercase character bigrams of a string (for {@link contentSimilarity}). */
 function bigrams(value: string): Map<string, number> {
   const normalized = value.toLowerCase();

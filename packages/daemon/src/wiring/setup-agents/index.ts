@@ -20,3 +20,6 @@ export { setupSingleAgent } from "./setup-agents-runtime.js";
 export type { AgentsResult } from "./setup-agents-registry.js";
 export { setupAgents } from "./setup-agents-registry.js";
 export { resolveAgentModel } from "./setup-agents-tooling.js";
+// WR-01: the shared per-agent learned-skill SURFACE registry (created in daemon.ts,
+// threaded into BOTH setupMemory's outcome wiring and setupAgents).
+export { createLearnedSkillSurfaceRegistry, type LearnedSkillSurfaceRegistry } from "./learned-skill-surface-registry.js";

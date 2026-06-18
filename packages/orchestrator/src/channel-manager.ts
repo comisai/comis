@@ -25,7 +25,7 @@ import type { SessionLifecycle } from "@comis/agent";
 import type { CommandQueue } from "./queue/command-queue.js";
 import type { ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
 import type { InteractiveCallbackRouter } from "./approval/index.js";
-import type { ChannelPort, DeliveryQueuePort, NormalizedMessage, SessionKey, TypedEventBus, DeliveryService } from "@comis/core";
+import type { ChannelPort, DeliveryQueuePort, NormalizedMessage, NormalizedReaction, SessionKey, TypedEventBus, DeliveryService } from "@comis/core";
 // Orchestrator imports ONLY the @comis/core activity port + ctx type
 // (never the observability impl — hexagonal boundary). The
 // ActivityTurnCoordinator is a local execution type.
@@ -33,7 +33,7 @@ import type { ActivityStreamPort, TurnActivityContext } from "@comis/core";
 import type { ActivityTurnCoordinator } from "./execution/activity-turn-coordinator.js";
 import type { StreamingConfig } from "@comis/core";
 import type { AutoReplyEngineConfig, SendPolicyConfig, QueueConfig, ElevatedReplyConfig } from "@comis/core";
-import { formatSessionKey, runWithContext, getMessageTraceId, systemNowMs } from "@comis/core";
+import { formatSessionKey, runWithContext, getMessageTraceId, systemNowMs, parseReaction } from "@comis/core";
 import { randomUUID } from "node:crypto";
 import type { ComisLogger } from "@comis/core";
 import type { Result } from "@comis/shared";
@@ -456,6 +456,43 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
               }
             },
           );
+        });
+
+        // REACT-01: register the inbound-reaction fanout if the adapter exposes
+        // it (Discord/Slack/Telegram). No-op adapters omit onReaction → the
+        // optional-call form registers nothing (honest no-op, NOT a gap).
+        adapter.onReaction?.((reaction: NormalizedReaction) => {
+          // WR-02: validate the binder-built reaction at the trust boundary (the
+          // single fanout chokepoint all three platform binders converge on)
+          // through the domain `parseReaction` strictObject — it rejects an
+          // empty/missing platform id or any smuggled field (V5) BEFORE the
+          // content-free event reaches the bus. A reaction is UNTRUSTED inbound;
+          // an invalid one is a fail-closed DROP (WARN, non-fatal), never an emit.
+          const parsed = parseReaction(reaction);
+          if (!parsed.ok) {
+            deps.logger.warn(
+              {
+                channelType: reaction.channelType,
+                errorKind: "validation" as const,
+                hint: "An inbound reaction failed NormalizedReaction validation at the fanout boundary; the reaction was dropped (it never reached the outcome wiring)",
+              },
+              "Dropped malformed inbound reaction",
+            );
+            return;
+          }
+          // A reaction is NOT an inbound turn — do NOT mint a request context.
+          // Emit the capture event (ids/emoji only); the daemon (Plan 04)
+          // resolves the messageId→trajectory and observes the outcome. PLAIN
+          // emit (not ?.) so the architecture gate's regex + the type system
+          // both see it (RESEARCH Pitfall 6).
+          deps.eventBus.emit("channel:reaction_received", {
+            messageId: parsed.value.messageId,
+            reactorId: parsed.value.reactorId,
+            emoji: parsed.value.emoji,
+            channelType: parsed.value.channelType,
+            channelId: parsed.value.channelId,
+            timestamp: systemNowMs(),
+          });
         });
 
         // Start the adapter

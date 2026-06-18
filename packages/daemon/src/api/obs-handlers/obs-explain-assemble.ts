@@ -400,6 +400,10 @@ export function assembleIncidentReport(
     // (Route a): keyless `costUsd:0` is VISIBLE (OBS-05), keyed cost is omitted
     // (FLAG 4). The offline assembler is the binding OBS-02 oracle.
     ...(signals.voice !== undefined ? { voice: signals.voice } : {}),
+    // OBS-02 (198): the Verified-Learning outcome signal reconstructed from the
+    // trajectory's learning.outcome_observed records (absent when the session
+    // recorded no outcome). Counts/ids/closed-enums only; drives outcome_unresolved.
+    ...(signals.learning !== undefined ? { learning: signals.learning } : {}),
     summary,
     // Plan 05 fills likelyRootCause; Plan 04 fills truncations; Plan 05 fills
     // the report-level suggestedNextSteps.

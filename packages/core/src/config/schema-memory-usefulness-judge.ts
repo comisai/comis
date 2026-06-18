@@ -4,10 +4,11 @@
  *
  * OPTIONAL offline cheap-model judge that POST-HOC scores recalled-memory
  * usefulness, feeding FEED via `recordUsage` (the same per-intent write loop the
- * citation marker drives). OFF by default — enabling it is a COST opt-in
- * (it runs an LLM cron), a deliberate operator choice, NOT a default behavior (no
- * back-compat fallback). OFFLINE only: the judge runs on a cron and NEVER touches
- * the recall read path (the recall hot path stays LLM-free).
+ * citation marker drives). The per-feature `enabled` flag defaults ON (opt-out); the
+ * judge is a COST feature gated by the master switch `memory.costFeatures.enabled`
+ * (default `true` = opt-out) — turning that master switch OFF force-disables it. OFFLINE
+ * only: the judge runs on a cron and NEVER touches the recall read path (the recall
+ * hot path stays LLM-free).
  *
  * The citation-marker attribution is the KEYLESS core of this feature;
  * this judge is the optional extra. Its costed enablement (the sentinel → seam →
@@ -28,7 +29,7 @@ import { z } from "zod";
  * usefulness-judge cron (OPTIONAL).
  *
  * Fields:
- * - enabled: opt-in (default false — a cost gate, not back-compat)
+ * - enabled: default true (opt-out); a cost gate force-disabled by the master switch
  * - schedule: cron expression, AFTER social's "0 6" daily slot so the judge scores
  *   recalled-memory usefulness over a fully-settled night (review/consolidation/
  *   reasoning/user-repr/social have all run)

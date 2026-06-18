@@ -66,13 +66,23 @@ describe("PLAT-01 Stage-B — decideAutoAnswer safe-answer / escalate-always", (
     expect(d).toEqual({ action: "escalate", reason: "auth_login" });
   });
 
-  it("a safe screen matching a hintPattern ⇒ answer with a single Enter", () => {
+  it("a safe screen matching a hintPattern ⇒ answer with a single Enter (source 'hint')", () => {
     const d = decideAutoAnswer("safe-only", TERMINAL_SCREENS.safe, SAFE_HINT_PATTERNS);
-    expect(d).toEqual({ action: "answer", keys: ["\r"], matchedPatternIndex: 0 });
+    expect(d).toEqual({ action: "answer", source: "hint", keys: ["\r"], matchedPatternIndex: 0 });
   });
 
   it("no hintPattern match ⇒ escalate no_safe_match (the safe default)", () => {
     const d = decideAutoAnswer("safe-only", "some unrelated benign program output", SAFE_HINT_PATTERNS);
+    expect(d).toEqual({ action: "escalate", reason: "no_safe_match" });
+  });
+
+  it("narration carrying a destructive WORD but matching NO safe pattern ⇒ no_safe_match, NOT destructive (v2.26, real-VPS 2026-06-16)", () => {
+    // The escalate-always gate is a VETO scoped to an about-to-auto-answer safe match. A driven CLI
+    // that merely NARRATES "delete a todo" with no operator safe pattern is never auto-answered
+    // anyway, so the broad markers must NOT fire on it (they used to false-positive and wedge the
+    // drive). Still escalated (no keystroke invented) — just with the generic no_safe_match reason.
+    const narration = "I built a TODO app: add, list, mark done, delete a todo by id, clear all completed.";
+    const d = decideAutoAnswer("safe-only", narration, SAFE_HINT_PATTERNS);
     expect(d).toEqual({ action: "escalate", reason: "no_safe_match" });
   });
 });

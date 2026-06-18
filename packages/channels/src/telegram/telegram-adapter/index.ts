@@ -32,7 +32,7 @@ import {
   startLifecycle,
   stopLifecycle,
 } from "./telegram-lifecycle.js";
-import { registerMessageHandler } from "./telegram-inbound.js";
+import { registerMessageHandler, registerReactionHandler } from "./telegram-inbound.js";
 import {
   deleteMessage,
   editMessage,
@@ -76,6 +76,7 @@ export function createTelegramAdapter(deps: TelegramAdapterDeps): TelegramAdapte
   const state: TelegramAdapterState = {
     bot,
     handlers: [],
+    reactionHandlers: [],
     channelId: "telegram-pending",
     runnerHandle: null,
     botIdentity: undefined,
@@ -121,6 +122,10 @@ export function createTelegramAdapter(deps: TelegramAdapterDeps): TelegramAdapte
 
     onMessage(handler) {
       registerMessageHandler(state, handler);
+    },
+
+    onReaction(handler) {
+      registerReactionHandler(state, handler);
     },
 
     getStatus: () => getStatusReport(state),

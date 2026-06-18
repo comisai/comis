@@ -107,11 +107,10 @@ export const MemoryEntityRowSchema = z.strictObject({
 
 /**
  * Schema for the `readUsefulness` projection (per-intent). The scoped `SELECT memory_id, intent, used_count,
- * ignored_count, last_useful_at FROM memory_usefulness WHERE tenant_id=? AND
- * agent_id=? AND intent IN (?, '') AND memory_id IN (...)` read; tenant_id/agent_id
- * NOT projected (the WHERE pins them). `intent` IS projected (the per-intent vs
- * global-`''` bucket), NON-nullable (NOT NULL DEFAULT '' — global is `''`, never
- * NULL); `last_useful_at` nullable (NULL until first "used"). Via `createRowMapper`.
+ * ignored_count, last_useful_at, failure_count FROM memory_usefulness WHERE tenant_id=? AND
+ * agent_id=? AND intent IN (?, '') AND memory_id IN (...)` read; tenant_id/agent_id NOT
+ * projected (the WHERE pins them). `intent` IS projected (per-intent vs global-`''`),
+ * NON-nullable (NOT NULL DEFAULT ''); `last_useful_at` nullable (NULL until first "used"). Via `createRowMapper`.
  */
 export const MemoryUsefulnessRowSchema = z.strictObject({
   memory_id: z.string(),
@@ -121,18 +120,18 @@ export const MemoryUsefulnessRowSchema = z.strictObject({
   ignored_count: z.number(),
   /** Epoch ms of the last "used" attribution; NULL until first use. */
   last_useful_at: z.number().nullable(),
+  /** Outcome-attributed task-failure count (NOT NULL DEFAULT 0; FORGET-02) — DISTINCT from ignored_count. WR-03: the readUsefulness projection NOW selects it (the bandit feed's negative-reward signal, surfaced onto the signal only when >0); `.optional()` keeps the schema tolerant of the legacy/lifecycle reads that omit it. */
+  failure_count: z.number().optional(),
 });
 
 /**
- * Schema for the lifecycle-sweep candidate-scan projection.
- * The scoped `SELECT id, memory_type, occurred_at, created_at, proof_count,
- * lifecycle_demoted_at, evicted_at, strength FROM memories WHERE tenant_id=? AND
- * agent_id=?` read the DORMANT sweep uses to compute each candidate's decayed
- * strength + hysteresis-banded tier; tenant_id/agent_id NOT projected (the WHERE
- * pins them). The three markers + occurred_at + proof_count are `.nullable()` (NULL
- * = not demoted / not evicted / no strength yet / event-time unknown / raw);
- * `memory_type` is NOT NULL (DEFAULT 'semantic'), drives the per-type β. Via
- * `createRowMapper`. SCAFFOLD-DORMANT: the sweep READS these markers but writes NONE.
+ * Schema for the lifecycle-sweep candidate-scan projection — the scoped
+ * `SELECT m.id, …, m.pinned, m.trust_level, SUM(u.failure_count), MAX(u.last_useful_at)
+ * FROM memories m LEFT JOIN memory_usefulness u … WHERE m.tenant_id=? AND m.agent_id=?`
+ * the sweep uses to compute each candidate's decayed strength (failure_count-coupled) +
+ * tier + eviction candidacy (tenant_id/agent_id NOT projected — the WHERE pins them).
+ * Markers + occurred_at + proof_count + failure_count + last_useful_at are `.nullable()`;
+ * `memory_type` NOT NULL drives β; `pinned`/`trust_level` feed the FORGET-03 exemptions. Via `createRowMapper`.
  */
 export const MemoryLifecycleRowSchema = z.strictObject({
   id: z.string(),
@@ -150,6 +149,14 @@ export const MemoryLifecycleRowSchema = z.strictObject({
   evicted_at: z.number().nullable(),
   /** Computed strength side-column (REAL 0..1); NULL = not yet computed. */
   strength: z.number().nullable(),
+  /** Pinned flag (NOT NULL DEFAULT 0); pinned=1 is a hard eviction exemption (FORGET-03). */
+  pinned: z.number(),
+  /** Trust tier ('system'|'learned'|'external'); 'system' is exempt (FORGET-03). */
+  trust_level: z.string(),
+  /** SUM(failure_count) across intents (LEFT JOIN; NULL→0) — the failurePenalty coupling (FORGET-02). */
+  failure_count: z.number().nullable(),
+  /** MAX(last_useful_at) across intents (LEFT JOIN; NULL = never recalled) — the DISUSE signal the dormant-age branch keys off (WR-02), NOT occurred_at. */
+  last_useful_at: z.number().nullable(),
 });
 
 /**
@@ -204,19 +211,13 @@ export const MemoryTripleRowSchema = z.strictObject({
   confidence: z.number().nullable(),
 });
 
-// Schema for a `user_representation` row projection. The scoped
-// read projects the 7 columns below (NOT tenant_id/agent_id/user_id — the WHERE pins
-// them); trust/entry_type z.enum match the DDL CHECKs ('external' absent);
-// source_memory_id/updated_at nullable. Parsed via createRowMapper.
-export const UserRepresentationRowSchema = z.strictObject({
-  id: z.string(),
-  entry_type: z.enum(["identity", "preference", "relationship", "instruction"]),
-  content: z.string(),
-  trust: z.enum(["system", "learned"]),
-  source_memory_id: z.string().nullable().optional(),
-  created_at: z.number(),
-  updated_at: z.number().nullable().optional(),
-});
+// The `user_representation` read-projection schema is co-located in
+// `user-representation-row-schema.ts` (this file is at the 800-line cap; the
+// tuned-alpha-row-schema.ts / outcome-event-row-schema.ts precedent) and re-exported
+// here so existing importers keep their import site. v2.26 WS5 REVISE-02: it carries
+// the four bi-temporal columns (t_valid_start/t_valid_end/expired_at/confidence) for
+// the asOf read + the supersession incumbent SELECT.
+export { UserRepresentationRowSchema } from "./user-representation-row-schema.js";
 
 // Schema for a `relationship` row projection. The scoped read
 // projects 8 columns (NOT tenant_id/agent_id/channel_id — the WHERE pins them); the
@@ -233,17 +234,12 @@ export const RelationshipRowSchema = z.strictObject({
   updated_at: z.number().nullable().optional(),
 });
 
-// Schema for a `tuned_alpha` row projection. The scoped read
-// projects 5 columns (NOT tenant_id/agent_id — the WHERE pins them): the 4 REAL
-// tunable boost alphas + updated_at. NO fifth (trust-weight) column (the structural
-// trust-freeze belt #3). Maps snake_case -> camelCase `TunedAlphaVector`. Via createRowMapper.
-export const TunedAlphaRowSchema = z.strictObject({
-  recency_alpha: z.number(),
-  temporal_alpha: z.number(),
-  proof_alpha: z.number(),
-  usefulness_alpha: z.number(),
-  updated_at: z.number(),
-});
+// The `tuned_alpha` read-projection schema is co-located in
+// `tuned-alpha-row-schema.ts` (this file is at the 800-line cap; the
+// outcome-event-row-schema.ts precedent) and re-exported here so existing
+// importers keep their import site (the scoped read projects the 4 alphas +
+// updated_at only — belt #3).
+export { TunedAlphaRowSchema } from "./tuned-alpha-row-schema.js";
 
 /**
  * Schema for the graph-spread recursive-CTE node projection. The

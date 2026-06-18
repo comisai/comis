@@ -18,7 +18,7 @@
  */
 
 import { runWithContext, systemNowMs } from "@comis/core";
-import type { NormalizedMessage } from "@comis/core";
+import type { NormalizedMessage, NormalizedReaction } from "@comis/core";
 import { randomUUID } from "node:crypto";
 import { mapGrammyToNormalized } from "../message-mapper.js";
 import { normalizeTelegramPollResult } from "../../shared/poll-normalizer.js";
@@ -254,6 +254,72 @@ export function bindInboundHandlers(
       );
     }
   });
+
+  // REACT-01: inbound reaction-add capture. Requires the runner allowed_updates
+  // opt-in to include "message_reaction" (telegram-lifecycle.ts) — without it
+  // Telegram never delivers this update. A reaction-ADD = an emoji present in
+  // new_reaction but NOT in old_reaction; a removal-only update is skipped.
+  // NOTE (webhook mode): telegram-webhook.ts picks runner vs webhook via
+  // shouldUseRunner; the allowed_updates opt-in covers the runner (polling)
+  // path. A webhook deployment must pass the same allowed_updates list to
+  // setWebhook (operator-side config, DOC-01) — out of scope for this binder.
+  state.bot.on("message_reaction", (ctx) => {
+    const mr = ctx.messageReaction;
+    if (!mr || !mr.user) return; // anonymous channel reaction → no reactor id
+    // Bot-own filter — never count the bot's own reactions.
+    if (state.botIdentity && mr.user.id === state.botIdentity.id) return;
+
+    const oldEmojis = new Set(emojiNames(mr.old_reaction));
+    const added = emojiNames(mr.new_reaction).filter((emoji) => !oldEmojis.has(emoji));
+    if (added.length === 0) return; // removal-only / non-emoji update → skip
+
+    for (const emoji of added) {
+      const normalized: NormalizedReaction = {
+        messageId: String(mr.message_id),
+        reactorId: String(mr.user.id),
+        emoji,
+        channelType: "telegram",
+        channelId: String(mr.chat.id),
+      };
+      for (const handler of state.reactionHandlers) {
+        // try/catch + .catch so a sync OR async handler throw is non-fatal.
+        try {
+          Promise.resolve(handler(normalized)).catch((handlerErr) =>
+            warnReactionHandlerFailed(deps, handlerErr),
+          );
+        } catch (handlerErr) {
+          warnReactionHandlerFailed(deps, handlerErr);
+        }
+      }
+    }
+  });
+}
+
+/**
+ * Extract the plain-emoji names from a grammy reaction list, dropping
+ * custom-emoji and paid reactions (only plain emoji can match the reactionMap
+ * downstream). `r.type === "emoji"` narrows to ReactionTypeEmoji whose `emoji`
+ * is the closed Telegram emoji union — returned as plain strings.
+ */
+function emojiNames(reactions: import("grammy/types").ReactionType[] | undefined): string[] {
+  const out: string[] = [];
+  for (const r of reactions ?? []) {
+    if (r.type === "emoji") out.push(r.emoji);
+  }
+  return out;
+}
+
+/** Log a non-fatal Telegram reaction-handler failure (sync throw or rejected promise). */
+function warnReactionHandlerFailed(deps: TelegramAdapterDeps, handlerErr: unknown): void {
+  deps.logger.warn(
+    {
+      channelType: "telegram",
+      err: handlerErr instanceof Error ? handlerErr : new Error(String(handlerErr)),
+      hint: "Telegram reaction handler threw; reaction dropped (non-fatal)",
+      errorKind: "platform" as const,
+    },
+    "Reaction handler failed",
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -266,4 +332,12 @@ export function registerMessageHandler(
   handler: import("@comis/core").MessageHandler,
 ): void {
   state.handlers.push(handler);
+}
+
+/** Append a ReactionHandler to the adapter's reaction dispatch list (REACT-01). */
+export function registerReactionHandler(
+  state: TelegramAdapterState,
+  handler: import("@comis/core").ReactionHandler,
+): void {
+  state.reactionHandlers.push(handler);
 }

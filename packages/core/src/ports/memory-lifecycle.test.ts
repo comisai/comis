@@ -41,19 +41,21 @@ const here = dirname(fileURLToPath(import.meta.url));
 const portSrc = readFileSync(resolve(here, "./memory-lifecycle.ts"), "utf8");
 
 /**
- * The segregated, SCAFFOLD-DORMANT `MemoryLifecyclePort` foundation.
+ * The segregated, LIVE-but-gated `MemoryLifecyclePort` foundation.
  *
  * The lifecycle port lives type-only in @comis/core (mirrors tuned-alpha-store.ts /
  * user-representation-store.ts): the sole adapter lands in @comis/memory, the
- * daemon cron wires it; they consume it by TYPE. The port carries a
- * single maintenance method `runLifecycleSweep`, scoped per (tenant, agent) with an
- * injected `now`, Result-returning.
+ * daemon cron wires it; they consume it by TYPE. The port carries the maintenance
+ * `runLifecycleSweep` (scoped per (tenant, agent) with an injected `now`, Result-returning)
+ * + the reversal `unevict`, plus the optional per-call `MemoryLifecycleEvictionOverride`
+ * the daemon threads from each agent's `learningForgetting` policy (FORGET-06).
  *
- * THE binding contract (gap-report OD4): the port is SCAFFOLD-DORMANT —
- * the sweep computes strengths/tiers but its demote/evict step performs NOTHING
- * (promoted/demoted/evicted stay 0) until an operator enables it; live eviction is
- * the deferred operator step. The port is a NEW segregated port — it does NOT
- * widen the security-reviewed MemoryPort.
+ * THE binding contract (FORGET-01): the port soft-evicts ONLY under an eviction-enabled
+ * policy (the `evicted_at` marker, never a DELETE; reversible via `unevict`), and stays
+ * DORMANT (evicts/demotes nothing — byte-identical) by default. The default-OFF gate is the
+ * behavior switch, not a back-compat fallback. Tier promote/demote moves remain deferred
+ * (promoted/demoted stay 0). The port is a NEW segregated port — it does NOT widen the
+ * security-reviewed MemoryPort.
  */
 describe("MemoryLifecyclePort — type-only segregated lifecycle port", () => {
   it("declares runLifecycleSweep on the port and stays type-only (no zod, no @comis/memory)", () => {
@@ -94,13 +96,15 @@ describe("MemoryLifecyclePort — type-only segregated lifecycle port", () => {
     expect(portSrc, "no `export class` in a type-only port").not.toMatch(/^\s*export\s+class\s/m);
   });
 
-  it("documents the SCAFFOLD-DORMANT contract VERBATIM (the OD4 deferral + the agent↛memory cut)", () => {
-    // The dormant-scaffold framing is load-bearing: it records WHY a wired port
-    // evicts/demotes nothing (OD4). The doc-comment must name the scaffold + the
-    // deferral so a future reader does not "complete" the live eviction by mistake.
-    expect(portSrc, "the doc must call the contract SCAFFOLD/dormant").toMatch(/SCAFFOLD/);
-    expect(portSrc, "the doc must cite the gap-report OD4 deferral").toMatch(/OD4/);
-    expect(portSrc, "the doc must record live eviction as deferred").toMatch(/deferred/i);
+  it("documents the LIVE-but-gated soft-eviction contract VERBATIM (the FORGET-01 default-OFF gate + the agent↛memory cut)", () => {
+    // The LIVE-but-gated framing is load-bearing: 200-05 activated soft eviction behind the
+    // eviction-enabled policy (FORGET-01), so the doc must record that the sweep soft-evicts
+    // ONLY under the policy and stays DORMANT (byte-identical) by default — so a future reader
+    // understands the default-OFF gate is the behavior switch, NOT a back-compat fallback.
+    expect(portSrc, "the doc must name LIVE soft eviction").toMatch(/LIVE soft eviction/);
+    expect(portSrc, "the doc must record the DORMANT default (byte-identity)").toMatch(/DORMANT/);
+    expect(portSrc, "the doc must record the (still-deferred) tier moves").toMatch(/deferred/i);
+    expect(portSrc, "the doc must cite the FORGET-01 requirement").toMatch(/FORGET-01/);
     // The NEW-port framing carried verbatim from tuned-alpha-store.ts.
     expect(portSrc, "the doc must state the port does NOT widen MemoryPort").toMatch(
       /does NOT widen/i,

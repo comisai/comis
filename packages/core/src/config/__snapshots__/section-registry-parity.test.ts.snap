@@ -924,6 +924,274 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "string"
   },
   {
+    "default": {
+      "enabled": true,
+      "eviction": {
+        "enabled": true,
+        "strengthThreshold": 0.2
+      },
+      "failurePenalty": 0.5
+    },
+    "immutable": true,
+    "path": "agents.learningForgetting",
+    "type": "object"
+  },
+  {
+    "default": true,
+    "immutable": true,
+    "path": "agents.learningForgetting.enabled",
+    "type": "boolean"
+  },
+  {
+    "default": {
+      "enabled": true,
+      "strengthThreshold": 0.2
+    },
+    "immutable": true,
+    "path": "agents.learningForgetting.eviction",
+    "type": "object"
+  },
+  {
+    "default": true,
+    "immutable": true,
+    "path": "agents.learningForgetting.eviction.enabled",
+    "type": "boolean"
+  },
+  {
+    "default": 0.2,
+    "immutable": true,
+    "path": "agents.learningForgetting.eviction.strengthThreshold",
+    "type": "number"
+  },
+  {
+    "default": 0.5,
+    "immutable": true,
+    "path": "agents.learningForgetting.failurePenalty",
+    "type": "number"
+  },
+  {
+    "default": {
+      "correction": {
+        "enabled": true
+      },
+      "enabled": true,
+      "judge": {
+        "enabled": false
+      },
+      "minConfidenceToLearn": 0.6,
+      "reactionMap": {
+        "failure": [
+          "👎",
+          "❌"
+        ],
+        "success": [
+          "👍",
+          "✅"
+        ]
+      },
+      "retentionDays": 30,
+      "sources": [
+        "tool",
+        "pipeline"
+      ]
+    },
+    "immutable": true,
+    "path": "agents.learningOutcome",
+    "type": "object"
+  },
+  {
+    "default": {
+      "enabled": true
+    },
+    "immutable": true,
+    "path": "agents.learningOutcome.correction",
+    "type": "object"
+  },
+  {
+    "default": true,
+    "immutable": true,
+    "path": "agents.learningOutcome.correction.enabled",
+    "type": "boolean"
+  },
+  {
+    "default": true,
+    "immutable": true,
+    "path": "agents.learningOutcome.enabled",
+    "type": "boolean"
+  },
+  {
+    "default": {
+      "enabled": false
+    },
+    "immutable": true,
+    "path": "agents.learningOutcome.judge",
+    "type": "object"
+  },
+  {
+    "default": false,
+    "immutable": true,
+    "path": "agents.learningOutcome.judge.enabled",
+    "type": "boolean"
+  },
+  {
+    "default": 0.6,
+    "immutable": true,
+    "path": "agents.learningOutcome.minConfidenceToLearn",
+    "type": "number"
+  },
+  {
+    "default": {
+      "failure": [
+        "👎",
+        "❌"
+      ],
+      "success": [
+        "👍",
+        "✅"
+      ]
+    },
+    "immutable": true,
+    "path": "agents.learningOutcome.reactionMap",
+    "type": "object"
+  },
+  {
+    "default": [
+      "👎",
+      "❌"
+    ],
+    "immutable": true,
+    "path": "agents.learningOutcome.reactionMap.failure",
+    "type": "array"
+  },
+  {
+    "default": [
+      "👍",
+      "✅"
+    ],
+    "immutable": true,
+    "path": "agents.learningOutcome.reactionMap.success",
+    "type": "array"
+  },
+  {
+    "default": 30,
+    "immutable": true,
+    "path": "agents.learningOutcome.retentionDays",
+    "type": "integer"
+  },
+  {
+    "default": [
+      "tool",
+      "pipeline"
+    ],
+    "immutable": true,
+    "path": "agents.learningOutcome.sources",
+    "type": "array"
+  },
+  {
+    "default": {
+      "approval": {
+        "requireForMutating": true
+      },
+      "autoAdmitReadOnly": true,
+      "enabled": true,
+      "minConfidence": 0.7,
+      "promoteAtProofCount": 3,
+      "validation": {
+        "requireReproduction": true
+      }
+    },
+    "immutable": true,
+    "path": "agents.learningSkills",
+    "type": "object"
+  },
+  {
+    "default": {
+      "requireForMutating": true
+    },
+    "immutable": true,
+    "path": "agents.learningSkills.approval",
+    "type": "object"
+  },
+  {
+    "default": true,
+    "immutable": true,
+    "path": "agents.learningSkills.approval.requireForMutating",
+    "type": "boolean"
+  },
+  {
+    "default": true,
+    "immutable": true,
+    "path": "agents.learningSkills.autoAdmitReadOnly",
+    "type": "boolean"
+  },
+  {
+    "default": true,
+    "immutable": true,
+    "path": "agents.learningSkills.enabled",
+    "type": "boolean"
+  },
+  {
+    "default": 0.7,
+    "immutable": true,
+    "path": "agents.learningSkills.minConfidence",
+    "type": "number"
+  },
+  {
+    "default": 3,
+    "immutable": true,
+    "path": "agents.learningSkills.promoteAtProofCount",
+    "type": "integer"
+  },
+  {
+    "default": {
+      "requireReproduction": true
+    },
+    "immutable": true,
+    "path": "agents.learningSkills.validation",
+    "type": "object"
+  },
+  {
+    "default": true,
+    "immutable": true,
+    "path": "agents.learningSkills.validation.requireReproduction",
+    "type": "boolean"
+  },
+  {
+    "default": {
+      "enabled": true,
+      "exploration": 0.1,
+      "learner": "bandit",
+      "perIntent": true
+    },
+    "immutable": true,
+    "path": "agents.learningTuning",
+    "type": "object"
+  },
+  {
+    "default": true,
+    "immutable": true,
+    "path": "agents.learningTuning.enabled",
+    "type": "boolean"
+  },
+  {
+    "default": 0.1,
+    "immutable": true,
+    "path": "agents.learningTuning.exploration",
+    "type": "number"
+  },
+  {
+    "default": "bandit",
+    "immutable": true,
+    "path": "agents.learningTuning.learner",
+    "type": "string"
+  },
+  {
+    "default": true,
+    "immutable": true,
+    "path": "agents.learningTuning.perIntent",
+    "type": "boolean"
+  },
+  {
     "default": 100000,
     "immutable": true,
     "path": "agents.maxContextChars",
@@ -952,6 +1220,10 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
       "consolidateExternal": false,
       "dedupThreshold": 0.9,
       "enabled": true,
+      "generalize": {
+        "enabled": true,
+        "minDistinctContexts": 3
+      },
       "maxCandidatesPerRun": 200,
       "maxClusterSize": 12,
       "maxClustersPerRun": 25,
@@ -986,6 +1258,27 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "immutable": true,
     "path": "agents.memoryConsolidation.enabled",
     "type": "boolean"
+  },
+  {
+    "default": {
+      "enabled": true,
+      "minDistinctContexts": 3
+    },
+    "immutable": true,
+    "path": "agents.memoryConsolidation.generalize",
+    "type": "object"
+  },
+  {
+    "default": true,
+    "immutable": true,
+    "path": "agents.memoryConsolidation.generalize.enabled",
+    "type": "boolean"
+  },
+  {
+    "default": 3,
+    "immutable": true,
+    "path": "agents.memoryConsolidation.generalize.minDistinctContexts",
+    "type": "integer"
   },
   {
     "default": 200,
@@ -1024,6 +1317,16 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "number"
   },
   {
+    "default": {
+      "durableCap": 1000,
+      "enabled": true,
+      "ephemeralCap": 500,
+      "epsilonPrune": 0.05,
+      "maxDormantDays": 90,
+      "schedule": "0 9 * * *",
+      "thetaDemote": 0.3,
+      "thetaPromote": 0.7
+    },
     "immutable": true,
     "path": "agents.memoryLifecycle",
     "type": "object"
@@ -1035,7 +1338,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "integer"
   },
   {
-    "default": false,
+    "default": true,
     "immutable": true,
     "path": "agents.memoryLifecycle.enabled",
     "type": "boolean"
@@ -1233,6 +1536,34 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   {
     "default": {
       "enabled": true,
+      "maxCandidatesPerRun": 200,
+      "schedule": "0 6 * * *"
+    },
+    "immutable": true,
+    "path": "agents.memoryTripleExtraction",
+    "type": "object"
+  },
+  {
+    "default": true,
+    "immutable": true,
+    "path": "agents.memoryTripleExtraction.enabled",
+    "type": "boolean"
+  },
+  {
+    "default": 200,
+    "immutable": true,
+    "path": "agents.memoryTripleExtraction.maxCandidatesPerRun",
+    "type": "integer"
+  },
+  {
+    "default": "0 6 * * *",
+    "immutable": true,
+    "path": "agents.memoryTripleExtraction.schedule",
+    "type": "string"
+  },
+  {
+    "default": {
+      "enabled": true,
       "maxSourceChars": 24000,
       "maxSourceMemories": 200,
       "schedule": "0 7 * * *"
@@ -1268,6 +1599,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   {
     "default": {
       "enabled": true,
+      "historyCap": 10,
       "maxEntriesPerRun": 50,
       "maxSourceChars": 24000,
       "maxSourceMemories": 200,
@@ -1282,6 +1614,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "immutable": true,
     "path": "agents.memoryUserRepresentation.enabled",
     "type": "boolean"
+  },
+  {
+    "default": 10,
+    "immutable": true,
+    "path": "agents.memoryUserRepresentation.historyCap",
+    "type": "integer"
   },
   {
     "default": 50,
@@ -8062,6 +8400,57 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() — 
           "enabled": false,
           "maxActiveCaches": 20
         },
+        "learningForgetting": {
+          "enabled": true,
+          "eviction": {
+            "enabled": true,
+            "strengthThreshold": 0.2
+          },
+          "failurePenalty": 0.5
+        },
+        "learningOutcome": {
+          "correction": {
+            "enabled": true
+          },
+          "enabled": true,
+          "judge": {
+            "enabled": false
+          },
+          "minConfidenceToLearn": 0.6,
+          "reactionMap": {
+            "failure": [
+              "👎",
+              "❌"
+            ],
+            "success": [
+              "👍",
+              "✅"
+            ]
+          },
+          "retentionDays": 30,
+          "sources": [
+            "tool",
+            "pipeline"
+          ]
+        },
+        "learningSkills": {
+          "approval": {
+            "requireForMutating": true
+          },
+          "autoAdmitReadOnly": true,
+          "enabled": true,
+          "minConfidence": 0.7,
+          "promoteAtProofCount": 3,
+          "validation": {
+            "requireReproduction": true
+          }
+        },
+        "learningTuning": {
+          "enabled": true,
+          "exploration": 0.1,
+          "learner": "bandit",
+          "perIntent": true
+        },
         "maxContextChars": 100000,
         "maxSteps": 150,
         "maxToolResultChars": 50000,
@@ -8070,12 +8459,26 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() — 
           "consolidateExternal": false,
           "dedupThreshold": 0.9,
           "enabled": true,
+          "generalize": {
+            "enabled": true,
+            "minDistinctContexts": 3
+          },
           "maxCandidatesPerRun": 200,
           "maxClusterSize": 12,
           "maxClustersPerRun": 25,
           "maxConsolidationTokens": 1024,
           "schedule": "30 3 * * *",
           "similarityThreshold": 0.82
+        },
+        "memoryLifecycle": {
+          "durableCap": 1000,
+          "enabled": true,
+          "ephemeralCap": 500,
+          "epsilonPrune": 0.05,
+          "maxDormantDays": 90,
+          "schedule": "0 9 * * *",
+          "thetaDemote": 0.3,
+          "thetaPromote": 0.7
         },
         "memoryOnlineTuning": {
           "enabled": true,
@@ -8102,6 +8505,11 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() — 
           "minMessages": 5,
           "schedule": "0 2 * * *"
         },
+        "memoryTripleExtraction": {
+          "enabled": true,
+          "maxCandidatesPerRun": 200,
+          "schedule": "0 6 * * *"
+        },
         "memoryUsefulnessJudge": {
           "enabled": true,
           "maxSourceChars": 24000,
@@ -8110,6 +8518,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() — 
         },
         "memoryUserRepresentation": {
           "enabled": true,
+          "historyCap": 10,
           "maxEntriesPerRun": 50,
           "maxSourceChars": 24000,
           "maxSourceMemories": 200,
@@ -16182,6 +16591,319 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
     "language": {
       "type": "string"
     },
+    "learningForgetting": {
+      "additionalProperties": false,
+      "default": {
+        "enabled": true,
+        "eviction": {
+          "enabled": true,
+          "strengthThreshold": 0.2
+        },
+        "failurePenalty": 0.5
+      },
+      "properties": {
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "eviction": {
+          "additionalProperties": false,
+          "default": {
+            "enabled": true,
+            "strengthThreshold": 0.2
+          },
+          "properties": {
+            "enabled": {
+              "default": true,
+              "type": "boolean"
+            },
+            "strengthThreshold": {
+              "default": 0.2,
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            }
+          },
+          "required": [
+            "enabled",
+            "strengthThreshold"
+          ],
+          "type": "object"
+        },
+        "failurePenalty": {
+          "default": 0.5,
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        }
+      },
+      "required": [
+        "enabled",
+        "eviction",
+        "failurePenalty"
+      ],
+      "type": "object"
+    },
+    "learningOutcome": {
+      "additionalProperties": false,
+      "default": {
+        "correction": {
+          "enabled": true
+        },
+        "enabled": true,
+        "judge": {
+          "enabled": false
+        },
+        "minConfidenceToLearn": 0.6,
+        "reactionMap": {
+          "failure": [
+            "👎",
+            "❌"
+          ],
+          "success": [
+            "👍",
+            "✅"
+          ]
+        },
+        "retentionDays": 30,
+        "sources": [
+          "tool",
+          "pipeline"
+        ]
+      },
+      "properties": {
+        "correction": {
+          "additionalProperties": false,
+          "default": {
+            "enabled": true
+          },
+          "properties": {
+            "enabled": {
+              "default": true,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "enabled"
+          ],
+          "type": "object"
+        },
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "judge": {
+          "additionalProperties": false,
+          "default": {
+            "enabled": false
+          },
+          "properties": {
+            "enabled": {
+              "default": false,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "enabled"
+          ],
+          "type": "object"
+        },
+        "minConfidenceToLearn": {
+          "default": 0.6,
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        "reactionMap": {
+          "additionalProperties": false,
+          "default": {
+            "failure": [
+              "👎",
+              "❌"
+            ],
+            "success": [
+              "👍",
+              "✅"
+            ]
+          },
+          "properties": {
+            "failure": {
+              "default": [
+                "👎",
+                "❌"
+              ],
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "success": {
+              "default": [
+                "👍",
+                "✅"
+              ],
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "success",
+            "failure"
+          ],
+          "type": "object"
+        },
+        "retentionDays": {
+          "default": 30,
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "sources": {
+          "default": [
+            "tool",
+            "pipeline"
+          ],
+          "items": {
+            "enum": [
+              "tool",
+              "pipeline"
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "enabled",
+        "sources",
+        "reactionMap",
+        "judge",
+        "correction",
+        "minConfidenceToLearn",
+        "retentionDays"
+      ],
+      "type": "object"
+    },
+    "learningSkills": {
+      "additionalProperties": false,
+      "default": {
+        "approval": {
+          "requireForMutating": true
+        },
+        "autoAdmitReadOnly": true,
+        "enabled": true,
+        "minConfidence": 0.7,
+        "promoteAtProofCount": 3,
+        "validation": {
+          "requireReproduction": true
+        }
+      },
+      "properties": {
+        "approval": {
+          "additionalProperties": false,
+          "default": {
+            "requireForMutating": true
+          },
+          "properties": {
+            "requireForMutating": {
+              "default": true,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "requireForMutating"
+          ],
+          "type": "object"
+        },
+        "autoAdmitReadOnly": {
+          "default": true,
+          "type": "boolean"
+        },
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "minConfidence": {
+          "default": 0.7,
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        "promoteAtProofCount": {
+          "default": 3,
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "validation": {
+          "additionalProperties": false,
+          "default": {
+            "requireReproduction": true
+          },
+          "properties": {
+            "requireReproduction": {
+              "default": true,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "requireReproduction"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "enabled",
+        "validation",
+        "autoAdmitReadOnly",
+        "approval",
+        "minConfidence",
+        "promoteAtProofCount"
+      ],
+      "type": "object"
+    },
+    "learningTuning": {
+      "additionalProperties": false,
+      "default": {
+        "enabled": true,
+        "exploration": 0.1,
+        "learner": "bandit",
+        "perIntent": true
+      },
+      "properties": {
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "exploration": {
+          "default": 0.1,
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        "learner": {
+          "default": "bandit",
+          "enum": [
+            "bandit",
+            "nudge"
+          ],
+          "type": "string"
+        },
+        "perIntent": {
+          "default": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "enabled",
+        "learner",
+        "perIntent",
+        "exploration"
+      ],
+      "type": "object"
+    },
     "maxContextChars": {
       "default": 100000,
       "exclusiveMinimum": 0,
@@ -16212,6 +16934,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         "consolidateExternal": false,
         "dedupThreshold": 0.9,
         "enabled": true,
+        "generalize": {
+          "enabled": true,
+          "minDistinctContexts": 3
+        },
         "maxCandidatesPerRun": 200,
         "maxClusterSize": 12,
         "maxClustersPerRun": 25,
@@ -16240,6 +16966,30 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         "enabled": {
           "default": true,
           "type": "boolean"
+        },
+        "generalize": {
+          "additionalProperties": false,
+          "default": {
+            "enabled": true,
+            "minDistinctContexts": 3
+          },
+          "properties": {
+            "enabled": {
+              "default": true,
+              "type": "boolean"
+            },
+            "minDistinctContexts": {
+              "default": 3,
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "enabled",
+            "minDistinctContexts"
+          ],
+          "type": "object"
         },
         "maxCandidatesPerRun": {
           "default": 200,
@@ -16286,12 +17036,23 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         "maxClustersPerRun",
         "maxConsolidationTokens",
         "consolidateExternal",
-        "autoTags"
+        "autoTags",
+        "generalize"
       ],
       "type": "object"
     },
     "memoryLifecycle": {
       "additionalProperties": false,
+      "default": {
+        "durableCap": 1000,
+        "enabled": true,
+        "ephemeralCap": 500,
+        "epsilonPrune": 0.05,
+        "maxDormantDays": 90,
+        "schedule": "0 9 * * *",
+        "thetaDemote": 0.3,
+        "thetaPromote": 0.7
+      },
       "properties": {
         "durableCap": {
           "default": 1000,
@@ -16300,7 +17061,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           "type": "integer"
         },
         "enabled": {
-          "default": false,
+          "default": true,
           "type": "boolean"
         },
         "ephemeralCap": {
@@ -16520,6 +17281,36 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
       ],
       "type": "object"
     },
+    "memoryTripleExtraction": {
+      "additionalProperties": false,
+      "default": {
+        "enabled": true,
+        "maxCandidatesPerRun": 200,
+        "schedule": "0 6 * * *"
+      },
+      "properties": {
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "maxCandidatesPerRun": {
+          "default": 200,
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "schedule": {
+          "default": "0 6 * * *",
+          "type": "string"
+        }
+      },
+      "required": [
+        "enabled",
+        "schedule",
+        "maxCandidatesPerRun"
+      ],
+      "type": "object"
+    },
     "memoryUsefulnessJudge": {
       "additionalProperties": false,
       "default": {
@@ -16562,6 +17353,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
       "additionalProperties": false,
       "default": {
         "enabled": true,
+        "historyCap": 10,
         "maxEntriesPerRun": 50,
         "maxSourceChars": 24000,
         "maxSourceMemories": 200,
@@ -16571,6 +17363,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         "enabled": {
           "default": true,
           "type": "boolean"
+        },
+        "historyCap": {
+          "default": 10,
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
         },
         "maxEntriesPerRun": {
           "default": 50,
@@ -16600,7 +17398,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         "schedule",
         "maxEntriesPerRun",
         "maxSourceMemories",
-        "maxSourceChars"
+        "maxSourceChars",
+        "historyCap"
       ],
       "type": "object"
     },
@@ -19149,7 +19948,13 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
     "memoryUserRepresentation",
     "dialectic",
     "memoryUsefulnessJudge",
-    "memoryOnlineTuning"
+    "learningOutcome",
+    "learningTuning",
+    "learningForgetting",
+    "learningSkills",
+    "memoryTripleExtraction",
+    "memoryOnlineTuning",
+    "memoryLifecycle"
   ],
   "type": "object"
 }"
@@ -26809,6 +27614,319 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() �
           "language": {
             "type": "string"
           },
+          "learningForgetting": {
+            "additionalProperties": false,
+            "default": {
+              "enabled": true,
+              "eviction": {
+                "enabled": true,
+                "strengthThreshold": 0.2
+              },
+              "failurePenalty": 0.5
+            },
+            "properties": {
+              "enabled": {
+                "default": true,
+                "type": "boolean"
+              },
+              "eviction": {
+                "additionalProperties": false,
+                "default": {
+                  "enabled": true,
+                  "strengthThreshold": 0.2
+                },
+                "properties": {
+                  "enabled": {
+                    "default": true,
+                    "type": "boolean"
+                  },
+                  "strengthThreshold": {
+                    "default": 0.2,
+                    "maximum": 1,
+                    "minimum": 0,
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "enabled",
+                  "strengthThreshold"
+                ],
+                "type": "object"
+              },
+              "failurePenalty": {
+                "default": 0.5,
+                "maximum": 1,
+                "minimum": 0,
+                "type": "number"
+              }
+            },
+            "required": [
+              "enabled",
+              "eviction",
+              "failurePenalty"
+            ],
+            "type": "object"
+          },
+          "learningOutcome": {
+            "additionalProperties": false,
+            "default": {
+              "correction": {
+                "enabled": true
+              },
+              "enabled": true,
+              "judge": {
+                "enabled": false
+              },
+              "minConfidenceToLearn": 0.6,
+              "reactionMap": {
+                "failure": [
+                  "👎",
+                  "❌"
+                ],
+                "success": [
+                  "👍",
+                  "✅"
+                ]
+              },
+              "retentionDays": 30,
+              "sources": [
+                "tool",
+                "pipeline"
+              ]
+            },
+            "properties": {
+              "correction": {
+                "additionalProperties": false,
+                "default": {
+                  "enabled": true
+                },
+                "properties": {
+                  "enabled": {
+                    "default": true,
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "enabled"
+                ],
+                "type": "object"
+              },
+              "enabled": {
+                "default": true,
+                "type": "boolean"
+              },
+              "judge": {
+                "additionalProperties": false,
+                "default": {
+                  "enabled": false
+                },
+                "properties": {
+                  "enabled": {
+                    "default": false,
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "enabled"
+                ],
+                "type": "object"
+              },
+              "minConfidenceToLearn": {
+                "default": 0.6,
+                "maximum": 1,
+                "minimum": 0,
+                "type": "number"
+              },
+              "reactionMap": {
+                "additionalProperties": false,
+                "default": {
+                  "failure": [
+                    "👎",
+                    "❌"
+                  ],
+                  "success": [
+                    "👍",
+                    "✅"
+                  ]
+                },
+                "properties": {
+                  "failure": {
+                    "default": [
+                      "👎",
+                      "❌"
+                    ],
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "success": {
+                    "default": [
+                      "👍",
+                      "✅"
+                    ],
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "success",
+                  "failure"
+                ],
+                "type": "object"
+              },
+              "retentionDays": {
+                "default": 30,
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "sources": {
+                "default": [
+                  "tool",
+                  "pipeline"
+                ],
+                "items": {
+                  "enum": [
+                    "tool",
+                    "pipeline"
+                  ],
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "enabled",
+              "sources",
+              "reactionMap",
+              "judge",
+              "correction",
+              "minConfidenceToLearn",
+              "retentionDays"
+            ],
+            "type": "object"
+          },
+          "learningSkills": {
+            "additionalProperties": false,
+            "default": {
+              "approval": {
+                "requireForMutating": true
+              },
+              "autoAdmitReadOnly": true,
+              "enabled": true,
+              "minConfidence": 0.7,
+              "promoteAtProofCount": 3,
+              "validation": {
+                "requireReproduction": true
+              }
+            },
+            "properties": {
+              "approval": {
+                "additionalProperties": false,
+                "default": {
+                  "requireForMutating": true
+                },
+                "properties": {
+                  "requireForMutating": {
+                    "default": true,
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "requireForMutating"
+                ],
+                "type": "object"
+              },
+              "autoAdmitReadOnly": {
+                "default": true,
+                "type": "boolean"
+              },
+              "enabled": {
+                "default": true,
+                "type": "boolean"
+              },
+              "minConfidence": {
+                "default": 0.7,
+                "maximum": 1,
+                "minimum": 0,
+                "type": "number"
+              },
+              "promoteAtProofCount": {
+                "default": 3,
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "validation": {
+                "additionalProperties": false,
+                "default": {
+                  "requireReproduction": true
+                },
+                "properties": {
+                  "requireReproduction": {
+                    "default": true,
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "requireReproduction"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "enabled",
+              "validation",
+              "autoAdmitReadOnly",
+              "approval",
+              "minConfidence",
+              "promoteAtProofCount"
+            ],
+            "type": "object"
+          },
+          "learningTuning": {
+            "additionalProperties": false,
+            "default": {
+              "enabled": true,
+              "exploration": 0.1,
+              "learner": "bandit",
+              "perIntent": true
+            },
+            "properties": {
+              "enabled": {
+                "default": true,
+                "type": "boolean"
+              },
+              "exploration": {
+                "default": 0.1,
+                "maximum": 1,
+                "minimum": 0,
+                "type": "number"
+              },
+              "learner": {
+                "default": "bandit",
+                "enum": [
+                  "bandit",
+                  "nudge"
+                ],
+                "type": "string"
+              },
+              "perIntent": {
+                "default": true,
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "enabled",
+              "learner",
+              "perIntent",
+              "exploration"
+            ],
+            "type": "object"
+          },
           "maxContextChars": {
             "default": 100000,
             "exclusiveMinimum": 0,
@@ -26839,6 +27957,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() �
               "consolidateExternal": false,
               "dedupThreshold": 0.9,
               "enabled": true,
+              "generalize": {
+                "enabled": true,
+                "minDistinctContexts": 3
+              },
               "maxCandidatesPerRun": 200,
               "maxClusterSize": 12,
               "maxClustersPerRun": 25,
@@ -26867,6 +27989,30 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() �
               "enabled": {
                 "default": true,
                 "type": "boolean"
+              },
+              "generalize": {
+                "additionalProperties": false,
+                "default": {
+                  "enabled": true,
+                  "minDistinctContexts": 3
+                },
+                "properties": {
+                  "enabled": {
+                    "default": true,
+                    "type": "boolean"
+                  },
+                  "minDistinctContexts": {
+                    "default": 3,
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "enabled",
+                  "minDistinctContexts"
+                ],
+                "type": "object"
               },
               "maxCandidatesPerRun": {
                 "default": 200,
@@ -26913,12 +28059,23 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() �
               "maxClustersPerRun",
               "maxConsolidationTokens",
               "consolidateExternal",
-              "autoTags"
+              "autoTags",
+              "generalize"
             ],
             "type": "object"
           },
           "memoryLifecycle": {
             "additionalProperties": false,
+            "default": {
+              "durableCap": 1000,
+              "enabled": true,
+              "ephemeralCap": 500,
+              "epsilonPrune": 0.05,
+              "maxDormantDays": 90,
+              "schedule": "0 9 * * *",
+              "thetaDemote": 0.3,
+              "thetaPromote": 0.7
+            },
             "properties": {
               "durableCap": {
                 "default": 1000,
@@ -26927,7 +28084,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() �
                 "type": "integer"
               },
               "enabled": {
-                "default": false,
+                "default": true,
                 "type": "boolean"
               },
               "ephemeralCap": {
@@ -27147,6 +28304,36 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() �
             ],
             "type": "object"
           },
+          "memoryTripleExtraction": {
+            "additionalProperties": false,
+            "default": {
+              "enabled": true,
+              "maxCandidatesPerRun": 200,
+              "schedule": "0 6 * * *"
+            },
+            "properties": {
+              "enabled": {
+                "default": true,
+                "type": "boolean"
+              },
+              "maxCandidatesPerRun": {
+                "default": 200,
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "schedule": {
+                "default": "0 6 * * *",
+                "type": "string"
+              }
+            },
+            "required": [
+              "enabled",
+              "schedule",
+              "maxCandidatesPerRun"
+            ],
+            "type": "object"
+          },
           "memoryUsefulnessJudge": {
             "additionalProperties": false,
             "default": {
@@ -27189,6 +28376,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() �
             "additionalProperties": false,
             "default": {
               "enabled": true,
+              "historyCap": 10,
               "maxEntriesPerRun": 50,
               "maxSourceChars": 24000,
               "maxSourceMemories": 200,
@@ -27198,6 +28386,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() �
               "enabled": {
                 "default": true,
                 "type": "boolean"
+              },
+              "historyCap": {
+                "default": 10,
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
               },
               "maxEntriesPerRun": {
                 "default": 50,
@@ -27227,7 +28421,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() �
               "schedule",
               "maxEntriesPerRun",
               "maxSourceMemories",
-              "maxSourceChars"
+              "maxSourceChars",
+              "historyCap"
             ],
             "type": "object"
           },
@@ -29776,7 +30971,13 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() �
           "memoryUserRepresentation",
           "dialectic",
           "memoryUsefulnessJudge",
-          "memoryOnlineTuning"
+          "learningOutcome",
+          "learningTuning",
+          "learningForgetting",
+          "learningSkills",
+          "memoryTripleExtraction",
+          "memoryOnlineTuning",
+          "memoryLifecycle"
         ],
         "type": "object"
       },
@@ -29845,6 +31046,57 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() �
             "enabled": false,
             "maxActiveCaches": 20
           },
+          "learningForgetting": {
+            "enabled": true,
+            "eviction": {
+              "enabled": true,
+              "strengthThreshold": 0.2
+            },
+            "failurePenalty": 0.5
+          },
+          "learningOutcome": {
+            "correction": {
+              "enabled": true
+            },
+            "enabled": true,
+            "judge": {
+              "enabled": false
+            },
+            "minConfidenceToLearn": 0.6,
+            "reactionMap": {
+              "failure": [
+                "👎",
+                "❌"
+              ],
+              "success": [
+                "👍",
+                "✅"
+              ]
+            },
+            "retentionDays": 30,
+            "sources": [
+              "tool",
+              "pipeline"
+            ]
+          },
+          "learningSkills": {
+            "approval": {
+              "requireForMutating": true
+            },
+            "autoAdmitReadOnly": true,
+            "enabled": true,
+            "minConfidence": 0.7,
+            "promoteAtProofCount": 3,
+            "validation": {
+              "requireReproduction": true
+            }
+          },
+          "learningTuning": {
+            "enabled": true,
+            "exploration": 0.1,
+            "learner": "bandit",
+            "perIntent": true
+          },
           "maxContextChars": 100000,
           "maxSteps": 150,
           "maxToolResultChars": 50000,
@@ -29853,12 +31105,26 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() �
             "consolidateExternal": false,
             "dedupThreshold": 0.9,
             "enabled": true,
+            "generalize": {
+              "enabled": true,
+              "minDistinctContexts": 3
+            },
             "maxCandidatesPerRun": 200,
             "maxClusterSize": 12,
             "maxClustersPerRun": 25,
             "maxConsolidationTokens": 1024,
             "schedule": "30 3 * * *",
             "similarityThreshold": 0.82
+          },
+          "memoryLifecycle": {
+            "durableCap": 1000,
+            "enabled": true,
+            "ephemeralCap": 500,
+            "epsilonPrune": 0.05,
+            "maxDormantDays": 90,
+            "schedule": "0 9 * * *",
+            "thetaDemote": 0.3,
+            "thetaPromote": 0.7
           },
           "memoryOnlineTuning": {
             "enabled": true,
@@ -29885,6 +31151,11 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() �
             "minMessages": 5,
             "schedule": "0 2 * * *"
           },
+          "memoryTripleExtraction": {
+            "enabled": true,
+            "maxCandidatesPerRun": 200,
+            "schedule": "0 6 * * *"
+          },
           "memoryUsefulnessJudge": {
             "enabled": true,
             "maxSourceChars": 24000,
@@ -29893,6 +31164,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() �
           },
           "memoryUserRepresentation": {
             "enabled": true,
+            "historyCap": 10,
             "maxEntriesPerRun": 50,
             "maxSourceChars": 24000,
             "maxSourceMemories": 200,

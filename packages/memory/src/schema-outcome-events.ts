@@ -1,0 +1,66 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * The `outcome_events` ledger DDL — the v2.26 Verified Learning (WS1) durable
+ * record of a finished trajectory's net task-outcome (OUTCOME-01). Every row is
+ * one raw observation from one signal source (tool / pipeline / correction /
+ * judge / reaction / explicit); `resolve()` fuses all rows for a trajectory into
+ * one verdict (precedence-first then confidence).
+ *
+ * Forward-only, re-run-safe: `CREATE TABLE IF NOT EXISTS` + `CREATE INDEX IF NOT
+ * EXISTS` only — no destructive or reverse DDL, no branch on an old shape (design
+ * §9, additive). Extracted from `schema.ts` (which is at the 800-line cap), like
+ * `schema-video-jobs.ts` — `initSchema` CALLS this so the table exists on every
+ * boot.
+ *
+ * IDEMPOTENCY: the `id` is a deterministic sha256 hash of the UNIQUE tuple
+ * `(tenant_id, agent_id, trajectory_id, source, observed_at)` computed in the
+ * store before insert, AND the table carries a `UNIQUE (…)` backstop on that
+ * tuple — a replayed observation is a no-op at BOTH layers (the store inserts
+ * `ON CONFLICT … DO NOTHING`; OUTCOME-01 / T-198-09).
+ *
+ * SECURITY (SEC-01 / T-198-05): `(tenant_id, agent_id)` are bare `NOT NULL`
+ * columns and lead every key/index — the store filters EVERY statement on them,
+ * so a row under one (tenant, agent) is never visible to a read under another in
+ * the multi-agent DB. No trust column exists (T-198-10): `confidence` /
+ * `sender_trust` are descriptive, never authorization. No message bodies are
+ * stored — ids + closed enums + confidence only (content-free, §V12).
+ *
+ * `better-sqlite3` durability is WAL + path-based chmod (never fd-based file
+ * sync), so this DDL is permission-model-safe by construction — no fd-fs guard is
+ * needed ([[node-permission-model-disables-fsync]]).
+ *
+ * @module
+ */
+
+import type Database from "better-sqlite3";
+
+/**
+ * Create the `outcome_events` table + its scope index idempotently.
+ *
+ * Safe to call multiple times (all DDL uses IF NOT EXISTS). Called from
+ * `initSchema` so the table exists on every daemon boot. The `CHECK` constraints
+ * pin the `outcome` / `source` closed enums; the `UNIQUE (…)` is the idempotency
+ * backstop; the index serves the scoped `resolve()` read.
+ *
+ * @param db - An open better-sqlite3 Database instance
+ */
+export function ensureOutcomeEventsTable(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS outcome_events (
+      id              TEXT PRIMARY KEY,
+      tenant_id       TEXT NOT NULL,
+      agent_id        TEXT NOT NULL,
+      session_id      TEXT NOT NULL,
+      trajectory_id   TEXT NOT NULL,
+      outcome         TEXT NOT NULL CHECK (outcome IN ('success','failure','corrected','unknown')),
+      source          TEXT NOT NULL CHECK (source IN ('tool','pipeline','correction','judge','reaction','explicit')),
+      confidence      REAL NOT NULL DEFAULT 0.5,
+      sender_trust    TEXT,
+      recalled_ids    TEXT,
+      used_skill_ids  TEXT,
+      observed_at     INTEGER NOT NULL,
+      UNIQUE (tenant_id, agent_id, trajectory_id, source, observed_at)
+    );
+    CREATE INDEX IF NOT EXISTS outcome_events_scope ON outcome_events(tenant_id, agent_id, trajectory_id);
+  `);
+}

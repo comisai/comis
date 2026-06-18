@@ -8,6 +8,7 @@
 export type {
   ChannelPort,
   MessageHandler,
+  ReactionHandler,
   SendMessageOptions,
   FetchMessagesOptions,
   FetchedMessage,
@@ -37,6 +38,7 @@ export type {
   UserRepresentationTrust,
   UserRepresentationEntry,
   UserRepresentationInput,
+  ReviseOutcome,
 } from "./user-representation-store.js";
 export type {
   TunedAlphaStore,
@@ -61,6 +63,29 @@ export type {
   UsefulnessScope,
   UsefulnessSignal,
 } from "./memory-usefulness-store.js";
+export type {
+  OutcomeSignalPort,
+  LearningScope,
+  OutcomeObservation,
+  ResolvedOutcome,
+  OutcomePruneResult,
+} from "./outcome-signal-port.js";
+export type {
+  SkillSynthesisPort,
+  SynthesisInput,
+  CandidateSkill,
+} from "./skill-synthesis-port.js";
+export type {
+  SkillValidationPort,
+  SkillValidationResult,
+  SkillValidationFinding,
+  ReplayContext,
+} from "./skill-validation-port.js";
+export type {
+  LearnedSkillStorePort,
+  LearnedSkill,
+  AdmitSkillInput,
+} from "./learned-skill-store.js";
 export type {
   MemoryConsolidationStore,
   ConsolidationCandidate,

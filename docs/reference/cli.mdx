@@ -713,6 +713,8 @@ Memory management and recall-diagnostics commands for searching, inspecting, and
 | `memory search <query>` | Search memory entries by content |
 | `memory inspect <id>` | Display full details of a memory entry |
 | `memory stats` | Display memory statistics (with a best-effort recall-counter overlay) |
+| `memory learning` | Outcome-learning telemetry: coverage, volume by source, success/failure ratio per agent |
+| `memory skills` | Procedural-learning telemetry: the learned-skill admission funnel (counts by state, per agent) + promotion/demotion roll-up |
 | `memory recall-trace <session>` | Inspect a session's hybrid-recall trace — **admin** |
 | `memory observations` | List observation provenance (sources + history) — **admin** |
 | `memory entities` | List an agent's entity graph, most-mentioned first — **admin** |
@@ -749,6 +751,42 @@ Accepts a full id or an id prefix. Resolution scans the 1000 most recent entries
 
 <Note>
 `memory stats` now overlays best-effort **recall counters** on top of the base memory statistics: lane usage, rerank-fallback rate, consolidation throughput, and recall hit-rate. The overlay is best-effort — a daemon that has not wired the counters (or a non-admin caller) still renders base stats.
+</Note>
+
+#### `memory learning`
+
+Outcome-learning telemetry for the v2.26 Verified Learning signal: the **coverage** (the share of finished trajectories that produced a resolvable outcome), the **volume by source**, and the **success/failure ratio**, broken down per agent. Read **offline** from the local [`outcome_events` ledger](/operations/data-directory) in `~/.comis/memory.db` (no gateway required). **Counts only** — no message bodies, no confidence values, no recalled/skill ids.
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--format <format>` | `table` \| `json` | `table` | Output format |
+
+```bash
+comis memory learning
+comis memory learning --format json
+```
+
+<Note>
+Outcome capture is **per-agent default-off** (`agents.<id>.learningOutcome.enabled`, gated by the master switch `memory.costFeatures.enabled`). With no recorded events the command prints an honest "no outcome events recorded yet" message naming the config keys to enable, rather than a misleading empty table. The same `learning` signal is reconstructable per session via [`comis explain`](#comis-explain).
+
+The v2.26 **ranking & forgetting** loops emit their own **counts-only** trajectory signals — `memory:online_tuning_applied` (per-intent tuning runs), `learning:memory_demoted` / `learning:memory_evicted` (soft-eviction counts) — surfaced through [`comis explain`](#comis-explain) (per session) and [`comis fleet`](#comis-fleet) (fleet-wide). They are gated by `agents.<id>.learningTuning.enabled` / `learningForgetting.enabled` (also under `memory.costFeatures.enabled`) and carry **no alpha value or memory body** — see [Learning Tuning / Learning Forgetting](/reference/config-yaml#learning-tuning-agents-learningtuning).
+</Note>
+
+#### `memory skills`
+
+Procedural-learning telemetry for the v2.26 Verified Learning skill loop: the **learned-skill admission funnel** — the total count and the per-state breakdown (`candidate` / `active` / `stale` / `archived`), broken down per agent, plus the per-skill `name·state·proof-count` (with `confidence` and a `mutating` flag). It also reports the **promotion / demotion roll-up** — `Promoted (active)` (the count of skills that reached `active`) and `Demoted (stale+archived)` (the count that left `active`), store-wide and per agent — derived from the per-state tally. Read **offline** from the local [`learned_skills` table](/operations/data-directory) in `~/.comis/memory.db` (no gateway required). **Counts, ids, and closed enums only** — never a procedure body, script, or description (the same closed-graph firewall as the trajectory signals). The `active` count is what the agent can actually use: an `active`, read-only procedure is surfaced into `<available_skills>` (v2.26 P3, default-off), while `candidate` / `stale` / `archived` rows are admitted-but-not-surfaced. See [Learning Skills in config-yaml](/reference/config-yaml#learning-skills-agents-learningskills).
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--format <format>` | `table` \| `json` | `table` | Output format |
+
+```bash
+comis memory skills
+comis memory skills --format json
+```
+
+<Note>
+Skill synthesis is **per-agent default-off** (`agents.<id>.learningSkills.enabled`, gated by the master switch `memory.costFeatures.enabled`). With no learned skills the command prints an honest "no learned skills yet" message naming the config keys to enable, rather than a misleading empty table. The synthesis run emits **counts-only** trajectory signals — `learning:skill_synthesized` (admitted count) / `learning:skill_validated` (static/dynamic verdict + coverage) — surfaced through [`comis explain`](#comis-explain) (per session) and [`comis fleet`](#comis-fleet) (fleet-wide); a learned procedure used in a failed/corrected trajectory or a low-capability **abstain** is named by the `learned_skill_failing` / `synthesis_abstained_low_capability` root-cause verdicts (the abstain is **benign** — Defer ≠ Retry).
 </Note>
 
 #### `memory recall-trace <session>`

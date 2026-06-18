@@ -34,6 +34,9 @@ import { success, error, info, json } from "../output/format.js";
 import { withSpinner } from "../output/spinner.js";
 import { renderTable, renderKeyValue } from "../output/table.js";
 import { confirm } from "../util/confirm.js";
+import { resolveOfflineDataDir } from "../util/offline-obs.js";
+import { readLearningStatsOffline } from "../util/offline-learning.js";
+import { readSkillStatsOffline } from "../util/offline-skills.js";
 
 /**
  * Register the `memory` subcommand group on the program.
@@ -196,6 +199,109 @@ export function registerMemoryCommand(program: Command): void {
         error(`Failed to fetch memory stats: ${msg}`);
         process.exit(1);
       }
+    });
+
+  // memory learning — OBS-02 (Phase 198) outcome-learning telemetry (coverage,
+  // volume by source, success/failure ratio per agent). Read OFFLINE from the
+  // local outcome_events ledger (~/.comis/memory.db): the CLI cannot import
+  // @comis/agent/@comis/skills (closed graph) and the daemon coverage gauge is
+  // not yet a queryable RPC, so the offline @comis/memory read is the sanctioned
+  // path. Counts/ids/closed-enums only — never a body/confidence/recalled id.
+  memory
+    .command("learning")
+    .description("Outcome-learning telemetry: coverage, volume by source, success/failure ratio")
+    .option("--format <format>", "Output format (table|json)", "table")
+    .action((options: { format: string }) => {
+      const stats = readLearningStatsOffline(resolveOfflineDataDir());
+      // Honest empty: learningOutcome is per-agent default-OFF — say WHY it is
+      // empty rather than render a misleading zeroed table.
+      if (stats === undefined || stats.totalRows === 0) {
+        if (options.format === "json") {
+          json({ totalRows: 0, totalTrajectories: 0, coverage: 0, perAgent: [] });
+          return;
+        }
+        info(
+          "No outcome events recorded yet. Outcome learning requires " +
+            "agents.<id>.learningOutcome.enabled (default off) + memory.costFeatures.enabled; " +
+            "once on, events accrue as agent turns finish.",
+        );
+        return;
+      }
+      if (options.format === "json") {
+        json(stats);
+        return;
+      }
+      const pct = (n: number): string => `${(n * 100).toFixed(0)}%`;
+      info(
+        `Coverage: ${pct(stats.coverage)} (${stats.totalResolved}/${stats.totalTrajectories} ` +
+          `trajectories resolved · ${stats.totalRows} outcome signals)`,
+      );
+      renderTable(
+        ["Tenant", "Agent", "Trajectories", "Resolved", "Coverage", "Outcomes", "Sources"],
+        stats.perAgent.map((a) => [
+          a.tenantId,
+          a.agentId,
+          String(a.trajectories),
+          String(a.resolved),
+          pct(a.coverage),
+          Object.entries(a.outcomes).map(([k, v]) => `${k}:${v}`).join(" "),
+          Object.entries(a.sources).map(([k, v]) => `${k}:${v}`).join(" "),
+        ]),
+      );
+    });
+
+  // memory skills — OBS-02 (Phase 201, P2 skills) procedural-learning telemetry:
+  // the learned-skill admission funnel (synthesized/admitted counts by state, per
+  // agent). Read OFFLINE from the local learned_skills table (~/.comis/memory.db):
+  // the CLI cannot import @comis/agent/@comis/skills (closed graph), so the offline
+  // @comis/memory read is the sanctioned path (mirrors `memory learning`).
+  // Counts/ids/closed-enums only — NEVER a procedure body/script/description.
+  memory
+    .command("skills")
+    .description(
+      "Procedural-learning telemetry: synthesized/validated counts, admission funnel, promotion/demotion rates",
+    )
+    .option("--format <format>", "Output format (table|json)", "table")
+    .action((options: { format: string }) => {
+      const stats = readSkillStatsOffline(resolveOfflineDataDir());
+      // Honest empty: learningSkills is per-agent default-OFF (and force-disabled
+      // by memory.costFeatures.enabled:false) — say WHY it is empty rather than
+      // render a misleading zeroed table.
+      if (stats === undefined || stats.total === 0) {
+        if (options.format === "json") {
+          json({ total: 0, byState: {}, perAgent: [] });
+          return;
+        }
+        info(
+          "No learned skills yet — none have been synthesized + admitted. Skill synthesis " +
+            "requires agents.<id>.learningSkills.enabled (default off) + memory.costFeatures.enabled, " +
+            "and runs on its schedule over successful trajectories (procedures only).",
+        );
+        return;
+      }
+      if (options.format === "json") {
+        json(stats);
+        return;
+      }
+      const byStateStr = (m: Record<string, number>): string =>
+        Object.entries(m).map(([k, v]) => `${k}:${v}`).join(" ");
+      info(`Learned skills: ${stats.total} (${byStateStr(stats.byState)})`);
+      // SURFACE-06 promotion/demotion roll-up — counts only (DERIVED from byState):
+      // promoted = active, demoted = stale+archived. Never a per-procedure body.
+      info(`Promoted (active): ${stats.promoted} · Demoted (stale+archived): ${stats.demoted}`);
+      renderTable(
+        ["Tenant", "Agent", "Total", "Funnel", "Promoted", "Demoted", "Skills (state·proof)"],
+        stats.perAgent.map((a) => [
+          a.tenantId,
+          a.agentId,
+          String(a.total),
+          byStateStr(a.byState),
+          String(a.promoted),
+          String(a.demoted),
+          // ids/counts only — name + state + proofCount; NEVER a body.
+          a.skills.map((s) => `${s.name}:${s.state}·${s.proofCount}`).join(" "),
+        ]),
+      );
     });
 
   // memory recall-trace <session> — inspect a session's recall trace.

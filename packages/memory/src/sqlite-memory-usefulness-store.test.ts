@@ -214,6 +214,28 @@ describe("createSqliteMemoryUsefulnessStore", () => {
       expect(res.ok).toBe(true);
       if (res.ok) expect(res.value.size).toBe(0);
     });
+
+    // WR-03: failure_count must be PROJECTED into the signal so the bandit feed sees it
+    // (RANK-01 negative reward). It is surfaced ONLY when > 0 (spread-conditional, like
+    // lastUsefulAt) so a clean memory's signal shape is byte-identical → the recall
+    // hot-path usefulnessNorm (used/ignored only) is unaffected (the 44 golden scores).
+    it("WR-03: projects failureCount onto the signal when failures accrued (else omits it — byte-identity for clean memories)", async () => {
+      const mFail = await seedMemory({ id: "m-fail" });
+      const mClean = await seedMemory({ id: "m-clean" });
+      await store.recordUsage([mFail], [], SCOPE_A); // used once
+      await store.recordFailure(mFail, SCOPE_A); // …and failed twice
+      await store.recordFailure(mFail, SCOPE_A);
+      await store.recordUsage([mClean], [], SCOPE_A); // clean: used, never failed
+
+      const res = await store.readUsefulness([mFail, mClean], READ_A);
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      // The failure-laden memory surfaces failureCount.
+      expect(res.value.get(mFail)?.failureCount).toBe(2);
+      // The clean memory's signal has NO failureCount key (byte-identical shape).
+      expect(res.value.get(mClean)).toEqual({ usedCount: 1, ignoredCount: 0, lastUsefulAt: SCOPE_A.now });
+      expect("failureCount" in res.value.get(mClean)!).toBe(false);
+    });
   });
 
   // =====================================================================
@@ -448,6 +470,95 @@ describe("createSqliteMemoryUsefulnessStore", () => {
       const res = await store.readUsefulness([m1], READ_A_TEMPORAL);
       expect(res.ok).toBe(true);
       if (res.ok) expect(res.value.get(m1)).toEqual({ usedCount: 1, ignoredCount: 0, lastUsefulAt: 1_000 });
+    });
+  });
+
+  // =====================================================================
+  // recordFailure (FORGET-02) — failure_count is a DISTINCT column from
+  // ignored_count (outcome-attributed task failure, NOT recalled-but-not-cited)
+  // =====================================================================
+
+  describe("recordFailure (failure_count, FORGET-02)", () => {
+    /**
+     * Read the raw `failure_count` for a (memory id, intent) bucket. The column
+     * is NEW in v2.26 (RANK-05) — this lookup fails on pre-patch HEAD because the
+     * column does not exist yet.
+     */
+    function rawFailure(
+      memoryId: string,
+      intent = "",
+      tenantId = "tenant_a",
+      agentId = "agent_a",
+    ): { failure_count: number; ignored_count: number; used_count: number } | undefined {
+      return db
+        .prepare(
+          "SELECT failure_count, ignored_count, used_count FROM memory_usefulness " +
+            "WHERE tenant_id = ? AND agent_id = ? AND memory_id = ? AND intent = ?",
+        )
+        .get(tenantId, agentId, memoryId, intent) as
+        | { failure_count: number; ignored_count: number; used_count: number }
+        | undefined;
+    }
+
+    it("memory_usefulness has a failure_count column distinct from ignored_count", () => {
+      const cols = (
+        db.prepare("PRAGMA table_info(memory_usefulness)").all() as { name: string }[]
+      ).map((c) => c.name);
+      expect(cols).toContain("failure_count");
+      expect(cols).toContain("ignored_count"); // both exist, distinct
+    });
+
+    it("first touch INSERTs failure_count=1; a second increments to 2 (same bucket)", async () => {
+      const m1 = await seedMemory({ id: "m1" });
+      const a = await store.recordFailure(m1, SCOPE_A);
+      expect(a.ok).toBe(true);
+      expect(rawFailure(m1)?.failure_count).toBe(1);
+
+      const b = await store.recordFailure(m1, { ...SCOPE_A, now: 2_000 });
+      expect(b.ok).toBe(true);
+      expect(rawFailure(m1)?.failure_count).toBe(2);
+
+      // Exactly one row (incremented, never duplicated).
+      expect(rowCount()).toBe(1);
+    });
+
+    it("leaves ignored_count and used_count UNCHANGED — failure_count is a SEPARATE signal (Pitfall 5)", async () => {
+      const m1 = await seedMemory({ id: "m1" });
+      // Pre-seed some usage so we can prove the failure write does not touch it.
+      await store.recordUsage([m1], [], SCOPE_A); // used_count=1
+      await store.recordUsage([], [m1], SCOPE_A); // ignored_count=1 (same global bucket)
+
+      await store.recordFailure(m1, SCOPE_A);
+
+      const row = rawFailure(m1);
+      expect(row?.failure_count).toBe(1); // accrued
+      expect(row?.used_count).toBe(1); // UNCHANGED
+      expect(row?.ignored_count).toBe(1); // UNCHANGED — NOT conflated with failure
+    });
+
+    it("accrues per-intent — a temporal failure does not touch the global '' bucket", async () => {
+      const m1 = await seedMemory({ id: "m1" });
+      await store.recordFailure(m1, SCOPE_A_TEMPORAL); // intent='temporal'
+
+      expect(rawFailure(m1, "temporal")?.failure_count).toBe(1);
+      // The global bucket has no row at all (the per-intent write did not bleed).
+      expect(rawFailure(m1, "")).toBeUndefined();
+    });
+
+    it("a failure under (tenant_a) does NOT touch (tenant_b)'s row (isolation)", async () => {
+      const m1 = await seedMemory({ id: "m1" });
+      await store.recordFailure(m1, SCOPE_A);
+
+      // tenant_b has no failure row for the same memory id.
+      expect(rawFailure(m1, "", "tenant_b", "agent_a")).toBeUndefined();
+      expect(rawFailure(m1, "", "tenant_a", "agent_a")?.failure_count).toBe(1);
+    });
+
+    it("never throws on a forced fault — a recordFailure after db.close() returns err", async () => {
+      const m1 = await seedMemory({ id: "m1" });
+      db.close();
+      const r = await store.recordFailure(m1, SCOPE_A);
+      expect(r.ok).toBe(false);
     });
   });
 });

@@ -50,6 +50,55 @@ describe("translatePayload — OBS-01 script signals (envelope stripping)", () =
   });
 });
 
+// SURFACE-06 (Phase 202 Plan 03): the promote/demote telemetry folds into the
+// shared { count } translator case (the FORGET-06/SKILL-09 precedent). The
+// translator forwards the COUNT ONLY — NEVER an id-list, procedure body, script,
+// or description; agentId/timestamp are envelope ids and are stripped. The record
+// TYPE (learning.skill_promoted vs learning.skill_demoted) conveys the direction.
+describe("translatePayload — SURFACE-06 skill promote/demote (counts-only, SEC-01 firewall)", () => {
+  it("forwards learning:skill_promoted as exactly {count}, stripping agentId/timestamp", () => {
+    const data = translatePayload("learning:skill_promoted", {
+      agentId: "agent-1",
+      count: 2,
+      timestamp: 1717171717,
+    });
+    expect(data).toEqual({ count: 2 });
+    // The translator output is the COUNT ONLY — keys exactly ["count"].
+    expect(Object.keys(data)).toEqual(["count"]);
+    expect(data.agentId).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("forwards learning:skill_demoted as exactly {count}, stripping the envelope", () => {
+    const data = translatePayload("learning:skill_demoted", {
+      agentId: "agent-1",
+      count: 1,
+      timestamp: 1717171717,
+    });
+    expect(data).toEqual({ count: 1 });
+    expect(Object.keys(data)).toEqual(["count"]);
+  });
+
+  it("never forwards a procedure body/script/id-list even if present on the payload (content-free invariant)", () => {
+    const data = translatePayload("learning:skill_promoted", {
+      agentId: "agent-1",
+      count: 3,
+      // hostile extras that MUST NOT cross into the trajectory:
+      body: "the promoted procedure markdown",
+      scripts: ["rm -rf /"],
+      skillIds: ["deploy", "backup"],
+      description: "why these were promoted",
+      timestamp: 1717171717,
+    } as Record<string, unknown>);
+    expect(data).toEqual({ count: 3 });
+    expect(Object.keys(data)).toEqual(["count"]);
+    expect("body" in data).toBe(false);
+    expect("scripts" in data).toBe(false);
+    expect("skillIds" in data).toBe(false);
+    expect("description" in data).toBe(false);
+  });
+});
+
 describe("translatePayload — T2.2 background_task lifecycle (F9: now visible on the trajectory)", () => {
   it("promoted: keeps taskId/toolName, strips the envelope agentId/timestamp", () => {
     const data = translatePayload("background_task:promoted", {

@@ -24,7 +24,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // runMemoryConsolidation is the spy the behavioral tests assert against.
 // ---------------------------------------------------------------------------
 
-const mockRunMemoryConsolidation = vi.hoisted(() => vi.fn(async () => ({ ok: true as const, value: undefined })));
+// Phase 203: runMemoryConsolidation now returns counts-only stats (was void) — the daemon emits learning:memory_generalized from them.
+const mockRunMemoryConsolidation = vi.hoisted(() => vi.fn(async () => ({ ok: true as const, value: { generalized: 0, clustersConsidered: 0, durationMs: 0 } })));
 const mockRunMemoryReview = vi.hoisted(() => vi.fn(async () => ({ ok: true as const, value: undefined })));
 // The reasoning job + its injected-seam factory. runMemoryReasoning
 // is the spy the __MEMORY_REASONING__ dispatch tests assert against;
@@ -160,7 +161,7 @@ function makeDeps(overrides: {
 describe("setup-channels-credentials", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockRunMemoryConsolidation.mockResolvedValue({ ok: true as const, value: undefined });
+    mockRunMemoryConsolidation.mockResolvedValue({ ok: true as const, value: { generalized: 0, clustersConsidered: 0, durationMs: 0 } });
     mockRunMemoryReasoning.mockResolvedValue({ ok: true as const, value: undefined });
     mockCreateReasoningSeam.mockReturnValue(mockReasonSeam);
     mockResolveOperationModel.mockReturnValue({

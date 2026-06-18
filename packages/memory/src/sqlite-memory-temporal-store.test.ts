@@ -115,6 +115,33 @@ describe("createSqliteMemoryTemporalStore", () => {
       expect(res.value).toEqual([]);
     });
 
+    // CR-01 (lane gap): the temporal spread lane hydrates full memory rows that flow
+    // straight into createMemoryRecall → the prompt with NO downstream evicted_at
+    // re-validation. A soft-evicted in-window memory MUST be excluded; the asOf raw
+    // read still resolves it (soft eviction is reversible).
+    it("CR-01: a soft-evicted in-window memory is EXCLUDED from the lane (asOf raw read still resolves it)", async () => {
+      await seedMemory({ id: "seed", occurredAt: SEED });
+      await seedMemory({ id: "live", occurredAt: SEED + 1 * DAY });
+      await seedMemory({ id: "evicted", occurredAt: SEED + 2 * DAY });
+      // Soft-evict the in-window "evicted" memory.
+      db.prepare("UPDATE memories SET evicted_at = ? WHERE id = ?").run(1_700_000_000_000, "evicted");
+
+      const res = await store.spreadLane([SEED], SCOPE_A, 7 * DAY, 50);
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      // "live" still surfaces; "evicted" must NOT (was leaking on HEAD).
+      expect(res.value.map((r) => r.entry.id)).toContain("live");
+      expect(res.value.map((r) => r.entry.id)).not.toContain("evicted");
+
+      // Reversibility: the raw inspect/asOf read does NOT add the evicted_at filter.
+      const raw = db.prepare("SELECT id, evicted_at FROM memories WHERE id = 'evicted'").get() as {
+        id: string;
+        evicted_at: number | null;
+      };
+      expect(raw.id).toBe("evicted");
+      expect(raw.evicted_at).not.toBeNull();
+    });
+
     it("respects cap: at most `cap` rows are returned (nearest-first)", async () => {
       await seedMemory({ id: "seed", occurredAt: SEED });
       // Three in-window neighbours at increasing distance.

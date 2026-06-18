@@ -903,6 +903,36 @@ describe("createSqliteTripleStore", () => {
       expect(bScore).toBeGreaterThan(cScore);
     });
 
+    // CR-01 (lane gap): the graph-spread lane hydrates a full memory row (m.* JOIN
+    // memory_triples) that flows straight into createMemoryRecall → the prompt with NO
+    // downstream evicted_at re-validation. A soft-evicted reached node's source memory
+    // MUST be excluded; the asOf raw read still resolves it (soft eviction is reversible).
+    it("CR-01: a soft-evicted reached-node source memory is EXCLUDED from the lane (asOf raw read still resolves it)", async () => {
+      await seedMemory("memB"); // depth-1, stays live
+      await seedMemory("memC"); // depth-2, will be soft-evicted
+      await edge("A", "B", { sourceMemoryId: "memB" });
+      await edge("B", "C", { sourceMemoryId: "memC" });
+
+      // Soft-evict memC (the reached-node source memory the lane would hydrate).
+      db.prepare("UPDATE memories SET evicted_at = ? WHERE id = ?").run(1_700_000_000_000, "memC");
+
+      const res = await store.spreadLane(["A"], READ_A, 2, 8, 50);
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      const ids = res.value.map((r) => r.entry.id);
+      // memB still surfaces; memC (evicted) must NOT (was leaking on HEAD).
+      expect(ids).toContain("memB");
+      expect(ids).not.toContain("memC");
+
+      // Reversibility: the raw inspect/asOf read does NOT add the evicted_at filter.
+      const raw = db.prepare("SELECT id, evicted_at FROM memories WHERE id = 'memC'").get() as {
+        id: string;
+        evicted_at: number | null;
+      };
+      expect(raw.id).toBe("memC");
+      expect(raw.evicted_at).not.toBeNull();
+    });
+
     it("fan-out cap: a hub seed with 20 current-truth out-edges + fanOut=8 yields at most 8 first-hop nodes", async () => {
       // 20 DISTINCT-predicate out-edges from the hub (distinct predicate so each is its own
       // current-truth row, not a contradiction that would soft-close the prior).

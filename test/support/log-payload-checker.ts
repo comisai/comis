@@ -31,12 +31,16 @@ import { resolve, dirname } from "node:path";
 import * as ts from "typescript";
 
 /**
- * Closed `ErrorKind` union — exactly 10 members. Any
+ * Closed `ErrorKind` union — exactly 11 members. Any
  * literal in `errorKind:` position not in this set is reported as a
  * violation by the walker. `precondition` was added so RPC handlers can
  * throw `PreconditionError` and
  * the dispatcher classifies caller-state mismatches at warn-level
  * (errorKind: "precondition") rather than escalating to error/internal.
+ * `sandbox_unavailable` was added (v2.26 Verified Learning, SKILL-07) for the
+ * fail-closed dynamic skill-validation path: no materializable bwrap jail
+ * degrades to `static-only` coverage (honest degradation, NOT a fault) — it
+ * must NOT inflate failure metrics (Defer ≠ Retry).
  */
 const VALID_ERROR_KINDS: ReadonlySet<string> = new Set([
   "config",
@@ -49,6 +53,7 @@ const VALID_ERROR_KINDS: ReadonlySet<string> = new Set([
   "dependency",
   "internal",
   "platform",
+  "sandbox_unavailable",
 ]);
 
 /**
@@ -73,11 +78,12 @@ interface CacheEntry {
  * cache poisoning.
  */
 interface CacheFile {
-  // Bumped 1 → 2 when `precondition` joined the closed ErrorKind union.
-  // v1 caches contain stale flags for files that legitimately use the
+  // Bumped 1 → 2 when `precondition` joined the closed ErrorKind union;
+  // 2 → 3 when `sandbox_unavailable` joined (v2.26 Verified Learning, SKILL-07).
+  // Older caches contain stale flags for files that legitimately use the
   // new literal — drop them on read so the next walker pass recomputes
   // against the updated VALID_ERROR_KINDS.
-  readonly version: 2;
+  readonly version: 3;
   readonly entries: Record<string, CacheEntry>;
 }
 
@@ -91,15 +97,15 @@ let cache: CacheFile | null = null;
 function loadCache(): CacheFile {
   if (cache) return cache;
   if (!existsSync(CACHE_PATH)) {
-    cache = { version: 2, entries: {} };
+    cache = { version: 3, entries: {} };
     return cache;
   }
   try {
     const raw = JSON.parse(readFileSync(CACHE_PATH, "utf8")) as CacheFile;
-    cache = raw.version === 2 ? raw : { version: 2, entries: {} };
+    cache = raw.version === 3 ? raw : { version: 3, entries: {} };
   } catch {
     // Corrupted JSON or unreadable file — drop cache and recompute.
-    cache = { version: 2, entries: {} };
+    cache = { version: 3, entries: {} };
   }
   return cache;
 }

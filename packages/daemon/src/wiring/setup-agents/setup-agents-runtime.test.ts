@@ -46,6 +46,62 @@ describe("setup-agents-runtime wiring", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Learned-skill surface seam wiring (SURFACE-01/03 + WR-01/WR-03)
+//
+// The getPromptSkillsXml seam must delegate to renderLearnedSkillsXml (the
+// merge-INTO-the-seam keystone so the per-session freeze captures the merged
+// listing) reading the per-agent surface cache, NOT the bare
+// skillRegistry.getSnapshot().prompt. WR-03: the cache is built via
+// wireAgentLearnedSkillSurface gated on learningSkills.enabled × the master cost
+// switch, so a default-off agent does ZERO surface work (no list()/rmSync). WR-01:
+// it registers into the shared learnedSkillSurfaceRegistry so the promote/demote
+// loop can re-refresh the agent's surface.
+// ---------------------------------------------------------------------------
+
+describe("setupSingleAgent learned-skill surface wiring", () => {
+  const source = readRuntimeSource();
+
+  it("delegates the getPromptSkillsXml seam to renderLearnedSkillsXml (not the bare snapshot prompt)", () => {
+    // The old seam returned skillRegistry.getSnapshot().prompt directly — that
+    // bare form must be GONE from the deps block (it bypassed the merge).
+    const depsStart = source.indexOf("createPiExecutor(effectiveConfig, {");
+    const depsEnd = source.indexOf("});", depsStart);
+    const depsBlock = source.slice(depsStart, depsEnd);
+
+    expect(depsBlock).toMatch(/getPromptSkillsXml:\s*\(\)\s*=>\s*renderLearnedSkillsXml\(/);
+    expect(depsBlock).not.toContain("getPromptSkillsXml: () => skillRegistry.getSnapshot().prompt");
+    // The seam reads the per-agent cache's `.current` snapshot (not a fresh async list()).
+    expect(depsBlock).toContain("learnedSkills: learnedSurface.current");
+  });
+
+  it("WR-03/WR-01: builds the surface via wireAgentLearnedSkillSurface, gated on learningSkills × cost + registered for re-refresh", () => {
+    const fnStart = source.indexOf("export async function setupSingleAgent(");
+    const fnBody = source.slice(fnStart);
+    // The cache is built via the gated helper (NOT the ungated createLearnedSkillSurfaceCache).
+    expect(fnBody).toContain("wireAgentLearnedSkillSurface({");
+    expect(fnBody).not.toContain("createLearnedSkillSurfaceCache({"); // ungated form is gone
+    const callStart = fnBody.indexOf("wireAgentLearnedSkillSurface({");
+    const callWindow = fnBody.slice(callStart, callStart + 420);
+    // WR-03 gate: learningSkills.enabled AND the master cost switch.
+    expect(callWindow).toContain("effectiveConfig.learningSkills?.enabled === true");
+    expect(callWindow).toContain("memory?.costFeatures?.enabled !== false");
+    // Threaded store + resolved (tenant, agent) scope.
+    expect(callWindow).toContain("learnedSkillStore: deps.learnedSkillStore");
+    expect(callWindow).toContain("tenantId: container.config.tenantId");
+    expect(callWindow).toContain("workspaceDir: dir");
+    // WR-01: registered into the shared registry for the promote/demote re-refresh.
+    expect(callWindow).toContain("registry: deps.learnedSkillSurfaceRegistry");
+  });
+
+  it("imports renderLearnedSkillsXml + wireAgentLearnedSkillSurface from the surface modules", () => {
+    expect(source).toMatch(/import\s*\{[^}]*renderLearnedSkillsXml[^}]*\}\s*from\s*"\.\/learned-skill-surface\.js"/s);
+    expect(source).toMatch(
+      /import\s*\{[^}]*wireAgentLearnedSkillSurface[^}]*\}\s*from\s*"\.\/learned-skill-surface-registry\.js"/s,
+    );
+  });
+});
+
 describe("setupSingleAgent OutputGuard wiring", () => {
   it("passes outputGuard and canaryToken to createPiExecutor deps (OGUARD regression guard)", () => {
     const source = readRuntimeSource();

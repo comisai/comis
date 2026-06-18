@@ -218,7 +218,7 @@ import {
   loadContinuations,
   buildMcpStatusLine,
 } from "./wiring/restart-continuation.js";
-import { setupSingleAgent } from "./wiring/setup-agents/index.js";
+import { setupSingleAgent, createLearnedSkillSurfaceRegistry } from "./wiring/setup-agents/index.js";
 import { buildDialecticWiring, dialecticWiringDepsFromBoot } from "./wiring/setup-dialectic.js";
 import { createConversationReset } from "./wiring/conversation-reset.js";
 import { setupSecretManager } from "./wiring/setup-secret-manager.js";
@@ -482,7 +482,7 @@ function buildChannelManagerDeps(deps: {
     container, executors, defaultAgentId, sessionManager, sessionStore,
     logger, channelsLogger, linkRunner, ssrfFetcher, transcriber,
     ttsAdapter, audioConverter, mediaTempManager, mediaSemaphore, fileExtractor,
-    workspaceDirs, defaultWorkspaceDir, memoryAdapter, memoryApi, entityStore, causalStore, consolidationStore, tripleStore, userRepresentationStore, relationshipStore, tunedAlphaStore, memoryLifecycleStore, usefulnessStore, embeddingQueue,
+    workspaceDirs, defaultWorkspaceDir, memoryAdapter, memoryApi, entityStore, causalStore, consolidationStore, tripleStore, userRepresentationStore, relationshipStore, tunedAlphaStore, memoryLifecycleStore, usefulnessStore, outcomeStore, learnedSkillStore, embeddingQueue,
     activeRunRegistry, sessionResolver, rpcCall,
     continuationTracker, approvalGate, interactiveCallbackWiring,
     piSessionAdapters, costTrackers, deliveryQueue, executionTrackers,
@@ -559,7 +559,8 @@ function buildChannelManagerDeps(deps: {
     // tripleStore + userRepresentationStore + relationshipStore +
     // tunedAlphaStore/usefulnessStore + memoryLifecycleStore + memoryApi ride the SAME cron-deps chain → the __MEMORY_REASONING__ /
     // __USER_REPRESENTATION__ / __SOCIAL_MODELING__ / __ONLINE_TUNING__ / __MEMORY_LIFECYCLE__ sentinels (the last two are KEYLESS: the bandit over the FEED signal + the DORMANT lifecycle sweep).
-    tripleStore, userRepresentationStore, relationshipStore, tunedAlphaStore, memoryLifecycleStore, usefulnessStore, memoryApi,
+    // outcomeStore + learnedSkillStore ride the SAME chain → the __SKILL_SYNTHESIS__ sentinel (SKILL-08/09): the daemon assembles the closed-graph skillSynthesis bundle from them + the tool list/policy + the LCD source inside registerCronEventListeners.
+    tripleStore, userRepresentationStore, relationshipStore, tunedAlphaStore, memoryLifecycleStore, usefulnessStore, outcomeStore, learnedSkillStore, memoryApi,
     tenantId: container.config.tenantId,
     embeddingQueue, queueConfig: container.config.queue,
     onSuspiciousContent,
@@ -1475,14 +1476,19 @@ async function bootFoundation(
     container, logger, daemonLogger, _createProcessMonitor,
   });
 
+  // WR-01: the shared per-agent learned-skill SURFACE registry — created BEFORE the memory
+  // wiring (which stands up the promote/demote loop) and threaded into BOTH it and setupAgents,
+  // so a promote/demote can re-refresh the agent that registered its surface cache.
+  const learnedSkillSurfaceRegistry = createLearnedSkillSurfaceRegistry();
+
   // 6.5. Memory + embedding
   const {
     disposeEmbedding, cachedPort, memoryAdapter, db,
     sessionStore, memoryApi, embeddingQueue, backgroundIndexingPromise,
     embeddingCacheStats, embeddingCircuitBreakerState, maintenanceTick,
     summarizerSpendBreaker,
-    rerankerPort, rerankerModelPresent, disposeReranker, entityStore, lcdStore, provenanceStore, contextBrowse, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, userRepresentationStore, relationshipStore, tunedAlphaStore, memoryLifecycleStore, consolidationStore, recallCounters,
-  } = await setupMemory({ container, memoryLogger, clock });
+    rerankerPort, rerankerModelPresent, disposeReranker, entityStore, lcdStore, provenanceStore, contextBrowse, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, userRepresentationStore, relationshipStore, tunedAlphaStore, outcomeStore, learnedSkillStore, recordOutboundMessage, destroyReactionWiring, memoryLifecycleStore, consolidationStore, recallCounters,
+  } = await setupMemory({ container, memoryLogger, clock, timers, learnedSkillSurfaceRegistry });
 
   // Observability persistence (dual-write to SQLite). obsStore +
   // obsPersistence via const+IIFE.
@@ -1509,6 +1515,32 @@ async function bootFoundation(
     : undefined;
   const obsStore = obsBundle?.obsStore; // trajectory recorder is per-session (pi-executor.ts).
   const obsPersistence = obsBundle?.obsPersistence;
+
+  // OUTCOME-07: prune the append-only outcome_events ledger at EVERY boot,
+  // UNCONDITIONALLY — deliberately OUTSIDE the obsConfig.persistence.enabled IIFE
+  // above, because this is anti-DoS housekeeping that must run regardless of obs
+  // persistence OR the learningOutcome enable flag (a ledger that grew while the
+  // signal was briefly enabled must still be bounded after it is turned off). The
+  // ledger is tenant/agent-agnostic, so retain the LONGEST horizon any agent asks
+  // for (default 30 from the Plan-01 schema) — never prune one agent's data early.
+  {
+    const learningOutcomeRetentionDays = Math.max(
+      30,
+      ...Object.values(container.config.agents ?? {}).map(
+        (a) => a?.learningOutcome?.retentionDays ?? 30,
+      ),
+    );
+    const outcomePruneStart = systemNowMs();
+    const outcomePruned = outcomeStore.prune(learningOutcomeRetentionDays);
+    daemonLogger.info(
+      {
+        retentionDays: learningOutcomeRetentionDays,
+        pruned: outcomePruned.changes,
+        durationMs: systemNowMs() - outcomePruneStart,
+      },
+      "Outcome events pruned on startup",
+    );
+  }
 
   // I2: one-shot model_health boot snapshot — embedding/reranker load-level
   // signals as a queryable obs_diagnostics row (no-ops when persistence off).
@@ -1611,7 +1643,7 @@ async function bootFoundation(
     processMonitor,
     disposeEmbedding, cachedPort, memoryAdapter, db, sessionStore, memoryApi,
     embeddingQueue, backgroundIndexingPromise, embeddingCacheStats,
-    embeddingCircuitBreakerState, summarizerSpendBreaker, rerankerPort, rerankerModelPresent, disposeReranker, entityStore, lcdStore, provenanceStore, contextBrowse, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, userRepresentationStore, relationshipStore, tunedAlphaStore, memoryLifecycleStore, consolidationStore, recallCounters, maintenanceTick,
+    embeddingCircuitBreakerState, summarizerSpendBreaker, rerankerPort, rerankerModelPresent, disposeReranker, entityStore, lcdStore, provenanceStore, contextBrowse, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, userRepresentationStore, relationshipStore, tunedAlphaStore, outcomeStore, learnedSkillStore, learnedSkillSurfaceRegistry, recordOutboundMessage, destroyReactionWiring, memoryLifecycleStore, consolidationStore, recallCounters, maintenanceTick,
     obsStore, obsPersistence,
     activeRunRegistry, sessionResolver, canaryFallbackSecret, injectionRateLimiter,
     deliveryMirror, startMirrorPrune, shutdownMirror,
@@ -1676,7 +1708,7 @@ async function bootAgents(
     causalStore, // threaded into setupAgents -> createPiExecutor -> createMemoryRecall (the 5th causal read lane, dormant until rag.lanes.causal.enabled) AND the cron review -> runMemoryReview -> linkCausal (the write path) — one segregated port, both halves
     tripleStore, // threaded into setupAgents -> createPiExecutor -> createMemoryRecall (the 6th graph-spread read lane, dormant until rag.lanes.graphSpread.enabled); the agent receives the port TYPE only (the agent↛memory cut)
     embeddingStore, usefulnessStore, userRepresentationStore, relationshipStore, tunedAlphaStore, // the MMR re-rank's scoped embedding read + recall usefulness read + the LLM-free <user_profile> standing-block read + the LLM-free <channel_relationships> standing-block read (dormant until the offline builder writes rows + the social-modeling sign-off) + the buildScoringAlphas tuned-vector read (dormant until rag.onlineTuning.enabled + the bandit cron) -> setupAgents -> createPiExecutor -> prompt-assembly; the agent receives the port TYPEs only (the agent↛memory cut)
-    activeRunRegistry, canaryFallbackSecret, injectionRateLimiter,
+    activeRunRegistry, canaryFallbackSecret, injectionRateLimiter, learnedSkillStore, learnedSkillSurfaceRegistry, // learnedSkillStore (v2.26 SURFACE-01/03) -> setupAgents -> getPromptSkillsXml; learnedSkillSurfaceRegistry (WR-01) -> setupAgents register + the promote/demote re-refresh
     deliveryMirror, geminiCacheManager,
     channelPluginsRef, backgroundTaskManager,
     secretsCrypto, secretsDb, obsStore, // thread into setupAgents
@@ -1820,7 +1852,7 @@ async function bootAgents(
     // from the SAME object SEP publishes into (Pitfall 1).
     executionPlanPorts, oauthManagers, // oauthManagers (184): DEFAULT agent's → buildImageGenBundle (CDX-01)
   } = await setupAgents({
-    container, memoryAdapter, sessionStore, agentLogger, rerankerPort, rerankerModelPresent, entityStore, lcdStore, provenanceStore, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, pinnedStore: memoryAdapter, userRepresentationStore, relationshipStore, tunedAlphaStore, summarizerSpendBreaker, outboundMediaEnabled: true,
+    container, memoryAdapter, sessionStore, agentLogger, rerankerPort, rerankerModelPresent, entityStore, lcdStore, provenanceStore, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, pinnedStore: memoryAdapter, userRepresentationStore, relationshipStore, tunedAlphaStore, learnedSkillStore, learnedSkillSurfaceRegistry, summarizerSpendBreaker, outboundMediaEnabled: true,
     autonomousMediaEnabled: !container.config.integrations.media.transcription.autoTranscribe
       || !container.config.integrations.media.vision.enabled
       || !container.config.integrations.media.documentExtraction.enabled,
@@ -1989,6 +2021,9 @@ async function bootAgents(
   const channelAdaptersRef = new Map<string, import("@comis/core").DeliveryAdapter>();
   const { deliveryQueue, drainAndStart: drainAndStartDeliveryPrune, shutdown: shutdownDeliveryQueue } = await setupDeliveryQueue({
     db, config: container.config, eventBus: container.eventBus, logger: daemonLogger, channelAdapters: channelAdaptersRef,
+    // REACT-02 (Verified Learning, Phase 199): capture agent-authored outbound (messageId → trajectory).
+    // `undefined` when learning-outcome is off for all agents (byte-identity: zero extra drain work).
+    recordOutboundMessage: foundation.recordOutboundMessage,
   });
 
   Object.assign(boot, {
@@ -2644,7 +2679,7 @@ async function bootShutdown(
     contextPipelineCollector, backgroundIndexingPromise, db,
     disposeEmbedding, disposeReranker, cachedPort, maintenanceTick, obsPersistence,
     disposeActivityStream,
-    injectionRateLimiter, geminiCacheManager, backgroundTaskManager,
+    injectionRateLimiter, destroyReactionWiring, geminiCacheManager, backgroundTaskManager,
     secretStore,
     executors: _execs, cronSchedulers, resetSchedulers, browserServices,
     skillWatcherHandles, lockCleanupTimer, continuationTracker,
@@ -2693,6 +2728,7 @@ async function bootShutdown(
     secretStore,  // close secrets.db on shutdown
     auditAggregator,  // clear pending dedup timers
     injectionRateLimiter,  // clear rate limiter timers on shutdown
+    destroyReactionWiring,  // WR-01: clear reaction/session map + reaction limiter timers on shutdown
     lockCleanupTimer,  // clear periodic lock cleanup timer
     dataDir: container.config.dataDir || dataDir,
     lockDataDir: dataDir,  // D14 lock release — must match acquireDataDirLock's boot path

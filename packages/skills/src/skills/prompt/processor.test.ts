@@ -71,6 +71,7 @@ describe("formatAvailableSkillsXml", () => {
         `    <name>test</name>\n` +
         `    <description>A test</description>\n` +
         `    <location>/skills/test</location>\n` +
+        `    <source>bundled</source>\n` +
         `  </skill>\n` +
         `</available_skills>`,
     );
@@ -152,6 +153,74 @@ describe("formatAvailableSkillsXml", () => {
     const result = formatAvailableSkillsXml(skills);
     expect(result).toContain("<name>no-flag</name>");
     expect(result).toContain("<name>explicit-false</name>");
+  });
+
+  // SURFACE-02: <source> renders the learned-trust distinction the model SEES.
+
+  it("renders <source>learned</source> for a learned-source skill", () => {
+    const skills: PromptSkillDescription[] = [
+      {
+        name: "learned-proc",
+        description: "A learned procedure",
+        location: "/skills/learned-proc",
+        source: "learned",
+      },
+    ];
+    const result = formatAvailableSkillsXml(skills);
+    expect(result).toContain("<source>learned</source>");
+  });
+
+  it("defaults to <source>bundled</source> when source is unset (byte-stable for platform skills)", () => {
+    const skills: PromptSkillDescription[] = [
+      { name: "platform", description: "No source set", location: "/skills/platform" },
+    ];
+    const result = formatAvailableSkillsXml(skills);
+    expect(result).toContain("<source>bundled</source>");
+    expect(result).not.toContain("<source>learned</source>");
+  });
+
+  it("XML-escapes the <source> value (consistency with other fields)", () => {
+    // A source carrying an XML metacharacter must be escaped like name/location.
+    // (The closed enum never produces this today, but the formatter must not
+    // special-case source — it goes through escapeXml like every other field.)
+    const skills: PromptSkillDescription[] = [
+      {
+        name: "weird",
+        description: "d",
+        location: "/l",
+        // Force an unescaped char via a deliberate cast — proves escapeXml is applied.
+        source: "a<b" as PromptSkillDescription["source"],
+      },
+    ];
+    const result = formatAvailableSkillsXml(skills);
+    expect(result).toContain("<source>a&lt;b</source>");
+  });
+
+  it("ATTR-01 non-regression: the new <source> line keeps <name>/<location> parseable per <skill> block", () => {
+    // Mirrors parseSkillLocationIndex (agent/executor/prompt-assembly.ts:213):
+    // a block regex pulls <name> + <location> from each <skill>…</skill>. The
+    // new <source> line lives INSIDE <skill> and must not break that keying.
+    const skills: PromptSkillDescription[] = [
+      { name: "alpha", description: "First", location: "/skills/alpha", source: "learned" },
+      { name: "beta", description: "Second", location: "/skills/beta" },
+    ];
+    const xml = formatAvailableSkillsXml(skills);
+
+    const blockRe = /<skill>([\s\S]*?)<\/skill>/g;
+    const index = new Map<string, string>();
+    let block: RegExpExecArray | null;
+    while ((block = blockRe.exec(xml)) !== null) {
+      const body = block[1] ?? "";
+      const nameMatch = /<name>([\s\S]*?)<\/name>/.exec(body);
+      const locationMatch = /<location>([\s\S]*?)<\/location>/.exec(body);
+      if (!nameMatch || !locationMatch) continue;
+      index.set(locationMatch[1] ?? "", nameMatch[1] ?? "");
+    }
+
+    // Both skills are attributed despite the <source> line in the first block.
+    expect(index.size).toBe(2);
+    expect(index.get("/skills/alpha")).toBe("alpha");
+    expect(index.get("/skills/beta")).toBe("beta");
   });
 });
 
@@ -425,10 +494,11 @@ describe("SDK format compliance", () => {
     expect(result).toContain("<name>test-skill</name>");
     expect(result).toContain("<description>A test skill</description>");
     expect(result).toContain("<location>/skills/test-skill</location>");
+    expect(result).toContain("<source>bundled</source>");
     expect(result).toContain("</skill>");
 
-    // Verify child element nesting order: <skill> -> <name>, <description>, <location>
-    const skillBlockMatch = result.match(/<skill>\n\s+<name>.*<\/name>\n\s+<description>.*<\/description>\n\s+<location>.*<\/location>\n\s+<\/skill>/);
+    // Verify child element nesting order: <skill> -> <name>, <description>, <location>, <source>
+    const skillBlockMatch = result.match(/<skill>\n\s+<name>.*<\/name>\n\s+<description>.*<\/description>\n\s+<location>.*<\/location>\n\s+<source>.*<\/source>\n\s+<\/skill>/);
     expect(skillBlockMatch).not.toBeNull();
   });
 

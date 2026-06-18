@@ -85,10 +85,18 @@ export type RecallDegradationKind = (typeof RECALL_DEGRADATION_KINDS)[number];
 
 /**
  * Per-memory score breakdown. Pure numbers — no redaction concern.
- * `final` is the product of `base` and the FIVE multiplicative factors
- * (recency/temporal/proof/trust/usefulness) surfaced from `score.ts`. The
+ * `final` is the product of `base` and the multiplicative factors
+ * (recency/temporal/proof/trust/usefulness/forget) surfaced from `score.ts`. The
  * `usefulness` factor is the read-side payoff of the recall-utility
  * feedback loop (1.0 when the per-memory usefulness signal is absent).
+ *
+ * `usefulnessOutcomeShare` (OBS-02, Verified Learning WS3) is an OPTIONAL annotation —
+ * the OUTCOME-attributed usefulness CONTRIBUTION (the signed deviation of the `usefulness`
+ * factor from its 1.0 neutral), surfaced so `comis explain` shows how much of a memory's
+ * rank came from learned recall-utility / outcome feedback, distinct from the lexical `base`.
+ * It is NOT a multiplicand (absent from `final`). Optional so older trace lines (and the
+ * `forget` factor, likewise appended after the original 5-factor schema) still parse —
+ * counts/derived-share only, never a raw alpha value.
  */
 const RecallScoreBreakdownSchema = z.object({
   base: z.number(),
@@ -97,6 +105,12 @@ const RecallScoreBreakdownSchema = z.object({
   proof: z.number(),
   trust: z.number(),
   usefulness: z.number(),
+  /** OBS-02 outcome-attributed usefulness contribution (annotation, NOT a multiplicand);
+   *  optional so older trace lines parse. Signed: + boosts, - demotes, 0 when absent. */
+  usefulnessOutcomeShare: z.number().optional(),
+  /** FadeMem decay factor surfaced from score.ts; optional (appended after the original
+   *  5-factor schema) so older trace lines that predate it still parse. */
+  forget: z.number().optional(),
   final: z.number(),
 });
 

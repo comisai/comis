@@ -61,6 +61,8 @@ import {
   breakerTool,
   hasModuleNotFound,
 } from "./obs-explain-heuristics-helpers.js";
+// OBS-02 (Phase 201): the two BENIGN learning verdicts (sibling — subdir cap).
+import { learnedSkillFailingVerdict, synthesisAbstainedVerdict, userModelRevisedVerdict } from "./obs-explain-learning-verdicts.js";
 
 // ---------------------------------------------------------------------------
 // Public shape: matches IncidentReport.likelyRootCause 1:1 (Plan 01).
@@ -431,7 +433,8 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
     };
   },
 
-  // 10) completed_with_tool_errors (CATCH-ALL — LAST, lowest priority). A
+  // 10) completed_with_tool_errors (the CATCH-ALL ACUTE cause — last of the acute
+  //     tier, above the BENIGN learning verdicts #11-13 below). A
   //     degraded session whose tool failures matched none of the named rules
   //     above (not misclassification, breaker, schema-strip, context-bloat,
   //     module-not-found, or timeout) used to fall through to a NULL verdict —
@@ -457,12 +460,36 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
       ],
     };
   },
+
+  // 11/12/12b) the BENIGN learning verdicts (sibling): after the acute tier, before #13
+  // (specific-over-generic, yet Defer ≠ Retry — never masks an acute error).
+  learnedSkillFailingVerdict,
+  synthesisAbstainedVerdict,
+  userModelRevisedVerdict, // OBS-02 (Phase 203): routine user-model revision; zero/absent ⇒ no verdict.
+
+  // 13) outcome_unresolved (OBS-02, Phase 198 — LOWEST-priority, BENIGN, the
+  //     generic learning catch-all). A finished trajectory the learning shadow saw
+  //     but where NO signal tier resolved an outcome AND neither skill verdict
+  //     fired. Defer ≠ Retry: dead-last (every acute cause + the two skill verdicts
+  //     out-rank it). Absent/resolved learning block ⇒ no verdict (no 678/503
+  //     fixture regression).
+  (s) => {
+    if (s.learning === undefined || s.learning.outcomeResolved) return null;
+    return {
+      code: "outcome_unresolved",
+      detail:
+        "outcome unresolved — the learning shadow observed this finished trajectory but no " +
+        "signal tier (tool/pipeline/judge/reaction) produced a resolvable outcome",
+      suggestedNextSteps: [
+        "expected in shadow mode for trajectories with no deterministic tool/pipeline signal — " +
+          "enable the judge source (agents.<id>.learningOutcome.judge.enabled) for fallback coverage",
+        "obs.explain depth=full",
+      ],
+    };
+  },
 ];
 
-/**
- * Run the ordered registry; return the first non-null `RootCause`, or `null`
- * when nothing matched (a clean session).
- */
+/** Run the ordered registry; first non-null `RootCause` wins, else `null` (clean session). */
 export function rootCause(s: IncidentSignals): RootCause | null {
   for (const h of HEURISTICS) {
     const r = h(s);

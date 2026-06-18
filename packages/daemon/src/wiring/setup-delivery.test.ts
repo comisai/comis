@@ -922,6 +922,157 @@ describe("setupDeliveryQueue", () => {
       db.close();
     });
   });
+
+  describe("recordOutboundMessage capture (REACT-02: agent-authored outbound → trajectory map)", () => {
+    it("calls recordOutboundMessage with the platform messageId + trajectory scope on a successful ack (non-null traceId)", async () => {
+      const { drainDeliveryQueue } = await import("./setup-delivery.js");
+      const entry = makeEntry({
+        id: "e1",
+        channelType: "telegram",
+        text: "agent reply",
+        tenantId: "tenant-x",
+        traceId: "trace-abc",
+        optionsJson: JSON.stringify({ agentId: "agent-1" }),
+      });
+      const queue = createMockQueue();
+      vi.mocked(queue.pendingEntries).mockResolvedValueOnce(ok([entry]));
+      const adapter = createMockAdapter("telegram", [{ ok: true, value: "platform-msg-99" }]);
+      const adapters = new Map<string, DeliveryAdapter>([["telegram", adapter]]);
+
+      const recordOutboundMessage = vi.fn();
+      await drainDeliveryQueue({
+        deliveryQueue: queue,
+        channelAdapters: adapters,
+        eventBus: createMockEventBus(),
+        logger: createMockLogger(),
+        drainBudgetMs: 60_000,
+        defaultMaxAttempts: 5,
+        recordOutboundMessage,
+      });
+
+      expect(recordOutboundMessage).toHaveBeenCalledTimes(1);
+      expect(recordOutboundMessage).toHaveBeenCalledWith("platform-msg-99", {
+        traceId: "trace-abc",
+        tenantId: "tenant-x",
+        agentId: "agent-1",
+        sessionId: "trace-abc",
+      });
+    });
+
+    it("does NOT call recordOutboundMessage for an entry with a null traceId (no trajectory → not mapped)", async () => {
+      const { drainDeliveryQueue } = await import("./setup-delivery.js");
+      const entry = makeEntry({ id: "e1", channelType: "telegram", traceId: null });
+      const queue = createMockQueue();
+      vi.mocked(queue.pendingEntries).mockResolvedValueOnce(ok([entry]));
+      const adapter = createMockAdapter("telegram", [{ ok: true, value: "platform-msg-1" }]);
+      const adapters = new Map<string, DeliveryAdapter>([["telegram", adapter]]);
+
+      const recordOutboundMessage = vi.fn();
+      await drainDeliveryQueue({
+        deliveryQueue: queue,
+        channelAdapters: adapters,
+        eventBus: createMockEventBus(),
+        logger: createMockLogger(),
+        drainBudgetMs: 60_000,
+        defaultMaxAttempts: 5,
+        recordOutboundMessage,
+      });
+
+      expect(recordOutboundMessage).not.toHaveBeenCalled();
+    });
+
+    it("does NOT call recordOutboundMessage on a send FAILURE (no platform messageId to map)", async () => {
+      const { drainDeliveryQueue } = await import("./setup-delivery.js");
+      const entry = makeEntry({ id: "e1", channelType: "telegram", traceId: "trace-abc" });
+      const queue = createMockQueue();
+      vi.mocked(queue.pendingEntries).mockResolvedValueOnce(ok([entry]));
+      const adapter = createMockAdapter("telegram", [{ ok: false, error: new Error("chat not found") }]);
+      const adapters = new Map<string, DeliveryAdapter>([["telegram", adapter]]);
+
+      const recordOutboundMessage = vi.fn();
+      await drainDeliveryQueue({
+        deliveryQueue: queue,
+        channelAdapters: adapters,
+        eventBus: createMockEventBus(),
+        logger: createMockLogger(),
+        drainBudgetMs: 60_000,
+        defaultMaxAttempts: 5,
+        recordOutboundMessage,
+      });
+
+      expect(recordOutboundMessage).not.toHaveBeenCalled();
+    });
+
+    it("CR-01: records a NON-'default' agentId from optionsJson (real agent, never the tenantId fallback)", async () => {
+      const { drainDeliveryQueue } = await import("./setup-delivery.js");
+      // The enqueue (delivery-service.ts) persists the request-context agentId
+      // into optionsJson. A multi-agent daemon's agent (mldag) differs from the
+      // tenant ("default") — the drain must attribute to mldag, not the tenant.
+      const entry = makeEntry({
+        id: "e1",
+        channelType: "telegram",
+        text: "agent reply",
+        tenantId: "default",
+        traceId: "trace-abc",
+        optionsJson: JSON.stringify({ agentId: "mldag" }),
+      });
+      const queue = createMockQueue();
+      vi.mocked(queue.pendingEntries).mockResolvedValueOnce(ok([entry]));
+      const adapter = createMockAdapter("telegram", [{ ok: true, value: "platform-msg-7" }]);
+      const adapters = new Map<string, DeliveryAdapter>([["telegram", adapter]]);
+
+      const recordOutboundMessage = vi.fn();
+      await drainDeliveryQueue({
+        deliveryQueue: queue,
+        channelAdapters: adapters,
+        eventBus: createMockEventBus(),
+        logger: createMockLogger(),
+        drainBudgetMs: 60_000,
+        defaultMaxAttempts: 5,
+        recordOutboundMessage,
+      });
+
+      expect(recordOutboundMessage).toHaveBeenCalledTimes(1);
+      expect(recordOutboundMessage).toHaveBeenCalledWith("platform-msg-7", {
+        traceId: "trace-abc",
+        tenantId: "default",
+        agentId: "mldag",
+        sessionId: "trace-abc",
+      });
+    });
+
+    it("CR-01 fail-closed: an outbound whose optionsJson carries NO agentId is NOT mapped (never falls back to the tenantId)", async () => {
+      const { drainDeliveryQueue } = await import("./setup-delivery.js");
+      // optionsJson without agentId (e.g. a pre-executor/non-agent send). The
+      // REACT-02 keystone is fail-closed: rather than mis-attribute under the
+      // tenantId, the drain skips the mapping entirely.
+      const entry = makeEntry({
+        id: "e1",
+        channelType: "telegram",
+        text: "no-agent send",
+        tenantId: "default",
+        traceId: "trace-xyz",
+        optionsJson: JSON.stringify({ replyTo: "m-1" }),
+      });
+      const queue = createMockQueue();
+      vi.mocked(queue.pendingEntries).mockResolvedValueOnce(ok([entry]));
+      const adapter = createMockAdapter("telegram", [{ ok: true, value: "platform-msg-8" }]);
+      const adapters = new Map<string, DeliveryAdapter>([["telegram", adapter]]);
+
+      const recordOutboundMessage = vi.fn();
+      await drainDeliveryQueue({
+        deliveryQueue: queue,
+        channelAdapters: adapters,
+        eventBus: createMockEventBus(),
+        logger: createMockLogger(),
+        drainBudgetMs: 60_000,
+        defaultMaxAttempts: 5,
+        recordOutboundMessage,
+      });
+
+      expect(recordOutboundMessage).not.toHaveBeenCalled();
+    });
+  });
 });
 
 // ===========================================================================

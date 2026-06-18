@@ -158,6 +158,12 @@ Two guide sources exist independently:
 - **Tool guides** — per-tool operational instructions (keyed by exact tool name).
 - **System prompt guides** — deferred system prompt sections triggered by a tool name, such as the privileged tools section which fires once on the first use of any of 10 privileged tools.
 
+### Learned-skill listing stability
+
+When the [Verified Learning](/reference/config-yaml#learning-skills-agents-learningskills) procedural loop is enabled (default-off), the agent's promoted, read-only **learned** procedures (`<source>learned</source>`) are listed inside the SAME `<available_skills>` block as the platform skills — but always **appended AFTER** the platform skills. The platform byte-**prefix** therefore never shifts when a learned skill is added or removed, so adding a learned procedure does not invalidate the cached prefix of the skills block.
+
+The listing is captured by a **per-session prompt-skills freeze** (snapshotted once when the session starts). A newly-promoted procedure is therefore picked up on the **next** session, not mid-session — the in-session listing stays byte-stable, and a demoted/archived procedure likewise leaves the listing only at the next freeze. With the loop off (the default) the block is byte-identical to a platform-only install.
+
 ---
 
 ## Tool deferral and parallelism

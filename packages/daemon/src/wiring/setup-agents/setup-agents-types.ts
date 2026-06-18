@@ -152,6 +152,19 @@ export interface SingleAgentDeps {
    *  gate (`rag.onlineTuning.enabled`) AND the OFFLINE bandit cron (`memoryOnlineTuning.enabled`) are on;
    *  absent ⇒ no read, byte-identical recall. */
   tunedAlphaStore?: import("@comis/core").TunedAlphaStore;
+  /** Learned-skill store (v2.26 SURFACE-01/03). Threaded into setupSingleAgent so the
+   *  `getPromptSkillsXml` seam can surface promoted read-only learned procedures
+   *  (append-after-platform, materialized read-only). The segregated `LearnedSkillStorePort`
+   *  TYPE from @comis/core (the agent↛memory cut); the daemon injects the concrete
+   *  @comis/memory adapter. Default-OFF byte-identity: absent ⇒ the listing is the
+   *  platform-only snapshot, unchanged. */
+  learnedSkillStore?: import("@comis/core").LearnedSkillStorePort;
+  /** WR-01: the shared per-agent learned-skill SURFACE registry. setupSingleAgent
+   *  registers this agent's surface refresh closure into it (only when learningSkills
+   *  is enabled — WR-03); the resolve-seam promote/demote loop (wireLearningOutcome,
+   *  wired earlier in setup-memory) calls `refresh(agentId)` on it after a real
+   *  transition so the next session sees the new active set. Absent ⇒ no re-refresh. */
+  learnedSkillSurfaceRegistry?: import("./learned-skill-surface-registry.js").LearnedSkillSurfaceRegistry;
   /** Delivery mirror port for session mirroring injection */
   deliveryMirror?: import("@comis/core").DeliveryMirrorPort;
   /** Delivery mirror config for injection budget */

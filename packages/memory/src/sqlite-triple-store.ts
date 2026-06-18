@@ -267,11 +267,17 @@ export function createSqliteTripleStore(deps: MemoryTripleStoreDeps): TripleStor
   // triple whose `object` is the node AND that carries a source_memory_id, then
   // join `memories` re-asserting the FULL (tenant, agent) scope (self-sufficient
   // hydrate — no fail-open if the CTE is ever refactored). Bound params only.
+  // FORGET-01 (CR-01): the ALWAYS-ON `evicted_at IS NULL` recall exclusion (`m.` alias —
+  // `memories` is joined as `m`). This is the RECALL-side hydration (graph-spread →
+  // MemorySearchResult[] → createMemoryRecall → the prompt), so a soft-evicted reached-node
+  // source memory MUST be omitted here. The bi-temporal asOf reads (asOfSelect /
+  // asOfTxnSelect over memory_triples) are UNRELATED (triples, not memories) and stay as-is;
+  // the inspect/asOf raw memory reads stay UNFILTERED (eviction soft + asOf-resolvable).
   const hydrateSpreadNode = db.prepare(
     "SELECT m.* FROM memories m " +
       "JOIN memory_triples t ON t.source_memory_id = m.id " +
       "WHERE t.tenant_id = ? AND t.agent_id = ? AND t.object = ? AND t.t_valid_end IS NULL " +
-      "AND m.tenant_id = ? AND m.agent_id = ? " +
+      "AND m.tenant_id = ? AND m.agent_id = ? AND m.evicted_at IS NULL " +
       "ORDER BY t.trust DESC, t.t_ingested DESC LIMIT 1",
   );
   // IDF seed-damp helper (HippoRAG): a seed's current-truth out-edge

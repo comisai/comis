@@ -28,9 +28,12 @@ export interface SandboxOptions {
    * Network isolation mode for the sandbox.
    * Default undefined/"open" = existing --share-net behaviour (no regression).
    * "broker-only" = --unshare-net + unix-socket bind for broker-only egress.
+   * "none" = --unshare-net with NO socket and NO proxy (kernel-enforced deny-all
+   *   egress; the skill-validation jail uses this so a synthesized script cannot
+   *   reach the network to exfiltrate during dynamic validation, T-201-35).
    * Consumed by BwrapProvider.buildArgs(); other providers ignore it.
    */
-  network?: { mode: "open" } | { mode: "broker-only"; brokerSocketPath: string };
+  network?: { mode: "open" } | { mode: "broker-only"; brokerSocketPath: string } | { mode: "none" };
   /**
    * When true, skip the ~/.local/share RW bind so credential material living
    * under that XDG dir is not read-write-exposed inside the sandbox.

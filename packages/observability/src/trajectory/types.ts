@@ -77,6 +77,34 @@ export const TRAJECTORY_EVENT_TYPES = [
   "memory.reranked",
   // GENQ-01: a memory-generation pass's output diverged from its source (content-free).
   "memory.generation_quality",
+  // OUTCOME-08 (v2.26 Verified Learning WS1): a finished trajectory's resolved net
+  // task-outcome (daemon-side emit, learningOutcome.enabled-gated). Counts/ids/closed-enums
+  // ONLY — no bodies/alpha (SEC-01). Bridged so `comis explain` can reconstruct it (OBS-02).
+  "learning.outcome_observed",
+  // RANK-06 (v2.26 WS3): the bandit applied a (per-intent) tuned-alpha update — counts +
+  // the per-intent dim ONLY, NEVER an alpha value (SEC-01). FORGET-06 (WS4): the lifecycle
+  // sweep demoted / soft-evicted N memories — counts ONLY (daemon-side emit). All bridged
+  // for `comis explain` (OBS-02).
+  "memory.online_tuning_applied",
+  "learning.memory_demoted",
+  "learning.memory_evicted",
+  // SKILL-09 (v2.26 WS2, Phase 201): the procedural-synthesis telemetry — admitted-skill
+  // count + the static/dynamic verdict + the coverage closed-enum ONLY, NEVER a procedure
+  // body / script / finding (SEC-01). Daemon-side emit; bridged for `comis explain` (OBS-02).
+  "learning.skill_synthesized",
+  "learning.skill_validated",
+  // SURFACE-06 (v2.26 WS2, Phase 202): the promote/demote telemetry — the COUNT ONLY,
+  // NEVER an id-list / procedure body / script (SEC-01). Daemon-side emit (Plan 05);
+  // bridged for `comis explain` (OBS-02).
+  "learning.skill_promoted",
+  "learning.skill_demoted",
+  // REVISE-/GENERAL- (v2.26 WS6/WS7, Phase 203): the user-model-revision +
+  // generalization telemetry — the COUNTS ONLY (superseded/corroborated/inserted +
+  // generalized/clustersConsidered + durationMs), NEVER a profile/memory body, an
+  // entryType, or a source id (SEC-01). Daemon-side emit (Plan 05); bridged for
+  // `comis explain` (OBS-02).
+  "learning.user_model_revised",
+  "learning.memory_generalized",
 
   // Background task lifecycle (T2.2 / F9): promote/complete/fail of a long-running tool
   // detached past the execute() boundary (content-free — ids + durationMs only).

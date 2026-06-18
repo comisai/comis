@@ -132,9 +132,13 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
         const now = systemNowMs();
         const results: MemorySearchResult[] = [];
         for (const vr of vecResults) {
+          // FORGET-01 (CR-01): the ALWAYS-ON `evicted_at IS NULL` recall exclusion —
+          // a soft-evicted row (evicted_at set by the lifecycle sweep) is omitted from
+          // THIS live vector-only recall path too, not only hybridSearch. The
+          // inspect/asOf raw reads stay UNFILTERED (eviction is soft + asOf-resolvable).
           const parsed = memoryRowMapper.parseOptionalRow(
             this.db
-              .prepare("SELECT * FROM memories WHERE id = ? AND tenant_id = ?")
+              .prepare("SELECT * FROM memories WHERE id = ? AND tenant_id = ? AND evicted_at IS NULL")
               .get(vr.id, tenantId),
           );
           const row = parsed.ok ? parsed.value : undefined;
@@ -209,9 +213,13 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
       const now = systemNowMs();
       const results: MemorySearchResult[] = [];
       for (const hr of hybridResults) {
+        // FORGET-01 (CR-01): hybridSearch already applies `evicted_at IS NULL` in its
+        // post-fusion WHERE, so an evicted id never reaches here — but the per-id hydrate
+        // is itself a recall read, so it carries the same always-on exclusion explicitly
+        // (defense in depth; the two halves of the soft-eviction guarantee stay coupled).
         const parsed = memoryRowMapper.parseOptionalRow(
           this.db
-            .prepare("SELECT * FROM memories WHERE id = ? AND tenant_id = ?")
+            .prepare("SELECT * FROM memories WHERE id = ? AND tenant_id = ? AND evicted_at IS NULL")
             .get(hr.id, tenantId),
         );
         const row = parsed.ok ? parsed.value : undefined;
@@ -317,8 +325,15 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
     const out: MemorySearchResult[] = [];
     let rank = 0;
     for (const id of ids) {
+      // FORGET-01 (CR-01): the ALWAYS-ON `evicted_at IS NULL` recall exclusion —
+      // hydrateLane backs searchLanes, the PRIMARY live recall path (createMemoryRecall
+      // prefers searchLanes, memory-recall.ts:183), so a soft-evicted row MUST be omitted
+      // here exactly as hybridSearch's post-fusion WHERE does it (hybrid-search.ts:440).
+      // The inspect/asOf raw reads stay UNFILTERED (eviction is soft + asOf-resolvable).
       const parsed = memoryRowMapper.parseOptionalRow(
-        this.db.prepare("SELECT * FROM memories WHERE id = ? AND tenant_id = ?").get(id, tenantId),
+        this.db
+          .prepare("SELECT * FROM memories WHERE id = ? AND tenant_id = ? AND evicted_at IS NULL")
+          .get(id, tenantId),
       );
       const row = parsed.ok ? parsed.value : undefined;
       if (!row) continue;
@@ -592,6 +607,11 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
     return fromPromise((async () => {
       // CR-02 fix: exclude expired entries (mirrors the other read paths in
       // hydrateLane and search — `expires_at IS NULL OR expires_at > nowMs`).
+      // FORGET-01 (CR-01): the `AND evicted_at IS NULL` is defensive coupling — a
+      // pinned row is store-side eviction-EXEMPT (the lifecycle sweep never evicts
+      // pinned/system/high-proof rows), so a `pinned = 1` row can never carry
+      // evicted_at; the guard makes the always-on-exclusion invariant explicit on this
+      // recall read too, so the pinned-first lane and the fused lanes stay coupled.
       const nowMs = systemNowMs();
       const parsed = memoryRowMapper.parseRows(
         this.db
@@ -599,6 +619,7 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
             "SELECT * FROM memories " +
               "WHERE tenant_id = ? AND agent_id = ? AND pinned = 1 " +
               "AND (expires_at IS NULL OR expires_at > ?) " +
+              "AND evicted_at IS NULL " +
               "ORDER BY created_at DESC LIMIT ?",
           )
           .all(scope.tenantId, scope.agentId, nowMs, limit),

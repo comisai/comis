@@ -7,7 +7,11 @@
  * path. It refreshes a single user's profile from their HIGH-TRUST source
  * memories: default-OFF gate → read sources → EXCLUDE `external`-trust
  * (anti-poisoning) → bound → INJECTED `build()` seam → `validateMemoryWrite` on
- * every candidate → `upsert` via the port → counts-only event → idempotent.
+ * every candidate → `revise()` via the port (REVISE-01, the trust-first bi-temporal
+ * soft-close — NOT a blind insert), which RESOLVES the slot (contradict → supersede /
+ * corroborate → bump / topic-distinct → coexist) and RETURNS the decided outcome →
+ * count the ADAPTER's authoritative outcome (WR-01 — never a divergent job-side
+ * re-classification) → counts-only event (superseded/corroborated/inserted) → idempotent.
  *
  * Security posture (design §9 — the same anti-poisoning discipline as the
  * reasoning + triple-extraction jobs, with the USER hardening):
@@ -31,9 +35,10 @@
  *   `skippedOverCap`). It emits a MINIMAL, counts-only
  *   `memory:user_representation_built` event + counts-only logs — NEVER the
  *   profile `content` (AGENTS.md §2.7).
- * - Idempotent: a re-run over unchanged sources writes 0 new — the upsert is keyed
- *   on `(scope, entryType, content)`, so re-distilling the same sources replaces in
- *   place rather than appending.
+ * - Idempotent: a re-run over unchanged sources writes 0 new — an EXACT
+ *   current-truth duplicate is pre-skipped (the cheap `(entryType, content)` set),
+ *   and revise() itself corroborates (bumps confidence in place) rather than
+ *   appending, so re-distilling the same sources does not grow the profile.
  *
  * The `build` LLM call is INJECTED (the offline seam) — the daemon builds it from a
  * cheap model; it is NEVER invoked on the recall path. The agent consumes
@@ -75,6 +80,26 @@ const TRUST_RANK: Record<UserRepresentationTrust, number> = { system: 2, learned
 function minTrust(a: UserRepresentationTrust, b: UserRepresentationTrust): UserRepresentationTrust {
   return TRUST_RANK[a] <= TRUST_RANK[b] ? a : b;
 }
+
+// ---------------------------------------------------------------------------
+// REVISE-01: the counts-only revision outcomes (the ADAPTER is authoritative)
+//
+// The job's `superseded`/`corroborated`/`inserted` counts (telemetry for the Plan-05
+// `learning:user_model_revised` event) are NOT re-derived by the job. The
+// AUTHORITATIVE per-slot resolution happens INSIDE `revise()` in the @comis/memory
+// adapter (Plan 02), and `revise()` RETURNS the `ReviseOutcome` (@comis/core) it
+// took. The job counts EXACTLY that returned outcome, so the emitted counts match
+// what was PERSISTED by construction (WR-01) — there is no second, divergent
+// similarity heuristic on the job side (the prior `contentSimilarity`/0.6 classifier
+// disagreed with the adapter's `bigramDice`/0.5 + 0.9-corroborate-floor in the
+// [0.5,0.6) and [0.9,1.0) bands, so the counts mis-reported the action).
+//
+// The adapter's `recorded-not-believed` branch (a lower-trust contradiction the
+// anti-poison control dropped) persists nothing and is counted in NONE of the three
+// tallies. The job's ONLY local same-slot judgement is the cheap BYTE-identical
+// exact-dup pre-skip (an unchanged re-distillation), counted as a `corroborated`
+// no-op without a `revise()` txn.
+// ---------------------------------------------------------------------------
 
 /**
  * One high-trust source memory the builder distills the profile from. The builder
@@ -160,7 +185,12 @@ export interface MemoryUserRepresentationDeps {
 export interface MemoryUserRepresentationStats {
   /** Candidates returned by the build seam (the pre-filter input count). */
   built: number;
-  /** Entries written via the port upsert. */
+  /**
+   * Current-truth ROWS written by revise() — the `superseded` + `inserted` outcomes
+   * ONLY (IN-02). An in-place `corroborated` confidence bump writes no row and is
+   * NOT counted here (it is tallied under {@link corroborated}); a
+   * `recorded-not-believed` (lower-trust contradiction) persists nothing.
+   */
   written: number;
   /** Candidates blocked by validateMemoryWrite (warn OR critical — Pitfall 2). */
   blocked: number;
@@ -172,6 +202,27 @@ export interface MemoryUserRepresentationStats {
   sourcesUsed: number;
   /** True when the input bound dropped one or more sources from the prompt. */
   sourcesTruncated: boolean;
+  /**
+   * REVISE-01 (counts only): revise() calls the adapter RESOLVED as a `superseded`
+   * outcome — a higher/equal-trust contradiction that soft-closed the incumbent and
+   * wrote the candidate as the new current-truth. The AUTHORITATIVE adapter outcome
+   * (WR-01), never a job-side re-derivation; telemetry for the Plan-05 daemon event.
+   */
+  superseded: number;
+  /**
+   * REVISE-01 (counts only): revise() calls the adapter RESOLVED as a `corroborated`
+   * outcome — a same-belief near-restatement that bumped the incumbent's confidence
+   * in place (NO new row), PLUS the cheap byte-identical exact-dup pre-skips (a no-op
+   * re-distillation, counted here without a revise() txn). Not counted in
+   * {@link written} (no row was written).
+   */
+  corroborated: number;
+  /**
+   * REVISE-01 (counts only): revise() calls the adapter RESOLVED as an `inserted`
+   * outcome — no same-slot incumbent (a different `entryType`, or a topic-distinct
+   * same-type fact that COEXISTS): a new current-truth row.
+   */
+  inserted: number;
 }
 
 /** The job's Result alias (exported for the test + the daemon onComplete mapping). */
@@ -190,8 +241,9 @@ export type MemoryUserRepresentationResult = Result<MemoryUserRepresentationStat
  * the surviving source text (non-fatal via `fromPromise`) → for each candidate
  * (bounded by `maxEntriesPerRun`): `validateMemoryWrite` (`warn` OR `critical` →
  * skip, `blocked++`; NO downgrade-and-store) → compute trust in CODE at the
- * surviving-source ceiling → `upsert` via the port (a rejecting store → WARN +
- * continue). Emit a counts-only `memory:user_representation_built` event.
+ * surviving-source ceiling → `revise()` via the port (a rejecting store → WARN +
+ * continue), counting the adapter's RETURNED outcome (superseded/inserted also bump
+ * `written`; corroborated does not). Emit a counts-only `memory:user_representation_built` event.
  *
  * @returns `ok(stats)` on success (even with 0 written); `err` only when the
  *   source read fails (cannot proceed safely). A per-candidate failure is non-fatal.
@@ -210,6 +262,10 @@ export async function runUserRepresentationBuild(
   let sourcesConsidered = 0;
   let sourcesUsed = 0;
   let sourcesTruncated = false;
+  // REVISE-01 classification counters (counts-only; never carry candidate content).
+  let superseded = 0;
+  let corroborated = 0;
+  let inserted = 0;
 
   const emit = (): void => {
     eventBus?.emit("memory:user_representation_built", {
@@ -221,6 +277,9 @@ export async function runUserRepresentationBuild(
       sourcesConsidered,
       sourcesUsed,
       sourcesTruncated,
+      superseded,
+      corroborated,
+      inserted,
       durationMs: clock.now() - startMs,
       timestamp: clock.now(),
     });
@@ -234,6 +293,9 @@ export async function runUserRepresentationBuild(
     sourcesConsidered,
     sourcesUsed,
     sourcesTruncated,
+    superseded,
+    corroborated,
+    inserted,
   });
 
   // The DEFAULT-OFF cost gate. No build() call, no write, no spend.
@@ -341,15 +403,17 @@ export async function runUserRepresentationBuild(
 
   const now = clock.now();
 
-  // 5. IDEMPOTENCY: a re-run over unchanged sources must write 0 new. Read the
-  //    current profile once and dedup candidates against the
-  //    EXISTING `(entryType, content)` set — re-distilling the same sources yields
-  //    the same candidates, which are already present, so they are skipped. The
-  //    dedup keys on the CONTENT set (not a global "ran once" flag), so a NEW source
-  //    that yields a NEW candidate still writes. The adapter's own
-  //    upsert-replace-per-(scope, entryType, content) is the second belt; this read
-  //    keeps `written` honest (0 new on a no-op re-run). The read is non-fatal: a
-  //    failed read degrades to "dedup nothing" (the adapter upsert still de-dups).
+  // 5. CURRENT-PROFILE PRE-READ — the CHEAP exact-dup pre-skip ONLY. After Plan 02,
+  //    `read()` returns CURRENT-TRUTH only (t_valid_end IS NULL). We derive
+  //    `existingKeys` (the `(entryType, content)` set): an EXACT current-truth
+  //    duplicate is a no-op re-distillation, so we skip the revise() txn entirely (a
+  //    no-op transaction saved) and count it as a `corroborated` no-op. The job no
+  //    longer re-classifies the contradict/corroborate/coexist relation — that is the
+  //    adapter's AUTHORITATIVE call inside revise(), RETURNED to us as a
+  //    {@link ReviseOutcome} (WR-01: the counts come from the adapter, by
+  //    construction, not from a divergent job-side heuristic). The read is non-fatal:
+  //    a failed read degrades to "no exact-dup pre-skip" — every surviving candidate
+  //    is then passed to revise(), whose adapter is the authoritative belt.
   const existingKeys = new Set<string>();
   const existing = await fromPromise(
     userRepresentationStore.read({ tenantId, agentId, userId }),
@@ -362,9 +426,9 @@ export async function runUserRepresentationBuild(
         agentId,
         errorKind: "dependency" as const,
         step: "user-repr" as const,
-        hint: "profile pre-read for idempotency failed — falling back to the adapter's upsert de-dup",
+        hint: "profile pre-read failed — skipping the exact-dup pre-skip; the adapter revise() remains the authoritative per-slot resolution",
       },
-      "User representation idempotency pre-read failed (non-fatal)",
+      "User representation profile pre-read failed (non-fatal)",
     );
   }
 
@@ -376,10 +440,15 @@ export async function runUserRepresentationBuild(
       continue;
     }
 
-    // Idempotency skip: a candidate already in the profile (same entryType +
-    // content) is a no-op re-distillation — do NOT re-write it (keeps `written`
-    // at 0 on an unchanged re-run). NOT counted as blocked (it is not a rejection).
+    // Idempotency optimization: a candidate BYTE-identical to a current-truth row
+    // (same entryType + content) is a no-op re-distillation — skip the revise() txn
+    // (keeps `written` at 0 on an unchanged re-run). It is the STRONGEST same-slot
+    // corroboration (normalized-equal to itself), so it is COUNTED as `corroborated`
+    // (REVISE-01 telemetry for the daemon event) even though we save the no-op
+    // write. NOT counted as `blocked` (it is not a rejection); the content already
+    // passed the firewall when first written.
     if (existingKeys.has(`${candidate.entryType}::${candidate.content}`)) {
+      corroborated++;
       continue;
     }
 
@@ -412,36 +481,58 @@ export async function runUserRepresentationBuild(
     // misleading; the table column is optional). CONSEQUENCE: because
     // `source_memory_id` is NULL here, the table's ON DELETE CASCADE does NOT retire
     // these rows when their source memories are deleted —
-    // an offline-built entry persists until the next run upsert-replaces it (keyed
-    // on (scope, entryType, content)). There is no orphan-sweep; do not rely on
-    // CASCADE to garbage-collect builder-produced rows (the adapter docstring
-    // carries the full caveat).
+    // an offline-built entry persists until the next run revise()-replaces it (the
+    // adapter soft-closes the superseded incumbent, never DELETEs). There is no
+    // orphan-sweep; do not rely on CASCADE to garbage-collect builder-produced rows
+    // (the adapter docstring carries the full caveat).
     const entry: UserRepresentationInput = {
       entryType: candidate.entryType,
       content: candidate.content,
       trust: sourceTrust,
     };
 
-    // The non-fatal write (mirrors reasoning-job.ts:462). The adapter filters every
-    // statement on `(tenantId, agentId, userId)`; the upsert is idempotent per
-    // (scope, entryType, content). A rejecting/erroring store → WARN + continue.
-    const upserted = await fromPromise(
-      userRepresentationStore.upsert(entry, { tenantId, agentId, userId, now }),
+    // The non-fatal write (mirrors reasoning-job.ts:462). REVISE-01: the write path
+    // is `revise()` (the trust-first bi-temporal soft-close), NOT the blind `upsert`.
+    // The adapter filters every statement on `(tenantId, agentId, userId)` and
+    // resolves the slot trust-first; it RETURNS the AUTHORITATIVE decided outcome so
+    // we count what was actually persisted (WR-01 — no divergent job-side classifier).
+    // A rejecting/erroring store → WARN + continue (nothing counted for a failed write).
+    const revised = await fromPromise(
+      userRepresentationStore.revise(entry, { tenantId, agentId, userId, now }),
     );
-    if (!upserted.ok || !upserted.value.ok) {
+    if (!revised.ok || !revised.value.ok) {
       logger.warn(
         {
           agentId,
           errorKind: "dependency" as const,
           step: "user-repr" as const,
-          hint: "userRepresentationStore.upsert failed/rejected — candidate skipped, run continues",
+          hint: "userRepresentationStore.revise failed/rejected — candidate skipped, run continues",
         },
-        "Failed to upsert representation entry (non-fatal)",
+        "Failed to revise representation entry (non-fatal)",
       );
       continue;
     }
-    written++;
-    // Same-run dedup: a later identical candidate is now "existing" → not re-written.
+
+    // Count the ADAPTER's AUTHORITATIVE outcome (counts only — never the
+    // content/entryType). `written` is ROW writes only (IN-02): a `superseded` or
+    // `inserted` wrote a new current-truth row; a `corroborated` was an in-place
+    // confidence bump (NO row) — counted under the corroboration tally, NOT `written`;
+    // a `recorded-not-believed` (lower-trust contradiction, anti-poison) persisted
+    // nothing and is not tallied here at all.
+    const outcome = revised.value.value;
+    if (outcome === "superseded") {
+      superseded++;
+      written++;
+    } else if (outcome === "inserted") {
+      inserted++;
+      written++;
+    } else if (outcome === "corroborated") {
+      corroborated++;
+    }
+    // outcome === "recorded-not-believed": nothing persisted, nothing counted.
+
+    // Same-run bookkeeping: a later BYTE-identical candidate is now an exact
+    // current-truth that the cheap exact-dup pre-skip catches (saving its no-op txn).
     existingKeys.add(`${candidate.entryType}::${candidate.content}`);
   }
 

@@ -129,6 +129,11 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
   // (RECALL-01 — the #1 troubleshooting blind spot), so they are NOT listed here.
   "memory:entities_linked",
   "memory:recall_used",
+  // memory:skill_used (ATTR-02) — per-turn used-skill ids + count, consumed by
+  // the daemon learning write-back subscriber (Plan 07 → observe(usedSkillIds)
+  // → used_skill_ids column), NOT a turn-level trajectory step. Same class as
+  // memory:recall_used above.
+  "memory:skill_used",
 
   // -------------------------------------------------------------------
   // Session-store lifecycle (distinct from session:started/ended which
@@ -154,6 +159,13 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
   "channel:disconnected",
   "channel:degraded",
   "channel:recovered",
+  // REACT-01 (v2.26 Verified Learning WS1): the RAW inbound reaction-add
+  // capture (counts/ids/emoji only), emitted by channel-manager. NOT a
+  // resolved learning outcome — its effect reaches the trajectory via the
+  // daemon's `learning:outcome_observed` resolve (already bridged), so the
+  // raw capture event does not get its own trajectory entry. Same class as
+  // sender:blocked's raw-signal predecessors.
+  "channel:reaction_received",
 
   // -------------------------------------------------------------------
   // Infra events — system metrics, not turn-scoped.

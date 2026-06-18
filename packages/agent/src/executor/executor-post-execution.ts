@@ -233,6 +233,12 @@ export interface PostExecutionParams {
    *  IN-PROCESS by the overlap heuristic here; content NEVER logged/emitted (only
    *  ids/counts cross the bus). Absent ⇒ no attribution (default-off / no recall). */
   recalledMemories?: ReadonlyArray<{ id: string; content: string }>;
+  /** ATTR-02: the per-turn skill ids attributed by ATTR-01 (skillNames whose
+   *  frozen `<location>` a `read` matched), read back from the bridge's named
+   *  carrier. When non-empty, postExecution emits the counts/ids-only
+   *  `memory:skill_used` write-back (the daemon Plan 07 consumes it). Absent /
+   *  empty ⇒ no emit (byte-identical to pre-patch). Ids only — never bodies. */
+  usedSkillIds?: ReadonlyArray<string>;
   bridge: PostExecutionBridge;
   unsubscribe: () => void;
   // Context engine
@@ -1789,6 +1795,30 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       });
     } catch {
       // Attribution + emit is non-fatal — it must never fail the turn.
+    }
+  }
+
+  // ATTR-02: emit the counts/ids-only memory:skill_used write-back carrying the
+  // per-turn skill ids attributed by ATTR-01 (the bridge's named carrier, read
+  // back at the pi-executor call site). Mirrors the memory:recall_used emit
+  // above — PLAIN emit, ids/counts ONLY (never procedure bodies). Gated on a
+  // non-empty usedSkillIds so the no-skill default path is byte-identical to
+  // pre-patch. The daemon subscriber (setup-learning.ts, Plan 07) threads
+  // usedSkillIds into observe() → the used_skill_ids column. This is the
+  // dedicated write-back event — the daemon-emitted outcome event has no
+  // usedSkillIds field and is never the carrier's target.
+  if (params.usedSkillIds !== undefined && params.usedSkillIds.length > 0) {
+    try {
+      deps.eventBus.emit("memory:skill_used", {
+        agentId: effectiveAgentId,
+        sessionKey: formattedKey,
+        traceId: tryGetContext()?.traceId ?? formattedKey,
+        usedSkillIds: [...params.usedSkillIds],
+        usedCount: params.usedSkillIds.length,
+        timestamp: deps.clock.now(),
+      });
+    } catch {
+      // Skill-use emit is non-fatal — it must never fail the turn.
     }
   }
 

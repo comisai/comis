@@ -221,6 +221,16 @@ export type { ReasoningSeamDeps } from "./memory/memory-reasoning-seam.js";
 export { createUserRepresentationSeam } from "./memory/memory-user-representation-seam.js";
 export type { UserRepresentationSeamDeps } from "./memory/memory-user-representation-seam.js";
 
+// Offline usefulness-judge seam (the OPTIONAL second usefulness signal alongside the
+// keyless citation-marker attribution). The factory the daemon __USEFULNESS_JUDGE__
+// sentinel calls to BUILD judge({ candidateIds, answer }) from a cheap resolved model
+// (the daemon injects it), keeping USEFULNESS_JUDGE_PROMPT + its lenient/total parser
+// agent-internal (mirrors createUserRepresentationSeam). The verdict partition is written
+// through usefulnessStore.recordUsage by the sentinel (WIRE-02). Only the factory is
+// exported — its Deps/Input/Verdict shapes are inferred at the daemon call site (no
+// unconsumed type surface on the public barrel).
+export { createUsefulnessJudgeSeam } from "./memory/memory-usefulness-judge-seam.js";
+
 // Query-time dialectic synthesis seam (the ONE allowed query-time LLM
 // surface). The factory the daemon `memory.ask` handler calls to BUILD the
 // synthesize() seam from a cheap resolved model (the daemon injects it), keeping DIALECTIC_PROMPT
@@ -606,3 +616,36 @@ export type { SessionLatch } from "./executor/session-latch.js";
 
 // Background task infrastructure
 export * from "./background/index.js";
+
+// Correction-detector seam (Verified Learning WS1, Phase 199 P0.5). The cost-gated
+// `fast`-tier detector the daemon constructs (setup-learning-reactions
+// buildReactionWiringDeps) ONLY when `learningOutcome.correction.enabled` is opted
+// in, then runs over a follow-up user turn → a `corrected`/`correction` soft-
+// failure verdict (CORRECT-01). Re-exported from the memory sub-barrel beside its
+// daemon consumer (this plan) so the public-export-consumers gate never sees an
+// orphan. The prompt + triple-bound (wrap + reward-cap + strip-parse) stay
+// agent-internal.
+export { createCorrectionDetectorSeam } from "./memory/index.js";
+export type { CorrectionVerdict } from "./memory/index.js";
+
+// Verified Learning WS2 (P2 Skills, Phase 201 Plan 04). The LLM-backed
+// procedural-synthesis adapter the daemon constructs on the `skillSynthesis` mid
+// tier (SKILL-02). Re-exported from the memory sub-barrel beside its daemon
+// consumer (Plan 07 wiring) so the public-export-consumers gate never sees an
+// orphan once that wiring lands. The synthesis JOB (`runSkillSynthesis`) lands in
+// the same plan's later tasks. The synthesis PROMPT + parser stay agent-internal.
+export { createLlmSkillSynthesisAdapter } from "./memory/index.js";
+export type { LlmSkillSynthesisAdapterDeps } from "./memory/index.js";
+
+// The procedural skill-synthesis JOB (SKILL-03/04/05/08) the daemon invokes from
+// the `__SKILL_SYNTHESIS__` cron (Plan 07): select success → abstain → cluster
+// (anti-domination) → synthesize → validate → admit. Consumes @comis/core PORT
+// TYPES only (the agent↛memory / agent↛skills closed-graph cut); the daemon
+// injects the store + validation adapters + the LCD-merged source.
+export { runSkillSynthesis } from "./memory/index.js";
+export type {
+  SkillSynthesisJobDeps,
+  SkillSynthesisJobResult,
+  SynthesisSourceTrajectory,
+  SkillApprovalGate,
+} from "./memory/index.js";

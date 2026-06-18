@@ -364,6 +364,192 @@ describe("obs-explain-heuristics", () => {
     for (const h of HEURISTICS) expect(typeof h).toBe("function");
   });
 
+  // ------------------------------------------------------------------------
+  // OBS-02 (Phase 198): outcome_unresolved verdict — BENIGN, lowest priority
+  // (Defer ≠ Retry). Fires on a finished trajectory whose learning shadow saw
+  // the turn but resolved no outcome; ranks BELOW every acute tool-failure cause.
+  // ------------------------------------------------------------------------
+
+  const UNRESOLVED_LEARNING: IncidentSignals["learning"] = {
+    outcomeResolved: false,
+    sources: ["tool"],
+    skillsUsed: [],
+    skillFailures: [],
+    synthesisAbstained: false,
+  };
+
+  it("OBS-02: an unresolved learning signal with NO acute failure → outcome_unresolved", () => {
+    const r = rootCause(makeSignals({ learning: UNRESOLVED_LEARNING }));
+    expect(r).not.toBeNull();
+    expect(r!.code).toBe("outcome_unresolved");
+    expect(r!.detail).toMatch(/no.*resolvable outcome/i);
+    // The hint points at the judge fallback (the shadow-mode coverage lever).
+    expect(r!.suggestedNextSteps.join(" ")).toMatch(/learningOutcome\.judge\.enabled/);
+    expect(r!.suggestedNextSteps).toContain("obs.explain depth=full");
+  });
+
+  it("OBS-02: outcome_unresolved ranks BELOW an acute tool failure (Defer ≠ Retry)", () => {
+    // The SAME unresolved-learning signal, now with a real tool failure, must
+    // report the upstream tool cause — the unresolved outcome is benign and
+    // never masks an acute error.
+    const r = rootCause(
+      makeSignals({
+        learning: UNRESOLVED_LEARNING,
+        endReason: "completed_with_tool_errors",
+        toolStats: { web_fetch: { ok: 0, failed: 1, topErrorKind: "dependency" } },
+        failures: [
+          { seq: 1, toolName: "web_fetch", classifiedFailureBy: "sdk_iserror", transportOk: false, errorKind: "dependency", resultDigest: "d", resultBytes: 0, errorPreview: "" },
+        ],
+      }),
+    );
+    expect(r).not.toBeNull();
+    expect(r!.code).toBe("completed_with_tool_errors");
+  });
+
+  it("OBS-02: a named acute cause (misclassification) out-ranks outcome_unresolved", () => {
+    const r = rootCause(
+      makeSignals({
+        learning: UNRESOLVED_LEARNING,
+        hasMisclassificationSignal: true,
+        misclassifiedTool: "web_fetch",
+        misclassifiedToken: "403",
+      }),
+    );
+    expect(r!.code).toBe("content_heuristic_misclassification");
+  });
+
+  it("OBS-02: a RESOLVED learning outcome (outcomeResolved:true) names NO cause", () => {
+    // A resolved outcome (incl. an explicit `unknown` resolution would set
+    // outcomeResolved per the assembler) is not a degradation — no verdict.
+    const r = rootCause(
+      makeSignals({
+        learning: { outcomeResolved: true, outcome: "success", sources: ["tool"], skillsUsed: [], skillFailures: [], synthesisAbstained: false },
+      }),
+    );
+    expect(r).toBeNull();
+  });
+
+  it("OBS-02: absent learning block names no cause (clean session)", () => {
+    expect(rootCause(makeSignals())).toBeNull();
+  });
+
+  it("OBS-02: the frozen 678/503 fixtures are UNCHANGED (they carry no learning block)", () => {
+    const r678 = rootCause(
+      makeSignals({
+        hasMisclassificationSignal: true,
+        misclassifiedTool: "web_fetch",
+        misclassifiedToken: "403",
+        hasDoNotRetrySignal: true,
+        breakerOpenedTool: "web_fetch",
+        repeatedFailureCount: { web_fetch: 14 },
+        mostFailedTool: "web_fetch",
+      }),
+    );
+    expect(r678!.code).toBe("content_heuristic_misclassification");
+    const r503 = rootCause(
+      makeSignals({
+        hasDoNotRetrySignal: true,
+        breakerOpenedTool: "web_fetch",
+        repeatedFailureCount: { web_fetch: 5 },
+        mostFailedTool: "web_fetch",
+      }),
+    );
+    expect(r503!.code).toBe("breaker_opened_repeated_failure");
+  });
+
+  // ------------------------------------------------------------------------
+  // OBS-02 (Phase 201, P2 skills): the two BENIGN procedural-skill verdicts —
+  // synthesis_abstained_low_capability + learned_skill_failing. Both dead-last
+  // (after the catch-all tool-failure rule); Defer ≠ Retry — an abstain never
+  // ranks as an acute failure.
+  // ------------------------------------------------------------------------
+
+  const ABSTAINED_LEARNING: IncidentSignals["learning"] = {
+    outcomeResolved: false,
+    sources: ["pipeline"],
+    skillsUsed: [],
+    skillFailures: [],
+    synthesisAbstained: true,
+  };
+
+  it("OBS-02: synthesisAbstained:true with no acute cause → synthesis_abstained_low_capability", () => {
+    const r = rootCause(makeSignals({ learning: ABSTAINED_LEARNING }));
+    expect(r).not.toBeNull();
+    expect(r!.code).toBe("synthesis_abstained_low_capability");
+    expect(r!.detail).toMatch(/abstain/i);
+    expect(r!.detail).toMatch(/benign|defer/i);
+    expect(r!.suggestedNextSteps.length).toBeGreaterThan(0);
+  });
+
+  it("OBS-02: synthesis_abstained is BENIGN — it ranks BELOW an acute tool failure (Defer ≠ Retry)", () => {
+    const r = rootCause(
+      makeSignals({
+        learning: ABSTAINED_LEARNING,
+        endReason: "completed_with_tool_errors",
+        failures: [
+          { seq: 1, toolName: "web_fetch", classifiedFailureBy: "sdk_iserror", transportOk: false, errorKind: "dependency", resultDigest: "d", resultBytes: 0, errorPreview: "" },
+        ],
+      }),
+    );
+    expect(r!.code).toBe("completed_with_tool_errors");
+  });
+
+  it("OBS-02: skillFailures non-empty (no acute cause) → learned_skill_failing", () => {
+    const r = rootCause(
+      makeSignals({
+        learning: { outcomeResolved: true, outcome: "corrected", sources: ["correction"], skillsUsed: ["flaky"], skillFailures: ["flaky"], synthesisAbstained: false },
+      }),
+    );
+    expect(r).not.toBeNull();
+    expect(r!.code).toBe("learned_skill_failing");
+    expect(r!.suggestedNextSteps.join(" ")).toMatch(/comis memory skills/);
+  });
+
+  it("OBS-02: learned_skill_failing fires on a REPEATEDLY-failing procedure → its hint is now ACTIONABLE (demote is real, Phase 202)", () => {
+    // A procedure used across several failed/corrected trajectories (the
+    // repeatedly-failing case): the verdict surfaces every implicated skill id.
+    // Phase 202 (Plan 05) makes the hint's "the procedure will demote on
+    // continued failure" promise actionable — the resolve-seam loop now demotes
+    // a corroborated+weakening surfaced skill (active→stale, then evict→archived),
+    // which drops it from the read-only surface. The verdict itself is UNCHANGED
+    // (still BENIGN, still counts/ids-only) — this asserts the actionable hint.
+    const r = rootCause(
+      makeSignals({
+        learning: { outcomeResolved: true, outcome: "failure", sources: ["tool", "correction"], skillsUsed: ["flaky", "shaky"], skillFailures: ["flaky", "shaky"], synthesisAbstained: false },
+      }),
+    );
+    expect(r).not.toBeNull();
+    expect(r!.code).toBe("learned_skill_failing");
+    // Names the failing skill ids (content-free) and points at the funnel + obs.explain.
+    expect(r!.detail).toContain("flaky");
+    expect(r!.detail).toContain("shaky");
+    expect(r!.suggestedNextSteps.join(" ")).toMatch(/comis memory skills/);
+    // The hint's demote promise (now fulfilled by Plan 05's resolve-seam loop).
+    expect(r!.suggestedNextSteps.join(" ")).toMatch(/demote on continued failure/);
+  });
+
+  it("OBS-02: learned_skill_failing ranks BELOW an acute tool failure", () => {
+    const r = rootCause(
+      makeSignals({
+        learning: { outcomeResolved: false, outcome: "failure", sources: ["tool"], skillsUsed: ["flaky"], skillFailures: ["flaky"], synthesisAbstained: false },
+        failures: [
+          { seq: 1, toolName: "web_fetch", classifiedFailureBy: "sdk_iserror", transportOk: false, errorKind: "dependency", resultDigest: "d", resultBytes: 0, errorPreview: "" },
+        ],
+      }),
+    );
+    expect(r!.code).toBe("completed_with_tool_errors");
+  });
+
+  it("OBS-02: neither skill verdict fires on an absent learning block (no fixture regression)", () => {
+    expect(rootCause(makeSignals())).toBeNull();
+    // A resolved, no-skill learning block fires NEITHER skill verdict.
+    expect(
+      rootCause(
+        makeSignals({ learning: { outcomeResolved: true, outcome: "success", sources: ["tool"], skillsUsed: [], skillFailures: [], synthesisAbstained: false } }),
+      ),
+    ).toBeNull();
+  });
+
   it("detail strings never contain a literal '${' (interpolation-bug guard)", () => {
     const r = rootCause(
       makeSignals({ breakerOpenedTool: "web_fetch", hasDoNotRetrySignal: true, mostFailedTool: "web_fetch", repeatedFailureCount: { web_fetch: 5 } }),

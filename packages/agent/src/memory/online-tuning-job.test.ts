@@ -248,4 +248,211 @@ describe("runOnlineTuning — counts-only event + KEYLESS/deterministic source b
     // Trust-freeze (the OD2 ship-gate): the literal trust-weight field name is never written.
     expect(src).not.toMatch(/trustAlpha|trustGradient/);
   });
+
+  it("the emit is a PLAIN eventBus.emit (NOT optional-chained) so EMIT_REGEX + the type system see it", () => {
+    const src = readFileSync(fileURLToPath(new URL("./online-tuning-job.ts", import.meta.url)), "utf8");
+    // RANK-06: the promoted emit. The `?.`-chained form evades the EMIT_REGEX arch gate
+    // (/eventBus\.emit\(/) AND the type system + trajectory — the plain form is mandatory.
+    expect(src).toMatch(/eventBus\.emit\(\s*"memory:online_tuning_applied"/);
+    expect(src).not.toMatch(/eventBus\?\.emit\(/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// RANK-02/03 (v2.26 WS3, Phase 200 Plan 06): per-intent runs + bandit/nudge
+// selection by config.learner + the per-intent emit dim, all via the PLAIN typed emit.
+// ---------------------------------------------------------------------------
+describe("runOnlineTuning — RANK-02 per-intent dimension", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("threads the per-intent bucket into BOTH the read and the upsert scope", async () => {
+    const store = makeStore();
+    const feed = new Map<string, OnlineTuningFeedEntry>([["m1", { usedCount: 9, ignoredCount: 1 }]]);
+    const deps = makeDeps({
+      config: { enabled: true, intent: "temporal" },
+      tunedAlphaStore: store as unknown as MemoryOnlineTuningDeps["tunedAlphaStore"],
+      readUsefulness: async () => ok(feed),
+    });
+    await runOnlineTuning(deps);
+    // The read + the upsert both carry intent (the per-(tenant, agent, intent) bucket).
+    expect(store.read).toHaveBeenCalledWith({ tenantId: "default", agentId: "test-agent", intent: "temporal" });
+    expect(store.upsert).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ tenantId: "default", agentId: "test-agent", intent: "temporal", now: NOW }),
+    );
+  });
+
+  it("omitted intent resolves the GLOBAL '' bucket (byte-identical to the pre-intent read/upsert)", async () => {
+    const store = makeStore();
+    const feed = new Map<string, OnlineTuningFeedEntry>([["m1", { usedCount: 9, ignoredCount: 1 }]]);
+    const deps = makeDeps({
+      config: { enabled: true }, // no intent
+      tunedAlphaStore: store as unknown as MemoryOnlineTuningDeps["tunedAlphaStore"],
+      readUsefulness: async () => ok(feed),
+    });
+    await runOnlineTuning(deps);
+    // No intent on the scope → the adapter resolves '' (the global bucket).
+    expect(store.read).toHaveBeenCalledWith({ tenantId: "default", agentId: "test-agent" });
+  });
+
+  it("the plain typed emit carries the per-intent dim (counts only — no alpha)", async () => {
+    const emit = vi.fn();
+    const feed = new Map<string, OnlineTuningFeedEntry>([["m1", { usedCount: 7, ignoredCount: 3 }]]);
+    const deps = makeDeps({
+      config: { enabled: true, intent: "temporal" },
+      readUsefulness: async () => ok(feed),
+      eventBus: { emit },
+    });
+    await runOnlineTuning(deps);
+    expect(emit).toHaveBeenCalledWith("memory:online_tuning_applied", expect.objectContaining({
+      intent: "temporal",
+      updated: true,
+    }));
+    const payload = (emit.mock.calls.find((c) => c[0] === "memory:online_tuning_applied")![1]) as Record<string, unknown>;
+    for (const k of Object.keys(payload)) expect(k).not.toMatch(/alpha/i);
+  });
+});
+
+describe("runOnlineTuning — RANK-03 bandit vs nudge selection", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("learner:'bandit' moves the FULL vector — recency/temporal/proof MOVE (not just usefulness) on a net-used feed", async () => {
+    const store = makeStore();
+    // A strong net-USED signal: positive reward mean → every axis nudged UP by the bandit
+    // (the reward mean rides every exploit term — the recency/temporal/proof axes, hardcoded-0
+    // gradient under the nudge, become learnable; the RANK-04 keystone mechanism).
+    const feed = new Map<string, OnlineTuningFeedEntry>([
+      ["m1", { usedCount: 10, ignoredCount: 0 }],
+      ["m2", { usedCount: 9, ignoredCount: 1 }],
+    ]);
+    const deps = makeDeps({
+      config: { enabled: true, learner: "bandit", exploration: 0.1 },
+      tunedAlphaStore: store as unknown as MemoryOnlineTuningDeps["tunedAlphaStore"],
+      readUsefulness: async () => ok(feed),
+    });
+    await runOnlineTuning(deps);
+    const v = store.stored!;
+    // The bandit moves ALL FOUR (the net-used reward + UCB bonus ride every axis), UNLIKE the nudge.
+    expect(v.recencyAlpha).toBeGreaterThan(BASELINE.recencyAlpha);
+    expect(v.temporalAlpha).toBeGreaterThan(BASELINE.temporalAlpha);
+    expect(v.proofAlpha).toBeGreaterThan(BASELINE.proofAlpha);
+    expect(v.usefulnessAlpha).toBeGreaterThan(BASELINE.usefulnessAlpha);
+    for (const a of [v.recencyAlpha, v.temporalAlpha, v.proofAlpha, v.usefulnessAlpha]) {
+      expect(a).toBeGreaterThanOrEqual(0);
+      expect(a).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it("learner:'nudge' moves ONLY usefulness (the recency/temporal/proof gradients stay 0) — the conservative fallback", async () => {
+    const store = makeStore();
+    const feed = new Map<string, OnlineTuningFeedEntry>([["m1", { usedCount: 9, ignoredCount: 1 }]]);
+    const deps = makeDeps({
+      config: { enabled: true, learner: "nudge" },
+      tunedAlphaStore: store as unknown as MemoryOnlineTuningDeps["tunedAlphaStore"],
+      readUsefulness: async () => ok(feed),
+    });
+    await runOnlineTuning(deps);
+    const v = store.stored!;
+    expect(v.usefulnessAlpha).toBeGreaterThan(BASELINE.usefulnessAlpha);
+    // The nudge leaves the other three UNTOUCHED (their gradient is 0 under the bare used-rate feed).
+    expect(v.recencyAlpha).toBe(BASELINE.recencyAlpha);
+    expect(v.temporalAlpha).toBe(BASELINE.temporalAlpha);
+    expect(v.proofAlpha).toBe(BASELINE.proofAlpha);
+  });
+
+  it("bandit on a net-FAILURE (negative reward) feed nudges DOWN (reward sign correct), clamped to [0,1]", async () => {
+    const seed: TunedAlphaVector = { recencyAlpha: 0.5, temporalAlpha: 0.5, proofAlpha: 0.5, usefulnessAlpha: 0.5 };
+    const store = makeStore(seed);
+    // A net-IGNORED feed → negative reward mean → the bandit pushes axes DOWN from 0.5.
+    const feed = new Map<string, OnlineTuningFeedEntry>([
+      ["m1", { usedCount: 0, ignoredCount: 10 }],
+      ["m2", { usedCount: 1, ignoredCount: 9 }],
+    ]);
+    const deps = makeDeps({
+      config: { enabled: true, learner: "bandit", exploration: 0 }, // exploration 0 isolates the reward sign
+      tunedAlphaStore: store as unknown as MemoryOnlineTuningDeps["tunedAlphaStore"],
+      readUsefulness: async () => ok(feed),
+    });
+    await runOnlineTuning(deps);
+    const v = store.stored!;
+    expect(v.usefulnessAlpha).toBeLessThan(0.5);
+    for (const a of [v.recencyAlpha, v.temporalAlpha, v.proofAlpha, v.usefulnessAlpha]) {
+      expect(a).toBeGreaterThanOrEqual(0);
+      expect(a).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it("byte-identity: disabled run still hits the plain emit + returns ok with no upsert (per-intent dim included)", async () => {
+    const emit = vi.fn();
+    const store = makeStore();
+    const deps = makeDeps({
+      config: { enabled: false, learner: "bandit", intent: "temporal" },
+      tunedAlphaStore: store as unknown as MemoryOnlineTuningDeps["tunedAlphaStore"],
+      eventBus: { emit },
+    });
+    const result = await runOnlineTuning(deps);
+    expect(result.ok && result.value.updated).toBe(false);
+    expect(store.upsert).not.toHaveBeenCalled();
+    expect(emit).toHaveBeenCalledWith("memory:online_tuning_applied", expect.objectContaining({ updated: false, intent: "temporal" }));
+  });
+
+  // ── WR-03: failures must feed the bandit as a NEGATIVE reward term ──
+  // RANK-01 requires "a memory in recalled_ids of a failure/corrected trajectory gets
+  // NEGATIVE reward" to feed the ranker. On HEAD the reward seam routes failures to
+  // memory_usefulness.failure_count, but the bandit feed (OnlineTuningFeedEntry) carries
+  // only used/ignored, so the posterior is positive-only — failures contribute nothing.
+  // The fix projects failure_count into the feed and subtracts it from the reward, so a
+  // failure-implicated memory learns a LOWER usefulnessAlpha per intent. Trust stays frozen.
+  it("WR-03: a memory with failures learns a LOWER usefulnessAlpha than an identical one without (failures feed the bandit)", async () => {
+    // Identical used/ignored on both runs; the ONLY difference is failureCount. The
+    // failure-laden feed must drive usefulnessAlpha strictly lower than the clean feed.
+    const seed: TunedAlphaVector = { recencyAlpha: 0.5, temporalAlpha: 0.5, proofAlpha: 0.5, usefulnessAlpha: 0.5 };
+
+    const cleanStore = makeStore(seed);
+    const cleanFeed = new Map<string, OnlineTuningFeedEntry>([
+      ["m1", { usedCount: 6, ignoredCount: 2, failureCount: 0 }],
+    ]);
+    await runOnlineTuning(makeDeps({
+      config: { enabled: true, learner: "bandit", exploration: 0 }, // exploration 0 isolates the reward sign
+      tunedAlphaStore: cleanStore as unknown as MemoryOnlineTuningDeps["tunedAlphaStore"],
+      readUsefulness: async () => ok(cleanFeed),
+    }));
+
+    const failStore = makeStore(seed);
+    const failFeed = new Map<string, OnlineTuningFeedEntry>([
+      ["m1", { usedCount: 6, ignoredCount: 2, failureCount: 8 }], // same used/ignored, but failures accrued
+    ]);
+    await runOnlineTuning(makeDeps({
+      config: { enabled: true, learner: "bandit", exploration: 0 },
+      tunedAlphaStore: failStore as unknown as MemoryOnlineTuningDeps["tunedAlphaStore"],
+      readUsefulness: async () => ok(failFeed),
+    }));
+
+    const clean = cleanStore.stored!;
+    const failed = failStore.stored!;
+    // The failure-implicated memory drags usefulnessAlpha strictly lower (the bandit
+    // down-weights it per intent) — failures are no longer invisible to the learner.
+    expect(failed.usefulnessAlpha).toBeLessThan(clean.usefulnessAlpha);
+    // Determinism + clamp preserved on both.
+    for (const a of [failed.recencyAlpha, failed.temporalAlpha, failed.proofAlpha, failed.usefulnessAlpha]) {
+      expect(a).toBeGreaterThanOrEqual(0);
+      expect(a).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it("WR-03: failureCount with no used/ignored signal still registers a NEGATIVE reward (a pure-failure memory)", async () => {
+    const seed: TunedAlphaVector = { recencyAlpha: 0.5, temporalAlpha: 0.5, proofAlpha: 0.5, usefulnessAlpha: 0.5 };
+    const store = makeStore(seed);
+    // No used, no ignored — but failures accrued. A pure-failure memory must push the
+    // posterior NEGATIVE (not be skipped as "never recalled"), so usefulnessAlpha drops.
+    const feed = new Map<string, OnlineTuningFeedEntry>([
+      ["m1", { usedCount: 0, ignoredCount: 0, failureCount: 5 }],
+    ]);
+    await runOnlineTuning(makeDeps({
+      config: { enabled: true, learner: "bandit", exploration: 0 },
+      tunedAlphaStore: store as unknown as MemoryOnlineTuningDeps["tunedAlphaStore"],
+      readUsefulness: async () => ok(feed),
+    }));
+    expect(store.stored!.usefulnessAlpha).toBeLessThan(0.5);
+  });
 });

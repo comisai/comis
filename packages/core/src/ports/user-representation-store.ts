@@ -83,6 +83,26 @@ export interface UserRepresentationInput {
 }
 
 /**
+ * The decided branch of a {@link UserRepresentationStore.revise} call — the
+ * AUTHORITATIVE per-slot resolution the adapter actually took, returned so the
+ * caller's telemetry counts what was PERSISTED (REVISE-01/OBS-01) rather than
+ * re-deriving the classification with a divergent heuristic:
+ * - `inserted`              — no same-slot incumbent (or a topic-distinct coexist):
+ *                             a NEW current-truth row was written.
+ * - `corroborated`          — a same-belief near-restatement: the incumbent's
+ *                             confidence was bumped IN PLACE; NO new row was written.
+ * - `superseded`            — a higher/equal-trust contradiction: the incumbent was
+ *                             soft-closed and `entry` written as the new current-truth.
+ * - `recorded-not-believed` — a LOWER-trust contradiction (anti-poison): the
+ *                             incumbent stays current; `entry` was NOT persisted.
+ *
+ * The agent cannot import the adapter (the agent↛memory build cut); this shared
+ * type is how the adapter's real decision crosses the port boundary so the offline
+ * builder's `learning:user_model_revised` counts match the action exactly.
+ */
+export type ReviseOutcome = "inserted" | "corroborated" | "superseded" | "recorded-not-believed";
+
+/**
  * A representation entry read back — the input shape plus the
  * adapter-assigned identity + bookkeeping timestamps.
  */
@@ -93,6 +113,17 @@ export interface UserRepresentationEntry extends UserRepresentationInput {
   createdAt: number;
   /** Epoch ms of the last upsert that touched this entry (absent if never updated). */
   updatedAt?: number;
+  /**
+   * REVISE-02 (Phase 203): the valid-time window for the asOf projection.
+   * `validFrom` = epoch ms the entry became believed (mirrors `memory_triples.t_valid_start`;
+   * absent on rows predating bi-temporal columns = valid-since-creation). `validTo`
+   * null/undefined = CURRENT truth; a non-null value = the epoch ms the entry was
+   * soft-closed (superseded). Surfaced ONLY by the explicit `asOf()` read — `read()`
+   * returns current-truth (validTo IS NULL) only.
+   */
+  validFrom?: number;
+  /** REVISE-02: epoch ms this entry was soft-closed (superseded); null/undefined = current truth. */
+  validTo?: number;
 }
 
 export interface UserRepresentationStore {
@@ -128,5 +159,38 @@ export interface UserRepresentationStore {
   read(
     scope: Omit<UserRepresentationScope, "now">,
     cap?: number,
+  ): Promise<Result<UserRepresentationEntry[], Error>>;
+
+  /**
+   * REVISE-01 WRITE PATH (the bi-temporal trust-first supersession). Classifies
+   * `entry` vs the live incumbent for (tenant, agent, user, entryType): a
+   * corroboration bumps confidence (no new row); a higher/equal-trust contradiction
+   * soft-closes the incumbent (sets t_valid_end + expired_at, NEVER deletes) and
+   * inserts `entry` as current-truth; a LOWER-trust contradiction is recorded-not-believed
+   * (anti-poison). One synchronous db.transaction (throw → rollback). Same high-trust
+   * floor + validateMemoryWrite boundary as upsert(). Bounded per-record history
+   * (oldest superseded rows beyond historyCap trimmed). Type contract only.
+   *
+   * Returns the AUTHORITATIVE {@link ReviseOutcome} the adapter took (the decided
+   * branch), so the caller's telemetry counts what was actually PERSISTED instead of
+   * re-deriving the classification — the single source of truth for the
+   * `learning:user_model_revised` counts (REVISE-01/OBS-01).
+   */
+  revise(
+    entry: UserRepresentationInput,
+    scope: UserRepresentationScope,
+  ): Promise<Result<ReviseOutcome, Error>>;
+
+  /**
+   * REVISE-02 bi-temporal AS-OF read. Returns the entries BELIEVED true at epoch `t`
+   * (mode "valid", default: t_valid_start <= t AND (t_valid_end IS NULL OR t_valid_end > t))
+   * or RECORDED as of `t` (mode "txn": created_at <= t AND (expired_at IS NULL OR expired_at > t)),
+   * for the caller's (tenant, agent, user) scope ONLY. Superseded history is reachable ONLY here;
+   * read() returns current-truth (t_valid_end IS NULL) only. Type contract only.
+   */
+  asOf(
+    t: number,
+    scope: Omit<UserRepresentationScope, "now">,
+    mode?: "valid" | "txn",
   ): Promise<Result<UserRepresentationEntry[], Error>>;
 }

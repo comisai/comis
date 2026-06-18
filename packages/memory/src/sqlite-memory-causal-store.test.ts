@@ -120,6 +120,36 @@ describe("createSqliteMemoryCausalStore", () => {
       if (!read.ok) return;
       expect(read.value.map((r) => r.entry.id)).toEqual(["cause"]);
     });
+
+    // CR-01 (lane gap): the causal lane hydrates a full memory row that flows straight
+    // into createMemoryRecall → the prompt with NO downstream evicted_at re-validation.
+    // A soft-evicted counterpart MUST be excluded; the asOf raw read still resolves it
+    // (soft eviction is reversible). NB: the edge itself is unaffected — only the
+    // recall-side hydration filters; the asOf/inspect raw read does not.
+    it("CR-01: a soft-evicted causal counterpart is EXCLUDED from the lane (asOf raw read still resolves it)", async () => {
+      const cause = await seedMemory({ id: "cause", content: "deployment triggered a cascading outage" });
+      await seedMemory({ id: "effect", content: "regional blackout affected every datacenter" });
+
+      const written = await store.linkCausal(cause, "blackout", SCOPE_A, 1);
+      expect(written.ok && written.value).toBe(1);
+
+      // Soft-evict the effect (the counterpart the lane would hydrate).
+      db.prepare("UPDATE memories SET evicted_at = ? WHERE id = ?").run(1_700_000_000_000, "effect");
+
+      const read = await store.causalLane([cause], READ_A, 10);
+      expect(read.ok).toBe(true);
+      if (!read.ok) return;
+      // The evicted counterpart must NOT surface (was leaking on HEAD).
+      expect(read.value.map((r) => r.entry.id)).not.toContain("effect");
+
+      // Reversibility: the raw inspect/asOf read does NOT add the evicted_at filter.
+      const raw = db.prepare("SELECT id, evicted_at FROM memories WHERE id = 'effect'").get() as {
+        id: string;
+        evicted_at: number | null;
+      };
+      expect(raw.id).toBe("effect");
+      expect(raw.evicted_at).not.toBeNull();
+    });
   });
 
   // =====================================================================

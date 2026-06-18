@@ -121,7 +121,7 @@ vi.mock("node:os", async (importOriginal) => {
   };
 });
 
-import { assembleExecutionPrompt, extractUserLanguage, resolvePromptModeForProfile, clearSessionToolNameSnapshot, clearSessionBootstrapFileSnapshot, clearSessionPromptSkillsXmlSnapshot, clearWr02SenderTrustWarned, getCacheSafeParams, clearCacheSafeParams, buildRecallTrace, type PromptAssemblyParams, type CacheSafeParams } from "./prompt-assembly.js";
+import { assembleExecutionPrompt, extractUserLanguage, resolvePromptModeForProfile, clearSessionToolNameSnapshot, clearSessionBootstrapFileSnapshot, clearSessionPromptSkillsXmlSnapshot, clearWr02SenderTrustWarned, getCacheSafeParams, clearCacheSafeParams, buildRecallTrace, parseSkillLocationIndex, getSessionPromptSkillLocations, type PromptAssemblyParams, type CacheSafeParams } from "./prompt-assembly.js";
 import { resolveRecallTraceFilePath } from "@comis/observability";
 // node:fs (sync) is NOT mocked here (only node:fs/promises is) — safe for the
 // GEN-03 source-grep chokepoint below.
@@ -482,13 +482,13 @@ describe("assembleExecutionPrompt", () => {
     ): {
       store: import("@comis/core").TunedAlphaStore;
       reads: () => number;
-      lastScope: () => { tenantId: string; agentId: string } | undefined;
+      lastScope: () => { tenantId: string; agentId: string; intent?: string } | undefined;
     } {
       let readCalls = 0;
-      let scope: { tenantId: string; agentId: string } | undefined;
+      let scope: { tenantId: string; agentId: string; intent?: string } | undefined;
       const store = {
         upsert: vi.fn(),
-        read: vi.fn(async (s: { tenantId: string; agentId: string }) => {
+        read: vi.fn(async (s: { tenantId: string; agentId: string; intent?: string }) => {
           readCalls += 1;
           scope = s;
           return { ok: true as const, value: vector };
@@ -579,9 +579,31 @@ describe("assembleExecutionPrompt", () => {
       expect(scoring.temporalAlpha).toBe(0.82);
       expect(scoring.proofAlpha).toBe(0.73);
       expect(scoring.usefulnessAlpha).toBe(0.64);
-      // The read fired exactly once, scoped to the live (tenant, agent).
+      // The read fired exactly once, scoped to the live (tenant, agent) + the per-intent
+      // bucket (RANK-02): the default "Hello" message classifies to the "factual" intent.
       expect(spy.reads()).toBe(1);
-      expect(spy.lastScope()).toEqual({ tenantId: "t", agentId: "agent-1" });
+      expect(spy.lastScope()).toEqual({ tenantId: "t", agentId: "agent-1", intent: "factual" });
+    });
+
+    it("Test 2b (RANK-02 per-intent read): the read scope carries classifyIntent(query) — a temporal query reads the 'temporal' bucket", async () => {
+      const spy = makeTunedSpy({
+        recencyAlpha: 0.91,
+        temporalAlpha: 0.82,
+        proofAlpha: 0.73,
+        usefulnessAlpha: 0.64,
+      });
+      await assembleExecutionPrompt(
+        makeParams({
+          config: tuningConfig({ enabled: true }),
+          deps: { workspaceDir: "/workspace", memoryPort: ragMemoryPort(), tunedAlphaStore: spy.store },
+          sessionKey: { tenantId: "t", agentId: "agent-1", channelType: "telegram", channelId: "chat-1" } as any,
+          agentId: "agent-1",
+          // A temporal query → classifyIntent → "temporal" → the per-intent bucket read.
+          msg: makeMsg({ text: "what happened yesterday" }),
+        }),
+      );
+      expect(spy.reads()).toBe(1);
+      expect(spy.lastScope()).toEqual({ tenantId: "t", agentId: "agent-1", intent: "temporal" });
     });
 
     it("Test 3 (belt #2 at the apply site): under tuning ON with ANY learned vector, scoring.trustAlpha is byte-identical to config", async () => {
@@ -3922,6 +3944,57 @@ describe("parent prefix reuse", () => {
     expect(result.inlineMemory).toBeUndefined();
   });
 
+  it("WR-06: populates the ATTR-01 skill-location index on the parent-cache reuse path", async () => {
+    // The reuse path re-emits `## Available Skills\n${promptSkillsXml}` into the
+    // dynamic preamble, so a learned-skill <location> is visible to the model —
+    // but pre-fix it never populated sessionPromptSkillLocations, so the bridge's
+    // getSessionPromptSkillLocations() returned undefined and skill-use
+    // attribution silently no-op'd for cache-reuse sub-agents (the dominant path).
+    const distinctKey = { agentId: "agent-attr-reuse", channelType: "telegram", channelId: "chat-attr" } as any;
+    const formattedKey = formatSessionKey(distinctKey);
+    clearSessionToolNameSnapshot(formattedKey);
+    clearSessionBootstrapFileSnapshot(formattedKey);
+    clearSessionPromptSkillsXmlSnapshot(formattedKey);
+    clearCacheSafeParams(formattedKey);
+
+    const skillsXml =
+      "<available_skills>\n" +
+      "  <skill>\n" +
+      "    <name>rotate-key</name>\n" +
+      "    <description>Use when rotating a key</description>\n" +
+      "    <location>/home/user/.comis/skills/rotate-key/SKILL.md</location>\n" +
+      "  </skill>\n" +
+      "</available_skills>";
+
+    const params = makeParams({
+      config: makeConfig({ model: "claude-3-opus", provider: "anthropic" }),
+      deps: {
+        workspaceDir: "/workspace",
+        spawnPacket: makeSpawnPacketWithCache(),
+        getPromptSkillsXml: () => skillsXml,
+      },
+      sessionKey: distinctKey,
+      resolvedModelId: "claude-3-opus",
+      resolvedModelProvider: "anthropic",
+    });
+
+    const result = await assembleExecutionPrompt(params);
+
+    // Early-return reuse path (no full assembly).
+    expect(mockAssembleRichSystemPrompt).not.toHaveBeenCalled();
+    expect(result.dynamicPreamble).toContain("/home/user/.comis/skills/rotate-key/SKILL.md");
+
+    // The keystone assertion: the bridge can now attribute a read of that location.
+    const index = getSessionPromptSkillLocations(formattedKey);
+    expect(index).toBeDefined();
+    expect(index?.get("/home/user/.comis/skills/rotate-key/SKILL.md")).toBe("rotate-key");
+
+    clearSessionToolNameSnapshot(formattedKey);
+    clearSessionBootstrapFileSnapshot(formattedKey);
+    clearSessionPromptSkillsXmlSnapshot(formattedKey);
+    clearCacheSafeParams(formattedKey);
+  });
+
   it("does NOT populate sessionToolNameSnapshots on reuse path", async () => {
     // Use a distinct session key for this test to avoid cross-test pollution
     const distinctKey = { agentId: "agent-sub-unique", channelType: "telegram", channelId: "chat-sub" } as any;
@@ -4715,5 +4788,91 @@ describe("assembleExecutionPrompt — CR-03: pinnedSet identified by entry.pinne
       // Nano profile caps chars at 1000
       expect(splitMaxChars).toBeLessThanOrEqual(1000);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ATTR-01: parseSkillLocationIndex — parse the frozen <available_skills> XML
+// (the exact processor.ts formatAvailableSkillsXml shape) into a
+// location→skillName Map, unescaping XML entities so the key matches the raw
+// read path.
+// ---------------------------------------------------------------------------
+describe("parseSkillLocationIndex (ATTR-01 frozen-XML location→skillName index)", () => {
+  it("parses a two-<skill> block into the exact location→name map", () => {
+    const xml =
+      "<available_skills>\n" +
+      "  <skill>\n" +
+      "    <name>deploy</name>\n" +
+      "    <description>Deploy the app</description>\n" +
+      "    <location>/home/user/.comis/skills/deploy/SKILL.md</location>\n" +
+      "  </skill>\n" +
+      "  <skill>\n" +
+      "    <name>backup</name>\n" +
+      "    <description>Back up data</description>\n" +
+      "    <location>/home/user/.comis/skills/backup/SKILL.md</location>\n" +
+      "  </skill>\n" +
+      "</available_skills>";
+
+    const index = parseSkillLocationIndex(xml);
+    expect(index.get("/home/user/.comis/skills/deploy/SKILL.md")).toBe("deploy");
+    expect(index.get("/home/user/.comis/skills/backup/SKILL.md")).toBe("backup");
+    expect(index.size).toBe(2);
+  });
+
+  it("unescapes XML entities in BOTH the location and the name (inverse of escapeXml)", () => {
+    // escapeXml turns & < > " ' into entities; a real path/name with those chars
+    // is stored escaped in the frozen XML and must round-trip back to raw.
+    const xml =
+      "<available_skills>\n" +
+      "  <skill>\n" +
+      "    <name>a&amp;b &lt;tag&gt;</name>\n" +
+      "    <description>d</description>\n" +
+      "    <location>/tmp/a &amp; b/&quot;x&apos;.md</location>\n" +
+      "  </skill>\n" +
+      "</available_skills>";
+
+    const index = parseSkillLocationIndex(xml);
+    // raw location key (unescaped) → raw name (unescaped)
+    expect(index.get("/tmp/a & b/\"x'.md")).toBe("a&b <tag>");
+  });
+
+  it("returns an empty map for undefined / empty / no-skill input", () => {
+    expect(parseSkillLocationIndex(undefined).size).toBe(0);
+    expect(parseSkillLocationIndex("").size).toBe(0);
+    expect(parseSkillLocationIndex("<available_skills>\n</available_skills>").size).toBe(0);
+  });
+
+  it("WR-02: an ABSOLUTE learned-skill <location> (mixed with a platform skill) is indexed → name, so a `read` of that path attributes", () => {
+    // The learned surface (mergeLearnedSkillsXml) now emits an ABSOLUTE materialized
+    // SKILL.md path for the learned <location> — the SAME absolute shape platform
+    // skills use (metadata.path) and the read tool reports. A `read` whose path
+    // equals that absolute location must attribute the learned skill. Pre-WR-02 the
+    // learned location was workspace-RELATIVE (.learned-skills/deploy/SKILL.md),
+    // which (a) does NOT match an absolute read path and (b) is an inconsistent
+    // mixed-format block the model may "normalize", silently breaking attribution.
+    const platformLoc = "/home/user/.comis/skills/build/SKILL.md";
+    const learnedLoc = "/home/user/workspace/.learned-skills/deploy/SKILL.md"; // absolute, as WR-02 emits
+    const xml =
+      "<available_skills>\n" +
+      "  <skill>\n" +
+      "    <name>build</name>\n" +
+      "    <description>Build it</description>\n" +
+      `    <location>${platformLoc}</location>\n` +
+      "    <source>bundled</source>\n" +
+      "  </skill>\n" +
+      "  <skill>\n" +
+      "    <name>deploy</name>\n" +
+      "    <description>Deploy it</description>\n" +
+      `    <location>${learnedLoc}</location>\n` +
+      "    <source>learned</source>\n" +
+      "  </skill>\n" +
+      "</available_skills>";
+
+    const index = parseSkillLocationIndex(xml);
+    // A `read` of the absolute learned location attributes the learned skill.
+    expect(index.get(learnedLoc)).toBe("deploy");
+    // Both locations are absolute — the block is format-consistent (no relative key).
+    expect([...index.keys()].every((k) => k.startsWith("/"))).toBe(true);
+    expect(index.get(platformLoc)).toBe("build");
   });
 });

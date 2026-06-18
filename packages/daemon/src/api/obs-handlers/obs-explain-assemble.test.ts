@@ -716,3 +716,37 @@ describe("assembleIncidentReport — RECALL-01 recall section", () => {
     expect(report.recall).toBeUndefined();
   });
 });
+
+describe("assembleIncidentReport — OBS-02 learning section", () => {
+  it("surfaces signals.learning on the report (counts/ids/closed-enums only — no bodies)", () => {
+    const report = assembleIncidentReport(
+      makeSignals({
+        learning: {
+          outcomeResolved: false,
+          outcome: "unknown",
+          sources: ["tool", "pipeline"],
+          skillsUsed: [],
+          skillFailures: [],
+          synthesisAbstained: false,
+        },
+      }),
+      makeMetadata(),
+      null,
+      SESSION_KEY,
+      READ_COUNT,
+    );
+    expect(report.learning).toEqual({
+      outcomeResolved: false,
+      outcome: "unknown",
+      sources: ["tool", "pipeline"],
+      skillsUsed: [],
+      skillFailures: [],
+      synthesisAbstained: false,
+    });
+  });
+
+  it("omits the learning section when the signals carry no learning data (default-off / no-outcome session)", () => {
+    const report = assembleIncidentReport(makeSignals(), makeMetadata(), null, SESSION_KEY, READ_COUNT);
+    expect(report.learning).toBeUndefined();
+  });
+});

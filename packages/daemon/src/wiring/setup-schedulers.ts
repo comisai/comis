@@ -568,6 +568,67 @@ export async function setupSchedulers(deps: {
         schedulerLogger.info({ agentId, schedule: memoryLifecycleConfig.schedule ?? "0 9 * * *" }, "Registered memory lifecycle cron job");
       }
     }
+
+    // -- Memory triple-extraction cron job (WIRE-01) --
+    // OPT-IN, DEFAULT OFF — the lone OFF-by-default learning seam alongside learningOutcome.
+    // Schedules the exported-but-never-wired runMemoryTripleExtraction (S/P/O from raw turns,
+    // COMPLEMENTARY to __MEMORY_REASONING__). A DEFAULT agent registers NO job → zero added cost,
+    // byte-identical with the config absent. Gated by BOTH the master cost kill switch AND the
+    // per-agent opt-in (force-disabled when memory.costFeatures.enabled is false). Default schedule
+    // 0 6 * * *. The __MEMORY_TRIPLE_EXTRACTION__ sentinel is dispatched in
+    // setup-channels-memory-crons-wire.ts → runMemoryTripleExtraction (trust-first upsertTriple).
+    const tripleCfg = agentConfig.memoryTripleExtraction;
+    if (costFeaturesEnabled && tripleCfg?.enabled) {
+      const tripleJobId = `memory-triple-extraction-${agentId}`;
+      if (!scheduler.getJobs().some((j) => j.id === tripleJobId)) {
+        await scheduler.addJob({
+          id: tripleJobId,
+          name: "Memory triple extraction",
+          agentId,
+          schedule: { kind: "cron", expr: tripleCfg.schedule ?? "0 6 * * *" },
+          payload: { kind: "system_event", text: "__MEMORY_TRIPLE_EXTRACTION__" },
+          sessionTarget: "isolated",
+          wakeMode: "next-heartbeat",
+          forwardToMain: false,
+          sessionStrategy: "fresh",
+          consecutiveErrors: 0,
+          enabled: true,
+          createdAtMs: systemNowMs(),
+        });
+        schedulerLogger.info({ agentId, schedule: tripleCfg.schedule ?? "0 6 * * *" }, "Registered memory triple-extraction cron job");
+      }
+    }
+
+    // -- Procedural skill-synthesis cron job (SKILL-08/09, v2.26 Verified Learning WS2) --
+    // OPT-IN, DEFAULT OFF (the byte-identity guarantee depends on it). Registered ONLY when the
+    // operator sets learningSkills.enabled AND the master cost kill switch is on; a default agent
+    // registers NO job → byte-identical with the config absent. Default schedule 30 9 * * * runs
+    // AFTER the lifecycle sweep's 0 9 (so the outcome/skill-used signals it selects on have
+    // settled). Job options mirror the other memory crons 1:1 (isolated / next-heartbeat / no
+    // forward-to-main / fresh). The __SKILL_SYNTHESIS__ sentinel (setup-channels-memory-crons-wire.ts)
+    // re-checks the knob + injects the @comis/memory store + @comis/skills validation adapter. SHADOW:
+    // even when enabled the synthesized candidate is admitted but NOT surfaced (Phase 202 surfaces it).
+    const learningSkillsCfg = agentConfig.learningSkills;
+    if (costFeaturesEnabled && learningSkillsCfg?.enabled) {
+      const skillSynthJobId = `skill-synthesis-${agentId}`;
+      if (!scheduler.getJobs().some((j) => j.id === skillSynthJobId)) {
+        await scheduler.addJob({
+          id: skillSynthJobId,
+          name: "Skill synthesis",
+          agentId,
+          schedule: { kind: "cron", expr: "30 9 * * *" },
+          payload: { kind: "system_event", text: "__SKILL_SYNTHESIS__" },
+          sessionTarget: "isolated",
+          wakeMode: "next-heartbeat",
+          forwardToMain: false,
+          sessionStrategy: "fresh",
+          consecutiveErrors: 0,
+          enabled: true,
+          createdAtMs: systemNowMs(),
+        });
+        schedulerLogger.info({ agentId, schedule: "30 9 * * *" }, "Registered skill synthesis cron job");
+      }
+    }
   }
 
   // First-run cost-disclosure notice (opt-out posture). Once per startup, right after the
@@ -577,6 +638,24 @@ export async function setupSchedulers(deps: {
   // here (not daemon.ts, which is at its 3000-line cap) — the natural cron-wiring seam, with the
   // agents map + config + logger already in scope.
   emitMemoryCostFeatureNotice({ agents, costFeaturesEnabled, logger: schedulerLogger });
+
+  // OUTCOME-09 boot posture: `learningOutcome` (Verified Learning WS1) is NOT a cron — it is the
+  // bus-wired observe/resolve subscriber stood up in setup-memory.ts (wireLearningOutcome). It is
+  // force-disabled by the SAME master cost switch as the six cost crons above: the effective enable
+  // is `costFeaturesEnabled && agents[id].learningOutcome.enabled` (default OFF → byte-identical).
+  // Surface the effective gate state once at boot so an operator can confirm the shadow signal's
+  // posture without a live repro (the gate itself is applied at the wiring site, not here).
+  const learningOutcomeEnabled = (agentId: string): boolean =>
+    costFeaturesEnabled && agents[agentId]?.learningOutcome?.enabled === true;
+  const learningOutcomeAgents = Object.keys(agents).filter((id) => learningOutcomeEnabled(id));
+  schedulerLogger.debug(
+    {
+      costFeaturesEnabled,
+      enabledAgentCount: learningOutcomeAgents.length,
+      enabledAgents: learningOutcomeAgents,
+    },
+    "Outcome-signal (learningOutcome) boot posture",
+  );
 
   /** Resolve the CronScheduler for a given agent ID. Throws descriptive error if not found. */
   function getAgentCronScheduler(agentId: string): CronScheduler {

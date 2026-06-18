@@ -14,10 +14,10 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { Attachment, AppContainer, ChannelPort, ClockPort, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore, RelationshipStore, TunedAlphaStore, MemoryUsefulnessStore, MemoryLifecyclePort, NormalizedMessage, SessionKey, TranscriptionPort, DeliveryService } from "@comis/core";
+import type { Attachment, AppContainer, ChannelPort, ClockPort, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore, RelationshipStore, TunedAlphaStore, MemoryUsefulnessStore, MemoryLifecyclePort, OutcomeSignalPort, LearnedSkillStorePort, NormalizedMessage, SessionKey, TranscriptionPort, DeliveryService } from "@comis/core";
 import { formatSessionKey, runWithContext, createDeliveryOrigin, systemNowMs, KEYLESS_PROVIDER_TYPES, KEYLESS_API_KEY_SENTINEL } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
-import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry, OperationModelResolution } from "@comis/agent";
+import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry, OperationModelResolution, SkillApprovalGate } from "@comis/agent";
 import type { createSessionStore, MemoryApi } from "@comis/memory";
 import { sanitizeAssistantResponse, resolveOperationModel, resolveProviderFamily, runMemoryReview, classifyError } from "@comis/agent";
 import { applyToolPolicy } from "@comis/skills";
@@ -25,19 +25,15 @@ import { buildReviewSessionSource } from "./review-session-source.js";
 import { filterResponse } from "@comis/channels";
 import type { ExecutionLogEntry } from "@comis/scheduler";
 import { handleMemoryCronSentinel } from "./setup-channels-memory-crons.js";
+import { buildSkillSynthesisCronDeps } from "./setup-channels-skill-synthesis-deps.js";
 import { resolveMemoryOpsCapability } from "./resolve-memory-ops-capability.js";
 
-/**
- * Closure-captured dependencies for the cron delivery listeners.
- */
-// @optional-field-count: 16 optional fields — CronEventListenerDeps is a composition-root cron-deps
-// bag that accretes the OFFLINE memory-cron sentinels' injected ports (consolidationStore for
-// __MEMORY_CONSOLIDATION__; tripleStore for __MEMORY_REASONING__; userRepresentationStore + memoryApi
-// for __USER_REPRESENTATION__) alongside the channel/media optionals. Each is an optional injected
-// port (absent on a default-config agent => that sentinel short-circuits). Tightening them to
-// required would force every non-cron caller to fabricate stub stores; splitting would create N
-// parallel cron-deps bags. The optional-field cap flags undermodeled types, NOT a well-bounded
-// composition-root deps accumulator like this (mirror BootContext / MemoryApiDeps).
+/** Closure-captured dependencies for the cron delivery listeners. */
+// @optional-field-count: 19 optional fields — CronEventListenerDeps is a composition-root cron-deps bag
+// that accretes the OFFLINE memory-cron sentinels' injected ports (consolidation/triple/userrep/skill
+// stores) alongside the channel/media optionals. Each is an optional injected port (absent on a
+// default-config agent => that sentinel short-circuits). Tightening to required would force every non-cron
+// caller to fabricate stubs; the cap flags undermodeled types, NOT a well-bounded accumulator (mirror BootContext).
 export interface CronEventListenerDeps {
   container: AppContainer;
   executors: Map<string, AgentExecutor>;
@@ -115,6 +111,9 @@ export interface CronEventListenerDeps {
    *  __ONLINE_TUNING__ sentinel scopes the bandit's FEED signal over it (`readUsefulness`).
    *  Built in setup-memory on the shared db handle; injected as the port TYPE (agent↛memory cut). */
   usefulnessStore?: MemoryUsefulnessStore;
+  outcomeStore?: OutcomeSignalPort; // SKILL-08/09: the __SKILL_SYNTHESIS__ runSkillSynthesis fail-closed success gate (agent↛memory)
+  learnedSkillStore?: LearnedSkillStorePort; // SKILL-08/09: the __SKILL_SYNTHESIS__ admit target (agent↛memory; off-by-default)
+  approvalGate?: SkillApprovalGate; // SKILL-08/09: the mutating-admission approval gate
   /** Per-user representation read surface — the __USER_REPRESENTATION__
    *  sentinel scopes the per-(tenant, agent, user) high-trust source read over `inspect`.
    *  Built in setup-memory; daemon-side (the agent imports no memory package). The SAME `inspect`
@@ -248,6 +247,7 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
       memoryLifecycleStore: deps.memoryLifecycleStore,
       usefulnessStore: deps.usefulnessStore,
       memoryApi: deps.memoryApi,
+      skillSynthesis: buildSkillSynthesisCronDeps(deps), // SKILL-08/09 closed-graph bundle; undefined ⇒ off
     });
     if (handledMemoryCron) return;
 

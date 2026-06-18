@@ -429,3 +429,56 @@ describe("wrapWebContent - includeWarning parameter", () => {
     expect(EXTERNAL_CONTENT_WARNING.length).toBeGreaterThan(50);
   });
 });
+
+describe("ExternalContentSource - learned_skill_synthesis source (v2.26 SKILL-02)", () => {
+  // The synthesis adapter wraps the UNTRUSTED trajectory under this NEW label
+  // before the synthesis LLM (the injection-defense keystone). Mirrors the
+  // outcome_judge member+label precedent — additive, no behavior change.
+  it("wrapExternalContent accepts source: 'learned_skill_synthesis'", () => {
+    const result = wrapExternalContent("trajectory text", { source: "learned_skill_synthesis" });
+    expect(typeof result).toBe("string");
+  });
+
+  it("resolves the 'Learned-skill synthesis input' source label in wrapped output", () => {
+    const result = wrapExternalContent("trajectory text", { source: "learned_skill_synthesis" });
+    expect(result).toContain("Source: Learned-skill synthesis input");
+  });
+
+  it("includes the security warning by default for the synthesis source", () => {
+    const result = wrapExternalContent("trajectory text", { source: "learned_skill_synthesis" });
+    expect(result).toContain("SECURITY NOTICE");
+  });
+
+  it("wraps the trajectory with delimiter markers (the boundary the injection cannot cross)", () => {
+    const result = wrapExternalContent("trajectory text", { source: "learned_skill_synthesis" });
+    expect(result).toMatch(/<<<UNTRUSTED_[a-f0-9]{24}>>>/);
+    expect(result).toMatch(/<<<END_UNTRUSTED_[a-f0-9]{24}>>>/);
+  });
+});
+
+describe("ExternalContentSource - memory_generalization source (v2.26 GENERAL-01/SEC-01)", () => {
+  // The consolidation generalization pass wraps the UNTRUSTED cross-context
+  // cluster under this NEW label before the synthesis LLM (the WS6 new-stage
+  // injection boundary). Mirrors the learned_skill_synthesis member+label
+  // precedent — additive, no behavior change to existing callers.
+  it("wrapExternalContent accepts source: 'memory_generalization'", () => {
+    const result = wrapExternalContent("cluster text", { source: "memory_generalization" });
+    expect(typeof result).toBe("string");
+  });
+
+  it("resolves the 'Memory generalization cluster input' source label in wrapped output", () => {
+    const result = wrapExternalContent("cluster text", { source: "memory_generalization" });
+    expect(result).toContain("Source: Memory generalization cluster input");
+  });
+
+  it("includes the security warning by default for the generalization source", () => {
+    const result = wrapExternalContent("cluster text", { source: "memory_generalization" });
+    expect(result).toContain("SECURITY NOTICE");
+  });
+
+  it("wraps the cluster with delimiter markers (the boundary the injection cannot cross)", () => {
+    const result = wrapExternalContent("cluster text", { source: "memory_generalization" });
+    expect(result).toMatch(/<<<UNTRUSTED_[a-f0-9]{24}>>>/);
+    expect(result).toMatch(/<<<END_UNTRUSTED_[a-f0-9]{24}>>>/);
+  });
+});

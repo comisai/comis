@@ -19,14 +19,17 @@ import type { Result } from "@comis/shared";
  * agent↛memory build cut). No new authority is granted beyond a scoped sweep
  * within the caller's own (tenant, agent).
  *
- * SCAFFOLD per gap-report OD4 — the sweep computes strengths/tiers but
- * its demote/evict step performs NOTHING (`promoted`/`demoted`/`evicted` stay 0)
- * until an operator enables it; live eviction is the deferred operator step.
- * The default-OFF `MemoryLifecycleConfigSchema` knob is a behavior gate, NOT a
- * back-compat fallback (mirror the schema-memory-online-tuning framing); even when
- * the cron is enabled the DORMANT adapter evicts/demotes nothing. The
- * eviction policy is NON-DESTRUCTIVE by design (a marker column — mirror
- * `consolidated_at` — never a hard DELETE of the raw row).
+ * LIVE soft eviction (v2.26 WS4 / FORGET-01) — when the policy is eviction-enabled
+ * (the daemon threads `learningForgetting.eviction.enabled` ∧ `.enabled`), the
+ * sweep soft-evicts candidates below the strength threshold that are not exempt
+ * (pinned / `trust_level='system'` / high-`proof_count` — FORGET-03), reporting a
+ * real `evicted` count. With the eviction behavior OFF (the default) the sweep
+ * stays DORMANT — it computes strengths/tiers but applies NOTHING (`evicted`/
+ * `demoted` = 0; the byte-identity guarantee). Tier demote/promote moves are still
+ * deferred (`promoted`/`demoted` stay 0). The default-OFF `MemoryLifecycleConfigSchema`
+ * knob is a behavior gate, NOT a back-compat fallback. The eviction policy is
+ * NON-DESTRUCTIVE by design (the `evicted_at` marker — mirror `consolidated_at` —
+ * never a hard DELETE of the raw row), and REVERSIBLE via {@link unevict}.
  *
  * The method returns `Promise<Result<…, Error>>` (the TunedAlphaStore Result
  * posture). This file is type-only (mirrors tuned-alpha-store.ts /
@@ -43,6 +46,23 @@ import type { Result } from "@comis/shared";
  * `MemoryLifecycleConfigSchema` as the dormant policy constants.
  */
 export type MemoryTier = "durable" | "ephemeral";
+
+/**
+ * The PER-CALL eviction-behavior override the daemon threads from each agent's
+ * `learningForgetting` config (FORGET-06). The lifecycle store is constructed ONCE and
+ * shared across agents, but the eviction policy is PER-AGENT — so the behavior gate rides
+ * the sweep CALL (this override), not the constructor: agent A can sweep eviction-on while
+ * agent B sweeps DORMANT on the same store. Omitted → the store's constructor policy (the
+ * default DORMANT — byte-identity). Counts-only telemetry; carries no memory content.
+ */
+export interface MemoryLifecycleEvictionOverride {
+  /** Activate LIVE soft eviction for THIS sweep (`learningForgetting.eviction.enabled ∧ .enabled`). */
+  evictionEnabled?: boolean;
+  /** The [0,1] strength floor below which a non-exempt candidate is soft-evicted (`learningForgetting.eviction.strengthThreshold`). */
+  strengthThreshold?: number;
+  /** The [0,1] wrongness-coupling weight on `failure_count` (`learningForgetting.failurePenalty`). */
+  failurePenalty?: number;
+}
 
 /**
  * The isolation boundary for every lifecycle sweep. Every statement
@@ -64,15 +84,22 @@ export interface MemoryLifecycleScope {
    * mirroring `TunedAlphaScope.now`.
    */
   now: number;
+  /**
+   * PER-CALL eviction-behavior override (FORGET-06). The daemon threads the per-agent
+   * `learningForgetting` eviction policy here so the shared store evicts per-agent. When
+   * present its fields take precedence over the store's constructor policy for THIS sweep;
+   * when omitted the constructor policy applies (DORMANT by default — byte-identical).
+   */
+  policy?: MemoryLifecycleEvictionOverride;
 }
 
 /**
  * The counts-only summary of one lifecycle sweep. Ids/counts only —
- * NEVER memory bodies or query text (AGENTS.md §2.7). For the SCAFFOLD-DORMANT
- * adapter `promoted`/`demoted`/`evicted` are always 0 (the demote/evict
- * step is the deferred live policy); `scanned` reflects the candidate rows the
- * sweep considered. This shape is what the daemon cron logs/emits as a single
- * counts-only event.
+ * NEVER memory bodies or query text (AGENTS.md §2.7). `evicted` is real under an
+ * eviction-enabled policy (0 when DORMANT — the default); `promoted`/`demoted`
+ * are still always 0 (tier moves are a deferred step); `scanned` reflects the
+ * candidate rows the sweep considered. This shape is what the daemon cron
+ * logs/emits as a single counts-only event.
  */
 export interface LifecycleSweepReport {
   /** How many candidate rows the sweep scanned for this (tenant, agent). */
@@ -81,7 +108,8 @@ export interface LifecycleSweepReport {
   promoted: number;
   /** How many rows were demoted to the ephemeral tier. DORMANT scaffold → 0. */
   demoted: number;
-  /** How many rows were (non-destructively) evicted/marked. DORMANT scaffold → 0. */
+  /** How many rows were (non-destructively) soft-evicted (`evicted_at` set). Real
+   *  under an eviction-enabled policy; 0 when DORMANT (the default). */
   evicted: number;
 }
 
@@ -97,13 +125,28 @@ export interface MemoryLifecyclePort {
    * {@link LifecycleSweepReport}. Called ONLY by the daemon's default-OFF
    * `__MEMORY_LIFECYCLE__` cron — never on the recall hot path.
    *
-   * SCAFFOLD-DORMANT (OD4): the sole adapter computes strengths/tiers but
-   * its demote/evict step performs NOTHING — `promoted`/`demoted`/`evicted` are 0;
-   * live eviction is the deferred operator step. With the knob off the cron
+   * LIVE soft eviction is gated on an eviction-enabled policy
+   * (`learningForgetting`): when ON, candidates below the strength threshold (and
+   * not exempt) are soft-evicted (`evicted` is real); when OFF (the default) the
+   * sweep computes but applies NOTHING (`evicted`/`demoted` 0 — byte-identity).
+   * Tier moves remain deferred (`promoted`/`demoted` 0). With the cron knob off it
    * is not even registered (a default agent runs no sweep → byte-identical).
    *
-   * NOTE: this is the type contract only. The SQLite adapter and the daemon cron
+   * NOTE: the SQLite adapter implements this; the daemon cron
    * wiring land in the implementation phases that follow.
    */
   runLifecycleSweep(scope: MemoryLifecycleScope): Promise<Result<LifecycleSweepReport, Error>>;
+
+  /**
+   * REVERSAL PATH (FORGET-04). Un-evict a previously soft-evicted memory on
+   * renewed usefulness: clears its `evicted_at` marker (back to NULL) so the row
+   * returns to recall. Soft eviction is reversible by design — the raw row was
+   * never deleted, only marked. Scoped to the caller's `(tenant, agent)` ONLY:
+   * an un-evict under one scope can NEVER clear another scope's marker (the same
+   * load-bearing isolation boundary as the sweep). Idempotent — un-evicting a
+   * live (or absent) row is a no-op `ok(...)`. Called by the daemon reward seam
+   * when a previously-evicted memory becomes useful again (a later plan wires the
+   * caller); the store exposes the capability here.
+   */
+  unevict(memoryId: string, scope: MemoryLifecycleScope): Promise<Result<void, Error>>;
 }

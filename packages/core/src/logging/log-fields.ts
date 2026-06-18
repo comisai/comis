@@ -50,8 +50,14 @@ export function isValidLogLevel(level: string): boolean {
  * - `dependency`   -- External service unavailable (LLM provider, embedding API)
  * - `internal`     -- Unexpected internal errors (assertion failures, logic bugs)
  * - `platform`     -- Chat platform API errors (Discord, Telegram, Slack rate limits)
+ * - `sandbox_unavailable` -- No materializable OS sandbox jail (Linux bwrap) for a
+ *                     fail-closed dynamic step (v2.26 Verified Learning skill
+ *                     validation, SKILL-07). HONEST DEGRADATION, NOT a fault: the
+ *                     work degrades to a reduced-coverage path (`static-only`)
+ *                     rather than running unsandboxed — `Defer ≠ Retry`, so this
+ *                     must NOT inflate failure metrics or trip a breaker.
  *
- * Closed 10-member union.
+ * Closed 11-member union.
  */
 export type ErrorKind =
   | "config"
@@ -63,7 +69,8 @@ export type ErrorKind =
   | "resource"
   | "dependency"
   | "internal"
-  | "platform";
+  | "platform"
+  | "sandbox_unavailable";
 
 /**
  * Structural log-method signature.

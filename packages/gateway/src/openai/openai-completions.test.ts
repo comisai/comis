@@ -375,4 +375,91 @@ describe("createOpenaiCompletionsRoute", () => {
       expect(logger.error).toHaveBeenCalled();
     });
   });
+
+  // Live finding 2026-06-18 (VPS): a single-agent chat-API turn's outcome was
+  // observed (outcome_events row) but NEVER resolved — the OpenAI-compat path
+  // bypasses the channel execution-pipeline (the sole diagnostic:message_processed
+  // emitter) and never fires graph:completed, so the Verified Learning resolve loop
+  // (RANK reward / FORGET accrual / SURFACE promote-demote) never ran for chat-API
+  // turns and they were invisible to obs. The route must emit the per-turn diagnostic.
+  describe("diagnostic:message_processed emit (Verified Learning resolve + obs)", () => {
+    it("emits one diagnostic:message_processed carrying the turn traceId (non-streaming)", async () => {
+      const emit = vi.fn();
+      const executeAgent = vi.fn().mockResolvedValue({
+        response: "ok",
+        tokensUsed: { input: 1, output: 2, total: 3 },
+        finishReason: "stop",
+        traceId: "trace-abc",
+        agentId: "default",
+        // The wiring returns the FORMATTED tenant-qualified key; the emit must carry it
+        // verbatim so downstream tenant derivation finds the right pool (live 2026-06-18).
+        sessionKey: "default:openai-api:openai",
+      });
+      const deps = createMockDeps({ executeAgent, eventBus: { emit } });
+      const app = createOpenaiCompletionsRoute(deps);
+
+      await app.request("/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(validBody()),
+      });
+
+      const call = emit.mock.calls.find(
+        (c) => c[0] === "diagnostic:message_processed",
+      );
+      expect(call).toBeDefined();
+      expect(call?.[1]).toMatchObject({
+        channelType: "openai",
+        agentId: "default",
+        traceId: "trace-abc",
+        // MUST be the 3-part tenant-qualified key from the wiring, NOT a 2-part fallback.
+        sessionKey: "default:openai-api:openai",
+        success: true,
+        finishReason: "stop",
+      });
+    });
+
+    it("emits diagnostic:message_processed on a streaming completion too", async () => {
+      const emit = vi.fn();
+      const executeAgent = vi.fn().mockImplementation(async (params) => {
+        params.onDelta?.("hi");
+        return {
+          response: "hi",
+          tokensUsed: { input: 1, output: 1, total: 2 },
+          finishReason: "stop",
+          traceId: "trace-stream",
+          agentId: "default",
+        };
+      });
+      const deps = createMockDeps({ executeAgent, eventBus: { emit } });
+      const app = createOpenaiCompletionsRoute(deps);
+
+      const res = await app.request("/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(validBody({ stream: true })),
+      });
+      await res.text();
+
+      const call = emit.mock.calls.find(
+        (c) => c[0] === "diagnostic:message_processed",
+      );
+      expect(call).toBeDefined();
+      expect(call?.[1]).toMatchObject({
+        channelType: "openai",
+        traceId: "trace-stream",
+      });
+    });
+
+    it("does not emit or throw when no eventBus is wired (back-compat)", async () => {
+      const deps = createMockDeps(); // no eventBus
+      const app = createOpenaiCompletionsRoute(deps);
+      const res = await app.request("/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(validBody()),
+      });
+      expect(res.status).toBe(200);
+    });
+  });
 });

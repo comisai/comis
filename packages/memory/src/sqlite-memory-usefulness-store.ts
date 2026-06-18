@@ -100,6 +100,16 @@ export function createSqliteMemoryUsefulnessStore(
       "VALUES (?, ?, ?, ?, 0, 1, NULL) " +
       "ON CONFLICT(tenant_id, agent_id, memory_id, intent) DO UPDATE SET ignored_count = ignored_count + 1",
   );
+  // Failure per-intent upsert (FORGET-02): first touch INSERTs failure_count=1
+  // (used/ignored=0, last_useful_at NULL — a failure is NEITHER a use NOR an
+  // ignore), later touches bump failure_count within the SAME (…, intent) bucket.
+  // failure_count is a DISTINCT signal from ignored_count (outcome-attributed task
+  // failure vs recalled-but-not-cited) — they never touch each other's column.
+  const upsertFailure = db.prepare(
+    "INSERT INTO memory_usefulness (tenant_id, agent_id, memory_id, intent, used_count, ignored_count, last_useful_at, failure_count) " +
+      "VALUES (?, ?, ?, ?, 0, 0, NULL, 1) " +
+      "ON CONFLICT(tenant_id, agent_id, memory_id, intent) DO UPDATE SET failure_count = failure_count + 1",
+  );
 
   return {
     async recordUsage(
@@ -165,6 +175,41 @@ export function createSqliteMemoryUsefulnessStore(
       }
     },
 
+    async recordFailure(
+      memoryId: string,
+      scope: UsefulnessScope,
+    ): Promise<Result<void, Error>> {
+      const startMs = systemNowMs();
+      const { tenantId, agentId } = scope;
+      // GLOBAL bucket when no intent supplied (omitted === '' === byte-identical).
+      // intent is an ADDITIONAL key, never a relaxation of the (tenant, agent)
+      // isolation scope.
+      const intent = scope.intent ?? "";
+      try {
+        upsertFailure.run(tenantId, agentId, memoryId, intent);
+        const durationMs = systemNowMs() - startMs;
+        logger?.debug(
+          { step: "usefulness-failure", failureCount: 1, durationMs },
+          "Usefulness recordFailure complete",
+        );
+        return ok(undefined);
+      } catch (e: unknown) {
+        const durationMs = systemNowMs() - startMs;
+        const error = e instanceof Error ? e : new Error(String(e));
+        logger?.warn(
+          {
+            step: "usefulness-failure",
+            durationMs,
+            err: error,
+            errorKind: "internal" as const,
+            hint: "usefulness recordFailure failed — failure_count not accrued",
+          },
+          "Usefulness recordFailure failed",
+        );
+        return err(error);
+      }
+    },
+
     async readUsefulness(
       memoryIds: string[],
       scope: Omit<UsefulnessScope, "now">,
@@ -192,9 +237,13 @@ export function createSqliteMemoryUsefulnessStore(
         // (?, '')` fetches BOTH the requested per-intent bucket AND the global
         // fallback row per id; the per-id preference is resolved below.
         const ph = memoryIds.map(() => "?").join(", ");
+        // WR-03: `failure_count` is now PROJECTED (the bandit feed's negative-reward
+        // signal). It is surfaced onto the signal ONLY when > 0 below, so a clean
+        // memory's signal shape is byte-identical and the recall hot-path usefulnessNorm
+        // (used/ignored only) is unaffected.
         const rows = db
           .prepare(
-            "SELECT memory_id, intent, used_count, ignored_count, last_useful_at FROM memory_usefulness " +
+            "SELECT memory_id, intent, used_count, ignored_count, last_useful_at, failure_count FROM memory_usefulness " +
               `WHERE tenant_id = ? AND agent_id = ? AND intent IN (?, '') AND memory_id IN (${ph})`,
           )
           .all(tenantId, agentId, intent, ...memoryIds);
@@ -220,6 +269,12 @@ export function createSqliteMemoryUsefulnessStore(
             usedCount: row.used_count,
             ignoredCount: row.ignored_count,
             ...(row.last_useful_at !== null ? { lastUsefulAt: row.last_useful_at } : {}),
+            // WR-03: surface failure_count ONLY when > 0 (spread-conditional, like
+            // lastUsefulAt) so a clean memory's signal is byte-identical — the recall
+            // hot path ignores it; the bandit feed reads it as the negative-reward term.
+            ...(row.failure_count !== undefined && row.failure_count > 0
+              ? { failureCount: row.failure_count }
+              : {}),
           });
         }
 

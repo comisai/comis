@@ -14,7 +14,7 @@
  * @module
  */
 
-import type { ChannelPort, ComisLogger, MessageHandler } from "@comis/core";
+import type { ChannelPort, ComisLogger, MessageHandler, ReactionHandler } from "@comis/core";
 import type { run } from "@grammyjs/runner";
 import type { Bot } from "grammy";
 import type { TelegramBotIdentity } from "../message-mapper.js";
@@ -72,6 +72,8 @@ export interface TelegramAdapterState {
   bot: Bot;
   /** Message handlers registered via handle.onMessage(). */
   handlers: MessageHandler[];
+  /** Reaction handlers registered via handle.onReaction() (REACT-01, WS1). */
+  reactionHandlers: ReactionHandler[];
   /** "telegram-pending" before start(); "telegram-{botId}" after start() succeeds. */
   channelId: string;
   /** grammy/runner handle returned by run(bot); null in webhook mode and before start(). */

@@ -973,6 +973,77 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       formatViolation: false,
       timestamp: 1000,
     },
+    "learning:outcome_observed": {
+      agentId: "default",
+      trajectoryId: "trace-lo-1",
+      outcome: "success",
+      source: "tool",
+      confidence: 0.9,
+      timestamp: 1000,
+    },
+    // RANK-06: the bandit-applied counts + the per-intent dim — NEVER an alpha value.
+    "memory:online_tuning_applied": {
+      agentId: "default",
+      updated: true,
+      clampHits: 1,
+      signalCount: 7,
+      intent: "temporal",
+      durationMs: 12,
+      timestamp: 1000,
+    },
+    // FORGET-06: the soft-eviction transition counts (daemon-side emit).
+    "learning:memory_demoted": {
+      agentId: "default",
+      count: 3,
+      timestamp: 1000,
+    },
+    "learning:memory_evicted": {
+      agentId: "default",
+      count: 2,
+      timestamp: 1000,
+    },
+    // SKILL-09: the procedural-synthesis telemetry (daemon-side emit) — count / verdict / coverage ONLY.
+    "learning:skill_synthesized": {
+      agentId: "default",
+      count: 2,
+      timestamp: 1000,
+    },
+    "learning:skill_validated": {
+      agentId: "default",
+      staticOk: true,
+      dynamicOk: false,
+      coverage: "static-only",
+      timestamp: 1000,
+    },
+    // SURFACE-06: the promote/demote telemetry (daemon-side emit) — count ONLY.
+    "learning:skill_promoted": {
+      agentId: "default",
+      count: 2,
+      timestamp: 1000,
+    },
+    "learning:skill_demoted": {
+      agentId: "default",
+      count: 1,
+      timestamp: 1000,
+    },
+    // REVISE-/GENERAL- (Phase 203): the user-model-revision + generalization telemetry
+    // (daemon-side emit) — COUNTS ONLY (superseded/corroborated/inserted + generalized/
+    // clustersConsidered + durationMs); never a profile/memory body or an entry id.
+    "learning:user_model_revised": {
+      agentId: "default",
+      superseded: 1,
+      corroborated: 2,
+      inserted: 3,
+      durationMs: 7,
+      timestamp: 1000,
+    },
+    "learning:memory_generalized": {
+      agentId: "default",
+      generalized: 1,
+      clustersConsidered: 4,
+      durationMs: 9,
+      timestamp: 1000,
+    },
     "background_task:promoted": {
       agentId: "default",
       taskId: "t-1",
@@ -3098,7 +3169,7 @@ describe("attachTrajectoryToEventBus -- dedup events", () => {
 // ---------------------------------------------------------------------------
 
 describe("health:budget_exceeded entry (bridge entry count guard)", () => {
-  it("bridge entry count is exactly 87 (+3 T2.2 background_task promoted/completed/failed; +2 D3 breaker + 1 D7 offload Phase 151; +1 session:summary Phase 152; +1 context:budget_computed W2; +1 execution:tool_schema_unsupported Phase 175; +2 OBS-01 script signals Phase 180; +2 RECALL-01 memory:recalled/reranked; +1 GENQ-01 memory:generation_quality; +4 OBS-04 image:* Phase 186; +3 media.vision:* VIS-04 Phase 187; +5 video:* OBS-04 Phase 192; +6 voice media.stt/tts:* OBS-02/03 Phase 196)", () => {
+  it("bridge entry count is exactly 97 (+3 T2.2 background_task promoted/completed/failed; +2 D3 breaker + 1 D7 offload Phase 151; +1 session:summary Phase 152; +1 context:budget_computed W2; +1 execution:tool_schema_unsupported Phase 175; +2 OBS-01 script signals Phase 180; +2 RECALL-01 memory:recalled/reranked; +1 GENQ-01 memory:generation_quality; +4 OBS-04 image:* Phase 186; +3 media.vision:* VIS-04 Phase 187; +5 video:* OBS-04 Phase 192; +6 voice media.stt/tts:* OBS-02/03 Phase 196; +1 OUTCOME-08 learning:outcome_observed v2.26 Phase 198; +3 RANK-06/FORGET-06 memory:online_tuning_applied + learning:memory_demoted/evicted v2.26 Phase 200; +2 SKILL-09 learning:skill_synthesized/skill_validated v2.26 Phase 201; +2 SURFACE-06 learning:skill_promoted/demoted v2.26 Phase 202; +2 REVISE-/GENERAL- learning:user_model_revised/memory_generalized v2.26 Phase 203)", () => {
     // 55 + tool:breaker_opened + tool:breaker_reset (D3) + tool:result_offloaded (D7)
     // + session:summary (F2/D5, Phase 152)
     // + execution:tool_schema_unsupported (GBNF-02, Phase 175 Plan 05)
@@ -3113,7 +3184,24 @@ describe("health:budget_exceeded entry (bridge entry count guard)", () => {
     //   Plan 01 — APPEND-ONLY beside image.*/media.vision.*; Pitfall 8).
     // + media.stt:requested/completed/failed + media.tts:requested/completed/failed
     //   (OBS-02/03, Phase 196 Plan 02 — APPEND-ONLY beside the media.*/video.* tuples).
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(87);
+    // + learning:outcome_observed (OUTCOME-08, v2.26 Verified Learning WS1, Phase 198
+    //   Plan 04 — APPEND-ONLY; the daemon-side emit, bridged for comis explain / OBS-02).
+    // + memory:online_tuning_applied (RANK-06, the bandit-applied counts/per-intent dim,
+    //   promoted from an optional-chained emit to a plain typed one — agent-side)
+    //   + learning:memory_demoted/evicted (FORGET-06, the soft-eviction counts —
+    //   daemon-side emit) (v2.26 Verified Learning WS3/WS4, Phase 200 Plan 06 — APPEND-ONLY;
+    //   all three counts/ids/closed-enums ONLY, NEVER an alpha value or memory body — SEC-01).
+    // + learning:skill_synthesized + learning:skill_validated (SKILL-09, v2.26 Verified Learning
+    //   WS2, Phase 201 Plan 07 — APPEND-ONLY; the daemon-side procedural-synthesis telemetry,
+    //   counts/coverage-enum ONLY, NEVER a procedure body / script / finding — SEC-01).
+    // + learning:skill_promoted + learning:skill_demoted (SURFACE-06, v2.26 Verified Learning
+    //   WS2, Phase 202 Plan 03 — APPEND-ONLY; the daemon-side promote/demote telemetry, count
+    //   ONLY, NEVER an id-list / procedure body / script — SEC-01).
+    // + learning:user_model_revised + learning:memory_generalized (REVISE-/GENERAL-, v2.26
+    //   Verified Learning WS6/WS7, Phase 203 Plan 05 — APPEND-ONLY; the daemon-side user-model-
+    //   revision + generalization telemetry, COUNTS ONLY (superseded/corroborated/inserted +
+    //   generalized/clustersConsidered), NEVER a profile / memory body / entry id — SEC-01).
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(97);
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {
@@ -3146,5 +3234,320 @@ describe("health:budget_exceeded entry (bridge entry count guard)", () => {
     // timestamp is envelope-only — MUST NOT appear in data
     expect(data.timestamp).toBeUndefined();
     expect("timestamp" in data).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// RANK-06 / FORGET-06 (v2.26 Verified Learning WS3/WS4, Phase 200 Plan 06):
+// the bandit-applied + soft-eviction telemetry events. memory:online_tuning_applied
+// is PROMOTED from an optional-chained emit to a plain typed key + bridged; the two
+// learning:memory_* keys are NEW (daemon-side emit). Counts/ids/closed-enums ONLY —
+// NEVER an alpha value or a memory body (the binding SEC-01 constraint).
+// ---------------------------------------------------------------------------
+
+describe("RANK-06/FORGET-06 learning/tuning events (counts-only, bridged)", () => {
+  it("the three new keys are in TRAJECTORY_BRIDGE_MAPPING with the canonical dotted names", () => {
+    const mapping = TRAJECTORY_BRIDGE_MAPPING as Record<string, string>;
+    expect(mapping["memory:online_tuning_applied"]).toBe("memory.online_tuning_applied");
+    expect(mapping["learning:memory_demoted"]).toBe("learning.memory_demoted");
+    expect(mapping["learning:memory_evicted"]).toBe("learning.memory_evicted");
+  });
+
+  it("TRAJECTORY_EVENT_TYPES includes the three new dotted trajectory types", () => {
+    const types = Array.from(TRAJECTORY_EVENT_TYPES as readonly string[]);
+    expect(types).toContain("memory.online_tuning_applied");
+    expect(types).toContain("learning.memory_demoted");
+    expect(types).toContain("learning.memory_evicted");
+  });
+
+  it("memory:online_tuning_applied → memory.online_tuning_applied carries counts + intent ONLY (no alpha value; correlation ids stripped)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("memory:online_tuning_applied", {
+      agentId: "default",
+      updated: true,
+      clampHits: 1,
+      signalCount: 7,
+      intent: "temporal",
+      durationMs: 12,
+      timestamp: 1000,
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("memory.online_tuning_applied");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.updated).toBe(true);
+    expect(data.clampHits).toBe(1);
+    expect(data.signalCount).toBe(7);
+    expect(data.intent).toBe("temporal");
+    expect(data.durationMs).toBe(12);
+    // Counts-only: agentId/timestamp are envelope-only; NO alpha key/value crosses.
+    expect(data.agentId).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+    for (const k of Object.keys(data)) {
+      expect(k, `payload key ${k} must not name an alpha`).not.toMatch(/alpha/i);
+    }
+  });
+
+  it("learning:memory_demoted → learning.memory_demoted carries the count ONLY (correlation ids stripped)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("learning:memory_demoted", { agentId: "default", count: 3, timestamp: 1000 });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("learning.memory_demoted");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.count).toBe(3);
+    expect(data.agentId).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("learning:memory_evicted → learning.memory_evicted carries the count ONLY (correlation ids stripped)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("learning:memory_evicted", { agentId: "default", count: 2, timestamp: 1000 });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("learning.memory_evicted");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.count).toBe(2);
+    expect(data.agentId).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SKILL-09 (Plan 07): the two procedural-synthesis telemetry events. Emitted
+// DAEMON-SIDE (the __SKILL_SYNTHESIS__ cron handler) after runSkillSynthesis.
+// Counts / ids / closed-enums (coverage) ONLY — NEVER a procedure body, a script,
+// or a finding (the SEC-01 firewall; the translator forwards counts/coverage only).
+// ---------------------------------------------------------------------------
+
+describe("SKILL-09 learning:skill_synthesized / skill_validated (counts-only, bridged)", () => {
+  it("both keys are in TRAJECTORY_BRIDGE_MAPPING with the canonical dotted names", () => {
+    const mapping = TRAJECTORY_BRIDGE_MAPPING as Record<string, string>;
+    expect(mapping["learning:skill_synthesized"]).toBe("learning.skill_synthesized");
+    expect(mapping["learning:skill_validated"]).toBe("learning.skill_validated");
+  });
+
+  it("TRAJECTORY_EVENT_TYPES includes both new dotted trajectory types", () => {
+    const types = Array.from(TRAJECTORY_EVENT_TYPES as readonly string[]);
+    expect(types).toContain("learning.skill_synthesized");
+    expect(types).toContain("learning.skill_validated");
+  });
+
+  it("learning:skill_synthesized → learning.skill_synthesized carries the count ONLY (correlation ids stripped)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("learning:skill_synthesized", { agentId: "default", count: 2, timestamp: 1000 });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("learning.skill_synthesized");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.count).toBe(2);
+    expect(data.agentId).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("learning:skill_validated → learning.skill_validated carries the verdict booleans + coverage ONLY (no body/scripts)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("learning:skill_validated", {
+      agentId: "default",
+      staticOk: true,
+      dynamicOk: false,
+      coverage: "static-only",
+      timestamp: 1000,
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("learning.skill_validated");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.staticOk).toBe(true);
+    expect(data.dynamicOk).toBe(false);
+    expect(data.coverage).toBe("static-only");
+    expect(data.agentId).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+    // SEC-01 firewall: NO body / scripts / findings / field-name leak crosses.
+    for (const k of Object.keys(data)) {
+      expect(k, `payload key ${k} must not name a body/script/finding`).not.toMatch(/body|script|finding|content/i);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SURFACE-06 (Phase 202 Plan 03): the two promote/demote telemetry events.
+// Emitted DAEMON-SIDE (the promote/demote loop, Plan 05) — NOT agent/orchestrator,
+// so the arch emit-scanner does not require them; bridged so OBS-02 `comis explain`
+// reconstructs a promotion/demotion. Counts ONLY — the count crosses, never an
+// id-list / procedure body / script (the SEC-01 firewall; they fold into the
+// shared { count } translator case). APPEND-ONLY beside the 201-07 skill rows.
+// ---------------------------------------------------------------------------
+
+describe("SURFACE-06 learning:skill_promoted / skill_demoted (counts-only, bridged)", () => {
+  it("both keys are in TRAJECTORY_BRIDGE_MAPPING with the canonical dotted names", () => {
+    const mapping = TRAJECTORY_BRIDGE_MAPPING as Record<string, string>;
+    expect(mapping["learning:skill_promoted"]).toBe("learning.skill_promoted");
+    expect(mapping["learning:skill_demoted"]).toBe("learning.skill_demoted");
+  });
+
+  it("TRAJECTORY_EVENT_TYPES includes both new dotted trajectory types", () => {
+    const types = Array.from(TRAJECTORY_EVENT_TYPES as readonly string[]);
+    expect(types).toContain("learning.skill_promoted");
+    expect(types).toContain("learning.skill_demoted");
+  });
+
+  it("learning:skill_promoted → learning.skill_promoted carries the count ONLY (correlation ids stripped)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("learning:skill_promoted", { agentId: "default", count: 2, timestamp: 1000 });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("learning.skill_promoted");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.count).toBe(2);
+    expect(Object.keys(data)).toEqual(["count"]);
+    expect(data.agentId).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("learning:skill_demoted → learning.skill_demoted carries the count ONLY (correlation ids stripped)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("learning:skill_demoted", { agentId: "default", count: 1, timestamp: 1000 });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("learning.skill_demoted");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.count).toBe(1);
+    expect(Object.keys(data)).toEqual(["count"]);
+    expect(data.agentId).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("never forwards a body/script/id-list even if present on the payload (SEC-01 firewall)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("learning:skill_promoted", {
+      agentId: "default",
+      count: 3,
+      // hostile extras that MUST NOT cross into the trajectory:
+      body: "the promoted procedure markdown",
+      scripts: ["rm -rf /"],
+      skillIds: ["deploy", "backup"],
+      timestamp: 1000,
+    } as never);
+
+    expect(recorder.calls).toHaveLength(1);
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data).toEqual({ count: 3 });
+    expect(Object.keys(data)).toEqual(["count"]);
+    for (const k of Object.keys(data)) {
+      expect(k, `payload key ${k} must not name a body/script/id-list`).not.toMatch(/body|script|skillids|finding|content/i);
+    }
+  });
+});
+
+describe("REVISE-/GENERAL- learning:user_model_revised / memory_generalized (counts-only, bridged)", () => {
+  it("both keys are in TRAJECTORY_BRIDGE_MAPPING with the canonical dotted names", () => {
+    const mapping = TRAJECTORY_BRIDGE_MAPPING as Record<string, string>;
+    expect(mapping["learning:user_model_revised"]).toBe("learning.user_model_revised");
+    expect(mapping["learning:memory_generalized"]).toBe("learning.memory_generalized");
+  });
+
+  it("TRAJECTORY_EVENT_TYPES includes both new dotted trajectory types", () => {
+    const types = Array.from(TRAJECTORY_EVENT_TYPES as readonly string[]);
+    expect(types).toContain("learning.user_model_revised");
+    expect(types).toContain("learning.memory_generalized");
+  });
+
+  it("learning:user_model_revised → learning.user_model_revised carries the revision COUNTS only (correlation ids stripped, no profile body)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("learning:user_model_revised", {
+      agentId: "default",
+      superseded: 1,
+      corroborated: 2,
+      inserted: 3,
+      durationMs: 7,
+      timestamp: 1000,
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("learning.user_model_revised");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data).toEqual({ superseded: 1, corroborated: 2, inserted: 3, durationMs: 7 });
+    // Correlation ids are envelope-only — never echoed into data.
+    expect(data.agentId).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("learning:memory_generalized → learning.memory_generalized carries the generalization COUNTS only (correlation ids stripped, no memory body)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("learning:memory_generalized", {
+      agentId: "default",
+      generalized: 1,
+      clustersConsidered: 4,
+      durationMs: 9,
+      timestamp: 1000,
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("learning.memory_generalized");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data).toEqual({ generalized: 1, clustersConsidered: 4, durationMs: 9 });
+    expect(data.agentId).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("never forwards a profile/memory body, entryType, or sourceId even if present on the payload (SEC-01 firewall)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("learning:user_model_revised", {
+      agentId: "default",
+      superseded: 1,
+      corroborated: 0,
+      inserted: 0,
+      durationMs: 5,
+      // hostile extras that MUST NOT cross into the trajectory:
+      content: "prefers espresso every morning",
+      body: "the revised profile entry",
+      entryType: "preference",
+      sourceId: "mem-42",
+      sourceIds: ["mem-42", "mem-43"],
+      timestamp: 1000,
+    } as never);
+
+    expect(recorder.calls).toHaveLength(1);
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data).toEqual({ superseded: 1, corroborated: 0, inserted: 0, durationMs: 5 });
+    for (const k of Object.keys(data)) {
+      expect(k, `payload key ${k} must not name a body/content/entryType/sourceId`).not.toMatch(
+        /body|content|entrytype|sourceid/i,
+      );
+    }
   });
 });

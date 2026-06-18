@@ -38,7 +38,7 @@ Events follow a `subsystem:action` naming pattern (for example, `message:receive
 |-----------|-------------|-------|
 | `MessagingEvents` | 38 | Message lifecycle, sessions, subagent lifecycle, compaction, context, execution control, announcements |
 | `AgentEvents` | 43 | Skills, tools, audit, observability, model selection, security, graphs, cache, SEP |
-| `ChannelEvents` | 43 | Channel lifecycle, queuing, streaming, typing, auto-reply, policies, delivery, steer |
+| `ChannelEvents` | 44 | Channel lifecycle, queuing, streaming, typing, auto-reply, policies, delivery, steer, inbound reactions |
 | `InfraEvents` | 55 | Approvals, config, plugins, hooks, auth, diagnostics, media, scheduler, system, MCP, notifications, background tasks |
 | `TerminalEvents` | 4 | Terminal session lifecycle, keystrokes, session eviction |
 
@@ -180,9 +180,9 @@ Subscribe to this event for driver-level monitoring, logging, or triggering down
 
 </Accordion>
 
-<Accordion title="ChannelEvents (43 events)">
+<Accordion title="ChannelEvents (44 events)">
 
-Channel registration, sender blocking, command queuing, streaming delivery, typing indicators, auto-reply, send policies, debounce, group history, follow-up chains, priority lanes, elevated routing, retry engine, ack reactions, steer lifecycle, block coalescing, unified delivery pipeline, delivery queue, channel health monitoring, delivery hooks, and sub-agent proxy typing events.
+Channel registration, sender blocking, command queuing, streaming delivery, typing indicators, auto-reply, send policies, debounce, group history, follow-up chains, priority lanes, elevated routing, retry engine, ack reactions, inbound reaction capture, steer lifecycle, block coalescing, unified delivery pipeline, delivery queue, channel health monitoring, delivery hooks, and sub-agent proxy typing events.
 
 | Event Name | Key Payload Fields |
 |------------|-------------------|
@@ -192,6 +192,7 @@ Channel registration, sender blocking, command queuing, streaming delivery, typi
 | `channel:deregistered` | channelType, pluginId, timestamp |
 | `channel:health_changed` | channelType, previousState, currentState, connectionMode, error, lastMessageAt, timestamp |
 | `channel:health_check` | channelType, state, responseTimeMs, timestamp |
+| `channel:reaction_received` | messageId, reactorId, emoji, channelType, channelId, timestamp |
 | `channel:registered` | channelType, pluginId, capabilities, timestamp |
 | `coalesce:flushed` | channelId, chatId, blockCount, charCount, trigger, timestamp |
 | `debounce:buffered` | sessionKey, channelType, bufferedCount, windowMs, timestamp |
@@ -230,6 +231,8 @@ Channel registration, sender blocking, command queuing, streaming delivery, typi
 | `typing:proxy_stop` | runId, channelType, channelId, reason, durationMs, timestamp |
 | `typing:started` | channelId, chatId, mode, timestamp |
 | `typing:stopped` | channelId, chatId, durationMs, timestamp |
+
+`channel:reaction_received` fires when someone adds a reaction to one of the agent's **outbound** messages on Discord, Slack, or Telegram (emitted by the channel-manager via the optional `adapter.onReaction` fanout). The payload is content-free — ids, the emoji, and a timestamp only, never a message body or a sender display name. The daemon consumes it as a corroborating [Verified Learning](/reference/config-yaml#learning-outcome-agents-learningoutcome) signal: it resolves the `messageId` to the originating trajectory (and ignores the event if it does not map to an agent-authored outbound message) and observes a `reaction`-source outcome. It is distinct from the *outbound* ack-reaction lifecycle (`ack:reaction_sent`, `reaction:phase_changed`, `reaction:terminal`, and friends), which tracks reactions the agent itself posts as progress indicators.
 
 </Accordion>
 

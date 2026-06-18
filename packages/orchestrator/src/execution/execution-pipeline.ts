@@ -225,6 +225,12 @@ export async function executeAndDeliver(
       channelType: adapter.channelType,
       agentId,
       sessionKey: formatSessionKey(sessionKey),
+      // CR-02: carry the turn's trajectory id so the Verified Learning correction
+      // writer can record the prior completed trajectory for a single-agent turn
+      // off the PAYLOAD (this emit runs outside the executor's runWithContext). The
+      // ingress context reuses the trajectory traceId; absent only on non-context
+      // paths (the writer then fails closed).
+      traceId: tryGetContext()?.traceId,
       receivedAt,
       executionDurationMs: systemNowMs() - receivedAt,
       deliveryDurationMs: 0,

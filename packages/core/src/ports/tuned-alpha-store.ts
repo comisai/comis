@@ -73,6 +73,19 @@ export interface TunedAlphaScope {
    * UserRepresentationStore.read's `Omit<…, "now">`).
    */
   now: number;
+  /**
+   * Optional query-INTENT bucket (RANK-02). When present, the read fetches /
+   * the write records the per-intent tuned vector (the learned ranking weights
+   * FOR THAT intent); when OMITTED the adapter resolves the GLOBAL bucket
+   * (intent="") — byte-identical to the prior behaviour. The closed-union value
+   * comes from the agent's deterministic `classifyIntent` (LLM-free); typed here
+   * as a plain string so @comis/core takes no @comis/agent dependency. NOT a
+   * security boundary — (tenantId, agentId) remain the isolation scope; intent is
+   * an ADDITIONAL key, never a relaxation. Because `read` takes
+   * `Omit<TunedAlphaScope, "now">`, this optional field flows to BOTH the write
+   * AND the read automatically.
+   */
+  intent?: string;
 }
 
 export interface TunedAlphaStore {

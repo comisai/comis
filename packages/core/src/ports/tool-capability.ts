@@ -44,8 +44,12 @@ export interface PromptSkillCapability {
   readonly summary?: string;
   /** Package names this skill replaces (for install-detour overlap detection). */
   readonly replacesPackages: readonly string[];
-  /** Where the skill was discovered from. */
-  readonly source?: "bundled" | "workspace" | "local";
+  /**
+   * Where the skill was discovered from. Mirrors `@comis/skills` `SkillSource`:
+   * "learned" is the verified-learning procedural source (v2.26), set
+   * explicitly by the daemon merge helper (never model-asserted).
+   */
+  readonly source?: "bundled" | "workspace" | "local" | "learned";
 }
 
 /**

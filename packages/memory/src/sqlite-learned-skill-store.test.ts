@@ -1,0 +1,683 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * Unit tests for `createSqliteLearnedSkillStore` — the @comis/memory SQLite
+ * adapter for the segregated `LearnedSkillStorePort` (@comis/core, v2.26 Verified
+ * Learning WS2 / SKILL-01). The store owns ALL `learned_skills` SQL: the
+ * idempotent `admit()` upsert (deterministic-hash id of the UNIQUE
+ * `(tenant_id, agent_id, name)` tuple + `ON CONFLICT(id) DO UPDATE`), the scoped
+ * `(tenant, agent)`-isolated `get`/`list` reads, and the `promote`/`demote`/
+ * `evict` lifecycle transitions (evict is SOFT — sets `evicted_at`, never a hard
+ * DELETE).
+ *
+ * `learned_skills` has NO foreign key, so a bare `new Database(":memory:")` +
+ * `initSchema(db, dims)` is sufficient — no `SqliteMemoryAdapter` / seeded
+ * memories needed (the `sqlite-outcome-store.test.ts` / no-FK precedent).
+ *
+ * The two load-bearing security invariants under test:
+ *  - SEC-01 trust ceiling: a raw `INSERT … trust_level='system'` THROWS (the DB
+ *    `CHECK (trust_level IN ('learned'))` rejects any non-'learned' value) — a
+ *    synthesized procedure can NEVER be `system`.
+ *  - SEC-01 (tenant, agent) isolation: a skill admitted under (tenantA, agentA)
+ *    is INVISIBLE to a read under (tenantB, agentB); an empty/unresolved scope
+ *    fails-closed with `err(...)` (never widens to a shared pool).
+ *
+ * @module
+ */
+
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import Database from "better-sqlite3";
+import { createHash } from "node:crypto";
+import { initSchema } from "./schema.js";
+import { createSqliteLearnedSkillStore } from "./sqlite-learned-skill-store.js";
+import type { AdmitSkillInput, LearningScope } from "@comis/core";
+
+// ---------------------------------------------------------------------------
+// Fixtures
+// ---------------------------------------------------------------------------
+
+const TENANT_A = "tenant_a";
+const AGENT_A = "agent_a";
+const TENANT_B = "tenant_b";
+const AGENT_B = "agent_b";
+const SCOPE_A: LearningScope = { tenantId: TENANT_A, agentId: AGENT_A };
+const SCOPE_B: LearningScope = { tenantId: TENANT_B, agentId: AGENT_B };
+
+/** Build a minimal AdmitSkillInput, overridable per test. */
+function makeInput(overrides: Partial<AdmitSkillInput> = {}): AdmitSkillInput {
+  return {
+    name: overrides.name ?? "deploy-the-thing",
+    description: overrides.description ?? "Deploy the thing the safe way",
+    body: overrides.body ?? "1. run the build\n2. ship it",
+    mutating: overrides.mutating ?? false,
+    proofCount: overrides.proofCount ?? 1,
+    confidence: overrides.confidence ?? 0.8,
+    sourceTrajIds: overrides.sourceTrajIds ?? ["traj_1"],
+    createdAt: overrides.createdAt ?? 1_000,
+  };
+}
+
+/**
+ * Recompute the deterministic id the store derives from the UNIQUE
+ * `(tenant, agent, name)` tuple. The test owns this formula independently so a
+ * drift in the store's hashing is caught (it is the idempotency backstop beyond
+ * the UNIQUE constraint).
+ */
+function expectedId(tenantId: string, agentId: string, name: string): string {
+  return createHash("sha256").update([tenantId, agentId, name].join(" ")).digest("hex");
+}
+
+describe("createSqliteLearnedSkillStore", () => {
+  let db: Database.Database;
+  let store: ReturnType<typeof createSqliteLearnedSkillStore>;
+
+  /** Count learned_skills rows under a (tenant, agent). */
+  function rowCount(tenantId = TENANT_A, agentId = AGENT_A): number {
+    const row = db
+      .prepare("SELECT COUNT(*) AS c FROM learned_skills WHERE tenant_id = ? AND agent_id = ?")
+      .get(tenantId, agentId) as { c: number };
+    return row.c;
+  }
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    initSchema(db, 384); // a realistic runtime-probed embedding dimension
+    store = createSqliteLearnedSkillStore({ db });
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  // -------------------------------------------------------------------------
+  // Schema: the table + the FTS/trigram twins are created on boot
+  // -------------------------------------------------------------------------
+
+  it("creates the learned_skills table + the FTS/vec/trigram twins on boot", () => {
+    const tables = new Set(
+      (
+        db
+          .prepare("SELECT name FROM sqlite_master WHERE type IN ('table') AND name LIKE 'learned_skills%'")
+          .all() as { name: string }[]
+      ).map((r) => r.name),
+    );
+    expect(tables.has("learned_skills")).toBe(true);
+    // FTS5 + trigram twins are virtual tables (type='table' in sqlite_master).
+    expect(tables.has("learned_skills_fts")).toBe(true);
+    expect(tables.has("learned_skills_fts_tri")).toBe(true);
+  });
+
+  it("is idempotent on a re-run of initSchema (CREATE … IF NOT EXISTS — no throw)", () => {
+    expect(() => initSchema(db, 384)).not.toThrow();
+  });
+
+  // -------------------------------------------------------------------------
+  // WR-04: the learned_skills_fts word-lane twin rebuilds + matches on a body
+  // token. The external-content FTS column must name the REAL source column
+  // (`body`) — naming it `content` (no such column on `learned_skills`) makes
+  // FTS5 'rebuild' throw "no such column: content" on every boot, leaving the
+  // index reliant solely on incremental triggers (stale after an unclean
+  // shutdown — the exact scenario memory_fts's rebuild guards against).
+  // -------------------------------------------------------------------------
+
+  it("rebuilds learned_skills_fts without throwing and a body token MATCHes after rebuild", async () => {
+    // Admit a row whose body carries a distinctive token.
+    await store.admit(makeInput({ name: "fts-rebuild", body: "deploy the zephyrwidget safely" }), SCOPE_A);
+    // Drop the incrementally-maintained index contents, then ask FTS5 to
+    // re-derive the index from the external content table. On the buggy schema
+    // (FTS column 'content' over a table with no 'content' column) this throws
+    // "no such column: content"; the correct schema rebuilds cleanly.
+    expect(() => {
+      db.exec("INSERT INTO learned_skills_fts(learned_skills_fts) VALUES('delete-all')");
+      db.exec("INSERT INTO learned_skills_fts(learned_skills_fts) VALUES('rebuild')");
+    }).not.toThrow();
+    // The rebuilt index finds the body token.
+    const hits = db
+      .prepare("SELECT rowid FROM learned_skills_fts WHERE learned_skills_fts MATCH ?")
+      .all("zephyrwidget") as { rowid: number }[];
+    expect(hits.length).toBe(1);
+  });
+
+  // -------------------------------------------------------------------------
+  // SEC-01 trust ceiling: the CHECK rejects any non-'learned' trust_level
+  // -------------------------------------------------------------------------
+
+  it("REJECTS a raw INSERT with trust_level='system' (the SEC-01 DB trust ceiling)", () => {
+    const insertSystem = () =>
+      db
+        .prepare(
+          "INSERT INTO learned_skills (id, tenant_id, agent_id, name, description, body, trust_level, state, created_at) " +
+            "VALUES (?, ?, ?, ?, ?, ?, 'system', 'candidate', ?)",
+        )
+        .run("forged-id", TENANT_A, AGENT_A, "evil", "evil", "rm -rf /", 1_000);
+    expect(insertSystem).toThrow(); // the CHECK (trust_level IN ('learned')) rejects 'system'
+  });
+
+  it("the admit() write always lands trust_level='learned' in the row", async () => {
+    const r = await store.admit(makeInput(), SCOPE_A);
+    expect(r.ok).toBe(true);
+    const row = db
+      .prepare("SELECT trust_level FROM learned_skills WHERE tenant_id = ? AND agent_id = ? AND name = ?")
+      .get(TENANT_A, AGENT_A, "deploy-the-thing") as { trust_level: string };
+    expect(row.trust_level).toBe("learned");
+  });
+
+  // -------------------------------------------------------------------------
+  // SKILL-01 idempotency: deterministic id + ON CONFLICT — a replay is a no-op
+  // -------------------------------------------------------------------------
+
+  it("derives the row id as a deterministic sha256 of the (tenant, agent, name) tuple", async () => {
+    const r = await store.admit(makeInput({ name: "x" }), SCOPE_A);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.value.id).toBe(expectedId(TENANT_A, AGENT_A, "x"));
+      expect(r.value.admitted).toBe(true);
+    }
+  });
+
+  it("a second admit() of the same (tenant, agent, name) is idempotent — one row, same id (ON CONFLICT)", async () => {
+    const first = await store.admit(makeInput({ name: "dup" }), SCOPE_A);
+    const second = await store.admit(
+      makeInput({ name: "dup", body: "updated body", confidence: 0.9 }),
+      SCOPE_A,
+    );
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+    // Still ONE row (the deterministic id collides → ON CONFLICT upsert, not a 2nd insert).
+    expect(rowCount()).toBe(1);
+    if (first.ok && second.ok) {
+      expect(second.value.id).toBe(first.value.id);
+    }
+  });
+
+  it("the deterministic id survives row deletion (a replay re-creates the same id)", async () => {
+    const first = await store.admit(makeInput({ name: "ghost" }), SCOPE_A);
+    expect(first.ok).toBe(true);
+    // Soft-evict then a fresh admit re-uses the same id (replay-stable).
+    db.prepare("DELETE FROM learned_skills WHERE tenant_id = ? AND agent_id = ? AND name = ?").run(
+      TENANT_A,
+      AGENT_A,
+      "ghost",
+    );
+    const replay = await store.admit(makeInput({ name: "ghost" }), SCOPE_A);
+    expect(replay.ok).toBe(true);
+    if (first.ok && replay.ok) {
+      expect(replay.value.id).toBe(first.value.id);
+    }
+    expect(rowCount()).toBe(1);
+  });
+
+  // -------------------------------------------------------------------------
+  // The admitted row round-trips through get() with the LearnedSkill shape
+  // -------------------------------------------------------------------------
+
+  it("get() round-trips the admitted skill (trustLevel 'learned', state 'candidate')", async () => {
+    await store.admit(
+      makeInput({ name: "round-trip", mutating: true, proofCount: 2, sourceTrajIds: ["a", "b"] }),
+      SCOPE_A,
+    );
+    const r = await store.get("round-trip", SCOPE_A);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      const skill = r.value;
+      expect(skill).toBeDefined();
+      expect(skill?.name).toBe("round-trip");
+      expect(skill?.trustLevel).toBe("learned");
+      expect(skill?.state).toBe("candidate");
+      expect(skill?.mutating).toBe(true);
+      expect(skill?.proofCount).toBe(2);
+      expect(skill?.sourceTrajIds).toEqual(["a", "b"]);
+      expect(skill?.id).toBe(expectedId(TENANT_A, AGENT_A, "round-trip"));
+    }
+  });
+
+  it("get() returns ok(undefined) for an absent skill name (within a resolved scope)", async () => {
+    const r = await store.get("does-not-exist", SCOPE_A);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value).toBeUndefined();
+  });
+
+  it("tolerates corrupt JSON in source_traj_ids (degrades to [], never throws)", async () => {
+    await store.admit(makeInput({ name: "corrupt" }), SCOPE_A);
+    db.prepare(
+      "UPDATE learned_skills SET source_traj_ids = '{not json' WHERE tenant_id = ? AND agent_id = ? AND name = ?",
+    ).run(TENANT_A, AGENT_A, "corrupt");
+    const r = await store.get("corrupt", SCOPE_A);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value?.sourceTrajIds).toEqual([]);
+  });
+
+  // A placeholder so SCOPE_B/TENANT_B/AGENT_B are referenced in Task 1 already
+  // (the full isolation matrix lands in Task 2).
+  it("a skill admitted under scope A does not appear in scope B's row count", async () => {
+    await store.admit(makeInput({ name: "scoped" }), SCOPE_A);
+    expect(rowCount(TENANT_A, AGENT_A)).toBe(1);
+    expect(rowCount(TENANT_B, AGENT_B)).toBe(0);
+    void SCOPE_B;
+  });
+});
+
+// ===========================================================================
+// SEC-01 isolation matrix + fail-closed scope + soft lifecycle (Task 2)
+// ===========================================================================
+describe("createSqliteLearnedSkillStore — (tenant, agent) isolation + lifecycle", () => {
+  let db: Database.Database;
+  let store: ReturnType<typeof createSqliteLearnedSkillStore>;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    initSchema(db, 384);
+    store = createSqliteLearnedSkillStore({ db });
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  // --- T-201-06: cross-scope reads see nothing -----------------------------
+
+  it("a skill admitted under (tenantA, agentA) is INVISIBLE to get() under (tenantB, agentB)", async () => {
+    await store.admit(makeInput({ name: "isolated" }), SCOPE_A);
+    const fromB = await store.get("isolated", SCOPE_B);
+    expect(fromB.ok).toBe(true);
+    if (fromB.ok) expect(fromB.value).toBeUndefined(); // never visible cross-scope
+    const fromA = await store.get("isolated", SCOPE_A);
+    expect(fromA.ok).toBe(true);
+    if (fromA.ok) expect(fromA.value?.name).toBe("isolated"); // own scope DOES see it
+  });
+
+  it("list() under (tenantB, agentB) does not return (tenantA, agentA)'s skills", async () => {
+    await store.admit(makeInput({ name: "a-only-1" }), SCOPE_A);
+    await store.admit(makeInput({ name: "a-only-2" }), SCOPE_A);
+    await store.admit(makeInput({ name: "b-only" }), SCOPE_B);
+    const listA = await store.list(SCOPE_A);
+    const listB = await store.list(SCOPE_B);
+    expect(listA.ok).toBe(true);
+    expect(listB.ok).toBe(true);
+    if (listA.ok) expect(listA.value.map((s) => s.name).sort()).toEqual(["a-only-1", "a-only-2"]);
+    if (listB.ok) expect(listB.value.map((s) => s.name)).toEqual(["b-only"]);
+  });
+
+  it("the SAME skill name under different scopes are DISTINCT rows (UNIQUE is per (tenant, agent))", async () => {
+    const a = await store.admit(makeInput({ name: "same-name", body: "A's body" }), SCOPE_A);
+    const b = await store.admit(makeInput({ name: "same-name", body: "B's body" }), SCOPE_B);
+    expect(a.ok && b.ok).toBe(true);
+    if (a.ok && b.ok) expect(a.value.id).not.toBe(b.value.id); // distinct ids → distinct rows
+    const fromA = await store.get("same-name", SCOPE_A);
+    const fromB = await store.get("same-name", SCOPE_B);
+    if (fromA.ok) expect(fromA.value?.body).toBe("A's body");
+    if (fromB.ok) expect(fromB.value?.body).toBe("B's body");
+  });
+
+  // --- T-201-07: unresolved scope fails closed (never widens to a pool) -----
+
+  const EMPTY_TENANT: LearningScope = { tenantId: "", agentId: AGENT_A };
+  const EMPTY_AGENT: LearningScope = { tenantId: TENANT_A, agentId: "" };
+
+  it("admit() with an empty tenantId fails-closed with err (does NOT widen to a shared pool)", async () => {
+    const r = await store.admit(makeInput({ name: "no-scope" }), EMPTY_TENANT);
+    expect(r.ok).toBe(false);
+    // Nothing was written under any scope.
+    const count = db.prepare("SELECT COUNT(*) AS c FROM learned_skills").get() as { c: number };
+    expect(count.c).toBe(0);
+  });
+
+  it("get()/list() with an empty agentId fail-closed with err", async () => {
+    const g = await store.get("anything", EMPTY_AGENT);
+    const l = await store.list(EMPTY_AGENT);
+    expect(g.ok).toBe(false);
+    expect(l.ok).toBe(false);
+  });
+
+  it("promote()/demote()/evict() with an empty scope fail-closed with err", async () => {
+    const p = await store.promote("some-id", EMPTY_TENANT, 3);
+    const d = await store.demote("some-id", EMPTY_AGENT);
+    const e = await store.evict("some-id", EMPTY_TENANT);
+    expect(p.ok).toBe(false);
+    expect(d.ok).toBe(false);
+    expect(e.ok).toBe(false);
+  });
+
+  // --- lifecycle: promote / demote / soft-evict ----------------------------
+
+  it("promote() advances candidate→active and increments proof_count when the threshold is crossed (scoped)", async () => {
+    // proofCount seeds 1; threshold 2 → proof_count + 1 = 2 >= 2 activates on this single call.
+    const admitted = await store.admit(makeInput({ name: "promote-me", proofCount: 1 }), SCOPE_A);
+    expect(admitted.ok).toBe(true);
+    if (!admitted.ok) return;
+    const r = await store.promote(admitted.value.id, { ...SCOPE_A, now: 2_000 }, 2);
+    expect(r.ok).toBe(true);
+    const after = await store.get("promote-me", SCOPE_A);
+    if (after.ok) {
+      expect(after.value?.state).toBe("active");
+      expect(after.value?.proofCount).toBe(2);
+    }
+  });
+
+  it("promote() is (tenant, agent)-scoped — a foreign scope cannot mutate another's skill", async () => {
+    const admitted = await store.admit(makeInput({ name: "guarded" }), SCOPE_A);
+    if (!admitted.ok) return;
+    // Promote under SCOPE_B (same id, wrong scope) — the WHERE pins (tenant, agent),
+    // so it matches 0 rows and A's skill is untouched.
+    await store.promote(admitted.value.id, SCOPE_B, 1);
+    const a = await store.get("guarded", SCOPE_A);
+    if (a.ok) {
+      expect(a.value?.state).toBe("candidate"); // unchanged — cross-scope UPDATE matched nothing
+      expect(a.value?.proofCount).toBe(1);
+    }
+  });
+
+  it("demote() steps an active skill back toward stale (scoped)", async () => {
+    const admitted = await store.admit(makeInput({ name: "demote-me" }), SCOPE_A);
+    if (!admitted.ok) return;
+    await store.promote(admitted.value.id, SCOPE_A, 1); // threshold 1 → active on the first promote
+    const r = await store.demote(admitted.value.id, SCOPE_A); // active → stale
+    expect(r.ok).toBe(true);
+    const after = await store.get("demote-me", SCOPE_A);
+    if (after.ok) expect(after.value?.state).toBe("stale");
+  });
+
+  it("evict() is SOFT — sets evicted_at, NEVER a hard DELETE (the row + provenance survive)", async () => {
+    const admitted = await store.admit(makeInput({ name: "evict-me", sourceTrajIds: ["t1", "t2"] }), SCOPE_A);
+    if (!admitted.ok) return;
+    const r = await store.evict(admitted.value.id, { ...SCOPE_A, now: 5_000 });
+    expect(r.ok).toBe(true);
+    // The row STILL EXISTS in the table (soft-close).
+    const rawCount = db
+      .prepare("SELECT COUNT(*) AS c FROM learned_skills WHERE tenant_id = ? AND agent_id = ? AND name = ?")
+      .get(TENANT_A, AGENT_A, "evict-me") as { c: number };
+    expect(rawCount.c).toBe(1);
+    const raw = db
+      .prepare("SELECT evicted_at, state, source_traj_ids FROM learned_skills WHERE tenant_id = ? AND agent_id = ? AND name = ?")
+      .get(TENANT_A, AGENT_A, "evict-me") as { evicted_at: number; state: string; source_traj_ids: string };
+    expect(raw.evicted_at).toBe(5_000);
+    expect(raw.state).toBe("archived");
+    expect(raw.source_traj_ids).toBe(JSON.stringify(["t1", "t2"])); // provenance survives
+    // But it no longer SURFACES through get()/list() (evicted_at IS NULL filter).
+    const g = await store.get("evict-me", SCOPE_A);
+    if (g.ok) expect(g.value).toBeUndefined();
+    const l = await store.list(SCOPE_A);
+    if (l.ok) expect(l.value.find((s) => s.name === "evict-me")).toBeUndefined();
+  });
+});
+
+// ===========================================================================
+// D2 / SURFACE-04 / T-202-04: promote() threshold gate — proof_count bumps every
+// call but candidate→active fires ONLY when proof_count + 1 >= promoteAtProofCount
+// (NOT on the first call). The §12 first-RED: today's unconditional CASE flips on
+// call 1, so the "stays candidate after call 1" assertions are RED on pre-patch.
+// ===========================================================================
+describe("createSqliteLearnedSkillStore — promote() proof-bar threshold gate (D2)", () => {
+  let db: Database.Database;
+  let store: ReturnType<typeof createSqliteLearnedSkillStore>;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    initSchema(db, 384);
+    store = createSqliteLearnedSkillStore({ db });
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  /** Admit a candidate seeded at proof_count=0 and return its id. */
+  async function admitCandidate(name: string): Promise<string> {
+    const r = await store.admit(makeInput({ name, proofCount: 0 }), SCOPE_A);
+    expect(r.ok).toBe(true);
+    return r.ok ? r.value.id : "";
+  }
+
+  it("the FIRST promote(id, scope, 3) bumps proof_count to 1 but the skill STAYS 'candidate' (not activated on call 1)", async () => {
+    const id = await admitCandidate("threshold-3");
+    const r = await store.promote(id, SCOPE_A, 3);
+    expect(r.ok).toBe(true);
+    const after = await store.get("threshold-3", SCOPE_A);
+    expect(after.ok).toBe(true);
+    if (after.ok) {
+      expect(after.value?.state).toBe("candidate"); // RED today: the unconditional CASE flips to 'active' here
+      expect(after.value?.proofCount).toBe(1);
+    }
+  });
+
+  it("the SECOND promote(id, scope, 3) bumps proof_count to 2 and the skill STILL STAYS 'candidate'", async () => {
+    const id = await admitCandidate("threshold-3-twice");
+    await store.promote(id, SCOPE_A, 3);
+    await store.promote(id, SCOPE_A, 3);
+    const after = await store.get("threshold-3-twice", SCOPE_A);
+    if (after.ok) {
+      expect(after.value?.state).toBe("candidate"); // proof_count + 1 = 2, still < 3
+      expect(after.value?.proofCount).toBe(2);
+    }
+  });
+
+  it("the THIRD promote(id, scope, 3) crosses the bar (proof_count + 1 = 3 >= 3) and activates → 'active', proofCount 3", async () => {
+    const id = await admitCandidate("threshold-3-thrice");
+    await store.promote(id, SCOPE_A, 3);
+    await store.promote(id, SCOPE_A, 3);
+    await store.promote(id, SCOPE_A, 3);
+    const after = await store.get("threshold-3-thrice", SCOPE_A);
+    if (after.ok) {
+      expect(after.value?.state).toBe("active"); // the activation call
+      expect(after.value?.proofCount).toBe(3);
+    }
+  });
+
+  it("promote(id, scope, 1) on a fresh candidate activates on the FIRST call (boundary: proof_count + 1 = 1 >= 1)", async () => {
+    const id = await admitCandidate("threshold-1");
+    const r = await store.promote(id, SCOPE_A, 1);
+    expect(r.ok).toBe(true);
+    const after = await store.get("threshold-1", SCOPE_A);
+    if (after.ok) {
+      expect(after.value?.state).toBe("active");
+      expect(after.value?.proofCount).toBe(1);
+    }
+  });
+
+  it("a promote(id, scope, 3) on an ALREADY-active skill keeps it 'active' and keeps bumping proof_count (the state='candidate' guard)", async () => {
+    const id = await admitCandidate("already-active");
+    // Activate at threshold 1, then promote 3 more times at threshold 3.
+    await store.promote(id, SCOPE_A, 1); // → active, proofCount 1
+    await store.promote(id, SCOPE_A, 3); // proofCount 2, stays active
+    await store.promote(id, SCOPE_A, 3); // proofCount 3, stays active
+    await store.promote(id, SCOPE_A, 3); // proofCount 4, stays active
+    const after = await store.get("already-active", SCOPE_A);
+    if (after.ok) {
+      expect(after.value?.state).toBe("active"); // an active skill's state never moves
+      expect(after.value?.proofCount).toBe(4); // proof_count keeps accumulating
+    }
+  });
+
+  it("promote() NEVER touches trust_level — it stays 'learned' across the whole proof ladder (SEC-01 / T-202-05)", async () => {
+    const id = await admitCandidate("trust-untouched");
+    await store.promote(id, SCOPE_A, 3);
+    await store.promote(id, SCOPE_A, 3);
+    await store.promote(id, SCOPE_A, 3); // crosses to active
+    const raw = db
+      .prepare("SELECT trust_level FROM learned_skills WHERE tenant_id = ? AND agent_id = ? AND name = ?")
+      .get(TENANT_A, AGENT_A, "trust-untouched") as { trust_level: string };
+    expect(raw.trust_level).toBe("learned"); // no promote path raises trust
+  });
+
+  it("promote() with an unresolved (empty) scope fails-closed on the widened 3-arg signature (T-202-06)", async () => {
+    const r = await store.promote("some-id", { tenantId: "", agentId: AGENT_A }, 3);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toBeInstanceOf(Error);
+  });
+});
+
+// ===========================================================================
+// CR-01: name-keyed promote/demote — the reuse-outcome loop holds skill NAMES
+// (ATTR-01), not the hash id. promoteByName/demoteByName resolve name→id
+// INTERNALLY (one place — the same derivation admit() uses) and REPORT
+// rows-changed so a 0-row write (an unknown/evicted name) is detectable and the
+// caller can stop the telemetry from lying.
+// ===========================================================================
+describe("createSqliteLearnedSkillStore — promoteByName / demoteByName (name→id + rows-changed)", () => {
+  let db: Database.Database;
+  let store: ReturnType<typeof createSqliteLearnedSkillStore>;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    initSchema(db, 384);
+    store = createSqliteLearnedSkillStore({ db });
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  /** Read just the lifecycle state of a named skill under SCOPE_A (block-local helper). */
+  async function stateOf(name: string): Promise<string | undefined> {
+    const r = await store.get(name, SCOPE_A);
+    return r.ok ? r.value?.state : undefined;
+  }
+
+  it("promoteByName resolves the NAME to the same id admit() derived and flips candidate→active at the bar", async () => {
+    const admitted = await store.admit(makeInput({ name: "by-name", proofCount: 0 }), SCOPE_A);
+    expect(admitted.ok).toBe(true);
+    // threshold 1 → activates on the first promote.
+    const r = await store.promoteByName("by-name", { ...SCOPE_A, now: 2_000 }, 1);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value.changed).toBe(true); // a real row was matched
+    const after = await store.get("by-name", SCOPE_A);
+    if (after.ok) {
+      expect(after.value?.state).toBe("active");
+      expect(after.value?.proofCount).toBe(1);
+      expect(after.value?.id).toBe(expectedId(TENANT_A, AGENT_A, "by-name"));
+    }
+  });
+
+  it("promoteByName on a NAME with no matching row reports changed=false (the 0-row-lies signal)", async () => {
+    const r = await store.promoteByName("does-not-exist", SCOPE_A, 3);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value.changed).toBe(false); // 0 rows → caller must not count/emit
+  });
+
+  it("promoteByName is (tenant, agent)-scoped — a foreign scope's same name matches a DIFFERENT id → changed=false here, no cross-mutation", async () => {
+    await store.admit(makeInput({ name: "scoped-name", proofCount: 0 }), SCOPE_A);
+    // Promote the SAME name under SCOPE_B: a distinct (tenant, agent) hashes to a
+    // distinct id → 0 rows under B, and A's row is untouched.
+    const r = await store.promoteByName("scoped-name", SCOPE_B, 1);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value.changed).toBe(false);
+    const a = await store.get("scoped-name", SCOPE_A);
+    if (a.ok) expect(a.value?.state).toBe("candidate"); // A unchanged
+  });
+
+  it("demoteByName resolves the NAME and steps an active skill toward stale, reporting changed=true", async () => {
+    await store.admit(makeInput({ name: "demote-by-name", proofCount: 0 }), SCOPE_A);
+    await store.promoteByName("demote-by-name", SCOPE_A, 1); // → active
+    const r = await store.demoteByName("demote-by-name", SCOPE_A);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value.changed).toBe(true);
+    const after = await store.get("demote-by-name", SCOPE_A);
+    if (after.ok) expect(after.value?.state).toBe("stale");
+  });
+
+  it("demoteByName on a NAME with no matching row reports changed=false", async () => {
+    const r = await store.demoteByName("ghost", SCOPE_A);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value.changed).toBe(false);
+  });
+
+  it("WR-06: demoteByName of an ALREADY-stale skill reports changed=false (no state delta → telemetry must not over-count)", async () => {
+    await store.admit(makeInput({ name: "already-stale", proofCount: 0 }), SCOPE_A);
+    await store.promoteByName("already-stale", SCOPE_A, 1); // → active
+    const first = await store.demoteByName("already-stale", SCOPE_A); // active → stale (a REAL transition)
+    expect(first.ok && first.value.changed).toBe(true);
+    expect(await stateOf("already-stale")).toBe("stale");
+    // A SECOND demote of the now-stale skill changes NO state → changed must be false
+    // (the demote UPDATE rewriting only updated_at must NOT be reported as a transition).
+    const second = await store.demoteByName("already-stale", SCOPE_A);
+    expect(second.ok).toBe(true);
+    if (second.ok) expect(second.value.changed).toBe(false); // RED on HEAD: changes===1 from updated_at rewrite
+    expect(await stateOf("already-stale")).toBe("stale"); // state unchanged
+  });
+
+  it("WR-06: demoteByName of an ALREADY-archived (evicted) skill reports changed=false", async () => {
+    await store.admit(makeInput({ name: "already-archived", proofCount: 0 }), SCOPE_A);
+    const id = expectedId(TENANT_A, AGENT_A, "already-archived");
+    await store.evict(id, SCOPE_A); // → archived (+ evicted_at set)
+    // demoteByName resolves the same id; the row is archived/evicted → no state delta.
+    const r = await store.demoteByName("already-archived", SCOPE_A);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value.changed).toBe(false);
+  });
+
+  it("WR-06: the active→stale demote DOES report changed=true (the real transition still works)", async () => {
+    await store.admit(makeInput({ name: "real-demote", proofCount: 0 }), SCOPE_A);
+    await store.promoteByName("real-demote", SCOPE_A, 1); // → active
+    const r = await store.demoteByName("real-demote", SCOPE_A); // active → stale
+    expect(r.ok && r.value.changed).toBe(true);
+    expect(await stateOf("real-demote")).toBe("stale");
+  });
+
+  it("WR-06: a candidate→stale demote reports changed=true (candidate is a non-terminal demote source)", async () => {
+    await store.admit(makeInput({ name: "cand-demote", proofCount: 0 }), SCOPE_A); // stays candidate
+    const r = await store.demoteByName("cand-demote", SCOPE_A); // candidate → stale
+    expect(r.ok && r.value.changed).toBe(true);
+    expect(await stateOf("cand-demote")).toBe("stale");
+  });
+
+  it("promoteByName / demoteByName with an unresolved (empty) scope fail-closed with err", async () => {
+    const p = await store.promoteByName("x", { tenantId: "", agentId: AGENT_A }, 3);
+    const d = await store.demoteByName("x", { tenantId: TENANT_A, agentId: "" });
+    expect(p.ok).toBe(false);
+    expect(d.ok).toBe(false);
+  });
+});
+
+describe("createSqliteLearnedSkillStore — error handling (catch branches)", () => {
+  // evict()/promote()/demote() must NEVER throw — a DB failure mid-operation is
+  // caught and surfaced as err() with a WARN (errorKind + hint, the §2.7 bar). We
+  // force the failure by dropping the table out from under the eagerly-prepared
+  // UPDATE statements (better-sqlite3 re-validates the schema at step time, so the
+  // prepared UPDATE throws "no such table").
+  let db: Database.Database;
+  let store: ReturnType<typeof createSqliteLearnedSkillStore>;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    initSchema(db, 384);
+    store = createSqliteLearnedSkillStore({ db });
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it("evict() returns err (not throw) when the underlying UPDATE fails", async () => {
+    db.exec("DROP TABLE learned_skills");
+    const r = await store.evict("any-id", SCOPE_A);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toBeInstanceOf(Error);
+  });
+
+  it("promote() returns err (not throw) when the underlying UPDATE fails (dedicated-body catch)", async () => {
+    db.exec("DROP TABLE learned_skills");
+    const r = await store.promote("any-id", SCOPE_A, 3);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toBeInstanceOf(Error);
+  });
+
+  it("demote() returns err (not throw) when the underlying UPDATE fails (runTransition catch)", async () => {
+    db.exec("DROP TABLE learned_skills");
+    const r = await store.demote("any-id", SCOPE_A);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toBeInstanceOf(Error);
+  });
+
+  it("promoteByName() returns err (not throw) when the underlying UPDATE fails", async () => {
+    db.exec("DROP TABLE learned_skills");
+    const r = await store.promoteByName("any-name", SCOPE_A, 3);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toBeInstanceOf(Error);
+  });
+
+  it("demoteByName() returns err (not throw) when the underlying UPDATE fails", async () => {
+    db.exec("DROP TABLE learned_skills");
+    const r = await store.demoteByName("any-name", SCOPE_A);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toBeInstanceOf(Error);
+  });
+});

@@ -13,3 +13,15 @@
  * @module
  */
 export * from "./skills/index.js";
+
+// v2.26 Verified Learning (WS2) — the SkillValidationPort adapter (STATIC half,
+// Phase 201 Plan 05; the DYNAMIC sandbox half extends it in Plan 06). The whole
+// adapter lives in @comis/skills because `applyToolPolicy` (and the bwrap sandbox
+// provider, Plan 06) are @comis/skills symbols; the daemon (Plan 07) injects it
+// into `runSkillSynthesis` via the SkillValidationPort TYPE. Ahead-of-consumer
+// (planned-orphan in test/support/public-api-policy.ts) until that wiring lands.
+export {
+  createSandboxSkillValidationAdapter,
+  classifyMutating,
+  type SandboxSkillValidationAdapterDeps,
+} from "./learning/sandbox-skill-validation-adapter.js";

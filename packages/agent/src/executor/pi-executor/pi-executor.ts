@@ -1687,6 +1687,9 @@ async function runSessionLocked(
     await postExecution({
       result, session, sm, config, msg, sessionKey, formattedKey, resolverRegisterKey, agentId,
       recalledMemories,
+      // ATTR-02: read the per-turn skill-use carrier the bridge wrote (ATTR-01)
+      // back into postExecution, which emits the memory:skill_used write-back.
+      usedSkillIds: [...bridge.getUsedSkillIds()],
       userMdLanguage: userLanguage, // DET-02 tier-2 (consumed by the degraded-reply resolver, 181-03)
       executionStartMs, executionId, executionOverrides,
       bridge, unsubscribe,

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from "vitest";
 import { ok, type Result } from "@comis/shared";
-import type { ChannelPort, SendMessageOptions } from "./channel.js";
+import type { ChannelPort, ReactionHandler, SendMessageOptions } from "./channel.js";
+import type { NormalizedReaction } from "../domain/normalized-reaction.js";
 
 // ---------------------------------------------------------------------------
 // Agent Transparency — editMessage rich-options widening
@@ -73,5 +74,110 @@ describe("ChannelPort.editMessage rich options", () => {
     const result = await adapter.editMessage!("c1", "m1", "Plain text");
     expect(result.ok).toBe(true);
     expect(adapter.lastOptions).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// onReaction? — the OPTIONAL inbound-reaction capability (REACT-01, WS1)
+//
+// onReaction is OPTIONAL on ChannelPort so non-binding adapters
+// (iMessage/LINE/IRC/Email/Echo) OMIT it — an honest no-op, NOT a gap, exactly
+// like reactToMessage?. A REQUIRED method would force dummy stubs on those
+// adapters. The pre-patch ChannelPort has no onReaction member, so the typed
+// `port.onReaction?.(handler)` call below is a compile error on pre-patch code
+// (RED via `tsc -p tsconfig.json`).
+// ---------------------------------------------------------------------------
+
+/** A no-op adapter that OMITS onReaction (e.g. iMessage/IRC/Email) — must still satisfy ChannelPort. */
+function makeNoOpReactionAdapter(): ChannelPort {
+  return {
+    channelId: "noop",
+    channelType: "echo",
+    async start(): Promise<Result<void, Error>> {
+      return ok(undefined);
+    },
+    async stop(): Promise<Result<void, Error>> {
+      return ok(undefined);
+    },
+    async sendMessage(): Promise<Result<string, Error>> {
+      return ok("msg-1");
+    },
+    onMessage(): void {
+      /* no-op */
+    },
+    // onReaction intentionally OMITTED — the honest no-op.
+    async platformAction(): Promise<Result<unknown, Error>> {
+      return ok(undefined);
+    },
+  };
+}
+
+/** A reaction-capable adapter that DEFINES onReaction and fans out to its handlers (e.g. Discord/Slack/Telegram). */
+function makeReactionAdapter(): ChannelPort & { handlers: ReactionHandler[] } {
+  const handlers: ReactionHandler[] = [];
+  return {
+    channelId: "reacting",
+    channelType: "discord",
+    handlers,
+    async start(): Promise<Result<void, Error>> {
+      return ok(undefined);
+    },
+    async stop(): Promise<Result<void, Error>> {
+      return ok(undefined);
+    },
+    async sendMessage(): Promise<Result<string, Error>> {
+      return ok("msg-1");
+    },
+    onMessage(): void {
+      /* no-op */
+    },
+    onReaction(handler: ReactionHandler): void {
+      handlers.push(handler);
+    },
+    async platformAction(): Promise<Result<unknown, Error>> {
+      return ok(undefined);
+    },
+  };
+}
+
+describe("ChannelPort.onReaction optional capability", () => {
+  it("ChannelPort allows an adapter to omit onReaction (optional no-op capability)", () => {
+    // Type-level: a no-op adapter WITHOUT onReaction is assignable to ChannelPort.
+    const port: ChannelPort = makeNoOpReactionAdapter();
+    expect(port.onReaction).toBeUndefined();
+  });
+
+  it("adapter.onReaction?.(handler) is a safe no-op when the method is absent", () => {
+    const port: ChannelPort = makeNoOpReactionAdapter();
+    const handler: ReactionHandler = () => {
+      /* never called */
+    };
+    // Optional-call form: undefined method → expression is undefined, no throw.
+    expect(() => port.onReaction?.(handler)).not.toThrow();
+    expect(port.onReaction?.(handler)).toBeUndefined();
+  });
+
+  it("a reaction-capable adapter registers handlers via onReaction and they receive a NormalizedReaction", () => {
+    const adapter = makeReactionAdapter();
+    const port: ChannelPort = adapter;
+    const received: NormalizedReaction[] = [];
+    const handler: ReactionHandler = (reaction) => {
+      received.push(reaction);
+    };
+
+    port.onReaction?.(handler);
+    expect(adapter.handlers).toHaveLength(1);
+
+    const reaction: NormalizedReaction = {
+      messageId: "m-1",
+      reactorId: "u-1",
+      emoji: "👍",
+      channelType: "discord",
+      channelId: "c-1",
+    };
+    for (const h of adapter.handlers) {
+      void h(reaction);
+    }
+    expect(received).toEqual([reaction]);
   });
 });

@@ -158,6 +158,30 @@ export type { MemoryConsolidationStoreDeps } from "./sqlite-memory-consolidation
 export { createSqliteMemoryUsefulnessStore } from "./sqlite-memory-usefulness-store.js";
 export type { MemoryUsefulnessStoreDeps } from "./sqlite-memory-usefulness-store.js";
 
+// Outcome-signal store (sole OutcomeSignalPort impl — v2.26 Verified Learning WS1).
+// Owns the idempotent `observe()` write (deterministic-hash id + ON CONFLICT DO
+// NOTHING on the (tenant, agent, trajectory, source, observed_at) UNIQUE tuple),
+// the scoped precedence-first-then-confidence `resolve()` fusion (fail-closed
+// `unknown`), and the age-based `prune()`. The daemon (composition root)
+// constructs it on the memory adapter's db handle; the OutcomeSignalPort TYPE
+// lives in @comis/core (the agent↛memory cut — outcome capture is daemon-side, a
+// future agent-side consumer consumes the port type only).
+export { createSqliteOutcomeStore } from "./sqlite-outcome-store.js";
+export type { OutcomeStoreDeps } from "./sqlite-outcome-store.js";
+
+// Learned-skill store (sole LearnedSkillStorePort impl — v2.26 Verified Learning WS2).
+// Owns the idempotent `admit()` upsert (deterministic-hash id of the
+// (tenant, agent, name) UNIQUE tuple + ON CONFLICT(id) DO UPDATE), the scoped
+// (tenant, agent)-isolated `get`/`list` reads, and the `promote`/`demote`/`evict`
+// lifecycle transitions (evict is SOFT — sets evicted_at, never a hard DELETE).
+// The DB CHECK (trust_level IN ('learned')) + a code coercion make a synthesized
+// procedure structurally incapable of being `system` (SEC-01). The daemon
+// (composition root) constructs it on the memory adapter's db handle (Plan 07);
+// the LearnedSkillStorePort TYPE lives in @comis/core (the agent↛memory cut — the
+// synthesis job consumes the type only).
+export { createSqliteLearnedSkillStore } from "./sqlite-learned-skill-store.js";
+export type { LearnedSkillStoreDeps } from "./sqlite-learned-skill-store.js";
+
 // Tuned-alpha store (sole TunedAlphaStore impl).
 // Owns the idempotent per-(tenant, agent) tuned-alpha-vector upsert + the scoped
 // read (undefined when absent → the apply-site default-OFF no-op). The daemon

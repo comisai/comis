@@ -101,8 +101,14 @@ export function createSqliteMemoryCausalStore(deps: MemoryCausalStoreDeps): Memo
   // Hydrate a linked memory, re-asserting the FULL (tenant, agent) scope so the
   // hydrate is self-sufficient (no fail-open if the lane query is ever
   // refactored). Bound params only.
+  // FORGET-01 (CR-01): the ALWAYS-ON `evicted_at IS NULL` recall exclusion. This is the
+  // RECALL-side hydration (causalLane → MemorySearchResult[] → createMemoryRecall → the
+  // prompt), so a soft-evicted causal counterpart MUST be omitted here. NB: the WRITE-path
+  // `memoryInScope` scope-check above is deliberately NOT filtered — a causal edge may
+  // legitimately target a soft-evicted memory at link time; only the recall hydration
+  // excludes it. The inspect/asOf raw reads stay UNFILTERED (eviction soft + asOf-resolvable).
   const hydrateMemory = db.prepare(
-    "SELECT * FROM memories WHERE id = ? AND tenant_id = ? AND agent_id = ?",
+    "SELECT * FROM memories WHERE id = ? AND tenant_id = ? AND agent_id = ? AND evicted_at IS NULL",
   );
 
   return {

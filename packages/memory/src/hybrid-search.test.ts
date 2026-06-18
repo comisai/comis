@@ -803,3 +803,87 @@ describe("hybridSearch occurredAtRange", () => {
     expect(ranged.map((r) => r.id)).toEqual(["in"]);
   });
 });
+
+// ── The ALWAYS-APPLIED evicted_at IS NULL recall-exclusion filter (FORGET-01) ──
+// The single most overlookable correctness gap: setting evicted_at without this
+// filter evicts NOTHING observable (recall still returns the row). The filter MUST
+// be applied on EVERY recall path — both when a post-fusion option is present AND
+// the bare else branch with no options. An evicted row must be ABSENT from recall
+// yet PRESENT via a direct read (the asOf/inspect audit path is unfiltered).
+describe("hybridSearch evicted_at recall-exclusion", () => {
+  let db: Database.Database;
+
+  /** Set the evicted_at soft-close marker on a memory (NULL = live). */
+  function markEvicted(memoryId: string, at: number): void {
+    db.prepare("UPDATE memories SET evicted_at = ? WHERE id = ?").run(at, memoryId);
+  }
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    initSchema(db, 4);
+  });
+
+  it("excludes an evicted row from recall in the BARE-ELSE path (no filter options)", () => {
+    // No trustLevel/memoryType/tenantId/agentId/occurredAtRange → the else branch.
+    // On HEAD the else applies NO WHERE, so the evicted row leaks through.
+    insertMemory(db, "live", "the quick brown fox");
+    insertMemory(db, "evicted", "the quick brown fox jumps");
+    markEvicted("evicted", Date.now());
+
+    const results = hybridSearch(db, "fox", undefined, { limit: 10 });
+    const ids = results.map((r) => r.id);
+    expect(ids).toContain("live");
+    expect(ids).not.toContain("evicted"); // ← the always-applied evicted_at IS NULL filter
+  });
+
+  it("excludes an evicted row from recall in the FILTERED path (a filter option present)", () => {
+    // trustLevel present → the conditioned branch. evicted_at IS NULL must be
+    // ANDed with the other conditions, not only the bare else.
+    insertMemory(db, "live", "lazy dog sleeps", { trustLevel: "learned" });
+    insertMemory(db, "evicted", "lazy dog naps", { trustLevel: "learned" });
+    markEvicted("evicted", Date.now());
+
+    const results = hybridSearch(db, "dog", undefined, { limit: 10, trustLevel: "learned" });
+    const ids = results.map((r) => r.id);
+    expect(ids).toContain("live");
+    expect(ids).not.toContain("evicted");
+  });
+
+  it("a NON-evicted (evicted_at NULL) row is returned normally (no regression)", () => {
+    // The filter excludes ONLY evicted rows — a live row is unaffected.
+    insertMemory(db, "m1", "cat plays with yarn");
+    insertMemory(db, "m2", "cat naps in the sun");
+
+    const results = hybridSearch(db, "cat", undefined, { limit: 10 });
+    expect(results.map((r) => r.id).sort()).toEqual(["m1", "m2"]);
+  });
+
+  it("the evicted row remains RESOLVABLE via a direct read (soft-close, never deleted — the asOf audit path)", () => {
+    // Recall excludes it; the raw row still exists (the audit/asOf read does NOT
+    // add the evicted_at filter). Proves eviction is soft, not a hard delete.
+    insertMemory(db, "evicted", "an audited but evicted fact");
+    markEvicted("evicted", Date.now());
+
+    const recall = hybridSearch(db, "audited", undefined, { limit: 10 });
+    expect(recall.map((r) => r.id)).not.toContain("evicted");
+
+    // The unfiltered audit read still resolves the row.
+    const raw = db.prepare("SELECT id, content, evicted_at FROM memories WHERE id = 'evicted'").get() as {
+      id: string;
+      content: string;
+      evicted_at: number | null;
+    };
+    expect(raw.id).toBe("evicted");
+    expect(raw.evicted_at).not.toBeNull();
+  });
+
+  it("un-evicting (evicted_at = NULL) restores the row to recall", () => {
+    insertMemory(db, "revived", "a revived fact about foxes");
+    markEvicted("revived", Date.now());
+    expect(hybridSearch(db, "foxes", undefined, { limit: 10 }).map((r) => r.id)).not.toContain("revived");
+
+    // Clear the marker (the un-evict reversal) → it returns to recall.
+    db.prepare("UPDATE memories SET evicted_at = NULL WHERE id = 'revived'").run();
+    expect(hybridSearch(db, "foxes", undefined, { limit: 10 }).map((r) => r.id)).toContain("revived");
+  });
+});

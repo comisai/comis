@@ -3,6 +3,8 @@
 
 export { AttachmentSchema, VoiceMetaSchema, NormalizedMessageSchema, parseMessage, getMessageTraceId } from "./normalized-message.js";
 export type { Attachment, VoiceMeta, NormalizedMessage } from "./normalized-message.js";
+export { NormalizedReactionSchema, parseReaction } from "./normalized-reaction.js";
+export type { NormalizedReaction } from "./normalized-reaction.js";
 
 export {
   TrustLevelSchema,

@@ -66,6 +66,13 @@ scheduler:
   quietHours:
     enabled: false
     criticalBypass: true
+# This suite exercises ONLY the approval-gate lifecycle (RPC/SSE/WS/tool-wrapper) — it never
+# uses memory recall or RAG (both agents set rag.enabled:false). Disable embedding generation so
+# the daemon does NOT load the ~53s local embedding GGUF at boot: under the full integration
+# suite's parallel forks that load pushed this test's 120s beforeAll daemon-boot budget over the
+# edge (it passes in isolation). FTS5-only memory is sufficient here. Mirrors config.test-daemon-lifecycle.yaml.
+embedding:
+  enabled: false
 memory:
   dbPath: test-memory-approval-gate-e2e.db
 security:

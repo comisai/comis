@@ -503,3 +503,39 @@ comis:
     expect(capWarns[0].obj.hint).toEqual(expect.stringContaining("Fix the comis.capability block"));
   });
 });
+
+// ---------------------------------------------------------------------------
+// SkillSource union (SURFACE-01)
+// ---------------------------------------------------------------------------
+//
+// The widening of the `SkillSource` union to include `'learned'` is a
+// type-level contract that compiles away under vitest's esbuild transform
+// (a literal-assignability assertion produces no runtime artifact). We assert
+// it with a source-grep guard so the RED state is reproducible from the
+// pre-patch source alone (the 201-01/03 reproducible-RED-for-type-contracts
+// precedent). The verified-learning surface (Plan 04) sets `source: 'learned'`
+// explicitly from `learnedSkillStore.list()`, so the union MUST accept it.
+describe("SkillSource union (SURFACE-01)", () => {
+  it("includes the 'learned' verified-learning procedural source", () => {
+    const discoverySrc = fs.readFileSync(
+      path.join(__dirname, "discovery.ts"),
+      "utf-8",
+    );
+    // The exported union declaration must enumerate "learned".
+    const unionLine = discoverySrc
+      .split("\n")
+      .find((l) => l.includes("export type SkillSource"));
+    expect(unionLine, "SkillSource union declaration not found").toBeDefined();
+    expect(unionLine).toContain('"learned"');
+  });
+
+  it("accepts a SkillMetadata whose source is 'learned' (auto-widens off SkillSource)", () => {
+    // Type-level: a metadata literal with source:"learned" must compile.
+    // Pinned to the imported type so a regression on the union surfaces here.
+    const meta: Pick<
+      import("./discovery.js").SkillMetadata,
+      "name" | "source"
+    > = { name: "learned-proc", source: "learned" };
+    expect(meta.source).toBe("learned");
+  });
+});

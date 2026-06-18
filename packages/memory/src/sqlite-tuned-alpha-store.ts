@@ -91,27 +91,35 @@ export function createSqliteTunedAlphaStore(
   const { db, logger } = deps;
 
   // --- Prepared statements (parameterized; reused across calls) ---
-  // Idempotent UPSERT keyed on the (tenant_id, agent_id) PK. Every value a bound
-  // `?` (NEVER concatenated). ON CONFLICT DO UPDATE keeps exactly ONE row per
-  // scope. updated_at = scope.now (injected clock, never a wall-clock read).
+  // Idempotent per-intent UPSERT keyed on the 3-col (tenant_id, agent_id, intent)
+  // PK (RANK-05). Every value a bound `?` (NEVER concatenated). ON CONFLICT DO
+  // UPDATE keeps exactly ONE row per (scope, intent) — a per-intent write touches
+  // ONLY its bucket (the global '' row and other intents are never clobbered). The
+  // RESERVED posterior-slot columns (outcome_reward_sum/outcome_n) are written 0 here
+  // and read by nobody (WR-04: INERT in v1 — the bandit derives its posterior LIVE
+  // from the memory_usefulness feed, not these columns; they are a forward-compat
+  // slot). updated_at = scope.now (injected clock, never a wall-clock read).
   const upsertVec = db.prepare(
     "INSERT INTO tuned_alpha " +
-      "(tenant_id, agent_id, recency_alpha, temporal_alpha, proof_alpha, usefulness_alpha, updated_at) " +
-      "VALUES (?, ?, ?, ?, ?, ?, ?) " +
-      "ON CONFLICT(tenant_id, agent_id) DO UPDATE SET " +
+      "(tenant_id, agent_id, intent, recency_alpha, temporal_alpha, proof_alpha, usefulness_alpha, outcome_reward_sum, outcome_n, updated_at) " +
+      "VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?) " +
+      "ON CONFLICT(tenant_id, agent_id, intent) DO UPDATE SET " +
       "recency_alpha = excluded.recency_alpha, " +
       "temporal_alpha = excluded.temporal_alpha, " +
       "proof_alpha = excluded.proof_alpha, " +
       "usefulness_alpha = excluded.usefulness_alpha, " +
       "updated_at = excluded.updated_at",
   );
-  // The scoped read. The `tenant_id = ? AND agent_id = ?` filter is the
-  // load-bearing 2-way ISOLATION boundary: a vector written under one scope can
-  // NEVER be read under any differing tenant/agent. Bound params only.
+  // The scoped per-intent read. The `tenant_id = ? AND agent_id = ?` filter is the
+  // load-bearing 2-way ISOLATION boundary (a vector written under one scope can
+  // NEVER be read under any differing tenant/agent); `intent = ?` is an ADDITIONAL
+  // key (omitted intent → the global '' bucket), never a relaxation of isolation.
+  // The projection omits the posterior columns (the recall hot path reads only the
+  // 4 alphas + updated_at — belt #3: the fifth weight is never read). Bound params only.
   const readScoped = db.prepare(
     "SELECT recency_alpha, temporal_alpha, proof_alpha, usefulness_alpha, updated_at " +
       "FROM tuned_alpha " +
-      "WHERE tenant_id = ? AND agent_id = ?",
+      "WHERE tenant_id = ? AND agent_id = ? AND intent = ?",
   );
 
   return {
@@ -121,10 +129,15 @@ export function createSqliteTunedAlphaStore(
     ): Promise<Result<void, Error>> {
       const startMs = systemNowMs();
       const { tenantId, agentId, now } = scope;
+      // Default to the GLOBAL bucket when no intent is supplied (omitted intent
+      // === '' === byte-identical to the pre-intent behaviour). intent is an
+      // ADDITIONAL key, never a relaxation of the (tenant, agent) isolation scope.
+      const intent = scope.intent ?? "";
       try {
         upsertVec.run(
           tenantId,
           agentId,
+          intent,
           vector.recencyAlpha,
           vector.temporalAlpha,
           vector.proofAlpha,
@@ -167,10 +180,14 @@ export function createSqliteTunedAlphaStore(
     ): Promise<Result<TunedAlphaVector | undefined, Error>> {
       const startMs = systemNowMs();
       const { tenantId, agentId } = scope;
+      // The requested per-intent bucket; '' = global (omitted → byte-identical to
+      // the pre-intent read). intent EXTENDS the isolation key, never relaxes it.
+      const intent = scope.intent ?? "";
       try {
         // The 2-way scoped read — the (tenant, agent) filter is the load-bearing
-        // isolation boundary. parseOptionalRow → ok(undefined) when no row matched.
-        const raw = readScoped.get(tenantId, agentId);
+        // isolation boundary; intent is the additional per-intent key.
+        // parseOptionalRow → ok(undefined) when no row matched.
+        const raw = readScoped.get(tenantId, agentId, intent);
         const parsed = tunedRowMapper.parseOptionalRow(raw);
         if (!parsed.ok) return err(new Error(parsed.error.message));
 

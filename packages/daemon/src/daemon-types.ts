@@ -461,22 +461,22 @@ export interface BootContext {
    *  injected as the port TYPE (agent↛memory cut). Dormant until BOTH the recall-side gate
    *  (`rag.onlineTuning.enabled`) AND the bandit cron (`memoryOnlineTuning.enabled`) are on. */
   tunedAlphaStore: Awaited<ReturnType<typeof setupMemory>>["tunedAlphaStore"];
-  /** Memory-lifecycle sweep store — threaded into the cron
-   *  path ONLY (the KEYLESS __MEMORY_LIFECYCLE__ sentinel → the DORMANT runLifecycleSweep). NOT
-   *  the executor recall path (daemon-cron-side, no 3-hop forwarding). Built in setup-memory
-   *  on the shared db; injected as the port TYPE (agent↛memory cut). Dormant — even when the cron
-   *  (`memoryLifecycle.enabled`, default OFF) is on the sweep evicts/demotes 0 rows. */
+  /** Memory-lifecycle sweep store — cron path ONLY (KEYLESS __MEMORY_LIFECYCLE__ → DORMANT
+   *  runLifecycleSweep; NOT the executor recall path). Shared db; port TYPE only (agent↛memory cut).
+   *  Dormant — even with `memoryLifecycle.enabled` (default OFF) the sweep evicts/demotes 0 rows. */
   memoryLifecycleStore: Awaited<ReturnType<typeof setupMemory>>["memoryLifecycleStore"];
-  /** Consolidation store — threaded into the cron path ONLY (the
-   *  registerCronEventListeners → runMemoryConsolidation sentinel). NOT the executor recall
-   *  path. Built in setup-memory on the shared db; injected as the port TYPE (agent↛memory cut). */
+  /** Consolidation store — cron path ONLY (registerCronEventListeners → runMemoryConsolidation sentinel; NOT the executor recall path). Shared db; port TYPE only (agent↛memory cut). */
   consolidationStore: Awaited<ReturnType<typeof setupMemory>>["consolidationStore"];
-  /** Live recall-counter wiring — the single
-   *  `wireRecallCounters(eventBus)` subscriber, stood up in setup-memory (the
-   *  composition site that holds the event bus). Threaded into
-   *  MemoryApiDeps.recallCounters so `memory.recall_stats` reads the live gauge. */
+  outcomeStore: Awaited<ReturnType<typeof setupMemory>>["outcomeStore"]; // WS1 — the __SKILL_SYNTHESIS__ cron success gate (agent↛memory cut)
+  learnedSkillStore: Awaited<ReturnType<typeof setupMemory>>["learnedSkillStore"]; // WS2/skills — the __SKILL_SYNTHESIS__ admit target
+  learnedSkillSurfaceRegistry: import("./wiring/setup-agents/learned-skill-surface-registry.js").LearnedSkillSurfaceRegistry; // WR-01 — shared per-agent surface registry created in bootFoundation; bootAgents registers each agent + the promote/demote loop re-refreshes
+  /** Live recall-counter wiring — the single `wireRecallCounters(eventBus)` subscriber (setup-memory holds the bus); threaded into MemoryApiDeps.recallCounters so `memory.recall_stats` reads the live gauge. */
   recallCounters: Awaited<ReturnType<typeof setupMemory>>["recallCounters"];
   maintenanceTick: Awaited<ReturnType<typeof setupMemory>>["maintenanceTick"];
+  /** REACT-02 (Phase 199): outbound-message → trajectory capture (built in setup-memory behind the byte-identity gate); threaded into setupDeliveryQueue. `undefined` when learning-outcome is off for all agents. */
+  recordOutboundMessage?: Awaited<ReturnType<typeof setupMemory>>["recordOutboundMessage"];
+  /** WR-01 (Phase 199): tear down the reaction/session trajectory maps + dedicated reaction rate limiter on shutdown (cancels their unref'd TTL timers). Threaded into setupShutdown. */
+  destroyReactionWiring?: Awaited<ReturnType<typeof setupMemory>>["destroyReactionWiring"];
   obsStore: ObservabilityStore | undefined;
   obsPersistence: ObsPersistenceResult | undefined;
   // Runtime registries (4 fields)

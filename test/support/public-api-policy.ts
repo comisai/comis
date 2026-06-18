@@ -524,6 +524,17 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // consume it via the local module path, which the walker skips as a
       // self-import.
       "MinViableEquation",
+      // Verified Learning WS2 (P2 Skills, Phase 201). The synthesis adapter
+      // (createLlmSkillSynthesisAdapter), the JOB (runSkillSynthesis) + its source
+      // type (SynthesisSourceTrajectory), and the approval-gate structural subset
+      // (SkillApprovalGate) are now CONSUMED by the daemon Plan 07 wiring
+      // (setup-channels-memory-crons-wire.ts / setup-channels-skill-synthesis-deps.ts
+      // / setup-channels-memory-crons-types.ts) — they SHRANK out of this allowlist
+      // (the shrink-only ratchet). Only the deps/result SHAPE types stay
+      // ahead-of-consumer (referenced via Parameters<>/ReturnType<>, not name-imported).
+      "LlmSkillSynthesisAdapterDeps",
+      "SkillSynthesisJobDeps",
+      "SkillSynthesisJobResult",
     ])],
     // @comis/channels: baseline orphans tracked here. The 5 delivery
     // helpers + the Markdown IR pipeline (incl. telegram-file-ref-guard)
@@ -831,6 +842,19 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // getMessageTraceId: typed accessor for NormalizedMessage.metadata.traceId.
       // Consumers: orchestrator channel-manager.ts will read msg.metadata.traceId via this helper.
       "getMessageTraceId",
+      // ── Verified Learning WS1: inbound-reaction contracts (Phase 199, REACT-01) ──
+      // The interface-first wave (Plan 01) ships the NormalizedReaction domain
+      // shape + parse + the ReactionHandler port type AHEAD of their consumers so
+      // later plans receive the contract rather than scavenge for it. Consumers
+      // land later: the reaction-capable adapters (Discord/Slack/Telegram, Plan 02)
+      // produce a NormalizedReaction via parseReaction and register a
+      // ReactionHandler through ChannelPort.onReaction?; the orchestrator
+      // channel-manager fans out to it (Plan 04); the daemon resolves trust +
+      // observes the outcome. Shrink each entry as its real in-repo consumer lands.
+      "NormalizedReactionSchema",
+      "parseReaction",
+      "NormalizedReaction",
+      "ReactionHandler",
       "TrustLevelSchema",
       "MemorySourceSchema",
       "MemoryEntrySchema",
@@ -1072,6 +1096,51 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "VOICE_KEYLESS",
       "MAIN_PROVIDER_AUDIO",
       "SttErrorKind",
+      // Verified Learning outcome signal (v2.26 Phase 198 Plan 01, Wave 1) — the
+      // greenfield OutcomeSignalPort + its DTOs surfaced on the public @comis/core
+      // barrel (exports/ports.ts) so the LATER-wave plans can import them BY TYPE:
+      // Plan 02's @comis/memory `createSqliteOutcomeStore` implements the port,
+      // Plan 03's judge seam + Plan 04's @comis/daemon `setup-learning` wiring
+      // construct/observe/resolve against it. These are interface-first ahead-of-
+      // consumer planned-orphans (the TunedAlphaStore / MemoryLifecyclePort
+      // precedent directly above — listed so the gate is green before the consumer
+      // lands, never under-listed). Each SHRINKS out of this baseline when its real
+      // cross-package consumer lands (the shrink-only ratchet, AGENTS.md §2.8):
+      // OutcomeSignalPort + the 4 DTOs go when Plan 02's adapter name-imports them.
+      "OutcomeSignalPort",
+      "LearningScope",
+      "OutcomeObservation",
+      "ResolvedOutcome",
+      "OutcomePruneResult",
+      // Verified Learning procedural-learning ports (v2.26 Phase 201 Plan 01, Wave 1)
+      // — the three greenfield type-only ports (SkillSynthesisPort,
+      // SkillValidationPort, LearnedSkillStorePort) + their DTOs, surfaced on the
+      // public @comis/core barrel (exports/ports.ts) so the LATER-wave plans can
+      // import them BY TYPE. This is interface-first Wave 1 (the OutcomeSignalPort /
+      // TunedAlphaStore precedent directly above): the contracts land FIRST, the
+      // cross-package consumers land in later waves —
+      //   - Plan 04 (@comis/agent skill-synthesis-job) consumes SkillSynthesisPort
+      //     + SynthesisInput + CandidateSkill,
+      //   - Plans 05/06 (@comis/skills sandbox-validation adapter) consume
+      //     SkillValidationPort + SkillValidationResult + SkillValidationFinding +
+      //     ReplayContext,
+      //   - Plan 04/07 (@comis/memory store + @comis/daemon wiring) consume
+      //     LearnedSkillStorePort + LearnedSkill + AdmitSkillInput.
+      // Defining the contracts in @comis/core first is the closed-graph SEC-01 cut
+      // (agent↛memory / agent↛skills) — the synthesis job imports PORT TYPES only.
+      // Each SHRINKS out of this baseline when its real cross-package NAME-import
+      // consumer lands (the shrink-only ratchet, AGENTS.md §2.8 — never under-listed,
+      // closed by deletion).
+      "SkillSynthesisPort",
+      "SynthesisInput",
+      "CandidateSkill",
+      "SkillValidationPort",
+      "SkillValidationResult",
+      "SkillValidationFinding",
+      "ReplayContext",
+      "LearnedSkillStorePort",
+      "LearnedSkill",
+      "AdmitSkillInput",
       // MemoryLifecyclePort + MemoryLifecycleScope +
       // MemoryTier + LifecycleSweepReport were tracked here as SCAFFOLD-DORMANT
       // ahead-of-consumer planned-orphans. REMOVED:
@@ -2384,6 +2453,34 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "MemoryLifecycleStoreDeps",
       "MemoryLifecyclePolicy",
       "MemoryLifecycleRowSchema",
+      // Outcome-signal store (v2.26 Verified Learning WS1, Phase 198 Plan 02).
+      // createSqliteOutcomeStore is the SOLE OutcomeSignalPort adapter (the
+      // (tenant, agent)-scoped outcome_events ledger — idempotent observe(),
+      // precedence-first-then-confidence resolve() with fail-closed unknown, and
+      // age-based prune()). It is an AHEAD-OF-CONSUMER factory-orphan: the daemon
+      // composition-root consumer LANDS in Plan 04 (Wave 4 — setup-learning.ts
+      // constructs it on the shared db handle in setup-memory + the default-OFF
+      // learningOutcome wiring subscribes/prunes), at which point this factory
+      // entry SHRINKS OUT (mirror createSqliteTunedAlphaStore / the lifecycle +
+      // relationship adapter shrinks; allowlist-shrink enforces shrink-only).
+      // OutcomeStoreDeps is the constructor-deps SHAPE type (referenced via inline
+      // objects only — the daemon calls the factory with an inline `{ db, logger }`)
+      // — PERMANENT baseline orphan (mirror MemoryTunedAlphaStoreDeps /
+      // MemoryLifecycleStoreDeps above).
+      "createSqliteOutcomeStore",
+      "OutcomeStoreDeps",
+      // Learned-skill store (v2.26 Verified Learning WS2, Phase 201 Plan 02).
+      // createSqliteLearnedSkillStore is the SOLE LearnedSkillStorePort adapter (the
+      // (tenant, agent)-scoped learned_skills procedural store — idempotent
+      // deterministic-id admit(), scoped get()/list(), and the promote()/demote()/
+      // evict() lifecycle, evict being a soft evicted_at set, never a hard DELETE).
+      // The daemon composition-root consumer LANDED (Plan 07: setup-memory.ts builds
+      // it on the shared db handle, threaded into the __SKILL_SYNTHESIS__ cron), so the
+      // FACTORY orphan createSqliteLearnedSkillStore was REMOVED here (the shrink-only
+      // ratchet fired on schedule; mirror createSqliteMemoryEmbeddingStore below).
+      // LearnedSkillStoreDeps is the constructor-deps SHAPE type (the daemon calls the
+      // factory with an inline `{ db, logger }`) — PERMANENT baseline orphan (mirror OutcomeStoreDeps above).
+      "LearnedSkillStoreDeps",
       // Scoped embedding-read store. createSqliteMemoryEmbeddingStore
       // is the sole MemoryEmbeddingStore adapter — the (tenant, agent)-scoped LEFT JOIN
       // vec_memories bulk read that hydrates the MMR diversity re-rank. Its daemon
@@ -2823,5 +2920,19 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // not a baseline orphan.
       "SkillManifestSchema",
       "SkillManifestParsed",
+      // v2.26 Verified Learning WS2 (P2 Skills, Phase 201 Plan 05/06). The
+      // SkillValidationPort adapter (STATIC half this plan; Plan 06 extends it
+      // with the DYNAMIC bwrap sandbox replay) + the canonical `mcp__`-aware
+      // mutating classifier + its deps type. The whole adapter lives in
+      // @comis/skills because applyToolPolicy + the bwrap sandbox provider are
+      // @comis/skills symbols (the synthesis job in @comis/agent consumes only the
+      // @comis/core SkillValidationPort TYPE — the closed-graph cut). The FACTORY
+      // createSandboxSkillValidationAdapter is now CONSUMED by the daemon Plan 07
+      // wiring (setup-channels-skill-synthesis-deps.ts builds it with the agent's tool
+      // list + policy), so it SHRANK out here (the shrink-only ratchet). classifyMutating
+      // (the exported predicate, no name-import consumer yet) + SandboxSkillValidationAdapterDeps
+      // (the constructor-deps SHAPE, called inline) stay ahead-of-consumer.
+      "classifyMutating",
+      "SandboxSkillValidationAdapterDeps",
     ])],
   ]);

@@ -22,6 +22,7 @@ import type {
   FetchMessagesOptions,
   MessageHandler,
   NormalizedMessage,
+  ReactionHandler,
   SendMessageOptions,
 } from "@comis/core";
 import type { ComisLogger } from "@comis/core";
@@ -31,6 +32,7 @@ import { randomUUID } from "node:crypto";
 import type { SlackMessageEvent } from "./message-mapper.js";
 import { validateSlackCredentials } from "./credential-validator.js";
 import { mapSlackToNormalized } from "./message-mapper.js";
+import { bindSlackReactions } from "./slack-reaction-binder.js";
 import { renderSlackButtons, renderSlackCards } from "./rich-renderer.js";
 import { executeSlackAction } from "./slack-actions.js";
 import { runWithContext, systemNowMs } from "@comis/core";
@@ -74,6 +76,9 @@ export interface SlackAdapterDeps {
  */
 export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
   const handlers: MessageHandler[] = [];
+  // REACT-01: inbound reaction-add handlers (binder co-located in
+  // slack-reaction-binder.ts to hold the 800-line cap).
+  const reactionHandlers: ReactionHandler[] = [];
   let _channelId = "slack-pending";
   let _ownBotId = "";
   let _ownUserId = "";
@@ -226,6 +231,11 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
             },
           );
         });
+
+        // REACT-01: bind the inbound reaction-add listener beside the message
+        // bind. Co-located in slack-reaction-binder.ts (800-line cap). The
+        // own-user id is resolved lazily — it is set above at start() post-auth.
+        bindSlackReactions(app, () => _ownUserId, reactionHandlers, deps.logger);
 
         // Button callback (block_actions) listener
         app.action(/.*/, async ({ action, ack, body }: {
@@ -589,6 +599,10 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
 
     onMessage(handler: MessageHandler): void {
       handlers.push(handler);
+    },
+
+    onReaction(handler: ReactionHandler): void {
+      reactionHandlers.push(handler);
     },
 
     getStatus(): ChannelStatus {

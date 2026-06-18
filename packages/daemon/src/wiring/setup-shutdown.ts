@@ -114,6 +114,7 @@ export interface ShutdownDeps {
   auditAggregator?: { destroy: () => void };
   /** Injection rate limiter for clearing timers on shutdown (optional). */
   injectionRateLimiter?: { destroy: () => void };
+  /** WR-01 (Phase 199): tear down the reaction/session trajectory maps + dedicated reaction rate limiter (optional). */ destroyReactionWiring?: () => void;
   /** Periodic lock cleanup timer (from setupAgents). */
   lockCleanupTimer?: import("@comis/core").TimerHandle;
   /** Data directory for restart continuation file (optional). */
@@ -224,6 +225,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
     secretStore,
     auditAggregator,
     injectionRateLimiter,
+    destroyReactionWiring,
     lockCleanupTimer,
     dataDir,
     lockDataDir,
@@ -651,6 +653,12 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
           injectionRateLimiter.destroy();
           daemonLogger.info({ component: "injection-rate-limiter", shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "injection-rate-limiter", daemonLogger);
+      }
+      if (destroyReactionWiring) { // WR-01: cancel reaction/session map + reaction limiter TTL timers (else they accumulate across SIGUSR2 hot-reload)
+        await withStepTimeout(() => {
+          destroyReactionWiring();
+          daemonLogger.info({ component: "reaction-wiring", shutdownOrder: ++shutdownOrder }, "Component stopped");
+        }, "reaction-wiring", daemonLogger);
       }
       // Close secret store database
       if (secretStore) {

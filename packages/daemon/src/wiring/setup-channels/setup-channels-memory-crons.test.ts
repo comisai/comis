@@ -18,16 +18,25 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const mockRunMemoryConsolidation = vi.hoisted(() => vi.fn(async () => ({ ok: true as const, value: undefined })));
+const mockRunMemoryConsolidation = vi.hoisted(() => vi.fn(async () => ({ ok: true as const, value: { generalized: 0, clustersConsidered: 0, durationMs: 0 } })));
 const mockReasonSeam = vi.hoisted(() => vi.fn(async () => ({ deductive: [], inductive: [] })));
 const mockCreateReasoningSeam = vi.hoisted(() => vi.fn(() => mockReasonSeam));
 const mockRunMemoryReasoning = vi.hoisted(() => vi.fn(async () => ({ ok: true as const, value: undefined })));
-const mockRunUserRepresentationBuild = vi.hoisted(() => vi.fn(async () => ({ ok: true as const, value: { built: 0, written: 0, blocked: 0 } })));
+const mockRunUserRepresentationBuild = vi.hoisted(() => vi.fn(async () => ({ ok: true as const, value: { built: 0, written: 0, blocked: 0, superseded: 0, corroborated: 0, inserted: 0, durationMs: 0 } })));
 const mockUserReprSeam = vi.hoisted(() => vi.fn(async () => []));
 const mockCreateUserRepresentationSeam = vi.hoisted(() => vi.fn(() => mockUserReprSeam));
 const mockRunRelationshipBuild = vi.hoisted(() => vi.fn(async () => ({ ok: true as const, value: { built: 0, written: 0, blocked: 0 } })));
 const mockRelationshipSeam = vi.hoisted(() => vi.fn(async () => []));
 const mockCreateRelationshipSeam = vi.hoisted(() => vi.fn(() => mockRelationshipSeam));
+// WIRE-02: the __USEFULNESS_JUDGE__ seam. `judge({ candidateIds, answer })` returns a
+// partition; the handler writes that through usefulnessStore.recordUsage. Default verdict
+// is empty (overridden per-test) so the no-op floor is also exercisable.
+const mockJudgeSeam = vi.hoisted(() => vi.fn(async () => ({ usedIds: [] as string[], ignoredIds: [] as string[] })));
+const mockCreateUsefulnessJudgeSeam = vi.hoisted(() => vi.fn(() => mockJudgeSeam));
+const mockRunMemoryTripleExtraction = vi.hoisted(() => vi.fn(async () => ({ ok: true as const, value: { extracted: 0, written: 0, blocked: 0, downgraded: 0, skippedOverCap: 0 } })));
+// RANK-02/03: the per-intent bandit job. Mocked so the cron's per-intent iteration +
+// learner/gate threading is asserted via the captured deps (not the math).
+const mockRunOnlineTuning = vi.hoisted(() => vi.fn(async () => ({ ok: true as const, value: { updated: false, clampHits: 0, signalCount: 0 } })));
 const mockResolveOperationModel = vi.hoisted(() => vi.fn(() => ({
   provider: "anthropic",
   modelId: "anthropic:claude-haiku",
@@ -61,6 +70,9 @@ vi.mock("@comis/agent", () => ({
   createUserRepresentationSeam: mockCreateUserRepresentationSeam,
   runRelationshipBuild: mockRunRelationshipBuild,
   createRelationshipSeam: mockCreateRelationshipSeam,
+  createUsefulnessJudgeSeam: mockCreateUsefulnessJudgeSeam,
+  runMemoryTripleExtraction: mockRunMemoryTripleExtraction,
+  runOnlineTuning: mockRunOnlineTuning,
 }));
 
 import { handleMemoryCronSentinel, type MemoryCronContext } from "./setup-channels-memory-crons.js";
@@ -73,6 +85,9 @@ function makeCtx(overrides: {
   /** The injected DORMANT lifecycle store (the __MEMORY_LIFECYCLE__ sentinel). When absent
    *  a default spy returning the all-0 dormant report is used so the on-path can assert it. */
   memoryLifecycleStore?: { runLifecycleSweep: ReturnType<typeof vi.fn> };
+  /** The usefulness store the __USEFULNESS_JUDGE__ sentinel WRITES through (recordUsage).
+   *  When absent a default spy returning ok is used so the write can be asserted (WIRE-02). */
+  usefulnessStore?: { recordUsage: ReturnType<typeof vi.fn>; readUsefulness: ReturnType<typeof vi.fn> };
 } = {}): MemoryCronContext {
   const logger = {
     info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn(),
@@ -102,10 +117,17 @@ function makeCtx(overrides: {
     consolidationStore: { listConsolidationCandidates: vi.fn() } as any,
     tripleStore: { upsertTriple: vi.fn(), currentTruth: vi.fn() } as any,
     relationshipStore: { upsert: vi.fn(), read: vi.fn() } as any,
+    // The tuned-alpha write store the __ONLINE_TUNING__ bandit upserts through (port TYPE only).
+    tunedAlphaStore: { upsert: vi.fn(async () => ({ ok: true as const, value: undefined })), read: vi.fn(async () => ({ ok: true as const, value: undefined })) } as any,
     memoryApi: memoryApi as any,
     memoryLifecycleStore: (overrides.memoryLifecycleStore ?? {
       // The DORMANT default: scanned some rows, mutated NONE (the scaffold).
       runLifecycleSweep: vi.fn(async () => ({ ok: true as const, value: { scanned: 3, promoted: 0, demoted: 0, evicted: 0 } })),
+    }) as any,
+    usefulnessStore: (overrides.usefulnessStore ?? {
+      // The WRITE surface the usefulness judge drives (WIRE-02) + the READ surface __ONLINE_TUNING__ uses.
+      recordUsage: vi.fn(async () => ({ ok: true as const, value: undefined })),
+      readUsefulness: vi.fn(async () => ({ ok: true as const, value: new Map() })),
     }) as any,
   };
 }
@@ -128,13 +150,17 @@ beforeEach(() => {
     }
     return { capabilityClass } as any;
   });
-  mockRunMemoryConsolidation.mockResolvedValue({ ok: true as const, value: undefined });
+  mockRunMemoryConsolidation.mockResolvedValue({ ok: true as const, value: { generalized: 0, clustersConsidered: 0, durationMs: 0 } });
   mockRunMemoryReasoning.mockResolvedValue({ ok: true as const, value: undefined });
   mockCreateReasoningSeam.mockReturnValue(mockReasonSeam);
-  mockRunUserRepresentationBuild.mockResolvedValue({ ok: true as const, value: { built: 0, written: 0, blocked: 0 } });
+  mockRunUserRepresentationBuild.mockResolvedValue({ ok: true as const, value: { built: 0, written: 0, blocked: 0, superseded: 0, corroborated: 0, inserted: 0, durationMs: 0 } });
   mockCreateUserRepresentationSeam.mockReturnValue(mockUserReprSeam);
   mockRunRelationshipBuild.mockResolvedValue({ ok: true as const, value: { built: 0, written: 0, blocked: 0 } });
   mockCreateRelationshipSeam.mockReturnValue(mockRelationshipSeam);
+  mockCreateUsefulnessJudgeSeam.mockReturnValue(mockJudgeSeam);
+  mockJudgeSeam.mockResolvedValue({ usedIds: [], ignoredIds: [] });
+  mockRunMemoryTripleExtraction.mockResolvedValue({ ok: true as const, value: { extracted: 0, written: 0, blocked: 0, downgraded: 0, skippedOverCap: 0 } });
+  mockRunOnlineTuning.mockResolvedValue({ ok: true as const, value: { updated: false, clampHits: 0, signalCount: 0 } });
 });
 
 describe("handleMemoryCronSentinel", () => {
@@ -328,6 +354,96 @@ describe("handleMemoryCronSentinel", () => {
 });
 
 // ---------------------------------------------------------------------------
+// __ONLINE_TUNING__ sentinel (RANK-02/03, Phase 200 Plan 06): the KEYLESS bandit.
+// The cron gate composes `memoryOnlineTuning.enabled` (schedule) AND
+// `learningTuning.enabled` (the bandit/per-intent/outcome-reward behavior). When the
+// behavior is on it iterates the INTENT buckets (global '' + the 4 deterministic intents),
+// running runOnlineTuning per bucket with the config-selected learner + exploration. When
+// learningTuning is OFF it falls back to a SINGLE legacy nudge run (byte-identical).
+// ---------------------------------------------------------------------------
+describe("handleMemoryCronSentinel __ONLINE_TUNING__", () => {
+  it("short-circuits ok and runs NOTHING when memoryOnlineTuning is disabled (the cron gate)", async () => {
+    const ctx = makeCtx({ agents: { "agent-1": { name: "Agent 1" } } });
+    const onComplete = vi.fn();
+    const handled = await handleMemoryCronSentinel("__ONLINE_TUNING__", { agentId: "agent-1", onComplete }, ctx);
+    expect(handled).toBe(true);
+    expect(mockRunOnlineTuning).not.toHaveBeenCalled();
+    expect(onComplete).toHaveBeenCalledWith({ status: "ok" });
+  });
+
+  it("RANK-02: with memoryOnlineTuning + learningTuning ON, iterates ALL intent buckets (global '' + the 4 intents) — one bandit run per bucket", async () => {
+    const ctx = makeCtx({
+      agents: {
+        "agent-1": {
+          name: "Agent 1",
+          memoryOnlineTuning: { enabled: true },
+          learningTuning: { enabled: true, learner: "bandit", perIntent: true, exploration: 0.1 },
+        },
+      },
+    });
+    const onComplete = vi.fn();
+    await handleMemoryCronSentinel("__ONLINE_TUNING__", { agentId: "agent-1", onComplete }, ctx);
+    // 5 buckets: the global '' + factual + temporal + preference + enumeration.
+    expect(mockRunOnlineTuning).toHaveBeenCalledTimes(5);
+    const intents = mockRunOnlineTuning.mock.calls.map((c) => (c[0] as any).config.intent);
+    expect(new Set(intents)).toEqual(new Set(["", "factual", "temporal", "preference", "enumeration"]));
+    expect(onComplete).toHaveBeenCalledWith({ status: "ok", error: undefined });
+  });
+
+  it("RANK-03: threads learner:'bandit' + exploration from learningTuning into each bandit run", async () => {
+    const ctx = makeCtx({
+      agents: {
+        "agent-1": {
+          name: "Agent 1",
+          memoryOnlineTuning: { enabled: true },
+          learningTuning: { enabled: true, learner: "bandit", perIntent: true, exploration: 0.25 },
+        },
+      },
+    });
+    await handleMemoryCronSentinel("__ONLINE_TUNING__", { agentId: "agent-1", onComplete: vi.fn() }, ctx);
+    for (const call of mockRunOnlineTuning.mock.calls) {
+      const cfg = (call[0] as any).config;
+      expect(cfg.learner).toBe("bandit");
+      expect(cfg.exploration).toBe(0.25);
+      expect(cfg.enabled).toBe(true);
+    }
+  });
+
+  it("byte-identity: with learningTuning OFF (default), runs the LEGACY single-bucket nudge (one run, no per-intent, no bandit)", async () => {
+    const ctx = makeCtx({
+      agents: { "agent-1": { name: "Agent 1", memoryOnlineTuning: { enabled: true } } }, // no learningTuning
+    });
+    await handleMemoryCronSentinel("__ONLINE_TUNING__", { agentId: "agent-1", onComplete: vi.fn() }, ctx);
+    // The legacy path: ONE run, no intent (global ''), no bandit learner.
+    expect(mockRunOnlineTuning).toHaveBeenCalledTimes(1);
+    const cfg = (mockRunOnlineTuning.mock.calls[0][0] as any).config;
+    expect(cfg.intent).toBeUndefined();
+    expect(cfg.learner).not.toBe("bandit");
+  });
+
+  it("reads the per-intent FEED scoped to (tenant, agent, intent) — the readUsefulness seam carries intent", async () => {
+    const readUsefulness = vi.fn(async () => ({ ok: true as const, value: new Map() }));
+    const ctx = makeCtx({
+      agents: {
+        "agent-1": {
+          name: "Agent 1",
+          memoryOnlineTuning: { enabled: true },
+          learningTuning: { enabled: true, learner: "bandit", perIntent: true, exploration: 0.1 },
+        },
+      },
+      usefulnessStore: { recordUsage: vi.fn(async () => ({ ok: true as const, value: undefined })), readUsefulness },
+    });
+    await handleMemoryCronSentinel("__ONLINE_TUNING__", { agentId: "agent-1", onComplete: vi.fn() }, ctx);
+    // Each bucket's readUsefulness seam is invoked by the job (mocked here), so assert the
+    // seam exists per call and the per-intent scope is threaded by exercising one seam.
+    const temporalCall = mockRunOnlineTuning.mock.calls.find((c) => (c[0] as any).config.intent === "temporal");
+    expect(temporalCall).toBeDefined();
+    await (temporalCall![0] as any).readUsefulness();
+    expect(readUsefulness).toHaveBeenCalledWith(expect.any(Array), expect.objectContaining({ tenantId: "tenant-a", agentId: "agent-1", intent: "temporal" }));
+  });
+});
+
+// ---------------------------------------------------------------------------
 // __SOCIAL_MODELING__ sentinel (the offline
 // directional relationship builder). The gate is STRICTER than the per-user
 // representation cron: it requires BOTH enabled AND a recorded privacy-review
@@ -497,5 +613,245 @@ describe("handleMemoryCronSentinel __MEMORY_LIFECYCLE__", () => {
     await handleMemoryCronSentinel("__MEMORY_LIFECYCLE__", { agentId: undefined, onComplete }, ctx);
     expect(sweep).not.toHaveBeenCalled();
     expect(onComplete).toHaveBeenCalledWith({ status: "error", error: "No agentId for memory lifecycle" });
+  });
+
+  // -------------------------------------------------------------------------
+  // FORGET-06 (Phase 200 Plan 06): the daemon emits learning:memory_demoted /
+  // learning:memory_evicted (COUNTS ONLY) from the real sweep report, and threads the
+  // learningForgetting eviction policy into runLifecycleSweep's per-call scope so the
+  // store activates eviction. The store itself emits nothing (counts-only convention).
+  // -------------------------------------------------------------------------
+  it("FORGET-06: emits learning:memory_demoted + learning:memory_evicted (counts only) from the sweep report", async () => {
+    const sweep = vi.fn(async () => ({ ok: true as const, value: { scanned: 9, promoted: 0, demoted: 2, evicted: 3 } }));
+    const ctx = makeCtx({
+      agents: {
+        "agent-1": {
+          name: "Agent 1",
+          memoryLifecycle: { enabled: true },
+          learningForgetting: { enabled: true, eviction: { enabled: true, strengthThreshold: 0.2 }, failurePenalty: 0.5 },
+        },
+      },
+      memoryLifecycleStore: { runLifecycleSweep: sweep },
+    });
+    const emit = (ctx.container as any).eventBus.emit as ReturnType<typeof vi.fn>;
+    await handleMemoryCronSentinel("__MEMORY_LIFECYCLE__", { agentId: "agent-1", onComplete: vi.fn() }, ctx);
+    expect(emit).toHaveBeenCalledWith("learning:memory_demoted", expect.objectContaining({ agentId: "agent-1", count: 2 }));
+    expect(emit).toHaveBeenCalledWith("learning:memory_evicted", expect.objectContaining({ agentId: "agent-1", count: 3 }));
+    // Counts only — the payloads carry no memory ids/bodies.
+    const evictPayload = emit.mock.calls.find((c) => c[0] === "learning:memory_evicted")![1] as Record<string, unknown>;
+    expect(Object.keys(evictPayload).sort()).toEqual(["agentId", "count", "timestamp"]);
+  });
+
+  it("FORGET-06: threads learningForgetting.eviction policy (evictionEnabled/strengthThreshold/failurePenalty) into the sweep scope", async () => {
+    const sweep = vi.fn(async () => ({ ok: true as const, value: { scanned: 5, promoted: 0, demoted: 0, evicted: 1 } }));
+    const ctx = makeCtx({
+      agents: {
+        "agent-1": {
+          name: "Agent 1",
+          memoryLifecycle: { enabled: true },
+          learningForgetting: { enabled: true, eviction: { enabled: true, strengthThreshold: 0.25 }, failurePenalty: 0.6 },
+        },
+      },
+      memoryLifecycleStore: { runLifecycleSweep: sweep },
+    });
+    await handleMemoryCronSentinel("__MEMORY_LIFECYCLE__", { agentId: "agent-1", onComplete: vi.fn() }, ctx);
+    const scope = sweep.mock.calls[0][0] as { tenantId: string; agentId: string; now: number; policy?: any };
+    expect(scope.policy).toBeDefined();
+    expect(scope.policy.evictionEnabled).toBe(true);
+    expect(scope.policy.strengthThreshold).toBe(0.25);
+    expect(scope.policy.failurePenalty).toBe(0.6);
+  });
+
+  it("byte-identity: with learningForgetting OFF (default), the sweep runs with eviction OFF and emits counts of 0 (no behavior change)", async () => {
+    const sweep = vi.fn(async () => ({ ok: true as const, value: { scanned: 5, promoted: 0, demoted: 0, evicted: 0 } }));
+    const ctx = makeCtx({
+      agents: { "agent-1": { name: "Agent 1", memoryLifecycle: { enabled: true } } }, // no learningForgetting
+      memoryLifecycleStore: { runLifecycleSweep: sweep },
+    });
+    const emit = (ctx.container as any).eventBus.emit as ReturnType<typeof vi.fn>;
+    await handleMemoryCronSentinel("__MEMORY_LIFECYCLE__", { agentId: "agent-1", onComplete: vi.fn() }, ctx);
+    // The sweep scope carries no eviction-enabled policy (DORMANT — byte-identical).
+    const scope = sweep.mock.calls[0][0] as { policy?: { evictionEnabled?: boolean } };
+    expect(scope.policy?.evictionEnabled ?? false).toBe(false);
+    // The emits carry count 0 (DORMANT report) — the eviction did nothing.
+    expect(emit).toHaveBeenCalledWith("learning:memory_evicted", expect.objectContaining({ count: 0 }));
+  });
+
+  // -------------------------------------------------------------------------
+  // WIRE-02 (the WS7 first-RED): the __USEFULNESS_JUDGE__ cron was registered at
+  // setup-schedulers.ts:489 but had NO dispatch handler — it fired nightly as a
+  // NO-OP. These pin that the handler now constructs the seam and WRITES through
+  // usefulnessStore.recordUsage (the dormant seam is live), with the same opt-in /
+  // no-agentId / non-fatal posture as the sibling sentinels.
+  // -------------------------------------------------------------------------
+  it("the __USEFULNESS_JUDGE__ handler writes through recordUsage (no longer a nightly no-op)", async () => {
+    // This is the first-RED: on pre-patch HEAD there is no __USEFULNESS_JUDGE__ block, so
+    // the sentinel falls through unhandled (returns false) and recordUsage is NEVER called.
+    mockJudgeSeam.mockResolvedValue({ usedIds: ["m1"], ignoredIds: ["m2"] });
+    const recordUsage = vi.fn(async () => ({ ok: true as const, value: undefined }));
+    const ctx = makeCtx({
+      agents: { "agent-1": { name: "Agent 1", provider: "anthropic", memoryUsefulnessJudge: { enabled: true } } },
+      apiKey: "test-key",
+      inspectRows: [{ id: "m1", userId: "u", content: "x", trustLevel: "learned" }, { id: "m2", userId: "u", content: "y", trustLevel: "learned" }],
+      usefulnessStore: { recordUsage, readUsefulness: vi.fn(async () => ({ ok: true as const, value: new Map() })) },
+    });
+    const onComplete = vi.fn();
+    const handled = await handleMemoryCronSentinel("__USEFULNESS_JUDGE__", { agentId: "agent-1", onComplete }, ctx);
+    expect(handled).toBe(true);
+    expect(mockCreateUsefulnessJudgeSeam).toHaveBeenCalledOnce();
+    expect(recordUsage).toHaveBeenCalledOnce();
+    // The verdict partition is written through to the store, scoped to (tenant, agent).
+    const [usedIds, ignoredIds, scope] = recordUsage.mock.calls[0] as [string[], string[], Record<string, unknown>];
+    expect(usedIds).toEqual(["m1"]);
+    expect(ignoredIds).toEqual(["m2"]);
+    expect(scope).toMatchObject({ tenantId: "tenant-a", agentId: "agent-1" });
+    expect(onComplete).toHaveBeenCalledWith({ status: "ok", error: undefined });
+  });
+
+  it("short-circuits the usefulness judge ok and never writes when the agent has it disabled (defence-in-depth re-check)", async () => {
+    const recordUsage = vi.fn(async () => ({ ok: true as const, value: undefined }));
+    const ctx = makeCtx({
+      agents: { "agent-1": { name: "Agent 1" } },
+      usefulnessStore: { recordUsage, readUsefulness: vi.fn(async () => ({ ok: true as const, value: new Map() })) },
+    });
+    const onComplete = vi.fn();
+    const handled = await handleMemoryCronSentinel("__USEFULNESS_JUDGE__", { agentId: "agent-1", onComplete }, ctx);
+    expect(handled).toBe(true);
+    expect(mockCreateUsefulnessJudgeSeam).not.toHaveBeenCalled();
+    expect(recordUsage).not.toHaveBeenCalled();
+    expect(onComplete).toHaveBeenCalledWith({ status: "ok" });
+  });
+
+  it("warns + errors when the usefulness-judge sentinel fires without an agentId (no write)", async () => {
+    const recordUsage = vi.fn(async () => ({ ok: true as const, value: undefined }));
+    const ctx = makeCtx({ usefulnessStore: { recordUsage, readUsefulness: vi.fn(async () => ({ ok: true as const, value: new Map() })) } });
+    const onComplete = vi.fn();
+    const handled = await handleMemoryCronSentinel("__USEFULNESS_JUDGE__", { agentId: undefined, onComplete }, ctx);
+    expect(handled).toBe(true);
+    expect(recordUsage).not.toHaveBeenCalled();
+    expect(onComplete).toHaveBeenCalledWith({ status: "error", error: "No agentId for usefulness judge" });
+  });
+
+  it("reports a non-fatal error (onComplete error) when recordUsage fails — never throws out of the dispatcher", async () => {
+    mockJudgeSeam.mockResolvedValue({ usedIds: ["m1"], ignoredIds: [] });
+    const recordUsage = vi.fn(async () => ({ ok: false as const, error: new Error("record boom") }));
+    const ctx = makeCtx({
+      agents: { "agent-1": { name: "Agent 1", provider: "anthropic", memoryUsefulnessJudge: { enabled: true } } },
+      apiKey: "test-key",
+      inspectRows: [{ id: "m1", userId: "u", content: "x", trustLevel: "learned" }],
+      usefulnessStore: { recordUsage, readUsefulness: vi.fn(async () => ({ ok: true as const, value: new Map() })) },
+    });
+    const onComplete = vi.fn();
+    const handled = await handleMemoryCronSentinel("__USEFULNESS_JUDGE__", { agentId: "agent-1", onComplete }, ctx);
+    expect(handled).toBe(true);
+    expect(recordUsage).toHaveBeenCalledOnce();
+    expect(onComplete).toHaveBeenCalledWith({ status: "error", error: "record boom" });
+  });
+
+  it("skips the usefulness judge with an error when an enabled agent has no API key (no key value used)", async () => {
+    const recordUsage = vi.fn(async () => ({ ok: true as const, value: undefined }));
+    const ctx = makeCtx({
+      agents: { "agent-1": { name: "Agent 1", provider: "anthropic", memoryUsefulnessJudge: { enabled: true } } },
+      apiKey: undefined,
+      usefulnessStore: { recordUsage, readUsefulness: vi.fn(async () => ({ ok: true as const, value: new Map() })) },
+    });
+    const onComplete = vi.fn();
+    await handleMemoryCronSentinel("__USEFULNESS_JUDGE__", { agentId: "agent-1", onComplete }, ctx);
+    expect(mockCreateUsefulnessJudgeSeam).not.toHaveBeenCalled();
+    expect(recordUsage).not.toHaveBeenCalled();
+    expect(onComplete).toHaveBeenCalledWith({ status: "error", error: "No API key for anthropic" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// OBS-01/OBS-02 (Phase 203 Plan 05): the daemon-side learning:* emits +
+// config forwarding for user-model REVISION (__USER_REPRESENTATION__) and
+// GENERALIZATION (__MEMORY_CONSOLIDATION__). Mirrors the FORGET-06 daemon-emit
+// precedent (learning:memory_demoted/evicted): the job RETURNS counts in its
+// .value; the handler emits a PLAIN counts-only learning:* event + an INFO
+// completion line. COUNTS ONLY — no profile/memory body, entryType, or id ever
+// crosses the bus (§2.7 / SEC-01 / T-203-leak). PLAIN emit (never ?.) so the
+// EMIT_REGEX arch gate sees it (T-203-emit-evasion).
+// ---------------------------------------------------------------------------
+describe("handleMemoryCronSentinel — OBS-01/02 learning:* daemon emit + config forward (Phase 203)", () => {
+  it("REVISE/OBS-01: emits learning:user_model_revised (superseded/corroborated/inserted COUNTS only) from the user-rep build result", async () => {
+    mockRunUserRepresentationBuild.mockResolvedValue({
+      ok: true as const,
+      value: { built: 5, written: 4, blocked: 0, superseded: 2, corroborated: 1, inserted: 1, durationMs: 13 },
+    });
+    const ctx = makeCtx({
+      agents: { "agent-1": { name: "Agent 1", provider: "anthropic", memoryUserRepresentation: { enabled: true } } },
+      apiKey: "test-key",
+      inspectRows: [{ id: "m1", userId: "u1", content: "fact", trustLevel: "learned", source: { sessionKey: "s1" } }],
+    });
+    (ctx as any).userRepresentationStore = { upsert: vi.fn(), read: vi.fn(), revise: vi.fn(), asOf: vi.fn() };
+    const emit = (ctx.container as any).eventBus.emit as ReturnType<typeof vi.fn>;
+    await handleMemoryCronSentinel("__USER_REPRESENTATION__", { agentId: "agent-1", onComplete: vi.fn() }, ctx);
+    expect(emit).toHaveBeenCalledWith(
+      "learning:user_model_revised",
+      expect.objectContaining({ agentId: "agent-1", superseded: 2, corroborated: 1, inserted: 1 }),
+    );
+    // Counts only — the payload carries no profile content/entryType/source ids.
+    const payload = emit.mock.calls.find((c) => c[0] === "learning:user_model_revised")![1] as Record<string, unknown>;
+    expect(Object.keys(payload).sort()).toEqual(["agentId", "corroborated", "durationMs", "inserted", "superseded", "timestamp"]);
+  });
+
+  it("REVISE: a 0-revision build still emits learning:user_model_revised with all-zero counts (Defer != Retry — benign)", async () => {
+    // historyCap forwarding lives at the STORE constructor (setup-memory), not the job config —
+    // the revise() trim is a store concern (Plan 02 constructor option). Here we pin the benign
+    // zero-count emit so a no-op revision run is still observable (not a silent gap).
+    mockRunUserRepresentationBuild.mockResolvedValue({
+      ok: true as const,
+      value: { built: 0, written: 0, blocked: 0, superseded: 0, corroborated: 0, inserted: 0, durationMs: 2 },
+    });
+    const ctx = makeCtx({
+      agents: { "agent-1": { name: "Agent 1", provider: "anthropic", memoryUserRepresentation: { enabled: true } } },
+      apiKey: "test-key",
+      inspectRows: [{ id: "m1", userId: "u1", content: "fact", trustLevel: "learned", source: { sessionKey: "s1" } }],
+    });
+    (ctx as any).userRepresentationStore = { upsert: vi.fn(), read: vi.fn(), revise: vi.fn(), asOf: vi.fn() };
+    const emit = (ctx.container as any).eventBus.emit as ReturnType<typeof vi.fn>;
+    await handleMemoryCronSentinel("__USER_REPRESENTATION__", { agentId: "agent-1", onComplete: vi.fn() }, ctx);
+    expect(emit).toHaveBeenCalledWith(
+      "learning:user_model_revised",
+      expect.objectContaining({ agentId: "agent-1", superseded: 0, corroborated: 0, inserted: 0 }),
+    );
+  });
+
+  it("GENERAL/OBS-01: emits learning:memory_generalized (generalized/clustersConsidered COUNTS only) from the consolidation result", async () => {
+    mockRunMemoryConsolidation.mockResolvedValue({
+      ok: true as const,
+      value: { generalized: 2, clustersConsidered: 5, durationMs: 21 },
+    });
+    const ctx = makeCtx({
+      agents: { "agent-1": { name: "Agent 1", provider: "anthropic", memoryConsolidation: { enabled: true } } },
+      apiKey: "test-key",
+    });
+    const emit = (ctx.container as any).eventBus.emit as ReturnType<typeof vi.fn>;
+    await handleMemoryCronSentinel("__MEMORY_CONSOLIDATION__", { agentId: "agent-1", onComplete: vi.fn() }, ctx);
+    expect(emit).toHaveBeenCalledWith(
+      "learning:memory_generalized",
+      expect.objectContaining({ agentId: "agent-1", generalized: 2, clustersConsidered: 5 }),
+    );
+    // Counts only — the payload carries no memory body/source ids.
+    const payload = emit.mock.calls.find((c) => c[0] === "learning:memory_generalized")![1] as Record<string, unknown>;
+    expect(Object.keys(payload).sort()).toEqual(["agentId", "clustersConsidered", "durationMs", "generalized", "timestamp"]);
+  });
+
+  it("GENERAL: forwards the full memoryConsolidation config (incl. generalize) into runMemoryConsolidation", async () => {
+    const ctx = makeCtx({
+      agents: {
+        "agent-1": {
+          name: "Agent 1",
+          provider: "anthropic",
+          memoryConsolidation: { enabled: true, generalize: { enabled: true, minDistinctContexts: 3 } },
+        },
+      },
+      apiKey: "test-key",
+    });
+    await handleMemoryCronSentinel("__MEMORY_CONSOLIDATION__", { agentId: "agent-1", onComplete: vi.fn() }, ctx);
+    expect(mockRunMemoryConsolidation).toHaveBeenCalled();
+    const arg = mockRunMemoryConsolidation.mock.calls[0][0] as { config: Record<string, unknown> };
+    expect(arg.config).toEqual(expect.objectContaining({ generalize: { enabled: true, minDistinctContexts: 3 } }));
   });
 });

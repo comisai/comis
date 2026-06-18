@@ -23,8 +23,13 @@ export interface PromptSkillDescription {
   readonly location: string;
   /** When true, skill is hidden from the model's available skills listing. */
   readonly disableModelInvocation?: boolean;
-  /** Origin of this skill: bundled (shared), workspace, or local (agent-specific). */
-  readonly source?: "bundled" | "workspace" | "local";
+  /**
+   * Origin of this skill: bundled (shared), workspace, local (agent-specific),
+   * or learned (a verified-learning procedure materialized read-only from the
+   * `learned_skills` store -- the trust distinction the model SEES, set by the
+   * daemon merge helper, never model-asserted).
+   */
+  readonly source?: "bundled" | "workspace" | "local" | "learned";
 }
 
 // ---------------------------------------------------------------------------
@@ -74,7 +79,9 @@ export function escapeXml(str: string): string {
  * Skills with `disableModelInvocation === true` are filtered out.
  * Returns an empty string when no visible skills remain (including empty input).
  *
- * Each skill's name, description, and location (absolute path) are XML-escaped for safety.
+ * Each skill's name, description, location (absolute path), and source are
+ * XML-escaped for safety. `source` defaults to `bundled` when unset, so platform
+ * skills (which never set it) render `<source>bundled</source>` deterministically.
  *
  * @param skills - Readonly array of skill descriptions to list
  * @returns XML string or empty string if no visible skills
@@ -91,6 +98,9 @@ export function formatAvailableSkillsXml(
       `    <name>${escapeXml(s.name)}</name>\n` +
       `    <description>${escapeXml(s.description)}</description>\n` +
       `    <location>${escapeXml(s.location)}</location>\n` +
+      // SURFACE-02: the learned-trust distinction the model SEES. Defaults to
+      // "bundled" for platform skills that never set source (byte-stable).
+      `    <source>${escapeXml(s.source ?? "bundled")}</source>\n` +
       `  </skill>`,
   );
 

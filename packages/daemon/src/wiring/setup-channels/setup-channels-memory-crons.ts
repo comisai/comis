@@ -2,66 +2,38 @@
 /**
  * The memory-cron sentinel handlers — extracted from setup-channels-credentials.ts
  * to keep that leaf under the 600L setup-channels cap. The LLM-backed sentinels
- * (__MEMORY_CONSOLIDATION__ P84, __MEMORY_REASONING__ P101, __USER_REPRESENTATION__
- * P107, __SOCIAL_MODELING__ P108) resolve a cheap "cron" model + an API key (by NAME,
- * never logged); the KEYLESS sentinels (__ONLINE_TUNING__ P111, __MEMORY_LIFECYCLE__
- * P112) resolve NO model + NO key.
+ * (__MEMORY_CONSOLIDATION__, __MEMORY_REASONING__, __USER_REPRESENTATION__,
+ * __SOCIAL_MODELING__) resolve a cheap "cron" model + an API key (by NAME, never logged);
+ * the KEYLESS __ONLINE_TUNING__ sentinel resolves none. The sibling-hosted sentinels
+ * (__USEFULNESS_JUDGE__, __MEMORY_TRIPLE_EXTRACTION__ WS7 + the KEYLESS __MEMORY_LIFECYCLE__
+ * FORGET-01/06 sweep) live in setup-channels-memory-crons-wire.ts (the 600L dir cap); the
+ * fall-through delegates there.
  *
  * All mirror the review branch: the cron registers ONLY for an operator-enabled agent
- * (setup-schedulers), but each sentinel ALSO re-checks cfg.enabled + short-circuits ok
- * when off (defence-in-depth — a stale persisted job must not run for a now-disabled
- * agent). Each injects its segregated store(s) as port TYPES only (the agent↛memory cut)
- * + (the LLM ones) the OFFLINE seam built from the cheap model (prompts stay agent-internal).
+ * (setup-schedulers), but each sentinel ALSO re-checks cfg.enabled + short-circuits ok when
+ * off (defence-in-depth). Each injects its segregated store(s) as port TYPES only (the
+ * agent↛memory cut) + (the LLM ones) the OFFLINE seam from the cheap model (prompts internal).
  *
  * @module
  */
 
-import type { AppContainer, ClockPort, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore, RelationshipStore, TunedAlphaStore, MemoryUsefulnessStore, MemoryLifecyclePort } from "@comis/core";
 import { parseFormattedSessionKey, KEYLESS_PROVIDER_TYPES, KEYLESS_API_KEY_SENTINEL } from "@comis/core";
-import type { ComisLogger } from "@comis/infra";
-import type { MemoryApi } from "@comis/memory";
 import { resolveOperationModel, resolveProviderFamily, runMemoryConsolidation, runMemoryReasoning, createReasoningSeam, runUserRepresentationBuild, createUserRepresentationSeam, runRelationshipBuild, createRelationshipSeam, runOnlineTuning, type UserRepresentationSourceMemory, type RelationshipSourceMemory, type OnlineTuningFeedEntry } from "@comis/agent";
 import { resolveMemoryOpsCapability } from "./resolve-memory-ops-capability.js";
+import { handleWireMemoryCronSentinel } from "./setup-channels-memory-crons-wire.js";
+import type { MemoryCronPayload, MemoryCronContext } from "./setup-channels-memory-crons-types.js";
 
-/** The minimal `scheduler:job_result` payload shape the sentinel handlers read. */
-interface MemoryCronPayload {
-  result?: string;
-  agentId?: string;
-  onComplete?: (result: { status: "ok" | "error"; error?: string }) => void;
-}
+export type { MemoryCronPayload, MemoryCronContext } from "./setup-channels-memory-crons-types.js";
 
-/** Closure-captured context the sentinel handlers need (a subset of the deps). */
-export interface MemoryCronContext {
-  container: AppContainer;
-  logger: ComisLogger;
-  clock: ClockPort;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- container.config.agents PerAgentConfig map (erased at the dispatch boundary)
-  agents: Record<string, any>;
-  tenantId?: string;
-  // All stores below are injected from setup-memory on the shared db; the agent
-  // receives the port TYPE only (the agent↛memory cut). Each backs the named sentinel.
-  /** The inductive applyConsolidation write (__MEMORY_CONSOLIDATION__). */
-  consolidationStore?: MemoryConsolidationStore;
-  /** The deductive trust-first upsertTriple write (__MEMORY_REASONING__). */
-  tripleStore?: TripleStorePort;
-  /** The per-user profile upsert write (__USER_REPRESENTATION__). */
-  userRepresentationStore?: UserRepresentationStore;
-  /** The per-(tenant, agent, channel) directional-edge upsert (__SOCIAL_MODELING__). */
-  relationshipStore?: RelationshipStore;
-  /** The tuned-alpha upsert write the KEYLESS bandit drives (__ONLINE_TUNING__). */
-  tunedAlphaStore?: TunedAlphaStore;
-  /** The accrued per-memory usefulness READ surface (`readUsefulness`)
-   *  the __ONLINE_TUNING__ sentinel scopes the bandit's FEED signal over. */
-  usefulnessStore?: MemoryUsefulnessStore;
-  /** The DORMANT lifecycle sweep the KEYLESS __MEMORY_LIFECYCLE__
-   *  sentinel drives (`runLifecycleSweep(scope)`, per (tenant, agent) + injected `now`).
-   *  DORMANT — even when enabled the sweep evicts/demotes 0 rows (live policy deferred). */
-  memoryLifecycleStore?: MemoryLifecyclePort;
-  /** The `inspect` read surface the __USER_REPRESENTATION__ / __SOCIAL_MODELING__
-   *  (grouped by channelId) / __ONLINE_TUNING__ (the bounded candidate-id set) sentinels
-   *  scope their per-(tenant, agent[, user/channel]) high-trust source reads over. */
-  memoryApi?: MemoryApi;
-}
+/**
+ * The per-intent tuned-alpha buckets the online-tuning bandit iterates when
+ * `learningTuning.perIntent` is on (RANK-02): the GLOBAL '' bucket + the four deterministic
+ * `classifyIntent` intents (`factual`/`temporal`/`preference`/`enumeration` — @comis/agent's
+ * closed `Intent` union). Kept as a local closed list (the agent's `Intent` type is not on the
+ * barrel and a TYPE cannot be iterated at runtime); a NEW intent on the agent side must be added
+ * here too. The recall apply-site classifies live via `classifyIntent(query)`.
+ */
+const TUNING_INTENT_BUCKETS = ["", "factual", "temporal", "preference", "enumeration"] as const;
 
 /**
  * Handle an LLM-backed memory-cron sentinel (`__MEMORY_CONSOLIDATION__` /
@@ -74,7 +46,7 @@ export async function handleMemoryCronSentinel(
   payload: MemoryCronPayload,
   ctx: MemoryCronContext,
 ): Promise<boolean> {
-  const { container, logger, clock, agents, tenantId, consolidationStore, tripleStore, userRepresentationStore, relationshipStore, tunedAlphaStore, usefulnessStore, memoryLifecycleStore, memoryApi } = ctx;
+  const { container, logger, clock, agents, tenantId, consolidationStore, tripleStore, userRepresentationStore, relationshipStore, tunedAlphaStore, usefulnessStore, memoryApi } = ctx;
 
   // -- Memory consolidation sentinel intercept --
   if (resultText === "__MEMORY_CONSOLIDATION__") {
@@ -129,6 +101,15 @@ export async function handleMemoryCronSentinel(
 
     if (!consolidationResult.ok) {
       logger.error({ agentId, err: consolidationResult.error, hint: "Memory consolidation failed -- will retry next cycle", errorKind: "internal" as const }, "Memory consolidation error");
+    } else {
+      // GENERAL-01/OBS-01: an INFO completion line + the daemon-side learning:memory_generalized
+      // emit (counts-only, mirrors FORGET-06; generalize defaults OFF → counts 0). PLAIN emit
+      // (never ?.) so EMIT_REGEX sees it; the memory body NEVER crosses the bus (SEC-01 / T-203-leak).
+      // Defensive ?? 0: a value-less result (older job build) emits benign zero counts, never throws.
+      const c = consolidationResult.value;
+      const gen = { generalized: c?.generalized ?? 0, clustersConsidered: c?.clustersConsidered ?? 0, durationMs: c?.durationMs ?? 0 };
+      logger.child({ agentId, submodule: "memory-consolidation" }).info({ agentId, ...gen }, "Memory consolidation generalization summary");
+      container.eventBus.emit("learning:memory_generalized", { agentId, ...gen, timestamp: clock.now() });
     }
     payload.onComplete?.({ status: consolidationResult.ok ? "ok" : "error", error: consolidationResult.ok ? undefined : consolidationResult.error?.message });
     return true;
@@ -258,10 +239,9 @@ export async function handleMemoryCronSentinel(
 
     // Read the agent's HIGH-TRUST sources (system + learned) once, group by user here
     // (InspectFilters has no userId axis); each user's slice becomes that user's readSources seam.
-    // `inspect` orders created_at DESC + applies `limit` BEFORE grouping, so a trust level
-    // with > SOURCE_READ_LIMIT rows is SILENTLY truncated to the newest window across ALL users
-    // (a chatty user crowds out a quieter one). No offset axis to page, so we make the truncation
-    // OBSERVABLE: a read returning exactly the cap emits a counts-only WARN (§2.7 — no silent drop).
+    // `inspect` orders created_at DESC + applies `limit` BEFORE grouping, so a trust level with
+    // > SOURCE_READ_LIMIT rows is SILENTLY truncated to the newest window across ALL users. No
+    // offset to page → a read returning exactly the cap emits a counts-only WARN (§2.7 — no silent drop).
     const SOURCE_READ_LIMIT = 1000;
     const sourcesByUser = new Map<string, UserRepresentationSourceMemory[]>();
     for (const trustLevel of ["system", "learned"] as const) {
@@ -298,6 +278,12 @@ export async function handleMemoryCronSentinel(
     });
 
     let anyError = false;
+    // REVISE-01/OBS-01: sum the counts-only revision totals across all per-user builds for ONE
+    // daemon-side learning:user_model_revised emit (mirrors FORGET-06). COUNTS ONLY (no body — SEC-01).
+    let superseded = 0;
+    let corroborated = 0;
+    let inserted = 0;
+    const reprStartMs = clock.now();
     for (const [userId, sources] of sourcesByUser) {
       const result = await runUserRepresentationBuild({
         agentId,
@@ -321,20 +307,39 @@ export async function handleMemoryCronSentinel(
       if (!result.ok) {
         anyError = true;
         reprLogger.error({ agentId, userId, err: result.error, hint: "User representation build failed for user -- will retry next cycle", errorKind: "internal" as const }, "User representation build error");
+      } else {
+        superseded += result.value.superseded;
+        corroborated += result.value.corroborated;
+        inserted += result.value.inserted;
       }
     }
+
+    // REVISE-01/OBS-01: the daemon-side learning:user_model_revised emit (PLAIN — never ?. — so
+    // EMIT_REGEX sees it) + an INFO completion line. COUNTS ONLY (no body/entryType/source ids — SEC-01).
+    const reprDurationMs = clock.now() - reprStartMs;
+    reprLogger.info(
+      { agentId, superseded, corroborated, inserted, durationMs: reprDurationMs },
+      "User representation revision summary",
+    );
+    container.eventBus.emit("learning:user_model_revised", {
+      agentId,
+      superseded,
+      corroborated,
+      inserted,
+      durationMs: reprDurationMs,
+      timestamp: clock.now(),
+    });
 
     payload.onComplete?.({ status: anyError ? "error" : "ok", error: anyError ? "One or more per-user representation builds failed" : undefined });
     return true;
   }
 
   // -- Online-tuning bandit sentinel intercept --
-  // The OFFLINE tuned-alpha bandit. UNLIKE the consolidation/reasoning/user-rep/social
-  // sentinels above, it is DETERMINISTIC + KEYLESS: there is NO resolveOperationModel, NO
-  // providerEntry, NO apiKey, NO build() seam (it deletes work the LLM crons do). It
-  // reads the accrued FEED signal for a bounded recent candidate-id set, runs the pure clamped
-  // computeTunedAlphas step (inside runOnlineTuning), and upserts a four-alpha vector. The job
-  // is non-fatal + counts-only; trust is never tuned (config-sourced at the apply site).
+  // The OFFLINE tuned-alpha bandit — DETERMINISTIC + KEYLESS (no model/key/build seam; it deletes
+  // the LLM crons' work). Gate: memoryOnlineTuning.enabled (cron) AND learningTuning.enabled
+  // (RANK-02/03: per-intent + bandit/nudge). When learning is on it iterates the intent buckets,
+  // selecting the learner by config; off → the legacy single-bucket nudge (byte-identical). The
+  // job is non-fatal + counts-only; trust is never tuned (config-sourced at the apply site).
   if (resultText === "__ONLINE_TUNING__") {
     const { agentId } = payload;
     if (!agentId) {
@@ -376,82 +381,70 @@ export async function handleMemoryCronSentinel(
       proofAlpha: scoring?.proofAlpha ?? 0.1,
       usefulnessAlpha: scoring?.usefulnessAlpha ?? 0.1,
     };
-
-    // The injected FEED-read seam scoped to (tenant, agent) over a bounded recent candidate-id set
-    // (the daemon's existing memory read surface; maxSourceMemories bounds it). A read failure is
-    // non-fatal in the job — the bandit keeps the ranker's current weights.
     const maxSourceMemories = cfg.maxSourceMemories ?? 200;
-    const readUsefulness = async (): Promise<Awaited<ReturnType<typeof usefulnessStore.readUsefulness>>> => {
-      const ids = memoryApi
-        ? memoryApi.inspect({ tenantId: tuningTenantId, agentId, limit: maxSourceMemories }).map((r) => r.id)
-        : [];
-      // readUsefulness returns Map<id, {usedCount, ignoredCount, lastUsefulAt?}>; OnlineTuningFeedEntry
-      // is the counts-only subset the job aggregates (structurally compatible).
-      return usefulnessStore.readUsefulness(ids, { tenantId: tuningTenantId, agentId });
-    };
 
-    const result = await runOnlineTuning({
-      agentId,
-      tenantId: tuningTenantId,
-      config: { enabled: cfg.enabled, maxSourceMemories },
-      // Injected from setup-memory (the composition-root join) — the port TYPE only.
-      tunedAlphaStore,
-      readUsefulness: readUsefulness as () => Promise<import("@comis/shared").Result<Map<string, OnlineTuningFeedEntry>, Error>>,
-      configScoring,
-      clock,
-      logger: tuningLogger,
-      eventBus: container.eventBus,
-    });
+    // The per-intent FEED-read seam scoped to (tenant, agent, intent) over a bounded recent
+    // candidate-id set (the daemon's existing memory read surface; maxSourceMemories bounds it).
+    // Omitted intent → the global '' bucket (byte-identical legacy read). A read failure is
+    // non-fatal in the job — the bandit keeps the ranker's current weights.
+    const makeReadUsefulness = (intent?: string) =>
+      async (): Promise<Awaited<ReturnType<typeof usefulnessStore.readUsefulness>>> => {
+        const ids = memoryApi
+          ? memoryApi.inspect({ tenantId: tuningTenantId, agentId, limit: maxSourceMemories }).map((r) => r.id)
+          : [];
+        return usefulnessStore.readUsefulness(ids, {
+          tenantId: tuningTenantId,
+          agentId,
+          ...(intent !== undefined ? { intent } : {}),
+        });
+      };
 
-    payload.onComplete?.({ status: result.ok ? "ok" : "error", error: result.ok ? undefined : result.error?.message });
-    return true;
-  }
+    // RANK-02/03 gate composition (resolved decision #3): `memoryOnlineTuning.enabled` runs the
+    // cron (already checked above); `learningTuning.enabled` SELECTS the bandit + per-intent +
+    // outcome-reward behavior. When OFF → the LEGACY single-bucket nudge (byte-identical). When
+    // ON → per-intent runs (perIntent) selecting bandit-vs-nudge by `learner`.
+    const learningTuning = agentConfig?.learningTuning;
+    const runFor = (intent?: string) =>
+      runOnlineTuning({
+        agentId,
+        tenantId: tuningTenantId,
+        config: {
+          enabled: cfg.enabled,
+          maxSourceMemories,
+          ...(learningTuning?.enabled ? { learner: learningTuning.learner, exploration: learningTuning.exploration } : {}),
+          ...(intent !== undefined ? { intent } : {}),
+        },
+        // Injected from setup-memory (the composition-root join) — the port TYPE only.
+        tunedAlphaStore,
+        readUsefulness: makeReadUsefulness(intent) as () => Promise<import("@comis/shared").Result<Map<string, OnlineTuningFeedEntry>, Error>>,
+        configScoring,
+        clock,
+        logger: tuningLogger,
+        eventBus: container.eventBus,
+      });
 
-  // -- Memory lifecycle sentinel intercept --
-  // The DORMANT lifecycle sweep. Like the __ONLINE_TUNING__ bandit (NOT the LLM crons) it is
-  // KEYLESS: NO resolveOperationModel, NO providerEntry, NO apiKey, NO build() seam.
-  // It re-checks memoryLifecycle.enabled (defence-in-depth) + short-circuits ok when off; when
-  // on it invokes runLifecycleSweep per (tenant, agent) with the INJECTED clock.now (never
-  // Date.now). DORMANT: even when on it evicts/demotes/promotes 0 rows (live policy deferred).
-  // Non-fatal + counts-only (the report numbers — NEVER a body/query, §2.7).
-  if (resultText === "__MEMORY_LIFECYCLE__") {
-    const { agentId } = payload;
-    if (!agentId) {
-      logger.warn({ hint: "Memory lifecycle job fired without agentId", errorKind: "config" as const }, "Skipping memory lifecycle -- no agentId");
-      payload.onComplete?.({ status: "error", error: "No agentId for memory lifecycle" });
-      return true;
-    }
-
-    const agentConfig = agents[agentId];
-    const cfg = agentConfig?.memoryLifecycle;
-    if (!cfg?.enabled) {
-      // The opt-in gate (defence-in-depth re-check): a disabled agent does NOTHING (clean ok run).
-      logger.debug({ agentId }, "Memory lifecycle disabled for agent, skipping");
-      payload.onComplete?.({ status: "ok" });
-      return true;
-    }
-
-    // The DORMANT sweep store MUST be present (injected from setup-memory). Absent => clean error.
-    if (!memoryLifecycleStore) {
-      logger.warn({ agentId, hint: "memoryLifecycleStore not injected -- cannot run the lifecycle sweep", errorKind: "config" as const }, "Skipping memory lifecycle -- lifecycle store not wired");
-      payload.onComplete?.({ status: "error", error: "memory lifecycle store not wired" });
-      return true;
-    }
-
-    // KEYLESS: no model, no provider entry, no secret/key, no build seam — deterministic + $0.
-    const lifecycleTenantId = tenantId ?? container.config.tenantId ?? "default";
-    const lifecycleResult = await memoryLifecycleStore.runLifecycleSweep({ tenantId: lifecycleTenantId, agentId, now: clock.now() });
-
-    if (!lifecycleResult.ok) {
-      logger.error({ agentId, err: lifecycleResult.error, hint: "Memory lifecycle sweep failed -- will retry next cycle", errorKind: "internal" as const }, "Memory lifecycle sweep error");
+    let anyTuningError = false;
+    if (learningTuning?.enabled && learningTuning?.perIntent) {
+      // Per-intent: the global '' bucket + the closed deterministic intents (mirrors the agent's
+      // classifyIntent union). Each bucket tunes its own (tenant, agent, intent) vector.
+      for (const intent of TUNING_INTENT_BUCKETS) {
+        const r = await runFor(intent);
+        if (!r.ok) anyTuningError = true;
+      }
     } else {
-      // Counts ONLY — the DORMANT report (promoted/demoted/evicted always 0 in the scaffold). §2.7.
-      const r = lifecycleResult.value;
-      logger.child({ agentId, submodule: "memory-lifecycle" }).debug({ agentId, scanned: r.scanned, promoted: r.promoted, demoted: r.demoted, evicted: r.evicted }, "Memory lifecycle sweep complete (DORMANT)");
+      // The LEGACY single-bucket path (learningTuning off, or on-but-not-per-intent): the global
+      // '' bucket only — byte-identical to the pre-Plan-06 behaviour when learningTuning is off.
+      const r = await runFor(undefined);
+      if (!r.ok) anyTuningError = true;
     }
-    payload.onComplete?.({ status: lifecycleResult.ok ? "ok" : "error", error: lifecycleResult.ok ? undefined : lifecycleResult.error?.message });
+
+    payload.onComplete?.({ status: anyTuningError ? "error" : "ok", error: anyTuningError ? "one or more online-tuning intent runs failed" : undefined });
     return true;
   }
+
+  // NOTE: the __MEMORY_LIFECYCLE__ sentinel (FORGET-01/06 — soft eviction + the
+  // learning:memory_* daemon emits) lives in the sibling setup-channels-memory-crons-wire.ts
+  // (the 600L dir cap); the fall-through delegates there.
 
   // -- Social modeling sentinel intercept --
   // The offline DIRECTIONAL relationship builder. Fires per (tenant, agent); groups high-trust
@@ -508,11 +501,10 @@ export async function handleMemoryCronSentinel(
     const relTenantId = tenantId ?? container.config.tenantId ?? "default";
     const relLogger = logger.child({ agentId, submodule: "social-modeling" });
 
-    // Read HIGH-TRUST sources once, group by RESOLVED channelId (the per-channel write boundary)
-    // here (no channel axis on InspectFilters). channelId is recovered per source via
-    // parseFormattedSessionKey; an unresolvable one (NULL session key — system memories) is
-    // SKIPPED + counted (NEVER bucket undefined — that collapses cross-channel sources
-    // into one leak bucket). entry.userId is the SPEAKER (sender attribution preserved).
+    // Read HIGH-TRUST sources once, group by RESOLVED channelId (the per-channel write boundary;
+    // no channel axis on InspectFilters), recovered via parseFormattedSessionKey. An unresolvable
+    // channelId (NULL session key — system memories) is SKIPPED + counted, NEVER bucketed as
+    // undefined (that collapses cross-channel sources into one leak bucket). entry.userId = SPEAKER.
     const SOURCE_READ_LIMIT = 1000;
     const sourcesByChannel = new Map<string, RelationshipSourceMemory[]>();
     let skippedNoChannel = 0;
@@ -595,5 +587,6 @@ export async function handleMemoryCronSentinel(
     return true;
   }
 
-  return false;
+  // WS7-wired sentinels live in the sibling leaf (600L cap); delegate the fall-through.
+  return handleWireMemoryCronSentinel(resultText, payload, ctx);
 }

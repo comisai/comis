@@ -54,11 +54,31 @@ export type { MemoryUserRepresentationConfig } from "./schema-memory-user-repres
 export { SocialModelingConfigSchema } from "./schema-social-modeling.js";
 export type { SocialModelingConfig } from "./schema-social-modeling.js";
 
-// Offline usefulness-judge schema (OPTIONAL, default-OFF)
+// Offline usefulness-judge schema (OPTIONAL; default-ON, gated by the master cost switch)
 export { MemoryUsefulnessJudgeConfigSchema } from "./schema-memory-usefulness-judge.js";
 export type { MemoryUsefulnessJudgeConfig } from "./schema-memory-usefulness-judge.js";
 
-// Offline tuned-alpha bandit schema (default-OFF, KEYLESS cron)
+// Outcome-signal (Verified Learning WS1) schema — per-agent, default-OFF
+export { LearningOutcomeConfigSchema } from "./schema-learning-outcome.js";
+export type { LearningOutcomeConfig } from "./schema-learning-outcome.js";
+
+// Learning-tuning (Verified Learning WS3 / ranking) schema — per-agent, default-OFF
+export { LearningTuningConfigSchema } from "./schema-learning-tuning.js";
+export type { LearningTuningConfig } from "./schema-learning-tuning.js";
+
+// Learning-forgetting (Verified Learning WS4 / forgetting) schema — per-agent, default-OFF
+export { LearningForgettingConfigSchema } from "./schema-learning-forgetting.js";
+export type { LearningForgettingConfig } from "./schema-learning-forgetting.js";
+
+// Procedural-learning (Verified Learning WS2 / skills) schema — per-agent, default-OFF
+export { LearningSkillsConfigSchema } from "./schema-learning-skills.js";
+export type { LearningSkillsConfig } from "./schema-learning-skills.js";
+
+// Memory triple-extraction schema (Verified Learning WS7) — per-agent, default-OFF
+export { MemoryTripleExtractionConfigSchema } from "./schema-memory-triple-extraction.js";
+export type { MemoryTripleExtractionConfig } from "./schema-memory-triple-extraction.js";
+
+// Offline tuned-alpha bandit schema (default-ON, gated by the master cost switch; KEYLESS cron)
 export { MemoryOnlineTuningConfigSchema } from "./schema-memory-online-tuning.js";
 export type { MemoryOnlineTuningConfig } from "./schema-memory-online-tuning.js";
 

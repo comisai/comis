@@ -323,6 +323,31 @@ export const IncidentReportSchema = z.object({
       errorKind: z.string().optional(),
     })
     .optional(),
+  /** OBS-02 (Phase 198): the Verified-Learning outcome signal reconstructed from
+   *  the session's `learning.outcome_observed` trajectory records (the fused
+   *  terminal verdict wins). Counts/ids/closed-enums ONLY — no body/alpha/recalled
+   *  ids (SEC-01). `outcomeResolved` is false ⇒ a finished trajectory with no
+   *  resolvable outcome (the `outcome_unresolved` verdict's trigger; distinct from
+   *  an explicit `unknown` resolution). `skillsUsed`/`skillFailures` empty +
+   *  `synthesisAbstained` false in P0 (attribution/synthesis → Phase 201).
+   *  Optional + additive (present only when the trajectory carries learning
+   *  records; schemaVersion stays 1) — the `recall`/`voice` precedent. */
+  learning: z
+    .object({
+      outcomeResolved: z.boolean(),
+      outcome: z.enum(["success", "failure", "corrected", "unknown"]).optional(),
+      sources: z.array(
+        z.enum(["tool", "pipeline", "correction", "judge", "reaction", "explicit"]),
+      ),
+      skillsUsed: z.array(z.string()),
+      skillFailures: z.array(z.string()),
+      synthesisAbstained: z.boolean(),
+      // REVISE-01 / GENERAL-01 (Phase 203): optional/additive revision + generalization
+      // counts (counts only, never bodies). Absent in P0..P3 — existing fixtures unaffected.
+      userModelRevised: z.number().optional(),
+      memoriesGeneralized: z.number().optional(),
+    })
+    .optional(),
   summary: z.string(),
   likelyRootCause: z
     .object({
@@ -420,16 +445,17 @@ export interface IncidentFailure {
  * misclassification signal + offending tool/token). Derived from the heuristic
  * predicates in 153-PATTERNS.md ("678 / 503 heuristic derivation").
  */
-// @optional-field-count: 15 — this is the obs.explain signal accumulator, the
-// single shared contract every Glass-Box heuristic (Phase 153/175/177/180/186/187/192)
+// @optional-field-count: 16 — this is the obs.explain signal accumulator, the
+// single shared contract every Glass-Box heuristic (Phase 153/175/177/180/186/187/192/198)
 // reads. Each optional field is a presence-conditional signal aggregated from a
 // distinct trajectory record class (contextBudget / promptTimeout /
-// toolSchemaUnsupported / recall / image / vision / videoGenerated / channel /
-// agentId / …) — absent when that record class did not occur. Clustering them
-// would couple unrelated heuristics; the read sites already key on each
-// independently. Grows by one per Glass-Box signal class (image added in 186 —
-// OBS-03/OBS-04; vision added in 187 — VIS-04; videoGenerated added in 192 —
-// OBS-03/OBS-04 video).
+// toolSchemaUnsupported / recall / image / vision / videoGenerated / voice /
+// learning / channel / agentId / …) — absent when that record class did not
+// occur. Clustering them would couple unrelated heuristics; the read sites
+// already key on each independently. Grows by one per Glass-Box signal class
+// (image added in 186 — OBS-03/OBS-04; vision added in 187 — VIS-04;
+// videoGenerated added in 192 — OBS-03/OBS-04 video; learning added in 198 —
+// OBS-02, the Verified-Learning outcome-signal shadow).
 export interface IncidentSignals {
   sessionKey: string;
   /** W8: agentId from the trajectory record envelopes (first seen). Fallback for
@@ -600,6 +626,33 @@ export interface IncidentSignals {
     source?: "explicit" | "keyless-local" | "follow-main-key" | "fallback";
     outcome: "ok" | "failed";
     errorKind?: string;
+  };
+  /**
+   * OBS-02 (Phase 198): the outcome-signal telemetry reconstructed from the
+   * session's `learning.outcome_observed` trajectory records (counts/ids/closed
+   * enums ONLY — the bridged record carries no body/alpha/recalled-ids; SEC-01).
+   * `outcomeResolved` is false ⇒ the learning shadow observed this finished
+   * trajectory but no signal tier produced a resolvable outcome (the
+   * `outcome_unresolved` verdict keys on exactly this — distinct from an explicit
+   * `unknown` outcome, which IS a resolution). `skillsUsed`/`skillFailures` are
+   * EMPTY in P0 (skill-use attribution lands Phase 201); `synthesisAbstained` is
+   * false in P0 (synthesis is Phase 201). Absent ⇒ no learning records in the
+   * trajectory (omitted from the report — the signal is per-agent default-OFF).
+   * `userModelRevised`/`memoriesGeneralized` (Phase 203) are optional counts of
+   * the session's profile-revision / higher-order-generalization activity (counts
+   * only, never bodies); absent in P0..P3.
+   */
+  learning?: {
+    outcomeResolved: boolean;
+    outcome?: "success" | "failure" | "corrected" | "unknown";
+    sources: Array<"tool" | "pipeline" | "correction" | "judge" | "reaction" | "explicit">;
+    skillsUsed: string[];
+    skillFailures: string[];
+    synthesisAbstained: boolean;
+    /** REVISE-01 (Phase 203): incumbent profile entries soft-closed by revision this session (count only). Optional/additive. */
+    userModelRevised?: number;
+    /** GENERAL-01 (Phase 203): higher-order semantic memories synthesized this session (count only). Optional/additive. */
+    memoriesGeneralized?: number;
   };
 }
 

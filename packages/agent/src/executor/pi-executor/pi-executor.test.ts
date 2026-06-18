@@ -243,6 +243,9 @@ vi.mock("../../bridge/pi-event-bridge.js", () => ({
     // end-of-turn backstop drainAt sharing the same composite-key Map.
     // The mock returns a fresh Map per construction.
     getDrainState: () => ({ drainInflightByKey: new Map<string, Promise<void>>() }),
+    // ATTR-02: postExecution reads the per-turn skill-use carrier back. Default
+    // empty (no skill attributed) → memory:skill_used not emitted.
+    getUsedSkillIds: () => new Set<string>(),
   }),
 }));
 
@@ -1277,6 +1280,8 @@ describe("PiExecutor", () => {
           // Same drain-state stub as the top-level mock so the per-test
           // override in this it() block matches the PostExecutionBridge interface.
           getDrainState: () => ({ drainInflightByKey: new Map<string, Promise<void>>() }),
+          // ATTR-02: per-turn skill-use carrier read-back (empty in the mock).
+          getUsedSkillIds: () => new Set<string>(),
         };
       });
 
