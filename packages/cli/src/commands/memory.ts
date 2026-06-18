@@ -221,9 +221,9 @@ export function registerMemoryCommand(program: Command): void {
           return;
         }
         info(
-          "No outcome events recorded yet. Outcome learning requires " +
-            "agents.<id>.learningOutcome.enabled (default off) + memory.costFeatures.enabled; " +
-            "once on, events accrue as agent turns finish.",
+          "No outcome events recorded yet. Outcome learning is ON by default " +
+            "(opt-out via agents.<id>.learningOutcome.enabled: false, or the master " +
+            "memory.costFeatures.enabled: false); events accrue as agent turns finish.",
         );
         return;
       }
@@ -264,9 +264,9 @@ export function registerMemoryCommand(program: Command): void {
     .option("--format <format>", "Output format (table|json)", "table")
     .action((options: { format: string }) => {
       const stats = readSkillStatsOffline(resolveOfflineDataDir());
-      // Honest empty: learningSkills is per-agent default-OFF (and force-disabled
-      // by memory.costFeatures.enabled:false) — say WHY it is empty rather than
-      // render a misleading zeroed table.
+      // Honest empty: skill synthesis is per-agent default-ON (opt-out; force-disabled
+      // by memory.costFeatures.enabled:false) — say WHY it is empty (nothing learned yet)
+      // rather than render a misleading zeroed table.
       if (stats === undefined || stats.total === 0) {
         if (options.format === "json") {
           json({ total: 0, byState: {}, perAgent: [] });
@@ -274,8 +274,8 @@ export function registerMemoryCommand(program: Command): void {
         }
         info(
           "No learned skills yet — none have been synthesized + admitted. Skill synthesis " +
-            "requires agents.<id>.learningSkills.enabled (default off) + memory.costFeatures.enabled, " +
-            "and runs on its schedule over successful trajectories (procedures only).",
+            "is ON by default (opt-out via agents.<id>.learningSkills.enabled: false, or the master " +
+            "memory.costFeatures.enabled: false), and runs on its schedule over successful trajectories (procedures only).",
         );
         return;
       }

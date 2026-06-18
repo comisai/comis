@@ -36,13 +36,25 @@ import type { ComisLogger } from "@comis/infra";
 const LEARNED_SKILLS_DIRNAME = ".learned-skills";
 
 /**
- * Surface filter (the WR-03 read-only fail-closed-dead stands): only an `active`,
- * read-only (`!mutating`) procedure surfaces. The store's `list()` already drops
- * soft-evicted rows (`evicted_at IS NULL`); `stale`/`candidate`/`archived` and any
- * `mutating` procedure never appear in the listing OR on disk.
+ * Surface filter: a read-only (`!mutating`) procedure in `candidate` OR `active`
+ * state surfaces. The store's `list()` drops soft-evicted rows (`evicted_at IS
+ * NULL`); `stale`/`archived` and any `mutating` procedure never appear.
+ *
+ * WHY candidates surface (live-2026-06-18 deadlock fix): promotion `candidate→active`
+ * is USE-BASED (`promoteByName` bumps `proof_count` only when the skill appears in a
+ * resolved-success turn's `memory:skill_used` attribution — design §SKILL-04, the
+ * `LOW_PROOF_COUNT` admission cap is the deliberate anti-gaming belt so synthesis can
+ * NEVER directly mint an `active` skill). But a turn can only attribute a skill it was
+ * SHOWN — so a never-surfaced candidate is never used, never promoted, never surfaced:
+ * a deadlock that left every learned skill stuck at `proof_count=1` forever (verified
+ * live: 0 skills ever reached `active`). Surfacing read-only candidates lets them be
+ * TRIED; a corroborated-success reuse promotes to `active`, a corroborated failure
+ * demotes/archives — the outcome-gated verified-reuse loop. Candidates are admitted
+ * only after static + (script-)sandbox validation at `trust=learned`, read-only, so
+ * trying one is bounded-safe; `active` remains the corroborated (proof≥N) tier.
  */
 function isSurfaceable(skill: LearnedSkill): boolean {
-  return skill.state === "active" && !skill.mutating;
+  return (skill.state === "active" || skill.state === "candidate") && !skill.mutating;
 }
 
 /**
