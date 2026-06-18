@@ -63,13 +63,14 @@ describe("placeCacheBreakpoints — pure", () => {
   });
 });
 
-describe("placeCacheBreakpoints — lookback-window coverage on long conversations (cache C-FIX-2, 2026-06-18)", () => {
-  // Live evidence: on a long tool turn the markers clustered as semi-stable@blk13 +
-  // recent@blk35 + SDK@blk38 — the recent marker is REDUNDANT with the SDK's end marker
-  // (3 blocks apart) while the gap blk13→blk35 (22 blocks) had NO marker and exceeded the
-  // Anthropic 20-block lookback window → that middle segment missed the cache every turn.
-  // The fix keeps the FIRST marker within the window of the start and BRIDGES the mid gap
-  // (priority over the redundant recent marker), so no inter-marker gap exceeds the window.
+describe("placeCacheBreakpoints — tail-reaching coverage on long conversations (cache C-FIX-4, 2026-06-18)", () => {
+  // Live evidence superseded C-FIX-2: Anthropic honors at most 4 cache_control breakpoints, and
+  // TWO are consumed outside placeCacheBreakpoints (the system/tools marker + the SDK's auto-marker
+  // on the LAST message). Placing 3 Comis markers (semi-stable + bridge + recent) pushed the total
+  // to 5 → Anthropic SILENTLY DROPPED the tail-reaching markers → the cache froze at the early
+  // markers and re-wrote the whole growing suffix every turn (O(N²); read frozen at 54961). The fix:
+  // cap Comis at 2 markers (anchor + recent) so the total stays ≤4 and the RECENT marker reaches
+  // the tail (its fresh write caches the whole prefix; live: single-tail read 54961→142941).
   const CACHE_LOOKBACK_WINDOW = 20;
 
   function markerIndices(msgs: Array<Record<string, unknown>>): number[] {
@@ -81,22 +82,27 @@ describe("placeCacheBreakpoints — lookback-window coverage on long conversatio
     return out;
   }
 
-  it("bounds every gap (start→first, first→second) within the lookback window on a long conversation", () => {
-    // 50 alternating 1-block messages → 50%-token semi-stable ≈ idx 25 (> 20 from start) and
-    // the recent zone ≈ idx 48 (clustered with the would-be SDK end marker), leaving a >20 gap.
+  it("places AT MOST 2 markers (leaving room for system + SDK within Anthropic's 4-limit)", () => {
     const roles: string[] = [];
     for (let i = 0; i < 50; i++) roles.push(i % 2 === 0 ? "user" : "assistant");
     const msgs = makeMessages(roles);
-    placeCacheBreakpoints(msgs, { minTokens: 0, maxBreakpoints: 2, strategy: "multi-zone" });
+    const placed = placeCacheBreakpoints(msgs, { minTokens: 0, maxBreakpoints: 4, strategy: "multi-zone" });
+    expect(placed).toBeLessThanOrEqual(2); // even when given maxBreakpoints:4, Comis reserves 2 for system+SDK
+    expect(markerIndices(msgs).length).toBeLessThanOrEqual(2);
+  });
+
+  it("places the RECENT marker in the tail zone (chains the SDK last-message marker), not stranded early", () => {
+    // 50 alternating 1-block messages. The load-bearing marker must be at the second-to-last user
+    // message (idx 48), NOT clustered at the start — otherwise the tail is never cached.
+    const roles: string[] = [];
+    for (let i = 0; i < 50; i++) roles.push(i % 2 === 0 ? "user" : "assistant");
+    const msgs = makeMessages(roles);
+    placeCacheBreakpoints(msgs, { minTokens: 0, maxBreakpoints: 4, strategy: "multi-zone" });
     const idx = markerIndices(msgs); // 1 block per message → index == block offset
     expect(idx.length).toBeGreaterThanOrEqual(1);
-    // First marker within the lookback window of the conversation start (block 0).
-    expect(idx[0]!).toBeLessThanOrEqual(CACHE_LOOKBACK_WINDOW);
-    // No gap between consecutive Comis markers exceeds the window (the mid-gap is bridged,
-    // not left to a recent marker clustered at the end).
-    for (let i = 1; i < idx.length; i++) {
-      expect(idx[i]! - idx[i - 1]!).toBeLessThanOrEqual(CACHE_LOOKBACK_WINDOW);
-    }
+    // The LAST Comis marker reaches the recent/tail zone: second-to-last user message.
+    // Messages 0..49 alternate user(even)/assistant(odd) → last user=48, second-to-last user=46.
+    expect(idx[idx.length - 1]!).toBe(46);
   });
 
   it("anchors the first marker to a STABLE block-boundary position as the conversation grows (C-FIX-2b incremental hits)", () => {

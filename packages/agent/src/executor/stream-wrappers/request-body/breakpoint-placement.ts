@@ -110,7 +110,13 @@ export function placeCacheBreakpoints(
   }
 
   let placed = 0;
-  const remaining = Math.min(maxBreakpoints, 3); // Use full budget (4 total - SDK's 1 = 3 available)
+  // Anthropic honors at most 4 cache_control breakpoints. TWO are already consumed outside
+  // this function: the SYSTEM/tools prefix marker AND the SDK's auto-marker on the LAST message
+  // (the tail). So Comis may place at most 2 message markers — placing 3 pushed the total to 5,
+  // and Anthropic SILENTLY DROPPED the tail-reaching markers, freezing the cache at the early
+  // markers and re-writing the entire growing suffix every turn (O(N²); cache C-FIX-4, 2026-06-18,
+  // confirmed live: single-tail marker read 54961→142941). Budget = 4 − system − SDK = 2.
+  const remaining = Math.min(maxBreakpoints, 2);
 
   // Find the second-to-last user message for breakpoint #3
   let secondToLastUserIdx = -1;
@@ -278,7 +284,8 @@ export function placeCacheBreakpoints(
     if (anchor > 0) semiStableIdx = anchor;
   }
 
-  // Place breakpoint #2 if above threshold
+  // Breakpoint #1 (semi-stable anchor): a stable early boundary (compaction summary or the
+  // C-FIX-2b-anchored ≤window-block position). Caches [0..semiStable] as a durable fallback.
   if (semiStableIdx >= 0 && placed < remaining) {
     const tokensToPoint = estimateTokensInRange(0, semiStableIdx);
     if (tokensToPoint >= minTokens) {
@@ -287,31 +294,12 @@ export function placeCacheBreakpoints(
     }
   }
 
-  // LOOKBACK GAP BRIDGE (cache C-FIX-2, 2026-06-18, evidence-based): when the span from the
-  // semi-stable marker to the LAST user message (where the SDK auto-marker lands) exceeds the
-  // lookback window, the MIDDLE of the conversation has no cache anchor -> that segment misses
-  // every turn (live tool turn: markers clustered semi-stable@blk13 + recent@blk35 + SDK@blk38
-  // left a 22-block gap blk13->blk35). The Comis "recent" marker is REDUNDANT with the SDK's
-  // last-user marker (a few blocks apart), so spend the slot on a BRIDGE at the last user within
-  // one window of semi-stable -- PRIORITY over the recent zone; the SDK marker still covers the end.
-  if (
-    semiStableIdx >= 0 &&
-    lastUserIdx > semiStableIdx &&
-    placed < remaining &&
-    blocksInRange(semiStableIdx + 1, lastUserIdx) > CACHE_LOOKBACK_WINDOW
-  ) {
-    let bridgeIdx = -1;
-    for (let i = semiStableIdx + 1; i < lastUserIdx; i++) {
-      if (blocksInRange(semiStableIdx + 1, i) > CACHE_LOOKBACK_WINDOW) break;
-      if ((messages[i] as any).role === "user") bridgeIdx = i;
-    }
-    if (bridgeIdx > semiStableIdx && estimateTokensInRange(semiStableIdx + 1, bridgeIdx) >= minTokens) {
-      addCacheControlToLastBlock(messages[bridgeIdx] as any, resolvedRetention ?? retention);
-      placed++;
-    }
-  }
-
-  // Place breakpoint #3 on second-to-last user message if above threshold
+  // Breakpoint #2 (RECENT / tail — PRIORITY over any bridge): on the second-to-last user message,
+  // ADJACENT to the SDK's last-message marker. This is the load-bearing marker: its fresh write
+  // caches [0..recent] (the WHOLE prefix — a fresh write does not need a nearby prior breakpoint),
+  // and it chains the SDK tail marker + the previous turn's cache (≤window apart) so the cached
+  // prefix advances with the conversation. cache C-FIX-4 (2026-06-18): this was previously placed
+  // AFTER the bridge and dropped when the budget filled, stranding the tail → O(N²) re-writes.
   if (secondToLastUserIdx >= 0 && placed < remaining) {
     const startFrom = semiStableIdx >= 0 ? semiStableIdx + 1 : 0;
     const tokensInRange = estimateTokensInRange(startFrom, secondToLastUserIdx);
@@ -331,71 +319,14 @@ export function placeCacheBreakpoints(
     }
   }
 
-  // Place breakpoint at mid-point between semi-stable and second-to-last user.
-  // Covers the gap in longer conversations where the semi-stable zone (compaction summary)
-  // is far from the recent zone (second-to-last user message).
-  if (semiStableIdx >= 0 && secondToLastUserIdx >= 0 && placed < remaining) {
-    const midIdx = Math.floor((semiStableIdx + secondToLastUserIdx) / 2);
-    if (midIdx > semiStableIdx && midIdx < secondToLastUserIdx) {
-      // Find nearest user message at or before the midpoint
-      let midUserIdx = -1;
-      for (let i = midIdx; i > semiStableIdx; i--) {
-        if ((messages[i] as any).role === "user") {
-          midUserIdx = i;
-          break;
-        }
-      }
-      if (midUserIdx >= 0) {
-        const startFrom = semiStableIdx + 1;
-        const tokensInRange = estimateTokensInRange(startFrom, midUserIdx);
-        if (tokensInRange >= minTokens) {
-          addCacheControlToLastBlock(messages[midUserIdx] as any, resolvedRetention ?? retention);
-          placed++;
-        }
-      }
-    }
-  }
-
-  // Lookback window enforcement: check gaps between consecutive breakpoints.
-  // The Anthropic API uses a 20-block lookback window for cache prefix matching.
-  // If any gap exceeds the window and slots remain, place a bridging breakpoint
-  // at the midpoint of the gap to prevent silent cache misses.
-  if (placed > 0 && placed < maxBreakpoints) {
-    const breakpointPositions: number[] = [];
-    for (let i = 0; i < messages.length; i++) {
-      const content = (messages[i] as any).content;
-      if (Array.isArray(content)) {
-        for (const block of content) {
-          if (block.cache_control) {
-            breakpointPositions.push(i);
-            break;
-          }
-        }
-      }
-    }
-
-    // Check gaps between consecutive breakpoints
-    for (let g = 1; g < breakpointPositions.length && placed < maxBreakpoints; g++) {
-      const gap = breakpointPositions[g]! - breakpointPositions[g - 1]!;
-      if (gap > CACHE_LOOKBACK_WINDOW) {
-        // Find a user message near the midpoint of the gap
-        const midTarget = Math.floor(
-          (breakpointPositions[g - 1]! + breakpointPositions[g]!) / 2,
-        );
-        for (let j = midTarget; j > breakpointPositions[g - 1]!; j--) {
-          if ((messages[j] as any).role === "user") {
-            const startFrom = breakpointPositions[g - 1]! + 1;
-            const tokensInRange = estimateTokensInRange(startFrom, j);
-            if (tokensInRange >= minTokens) {
-              addCacheControlToLastBlock(messages[j] as any, resolvedRetention ?? retention);
-              placed++;
-            }
-            break;
-          }
-        }
-      }
-    }
-  }
+  // NOTE (cache C-FIX-4, 2026-06-18): the former mid-point + lookback-gap-bridge breakpoints were
+  // REMOVED. They were added (C-FIX-2) to keep every inter-marker gap ≤ the 20-block window, but
+  // live evidence disproved the premise: a fresh cache write at a breakpoint caches the WHOLE prefix
+  // up to it regardless of distance from the prior breakpoint, so the gap does NOT cause a miss.
+  // What DID cause the freeze was placing too many markers (semi-stable + bridge + recent = 3),
+  // which — with the system marker and the SDK's auto-marker on the last message — exceeded
+  // Anthropic's 4-breakpoint limit, so the tail-reaching markers were silently dropped. Capping
+  // Comis to 2 (anchor + recent) keeps the total at 4 and lets the recent marker reach the tail.
 
   return placed;
 }

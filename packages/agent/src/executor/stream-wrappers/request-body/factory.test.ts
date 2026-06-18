@@ -1644,7 +1644,7 @@ describe("breakpoint cap increase", () => {
     return indices;
   }
 
-  it("places 3 breakpoints on long conversation with compaction summary", async () => {
+  it("places 2 breakpoints on long conversation with compaction summary (cache C-FIX-4: anchor + recent)", async () => {
     const base = createMockStreamFn();
     const wrapper = createRequestBodyInjector({ getCacheRetention: () => "long", cacheBreakpointStrategy: "multi-zone" }, logger);
     const wrappedFn = wrapper(base);
@@ -1669,13 +1669,14 @@ describe("breakpoint cap increase", () => {
       msgs.push({ role: i % 2 === 0 ? "user" : "assistant", text: textForTokens(300) });
     }
 
-    // SDK has 1 system breakpoint -- leaves 3 slots
     const payload = makeApiPayload(msgs, 1);
     const result = await onPayload(payload, model);
 
-    // Should have 3 custom breakpoints in messages (3 available slots, all used)
+    // C-FIX-4: Comis places at most 2 message markers (anchor + recent). Anthropic's 4-breakpoint
+    // limit is otherwise blown by system + the SDK's auto last-message marker, which silently drops
+    // the tail-reaching markers (the O(N²) freeze). Two markers keeps the total at ≤4.
     const msgBps = countMessageBreakpoints(result);
-    expect(msgBps).toBe(3);
+    expect(msgBps).toBe(2);
   });
 
   it("still places 0-2 breakpoints on short conversation", async () => {
@@ -1706,7 +1707,7 @@ describe("breakpoint cap increase", () => {
     expect(msgBps).toBeLessThanOrEqual(2);
   });
 
-  it("third breakpoint placed between semi-stable and second-to-last", async () => {
+  it("places anchor + recent (no mid/bridge breakpoint) — recent reaches the tail (cache C-FIX-4)", async () => {
     const base = createMockStreamFn();
     const wrapper = createRequestBodyInjector({ getCacheRetention: () => "long", cacheBreakpointStrategy: "multi-zone" }, logger);
     const wrappedFn = wrapper(base);
@@ -1719,45 +1720,26 @@ describe("breakpoint cap increase", () => {
     const receivedOptions = base.mock.calls[0][2] as Record<string, unknown>;
     const onPayload = receivedOptions.onPayload as (payload: any, model: any) => Promise<any>;
 
-    // Build a carefully crafted conversation:
-    // - Compaction summary at index 0 (semi-stable)
-    // - 30 messages total, alternating user/assistant
-    // - Second-to-last user is at index 28, last user at index 28 (even indices are user)
-    // - Midpoint between 0 and 28 is ~14
+    // Compaction summary at index 0 (semi-stable anchor); 30 messages alternating.
+    // Last user at index 28, second-to-last user at index 26.
     const msgs: Array<{ role: string; text: string }> = [];
-    // Compaction summary at index 0
     msgs.push({ role: "user", text: "<summary>" + textForTokens(2000) + "</summary>" });
     msgs.push({ role: "assistant", text: textForTokens(2000) });
-    // Messages 2-29
     for (let i = 2; i < 30; i++) {
       msgs.push({ role: i % 2 === 0 ? "user" : "assistant", text: textForTokens(300) });
     }
 
-    const payload = makeApiPayload(msgs, 1); // 1 system bp = 3 available
+    const payload = makeApiPayload(msgs, 1);
     const result = await onPayload(payload, model);
 
     const bpIndices = findBreakpointIndices(result);
 
-    // Should have 3 breakpoints
-    expect(bpIndices).toHaveLength(3);
-
-    // First breakpoint at compaction summary (index 0)
-    expect(bpIndices[0]).toBe(0);
-
-    // Second breakpoint at second-to-last user message
-    // Third breakpoint should be between the semi-stable (0) and second-to-last user
-    // The mid-point breakpoint should be strictly between 0 and the second-to-last user index
-    const semiStablePos = bpIndices[0]; // 0
-    const midBreakpoint = bpIndices[1]; // should be in between
-    const recentBreakpoint = bpIndices[2]; // second-to-last user
-
-    expect(midBreakpoint).toBeGreaterThan(semiStablePos);
-    expect(midBreakpoint).toBeLessThan(recentBreakpoint);
-
-    // Verify the mid-point message has cache_control set
-    const midMsg = (result.messages as any[])[midBreakpoint];
-    const lastBlock = midMsg.content[midMsg.content.length - 1];
-    expect(lastBlock.cache_control).toBeDefined();
+    // C-FIX-4: exactly 2 markers — anchor (compaction summary @0) + recent (second-to-last user).
+    // NO mid/bridge marker (those pushed the total over Anthropic's 4-limit and stranded the tail).
+    expect(bpIndices).toHaveLength(2);
+    expect(bpIndices[0]).toBe(0); // anchor at compaction summary
+    // The recent marker reaches the tail zone (second-to-last user = 26), not stranded mid-conversation.
+    expect(bpIndices[1]).toBe(26);
   });
 
   it("no third breakpoint when gap between positions is too small", async () => {
@@ -2307,7 +2289,7 @@ describe("lookback window enforcement", () => {
     return indices;
   }
 
-  it("places bridging breakpoint when gap exceeds 20 blocks", async () => {
+  it("does NOT add bridge/mid markers on a long conversation — anchor + recent reach the tail (cache C-FIX-4)", async () => {
     const base = createMockStreamFn();
     const wrapper = createRequestBodyInjector({ getCacheRetention: () => "long", cacheBreakpointStrategy: "multi-zone" }, logger);
     const wrappedFn = wrapper(base);
@@ -2320,14 +2302,11 @@ describe("lookback window enforcement", () => {
     const receivedOptions = base.mock.calls[0][2] as Record<string, unknown>;
     const onPayload = receivedOptions.onPayload as (p: any, m: any) => Promise<any>;
 
-    // Build 42-message conversation: compaction summary at index 0, then 41 alternating
-    // messages. Each with enough tokens for Sonnet's 1024 threshold.
-    // The semi-stable breakpoint will be at index 0 (compaction summary).
-    // The second-to-last user message will be at index 40.
-    // Gap = 40 blocks, well above the 20-block lookback window.
-    // With only 1 system breakpoint, 3 message slots available.
-    // The mid-zone breakpoint covers the midpoint (~20).
-    // If that still leaves a gap > 20, the lookback pass adds a bridge.
+    // 42-message conversation: compaction summary @0, last user @40, second-to-last user @38.
+    // The anchor→recent gap (38 blocks) far exceeds the 20-block window — but C-FIX-4 proved a
+    // fresh cache write at the recent marker caches the WHOLE prefix regardless of the gap, so NO
+    // bridge/mid marker is needed (and adding them blew Anthropic's 4-breakpoint limit, freezing
+    // the cache). Comis places exactly 2 markers; the gap is expected and benign.
     const msgs: Array<{ role: string; text: string }> = [];
     msgs.push({ role: "user", text: "<summary>" + textForTokens(2000) + "</summary>" });
     msgs.push({ role: "assistant", text: textForTokens(2000) });
@@ -2335,20 +2314,15 @@ describe("lookback window enforcement", () => {
       msgs.push({ role: i % 2 === 0 ? "user" : "assistant", text: textForTokens(300) });
     }
 
-    const payload = makeApiPayload(msgs, 1); // 1 system bp => 3 message slots
+    const payload = makeApiPayload(msgs, 1);
     const result = await onPayload(payload, model);
 
     const bpIndices = findBreakpointIndices(result);
 
-    // Verify no consecutive breakpoint gap exceeds 20 blocks
-    for (let i = 1; i < bpIndices.length; i++) {
-      const gap = bpIndices[i]! - bpIndices[i - 1]!;
-      // With 3 message slots and lookback enforcement, gaps should be manageable
-      // The key assertion: at least 3 breakpoints placed to cover the 40-block span
-      expect(gap).toBeLessThanOrEqual(20);
-    }
-    // Should have placed at least 3 breakpoints to cover the gap
-    expect(bpIndices.length).toBeGreaterThanOrEqual(3);
+    // Exactly 2 markers: anchor (compaction @0) + recent (second-to-last user @38).
+    expect(bpIndices).toHaveLength(2);
+    expect(bpIndices[0]).toBe(0);
+    expect(bpIndices[1]).toBe(38); // recent reaches the tail, no early-clustered bridge
   });
 
   it("does not place bridge when gap is within lookback window", async () => {
@@ -2627,9 +2601,10 @@ describe("breakpoint strategy config", () => {
     const payload = makeApiPayload(msgs, 1);
     const result = await onPayload(payload, model);
 
-    // Multi-zone should place 3 breakpoints (same as existing multi-zone test)
+    // Multi-zone places 2 breakpoints (anchor + recent) — cache C-FIX-4 capped Comis at 2 to stay
+    // within Anthropic's 4-breakpoint limit (system + SDK consume the other two).
     const msgBps = countMessageBreakpoints(result);
-    expect(msgBps).toBe(3);
+    expect(msgBps).toBe(2);
   });
 
   it("single strategy respects slotsAvailable = 0", async () => {
@@ -6650,6 +6625,44 @@ describe("fence-aware microcompaction", () => {
       const payload = warn![0] as Record<string, unknown>;
       expect(payload.firstDivergentIndex).toBe(2);
       expect(String(payload.mutationClass)).toContain("datetime-preamble");
+    });
+
+    it("WARN classifies a CLEARED thinking block (structural delta, no content leak)", async () => {
+      const testLogger = createMockLogger();
+      // idx 3 (assistant) carries a thinking block that varies for 3 turns (builds the
+      // 3 consecutive changes), then is REMOVED on turn 3 — exactly what microcompaction's
+      // clearStaleThinkingBlocks does to a cached assistant message. The diagnostic must
+      // report mutationClass "thinking-cleared" from the structural delta (block/thinking
+      // counts + length), WITHOUT logging any message content.
+      const mk = (turn: number, withThinking: boolean): Array<Record<string, unknown>> => ([
+        { role: "user", content: [{ type: "text", text: "u0" }] },
+        { role: "assistant", content: [{ type: "text", text: "a0" }] },
+        { role: "user", content: [{ type: "text", text: "u1" }] },
+        // idx 3: a text block whose value varies each turn (so the prefix hash changes →
+        // the WARN's 3-consecutive-change threshold is reached); on the final turn the
+        // thinking block is also removed (the clearStaleThinkingBlocks behaviour).
+        { role: "assistant", content: withThinking
+          ? [{ type: "thinking", thinking: `reasoning turn ${turn} ........` }, { type: "text", text: `answer ${turn}` }]
+          : [{ type: "text", text: `answer ${turn}` }] },
+        { role: "user", content: [{ type: "text", text: "u2" }] },
+        { role: "assistant", content: [{ type: "text", text: "a2" }] },
+      ]);
+      await invokeWithFence(4, mk(0, true), testLogger);  // baseline (thinking present)
+      await invokeWithFence(4, mk(1, true), testLogger);  // change #1 (thinking text differs)
+      await invokeWithFence(4, mk(2, true), testLogger);  // change #2
+      await invokeWithFence(4, mk(3, false), testLogger); // change #3 → WARN; thinking REMOVED
+
+      const warn = (testLogger.warn as ReturnType<typeof vi.fn>).mock.calls.find(
+        (c: unknown[]) => typeof c[1] === "string" && c[1].includes("Unstable prefix detected"),
+      );
+      expect(warn).toBeDefined();
+      const payload = warn![0] as Record<string, unknown>;
+      expect(payload.firstDivergentIndex).toBe(3);
+      expect(String(payload.mutationClass)).toContain("thinking-cleared");
+      // structural sigs present, and they must NOT contain message text (only counts/length)
+      expect(typeof payload.prevSig).toBe("string");
+      expect(typeof payload.currSig).toBe("string");
+      expect(String(payload.prevSig)).not.toContain("reasoning");
     });
   });
 });

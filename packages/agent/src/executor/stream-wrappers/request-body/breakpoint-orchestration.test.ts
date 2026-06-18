@@ -199,7 +199,9 @@ describe("runCacheBreakpointPhase — Fix E: UNTRUSTED_ block 1h cache anchor", 
       // Pad each message with enough text so placeCacheBreakpoints'
       // minTokens=0 path always treats the recent zone as eligible.
       const text = i === 10
-        ? "Please summarize: <<<UNTRUSTED_HTML>>>...32KB of link-understanding output...<<<END_UNTRUSTED_HTML>>>"
+        // Genuinely large (>16KB) so the Fix-E UNTRUSTED size-gate fires and anchors a 1h marker
+        // here (the precondition the monotonicity invariant exercises).
+        ? `Please summarize: <<<UNTRUSTED_HTML>>>${"link-understanding output ".repeat(800)}<<<END_UNTRUSTED_HTML>>>`
         : `message ${i}: lorem ipsum dolor sit amet consectetur adipiscing elit`;
       messages.push({ role, content: [{ type: "text", text }] });
     }
