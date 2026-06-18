@@ -26,7 +26,7 @@
 
 import { describe, it, expect, vi } from "vitest";
 import { ok } from "@comis/shared";
-import type { CapabilityClass } from "@comis/agent";
+import type { CapabilityClass, TemplateMatch } from "@comis/agent";
 
 import { bindGraphMutateHandlers } from "./graph-mutate.js";
 import type { GraphHandlerDeps } from "./graph-helpers.js";
@@ -61,6 +61,10 @@ interface FakeDepsOverrides {
   logger?: Partial<Record<"info" | "warn" | "debug" | "error", ReturnType<typeof vi.fn>>>;
   /** Override graphCoordinator.run (WR-01: assert run still dispatches). */
   run?: ReturnType<typeof vi.fn>;
+  /** AUTHOR-01 (174-03): the orchestration.authoring gate. */
+  authoringConfig?: { repairProducer: boolean; intentAction: boolean; gbnfConstrain: boolean };
+  /** AUTHOR-01 (174-03): the injected conservative repair matcher. */
+  repairMatch?: (rawGraph: unknown) => TemplateMatch;
 }
 
 function makeDeps(overrides: FakeDepsOverrides = {}): GraphHandlerDeps {
@@ -79,6 +83,8 @@ function makeDeps(overrides: FakeDepsOverrides = {}): GraphHandlerDeps {
     logger: { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn(), ...overrides.logger },
     eventBus: { emit, on: vi.fn() },
     resolveCapabilityClass: overrides.resolveCapabilityClass,
+    authoringConfig: overrides.authoringConfig,
+    repairMatch: overrides.repairMatch,
   } as unknown as GraphHandlerDeps;
 }
 
@@ -88,6 +94,26 @@ function authoredPayloads(emit: ReturnType<typeof vi.fn>): Array<Record<string, 
     .filter((c) => c[0] === "pipeline:authored")
     .map((c) => c[1] as Record<string, unknown>);
 }
+
+/** Pull graph:repaired payloads off a captured emit mock (AUTHOR-01). */
+function repairedPayloads(emit: ReturnType<typeof vi.fn>): Array<Record<string, unknown>> {
+  return emit.mock.calls
+    .filter((c) => c[0] === "graph:repaired")
+    .map((c) => c[1] as Record<string, unknown>);
+}
+
+/** A repairMatch stub that always returns a valid filled `debate` (2+1). */
+const MATCH_DEBATE: (rawGraph: unknown) => TemplateMatch = () => ({
+  kind: "matched",
+  pattern: "debate",
+  filledNodes: [
+    { nodeId: "pro", task: "Argue FOR", dependsOn: [] },
+    { nodeId: "con", task: "Argue AGAINST", dependsOn: [] },
+    { nodeId: "judge", task: "Verdict", dependsOn: ["pro", "con"] },
+  ],
+});
+
+const FLAGS_ON = { repairProducer: true, intentAction: false, gbnfConstrain: false };
 
 // ---------------------------------------------------------------------------
 // graph.define emit
@@ -350,5 +376,88 @@ describe("pipeline:authored — emit is best-effort (telemetry never breaks the 
     await expect(handlers["graph.execute"]!({ nodes: CYCLIC_NODES })).rejects.not.toThrow(
       /SQLITE_BUSY/,
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AUTHOR-01 (174-03): the gated SERVER-SIDE capabilityClass feed.
+//
+// The tier the handler passes into buildGraphInput is observable through the
+// repair branch: a weak (small/nano) tier + an invalid graph + repairProducer
+// ON + an injected repairMatch → the invalid graph is REPAIRED (resolves +
+// emits graph:repaired) instead of throwing the Phase-157 fail-close. So:
+//   - FLAGS-OFF → tier fed undefined → capable path → the SAME Phase-157 throw
+//     on a weak agent's invalid graph (byte-identical to today).
+//   - FLAGS-ON  → tier fed the SERVER-RESOLVED value (resolveCapabilityClass),
+//     NOT userParams.capabilityClass (the spoofing surface T-174-SPOOF/T-173-03).
+// ---------------------------------------------------------------------------
+
+describe("graph mutate — gated server-side capabilityClass feed (AUTHOR-01)", () => {
+  it("Test 1 (FLAGS-OFF byte-identical): repairProducer absent → a weak agent's invalid graph still throws Phase-157 (tier fed undefined)", async () => {
+    const emit = vi.fn();
+    // The agent is weak, but the gate is OFF — the tier must NOT be resolved.
+    const resolveCapabilityClass = vi.fn(() => "small" as CapabilityClass);
+    const handlers = bindGraphMutateHandlers(
+      makeDeps({ emit, resolveCapabilityClass, repairMatch: MATCH_DEBATE /* no authoringConfig */ }),
+    );
+
+    // FLAGS-OFF: the invalid graph hits the capable direct path → throws.
+    await expect(
+      handlers["graph.define"]!({ nodes: CYCLIC_NODES, _agentId: "weakbot" }),
+    ).rejects.toThrow(/Graph validation failed/);
+    // The tier resolver was NEVER consulted for the buildGraphInput feed
+    // (the only call would be the pipeline:authored emit, which reads it
+    // separately — but with the gate off buildGraphInput got undefined, proven
+    // by the Phase-157 throw above and the absence of any repair).
+    expect(repairedPayloads(emit)).toHaveLength(0);
+  });
+
+  it("Test 2 (server-side resolution): repairProducer ON + weak agent + invalid graph → REPAIRED via the server-resolved tier (not userParams)", async () => {
+    const emit = vi.fn();
+    const resolveCapabilityClass = vi.fn(() => "small" as CapabilityClass);
+    const handlers = bindGraphMutateHandlers(
+      makeDeps({ emit, resolveCapabilityClass, authoringConfig: FLAGS_ON, repairMatch: MATCH_DEBATE }),
+    );
+
+    // The invalid graph is repaired (resolves, does NOT throw).
+    const result = await handlers["graph.define"]!({ nodes: CYCLIC_NODES, _agentId: "weakbot" });
+    expect(result).toMatchObject({ valid: true });
+    // The tier was resolved SERVER-SIDE from the raw _agentId.
+    expect(resolveCapabilityClass).toHaveBeenCalledWith("weakbot");
+    // graph:repaired fired (the weak tier reached the repair branch).
+    expect(repairedPayloads(emit)).toHaveLength(1);
+  });
+
+  it("Test 3 (spoofing ignored): a tool-supplied capabilityClass='frontier' on a weak agent is IGNORED — the real (weak) tier still routes to repair", async () => {
+    const emit = vi.fn();
+    // The SERVER resolves the agent as weak; the TOOL claims frontier.
+    const resolveCapabilityClass = vi.fn(() => "small" as CapabilityClass);
+    const handlers = bindGraphMutateHandlers(
+      makeDeps({ emit, resolveCapabilityClass, authoringConfig: FLAGS_ON, repairMatch: MATCH_DEBATE }),
+    );
+
+    // Tool-supplied capabilityClass:"frontier" must NOT skip repair.
+    const result = await handlers["graph.execute"]!({
+      nodes: CYCLIC_NODES,
+      capabilityClass: "frontier", // the spoof
+      _agentId: "weakbot",
+    });
+    expect(result).toMatchObject({ async: true });
+    // Repair STILL fired → the tool param was ignored, the server tier (weak) won.
+    expect(repairedPayloads(emit)).toHaveLength(1);
+  });
+
+  it("Test 4 (FLAGS-ON, capable agent unaffected): a frontier agent's invalid graph still throws (no repair) — repair is weak-only", async () => {
+    const emit = vi.fn();
+    const resolveCapabilityClass = vi.fn(() => "frontier" as CapabilityClass);
+    const handlers = bindGraphMutateHandlers(
+      makeDeps({ emit, resolveCapabilityClass, authoringConfig: FLAGS_ON, repairMatch: MATCH_DEBATE }),
+    );
+
+    // A capable tier never routes to repair, even flag-on → the capable throw.
+    await expect(
+      handlers["graph.define"]!({ nodes: CYCLIC_NODES, _agentId: "strongbot" }),
+    ).rejects.toThrow(/Graph validation failed/);
+    expect(repairedPayloads(emit)).toHaveLength(0);
   });
 });
