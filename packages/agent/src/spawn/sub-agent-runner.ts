@@ -683,6 +683,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           task: run.task,
           runtimeMs: runningDurationMs,
           runId,
+          callerSessionKey: run.callerSessionKey,  // DELIVERY-03: shared dedup key
         // eslint-disable-next-line no-restricted-syntax -- intentional fire-and-forget
         }, deps).catch(() => { /* deliverFailureNotification already handles errors internally */ });
       }
@@ -1421,6 +1422,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
               task: params.task,
               runtimeMs,
               runId,
+              callerSessionKey: params.callerSessionKey,  // DELIVERY-03: shared dedup key
             }, deps);
           }
         } else if (params.announceChannelType && params.announceChannelId) {
@@ -1586,6 +1588,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
             task: params.task,
             runtimeMs,
             runId,
+            callerSessionKey: params.callerSessionKey,  // DELIVERY-03: shared dedup key
           }, deps);
         } else {
           // Log explicit reason when failure announcement cannot be routed
@@ -1693,6 +1696,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           task: params.task,
           runtimeMs,
           runId,
+          callerSessionKey: params.callerSessionKey,  // DELIVERY-03: shared dedup key
         // eslint-disable-next-line no-restricted-syntax -- intentional fire-and-forget
         }, deps).catch(() => { /* deliverFailureNotification already handles errors internally */ });
       }
