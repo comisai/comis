@@ -134,6 +134,42 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
     sessionKey: rawParams._callerSessionKey as string | undefined,
   });
 
+  // AUTHOR-02 (Phase 174-04): best-effort audit emit for a from_intent synthesis
+  // (mirrors emitPipelineAuthored's WR-01 guard — telemetry never breaks the
+  // measured op). Counts/ids/closed-enums ONLY (pattern + GOVERNED node count +
+  // correlation ids; NEVER the graph body / node task / one-line intent — §2.7).
+  // Called AFTER buildGraphInput + validateTypeConfigs, so it reflects a GOVERNED graph.
+  const emitGraphSynthesized = (
+    pattern: "research-fanout" | "debate" | "vote" | "map-reduce",
+    nodeCount: number,
+    rawParams: Record<string, unknown>,
+  ): void => {
+    try {
+      deps.eventBus?.emit("graph:synthesized_from_intent", {
+        pattern,
+        nodeCount,
+        agentId: rawParams._agentId as string | undefined,
+        sessionKey: rawParams._callerSessionKey as string | undefined,
+        timestamp: systemNowMs(),
+      });
+    } catch (err) {
+      deps.logger?.warn(
+        {
+          err,
+          pattern,
+          errorKind: "internal" as const,
+          hint: "graph:synthesized_from_intent audit emit failed (likely an obs-buffer SQLite flush throw); the synthesized graph proceeds unaffected",
+        },
+        "from-intent synthesis audit emit failed (best-effort)",
+      );
+    }
+  };
+
+  /** The closed set of canonical from_intent patterns (mirrors the synthesizer). */
+  const SYNTH_PATTERNS = ["research-fanout", "debate", "vote", "map-reduce"] as const;
+  const isSynthPattern = (v: string): v is (typeof SYNTH_PATTERNS)[number] =>
+    (SYNTH_PATTERNS as readonly string[]).includes(v);
+
   return {
     [GraphDefineContract.method]: async (rawParams) => {
       // Bespoke pre-Zod validation FIRST (preserves user-friendly error
@@ -204,7 +240,31 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
         throw new Error("Agent-to-agent messaging is disabled by policy.");
       }
 
+      // AUTHOR-02 (Phase 174-04): read the from_intent marker BEFORE the strip
+      // (mirrors the _agentId/_callerSessionKey precedent — internal fields are
+      // read from rawParams, not userParams). The marker is an in-band signal
+      // the from_intent tool action sets so the daemon can GATE + AUDIT the
+      // synthesis at this chokepoint (the synthesizer runs in the skills tool,
+      // separated from this handler by JSON-RPC, so the signal must travel
+      // in-band on the rpcCall).
+      const synthPattern = rawParams._synthesizedFromIntent as string | undefined;
+      // FLAGS-OFF refusal (D-GATED-OFF / T-174-INTENT-GATE): refuse a from_intent
+      // dispatch when orchestration.authoring.intentAction is off, BEFORE any
+      // graph runs. A non-from_intent execute (no marker) is wholly unaffected —
+      // byte-identical to pre-174.
+      if (synthPattern && !deps.authoringConfig?.intentAction) {
+        throw new Error(
+          "from_intent authoring is disabled by policy (orchestration.authoring.intentAction).",
+        );
+      }
+
       const userParams = stripInternalFields(rawParams);
+      // M-1 (T-174-MARKER-LEAK): _synthesizedFromIntent is NOT in
+      // INTERNAL_FIELD_NAMES (a single-use graph-handler-local marker, not a
+      // shared dispatcher field), and GraphExecuteContract.request is a loose
+      // z.record — so the strip alone leaves it on userParams → it would reach
+      // buildGraphInput. Remove it explicitly so it never reaches the graph builder.
+      delete userParams._synthesizedFromIntent;
       // WR-02 (Phase 173 review): unlike graph.define, GraphExecuteContract is a
       // LOOSE z.record(z.string(), z.unknown()) — it accepts essentially any
       // object, so a present-but-malformed authoring call does NOT throw here.
@@ -230,6 +290,13 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
       }
       emitPipelineAuthored("execute", true, rawParams);
       validateTypeConfigs(validated.graph, deps.nodeTypeRegistry);
+
+      // AUTHOR-02 (Phase 174-04): emit the synthesis audit AFTER governance
+      // succeeded, so it reflects a GOVERNED graph (T-174-SYNTH-EMIT best-effort).
+      // Only when the marker was set AND intentAction is on (FLAGS-OFF already threw).
+      if (synthPattern && deps.authoringConfig?.intentAction && isSynthPattern(synthPattern)) {
+        emitGraphSynthesized(synthPattern, validated.graph.nodes.length, rawParams);
+      }
 
       // Apply user-variable substitution if variables provided
       const variables = userParams.variables as Record<string, string> | undefined;
