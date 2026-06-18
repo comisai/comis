@@ -11,6 +11,7 @@
 
 import { parseFormattedSessionKey, type SessionKey, type TypedEventBus, systemNowMs, systemSetTimeout, systemClearTimeout, systemScheduleTimeout } from "@comis/core";
 import { withTimeout } from "@comis/shared";
+import { createDeliveryDedup, type DeliveryDedup } from "@comis/agent";
 
 /** Hard timeout for announceToParent calls (300 seconds / 5 minutes).
  *  Parent agents may call slow tools (image generation at 120s, web search, etc.)
@@ -80,6 +81,14 @@ export interface AnnouncementBatcherDeps {
   maxRetries?: number;
   /** Typed event bus for the counts/ids-only delivery_retried / delivery_deadlettered events (§2.7). */
   eventBus?: Pick<TypedEventBus, "emit">;
+  /**
+   * Shared, BOUNDED delivered-key store (WR-02/WR-03). When injected by the
+   * daemon wiring, the SAME instance is also handed to the no-batcher success
+   * branches (`deliverAnnouncement`) and the failure path / DLQ recovery, so
+   * every completion-delivery surface dedups against one set. Absent → the
+   * batcher owns an internal bounded dedup (still capped — never leaks).
+   */
+  deliveryDedup?: DeliveryDedup;
 }
 
 export interface AnnouncementBatcher {
@@ -194,11 +203,14 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
   // (the documented at-least-once-across-restart boundary — the DLQ bounds
   // cross-restart re-delivery by runId/attemptCount/maxAgeMs). Marked ONLY on a
   // successful send (Pitfall 3) so a transient failure can still be retried.
-  const deliveredKeys = new Set<string>();
+  // WR-03: BOUNDED (FIFO) so it never leaks for the daemon lifetime — uses the
+  // injected shared dedup when present (WR-01/02: the no-batcher success
+  // branches + DLQ recovery mark the SAME set), else an internal bounded one.
+  const deliveredKeys: DeliveryDedup = deps.deliveryDedup ?? createDeliveryDedup();
 
   /** DELIVERY-01: mark a delivered item's key (no-op for undefined-keyed / top-level spawns). Call ONLY after a successful send. */
   function markDeliveredIfKeyed(item: QueuedAnnouncement): void {
-    if (item.idempotencyKey) deliveredKeys.add(item.idempotencyKey);
+    if (item.idempotencyKey) deliveredKeys.mark(item.idempotencyKey);
   }
 
   /** AGENTS §2.2: no raw setTimeout — sleep via the sanctioned systemScheduleTimeout. */
@@ -304,7 +316,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
     for (const item of queued) {
       const k = item.idempotencyKey;
       if (k !== undefined) {
-        if (deliveredKeys.has(k) || seen.has(k)) {
+        if (deliveredKeys.has(k) || seen.has(k)) { // WR-03: bounded dedup lookup
           deps.logger?.debug(
             { runId: item.runId, hint: "duplicate delivery suppressed" },
             "Announcement dedup no-op",
@@ -518,7 +530,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
     },
     hasDelivered: (key: string) => deliveredKeys.has(key),
     markDelivered: (key: string) => {
-      deliveredKeys.add(key);
+      deliveredKeys.mark(key);
     },
   };
 }

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createAnnouncementBatcher, sanitizeForUser, type AnnouncementBatcherDeps, type QueuedAnnouncement } from "./announcement-batcher.js";
+import { createDeliveryDedup, MAX_DELIVERED_KEYS } from "@comis/agent";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -333,6 +334,64 @@ describe("AnnouncementBatcher idempotent delivery (DELIVERY-01)", () => {
     await vi.advanceTimersByTimeAsync(2000);
 
     expect(deps.announceToParent).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WR-03: the delivered-key set must be BOUNDED. Every successful keyed delivery
+// adds a `${callerSessionKey}::${runId}` string and nothing evicted it for the
+// daemon lifetime — a leak over a 40-hour autonomous run spawning thousands of
+// sub-agents. The set must be capped like its siblings (runs MAX_RUNS, the DLQ
+// maxEntries). Also: the batcher must accept an INJECTED shared DeliveryDedup so
+// the no-batcher success branches + DLQ recovery can mark the SAME set (WR-01/02).
+// ---------------------------------------------------------------------------
+
+describe("AnnouncementBatcher deliveredKeys bounding (WR-03)", () => {
+  it("does not grow the delivered-key set without bound when an injected dedup is capped", () => {
+    const cap = 16;
+    const dedup = createDeliveryDedup(cap);
+    const deps = makeDeps({ deliveryDedup: dedup });
+    const batcher = createAnnouncementBatcher(deps);
+
+    // Drive far more distinct keys than the cap straight through the public
+    // markDelivered seam (the success paths funnel through the same sink).
+    for (let i = 0; i < cap * 50; i++) batcher.markDelivered(`default:u:c::run-${i}`);
+
+    // The shared set is bounded — it never exceeds the cap.
+    expect(dedup.size).toBe(cap);
+    // And the most-recent key is retained (FIFO evicts oldest, not newest).
+    expect(batcher.hasDelivered(`default:u:c::run-${cap * 50 - 1}`)).toBe(true);
+    expect(batcher.hasDelivered("default:u:c::run-0")).toBe(false);
+  });
+
+  it("uses an injected DeliveryDedup as the shared delivered-key store", () => {
+    const dedup = createDeliveryDedup();
+    const deps = makeDeps({ deliveryDedup: dedup });
+    const batcher = createAnnouncementBatcher(deps);
+
+    // A key marked directly on the shared dedup is visible to the batcher...
+    dedup.mark("X");
+    expect(batcher.hasDelivered("X")).toBe(true);
+    // ...and a key marked via the batcher is visible on the shared dedup
+    // (this is what lets the no-batcher success branches + DLQ recovery share it).
+    batcher.markDelivered("Y");
+    expect(dedup.has("Y")).toBe(true);
+  });
+
+  it("self-bounds the delivered-key set even when no dedup is injected (default cap)", () => {
+    // Without injection the batcher owns an internal bounded dedup; a default
+    // construction must still not leak. We can only observe the public surface,
+    // so assert the OLDEST key is eventually evicted after >MAX_DELIVERED_KEYS adds.
+    const deps = makeDeps();
+    const batcher = createAnnouncementBatcher(deps);
+
+    batcher.markDelivered("first-key");
+    for (let i = 0; i < MAX_DELIVERED_KEYS + 5; i++) batcher.markDelivered(`bulk-${i}`);
+
+    // The very first key has been evicted (set is bounded, FIFO), proving the
+    // internal set does not grow without limit.
+    expect(batcher.hasDelivered("first-key")).toBe(false);
+    expect(batcher.hasDelivered(`bulk-${MAX_DELIVERED_KEYS + 4}`)).toBe(true);
   });
 });
 
