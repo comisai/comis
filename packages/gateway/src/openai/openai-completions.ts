@@ -379,6 +379,7 @@ export function createOpenaiCompletionsRoute(
       });
 
       // Turn completed — emit the per-turn diagnostic (resolve + obs). Non-streaming path.
+      emitTurnDiagnostic(deps, { result, sessionKey, completionId, receivedAt });
 
       const completion: ChatCompletion = {
         id: completionId,
