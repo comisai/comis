@@ -66,8 +66,16 @@ export interface GraphStateMachine {
   /** Transition a "running" node to "failed". Returns skipped and newly ready node IDs.
    *  When the node is retry-eligible, the optional priorSessionKey is stashed on
    *  the node state so the retry spawn can re-use the aborted attempt's session,
-   *  letting Anthropic cache amortize across retries. */
-  markNodeFailed(nodeId: string, error: string, priorSessionKey?: string): Result<FailureResult, string>;
+   *  letting Anthropic cache amortize across retries.
+   *  `options.terminal: true` forces a NON-RETRYABLE failure: the retry branch is
+   *  skipped even when retries remain. Used for per-node token-budget breaches —
+   *  a retry would only re-burn the budget (BUDGET-02, D2). */
+  markNodeFailed(
+    nodeId: string,
+    error: string,
+    priorSessionKey?: string,
+    options?: { terminal?: boolean },
+  ): Result<FailureResult, string>;
 
   /** Get current state of a specific node. */
   getNodeState(nodeId: string): NodeExecutionState | undefined;
@@ -428,7 +436,12 @@ export function createGraphStateMachine(validated: ValidatedGraph): GraphStateMa
     return ok(newlyReady);
   }
 
-  function markNodeFailed(nodeId: string, error: string, priorSessionKey?: string): Result<FailureResult, string> {
+  function markNodeFailed(
+    nodeId: string,
+    error: string,
+    priorSessionKey?: string,
+    options?: { terminal?: boolean },
+  ): Result<FailureResult, string> {
     const state = getState(nodeId);
     if (!state) {
       return err(`Node "${nodeId}" not found`);
@@ -437,9 +450,11 @@ export function createGraphStateMachine(validated: ValidatedGraph): GraphStateMa
       return err(`Cannot transition node "${nodeId}" from "${state.status}" to "failed"`);
     }
 
-    // Check retry eligibility BEFORE setting failed
+    // Check retry eligibility BEFORE setting failed. A terminal failure (e.g. a
+    // per-node token-budget breach, D2) bypasses retry even when retries remain —
+    // re-running would only re-burn the budget.
     const remaining = state.retriesRemaining ?? 0;
-    if (remaining > 0) {
+    if (remaining > 0 && !options?.terminal) {
       // Transition back to ready instead of failed
       state.status = "ready";
       state.error = error;              // preserve last error for observability

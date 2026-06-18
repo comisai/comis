@@ -48,6 +48,7 @@ function makeGraphRunState(overrides?: Partial<GraphRunState>): GraphRunState {
     waitHandlers: new Map(),
     syntheticRunResults: new Map(),
     nodeCacheData: new Map(),
+    nodeTokenSpend: new Map(),
     ...overrides,
   };
 }
@@ -64,6 +65,7 @@ function makeConfig(overrides?: Partial<CoordinatorConfig>): CoordinatorConfig {
   return {
     maxConcurrency: 10,
     maxResultLength: 12000,
+    subAgentTokenBudget: null,
     graphRetentionMs: 3600000,
     maxGlobalSubAgents: 20,
     maxParallelSpawns: 10,

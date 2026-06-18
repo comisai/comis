@@ -3287,6 +3287,7 @@ describe("createGraphCoordinator", () => {
         waitHandlers: new Map(),
         syntheticRunResults: new Map(),
         nodeCacheData: new Map(),
+        nodeTokenSpend: new Map(),
         ...overrides,
       };
 
