@@ -27,6 +27,7 @@ import { withTimeout } from "@comis/shared";
 import { mkdir, readdir, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { AnnouncementBatcher, AnnouncementDeadLetterQueue } from "./announcement-ports.js";
+import { buildAnnounceKey } from "./announce-key.js";
 import { ANNOUNCE_PARENT_TIMEOUT_MS, type SubAgentRunnerDeps, type SubAgentRunnerLogger } from "./sub-agent-runner.js";
 
 // ---------------------------------------------------------------------------
@@ -507,11 +508,11 @@ export async function deliverAnnouncement(params: {
 }): Promise<void> {
   const { announceChannelType, announceChannelId, callerAgentId, callerSessionKey, runId } = params;
 
-  // DELIVERY-01: build the idempotency key ONCE here, thread it as data through
-  // the batcher and the dead-letter entry — never reconstruct it downstream.
-  // `::` delimits the session key's own single colons (callerSessionKey is the
-  // formatted form, e.g. `default:user1:chan1`). Undefined for a top-level spawn.
-  const announceKey = callerSessionKey ? `${callerSessionKey}::${runId}` : undefined;
+  // DELIVERY-01 / INFO-DRY: build the idempotency key ONCE here via the shared
+  // helper (single source of truth — the failure path uses the same builder),
+  // then thread it as data through the batcher and the dead-letter entry; never
+  // reconstruct it downstream. Undefined for a top-level spawn (no callerSessionKey).
+  const announceKey = buildAnnounceKey(callerSessionKey, runId);
 
   // Scrub announcement text before any delivery path (batcher, parent, or direct channel).
   const announceScrub = scrubSecretsFromText(params.announcementText);
@@ -632,13 +633,14 @@ export async function deliverFailureNotification(
     `Runtime: ${(params.runtimeMs / 1000).toFixed(1)}s`,
   ].join("\n");
 
-  // DELIVERY-03: build the SAME idempotency key as the success path
-  // (deliverAnnouncement:514) and dedup against the SAME deliveredKeys set
-  // (reached via the batcher's hasDelivered/markDelivered, D-SHAREDDEDUP).
-  // A Phase-170 budget-failed node routes here; its failure-key == its
-  // success-key, so a second sweep does not double-notify. Undefined for a
-  // top-level spawn (no callerSessionKey) → no dedup, behaves as today.
-  const announceKey = params.callerSessionKey ? `${params.callerSessionKey}::${params.runId}` : undefined;
+  // DELIVERY-03 / INFO-DRY: build the SAME idempotency key as the success path
+  // via the shared `buildAnnounceKey` helper (one source of truth — divergence
+  // would silently break the cross-path dedup) and dedup against the SAME
+  // deliveredKeys set (reached via the batcher's hasDelivered/markDelivered,
+  // D-SHAREDDEDUP). A Phase-170 budget-failed node routes here; its failure-key
+  // == its success-key, so a second sweep does not double-notify. Undefined for
+  // a top-level spawn (no callerSessionKey) → no dedup, behaves as today.
+  const announceKey = buildAnnounceKey(params.callerSessionKey, params.runId);
   if (announceKey && deps.batcher?.hasDelivered(announceKey)) {
     deps.logger?.debug({
       runId: params.runId,
