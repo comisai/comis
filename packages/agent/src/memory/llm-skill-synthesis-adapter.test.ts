@@ -113,6 +113,36 @@ describe("createLlmSkillSynthesisAdapter (SKILL-02)", () => {
     expect(res.value).toEqual([]);
   });
 
+  it("DIAGNOSABLE: a non-thrown stopReason:error response → err + WARNs the model (live-2026-06-18, same class as the judge)", async () => {
+    // pi-ai does NOT throw on an API error (e.g. a retired model id 404) — it RETURNS
+    // {stopReason:"error", content:[], errorMessage}. Pre-fix the adapter read the empty
+    // content as 0 candidates (ok([])) with NO warn, so a broken synthesis model silently
+    // produced no skills forever. It must now WARN naming the model + return err (skip the
+    // cluster), exactly like a thrown call — the judge precedent.
+    const logger = { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    (completeSimple as Mock).mockResolvedValue({
+      role: "assistant",
+      content: [],
+      stopReason: "error",
+      errorMessage: '404 {"type":"error","error":{"type":"not_found_error","message":"model: claude-3-5-sonnet-latest"}}',
+    });
+    const adapter = createLlmSkillSynthesisAdapter({
+      provider: "anthropic",
+      modelId: "claude-x",
+      apiKey: "sk-test",
+      clock: { now: () => SCOPE.now },
+      logger,
+    });
+
+    const res = await adapter.synthesize(makeInput());
+
+    expect(res.ok).toBe(false);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ errorKind: "dependency", step: "synthesize", model: expect.stringContaining("claude-x") }),
+      expect.stringContaining("error/empty response"),
+    );
+  });
+
   it("returns ok([]) for a schema-mismatched envelope (no throw)", async () => {
     (completeSimple as Mock).mockResolvedValue(
       textResponse(JSON.stringify({ skills: [{ totally: "wrong", shape: true }] })),
