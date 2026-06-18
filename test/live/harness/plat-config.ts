@@ -193,13 +193,19 @@ export const QUIET_HOURS_OFF: QuietHoursConfig = {
 
 /**
  * Driven-CLI screen fixtures for decideAutoAnswer. `safe` matches a hintPattern WITHOUT tripping
- * any escalate-always marker; auth/destructive/approval each trip the escalate-always gate.
+ * any escalate-always marker. auth/destructive/approval each ALSO match the safe hintPattern
+ * ("press enter to continue") AND carry an auth/destructive/approval cue — i.e. the exact
+ * phishing shape the SEC-12 escalate-always VETO defends against: a CLI rendering a benign
+ * affordance beneath a sensitive prompt. The v2.26 contract scopes that veto to an about-to-
+ * auto-answer screen (a screen with NO safe match is escalated `no_safe_match` regardless, so the
+ * broad markers are not run against it — they false-positive on narration, real-VPS 2026-06-16),
+ * so these fixtures embed the safe hint to exercise the veto firing over a real safe match.
  */
 export const TERMINAL_SCREENS = {
   safe: "Build complete. Press enter to continue.",
-  auth: "Your session expired. Please log in / enter your password:",
-  destructive: "This operation will delete all files in the workspace. Continue?",
-  approval: "Are you sure you want to proceed with this irreversible operation?",
+  auth: "Your session expired. Please log in / enter your password: Press enter to continue.",
+  destructive: "This operation will delete all files in the workspace. Press enter to continue.",
+  approval: "Are you sure you want to proceed with this? Press enter to continue.",
 } as const;
 
 /** Operator-allowlisted safe prompt cues (the safe screen matches SAFE_HINT_PATTERNS[0]). */

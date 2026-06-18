@@ -6,13 +6,16 @@
  * design line 343 / MEDIA-04). Its decision function `shouldAutoTts` (from @comis/skills)
  * is pure and keyless — the four modes' voice/text delivery decisions are fully assertable
  * in the sandbox, including the "always + media-response ⇒ deliver the image, don't voice
- * it over" interaction. `createImageGenProvider` returns ok(undefined) when the key is
- * absent — the sandbox-honest "image-gen disabled" path. Real "draw X"→image lives behind
- * COMIS_LIVE via the image.* RPC.
+ * it over" interaction. For `fal`, `createImageGenProvider` returns ok(undefined) when the
+ * key is absent — the sandbox-honest "image-gen disabled" path. Since the 185 FOLD (v2.23)
+ * `openai` is no longer a skills-factory provider (it routes through the daemon's `openai-images`
+ * registered pi-ai transport), so a `provider:"openai"` config hits the factory's error branch.
+ * Real "draw X"→image lives behind COMIS_LIVE via the image.* RPC.
  *
  * Stage-A (always runs): autoMode + image-gen provider constants.
  * Stage-B (always runs, no daemon): shouldAutoTts delivery decisions ×4 (incl. always+media
- *   and tagged-strip) + createImageGenProvider key-gating ⇒ ok(undefined).
+ *   and tagged-strip) + createImageGenProvider key-gating (fal ⇒ ok(undefined); openai folded
+ *   out in the 185 FOLD ⇒ err).
  * Stage-C (it.skip, COMIS_LIVE + keys): real {fal,openai} "draw X" → delivered image.
  *
  * There is NO media:image_generated event and NO image-gen autoMode — assertions are on
@@ -121,9 +124,10 @@ describe("IMAGE-GEN Stage-B — autoMode delivery decisions + image-gen key-gati
     ).toBe(false);
   });
 
-  it("createImageGenProvider key-gates to ok(undefined) when no key present (fal + openai)", () => {
+  it("createImageGenProvider key-gates fal to ok(undefined) when no key; openai is folded out (185 FOLD) ⇒ err", () => {
     const secretManager = { get: () => undefined } as unknown as SecretManager;
 
+    // fal: the legacy skills factory still serves it — no FAL_KEY ⇒ graceful ok(undefined).
     const falResult = createImageGenProvider(
       { provider: "fal" } as unknown as ImageGenerationConfig,
       secretManager,
@@ -131,12 +135,15 @@ describe("IMAGE-GEN Stage-B — autoMode delivery decisions + image-gen key-gati
     expect(falResult.ok).toBe(true);
     if (falResult.ok) expect(falResult.value).toBeUndefined();
 
+    // openai: removed from this factory in the 185 FOLD (v2.23) — explicit `openai` now routes
+    // through the daemon's `openai-images` registered pi-ai transport, so the skills factory
+    // reports it as an unknown provider (err), not ok(undefined).
     const openaiResult = createImageGenProvider(
       { provider: "openai" } as unknown as ImageGenerationConfig,
       secretManager,
     );
-    expect(openaiResult.ok).toBe(true);
-    if (openaiResult.ok) expect(openaiResult.value).toBeUndefined();
+    expect(openaiResult.ok).toBe(false);
+    if (!openaiResult.ok) expect(openaiResult.error.message).toContain("Unknown image generation provider");
   });
 });
 
