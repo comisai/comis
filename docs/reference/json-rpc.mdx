@@ -3818,7 +3818,7 @@ Sub-agent lifecycle management: list running sub-agents, kill stuck executions, 
 |--------|-------|-------------|
 | `subagent.list` | `admin` | List recent sub-agent runs |
 | `subagent.kill` | `admin` | Kill a running sub-agent |
-| `subagent.steer` | `admin` | Inject a steering message into a running sub-agent |
+| `subagent.steer` | `admin` | Steer a running sub-agent -- inject a message into the live child (flag on) or kill+respawn (flag off, default) |
 
 ### `subagent.list`
 
@@ -3885,8 +3885,15 @@ Sub-agent lifecycle management: list running sub-agents, kill stuck executions, 
 | Property | Value |
 |----------|-------|
 | **Scope** | `admin` |
-| **Parameters** | `{ target: string, message: string }` -- inject a user-turn message into the sub-agent's conversation |
-| **Returns** | Steer confirmation |
+| **Parameters** | `{ target: string, message: string }` -- `target` is the runId; `message` is the steering text |
+| **Returns** | A discriminated union on `status` (see below) |
+
+Behavior is gated on [`security.agentToAgent.steerInject`](/reference/config-yaml#security) (default `false`):
+
+- **Flag off (default)** -- kills the running child and respawns a fresh run with `message` as the new task. Returns `{ status: "steered", oldRunId, newRunId }`. The child's transcript and progress are discarded.
+- **Flag on** -- injects `message` into the *running* child's live session at its next step boundary, preserving the transcript and prior work (no kill, no respawn -- the same runId continues). Returns `{ status: "steered_inject", runId }`. The message lands as a user turn after the current step commits (it does not interrupt a tool call mid-execution).
+
+Rate-limited to one steer per `target` every 2 seconds (shared across both modes). A steered message is a message, not a capability grant: the child's tool set is fixed at spawn, so a steered request for a tool on the sub-agent tool denylist is still refused (the [defense-in-depth](/security/defense-in-depth) governance applies regardless of message source).
 
 </Accordion>
 
