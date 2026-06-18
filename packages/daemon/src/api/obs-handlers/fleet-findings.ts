@@ -19,6 +19,7 @@
  * @module
  */
 import type { DiagnosticRow } from "@comis/memory";
+import type { PipelineAuthoringAggregate } from "@comis/observability";
 
 /** One report finding. Shape-identical to `FleetHealthReport.findings[number]`. */
 export interface Finding {
@@ -204,29 +205,20 @@ function pipelineAuthoringFromRow(row: DiagnosticRow): { tier: string; schemaVal
 
 /**
  * TELEM-01 (Plan 173-03): the pipeline-authoring aggregate the Phase-174 gate
- * (Plan 04's `pipelineAuthoringGate`) consumes — computed compute-on-read over the
- * windowed `health_signal` rows (no persisted rollup; Open Q2 / D-AGGREGATE).
+ * (`pipelineAuthoringGate`) consumes — computed compute-on-read over the windowed
+ * `health_signal` rows (no persisted rollup; Open Q2 / D-AGGREGATE).
  *
- * PROVISIONAL: declared LOCALLY here at Plan 03. Plan 04 makes `@comis/observability`
- * the single source of this type and this file then IMPORTS it (MEDIUM-4) — the
- * field NAMES + ORDER below MUST match Plan 04's `PipelineAuthoringAggregate`
- * EXACTLY (`smallTierInvocations`, `smallTierValidRate`, `frontierValidRate`) so the
- * swap is mechanical.
+ * The `PipelineAuthoringAggregate` type is now SINGLE-SOURCED in
+ * `@comis/observability` (Plan 173-04, MEDIUM-4) — the provisional local
+ * interface declared here at Plan 03 was deleted and this file imports the
+ * canonical type (see the top-of-file `import type`). The field NAMES + ORDER
+ * (`smallTierInvocations`, `smallTierValidRate`, `frontierValidRate`) are
+ * unchanged — the swap is structural.
  *
  * The small/local tier = capabilityClass "small" OR "nano" (D-TIER); frontier =
  * "frontier". "mid" and "unknown" rows are in NEITHER cohort (they are not the
  * comparison tiers). Rates are 0 (never NaN) when the cohort is empty.
- */
-export interface PipelineAuthoringAggregate {
-  /** Count of small|nano rows. */
-  smallTierInvocations: number;
-  /** (small|nano rows where schemaValid===true) / smallTierInvocations; 0 when smallTierInvocations===0. */
-  smallTierValidRate: number;
-  /** (frontier rows where schemaValid===true) / frontier total; 0 when no frontier rows. */
-  frontierValidRate: number;
-}
-
-/**
+ *
  * Reduce the windowed `health_signal` rows to the `PipelineAuthoringAggregate`.
  * PURE — no I/O, no globals, no Date.now(); malformed / non-pipeline rows fold out
  * (counted in neither cohort, never throws). Exported so Plan 04 / fleet-health.ts

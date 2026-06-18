@@ -124,6 +124,20 @@ export const FleetHealthReportSchema = z.object({
       billing: z.object({ present: z.boolean() }),
     })
     .optional(),
+  /**
+   * TELEM-02: the pre-committed pipeline-authoring decision verdict (gates Phase
+   * 174). Optional (schemaVersion stays 1) — additive; pre-existing constructors
+   * omit it. Declared INLINE here because core depends only on shared (it cannot
+   * import the observability package — that would invert the dep graph + trip the
+   * cycle gate); the daemon assigns the observability `PipelineAuthoringVerdict`,
+   * structurally `{buildAuthor, reason}`, into this field. Counts/boolean verdict
+   * only — no body/secret. Without this field the non-strict z.object STRIPS the
+   * verdict on parse, so it never reaches the operator (T-173-12 Tampering — the
+   * round-trip test proves it).
+   */
+  pipelineAuthoringGate: z
+    .object({ buildAuthor: z.boolean(), reason: z.string() })
+    .optional(),
 });
 
 /** The `obs.fleet.health` response (the cross-session fleet digest). Inferred from the Zod schema. */
