@@ -306,6 +306,34 @@ describe("createSubagentHandlers", () => {
       expect(deps.eventBus!.emit).not.toHaveBeenCalled();
     });
 
+    // WR-03 (175-REVIEW.md §2.7): the inject-failure branch is a path an operator
+    // must diagnose, so before the throw it must log a WARN carrying an
+    // operator-actionable hint + errorKind (the success branch already logs INFO
+    // + emits an event; failure had only the raw thrown string).
+    it("on steerRun failure, logs a WARN with an actionable hint + errorKind before throwing (does NOT leak the message body)", async () => {
+      mockRunningRun("run-warn");
+      vi.mocked(deps.subAgentRunner.steerRun).mockResolvedValue({
+        steered: false,
+        error: "No live session for run run-warn — cannot inject (use kill, or the run is not running).",
+      });
+
+      await expect(
+        handlers["subagent.steer"]!({ target: "run-warn", message: "secret steer body" }),
+      ).rejects.toThrow("No live session for run run-warn");
+
+      expect(deps.logger!.warn).toHaveBeenCalledTimes(1);
+      const [obj, msg] = vi.mocked(deps.logger!.warn).mock.calls[0]!;
+      expect(obj).toMatchObject({
+        runId: "run-warn",
+        agentId: "researcher",
+        errorKind: "precondition",
+      });
+      expect((obj as { hint?: unknown }).hint).toEqual(expect.stringMatching(/subagent\.list|kill\+respawn|live/i));
+      expect(typeof msg).toBe("string");
+      // No leak of the steer message body into the WARN.
+      expect(JSON.stringify({ obj, msg })).not.toContain("secret steer body");
+    });
+
     it("throws 'Unknown run ID' when getRunStatus returns undefined (flag-on)", async () => {
       vi.mocked(deps.subAgentRunner.getRunStatus).mockReturnValue(undefined);
 
@@ -314,6 +342,40 @@ describe("createSubagentHandlers", () => {
       ).rejects.toThrow("Unknown run ID: run-ghost");
       expect(deps.subAgentRunner.steerRun).not.toHaveBeenCalled();
     });
+
+    // WR-02 (175-REVIEW.md): the inject path must mirror killRun's status guard.
+    // getRunStatus returns a run for ANY status inside the retention window, so a
+    // completed/failed/queued target would otherwise proceed to steerRun, find no
+    // live handle, and throw the generic "No live session" — a worse, less
+    // actionable error than kill's "is not running (status: X)".
+    it.each(["completed", "failed", "queued"] as const)(
+      "throws an actionable status error (not the generic 'No live session') for a %s run, and does NOT call steerRun",
+      async (status) => {
+        vi.mocked(deps.subAgentRunner.getRunStatus).mockReturnValue({
+          runId: `run-${status}`,
+          status,
+          agentId: "researcher",
+          task: "t",
+          sessionKey: `default:sub-agent-run-${status}:sub-agent:run-${status}`,
+          startedAt: Date.now() - 5_000,
+          ...(status === "completed" || status === "failed"
+            ? { completedAt: Date.now() }
+            : {}),
+        } as ReturnType<typeof deps.subAgentRunner.getRunStatus>);
+
+        await expect(
+          handlers["subagent.steer"]!({ target: `run-${status}`, message: "adjust" }),
+        ).rejects.toThrow(
+          `Run run-${status} is not running (status: ${status}) — cannot steer; use kill+respawn instead.`,
+        );
+
+        // The inject mechanism must NOT run for a non-running target.
+        expect(deps.subAgentRunner.steerRun).not.toHaveBeenCalled();
+        expect(deps.subAgentRunner.killRun).not.toHaveBeenCalled();
+        expect(deps.subAgentRunner.spawn).not.toHaveBeenCalled();
+        expect(deps.eventBus!.emit).not.toHaveBeenCalled();
+      },
+    );
   });
 
   describe("STEER-01 — the 2s rate limit is shared across both flag settings", () => {

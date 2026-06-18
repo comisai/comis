@@ -131,8 +131,34 @@ export function createSubagentHandlers(deps: SubagentHandlerDeps): Record<string
         if (!run) {
           throw new Error(`Unknown run ID: ${target}`);
         }
+        // WR-02: mirror killRun's status guard (sub-agent-runner.ts:1910-1912).
+        // getRunStatus returns a run for ANY status still inside the retention
+        // window; a steer aimed at a completed/failed/queued run has no live
+        // handle, so fail fast with an actionable status-named error instead of
+        // proceeding to the generic "No live session" throw from steerRun.
+        if (run.status !== "running") {
+          throw new Error(
+            `Run ${target} is not running (status: ${run.status}) — cannot steer; use kill+respawn instead.`,
+          );
+        }
         const steerResult = await deps.subAgentRunner.steerRun(target, message);
         if (!steerResult.steered) {
+          // WR-03 (§2.7): the inject-failure branch is a path an operator must
+          // diagnose. Log a WARN with an actionable hint + errorKind before the
+          // throw (which the @allow-throw dispatcher converts to a JSON-RPC
+          // error) — never the steer message body. The success branch already
+          // logs INFO + emits subagent:steered; this gives the failure branch
+          // the matching observability so `comis explain` / daemon.log can
+          // distinguish a no-live-handle miss from a finished run.
+          deps.logger?.warn(
+            {
+              runId: target,
+              agentId: run.agentId,
+              hint: "Steer could not reach a live child session; the run may have finished or its SDK handle was not registered under the resolved key — verify with subagent.list, or use kill+respawn",
+              errorKind: "precondition" as const,
+            },
+            "Sub-agent steer inject failed (no live session)",
+          );
           throw new Error(steerResult.error!);
         }
         // Counts/ids/mode only — NEVER the steer message body (AGENTS.md §2.7).
