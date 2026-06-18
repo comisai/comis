@@ -10,7 +10,10 @@
  * a terminal completion, a typed-driver lifecycle phase, and (BUDGET-03) a
  * per-node token-budget breach. `pipeline:authored` (P1/TELEM-01) is the
  * authoring half of the same graph subsystem — a counts-only signal per
- * `pipeline` tool invocation.
+ * `pipeline` tool invocation. `graph:repaired` (P2/AUTHOR-01) and
+ * `graph:synthesized_from_intent` (P2/AUTHOR-02) are the audit half — one
+ * counts-only signal per conservative repair / intent-synthesis (the producers
+ * the P1 `repaired` flag documented as deferred).
  *
  * Counts / ids / typed enums ONLY — NEVER task text, sub-agent output, or
  * response bodies. The breach event (`subagent:budget_exceeded`) carries the
@@ -156,6 +159,47 @@ export interface OrchestrationEvents {
     schemaValid: boolean;
     /** P1: ALWAYS false (the repair producer is deferred to Phase 174 / AUTHOR-01). */
     repaired: boolean;
+    agentId?: string;
+    sessionKey?: string;
+    timestamp: number;
+  };
+
+  /**
+   * AUTHOR-01 (v2.27 P2, Phase 174): a weak-model + schema-invalid pipeline graph
+   * was conservatively REPAIRED to a canonical template (deterministic
+   * template-match + fillDagTemplate). Emitted DAEMON-SIDE (the graph-helpers.ts
+   * repair path, Plan 03) — the producer the P1 `pipeline:authored.repaired` flag
+   * documented as deferred. Counts/ids/enums ONLY — NEVER the graph body, task
+   * text, type_config value, or a secret (AGENTS.md §2.7). `pattern` is the matched
+   * canonical template (closed enum); the repaired graph then flows through the
+   * SAME governance as a hand-authored one. Every payload is reconstructable from
+   * the bus alone.
+   */
+  "graph:repaired": {
+    /** The matched canonical template (closed enum). */
+    pattern: "research-fanout" | "debate" | "vote" | "map-reduce";
+    /** Node count of the repaired graph. */
+    nodeCount: number;
+    /** Calling agent's resolved tier (server-side; "unknown" when unmapped — record honestly, never silently drop). */
+    capabilityClass: "frontier" | "mid" | "small" | "nano" | "unknown";
+    agentId?: string;
+    sessionKey?: string;
+    timestamp: number;
+  };
+
+  /**
+   * AUTHOR-02 (v2.27 P2, Phase 174): a graph was SYNTHESIZED from a one-line intent
+   * via the `from_intent` action (deterministic canonical-template expansion).
+   * Emitted DAEMON-SIDE (Plan 04). Counts/ids/enums ONLY — NEVER the intent text,
+   * agent names, or task bodies (AGENTS.md §2.7); the intent text is the highest-risk
+   * leak and is intentionally absent. The synthesized graph flows through the SAME
+   * governance as a hand-authored one (it is never executed directly).
+   */
+  "graph:synthesized_from_intent": {
+    /** The requested canonical pattern (closed enum). */
+    pattern: "research-fanout" | "debate" | "vote" | "map-reduce";
+    /** Node count of the synthesized graph. */
+    nodeCount: number;
     agentId?: string;
     sessionKey?: string;
     timestamp: number;
