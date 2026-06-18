@@ -22,6 +22,7 @@ import { writeRegularFile } from "@comis/observability";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { interpolateTaskText, buildContextEnvelope } from "./template-interpolation.js";
 import { gatedSpawn } from "./graph-concurrency.js";
+import { resolveNodeBudget, applyNodeBudgetBreach, emitSkipsAndSpawnReady } from "./graph-node-budget.js";
 import type {
   CoordinatorSharedState,
   GraphCoordinatorDeps,
@@ -200,7 +201,7 @@ export function markNodeFailed(
 export function spawnNode(
   state: CoordinatorSharedState,
   deps: Pick<GraphCoordinatorDeps, "subAgentRunner" | "eventBus" | "logger" | "defaultAgentId" | "nodeTypeRegistry">,
-  config: Pick<CoordinatorConfig, "maxResultLength" | "maxGlobalSubAgents">,
+  config: Pick<CoordinatorConfig, "maxResultLength" | "maxGlobalSubAgents" | "subAgentTokenBudget">,
   gs: GraphRunState,
   nodeId: string,
   callbacks: {
@@ -297,6 +298,9 @@ export function spawnNode(
       agentId: node.agentId ?? deps.defaultAgentId,
       model: node.model,
       max_steps: node.maxSteps,
+      // BUDGET-01/02 (D3): per-node token cap → the child's BudgetGuard per-execution
+      // cap (mid-run hard stop). Pairs with the post-hoc node-fail in handleSubAgentCompleted.
+      tokenBudget: resolveNodeBudget(gs, nodeId, config.subAgentTokenBudget),
       callerSessionKey: gs.callerSessionKey,
       callerAgentId: gs.callerAgentId,
       callerType: "graph",
@@ -546,8 +550,8 @@ export function startDriverNode(
  */
 export function handleSubAgentCompleted(
   state: CoordinatorSharedState,
-  deps: Pick<GraphCoordinatorDeps, "subAgentRunner" | "eventBus" | "logger" | "sendToChannel" | "touchParentSession">,
-  config: Pick<CoordinatorConfig, "maxResultLength">,
+  deps: Pick<GraphCoordinatorDeps, "subAgentRunner" | "eventBus" | "logger" | "sendToChannel" | "touchParentSession" | "defaultAgentId">,
+  config: Pick<CoordinatorConfig, "maxResultLength" | "subAgentTokenBudget">,
   gs: GraphRunState,
   event: { runId: string; success: boolean; tokensUsed?: number; cost?: number; cacheReadTokens?: number; cacheWriteTokens?: number },
   callbacks: {
@@ -608,8 +612,21 @@ export function handleSubAgentCompleted(
     } catch { /* best-effort, don't block graph progress */ }
   }
 
+  // 5d. Per-node spend + node-first breach (BUDGET-02/03; D5 — BEFORE the step-6
+  // state transition so a breaching SUCCESSFUL run ends `failed`, not `completed`,
+  // and BEFORE the cumulative check at step 6.6). Records nodeTokenSpend always.
+  const budgetBreach = applyNodeBudgetBreach(
+    deps, config, gs, nodeId, event.tokensUsed ?? 0, run?.sessionKey,
+  );
+
   // 6. Synchronous state machine update
-  if (event.success) {
+  if (budgetBreach.breached) {
+    // The node was already failed terminally by applyNodeBudgetBreach. Reuse the
+    // shared cascade handling (skip-emit + spawn newly-ready) for its FailureResult.
+    if (budgetBreach.failResult) {
+      emitSkipsAndSpawnReady(deps, gs, budgetBreach.failResult, callbacks.spawnReadyNodes);
+    }
+  } else if (event.success) {
     const result = gs.stateMachine.markNodeCompleted(nodeId, output);
     if (!result.ok) {
       deps.logger?.warn(
@@ -678,20 +695,7 @@ export function handleSubAgentCompleted(
         gs.retryTimers.set(retryNodeId, retryTimer);
       }
     } else if (result.ok) {
-      for (const skippedId of result.value.skipped) {
-        if (!gs.skippedNodesEmitted.has(skippedId)) {
-          gs.skippedNodesEmitted.add(skippedId);
-          deps.eventBus.emit("graph:node_updated", {
-            graphId: gs.graphId,
-            nodeId: skippedId,
-            status: "skipped" as const,
-            timestamp: systemNowMs(),
-          });
-        }
-      }
-      if (result.value.newlyReady.length > 0) {
-        queueMicrotask(() => callbacks.spawnReadyNodes(gs));
-      }
+      emitSkipsAndSpawnReady(deps, gs, result.value, callbacks.spawnReadyNodes);
     }
   }
 
@@ -721,6 +725,10 @@ export function handleSubAgentCompleted(
       status: nodeCompleted ? "completed" as const : "failed" as const,
       durationMs: finalNodeState?.startedAt ? systemNowMs() - finalNodeState.startedAt : undefined,
       error: nodeCompleted ? undefined : (run?.error ?? "Unknown error"),
+      // BUDGET-03: per-node spend on the transition event (additive; undefined when
+      // the completion omits them — byte-identical shape otherwise).
+      tokensUsed: event.tokensUsed,
+      cost: event.cost,
       timestamp: systemNowMs(),
     });
   }

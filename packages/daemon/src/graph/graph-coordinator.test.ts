@@ -112,6 +112,7 @@ interface SimpleNode {
   agentId?: string;
   model?: string;
   maxSteps?: number;
+  tokenBudget?: number;
   timeoutMs?: number;
   barrierMode?: "all" | "majority" | "best-effort";
   retries?: number;
@@ -129,6 +130,7 @@ function buildGraph(nodes: SimpleNode[], opts?: Partial<ExecutionGraph>): Valida
       agentId: n.agentId,
       model: n.model,
       maxSteps: n.maxSteps,
+      ...(n.tokenBudget !== undefined && { tokenBudget: n.tokenBudget }),
       timeoutMs: n.timeoutMs,
       ...(n.barrierMode !== undefined && { barrierMode: n.barrierMode }),
       retries: n.retries ?? 0,
@@ -1380,12 +1382,15 @@ describe("createGraphCoordinator", () => {
       const completedEvents: Array<Record<string, unknown>> = [];
       eventBus.on("graph:completed", (p) => completedEvents.push(p as unknown as Record<string, unknown>));
 
-      // A -> B -> C with token budget of 100
+      // A -> B -> C with token budget of 100. Explicit per-node tokenBudget:1000
+      // on each node so the D3 inherit-share (floor(100/3)=33) does NOT pre-empt
+      // the cumulative path — A's 60 and B's 50 each stay within their own cap, but
+      // together (110 > 100) trip the CUMULATIVE graph abort this test exercises.
       const graph = buildGraph(
         [
-          { nodeId: "A" },
-          { nodeId: "B", dependsOn: ["A"] },
-          { nodeId: "C", dependsOn: ["B"] },
+          { nodeId: "A", tokenBudget: 1000 },
+          { nodeId: "B", dependsOn: ["A"], tokenBudget: 1000 },
+          { nodeId: "C", dependsOn: ["B"], tokenBudget: 1000 },
         ],
         { budget: { maxTokens: 100 } },
       );
