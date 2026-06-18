@@ -3225,7 +3225,7 @@ describe("attachTrajectoryToEventBus -- dedup events", () => {
 // ---------------------------------------------------------------------------
 
 describe("health:budget_exceeded entry (bridge entry count guard)", () => {
-  it("bridge entry count is exactly 97 (+3 T2.2 background_task promoted/completed/failed; +2 D3 breaker + 1 D7 offload Phase 151; +1 session:summary Phase 152; +1 context:budget_computed W2; +1 execution:tool_schema_unsupported Phase 175; +2 OBS-01 script signals Phase 180; +2 RECALL-01 memory:recalled/reranked; +1 GENQ-01 memory:generation_quality; +4 OBS-04 image:* Phase 186; +3 media.vision:* VIS-04 Phase 187; +5 video:* OBS-04 Phase 192; +6 voice media.stt/tts:* OBS-02/03 Phase 196; +1 OUTCOME-08 learning:outcome_observed v2.26 Phase 198; +3 RANK-06/FORGET-06 memory:online_tuning_applied + learning:memory_demoted/evicted v2.26 Phase 200; +2 SKILL-09 learning:skill_synthesized/skill_validated v2.26 Phase 201; +2 SURFACE-06 learning:skill_promoted/demoted v2.26 Phase 202; +2 REVISE-/GENERAL- learning:user_model_revised/memory_generalized v2.26 Phase 203)", () => {
+  it("bridge entry count is exactly 98 (+3 T2.2 background_task promoted/completed/failed; +2 D3 breaker + 1 D7 offload Phase 151; +1 session:summary Phase 152; +1 context:budget_computed W2; +1 execution:tool_schema_unsupported Phase 175; +2 OBS-01 script signals Phase 180; +2 RECALL-01 memory:recalled/reranked; +1 GENQ-01 memory:generation_quality; +4 OBS-04 image:* Phase 186; +3 media.vision:* VIS-04 Phase 187; +5 video:* OBS-04 Phase 192; +6 voice media.stt/tts:* OBS-02/03 Phase 196; +1 OUTCOME-08 learning:outcome_observed v2.26 Phase 198; +3 RANK-06/FORGET-06 memory:online_tuning_applied + learning:memory_demoted/evicted v2.26 Phase 200; +2 SKILL-09 learning:skill_synthesized/skill_validated v2.26 Phase 201; +2 SURFACE-06 learning:skill_promoted/demoted v2.26 Phase 202; +2 REVISE-/GENERAL- learning:user_model_revised/memory_generalized v2.26 Phase 203; +1 TELEM-01 pipeline:authored v2.27 Phase 173)", () => {
     // 55 + tool:breaker_opened + tool:breaker_reset (D3) + tool:result_offloaded (D7)
     // + session:summary (F2/D5, Phase 152)
     // + execution:tool_schema_unsupported (GBNF-02, Phase 175 Plan 05)
@@ -3257,7 +3257,12 @@ describe("health:budget_exceeded entry (bridge entry count guard)", () => {
     //   Verified Learning WS6/WS7, Phase 203 Plan 05 — APPEND-ONLY; the daemon-side user-model-
     //   revision + generalization telemetry, COUNTS ONLY (superseded/corroborated/inserted +
     //   generalized/clustersConsidered), NEVER a profile / memory body / entry id — SEC-01).
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(97);
+    // + pipeline:authored (TELEM-01, v2.27 P1, Phase 173 Plan 01 — APPEND-ONLY; the
+    //   authoring-telemetry signal, counts/enums/booleans ONLY (action/capabilityClass/
+    //   schemaValid/repaired), NEVER a pipeline body / type_config value / node task — §2.7.
+    //   Mapping reserves the type for arch closure; the live per-session recordEvent emit is
+    //   a deferred follow-up — getRecorder is not reachable on the graph-handler deps at P1).
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(98);
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {

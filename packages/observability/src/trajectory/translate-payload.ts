@@ -261,6 +261,10 @@ export function translatePayload(
         formatViolation: payload.formatViolation,
       };
 
+    // TELEM-01: authoring action + tier + schema-validity/repaired flags. Closed enums + booleans ONLY — never a pipeline body, type_config value, or node task; agentId/sessionKey stripped (§2.7 / H1). repaired is P1-inert.
+    case "pipeline:authored":
+      return { action: payload.action, capabilityClass: payload.capabilityClass, schemaValid: payload.schemaValid, repaired: payload.repaired };
+
     case "learning:outcome_observed":
       // OUTCOME-08: trajectoryId + closed-enum outcome/source + numeric confidence ONLY (no body/alpha/recalled ids; agentId/sessionKey/traceId are envelope ids — §2.7 / SEC-01).
       return { trajectoryId: payload.trajectoryId, outcome: payload.outcome, source: payload.source, confidence: payload.confidence };

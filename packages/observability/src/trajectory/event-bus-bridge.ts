@@ -95,6 +95,17 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // enums + booleans — H1); the source/generated body never crosses the bus.
   "memory:generation_quality": "memory.generation_quality",
 
+  // TELEM-01 (v2.27 P1, Phase 173): a `pipeline` tool invocation was authored —
+  // counts-only (action / capabilityClass tier / schemaValid / repaired). Mapped
+  // here for trajectory-type ARCH closure (every EventMap member is mapped-or-
+  // allowlisted) and to reserve the `pipeline.authored` trajectory type. The live
+  // per-session recordEvent emit is a DEFERRED follow-up: at P1 `getRecorder` is
+  // NOT reachable on the graph-handler deps (it rides the image-handler slice, not
+  // the createGraphHandlers spread) — the P1 path is the FLEET aggregate (Plan
+  // 03/04), which needs only eventBus. Content-free (closed enums + booleans —
+  // H1); no pipeline body / type_config value / node task crosses the bus.
+  "pipeline:authored": "pipeline.authored",
+
   // OUTCOME-08 (v2.26 Verified Learning WS1): a finished trajectory's resolved net
   // task-outcome, emitted DAEMON-SIDE after OutcomeSignalPort.resolve (learningOutcome.
   // enabled-gated, default OFF). DAEMON emit (NOT agent/orchestrator) so the arch

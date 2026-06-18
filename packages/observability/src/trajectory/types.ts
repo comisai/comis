@@ -106,6 +106,17 @@ export const TRAJECTORY_EVENT_TYPES = [
   "learning.user_model_revised",
   "learning.memory_generalized",
 
+  // TELEM-01 (v2.27 P1, Phase 173): a `pipeline` tool invocation was authored —
+  // the reserved trajectory type for the counts-only pipeline:authored event
+  // (action / capabilityClass tier / schemaValid / repaired). Mirrors the
+  // memory.generation_quality triple. Content-free: closed enums + booleans ONLY,
+  // never a pipeline body / type_config value / node task (§2.7 / H1). The bridge
+  // mapping reserves this type for arch closure (every EventMap member is
+  // mapped-or-allowlisted); the live per-session recordEvent emit is a documented
+  // deferred follow-up (getRecorder is not reachable on the graph-handler deps at
+  // P1 — the FLEET aggregate, Plan 03/04, is the P1 deliverable).
+  "pipeline.authored",
+
   // Background task lifecycle (T2.2 / F9): promote/complete/fail of a long-running tool
   // detached past the execute() boundary (content-free — ids + durationMs only).
   "background_task.promoted",
