@@ -49,6 +49,26 @@ describe("resolveNodeBudget — precedence (D3)", () => {
     expect(resolveNodeBudget(gs, "n1", null)).toBe(3_333); // floor(10000/3)
   });
 
+  // WR-01 (170-REVIEW): the inherit-share floor(maxTokens / nodeCount) must be
+  // clamped to >= 1. When maxTokens < nodeCount the raw floor is 0, which would
+  // flow as the child's per-execution cap (checkBudget breaches on the FIRST
+  // call — the child can never run a single step) AND make applyNodeBudgetBreach
+  // terminal-fail every node with "exceeded (N > 0)". Clamp at 1 so an
+  // under-provisioned graph budget yields a tight-but-usable cap, never 0.
+  it("WR-01: inherit-share clamps to >= 1 when maxTokens < nodeCount (never a 0 cap)", () => {
+    const gs = makeGs({
+      nodes: [{ nodeId: "n1" }, { nodeId: "n2" }, { nodeId: "n3" }],
+      graphBudget: { maxTokens: 2 }, // floor(2/3) = 0 on the old code
+    });
+    expect(resolveNodeBudget(gs, "n1", null)).toBe(1);
+  });
+
+  it("WR-01: inherit-share clamps to 1 for a huge graph where maxTokens rounds to 0", () => {
+    const nodes = Array.from({ length: 100 }, (_, i) => ({ nodeId: `n${i}` }));
+    const gs = makeGs({ nodes, graphBudget: { maxTokens: 50 } }); // floor(50/100) = 0 on the old code
+    expect(resolveNodeBudget(gs, "n0", null)).toBe(1);
+  });
+
   it("undefined (unbounded) when no node budget, no operator default, no graph budget", () => {
     const gs = makeGs({ nodes: [{ nodeId: "n1" }] });
     expect(resolveNodeBudget(gs, "n1", null)).toBeUndefined();

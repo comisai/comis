@@ -30,7 +30,10 @@ import type { GraphRunState } from "./graph-coordinator-state.js";
  *  2. else the operator default `security.agentToAgent.tokenBudget`
  *     (`subAgentTokenBudget`, when not null).
  *  3. else the inherit-share `floor(graphBudget.maxTokens / total node count)`
- *     ONLY when a graph budget is set.
+ *     ONLY when a graph budget is set. WR-01: clamped to >= 1 — when maxTokens
+ *     < nodeCount the raw floor is 0, which would brick the node (checkBudget
+ *     breaches on the first call; applyNodeBudgetBreach terminal-fails it). A
+ *     clamp to 1 yields a tight-but-usable cap, never a silent all-nodes-brick.
  *  4. else `undefined` — unbounded (byte-identical to today).
  */
 export function resolveNodeBudget(
@@ -43,7 +46,9 @@ export function resolveNodeBudget(
   if (subAgentTokenBudget !== null) return subAgentTokenBudget;
   const graphMax = gs.graph.graph.budget?.maxTokens;
   const total = gs.graph.graph.nodes.length;
-  if (graphMax !== undefined && total > 0) return Math.floor(graphMax / total);
+  // WR-01: Math.max(1, …) — never round the share down to a 0 cap that bricks
+  // every node when the graph budget is smaller than the node count.
+  if (graphMax !== undefined && total > 0) return Math.max(1, Math.floor(graphMax / total));
   return undefined; // unbounded — byte-identical to today
 }
 
