@@ -237,9 +237,20 @@
             {
               "const": "outputs",
               "type": "string"
+            },
+            {
+              "const": "from_intent",
+              "type": "string"
             }
           ],
-          "description": "Pipeline action (default: execute). Valid values: define (validate graph structure), execute (run pipeline), status (check graph state), cancel (terminate running graph), save (persist named graph), load (retrieve saved graph), list (enumerate saved graphs), delete (soft-delete saved graph), outputs (retrieve node results)"
+          "description": "Pipeline action (default: execute). Valid values: define (validate graph structure), execute (run pipeline), status (check graph state), cancel (terminate running graph), save (persist named graph), load (retrieve saved graph), list (enumerate saved graphs), delete (soft-delete saved graph), outputs (retrieve node results), from_intent (synthesize a multi-agent graph from a one-line intent: a pattern + a few agent/task names — then run it)"
+        },
+        "agents": {
+          "description": "from_intent: agent names for the pattern's roles — debate: [PRO, CON] (e.g. [\"bull\", \"bear\"]); vote: the voter pool; map-reduce: the mapper pool.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "budget": {
           "description": "Resource budget limits for the graph",
@@ -539,12 +550,44 @@
           ],
           "description": "Failure strategy (default: fail-fast). Valid values: fail-fast (abort pipeline on first error), continue (skip failed node, proceed)"
         },
+        "pattern": {
+          "anyOf": [
+            {
+              "const": "research-fanout",
+              "type": "string"
+            },
+            {
+              "const": "debate",
+              "type": "string"
+            },
+            {
+              "const": "vote",
+              "type": "string"
+            },
+            {
+              "const": "map-reduce",
+              "type": "string"
+            }
+          ],
+          "description": "from_intent: the canonical multi-agent pattern to synthesize. research-fanout (N researchers → synthesize), debate (pro vs con → moderator), vote (N voters → aggregate), map-reduce (N mappers → reduce)."
+        },
         "recent_minutes": {
           "description": "Include graphs from last N minutes (for status listing)",
           "type": "integer"
         },
+        "rounds": {
+          "description": "from_intent: optional number of rounds (reserved; accepted for debate/collaborate-style patterns).",
+          "type": "integer"
+        },
         "settings": {
           "description": "Graph settings object"
+        },
+        "tasks": {
+          "description": "from_intent: the topic/task the synthesized graph works on (tasks[0] fills the TOPIC/TASK slot). Use instead of, or alongside, agents.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "timeout_ms": {
           "description": "Overall graph timeout in milliseconds (default: 1500000 — 25 minutes). Heuristic: estimate ~3 minutes per node, double for debate/collaborate rounds. Multi-phase pipelines with debate rounds typically need 25-30 minutes. Do NOT lower below the default unless the graph is trivially small (2-3 simple nodes).",
