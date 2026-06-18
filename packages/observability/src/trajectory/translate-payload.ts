@@ -22,6 +22,7 @@
  */
 
 import type { TrajectoryBridgedEventName } from "./event-bus-bridge.js";
+import { translateOrchestrationPayload } from "./translate-orchestration-payload.js";
 import { translateVideoPayload } from "./translate-video-payload.js";
 import { translateVisionPayload } from "./translate-vision-payload.js";
 import { translateVoicePayload } from "./translate-voice-payload.js";
@@ -261,15 +262,12 @@ export function translatePayload(
         formatViolation: payload.formatViolation,
       };
 
-    // v2.27 authoring telemetry/audit family (TELEM-01 + AUTHOR-01/02): closed enums + numbers/booleans ONLY — NEVER a pipeline/graph body, type_config value, node task, or the synthesis INTENT TEXT (the highest-risk leak); agentId/sessionKey stripped (§2.7 / H1). pipeline:authored.repaired is P1-inert.
+    // ---- v2.27 authoring / sub-agent orchestration (TELEM-01 + AUTHOR-01/02 + STEER-01) ---- delegated to translate-orchestration-payload.ts (file-size split, Phase 175; content-free + envelope-stripped — closed enums + numbers/booleans + a run id ONLY, never a graph body, the synthesis INTENT TEXT, or the steer MESSAGE BODY; §2.7 / H1).
     case "pipeline:authored":
-      return { action: payload.action, capabilityClass: payload.capabilityClass, schemaValid: payload.schemaValid, repaired: payload.repaired };
-    case "graph:repaired": // AUTHOR-01: matched canonical template + repaired-graph nodeCount + tier
-      return { pattern: payload.pattern, nodeCount: payload.nodeCount, capabilityClass: payload.capabilityClass };
-    case "graph:synthesized_from_intent": // AUTHOR-02: requested pattern + synthesized-graph nodeCount (no intent text)
-      return { pattern: payload.pattern, nodeCount: payload.nodeCount };
-    case "subagent:steered": // STEER-01 (175): the steered runId + the closed-union mode (steer|followup) ONLY — NEVER the steer message body (the highest-risk leak); agentId/timestamp are envelope-only and stripped (the graph:repaired precedent).
-      return { runId: payload.runId, mode: payload.mode };
+    case "graph:repaired":
+    case "graph:synthesized_from_intent":
+    case "subagent:steered":
+      return translateOrchestrationPayload(eventName, payload);
 
     case "learning:outcome_observed": // OUTCOME-08: trajectoryId + closed-enum outcome/source + numeric confidence ONLY (no body/alpha/recalled ids; agentId/sessionKey/traceId envelope-only — §2.7 / SEC-01).
       return { trajectoryId: payload.trajectoryId, outcome: payload.outcome, source: payload.source, confidence: payload.confidence };
