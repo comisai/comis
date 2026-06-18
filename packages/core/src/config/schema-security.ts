@@ -52,6 +52,8 @@ const AgentToAgentBaseSchema = z.strictObject({
     graphMaxResultLength: z.number().int().positive().optional(),
     /** Cross-graph global sub-agent cap (max concurrent sub-agents across all graphs) */
     graphMaxGlobalSubAgents: z.number().int().positive().optional(),
+    /** Per-spawn token budget for graph sub-agents (BUDGET-01/03). null (default) = inherit the graph share (graphBudget.maxTokens / total node count) ONLY when a graph budget is set; else unbounded (today's behavior, byte-identical). A graph node's own tokenBudget overrides this. */
+    tokenBudget: z.number().int().positive().nullable().default(null),
   });
 
 export const AgentToAgentConfigSchema = AgentToAgentBaseSchema.extend({
