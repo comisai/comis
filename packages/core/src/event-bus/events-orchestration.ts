@@ -54,6 +54,14 @@ export interface OrchestrationEvents {
     tokenBudget: number;
     /** The node's actual run token spend. */
     tokensUsed: number;
+    /**
+     * IN-02: which resolution source produced the breached cap (D3 precedence) —
+     * the node's own `tokenBudget`, the operator default
+     * `security.agentToAgent.tokenBudget`, or the graph-budget inherit-share. A
+     * closed-union enum tag (counts/ids-only, safe under §2.7) so an operator can
+     * tell WHICH knob bound the node, not just THAT it was bounded.
+     */
+    capSource: "node" | "operator-default" | "inherit-share";
     timestamp: number;
   };
 

@@ -141,6 +141,42 @@ describe("applyNodeBudgetBreach", () => {
       expect.stringContaining("Budget-fail node transition failed"),
     );
   });
+
+  // IN-02 (170-REVIEW): the breach event + WARN must name WHICH cap source
+  // bound the node (the node's own tokenBudget / the operator default / the
+  // inherit-share) so an operator can tell why a node was bounded. capSource is
+  // a closed-union enum tag — counts/ids-only, safe under §2.7.
+  describe("IN-02: capSource names the resolution source on breach", () => {
+    function findBreach(deps: ReturnType<typeof makeDeps>) {
+      const emit = deps.eventBus.emit as unknown as ReturnType<typeof vi.fn>;
+      return emit.mock.calls.find((c) => c[0] === "subagent:budget_exceeded");
+    }
+
+    it("capSource = 'node' when the node's own tokenBudget fired", () => {
+      const gs = makeGs({ nodes: [{ nodeId: "n1", tokenBudget: 1_000 }], graphBudget: { maxTokens: 9_000 } });
+      const deps = makeDeps();
+      applyNodeBudgetBreach(deps, { subAgentTokenBudget: 4_000 }, gs, "n1", 5_000);
+      expect(findBreach(deps)![1]).toMatchObject({ capSource: "node" });
+      expect(deps.logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ capSource: "node" }),
+        expect.stringContaining("token budget exceeded"),
+      );
+    });
+
+    it("capSource = 'operator-default' when the operator default fired", () => {
+      const gs = makeGs({ nodes: [{ nodeId: "n1" }], graphBudget: { maxTokens: 9_000 } });
+      const deps = makeDeps();
+      applyNodeBudgetBreach(deps, { subAgentTokenBudget: 2_000 }, gs, "n1", 5_000);
+      expect(findBreach(deps)![1]).toMatchObject({ capSource: "operator-default", tokenBudget: 2_000 });
+    });
+
+    it("capSource = 'inherit-share' when the graph-budget share fired", () => {
+      const gs = makeGs({ nodes: [{ nodeId: "n1" }, { nodeId: "n2" }], graphBudget: { maxTokens: 6_000 } });
+      const deps = makeDeps();
+      applyNodeBudgetBreach(deps, { subAgentTokenBudget: null }, gs, "n1", 5_000); // share = 3_000
+      expect(findBreach(deps)![1]).toMatchObject({ capSource: "inherit-share", tokenBudget: 3_000 });
+    });
+  });
 });
 
 describe("emitSkipsAndSpawnReady", () => {

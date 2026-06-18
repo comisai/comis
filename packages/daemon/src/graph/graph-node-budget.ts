@@ -41,15 +41,39 @@ export function resolveNodeBudget(
   nodeId: string,
   subAgentTokenBudget: number | null,
 ): number | undefined {
+  return resolveNodeBudgetWithSource(gs, nodeId, subAgentTokenBudget).budget;
+}
+
+/**
+ * IN-02: which resolution source produced a node's effective per-node cap (D3).
+ * A closed union mirrored onto the `subagent:budget_exceeded` event payload so a
+ * breach names WHICH knob bound the node.
+ */
+export type NodeBudgetSource = "node" | "operator-default" | "inherit-share";
+
+/**
+ * Resolve the effective per-node budget AND the source that produced it (D3).
+ * Single source of truth for the precedence; {@link resolveNodeBudget} returns
+ * just the number, {@link applyNodeBudgetBreach} also reports `source` so the
+ * breach event/WARN name the exact resolution knob (IN-02). `source` is
+ * `undefined` only when `budget` is `undefined` (the unbounded path).
+ */
+export function resolveNodeBudgetWithSource(
+  gs: GraphRunState,
+  nodeId: string,
+  subAgentTokenBudget: number | null,
+): { budget: number | undefined; source: NodeBudgetSource | undefined } {
   const node = gs.graph.graph.nodes.find((n) => n.nodeId === nodeId);
-  if (node?.tokenBudget !== undefined) return node.tokenBudget;
-  if (subAgentTokenBudget !== null) return subAgentTokenBudget;
+  if (node?.tokenBudget !== undefined) return { budget: node.tokenBudget, source: "node" };
+  if (subAgentTokenBudget !== null) return { budget: subAgentTokenBudget, source: "operator-default" };
   const graphMax = gs.graph.graph.budget?.maxTokens;
   const total = gs.graph.graph.nodes.length;
   // WR-01: Math.max(1, …) — never round the share down to a 0 cap that bricks
   // every node when the graph budget is smaller than the node count.
-  if (graphMax !== undefined && total > 0) return Math.max(1, Math.floor(graphMax / total));
-  return undefined; // unbounded — byte-identical to today
+  if (graphMax !== undefined && total > 0) {
+    return { budget: Math.max(1, Math.floor(graphMax / total)), source: "inherit-share" };
+  }
+  return { budget: undefined, source: undefined }; // unbounded — byte-identical to today
 }
 
 /** Outcome of the per-node breach check. */
@@ -85,8 +109,9 @@ export function applyNodeBudgetBreach(
   // BUDGET-03: always record per-node spend (present even when no budget resolves).
   gs.nodeTokenSpend.set(nodeId, spend);
 
-  const nodeBudget = resolveNodeBudget(gs, nodeId, config.subAgentTokenBudget);
-  if (nodeBudget === undefined || spend <= nodeBudget || gs.stateMachine.isTerminal()) {
+  // IN-02: resolve the cap AND the knob that produced it so the breach names it.
+  const { budget: nodeBudget, source: capSource } = resolveNodeBudgetWithSource(gs, nodeId, config.subAgentTokenBudget);
+  if (nodeBudget === undefined || capSource === undefined || spend <= nodeBudget || gs.stateMachine.isTerminal()) {
     return { breached: false };
   }
 
@@ -113,15 +138,23 @@ export function applyNodeBudgetBreach(
     agentId: node?.agentId ?? deps.defaultAgentId,
     tokenBudget: nodeBudget,
     tokensUsed: spend,
+    capSource, // IN-02: which knob bound the node (node / operator-default / inherit-share)
     timestamp: systemNowMs(),
   });
+  // IN-02: name the exact knob in the hint so the operator knows WHICH lever to pull.
+  const capHintBySource: Record<NodeBudgetSource, string> = {
+    "node": "the node's own `tokenBudget`",
+    "operator-default": "the operator default `security.agentToAgent.tokenBudget`",
+    "inherit-share": "the graph-budget inherit-share (`budget.maxTokens` ÷ node count)",
+  };
   deps.logger?.warn(
     {
       graphId: gs.graphId,
       nodeId,
       tokenBudget: nodeBudget,
       tokensUsed: spend,
-      hint: "Per-node token budget exceeded; node failed per on_failure. Raise the node's tokenBudget or the graph budget.",
+      capSource,
+      hint: `Per-node token budget exceeded; node failed per on_failure. Cap came from ${capHintBySource[capSource]} — raise that, or the graph budget.`,
       errorKind: "resource" as const,
     },
     "Sub-agent per-node token budget exceeded",
