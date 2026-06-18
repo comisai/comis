@@ -146,6 +146,26 @@ Graphs support resource limits at both the node and graph level:
 - **Graph-level timeout** (`timeout_ms` on the graph) -- cancels all remaining nodes if the entire graph exceeds the time limit
 - **Budget limits** (`budget.max_tokens`, `budget.max_cost`) -- cancels the graph if cumulative token usage or cost across all nodes exceeds the limit
 
+### Token budgets
+
+There are two distinct token guardrails, and they apply at different scopes:
+
+- **Per-node token budget** -- a `tokenBudget` cap on a *single* node's sub-agent. It is enforced two ways: as a live mid-run hard stop (the sub-agent's tool calls are blocked once it has spent its cap) and as a post-completion accounting check. A node that exceeds its budget **fails** -- it is not retried, even when `retries` is set, because a retry would re-burn the budget. The graph's `on_failure` policy then decides the cascade: under `fail-fast` the failure aborts downstream dependents, under `continue` siblings whose barrier is still satisfiable keep running.
+- **Cumulative graph budget** (`budget.max_tokens` / `budget.max_cost`) -- bounds the *total* spend summed across every node, and cancels the whole graph when the total is exceeded.
+
+**Where a node's per-node budget comes from** (first match wins):
+
+1. The node's own `tokenBudget`, when set.
+2. The operator default `security.agentToAgent.tokenBudget` (a positive integer applies the same cap to every node; see [Configuration](/reference/config-yaml#security)).
+3. The **inherited graph share** -- `budget.max_tokens` divided by the total node count -- but only when the graph sets a token budget.
+4. Otherwise **unbounded** -- a graph with no budget set anywhere behaves exactly as before.
+
+The two checks run **in series, node-first**: when a single node's overage *also* tips the cumulative graph budget, that node fails its own budget first, then the graph aborts. This ordering is deterministic -- never a race -- so one runaway sub-agent is contained to its own node rather than silently consuming the entire graph's allowance.
+
+<Note>
+The per-node `tokenBudget` field is present on the graph node schema and is honored by the coordinator. Today it is reached through the operator default and the inherited graph share (above); a dedicated per-node authoring key on the `pipeline` tool is a planned follow-up. To bound an individual node now, set a graph `budget.max_tokens` (each node inherits its share) or the operator default.
+</Note>
+
 ### Graph lifecycle
 
 Every graph follows the same lifecycle:
