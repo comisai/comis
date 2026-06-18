@@ -57,7 +57,7 @@ export type { CadenceTrackerEntry } from "./cadence-tracker.js";
 // When the prefix hash changes on consecutive turns, the cache prefix is unstable
 // and every turn will miss cache reads beyond the system prompt.
 // ---------------------------------------------------------------------------
-export const sessionPrefixStability = new Map<string, { hash: number; fenceIdx: number; consecutiveChanges: number }>();
+export const sessionPrefixStability = new Map<string, { hash: number; fenceIdx: number; consecutiveChanges: number; msgHashes?: number[] }>();
 
 export function clearSessionPrefixStability(sessionKey: string): void {
   sessionPrefixStability.delete(sessionKey);

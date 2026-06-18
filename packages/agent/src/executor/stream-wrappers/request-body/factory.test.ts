@@ -6628,6 +6628,29 @@ describe("fence-aware microcompaction", () => {
       // Changes: turn 2 (#1), turn 3 (#2), turn 4 (#3 triggers warn), turn 5 (#4 triggers warn)
       expect(countUnstableWarns(testLogger)).toBeGreaterThanOrEqual(1);
     });
+
+    it("WARN names the first divergent message index + its poison class (obs retro)", async () => {
+      const testLogger = createMockLogger();
+
+      // Mutate index 2 with a varying DATETIME-PREAMBLE each turn — a cache-poison
+      // class that reaches the diagnostic (unlike the inline-recall block, which
+      // C-FIX-3 strips upstream). The diagnostic must identify WHICH message + WHAT
+      // content class, so the next incident needs no ad-hoc instrumentation.
+      for (let turn = 0; turn < 4; turn++) {
+        const msgs = buildMessages(6);
+        (msgs[2].content as any[])[0].text =
+          `[System context]\n## Current Date & Time\n2026-06-18T16:14:0${turn}.000Z\n[End system context]\n\nsome question`;
+        await invokeWithFence(4, msgs, testLogger);
+      }
+
+      const warn = (testLogger.warn as ReturnType<typeof vi.fn>).mock.calls.find(
+        (c: unknown[]) => typeof c[1] === "string" && c[1].includes("Unstable prefix detected"),
+      );
+      expect(warn).toBeDefined();
+      const payload = warn![0] as Record<string, unknown>;
+      expect(payload.firstDivergentIndex).toBe(2);
+      expect(String(payload.mutationClass)).toContain("datetime-preamble");
+    });
   });
 });
 
