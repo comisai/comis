@@ -68,13 +68,18 @@ const DEFAULT_TOPIC = "the requested task";
  */
 function slotsForPattern(intent: SynthesisIntent): Result<Record<string, string>, string> {
   const topic = intent.tasks?.[0]?.trim() || DEFAULT_TOPIC;
-  const agents = intent.agents ?? [];
+  // IN-02: trim + drop blank entries BEFORE any count/use. A blank agent name
+  // is garbage-in — `["", ""]` would otherwise pass the debate length gate and
+  // fill PRO_AGENT="" / CON_AGENT="" (a "...Agent: " blank-role graph). Filtering
+  // here makes blank agents trip the same "requires 2 agents" err as `[]`, and
+  // keeps the vote/map-reduce pool join free of empty fragments.
+  const agents = (intent.agents ?? []).map((a) => a.trim()).filter(Boolean);
 
   switch (intent.pattern) {
     case "research-fanout":
       return ok({ TOPIC: topic });
     case "debate":
-      // The canonical debate template needs two advocate agents.
+      // The canonical debate template needs two NON-EMPTY advocate agents.
       if (agents.length < 2) {
         return err(
           `debate requires 2 agents (got ${agents.length}) — provide agents: [PRO, CON] (e.g. ["bull", "bear"]).`,

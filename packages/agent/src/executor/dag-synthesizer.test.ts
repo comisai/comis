@@ -130,6 +130,35 @@ describe("synthesizeFromIntent (AUTHOR-02 deterministic intent synthesizer)", ()
   });
 
   // -------------------------------------------------------------------------
+  // IN-02 (174-REVIEW): blank agent names are garbage-in. PRE-FIX `debate`
+  // checked `agents.length < 2` but NOT that the names were non-empty, so
+  // `["", ""]` passed the length gate and filled PRO_AGENT="" / CON_AGENT="",
+  // producing tasks ending "...Agent: " (blank role). The fix trims+filters
+  // empties BEFORE the count check, so blank agents trip the same
+  // "debate requires 2 agents" err as `[]` — never a malformed graph.
+  // -------------------------------------------------------------------------
+  it("IN-02: debate with two EMPTY-string agents → err (blank names fail the 2-agent guard), never a blank-role graph", () => {
+    const r = synthesizeFromIntent({ pattern: "debate", agents: ["", ""] });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error.toLowerCase()).toContain("debate");
+  });
+
+  it("IN-02: debate with whitespace-only agents → err (trimmed to empty, fails the guard)", () => {
+    const r = synthesizeFromIntent({ pattern: "debate", agents: ["   ", "\t\n"] });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error.toLowerCase()).toContain("debate");
+  });
+
+  it("IN-02: debate with one real + one blank agent → err (only one non-empty name)", () => {
+    const r = synthesizeFromIntent({ pattern: "debate", agents: ["bull", "  "] });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error.toLowerCase()).toContain("debate");
+  });
+
+  // -------------------------------------------------------------------------
   // Test 7: the synthesizer is PURE — it returns a graph object and never
   // executes one. The returned value is a plain ExecutionGraph (nodes array),
   // not a run handle / coordinator result.
