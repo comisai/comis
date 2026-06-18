@@ -66,11 +66,31 @@ export interface SteerableRun {
 }
 
 /**
- * Composite key for the resolver lookup. Mirrors `deriveCompositeForRun`
- * (sub-agent-runner.ts:76-87) — duplicated here as a tiny private helper so
- * this leaf module does not import the runner's (large) internals. Single
- * source of truth for the FORMULA is the runner's doc-comment; if it drifts,
- * the 175-00 spike fails loudly.
+ * Composite key for the resolver lookup. MUST compose, via
+ * `BackgroundSessionResolver.formatComposite`, to the EXACT key the executor
+ * registers the live handle under (pi-executor.ts:1152-1156):
+ *
+ *   formatSessionKey({ tenantId: agentId ?? "default",
+ *                      channelId: `${originChannelType}:${msg.channelId}`,
+ *                      userId: msg.channelId })
+ *
+ * where for a sub-agent run `originChannelType = deliveryOrigin?.channelType ??
+ * channelType ?? "gateway"` and `msg.channelId = subSessionKey.channelId` (the
+ * executor ALWAYS receives subSessionKey — sub-agent-runner.ts:1289). So:
+ *   - channelType → run.announceChannelType ?? "gateway"  (the executor's
+ *     originChannelType: announce runs propagate announceChannelType into ALS as
+ *     deliveryOrigin; no-announce runs fall back to "gateway")
+ *   - channelId   → the PARSED sub-session channelId (NOT run.announceChannelId
+ *     — the executor never keys on the announce channelId; it keys on
+ *     subSessionKey.channelId)
+ *
+ * WR-01 (175-REVIEW.md): the prior formula used `"sub-agent"` for channelType
+ * and `run.announceChannelId ?? parsed?.channelId` for channelId, which DIVERGED
+ * from the registration key and made `steerRun` return `{steered:false}` for a
+ * genuinely-running sub-agent (and made the kill/ghost/watchdog abort lookups
+ * silently miss — best-effort there, so latent, but fatal for steer). Mirror the
+ * IDENTICAL formula in sub-agent-runner.ts:`deriveCompositeForRun`; the 175-00
+ * spike (sub-agent-runner.steer-resolve.spike.test.ts) fails loudly on drift.
  */
 function deriveCompositeForRun(run: SteerableRun): {
   agentId: string;
@@ -80,10 +100,20 @@ function deriveCompositeForRun(run: SteerableRun): {
   const parsed = parseFormattedSessionKey(run.sessionKey);
   return {
     agentId: run.agentId,
-    channelType: run.announceChannelType ?? "sub-agent",
-    channelId: run.announceChannelId ?? parsed?.channelId ?? run.sessionKey,
+    channelType: run.announceChannelType ?? "gateway",
+    channelId: parsed?.channelId ?? run.sessionKey,
   };
 }
+
+/**
+ * Test-only alias for the module-private {@link deriveCompositeForRun}. The
+ * 175-00 A1 spike (sub-agent-runner.steer-resolve.spike.test.ts) imports the
+ * REAL formula so a drift between it and the executor registration key
+ * (pi-executor.ts:1152-1156) fails loudly — NOT a reconstructed replica
+ * (WR-01 correction: the old inline replica made the drift guard a tautology).
+ * @internal
+ */
+export const deriveCompositeForRunForTest = deriveCompositeForRun;
 
 /**
  * Dependencies for {@link steerRun}. The resolver/registry are typed to the

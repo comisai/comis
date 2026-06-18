@@ -57,23 +57,35 @@ export const ANNOUNCE_PARENT_TIMEOUT_MS = 300_000;
 
 /**
  * Build the composite-key triple from a SubAgentRun for resolver lookups.
- * Sub-agent runs only carry a formatted `sessionKey` string +
- * `agentId` + optional announce-channel context, so:
- *   - agentId    -> run.agentId
- *   - channelType-> run.announceChannelType ?? "sub-agent"
- *   - channelId  -> run.announceChannelId
- *                   ?? parseFormattedSessionKey(run.sessionKey)?.channelId
- *                   ?? run.sessionKey  (last-resort: the formatted key
- *                                       itself; never empty so the
- *                                       resolver's empty-field guard
- *                                       does not trip)
+ * MUST compose (via BackgroundSessionResolver.formatComposite) to the EXACT key
+ * the executor registers the live handle under (pi-executor.ts:1152-1156):
  *
- * The "sub-agent" channelType fallback acknowledges that production
- * SubAgentRun does not carry the original inbound channelType -- the
- * abort path is best-effort regardless (the SDK session may already be
- * in cleanup), so a no-op when the resolver does not find a handle is
- * acceptable. There is a runtime semantic gap (deviation: composite-key
- * triple vs registered formatted-key shape).
+ *   formatSessionKey({ tenantId: agentId ?? "default",
+ *                      channelId: `${originChannelType}:${msg.channelId}`,
+ *                      userId: msg.channelId })
+ *
+ * where for a sub-agent run `originChannelType = deliveryOrigin?.channelType ??
+ * channelType ?? "gateway"` and `msg.channelId = subSessionKey.channelId` (the
+ * executor ALWAYS receives subSessionKey -- line 1289). So:
+ *   - agentId    -> run.agentId
+ *   - channelType-> run.announceChannelType ?? "gateway"  (announce runs
+ *                   propagate announceChannelType into ALS as deliveryOrigin
+ *                   -- line 1267/1286; no-announce runs default to "gateway")
+ *   - channelId  -> parseFormattedSessionKey(run.sessionKey)?.channelId
+ *                   ?? run.sessionKey  (the PARSED sub-session channelId, NOT
+ *                   run.announceChannelId -- the executor keys on
+ *                   subSessionKey.channelId, never the announce channelId; the
+ *                   last-resort raw key keeps the resolver's empty-field guard
+ *                   from tripping)
+ *
+ * WR-01 (175-REVIEW.md): the prior formula used "sub-agent" for channelType and
+ * `run.announceChannelId ?? parsed?.channelId` for channelId, which DIVERGED
+ * from the registration key. For steer (steer-run.ts) that miss was FATAL
+ * (the inject's whole purpose is to reach the live handle); for the kill /
+ * ghost-sweep / watchdog aborts below it was a silent best-effort no-op
+ * (latent). Aligning the formula fixes steer AND makes those aborts actually
+ * reach the handle. Keep this BYTE-IDENTICAL to steer-run.ts:deriveCompositeForRun
+ * -- the 175-00 spike fails loudly on drift.
  */
 function deriveCompositeForRun(run: SubAgentRun): {
   agentId: string;
@@ -83,8 +95,8 @@ function deriveCompositeForRun(run: SubAgentRun): {
   const parsed = parseFormattedSessionKey(run.sessionKey);
   return {
     agentId: run.agentId,
-    channelType: run.announceChannelType ?? "sub-agent",
-    channelId: run.announceChannelId ?? parsed?.channelId ?? run.sessionKey,
+    channelType: run.announceChannelType ?? "gateway",
+    channelId: parsed?.channelId ?? run.sessionKey,
   };
 }
 

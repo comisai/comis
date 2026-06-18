@@ -18,8 +18,13 @@
  * @module
  */
 import { describe, it, expect, vi } from "vitest";
+import { formatSessionKey, type SessionKey } from "@comis/core";
 import { steerRun, type SteerRunDeps } from "./steer-run.js";
-import type { RunHandle } from "../executor/active-run-registry.js";
+import {
+  createActiveRunRegistry,
+  type RunHandle,
+} from "../executor/active-run-registry.js";
+import { createBackgroundSessionResolver } from "../background/session-resolver.js";
 import type { SubAgentRun } from "./sub-agent-runner.js";
 
 // ---------------------------------------------------------------------------
@@ -167,5 +172,108 @@ describe("steerRun — inject a steer message into a running sub-agent's live se
     for (const key of depKeys) {
       expect(key).not.toMatch(/tool|profile|reachable|grant|assembl/i);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WR-01 (175-REVIEW.md): end-to-end with the REAL registration key.
+//
+// Every test above mocks the resolver to hand back the handle unconditionally,
+// so none exercised the REAL key formulas. This block wires a GENUINE
+// `createActiveRunRegistry` + `createBackgroundSessionResolver` and registers a
+// handle under the EXECUTOR's real registration key (pi-executor.ts:1152-1156)
+// — channelType = the runtime origin ("gateway" for a no-announce sub-agent),
+// userId = the sub-session channelId — then asserts steerRun resolves + injects
+// through it. RED before the WR-01 alignment (deriveCompositeForRun used
+// "sub-agent" as the channelType ⇒ key miss ⇒ {steered:false}); GREEN after.
+// ---------------------------------------------------------------------------
+describe("steerRun — end-to-end with the REAL executor registration key (WR-01)", () => {
+  const agentId = "researcher";
+  const runId = "run-e2e-1";
+  const subSessionChannelId = `sub-agent:${runId}`;
+  // The spawn path's sessionKey shape (sub-agent-runner.ts:1184).
+  const sessionKey = formatSessionKey({
+    tenantId: "default",
+    userId: `sub-agent-${runId}`,
+    channelId: subSessionChannelId,
+  } satisfies SessionKey);
+
+  /** The REAL executor registration key (pi-executor.ts:1152-1156). */
+  function executorRegistrationKey(originChannelType: string): string {
+    return formatSessionKey({
+      tenantId: agentId, // agentId ?? "default"
+      channelId: `${originChannelType}:${subSessionChannelId}`,
+      userId: subSessionChannelId,
+    } satisfies SessionKey);
+  }
+
+  function makeFullHandle(opts: { streaming: boolean }): RunHandle & {
+    steer: ReturnType<typeof vi.fn>;
+    followUp: ReturnType<typeof vi.fn>;
+  } {
+    return {
+      steer: vi.fn().mockResolvedValue(undefined),
+      followUp: vi.fn().mockResolvedValue(undefined),
+      abort: vi.fn().mockResolvedValue(undefined),
+      isStreaming: () => opts.streaming,
+      isCompacting: () => false,
+    };
+  }
+
+  it("resolves a sub-agent registered under the executor key (origin 'gateway') and injects via steer", async () => {
+    const registry = createActiveRunRegistry();
+    const resolver = createBackgroundSessionResolver({ activeRunRegistry: registry });
+    const handle = makeFullHandle({ streaming: true });
+
+    // Register exactly as the executor does for a no-announce sub-agent run.
+    registry.register(executorRegistrationKey("gateway"), handle);
+
+    const run = makeRun({ runId, agentId, sessionKey });
+    const runs = new Map<string, SubAgentRun>([[runId, run]]);
+    const deps: SteerRunDeps = {
+      runs,
+      sessionResolver: {
+        resolveActiveSession: (key) => resolver.resolveActiveSession(key),
+      },
+      activeRunRegistry: { get: (k) => registry.get(k) },
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+    };
+
+    const result = await steerRun(deps, runId, "narrow the scope");
+
+    expect(result).toEqual({ steered: true, mode: "steer" });
+    expect(handle.steer).toHaveBeenCalledWith("narrow the scope");
+    expect(handle.followUp).not.toHaveBeenCalled();
+  });
+
+  it("resolves a sub-agent registered with an announce origin channelType (telegram), channelId still the sub-session id", async () => {
+    const registry = createActiveRunRegistry();
+    const resolver = createBackgroundSessionResolver({ activeRunRegistry: registry });
+    const handle = makeFullHandle({ streaming: false });
+
+    // Announce run: executor's originChannelType = announceChannelType, but
+    // msg.channelId is STILL the sub-session channelId (line 1289).
+    registry.register(executorRegistrationKey("telegram"), handle);
+
+    const run = makeRun({
+      runId,
+      agentId,
+      sessionKey,
+      announceChannelType: "telegram",
+      announceChannelId: "chat-9",
+    });
+    const runs = new Map<string, SubAgentRun>([[runId, run]]);
+    const deps: SteerRunDeps = {
+      runs,
+      sessionResolver: {
+        resolveActiveSession: (key) => resolver.resolveActiveSession(key),
+      },
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+    };
+
+    const result = await steerRun(deps, runId, "use the cached result");
+
+    expect(result).toEqual({ steered: true, mode: "followup" });
+    expect(handle.followUp).toHaveBeenCalledWith("use the cached result");
   });
 });
