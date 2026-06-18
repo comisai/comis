@@ -617,8 +617,10 @@ export async function deliverFailureNotification(
     task: string;
     runtimeMs: number;
     runId: string;
+    /** DELIVERY-03: formatted caller session key — needed to build the shared announceKey. */
+    callerSessionKey?: string;
   },
-  deps: Pick<SubAgentRunnerDeps, "sendToChannel" | "logger">,
+  deps: Pick<SubAgentRunnerDeps, "sendToChannel" | "logger" | "batcher">,
 ): Promise<void> {
   const taskPreview = params.task.length > 100
     ? params.task.slice(0, 97) + "..."
@@ -630,6 +632,21 @@ export async function deliverFailureNotification(
     `Runtime: ${(params.runtimeMs / 1000).toFixed(1)}s`,
   ].join("\n");
 
+  // DELIVERY-03: build the SAME idempotency key as the success path
+  // (deliverAnnouncement:514) and dedup against the SAME deliveredKeys set
+  // (reached via the batcher's hasDelivered/markDelivered, D-SHAREDDEDUP).
+  // A Phase-170 budget-failed node routes here; its failure-key == its
+  // success-key, so a second sweep does not double-notify. Undefined for a
+  // top-level spawn (no callerSessionKey) → no dedup, behaves as today.
+  const announceKey = params.callerSessionKey ? `${params.callerSessionKey}::${params.runId}` : undefined;
+  if (announceKey && deps.batcher?.hasDelivered(announceKey)) {
+    deps.logger?.debug({
+      runId: params.runId,
+      hint: "duplicate failure notification suppressed",
+    }, "Failure notification dedup no-op");
+    return;
+  }
+
   // Extract thread context from ALS so failure notifications
   // land in the correct Telegram topic / thread.
   const ctx = tryGetContext();
@@ -637,6 +654,9 @@ export async function deliverFailureNotification(
 
   try {
     await deps.sendToChannel(params.channelType, params.channelId, message, threadId ? { threadId } : undefined);
+    // Mark delivered ONLY after a successful send (Pitfall 3 — a failed send
+    // must stay retry-eligible / re-notifiable). No-op without a key/batcher.
+    if (announceKey) deps.batcher?.markDelivered(announceKey);
   } catch (sendErr) {
     deps.logger?.warn({
       runId: params.runId,
