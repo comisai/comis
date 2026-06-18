@@ -144,4 +144,30 @@ describe("pipelineAuthoringGate (TELEM-02 — pre-committed deterministic gate)"
     expect(verdict.reason).toMatch(/50/);
     expect(verdict.reason).toMatch(/pp/);
   });
+
+  // IN-01 (Phase 173 review): the production reducer can only ever produce
+  // finite 0..1 rates, but the gate is an exported pure function on the package
+  // public API. A future second caller passing NaN/Infinity would make
+  // `gapPp < MATERIAL_GAP_PP` evaluate false (NaN comparisons are false) and
+  // fall through to a WRONG buildAuthor:true. A non-finite rate must FAIL-SAFE
+  // (defer), never build.
+  it("FAIL-SAFE: a NaN validity rate (ample sample) DEFERS with an invalid-aggregate reason, never builds", () => {
+    const verdict = pipelineAuthoringGate({
+      smallTierInvocations: 50,
+      smallTierValidRate: Number.NaN,
+      frontierValidRate: 0.95,
+    });
+    expect(verdict.buildAuthor).toBe(false);
+    expect(verdict.reason).toMatch(/invalid aggregate/);
+  });
+
+  it("FAIL-SAFE: an Infinity frontier rate (ample sample) DEFERS, never builds", () => {
+    const verdict = pipelineAuthoringGate({
+      smallTierInvocations: 50,
+      smallTierValidRate: 0.1,
+      frontierValidRate: Number.POSITIVE_INFINITY,
+    });
+    expect(verdict.buildAuthor).toBe(false);
+    expect(verdict.reason).toMatch(/invalid aggregate/);
+  });
 });

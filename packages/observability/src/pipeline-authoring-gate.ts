@@ -75,6 +75,17 @@ export function pipelineAuthoringGate(
       reason: `defer: insufficient telemetry (${agg.smallTierInvocations} small-tier invocations < ${MIN_SMALL_TIER_SAMPLE})`,
     };
   }
+  // IN-01 (Phase 173 review): fail-safe on a non-finite rate. The sole
+  // production feeder (pipelineAuthoringAggregateFromRows) guards
+  // division-by-zero and can only ever produce finite 0..1 rates, so this is
+  // unreachable today — but the gate is an exported pure function on the
+  // package's public API, and `NaN < MATERIAL_GAP_PP` / `Infinity < ...` both
+  // evaluate false, which would otherwise fall through to a WRONG buildAuthor:
+  // true. A non-finite aggregate defers (fail-safe), never builds. Pure: no I/O,
+  // no clock, no globals — Number.isFinite is a stateless numeric predicate.
+  if (!Number.isFinite(agg.smallTierValidRate) || !Number.isFinite(agg.frontierValidRate)) {
+    return { buildAuthor: false, reason: "defer: non-finite validity rate (invalid aggregate)" };
+  }
   // 2) Materially-below-frontier validity gap (in percentage points).
   const gapPp = (agg.frontierValidRate - agg.smallTierValidRate) * 100;
   if (gapPp < MATERIAL_GAP_PP) {
