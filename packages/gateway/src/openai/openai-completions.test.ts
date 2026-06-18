@@ -391,6 +391,9 @@ describe("createOpenaiCompletionsRoute", () => {
         finishReason: "stop",
         traceId: "trace-abc",
         agentId: "default",
+        // The wiring returns the FORMATTED tenant-qualified key; the emit must carry it
+        // verbatim so downstream tenant derivation finds the right pool (live 2026-06-18).
+        sessionKey: "default:openai-api:openai",
       });
       const deps = createMockDeps({ executeAgent, eventBus: { emit } });
       const app = createOpenaiCompletionsRoute(deps);
@@ -409,6 +412,8 @@ describe("createOpenaiCompletionsRoute", () => {
         channelType: "openai",
         agentId: "default",
         traceId: "trace-abc",
+        // MUST be the 3-part tenant-qualified key from the wiring, NOT a 2-part fallback.
+        sessionKey: "default:openai-api:openai",
         success: true,
         finishReason: "stop",
       });

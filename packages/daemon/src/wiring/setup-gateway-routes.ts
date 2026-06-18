@@ -366,6 +366,10 @@ export function mountGatewayRoutes(deps: GatewayRouteDeps): void {
         finishReason: result.finishReason,
         traceId: turnTraceId,
         agentId: defaultAgentId,
+        // FORMATTED tenant-qualified key (tenantId:userId:channelId) so the per-turn
+        // diagnostic carries the right tenant — the Verified Learning resolve derives
+        // tenant via deriveTenantFromSessionKey and a 2-part key resolves the wrong pool.
+        sessionKey: formatSessionKey(sk),
       };
     },
     eventBus: container.eventBus,

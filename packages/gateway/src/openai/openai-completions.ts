@@ -50,6 +50,10 @@ export interface OpenaiCompletionsDeps {
     traceId?: string;
     /** The agent that ran the turn (the executor's resolved agentId). Optional. */
     agentId?: string;
+    /** The FORMATTED `tenantId:userId:channelId` session key (formatSessionKey). Carried
+     *  back so the per-turn diagnostic emits the tenant-qualified key — downstream tenant
+     *  derivation (Verified Learning resolve, obs attribution) needs all three parts. */
+    sessionKey?: string;
   }>;
 
   /** Optional model alias resolution. Returns undefined if model not found. */
@@ -87,7 +91,18 @@ export interface OpenaiCompletionsDeps {
 function emitTurnDiagnostic(
   deps: OpenaiCompletionsDeps,
   args: {
-    result: { tokensUsed: { total: number }; finishReason: string; traceId?: string; agentId?: string };
+    result: {
+      tokensUsed: { total: number };
+      finishReason: string;
+      traceId?: string;
+      agentId?: string;
+      /** The FORMATTED `tenantId:userId:channelId` session key from the executor wiring.
+       *  REQUIRED for correct tenant derivation downstream: the Verified Learning
+       *  resolve loop derives the tenant via deriveTenantFromSessionKey(sessionKey), so a
+       *  2-part `userId:channelId` key resolves the WRONG tenant → 0 rows → unknown verdict
+       *  (live finding 2026-06-18). Falls back to a 2-part key only when the wiring omits it. */
+      sessionKey?: string;
+    };
     sessionKey: { userId: string; channelId: string; peerId: string };
     completionId: string;
     receivedAt: number;
@@ -102,7 +117,9 @@ function emitTurnDiagnostic(
       channelId: args.sessionKey.channelId,
       channelType: "openai",
       agentId: args.result.agentId ?? "default",
-      sessionKey: `${args.sessionKey.userId}:${args.sessionKey.channelId}`,
+      sessionKey:
+        args.result.sessionKey ??
+        `${args.sessionKey.userId}:${args.sessionKey.channelId}`,
       traceId: args.result.traceId,
       receivedAt: args.receivedAt,
       executionDurationMs: elapsed,
