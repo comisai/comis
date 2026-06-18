@@ -99,7 +99,7 @@ export interface RecoverSessionDescriptorsDeps {
   /** The durable descriptor store (daemon impl in 165-07; a fake in unit tests). */
   store: SessionDescriptorStorePort;
   /** The `has-session` liveness probe (the worker's `has-session`), injected per 165-01. */
-  isTmuxAlive: (name: string) => boolean;
+  isTmuxAlive: (name: string, socket?: string) => boolean;
 }
 
 /**
@@ -190,6 +190,9 @@ export function rehydrateHandleFromDescriptor(d: SessionDescriptor, nowMs: numbe
     // is NOT flipped lost on a worker close, Q4).
     durable: true,
     tmuxName: d.tmuxName,
+    // RECUR-03: rehydrate the per-boot socket so the daemon probe / reaper target the session's
+    // OWN (prior-boot) server, and the worker re-attaches there (not this boot's fresh server).
+    tmuxSocket: d.tmuxSocket,
   };
 }
 
@@ -203,10 +206,10 @@ export function rehydrateHandleFromDescriptor(d: SessionDescriptor, nowMs: numbe
  * crash-flushed create-reply waiter), so a crash cannot re-flip a live durable session.
  */
 export function staysRecoverable(
-  handle: Pick<SessionHandle, "durable" | "tmuxName">,
-  isTmuxAlive: (name: string) => boolean,
+  handle: Pick<SessionHandle, "durable" | "tmuxName" | "tmuxSocket">,
+  isTmuxAlive: (name: string, socket?: string) => boolean,
 ): boolean {
-  return handle.durable === true && handle.tmuxName !== undefined && isTmuxAlive(handle.tmuxName) === true;
+  return handle.durable === true && handle.tmuxName !== undefined && isTmuxAlive(handle.tmuxName, handle.tmuxSocket) === true;
 }
 
 /**
@@ -219,7 +222,7 @@ export function staysRecoverable(
  */
 export function markRunningSessionsLost(
   sessions: Map<string, SessionHandle>,
-  isTmuxAlive: (name: string) => boolean,
+  isTmuxAlive: (name: string, socket?: string) => boolean,
 ): void {
   for (const handle of sessions.values()) {
     if (handle.status === "running" && !staysRecoverable(handle, isTmuxAlive)) handle.status = "lost";
@@ -230,6 +233,9 @@ export function markRunningSessionsLost(
 export interface DurableCreateInputs {
   sessionId: string;
   tmuxName?: string;
+  /** RECUR-03: the per-boot `-S` socket this durable session's tmux server is bound to (persisted
+   *  so a restart re-attaches it from its OWN server while new sessions get a fresh per-boot one). */
+  tmuxSocket?: string;
   allowId: string;
   owner: SessionOwner;
   cols: number;
@@ -256,6 +262,7 @@ export function buildSessionDescriptor(i: DurableCreateInputs): SessionDescripto
     createdAt: i.createdAt,
   };
   if (i.scope !== undefined) descriptor.scope = i.scope;
+  if (i.tmuxSocket !== undefined) descriptor.tmuxSocket = i.tmuxSocket;
   return descriptor;
 }
 
@@ -273,7 +280,7 @@ export function buildSessionDescriptor(i: DurableCreateInputs): SessionDescripto
  */
 export interface TerminalDurabilityDeps {
   descriptorStore?: SessionDescriptorStorePort;
-  isTmuxAlive?: (name: string) => boolean;
+  isTmuxAlive?: (name: string, socket?: string) => boolean;
   onReattached?: (info: { sessionId: string; agentId: string }) => void;
   onUnrecoverable?: (info: { sessionId: string; agentId: string; reason: string; errorKind: string }) => void;
 }
@@ -285,7 +292,7 @@ export interface TerminalDurabilityDeps {
  * unit tests resolves `true`/`false`. ABSENT ⇒ the legacy synchronous behavior (fire
  * onReattached at recover-time without a worker confirmation) — not used in production.
  */
-export type ReattachWorkerFn = (sessionId: string, cols: number, rows: number) => Promise<{ ok: boolean }>;
+export type ReattachWorkerFn = (sessionId: string, cols: number, rows: number, allowId: string, tmuxSocket?: string) => Promise<{ ok: boolean }>;
 
 /**
  * BL-01 (165-REVIEW): drive ONE recovered session's worker re-attach + gate the obs hooks
@@ -305,7 +312,7 @@ async function driveWorkerReattach(
   reattachWorker: ReattachWorkerFn,
 ): Promise<void> {
   // A faulting round-trip → the SAFE direction (not-ok ⇒ lost), never a zombie running.
-  const ok = await reattachWorker(descriptor.sessionId, descriptor.cols, descriptor.rows)
+  const ok = await reattachWorker(descriptor.sessionId, descriptor.cols, descriptor.rows, descriptor.allowId, descriptor.tmuxSocket)
     .then((r) => r.ok)
     .catch(() => false);
   if (ok) {

@@ -134,6 +134,10 @@ export interface AttachBackendArgs {
    * this path (the surviving pane is read, never re-spawned).
    */
   attachOnly?: boolean;
+  /** RECUR-03: on the `attachOnly` re-attach, the surviving session's OWN per-boot `-S` socket
+   *  (from its descriptor) — forwarded to {@link TmuxBackendLike.reattach} so it targets THAT
+   *  server, not this boot's. Absent ⇒ the worker's legacy single-socket default. */
+  tmuxSocket?: string;
 }
 
 /**
@@ -153,7 +157,7 @@ export interface AttachBackendArgs {
  * — the caller (`handleReattach`) maps `false` to a worker `ok:false` reply.
  */
 export function attachBackend(args: AttachBackendArgs): boolean {
-  const { plan, cols, rows, state, loadPty, spawnPipe, logger, requestedBackend, loadTmux, sessionId, attachOnly } = args;
+  const { plan, cols, rows, state, loadPty, spawnPipe, logger, requestedBackend, loadTmux, sessionId, attachOnly, tmuxSocket } = args;
 
   // BL-01 (165-REVIEW): the recover-on-boot RE-ATTACH path — attach to an EXISTING tmux
   // session by name, NEVER create. A GONE session (reattach → undefined) attaches NOTHING
@@ -161,7 +165,7 @@ export function attachBackend(args: AttachBackendArgs): boolean {
   // pty/pipe fallback (a re-attach with no live session is a genuine death, not a degrade).
   if (attachOnly === true) {
     if (loadTmux === undefined) return false; // cannot re-attach without the tmux backend.
-    const handle = loadTmux.reattach({ sessionId, cols, rows, env: plan.env });
+    const handle = loadTmux.reattach({ sessionId, cols, rows, env: plan.env, tmuxSocket });
     if (handle === undefined) return false; // the tmux session is gone — honest death (I10).
     handle.onData((d) => appendRing(state, d));
     handle.onExit((e) => {

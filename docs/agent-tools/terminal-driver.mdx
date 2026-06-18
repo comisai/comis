@@ -80,7 +80,11 @@ agents:
           # credentialPaths bind would block. credentialPaths (RO) instead suits a CLI that is
           # system-installed AND only reads its creds -- see the credentialPaths note below.
           - id: claude
-            match: { path: /home/comis/.local/bin/claude }
+            match:
+              path: /home/comis/.local/bin/claude   # canonical binary (realpath/hash-pinned)
+              argsPrefix:                            # operator-pinned: the agent cannot change the permission mode
+                - --permission-mode
+                - bypassPermissions
             scope:
               filesystem: home                 # binds the home-installed binary + RW ~/.claude state
               network: full                    # reach the model API
@@ -103,11 +107,13 @@ agents:
 
 The whole `drive:` block is **optional** and additive: a config with no `drive` block behaves **exactly as before** (no auto-promotion change, the digest read is already the effective default). An unknown key under `drive:` (a typo) is rejected at config load, like every other terminal key.
 
-The agent then drives it: `terminal_session_create({ allowId: "claude", command: "/home/comis/.local/bin/claude", args: ["--permission-mode", "bypassPermissions"] })` -> wait -> `terminal_session_send_text(...)` -> `terminal_session_read(...)`.
+The agent then drives it: `terminal_session_create({ allowId: "claude", command: "claude", project: "<name>" })` (the operator-pinned `argsPrefix` above is prepended automatically) -> wait -> `terminal_session_send_text(...)` -> `terminal_session_read(...)`. For the full per-CLI setup (Claude Code **and** Codex), see [Coding CLIs](/agent-tools/coding-clis).
+
+**Per-project folders — always name a coding project.** Pass `project: "<name>"` to `terminal_session_create` and the session opens in a dedicated, auto-created folder `<agent-workspace>/projects/<name>` (e.g. `~/.comis/workspace/projects/<name>` for the default agent). **Any coding project you may revisit should be named this way** — it makes the work persistent and **retrievable**: to fix a bug or add a feature later, start a new session with the **same** `project` name and it reopens in the same folder. **Different** names give isolated folders — that is how multiple projects run **in parallel** (each its own session + folder, no collisions). The agent is instructed (in the `terminal_session_create` tool description) to set `project` automatically for coding work. Two things that do **not** create a project folder: the display `name` param (just a listing label), and `cwd` (an explicit working dir, honored only if *within* the session workspace — a path outside is silently clamped to the workspace, the jail-escape guard). So `project` is the only path-free, retrievable way to organize project work.
 
 **Driving a slow interactive AI CLI** (e.g. `claude`/`codex`): the model's reply takes tens of seconds, so pass a generous `terminal_session_wait({ forIdleMs: 20000, timeoutMs: 300000 })` — the settle returns the instant the CLI goes quiet (not at the timeout), and a long wait auto-backgrounds so the turn never blocks (the completion then arrives as a follow-up, e.g. a Telegram message). The CLI's **first-run startup gates** persist once accepted (recorded in the CLI's credential file), so accept them once **outside the jail** before the first drive: Claude Code shows a "trust this folder" prompt and — under `--permission-mode bypassPermissions` — a "Bypass Permissions" warning whose default highlight is **"No, exit"**, so a reflexive Enter quits the CLI. Once accepted, the trust is recorded in `~/.claude.json`: under `filesystem: home` that file is bound **read-write**, so claude persists the acceptance itself and later drives open straight to the prompt. (If you expose creds via `credentialPaths`, which is **read-only**, the CLI cannot persist the gate state — pre-accepting outside the jail is then mandatory, not just convenient.)
 
-**Nested sandboxes (Claude Code's Bash tool).** Some AI CLIs sandbox their _own_ subprocesses. Claude Code, on Linux, wraps each Bash-tool command in a second bubblewrap that remounts `$HOME` read-only — and nested inside this driver's jail that inner sandbox can't provision its own state, failing with `EROFS … mkdir ~/.claude/session-env/…`. The symptom is a claude that can **author** files but cannot **run** them (its Bash tool is dead while Read/Write/Edit work). The driver avoids this by telling the driven CLI it is **already** sandboxed — it sets `CLAUDE_CODE_BUBBLEWRAP=1` in the child environment — so claude skips the redundant inner sandbox and runs Bash commands directly inside this jail, which is already the enforced security boundary (the filesystem/network scope above, with `~/.comis` always masked). This is automatic; no configuration is required.
+**Nested sandboxes (Claude Code's Bash tool).** Claude Code, on Linux, wraps each Bash-tool command in a second bubblewrap that remounts `$HOME` read-only **in place** — and nested inside this driver's jail, claude's per-command state dir `~/.claude/session-env/<id>` then lands on that read-only mount, failing with `EROFS … mkdir`. The symptom is a claude that can **author** files but cannot **run** them (its Bash tool is dead while Read/Write/Edit work). The driver fixes this by mounting a writable `tmpfs` carve-out at `~/.claude/session-env` — a **separate** sub-mount that survives claude's in-place `$HOME` remount, so the `mkdir` lands on a writable surface and Bash runs. (It also sets `CLAUDE_CODE_BUBBLEWRAP=1` and strips the daemon's `NODE_OPTIONS` from the child env — defense-in-depth and correctness, but the carve-out is what actually unblocks Bash in the production seccomp'd daemon.) All automatic; no configuration required. claude's creds/config under `~/.claude` stay intact — only the transient `session-env` subdir is an ephemeral, per-session tmpfs.
 
 ### Allow-entry fields
 
@@ -117,7 +123,7 @@ The agent then drives it: `terminal_session_create({ allowId: "claude", command:
 | `match.path` | The canonical absolute binary path (resolved via `realpath`; optional `hash` pin). Spawned as direct argv -- never via a shell. |
 | `match.argsPrefix` | Optional pinned argv prefix the agent's `args` must start with. |
 | `scope` | The sandbox the child runs in (below). Sourced **only** from this entry -- the agent cannot supply or widen scope. |
-| `autoAnswer` | `none` / `safe-only` (default) / `all`. `safe-only` auto-answers only prompts matching `hintPatterns`; everything else (destructive, approval, auth/login) escalates. |
+| `autoAnswer` | `none` / `safe-only` (default) / `all`. `safe-only` auto-answers prompts matching `hintPatterns` **and** the selected platform profile's known-safe dialogs (e.g. Claude Code's "trust this folder" gate — see [Platform profiles](#platform-profiles)); everything else — a profile's `destructive` dialog (e.g. Codex's run-command approval), and any destructive/approval/auth-login prompt — escalates. The escalate-always veto wins over any profile/hint answer. |
 | `consent` | Required informed-consent record (`acknowledgedRisk: true` + a timestamp). |
 | `limits` | Optional per-session caps: `wallClockMs`, `maxInteractions`, `maxRequestsPerSession`, `maxSessions`. |
 | `approveOnCreate` | Require the approval gate at `session_create`. |
@@ -145,7 +151,7 @@ Every driven session runs in a bwrap jail materializing the entry's `scope`:
 
 A driven session runs in the **agent's own workspace**, not a throwaway temp dir, so its work **persists** across the session (and across worker restarts):
 
-- The session working directory is `<agent-workspace>/terminal` — `~/.comis/workspace/terminal` for the default agent, `~/.comis/workspace-<agentId>/terminal` for a named agent. A full, milestone-length run (e.g. driving Claude Code to build a project) leaves its output there after the session ends.
+- The session working directory is `<agent-workspace>/projects` — `~/.comis/workspace/projects` for the default agent, `~/.comis/workspace-<agentId>/projects` for a named agent — with each named project under `projects/<name>`. A full, milestone-length run (e.g. driving Claude Code to build a project) leaves its output there after the session ends.
 - Because it lives **inside the agent's workspace**, the agent's other tools (`read`/`write`/`apply_patch`/`exec`, which operate on the same workspace) can see and continue the driven session's work.
 - The `~/.comis` carve-out still masks everything else under the data dir — the secret store, config, and the agent's *other* workspace files (identity, skills, memory). Only the `terminal` subtree is re-bound read-write inside the jail, so the driven child is confined to it (least-privilege) and can never reach Comis's secrets.
 - `filesystem: workspace` (the default) binds exactly this directory. The directory is created on first use and is world-writable so a jailed child running as a net-new uid (`uid: dedicated`) can write it; at `uid: daemon` the child owns it directly.
@@ -262,9 +268,30 @@ The classifier distinguishes `awaiting-input` (a prompt is waiting for you) from
 
 **Locking the classifier against a CLI upgrade:** the `awaiting-input`-vs-`stuck` call is pinned by a **versioned fixture corpus** -- content-free synthetic frames for `claude`/`codex`/`aider` across each state (idle-working, awaiting-text-input, full-screen menu, permission dialog, completed, hung) replayed through the real emulator and asserted for both state and confidence. When a `claude`, `codex`, or `aider` release reshapes its TUI (moving where the cursor parks or changing the dialog chrome), the fix is to **add or refresh a fixture** in `packages/skills/src/tools/builtin/terminal-driver/fixtures/` and re-run the corpus suite -- a drift surfaces there as a failing test, **not** as a misread discovered mid-drive in production. See the [classifier corpus README](https://github.com/comisai/comis/blob/main/packages/skills/src/tools/builtin/terminal-driver/fixtures/README.md) for how to author a fixture (synthetic, via `record-fixture.mjs` -- never hand-edited bytes) and bump the pinned CLI versions.
 
+## Platform profiles
+
+The driver is **agnostic** -- it drives any TUI with the generic perception above. For the **first-class** CLIs (Claude Code, Codex), an optional **read-side platform profile** -- selected by the operator-declared `allowId`, never by the program's own output -- tunes how the driver *perceives* the session:
+
+- **Render** -- it strips Claude Code's dim autocomplete "ghost-text" from the captured screen so a driving model never mistakes the suggestion for queued input.
+- **Perception** -- it feeds the classifier the platform's working-line (Claude's spinner, Codex's `Working (Ns)`) and picker/menu signatures, so a busy frame reads `working` and a `/model`-style picker reads `awaiting-input` rather than `stuck`.
+- **Dialogs** -- it declares the platform's known interactive dialogs and their **safe** answer. Under `autoAnswer: safe-only` a non-destructive dialog (Claude's "trust this folder" gate) is answered with the canned keystroke; a `destructive` dialog (Codex's run-command approval) **always escalates** to you. The operator safe-only policy and the escalate-always veto still gate every answer -- a profile only *proposes*.
+
+A profile is **read-side only**: it never widens the sandbox, the env, or the launch (those stay operator-controlled). With no matching profile (any other `allowId`) the driver's perception/render/auto-answer is **byte-identical** to the agnostic default.
+
+**Adding a platform is engine-free** -- a drop-in profile + bundled skill, no change to the agnostic render/classifier/dialog code:
+
+1. Create `packages/skills/src/tools/builtin/terminal-driver/platforms/<id>/profile.ts` exporting a `TerminalPlatformProfile` -- `id`, the operator `allowIds` it claims, a `platformVersion`, and any of the optional read-side fields (`transformSnapshot` for render, `perception` pattern lists, `dialogs`).
+2. Register it in `platforms/index.ts` (`ALL_PROFILES`). The load-time guards reject a duplicate `allowId` or a ReDoS-prone pattern.
+3. Add the paired bundled skill `packages/daemon/bundled-skills/<id>/SKILL.md` with a frontmatter `version` **equal** to the profile's `platformVersion` (a build-time architecture test enforces the match).
+4. Capture golden frames and assert the profile's transform/perception/dialogs against them (live with the profile, e.g. `platforms/<id>/profile.test.ts`).
+
+No edit to `terminal-render.ts`, `terminal-classifier.ts`, `terminal-dialog-detector.ts`, or `terminal-auto-answer.ts` is required -- they consume whatever the selected profile provides, with the agnostic fallback when no profile matches.
+
 ## Related
 
 <CardGroup cols={2}>
+  <Card title="Coding CLIs: Claude Code & Codex" icon="robot" href="/agent-tools/coding-clis">Per-CLI config + how the skill/profile/sandbox fit together</Card>
+  <Card title="Autonomous Builds (GSD)" icon="diagram-project" href="/agent-tools/gsd-builder">Hand the agent a design doc → it drives Claude Code through GSD to build it end-to-end</Card>
   <Card title="Tool Policy" icon="shield-halved" href="/skills/tool-policy">Control which tools each agent can use</Card>
   <Card title="Built-in Tools" icon="puzzle-piece" href="/skills/built-in-tools">The full built-in tool surface</Card>
 </CardGroup>

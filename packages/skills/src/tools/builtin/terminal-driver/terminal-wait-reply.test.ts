@@ -9,7 +9,7 @@
 
 import { describe, it, expect } from "vitest";
 
-import { mapWaitReply, degradedWaitResult } from "./terminal-wait-reply.js";
+import { mapWaitReply, degradedWaitResult, withCompleteNote, type WaitResult } from "./terminal-wait-reply.js";
 
 describe("mapWaitReply", () => {
   it("passes the T1.1 producing + hint through verbatim", () => {
@@ -55,6 +55,31 @@ describe("mapWaitReply", () => {
       screen: "",
       cursor: { x: 0, y: 0 },
     });
+  });
+});
+
+describe("withCompleteNote — FINDING-3 scope guard on a settle-complete wait", () => {
+  // Live VPS 2026-06-17: the driving model over-reads `isComplete:true` (a SETTLE-scoped signal)
+  // as "my whole task is done" and ends the turn, dropping later requested steps after a build.
+  // The complete path must carry a model-facing note scoping `isComplete` to the settle.
+  it("attaches the scope note when isComplete (so the driver does not over-read it as task-done)", () => {
+    const out: WaitResult = { matched: true, isComplete: true, reason: "idle", screen: "x", cursor: { x: 0, y: 0 } };
+    const r = withCompleteNote(out) as WaitResult & { note?: string };
+    expect(r.note).toBeDefined();
+    expect(r.note).toMatch(/SETTLED/);
+    expect(r.note).toMatch(/does NOT mean your overall task is done/i);
+    expect(r.note).toMatch(/remaining steps/i);
+    // the rest of the result is preserved verbatim
+    expect(r.isComplete).toBe(true);
+    expect(r.reason).toBe("idle");
+    expect(r.screen).toBe("x");
+  });
+
+  it("leaves a NOT-complete (timeout) result unchanged — no note (the driver keeps waiting)", () => {
+    const out: WaitResult = { matched: false, isComplete: false, reason: "timeout", producing: true, screen: "", cursor: { x: 0, y: 0 } };
+    const r = withCompleteNote(out) as WaitResult & { note?: string };
+    expect(r.note).toBeUndefined();
+    expect(r).toEqual(out);
   });
 });
 

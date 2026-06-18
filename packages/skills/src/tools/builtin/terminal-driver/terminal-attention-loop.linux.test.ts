@@ -276,7 +276,7 @@ function makeUnrefTimers(): TimerPort {
 describe.skipIf(!isLinux() || !claudeAvailable() || !bwrapAvailable())(
   "TR-07/TR-12 (Linux+bwrap) — the scripted GSD-dialog completes across woken turns (live)",
   () => {
-    it("drives the scripted dialog: each step reaches awaiting-input (fd3 fires, no poll), is answered by keystroke, and the dialog COMPLETES", async () => {
+    it("drives the scripted dialog: each step reaches awaiting-input (the foreground wait IS the no-poll wake), is answered by keystroke, and the dialog COMPLETES", async () => {
       const shell = realShell();
 
       // The no-poll observation: collect every fd3 `terminal:input_needed` the worker emits.
@@ -343,10 +343,18 @@ describe.skipIf(!isLinux() || !claudeAvailable() || !bwrapAvailable())(
         }
         expect(reachedAwaiting).toBe(true); // the classifier reached awaiting-input for this prompt
 
-        // The no-poll proof: the wait-driven settle PUSHED ≥1 `terminal:input_needed` frame on
-        // fd3 — the agent is woken by the pushed event, not by a spin. (Flaky-tolerant lower
-        // bound: ≥1, since coalescing/timing can vary across the woken turns.)
-        expect(inputNeededEvents.length).toBeGreaterThanOrEqual(1);
+        // The no-poll proof (LIVE-04): a FOREGROUND `wait` IS the agent's wake — its REPLY
+        // resolves the moment the classifier reaches awaiting-input (reachedAwaiting above), so
+        // the agent unblocks and drives WITHOUT a spin-poll. That same foreground settle
+        // DELIBERATELY SUPPRESSES the fd3 `terminal:input_needed` push (a fd3 woken turn here
+        // would race the wait reply — the launch-escalation regression LIVE-04 closed); the fd3
+        // push is reserved for the BACKGROUNDED drive the daemon backstop attends. And because
+        // the emitter is edge-triggered, those suppressed foreground settles still advance
+        // `lastState` to awaiting-input — so a later act-then-return send settle sees no fresh
+        // transition to emit either. Net: NO input_needed frame fires across this foreground
+        // drive. (The emit-on-transition mechanism itself is unit-proven in
+        // terminal-attention-emitter.test.ts.) Guard the LIVE-04 suppression invariant:
+        expect(inputNeededEvents.length).toBe(0);
 
         // The woken-turn policy: the SAME safe-only decideAutoAnswer the daemon driver runs.
         // Steps 1–2 match an operator hint pattern (no structural cue) → answer. Step 3

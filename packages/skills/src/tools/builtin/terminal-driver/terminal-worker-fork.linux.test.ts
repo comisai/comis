@@ -122,10 +122,20 @@ describe.skipIf(!isLinux() || !distBuilt)(
       const created = await createTool.execute("create-a", { allowId: "bash", command: shell, cols: 80, rows: 24 });
       const details = created.details as { sessionId?: string; alive?: boolean };
       // The real worker forked + the create frame round-tripped over IPC; with no
-      // bwrap the worker fail-closed, so no live session exists (SEC-16). Either the
-      // create reports not-alive, or the session never lands in list as alive.
-      const list = (await listTool.execute("list-a", {})).details as Array<{ sessionId: string; alive: boolean }>;
-      const live = list.find((s) => s.sessionId === details.sessionId && s.alive);
+      // bwrap the worker fail-closed, so no live session exists (SEC-16). The
+      // fail-close is ASYNC: the registry fires the create frame WITHOUT blocking the
+      // turn (so `create` returns with the session still optimistically `running`),
+      // then an out-of-band `ok:false` reply ("no sandbox provider: cannot materialize
+      // the terminal scope jail") flips it `lost`. So POLL the list until the session
+      // is gone — listing immediately races the reply on a loaded CI runner (the
+      // session is briefly `alive:true` before the flip lands).
+      let live: { sessionId: string; alive: boolean } | undefined;
+      for (let i = 0; i < 60; i++) {
+        const list = (await listTool.execute("list-a", {})).details as Array<{ sessionId: string; alive: boolean }>;
+        live = list.find((s) => s.sessionId === details.sessionId && s.alive);
+        if (live === undefined) break;
+        await new Promise((r) => setTimeout(r, 50));
+      }
       expect(live).toBeUndefined();
 
       await registry.cleanup();

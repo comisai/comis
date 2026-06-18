@@ -60,6 +60,7 @@ export const WORKER_PERMISSION_ARGS: readonly string[] = [
 export function buildProductionSpawnWorker(
   workerJsPath: string,
   dataDir: string,
+  tmuxSocketPath?: string,
 ): () => FakeWorkerChild {
   const args = [
     ...WORKER_PERMISSION_ARGS,
@@ -72,6 +73,15 @@ export function buildProductionSpawnWorker(
       stdio: ["pipe", "pipe", "pipe", "pipe"],
       // Inject the data dir so the worker's durable-state dir matches the
       // `--allow-fs-write` scope above (the worker mkdir's + logs there).
-      env: { ...systemEnvSnapshot(), COMIS_TERMINAL_DATA_DIR: dataDir },
+      // RECUR-03 (option A): inject this daemon generation's PER-BOOT tmux socket so the worker
+      // creates NEW sessions on a fresh server in the live mount namespace (a restart's stranded
+      // prior-generation ns never breaks new bwrap sessions — RECUR-02). Stable across worker
+      // respawns within a daemon generation (the daemon re-spawns with the same value); a restart
+      // brings a new daemon → a new socket. Absent ⇒ the worker's legacy single-socket default.
+      env: {
+        ...systemEnvSnapshot(),
+        COMIS_TERMINAL_DATA_DIR: dataDir,
+        ...(tmuxSocketPath !== undefined ? { COMIS_TERMINAL_TMUX_SOCKET: tmuxSocketPath } : {}),
+      },
     }) as unknown as FakeWorkerChild;
 }

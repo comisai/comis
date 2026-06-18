@@ -72,6 +72,90 @@ function frame(over: Partial<ClassifierFrame> = {}): ClassifierFrame {
 }
 
 const noStuck: FrameHistory = { noProgressMs: 0, stuckMs: 5_000 };
+const pastStuck: FrameHistory = { noProgressMs: 10_000, stuckMs: 5_000 };
+
+// ---------------------------------------------------------------------------
+// CLASSIFY-01/02 (v2.26): the classifier CONSUMES profile.perception (a generic
+// PlatformPerception fed from the worker via the session allowId) — layered on the
+// generic structural detection, with a profile-FREE fallback identical to today (INV-1).
+// ---------------------------------------------------------------------------
+
+describe("classifyFrame — consumes profile.perception (CLASSIFY-01/02)", () => {
+  it("a workingLine match on a RECENT unparked frame keeps it working (pre-empts a stale menu)", () => {
+    // Within the stuck window: a workingLine indicator wins over a stale on-screen menu → working.
+    const snapshot = snap(["Working (5s)", "Select Model", "the fast one", ""], { x: 4, y: 0 });
+    const c = classifyFrame(
+      frame({ snapshot, perception: { workingLine: [/Working \(\d+s\)/], menuOrPicker: [/Select Model/] } }),
+      noStuck,
+    );
+    expect(c.state).toBe("working");
+    expect(c.reason).toBe("working_line");
+  });
+
+  it("a STATIC workingLine PAST the stuck window is NOT rescued → stuck (no hang suppression, WR-02)", () => {
+    // A frame frozen for the WHOLE stuck window is hung regardless of a leftover spinner glyph — the
+    // workingLine guard is gated on noProgressMs <= stuckMs, so genuine stuck detection still fires.
+    const snapshot = snap(["Working (5s)", "reading the project files", "more output here", "and more"], { x: 4, y: 0 });
+    const c = classifyFrame(
+      frame({ snapshot, perception: { workingLine: [/Working \(\d+s\)/] } }),
+      pastStuck,
+    );
+    expect(c.state).toBe("stuck");
+  });
+
+  it("a menuOrPicker match makes a text-only menu (no box/enumerator/caret) → awaiting-input", () => {
+    // "Select Model" with no structural box/enumerator/❯ — the generic detector misses it.
+    const snapshot = snap(["Select Model", "the fast one", "the slow one", ""], { x: 0, y: 3 });
+    expect(classifyFrame(frame({ snapshot }), noStuck).state).toBe("working"); // profile-free: no structure → unparked working
+    const c = classifyFrame(
+      frame({ snapshot, perception: { menuOrPicker: [/Select Model/] } }),
+      noStuck,
+    );
+    expect(c.state).toBe("awaiting-input");
+    expect(c.reason).toBe("dialog_detected");
+  });
+
+  it("a dialogDetects match makes a text-only trust-gate (no box) → awaiting-input (DIALOG-01)", () => {
+    const snapshot = snap(["Do you trust the files in this folder?", "1. Yes  2. No", ""], { x: 0, y: 2 });
+    expect(classifyFrame(frame({ snapshot }), noStuck).state).toBe("working"); // profile-free: no structure → unparked working
+    const c = classifyFrame(
+      frame({ snapshot, dialogDetects: [/trust the files in this folder/i] }),
+      noStuck,
+    );
+    expect(c.state).toBe("awaiting-input");
+    expect(c.reason).toBe("dialog_detected");
+  });
+
+  it("a promptAffordance match makes a settled idle affordance the generic misses → awaiting-input", () => {
+    // A platform-specific affordance the generic SELECTOR/box/enumerator does NOT catch.
+    const snapshot = snap(["output above", "▶ ready for input", ""], { x: 0, y: 2 });
+    expect(classifyFrame(frame({ snapshot }), noStuck).state).toBe("working"); // profile-free baseline
+    const c = classifyFrame(
+      frame({ snapshot, perception: { promptAffordance: [/▶ ready/] } }),
+      noStuck,
+    );
+    expect(c.state).toBe("awaiting-input");
+  });
+
+  it("a genuinely parked prompt still wins over a workingLine match (high-confidence parked)", () => {
+    // A real prompt at the bottom + a stale workingLine elsewhere: the parked gate (step 3) wins.
+    const snapshot = snap(["Working (3s)", "Type a command:", "$ "], { x: 2, y: 2 });
+    const c = classifyFrame(
+      frame({ snapshot, perception: { workingLine: [/Working \(\d+s\)/] } }),
+      noStuck,
+    );
+    expect(c.state).toBe("awaiting-input");
+    expect(c.confidence).toBe("high");
+  });
+
+  it("profile-free: perception absent ⇒ classification is byte-identical to today (INV-1)", () => {
+    // The same frames WITHOUT a perception object take the generic structural path unchanged.
+    const menuish = snap(["Select Model", "the fast one", ""], { x: 0, y: 2 });
+    expect(classifyFrame(frame({ snapshot: menuish }), noStuck).state).toBe("working");
+    const working = snap(["Working (5s)", "reading files", "more output", "and more"], { x: 4, y: 0 });
+    expect(classifyFrame(frame({ snapshot: working }), pastStuck).state).toBe("stuck");
+  });
+});
 
 // ---------------------------------------------------------------------------
 // classifyFrame — the §4.3 decision tree

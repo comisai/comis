@@ -55,10 +55,9 @@ import {
   type SessionListing,
   type SessionOwner,
 } from "./terminal-session-registry.js";
+import { withCompleteNote } from "./terminal-wait-reply.js";
 
-// ---------------------------------------------------------------------------
 // Injected dependency contracts
-// ---------------------------------------------------------------------------
 
 /** Minimal pino-compatible structural logger — NOT `getLogger` from `@comis/infra`. */
 export interface ToolLogger {
@@ -186,25 +185,27 @@ export interface TerminalToolDeps {
   readonly approvalGate?: ApprovalGate;
 }
 
-// ---------------------------------------------------------------------------
 // Defaults (spec §5)
-// ---------------------------------------------------------------------------
 
 const DEFAULT_COLS = 120;
 const DEFAULT_ROWS = 40;
 
-// ---------------------------------------------------------------------------
 // Parameter schemas (spec §5 — the final signatures)
-// ---------------------------------------------------------------------------
 
 const CreateParams = Type.Object({
   allowId: Type.String({ description: "Allowlist entry id to spawn under" }),
   command: Type.String({ description: "The binary to drive (an absolute/relative path; canonical-matched)" }),
   args: Type.Optional(Type.Array(Type.String(), { description: "Arguments appended after the entry's argsPrefix" })),
-  cwd: Type.Optional(Type.String({ description: "Working directory for the session" })),
+  cwd: Type.Optional(Type.String({ description: "Working directory for the session (honored only if within the session workspace; else clamped to it). For a CODING PROJECT do NOT use this — pass `project` instead; `cwd` does NOT create a named, retrievable project folder and a path outside the workspace is silently clamped." })),
+  project: Type.Optional(
+    Type.String({
+      description:
+        "Project name. The session opens in a dedicated per-project folder <workspace>/projects/<project> (auto-created) — pass the SAME name to keep working on, fix, or extend an existing project; different names give isolated folders for parallel projects.",
+    }),
+  ),
   cols: Type.Optional(Type.Integer({ description: "Terminal columns (default 120)" })),
   rows: Type.Optional(Type.Integer({ description: "Terminal rows (default 40)" })),
-  name: Type.Optional(Type.String({ description: "Human-readable session name" })),
+  name: Type.Optional(Type.String({ description: "Human-readable display label for the session (shown in listings) — this is NOT the project folder. To name a coding project's folder, use `project`." })),
   hintPatterns: Type.Optional(Type.Array(Type.String(), { description: "Safe-interaction hint patterns" })),
 });
 
@@ -255,9 +256,7 @@ const ResizeParams = Type.Object({
   rows: Type.Integer({ description: "New row count" }),
 });
 
-// ---------------------------------------------------------------------------
 // Param readers (typed, local — params arrive as Record<string,unknown>)
-// ---------------------------------------------------------------------------
 
 function readString(p: Record<string, unknown>, key: string): string | undefined {
   const v = p[key];
@@ -286,9 +285,7 @@ function readOptInt(p: Record<string, unknown>, key: string): number | undefined
   return typeof v === "number" && Number.isFinite(v) ? v : undefined;
 }
 
-// ---------------------------------------------------------------------------
 // Origin-keying: derive the (agentId, sessionKey) owner per call
-// ---------------------------------------------------------------------------
 
 /**
  * Derive the calling origin `(agentId, sessionKey)` for the owner-scoped registry calls from
@@ -305,9 +302,7 @@ export function resolveOwner(deps: TerminalToolDeps): SessionOwner {
 /** The degraded `{screen,cursor}` snapshot a send_text/send_key returns when the turn signal already aborted. */
 const ABORTED_SEND: SendResult = { screen: "", cursor: { x: 0, y: 0 } };
 
-// ---------------------------------------------------------------------------
 // create (the gate — allowlist / fail-closed / canonicalize / observe)
-// ---------------------------------------------------------------------------
 
 /**
  * `terminal_session_create` — gate on the allowlist, fail closed on a
@@ -319,7 +314,8 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
     name: "terminal_session_create",
     label: "Terminal: create session",
     description:
-      "Start an interactive terminal session driving an allowlisted binary. Rejected unless the canonical command matches an operator allowlist entry.",
+      "Start an interactive terminal session driving an allowlisted binary. Rejected unless the canonical command matches an operator allowlist entry. " +
+      "FOR A CODING PROJECT (anything you may revisit to fix a bug or add a feature), ALWAYS pass `project: <short-kebab-name>` — the work then lives in a persistent, named folder `<workspace>/projects/<name>/` that you can return to later by creating a new session with the SAME `project` name (the folder is reused). Do NOT use `cwd` and do NOT rely on the display `name` for this — only `project` creates a retrievable per-project folder. To see existing projects to continue, list `<workspace>/projects/`.",
     parameters: CreateParams,
 
     // The SDK 4-arg execute — the turn's AbortSignal is arg 3. We OBSERVE it
@@ -335,6 +331,10 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
       const args = readStringArray(params, "args");
       const cols = readInt(params, "cols", DEFAULT_COLS);
       const rows = readInt(params, "rows", DEFAULT_ROWS);
+      // Working dir: an explicit cwd (clamped within the workspace) OR a `project` name → its own
+      // <agent-workspace>/projects/<slug> folder (auto-created). Both resolve in resolveCreateWorkspace.
+      const cwd = readString(params, "cwd");
+      const project = readString(params, "project");
 
       // abort ends the call, NOT the session — never registry.kill here. The
       // turn already aborted, so do NOT spawn a new session (create is the one
@@ -426,7 +426,12 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
             cols,
             rows,
             scrollback: DEFAULT_SCROLLBACK,
-            scope: matched.entry.scope, ...(deps.durable ? { durable: true } : {}), // FINDING-B: drive.durable → req.durable → the registry derives the tmux name + selects the tmux backend.
+            scope: matched.entry.scope,
+            // Agent-supplied working dir / project folder (resolveCreateWorkspace clamps cwd within
+            // the workspace + sanitizes project → <agent-workspace>/projects/<slug>, auto-created).
+            ...(cwd !== undefined ? { cwd } : {}),
+            ...(project !== undefined ? { project } : {}),
+            ...(deps.durable ? { durable: true } : {}), // FINDING-B: drive.durable → req.durable → the registry derives the tmux name + selects the tmux backend.
           },
           // Stamp the origin so this session is visible ONLY to its owner.
           resolveOwner(deps),
@@ -486,9 +491,7 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
   };
 }
 
-// ---------------------------------------------------------------------------
 // read / list / kill (thin delegations)
-// ---------------------------------------------------------------------------
 
 /** `terminal_session_read` — return the settled `{screen,cursor,cols,rows,alt,alive}` view. */
 export function createTerminalSessionReadTool(deps: TerminalToolDeps): AgentTool<typeof ReadParams> {
@@ -593,7 +596,6 @@ export function createTerminalSessionKillTool(deps: TerminalToolDeps): AgentTool
   };
 }
 
-// ---------------------------------------------------------------------------
 // Interaction tools (send_text / send_key / resize / wait).
 //
 // Each is a thin delegation to the matching registry forwarding method,
@@ -602,7 +604,6 @@ export function createTerminalSessionKillTool(deps: TerminalToolDeps): AgentTool
 // session was gated at create) and never touch detectProvider — exactly the
 // read/list/kill posture. They take the full TerminalToolDeps so the daemon hands
 // one sharedDeps to all eight implemented tools.
-// ---------------------------------------------------------------------------
 
 /**
  * `terminal_session_send_text` — type `text` into the session; with `submit` the
@@ -792,7 +793,7 @@ export function createTerminalSessionWaitTool(deps: TerminalToolDeps): AgentTool
           driveMode === "detached" ? "mode_detached" : "producing",
         );
       }
-      return jsonResult(out);
+      return jsonResult(withCompleteNote(out)); // FINDING-3: scope `isComplete` for the model (registry `out` unchanged)
     },
   };
 }

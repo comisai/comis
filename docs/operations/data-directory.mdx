@@ -31,7 +31,7 @@ Here's everything Comis keeps on disk — and why.
 ├── logs/
 │   └── daemon.N.log         # structured JSON log (pino-roll; live file = newest N)
 ├── traces/                  # per-session JSONL execution traces
-├── workspace/               # default agent workspace (files, git, skills, terminal/)
+├── workspace/               # default agent workspace (files, git, skills, projects/)
 ├── workspace-<agentId>/     # named-agent workspaces (one per extra agent)
 ├── terminal-drive/          # durable terminal-driver state (default; absent only with drive.durable: false)
 │   └── <agentId>/journals/<sessionId>.json
@@ -39,6 +39,8 @@ Here's everything Comis keeps on disk — and why.
 │   └── whisper/             # local STT whisper model (downloaded once on first use, reused)
 ├── agents/                  # per-agent RPC state (subagent results, etc.)
 ├── background-tasks/        # background task state files
+├── skills/                  # seeded skill library — bundled claude-code/codex/skill-creator skills (re-seeded on version change) + any added skills
+│   └── <name>/SKILL.md      # one dir per skill (the agent auto-discovers these by description)
 ├── identity/
 │   └── device.json          # Ed25519 device identity (auto-generated)
 └── devices/                 # paired device records (if pairing is used)
@@ -247,8 +249,8 @@ Each agent gets a dedicated workspace directory. The default agent uses `workspa
 - Agent identity files (`AGENTS.md`, `SOUL.md`, `USER.md`, `IDENTITY.md`)
 - A `.scheduler/` subdirectory with `cron-jobs.json` and execution logs
 - A `skills/` subdirectory for agent-specific prompt skills
-- A `terminal/` subdirectory — the persistent working directory for [terminal-driver](/agent-tools/terminal-driver) sessions (present only if the agent uses that tool). A driven session's work lands here and survives the session; it is the only part of `~/.comis` re-exposed read-write inside the session's bwrap jail.
-- Subdirectories seeded by Comis: `projects/`, `scripts/`, `documents/`, `media/`, `data/`, `output/`
+- A `projects/` subdirectory — the persistent working root for [terminal-driver](/agent-tools/terminal-driver) sessions (present only if the agent uses that tool). Each named coding project gets its own auto-created folder `projects/<name>`, so a driven session's work (e.g. a Claude Code build) lands at `workspace/projects/<name>` and survives the session. This `projects/` subtree is the only part of `~/.comis` re-exposed read-write inside the session's bwrap jail; the agent's sibling `sessions/`, `skills/`, `memory.db`, and secrets stay masked.
+- Other subdirectories seeded by Comis: `scripts/`, `documents/`, `media/`, `data/`, `output/`
 
 The seeded `media/` subdirectory is scratch space for agent file operations and the durable home for generated images. The `image_generate` tool persists each generated image to `media/photos/` inside the agent's workspace (`~/.comis/workspace/media/photos/` for the default agent) via the media-persistence service — a UUID filename with a MIME-detected extension, bounded by the media-persistence size cap. The persisted file is then delivered to the channel via the adapter's `sendAttachment` from that durable path. When the channel cannot receive an attachment — an adapter without `sendAttachment` (currently only IRC) — or no channel is present, the handler returns a bounded base64 image over the RPC response instead. The persisted file is not deleted after delivery, so generated images survive for later inspection (see the [`image_generate` tool](/agent-tools/media)).
 
@@ -261,7 +263,7 @@ The `video_generate` tool (v2.24) persists generated videos to `media/videos/` i
 
 ### `terminal-drive/`
 
-Durable drive-state journals for the [terminal-driver](/agent-tools/terminal-driver), written **only** when an agent runs a durable drive (`drive.durable: true`). Each journal lives at `terminal-drive/<agentId>/journals/<sessionId>.json` — one small JSON file per driven session, beside (but distinct from) the agent's persistent `terminal/` working directory under `workspace/`.
+Durable drive-state journals for the [terminal-driver](/agent-tools/terminal-driver), written **only** when an agent runs a durable drive (`drive.durable: true`). Each journal lives at `terminal-drive/<agentId>/journals/<sessionId>.json` — one small JSON file per driven session, beside (but distinct from) the agent's persistent `projects/` working directory under `workspace/`.
 
 The journal is what lets a long autonomous drive **survive a daemon restart**: a durable drive launches the driven CLI inside a detached tmux server that outlives the daemon, and the journal records the compact drive state — the objective, the last screen classification, the prompts already answered, and the steps tried — so on restart the driver **re-attaches to the live tmux session and resumes** instead of starting over or re-answering prompts. A genuinely-gone session is reported as failed with its journal preserved.
 
