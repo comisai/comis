@@ -31,6 +31,7 @@ import {
   type ValidationResult,
   type AbortClassification,
 } from "./sub-agent-result-processor.js";
+import { createDeliveryDedup } from "./announce-key.js";
 import type { ClockPort, TimerPort, TimerHandle } from "@comis/core";
 
 // ---------------------------------------------------------------------------
@@ -3802,5 +3803,48 @@ describe("sub-agent-runner uses BackgroundSessionResolver for parent-session loo
       .join("\n");
     // No literal activeRunRegistry.get( in the source.
     expect(stripped).not.toMatch(/activeRunRegistry\.get\(/);
+  });
+
+  // -------------------------------------------------------------------------
+  // WR-01: the runner must pass an onDelivered sink into deadLetterQueue.drain
+  // so a DLQ-recovered announcement marks the shared deliveredKeys set —
+  // otherwise a later failure sweep double-notifies the same run.
+  // -------------------------------------------------------------------------
+
+  it("marks the shared deliveryDedup when a DLQ drain recovers a keyed announcement", async () => {
+    vi.useRealTimers(); // shutdown awaits a real microtask chain
+
+    const deliveryDedup = createDeliveryDedup();
+    // Stub DLQ whose drain re-delivers a keyed entry and invokes onDelivered.
+    const drain = vi.fn(
+      async (
+        _send: unknown,
+        onDelivered?: (idempotencyKey: string) => void,
+      ): Promise<void> => {
+        onDelivered?.("default:u1:c1::recovered-run");
+      },
+    );
+    const deadLetterQueue = {
+      enqueue: vi.fn(),
+      drain,
+      size: vi.fn().mockReturnValue(0),
+    };
+
+    const runner = createSubAgentRunner({
+      ...createMockDeps(),
+      // The DLQ recovery path registers a provider:recovered listener, so the
+      // event bus needs `on` here (the default mock only stubs `emit`).
+      eventBus: { emit: vi.fn(), on: vi.fn() } as unknown as SubAgentRunnerDeps["eventBus"],
+      deadLetterQueue: deadLetterQueue as unknown as SubAgentRunnerDeps["deadLetterQueue"],
+      deliveryDedup,
+    });
+
+    // shutdown() drains the DLQ (one of the three drain call sites).
+    await runner.shutdown();
+
+    expect(drain).toHaveBeenCalled();
+    // The recovered key is now in the shared dedup → a later failure sweep
+    // sees hasDelivered === true and suppresses the duplicate notification.
+    expect(deliveryDedup.has("default:u1:c1::recovered-run")).toBe(true);
   });
 });

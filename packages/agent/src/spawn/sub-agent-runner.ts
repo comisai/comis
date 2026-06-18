@@ -523,6 +523,15 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   const SWEEP_INTERVAL_MS = 300_000;
   const MAX_RUNS = 1000;
 
+  // WR-01: DLQ recovery sink — when a dead-lettered announcement is finally
+  // re-delivered on drain(), record its idempotency key in the shared
+  // deliveredKeys set so a later failure sweep (deliverFailureNotification)
+  // does not double-notify the same run. No-op when no shared dedup is wired.
+  const markRecoveredDelivered = (idempotencyKey: string): void => {
+    deps.deliveryDedup?.mark(idempotencyKey);
+    deps.batcher?.markDelivered(idempotencyKey);
+  };
+
   const sweepInterval = timers.setInterval(() => {
     const now = clock.now();
     const retentionMs = deps.config.subAgentRetentionMs;
@@ -719,7 +728,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     // Dead-letter queue periodic drain
     if (deps.deadLetterQueue) {
       suppressError(
-        deps.deadLetterQueue.drain(deps.sendToChannel),
+        deps.deadLetterQueue.drain(deps.sendToChannel, markRecoveredDelivered),
         "dead-letter-sweep-drain",
       );
     }
@@ -731,7 +740,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   if (deps.deadLetterQueue) {
     deps.eventBus.on("provider:recovered", () => {
       suppressError(
-        deps.deadLetterQueue!.drain(deps.sendToChannel),
+        deps.deadLetterQueue!.drain(deps.sendToChannel, markRecoveredDelivered),
         "dead-letter-recovery-drain",
       );
     });
@@ -1908,7 +1917,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     // Drain dead-letter queue before shutdown
     if (deps.deadLetterQueue) {
       try {
-        await deps.deadLetterQueue.drain(deps.sendToChannel);
+        await deps.deadLetterQueue.drain(deps.sendToChannel, markRecoveredDelivered);
       } catch {
         // Best-effort drain on shutdown
       }

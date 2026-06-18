@@ -84,8 +84,18 @@ export interface AnnouncementDeadLetterQueue {
   /**
    * Retry delivery of queued entries via the provided sendToChannel callback.
    * Processes entries sequentially, drops expired entries, uses atomic write.
+   *
+   * WR-01: `onDelivered` (optional) is invoked with the entry's
+   * `idempotencyKey` after a SUCCESSFUL re-delivery, so the caller can record
+   * the recovered key in the shared deliveredKeys set (deliveryDedup.mark /
+   * batcher.markDelivered). Without it, a DLQ-recovered announcement is never
+   * marked delivered and a later sweep double-notifies the same run. Only fired
+   * for keyed entries on success; never on failure (the key must stay open).
    */
-  drain(sendToChannel: (type: ChannelType, id: string, text: string, options?: { threadId?: string }) => Promise<boolean>): Promise<void>;
+  drain(
+    sendToChannel: (type: ChannelType, id: string, text: string, options?: { threadId?: string }) => Promise<boolean>,
+    onDelivered?: (idempotencyKey: string) => void,
+  ): Promise<void>;
   /** Return the current number of entries in the queue. */
   size(): number;
 }
@@ -252,6 +262,7 @@ export function createAnnouncementDeadLetterQueue(
 
     async drain(
       sendToChannel: (type: ChannelType, id: string, text: string, options?: { threadId?: string }) => Promise<boolean>,
+      onDelivered?: (idempotencyKey: string) => void,
     ): Promise<void> {
       // Concurrent drain protection
       if (draining) return;
@@ -299,6 +310,10 @@ export function createAnnouncementDeadLetterQueue(
             );
             if (success) {
               delivered.add(entry.id);
+              // WR-01: record the recovered key as delivered so a later sweep
+              // (deliverFailureNotification) does not double-notify the same
+              // run. Fired ONLY on success and ONLY for keyed entries.
+              if (entry.idempotencyKey) onDelivered?.(entry.idempotencyKey);
               eventBus.emit("announcement:dead_letter_delivered", {
                 runId: entry.runId,
                 channelType: entry.channelType,

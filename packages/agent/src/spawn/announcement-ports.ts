@@ -91,6 +91,13 @@ export interface AnnouncementDeadLetterQueue {
       text: string,
       options?: { threadId?: string },
     ) => Promise<boolean>,
+    /**
+     * WR-01: invoked with the entry's `idempotencyKey` after a SUCCESSFUL
+     * re-delivery so the caller can mark the recovered key delivered (shared
+     * deliveredKeys set) — otherwise a later failure sweep double-notifies.
+     * Mirrors the orchestrator DLQ signature (D-MIRRORS).
+     */
+    onDelivered?: (idempotencyKey: string) => void,
   ): Promise<void>;
   size(): number;
 }
