@@ -265,6 +265,13 @@ export function translatePayload(
     case "pipeline:authored":
       return { action: payload.action, capabilityClass: payload.capabilityClass, schemaValid: payload.schemaValid, repaired: payload.repaired };
 
+    // AUTHOR-01: the matched canonical template (closed enum) + repaired-graph nodeCount + tier. Closed enum + numbers ONLY — never the graph body, type_config value, or node task; agentId/sessionKey stripped (§2.7 / H1).
+    case "graph:repaired":
+      return { pattern: payload.pattern, nodeCount: payload.nodeCount, capabilityClass: payload.capabilityClass };
+    // AUTHOR-02: the requested canonical pattern (closed enum) + synthesized-graph nodeCount. Closed enum + number ONLY — never the INTENT TEXT (the highest-risk synthesis leak), graph body, or node task; agentId/sessionKey stripped (§2.7 / H1).
+    case "graph:synthesized_from_intent":
+      return { pattern: payload.pattern, nodeCount: payload.nodeCount };
+
     case "learning:outcome_observed":
       // OUTCOME-08: trajectoryId + closed-enum outcome/source + numeric confidence ONLY (no body/alpha/recalled ids; agentId/sessionKey/traceId are envelope ids — §2.7 / SEC-01).
       return { trajectoryId: payload.trajectoryId, outcome: payload.outcome, source: payload.source, confidence: payload.confidence };

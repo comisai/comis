@@ -117,6 +117,15 @@ export const TRAJECTORY_EVENT_TYPES = [
   // P1 — the FLEET aggregate, Plan 03/04, is the P1 deliverable).
   "pipeline.authored",
 
+  // AUTHOR-01/02 (v2.27 P2, Phase 174): the reserved trajectory types for the two
+  // counts-only authoring-AUDIT events Plans 03/04 emit on a conservative repair /
+  // intent-synthesis. APPEND-ONLY beside pipeline.authored. Content-free: closed
+  // canonical-template pattern enum + numeric nodeCount (+ tier on repaired) ONLY,
+  // never a graph body / type_config value / node task / intent text (§2.7 / H1).
+  // Daemon-side emit (graph-helpers.ts); bridged for arch closure + `comis explain`.
+  "graph.repaired",
+  "graph.synthesized_from_intent",
+
   // Background task lifecycle (T2.2 / F9): promote/complete/fail of a long-running tool
   // detached past the execute() boundary (content-free — ids + durationMs only).
   "background_task.promoted",
