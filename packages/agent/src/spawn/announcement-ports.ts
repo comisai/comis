@@ -38,6 +38,8 @@ export interface QueuedAnnouncementShape {
   callerAgentId: string;
   callerSessionKey: string;
   runId: string;
+  /** Idempotency key `${callerSessionKey}::${runId}` (DELIVERY-01). Mirrors QueuedAnnouncement.idempotencyKey — keep in lockstep (D-MIRRORS). */
+  idempotencyKey?: string;
 }
 
 /**
@@ -67,6 +69,8 @@ export interface DeadLetterEntryShape {
   lastAttemptAt: number;
   lastError?: string;
   threadId?: string;
+  /** Idempotency key `${callerSessionKey}::${runId}` (DELIVERY-01). Mirrors DeadLetterEntry.idempotencyKey — keep in lockstep (D-MIRRORS). */
+  idempotencyKey?: string;
 }
 
 /**

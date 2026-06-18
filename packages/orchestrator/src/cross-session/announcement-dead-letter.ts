@@ -70,6 +70,8 @@ export interface DeadLetterEntry {
   lastError?: string;
   /** Thread ID for threaded delivery Persisted so retried deliveries land in the correct thread. */
   threadId?: string;
+  /** Idempotency key `${callerSessionKey}::${runId}` (DELIVERY-01). Optional/forward-additive — pre-existing JSONL rows have it undefined (no migration; parseEntries tolerates the missing field). */
+  idempotencyKey?: string;
 }
 
 /** Dead-letter queue interface for announcement retry management. */

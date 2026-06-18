@@ -31,6 +31,8 @@ export interface QueuedAnnouncement {
   callerAgentId: string;
   callerSessionKey: string;
   runId: string;
+  /** Idempotency key `${callerSessionKey}::${runId}` (DELIVERY-01). Built once at the delivery entry; opaque here. Undefined for a top-level spawn (no callerSessionKey). */
+  idempotencyKey?: string;
 }
 
 export interface AnnouncementBatcherDeps {
@@ -57,6 +59,8 @@ export interface AnnouncementBatcherDeps {
       failedAt: number;
       attemptCount: number;
       lastError?: string;
+      /** Idempotency key `${callerSessionKey}::${runId}` (DELIVERY-01), carried onto the dead-letter entry. */
+      idempotencyKey?: string;
     }): void;
   };
 }

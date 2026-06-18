@@ -476,6 +476,12 @@ export async function deliverAnnouncement(params: {
 }): Promise<void> {
   const { announceChannelType, announceChannelId, callerAgentId, callerSessionKey, runId } = params;
 
+  // DELIVERY-01: build the idempotency key ONCE here, thread it as data through
+  // the batcher and the dead-letter entry — never reconstruct it downstream.
+  // `::` delimits the session key's own single colons (callerSessionKey is the
+  // formatted form, e.g. `default:user1:chan1`). Undefined for a top-level spawn.
+  const announceKey = callerSessionKey ? `${callerSessionKey}::${runId}` : undefined;
+
   // Scrub announcement text before any delivery path (batcher, parent, or direct channel).
   const announceScrub = scrubSecretsFromText(params.announcementText);
   if (announceScrub.redactions > 0) {
@@ -497,6 +503,7 @@ export async function deliverAnnouncement(params: {
       callerAgentId,
       callerSessionKey,
       runId,
+      idempotencyKey: announceKey,
     });
     deps.logger?.debug({ runId, channelType: announceChannelType }, "Sub-agent announcement queued for batching");
     return;
@@ -555,6 +562,7 @@ export async function deliverAnnouncement(params: {
         attemptCount: 0,
         lastError: sendErr instanceof Error ? sendErr.message : String(sendErr),
         threadId,  // Persist thread context for retried deliveries
+        idempotencyKey: announceKey,  // DELIVERY-01: same key threaded onto the DLQ entry
       });
     }
   });
