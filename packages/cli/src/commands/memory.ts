@@ -221,8 +221,9 @@ export function registerMemoryCommand(program: Command): void {
           return;
         }
         info(
-          "No outcome events recorded yet — learningOutcome is default-off " +
-            "(enable agents.<id>.learningOutcome.enabled, gated by memory.costFeatures.enabled, to populate).",
+          "No outcome events recorded yet. Outcome learning requires " +
+            "agents.<id>.learningOutcome.enabled (default off) + memory.costFeatures.enabled; " +
+            "once on, events accrue as agent turns finish.",
         );
         return;
       }
@@ -272,8 +273,9 @@ export function registerMemoryCommand(program: Command): void {
           return;
         }
         info(
-          "No learned skills yet — learningSkills is default-off " +
-            "(enable agents.<id>.learningSkills.enabled, gated by memory.costFeatures.enabled, to populate).",
+          "No learned skills yet — none have been synthesized + admitted. Skill synthesis " +
+            "requires agents.<id>.learningSkills.enabled (default off) + memory.costFeatures.enabled, " +
+            "and runs on its schedule over successful trajectories (procedures only).",
         );
         return;
       }
