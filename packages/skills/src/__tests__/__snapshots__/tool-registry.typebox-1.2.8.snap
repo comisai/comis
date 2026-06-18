@@ -575,10 +575,6 @@
           "description": "Include graphs from last N minutes (for status listing)",
           "type": "integer"
         },
-        "rounds": {
-          "description": "from_intent: optional number of rounds (reserved; accepted for debate/collaborate-style patterns).",
-          "type": "integer"
-        },
         "settings": {
           "description": "Graph settings object"
         },
