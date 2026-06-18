@@ -340,3 +340,50 @@ describe("pipeline:authored authoring-telemetry event (counts/ids/enums only)", 
     expect(makeSample().repaired).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// STEER-01 (v2.27 P3, Phase 175): the subagent:steered event — emitted at the
+// inject site (Plan 02, subagent-handlers.ts / sub-agent-runner.ts) when a
+// running child is steered in-flight (transcript preserved) instead of
+// kill+respawn. Counts/ids/typed-enum ONLY — NEVER the steer message body
+// (§2.7). The reproducible-RED signal is the source-grep (the type-level
+// assertions compile away under esbuild — the 173/174 precedent).
+// ---------------------------------------------------------------------------
+
+describe("subagent:steered event source (reproducible RED guards — STEER-01)", () => {
+  it("declares the subagent:steered key on the OrchestrationEvents interface", () => {
+    const src = readFileSync(resolve(here, "events-orchestration.ts"), "utf8");
+    expect(src).toMatch(/interface\s+OrchestrationEvents/);
+    expect(src).toContain('"subagent:steered"');
+  });
+
+  it("the subagent:steered block declares runId/agentId/mode/timestamp and NO message-body field (counts/ids-only, §2.7)", () => {
+    const src = readFileSync(resolve(here, "events-orchestration.ts"), "utf8");
+    // Isolate the subagent:steered declaration block (from its key to the
+    // closing `};`) so the body-field guard scopes to THIS event only.
+    const match = src.match(/"subagent:steered":\s*\{[\s\S]*?\n\s*\};/);
+    expect(match, "subagent:steered block not found in events-orchestration.ts").not.toBeNull();
+    const steeredBlock = match![0];
+    // Counts/ids/typed-enum the event MUST carry.
+    expect(steeredBlock).toMatch(/\brunId\b/);
+    expect(steeredBlock).toMatch(/\bagentId\b/);
+    expect(steeredBlock).toMatch(/\bmode\b/);
+    expect(steeredBlock).toMatch(/\btimestamp\b/);
+    // The §2.7 / D-EVENT no-leak guard: NO message-body field may appear in the
+    // event payload block (the steer message text is excluded).
+    expect(steeredBlock).not.toMatch(/\b(message|text|body|content)\b/);
+  });
+
+  it("the subagent:steered mode field is the closed union \"steer\" | \"followup\" (§2.8)", () => {
+    const src = readFileSync(resolve(here, "events-orchestration.ts"), "utf8");
+    // The closed-union discriminator — which SDK primitive landed the inject.
+    expect(src).toMatch(/mode:\s*"steer"\s*\|\s*"followup"/);
+  });
+
+  it("documents subagent:steered as DAEMON-emitted, counts/ids-only (§2.7)", () => {
+    const src = readFileSync(resolve(here, "events-orchestration.ts"), "utf8");
+    // The doc names STEER-01 + the counts/ids-only discipline so a future reader
+    // cannot mistake it for an agent-side body-carrying signal.
+    expect(src).toMatch(/STEER-01/);
+  });
+});

@@ -1574,6 +1574,14 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       nodeCount: 4,
       timestamp: 0,
     },
+    // STEER-01: counts/ids + the closed-union mode only — the correlation
+    // invariant must hold (no sessionKey/traceId leak into the record data).
+    "subagent:steered": {
+      runId: "run-1",
+      agentId: "agent-1",
+      mode: "steer",
+      timestamp: 0,
+    },
   };
 
   it.each(Object.keys(TRAJECTORY_BRIDGE_MAPPING))(
@@ -1757,6 +1765,79 @@ describe("TRAJECTORY_BRIDGE_MAPPING -- graph:repaired + graph:synthesized_from_i
     for (const forbidden of ["intent", "nodes", "graph", "type_config", "typeConfig", "task", "label", "body"]) {
       expect(data[forbidden], `forbidden body key on trajectory record: ${forbidden}`).toBeUndefined();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// STEER-01 (v2.27 P3, Phase 175): the subagent:steered event — bridge-mapped
+// for OPERATOR TRAJECTORY VISIBILITY (a steer is a meaningful per-session event
+// an operator wants in `comis explain`), mirroring the 173/174 entries
+// (pipeline:authored / graph:repaired / graph:synthesized_from_intent). This is
+// a recording choice, NOT a closure-gate requirement: the closure gate scans
+// agent/orchestrator emit sites only and subagent:steered is daemon-emitted
+// (Plan 02, subagent-handlers.ts) — so it does not trip the gate (the unmapped
+// subagent:budget_exceeded precedent). The translator is content-free: runId/
+// agentId/mode counts/ids ONLY — NEVER the steer message body (§2.7 / H1).
+// ---------------------------------------------------------------------------
+describe("TRAJECTORY_BRIDGE_MAPPING -- subagent:steered (STEER-01, operator visibility)", () => {
+  it("maps subagent:steered -> subagent.steered (mirrors the graph:repaired entry)", () => {
+    expect(TRAJECTORY_BRIDGE_MAPPING["subagent:steered"]).toBe("subagent.steered");
+  });
+
+  it("subagent:steered is a member of TrajectoryBridgedEventName + subagent.steered is a valid TrajectoryEventType (arch closure)", () => {
+    const keys = Object.keys(TRAJECTORY_BRIDGE_MAPPING);
+    expect(keys).toContain("subagent:steered");
+    const allTypes = new Set<string>(TRAJECTORY_EVENT_TYPES as readonly string[]);
+    expect(allTypes.has("subagent.steered")).toBe(true);
+  });
+
+  it("bridge translates subagent:steered to a content-free record (runId/agentId/mode only — NO message body crosses, §2.7 / H1)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("subagent:steered", {
+      runId: "run-77",
+      agentId: "agent-X",
+      mode: "steer",
+      sessionKey: "skey-X",
+      traceId: "trace-X",
+      timestamp: 1000,
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0]!.type).toBe("subagent.steered");
+    const data = recorder.calls[0]!.data as Record<string, unknown>;
+    // The run identity + the closed-union mode cross.
+    expect(data.runId).toBe("run-77");
+    expect(data.mode).toBe("steer");
+    // agentId/sessionKey/traceId are envelope-only correlation ids handled by the
+    // recorder envelope (TrajectoryRecorderInit + AsyncLocalStorage) — the
+    // translator MUST NOT echo them into data (the graph:repaired precedent).
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.traceId).toBeUndefined();
+    // The steer MESSAGE BODY (the highest-risk leak) must NEVER cross the bridge.
+    for (const forbidden of ["message", "text", "body", "content"]) {
+      expect(data[forbidden], `forbidden body key on trajectory record: ${forbidden}`).toBeUndefined();
+    }
+  });
+
+  it("the followup mode round-trips through the bridge (closed-union steer|followup)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("subagent:steered", {
+      runId: "run-78",
+      agentId: "agent-Y",
+      mode: "followup",
+      timestamp: 1000,
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    const data = recorder.calls[0]!.data as Record<string, unknown>;
+    expect(data.mode).toBe("followup");
   });
 });
 
@@ -3356,7 +3437,14 @@ describe("health:budget_exceeded entry (bridge entry count guard)", () => {
     //   ONLY (pattern closed-enum + nodeCount + capabilityClass tier), NEVER a graph body /
     //   type_config value / node task / intent text — §2.7. Mapping reserves the types for
     //   arch closure of the keyof TrajectoryBridgedEventName).
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(100);
+    // + subagent:steered (STEER-01, v2.27 P3, Phase 175 Plan 01 — APPEND-ONLY beside the
+    //   AUTHOR-01/02 entries; the daemon-side in-flight-steer event Plan 02 emits at the
+    //   inject site, bridged for OPERATOR TRAJECTORY VISIBILITY (`comis explain`). Counts/
+    //   ids/closed-enum-mode ONLY (runId + mode), NEVER the steer message body — §2.7.
+    //   Daemon-emitted → outside the agent/orchestrator closure-gate scan, so no
+    //   EVENTS_NOT_TRAJECTORY_MAPPED entry is needed; the unmapped subagent:budget_exceeded
+    //   is the precedent. The mapping is purely for trajectory recording).
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(101);
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {
