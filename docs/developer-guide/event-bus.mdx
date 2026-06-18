@@ -135,6 +135,8 @@ Skill lifecycle, tool execution, audit logging, observability (tokens and latenc
 | `graph:completed` | graphId, status, durationMs, nodeCount, nodesCompleted, nodesFailed, nodesSkipped, cancelReason, timestamp, graphCacheReadTokens, graphCacheWriteTokens, graphCacheEffectiveness, nodeEffectiveness |
 | `graph:driver_lifecycle` | graphId, nodeId, typeId, phase |
 | `subagent:budget_exceeded` | graphId, nodeId, agentId, tokenBudget, tokensUsed, timestamp |
+| `subagent:delivery_retried` | runId, channelType, attempt, transient, timestamp |
+| `subagent:delivery_deadlettered` | runId, channelType, attempt, transient, timestamp |
 | `memory:review_completed` | agentId, sessionsReviewed, memoriesExtracted, duplicatesSkipped, durationMs, timestamp |
 | `model:auth_cooldown` | keyName, provider, cooldownMs, failureCount, timestamp |
 | `model:catalog_loaded` | providerCount, modelCount, timestamp |
@@ -178,6 +180,13 @@ The `graph:driver_lifecycle` event fires at each phase transition during typed n
 Subscribe to this event for driver-level monitoring, logging, or triggering downstream actions based on typed node progress. See the [Pipelines: Driver Lifecycle](/developer-guide/pipelines#driver-lifecycle) documentation for the full execution flow.
 
 **Per-node token budgets:** `subagent:budget_exceeded` fires when a graph node's sub-agent exceeds its per-node token budget. The payload is counts and ids only -- `tokenBudget` is the cap that was breached, `tokensUsed` is the node's actual spend, and `agentId` is the node's child agent (never task text or sub-agent output). The breaching node fails terminally (honoring the graph's `on_failure`); see [Execution Graphs: Token budgets](/agents/execution-graphs#token-budgets). For completed nodes, `graph:node_updated` carries the optional `tokensUsed` and `cost` fields so per-node spend is observable from the bus alone; both are absent when the underlying run did not report them.
+
+**Self-healing completion delivery:** `subagent:delivery_retried` and `subagent:delivery_deadlettered` track the retry/dead-letter routing when a sub-agent completion delivery falls back to a direct channel send and that send fails. Like `subagent:budget_exceeded`, both payloads are counts and ids only -- never the announcement text, the sub-agent output, or the error string.
+
+- `subagent:delivery_retried` fires once **per retry** of a *transient* delivery failure. `runId` is the sub-agent run, `channelType` is the target channel, `attempt` is the 1-based retry number, and `transient` is always `true` (only transient failures are retried).
+- `subagent:delivery_deadlettered` fires when a delivery is finally **dead-lettered** -- either after exhausting `security.agentToAgent.delivery.maxRetries` retries for a transient failure, or immediately for a permanent one. `attempt` is the number of retries that were exhausted (`0` for an immediate permanent dead-letter), and `transient` records whether the dead-letter followed an exhausted transient retry (`true`) or a permanent failure (`false`).
+
+See [Resilience: Self-healing delivery retries](/agents/resilience#self-healing-delivery-retries) for the transient/permanent classification and the backoff schedule.
 
 **Cache cost fields** (added in v58.0): The `observability:token_usage` event includes prompt caching data when the provider supports it. `cost.cacheRead` and `cost.cacheWrite` are dollar costs for cached token reads/writes. `savedVsUncached` is the net savings compared to uncached pricing (positive = money saved). `cacheEligible` indicates whether the model supports prompt caching. `sessionKey` identifies the conversation session for per-session cost aggregation.
 
