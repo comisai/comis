@@ -73,7 +73,7 @@
         "tab": "Agent Tools",
         "groups": [
           { "group": "Overview", "pages": ["agent-tools/index"] },
-          { "group": "Tool Guides", "pages": ["agent-tools/scheduling", "agent-tools/messaging", "agent-tools/sessions", "agent-tools/pipelines", "agent-tools/media", "agent-tools/infrastructure", "agent-tools/browser", "agent-tools/terminal-driver", "agent-tools/coding-clis", "agent-tools/web-tools"] },
+          { "group": "Tool Guides", "pages": ["agent-tools/scheduling", "agent-tools/messaging", "agent-tools/sessions", "agent-tools/pipelines", "agent-tools/media", "agent-tools/infrastructure", "agent-tools/browser", "agent-tools/terminal-driver", "agent-tools/coding-clis", "agent-tools/gsd-builder", "agent-tools/web-tools"] },
           { "group": "Platform Actions", "pages": ["agent-tools/platform-actions"] }
         ]
       },
