@@ -328,6 +328,145 @@ describe("deliverFailureNotification", () => {
 });
 
 // ---------------------------------------------------------------------------
+// deliverFailureNotification idempotency (DELIVERY-03)
+//
+// The failure path must dedup on the SAME announceKey = `${callerSessionKey}::${runId}`
+// that the success path (deliverAnnouncement) builds, sharing the batcher's
+// deliveredKeys via hasDelivered/markDelivered (D-SHAREDDEDUP from Plan 01).
+// A Phase-170 budget-failed node delivered twice must notify ONCE.
+//
+// NOTE: these tests pass `callerSessionKey` + a `batcher` with hasDelivered/
+// markDelivered into deliverFailureNotification — neither exists on the
+// pre-patch signature, so the suite fails to compile against pre-patch code.
+// That compile-failure IS the RED for the signature change (§2.10).
+// ---------------------------------------------------------------------------
+
+/** A stub batcher whose delivered-key set is a real shared Set (mirrors the orchestrator batcher). */
+function makeStubBatcher() {
+  const deliveredKeys = new Set<string>();
+  const markDelivered = vi.fn((key: string) => { deliveredKeys.add(key); });
+  const hasDelivered = vi.fn((key: string) => deliveredKeys.has(key));
+  return {
+    enqueue: vi.fn(),
+    flush: vi.fn().mockResolvedValue(undefined),
+    shutdown: vi.fn().mockResolvedValue(undefined),
+    get pending() { return 0; },
+    hasDelivered,
+    markDelivered,
+  };
+}
+
+describe("deliverFailureNotification idempotency (DELIVERY-03)", () => {
+  it("is idempotent on the same (callerSessionKey, runId): second call is a no-op", async () => {
+    const sendToChannel = vi.fn().mockResolvedValue(true);
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
+    const batcher = makeStubBatcher();
+
+    const params = {
+      channelType: "discord",
+      channelId: "chan-1",
+      task: "budget-capped task",
+      runtimeMs: 1234,
+      runId: "r1",
+      callerSessionKey: "default:u1:c1",
+    };
+
+    await deliverFailureNotification(params, { sendToChannel, logger, batcher });
+    await deliverFailureNotification(params, { sendToChannel, logger, batcher });
+
+    // First delivery sent once; the second short-circuits before sendToChannel.
+    expect(sendToChannel).toHaveBeenCalledOnce();
+    expect(batcher.hasDelivered).toHaveBeenCalledWith("default:u1:c1::r1");
+  });
+
+  it("marks the SAME key the success path would mark (cross-path collision)", async () => {
+    const sendToChannel = vi.fn().mockResolvedValue(true);
+    const batcher = makeStubBatcher();
+
+    await deliverFailureNotification(
+      {
+        channelType: "telegram",
+        channelId: "chat-2",
+        task: "t",
+        runtimeMs: 500,
+        runId: "r1",
+        callerSessionKey: "default:u1:c1",
+      },
+      { sendToChannel, batcher },
+    );
+
+    // Proves a budget-failed node's failure-key == its success-key (deliverAnnouncement:514).
+    expect(batcher.markDelivered).toHaveBeenCalledOnce();
+    expect(batcher.markDelivered).toHaveBeenCalledWith("default:u1:c1::r1");
+  });
+
+  it("does NOT mark delivered when sendToChannel rejects (key stays retry-eligible, Pitfall 3)", async () => {
+    const sendToChannel = vi.fn().mockRejectedValue(new Error("network down"));
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
+    const batcher = makeStubBatcher();
+
+    await deliverFailureNotification(
+      {
+        channelType: "discord",
+        channelId: "chan-fail",
+        task: "t",
+        runtimeMs: 2000,
+        runId: "r1",
+        callerSessionKey: "default:u1:c1",
+      },
+      { sendToChannel, logger, batcher },
+    );
+
+    expect(sendToChannel).toHaveBeenCalledOnce();
+    expect(batcher.markDelivered).not.toHaveBeenCalled();
+    expect(batcher.hasDelivered("default:u1:c1::r1")).toBe(false);
+    // Still never throws.
+    expect(logger.warn).toHaveBeenCalledOnce();
+  });
+
+  it("no-op dedup when callerSessionKey is absent (top-level spawn) — always sends", async () => {
+    const sendToChannel = vi.fn().mockResolvedValue(true);
+    const batcher = makeStubBatcher();
+
+    const params = {
+      channelType: "discord",
+      channelId: "chan-1",
+      task: "t",
+      runtimeMs: 100,
+      runId: "r-top",
+      // no callerSessionKey
+    };
+
+    await deliverFailureNotification(params, { sendToChannel, batcher });
+    await deliverFailureNotification(params, { sendToChannel, batcher });
+
+    // No key → no dedup → both sends fire; the batcher dedup pair is never consulted.
+    expect(sendToChannel).toHaveBeenCalledTimes(2);
+    expect(batcher.hasDelivered).not.toHaveBeenCalled();
+    expect(batcher.markDelivered).not.toHaveBeenCalled();
+  });
+
+  it("behaves as today when deps.batcher is absent (no dedup, always sends, never throws)", async () => {
+    const sendToChannel = vi.fn().mockResolvedValue(true);
+
+    const params = {
+      channelType: "discord",
+      channelId: "chan-1",
+      task: "t",
+      runtimeMs: 100,
+      runId: "r1",
+      callerSessionKey: "default:u1:c1",
+    };
+
+    // No batcher in deps → behaves exactly as the pre-patch path.
+    await deliverFailureNotification(params, { sendToChannel });
+    await deliverFailureNotification(params, { sendToChannel });
+
+    expect(sendToChannel).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // classifyErrorContext - HTTP 5xx detection (operator-precedence regression).
 // The old expression
 // `lowerMsg.includes("provider") || lowerMsg.includes("5") && lowerMsg.includes("00")`
