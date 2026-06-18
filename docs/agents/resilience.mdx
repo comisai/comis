@@ -201,6 +201,12 @@ in-memory: a successful delivery before a restart is already complete, and
 re-delivery of a dead-lettered entry across a restart is bounded by the
 dead-letter queue's own retry and age limits above.
 
+The **failure notification** path (the static message sent when a sub-agent
+ends in error — a budget breach, watchdog timeout, ghost sweep, or degraded
+provider) shares the same delivered-key set, so it is idempotent on the same
+key. A node that ends in failure and is swept twice notifies the channel
+**once** — the second failure notification is a no-op.
+
 ```yaml
 security:
   agentToAgent:
