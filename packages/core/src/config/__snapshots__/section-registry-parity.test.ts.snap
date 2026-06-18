@@ -7770,6 +7770,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("secur
       "enabled": true,
       "maxPingPongTurns": 3,
       "sandboxNoDowngrade": true,
+      "steerInject": false,
       "subAgentMaxSteps": 50,
       "subAgentMcpTools": "inherit",
       "subAgentRetentionMs": 3600000,
@@ -7856,6 +7857,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("secur
     "default": true,
     "immutable": true,
     "path": "security.agentToAgent.sandboxNoDowngrade",
+    "type": "boolean"
+  },
+  {
+    "default": false,
+    "immutable": true,
+    "path": "security.agentToAgent.steerInject",
     "type": "boolean"
   },
   {
@@ -14338,6 +14345,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
         "enabled": true,
         "maxPingPongTurns": 3,
         "sandboxNoDowngrade": true,
+        "steerInject": false,
         "subAgentMaxSteps": 50,
         "subAgentMcpTools": "inherit",
         "subAgentRetentionMs": 3600000,
@@ -14420,6 +14428,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
       "enabled": true,
       "maxPingPongTurns": 3,
       "sandboxNoDowngrade": true,
+      "steerInject": false,
       "subAgentMaxSteps": 50,
       "subAgentMcpTools": "inherit",
       "subAgentRetentionMs": 3600000,
@@ -14506,6 +14515,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "default": true,
     "immutable": true,
     "path": "security.agentToAgent.sandboxNoDowngrade",
+    "type": "boolean"
+  },
+  {
+    "default": false,
+    "immutable": true,
+    "path": "security.agentToAgent.steerInject",
     "type": "boolean"
   },
   {
@@ -25790,6 +25805,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("sec
         "enabled": true,
         "maxPingPongTurns": 3,
         "sandboxNoDowngrade": true,
+        "steerInject": false,
         "subAgentMaxSteps": 50,
         "subAgentMcpTools": "inherit",
         "subAgentRetentionMs": 3600000,
@@ -25875,6 +25891,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("sec
         },
         "sandboxNoDowngrade": {
           "default": true,
+          "type": "boolean"
+        },
+        "steerInject": {
+          "default": false,
           "type": "boolean"
         },
         "subAgentMaxSteps": {
@@ -26109,6 +26129,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("sec
         "tokenBudget",
         "delivery",
         "sandboxNoDowngrade",
+        "steerInject",
         "subagentContext"
       ],
       "type": "object"
@@ -39056,6 +39077,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "enabled": true,
           "maxPingPongTurns": 3,
           "sandboxNoDowngrade": true,
+          "steerInject": false,
           "subAgentMaxSteps": 50,
           "subAgentMcpTools": "inherit",
           "subAgentRetentionMs": 3600000,
@@ -39139,6 +39161,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "enabled": true,
             "maxPingPongTurns": 3,
             "sandboxNoDowngrade": true,
+            "steerInject": false,
             "subAgentMaxSteps": 50,
             "subAgentMcpTools": "inherit",
             "subAgentRetentionMs": 3600000,
@@ -39224,6 +39247,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             },
             "sandboxNoDowngrade": {
               "default": true,
+              "type": "boolean"
+            },
+            "steerInject": {
+              "default": false,
               "type": "boolean"
             },
             "subAgentMaxSteps": {
@@ -39458,6 +39485,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "tokenBudget",
             "delivery",
             "sandboxNoDowngrade",
+            "steerInject",
             "subagentContext"
           ],
           "type": "object"

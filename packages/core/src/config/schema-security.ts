@@ -76,6 +76,17 @@ const AgentToAgentBaseSchema = z.strictObject({
      * Consumers read security.agentToAgent.sandboxNoDowngrade — never `?? true` at the call site (§6.4).
      */
     sandboxNoDowngrade: z.boolean().default(true),
+    /**
+     * Real mid-flight steering inject (STEER-01). When true, `subagent.steer`
+     * injects the message into the RUNNING child at its next step boundary
+     * (transcript + progress preserved) instead of kill+respawn; default false =
+     * today's kill+respawn behavior, byte-identical. Joins the existing
+     * security.agentToAgent section — ZERO new SECTION_REGISTRY entries (D1).
+     * Ships gated-off; the operator enables it on observed steering demand.
+     * Consumers read security.agentToAgent.steerInject — never `?? false` at the
+     * call site (§6.4).
+     */
+    steerInject: z.boolean().default(false),
   });
 
 export const AgentToAgentConfigSchema = AgentToAgentBaseSchema.extend({
