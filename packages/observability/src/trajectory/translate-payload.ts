@@ -261,25 +261,18 @@ export function translatePayload(
         formatViolation: payload.formatViolation,
       };
 
-    // TELEM-01: authoring action + tier + schema-validity/repaired flags. Closed enums + booleans ONLY — never a pipeline body, type_config value, or node task; agentId/sessionKey stripped (§2.7 / H1). repaired is P1-inert.
+    // v2.27 authoring telemetry/audit family (TELEM-01 + AUTHOR-01/02): closed enums + numbers/booleans ONLY — NEVER a pipeline/graph body, type_config value, node task, or the synthesis INTENT TEXT (the highest-risk leak); agentId/sessionKey stripped (§2.7 / H1). pipeline:authored.repaired is P1-inert.
     case "pipeline:authored":
       return { action: payload.action, capabilityClass: payload.capabilityClass, schemaValid: payload.schemaValid, repaired: payload.repaired };
-
-    // AUTHOR-01: the matched canonical template (closed enum) + repaired-graph nodeCount + tier. Closed enum + numbers ONLY — never the graph body, type_config value, or node task; agentId/sessionKey stripped (§2.7 / H1).
-    case "graph:repaired":
+    case "graph:repaired": // AUTHOR-01: matched canonical template + repaired-graph nodeCount + tier
       return { pattern: payload.pattern, nodeCount: payload.nodeCount, capabilityClass: payload.capabilityClass };
-    // AUTHOR-02: the requested canonical pattern (closed enum) + synthesized-graph nodeCount. Closed enum + number ONLY — never the INTENT TEXT (the highest-risk synthesis leak), graph body, or node task; agentId/sessionKey stripped (§2.7 / H1).
-    case "graph:synthesized_from_intent":
+    case "graph:synthesized_from_intent": // AUTHOR-02: requested pattern + synthesized-graph nodeCount (no intent text)
       return { pattern: payload.pattern, nodeCount: payload.nodeCount };
 
-    case "learning:outcome_observed":
-      // OUTCOME-08: trajectoryId + closed-enum outcome/source + numeric confidence ONLY (no body/alpha/recalled ids; agentId/sessionKey/traceId are envelope ids — §2.7 / SEC-01).
+    case "learning:outcome_observed": // OUTCOME-08: trajectoryId + closed-enum outcome/source + numeric confidence ONLY (no body/alpha/recalled ids; agentId/sessionKey/traceId envelope-only — §2.7 / SEC-01).
       return { trajectoryId: payload.trajectoryId, outcome: payload.outcome, source: payload.source, confidence: payload.confidence };
-
-    case "memory:online_tuning_applied":
-      // RANK-06: bandit-applied COUNTS + the per-intent dim ONLY — NEVER an alpha value or FEED content (§2.7 / SEC-01); agentId/timestamp are envelope ids.
+    case "memory:online_tuning_applied": // RANK-06: bandit-applied COUNTS + the per-intent dim ONLY — NEVER an alpha value or FEED content (§2.7 / SEC-01); agentId/timestamp envelope-only.
       return { updated: payload.updated, clampHits: payload.clampHits, signalCount: payload.signalCount, intent: payload.intent, durationMs: payload.durationMs };
-
     case "learning:memory_demoted":
     case "learning:memory_evicted":
     case "learning:skill_synthesized":
