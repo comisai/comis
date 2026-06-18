@@ -73,20 +73,31 @@ export const SubagentKillContract = defineContract({
 // ---------------------------------------------------------------------------
 
 /**
- * `subagent.steer` — Kill current run and respawn with a new task.
- * Rate-limited at 2s per target. Admin-scoped per setup-gateway-api.ts:207-209.
- * Handler path: subagent-handlers.ts:57-105.
+ * `subagent.steer` — Steer a running sub-agent. Flag-gated on
+ * `security.agentToAgent.steerInject` (default false, STEER-01):
+ *   - flag OFF (default): kill the current run and respawn with a new task
+ *     (the historical behavior) → `{ status: "steered", oldRunId, newRunId }`.
+ *   - flag ON: inject the message into the RUNNING child's live SDK session at
+ *     its next step boundary (transcript + progress preserved, same runId; no
+ *     kill, no respawn) → `{ status: "steered_inject", runId }`.
+ * Rate-limited at 2s per target (shared across both branches).
+ * Admin-scoped per setup-gateway-api.ts:207-209. Handler path:
+ * subagent-handlers.ts (subagent.steer).
  *
  * Bespoke pre-Zod validation:
  *   - Missing `target` → `"Missing required parameter: target"`.
  *   - Missing `message` → `"Missing required parameter: message"`.
  *   - Rate-limit (< 2s since last steer to same target) → `"Rate limited: wait
  *     2s between steers to same target"`.
- *   - killRun !killed → throws.
- *   - getRunStatus undefined after kill → `"Run details not found after kill: <id>"`.
+ *   - flag OFF: killRun !killed → throws; getRunStatus undefined after kill →
+ *     `"Run details not found after kill: <id>"`.
+ *   - flag ON: getRunStatus undefined → `"Unknown run ID: <id>"`; steerRun
+ *     `!steered` → throws the steerRun error (e.g. no live session).
  *
  * Request: `{ target, message }`.
- * Response: `{ status, oldRunId, newRunId }`. `status` is literal "steered".
+ * Response: discriminated union on `status` —
+ *   `{ status: "steered", oldRunId, newRunId }` (kill+respawn) |
+ *   `{ status: "steered_inject", runId }` (live inject).
  */
 export const SubagentSteerContract = defineContract({
   method: "subagent.steer",
@@ -94,11 +105,17 @@ export const SubagentSteerContract = defineContract({
     target: z.string(),
     message: z.string(),
   }),
-  response: z.object({
-    status: z.literal("steered"),
-    oldRunId: z.string(),
-    newRunId: z.string(),
-  }),
+  response: z.discriminatedUnion("status", [
+    z.object({
+      status: z.literal("steered"),
+      oldRunId: z.string(),
+      newRunId: z.string(),
+    }),
+    z.object({
+      status: z.literal("steered_inject"),
+      runId: z.string(),
+    }),
+  ]),
   scopes: ["admin"] as const,
 });
 

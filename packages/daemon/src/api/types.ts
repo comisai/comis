@@ -81,7 +81,7 @@ export interface SessionsApiDeps {
   };
   crossSessionSender: ReturnType<typeof createCrossSessionSender>;
   subAgentRunner: ReturnType<typeof createSubAgentRunner>;
-  securityConfig: { agentToAgent?: { enabled?: boolean; waitTimeoutMs: number; subAgentToolGroups?: string[] } };
+  securityConfig: { agentToAgent?: { enabled?: boolean; waitTimeoutMs: number; subAgentToolGroups?: string[]; steerInject?: boolean } };
   tenantId: string;
   /** Structured logger threaded through every cluster slice (DaemonApiDeps
    *  is required; SessionsApiDeps mirrors required for multi-extends parity). */
@@ -351,7 +351,7 @@ export interface OrchestratorApiDeps {
   /** heartbeat-handlers reads deps.persistDeps for YAML writes. */
   persistDeps?: PersistToConfigDeps;
   /** graph-handlers reads deps.securityConfig.agentToAgent.enabled. */
-  securityConfig: { agentToAgent?: { enabled?: boolean; waitTimeoutMs: number; subAgentToolGroups?: string[] } };
+  securityConfig: { agentToAgent?: { enabled?: boolean; waitTimeoutMs: number; subAgentToolGroups?: string[]; steerInject?: boolean } };
   /** graph / subagent handlers read deps.logger.info/warn. Required (multi-extends parity; DaemonApiDeps.logger is required). */
   logger: ComisLogger;
   /** graph-handlers reads deps.dataDir for graph-runs output. */

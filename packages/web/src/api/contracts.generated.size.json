@@ -1,6 +1,6 @@
 {
-  "totalMinified": 125725,
-  "totalGzipped": 12466,
+  "totalMinified": 125884,
+  "totalGzipped": 12493,
   "budget": {
     "minified": 126000,
     "gzipped": 38912
@@ -193,7 +193,7 @@
     "slack.action": 268,
     "subagent.kill": 369,
     "subagent.list": 434,
-    "subagent.steer": 470,
+    "subagent.steer": 652,
     "system.ping": 324,
     "telegram.action": 268,
     "tokens.create": 564,

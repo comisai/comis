@@ -7,8 +7,11 @@
  *   subagent.list, subagent.kill, subagent.steer
  *
  * List returns filtered runs from SubAgentRunner. Kill marks a running
- * run as failed. Steer kills the current run and respawns with a new task,
- * rate-limited at 2s per target.
+ * run as failed. Steer is flag-gated on security.agentToAgent.steerInject
+ * (STEER-01): OFF (default) → kill+respawn with a new task (status "steered");
+ * ON → inject the message into the running child's live session at its next
+ * step boundary (no kill/respawn, same runId, status "steered_inject").
+ * Rate-limited at 2s per target (shared across both branches).
  *
  * Per-method pipeline: bespoke pre-Zod guards FIRST (using rawParams reads
  * — preserves user-friendly error messages matching the existing
@@ -117,6 +120,35 @@ export function createSubagentHandlers(deps: SubagentHandlerDeps): Record<string
         if (now - ts > ONE_HOUR) {
           steerTimestamps.delete(key);
         }
+      }
+
+      // STEER-01: flag-gated branch. Flag ON → inject into the live child (no
+      // kill, no respawn — transcript + progress preserved, same runId). Flag
+      // OFF (default) → the historical kill+respawn, BYTE-IDENTICAL. The 2s
+      // rate-limit above is shared by both branches.
+      if (deps.securityConfig.agentToAgent?.steerInject) {
+        const run = deps.subAgentRunner.getRunStatus(target);
+        if (!run) {
+          throw new Error(`Unknown run ID: ${target}`);
+        }
+        const steerResult = await deps.subAgentRunner.steerRun(target, message);
+        if (!steerResult.steered) {
+          throw new Error(steerResult.error!);
+        }
+        // Counts/ids/mode only — NEVER the steer message body (AGENTS.md §2.7).
+        deps.eventBus?.emit("subagent:steered", {
+          runId: target,
+          agentId: run.agentId,
+          mode: steerResult.mode!,
+          timestamp: systemNowMs(),
+        });
+        deps.logger?.info(
+          { runId: target, agentId: run.agentId, mode: steerResult.mode },
+          "Sub-agent steered (inject) at next step boundary",
+        );
+        const injectResult = { status: "steered_inject" as const, runId: target };
+        if (IS_DEV) SubagentSteerContract.response.parse(injectResult);
+        return injectResult;
       }
 
       // Kill the current run
