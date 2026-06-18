@@ -233,7 +233,7 @@ These are the config keys most relevant to cache behavior. All live under the pe
 |-----|---------|-----------------|
 | `cacheRetention` | `"long"` | Base TTL hint: `"none"`, `"short"` (5m), or `"long"` (1h) |
 | `adaptiveCacheRetention` | `true` | Whether to escalate from short to long after warm-up turns |
-| `cacheBreakpointStrategy` | `"single"` | Breakpoint placement: `"single"`, `"multi-zone"`, or `"auto"` |
+| `cacheBreakpointStrategy` | `"auto"` | Breakpoint placement: `"auto"` (→ multi-zone, recommended), `"multi-zone"`, or `"single"`. `"single"` places one breakpoint and can cause lookback-window cache misses (excessive cache writes) on long tool-using turns. |
 | `cacheRetentionOverrides` | `{}` | Per-model-prefix overrides, e.g. `"claude-haiku": "none"` |
 | `advancedCacheOptimization.enableRecentZonePromotion` | `true` | Promote recent-zone breakpoint from 5m to 1h in slow channels |
 

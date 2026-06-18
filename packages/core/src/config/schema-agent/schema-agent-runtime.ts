@@ -126,10 +126,13 @@ export const AgentConfigSchema = z.strictObject({
      *  When false, use static retention from cacheRetention field.
      *  Default: true -- adaptive retention saves ~$4/MTok on cold-start Opus calls. */
     adaptiveCacheRetention: z.boolean().default(true),
-    /** Cache breakpoint strategy. 'single' (default) minimizes KV page waste.
-     *  'auto' resolves to 'single' for direct Anthropic and 'multi-zone' for Bedrock/Vertex.
-     *  'multi-zone' places breakpoints across system, tools, and messages. */
-    cacheBreakpointStrategy: z.enum(["auto", "multi-zone", "single"]).default("single"),
+    /** Cache breakpoint strategy. Default 'auto' → 'multi-zone' for ALL providers (W11):
+     *  multi-zone places breakpoints across system, tools, and messages so a long tool-using
+     *  turn keeps each Anthropic 20-block lookback window covered. 'single' places ONE
+     *  breakpoint and can cause lookback-window cache misses + O(N^2) cache_creation
+     *  re-writes on long tool turns (the 2026-06-18 regression: the default was 'single',
+     *  billing the whole tool suffix as a fresh write every iteration). */
+    cacheBreakpointStrategy: z.enum(["auto", "multi-zone", "single"]).default("auto"),
     /** Advanced cache optimization options for interactive sessions. */
     advancedCacheOptimization: z.object({
       /** When true, the recent-zone message breakpoint may be promoted from

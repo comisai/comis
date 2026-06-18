@@ -209,11 +209,18 @@ describe("AgentConfigSchema", () => {
     }
   });
 
-  it("cacheBreakpointStrategy defaults to 'single'", () => {
+  it("cacheBreakpointStrategy defaults to 'auto' (→ multi-zone; live-2026-06-18 cache regression)", () => {
+    // The default was regressed to 'single' (#110, 2026-05-17), which forces the
+    // single-breakpoint strategy on every default install. On a long tool-using turn
+    // that places one breakpoint across a 37-41 block conversation → the 20-block
+    // Anthropic lookback window is blown → cache miss → the whole tool suffix is
+    // re-written every iteration (O(N^2) cache_creation, the 2.55M-write bill).
+    // resolveBreakpointStrategy maps 'auto' → 'multi-zone' (W11), which is the documented
+    // mitigation; the default MUST be 'auto' so a default install gets multi-zone.
     const result = AgentConfigSchema.safeParse({});
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.cacheBreakpointStrategy).toBe("single");
+      expect(result.data.cacheBreakpointStrategy).toBe("auto");
     }
   });
 

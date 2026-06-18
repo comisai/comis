@@ -345,6 +345,12 @@ describe("resolveBreakpointStrategy", () => {
     expect(resolveBreakpointStrategy("multi-zone", "anthropic")).toBe("multi-zone");
   });
 
+  // The default-strategy regression (default 'single' → lookback-window cache misses +
+  // O(N^2) writes, live-2026-06-18) is guarded by TWO same-package unit tests, kept apart
+  // to avoid a stale-sibling-dist dependency: schema-agent.test.ts asserts the schema
+  // default is 'auto', and the 'auto' → 'multi-zone' case below proves a default install
+  // gets multi-zone.
+
   it("treats undefined as 'auto' (resolves by provider)", () => {
     expect(resolveBreakpointStrategy(undefined, "anthropic")).toBe("multi-zone");
     expect(resolveBreakpointStrategy(undefined, "amazon-bedrock")).toBe("multi-zone");

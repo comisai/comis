@@ -181,7 +181,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "integer"
   },
   {
-    "default": "single",
+    "default": "auto",
     "immutable": true,
     "path": "agents.cacheBreakpointStrategy",
     "type": "string"
@@ -8360,7 +8360,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
           "perExecution": 2000000,
           "perHour": 10000000
         },
-        "cacheBreakpointStrategy": "single",
+        "cacheBreakpointStrategy": "auto",
         "cacheRetention": "long",
         "circuitBreaker": {
           "failureThreshold": 5,
@@ -15689,7 +15689,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
       "type": "object"
     },
     "cacheBreakpointStrategy": {
-      "default": "single",
+      "default": "auto",
       "enum": [
         "auto",
         "multi-zone",
@@ -26712,7 +26712,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "type": "object"
           },
           "cacheBreakpointStrategy": {
-            "default": "single",
+            "default": "auto",
             "enum": [
               "auto",
               "multi-zone",
@@ -31006,7 +31006,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "perExecution": 2000000,
             "perHour": 10000000
           },
-          "cacheBreakpointStrategy": "single",
+          "cacheBreakpointStrategy": "auto",
           "cacheRetention": "long",
           "circuitBreaker": {
             "failureThreshold": 5,
