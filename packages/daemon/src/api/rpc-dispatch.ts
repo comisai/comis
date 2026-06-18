@@ -214,6 +214,15 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
       tenantId: deps.tenantId,
       dataDir: deps.container.config.dataDir || ".",
       nodeTypeRegistry: deps.nodeTypeRegistry,
+      // TELEM-01 (Phase 173-02): construct the per-agent capabilityClass
+      // resolver for the daemon-side `pipeline:authored` emit. Resolve the tier
+      // server-side from the agent's provider (deps.agents[agentId].provider →
+      // getProviderCapabilityClass) — NEVER a tool-supplied param (Spoofing
+      // mitigation T-173-03). Constructing it HERE (not just typing it) is the
+      // load-bearing guard against the 172-WR-02 silent-dead-metric class
+      // (T-173-13): without this line every emit fail-defaults to "unknown".
+      resolveCapabilityClass: (agentId) =>
+        deps.getProviderCapabilityClass?.(deps.agents[agentId ?? ""]?.provider),
     }) : {}),
     // approval-handlers consumes WorkspaceApiDeps; spread `...deps` so the
     // cluster slice's required fields (e.g. mcpClientManager, execGit,

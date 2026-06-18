@@ -368,6 +368,16 @@ export interface OrchestratorApiDeps {
    *  ApiDispatchDeps multi-extends stays well-formed (the dispatcher spreads a
    *  single eventBus across every slice). */
   eventBus?: AppContainer["eventBus"];
+  /** Resolve a provider's operator-pinned capabilityClass override (the same
+   *  providers.entries source the executor's ModelProfile uses; threaded from
+   *  daemon.ts). The graph-handler wiring (rpc-dispatch.ts) composes this with
+   *  deps.agents to build the per-agent `resolveCapabilityClass` for the
+   *  `pipeline:authored` tier (TELEM-01). Same shape as SetupToolsDeps'
+   *  getProviderCapabilityClass. Optional/undefined ⇒ the emit records
+   *  "unknown". */
+  getProviderCapabilityClass?: (
+    provider: string | undefined,
+  ) => import("@comis/agent").CapabilityClass | undefined;
 }
 
 /**
