@@ -242,11 +242,9 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
 
       // AUTHOR-02 (Phase 174-04): read the from_intent marker BEFORE the strip
       // (mirrors the _agentId/_callerSessionKey precedent — internal fields are
-      // read from rawParams, not userParams). The marker is an in-band signal
-      // the from_intent tool action sets so the daemon can GATE + AUDIT the
-      // synthesis at this chokepoint (the synthesizer runs in the skills tool,
-      // separated from this handler by JSON-RPC, so the signal must travel
-      // in-band on the rpcCall).
+      // read from rawParams). It is the in-band signal the from_intent tool sets
+      // so the daemon can GATE + AUDIT the synthesis at this chokepoint (the
+      // synthesizer runs in the skills tool, separated from here by JSON-RPC).
       const synthPattern = rawParams._synthesizedFromIntent as string | undefined;
       // FLAGS-OFF refusal (D-GATED-OFF / T-174-INTENT-GATE): refuse a from_intent
       // dispatch when orchestration.authoring.intentAction is off, BEFORE any
