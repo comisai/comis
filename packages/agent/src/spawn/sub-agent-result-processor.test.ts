@@ -379,6 +379,69 @@ describe("classifyErrorContext HTTP-5xx detection", () => {
 });
 
 // ---------------------------------------------------------------------------
+// classifyErrorContext - transport-errno widening (DELIVERY-02).
+// The bare Node errno spellings do NOT contain "timeout"/"timed out"
+// (e.g. "ETIMEDOUT".toLowerCase() === "etimedout"), and ECONNRESET /
+// ECONNREFUSED / "socket hang up" / "fetch failed" / "network request failed"
+// match NONE of the existing transient tokens — so on pre-patch code they fall
+// through to Unknown → retryable:false → immediate dead-letter, defeating the
+// most common transient delivery failure. The widening adds an explicit
+// transport-errno branch so these self-heal (retry-with-backoff in the batcher).
+// ---------------------------------------------------------------------------
+
+describe("classifyErrorContext transport-errno widening (DELIVERY-02)", () => {
+  it("classifies bare transport errno spellings as retryable (transient delivery blips)", () => {
+    // All FAIL on pre-patch code (Unknown / retryable:false); the widening flips
+    // each to retryable:true. Case-insensitive on the raw message.
+    const transientTransport = [
+      "ETIMEDOUT",
+      "ECONNRESET",
+      "ECONNREFUSED",
+      "EPIPE",
+      "socket hang up",
+      "fetch failed",
+      "Network request failed", // mixed case proves case-insensitivity
+    ];
+    for (const msg of transientTransport) {
+      const result = classifyErrorContext(msg, "failed");
+      expect(result.retryable, `msg: ${msg}`).toBe(true);
+    }
+  });
+
+  it("classifies errno tokens embedded in a longer message as retryable", () => {
+    // Real delivery errors wrap the errno in surrounding text.
+    const result = classifyErrorContext("send failed: connect ECONNREFUSED 127.0.0.1:443", "failed");
+    expect(result.retryable).toBe(true);
+  });
+
+  // REGRESSION-GUARD: the widening must NOT make genuinely permanent failures
+  // retryable, and must NOT collide with the existing numeric false-positive
+  // pins. These stay exactly as pre-patch (retryable:false / NOT ProviderError).
+  it("keeps genuinely permanent failures non-retryable after the widening", () => {
+    expect(classifyErrorContext("token budget exceeded", "failed").retryable).toBe(false);
+    expect(classifyErrorContext("max steps reached", "failed").retryable).toBe(false);
+    expect(classifyErrorContext("context window exhausted", "failed").retryable).toBe(false);
+    // killed endReason is permanent regardless of message.
+    expect(classifyErrorContext("ECONNRESET", "killed").retryable).toBe(false);
+  });
+
+  it("does NOT let transport tokens collide with the numeric 5xx false-positive guards", () => {
+    // These must still NOT be ProviderError AND must stay retryable:false — the
+    // new transport tokens share no substring with them.
+    const stillPermanent = [
+      "50000 tokens consumed",
+      "processed 5000 messages",
+      "Step 5 failed at 12:00:00",
+    ];
+    for (const msg of stillPermanent) {
+      const result = classifyErrorContext(msg, "failed");
+      expect(result.errorType, `msg: ${msg}`).not.toBe("ProviderError");
+      expect(result.retryable, `msg: ${msg}`).toBe(false);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // announcement scrub
 // ---------------------------------------------------------------------------
 
