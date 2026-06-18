@@ -70,6 +70,10 @@ export interface AnnouncementBatcher {
   flush(): Promise<void>;
   shutdown(): Promise<void>;
   readonly pending: number;
+  /** DELIVERY-01: has this idempotency key already been delivered (success-path dedup)? Shared with the failure path in Plan 03 (D-SHAREDDEDUP). */
+  hasDelivered(key: string): boolean;
+  /** DELIVERY-01: mark an idempotency key delivered. Caller marks ONLY after a successful send (never before the await) so a transient retry is preserved. */
+  markDelivered(key: string): void;
 }
 
 // ---------------------------------------------------------------------------
@@ -167,6 +171,16 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
   const debounceMs = deps.debounceMs ?? DEFAULT_DEBOUNCE_MS;
   const queues = new Map<string, QueuedAnnouncement[]>();
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
+  // DELIVERY-01: idempotency keys whose delivery has SUCCEEDED. In-memory floor
+  // (the documented at-least-once-across-restart boundary — the DLQ bounds
+  // cross-restart re-delivery by runId/attemptCount/maxAgeMs). Marked ONLY on a
+  // successful send (Pitfall 3) so a transient failure can still be retried.
+  const deliveredKeys = new Set<string>();
+
+  /** DELIVERY-01: mark a delivered item's key (no-op for undefined-keyed / top-level spawns). Call ONLY after a successful send. */
+  function markDeliveredIfKeyed(item: QueuedAnnouncement): void {
+    if (item.idempotencyKey) deliveredKeys.add(item.idempotencyKey);
+  }
 
   // -------------------------------------------------------------------------
   // Internal delivery
@@ -174,10 +188,33 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
 
   async function deliverBatch(key: string): Promise<void> {
     timers.delete(key);
-    const items = queues.get(key);
+    const queued = queues.get(key);
     queues.delete(key);
 
-    if (!items || items.length === 0) return;
+    if (!queued || queued.length === 0) return;
+
+    // DELIVERY-01 dedup: drop items whose key is already delivered (handles a
+    // rapid re-enqueue inside the same debounce window) AND collapse same-key
+    // duplicates within this batch (keep the first). undefined-keyed items are
+    // never deduped — every top-level-spawn delivery proceeds.
+    const seen = new Set<string>();
+    const items: QueuedAnnouncement[] = [];
+    for (const item of queued) {
+      const k = item.idempotencyKey;
+      if (k !== undefined) {
+        if (deliveredKeys.has(k) || seen.has(k)) {
+          deps.logger?.debug(
+            { runId: item.runId, hint: "duplicate delivery suppressed" },
+            "Announcement dedup no-op",
+          );
+          continue;
+        }
+        seen.add(k);
+      }
+      items.push(item);
+    }
+
+    if (items.length === 0) return;
 
     const first = items[0]!;
 
@@ -206,6 +243,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
             systemScheduleTimeout,
             "announceToParent",
           );
+          markDeliveredIfKeyed(first); // DELIVERY-01: mark on success only
           return;
         } catch (err) {
           // Batch state fields in timeout WARN for diagnostics
@@ -215,6 +253,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
           );
           try {
             await deps.sendToChannel(first.announceChannelType, first.announceChannelId, sanitizeForUser(first.announcementText));
+            markDeliveredIfKeyed(first); // DELIVERY-01: fallback send succeeded
           } catch (sendErr) {
             deps.logger?.warn(
               { batchKey: key, runId: first.runId, err: sendErr, errorKind: "network" as const, hint: "Single-item fallback direct send failed" },
@@ -230,6 +269,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
                 failedAt: systemNowMs(),
                 attemptCount: 0,
                 lastError: sendErr instanceof Error ? sendErr.message : String(sendErr),
+                idempotencyKey: first.idempotencyKey, // DELIVERY-01
               });
             }
           }
@@ -264,6 +304,8 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
           systemScheduleTimeout,
           "announceToParent",
         );
+        // DELIVERY-01: the combined announce delivered all batch items at once.
+        for (const item of items) markDeliveredIfKeyed(item);
       } catch (err) {
         deps.logger?.warn(
           { batchKey: key, batchSize: items.length, itemsDelivered: 0, itemsRemaining: items.length, isPartialDelivery: false, err, errorKind: "internal" as const, hint: "Parent session injection failed/timed out; falling back to direct send" },
@@ -274,6 +316,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
         for (const item of items) {
           await deps.sendToChannel(item.announceChannelType, item.announceChannelId, sanitizeForUser(item.announcementText)).then(() => {
             fallbackDelivered++;
+            markDeliveredIfKeyed(item); // DELIVERY-01: this item's fallback send succeeded
           }).catch((sendErr) => {
             deps.logger?.warn(
               { batchKey: key, runId: item.runId, batchSize: items.length, itemsDelivered: fallbackDelivered, itemsRemaining: items.length - fallbackDelivered, isPartialDelivery: fallbackDelivered > 0, err: sendErr, errorKind: "network" as const, hint: "Fallback direct send also failed for batch item" },
@@ -289,6 +332,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
                 failedAt: systemNowMs(),
                 attemptCount: 0,
                 lastError: sendErr instanceof Error ? sendErr.message : String(sendErr),
+                idempotencyKey: item.idempotencyKey, // DELIVERY-01
               });
             }
           });
@@ -367,6 +411,10 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
         count += queue.length;
       }
       return count;
+    },
+    hasDelivered: (key: string) => deliveredKeys.has(key),
+    markDelivered: (key: string) => {
+      deliveredKeys.add(key);
     },
   };
 }

@@ -52,6 +52,10 @@ export interface AnnouncementBatcher {
   flush(): Promise<void>;
   shutdown(): Promise<void>;
   readonly pending: number;
+  /** DELIVERY-01: has this idempotency key already been delivered? Mirrors the orchestrator batcher — keep in lockstep (D-MIRRORS / D-SHAREDDEDUP). Plan 03's failure path reads it. */
+  hasDelivered(key: string): boolean;
+  /** DELIVERY-01: mark an idempotency key delivered (success only). Mirrors the orchestrator batcher (D-MIRRORS). */
+  markDelivered(key: string): void;
 }
 
 /**
