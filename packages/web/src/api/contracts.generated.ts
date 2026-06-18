@@ -8552,6 +8552,22 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
             "billing"
           ],
           "additionalProperties": false
+        },
+        "pipelineAuthoringGate": {
+          "type": "object",
+          "properties": {
+            "buildAuthor": {
+              "type": "boolean"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "buildAuthor",
+            "reason"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [
