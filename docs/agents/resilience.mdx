@@ -187,6 +187,31 @@ The dead-letter queue ensures that transient failures do not cause permanent
 message loss. Even during extended provider outages, announcements are preserved
 and delivered once the provider recovers.
 
+### Delivery idempotency
+
+Each sub-agent completion delivery is tagged with an idempotency key derived from
+the caller's session key and the sub-agent run ID. The delivery batcher tracks
+keys whose delivery has already succeeded, so a completion that is enqueued twice
+within a process lifetime is delivered **once** — the second enqueue is a no-op.
+This prevents a fallback or retry from double-notifying the parent.
+
+The key is recorded only **after** a successful send, so a failed delivery is
+never suppressed — it remains eligible for retry. The delivered-key set is
+in-memory: a successful delivery before a restart is already complete, and
+re-delivery of a dead-lettered entry across a restart is bounded by the
+dead-letter queue's own retry and age limits above.
+
+```yaml
+security:
+  agentToAgent:
+    delivery:
+      maxRetries: 3   # default — max transient delivery retries before dead-lettering (0–10)
+```
+
+- **`security.agentToAgent.delivery.maxRetries`** (default `3`, range `0`–`10`)
+  bounds how many times a *transient* delivery failure is retried before the
+  message is dead-lettered. Permanent failures are dead-lettered immediately.
+
 ## Ghost sweep
 
 The ghost sweep catches sub-agent runs that are stuck in a "running" state past
