@@ -629,6 +629,16 @@ export async function deliverAnnouncement(params: {
  * or any LLM. It sends a fixed-format message via `sendToChannel`, avoiding
  * the circular dependency when the LLM provider is the cause of the failure.
  * Never throws -- delivery errors are logged as warnings.
+ *
+ * DEFER-171-01 (WR-04): this path is SINGLE-ATTEMPT by design. DELIVERY-03's
+ * requirement was failure-path IDEMPOTENCY (the shared dedup above), NOT the
+ * transient retry/DLQ self-healing the SUCCESS fallback got in DELIVERY-02
+ * (`sendWithRetry` in the batcher). Mirroring that here means injecting the
+ * classifier/backoff/maxRetries/eventBus (and a DLQ) and a parallel retry loop
+ * — a materially restructured failure path, out of scope for P0-B. The
+ * asymmetry with the hardened success path is therefore a documented decision,
+ * not an oversight (see the phase deferred-items.md). On a transient transport
+ * blip the notification is dropped (logged with a hint), pending that follow-up.
  */
 export async function deliverFailureNotification(
   params: {
