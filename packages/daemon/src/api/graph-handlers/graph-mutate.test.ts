@@ -245,6 +245,47 @@ describe("pipeline:authored — counts/ids/enums-only (no body leak)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// WR-02: contract-parse-level schema rejections of a present-but-malformed
+// authoring call ALSO count as schemaValid:false (so the gate denominator
+// includes the crudest small-model authoring failures — an HONEST metric).
+// graph.define has a STRICT z.object contract, so a present-nodes call with a
+// malformed contract field throws at GraphDefineContract.request.parse BEFORE
+// buildGraphInput — that throw must now emit schemaValid:false then re-throw.
+// (graph.execute's contract is a loose z.record that accepts any object, so
+// there is no contract-parse gap there — malformed-but-present input reaches
+// buildGraphInput, which already emits via its own try/catch.)
+// ---------------------------------------------------------------------------
+
+describe("graph.define — contract-parse rejection emits schemaValid:false (WR-02)", () => {
+  /** nodes present + non-empty (passes the bespoke "Missing nodes" check) but a
+   *  contract-level field is malformed (timeoutMs must be a number) → the call
+   *  throws at GraphDefineContract.request.parse, BEFORE buildGraphInput. */
+  const CONTRACT_INVALID_PARAMS = {
+    nodes: VALID_NODES,
+    timeoutMs: "not-a-number",
+    _agentId: "weakbot",
+  };
+
+  it("emits one pipeline:authored{schemaValid:false} with the resolved tier on a contract-parse throw, then re-throws", async () => {
+    const emit = vi.fn();
+    const resolveCapabilityClass = vi.fn(() => "small" as CapabilityClass);
+    const handlers = bindGraphMutateHandlers(makeDeps({ emit, resolveCapabilityClass }));
+
+    // The user-facing contract is unchanged — the handler still throws.
+    await expect(handlers["graph.define"]!(CONTRACT_INVALID_PARAMS)).rejects.toThrow();
+
+    const payloads = authoredPayloads(emit);
+    expect(payloads).toHaveLength(1);
+    expect(payloads[0]).toMatchObject({
+      action: "define",
+      schemaValid: false,
+      repaired: false,
+      capabilityClass: "small",
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // WR-01: the emit is BEST-EFFORT — a throwing bus listener (the diagnostic
 // buffer's synchronous SQLite flush on its 50th item can throw SQLITE_BUSY/FULL;
 // TypedEventBus.emit has NO listener error isolation) must NEVER break the

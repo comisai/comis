@@ -345,6 +345,17 @@ export function buildFindings(
   // small-tier traffic — mirrors the GENQ-01/voice if-guards). The reducer above is
   // the same compute-on-read fold; here we re-walk for the invalid COUNT the finding
   // names.
+  //
+  // METRIC BOUNDARY (Phase 173 review WR-02): the denominator counts every
+  // CONTRACT-PARSE-REACHABLE authoring invocation. graph.define emits
+  // schemaValid:false on BOTH a strict-contract (GraphDefineContract) parse
+  // rejection AND a buildGraphInput parse/validate throw; graph.execute (a loose
+  // z.record contract that never rejects) emits on the buildGraphInput throw.
+  // EXCLUDED — and so NOT in either cohort — are the bespoke pre-Zod guards
+  // (graph.define's "Missing required parameter: nodes" empty-call check and
+  // graph.execute's agent-to-agent-disabled policy gate): an empty/garbage call
+  // or a policy rejection is not an "authoring attempt." This is a deliberate,
+  // documented boundary, not a silent undercount.
   let smallTotal = 0;
   let smallInvalid = 0;
   for (const row of healthSignals) {

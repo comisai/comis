@@ -56,6 +56,16 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
   // (Pitfall 2: record honestly, never silently drop, never default to
   // "frontier"). `repaired` is the literal false: the weak-model repair
   // producer is Phase 174 / AUTHOR-01 and is NOT wired here.
+  //
+  // METRIC DENOMINATOR (Phase 173 review WR-02): an authoring invocation is
+  // counted on every CONTRACT-PARSE-REACHABLE path — graph.define emits on a
+  // strict-contract parse rejection (below) AND a buildGraphInput throw;
+  // graph.execute (a loose z.record contract) emits on the buildGraphInput
+  // throw. The bespoke pre-Zod guards (define's "Missing required parameter:
+  // nodes" empty-call check, execute's a2a-disabled policy gate) emit NOTHING —
+  // an empty/garbage call or a policy rejection is not an authoring attempt.
+  // This boundary is deliberate (documented in fleet-findings.ts's
+  // pipeline_authoring finding + docs/developer-guide/event-bus.mdx).
   const emitPipelineAuthored = (
     action: "define" | "execute",
     schemaValid: boolean,
@@ -108,7 +118,23 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
       }
 
       const userParams = stripInternalFields(rawParams);
-      GraphDefineContract.request.parse(userParams);
+      // WR-02 (Phase 173 review): a present-but-malformed authoring call that
+      // fails the STRICT GraphDefineContract z.object (e.g. a wrong-typed
+      // contract field) throws HERE, before buildGraphInput — yet it is a
+      // genuine small-model "authored an invalid pipeline" attempt. Emit
+      // schemaValid:false so it lands in the gate denominator (the metric counts
+      // every contract-parse-reachable authoring, not only buildGraphInput-
+      // reachable ones), then re-throw (the user-facing error contract is
+      // unchanged). The bespoke "Missing required parameter: nodes" pre-check
+      // above is deliberately NOT counted — an empty/garbage call is not an
+      // authoring attempt (see the pipeline:authored doc comment for the
+      // metric's exact boundary).
+      try {
+        GraphDefineContract.request.parse(userParams);
+      } catch (e) {
+        emitPipelineAuthored("define", false, rawParams);
+        throw e;
+      }
 
       // O3 (WR-01) producer deferred to Phase 157: no current producer sets
       // capabilityClass on graph RPC params — it is absent from the contract
@@ -157,6 +183,13 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
       }
 
       const userParams = stripInternalFields(rawParams);
+      // WR-02 (Phase 173 review): unlike graph.define, GraphExecuteContract is a
+      // LOOSE z.record(z.string(), z.unknown()) — it accepts essentially any
+      // object, so a present-but-malformed authoring call does NOT throw here.
+      // It instead reaches buildGraphInput below, which already emits
+      // schemaValid:false via its own try/catch. There is therefore no
+      // contract-parse-level denominator gap on the execute path; no emit guard
+      // is needed around this parse.
       GraphExecuteContract.request.parse(userParams);
 
       // O3 (WR-01) producer deferred to Phase 157 — see graph.define above.
