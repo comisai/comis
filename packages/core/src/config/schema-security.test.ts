@@ -291,3 +291,52 @@ describe("AgentToAgentConfigSchema.sandboxNoDowngrade", () => {
     expect(registrySrc).not.toMatch(/sandboxNoDowngrade/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// AgentToAgentConfigSchema.steerInject (STEER-01, D1 — the gated-off control)
+// the load-bearing flag that selects the real mid-flight steer-INJECT path
+// (preserve transcript) over today's kill+respawn. Defaults FALSE (gated-off —
+// flag-off is byte-identical kill+respawn). Co-located under the existing
+// security.agentToAgent section, so NO new SECTION_REGISTRY entry. Every field
+// .default() (AGENTS.md §6.4) — the inject branch reads it, never `?? false`.
+// ---------------------------------------------------------------------------
+
+describe("AgentToAgentConfigSchema.steerInject (STEER-01 — gated-off)", () => {
+  it("defaults to false when omitted (gated-off by default — byte-identical kill+respawn)", () => {
+    const result = AgentToAgentConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.steerInject).toBe(false);
+    }
+  });
+
+  it("accepts explicit true and round-trips it (the operator opt-in)", () => {
+    const result = AgentToAgentConfigSchema.safeParse({ steerInject: true });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.steerInject).toBe(true);
+    }
+  });
+
+  it("rejects a non-boolean value (strict boolean — string and number both fail)", () => {
+    expect(AgentToAgentConfigSchema.safeParse({ steerInject: "yes" }).success).toBe(false);
+    expect(AgentToAgentConfigSchema.safeParse({ steerInject: 1 }).success).toBe(false);
+  });
+
+  it("is present in SecurityConfigSchema parsed output defaulting to false", () => {
+    const result = SecurityConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.agentToAgent.steerInject).toBe(false);
+    }
+  });
+
+  it("adds ZERO new SECTION_REGISTRY entries — steerInject nests in the existing security.agentToAgent section (D1)", () => {
+    // The field nests in the already-registered `security.agentToAgent` section.
+    // There must be no `steerInject` token in the section registry — a new
+    // registry entry would be a churn regression (the 170/171/172 tokenBudget/
+    // delivery/sandboxNoDowngrade precedent).
+    const registrySrc = readFileSync(resolve(here, "./section-registry.ts"), "utf8");
+    expect(registrySrc).not.toMatch(/steerInject/);
+  });
+});
