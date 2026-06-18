@@ -1554,6 +1554,15 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       source: "explicit",
       timestamp: 0,
     },
+    // TELEM-01: counts/enums/booleans only — the correlation invariant must hold
+    // (no agentId/sessionKey leak into the trajectory record data).
+    "pipeline:authored": {
+      action: "execute",
+      capabilityClass: "small",
+      schemaValid: true,
+      repaired: false,
+      timestamp: 0,
+    },
   };
 
   it.each(Object.keys(TRAJECTORY_BRIDGE_MAPPING))(
@@ -1613,6 +1622,53 @@ describe("TRAJECTORY_BRIDGE_MAPPING -- architecture-test surface", () => {
     expect(TRAJECTORY_BRIDGE_MAPPING["delivery:complete"]).toBe("delivery.dispatched");
     // Context engine pipeline → context.compiled.
     expect(TRAJECTORY_BRIDGE_MAPPING["context:pipeline"]).toBe("context.compiled");
+  });
+});
+
+describe("TRAJECTORY_BRIDGE_MAPPING -- pipeline:authored (TELEM-01, arch-closure)", () => {
+  it("maps pipeline:authored -> pipeline.authored (mirrors the memory:generation_quality entry)", () => {
+    expect(TRAJECTORY_BRIDGE_MAPPING["pipeline:authored"]).toBe("pipeline.authored");
+  });
+
+  it("pipeline:authored is a member of TrajectoryBridgedEventName (keyof the mapping — EventMap-membership arch closure)", () => {
+    // keyof closure: the key is enumerable on the const mapping (the arch test
+    // enumerates Object.keys to confirm every EventMap member is mapped-or-allowlisted).
+    const keys = Object.keys(TRAJECTORY_BRIDGE_MAPPING);
+    expect(keys).toContain("pipeline:authored");
+    // The reserved trajectory type name is a valid TrajectoryEventType.
+    const allTypes = new Set<string>(TRAJECTORY_EVENT_TYPES as readonly string[]);
+    expect(allTypes.has("pipeline.authored")).toBe(true);
+  });
+
+  it("bridge translates pipeline:authored to a content-free record (counts/enums/booleans only — H1 / §2.7)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("pipeline:authored", {
+      action: "execute",
+      capabilityClass: "small",
+      schemaValid: false,
+      repaired: false,
+      agentId: "agent-X",
+      sessionKey: "skey-X",
+      timestamp: 1000,
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0]!.type).toBe("pipeline.authored");
+    const data = recorder.calls[0]!.data as Record<string, unknown>;
+    // The counts/enums/booleans cross; the correlation ids are envelope-only.
+    expect(data.action).toBe("execute");
+    expect(data.capabilityClass).toBe("small");
+    expect(data.schemaValid).toBe(false);
+    expect(data.repaired).toBe(false);
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    // No pipeline body / type_config ever crosses the bridge.
+    for (const forbidden of ["nodes", "graph", "type_config", "typeConfig", "task", "label", "body"]) {
+      expect(data[forbidden], `forbidden body key on trajectory record: ${forbidden}`).toBeUndefined();
+    }
   });
 });
 
