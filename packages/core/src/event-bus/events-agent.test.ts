@@ -1241,3 +1241,96 @@ describe("tool:install_detour_detected event type", () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// subagent:budget_exceeded + enriched graph:node_updated (BUDGET-03).
+// Counts/ids-only event mirroring memory:consolidated; the hygiene pin keeps
+// task/output/body fields off the breach payload (AGENTS.md §2.7).
+// ---------------------------------------------------------------------------
+
+describe("subagent:budget_exceeded event type", () => {
+  it("type-checks and round-trips with ids + the two token numbers only", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["subagent:budget_exceeded"] = {
+      graphId: "graph-1",
+      nodeId: "node-a",
+      agentId: "agent-1",
+      tokenBudget: 50_000,
+      tokensUsed: 51_234,
+      timestamp: Date.now(),
+    };
+
+    bus.on("subagent:budget_exceeded", handler);
+    bus.emit("subagent:budget_exceeded", payload);
+
+    expect(handler).toHaveBeenCalledWith(payload);
+    const r = handler.mock.calls[0]![0] as EventMap["subagent:budget_exceeded"];
+    expect(r.graphId).toBe("graph-1");
+    expect(r.nodeId).toBe("node-a");
+    expect(r.agentId).toBe("agent-1");
+    expect(r.tokenBudget).toBe(50_000);
+    expect(r.tokensUsed).toBe(51_234);
+  });
+
+  it("payload carries exactly the 6 counts/ids keys — no body/task/output", () => {
+    const payload: EventMap["subagent:budget_exceeded"] = {
+      graphId: "g",
+      nodeId: "n",
+      agentId: "a",
+      tokenBudget: 1,
+      tokensUsed: 2,
+      timestamp: 3,
+    };
+    expect(Object.keys(payload).sort()).toEqual(
+      ["agentId", "graphId", "nodeId", "timestamp", "tokenBudget", "tokensUsed"].sort(),
+    );
+
+    // Source-grep the breach event block for forbidden body fields (counts-only
+    // contract — never task text, output, or response bodies; AGENTS.md §2.7).
+    const src = readFileSync(resolve(here, "./events-agent.ts"), "utf8");
+    const match = src.match(/"subagent:budget_exceeded":\s*\{[\s\S]*?\n\s*\};/);
+    expect(match, "subagent:budget_exceeded event block must exist").toBeTruthy();
+    const block = match![0];
+    for (const forbidden of ["task", "output", "response", "body", "content", "result"]) {
+      expect(block, `no \`${forbidden}:\` field`).not.toMatch(
+        new RegExp(`^\\s*(?:readonly\\s+)?${forbidden}\\??:`, "m"),
+      );
+    }
+  });
+});
+
+describe("graph:node_updated enriched with tokensUsed/cost (BUDGET-03)", () => {
+  it("carries optional tokensUsed and cost and a listener reads them", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["graph:node_updated"] = {
+      graphId: "graph-1",
+      nodeId: "node-a",
+      status: "completed",
+      durationMs: 1200,
+      tokensUsed: 8_192,
+      cost: 0.0123,
+      timestamp: Date.now(),
+    };
+
+    bus.on("graph:node_updated", handler);
+    bus.emit("graph:node_updated", payload);
+
+    expect(handler).toHaveBeenCalledWith(payload);
+    const r = handler.mock.calls[0]![0] as EventMap["graph:node_updated"];
+    expect(r.tokensUsed).toBe(8_192);
+    expect(r.cost).toBeCloseTo(0.0123);
+  });
+
+  it("still type-checks when tokensUsed/cost are omitted (byte-identical when absent)", () => {
+    const payload: EventMap["graph:node_updated"] = {
+      graphId: "graph-1",
+      nodeId: "node-a",
+      status: "running",
+      timestamp: Date.now(),
+    };
+    expect(payload.tokensUsed).toBeUndefined();
+    expect(payload.cost).toBeUndefined();
+  });
+});
