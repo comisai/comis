@@ -27,5 +27,9 @@ export { createSubAgentRunner, ANNOUNCE_PARENT_TIMEOUT_MS } from "./sub-agent-ru
 export type { SubAgentRunnerDeps, SubAgentRun, SpawnParams, SubAgentRunnerLogger } from "./sub-agent-runner.js";
 
 export { sweepResultFiles, buildAnnouncementMessage, deliverFailureNotification, classifyErrorContext } from "./sub-agent-result-processor.js";
-export { buildAnnounceKey, createDeliveryDedup, MAX_DELIVERED_KEYS } from "./announce-key.js";
+// createDeliveryDedup + DeliveryDedup cross the package boundary (the orchestrator
+// batcher + daemon wiring share one bounded delivered-key store). buildAnnounceKey
+// and MAX_DELIVERED_KEYS stay agent-internal (used only within spawn/ + the agent's
+// own tests via relative import) — not re-exported, to avoid a dead public export.
+export { createDeliveryDedup } from "./announce-key.js";
 export type { DeliveryDedup } from "./announce-key.js";

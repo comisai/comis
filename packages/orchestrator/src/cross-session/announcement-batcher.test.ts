@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createAnnouncementBatcher, sanitizeForUser, type AnnouncementBatcherDeps, type QueuedAnnouncement } from "./announcement-batcher.js";
-import { createDeliveryDedup, MAX_DELIVERED_KEYS } from "@comis/agent";
+import { createDeliveryDedup } from "@comis/agent";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -378,21 +378,10 @@ describe("AnnouncementBatcher deliveredKeys bounding (WR-03)", () => {
     expect(dedup.has("Y")).toBe(true);
   });
 
-  it("self-bounds the delivered-key set even when no dedup is injected (default cap)", () => {
-    // Without injection the batcher owns an internal bounded dedup; a default
-    // construction must still not leak. We can only observe the public surface,
-    // so assert the OLDEST key is eventually evicted after >MAX_DELIVERED_KEYS adds.
-    const deps = makeDeps();
-    const batcher = createAnnouncementBatcher(deps);
-
-    batcher.markDelivered("first-key");
-    for (let i = 0; i < MAX_DELIVERED_KEYS + 5; i++) batcher.markDelivered(`bulk-${i}`);
-
-    // The very first key has been evicted (set is bounded, FIFO), proving the
-    // internal set does not grow without limit.
-    expect(batcher.hasDelivered("first-key")).toBe(false);
-    expect(batcher.hasDelivered(`bulk-${MAX_DELIVERED_KEYS + 4}`)).toBe(true);
-  });
+  // NOTE: the default-cap (no-injection) self-bounding of createDeliveryDedup is
+  // proven directly + cheaply in packages/agent/src/spawn/announce-key.test.ts
+  // (the batcher uses that same primitive as its internal default), so it is not
+  // re-driven here through 10k batcher.markDelivered calls.
 });
 
 // ---------------------------------------------------------------------------
