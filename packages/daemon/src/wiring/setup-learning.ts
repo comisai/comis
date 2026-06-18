@@ -581,6 +581,18 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
     if (scope === undefined) return; // no trajectory identity (absent traceId) → skip
     resolveAndConsume(scope, deps.clock.now());
   });
+
+  // ---- SURFACE-ADMIT (live-2026-06-18): refresh the per-agent surface the MOMENT a
+  // synthesis run ADMITS a skill. Without this a freshly-admitted candidate stays invisible
+  // until the next daemon boot — and promotion is USE-gated (the agent must SEE the skill to
+  // use it), so the post-promote/demote refresh can NEVER fire: a second-order deadlock that
+  // leaves a learned skill permanently dormant on a long-running daemon. `learning:skill_
+  // synthesized.count` IS the admitted count (events-learning.ts emits v.admitted). NOT gated
+  // by learningOutcomeEnabled (this is a SKILLS signal); refreshSurface is undefined when no
+  // registry is wired ⇒ byte-identical no-op. Mirrors the post-promote/demote refresh. ----
+  deps.eventBus.on("learning:skill_synthesized", (p) => {
+    if (p.count > 0) refreshSurface?.(p.agentId);
+  });
 }
 
 /** Dependencies for {@link setupLearningOutcomeWiring}. */

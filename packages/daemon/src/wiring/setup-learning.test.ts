@@ -1973,3 +1973,41 @@ describe("wireLearningOutcome — LLM outcome-judge fallback on an unknown conve
 async function flushMicrotasks(): Promise<void> {
   for (let i = 0; i < 20; i++) await Promise.resolve();
 }
+
+describe("wireLearningOutcome — surface refresh on skill ADMISSION (SURFACE-ADMIT, live-2026-06-18)", () => {
+  // A synthesis run that admits a candidate must refresh the per-agent surface NOW.
+  // Otherwise the candidate stays invisible until the next boot, and promotion is
+  // USE-gated (needs it surfaced first) — a second-order deadlock the post-promote
+  // refresh can never break. `learning:skill_synthesized.count` IS the admitted count.
+  function wire(refresh: (agentId: string) => void): TypedEventBus {
+    const bus = new TypedEventBus();
+    const { store } = makeStubStore();
+    wireLearningOutcome({
+      eventBus: bus,
+      outcomeStore: store,
+      usefulnessStore: mockUsefulnessStore().store,
+      learnedSkillStore: mockLearnedSkillStore().store,
+      learningTuningEnabled: () => false,
+      learningForgettingEnabled: () => false,
+      learningSkillsEnabled: () => true,
+      learningSkillsPromoteAt: () => 3,
+      clock: createFakeClock(NOW),
+      logger: createMockLogger(),
+      learningOutcomeEnabled: () => true,
+      refreshLearnedSkillSurface: refresh,
+    });
+    return bus;
+  }
+
+  it("refreshes the per-agent surface when a synthesis run ADMITTED >=1 skill", () => {
+    const refresh = vi.fn();
+    wire(refresh).emit("learning:skill_synthesized", { agentId: "agent-9", count: 1, timestamp: NOW });
+    expect(refresh).toHaveBeenCalledWith("agent-9");
+  });
+
+  it("does NOT refresh when a synthesis run admitted 0 skills (nothing new to surface)", () => {
+    const refresh = vi.fn();
+    wire(refresh).emit("learning:skill_synthesized", { agentId: "agent-9", count: 0, timestamp: NOW });
+    expect(refresh).not.toHaveBeenCalled();
+  });
+});
