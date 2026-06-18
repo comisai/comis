@@ -508,3 +508,23 @@ export type {
   PlanStream,
   PlanUpdate,
 } from "./activity/plan-stream.js";
+
+// ---------------------------------------------------------------------------
+// Pipeline-authoring gate surface (TELEM-02).
+// ---------------------------------------------------------------------------
+//
+// The pre-committed, PURE, deterministic decision rule that gates Phase 174
+// (P2/AUTHOR): `pipelineAuthoringGate(aggregate) -> { buildAuthor, reason }`.
+// This package is the SINGLE SOURCE of `PipelineAuthoringAggregate` — the
+// daemon's fleet-findings reducer imports the type from here, and the daemon's
+// fleet-health assembler surfaces the verdict on the FleetHealthReport. Pure
+// (no I/O, no clock, no globals) — a leaf consumer like the rest of the package.
+export {
+  pipelineAuthoringGate,
+  MIN_SMALL_TIER_SAMPLE,
+  MATERIAL_GAP_PP,
+} from "./pipeline-authoring-gate.js";
+export type {
+  PipelineAuthoringAggregate,
+  PipelineAuthoringVerdict,
+} from "./pipeline-authoring-gate.js";

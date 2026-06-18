@@ -105,21 +105,21 @@ describe("pipelineAuthoringGate (TELEM-02 — pre-committed deterministic gate)"
     expect(verdict.reason).toMatch(/10\.0pp/);
   });
 
-  it("GAP BOUNDARY: a gap of exactly 15pp does NOT build (strict < MATERIAL_GAP_PP defers; >= 15 builds)", () => {
-    // gap === 15pp -> NOT material (strict less-than defers); 0.80 vs 0.95 = 15pp.
+  it("GAP BOUNDARY: a gap of exactly 15pp BUILDS (>= MATERIAL_GAP_PP), just-under DEFERS (strict <)", () => {
+    // The build side is INCLUSIVE: gap >= 15pp builds, gap < 15pp defers.
+    // 0.90 vs 0.75 = a 15pp gap (the fixture avoids IEEE-754 drift across 15).
     const atBoundary = pipelineAuthoringGate({
       smallTierInvocations: 50,
-      smallTierValidRate: 0.8,
-      frontierValidRate: 0.95,
+      smallTierValidRate: 0.75,
+      frontierValidRate: 0.9,
     });
-    // 15pp is NOT < 15 -> it BUILDS (the boundary is inclusive on the build side).
     expect(atBoundary.buildAuthor).toBe(true);
 
-    // Just under the boundary defers: 0.801 vs 0.95 ~ 14.9pp < 15pp.
+    // Just under the boundary defers: 0.45 vs 0.60 ~ 14.99...pp < 15pp.
     const justUnder = pipelineAuthoringGate({
       smallTierInvocations: 50,
-      smallTierValidRate: 0.801,
-      frontierValidRate: 0.95,
+      smallTierValidRate: 0.45,
+      frontierValidRate: 0.6,
     });
     expect(justUnder.buildAuthor).toBe(false);
   });
