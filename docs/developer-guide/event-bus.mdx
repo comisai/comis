@@ -121,9 +121,9 @@ See [Compaction](/agents/compaction) for details on what triggers each event.
 
 </Accordion>
 
-<Accordion title="AgentEvents (43 events)">
+<Accordion title="AgentEvents (44 events)">
 
-Skill lifecycle, tool execution, audit logging, observability (tokens and latency), cache break detection, model failover, security, execution graph, provider health, SEP (step-execution planning), and exec command blocking events.
+Skill lifecycle, tool execution, audit logging, observability (tokens and latency), cache break detection, model failover, security, execution graph, per-node sub-agent budget breaches, provider health, SEP (step-execution planning), and exec command blocking events.
 
 | Event Name | Key Payload Fields |
 |------------|-------------------|
@@ -131,9 +131,10 @@ Skill lifecycle, tool execution, audit logging, observability (tokens and latenc
 | `cache:graph_prefix_written` | graphId, nodeId, cacheWriteTokens, timestamp |
 | `command:blocked` | agentId, commandPrefix, reason, blocker, timestamp |
 | `graph:started` | graphId, label, nodeCount, timestamp |
-| `graph:node_updated` | graphId, nodeId, status, previousStatus, durationMs, error, timestamp |
+| `graph:node_updated` | graphId, nodeId, status, previousStatus, durationMs, error, tokensUsed, cost, timestamp |
 | `graph:completed` | graphId, status, durationMs, nodeCount, nodesCompleted, nodesFailed, nodesSkipped, cancelReason, timestamp, graphCacheReadTokens, graphCacheWriteTokens, graphCacheEffectiveness, nodeEffectiveness |
 | `graph:driver_lifecycle` | graphId, nodeId, typeId, phase |
+| `subagent:budget_exceeded` | graphId, nodeId, agentId, tokenBudget, tokensUsed, timestamp |
 | `memory:review_completed` | agentId, sessionsReviewed, memoriesExtracted, duplicatesSkipped, durationMs, timestamp |
 | `model:auth_cooldown` | keyName, provider, cooldownMs, failureCount, timestamp |
 | `model:catalog_loaded` | providerCount, modelCount, timestamp |
@@ -175,6 +176,8 @@ The `graph:driver_lifecycle` event fires at each phase transition during typed n
 | `aborted` | When the coordinator calls `onAbort()` due to timeout, cancellation, or graph shutdown | The node transitions to the `failed` state with an abort reason. Resources are cleaned up |
 
 Subscribe to this event for driver-level monitoring, logging, or triggering downstream actions based on typed node progress. See the [Pipelines: Driver Lifecycle](/developer-guide/pipelines#driver-lifecycle) documentation for the full execution flow.
+
+**Per-node token budgets:** `subagent:budget_exceeded` fires when a graph node's sub-agent exceeds its per-node token budget. The payload is counts and ids only -- `tokenBudget` is the cap that was breached, `tokensUsed` is the node's actual spend, and `agentId` is the node's child agent (never task text or sub-agent output). The breaching node fails terminally (honoring the graph's `on_failure`); see [Execution Graphs: Token budgets](/agents/execution-graphs#token-budgets). For completed nodes, `graph:node_updated` carries the optional `tokensUsed` and `cost` fields so per-node spend is observable from the bus alone; both are absent when the underlying run did not report them.
 
 **Cache cost fields** (added in v58.0): The `observability:token_usage` event includes prompt caching data when the provider supports it. `cost.cacheRead` and `cost.cacheWrite` are dollar costs for cached token reads/writes. `savedVsUncached` is the net savings compared to uncached pricing (positive = money saved). `cacheEligible` indicates whether the model supports prompt caching. `sessionKey` identifies the conversation session for per-session cost aggregation.
 
