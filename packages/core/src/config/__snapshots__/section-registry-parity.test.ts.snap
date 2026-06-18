@@ -7764,6 +7764,9 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("secur
   {
     "default": {
       "allowAgents": [],
+      "delivery": {
+        "maxRetries": 3
+      },
       "enabled": true,
       "maxPingPongTurns": 3,
       "subAgentMaxSteps": 50,
@@ -7806,6 +7809,20 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("secur
     "immutable": true,
     "path": "security.agentToAgent.allowAgents",
     "type": "array"
+  },
+  {
+    "default": {
+      "maxRetries": 3
+    },
+    "immutable": true,
+    "path": "security.agentToAgent.delivery",
+    "type": "object"
+  },
+  {
+    "default": 3,
+    "immutable": true,
+    "path": "security.agentToAgent.delivery.maxRetries",
+    "type": "integer"
   },
   {
     "default": true,
@@ -14268,6 +14285,9 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
       },
       "agentToAgent": {
         "allowAgents": [],
+        "delivery": {
+          "maxRetries": 3
+        },
         "enabled": true,
         "maxPingPongTurns": 3,
         "subAgentMaxSteps": 50,
@@ -14346,6 +14366,9 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
   {
     "default": {
       "allowAgents": [],
+      "delivery": {
+        "maxRetries": 3
+      },
       "enabled": true,
       "maxPingPongTurns": 3,
       "subAgentMaxSteps": 50,
@@ -14388,6 +14411,20 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "immutable": true,
     "path": "security.agentToAgent.allowAgents",
     "type": "array"
+  },
+  {
+    "default": {
+      "maxRetries": 3
+    },
+    "immutable": true,
+    "path": "security.agentToAgent.delivery",
+    "type": "object"
+  },
+  {
+    "default": 3,
+    "immutable": true,
+    "path": "security.agentToAgent.delivery.maxRetries",
+    "type": "integer"
   },
   {
     "default": true,
@@ -25692,6 +25729,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("sec
       "additionalProperties": false,
       "default": {
         "allowAgents": [],
+        "delivery": {
+          "maxRetries": 3
+        },
         "enabled": true,
         "maxPingPongTurns": 3,
         "subAgentMaxSteps": 50,
@@ -25733,6 +25773,24 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("sec
             "type": "string"
           },
           "type": "array"
+        },
+        "delivery": {
+          "additionalProperties": false,
+          "default": {
+            "maxRetries": 3
+          },
+          "properties": {
+            "maxRetries": {
+              "default": 3,
+              "maximum": 10,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "maxRetries"
+          ],
+          "type": "object"
         },
         "enabled": {
           "default": true,
@@ -25989,6 +26047,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("sec
         "subAgentMcpTools",
         "subAgentSessionPersistence",
         "tokenBudget",
+        "delivery",
         "subagentContext"
       ],
       "type": "object"
@@ -38886,6 +38945,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
         },
         "agentToAgent": {
           "allowAgents": [],
+          "delivery": {
+            "maxRetries": 3
+          },
           "enabled": true,
           "maxPingPongTurns": 3,
           "subAgentMaxSteps": 50,
@@ -38965,6 +39027,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "additionalProperties": false,
           "default": {
             "allowAgents": [],
+            "delivery": {
+              "maxRetries": 3
+            },
             "enabled": true,
             "maxPingPongTurns": 3,
             "subAgentMaxSteps": 50,
@@ -39006,6 +39071,24 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "type": "string"
               },
               "type": "array"
+            },
+            "delivery": {
+              "additionalProperties": false,
+              "default": {
+                "maxRetries": 3
+              },
+              "properties": {
+                "maxRetries": {
+                  "default": 3,
+                  "maximum": 10,
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "maxRetries"
+              ],
+              "type": "object"
             },
             "enabled": {
               "default": true,
@@ -39262,6 +39345,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "subAgentMcpTools",
             "subAgentSessionPersistence",
             "tokenBudget",
+            "delivery",
             "subagentContext"
           ],
           "type": "object"
