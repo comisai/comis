@@ -8,7 +8,9 @@
  * TerminalEvents / MediaGenerationEvents are their own sub-interfaces folded
  * into EventMap. The graph engine emits a start signal, a per-node transition,
  * a terminal completion, a typed-driver lifecycle phase, and (BUDGET-03) a
- * per-node token-budget breach.
+ * per-node token-budget breach. `pipeline:authored` (P1/TELEM-01) is the
+ * authoring half of the same graph subsystem — a counts-only signal per
+ * `pipeline` tool invocation.
  *
  * Counts / ids / typed enums ONLY — NEVER task text, sub-agent output, or
  * response bodies. The breach event (`subagent:budget_exceeded`) carries the
@@ -129,5 +131,33 @@ export interface OrchestrationEvents {
     nodeId: string;
     typeId: string;
     phase: "initialized" | "progress" | "completed" | "partial_complete" | "failed" | "aborted";
+  };
+
+  /**
+   * P1/TELEM-01: a `pipeline` tool invocation was authored — counts-only.
+   * Emitted DAEMON-SIDE (the graph.define / graph.execute handlers, Plan 02)
+   * where schema validity is determined (the buildGraphInput parse + validate)
+   * and the resolved capabilityClass arrives. Mirrors the
+   * memory:generation_quality triple (event -> health_signal row -> fleet
+   * finding). NEVER a pipeline body, a type_config value, a node task/label, or
+   * a secret (AGENTS.md §2.7) — closed enums + booleans only; every payload is
+   * reconstructable from the bus alone.
+   *
+   * `repaired` is ALWAYS false at P1: the repair producer is Phase 174 /
+   * AUTHOR-01 (the graph-helpers.ts fail-closed weak-model throw, UNWIRED here).
+   * The field exists so the SAME event is unchanged when P2 lands.
+   */
+  "pipeline:authored": {
+    /** The pipeline action authored (closed union — define | execute). */
+    action: "define" | "execute";
+    /** The calling model's resolved tier; "unknown" when the tier cannot be resolved (Pitfall 2 — record honestly, never silently drop). */
+    capabilityClass: "frontier" | "mid" | "small" | "nano" | "unknown";
+    /** Did the call parse + validate against the graph schema (buildGraphInput)? */
+    schemaValid: boolean;
+    /** P1: ALWAYS false (the repair producer is deferred to Phase 174 / AUTHOR-01). */
+    repaired: boolean;
+    agentId?: string;
+    sessionKey?: string;
+    timestamp: number;
   };
 }
