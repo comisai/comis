@@ -126,6 +126,15 @@ export const TRAJECTORY_EVENT_TYPES = [
   "graph.repaired",
   "graph.synthesized_from_intent",
 
+  // STEER-01 (v2.27 P3, Phase 175): the reserved trajectory type for the
+  // counts-only subagent:steered event Plan 02 emits when a running child is
+  // steered in-flight (transcript preserved) instead of kill+respawn. APPEND-ONLY
+  // beside the AUTHOR-01/02 types. Content-free: runId + the closed-union mode
+  // (steer|followup) ONLY, never the steer message body (§2.7 / H1). Daemon-side
+  // emit (subagent-handlers.ts); bridged for OPERATOR TRAJECTORY VISIBILITY
+  // (`comis explain`).
+  "subagent.steered",
+
   // Background task lifecycle (T2.2 / F9): promote/complete/fail of a long-running tool
   // detached past the execute() boundary (content-free — ids + durationMs only).
   "background_task.promoted",

@@ -18,7 +18,10 @@
  * Counts / ids / typed enums ONLY — NEVER task text, sub-agent output, or
  * response bodies. The breach event (`subagent:budget_exceeded`) carries the
  * two token numbers and the ids and nothing else (AGENTS.md §2.7); every
- * payload is reconstructable from the bus alone.
+ * payload is reconstructable from the bus alone. `subagent:steered`
+ * (STEER-01, Phase 175) is the in-flight-steer half of the same sub-agent
+ * lifecycle — a counts/ids/typed-enum-mode signal per real steer-inject (the
+ * message body never crosses the bus).
  */
 import type { NodeStatus, GraphStatus } from "../domain/execution-graph.js";
 
@@ -67,6 +70,29 @@ export interface OrchestrationEvents {
      * tell WHICH knob bound the node, not just THAT it was bounded.
      */
     capSource: "node" | "operator-default" | "inherit-share";
+    timestamp: number;
+  };
+
+  /**
+   * STEER-01 (v2.27 P3, Phase 175): a running sub-agent was steered IN-FLIGHT —
+   * a high-priority message injected at the child's next step boundary
+   * (transcript + progress preserved) instead of today's kill+respawn. Emitted
+   * DAEMON-SIDE at the inject site (Plan 02, subagent-handlers.ts /
+   * sub-agent-runner.ts), gated behind `security.agentToAgent.steerInject`.
+   * Counts/ids/typed-enum ONLY — NEVER the steer message body (AGENTS.md §2.7);
+   * the message text is the highest-risk leak and is intentionally absent.
+   * `mode` is the closed union naming which SDK primitive landed the inject
+   * (`steer` when the child was streaming, `followup` when it was idle — the
+   * channel-path streaming branch). Every payload is reconstructable from the
+   * bus alone.
+   */
+  "subagent:steered": {
+    /** The steered run id. */
+    runId: string;
+    /** The owning agent. */
+    agentId: string;
+    /** CLOSED union — which SDK primitive landed the inject (§2.8). */
+    mode: "steer" | "followup";
     timestamp: number;
   };
 

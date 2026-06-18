@@ -268,6 +268,8 @@ export function translatePayload(
       return { pattern: payload.pattern, nodeCount: payload.nodeCount, capabilityClass: payload.capabilityClass };
     case "graph:synthesized_from_intent": // AUTHOR-02: requested pattern + synthesized-graph nodeCount (no intent text)
       return { pattern: payload.pattern, nodeCount: payload.nodeCount };
+    case "subagent:steered": // STEER-01 (175): the steered runId + the closed-union mode (steer|followup) ONLY — NEVER the steer message body (the highest-risk leak); agentId/timestamp are envelope-only and stripped (the graph:repaired precedent).
+      return { runId: payload.runId, mode: payload.mode };
 
     case "learning:outcome_observed": // OUTCOME-08: trajectoryId + closed-enum outcome/source + numeric confidence ONLY (no body/alpha/recalled ids; agentId/sessionKey/traceId envelope-only — §2.7 / SEC-01).
       return { trajectoryId: payload.trajectoryId, outcome: payload.outcome, source: payload.source, confidence: payload.confidence };

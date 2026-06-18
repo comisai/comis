@@ -121,6 +121,18 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   "graph:repaired": "graph.repaired",
   "graph:synthesized_from_intent": "graph.synthesized_from_intent",
 
+  // STEER-01 (v2.27 P3, Phase 175): a running sub-agent was steered IN-FLIGHT (a
+  // high-priority message injected at the child's next step boundary, transcript
+  // preserved) instead of kill+respawn. Emitted DAEMON-SIDE at the inject site
+  // (Plan 02, subagent-handlers.ts), so the trajectory-event-types-known arch gate
+  // — which walks only packages/agent + packages/orchestrator — does NOT require it
+  // (the unmapped subagent:budget_exceeded precedent); the registration here is
+  // purely for OPERATOR TRAJECTORY VISIBILITY (a steer is a meaningful per-session
+  // event in `comis explain`), mirroring the graph:repaired entry above. Content-free
+  // (runId + the closed-union mode steer|followup — H1); the steer MESSAGE BODY never
+  // crosses the bus.
+  "subagent:steered": "subagent.steered",
+
   // OUTCOME-08 (v2.26 Verified Learning WS1): a finished trajectory's resolved net
   // task-outcome, emitted DAEMON-SIDE after OutcomeSignalPort.resolve (learningOutcome.
   // enabled-gated, default OFF). DAEMON emit (NOT agent/orchestrator) so the arch
