@@ -13747,6 +13747,46 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
   },
   {
     "default": {
+      "authoring": {
+        "gbnfConstrain": false,
+        "intentAction": false,
+        "repairProducer": false
+      }
+    },
+    "immutable": false,
+    "path": "orchestration",
+    "type": "object"
+  },
+  {
+    "default": {
+      "gbnfConstrain": false,
+      "intentAction": false,
+      "repairProducer": false
+    },
+    "immutable": false,
+    "path": "orchestration.authoring",
+    "type": "object"
+  },
+  {
+    "default": false,
+    "immutable": false,
+    "path": "orchestration.authoring.gbnfConstrain",
+    "type": "boolean"
+  },
+  {
+    "default": false,
+    "immutable": false,
+    "path": "orchestration.authoring.intentAction",
+    "type": "boolean"
+  },
+  {
+    "default": false,
+    "immutable": false,
+    "path": "orchestration.authoring.repairProducer",
+    "type": "boolean"
+  },
+  {
+    "default": {
       "classes": {
         "attachment": {
           "retentionMs": 604800000
@@ -37957,6 +37997,50 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
       ],
       "type": "object"
     },
+    "orchestration": {
+      "additionalProperties": false,
+      "default": {
+        "authoring": {
+          "gbnfConstrain": false,
+          "intentAction": false,
+          "repairProducer": false
+        }
+      },
+      "properties": {
+        "authoring": {
+          "additionalProperties": false,
+          "default": {
+            "gbnfConstrain": false,
+            "intentAction": false,
+            "repairProducer": false
+          },
+          "properties": {
+            "gbnfConstrain": {
+              "default": false,
+              "type": "boolean"
+            },
+            "intentAction": {
+              "default": false,
+              "type": "boolean"
+            },
+            "repairProducer": {
+              "default": false,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "intentAction",
+            "repairProducer",
+            "gbnfConstrain"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "authoring"
+      ],
+      "type": "object"
+    },
     "outputRetention": {
       "additionalProperties": false,
       "default": {
@@ -40448,6 +40532,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
     "integrations",
     "monitoring",
     "observability",
+    "orchestration",
     "diagnostics",
     "plugins",
     "queue",
@@ -40496,6 +40581,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSections() 
   "providers",
   "messages",
   "approvals",
-  "tooling"
+  "tooling",
+  "orchestration"
 ]"
 `;

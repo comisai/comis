@@ -63,9 +63,9 @@ describe("getConfigSections", () => {
     expect(sections).toContain("gateway");
   });
 
-  it("contains all 17 sections", () => {
+  it("contains all 18 sections", () => {
     const sections = getConfigSections();
-    expect(sections).toHaveLength(17);
+    expect(sections).toHaveLength(18);
     expect(sections).toContain("agents");
     expect(sections).toContain("channels");
     expect(sections).toContain("memory");
@@ -84,5 +84,7 @@ describe("getConfigSections", () => {
     expect(sections).toContain("tooling");
     // diagnostics scaffold
     expect(sections).toContain("diagnostics");
+    // orchestration authoring gate (Phase 174, gated-off)
+    expect(sections).toContain("orchestration");
   });
 });
