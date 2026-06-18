@@ -251,6 +251,40 @@ export function reorderContentForStablePrefix(messages: Array<Record<string, unk
 }
 
 /**
+ * Strip thinking blocks from every HISTORICAL assistant message, keeping them only
+ * on the LAST assistant message (the current, unresolved tool cycle).
+ *
+ * cache break #C1 (2026-06-19): the LCD codec (parts-codec F3) reconstructs historical
+ * assistant messages WITHOUT thinking (topLevelReasoningOnly), but the SDK's in-memory
+ * conversation carries thinking on those same messages while the current cycle is live —
+ * so the cached prefix is written WITH thinking (call B, in-memory) and re-sent WITHOUT
+ * thinking (next turn, from the LCD) → the cached prefix mutates → read collapse on
+ * thinking-heavy turns (coding). Stripping historical thinking on EVERY request makes
+ * the cached prefix byte-stable (consistent with the durable LCD form), while the LAST
+ * assistant message keeps its thinking (Anthropic requires it for the open tool cycle;
+ * it rides the uncached tail). Mirrors `stripTransientRecallFromHistory`.
+ *
+ * Mutates messages in place. Returns the number of messages whose thinking was stripped.
+ */
+export function stripHistoricalThinking(messages: Array<Record<string, unknown>>): number {
+  let lastAssistantIdx = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i]!.role === "assistant") { lastAssistantIdx = i; break; }
+  }
+  if (lastAssistantIdx <= 0) return 0; // no historical assistant message to strip
+
+  let stripped = 0;
+  for (let i = 0; i < lastAssistantIdx; i++) {
+    const msg = messages[i]!;
+    if (msg.role !== "assistant" || !Array.isArray(msg.content)) continue;
+    const content = msg.content as Array<Record<string, unknown>>;
+    const filtered = content.filter(b => b.type !== "thinking");
+    if (filtered.length < content.length) { msg.content = filtered; stripped++; }
+  }
+  return stripped;
+}
+
+/**
  * Strip the TRANSIENT inline-recall block from every HISTORICAL user message,
  * keeping it only on the latest user message (the current turn).
  *

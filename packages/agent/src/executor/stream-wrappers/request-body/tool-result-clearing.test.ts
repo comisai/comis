@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { clearStaleThinkingBlocks, stripTransientRecallFromHistory } from "./index.js";
+import { clearStaleThinkingBlocks, stripTransientRecallFromHistory, stripHistoricalThinking } from "./index.js";
 
 /** A representative inline-recall block as envelope-wrapper prepends it (hybrid-memory-injector template). */
 const recall = (content: string) =>
@@ -150,6 +150,54 @@ describe("clearStaleThinkingBlocks (pure)", () => {
 
     // First assistant: 2 thinking blocks cleared, second assistant: 1 thinking cleared
     expect(cleared).toBe(3);
+  });
+});
+
+describe("stripHistoricalThinking (pure) — cache break #C1", () => {
+  // Thinking blocks are cached in-memory WITH thinking on the current cycle (call B),
+  // but the LCD (parts-codec F3) reconstructs historical assistant messages WITHOUT
+  // thinking → the cached prefix mutates the next turn → cache read collapse on
+  // thinking-heavy (coding) turns. Fix: strip thinking from ALL historical assistant
+  // messages on EVERY request (matching the LCD), keeping only the LAST assistant
+  // message's thinking (the current, unresolved tool cycle Anthropic requires).
+
+  it("strips thinking from historical assistant messages, keeps the last assistant's thinking", () => {
+    const messages: Array<Record<string, unknown>> = [
+      { role: "user", content: [{ type: "text", text: "u1" }] },
+      { role: "assistant", content: [{ type: "thinking", thinking: "old reasoning" }, { type: "text", text: "a1" }] },
+      { role: "user", content: [{ type: "text", text: "u2" }] },
+      { role: "assistant", content: [{ type: "thinking", thinking: "older reasoning" }, { type: "tool_use", id: "t1", name: "bash", input: {} }] },
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "ok" }] },
+      { role: "assistant", content: [{ type: "thinking", thinking: "CURRENT reasoning" }, { type: "tool_use", id: "t2", name: "bash", input: {} }] },
+    ];
+    const stripped = stripHistoricalThinking(messages);
+    expect(stripped).toBe(2); // idx 1 and idx 3 (historical assistants)
+    expect((messages[1]!.content as any[]).some(b => b.type === "thinking")).toBe(false);
+    expect((messages[3]!.content as any[]).some(b => b.type === "thinking")).toBe(false);
+    // LAST assistant (idx 5, current cycle) KEEPS its thinking (Anthropic requirement).
+    expect((messages[5]!.content as any[]).some(b => b.type === "thinking")).toBe(true);
+  });
+
+  it("is a no-op when only the last assistant message has thinking", () => {
+    const messages: Array<Record<string, unknown>> = [
+      { role: "user", content: [{ type: "text", text: "u1" }] },
+      { role: "assistant", content: [{ type: "text", text: "a1" }] },
+      { role: "user", content: [{ type: "text", text: "u2" }] },
+      { role: "assistant", content: [{ type: "thinking", thinking: "current" }, { type: "text", text: "a2" }] },
+    ];
+    const stripped = stripHistoricalThinking(messages);
+    expect(stripped).toBe(0);
+    expect((messages[3]!.content as any[]).some(b => b.type === "thinking")).toBe(true);
+  });
+
+  it("no-op on a conversation with no thinking blocks (echo-style tool turns)", () => {
+    const messages: Array<Record<string, unknown>> = [
+      { role: "user", content: [{ type: "text", text: "u1" }] },
+      { role: "assistant", content: [{ type: "tool_use", id: "t", name: "bash", input: {} }] },
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "t", content: "ok" }] },
+      { role: "assistant", content: [{ type: "text", text: "done" }] },
+    ];
+    expect(stripHistoricalThinking(messages)).toBe(0);
   });
 });
 

@@ -41,4 +41,4 @@ export { clearSessionBetaHeaderLatches } from "./context-window.js";
 export { estimateBlockTokens } from "./token-estimation.js";
 
 // Tool-result-clearing leaf
-export { clearStaleThinkingBlocks, stripTransientRecallFromHistory } from "./tool-result-clearing.js";
+export { clearStaleThinkingBlocks, stripTransientRecallFromHistory, stripHistoricalThinking } from "./tool-result-clearing.js";

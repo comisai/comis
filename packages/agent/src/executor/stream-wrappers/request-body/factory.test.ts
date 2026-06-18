@@ -5439,13 +5439,18 @@ describe("clearStaleThinkingBlocks (integration)", () => {
     expect(onContentModification).toHaveBeenCalled();
   });
 
-  it("onPayload does NOT call clearStaleThinkingBlocks when elapsed <= TTL (cache is warm)", async () => {
+  it("strips HISTORICAL thinking even when cache is warm (cache break #C1: consistent with LCD)", async () => {
+    // cache break #C1: historical thinking MUST be stripped on every request — warm OR stale —
+    // because the durable LCD (parts-codec F3) always reconstructs historical assistant messages
+    // WITHOUT thinking. Keeping it "when warm" was exactly the inconsistency that mutated the
+    // cached prefix (cached WITH thinking, re-sent WITHOUT) → read collapse. The LAST assistant
+    // message keeps its thinking (the open tool cycle Anthropic requires).
     const onContentModification = vi.fn();
     const base = createMockStreamFn();
     const wrapper = createRequestBodyInjector(
       {
         getCacheRetention: () => "short",
-        getElapsedSinceLastResponse: () => 100_000, // 100s < 300s TTL for "short"
+        getElapsedSinceLastResponse: () => 100_000, // warm (100s < 300s TTL) — must still strip
         observationKeepWindow: 1,
         onContentModification,
         sessionKey: "test-thinking-warm",
@@ -5467,22 +5472,25 @@ describe("clearStaleThinkingBlocks (integration)", () => {
       messages: [
         { role: "user", content: [{ type: "text", text: "Hello" }] },
         { role: "assistant", content: [
-          { type: "thinking", thinking: "Thinking should be preserved" },
+          { type: "thinking", thinking: "Historical thinking — must be stripped for cache stability" },
           { type: "text", text: "Response" },
         ]},
         { role: "user", content: [{ type: "text", text: "Next" }] },
         { role: "assistant", content: [
+          { type: "thinking", thinking: "Current-cycle thinking — kept (last assistant)" },
           { type: "text", text: "Latest" },
         ]},
       ],
     }, model);
 
-    // All thinking blocks should be preserved when cache is warm
     const msgs = result.messages as any[];
-    expect(msgs[1].content.length).toBe(2);
-    expect(msgs[1].content[0].type).toBe("thinking");
-    // onContentModification should NOT have been called for thinking
-    // (may have been called for tool results, but not for thinking alone)
+    // Historical assistant (idx 1): thinking STRIPPED even though warm → byte-stable cached prefix.
+    expect(msgs[1].content.length).toBe(1);
+    expect(msgs[1].content[0].type).toBe("text");
+    // LAST assistant (idx 3): thinking KEPT (open cycle, Anthropic requirement, rides uncached tail).
+    expect(msgs[3].content.some((b: any) => b.type === "thinking")).toBe(true);
+    // The deliberate strip notifies the cache-break detector (suppress the one-time read change).
+    expect(onContentModification).toHaveBeenCalled();
   });
 });
 describe("token-ceiling microcompact", () => {
@@ -6627,30 +6635,31 @@ describe("fence-aware microcompaction", () => {
       expect(String(payload.mutationClass)).toContain("datetime-preamble");
     });
 
-    it("WARN classifies a CLEARED thinking block (structural delta, no content leak)", async () => {
+    it("WARN classifies a CONTENT-cleared structural delta (no content leak)", async () => {
       const testLogger = createMockLogger();
-      // idx 3 (assistant) carries a thinking block that varies for 3 turns (builds the
-      // 3 consecutive changes), then is REMOVED on turn 3 — exactly what microcompaction's
-      // clearStaleThinkingBlocks does to a cached assistant message. The diagnostic must
-      // report mutationClass "thinking-cleared" from the structural delta (block/thinking
-      // counts + length), WITHOUT logging any message content.
-      const mk = (turn: number, withThinking: boolean): Array<Record<string, unknown>> => ([
+      // NOTE: a thinking-cleared cached-prefix mutation can no longer be PRODUCED — cache break
+      // #C1 fixed it by stripping historical thinking consistently (stripHistoricalThinking). So
+      // this exercises the classifier's other structural-delta branch: a large content SHRINK on a
+      // historical assistant message (e.g. a cleared/offloaded tool_result) → "content-cleared".
+      // The diagnostic reports the class from the structural delta (block count + length), WITHOUT
+      // logging any message content.
+      const big = "x".repeat(2000);
+      const mk = (turn: number, large: boolean): Array<Record<string, unknown>> => ([
         { role: "user", content: [{ type: "text", text: "u0" }] },
         { role: "assistant", content: [{ type: "text", text: "a0" }] },
         { role: "user", content: [{ type: "text", text: "u1" }] },
-        // idx 3: a text block whose value varies each turn (so the prefix hash changes →
-        // the WARN's 3-consecutive-change threshold is reached); on the final turn the
-        // thinking block is also removed (the clearStaleThinkingBlocks behaviour).
-        { role: "assistant", content: withThinking
-          ? [{ type: "thinking", thinking: `reasoning turn ${turn} ........` }, { type: "text", text: `answer ${turn}` }]
+        // idx 3 (historical assistant): text varies each turn (drives the 3-consecutive-change
+        // threshold); on the final turn the content SHRINKS by >500 chars (content-cleared).
+        { role: "assistant", content: large
+          ? [{ type: "text", text: `answer ${turn} ${big}` }]
           : [{ type: "text", text: `answer ${turn}` }] },
         { role: "user", content: [{ type: "text", text: "u2" }] },
         { role: "assistant", content: [{ type: "text", text: "a2" }] },
       ]);
-      await invokeWithFence(4, mk(0, true), testLogger);  // baseline (thinking present)
-      await invokeWithFence(4, mk(1, true), testLogger);  // change #1 (thinking text differs)
+      await invokeWithFence(4, mk(0, true), testLogger);  // baseline (large)
+      await invokeWithFence(4, mk(1, true), testLogger);  // change #1 (text differs)
       await invokeWithFence(4, mk(2, true), testLogger);  // change #2
-      await invokeWithFence(4, mk(3, false), testLogger); // change #3 → WARN; thinking REMOVED
+      await invokeWithFence(4, mk(3, false), testLogger); // change #3 → WARN; content SHRUNK
 
       const warn = (testLogger.warn as ReturnType<typeof vi.fn>).mock.calls.find(
         (c: unknown[]) => typeof c[1] === "string" && c[1].includes("Unstable prefix detected"),
@@ -6658,11 +6667,11 @@ describe("fence-aware microcompaction", () => {
       expect(warn).toBeDefined();
       const payload = warn![0] as Record<string, unknown>;
       expect(payload.firstDivergentIndex).toBe(3);
-      expect(String(payload.mutationClass)).toContain("thinking-cleared");
+      expect(String(payload.mutationClass)).toContain("content-cleared");
       // structural sigs present, and they must NOT contain message text (only counts/length)
       expect(typeof payload.prevSig).toBe("string");
       expect(typeof payload.currSig).toBe("string");
-      expect(String(payload.prevSig)).not.toContain("reasoning");
+      expect(String(payload.prevSig)).not.toContain("xxxx");
     });
   });
 });
