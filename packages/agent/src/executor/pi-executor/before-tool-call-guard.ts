@@ -2,7 +2,7 @@
 /**
  * createBeforeToolCallGuard — proactive tool-call safety guard.
  *
- * Takes 5 typed parameters (StepCounter, BudgetGuard, CircuitBreaker,
+ * Takes 5 typed parameters (StepCounter, ExecutionBudgetWindow, CircuitBreaker,
  * ToolRetryBreaker?, MessageSendLimiter?) — does not follow the
  * closure-extraction `state` first-param contract because it operates
  * at the top level of the executor.
@@ -10,7 +10,7 @@
  * @module
  */
 
-import type { BudgetGuard } from "../../budget/budget-guard.js";
+import type { ExecutionBudgetWindow } from "../../budget/budget-guard.js";
 import type { StepCounter } from "../step-counter.js";
 import type { CircuitBreaker } from "../../safety/circuit-breaker.js";
 import type { ToolRetryBreaker } from "../../safety/tool-retry-breaker.js";
@@ -32,7 +32,9 @@ import type { TurnLoopDetector } from "../turn-loop-detector.js";
  */
 export function createBeforeToolCallGuard(
   stepCounter: StepCounter,
-  budgetGuard: BudgetGuard,
+  // CR-01: the per-execution budget window (the shared BudgetGuard is also
+  // structurally assignable). Only checkBudget(0) is used here.
+  budgetGuard: ExecutionBudgetWindow,
   circuitBreaker: CircuitBreaker,
   toolRetryBreaker?: ToolRetryBreaker,
   messageSendLimiter?: MessageSendLimiter,

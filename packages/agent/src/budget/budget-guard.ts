@@ -42,6 +42,31 @@ export interface BudgetSnapshot {
   perDay: number;
 }
 
+/**
+ * Execution-local view of a budget guard returned by {@link BudgetGuard.resetExecution}.
+ *
+ * CR-01: the per-execution dimension (the running `total` and the effective cap)
+ * is owned by THIS handle, not by the shared per-agent guard. Two concurrent
+ * executions of the same agentId therefore get two independent windows and can
+ * never clobber each other's cap or accrued spend. The per-hour/per-day rolling
+ * windows are delegated to the shared guard (they are correctly per-agent), so a
+ * window's checkBudget still enforces the agent-wide hourly/daily caps.
+ */
+export interface ExecutionBudgetWindow {
+  /** Estimate total tokens from context size and max output (delegates to the guard). */
+  estimateCost(contextChars: number, maxOutputTokens: number): number;
+  /**
+   * Check if estimated tokens would exceed THIS execution's per-execution cap
+   * or the SHARED per-hour/per-day caps. Per-execution uses this window's own
+   * `total` + cap; the rolling windows read the shared per-agent entries.
+   */
+  checkBudget(estimatedTokens: number): Result<void, BudgetError>;
+  /** Record actual token usage: accrues into THIS window's total AND the shared rolling windows. */
+  recordUsage(tokens: number): void;
+  /** Return current usage (this window's per-execution total + the shared hour/day windows). */
+  getSnapshot(): BudgetSnapshot;
+}
+
 export interface BudgetGuard {
   /** Estimate total tokens from context size and max output. Delegates to SDK's estimateTokens() ratio for chars-to-token conversion. */
   estimateCost(contextChars: number, maxOutputTokens: number): number;
@@ -50,14 +75,19 @@ export interface BudgetGuard {
   /** Record actual token usage after an LLM call completes. */
   recordUsage(tokens: number): void;
   /**
-   * Reset per-execution counter and set an OPTIONAL per-execution effective cap
-   * for THIS run (called at the start of every execution). The cap is scoped to
-   * a single execution — it is cleared/replaced on the next resetExecution, so a
-   * tight sub-agent budget never leaks into the agent's other runs on the shared
-   * per-agent guard. checkBudget then enforces min(config.perExecution, cap): a
+   * Reset the per-execution window and set an OPTIONAL per-execution effective
+   * cap for THIS run (called at the start of every execution). Returns an
+   * execution-local {@link ExecutionBudgetWindow} that OWNS this run's running
+   * total + effective cap — the caller threads it into checkBudget/recordUsage
+   * so concurrent executions of the same agent never share the per-execution
+   * dimension (CR-01). checkBudget enforces min(config.perExecution, cap): a
    * child can only TIGHTEN, never RAISE, its per-execution budget (BUDGET-01).
+   *
+   * Calling resetExecution also re-points the guard's OWN checkBudget/recordUsage/
+   * getSnapshot at the freshly-created window, preserving the legacy single-execution
+   * call shape for callers that have not been threaded the handle.
    */
-  resetExecution(cap?: number): void;
+  resetExecution(cap?: number): ExecutionBudgetWindow;
   /** Return current usage across all three budget windows. */
   getSnapshot(): BudgetSnapshot;
 }
@@ -94,10 +124,9 @@ export function createBudgetGuard(
   config: BudgetConfig,
   logger?: { debug: (...args: unknown[]) => void; warn: (...args: unknown[]) => void },
 ): BudgetGuard {
-  let executionTotal = 0;
-  // Per-execution effective cap for the CURRENT run, set via resetExecution(cap).
-  // undefined ⇒ enforce config.perExecution (byte-identical to the no-budget path).
-  let effectiveExecutionCap: number | undefined;
+  // SHARED per-agent state: the rolling per-hour/per-day windows and the
+  // last-estimate latch. These legitimately stay shared across every execution
+  // of this agent (CR-01: only the per-EXECUTION dimension must be local).
   let lastEstimate = 0;
   const entries: WindowEntry[] = [];
 
@@ -125,79 +154,118 @@ export function createBudgetGuard(
     return total;
   }
 
+  function estimateCost(contextChars: number, maxOutputTokens: number): number {
+    const inputTokens = Math.ceil(contextChars / SDK_CHARS_PER_TOKEN);
+    const totalEstimate = inputTokens + maxOutputTokens;
+    lastEstimate = totalEstimate;
+    logger?.debug({ contextChars, inputTokens, maxOutputTokens, totalEstimate }, "Pre-execution cost estimate");
+    return totalEstimate;
+  }
+
+  /**
+   * Create an execution-local window. CR-01: `executionTotal` and
+   * `effectiveExecutionCap` are closed over by THIS window only — never shared
+   * across concurrent executions — while the rolling-window reads/writes
+   * (`entries`/`sumWindow`) and the estimate latch stay on the shared guard.
+   */
+  function createWindow(cap?: number): ExecutionBudgetWindow {
+    // Per-execution running total — local to this window (NOT the shared guard).
+    let executionTotal = 0;
+    // Per-execution effective cap for THIS run; undefined ⇒ enforce
+    // config.perExecution (byte-identical to the no-budget path).
+    const effectiveExecutionCap = cap;
+
+    return {
+      estimateCost,
+
+      checkBudget(estimatedTokens: number): Result<void, BudgetError> {
+        prune();
+
+        // Check per-execution first against THIS window's own total + cap. A
+        // per-spawn effective cap can only TIGHTEN the budget — min() means a
+        // child never raises its ceiling above the agent's config.perExecution.
+        const execCap =
+          effectiveExecutionCap === undefined
+            ? config.perExecution
+            : Math.min(config.perExecution, effectiveExecutionCap);
+        if (executionTotal + estimatedTokens > execCap) {
+          return err(new BudgetError("per-execution", executionTotal, execCap, estimatedTokens));
+        }
+
+        // Check per-hour (SHARED per-agent window)
+        const hourlyUsage = sumWindow(ONE_HOUR_MS);
+        if (hourlyUsage + estimatedTokens > config.perHour) {
+          return err(new BudgetError("per-hour", hourlyUsage, config.perHour, estimatedTokens));
+        }
+
+        // Check per-day (SHARED per-agent window)
+        const dailyUsage = sumWindow(ONE_DAY_MS);
+        if (dailyUsage + estimatedTokens > config.perDay) {
+          return err(new BudgetError("per-day", dailyUsage, config.perDay, estimatedTokens));
+        }
+
+        return ok(undefined);
+      },
+
+      recordUsage(tokens: number): void {
+        // Accrue into THIS window's per-execution total AND the shared rolling windows.
+        executionTotal += tokens;
+        entries.push({ timestamp: systemNowMs(), tokens });
+
+        // Detect large discrepancy between estimated and actual token usage
+        if (lastEstimate > 0 && Math.abs(tokens - lastEstimate) / lastEstimate > 0.5) {
+          logger?.warn(
+            {
+              estimated: lastEstimate,
+              actual: tokens,
+              ratio: (tokens / lastEstimate).toFixed(2),
+              hint: "Token estimate diverged significantly from actual API usage; budget may over/under-protect",
+              errorKind: "validation" as const,
+            },
+            "Token estimate vs actual discrepancy",
+          );
+        }
+        lastEstimate = 0;
+      },
+
+      getSnapshot(): BudgetSnapshot {
+        prune();
+        return {
+          perExecution: executionTotal,
+          perHour: sumWindow(ONE_HOUR_MS),
+          perDay: sumWindow(ONE_DAY_MS),
+        };
+      },
+    };
+  }
+
+  // Legacy single-execution window: backs the guard's OWN checkBudget/
+  // recordUsage/getSnapshot for callers that have not been threaded an explicit
+  // window handle. resetExecution re-points this at a fresh window.
+  let currentWindow: ExecutionBudgetWindow = createWindow();
+
   return {
-    estimateCost(contextChars: number, maxOutputTokens: number): number {
-      const inputTokens = Math.ceil(contextChars / SDK_CHARS_PER_TOKEN);
-      const totalEstimate = inputTokens + maxOutputTokens;
-      lastEstimate = totalEstimate;
-      logger?.debug({ contextChars, inputTokens, maxOutputTokens, totalEstimate }, "Pre-execution cost estimate");
-      return totalEstimate;
-    },
+    estimateCost,
 
     checkBudget(estimatedTokens: number): Result<void, BudgetError> {
-      prune();
-
-      // Check per-execution first. A per-spawn effective cap (set via
-      // resetExecution(cap)) can only TIGHTEN the budget — min() means a child
-      // never raises its ceiling above the agent's config.perExecution.
-      const execCap =
-        effectiveExecutionCap === undefined
-          ? config.perExecution
-          : Math.min(config.perExecution, effectiveExecutionCap);
-      if (executionTotal + estimatedTokens > execCap) {
-        return err(new BudgetError("per-execution", executionTotal, execCap, estimatedTokens));
-      }
-
-      // Check per-hour
-      const hourlyUsage = sumWindow(ONE_HOUR_MS);
-      if (hourlyUsage + estimatedTokens > config.perHour) {
-        return err(new BudgetError("per-hour", hourlyUsage, config.perHour, estimatedTokens));
-      }
-
-      // Check per-day
-      const dailyUsage = sumWindow(ONE_DAY_MS);
-      if (dailyUsage + estimatedTokens > config.perDay) {
-        return err(new BudgetError("per-day", dailyUsage, config.perDay, estimatedTokens));
-      }
-
-      return ok(undefined);
+      return currentWindow.checkBudget(estimatedTokens);
     },
 
     recordUsage(tokens: number): void {
-      executionTotal += tokens;
-      entries.push({ timestamp: systemNowMs(), tokens });
-
-      // Detect large discrepancy between estimated and actual token usage
-      if (lastEstimate > 0 && Math.abs(tokens - lastEstimate) / lastEstimate > 0.5) {
-        logger?.warn(
-          {
-            estimated: lastEstimate,
-            actual: tokens,
-            ratio: (tokens / lastEstimate).toFixed(2),
-            hint: "Token estimate diverged significantly from actual API usage; budget may over/under-protect",
-            errorKind: "validation" as const,
-          },
-          "Token estimate vs actual discrepancy",
-        );
-      }
-      lastEstimate = 0;
+      currentWindow.recordUsage(tokens);
     },
 
-    resetExecution(cap?: number): void {
-      executionTotal = 0;
-      // Scope the effective cap to THIS run only — replaced (or cleared to
-      // undefined) on the next reset, so the shared per-agent guard never
-      // bleeds one spawn's tight cap into another run.
-      effectiveExecutionCap = cap;
+    resetExecution(cap?: number): ExecutionBudgetWindow {
+      // CR-01: a FRESH execution-local window each reset. The returned handle
+      // is what concurrent callers thread through checkBudget/recordUsage so
+      // they never share the per-execution total/cap. The guard's own legacy
+      // methods follow the most-recent window (sequential-caller compatibility).
+      currentWindow = createWindow(cap);
+      return currentWindow;
     },
 
     getSnapshot(): BudgetSnapshot {
-      prune();
-      return {
-        perExecution: executionTotal,
-        perHour: sumWindow(ONE_HOUR_MS),
-        perDay: sumWindow(ONE_DAY_MS),
-      };
+      return currentWindow.getSnapshot();
     },
   };
 }

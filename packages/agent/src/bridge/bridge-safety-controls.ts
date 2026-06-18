@@ -17,7 +17,7 @@
 import type { SessionKey, TypedEventBus } from "@comis/core";
 import type { ComisLogger } from "@comis/core";
 import { systemNowMs } from "@comis/core";
-import type { BudgetGuard } from "../budget/budget-guard.js";
+import type { ExecutionBudgetWindow } from "../budget/budget-guard.js";
 import type { StepCounter } from "../executor/step-counter.js";
 import type { CircuitBreaker } from "../safety/circuit-breaker.js";
 import type { ContextWindowGuard, ContextUsageData } from "../safety/context-window-guard.js";
@@ -162,7 +162,9 @@ export function emitLoopAbort(
  * Returns abort descriptor if budget exceeded.
  */
 export function checkBudgetLimit(
-  budgetGuard: BudgetGuard,
+  // CR-01: a per-execution window (or the legacy shared guard, which is
+  // structurally assignable). Only checkBudget(0) is used here.
+  budgetGuard: ExecutionBudgetWindow,
   aborted: boolean,
 ): SafetyCheckResult {
   const budgetCheck = budgetGuard.checkBudget(0);

@@ -364,13 +364,21 @@ function createMockDeps(overrides?: Partial<PiExecutorDeps>): PiExecutorDeps {
       getState: vi.fn(),
       reset: vi.fn(),
     },
-    budgetGuard: {
-      recordUsage: vi.fn(),
-      checkBudget: vi.fn().mockReturnValue(ok(undefined)),
-      estimateCost: vi.fn(),
-      resetExecution: vi.fn(),
-      getSnapshot: vi.fn().mockReturnValue({ perExecution: 0, perHour: 0, perDay: 0 }),
-    },
+    budgetGuard: (() => {
+      // CR-01: resetExecution now returns an execution-local window. The mock
+      // window carries the same checkBudget/recordUsage/estimateCost/getSnapshot
+      // surface; resetExecution returns it so the executor threads a real handle.
+      const win = {
+        recordUsage: vi.fn(),
+        checkBudget: vi.fn().mockReturnValue(ok(undefined)),
+        estimateCost: vi.fn(),
+        getSnapshot: vi.fn().mockReturnValue({ perExecution: 0, perHour: 0, perDay: 0 }),
+      };
+      return {
+        ...win,
+        resetExecution: vi.fn().mockReturnValue(win),
+      };
+    })(),
     costTracker: {
       record: vi.fn(),
     } as any,
