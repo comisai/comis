@@ -420,3 +420,125 @@ describe("announcement scrub", () => {
     expect(deliveredText).not.toContain(rawToken);
   });
 });
+
+// ---------------------------------------------------------------------------
+// deliverAnnouncement idempotency-key threading (DELIVERY-01).
+// The key `${callerSessionKey}::${runId}` is built ONCE at the entry and
+// threaded as data through the batcher enqueue and the fallback DLQ entry —
+// never reconstructed downstream. `::` delimits the session key's own colons.
+// ---------------------------------------------------------------------------
+
+describe("deliverAnnouncement idempotency key (DELIVERY-01)", () => {
+  it("sets idempotencyKey = `${callerSessionKey}::${runId}` on the batcher enqueue", async () => {
+    const { deliverAnnouncement } = await import("./sub-agent-result-processor.js");
+    const enqueue = vi.fn();
+    const batcher = {
+      enqueue,
+      flush: vi.fn().mockResolvedValue(undefined),
+      shutdown: vi.fn().mockResolvedValue(undefined),
+      get pending() { return 0; },
+    };
+
+    await deliverAnnouncement(
+      {
+        announcementText: "[System Message]\nResult: ok",
+        announceChannelType: "discord",
+        announceChannelId: "chan-1",
+        callerAgentId: "agent-main",
+        callerSessionKey: "default:user1:chan1",
+        runId: "run-xyz",
+      },
+      { sendToChannel: vi.fn().mockResolvedValue(true), batcher },
+    );
+
+    expect(enqueue).toHaveBeenCalledOnce();
+    const arg = enqueue.mock.calls[0]![0] as { idempotencyKey?: string };
+    expect(arg.idempotencyKey).toBe("default:user1:chan1::run-xyz");
+  });
+
+  it("does NOT fabricate a key and does NOT enqueue when callerSessionKey is absent (top-level spawn)", async () => {
+    const { deliverAnnouncement } = await import("./sub-agent-result-processor.js");
+    const enqueue = vi.fn();
+    const sendToChannel = vi.fn().mockResolvedValue(true);
+    const batcher = {
+      enqueue,
+      flush: vi.fn().mockResolvedValue(undefined),
+      shutdown: vi.fn().mockResolvedValue(undefined),
+      get pending() { return 0; },
+    };
+
+    await deliverAnnouncement(
+      {
+        announcementText: "[System Message]\nResult: ok",
+        announceChannelType: "discord",
+        announceChannelId: "chan-1",
+        // no callerAgentId / callerSessionKey → top-level spawn
+        runId: "run-top",
+      },
+      { sendToChannel, batcher },
+    );
+
+    // The batcher enqueue path requires callerAgentId + callerSessionKey;
+    // without them, delivery goes direct (no fabricated key).
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(sendToChannel).toHaveBeenCalledOnce();
+  });
+
+  it("threads the same idempotencyKey onto the fallback DLQ entry when the direct send fails", async () => {
+    const { deliverAnnouncement } = await import("./sub-agent-result-processor.js");
+    const dlqEnqueue = vi.fn();
+    const deadLetterQueue = {
+      enqueue: dlqEnqueue,
+      drain: vi.fn().mockResolvedValue(undefined),
+      size: vi.fn().mockReturnValue(0),
+    };
+
+    await deliverAnnouncement(
+      {
+        announcementText: "[System Message]\nResult: ok",
+        announceChannelType: "telegram",
+        announceChannelId: "chat-1",
+        callerAgentId: "agent-main",
+        callerSessionKey: "default:user2:chan2",
+        runId: "run-dlq",
+      },
+      {
+        // No batcher, no announceToParent → goes straight to the direct send,
+        // which rejects → fallback DLQ enqueue.
+        sendToChannel: vi.fn().mockRejectedValue(new Error("send failed")),
+        deadLetterQueue,
+      },
+    );
+
+    expect(dlqEnqueue).toHaveBeenCalledOnce();
+    const entry = dlqEnqueue.mock.calls[0]![0] as { idempotencyKey?: string };
+    expect(entry.idempotencyKey).toBe("default:user2:chan2::run-dlq");
+  });
+
+  it("leaves idempotencyKey undefined on the fallback DLQ entry when callerSessionKey is absent", async () => {
+    const { deliverAnnouncement } = await import("./sub-agent-result-processor.js");
+    const dlqEnqueue = vi.fn();
+    const deadLetterQueue = {
+      enqueue: dlqEnqueue,
+      drain: vi.fn().mockResolvedValue(undefined),
+      size: vi.fn().mockReturnValue(0),
+    };
+
+    await deliverAnnouncement(
+      {
+        announcementText: "[System Message]\nResult: ok",
+        announceChannelType: "telegram",
+        announceChannelId: "chat-1",
+        runId: "run-nokey",
+      },
+      {
+        sendToChannel: vi.fn().mockRejectedValue(new Error("send failed")),
+        deadLetterQueue,
+      },
+    );
+
+    expect(dlqEnqueue).toHaveBeenCalledOnce();
+    const entry = dlqEnqueue.mock.calls[0]![0] as { idempotencyKey?: string };
+    expect(entry.idempotencyKey).toBeUndefined();
+  });
+});
