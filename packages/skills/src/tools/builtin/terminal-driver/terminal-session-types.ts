@@ -25,6 +25,7 @@
  */
 
 import type { SessionOwner } from "./terminal-session-owner.js";
+import type { SnapshotDiff } from "./terminal-render.js";
 
 /**
  * A structural logger — the minimal `{ info, debug, warn, error }` surface. NOT
@@ -98,4 +99,70 @@ export interface SessionHandle {
    * `lost`). Present only for a durable session (set at create-time + on rehydrate).
    */
   tmuxName?: string;
+  /**
+   * RECUR-03 (option A): the explicit `-S` socket path this durable session's tmux server is bound
+   * to — the PER-BOOT socket of the daemon generation that created it. The daemon's per-session
+   * `isTmuxAlive` probe + the worker's re-attach target THIS socket, so a restart re-attaches the
+   * surviving session from its OWN (prior-boot) server while new sessions get a fresh per-boot
+   * server in the live mount namespace (RECUR-02). Set at create-time + rehydrated on recover;
+   * absent ⇒ the boot socket fallback. Present only for a durable tmux session.
+   */
+  tmuxSocket?: string;
+}
+
+// The registry's create/read/send/list shape DTOs. Moved here from
+// terminal-session-registry.ts (PROJECTS-MOVE follow-up) — same neutral-leaf rationale as
+// the handle/logger types above (keeps the registry under the 800-line cap; type-only, the
+// registry re-exports them so every existing importer is unchanged).
+
+/** Details handed to `onSpawnFailed` when the worker reports a failed backend spawn. */
+export interface SpawnFailureInfo {
+  /** The session whose backend spawn failed in the worker. */
+  sessionId: string;
+  /** The worker-reported error message (e.g. `spawn ENOENT`), if any. */
+  error?: string;
+}
+
+/** The `create` result handed back to the tool layer. */
+export interface CreateResult {
+  sessionId: string;
+  allowId: string;
+  cols: number;
+  rows: number;
+}
+
+/** The terminal view returned by `read` — the round-trip shape. */
+export interface TerminalView {
+  screen: string;
+  cursor: { x: number; y: number };
+  cols: number;
+  rows: number;
+  alt: boolean;
+  alive: boolean;
+  /** The per-read screen-diff vs the prior read. ADDITIVE: present when an emulator snapshot exists; the not-found/degraded early returns omit it. */
+  diff?: SnapshotDiff;
+}
+
+/** The post-action snapshot subset returned by `sendText`/`sendKey` (spec §5) — `{screen,cursor}`, a strict subset of {@link TerminalView}. */
+export interface SendResult {
+  screen: string;
+  cursor: { x: number; y: number };
+  /**
+   * Whether the send was actually FORWARDED to a live worker (WR-05). `true` only
+   * when the owned, running session round-tripped an `ok` reply; absent/falsy on the
+   * degraded path (absent/cross-owner/not-running session OR a wedged worker — the
+   * `{screen:"",cursor:{0,0}}` not-delivered shape). The woken-turn audit reads this
+   * so a keystroke that reached nothing is recorded `outcome:"rejected"`, never
+   * `attempted` — keeping the §2.7 audit trail honest about delivery.
+   */
+  delivered?: boolean;
+}
+
+/** A `list` row — the create-time + liveness summary. */
+export interface SessionListing {
+  sessionId: string;
+  allowId: string;
+  command: string;
+  alive: boolean;
+  lastActivity: number;
 }

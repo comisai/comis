@@ -133,6 +133,11 @@ export {
   // (124-04) + the normalized loop-guard (124-04) — the SEC-12/SEC-11 governance modules.
   decideAutoAnswer,
   createLoopGuard,
+  // v2.26 DIALOG-01: the woken-turn driver resolves a session's platform profile by allowId to feed
+  // decideAutoAnswer the profile's dialogs (the safe-only policy still disposes).
+  getPlatformProfile,
+  type TerminalPlatformProfile,
+  type PlatformDialog,
   type AutoAnswerMode,
   type AutoAnswerDecision,
   type LoopGuard,

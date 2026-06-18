@@ -36,6 +36,27 @@ export interface WaitResult {
 }
 
 /**
+ * FINDING-3 (live VPS 2026-06-17): the driving model OVER-READS a settle-complete wait result's
+ * `isComplete:true` as "my whole task is done" and ENDS the turn — dropping later requested steps
+ * after a build settles (reproduced: "build X then run /status" → built, then stopped; clean
+ * `finishReason:"stop"`, no cap/abort). `isComplete` is SETTLE-scoped (the driven CLI's output
+ * settled), NOT task-scoped. {@link withCompleteNote} attaches this model-facing note on the
+ * COMPLETE path so the driver finishes only when the whole request is handled. The registry
+ * {@link WaitResult} (the daemon wake/attention contract) is UNCHANGED — the note rides only the
+ * tool-layer JSON the model reads (the wait tool wraps `out` through this helper before jsonResult).
+ */
+export const WAIT_COMPLETE_NOTE =
+  "isComplete here means the terminal SETTLED (the driven CLI finished its current output) — it does NOT mean your overall task is done. If the user's request has remaining steps (more commands, edits, or a follow-up like a slash command), continue with them now; finish only when the whole request is handled.";
+
+/**
+ * Attach {@link WAIT_COMPLETE_NOTE} to a settle-COMPLETE wait result (FINDING-3 scope guard,
+ * model-facing only); a not-complete result is returned unchanged (the driver keeps waiting).
+ */
+export function withCompleteNote(out: WaitResult): WaitResult & { note?: string } {
+  return out.isComplete ? { ...out, note: WAIT_COMPLETE_NOTE } : out;
+}
+
+/**
  * The honest not-complete shape for a wedged/absent worker — NEVER `isComplete:true`.
  * Carries a T1.1 hint so the caller reads it as "the worker did not reply" (the session
  * may still be running) rather than "the program produced nothing".

@@ -123,6 +123,9 @@ export interface TmuxBackendLike {
     cols: number;
     rows: number;
     env: NodeJS.ProcessEnv;
+    /** RECUR-03: the surviving session's OWN per-boot `-S` socket (from its descriptor) — re-attach
+     *  targets THIS server, not this boot's fresh one. Absent ⇒ the legacy single-socket default. */
+    tmuxSocket?: string;
   }): FakePtyLike | undefined;
 }
 
@@ -172,6 +175,8 @@ export interface SessionState {
   exitListeners: Set<() => void>;
   /** Operator-declared sandbox scope (SEC-02) off the create frame — materialized into the bwrap jail by the 122-06 composer. */
   scope?: TerminalScope;
+  /** Operator-declared allowId (create frame) — selects the read-side platform profile (RENDER-01/§5; by allowId only, never content-sniffed). Absent ⇒ the agnostic default. Consumed by the emulator's render transform + (Phase 168) the classifier's perception. */
+  allowId?: string;
   /** Session workspace root (create frame) — the always-bound jail workspace. */
   workspace?: string;
   /** Session working directory (create frame) — the jail `--chdir` target. */

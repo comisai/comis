@@ -59,6 +59,24 @@ const NESTED_CLI_PREFIXES: readonly string[] = ["CLAUDE_CODE_"];
 const NESTED_CLI_EXACT: ReadonlySet<string> = new Set(["CLAUDECODE"]);
 
 /**
+ * The fixed-name env keys to clear from the JAILED CLI via bwrap `--unsetenv` (emitted by
+ * `terminal-scope-args`). This is the BACKEND-INDEPENDENT half of {@link scrubChildEnv}: that
+ * function scrubs the `env` OBJECT the worker hands to the PTY backend's `pty.spawn`, but the
+ * DEFAULT tmux/durable backend runs `tmux new-session -- bwrap …` and the new session inherits the
+ * tmux SERVER env, bypassing the scrubbed object entirely (real-VPS 2026-06-17: the daemon's
+ * `NODE_OPTIONS=--permission …` leaked into a driven claude, and CLAUDE_CODE_BUBBLEWRAP never
+ * reached it → its Bash/SessionStart hook EROFS'd). Emitting `--unsetenv` for these in the bwrap
+ * argv clears them on EVERY backend. NAMES ONLY (bwrap `--unsetenv` takes a key, not a glob): the
+ * interpreter-control vectors + the exact `CLAUDECODE` sentinel. The `CLAUDE_CODE_*` PREFIX glob +
+ * the Shellshock value check stay prefix/value-based in {@link scrubChildEnv} (and are absent from
+ * a prod systemd daemon's env anyway). Single source of truth — the same sets scrubChildEnv enforces.
+ */
+export const JAIL_UNSET_ENV_VARS: readonly string[] = [
+  ...INTERPRETER_CONTROL_BLOCKLIST,
+  ...NESTED_CLI_EXACT,
+];
+
+/**
  * Scrub the env handed to the jailed child.
  *
  * COPIES every key EXCEPT: a non-string value; an interpreter-control key; the

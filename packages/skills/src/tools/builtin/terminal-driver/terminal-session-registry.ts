@@ -42,7 +42,7 @@ import {
   type TerminalReplyFrame,
   type TerminalRequestFrame,
 } from "./terminal-ipc.js";
-import type { ReadOptions, SnapshotDiff } from "./terminal-render.js";
+import type { ReadOptions } from "./terminal-render.js";
 import {
   notFoundStatus,
   composeStatusView,
@@ -73,6 +73,11 @@ import type {
   FakeWorkerChild,
   RegistryLogger,
   SessionHandle,
+  SpawnFailureInfo,
+  CreateResult,
+  TerminalView,
+  SendResult,
+  SessionListing,
 } from "./terminal-session-types.js";
 
 export type { SessionOwner } from "./terminal-session-owner.js";
@@ -86,6 +91,11 @@ export type {
   RegistryLogger,
   SessionHandle,
   SessionStatus,
+  SpawnFailureInfo,
+  CreateResult,
+  TerminalView,
+  SendResult,
+  SessionListing,
 } from "./terminal-session-types.js";
 
 /**
@@ -94,21 +104,11 @@ export type {
  */
 export const DEFAULT_SCROLLBACK = 1000;
 
-// ---------------------------------------------------------------------------
 // Injected dependency contracts
-// ---------------------------------------------------------------------------
 //
 // RegistryLogger + FakeWorkerChild moved to the neutral leaf terminal-session-types.ts
 // (124-01) to break the worker-supervisor import cycle; type-imported above and
 // re-exported so the public surface is unchanged.
-
-/** Details handed to `onSpawnFailed` when the worker reports a failed backend spawn. */
-export interface SpawnFailureInfo {
-  /** The session whose backend spawn failed in the worker. */
-  sessionId: string;
-  /** The worker-reported error message (e.g. `spawn ENOENT`), if any. */
-  error?: string;
-}
 
 /**
  * Default reply timeout: a `request()` with no correlated reply in this window
@@ -149,6 +149,12 @@ export interface TerminalSessionRegistryDeps extends ReaperCaps {
   clearTimer?: (handle: unknown) => void;
   /** Daemon-resolved bwrap path (the jail seam): a STRING, forwarded onto the create frame for the worker's fail-closed branch (undefined ⇒ the worker rejects). */
   bwrapPath?: string;
+  /** RECUR-03 (option A): this daemon generation's PER-BOOT tmux `-S` socket — stamped on a durable
+   *  session's handle + descriptor at create so a restart re-attaches it from its OWN server while
+   *  new sessions get a fresh per-boot server in the live mount namespace. MUST equal the worker's
+   *  `COMIS_TERMINAL_TMUX_SOCKET` env (both daemon-supplied from the same source). Absent ⇒ the
+   *  worker/probe legacy single-socket default. */
+  currentTmuxSocket?: string;
   /** Daemon-injected no-secret egress port — the daemon->worker-main seam for `listed-hosts`; a live `net` server, so (unlike bwrapPath) NOT frame-serialized. Type-only from @comis/core. */
   egressControl?: EgressControlPort;
   /** Allocate a real per-session jail workspace dir (gap 2); default {@link allocateSessionWorkspace} (world-rwx mkdtemp under os.tmpdir()). `create` threads it onto the frame as workspace+cwd so the jail binds RW + --chdirs in (else it defaults to HOME, which uid 65534 cannot use). Injectable for a data-dir-rooted daemon allocator; cleanup is the paired {@link cleanupWorkspace}. */
@@ -164,9 +170,7 @@ export interface TerminalSessionRegistryDeps extends ReaperCaps {
   durability?: TerminalDurabilityDeps;
 }
 
-// ---------------------------------------------------------------------------
 // Public types
-// ---------------------------------------------------------------------------
 //
 // SessionStatus + SessionHandle moved to the neutral leaf terminal-session-types.ts
 // (124-01, closure of the worker-supervisor cycle break); type-imported above and
@@ -190,47 +194,16 @@ export interface CreateRequest {
   scope?: TerminalScope;
   /** Session workspace root — `scope`'s companion for the jail binds. */
   workspace?: string;
-  /** Session working directory — `scope`'s companion for the jail `--chdir`. */
+  /** Session working directory — `scope`'s companion for the jail `--chdir`. Honored only if it
+   *  resolves WITHIN the session workspace (else clamped to it — the jail-escape guard). */
   cwd?: string;
+  /** Project name → the session opens in its own auto-created folder `<agent-workspace>/projects/
+   *  <sanitized-slug>` (the session workspace IS the agent's projects root). Takes precedence over `cwd`. */
+  project?: string;
   /** DUR-01 (165-06): `true` for a `drive.durable:true` session — persist a descriptor at create-time (Pitfall 6) + stamp the handle `durable` so the durable-aware {@link markRunningSessionsLost} keeps it recoverable while its tmux is alive (Q4). Absent ⇒ today's spawn session (I1). */
   durable?: boolean;
   /** DUR-01 (165-06): the deterministic `comis-<sessionId>` tmux name — the re-attach key persisted in the descriptor + stamped on the handle for the liveness probe (the daemon supplies it with `durable:true`). */
   tmuxName?: string;
-}
-
-/** The `create` result handed back to the tool layer. */
-export interface CreateResult {
-  sessionId: string;
-  allowId: string;
-  cols: number;
-  rows: number;
-}
-
-/** The terminal view returned by `read` — the round-trip shape. */
-export interface TerminalView {
-  screen: string;
-  cursor: { x: number; y: number };
-  cols: number;
-  rows: number;
-  alt: boolean;
-  alive: boolean;
-  /** The per-read screen-diff vs the prior read. ADDITIVE: present when an emulator snapshot exists; the not-found/degraded early returns omit it. */
-  diff?: SnapshotDiff;
-}
-
-/** The post-action snapshot subset returned by `sendText`/`sendKey` (spec §5) — `{screen,cursor}`, a strict subset of {@link TerminalView}. */
-export interface SendResult {
-  screen: string;
-  cursor: { x: number; y: number };
-  /**
-   * Whether the send was actually FORWARDED to a live worker (WR-05). `true` only
-   * when the owned, running session round-tripped an `ok` reply; absent/falsy on the
-   * degraded path (absent/cross-owner/not-running session OR a wedged worker — the
-   * `{screen:"",cursor:{0,0}}` not-delivered shape). The woken-turn audit reads this
-   * so a keystroke that reached nothing is recorded `outcome:"rejected"`, never
-   * `attempted` — keeping the §2.7 audit trail honest about delivery.
-   */
-  delivered?: boolean;
 }
 
 // The §5 `status` view + its pure composition live in the leaf `terminal-status-view.ts`
@@ -241,15 +214,6 @@ export type { TerminalStatusView };
 // The wait reply shape + its defensive worker→daemon mapping live in terminal-wait-reply
 // (extracted to keep this file under the 800-line cap + make the mapping a tested unit).
 export type { WaitResult };
-
-/** A `list` row — the create-time + liveness summary. */
-export interface SessionListing {
-  sessionId: string;
-  allowId: string;
-  command: string;
-  alive: boolean;
-  lastActivity: number;
-}
 
 /**
  * The registry's public surface. Every session-scoped method takes a REQUIRED
@@ -297,9 +261,7 @@ export interface TerminalSessionRegistry {
 // buildProductionSpawnWorker) is in ./terminal-worker-launch.ts — extracted so this
 // file stays under the 800-line cap; the barrel re-exports it from there.
 
-// ---------------------------------------------------------------------------
 // Factory
-// ---------------------------------------------------------------------------
 
 /** Generate a unique session id (mirrors process-registry's `generateSessionId`). */
 function generateSessionId(): string {
@@ -499,14 +461,22 @@ export function createTerminalSessionRegistry(
       // the HANDLE only — NEVER the worker frame (the worker is owner-agnostic).
       owner,
       // DUR-01: stamp the durable marker + re-attach key (the durable-aware lost gate, Q4); absent for a spawn session (I1). FINDING-B: the registry DERIVES the deterministic comis-<sessionId> name (the tool cannot — sessionId is generated HERE), so durable engages without the caller supplying tmuxName.
-      ...(req.durable ? { durable: true, tmuxName: req.tmuxName ?? tmuxSessionName(sessionId) } : {}),
+      ...(req.durable
+        ? {
+            durable: true,
+            tmuxName: req.tmuxName ?? tmuxSessionName(sessionId),
+            // RECUR-03: stamp this boot's per-boot socket so the daemon probe / reaper target THIS
+            // session's server, and a future restart re-attaches it from this (now prior-boot) socket.
+            ...(deps.currentTmuxSocket !== undefined ? { tmuxSocket: deps.currentTmuxSocket } : {}),
+          }
+        : {}),
     };
     sessions.set(sessionId, handle);
 
     // DUR-01: persist the durable descriptor at CREATE-time, BEFORE the create frame (Pitfall 6 — no orphan window); non-durable persists nothing (I1).
     if (req.durable && deps.durability?.descriptorStore !== undefined) {
       deps.durability.descriptorStore.persist(
-        buildSessionDescriptor({ sessionId, tmuxName: req.tmuxName ?? tmuxSessionName(sessionId), allowId: req.allowId, owner, cols: req.cols, rows: req.rows, createdAt, scope: req.scope }),
+        buildSessionDescriptor({ sessionId, tmuxName: req.tmuxName ?? tmuxSessionName(sessionId), tmuxSocket: deps.currentTmuxSocket, allowId: req.allowId, owner, cols: req.cols, rows: req.rows, createdAt, scope: req.scope }),
       );
     }
 
@@ -518,6 +488,10 @@ export function createTerminalSessionRegistry(
       sessionId,
       bin: req.bin,
       argv: req.argv,
+      // The operator-declared allowId — selects the read-side platform profile in the worker
+      // (RENDER-01 / §5/INV-3: by allowId only). Already on the descriptor; threaded to the worker
+      // so the emulator's render transform + the classifier's perception pick the right profile.
+      allowId: req.allowId,
       cols: req.cols,
       rows: req.rows,
       // Thread the per-session scrollback ceiling so handleCreate builds
@@ -793,7 +767,12 @@ export function createTerminalSessionRegistry(
   // the 4th arg is the worker `reattach` round-trip the sibling drives (worker re-attaches
   // the surviving pane, NEVER a create; running status + obs hooks gated on its ok).
   if (deps.durability !== undefined)
-    applyRecoveredSessions(deps.durability, sessions, nowMs, (id, cols, rows) => request(id, "reattach", { sessionId: id, cols, rows }));
+    applyRecoveredSessions(deps.durability, sessions, nowMs, (id, cols, rows, allowId, tmuxSocket) =>
+      // v2.26: thread the recovered session's allowId so the worker re-resolves its platform profile
+      // (render transform + perception) on reattach — without it a durable claude drive reverts to the
+      // agnostic path after a restart (FINDING-3 ghost-strip + perception silently lost).
+      request(id, "reattach", { sessionId: id, cols, rows, allowId, ...(tmuxSocket !== undefined ? { tmuxSocket } : {}) }),
+    );
 
   return { create, read, status, sendText, sendKey, resize, wait, get, list, kill, evict, getOwner: (sessionId: string): SessionOwner | undefined => sessions.get(sessionId)?.owner, size, cleanup };
 }

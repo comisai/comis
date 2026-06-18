@@ -1,0 +1,131 @@
+---
+title: "Autonomous Builds: spec → GSD → shipped"
+description: "Hand the agent a design document and it implements the whole thing — driving Claude Code through the GSD spec-driven workflow, phase by phase, test-first."
+---
+
+Send the agent a design/spec document and ask it to build it. The agent drives **Claude Code**
+(through the [terminal driver](/agent-tools/terminal-driver)) through the **GSD** spec-driven
+workflow — turning the doc into a milestone, then executing every phase test-first, unattended —
+and reports back when the suite is green.
+
+This is the **`gsd-builder`** bundled skill. You are the orchestrator's operator: you provide the
+doc and the sandbox; the agent does the rest.
+
+<Note>
+**GSD runs inside the driven Claude Code, not inside Comis.** Comis drives Claude Code; Claude Code
+runs the `/gsd-*` workflow. So the prerequisite below installs GSD for the *driven* CLI's user.
+</Note>
+
+## Prerequisites (once, per host)
+
+<Steps>
+<Step title="Install GSD for the driven Claude Code">
+GSD (Get Shit Done — spec-driven development for Claude Code) must be installed for the **same user
+the daemon runs as**, so the `/gsd-*` slash-commands resolve inside the driven session. Install it
+from **[github.com/open-gsd/gsd-core](https://github.com/open-gsd/gsd-core)** (e.g.
+`npx @opengsd/gsd-core@latest` as the service user — see the repo for the authoritative install and
+flags). Verify by launching `claude` as that user and confirming `/gsd-help` renders.
+</Step>
+<Step title="Configure the `claude` terminal-driver allowlist entry">
+The agent drives Claude Code, so the `claude` allowlist entry from
+[Coding CLIs](/agent-tools/coding-clis#claude-code) must be present (path, `argsPrefix`
+`--permission-mode bypassPermissions`, `filesystem: home`, `network: full`, `uid: daemon`). Claude
+Code must already be installed + authenticated per that guide.
+</Step>
+<Step title="Have a well-structured design document">
+A clear brief — **problem, goals, scope, requirements, suggested phases** — is the linchpin: GSD
+extracts the milestone, requirements, and roadmap straight from it. A vague doc means a wrong
+milestone built unattended. The doc can be a host file path or pasted into the chat.
+</Step>
+</Steps>
+
+## How it works
+
+The agent follows the bundled `gsd-builder` skill:
+
+1. **Stage** — pick a short project name; put the repo in `~/.comis/workspace/projects/<name>` (a
+   fresh `git init` for a new app, or an existing checkout), and copy the design doc into it at
+   `.planning/design/new/<name>.md`. All file work goes **through the driven Claude** (which has
+   `filesystem: home`), never the agent's own sandboxed shell.
+2. **Define the milestone** — greenfield (new app, no `PROJECT.md`) → **`/gsd-new-project --auto @<doc>`**;
+   brownfield (existing GSD project) → **`/gsd-new-milestone @<doc>`**. `--auto` extracts scope and
+   runs research → requirements → roadmap unattended, pausing only for a few config gates
+   (granularity, git, agents, verifier toggles) which the agent answers with sensible defaults.
+3. **Build phase by phase** — execute each roadmap phase with **`/gsd-autonomous --only <N>`**
+   (plan → execute → verify, test-first), **resetting Claude's context before each phase** (below).
+4. **Verify** — read the final `ROADMAP.md`/`STATE.md` (all phases done, audit clean) and run the
+   project's own test command; report the real result. A partial/failed build reported honestly
+   beats a false "done".
+
+### Per-phase context management (the important part)
+
+A multi-phase GSD build **does not fit in one Claude context window** — a single phase's
+research → plan → execute → verify cycle alone can fill it. GSD is built for this: it persists all
+state in `.planning/`, so a **fresh context resumes cleanly**. The skill therefore drives the build
+**one phase at a time, resetting context before each phase**:
+
+<Steps>
+<Step title="Stop Claude first — Escape">
+Claude shows its "context critical" summary *while it is still busy*, and **input is ignored while
+it is busy**. Press **`Escape`** to interrupt it and return to an idle prompt. Skipping this is the
+top way a long build freezes — the next command sits typed-but-unprocessed.
+</Step>
+<Step title="Clear the context — /clear">
+Send **`/clear`** as its own input (confirm any "clear history?" prompt). Never combine it with the
+next command on one line — `/clear` is a slash-command and ignores trailing text.
+</Step>
+<Step title="Resume the phase — /gsd-autonomous --only N">
+Send **`/gsd-autonomous --only <N>`** alone. It resumes from the persisted `.planning/` state and
+runs exactly that phase in the fresh context.
+</Step>
+</Steps>
+
+<Warning>
+At a "context nearly full / auto-compact" dialog, the recovery is always **`Escape` → `/clear` →
+resume** — **never "continue"**, which runs the window into auto-compact and strands the build.
+</Warning>
+
+## Real example — a TODO CLI
+
+**The brief** (`todo-app-design.md`) — a small Python CLI: add / list / done / remove, JSON
+persistence (`TODO_FILE` override), pytest, with explicit requirements + a single suggested phase.
+**The request:**
+
+> *"Implement the design brief at `~/todo-app-design.md` end-to-end with the GSD workflow — it's a
+> new (greenfield) app, so `/gsd-new-project --auto`, then build all phases test-first, and confirm
+> the suite is green. Project: `todo-app`."*
+
+**What the agent did:** launched a durable `claude` session in `projects/todo-app`, copied the brief
+in, ran `/gsd-new-project --auto @.planning/design/new/todo-app.md`, and drove the config gates. GSD
+produced `PROJECT.md`, `REQUIREMENTS.md` (31 requirements), and a **4-phase roadmap**:
+
+| Phase | Goal | Output |
+|-------|------|--------|
+| 1 · Persistence | Atomic JSON I/O + test isolation | `todo.py` + `tests/test_persistence.py` — **5 passed** |
+| 2 · Domain | Pure task functions | `todo.py` domain fns + `tests/test_domain.py` |
+| 3 · CLI + Integration | `argparse` wiring + `pytest -q` green | — |
+| 4 · README | Document commands + `$TODO_FILE` | — |
+
+Each phase ran in a fresh context (`Escape` → `/clear` → `/gsd-autonomous --only N`), committing its
+research → plan → code → tests → state update before the next. The agent verified each phase's tests
+passed rather than assuming success.
+
+## Operating it
+
+- **It's a long, durable drive** (often hours for a multi-phase build). Launch with
+  `drive: { durable: true }` so it survives a daemon restart.
+- **One scope checkpoint.** Once the milestone is scoped (roadmap visible), the agent sends one short
+  summary — *"Scoped vX: N phases, M requirements — building now"* — then proceeds. This is the
+  highest-leverage human gate (the doc→milestone translation), not a per-step conversation.
+- **Genuine blockers escalate.** Auth failures, destructive/irreversible actions, hard errors, or
+  decisions the doc doesn't cover are surfaced to you with the exact screen context — never guessed.
+- **Nudge between phases if needed.** On a very long build the agent may pause at a phase boundary;
+  a follow-up message (*"continue with the next phase"*) re-engages it, exactly like steering any
+  long task in chat.
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Coding CLIs" icon="robot" href="/agent-tools/coding-clis">The `claude` allowlist entry + how the agent drives Claude Code</Card>
+  <Card title="Terminal Driver" icon="terminal" href="/agent-tools/terminal-driver">Driver reference — sandbox scope, durability, sessions</Card>
+</CardGroup>

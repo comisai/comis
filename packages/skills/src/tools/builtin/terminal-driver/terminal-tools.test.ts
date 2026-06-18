@@ -503,6 +503,22 @@ describe("terminal-tools — scope is sourced from the entry, never the agent pa
     expect(Object.keys(props)).not.toContain("scope");
   });
 
+  it("PROJECTS-02: the create tool STEERS a coding project to the `project` param (named, retrievable <workspace>/projects/<name> folder) — not cwd/name", () => {
+    // Live Telegram drive 2026-06-17: the agent built a full snake game but passed cwd+name and
+    // NOT `project`, so it landed FLAT in the session workspace (no retrievable projects/<name>
+    // folder). The mechanism (PROJECTS-01) works — the agent just never invoked it. The fix is
+    // guidance: the tool description + cwd/name param hints must point coding work at `project`.
+    const tool = createTerminalSessionCreateTool(baseDeps(makeFakeRegistry()));
+    const props = (tool.parameters as { properties: Record<string, { description?: string }> }).properties;
+    // The TOP-LEVEL description names the project workflow (the agent reads it first).
+    expect(tool.description.toLowerCase()).toContain("project");
+    expect(tool.description.toLowerCase()).toContain("projects/");
+    // `cwd` defers to `project` for coding (so the agent does not reach for cwd + lose the folder).
+    expect(props.cwd?.description?.toLowerCase()).toContain("project");
+    // `name` is clarified as a display label — NOT the thing that names the project folder.
+    expect(props.name?.description?.toLowerCase()).toMatch(/label|display|not.*project/);
+  });
+
   it("lock: a scope supplied in the agent params is IGNORED — the entry's scope wins", async () => {
     // Even if a (schema-rejected) `scope` rides the raw params, the tool must read
     // scope EXCLUSIVELY from matched.entry — never from params.
@@ -927,13 +943,16 @@ describe("terminal-tools — wait delegation", () => {
       sessionId: "s1",
       args: { forIdleMs: 120, forText: undefined, forExit: undefined, timeoutMs: 5000 },
     });
-    expect(res.details).toEqual({
+    expect(res.details).toMatchObject({
       matched: true,
       isComplete: true,
       reason: "idle",
       screen: "quiet",
       cursor: { x: 2, y: 2 },
     });
+    // FINDING-3: a settle-COMPLETE result carries the model-facing scope note (so the driver does
+    // not over-read `isComplete:true` as "task done" and drop later steps).
+    expect((res.details as { note?: string }).note).toMatch(/SETTLED.*not.*overall task is done/is);
   });
 
   it("forwards a timeout result UNCHANGED — isComplete:false survives (the tool never coerces it to true)", async () => {

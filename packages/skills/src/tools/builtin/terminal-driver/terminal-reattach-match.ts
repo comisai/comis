@@ -81,6 +81,16 @@ export interface SessionDescriptor {
    * scheme: it must equal what `terminal-tmux-backend.ts:54` derives.
    */
   tmuxName: string;
+  /**
+   * RECUR-03 (option A, per-generation tmux server): the explicit `-S` socket path the durable
+   * session's tmux server is bound to — the PER-BOOT socket of the daemon generation that created
+   * it (`<durableDir>/tmux-<gen>.sock`). Persisting it per-session is what lets a restart re-attach
+   * the surviving session from its OWN server while NEW sessions get a fresh server (in the live
+   * mount namespace) on the new boot's socket — so a stranded prior-generation ns never breaks new
+   * `bwrap` sessions (RECUR-02). OPTIONAL: absent on a pre-RECUR-03 / non-durable descriptor, where
+   * the caller falls back to the boot socket. Validated as a non-empty string when present.
+   */
+  tmuxSocket?: string;
   /** The allow-entry id to re-stamp VERBATIM on re-attach (I5 — WHERE not WHAT). */
   allowId: string;
   /** The owning `(agentId, sessionKey)` to re-stamp VERBATIM (I5); type-only import. */
@@ -138,7 +148,7 @@ function safeSessionId(d: SessionDescriptor | undefined): string {
  */
 export function reattachDecision(
   d: SessionDescriptor,
-  isTmuxAlive: (name: string) => boolean,
+  isTmuxAlive: (name: string, socket?: string) => boolean,
 ): ReattachDecision {
   const sessionId = safeSessionId(d);
 
@@ -159,7 +169,9 @@ export function reattachDecision(
   // direction is `failed`, NEVER `reattach` (a false re-attach would double-drive, I10).
   let alive: boolean;
   try {
-    alive = isTmuxAlive(name) === true;
+    // RECUR-03: probe the session's OWN per-boot server (`d.tmuxSocket`) — a survivor sits on its
+    // prior-boot socket, not this boot's. Absent (pre-RECUR-03 descriptor) ⇒ the probe's default.
+    alive = isTmuxAlive(name, d.tmuxSocket) === true;
   } catch {
     return { action: "failed", sessionId, reason: "tmux_session_gone" };
   }
@@ -267,6 +279,14 @@ export function deserializeDescriptor(raw: unknown): SessionDescriptor | undefin
     return undefined;
   }
 
+  // RECUR-03: `tmuxSocket` is optional, but if present it must be a non-empty string — a
+  // smuggled-after-crash non-string socket must never reach the per-session has-session probe /
+  // attach (it would target the wrong / a degenerate server). A missing one is a pre-RECUR-03 /
+  // non-durable descriptor (the caller falls back to the boot socket), NOT a rejection.
+  if (r.tmuxSocket !== undefined && !isNonEmptyString(r.tmuxSocket)) {
+    return undefined;
+  }
+
   const descriptor: SessionDescriptor = {
     sessionId: r.sessionId,
     tmuxName: r.tmuxName,
@@ -279,6 +299,9 @@ export function deserializeDescriptor(raw: unknown): SessionDescriptor | undefin
   };
   if (r.scope !== undefined) {
     descriptor.scope = r.scope as TerminalScope;
+  }
+  if (r.tmuxSocket !== undefined) {
+    descriptor.tmuxSocket = r.tmuxSocket;
   }
   return descriptor;
 }

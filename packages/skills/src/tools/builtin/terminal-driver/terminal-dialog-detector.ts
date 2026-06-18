@@ -149,11 +149,16 @@ function isHintAffordanceLine(trimmed: string, hintPatterns: readonly string[]):
  *   (this branch is reached only when the cursor is NOT parked).
  * @param hintPatterns - Optional operator prompt cues (reinforcement only — never
  *   enough to satisfy structure alone; preserves T-124-06).
+ * @param perceptionAffordances - Optional SELECTED-platform perception patterns
+ *   (`menuOrPicker`/`promptAffordance`/`turnEnd` from the profile, fed by the classifier).
+ *   A rendered line matching any is a dialog cue — developer-authored + operator-selected
+ *   by allowId (not screen-derived, T-124-06-safe); empty ⇒ the generic structural path.
  * @returns `true` iff the rendered structure is unmistakably a dialog/menu.
  */
 export function detectsFullScreenDialog(
   snapshot: EmulatorSnapshot,
   hintPatterns: readonly string[] = [],
+  perceptionAffordances: readonly RegExp[] = [],
 ): boolean {
   const lines = snapshot.screen.split("\n");
 
@@ -165,6 +170,7 @@ export function detectsFullScreenDialog(
   let lineIndex = 0;
   let sawSelector = false;
   let sawHintAffordance = false;
+  let sawPerceptionAffordance = false;
 
   for (const raw of lines) {
     const line = raw ?? "";
@@ -178,6 +184,16 @@ export function detectsFullScreenDialog(
     // A genuine selector affordance (`❯` / a STANDALONE end-of-line `(y/n)`/`[Y/n]`) is
     // an immediate cue.
     if (SELECTOR.test(line)) sawSelector = true;
+
+    // v2.26 CLASSIFY-01/D5: a SELECTED platform profile's perception affordance (a
+    // `menuOrPicker`/`promptAffordance`/`turnEnd` pattern — e.g. Claude's `Select Model`
+    // picker or `Esc to cancel`) the generic structural cues miss. These are
+    // developer-authored + operator-selected-by-allowId (not screen/model-derived, so a
+    // driven CLI cannot phish one), and this branch is reached only on a settled
+    // diff-empty / past-stuck frame — so a match is a genuine awaiting-input cue.
+    if (!sawPerceptionAffordance && perceptionAffordances.some((re) => re.test(line))) {
+      sawPerceptionAffordance = true;
+    }
 
     // Count enumerated option rows (a single one is prose, "step 1."). The ≥2 check +
     // the trailing-structure test below are what promote them to a menu (MR-01). Capture
@@ -209,8 +225,9 @@ export function detectsFullScreenDialog(
 
   // A genuine selector affordance is a strong cue on its own. A reinforcing hintPattern
   // counts as a borderline selector (so a lone allowlisted-cue affordance row fires),
-  // but only because the cue matched an actual rendered line — never bare prose.
-  return enumeratedMenu || sawSelector || sawHintAffordance;
+  // but only because the cue matched an actual rendered line — never bare prose. A
+  // profile perception affordance (operator-selected by allowId) is an equal cue.
+  return enumeratedMenu || sawSelector || sawHintAffordance || sawPerceptionAffordance;
 }
 
 /**

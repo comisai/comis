@@ -56,6 +56,7 @@
 
 import { detectsFullScreenDialog } from "./terminal-dialog-detector.js";
 import type { EmulatorSnapshot } from "./terminal-render.js";
+import type { PlatformPerception } from "./platforms/index.js";
 
 // ---------------------------------------------------------------------------
 // Tunables (the structural cursor-parked gate)
@@ -107,6 +108,26 @@ export interface ClassifierFrame {
    * (T-124-06). Absent ⇒ the gate is purely structural.
    */
   hintPatterns?: readonly string[];
+  /**
+   * OPTIONAL selected-platform perception (the `TerminalPlatformProfile.perception` for the
+   * session's operator-declared allowId, fed by the worker — v2.26 CLASSIFY-01). The classifier
+   * stays the SOLE owner of `activity` (D4): these patterns FEED the generic decision —
+   * `workingLine` biases a settled-unparked frame WITH recent progress to `working` (the Codex
+   * `Working (Ns)` / Claude spinner case); `menuOrPicker` + `promptAffordance` feed the structural
+   * dialog detector (the D5 v2.11 menu fix + LIVE-02 idle-`❯`). `turnEnd` is populated but reserved
+   * for the §6-v2 structured-perception layer (NOT routed into the activity decision — it would
+   * over-fire on Claude's per-tool-action `⏺` bullet). Absent ⇒ the purely generic path,
+   * byte-identical to today (INV-1).
+   */
+  perception?: PlatformPerception;
+  /**
+   * OPTIONAL selected-platform dialog `detect` patterns (`profile.dialogs[].detect`, v2.26
+   * DIALOG-01) — the trust-gate / permission-prompt / approval-overlay signatures. The dialog
+   * detector consumes these as awaiting-input cues (a profile dialog IS awaiting-input), additive
+   * to the generic structural detection. Absent ⇒ the generic path (INV-1). Detection only; the
+   * safe-only auto-answer (`decideAutoAnswer`) makes the keystroke decision downstream.
+   */
+  dialogDetects?: readonly RegExp[];
 }
 
 /**
@@ -230,6 +251,11 @@ export function isCursorParked(
 // The classifier (the §4.3 decision tree)
 // ---------------------------------------------------------------------------
 
+/** True iff any pattern matches the text — a selected-platform perception list. Empty/undefined ⇒ false. */
+function matchesAnyPattern(text: string, patterns?: readonly RegExp[]): boolean {
+  return patterns !== undefined && patterns.some((re) => re.test(text));
+}
+
 /**
  * Classify a frame into `working | awaiting-input | exited | stuck` per the spec
  * §4.3 decision tree. Pure, total, never throws — biases to the SAFE direction
@@ -240,6 +266,16 @@ export function isCursorParked(
  * @returns The typed {@link Classification}.
  */
 export function classifyFrame(frame: ClassifierFrame, history: FrameHistory): Classification {
+  // CLASSIFY-01: the selected platform profile's awaiting-input affordance patterns (or none — the
+  // generic path). `menuOrPicker` + `promptAffordance` FEED the structural dialog detector; the
+  // classifier remains the sole owner of `activity` (D4). `turnEnd` is deliberately EXCLUDED here
+  // (review WR-01): Claude's `⏺` turn bullet is also its per-tool-action bullet, so feeding it would
+  // over-fire awaiting-input on a mid-turn pause — the idle `❯` (promptAffordance) is the real cue;
+  // `turnEnd` stays populated for the §6-v2 structured-perception layer. Empty when no profile (INV-1).
+  const perceptionAffordances: readonly RegExp[] = [
+    ...(frame.perception ? [...(frame.perception.menuOrPicker ?? []), ...(frame.perception.promptAffordance ?? [])] : []),
+    ...(frame.dialogDetects ?? []), // DIALOG-01: a profile dialog (trust/permission/approval) IS awaiting-input
+  ];
   // 1. PTY exit — terminal; nothing more can render.
   if (!frame.alive) {
     return { state: "exited", confidence: "high", reason: "pty_exit" };
@@ -265,6 +301,22 @@ export function classifyFrame(frame: ClassifierFrame, history: FrameHistory): Cl
     return { state: "awaiting-input", confidence: "high", reason: "settled_cursor_parked" };
   }
 
+  // 3.5. CLASSIFY-01: a SELECTED-platform working-line indicator (Claude spinner glyph+gerund /
+  //      Codex `Working (Ns)`) on a settled-but-UNPARKED frame that has made progress WITHIN the
+  //      stuck window means the CLI is mid-work — a render that briefly stopped, NOT a prompt or a
+  //      hang. Bias to `working` (pre-empts the dialog branch below). GATED on
+  //      `noProgressMs <= stuckMs` (review WR-02): a frame static for the WHOLE stuck window is hung
+  //      regardless of a leftover spinner glyph — letting it fall through to the stuck branch closes
+  //      the hang-suppression hole (the daemon backstop derives `stuck` from this verdict and has no
+  //      independent wall-clock timeout). A genuinely parked prompt already won at step 3; with no
+  //      profile this is a no-op (INV-1).
+  if (
+    history.noProgressMs <= history.stuckMs &&
+    matchesAnyPattern(frame.snapshot.screen, frame.perception?.workingLine)
+  ) {
+    return { state: "working", confidence: "medium", reason: "working_line" };
+  }
+
   // 3b. CLASS-01: a settled, diff∅ frame whose STRUCTURE is unmistakably a full-screen
   //     dialog/menu — even though the cursor is NOT parked. This is the documented
   //     claude-2.1.x shape: the prompt block (a box / an enumerated menu / a selector)
@@ -276,7 +328,7 @@ export function classifyFrame(frame: ClassifierFrame, history: FrameHistory): Cl
   //     No new classifier state — reuses `awaiting-input`. SEC-12 escalate-always still
   //     gates the actual answer downstream (a dialog_detected frame routes through the
   //     same decideAutoAnswer the wake-turn calls — I4 no-bypass).
-  if (frame.diffEmpty && detectsFullScreenDialog(frame.snapshot, frame.hintPatterns)) {
+  if (frame.diffEmpty && detectsFullScreenDialog(frame.snapshot, frame.hintPatterns, perceptionAffordances)) {
     return { state: "awaiting-input", confidence: "medium", reason: "dialog_detected" };
   }
 
@@ -297,7 +349,7 @@ export function classifyFrame(frame: ClassifierFrame, history: FrameHistory): Cl
   //    frame with NO affordance is genuinely stuck. SEC-12 escalate-always still gates the answer
   //    downstream (this routes through the SAME decideAutoAnswer as step 3b — I4 no-bypass).
   if (history.noProgressMs > history.stuckMs) {
-    if (detectsFullScreenDialog(frame.snapshot, frame.hintPatterns)) {
+    if (detectsFullScreenDialog(frame.snapshot, frame.hintPatterns, perceptionAffordances)) {
       return { state: "awaiting-input", confidence: "medium", reason: "dialog_detected" };
     }
     return { state: "stuck", confidence: "medium", reason: "no_progress" };

@@ -31,6 +31,7 @@
  */
 
 import { execFileSync } from "node:child_process";
+import { readlinkSync } from "node:fs";
 import {
   createSessionDescriptorStore,
   type SessionDescriptorPersistenceDeps,
@@ -127,17 +128,144 @@ export function buildIsTmuxAlive(
     // eslint-disable-next-line no-restricted-syntax -- bounded has-session liveness probe (recover-on-boot + backstop)
     execFileSync(bin, args, { stdio: "ignore" });
   },
-): (name: string) => boolean {
+): (name: string, socket?: string) => boolean {
   if (tmuxPath === undefined) return (): boolean => false;
-  return (name: string): boolean => {
+  // RECUR-03 (option A): the probe takes an OPTIONAL per-session `socket` — the PER-BOOT server
+  // the session lives on (`handle.tmuxSocket` / `descriptor.tmuxSocket`). A restart's surviving
+  // durable sits on its OWN (prior-boot) socket while a new session is on this boot's socket, so
+  // the probe MUST target the session's own server, not one fixed socket. Absent ⇒ `socketPath`
+  // (the legacy/default — a pre-RECUR-03 descriptor or a non-per-boot caller).
+  return (name: string, socket?: string): boolean => {
     try {
-      const [bin, ...args] = buildTmuxHasSessionArgv({ tmuxPath, socketPath, name });
+      const [bin, ...args] = buildTmuxHasSessionArgv({ tmuxPath, socketPath: socket ?? socketPath, name });
       run(bin!, args);
       return true; // exit 0 ⇒ the named detached session is alive
     } catch {
       return false; // non-zero exit (gone) / spawn fault ⇒ the SAFE direction is "not alive"
     }
   };
+}
+
+/**
+ * RECUR-02 (live VPS 2026-06-17) — the stranded-mount-namespace predicate. A durable tmux
+ * server kept alive across a daemon restart by `KillMode=process` was forked by the PRIOR
+ * daemon generation, so it lives in that generation's mount namespace. systemd `PrivateTmp`/
+ * `ProtectHome`/`ProtectSystem` give EVERY daemon START a fresh mount ns, so after a restart the
+ * surviving server sits in a now-dismantled ns: its EXISTING sessions keep running (their bwrap
+ * was set up when the ns was healthy) but every NEW `bwrap` session it forks dies ~2.5s (mount
+ * setup runs in the torn-down ns). PROVEN live: server `mnt:[…294]` ≠ restarted daemon
+ * `mnt:[…302]`; a new claude AND a plain `sh` new-session both died while the re-attached durable
+ * one survived. `true` ONLY when BOTH ns ids are known AND differ — an unknowable ns (no server /
+ * unreadable `/proc`) is the SAFE direction `false` (never needlessly tear down a server).
+ */
+export function isTmuxServerStranded(serverMntNs: string | undefined, daemonMntNs: string | undefined): boolean {
+  if (serverMntNs === undefined || daemonMntNs === undefined) return false;
+  return serverMntNs !== daemonMntNs;
+}
+
+/** The injectable deps for {@link recreateStrandedTmuxServerOnBoot} (the `/proc` readers + the kill
+ *  are seams so the decision is unit-provable without a live tmux server / a real `/proc`). */
+export interface RecreateStrandedTmuxDeps {
+  /** The durable `-S` socket the surviving server is bound to. */
+  readonly socketPath: string;
+  /** The resolved tmux binary; `undefined` ⇒ no tmux on this host ⇒ a no-op (durable already degrades). */
+  readonly tmuxPath: string | undefined;
+  readonly logger: { warn(obj: Record<string, unknown>, msg?: string): void };
+  /** Read the surviving server's mount-ns id (default: `tmux display-message -p '#{pid}'` → `/proc/<pid>/ns/mnt`). */
+  readServerMntNs?: (socketPath: string) => string | undefined;
+  /** Read THIS daemon's mount-ns id (default: `/proc/self/ns/mnt`). */
+  readDaemonMntNs?: () => string | undefined;
+  /** Tear down the stranded server (default: `tmux -S <socket> kill-server`). */
+  killServer?: (socketPath: string) => void;
+}
+
+/** Default `/proc`-backed reader for the surviving tmux server's mount-ns id. Returns `undefined` on
+ *  ANY fault (no server / unreadable) — the SAFE direction (never assert a strand we cannot confirm). */
+function defaultReadServerMntNs(socketPath: string, tmuxPath: string): string | undefined {
+  try {
+    // eslint-disable-next-line no-restricted-syntax -- one-shot bounded server-pid probe at daemon boot (recover-on-boot strand check)
+    const pid = execFileSync(tmuxPath, ["-S", socketPath, "display-message", "-p", "#{pid}"], { encoding: "utf8" }).trim();
+    if (pid === "") return undefined;
+    return readlinkSync(`/proc/${pid}/ns/mnt`);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Default `/proc/self/ns/mnt` reader for THIS daemon's mount-ns id (`undefined` on a non-Linux/unreadable host). */
+function defaultReadDaemonMntNs(): string | undefined {
+  try {
+    return readlinkSync("/proc/self/ns/mnt");
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * RECUR-02 — at daemon boot, if the durable tmux server SURVIVED into a stranded prior-generation
+ * mount namespace ({@link isTmuxServerStranded}), tear it down (`kill-server`) so the next
+ * `new-session` starts a FRESH server in THIS daemon's live ns (where new `bwrap` sessions work).
+ * Its surviving durable sessions are intentionally killed — they would otherwise be a half-dead
+ * server that accepts NO new work — and the registry's recover-on-boot then finds them gone via
+ * `has-session` and flips them `lost` with the journal PRESERVED (the existing `onUnrecoverable`
+ * path), so the agent resumes the work on the fresh server. MUST run ONCE before any registry's
+ * recover-on-boot probes. A no-op when there is no tmux, no server, or the server is healthy (same
+ * ns) — so a normal first boot and a restart with no live durable both leave the server untouched.
+ */
+export function recreateStrandedTmuxServerOnBoot(deps: RecreateStrandedTmuxDeps): { stranded: boolean; killed: boolean } {
+  const { socketPath, tmuxPath, logger } = deps;
+  // No tmux on this host → there is no durable server to strand (durable already degrades to the
+  // lost floor at runtime, §7.1.5). Nothing to recreate.
+  if (tmuxPath === undefined) return { stranded: false, killed: false };
+  const readServerMntNs = deps.readServerMntNs ?? ((s: string) => defaultReadServerMntNs(s, tmuxPath));
+  const readDaemonMntNs = deps.readDaemonMntNs ?? defaultReadDaemonMntNs;
+  const killServer =
+    deps.killServer ??
+    ((s: string): void => {
+      try {
+        // eslint-disable-next-line no-restricted-syntax -- one-shot bounded kill-server at daemon boot (tear down the stranded prior-generation server)
+        execFileSync(tmuxPath, ["-S", s, "kill-server"], { stdio: "ignore" });
+      } catch {
+        /* best-effort: a kill of an already-gone/unreachable server is a no-op, never a boot crash */
+      }
+    });
+
+  const serverMntNs = readServerMntNs(socketPath);
+  const daemonMntNs = readDaemonMntNs();
+  if (!isTmuxServerStranded(serverMntNs, daemonMntNs)) return { stranded: false, killed: false };
+
+  killServer(socketPath);
+  // §2.7: load-bearing boot record (INFO-equivalent WARN) — an operator must see WHY durable
+  // sessions were reset on this boot (the stranded-ns strand) without a debugger / live repro.
+  logger.warn(
+    {
+      step: "tmux_server_stranded_recreate",
+      errorKind: "dependency" as const,
+      serverMntNs,
+      daemonMntNs,
+      hint: "durable tmux server survived the restart in the PRIOR daemon's dismantled mount namespace (PrivateTmp/ProtectHome give each start a fresh ns; KillMode=process kept the old server) — new bwrap sessions in it fail, so it was torn down; surviving durable sessions flip lost with the journal preserved and resume on a fresh server in the live ns",
+    },
+    "terminal durable tmux server recreated on boot (stranded mount namespace)",
+  );
+  return { stranded: true, killed: true };
+}
+
+/**
+ * RECUR-02 — the dataDir-bound boot step the composition root calls ONCE before any registry's
+ * recover-on-boot. Resolves the daemon tmux path + the durable `-S` socket (the SAME derivation
+ * the liveness probe uses) and delegates to {@link recreateStrandedTmuxServerOnBoot}. Thin
+ * composition (no logic of its own — the decision is unit-tested on the delegate), mirroring the
+ * other dataDir-bound builders in this module.
+ */
+export function recreateStrandedTmuxServerForDataDir(
+  dataDir: string,
+  logger: { warn(obj: Record<string, unknown>, msg?: string): void },
+): { stranded: boolean; killed: boolean } {
+  return recreateStrandedTmuxServerOnBoot({
+    socketPath: resolveTmuxSocketPath(terminalWorkerDir(dataDir)),
+    tmuxPath: resolveDaemonTmuxPath(),
+    logger,
+  });
 }
 
 /** Inputs for the per-agent durability + reaper-isBusy wiring. */
@@ -228,7 +356,7 @@ export function buildAgentTerminalDurability(i: AgentTerminalDurabilityInputs): 
     const reg = i.registries.get(i.agentId);
     const handle = reg?.get(s.sessionId, resolveStampedOwner(reg, s.sessionId, i.agentId));
     if (handle === undefined) return false; // gone → not busy (let the sweep do its thing)
-    const alive = handle.status === "running" && (handle.durable !== true || (handle.tmuxName !== undefined && isTmuxAlive(handle.tmuxName)));
+    const alive = handle.status === "running" && (handle.durable !== true || (handle.tmuxName !== undefined && isTmuxAlive(handle.tmuxName, handle.tmuxSocket)));
     const signal: BusySignal = { alive, noProgressMs: Math.max(0, i.nowMs() - s.lastActivity), stuckMs: i.workerStuckMs };
     return busyOrHung(signal) === "busy";
   };
@@ -342,7 +470,7 @@ export function buildWakeDurabilityDeps(i: WakeDurabilityInputs): {
     if (status.state === "exited") return { alive: false, noProgressMs: 0, stuckMs };
     // For a durable session also require the detached tmux to be alive (a wedged-but-present
     // worker whose tmux died is hung). `stuck` from the classifier → past the no-progress window.
-    const tmuxOk = handle.durable !== true || (handle.tmuxName !== undefined && isTmuxAlive(handle.tmuxName));
+    const tmuxOk = handle.durable !== true || (handle.tmuxName !== undefined && isTmuxAlive(handle.tmuxName, handle.tmuxSocket));
     if (!tmuxOk) return { alive: false, noProgressMs: 0, stuckMs };
     if (status.state === "stuck") return { alive: true, noProgressMs: stuckMs + 1, stuckMs };
     // working / awaiting-input → busy (recent progress; the classifier did not flag no-progress).

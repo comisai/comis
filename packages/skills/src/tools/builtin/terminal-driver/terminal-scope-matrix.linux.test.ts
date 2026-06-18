@@ -492,10 +492,22 @@ describe.skipIf(!linuxBwrap)(
         // The interpreter-control + nested-CLI markers are stripped.
         expect(hasKey("NODE_OPTIONS"), "NODE_OPTIONS MUST be scrubbed").toBe(false);
         expect(hasKey("CLAUDECODE"), "CLAUDECODE MUST be scrubbed").toBe(false);
+        // The DANGEROUS nested-CLI markers (e.g. CLAUDE_CODE_ENTRYPOINT) are stripped by
+        // scrubChildEnv's CLAUDE_CODE_* prefix glob.
+        expect(hasKey("CLAUDE_CODE_ENTRYPOINT"), "CLAUDE_CODE_ENTRYPOINT MUST be scrubbed").toBe(false);
+        // The ONE deliberate exception: CLAUDE_CODE_BUBBLEWRAP=1 is re-injected POST-scrub
+        // (EROFS-01, terminal-spawn-plan.ts) — it tells a sandbox-aware CLI it is ALREADY
+        // bubblewrapped so it does not nest a second jail (which would remount $HOME ro and
+        // EROFS on `mkdir ~/.claude/session-env`). It is the SOLE CLAUDE_CODE_* key that may
+        // survive into the jail; every other CLAUDE_CODE_* must be gone.
+        const claudeCodeKeys = lines
+          .filter((l) => l.startsWith("CLAUDE_CODE_"))
+          .map((l) => l.split("=", 1)[0]);
         expect(
-          lines.some((l) => l.startsWith("CLAUDE_CODE_")),
-          "CLAUDE_CODE_* MUST be scrubbed",
-        ).toBe(false);
+          claudeCodeKeys.sort(),
+          "the SOLE surviving CLAUDE_CODE_* key is the deliberate CLAUDE_CODE_BUBBLEWRAP sentinel",
+        ).toEqual(["CLAUDE_CODE_BUBBLEWRAP"]);
+        expect(hasKey("CLAUDE_CODE_BUBBLEWRAP"), "the CLAUDE_CODE_BUBBLEWRAP=1 sentinel is injected post-scrub").toBe(true);
         // And a benign var survives (the scrub is a blocklist, not a wipe).
         expect(hasKey("SAFE_KEEPER"), "a benign env var MUST survive the scrub").toBe(true);
       });

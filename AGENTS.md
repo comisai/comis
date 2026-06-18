@@ -71,6 +71,8 @@ Dependency direction: inward to `core`. `daemon` depends on everything; `shared`
 - No config keys, port methods, or feature flags without a concrete caller.
 - No speculative abstractions. Duplicate small local logic when it preserves clarity.
 - Extract shared helpers only after the rule of three; preserve package boundaries.
+- Before adding a dependency, climb the ladder: stdlib / Node built-in → native platform or language feature → a dep already in the tree → a few lines of our own. A new package must clear a bar those rungs can't — every dependency is supply-chain attack surface (see CLAUDE.md "Supply-chain invariants"). "Saves a few lines" is not that bar.
+- Minimalism never buys simplicity with correctness. YAGNI deletes speculative features and abstractions — never input validation, error/`Result` handling, edge cases, or the security/observability floor (§2.1, §2.2, §2.7). Between two equally small options, take the one that's correct on the edges.
 
 ### 2.4 Composition root + factories
 - Wire dependencies in `bootstrap.ts` — never import sibling packages directly.
@@ -259,6 +261,7 @@ If full validation is impractical, document what was run and what was skipped.
 - Modify unrelated packages "while here" — one concern per change.
 - Skip `pnpm build` before integration tests.
 - Add speculative config keys or feature flags "just in case".
+- Add a new dependency for what stdlib, a native platform feature, an already-present dep, or a few lines can do — every package is supply-chain surface.
 - Use string interpolation in structured log calls — Pino object-first only.
 - Include personal identity or sensitive data in tests, examples, docs, or commits.
 - Add entries to architecture allowlists (`test/support/architecture-allowlist.ts`) — they are shrink-only. Closing a violation requires deleting the entry, not adding a new one.
