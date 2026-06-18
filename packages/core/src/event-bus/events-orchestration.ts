@@ -84,6 +84,13 @@ export interface OrchestrationEvents {
     graphCacheEffectiveness?: number;
     /** 3.3: Per-node cache effectiveness breakdown. */
     nodeEffectiveness?: Record<string, number>;
+    /**
+     * IN-01: per-node token-spend breakdown (nodeId → tokens) for the run,
+     * sourced from the coordinator's nodeTokenSpend map. Present only when at
+     * least one node recorded spend — the production reader of nodeTokenSpend
+     * (otherwise a dead write). Counts/ids-only (§2.7). Mirrors nodeEffectiveness.
+     */
+    nodeTokenSpend?: Record<string, number>;
   };
 
   /** Node type driver reached a lifecycle phase (initialized, progress, completed, failed, aborted) */

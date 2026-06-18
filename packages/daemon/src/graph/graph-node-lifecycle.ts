@@ -614,7 +614,8 @@ export function handleSubAgentCompleted(
 
   // 5d. Per-node spend + node-first breach (BUDGET-02/03; D5 — BEFORE the step-6
   // state transition so a breaching SUCCESSFUL run ends `failed`, not `completed`,
-  // and BEFORE the cumulative check at step 6.6). Records nodeTokenSpend always.
+  // and BEFORE the cumulative check at step 6.6). Records nodeTokenSpend always —
+  // surfaced as the per-node breakdown on graph:completed (IN-01).
   const budgetBreach = applyNodeBudgetBreach(
     deps, config, gs, nodeId, event.tokensUsed ?? 0, run?.sessionKey,
   );

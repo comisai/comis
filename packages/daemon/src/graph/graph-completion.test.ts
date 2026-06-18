@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { buildGraphAnnouncement, truncatePreview, extractAnnouncementPreview } from "./graph-completion.js";
+import { buildGraphAnnouncement, truncatePreview, extractAnnouncementPreview, handleGraphCompletion } from "./graph-completion.js";
 import {
   type ValidatedGraph,
   type ExecutionGraph,
@@ -361,6 +361,44 @@ describe("buildGraphAnnouncement", () => {
 // level `vi.mock("node:fs", ...)`. The substrate's chmod-by-fd is the
 // load-bearing primitive the §1.4 invariant relies on.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// IN-01: nodeTokenSpend must have a production READER. It is surfaced as a
+// per-node spend breakdown on the graph:completed event (mirroring the sibling
+// nodeEffectiveness cache breakdown), so the per-node spend recorded by
+// applyNodeBudgetBreach is no longer a dead write.
+// ---------------------------------------------------------------------------
+describe("IN-01: graph:completed surfaces the per-node token-spend breakdown", () => {
+  function runCompletion(spend: Record<string, number>) {
+    const gs = createMinimalGraphRunState([
+      { nodeId: "n1", status: "completed" },
+      { nodeId: "n2", status: "completed" },
+    ]);
+    gs.completedAt = undefined; // not yet completed (the helper pre-stamps it)
+    for (const [nodeId, n] of Object.entries(spend)) gs.nodeTokenSpend.set(nodeId, n);
+
+    const emit = vi.fn();
+    const deps = {
+      eventBus: { emit, on: vi.fn(), off: vi.fn() },
+      logger: { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn() },
+    } as never;
+    handleGraphCompletion({} as never, deps, gs);
+    const completed = emit.mock.calls.find((c) => c[0] === "graph:completed");
+    return completed?.[1] as Record<string, unknown> | undefined;
+  }
+
+  it("includes nodeTokenSpend on graph:completed when per-node spend was recorded", () => {
+    const payload = runCompletion({ n1: 1_200, n2: 3_400 });
+    expect(payload).toBeDefined();
+    expect(payload!.nodeTokenSpend).toEqual({ n1: 1_200, n2: 3_400 });
+  });
+
+  it("omits nodeTokenSpend when no per-node spend was recorded (byte-identical to today)", () => {
+    const payload = runCompletion({});
+    expect(payload).toBeDefined();
+    expect(payload!.nodeTokenSpend).toBeUndefined();
+  });
+});
+
 describe("graph-completion honors §1.4 file mode invariant", () => {
   it("write_regular_file_substrate_produces_run_metadata_at_mode_0o600", async () => {
     // Direct substrate-level test: write to a tmp file using the same
