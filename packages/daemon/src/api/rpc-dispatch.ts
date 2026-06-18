@@ -53,6 +53,11 @@ import { createDaemonHandlers } from "./daemon-handlers.js";
 import { createMcpHandlers } from "./mcp-handlers.js";
 import { createMcpOauthHandlers } from "./mcp-oauth-handlers.js";
 import { createGraphHandlers } from "./graph-handlers/index.js";
+// AUTHOR-01 (Phase 174-03): the daemon composition site is the boundary-clean
+// place to import @comis/agent and inject the conservative repair matcher into
+// the graph handlers (buildGraphInput receives it via deps.repairMatch — never a
+// direct daemon→agent import in the pure helper).
+import { matchRawGraphToTemplate } from "@comis/agent";
 import { createWorkspaceHandlers } from "./workspace-handlers.js";
 import { createHeartbeatHandlers } from "./heartbeat-handlers.js";
 import { createSkillHandlers } from "./skill-handlers.js";
@@ -231,6 +236,14 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
         // so adding the directive here is reported as unused — this plain comment
         // documents the intentional safe read instead.
         deps.getProviderCapabilityClass?.(deps.agents[agentId ?? ""]?.provider),
+      // AUTHOR-01 (Phase 174-03): thread the orchestration.authoring gate +
+      // inject the conservative repair matcher. The daemon→agent boundary is
+      // crossed HERE (the composition site legitimately imports @comis/agent),
+      // never inside buildGraphInput — mirroring the resolveCapabilityClass
+      // injection above. With repairProducer:false (the default) the gate is off
+      // and buildGraphInput is byte-identical to pre-174.
+      authoringConfig: deps.container.config.orchestration?.authoring,
+      repairMatch: matchRawGraphToTemplate,
     }) : {}),
     // approval-handlers consumes WorkspaceApiDeps; spread `...deps` so the
     // cluster slice's required fields (e.g. mcpClientManager, execGit,

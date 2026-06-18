@@ -107,6 +107,33 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
     }
   };
 
+  // AUTHOR-01 (Phase 174-03): resolve the calling agent's capabilityClass tier
+  // for the buildGraphInput repair decision, GATED on repairProducer. When the
+  // gate is off (or absent) this returns undefined so buildGraphInput takes the
+  // capable direct path — byte-identical to pre-174 (D-GATED-OFF). The tier is
+  // resolved SERVER-SIDE from the RAW _agentId (Spoofing mitigation T-174-SPOOF /
+  // T-173-03), reusing 173's injected resolveCapabilityClass — the tool-supplied
+  // capabilityClass param is NEVER read for the tier.
+  const resolveAuthoringTier = (
+    d: GraphHandlerDeps,
+    rawParams: Record<string, unknown>,
+  ): "frontier" | "mid" | "small" | "nano" | undefined =>
+    d.authoringConfig?.repairProducer
+      ? d.resolveCapabilityClass?.(rawParams._agentId as string | undefined)
+      : undefined;
+
+  // AUTHOR-01: assemble the repair context buildGraphInput needs for the gated
+  // weak-model branch (the injected matcher + gate + best-effort emit inputs).
+  // Correlation ids ride from the RAW params (envelope-only — never body).
+  const repairContext = (d: GraphHandlerDeps, rawParams: Record<string, unknown>) => ({
+    authoringConfig: d.authoringConfig,
+    repairMatch: d.repairMatch,
+    eventBus: d.eventBus,
+    logger: d.logger,
+    agentId: rawParams._agentId as string | undefined,
+    sessionKey: rawParams._callerSessionKey as string | undefined,
+  });
+
   return {
     [GraphDefineContract.method]: async (rawParams) => {
       // Bespoke pre-Zod validation FIRST (preserves user-friendly error
@@ -136,17 +163,12 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
         throw e;
       }
 
-      // O3 (WR-01) producer deferred to Phase 157: no current producer sets
-      // capabilityClass on graph RPC params — it is absent from the contract
-      // request schema and the pipeline tool does not send it. Until Phase 157
-      // wires the producer (the resolved-ModelProfile capabilityClass threaded
-      // from the agent's rpcCall boundary) AND the matching weak-model repair
-      // consumer (see buildGraphInput / repairDagWithBoundedRetries in
-      // graph-helpers.ts), this is always undefined → the capable direct-emit
-      // path. The read is intentionally retained so the producer wiring is a
-      // single localized change in Phase 157.
-      const capabilityClass = userParams.capabilityClass as
-        "frontier" | "mid" | "small" | "nano" | undefined;
+      // AUTHOR-01 (Phase 174-03): resolve the calling agent's tier SERVER-SIDE,
+      // gated on repairProducer. FLAGS-OFF (or absent) ⇒ undefined ⇒ the capable
+      // direct-emit path ⇒ byte-identical to pre-174. NEVER read the tool-supplied
+      // userParams.capabilityClass for the tier (the spoofing surface 173 closed,
+      // T-174-SPOOF / T-173-03 — a weak model claiming "frontier" to skip repair).
+      const capabilityClass = resolveAuthoringTier(deps, rawParams);
       // TELEM-01: capture the REAL buildGraphInput parse+validate verdict.
       // buildGraphInput THROWS on parse/validate failure — emit schemaValid:false
       // and re-throw (the existing user-facing error contract is unchanged);
@@ -154,7 +176,7 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
       // logic so a valid-but-otherwise-rejected call still counts as authored.
       let validated;
       try {
-        validated = buildGraphInput(userParams, capabilityClass);
+        validated = await buildGraphInput(userParams, capabilityClass, repairContext(deps, rawParams));
       } catch (e) {
         emitPipelineAuthored("define", false, rawParams);
         throw e;
@@ -192,17 +214,16 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
       // is needed around this parse.
       GraphExecuteContract.request.parse(userParams);
 
-      // O3 (WR-01) producer deferred to Phase 157 — see graph.define above.
-      // No producer sets capabilityClass yet, so this is always undefined →
-      // capable direct-emit path. Retained as the single Phase-157 wiring point.
-      const capabilityClass = userParams.capabilityClass as
-        "frontier" | "mid" | "small" | "nano" | undefined;
+      // AUTHOR-01 (Phase 174-03): server-side gated tier — see graph.define.
+      // FLAGS-OFF ⇒ undefined ⇒ capable path (byte-identical). The tool-supplied
+      // userParams.capabilityClass is never read for the tier (T-174-SPOOF).
+      const capabilityClass = resolveAuthoringTier(deps, rawParams);
       // TELEM-01: same try/catch verdict capture as graph.define — emit
       // schemaValid:false on a parse/validate throw (still re-throwing), true
       // on success, before the coordinator dispatch.
       let validated;
       try {
-        validated = buildGraphInput(userParams, capabilityClass);
+        validated = await buildGraphInput(userParams, capabilityClass, repairContext(deps, rawParams));
       } catch (e) {
         emitPipelineAuthored("execute", false, rawParams);
         throw e;
@@ -336,12 +357,11 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
       const tenantId = deps.tenantId ?? "default";
       const agentId = (rawParams.agentId as string) ?? deps.defaultAgentId;
 
-      // Validate structure (typeId/typeConfig pairing, DAG sort, Zod schema)
-      // O3 (WR-01) producer deferred to Phase 157 — see graph.define above.
-      // Always undefined today → capable direct-emit path.
-      const capabilityClass = userParams.capabilityClass as
-        "frontier" | "mid" | "small" | "nano" | undefined;
-      const validated = buildGraphInput(userParams, capabilityClass);
+      // Validate structure (typeId/typeConfig pairing, DAG sort, Zod schema).
+      // AUTHOR-01 (Phase 174-03): server-side gated tier — see graph.define.
+      // FLAGS-OFF ⇒ undefined ⇒ capable direct path (byte-identical).
+      const capabilityClass = resolveAuthoringTier(deps, rawParams);
+      const validated = await buildGraphInput(userParams, capabilityClass, repairContext(deps, rawParams));
       validateTypeConfigs(validated.graph, deps.nodeTypeRegistry);
 
       deps.namedGraphStore.save({
