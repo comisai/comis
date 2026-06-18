@@ -2,9 +2,9 @@
 
 **Generated:** 2026-05-15
 **Status:** FINAL
-**Interface source:** `packages/agent/src/spawn/sub-agent-runner.ts:131-291` (21-field interface)
-**Construction site:** `packages/daemon/src/wiring/setup-cross-session.ts:813` (single site — `createSubAgentRunner({`)
-**Field count:** 21 (7 required + 14 optional + 0 stale-fallback)
+**Interface source:** `packages/agent/src/spawn/sub-agent-runner.ts` SubAgentRunnerDeps (22-field interface)
+**Construction site:** `packages/daemon/src/wiring/setup-cross-session/setup-cross-session-runtime.ts` (single site — `createSubAgentRunner({`)
+**Field count:** 22 (7 required + 15 optional + 0 stale-fallback)
 
 This audit lives co-located with the agent package; `files: ["dist"]` in `packages/agent/package.json` excludes it from the npm tarball.
 
@@ -29,6 +29,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | eventBus | required | — | packages/agent/src/spawn/sub-agent-runner.ts:168 |
 | config | required | — | packages/agent/src/spawn/sub-agent-runner.ts:169 |
 | tenantId | required | — | packages/agent/src/spawn/sub-agent-runner.ts:170 |
+| resolvePosture | optional | the sandbox no-downgrade gate (SANDBOX-02) is inert — no posture is resolved or compared, so no spawn is refused on posture grounds (spawn() guard `... && deps.resolvePosture && params.callerAgentId`; the daemon always wires it in production) | packages/agent/src/spawn/sub-agent-runner.ts:190 |
 | logger | optional | lifecycle diagnostic log lines suppressed (deps.logger?. optional-chain across every call site) | packages/agent/src/spawn/sub-agent-runner.ts:172 |
 | memoryAdapter | optional | sub-agent completion summaries skipped (line 1147 `if (deps.memoryAdapter)` guard) | packages/agent/src/spawn/sub-agent-runner.ts:174 |
 | batcher | optional | announcements bypass coalescing and emit individually (deps.batcher absent → direct send path) | packages/agent/src/spawn/sub-agent-runner.ts:189 |
@@ -53,7 +54,7 @@ The candidate stale-fallback field `activeRunRegistry` was retained as `optional
 
 ## Summary
 
-- **Final count:** 21 (7 required + 14 optional)
+- **Final count:** 22 (7 required + 15 optional)
 - **Removed (stale-fallback):** 0
 - **`stale-fallback` classification rows:** 0 (architecture test enforces; no row may carry this terminal value at any commit)
 
