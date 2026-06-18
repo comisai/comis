@@ -3947,6 +3947,20 @@ describe("sandbox no-downgrade gate", () => {
       "session:sub_agent_spawn_queued",
       expect.anything(),
     );
+
+    // SANDBOX-03: the typed refusal event fires (before the throw, at the same
+    // point a run/session would otherwise be created) carrying both postures as
+    // enum tuples + the violated dimension(s) + the parent/child ids — NO secrets.
+    expect(deps.eventBus.emit).toHaveBeenCalledWith(
+      "security:sandbox_downgrade_refused",
+      expect.objectContaining({
+        parentAgentId: "parent",
+        childAgentId: "loose-child",
+        violatedDimensions: ["exec"],
+        parentPosture: { exec: "always" },
+        childPosture: { exec: "never" },
+      }),
+    );
   });
 
   // -------------------------------------------------------------------------

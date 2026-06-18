@@ -1436,3 +1436,150 @@ describe("graph:node_updated enriched with tokensUsed/cost (BUDGET-03)", () => {
     expect(payload.cost).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// security:sandbox_downgrade_refused (SANDBOX-03). A fail-closed spawn refusal
+// emits this typed event carrying BOTH postures as enum tuples + the violated
+// dimensions + agent ids — labels only, NO secrets (no paths/hosts/uids-as-
+// values/credentials). Mirrors the security:injection_detected family shape and
+// the tool:install_detour_detected §2.7 no-secrets discipline.
+// ---------------------------------------------------------------------------
+
+describe("security:sandbox_downgrade_refused event type", () => {
+  it("round-trips both postures as enum tuples + violated dimensions + ids only", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["security:sandbox_downgrade_refused"] = {
+      timestamp: Date.now(),
+      parentAgentId: "parent-agent",
+      childAgentId: "child-agent",
+      violatedDimensions: ["exec", "network"],
+      parentPosture: { exec: "always", network: "none" },
+      childPosture: { exec: "never", network: "full" },
+    };
+
+    bus.on("security:sandbox_downgrade_refused", handler);
+    bus.emit("security:sandbox_downgrade_refused", payload);
+
+    expect(handler).toHaveBeenCalledWith(payload);
+    const received =
+      handler.mock.calls[0]![0] as EventMap["security:sandbox_downgrade_refused"];
+    expect(received.parentAgentId).toBe("parent-agent");
+    expect(received.childAgentId).toBe("child-agent");
+    expect(received.violatedDimensions).toEqual(["exec", "network"]);
+    expect(received.parentPosture.exec).toBe("always");
+    expect(received.childPosture.exec).toBe("never");
+  });
+
+  it("accepts every closed-union posture enum label across all four dimensions", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["security:sandbox_downgrade_refused"] = {
+      timestamp: Date.now(),
+      parentAgentId: "p",
+      childAgentId: "c",
+      violatedDimensions: ["exec", "filesystem", "network", "uid"],
+      parentPosture: {
+        exec: "always",
+        filesystem: "workspace",
+        network: "none",
+        uid: "dedicated",
+      },
+      childPosture: {
+        exec: "never",
+        filesystem: "full",
+        network: "listed-hosts",
+        uid: "daemon",
+      },
+    };
+
+    bus.on("security:sandbox_downgrade_refused", handler);
+    bus.emit("security:sandbox_downgrade_refused", payload);
+
+    const received =
+      handler.mock.calls[0]![0] as EventMap["security:sandbox_downgrade_refused"];
+    expect(received.childPosture.filesystem).toBe("full");
+    expect(received.childPosture.uid).toBe("daemon");
+  });
+
+  it("runtime payload exposes ONLY enum labels + ids + timestamp — every posture value is an allowed enum label and no key is secret-shaped", () => {
+    // Runtime structural no-secrets assertion (the §2.7 discipline, mirroring
+    // the 170/171 events). Serialize the payload and assert (a) no key matches
+    // a secret-shaped name, and (b) every posture value is one of the allowed
+    // closed-union enum labels — never a path/host/uid value.
+    const payload: EventMap["security:sandbox_downgrade_refused"] = {
+      timestamp: Date.now(),
+      parentAgentId: "parent-agent",
+      childAgentId: "child-agent",
+      violatedDimensions: ["exec"],
+      parentPosture: { exec: "always", filesystem: "workspace", network: "none", uid: "dedicated" },
+      childPosture: { exec: "never", filesystem: "home", network: "listed-hosts", uid: "daemon" },
+    };
+
+    const allKeys = new Set<string>();
+    const collectKeys = (obj: unknown): void => {
+      if (obj && typeof obj === "object" && !Array.isArray(obj)) {
+        for (const [k, v] of Object.entries(obj)) {
+          allKeys.add(k);
+          collectKeys(v);
+        }
+      }
+    };
+    collectKeys(payload);
+
+    // Forbidden = key names that would carry operator topology / credentials.
+    // The four dimension KEYS (`exec`/`filesystem`/`network`/`uid`) are the
+    // spec'd closed-union enum-tuple field names and are explicitly allowed —
+    // the value-allowlist check below proves each carries only an enum LABEL,
+    // never the underlying path/host/uid-number that would leak the topology.
+    const allowedKeys = new Set<string>([
+      "timestamp", "parentAgentId", "childAgentId", "violatedDimensions",
+      "parentPosture", "childPosture",
+      "exec", "filesystem", "network", "uid",
+    ]);
+    const secretShaped = /paths?|hosts?|credential|token|secret|password|url|cwd|dir|value|prefix|body|content/i;
+    for (const key of allKeys) {
+      expect(allowedKeys.has(key), `unexpected key "${key}" in refusal payload`).toBe(true);
+      expect(secretShaped.test(key), `key "${key}" must not be secret-shaped`).toBe(false);
+    }
+
+    // Every posture value must be one of the allowed enum labels for its
+    // dimension — proving the postures carry LABELS, never operator topology.
+    const allowed = new Set<string>([
+      "always", "never",
+      "workspace", "listed-paths", "home", "full",
+      "none", "listed-hosts",
+      "dedicated", "daemon",
+    ]);
+    for (const posture of [payload.parentPosture, payload.childPosture]) {
+      for (const value of Object.values(posture)) {
+        expect(allowed.has(value), `posture value "${value}" must be an allowed enum label`).toBe(true);
+      }
+    }
+    for (const dim of payload.violatedDimensions) {
+      expect(["exec", "filesystem", "network", "uid"]).toContain(dim);
+    }
+  });
+
+  it("payload type contains no forbidden privacy-leak fields", () => {
+    // Source-grep the event block: the closed shape MUST NOT carry raw paths,
+    // hosts, credential values, or any free-form value field — only the
+    // posture enum tuples + agent ids + timestamp (AGENTS.md §2.7).
+    const src = readFileSync(resolve(here, "./events-agent.ts"), "utf8");
+    const match = src.match(
+      /"security:sandbox_downgrade_refused":\s*\{[\s\S]*?\n {2}\};/,
+    );
+    expect(match, "sandbox-downgrade-refused event block must exist").toBeTruthy();
+    const block = match![0];
+
+    expect(block, "no `paths:` field").not.toMatch(/^\s*(?:readonly\s+)?paths:/m);
+    expect(block, "no `hosts:` field").not.toMatch(/^\s*(?:readonly\s+)?hosts:/m);
+    expect(block, "no `allowedPaths:` field").not.toMatch(/^\s*(?:readonly\s+)?allowedPaths:/m);
+    expect(block, "no `credentialPaths:` field").not.toMatch(/^\s*(?:readonly\s+)?credentialPaths:/m);
+    expect(block, "no `uidValue:`/`uid:` numeric field").not.toMatch(/^\s*(?:readonly\s+)?uid(?:Value)?:\s*number/m);
+    // Required structural fields present (postures as enum tuples + ids):
+    expect(block, "parentPosture present").toMatch(/parentPosture:/);
+    expect(block, "childPosture present").toMatch(/childPosture:/);
+    expect(block, "violatedDimensions present").toMatch(/violatedDimensions:/);
+  });
+});

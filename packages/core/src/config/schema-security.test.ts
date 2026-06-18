@@ -236,3 +236,58 @@ describe("AgentToAgentConfigSchema.delivery.maxRetries", () => {
     expect(registrySrc).not.toMatch(/maxRetries/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// AgentToAgentConfigSchema.sandboxNoDowngrade (SANDBOX-02/03, D1) — the one
+// documented off-switch for the fail-closed sandbox no-downgrade gate. Defaults
+// TRUE (pure safety / fail-closed). Co-located under the existing
+// security.agentToAgent section, so NO new SECTION_REGISTRY entry. Every field
+// .default() (AGENTS.md §6.4) — the spawn gate reads it, never `?? true`.
+// ---------------------------------------------------------------------------
+
+describe("AgentToAgentConfigSchema.sandboxNoDowngrade", () => {
+  it("defaults to true when omitted (fail-closed by default)", () => {
+    const result = AgentToAgentConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.sandboxNoDowngrade).toBe(true);
+    }
+  });
+
+  it("accepts explicit false and round-trips it (the documented off-switch)", () => {
+    const result = AgentToAgentConfigSchema.safeParse({ sandboxNoDowngrade: false });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.sandboxNoDowngrade).toBe(false);
+    }
+  });
+
+  it("accepts explicit true and round-trips it", () => {
+    const result = AgentToAgentConfigSchema.safeParse({ sandboxNoDowngrade: true });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.sandboxNoDowngrade).toBe(true);
+    }
+  });
+
+  it("rejects a non-boolean value", () => {
+    expect(AgentToAgentConfigSchema.safeParse({ sandboxNoDowngrade: "yes" }).success).toBe(false);
+  });
+
+  it("is present in SecurityConfigSchema parsed output defaulting to true", () => {
+    const result = SecurityConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.agentToAgent.sandboxNoDowngrade).toBe(true);
+    }
+  });
+
+  it("adds ZERO new SECTION_REGISTRY entries — sandboxNoDowngrade nests in the existing security.agentToAgent section (D1)", () => {
+    // The field nests in the already-registered `security.agentToAgent` section.
+    // There must be no `sandboxNoDowngrade` token in the section registry — a new
+    // registry entry would be a churn regression (the 170/171 tokenBudget/delivery
+    // precedent).
+    const registrySrc = readFileSync(resolve(here, "./section-registry.ts"), "utf8");
+    expect(registrySrc).not.toMatch(/sandboxNoDowngrade/);
+  });
+});
