@@ -439,6 +439,18 @@ describe("classifyErrorContext transport-errno widening (DELIVERY-02)", () => {
       expect(result.retryable, `msg: ${msg}`).toBe(false);
     }
   });
+
+  it("is re-exported from the spawn barrel so the daemon wiring can inject it (DELIVERY-02)", async () => {
+    // Characterization pin (Task 2): classifyErrorContext must reach the
+    // @comis/agent public surface via the spawn/index.js barrel — the path
+    // packages/agent/src/index.ts re-exports from — so setup-cross-session
+    // can inject it into the orchestrator batcher (it cannot import the agent
+    // internal directly). The dist-import smoke check covers the full barrel.
+    const spawnBarrel = await import("./index.js");
+    expect(typeof spawnBarrel.classifyErrorContext).toBe("function");
+    // The barrel symbol is the same function as the module export.
+    expect(spawnBarrel.classifyErrorContext("ECONNRESET", "failed").retryable).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------

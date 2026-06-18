@@ -535,7 +535,7 @@ export type { LifecycleHooksDeps } from "./spawn/index.js";
 export { createEphemeralComisSessionManager } from "./spawn/index.js";
 export { createSubAgentRunner, ANNOUNCE_PARENT_TIMEOUT_MS } from "./spawn/index.js";
 export type { SubAgentRunnerDeps, SubAgentRun, SpawnParams, SubAgentRunnerLogger } from "./spawn/index.js";
-export { sweepResultFiles, buildAnnouncementMessage, deliverFailureNotification } from "./spawn/index.js";
+export { sweepResultFiles, buildAnnouncementMessage, deliverFailureNotification, classifyErrorContext } from "./spawn/index.js";
 
 // Context engine
 export { createContextEngine } from "./context-engine/index.js";

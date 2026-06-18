@@ -26,4 +26,4 @@ export { createEphemeralComisSessionManager } from "./pi-mono-adapters.js";
 export { createSubAgentRunner, ANNOUNCE_PARENT_TIMEOUT_MS } from "./sub-agent-runner.js";
 export type { SubAgentRunnerDeps, SubAgentRun, SpawnParams, SubAgentRunnerLogger } from "./sub-agent-runner.js";
 
-export { sweepResultFiles, buildAnnouncementMessage, deliverFailureNotification } from "./sub-agent-result-processor.js";
+export { sweepResultFiles, buildAnnouncementMessage, deliverFailureNotification, classifyErrorContext } from "./sub-agent-result-processor.js";
