@@ -701,6 +701,34 @@ describe("classifyErrorContext transport-errno widening (DELIVERY-02)", () => {
     }
   });
 
+  // INFO-CLASSIFIER: the two natural-language phrases "connection reset" /
+  // "connection refused" are pure exposure — their errno twins (ECONNRESET /
+  // ECONNREFUSED) already match every genuine Node transport error (which always
+  // carries the errno spelling), so the phrases are redundant for real failures
+  // but could over-match a PERMANENT error that quotes them as content. Drop the
+  // redundant phrases (clean tightening, errno-style only) while keeping the
+  // errno-less real phrasings (fetch failed / socket hang up). Mirrors the
+  // existing 5xx false-positive guard the file already carries.
+  it("does NOT classify a permanent error that merely quotes 'connection refused' as retryable", () => {
+    // A tool/model error that embeds the phrase as quoted content is NOT a
+    // transport blip — it must stay non-retryable (no errno present).
+    const result = classifyErrorContext('Tool reported: "connection refused by policy"', "failed");
+    expect(result.errorType).not.toBe("TransportError");
+    expect(result.retryable).toBe(false);
+  });
+
+  it("does NOT classify a permanent error that merely quotes 'connection reset' as retryable", () => {
+    const result = classifyErrorContext('validation failed: expected "connection reset" flag', "failed");
+    expect(result.errorType).not.toBe("TransportError");
+    expect(result.retryable).toBe(false);
+  });
+
+  it("still classifies a genuine ECONNREFUSED / ECONNRESET transport error as retryable (coverage preserved)", () => {
+    // The errno-bearing forms — the real Node transport failures — keep self-healing.
+    expect(classifyErrorContext("connect ECONNREFUSED 127.0.0.1:443", "failed").retryable).toBe(true);
+    expect(classifyErrorContext("read ECONNRESET", "failed").retryable).toBe(true);
+  });
+
   it("is re-exported from the spawn barrel so the daemon wiring can inject it (DELIVERY-02)", async () => {
     // Characterization pin (Task 2): classifyErrorContext must reach the
     // @comis/agent public surface via the spawn/index.js barrel — the path

@@ -258,6 +258,16 @@ export async function persistFailureRecord(params: {
  * explicitly. Matched case-insensitively as a substring of the error message
  * (real delivery errors wrap the errno in surrounding text, e.g.
  * "connect ECONNREFUSED 127.0.0.1:443").
+ *
+ * INFO-CLASSIFIER: deliberately errno-style only, PLUS the errno-less real
+ * phrasings emitted by undici/fetch ("fetch failed", "network request failed",
+ * "socket hang up"). The natural-language phrases "connection reset" /
+ * "connection refused" are intentionally OMITTED: every genuine Node transport
+ * error carries its errno spelling (ECONNRESET / ECONNREFUSED, already matched
+ * here), so those phrases add no real-failure coverage but DO over-match a
+ * PERMANENT error that quotes them as content (e.g. a tool result
+ * `"connection refused by policy"`). Keeping the list errno-anchored bounds the
+ * false-positive surface (mirrors the 5xx `\b5\d{2}\b` word-boundary guard).
  */
 const TRANSIENT_TRANSPORT_TOKENS = [
   "etimedout",
@@ -269,8 +279,6 @@ const TRANSIENT_TRANSPORT_TOKENS = [
   "socket hang up",
   "fetch failed",
   "network request failed",
-  "connection reset",
-  "connection refused",
 ];
 
 /**
