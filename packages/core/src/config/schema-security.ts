@@ -27,6 +27,17 @@ export const ActionConfirmationConfigSchema = z.strictObject({
     autoApprove: z.array(z.string()).default([]),
   });
 
+/**
+ * Sub-agent completion delivery resilience config (DELIVERY-01/02).
+ * Nests under `security.agentToAgent.delivery` — joins the already-registered
+ * section, so it adds ZERO new SECTION_REGISTRY entries (D1, mirrors the
+ * Phase-170 tokenBudget precedent). Every field `.default()` (AGENTS.md §6.4).
+ */
+const DeliveryConfigSchema = z.strictObject({
+    /** Max retry attempts for a transient delivery failure before dead-lettering (DELIVERY-02). 0 = dead-letter on the first transient blip; capped at 10 to bound retry-storm amplification (T-171-04). */
+    maxRetries: z.number().int().min(0).max(10).default(3),
+  });
+
 const AgentToAgentBaseSchema = z.strictObject({
     /** Enable cross-agent session messaging */
     enabled: z.boolean().default(true),
@@ -54,6 +65,8 @@ const AgentToAgentBaseSchema = z.strictObject({
     graphMaxGlobalSubAgents: z.number().int().positive().optional(),
     /** Per-spawn token budget for graph sub-agents (BUDGET-01/03). null (default) = inherit the graph share (graphBudget.maxTokens / total node count) ONLY when a graph budget is set; else unbounded (today's behavior, byte-identical). A graph node's own tokenBudget overrides this. */
     tokenBudget: z.number().int().positive().nullable().default(null),
+    /** Sub-agent completion delivery resilience (DELIVERY-01/02). Joins the existing security.agentToAgent section — ZERO new SECTION_REGISTRY entries (D1). Consumers read security.agentToAgent.delivery.maxRetries — never `?? 3` at the call site (§6.4). */
+    delivery: DeliveryConfigSchema.default(() => DeliveryConfigSchema.parse({})),
   });
 
 export const AgentToAgentConfigSchema = AgentToAgentBaseSchema.extend({

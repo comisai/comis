@@ -1301,6 +1301,107 @@ describe("subagent:budget_exceeded event type", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// subagent:delivery_retried + subagent:delivery_deadlettered (DELIVERY-02/03).
+// Counts/ids-only events mirroring subagent:budget_exceeded — ids + attempt
+// count + a closed-union `transient` tag + timestamp ONLY. The hygiene pin
+// keeps announcement text / error strings / bodies off the payload (§2.7).
+// ---------------------------------------------------------------------------
+
+describe("subagent:delivery_retried event type", () => {
+  it("type-checks and round-trips with runId + channelType + attempt + transient + timestamp", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["subagent:delivery_retried"] = {
+      runId: "run-1",
+      channelType: "discord",
+      attempt: 2,
+      transient: true,
+      timestamp: Date.now(),
+    };
+
+    bus.on("subagent:delivery_retried", handler);
+    bus.emit("subagent:delivery_retried", payload);
+
+    expect(handler).toHaveBeenCalledWith(payload);
+    const r = handler.mock.calls[0]![0] as EventMap["subagent:delivery_retried"];
+    expect(r.runId).toBe("run-1");
+    expect(r.channelType).toBe("discord");
+    expect(r.attempt).toBe(2);
+    // Closed-union literal: a retry is always for a transient failure.
+    expect(r.transient).toBe(true);
+  });
+
+  it("payload carries exactly the 5 counts/ids keys — no body/text/error", () => {
+    const payload: EventMap["subagent:delivery_retried"] = {
+      runId: "r",
+      channelType: "telegram",
+      attempt: 1,
+      transient: true,
+      timestamp: 3,
+    };
+    expect(Object.keys(payload).sort()).toEqual(
+      ["attempt", "channelType", "runId", "timestamp", "transient"].sort(),
+    );
+
+    const src = readFileSync(resolve(here, "./events-orchestration.ts"), "utf8");
+    const match = src.match(/"subagent:delivery_retried":\s*\{[\s\S]*?\n\s*\};/);
+    expect(match, "subagent:delivery_retried event block must exist").toBeTruthy();
+    const block = match![0];
+    for (const forbidden of ["announcementText", "text", "err", "error", "lastError", "body", "content", "response", "result"]) {
+      expect(block, `no \`${forbidden}:\` field`).not.toMatch(
+        new RegExp(`^\\s*(?:readonly\\s+)?${forbidden}\\??:`, "m"),
+      );
+    }
+  });
+});
+
+describe("subagent:delivery_deadlettered event type", () => {
+  it("type-checks and round-trips; transient is a boolean (transient retries-exhausted OR permanent immediate)", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["subagent:delivery_deadlettered"] = {
+      runId: "run-9",
+      channelType: "slack",
+      attempt: 3,
+      transient: false,
+      timestamp: Date.now(),
+    };
+
+    bus.on("subagent:delivery_deadlettered", handler);
+    bus.emit("subagent:delivery_deadlettered", payload);
+
+    expect(handler).toHaveBeenCalledWith(payload);
+    const r = handler.mock.calls[0]![0] as EventMap["subagent:delivery_deadlettered"];
+    expect(r.runId).toBe("run-9");
+    expect(r.attempt).toBe(3);
+    expect(r.transient).toBe(false);
+  });
+
+  it("payload carries exactly the 5 counts/ids keys — no body/text/error", () => {
+    const payload: EventMap["subagent:delivery_deadlettered"] = {
+      runId: "r",
+      channelType: "irc",
+      attempt: 0,
+      transient: true,
+      timestamp: 7,
+    };
+    expect(Object.keys(payload).sort()).toEqual(
+      ["attempt", "channelType", "runId", "timestamp", "transient"].sort(),
+    );
+
+    const src = readFileSync(resolve(here, "./events-orchestration.ts"), "utf8");
+    const match = src.match(/"subagent:delivery_deadlettered":\s*\{[\s\S]*?\n\s*\};/);
+    expect(match, "subagent:delivery_deadlettered event block must exist").toBeTruthy();
+    const block = match![0];
+    for (const forbidden of ["announcementText", "text", "err", "error", "lastError", "body", "content", "response", "result"]) {
+      expect(block, `no \`${forbidden}:\` field`).not.toMatch(
+        new RegExp(`^\\s*(?:readonly\\s+)?${forbidden}\\??:`, "m"),
+      );
+    }
+  });
+});
+
 describe("graph:node_updated enriched with tokensUsed/cost (BUDGET-03)", () => {
   it("carries optional tokensUsed and cost and a listener reads them", () => {
     const bus = new TypedEventBus();

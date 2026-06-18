@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { resolve, dirname } from "node:path";
 import { AgentToAgentConfigSchema, SecurityConfigSchema } from "./schema-security.js";
 import type { CredentialStorageMode } from "./schema-security.js";
+
+const here = dirname(fileURLToPath(import.meta.url));
 
 // ---------------------------------------------------------------------------
 // SecurityConfigSchema.storage — RED tests (added before production patch)
@@ -168,5 +173,66 @@ describe("AgentToAgentConfigSchema.tokenBudget", () => {
     if (result.success) {
       expect(result.data.agentToAgent.tokenBudget).toBeNull();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AgentToAgentConfigSchema.delivery.maxRetries (DELIVERY-01/02) — max transient
+// delivery retries before dead-lettering. Co-located under the existing
+// security.agentToAgent section (D1), so NO new SECTION_REGISTRY entry. Every
+// field .default() (AGENTS.md §6.4): parsing `{}` yields delivery.maxRetries=3.
+// ---------------------------------------------------------------------------
+
+describe("AgentToAgentConfigSchema.delivery.maxRetries", () => {
+  it("defaults to 3 when delivery is omitted entirely", () => {
+    const result = AgentToAgentConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.delivery.maxRetries).toBe(3);
+    }
+  });
+
+  it("defaults to 3 when delivery is present but maxRetries is omitted", () => {
+    const result = AgentToAgentConfigSchema.safeParse({ delivery: {} });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.delivery.maxRetries).toBe(3);
+    }
+  });
+
+  it("accepts the in-range boundary values 0 and 10", () => {
+    for (const value of [0, 10]) {
+      const result = AgentToAgentConfigSchema.safeParse({ delivery: { maxRetries: value } });
+      expect(result.success, `Expected maxRetries ${value} to be accepted`).toBe(true);
+      if (result.success) {
+        expect(result.data.delivery.maxRetries).toBe(value);
+      }
+    }
+  });
+
+  it("rejects out-of-range values 11 (>max 10) and -1 (<min 0)", () => {
+    expect(AgentToAgentConfigSchema.safeParse({ delivery: { maxRetries: 11 } }).success).toBe(false);
+    expect(AgentToAgentConfigSchema.safeParse({ delivery: { maxRetries: -1 } }).success).toBe(false);
+  });
+
+  it("rejects a fractional value (int only)", () => {
+    expect(AgentToAgentConfigSchema.safeParse({ delivery: { maxRetries: 2.5 } }).success).toBe(false);
+  });
+
+  it("is present in SecurityConfigSchema parsed output defaulting to 3", () => {
+    const result = SecurityConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.agentToAgent.delivery.maxRetries).toBe(3);
+    }
+  });
+
+  it("adds ZERO new SECTION_REGISTRY entries — delivery nests in the existing security.agentToAgent section (D1)", () => {
+    // The delivery field is a nested object under the already-registered
+    // `security.agentToAgent` section. There must be no `delivery` token in the
+    // section registry — a new registry entry would be a churn regression.
+    const registrySrc = readFileSync(resolve(here, "./section-registry.ts"), "utf8");
+    expect(registrySrc).not.toMatch(/['"`]delivery['"`]/);
+    expect(registrySrc).not.toMatch(/maxRetries/);
   });
 });

@@ -65,6 +65,36 @@ export interface OrchestrationEvents {
     timestamp: number;
   };
 
+  /**
+   * A transient sub-agent completion delivery failed and was retried (DELIVERY-02/03).
+   * Counts/ids only — NEVER announcement text or the error string (AGENTS.md §2.7).
+   * Mirrors subagent:budget_exceeded's counts/ids/typed-tag discipline.
+   */
+  "subagent:delivery_retried": {
+    runId: string;
+    channelType: string;
+    /** 1-based retry attempt number. */
+    attempt: number;
+    /** Closed-union tag: a retry is always for a transient failure. */
+    transient: true;
+    timestamp: number;
+  };
+
+  /**
+   * A sub-agent completion delivery was dead-lettered after exhausting retries
+   * (transient) or immediately (permanent) (DELIVERY-02/03). Counts/ids only (§2.7) —
+   * NEVER announcement text or the error string.
+   */
+  "subagent:delivery_deadlettered": {
+    runId: string;
+    channelType: string;
+    /** Attempts made before dead-lettering (0 for an immediate permanent dead-letter). */
+    attempt: number;
+    /** Closed-union tag: was the underlying failure classified transient (retries exhausted) or permanent (immediate). */
+    transient: boolean;
+    timestamp: number;
+  };
+
   /** Graph reached terminal state (completed, failed, or cancelled) */
   "graph:completed": {
     graphId: string;
