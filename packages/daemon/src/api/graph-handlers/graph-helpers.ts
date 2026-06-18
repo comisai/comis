@@ -27,6 +27,11 @@ import {
   systemGetEnv,
   systemNowMs,
 } from "@comis/core";
+// AUTHOR-01 (Phase 174-03): the daemon consumes the injected matcher's result
+// types (the matcher fn itself is imported only at the rpc-dispatch composition
+// site and injected via deps.repairMatch — never a direct import in this pure
+// helper). Type-only imports introduce no runtime daemon→agent coupling.
+import type { CapabilityClass, TemplateMatch, CanonicalTemplatePattern } from "@comis/agent";
 import { z } from "zod";
 
 // ---------------------------------------------------------------------------
@@ -67,7 +72,7 @@ export type GraphHandlerDeps = OrchestratorApiDeps & {
    */
   resolveCapabilityClass?: (
     agentId: string | undefined,
-  ) => import("@comis/agent").CapabilityClass | undefined;
+  ) => CapabilityClass | undefined;
   /**
    * AUTHOR-01 (Phase 174-03): the orchestration.authoring gate
    * (config.orchestration.authoring). When `repairProducer` is true AND the
@@ -90,7 +95,7 @@ export type GraphHandlerDeps = OrchestratorApiDeps & {
    * mirroring the `resolveCapabilityClass` precedent. Returns a deterministic
    * "matched"/"ambiguous"/"no-match" verdict (no model reprompt).
    */
-  repairMatch?: (rawGraph: unknown) => import("@comis/agent").TemplateMatch;
+  repairMatch?: (rawGraph: unknown) => TemplateMatch;
 };
 
 /** A single validation issue returned to the LLM for self-correction. */
@@ -340,7 +345,7 @@ export async function buildGraphInput(
  */
 function emitGraphRepaired(
   repair: BuildGraphRepairContext,
-  pattern: import("@comis/agent").CanonicalTemplatePattern,
+  pattern: CanonicalTemplatePattern,
   nodeCount: number,
   capabilityClass: CapabilityClassParam,
 ): void {
