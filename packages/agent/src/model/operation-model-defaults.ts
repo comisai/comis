@@ -94,7 +94,15 @@ export function resolveOperationDefaults(provider: string): { fast?: string; mid
   if (!_nativeProviderSet.has(provider)) return {};
 
   const all = getModels(provider as KnownProvider);
-  const textCapable = all.filter((m) => m.input?.includes("text"));
+  const textCapableAll = all.filter((m) => m.input?.includes("text"));
+  // Operation-tier models must be PINNED, reproducible ids — EXCLUDE floating aliases
+  // (`*-latest`). An alias drifts as the provider re-points it and 404s outright once the
+  // provider retires it: the live 2026-06-18 fast-tier pick `claude-3-5-haiku-latest`
+  // returned an Anthropic `not_found_error`, which the cost-gated seams swallowed as an
+  // empty verdict (the outcome judge never fired). A dated id (`…-20241022`) is stable.
+  // Keep the aliased set as a fallback so a catalog that ONLY exposes aliases still resolves.
+  const pinned = textCapableAll.filter((m) => !m.id.endsWith("-latest"));
+  const textCapable = pinned.length > 0 ? pinned : textCapableAll;
 
   // Non-free models, sorted ascending by total cost.
   const priced = textCapable

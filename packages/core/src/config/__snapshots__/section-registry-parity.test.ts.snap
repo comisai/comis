@@ -976,7 +976,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
       },
       "enabled": true,
       "judge": {
-        "enabled": false
+        "enabled": true
       },
       "minConfidenceToLearn": 0.6,
       "reactionMap": {
@@ -1021,14 +1021,14 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   },
   {
     "default": {
-      "enabled": false
+      "enabled": true
     },
     "immutable": true,
     "path": "agents.learningOutcome.judge",
     "type": "object"
   },
   {
-    "default": false,
+    "default": true,
     "immutable": true,
     "path": "agents.learningOutcome.judge.enabled",
     "type": "boolean"
@@ -8414,7 +8414,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
           },
           "enabled": true,
           "judge": {
-            "enabled": false
+            "enabled": true
           },
           "minConfidenceToLearn": 0.6,
           "reactionMap": {
@@ -16652,7 +16652,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         },
         "enabled": true,
         "judge": {
-          "enabled": false
+          "enabled": true
         },
         "minConfidenceToLearn": 0.6,
         "reactionMap": {
@@ -16695,11 +16695,11 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         "judge": {
           "additionalProperties": false,
           "default": {
-            "enabled": false
+            "enabled": true
           },
           "properties": {
             "enabled": {
-              "default": false,
+              "default": true,
               "type": "boolean"
             }
           },
@@ -27675,7 +27675,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               },
               "enabled": true,
               "judge": {
-                "enabled": false
+                "enabled": true
               },
               "minConfidenceToLearn": 0.6,
               "reactionMap": {
@@ -27718,11 +27718,11 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "judge": {
                 "additionalProperties": false,
                 "default": {
-                  "enabled": false
+                  "enabled": true
                 },
                 "properties": {
                   "enabled": {
-                    "default": false,
+                    "default": true,
                     "type": "boolean"
                   }
                 },
@@ -31060,7 +31060,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             },
             "enabled": true,
             "judge": {
-              "enabled": false
+              "enabled": true
             },
             "minConfidenceToLearn": 0.6,
             "reactionMap": {

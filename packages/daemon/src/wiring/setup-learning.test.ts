@@ -1462,9 +1462,12 @@ describe("wireLearningOutcome — SINGLE-AGENT turn resolve via diagnostic:messa
 // (T-202-18 — promotion touches state/proof_count only; trust is structurally capped).
 describe("SURFACE-07 / SEC-01: the 202 daemon files add no execution path + no trust escalation", () => {
   const HERE = dirname(fileURLToPath(import.meta.url));
-  /** The 202 daemon source files (the promote/demote loop + the trend + the read-only surface). */
+  /** The 202 daemon source files (the promote/demote loop + the trend + the read-only surface).
+   *  The promote/demote loop body lives in setup-learning-skill-transitions.ts (extracted from
+   *  setup-learning.ts to stay under the 800-line cap); both are guarded. */
   const FILES_202 = [
     join(HERE, "setup-learning.ts"),
+    join(HERE, "setup-learning-skill-transitions.ts"),
     join(HERE, "setup-learning-skill-trend.ts"),
     join(HERE, "setup-agents", "learned-skill-surface.ts"),
   ];
@@ -1520,16 +1523,20 @@ describe("SURFACE-07 / SEC-01: the 202 daemon files add no execution path + no t
   it("the promote/demote loop calls ONLY the store transition methods (promoteByName/demoteByName) — no other store mutation", () => {
     // CR-01: the loop's only learnedSkillStore calls are the NAME-keyed
     // promoteByName()/demoteByName() (the carrier holds skill NAMES; the store
-    // resolves name→id internally). The surface calls list() for the read. Assert
-    // setup-learning.ts references promote/demote (by name) but NOT admit/evict
-    // (which would be a different, un-governed lifecycle write).
-    const src = stripComments(readFileSync(join(HERE, "setup-learning.ts"), "utf8"));
+    // resolves name→id internally). The surface calls list() for the read. The loop body
+    // lives in setup-learning-skill-transitions.ts (extracted from setup-learning.ts);
+    // assert it references promote/demote (by name) but NOT admit/evict (which would be a
+    // different, un-governed lifecycle write).
+    const src = stripComments(readFileSync(join(HERE, "setup-learning-skill-transitions.ts"), "utf8"));
     expect(src).toMatch(/\.promoteByName\(/);
     expect(src).toMatch(/\.demoteByName\(/);
     // The resolve seam never admits or evicts a skill (those are the synthesis/forget
-    // paths, not the reuse-outcome loop).
-    expect(/learnedSkillStore[^;]*\.admit\(/.test(src)).toBe(false);
-    expect(/learnedSkillStore[^;]*\.evict\(/.test(src)).toBe(false);
+    // paths, not the reuse-outcome loop) — guard BOTH the loop body and its parent.
+    const parent = stripComments(readFileSync(join(HERE, "setup-learning.ts"), "utf8"));
+    for (const s of [src, parent]) {
+      expect(/(?:learnedSkillStore|skillStore)[^;]*\.admit\(/.test(s)).toBe(false);
+      expect(/(?:learnedSkillStore|skillStore)[^;]*\.evict\(/.test(s)).toBe(false);
+    }
   });
 });
 
@@ -1699,6 +1706,263 @@ describe("CR-01: promote/demote drive the REAL learned-skill store via name→id
     expect(emitted("learning:outcome_observed"), "the resolve must have completed").toBe(true);
     // A 0-row promoteByName must NOT emit a non-zero count (RED on name-as-id: emits count 1).
     expect(emitted("learning:skill_promoted"), "an unmatched name must not emit learning:skill_promoted").toBe(false);
+  });
+});
+
+// ── OUTCOME-04: the LLM outcome-judge fallback for a CONVERSATIONAL turn ──
+//
+// A conversational turn (no tool/pipeline signal) resolves to `unknown` and would
+// otherwise derive NO learning. When the judge is enabled (default-on, opt-out) the
+// daemon runs ONE cheap-model pass over the turn transcript, observes a `source:"judge"`
+// row (reward CODE-capped ≤ 0.7), RE-RESOLVES, and uses the upgraded verdict for the
+// consume chain. The deterministic tool/pipeline tier ALWAYS out-ranks the judge at
+// fusion, so the judge runs ONLY on `unknown` (resolved turns skip it — bounds cost).
+//
+// RED on pre-patch HEAD: there is no judge upgrade — a single-agent turn whose resolve
+// is `unknown` stays unknown, observes no judge row, and rewards nothing.
+describe("wireLearningOutcome — LLM outcome-judge fallback on an unknown conversational turn (OUTCOME-04)", () => {
+  function diagnosticPayload(
+    over?: Partial<EventMap["diagnostic:message_processed"]>,
+  ): EventMap["diagnostic:message_processed"] {
+    return {
+      messageId: "msg-1",
+      channelId: "chan-1",
+      channelType: "telegram",
+      agentId: AGENT,
+      sessionKey: SESSION_KEY,
+      traceId: TRACE,
+      receivedAt: NOW,
+      executionDurationMs: 10,
+      deliveryDurationMs: 0,
+      totalDurationMs: 10,
+      tokensUsed: 5,
+      cost: 0,
+      success: true,
+      finishReason: "stop",
+      timestamp: NOW,
+      ...over,
+    };
+  }
+
+  /**
+   * A two-phase OutcomeSignalPort stub: resolve() returns the DETERMINISTIC verdict until
+   * a `source:"judge"` row is observed, then returns the UPGRADED verdict (mirrors the
+   * real adapter, where resolve() is a pure re-fusion that now sees the judge row).
+   */
+  function makeUpgradingStore(deterministic: ResolvedOutcome, upgraded: ResolvedOutcome) {
+    let judgeObserved = false;
+    const observe = vi.fn(async (obs: OutcomeObservation): Promise<Result<void, Error>> => {
+      if (obs.source === "judge") judgeObserved = true;
+      return ok(undefined);
+    });
+    const resolve = vi.fn(
+      async (): Promise<Result<ResolvedOutcome, Error>> => ok(judgeObserved ? upgraded : deterministic),
+    );
+    const prune = vi.fn(() => ({ changes: 0 }));
+    return { store: { observe, resolve, prune }, observe, resolve };
+  }
+
+  it("an UNKNOWN conversational turn + a judge `success` → observes a source:'judge' row (capped) and the consumed verdict becomes success", async () => {
+    const bus = new TypedEventBus();
+    const { store, observe, resolve } = makeUpgradingStore(
+      baseVerdict({ outcome: "unknown", confidence: 0, sources: [] }),
+      baseVerdict({ outcome: "success", confidence: 0.7, sources: ["judge"], recalledIds: ["m1"] }),
+    );
+    const us = mockUsefulnessStore();
+    const outcomeJudge = vi.fn(async () => ({ outcome: "success" as const, cappedConfidence: 0.7 }));
+    const readTurnTranscript = vi.fn(() => "user: please summarize\nassistant: here is the summary");
+    const emitSpy = vi.spyOn(bus, "emit");
+    wireLearningOutcome({
+      eventBus: bus,
+      outcomeStore: store,
+      usefulnessStore: us.store,
+      learningTuningEnabled: () => true,
+      learningForgettingEnabled: () => true,
+      clock: createFakeClock(NOW),
+      logger: createMockLogger(),
+      learningOutcomeEnabled: () => true,
+      outcomeJudge,
+      learningOutcomeJudgeEnabled: () => true,
+      readTurnTranscript,
+    });
+
+    bus.emit("diagnostic:message_processed", diagnosticPayload());
+    await flushMicrotasks();
+
+    // The judge ran over the transcript and a source:"judge" row was observed (capped reward).
+    expect(readTurnTranscript).toHaveBeenCalledTimes(1);
+    expect(outcomeJudge).toHaveBeenCalledTimes(1);
+    expect(outcomeJudge.mock.calls[0]![0]).toContain("summarize");
+    const judgeObs = observe.mock.calls.map((c) => c[0]).find((o) => o.source === "judge");
+    expect(judgeObs, "a source:'judge' observation must be written").toBeDefined();
+    expect(judgeObs!.outcome).toBe("success");
+    expect(judgeObs!.confidence).toBe(0.7); // the CODE-capped reward, never the raw self-report
+    expect(judgeObs!.trajectoryId).toBe(TRACE);
+    expect(judgeObs!.agentId).toBe(AGENT);
+
+    // resolve() ran TWICE — the initial unknown resolve, then the re-resolve after the judge row.
+    expect(resolve).toHaveBeenCalledTimes(2);
+
+    // The CONSUMED verdict is the upgraded `success` → the reward for the recalled id fired.
+    expect(us.recordUsage).toHaveBeenCalledTimes(1);
+    expect(us.recordUsage.mock.calls[0]![0]).toEqual(["m1"]);
+
+    // The emitted learning:outcome_observed reflects the upgraded verdict.
+    const emitted = emitSpy.mock.calls.find((c) => c[0] === "learning:outcome_observed");
+    expect(emitted).toBeDefined();
+    expect((emitted![1] as EventMap["learning:outcome_observed"]).outcome).toBe("success");
+  });
+
+  it("byte-identity: learningOutcomeJudgeEnabled => false → NO judge call, verdict stays unknown, no judge row", async () => {
+    const bus = new TypedEventBus();
+    const { store, observe, resolve } = makeUpgradingStore(
+      baseVerdict({ outcome: "unknown", confidence: 0, sources: [] }),
+      baseVerdict({ outcome: "success", confidence: 0.7, sources: ["judge"] }),
+    );
+    const us = mockUsefulnessStore();
+    const outcomeJudge = vi.fn(async () => ({ outcome: "success" as const, cappedConfidence: 0.7 }));
+    const readTurnTranscript = vi.fn(() => "user: hi\nassistant: hello");
+    wireLearningOutcome({
+      eventBus: bus,
+      outcomeStore: store,
+      usefulnessStore: us.store,
+      learningTuningEnabled: () => true,
+      learningForgettingEnabled: () => true,
+      clock: createFakeClock(NOW),
+      logger: createMockLogger(),
+      learningOutcomeEnabled: () => true,
+      outcomeJudge,
+      learningOutcomeJudgeEnabled: () => false, // judge OFF for this agent
+      readTurnTranscript,
+    });
+
+    bus.emit("diagnostic:message_processed", diagnosticPayload());
+    await flushMicrotasks();
+
+    expect(outcomeJudge).not.toHaveBeenCalled();
+    expect(readTurnTranscript).not.toHaveBeenCalled();
+    expect(observe.mock.calls.some((c) => c[0].source === "judge")).toBe(false);
+    expect(resolve).toHaveBeenCalledTimes(1); // only the initial resolve — no re-resolve
+    expect(us.recordUsage).not.toHaveBeenCalled(); // verdict stayed unknown → no reward
+  });
+
+  it("byte-identity: outcomeJudge absent (pre-judge caller) → an unknown turn stays unknown", async () => {
+    const bus = new TypedEventBus();
+    const { store, resolve } = makeUpgradingStore(
+      baseVerdict({ outcome: "unknown", confidence: 0, sources: [] }),
+      baseVerdict({ outcome: "success", confidence: 0.7, sources: ["judge"] }),
+    );
+    const us = mockUsefulnessStore();
+    // NO outcomeJudge / learningOutcomeJudgeEnabled / readTurnTranscript deps.
+    wireLearningOutcome({
+      eventBus: bus,
+      outcomeStore: store,
+      usefulnessStore: us.store,
+      learningTuningEnabled: () => true,
+      learningForgettingEnabled: () => true,
+      clock: createFakeClock(NOW),
+      logger: createMockLogger(),
+      learningOutcomeEnabled: () => true,
+    });
+
+    bus.emit("diagnostic:message_processed", diagnosticPayload());
+    await flushMicrotasks();
+
+    expect(resolve).toHaveBeenCalledTimes(1); // no re-resolve
+    expect(us.recordUsage).not.toHaveBeenCalled();
+  });
+
+  it("a DETERMINISTIC success verdict does NOT call the judge (only unknown triggers it — bounds cost)", async () => {
+    const bus = new TypedEventBus();
+    // resolve already yields a deterministic success — the judge must never run.
+    const { store } = makeStubStore(baseVerdict({ outcome: "success", sources: ["tool"], recalledIds: ["m1"] }));
+    const outcomeJudge = vi.fn(async () => ({ outcome: "failure" as const, cappedConfidence: 0.7 }));
+    const readTurnTranscript = vi.fn(() => "user: do x\nassistant: done");
+    wireLearningOutcome({
+      eventBus: bus,
+      outcomeStore: store,
+      usefulnessStore: mockUsefulnessStore().store,
+      learningTuningEnabled: () => true,
+      learningForgettingEnabled: () => true,
+      clock: createFakeClock(NOW),
+      logger: createMockLogger(),
+      learningOutcomeEnabled: () => true,
+      outcomeJudge,
+      learningOutcomeJudgeEnabled: () => true,
+      readTurnTranscript,
+    });
+
+    bus.emit("diagnostic:message_processed", diagnosticPayload());
+    await flushMicrotasks();
+
+    expect(outcomeJudge).not.toHaveBeenCalled();
+    expect(readTurnTranscript).not.toHaveBeenCalled();
+  });
+
+  it("is non-fatal: a judge that THROWS keeps the unknown verdict and does not throw out of the handler", async () => {
+    const bus = new TypedEventBus();
+    const { store, observe, resolve } = makeUpgradingStore(
+      baseVerdict({ outcome: "unknown", confidence: 0, sources: [] }),
+      baseVerdict({ outcome: "success", confidence: 0.7, sources: ["judge"] }),
+    );
+    const logger = createMockLogger();
+    const outcomeJudge = vi.fn(async () => {
+      throw new Error("model resolution failed");
+    });
+    wireLearningOutcome({
+      eventBus: bus,
+      outcomeStore: store,
+      usefulnessStore: mockUsefulnessStore().store,
+      learningTuningEnabled: () => true,
+      learningForgettingEnabled: () => true,
+      clock: createFakeClock(NOW),
+      logger,
+      learningOutcomeEnabled: () => true,
+      outcomeJudge,
+      learningOutcomeJudgeEnabled: () => true,
+      readTurnTranscript: () => "user: x\nassistant: y",
+    });
+
+    expect(() => bus.emit("diagnostic:message_processed", diagnosticPayload())).not.toThrow();
+    await flushMicrotasks();
+
+    expect(outcomeJudge).toHaveBeenCalledTimes(1);
+    expect(observe.mock.calls.some((c) => c[0].source === "judge")).toBe(false); // no row written
+    expect(resolve).toHaveBeenCalledTimes(1); // no re-resolve
+    const warn = logger.warn.mock.calls.find(
+      (c) =>
+        typeof (c[0] as { hint?: string }).hint === "string" &&
+        (c[0] as { errorKind?: string }).errorKind !== undefined,
+    );
+    expect(warn, "a judge throw must WARN with hint+errorKind").toBeDefined();
+  });
+
+  it("an empty transcript → the judge never runs (no content to score), verdict stays unknown", async () => {
+    const bus = new TypedEventBus();
+    const { store, resolve } = makeUpgradingStore(
+      baseVerdict({ outcome: "unknown", confidence: 0, sources: [] }),
+      baseVerdict({ outcome: "success", confidence: 0.7, sources: ["judge"] }),
+    );
+    const outcomeJudge = vi.fn(async () => ({ outcome: "success" as const, cappedConfidence: 0.7 }));
+    wireLearningOutcome({
+      eventBus: bus,
+      outcomeStore: store,
+      usefulnessStore: mockUsefulnessStore().store,
+      learningTuningEnabled: () => false,
+      learningForgettingEnabled: () => false,
+      clock: createFakeClock(NOW),
+      logger: createMockLogger(),
+      learningOutcomeEnabled: () => true,
+      outcomeJudge,
+      learningOutcomeJudgeEnabled: () => true,
+      readTurnTranscript: () => "", // empty transcript
+    });
+
+    bus.emit("diagnostic:message_processed", diagnosticPayload());
+    await flushMicrotasks();
+
+    expect(outcomeJudge).not.toHaveBeenCalled();
+    expect(resolve).toHaveBeenCalledTimes(1);
   });
 });
 

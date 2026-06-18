@@ -32,8 +32,11 @@ import { z } from "zod";
  *   member — deterministic signals always outrank the judge via fusion precedence.
  * - reactionMap: the success/failure emoji → outcome map (consumed by the Phase
  *   199 reaction source; declared here so the config shape is stable).
- * - judge: the OPTIONAL cost-gated `fast`-tier LLM judge (default disabled — no
- *   LLM call, no cost; enabling it is a second, separate opt-in).
+ * - judge: the cost-gated `fast`-tier LLM judge. Default ENABLED (opt-out) — it is
+ *   the FALLBACK outcome source for a CONVERSATIONAL turn (one with no deterministic
+ *   tool/pipeline signal, which would otherwise resolve to `unknown` and derive no
+ *   learning). It runs ONE cheap-model pass ONLY when the deterministic resolve is
+ *   `unknown` (bounds the cost) and is force-disabled under `memory.costFeatures.enabled`.
  * - correction: the cost-gated correction detector (Phase 199, CORRECT-01).
  *   Default ENABLED (opt-out) — untrusted follow-up text is `wrapExternalContent`-
  *   fenced before the `fast`-tier judge; force-disabled under `memory.costFeatures.enabled`.
@@ -55,8 +58,13 @@ export const LearningOutcomeConfigSchema = z.strictObject({
       failure: z.array(z.string()).default(["👎", "❌"]),
     })
     .default(() => ({ success: ["👍", "✅"], failure: ["👎", "❌"] })),
-  /** OPTIONAL cost-gated `fast`-tier LLM judge. Default disabled — no LLM call, no cost. */
-  judge: z.strictObject({ enabled: z.boolean().default(false) }).default(() => ({ enabled: false })),
+  /** Cost-gated `fast`-tier LLM judge. Default ENABLED (opt-out) — the FALLBACK source
+   *  that learns from a CONVERSATIONAL turn (an `unknown` deterministic resolve). Runs ONE
+   *  cheap-model pass only on `unknown` (bounds cost); force-disabled under
+   *  `memory.costFeatures.enabled`. (Zod v4 does NOT re-run an inner field default when the
+   *  OUTER `.default()` supplies a populated object, so the outer default must ALSO set
+   *  `enabled: true` — otherwise an absent `judge` block would read `undefined`, not `true`.) */
+  judge: z.strictObject({ enabled: z.boolean().default(true) }).default(() => ({ enabled: true })),
   /** Cost-gated correction detector (Phase 199, CORRECT-01). Default: TRUE (opt-out).
    *  A follow-up "no, do X instead" turn is classified via the cheap `fast`-tier judge (untrusted
    *  text is `wrapExternalContent`-fenced) and emits a `corrected` soft-failure of the prior
