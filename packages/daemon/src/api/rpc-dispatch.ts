@@ -222,6 +222,14 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
       // load-bearing guard against the 172-WR-02 silent-dead-metric class
       // (T-173-13): without this line every emit fail-defaults to "unknown".
       resolveCapabilityClass: (agentId) =>
+        // IN-02 (Phase 173 review): a dynamic-key READ (not a write) on the typed
+        // Record<string, PerAgentConfig>; the key is the server-trusted agentId.
+        // A key like "__proto__" returns the prototype's `provider` (undefined) →
+        // fail-safes to "unknown", never a pollution write. No eslint-disable is
+        // needed (unlike the sibling object-injection sites): security/detect-
+        // object-injection does NOT flag a logical-expression key (`agentId ?? ""`),
+        // so adding the directive here is reported as unused — this plain comment
+        // documents the intentional safe read instead.
         deps.getProviderCapabilityClass?.(deps.agents[agentId ?? ""]?.provider),
     }) : {}),
     // approval-handlers consumes WorkspaceApiDeps; spread `...deps` so the
