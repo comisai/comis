@@ -33,6 +33,7 @@ The defining assumption is load-bearing: **the LLM agent is treated as a potenti
 | SSRF from web tools | `validateUrl()` (blocks private/loopback/link-local + cloud-metadata ranges) plus kernel broker-only egress |
 | SSRF via MCP server redirects | The in-process MCP client `validateUrl()`-checks every cross-host redirect target before following it (same-host redirects stay on the operator-configured server); a malicious server cannot bounce the daemon to metadata/localhost/RFC-1918 |
 | Memory poisoning | `validateMemoryWrite()` (block / downgrade-to-`external` / store) and trust-ranked recall |
+| Sandbox downgrade by delegation (a confined agent spawning a less-confined child) | Fail-closed **no-downgrade invariant** on the sub-agent spawn path -- a child spawn is refused *before any run or session is created* if its resolved posture is less confined than its spawner's on any dimension (`comparePosture` ranks exec / filesystem / network / uid; missing config folds to the most-confined value). Controlled by `security.agentToAgent.sandboxNoDowngrade` (default on) and audited via the `security:sandbox_downgrade_refused` event |
 | Malicious or vulnerable MCP servers | OSV pre-spawn scan, sandboxed spawn, circuit breakers; default-deny MCP server endpoint; cross-host redirect SSRF guard (above) |
 | Supply-chain tampering | Exact-pinned deps, bundled private packages, sigstore provenance, `pnpm audit`, CodeQL |
 | Path traversal / symlink escape | `safePath()` (raw `path.join` is ESLint-banned) |
@@ -85,8 +86,13 @@ Severity is the impact *if* the precondition is met.
 | Credential broker does not broker OAuth / subscription CLIs | Medium | Only header/query API-key + bearer injection today |
 | DNS-rebinding TOCTOU window in `validateUrl` | Low–Medium | Broker-only egress eliminates it for sandboxed tools |
 | File-size governance debt | Low | Tracked via the shrink-only `fileSizeAllowlist` |
+| No-downgrade invariant does not yet cover the terminal-driver `session_create` path | Low | Sub-agent spawns are enforced (above); the terminal `session_create` posture check is a scoped follow-up (the skills layer cannot reach the spawner's posture cleanly). Terminal scope is operator-declared per allow-entry and the create path is already fail-closed on the sandbox provider + consent gate, so there is no direct terminal analogue of the spawn-path escalation today |
 
 Self-reported benchmark figures (memory accuracy, cache savings) are self-authored, small-N, and LLM-judged — directional, not independent guarantees.
+
+<Note>
+  **No-downgrade posture model.** The invariant is enforced over the four config-derived confinement dimensions — exec, filesystem, network, uid. For the sub-agent spawn path today the **exec sandbox** dimension is the active one (exec `always` is more confined than exec `never`); filesystem/network/uid are present in the comparator but inert until the deferred terminal path lands. The design's "broker-only parent → open child" phrasing refers to a *runtime* sandbox network mode, not an operator config field (no `broker-only`/`open` config key exists); in operator config the same escalation is expressed as a more-confined parent (e.g. exec `always`) spawning a less-confined child (exec `never`), which is what `comparePosture` refuses.
+</Note>
 
 ## Reporting a vulnerability
 

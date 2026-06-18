@@ -180,6 +180,10 @@ skills:
 For production deployments, pair content scanning with a restrictive tool policy profile. Content scanning catches malicious patterns at load time, while tool policy limits what a skill can do at runtime.
 </Tip>
 
+### Sandbox no-downgrade invariant
+
+A confined agent must not be able to escalate by *delegation* — spawning a sub-agent that runs with a *less* confined sandbox than itself. Comis enforces a fail-closed **no-downgrade invariant** on the sub-agent spawn path: a child spawn is **refused before any run or session is created** when the child's resolved sandbox posture would be less confined than its spawner's on any dimension (exec / filesystem / network / uid), and a `security:sandbox_downgrade_refused` event is emitted. Missing posture config folds to the most-confined value, so a posture is never inferred more permissive than reality. For sub-agents today the **exec sandbox** dimension is the active one; the other dimensions are reserved for the deferred terminal path. The invariant is on by default and controlled by [`security.agentToAgent.sandboxNoDowngrade`](/reference/config-yaml); see the [Threat Model](/security/threat-model) for the trust-boundary rationale.
+
 ## MCP Server Sandboxing
 
 MCP (Model Context Protocol) integrations connect your agents to external tools and data sources. Because MCP servers run as separate processes, they receive the same sandboxing treatment as other skills:

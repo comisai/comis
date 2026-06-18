@@ -150,6 +150,7 @@ Skill lifecycle, tool execution, audit logging, observability (tokens and latenc
 | `security:injection_detected` | timestamp, source, patterns, riskLevel, agentId, sessionKey, traceId |
 | `security:injection_rate_exceeded` | timestamp, sessionKey, count, threshold, action |
 | `security:memory_tainted` | timestamp, agentId, originalTrustLevel, adjustedTrustLevel, patterns, blocked |
+| `security:sandbox_downgrade_refused` | timestamp, parentAgentId, childAgentId, violatedDimensions, parentPosture, childPosture |
 | `sender:trust_resolved` | agentId, senderId, trustLevel, displayMode, sessionKey, timestamp |
 | `sep:plan_extracted` | agentId, sessionKey, stepCount, timestamp |
 | `skill:created` | skillName, scope, agentId, timestamp |
@@ -187,6 +188,8 @@ Subscribe to this event for driver-level monitoring, logging, or triggering down
 - `subagent:delivery_deadlettered` fires when a delivery is finally **dead-lettered** -- either after exhausting `security.agentToAgent.delivery.maxRetries` retries for a transient failure, or immediately for a permanent one. `attempt` is the number of retries that were exhausted (`0` for an immediate permanent dead-letter), and `transient` records whether the dead-letter followed an exhausted transient retry (`true`) or a permanent failure (`false`).
 
 See [Resilience: Self-healing delivery retries](/agents/resilience#self-healing-delivery-retries) for the transient/permanent classification and the backoff schedule.
+
+**Sandbox no-downgrade refusal:** `security:sandbox_downgrade_refused` fires when the fail-closed [no-downgrade invariant](/security/threat-model) refuses a sub-agent spawn because the child's resolved sandbox posture would be less confined than its spawner's. `parentAgentId`/`childAgentId` are agent ids; `violatedDimensions` lists the offending dimensions (`exec` / `filesystem` / `network` / `uid`); `parentPosture` and `childPosture` carry each dimension as a closed enum **label** (e.g. exec `always`/`never`). The payload is enum labels and ids only -- never filesystem paths, network hosts, uid numbers, or any credential value, so it does not leak the operator's sandbox topology. Gated by [`security.agentToAgent.sandboxNoDowngrade`](/reference/config-yaml) (default on).
 
 **Cache cost fields** (added in v58.0): The `observability:token_usage` event includes prompt caching data when the provider supports it. `cost.cacheRead` and `cost.cacheWrite` are dollar costs for cached token reads/writes. `savedVsUncached` is the net savings compared to uncached pricing (positive = money saved). `cacheEligible` indicates whether the model supports prompt caching. `sessionKey` identifies the conversation session for per-session cost aggregation.
 
