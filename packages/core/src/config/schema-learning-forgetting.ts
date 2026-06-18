@@ -13,11 +13,12 @@
  * `strengthThreshold` (0.2) is deliberately DISTINCT from
  * `MemoryLifecycleConfigSchema.epsilonPrune` (0.05) — resolved decision #3.
  *
- * DEFAULT OFF — like `learningTuning`/`learningOutcome`, `learningForgetting`
- * defaults `enabled: false`. Enabling it is a deliberate operator opt-in, and the
- * phase's byte-identity guarantee depends on the default being disabled. The
- * master kill-switch `memory.costFeatures.enabled` force-disables it at the
- * daemon registration site (a later plan).
+ * DEFAULT ON (opt-out) — `learningForgetting` defaults `enabled: true`, like the
+ * surrounding `memory*` cost features, so wrongness-based forgetting works out of
+ * the box. Safe to default-on now that outcome fusion uses RECENCY (a recovered
+ * turn resolves to `success`, so a transient tool failure no longer wrongly decays
+ * the memories it used). The master kill-switch `memory.costFeatures.enabled`
+ * force-disables it; set this `enabled: false` to opt a single agent out.
  *
  * Strict (`z.strictObject`) with `.default()` on EVERY field — including the
  * nested `eviction` object, which carries its own `.default()` (Playbook 6.4).
@@ -34,7 +35,7 @@ import { z } from "zod";
  * LearningForgettingConfigSchema: Zod schema for the per-agent soft-eviction policy.
  *
  * Fields:
- * - enabled: master opt-in for this agent (default FALSE — byte-identity precondition).
+ * - enabled: master switch for this agent (default TRUE / opt-out — on out of the box).
  *   Force-disabled when `memory.costFeatures.enabled: false`.
  * - eviction: the soft-eviction sub-policy (its own `.default()`):
  *   - enabled: whether the sweep applies soft eviction at all (default true; the
@@ -45,9 +46,9 @@ import { z } from "zod";
  *   when computing decayed strength (more failures → lower strength → earlier eviction).
  */
 export const LearningForgettingConfigSchema = z.strictObject({
-  /** Enable wrongness-based soft eviction for this agent. Default: false (the phase's
-   *  byte-identity precondition). Force-disabled when `memory.costFeatures.enabled: false`. */
-  enabled: z.boolean().default(false),
+  /** Enable wrongness-based soft eviction for this agent. Default: TRUE (opt-out — on
+   *  out of the box). Force-disabled when `memory.costFeatures.enabled: false`. */
+  enabled: z.boolean().default(true),
   /** Soft-eviction sub-policy. Has its own `.default()` so a partial config fills it in. */
   eviction: z
     .strictObject({

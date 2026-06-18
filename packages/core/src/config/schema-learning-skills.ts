@@ -8,13 +8,12 @@
  * §WS2 / §7). A read-only validated procedure auto-admits; a mutating one routes
  * through the approval gate.
  *
- * DEFAULT OFF — unlike every surrounding `memory*` cost feature (which defaults
- * ON / opt-out), `learningSkills` defaults `enabled: false`. Enabling it is a
- * deliberate operator opt-in, and the phase's byte-identity guarantee (zero
- * behavior change with the default config) depends on the default being
- * disabled. The master kill-switch `memory.costFeatures.enabled` force-disables
- * it at the registration site (a later plan), exactly like the other cost
- * features.
+ * DEFAULT ON (opt-out) — `learningSkills` defaults `enabled: true`, like the
+ * surrounding `memory*` cost features, so procedural learning works out of the
+ * box. The master kill-switch `memory.costFeatures.enabled` force-disables it (and
+ * every cost feature) at the registration site; set this `enabled: false` to opt a
+ * single agent out. (Was opt-in during the v2.26 phased rollout; graduated to
+ * default-on once the synthesis→validate→admit→surface loop was verified.)
  *
  * Strict (`z.strictObject`) with `.default()` on EVERY field (Playbook 6.4) —
  * consumers see a fully-defaulted block; no `config.x ?? fallback` at call sites.
@@ -28,8 +27,8 @@ import { z } from "zod";
  * LearningSkillsConfigSchema: Zod schema for the per-agent procedural-learning loop.
  *
  * Fields (design §7, verbatim):
- * - enabled: master opt-in for this agent (default FALSE — the byte-identity
- *   guarantee depends on it; force-disabled when `memory.costFeatures.enabled: false`).
+ * - enabled: master switch for this agent (default TRUE / opt-out — on out of the
+ *   box; force-disabled when `memory.costFeatures.enabled: false`).
  * - validation.requireReproduction: when true, a candidate with embedded scripts
  *   must REPRODUCE its effect in the sandbox before admission (fail-closed; the
  *   honest-degradation `static-only` coverage admits only read-only candidates).
@@ -40,9 +39,9 @@ import { z } from "zod";
  * - promoteAtProofCount: verified-success count at which a candidate promotes to active.
  */
 export const LearningSkillsConfigSchema = z.strictObject({
-  /** Enable procedural learning for this agent. Default: false (the byte-identity
-   *  guarantee depends on it). Force-disabled when `memory.costFeatures.enabled: false`. */
-  enabled: z.boolean().default(false),
+  /** Enable procedural learning for this agent. Default: TRUE (opt-out — on out of
+   *  the box). Force-disabled when `memory.costFeatures.enabled: false`. */
+  enabled: z.boolean().default(true),
   /** Sandbox-validation policy. `requireReproduction` (default true) gates admission of a
    *  scripted candidate on a reproduced effect in the jail (fail-closed). */
   validation: z

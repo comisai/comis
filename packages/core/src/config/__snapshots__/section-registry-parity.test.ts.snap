@@ -925,7 +925,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   },
   {
     "default": {
-      "enabled": false,
+      "enabled": true,
       "eviction": {
         "enabled": true,
         "strengthThreshold": 0.2
@@ -937,7 +937,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "object"
   },
   {
-    "default": false,
+    "default": true,
     "immutable": true,
     "path": "agents.learningForgetting.enabled",
     "type": "boolean"
@@ -972,9 +972,9 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   {
     "default": {
       "correction": {
-        "enabled": false
+        "enabled": true
       },
-      "enabled": false,
+      "enabled": true,
       "judge": {
         "enabled": false
       },
@@ -1001,20 +1001,20 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   },
   {
     "default": {
-      "enabled": false
+      "enabled": true
     },
     "immutable": true,
     "path": "agents.learningOutcome.correction",
     "type": "object"
   },
   {
-    "default": false,
+    "default": true,
     "immutable": true,
     "path": "agents.learningOutcome.correction.enabled",
     "type": "boolean"
   },
   {
-    "default": false,
+    "default": true,
     "immutable": true,
     "path": "agents.learningOutcome.enabled",
     "type": "boolean"
@@ -1093,7 +1093,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
         "requireForMutating": true
       },
       "autoAdmitReadOnly": true,
-      "enabled": false,
+      "enabled": true,
       "minConfidence": 0.7,
       "promoteAtProofCount": 3,
       "validation": {
@@ -1125,7 +1125,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "boolean"
   },
   {
-    "default": false,
+    "default": true,
     "immutable": true,
     "path": "agents.learningSkills.enabled",
     "type": "boolean"
@@ -1158,7 +1158,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   },
   {
     "default": {
-      "enabled": false,
+      "enabled": true,
       "exploration": 0.1,
       "learner": "bandit",
       "perIntent": true
@@ -1168,7 +1168,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "object"
   },
   {
-    "default": false,
+    "default": true,
     "immutable": true,
     "path": "agents.learningTuning.enabled",
     "type": "boolean"
@@ -1221,7 +1221,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
       "dedupThreshold": 0.9,
       "enabled": true,
       "generalize": {
-        "enabled": false,
+        "enabled": true,
         "minDistinctContexts": 3
       },
       "maxCandidatesPerRun": 200,
@@ -1261,7 +1261,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   },
   {
     "default": {
-      "enabled": false,
+      "enabled": true,
       "minDistinctContexts": 3
     },
     "immutable": true,
@@ -1269,7 +1269,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "object"
   },
   {
-    "default": false,
+    "default": true,
     "immutable": true,
     "path": "agents.memoryConsolidation.generalize.enabled",
     "type": "boolean"
@@ -1317,6 +1317,16 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "number"
   },
   {
+    "default": {
+      "durableCap": 1000,
+      "enabled": true,
+      "ephemeralCap": 500,
+      "epsilonPrune": 0.05,
+      "maxDormantDays": 90,
+      "schedule": "0 9 * * *",
+      "thetaDemote": 0.3,
+      "thetaPromote": 0.7
+    },
     "immutable": true,
     "path": "agents.memoryLifecycle",
     "type": "object"
@@ -1328,7 +1338,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "integer"
   },
   {
-    "default": false,
+    "default": true,
     "immutable": true,
     "path": "agents.memoryLifecycle.enabled",
     "type": "boolean"
@@ -1525,7 +1535,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   },
   {
     "default": {
-      "enabled": false,
+      "enabled": true,
       "maxCandidatesPerRun": 200,
       "schedule": "0 6 * * *"
     },
@@ -1534,7 +1544,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "object"
   },
   {
-    "default": false,
+    "default": true,
     "immutable": true,
     "path": "agents.memoryTripleExtraction.enabled",
     "type": "boolean"
@@ -8391,7 +8401,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
           "maxActiveCaches": 20
         },
         "learningForgetting": {
-          "enabled": false,
+          "enabled": true,
           "eviction": {
             "enabled": true,
             "strengthThreshold": 0.2
@@ -8400,9 +8410,9 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
         },
         "learningOutcome": {
           "correction": {
-            "enabled": false
+            "enabled": true
           },
-          "enabled": false,
+          "enabled": true,
           "judge": {
             "enabled": false
           },
@@ -8428,7 +8438,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
             "requireForMutating": true
           },
           "autoAdmitReadOnly": true,
-          "enabled": false,
+          "enabled": true,
           "minConfidence": 0.7,
           "promoteAtProofCount": 3,
           "validation": {
@@ -8436,7 +8446,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
           }
         },
         "learningTuning": {
-          "enabled": false,
+          "enabled": true,
           "exploration": 0.1,
           "learner": "bandit",
           "perIntent": true
@@ -8450,7 +8460,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
           "dedupThreshold": 0.9,
           "enabled": true,
           "generalize": {
-            "enabled": false,
+            "enabled": true,
             "minDistinctContexts": 3
           },
           "maxCandidatesPerRun": 200,
@@ -8459,6 +8469,16 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
           "maxConsolidationTokens": 1024,
           "schedule": "30 3 * * *",
           "similarityThreshold": 0.82
+        },
+        "memoryLifecycle": {
+          "durableCap": 1000,
+          "enabled": true,
+          "ephemeralCap": 500,
+          "epsilonPrune": 0.05,
+          "maxDormantDays": 90,
+          "schedule": "0 9 * * *",
+          "thetaDemote": 0.3,
+          "thetaPromote": 0.7
         },
         "memoryOnlineTuning": {
           "enabled": true,
@@ -8486,7 +8506,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
           "schedule": "0 2 * * *"
         },
         "memoryTripleExtraction": {
-          "enabled": false,
+          "enabled": true,
           "maxCandidatesPerRun": 200,
           "schedule": "0 6 * * *"
         },
@@ -16574,7 +16594,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
     "learningForgetting": {
       "additionalProperties": false,
       "default": {
-        "enabled": false,
+        "enabled": true,
         "eviction": {
           "enabled": true,
           "strengthThreshold": 0.2
@@ -16583,7 +16603,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
       },
       "properties": {
         "enabled": {
-          "default": false,
+          "default": true,
           "type": "boolean"
         },
         "eviction": {
@@ -16628,9 +16648,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
       "additionalProperties": false,
       "default": {
         "correction": {
-          "enabled": false
+          "enabled": true
         },
-        "enabled": false,
+        "enabled": true,
         "judge": {
           "enabled": false
         },
@@ -16655,11 +16675,11 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         "correction": {
           "additionalProperties": false,
           "default": {
-            "enabled": false
+            "enabled": true
           },
           "properties": {
             "enabled": {
-              "default": false,
+              "default": true,
               "type": "boolean"
             }
           },
@@ -16669,7 +16689,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           "type": "object"
         },
         "enabled": {
-          "default": false,
+          "default": true,
           "type": "boolean"
         },
         "judge": {
@@ -16773,7 +16793,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           "requireForMutating": true
         },
         "autoAdmitReadOnly": true,
-        "enabled": false,
+        "enabled": true,
         "minConfidence": 0.7,
         "promoteAtProofCount": 3,
         "validation": {
@@ -16802,7 +16822,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           "type": "boolean"
         },
         "enabled": {
-          "default": false,
+          "default": true,
           "type": "boolean"
         },
         "minConfidence": {
@@ -16847,14 +16867,14 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
     "learningTuning": {
       "additionalProperties": false,
       "default": {
-        "enabled": false,
+        "enabled": true,
         "exploration": 0.1,
         "learner": "bandit",
         "perIntent": true
       },
       "properties": {
         "enabled": {
-          "default": false,
+          "default": true,
           "type": "boolean"
         },
         "exploration": {
@@ -16915,7 +16935,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         "dedupThreshold": 0.9,
         "enabled": true,
         "generalize": {
-          "enabled": false,
+          "enabled": true,
           "minDistinctContexts": 3
         },
         "maxCandidatesPerRun": 200,
@@ -16950,12 +16970,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         "generalize": {
           "additionalProperties": false,
           "default": {
-            "enabled": false,
+            "enabled": true,
             "minDistinctContexts": 3
           },
           "properties": {
             "enabled": {
-              "default": false,
+              "default": true,
               "type": "boolean"
             },
             "minDistinctContexts": {
@@ -17023,6 +17043,16 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
     },
     "memoryLifecycle": {
       "additionalProperties": false,
+      "default": {
+        "durableCap": 1000,
+        "enabled": true,
+        "ephemeralCap": 500,
+        "epsilonPrune": 0.05,
+        "maxDormantDays": 90,
+        "schedule": "0 9 * * *",
+        "thetaDemote": 0.3,
+        "thetaPromote": 0.7
+      },
       "properties": {
         "durableCap": {
           "default": 1000,
@@ -17031,7 +17061,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           "type": "integer"
         },
         "enabled": {
-          "default": false,
+          "default": true,
           "type": "boolean"
         },
         "ephemeralCap": {
@@ -17254,13 +17284,13 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
     "memoryTripleExtraction": {
       "additionalProperties": false,
       "default": {
-        "enabled": false,
+        "enabled": true,
         "maxCandidatesPerRun": 200,
         "schedule": "0 6 * * *"
       },
       "properties": {
         "enabled": {
-          "default": false,
+          "default": true,
           "type": "boolean"
         },
         "maxCandidatesPerRun": {
@@ -19923,7 +19953,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
     "learningForgetting",
     "learningSkills",
     "memoryTripleExtraction",
-    "memoryOnlineTuning"
+    "memoryOnlineTuning",
+    "memoryLifecycle"
   ],
   "type": "object"
 }"
@@ -27586,7 +27617,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "learningForgetting": {
             "additionalProperties": false,
             "default": {
-              "enabled": false,
+              "enabled": true,
               "eviction": {
                 "enabled": true,
                 "strengthThreshold": 0.2
@@ -27595,7 +27626,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             },
             "properties": {
               "enabled": {
-                "default": false,
+                "default": true,
                 "type": "boolean"
               },
               "eviction": {
@@ -27640,9 +27671,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "additionalProperties": false,
             "default": {
               "correction": {
-                "enabled": false
+                "enabled": true
               },
-              "enabled": false,
+              "enabled": true,
               "judge": {
                 "enabled": false
               },
@@ -27667,11 +27698,11 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "correction": {
                 "additionalProperties": false,
                 "default": {
-                  "enabled": false
+                  "enabled": true
                 },
                 "properties": {
                   "enabled": {
-                    "default": false,
+                    "default": true,
                     "type": "boolean"
                   }
                 },
@@ -27681,7 +27712,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "type": "object"
               },
               "enabled": {
-                "default": false,
+                "default": true,
                 "type": "boolean"
               },
               "judge": {
@@ -27785,7 +27816,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "requireForMutating": true
               },
               "autoAdmitReadOnly": true,
-              "enabled": false,
+              "enabled": true,
               "minConfidence": 0.7,
               "promoteAtProofCount": 3,
               "validation": {
@@ -27814,7 +27845,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "type": "boolean"
               },
               "enabled": {
-                "default": false,
+                "default": true,
                 "type": "boolean"
               },
               "minConfidence": {
@@ -27859,14 +27890,14 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "learningTuning": {
             "additionalProperties": false,
             "default": {
-              "enabled": false,
+              "enabled": true,
               "exploration": 0.1,
               "learner": "bandit",
               "perIntent": true
             },
             "properties": {
               "enabled": {
-                "default": false,
+                "default": true,
                 "type": "boolean"
               },
               "exploration": {
@@ -27927,7 +27958,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "dedupThreshold": 0.9,
               "enabled": true,
               "generalize": {
-                "enabled": false,
+                "enabled": true,
                 "minDistinctContexts": 3
               },
               "maxCandidatesPerRun": 200,
@@ -27962,12 +27993,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "generalize": {
                 "additionalProperties": false,
                 "default": {
-                  "enabled": false,
+                  "enabled": true,
                   "minDistinctContexts": 3
                 },
                 "properties": {
                   "enabled": {
-                    "default": false,
+                    "default": true,
                     "type": "boolean"
                   },
                   "minDistinctContexts": {
@@ -28035,6 +28066,16 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           },
           "memoryLifecycle": {
             "additionalProperties": false,
+            "default": {
+              "durableCap": 1000,
+              "enabled": true,
+              "ephemeralCap": 500,
+              "epsilonPrune": 0.05,
+              "maxDormantDays": 90,
+              "schedule": "0 9 * * *",
+              "thetaDemote": 0.3,
+              "thetaPromote": 0.7
+            },
             "properties": {
               "durableCap": {
                 "default": 1000,
@@ -28043,7 +28084,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "type": "integer"
               },
               "enabled": {
-                "default": false,
+                "default": true,
                 "type": "boolean"
               },
               "ephemeralCap": {
@@ -28266,13 +28307,13 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "memoryTripleExtraction": {
             "additionalProperties": false,
             "default": {
-              "enabled": false,
+              "enabled": true,
               "maxCandidatesPerRun": 200,
               "schedule": "0 6 * * *"
             },
             "properties": {
               "enabled": {
-                "default": false,
+                "default": true,
                 "type": "boolean"
               },
               "maxCandidatesPerRun": {
@@ -30935,7 +30976,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "learningForgetting",
           "learningSkills",
           "memoryTripleExtraction",
-          "memoryOnlineTuning"
+          "memoryOnlineTuning",
+          "memoryLifecycle"
         ],
         "type": "object"
       },
@@ -31005,7 +31047,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "maxActiveCaches": 20
           },
           "learningForgetting": {
-            "enabled": false,
+            "enabled": true,
             "eviction": {
               "enabled": true,
               "strengthThreshold": 0.2
@@ -31014,9 +31056,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           },
           "learningOutcome": {
             "correction": {
-              "enabled": false
+              "enabled": true
             },
-            "enabled": false,
+            "enabled": true,
             "judge": {
               "enabled": false
             },
@@ -31042,7 +31084,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "requireForMutating": true
             },
             "autoAdmitReadOnly": true,
-            "enabled": false,
+            "enabled": true,
             "minConfidence": 0.7,
             "promoteAtProofCount": 3,
             "validation": {
@@ -31050,7 +31092,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             }
           },
           "learningTuning": {
-            "enabled": false,
+            "enabled": true,
             "exploration": 0.1,
             "learner": "bandit",
             "perIntent": true
@@ -31064,7 +31106,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "dedupThreshold": 0.9,
             "enabled": true,
             "generalize": {
-              "enabled": false,
+              "enabled": true,
               "minDistinctContexts": 3
             },
             "maxCandidatesPerRun": 200,
@@ -31073,6 +31115,16 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "maxConsolidationTokens": 1024,
             "schedule": "30 3 * * *",
             "similarityThreshold": 0.82
+          },
+          "memoryLifecycle": {
+            "durableCap": 1000,
+            "enabled": true,
+            "ephemeralCap": 500,
+            "epsilonPrune": 0.05,
+            "maxDormantDays": 90,
+            "schedule": "0 9 * * *",
+            "thetaDemote": 0.3,
+            "thetaPromote": 0.7
           },
           "memoryOnlineTuning": {
             "enabled": true,
@@ -31100,7 +31152,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "schedule": "0 2 * * *"
           },
           "memoryTripleExtraction": {
-            "enabled": false,
+            "enabled": true,
             "maxCandidatesPerRun": 200,
             "schedule": "0 6 * * *"
           },

@@ -10,16 +10,17 @@ import { PerAgentConfigSchema } from "./schema-agent/schema-agent-runtime.js";
  * The per-agent `learningTuning` config (RANK-07).
  *
  * The on/off switch + tunables every later Phase-200 plan reads (the daemon
- * reward seam, the bandit job, the per-intent recall apply). Defaults OFF
- * (`enabled:false`) so the rest of the phase ships byte-identical until an
- * operator opts in. The schema is `z.strictObject` (unknown keys rejected,
- * SEC-01 — a smuggled `trustAlpha`/trust knob is refused at parse) with
- * `.default()` on every field. It attaches to `PerAgentConfigSchema`.
+ * reward seam, the bandit job, the per-intent recall apply). Now defaults ON
+ * (`enabled:true`, opt-out) so tuning works out of the box; the master kill
+ * switch `memory.costFeatures.enabled` (default true) is the real gate. The
+ * schema is `z.strictObject` (unknown keys rejected, SEC-01 — a smuggled
+ * `trustAlpha`/trust knob is refused at parse) with `.default()` on every field.
+ * It attaches to `PerAgentConfigSchema`.
  */
-describe("LearningTuningConfigSchema — per-agent bandit/per-intent tuning config (default OFF)", () => {
-  it("parse({}) yields the documented default-OFF block (enabled:false, bandit, perIntent, exploration:0.1)", () => {
+describe("LearningTuningConfigSchema — per-agent bandit/per-intent tuning config (default ON, opt-out)", () => {
+  it("parse({}) yields the documented default-ON block (enabled:true, bandit, perIntent, exploration:0.1)", () => {
     expect(LearningTuningConfigSchema.parse({})).toEqual({
-      enabled: false,
+      enabled: true,
       learner: "bandit",
       perIntent: true,
       exploration: 0.1,
@@ -47,9 +48,9 @@ describe("LearningTuningConfigSchema — per-agent bandit/per-intent tuning conf
     expect(LearningTuningConfigSchema.parse({ exploration: 1 }).exploration).toBe(1);
   });
 
-  it("attaches to PerAgentConfigSchema — a parsed agent config exposes learningTuning.enabled === false", () => {
+  it("attaches to PerAgentConfigSchema — a parsed agent config exposes learningTuning.enabled === true", () => {
     const agent = PerAgentConfigSchema.parse({});
-    expect(agent.learningTuning.enabled).toBe(false);
+    expect(agent.learningTuning.enabled).toBe(true);
     expect(agent.learningTuning.learner).toBe("bandit");
     expect(agent.learningTuning.perIntent).toBe(true);
     expect(agent.learningTuning.exploration).toBe(0.1);

@@ -19,8 +19,8 @@ describe("MemoryConsolidationConfigSchema", () => {
       maxConsolidationTokens: 1024,
       consolidateExternal: false,
       autoTags: [],
-      // GENERAL-01/02 higher-order generalization (Phase 203) — default-OFF, byte-identical when off.
-      generalize: { enabled: false, minDistinctContexts: 3 },
+      // GENERAL-01/02 higher-order generalization (Phase 203) — default-ON (opt-out).
+      generalize: { enabled: true, minDistinctContexts: 3 },
     });
   });
 
@@ -54,11 +54,11 @@ describe("MemoryConsolidationConfigSchema", () => {
     expect(() => MemoryConsolidationConfigSchema.parse({ maxCandidatesPerRun: 0 })).toThrow();
   });
 
-  it("defaults the generalize block OFF with minDistinctContexts 3 (GENERAL-01/02)", () => {
+  it("defaults the generalize block ON (opt-out) with minDistinctContexts 3 (GENERAL-01/02)", () => {
     // GENERAL-01/02 (v2.26 Phase 203): higher-order generalization synthesis is
-    // default-OFF (opt-in additive); the diversity gate needs ≥3 distinct contexts.
+    // default-ON (opt-out); the diversity gate still needs ≥3 distinct contexts.
     const result = MemoryConsolidationConfigSchema.parse({});
-    expect(result.generalize).toEqual({ enabled: false, minDistinctContexts: 3 });
+    expect(result.generalize).toEqual({ enabled: true, minDistinctContexts: 3 });
   });
 
   it("rejects a non-positive / fractional generalize.minDistinctContexts (the diversity gate is a positive int)", () => {

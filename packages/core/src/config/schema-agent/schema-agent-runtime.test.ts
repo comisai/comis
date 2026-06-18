@@ -123,9 +123,10 @@ describe("top-level verbosity stays unchanged alongside activity.verbosity (no-B
 // These cases fail on the pre-patch schema (no `memoryLifecycle` field) — RED.
 // ---------------------------------------------------------------------------
 describe("per-agent memoryLifecycle config block", () => {
-  it("treats memoryLifecycle as optional (absent on a bare config — byte-identical default)", () => {
+  it("materializes memoryLifecycle ON by default (opt-out — SCAFFOLD-DORMANT, evicts nothing)", () => {
     const cfg = PerAgentConfigSchema.parse({});
-    expect(cfg.memoryLifecycle).toBeUndefined();
+    expect(cfg.memoryLifecycle).toBeDefined();
+    expect(cfg.memoryLifecycle!.enabled).toBe(true);
   });
 
   it("accepts a memoryLifecycle subtree on a per-agent config and applies the dormant defaults", () => {

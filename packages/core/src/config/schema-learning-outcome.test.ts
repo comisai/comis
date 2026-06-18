@@ -10,17 +10,20 @@ import type { AgentEvents } from "../event-bus/events-agent.js";
 /**
  * The per-agent `learningOutcome` config (OUTCOME-09).
  *
- * Unlike every surrounding `memory*` cost feature (which defaults ON / opt-out),
- * learningOutcome defaults OFF (`enabled:false`) — enabling it is a deliberate
- * operator opt-in, and the closing gate's byte-identity guarantee depends on the
- * default being disabled. The schema is `z.strictObject` (unknown keys rejected)
- * with `.default()` on every field. It attaches to `PerAgentConfigSchema`.
+ * Like the surrounding `memory*` cost features, learningOutcome now defaults ON
+ * (`enabled:true`) — the Verified-Learning loop works out of the box (opt-out).
+ * The master kill switch `memory.costFeatures.enabled` (default true) is the real
+ * gate; flipping it off force-disables the loop at the cron registration site.
+ * `judge.enabled` STAYS off (dormant). The schema is `z.strictObject` (unknown
+ * keys rejected) with `.default()` on every field. It attaches to
+ * `PerAgentConfigSchema`.
  */
-describe("LearningOutcomeConfigSchema — per-agent outcome-signal config (default OFF)", () => {
-  it("parse({}) yields the documented default-OFF block (enabled:false, tool/pipeline sources, judge off)", () => {
+describe("LearningOutcomeConfigSchema — per-agent outcome-signal config (default ON, opt-out)", () => {
+  it("parse({}) yields the documented default-ON block (enabled:true, tool/pipeline sources, judge off)", () => {
     const cfg = LearningOutcomeConfigSchema.parse({});
-    expect(cfg.enabled).toBe(false);
+    expect(cfg.enabled).toBe(true);
     expect(cfg.sources).toEqual(["tool", "pipeline"]);
+    // judge STAYS dormant — it is the LLM-judge seam, gated off independently.
     expect(cfg.judge.enabled).toBe(false);
     expect(cfg.minConfidenceToLearn).toBe(0.6);
     expect(cfg.retentionDays).toBe(30);
@@ -28,14 +31,15 @@ describe("LearningOutcomeConfigSchema — per-agent outcome-signal config (defau
     expect(cfg.reactionMap.failure).toEqual(["👎", "❌"]);
   });
 
-  it("correction is a default-OFF cost-gate sub-block (enabled:false — no LLM call, no cost)", () => {
+  it("correction is a default-ON cost-gate sub-block (enabled:true — opt-out, gated by the master cost switch)", () => {
     // CORRECT-01: the correction detector runs an LLM over untrusted follow-up
-    // text, so it is a NET-NEW attack surface gated OFF by default.
+    // text. It now defaults ON (opt-out) so the loop works out of the box; the
+    // master cost switch `memory.costFeatures.enabled` is the real gate.
     const cfg = LearningOutcomeConfigSchema.parse({});
-    expect(cfg.correction.enabled).toBe(false);
-    // Opting in is explicit, and the sub-block is strict (no smuggled keys).
-    expect(LearningOutcomeConfigSchema.parse({ correction: { enabled: true } }).correction.enabled).toBe(
-      true,
+    expect(cfg.correction.enabled).toBe(true);
+    // Explicitly opting out is honored, and the sub-block is strict (no smuggled keys).
+    expect(LearningOutcomeConfigSchema.parse({ correction: { enabled: false } }).correction.enabled).toBe(
+      false,
     );
     expect(
       LearningOutcomeConfigSchema.safeParse({ correction: { enabled: false, bogus: 1 } }).success,
@@ -60,9 +64,9 @@ describe("LearningOutcomeConfigSchema — per-agent outcome-signal config (defau
     expect(LearningOutcomeConfigSchema.safeParse({ sources: ["judge"] }).success).toBe(false);
   });
 
-  it("attaches to PerAgentConfigSchema — a parsed agent config exposes learningOutcome.enabled === false", () => {
+  it("attaches to PerAgentConfigSchema — a parsed agent config exposes learningOutcome.enabled === true", () => {
     const agent = PerAgentConfigSchema.parse({});
-    expect(agent.learningOutcome.enabled).toBe(false);
+    expect(agent.learningOutcome.enabled).toBe(true);
     expect(agent.learningOutcome.sources).toEqual(["tool", "pipeline"]);
   });
 });

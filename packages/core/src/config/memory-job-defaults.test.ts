@@ -66,11 +66,13 @@ describe("memory-job config defaults match documented intent (anti-drift, WIRE-0
     expect(memory.costFeatures.enabled, "the master cost-feature switch defaults ON (opt-out)").toBe(true);
   });
 
-  it("keeps learningOutcome as the LONE OFF-by-default learning feature (the documented contrast)", () => {
-    // Unlike the six cost jobs, the Verified-Learning outcome signal is genuinely
-    // opt-IN (default false) — the contrast the reconciled headers point at, and the
-    // byte-identity guarantee P0 shadow mode rests on.
-    expect(LearningOutcomeConfigSchema.parse({}).enabled).toBe(false);
+  it("defaults the Verified-Learning features ON (opt-out) — no lone OFF feature; the master kill switch is the gate", () => {
+    // v2.26 flipped the Verified-Learning loop from opt-in (default OFF) to opt-out
+    // (default ON), so it works out of the box. learningOutcome — once the LONE
+    // OFF-by-default feature — now defaults ON like every cost job. The REAL gate is
+    // still the master kill switch `memory.costFeatures.enabled` (default true);
+    // flipping it OFF force-disables the whole loop at the cron registration site.
+    expect(LearningOutcomeConfigSchema.parse({}).enabled, "learningOutcome now defaults ON (opt-out), gated by the master switch").toBe(true);
   });
 
   it("pins rag.forget.enabled to true — the truth score.ts's 'default-OFF' FadeMem comment contradicted", () => {

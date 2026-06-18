@@ -3,9 +3,9 @@
  * Memory-lifecycle sweep configuration schema.
  *
  * The CRON knob for the periodic, KEYLESS memory-lifecycle sweep — the
- * hysteresis-banded tier promote/demote + usefulness-aware eviction pass. OFF by
- * default — enabling it is a deliberate operator choice, NOT a default behavior
- * (no back-compat fallback). Like {@link MemoryOnlineTuningConfigSchema} this
+ * hysteresis-banded tier promote/demote + usefulness-aware eviction pass. ON by
+ * default (opt-out), like {@link MemoryOnlineTuningConfigSchema} — but SCAFFOLD-
+ * DORMANT (see below): even on, it evicts/demotes NOTHING. Like that schema this
  * sweep is KEYLESS: the cron dispatch makes NO model call and needs NO API key
  * (it reads the already-accrued FEED/decay signals, computes strengths/tiers, and
  * — in the live policy — marks rows). So enabling it costs nothing in LLM spend;
@@ -15,9 +15,9 @@
  * ({@link MemoryLifecyclePort}) + the adapter + the cron exist
  * and are wired, but EVEN WHEN ENABLED the sweep's demote/evict step performs
  * NOTHING (`promoted`/`demoted`/`evicted` stay 0) — the live eviction policy is
- * the deferred operator step. The default-OFF is therefore a behavior gate,
- * NOT a back-compat fallback (mirror the online-tuning framing): a default agent
- * registers NO `__MEMORY_LIFECYCLE__` cron → byte-identical to today.
+ * the deferred operator step. So default-ON is harmless: a default agent registers
+ * the `__MEMORY_LIFECYCLE__` cron, but it computes tiers/strengths and applies
+ * NOTHING until the live eviction policy ships (then it activates without a flag flip).
  *
  * The bounded fields below are the DORMANT POLICY CONSTANTS the live step
  * (deferred) would apply — the cron computes them, applies nothing:
@@ -41,9 +41,9 @@ import { z } from "zod";
  * memory-lifecycle sweep cron.
  *
  * Fields:
- * - enabled: opt-in (default false — a behavior gate, NOT back-compat; and even
- *   when enabled the SCAFFOLD evicts/demotes nothing — the live policy is the
- *   deferred operator step). KEYLESS, so this is not a COST gate.
+ * - enabled: opt-out (default TRUE — on out of the box; and even when enabled the
+ *   SCAFFOLD evicts/demotes nothing — the live policy is the deferred operator
+ *   step). KEYLESS, so this is not a COST gate.
  * - schedule: cron expression, default daily at 09:00 UTC — AFTER online-tuning's
  *   "0 8" slot so the FEED + the tuned alphas have fully settled before the sweep
  *   reads them (the judge `0 7` → tuning `0 8` → lifecycle `0 9` chain).
@@ -56,8 +56,9 @@ import { z } from "zod";
  *   evict a stale row.
  */
 export const MemoryLifecycleConfigSchema = z.strictObject({
-  /** Enable the periodic SCAFFOLD-DORMANT memory-lifecycle sweep for this agent. Default: false (opt-in). */
-  enabled: z.boolean().default(false),
+  /** Enable the periodic SCAFFOLD-DORMANT memory-lifecycle sweep for this agent. Default: TRUE
+   *  (opt-out; the sweep is still a no-op until the live eviction policy ships). */
+  enabled: z.boolean().default(true),
   /** Cron schedule for lifecycle sweeps. Default: daily at 09:00 UTC (AFTER online-tuning's 08:00). */
   schedule: z.string().default("0 9 * * *"),
   /** Hysteresis PROMOTE threshold: imp ≥ θ_promote → durable tier. Default 0.7 (> θ_demote — the no-flap band). */

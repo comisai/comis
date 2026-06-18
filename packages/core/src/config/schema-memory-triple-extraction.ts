@@ -7,12 +7,11 @@
  * to the deductive/inductive `runMemoryReasoning` cron (higher-recall facts straight
  * from raw turns), NOT redundant with it.
  *
- * DEFAULT OFF — the lone OFF-by-default learning seam alongside `learningOutcome`
- * (every surrounding `memory*` cost feature defaults ON / opt-out). A default agent
- * registers NO triple-extraction job, so it adds ZERO cost and stays byte-identical
- * with the config absent. Enabling it is a deliberate operator opt-in; the master
- * kill-switch `memory.costFeatures.enabled` (default true) ALSO force-disables it at
- * the registration site (setup-schedulers.ts) alongside the other cost crons.
+ * DEFAULT ON (opt-out) — `memoryTripleExtraction` defaults `enabled: true`, like
+ * every surrounding `memory*` cost feature, so KG triples are extracted out of the
+ * box. The master kill-switch `memory.costFeatures.enabled` (default true) ALSO
+ * force-disables it at the registration site (setup-schedulers.ts) alongside the
+ * other cost crons; set this `enabled: false` to opt a single agent out.
  *
  * Strict (`z.strictObject`) with `.default()` on EVERY field (Playbook 6.4) — a
  * smuggled trust knob is REFUSED at parse; consumers see a fully-defaulted block.
@@ -27,15 +26,15 @@ import { z } from "zod";
  * triple-extraction cron.
  *
  * Fields:
- * - enabled: opt-in (default FALSE — complementary to runMemoryReasoning, not back-compat)
+ * - enabled: opt-out (default TRUE — complementary to runMemoryReasoning, on out of the box)
  * - schedule: cron expression, default daily at 06:00 UTC (after the night's cost crons)
  * - maxCandidatesPerRun: the per-run write cap (the DoS cost bound on triples written)
  */
 export const MemoryTripleExtractionConfigSchema = z.strictObject({
-  /** Enable the periodic offline triple-extraction job for this agent. Default: false
-   *  (opt-in; the lone OFF-by-default learning seam). Force-disabled when
+  /** Enable the periodic offline triple-extraction job for this agent. Default: TRUE
+   *  (opt-out — on out of the box). Force-disabled when
    *  `memory.costFeatures.enabled: false`. */
-  enabled: z.boolean().default(false),
+  enabled: z.boolean().default(true),
   /** Cron schedule for triple-extraction runs. Default: daily at 06:00 UTC. */
   schedule: z.string().default("0 6 * * *"),
   /** Maximum triple candidates written per run (the DoS cost bound). */

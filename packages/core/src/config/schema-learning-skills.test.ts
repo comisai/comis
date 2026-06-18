@@ -9,16 +9,17 @@ import { PerAgentConfigSchema } from "./schema-agent/schema-agent-runtime.js";
 /**
  * The per-agent `learningSkills` config (SKILL-08 / SEC-01, design §7).
  *
- * Unlike every surrounding `memory*` cost feature (which defaults ON / opt-out),
- * learningSkills defaults OFF (`enabled:false`) — enabling it is a deliberate
- * operator opt-in, and the closing gate's byte-identity guarantee depends on the
- * default being disabled. The schema is `z.strictObject` (unknown keys rejected)
- * with `.default()` on every field. It attaches to `PerAgentConfigSchema`.
+ * Like the surrounding `memory*` cost features, learningSkills now defaults ON
+ * (`enabled:true`) — procedural learning works out of the box (opt-out). The
+ * master kill switch `memory.costFeatures.enabled` (default true) is the real
+ * gate. The schema is `z.strictObject` (unknown keys rejected) with `.default()`
+ * on every field. It attaches to `PerAgentConfigSchema`. The validation/approval
+ * fail-closed sub-blocks (requireReproduction / requireForMutating) are unchanged.
  */
-describe("LearningSkillsConfigSchema — per-agent procedural-learning config (default OFF)", () => {
-  it("parse({}) yields the documented default-OFF block (the verbatim design §7 defaults)", () => {
+describe("LearningSkillsConfigSchema — per-agent procedural-learning config (default ON, opt-out)", () => {
+  it("parse({}) yields the documented default-ON block (the verbatim design §7 defaults)", () => {
     const cfg = LearningSkillsConfigSchema.parse({});
-    expect(cfg.enabled).toBe(false);
+    expect(cfg.enabled).toBe(true);
     expect(cfg.validation.requireReproduction).toBe(true);
     expect(cfg.autoAdmitReadOnly).toBe(true);
     expect(cfg.approval.requireForMutating).toBe(true);
@@ -54,9 +55,9 @@ describe("LearningSkillsConfigSchema — per-agent procedural-learning config (d
     expect(LearningSkillsConfigSchema.safeParse({ promoteAtProofCount: 3 }).success).toBe(true);
   });
 
-  it("attaches to PerAgentConfigSchema — a parsed agent config exposes learningSkills.enabled === false", () => {
+  it("attaches to PerAgentConfigSchema — a parsed agent config exposes learningSkills.enabled === true", () => {
     const agent = PerAgentConfigSchema.parse({});
-    expect(agent.learningSkills.enabled).toBe(false);
+    expect(agent.learningSkills.enabled).toBe(true);
     expect(agent.learningSkills.validation.requireReproduction).toBe(true);
     expect(agent.learningSkills.autoAdmitReadOnly).toBe(true);
     expect(agent.learningSkills.approval.requireForMutating).toBe(true);

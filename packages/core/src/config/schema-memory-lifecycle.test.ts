@@ -2,11 +2,11 @@
 import { describe, it, expect } from "vitest";
 import { MemoryLifecycleConfigSchema } from "./schema-memory-lifecycle.js";
 
-describe("MemoryLifecycleConfigSchema (the scaffolded, dormant default-OFF lifecycle cron knob)", () => {
-  it("parses an empty object to the off-by-default dormant policy configuration", () => {
+describe("MemoryLifecycleConfigSchema (the scaffolded, dormant default-ON lifecycle cron knob)", () => {
+  it("parses an empty object to the on-by-default (opt-out) dormant policy configuration", () => {
     const result = MemoryLifecycleConfigSchema.parse({});
     expect(result).toEqual({
-      enabled: false,
+      enabled: true,
       // A slot AFTER online-tuning's "0 8" so the FEED + the tuned alphas have
       // fully settled before the lifecycle sweep reads them.
       schedule: "0 9 * * *",
@@ -21,8 +21,8 @@ describe("MemoryLifecycleConfigSchema (the scaffolded, dormant default-OFF lifec
     });
   });
 
-  it("defaults enabled to false (the sweep is opt-in — a behavior gate, NOT a back-compat fallback)", () => {
-    expect(MemoryLifecycleConfigSchema.parse({}).enabled).toBe(false);
+  it("defaults enabled to true (opt-out — gated by the master cost switch; the sweep itself is SCAFFOLD-DORMANT, evicts/demotes nothing even when enabled)", () => {
+    expect(MemoryLifecycleConfigSchema.parse({}).enabled).toBe(true);
   });
 
   it("defaults the schedule to a slot after online-tuning's 08:00 (0 9 * * *)", () => {

@@ -10,17 +10,19 @@ import { PerAgentConfigSchema } from "./schema-agent/schema-agent-runtime.js";
  * The per-agent `learningForgetting` config (FORGET-06).
  *
  * The on/off switch + tunables for wrongness-based soft eviction (the lifecycle
- * sweep's `failurePenalty` + `strengthThreshold`). Defaults OFF
- * (`enabled:false`) so the rest of the phase ships byte-identical until an
- * operator opts in. The schema is `z.strictObject` (unknown keys rejected,
- * SEC-01 — a smuggled `halfLifeDays` knob (FORGET-05) is refused at parse) with
- * `.default()` on every field; the nested `eviction` object has its own
- * `.default()`. It attaches to `PerAgentConfigSchema`.
+ * sweep's `failurePenalty` + `strengthThreshold`). Now defaults ON
+ * (`enabled:true`, opt-out) so wrongness-based forgetting works out of the box;
+ * the master kill switch `memory.costFeatures.enabled` (default true) is the real
+ * gate. The nested `eviction.enabled` STAYS true and `failurePenalty` STAYS 0.5.
+ * The schema is `z.strictObject` (unknown keys rejected, SEC-01 — a smuggled
+ * `halfLifeDays` knob (FORGET-05) is refused at parse) with `.default()` on every
+ * field; the nested `eviction` object has its own `.default()`. It attaches to
+ * `PerAgentConfigSchema`.
  */
-describe("LearningForgettingConfigSchema — per-agent soft-eviction config (default OFF)", () => {
-  it("parse({}) yields the documented default-OFF block (enabled:false, eviction{enabled:true, strengthThreshold:0.2}, failurePenalty:0.5)", () => {
+describe("LearningForgettingConfigSchema — per-agent soft-eviction config (default ON, opt-out)", () => {
+  it("parse({}) yields the documented default-ON block (enabled:true, eviction{enabled:true, strengthThreshold:0.2}, failurePenalty:0.5)", () => {
     expect(LearningForgettingConfigSchema.parse({})).toEqual({
-      enabled: false,
+      enabled: true,
       eviction: { enabled: true, strengthThreshold: 0.2 },
       failurePenalty: 0.5,
     });
@@ -52,9 +54,9 @@ describe("LearningForgettingConfigSchema — per-agent soft-eviction config (def
     ).toBe(0);
   });
 
-  it("attaches to PerAgentConfigSchema — a parsed agent config exposes learningForgetting.enabled === false", () => {
+  it("attaches to PerAgentConfigSchema — a parsed agent config exposes learningForgetting.enabled === true", () => {
     const agent = PerAgentConfigSchema.parse({});
-    expect(agent.learningForgetting.enabled).toBe(false);
+    expect(agent.learningForgetting.enabled).toBe(true);
     expect(agent.learningForgetting.eviction).toEqual({ enabled: true, strengthThreshold: 0.2 });
     expect(agent.learningForgetting.failurePenalty).toBe(0.5);
   });

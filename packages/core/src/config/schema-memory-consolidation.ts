@@ -62,16 +62,20 @@ export const MemoryConsolidationConfigSchema = z.strictObject({
   /** Extra tags applied to every created observation. */
   autoTags: z.array(z.string()).default([]),
   /** GENERAL-01/02: higher-order generalization synthesis (cluster → one "user prefers X in general"
-   *  semantic memory). Default-OFF — opt-in additive to the merge loop; rides the same abstain gate.
-   *  The block default is the explicit populated object (Zod v4 does NOT re-run inner field defaults
-   *  for a bare `.default({})`), so a config omitting `generalize` still parses to the full shape. */
+   *  semantic memory). Default-ON (opt-out) — additive to the merge loop; rides the same abstain gate
+   *  + the minDistinctContexts diversity gate. The block default is the explicit populated object (Zod
+   *  v4 does NOT re-run inner field defaults for a bare `.default({})`), so a config omitting
+   *  `generalize` still parses to the full shape. */
   generalize: z
     .strictObject({
-      enabled: z.boolean().default(false),
+      enabled: z.boolean().default(true),
       /** Min distinct (sessionKey, sender) contexts in a cluster before it generalizes (anti-domination). */
       minDistinctContexts: z.number().int().positive().default(3),
     })
-    .default({ enabled: false, minDistinctContexts: 3 }),
+    // OUTER default is the AUTHORITATIVE value for an absent `generalize` block
+    // (Zod v4 does NOT re-run the inner field defaults for a populated `.default`),
+    // so it must carry enabled:true to be default-ON out of the box.
+    .default({ enabled: true, minDistinctContexts: 3 }),
 });
 
 export type MemoryConsolidationConfig = z.infer<typeof MemoryConsolidationConfigSchema>;

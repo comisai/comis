@@ -4,20 +4,20 @@ import { MemoryTripleExtractionConfigSchema } from "./schema-memory-triple-extra
 import { PerAgentConfigSchema } from "./schema-agent/index.js";
 
 describe("MemoryTripleExtractionConfigSchema", () => {
-  it("parses empty object with DEFAULT-OFF defaults (the lone OFF-by-default learning seam alongside learningOutcome)", () => {
-    // Unlike the six default-ON cost jobs, triple extraction is genuinely opt-IN
-    // (complementary higher-recall S/P/O from raw turns) — default-off keeps a default
-    // agent's cost at zero and its behavior byte-identical with the config absent.
+  it("parses empty object with DEFAULT-ON defaults (opt-out — gated by the master cost switch)", () => {
+    // Like the other cost jobs, triple extraction now defaults ON (opt-out) so the
+    // complementary higher-recall S/P/O extraction from raw turns runs out of the box;
+    // the master kill switch `memory.costFeatures.enabled` (default true) is the real gate.
     const result = MemoryTripleExtractionConfigSchema.parse({});
     expect(result).toEqual({
-      enabled: false,
+      enabled: true,
       schedule: "0 6 * * *",
       maxCandidatesPerRun: 200,
     });
   });
 
-  it("defaults enabled to false", () => {
-    expect(MemoryTripleExtractionConfigSchema.parse({}).enabled).toBe(false);
+  it("defaults enabled to true", () => {
+    expect(MemoryTripleExtractionConfigSchema.parse({}).enabled).toBe(true);
   });
 
   it("overrides only specified fields", () => {
@@ -38,13 +38,13 @@ describe("MemoryTripleExtractionConfigSchema", () => {
 });
 
 describe("PerAgentConfigSchema memoryTripleExtraction field", () => {
-  it("attaches memoryTripleExtraction (default-OFF) without clobbering Plan 01's learningOutcome", () => {
+  it("attaches memoryTripleExtraction (default-ON) without clobbering Plan 01's learningOutcome", () => {
     const result = PerAgentConfigSchema.parse({});
-    // The new field lands beside learningOutcome (Plan 01) — both present, both default-OFF.
+    // The new field lands beside learningOutcome (Plan 01) — both present, both default-ON (opt-out).
     expect(result.memoryTripleExtraction).toBeDefined();
-    expect(result.memoryTripleExtraction!.enabled).toBe(false);
+    expect(result.memoryTripleExtraction!.enabled).toBe(true);
     expect(result.learningOutcome).toBeDefined();
-    expect(result.learningOutcome!.enabled).toBe(false);
+    expect(result.learningOutcome!.enabled).toBe(true);
   });
 
   it("accepts an explicit memoryTripleExtraction opt-in", () => {
