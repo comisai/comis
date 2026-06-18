@@ -878,13 +878,13 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     // session on BOTH the immediate (line ~1019) and queued (line ~949) paths —
     // satisfying "refuse before any child run/session is created".
     //
-    // Gated by `config.sandboxNoDowngrade` (default true; Plan 03 lands the typed
-    // field — read via the structural view below so this compiles before then,
-    // `undefined !== false` ⇒ active). Inert when `resolvePosture` is absent
-    // (older test wiring) or for a top-level spawn (no parent posture to compare
-    // against). Posture is resolved via the INJECTED `deps.resolvePosture` dep —
-    // the runner never reaches `config.agents[...]` (D-RESOLVEDEP).
-    const sandboxNoDowngrade = (deps.config as { sandboxNoDowngrade?: boolean }).sandboxNoDowngrade;
+    // Gated by the typed `config.sandboxNoDowngrade` field (default true;
+    // `undefined !== false` ⇒ active, so an explicit `false` is the ONLY off
+    // state). Inert when `resolvePosture` is absent (older test wiring) or for a
+    // top-level spawn (no parent posture to compare against). Posture is resolved
+    // via the INJECTED `deps.resolvePosture` dep — the runner never reaches
+    // `config.agents[...]` (D-RESOLVEDEP).
+    const sandboxNoDowngrade = deps.config.sandboxNoDowngrade;
     if (sandboxNoDowngrade !== false && deps.resolvePosture && params.callerAgentId) {
       const parentPosture = deps.resolvePosture(params.callerAgentId);
       const childPosture = deps.resolvePosture(params.agentId, params.callerAgentId);
