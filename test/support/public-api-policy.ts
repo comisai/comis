@@ -535,6 +535,17 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "LlmSkillSynthesisAdapterDeps",
       "SkillSynthesisJobDeps",
       "SkillSynthesisJobResult",
+      // Sandbox-posture primitive (SANDBOX-01, phase 172 Plan 01). The pure
+      // comparator + resolver + types are a @comis/agent leaf; the daemon Plan
+      // 02 wiring is their cross-package consumer (it injects a resolvePosture
+      // closure into the sub-agent runner and compares postures at the spawn
+      // gate). Ahead-of-consumer until Plan 02 lands — shrinks out then.
+      "comparePosture",
+      "resolvePostureFromSkills",
+      "SandboxPosture",
+      "PostureDimension",
+      "PostureComparison",
+      "SkillsPostureSlice",
     ])],
     // @comis/channels: baseline orphans tracked here. The 5 delivery
     // helpers + the Markdown IR pipeline (incl. telegram-file-ref-guard)
