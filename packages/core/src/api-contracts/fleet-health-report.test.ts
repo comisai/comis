@@ -68,6 +68,10 @@ function validReport(): FleetHealthReport {
       sessionIndex: { daysRead: 1, daysMissing: 0 },
       billing: { present: true },
     },
+    pipelineAuthoringGate: {
+      buildAuthor: false,
+      reason: "defer: insufficient telemetry (0 small-tier invocations < 20)",
+    },
   };
 }
 
@@ -117,6 +121,33 @@ describe("FleetHealthReportSchema (R1 — bounded/deterministic fleet wire shape
     const noVerdict = { ...validReport(), likelyRootCause: null };
     const parsed = FleetHealthReportSchema.parse(noVerdict);
     expect(parsed.likelyRootCause).toBeNull();
+  });
+
+  it("TELEM-02: the pipelineAuthoringGate verdict SURVIVES .parse() (the BLOCKER-1 proof)", () => {
+    // Without the schema field, the non-strict z.object STRIPS this key on parse
+    // -> the verdict never reaches the wire (the operator never sees the gate
+    // decision). Declaring it in FleetHealthReportSchema is what makes .parse()
+    // PRESERVE it (T-173-12 Tampering mitigation). RED before the schema field.
+    const parsed = FleetHealthReportSchema.parse(validReport());
+    expect(parsed.pipelineAuthoringGate).toBeDefined();
+    expect(parsed.pipelineAuthoringGate?.buildAuthor).toBe(false);
+    expect(parsed.pipelineAuthoringGate?.reason).toMatch(/insufficient telemetry/);
+
+    // The build verdict round-trips intact too.
+    const buildReport = {
+      ...validReport(),
+      pipelineAuthoringGate: { buildAuthor: true, reason: "build: 50 small-tier invocations, validity 45.0pp below frontier (>= 15pp)" },
+    };
+    const parsedBuild = FleetHealthReportSchema.parse(buildReport);
+    expect(parsedBuild.pipelineAuthoringGate?.buildAuthor).toBe(true);
+  });
+
+  it("treats `pipelineAuthoringGate` as optional (additive — schemaVersion stays 1)", () => {
+    const without = validReport() as Partial<FleetHealthReport>;
+    delete without.pipelineAuthoringGate;
+    const parsed = FleetHealthReportSchema.parse(without);
+    expect(parsed.pipelineAuthoringGate).toBeUndefined();
+    expect(parsed.schemaVersion).toBe(1);
   });
 
   it("QT2/QT3: carries degradedByCause — a required bounded Record<cause, count> of named causes", () => {
