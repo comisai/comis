@@ -42,6 +42,7 @@ import {
   type AbortClassification,
   type ValidationResult,
 } from "./sub-agent-result-processor.js";
+import { comparePosture, type SandboxPosture } from "./sandbox-posture.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -175,6 +176,18 @@ export interface SubAgentRunnerDeps {
   eventBus: TypedEventBus;
   config: AgentToAgentConfig;
   tenantId: string;
+  /**
+   * Resolve an agent's sandbox posture from its per-agent skills config
+   * (SANDBOX-01) for the fail-closed no-downgrade gate (SANDBOX-02). Injected by
+   * the daemon wiring (which holds `container.config.agents`); the runner stays a
+   * `@comis/agent` leaf with no full-config import — it never reaches
+   * `config.agents[...]` itself. The two-arg form mirrors the daemon's
+   * `effectiveAgentId` inherit-caller fallback: a child with no dedicated config
+   * inherits the caller's posture, so the gate compares the posture the child
+   * will actually run under. **Absent ⇒ the gate is inert** (no posture to
+   * compare; older test wiring). The daemon ALWAYS wires it in production.
+   */
+  resolvePosture?: (agentId: string, callerAgentId?: string) => SandboxPosture;
   /** Optional structured logger for lifecycle diagnostics. */
   logger?: SubAgentRunnerLogger;
   /** Optional memory adapter for persisting sub-agent completion summaries. */
@@ -855,6 +868,45 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         }, "Sub-agent spawn rejected: required tools unreachable");
         // @allow-throw: spawn() consumed exclusively by daemon RPC handlers.
         throw new RequiredToolsUnreachableError(unreachable);
+      }
+    }
+
+    // Sandbox no-downgrade gate (SANDBOX-02). The single fail-closed posture
+    // check at the spawn chokepoint: a spawned child may never be LESS confined
+    // than its spawner. Placed AFTER the required_tools gate and BEFORE the
+    // children/queue branch, so ONE check fires before any `runs.set` / runId /
+    // session on BOTH the immediate (line ~1019) and queued (line ~949) paths —
+    // satisfying "refuse before any child run/session is created".
+    //
+    // Gated by `config.sandboxNoDowngrade` (default true; Plan 03 lands the typed
+    // field — read via the structural view below so this compiles before then,
+    // `undefined !== false` ⇒ active). Inert when `resolvePosture` is absent
+    // (older test wiring) or for a top-level spawn (no parent posture to compare
+    // against). Posture is resolved via the INJECTED `deps.resolvePosture` dep —
+    // the runner never reaches `config.agents[...]` (D-RESOLVEDEP).
+    const sandboxNoDowngrade = (deps.config as { sandboxNoDowngrade?: boolean }).sandboxNoDowngrade;
+    if (sandboxNoDowngrade !== false && deps.resolvePosture && params.callerAgentId) {
+      const parentPosture = deps.resolvePosture(params.callerAgentId);
+      const childPosture = deps.resolvePosture(params.agentId, params.callerAgentId);
+      const cmp = comparePosture(parentPosture, childPosture);
+      if (cmp.isDowngrade) {
+        const violated = cmp.violatedDimensions.join(", ");
+        deps.logger?.warn({
+          agentId: params.agentId,
+          parentAgentId: params.callerAgentId,
+          childAgentId: params.agentId,
+          // Enum labels only — never posture values/paths/hosts (§2.7).
+          violatedDimensions: cmp.violatedDimensions,
+          hint:
+            `Spawn refused: child sandbox posture is less confined than its spawner on ${violated}; ` +
+            "align the child's skills sandbox config or set security.agentToAgent.sandboxNoDowngrade:false to disable",
+          errorKind: "precondition" as const,
+        }, "Sub-agent spawn refused: sandbox downgrade");
+        // Plan 03: emit security:sandbox_downgrade_refused here (enum tuples only).
+        // @allow-throw: spawn() consumed exclusively by daemon RPC handlers; @allow-throw boundary.
+        throw new Error(
+          `Spawn refused: child "${params.agentId}" sandbox posture is less confined than parent "${params.callerAgentId}" on: ${violated}.`,
+        );
       }
     }
 

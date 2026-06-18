@@ -16,7 +16,7 @@
 import type { NormalizedMessage, SessionKey, DeliveryService, DeliverToChannelOptions, ClockPort, TimerPort, AppContainer, FileLockPort, ChannelPort } from "@comis/core";
 import { tryGetContext, safePath, systemNowMs } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
-import { createResultCondenser, createNarrativeCaster, createLifecycleHooks, resolveOperationModel, resolveProviderFamily, createSubAgentRunner, classifyErrorContext, createDeliveryDedup } from "@comis/agent";
+import { createResultCondenser, createNarrativeCaster, createLifecycleHooks, resolveOperationModel, resolveProviderFamily, createSubAgentRunner, classifyErrorContext, createDeliveryDedup, resolvePostureFromSkills } from "@comis/agent";
 import {
   createCrossSessionSender,
   createAnnouncementBatcher,
@@ -344,6 +344,21 @@ export function setupCrossSession(deps: {
     announceToParent,
     eventBus: container.eventBus,
     config: container.config.security.agentToAgent,
+    // Sandbox no-downgrade posture resolver (SANDBOX-02). The runner is a
+    // @comis/agent leaf with no full-config import, so it CANNOT reach
+    // container.config.agents — we inject a closure that resolves each agent's
+    // posture from its per-agent skills config. The two-arg form mirrors the
+    // effectiveAgentId inherit-caller fallback in setup-cross-session-graph.ts
+    // (:197-199): a child with no dedicated config inherits the caller's config,
+    // so its resolved posture matches what it will actually run under (equal to
+    // the caller ⇒ not a phantom downgrade). resolvePostureFromSkills folds an
+    // absent slice to the most-confined default (fail-closed).
+    resolvePosture: (agentId: string, callerAgentId?: string) => {
+      const effectiveAgentId = (agentId in container.config.agents)
+        ? agentId
+        : (callerAgentId && callerAgentId in container.config.agents ? callerAgentId : agentId);
+      return resolvePostureFromSkills(container.config.agents[effectiveAgentId]?.skills);
+    },
     tenantId: container.config.tenantId,
     dataDir: container.config.dataDir || ".",
     logger: deps.logger?.child({ submodule: "sub-agent-runner" }),
