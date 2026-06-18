@@ -33,3 +33,15 @@ export { sweepResultFiles, buildAnnouncementMessage, deliverFailureNotification,
 // own tests via relative import) — not re-exported, to avoid a dead public export.
 export { createDeliveryDedup } from "./announce-key.js";
 export type { DeliveryDedup } from "./announce-key.js";
+
+// Pure sandbox-posture primitive (SANDBOX-01). The comparator + resolver are a
+// @comis/agent leaf; the daemon wiring (Plan 02) injects a resolver closure over
+// container.config.agents into the sub-agent runner, so the TYPE + comparator must
+// cross the package boundary here.
+export { comparePosture, resolvePostureFromSkills } from "./sandbox-posture.js";
+export type {
+  SandboxPosture,
+  PostureDimension,
+  PostureComparison,
+  SkillsPostureSlice,
+} from "./sandbox-posture.js";
