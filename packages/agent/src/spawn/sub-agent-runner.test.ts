@@ -4163,6 +4163,81 @@ describe("sandbox no-downgrade gate", () => {
   });
 
   // -------------------------------------------------------------------------
+  // WR-02: make the fail-OPEN observable. When the gate is enabled but no
+  // resolver was injected, the gate is silently inert (a security control that
+  // no-ops). Emit a one-time construction WARN so an operator sees the fail-open
+  // in the logs — defense-in-depth alongside the daemon-wiring test.
+  // -------------------------------------------------------------------------
+  it("emits a one-time construction WARN when sandboxNoDowngrade is enabled but no resolver is injected", () => {
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
+    const deps = {
+      ...createMockDeps(),
+      config: {
+        enabled: true,
+        maxPingPongTurns: 3,
+        allowAgents: [],
+        subAgentRetentionMs: 3_600_000,
+        waitTimeoutMs: 60_000,
+        subAgentMaxSteps: 50,
+        subAgentToolGroups: ["coding"],
+        sandboxNoDowngrade: true,
+      } as SubAgentRunnerDeps["config"],
+      logger: logger as unknown as SubAgentRunnerDeps["logger"],
+      // resolvePosture intentionally absent ⇒ fail-open.
+    };
+
+    createSubAgentRunner(deps);
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorKind: "config",
+        hint: expect.stringContaining("no posture resolver"),
+      }),
+      expect.stringMatching(/no-downgrade gate is INERT/i),
+    );
+  });
+
+  it("does NOT warn at construction when the resolver IS injected", () => {
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
+    const resolvePosture = makePostureResolver({});
+    const deps = createGateDeps(resolvePosture, {
+      logger: logger as unknown as SubAgentRunnerDeps["logger"],
+    });
+
+    createSubAgentRunner(deps);
+
+    expect(logger.warn).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.stringMatching(/no-downgrade gate is INERT/i),
+    );
+  });
+
+  it("does NOT warn at construction when sandboxNoDowngrade is explicitly false (gate intentionally off)", () => {
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
+    const deps = {
+      ...createMockDeps(),
+      config: {
+        enabled: true,
+        maxPingPongTurns: 3,
+        allowAgents: [],
+        subAgentRetentionMs: 3_600_000,
+        waitTimeoutMs: 60_000,
+        subAgentMaxSteps: 50,
+        subAgentToolGroups: ["coding"],
+        sandboxNoDowngrade: false,
+      } as SubAgentRunnerDeps["config"],
+      logger: logger as unknown as SubAgentRunnerDeps["logger"],
+    };
+
+    createSubAgentRunner(deps);
+
+    expect(logger.warn).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.stringMatching(/no-downgrade gate is INERT/i),
+    );
+  });
+
+  // -------------------------------------------------------------------------
   // Top-level spawn (no callerAgentId) — no parent to compare against
   // -------------------------------------------------------------------------
   it("allows a top-level spawn with no callerAgentId (no spawner posture to compare)", () => {

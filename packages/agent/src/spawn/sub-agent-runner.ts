@@ -433,6 +433,21 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   const runs = new Map<string, SubAgentRun>();
   const activePromises = new Set<Promise<void>>();
 
+  // WR-02: make the fail-OPEN observable. The sandbox no-downgrade gate (below)
+  // silently no-ops when `resolvePosture` is absent — a P0 security control that
+  // does nothing. Production composition (setup-cross-session-runtime.ts) ALWAYS
+  // injects the resolver (a daemon-wiring test pins this), but a future second
+  // construction path could omit it and ship an inert gate. Emit a one-time
+  // construction WARN so the fail-open surfaces in the logs rather than silently.
+  if (deps.config.sandboxNoDowngrade !== false && !deps.resolvePosture) {
+    deps.logger?.warn({
+      hint:
+        "sandboxNoDowngrade is on but no posture resolver was injected — the no-downgrade gate is INERT; " +
+        "wire resolvePosture into createSubAgentRunner (see setup-cross-session-runtime.ts) or set security.agentToAgent.sandboxNoDowngrade:false",
+      errorKind: "config" as const,
+    }, "Sandbox no-downgrade gate is INERT: no posture resolver injected");
+  }
+
   // ---------------------------------------------------------------------
   // In-flight spawn dedup:
   //   Maps `(callerSessionKey + agentId + task)` triples to in-flight runIds.
