@@ -620,6 +620,12 @@ export { seedDefaultDagTemplates } from "./executor/dag-templates.js";
 // internally), so only the matcher fn + its result types cross the boundary.
 export { matchRawGraphToTemplate } from "./executor/dag-template-match.js";
 export type { TemplateMatch, CanonicalTemplatePattern } from "./executor/dag-template-match.js";
+// AUTHOR-02 (Phase 174-04): the deterministic intent → ExecutionGraph
+// synthesizer. Imported by the pipeline tool's from_intent action (@comis/skills)
+// — it RETURNS a validated graph, never executes one; the tool dispatches it
+// through the existing graph.execute path so governance applies automatically.
+export { synthesizeFromIntent } from "./executor/dag-synthesizer.js";
+export type { SynthesisIntent, SynthesisPattern } from "./executor/dag-synthesizer.js";
 export { resolveOperationDefaults, OPERATION_TIER_MAP, OPERATION_TIMEOUT_DEFAULTS, OPERATION_CACHE_DEFAULTS } from "./model/operation-model-defaults.js";
 export { resolveCompactionModel } from "./model/compaction-model-resolver.js";
 
