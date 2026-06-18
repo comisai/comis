@@ -250,6 +250,29 @@ export async function persistFailureRecord(params: {
 // ---------------------------------------------------------------------------
 
 /**
+ * Transport-layer failures are transient (DELIVERY-02): they self-heal on a
+ * retry-with-backoff in the announcement batcher. The bare Node errno spellings
+ * do NOT contain "timeout"/"timed out" (e.g. "ETIMEDOUT".toLowerCase() is
+ * "etimedout"), so the existing timeout branch misses them — match these
+ * explicitly. Matched case-insensitively as a substring of the error message
+ * (real delivery errors wrap the errno in surrounding text, e.g.
+ * "connect ECONNREFUSED 127.0.0.1:443").
+ */
+const TRANSIENT_TRANSPORT_TOKENS = [
+  "etimedout",
+  "econnreset",
+  "econnrefused",
+  "epipe",
+  "enetunreach",
+  "eai_again",
+  "socket hang up",
+  "fetch failed",
+  "network request failed",
+  "connection reset",
+  "connection refused",
+];
+
+/**
  * Classify an error message and endReason into structured error context
  * for offline analysis and retry decisions.
  */
@@ -287,6 +310,14 @@ export function classifyErrorContext(
         retryable = false;
       } else if (lowerMsg.includes("timeout") || lowerMsg.includes("timed out")) {
         errorType = "ExecutionTimeout";
+        retryable = true;
+      } else if (TRANSIENT_TRANSPORT_TOKENS.some((token) => lowerMsg.includes(token))) {
+        // DELIVERY-02: transport-layer blips (ECONNRESET/ECONNREFUSED/EPIPE/
+        // "socket hang up"/"fetch failed"/...) are transient — the batcher
+        // retries them with backoff before dead-lettering. Placed AFTER the
+        // budget/timeout branches (which precede it) so a permanent budget
+        // message never reaches here.
+        errorType = "TransportError";
         retryable = true;
       } else if (lowerMsg.includes("rate limit") || lowerMsg.includes("429")) {
         errorType = "RateLimited";
