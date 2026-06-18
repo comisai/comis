@@ -118,24 +118,44 @@ const DIMENSIONS: readonly PostureDimension[] = [
   "uid",
 ];
 
+// Most-confined rank per dimension — the value an absent field folds to BEFORE
+// ranking AND the fail-closed fallback for a present-but-unknown enum value. The
+// pre-map `?? <most-confined>` already guarantees a valid key for the only field
+// the validated config path can leave undefined, so the trailing `?? MOST_CONFINED`
+// is defensive: it only fires if a caller hand-builds a SandboxPosture with an
+// out-of-union value, bypassing Zod (schema-skills.ts enums). When it does fire it
+// must rank MOST-confined (not 0 = least), so an unexpected value fails CLOSED — a
+// child carrying it looks confined/safe; a parent carrying it makes a looser child
+// a downgrade — never the reverse.
+const EXEC_MOST_CONFINED = 1; // "always"
+const FILESYSTEM_MOST_CONFINED = 3; // "workspace"
+const NETWORK_MOST_CONFINED = 2; // "none"
+const UID_MOST_CONFINED = 1; // "dedicated"
+
 /**
  * Rank a single dimension of a posture, folding an absent field to the
  * most-confined value (highest rank) BEFORE ranking. This is the load-bearing
  * safe default (T-172-01): a missing field is never read as more permissive than
- * reality. The `?? <most-confined>` per branch IS the safe default; the rank-map
- * `get` is then total over that dimension's closed enum, so `?? 0` is unreachable
- * defensive code, not a real fallback.
+ * reality. The pre-map `?? <most-confined>` IS the safe default for an absent
+ * field; the trailing `?? <most-confined>` is the fail-closed fallback for a
+ * present-but-unknown enum value (unreachable via the Zod-validated config path,
+ * but if a caller hand-builds a posture it must still fail CLOSED — IN-01).
  */
 function rankOf(posture: SandboxPosture, dimension: PostureDimension): number {
   switch (dimension) {
     case "exec":
-      return EXEC_RANK.get(posture.exec) ?? 0;
+      return EXEC_RANK.get(posture.exec) ?? EXEC_MOST_CONFINED;
     case "filesystem":
-      return FILESYSTEM_RANK.get(posture.filesystem ?? "workspace") ?? 0;
+      return (
+        FILESYSTEM_RANK.get(posture.filesystem ?? "workspace") ??
+        FILESYSTEM_MOST_CONFINED
+      );
     case "network":
-      return NETWORK_RANK.get(posture.network ?? "none") ?? 0;
+      return (
+        NETWORK_RANK.get(posture.network ?? "none") ?? NETWORK_MOST_CONFINED
+      );
     case "uid":
-      return UID_RANK.get(posture.uid ?? "dedicated") ?? 0;
+      return UID_RANK.get(posture.uid ?? "dedicated") ?? UID_MOST_CONFINED;
     default: {
       const _exhaustive: never = dimension;
       return _exhaustive;

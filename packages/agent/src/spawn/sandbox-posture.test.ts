@@ -265,3 +265,70 @@ describe("resolvePostureFromSkills", () => {
     expect(result.violatedDimensions).toEqual([]);
   });
 });
+
+describe("comparePosture — unknown-enum fallback fails CLOSED (IN-01)", () => {
+  // Zod validation makes a present-but-unknown enum value unreachable via the
+  // validated config path, but the comparator must still fail CLOSED on the
+  // defensive branch: an unexpected value must rank MOST-confined (not 0 = least),
+  // so a child carrying it looks confined/safe and a parent carrying it makes a
+  // looser child a downgrade — never the reverse. These cast out-of-union values
+  // to drive the rankOf fallback directly.
+
+  it("ranks an unknown CHILD exec value as most-confined, so it is NOT a downgrade vs an always-sandboxed parent", () => {
+    const parent: SandboxPosture = { exec: "always" };
+    const child = { exec: "bogus" } as unknown as SandboxPosture;
+
+    const result = comparePosture(parent, child);
+
+    // Most-confined fallback ⇒ child rank >= parent rank ⇒ not a downgrade.
+    expect(result.isDowngrade).toBe(false);
+    expect(result.violatedDimensions).not.toContain("exec");
+  });
+
+  it("ranks an unknown PARENT exec value as most-confined, so an explicit never-sandboxed child IS a downgrade", () => {
+    const parent = { exec: "bogus" } as unknown as SandboxPosture;
+    const child: SandboxPosture = { exec: "never" };
+
+    const result = comparePosture(parent, child);
+
+    // Parent folds to most-confined ⇒ the looser `never` child trips the gate.
+    expect(result.isDowngrade).toBe(true);
+    expect(result.violatedDimensions).toContain("exec");
+  });
+
+  it("ranks an unknown CHILD filesystem value as most-confined, so it is NOT a downgrade vs a workspace-confined parent", () => {
+    const parent: SandboxPosture = { exec: "always", filesystem: "workspace" };
+    const child = {
+      exec: "always",
+      filesystem: "bogus",
+    } as unknown as SandboxPosture;
+
+    const result = comparePosture(parent, child);
+
+    expect(result.violatedDimensions).not.toContain("filesystem");
+  });
+
+  it("ranks an unknown CHILD network value as most-confined, so it is NOT a downgrade vs a none-confined parent", () => {
+    const parent: SandboxPosture = { exec: "always", network: "none" };
+    const child = {
+      exec: "always",
+      network: "bogus",
+    } as unknown as SandboxPosture;
+
+    const result = comparePosture(parent, child);
+
+    expect(result.violatedDimensions).not.toContain("network");
+  });
+
+  it("ranks an unknown CHILD uid value as most-confined, so it is NOT a downgrade vs a dedicated-confined parent", () => {
+    const parent: SandboxPosture = { exec: "always", uid: "dedicated" };
+    const child = {
+      exec: "always",
+      uid: "bogus",
+    } as unknown as SandboxPosture;
+
+    const result = comparePosture(parent, child);
+
+    expect(result.violatedDimensions).not.toContain("uid");
+  });
+});
