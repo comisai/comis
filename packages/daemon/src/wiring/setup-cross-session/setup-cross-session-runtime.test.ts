@@ -218,6 +218,9 @@ function createMinimalDeps(overrides: Record<string, any> = {}) {
             subAgentMaxSteps: 50,
             subAgentToolGroups: ["coding"],
             subAgentMcpTools: "inherit",
+            // DELIVERY-02: the batcher reads delivery.maxRetries for the
+            // transient-retry cap (schema-defaulted in real config).
+            delivery: { maxRetries: 3 },
           },
         },
         tenantId: "test-tenant",
@@ -1064,6 +1067,7 @@ describe("setupCrossSession", () => {
                 subAgentMaxSteps: 15,
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
+                delivery: { maxRetries: 3 }, // DELIVERY-02 batcher retry cap
               },
             },
             tenantId: "test-tenant",
@@ -1261,6 +1265,7 @@ describe("setupCrossSession", () => {
                 subAgentMaxSteps: 50,
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "none",
+                delivery: { maxRetries: 3 }, // DELIVERY-02 batcher retry cap
               },
             },
             tenantId: "test-tenant",
@@ -1341,6 +1346,7 @@ describe("setupCrossSession", () => {
                 subAgentMaxSteps: 50,
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
+                delivery: { maxRetries: 3 }, // DELIVERY-02 batcher retry cap
               },
             },
             tenantId: "test-tenant",
@@ -1403,6 +1409,7 @@ describe("setupCrossSession", () => {
                 subAgentMaxSteps: 50,
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
+                delivery: { maxRetries: 3 }, // DELIVERY-02 batcher retry cap
               },
             },
             tenantId: "test-tenant",
@@ -1458,6 +1465,7 @@ describe("setupCrossSession", () => {
                 subAgentMaxSteps: 50,
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
+                delivery: { maxRetries: 3 }, // DELIVERY-02 batcher retry cap
               },
             },
             tenantId: "test-tenant",
@@ -1520,6 +1528,7 @@ describe("setupCrossSession", () => {
                 subAgentMaxSteps: 50,
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
+                delivery: { maxRetries: 3 }, // DELIVERY-02 batcher retry cap
               },
             },
             tenantId: "test-tenant",
@@ -1576,6 +1585,7 @@ describe("setupCrossSession", () => {
                 subAgentMaxSteps: 50,
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
+                delivery: { maxRetries: 3 }, // DELIVERY-02 batcher retry cap
               },
             },
             tenantId: "test-tenant",
@@ -1626,6 +1636,7 @@ describe("setupCrossSession", () => {
                 subAgentMaxSteps: 50,
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
+                delivery: { maxRetries: 3 }, // DELIVERY-02 batcher retry cap
               },
             },
             tenantId: "test-tenant",
@@ -1675,6 +1686,7 @@ describe("setupCrossSession", () => {
                 subAgentMaxSteps: 50,
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
+                delivery: { maxRetries: 3 }, // DELIVERY-02 batcher retry cap
               },
             },
             tenantId: "test-tenant",
@@ -1731,6 +1743,7 @@ describe("setupCrossSession", () => {
                 subAgentMaxSteps: 50,
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
+                delivery: { maxRetries: 3 }, // DELIVERY-02 batcher retry cap
               },
             },
             tenantId: "test-tenant",
@@ -1772,6 +1785,7 @@ describe("setupCrossSession", () => {
                   subAgentMaxSteps: 50,
                   subAgentToolGroups: ["coding"],
                   subAgentMcpTools: "inherit",
+                  delivery: { maxRetries: 3 }, // DELIVERY-02 batcher retry cap
                 },
               },
               tenantId: "test-tenant",
@@ -2162,6 +2176,7 @@ describe("setupCrossSession", () => {
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
                 subAgentSessionPersistence: false,
+                delivery: { maxRetries: 3 }, // DELIVERY-02 batcher retry cap
               },
             },
             tenantId: "test-tenant",
@@ -2210,6 +2225,7 @@ describe("setupCrossSession", () => {
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
                 subAgentSessionPersistence: true,
+                delivery: { maxRetries: 3 }, // DELIVERY-02 batcher retry cap
               },
             },
             tenantId: "test-tenant",
@@ -2272,6 +2288,7 @@ describe("setupCrossSession", () => {
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
                 subAgentSessionPersistence: true,
+                delivery: { maxRetries: 3 }, // DELIVERY-02 batcher retry cap
               },
             },
             tenantId: "test-tenant",
@@ -2599,6 +2616,7 @@ describe("setupCrossSession", () => {
                 subAgentMaxSteps: 50,
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
+                delivery: { maxRetries: 3 }, // DELIVERY-02 batcher retry cap
               },
             },
             tenantId: "test-tenant",
@@ -2736,6 +2754,7 @@ describe("setupCrossSession", () => {
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
                 subagentContext: {},
+                delivery: { maxRetries: 3 }, // DELIVERY-02 batcher retry cap
               },
             },
             tenantId: "test-tenant",
@@ -2780,6 +2799,7 @@ describe("setupCrossSession", () => {
                 subAgentMaxSteps: 50,
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
+                delivery: { maxRetries: 3 }, // DELIVERY-02 batcher retry cap
               },
             },
             tenantId: "test-tenant",

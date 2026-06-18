@@ -16,13 +16,14 @@
 import type { NormalizedMessage, SessionKey, DeliveryService, DeliverToChannelOptions, ClockPort, TimerPort, AppContainer, FileLockPort, ChannelPort } from "@comis/core";
 import { tryGetContext, safePath, systemNowMs } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
-import { createResultCondenser, createNarrativeCaster, createLifecycleHooks, resolveOperationModel, resolveProviderFamily, createSubAgentRunner } from "@comis/agent";
+import { createResultCondenser, createNarrativeCaster, createLifecycleHooks, resolveOperationModel, resolveProviderFamily, createSubAgentRunner, classifyErrorContext } from "@comis/agent";
 import {
   createCrossSessionSender,
   createAnnouncementBatcher,
   createAnnouncementDeadLetterQueue,
 } from "@comis/orchestrator";
 import { randomUUID } from "node:crypto";
+import { computeRetryBackoff } from "../../graph/graph-node-lifecycle.js";
 import { buildExecuteSubAgent } from "./setup-cross-session-graph.js";
 import { registerProxyTypingListeners } from "./setup-cross-session-events.js";
 
@@ -262,6 +263,17 @@ export function setupCrossSession(deps: {
     sendToChannel,
     logger: deps.logger?.child({ submodule: "announcement-batcher" }),
     deadLetterQueue,
+    // DELIVERY-02: inject the transient/permanent classifier + backoff so the
+    // batcher self-heals transient fallback failures (retry-with-backoff) and
+    // fast-paths permanent ones to the DLQ. computeRetryBackoff is an
+    // intra-package import (daemon owns it); classifyErrorContext comes from
+    // @comis/agent — both injected here so the orchestrator never imports either
+    // (no dependency inversion). The batcher only ever classifies transport
+    // errors, so endReason is bound to "failed".
+    classifyErrorContext: (msg: string) => classifyErrorContext(msg, "failed"),
+    computeRetryBackoff,
+    maxRetries: container.config.security.agentToAgent.delivery.maxRetries,
+    eventBus: container.eventBus,
   });
 
   // Resolve condensation model via 5-level priority chain
