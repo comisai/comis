@@ -73,10 +73,21 @@ export function buildSkillSynthesisCronDeps(deps: SkillSynthesisDepsInput): Skil
       });
     },
 
-    // Build the LCD-merged source trajectories (buildReviewSessionSource — NOT sessionStore.listDetailed,
-    // which is empty in DAG mode, the LIVEMEM bug). Flatten each session's transcript into one block the
-    // synthesis adapter wraps; the sessionKey is the trajectory identity the outcome signal resolves on.
+    // Build the source trajectories for the synthesis SELECT step, which resolves
+    // each one's `trajectoryId` against the outcome signal. Outcomes are keyed by
+    // the PER-TURN `traceId` (setup-learning.ts), NOT the sessionKey — so we
+    // ENUMERATE the real per-turn ids from the outcome ledger (listTrajectoryIds)
+    // and emit THOSE, attaching each turn's session transcript (buildReviewSessionSource
+    // — LCD-merged, NOT raw listDetailed which is empty in DAG mode) as the text to
+    // generalize from. Pre-fix this emitted the sessionKey, which resolve() never
+    // matched → `selected:0` forever on the single-agent path (live VPS 2026-06-18).
     buildSourceTrajectories: async (agentId: string, tenantId: string): Promise<SynthesisSourceTrajectory[]> => {
+      // Fail-closed: without an enumerable, resolvable id source there is nothing to
+      // synthesize (never fall back to a non-resolvable identity like the sessionKey).
+      if (!outcomeStore.listTrajectoryIds) return [];
+      const idsRes = await outcomeStore.listTrajectoryIds({ tenantId, agentId });
+      if (!idsRes.ok || idsRes.value.length === 0) return [];
+
       const source = buildReviewSessionSource({
         // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the review-source sessionStore view
         sessionStore: deps.sessionStore as any,
@@ -85,20 +96,34 @@ export function buildSkillSynthesisCronDeps(deps: SkillSynthesisDepsInput): Skil
         agentId,
         tenantId,
       });
-      const entries = source.listDetailed(tenantId);
+      // sessionKey → sender (userId), from the session view.
+      const senderBySession = new Map<string, string>();
+      for (const e of source.listDetailed(tenantId)) senderBySession.set(e.sessionKey, e.userId);
+      // sessionKey → flattened transcript, loaded at most once per session.
+      const textCache = new Map<string, string | undefined>();
+      const sessionText = (sessionKey: string): string | undefined => {
+        if (textCache.has(sessionKey)) return textCache.get(sessionKey);
+        const loaded = source.loadByFormattedKey(sessionKey);
+        const text =
+          loaded === undefined
+            ? ""
+            : loaded.messages
+                .map((m) => {
+                  const content = (m as { content?: unknown }).content;
+                  return typeof content === "string" ? content : "";
+                })
+                .filter((t) => t.length > 0)
+                .join("\n");
+        const val = text.length > 0 ? text : undefined;
+        textCache.set(sessionKey, val);
+        return val;
+      };
+
       const out: SynthesisSourceTrajectory[] = [];
-      for (const e of entries) {
-        const loaded = source.loadByFormattedKey(e.sessionKey);
-        if (loaded === undefined) continue;
-        const text = loaded.messages
-          .map((m) => {
-            const content = (m as { content?: unknown }).content;
-            return typeof content === "string" ? content : "";
-          })
-          .filter((t) => t.length > 0)
-          .join("\n");
-        if (text.length === 0) continue;
-        out.push({ trajectoryId: e.sessionKey, sessionId: e.sessionKey, sender: e.userId, text });
+      for (const { trajectoryId, sessionId } of idsRes.value) {
+        const text = sessionText(sessionId);
+        if (text === undefined) continue; // no transcript for this turn's session → skip
+        out.push({ trajectoryId, sessionId, sender: senderBySession.get(sessionId) ?? "", text });
       }
       return out;
     },

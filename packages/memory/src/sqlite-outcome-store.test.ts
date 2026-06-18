@@ -97,6 +97,34 @@ describe("createSqliteOutcomeStore", () => {
     db.close();
   });
 
+  describe("listTrajectoryIds() — per-turn enumeration (live-2026-06-18 synthesis-source fix)", () => {
+    it("returns the DISTINCT (trajectoryId, sessionId) pairs for the scope, deduped across sources", async () => {
+      // Two per-turn traceIds in one session; turn-a has two source rows.
+      await store.observe(makeObs({ trajectoryId: "turn-a", sessionId: "sess-1", source: "tool", observedAt: 1_000 }));
+      await store.observe(makeObs({ trajectoryId: "turn-a", sessionId: "sess-1", source: "explicit", observedAt: 1_001 }));
+      await store.observe(makeObs({ trajectoryId: "turn-b", sessionId: "sess-1", source: "tool", observedAt: 2_000 }));
+      const r = await store.listTrajectoryIds!(SCOPE_A);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      const pairs = r.value.map((p) => `${p.trajectoryId}|${p.sessionId}`).sort();
+      expect(pairs).toEqual(["turn-a|sess-1", "turn-b|sess-1"]);
+    });
+
+    it("is scoped — never returns another (tenant, agent)'s trajectories (SEC-01)", async () => {
+      await store.observe(makeObs({ trajectoryId: "mine", sessionId: "s" }));
+      await store.observe(makeObs({ tenantId: "other", agentId: "other", trajectoryId: "theirs", sessionId: "s" }));
+      const r = await store.listTrajectoryIds!(SCOPE_A);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.value.map((p) => p.trajectoryId)).toEqual(["mine"]);
+    });
+
+    it("fails closed on an unresolved scope (never a global pool)", async () => {
+      const r = await store.listTrajectoryIds!({ tenantId: "", agentId: "" });
+      expect(r.ok).toBe(false);
+    });
+  });
+
   describe("observe() — idempotent write (WS1 first-RED)", () => {
     it("treats a replayed observation on the same tuple as a no-op (exactly one row)", async () => {
       const obs = makeObs();
@@ -248,12 +276,9 @@ describe("createSqliteOutcomeStore", () => {
       expect(res.value.confidence).toBe(0.8);
     });
 
-    it("breaks a same-tier EQUAL-confidence tie toward 'failure' deterministically (WR-01)", async () => {
-      // The real multi-tool case: one tool succeeds and a sibling tool transport-fails,
-      // BOTH written at DETERMINISTIC_CONFIDENCE (0.9) on the same `tool` tier. The
-      // resolved verdict must be a STABLE `failure` — a real failure must never be
-      // masked by an equal-confidence success, and the verdict must not depend on the
-      // unindexed scan order. Insertion order: success FIRST.
+    it("a turn that ENDS in failure resolves to 'failure' (latest observation wins — recency tie-break, WR-01)", async () => {
+      // Same-tier (tool) equal-confidence (0.9) signals; the FAILURE is the LATEST
+      // (terminal) observation → the turn ended failed → resolves `failure`.
       await store.observe(makeObs({ source: "tool", outcome: "success", confidence: 0.9, observedAt: 1_000 }));
       await store.observe(makeObs({ source: "tool", outcome: "failure", confidence: 0.9, observedAt: 2_000 }));
       const res = await store.resolve(TRAJ, SCOPE_A);
@@ -263,12 +288,28 @@ describe("createSqliteOutcomeStore", () => {
       expect(res.value.confidence).toBe(0.9);
     });
 
-    it("breaks the same tie toward 'failure' regardless of insertion order (WR-01 determinism)", async () => {
-      // Same two same-tier same-confidence rows, but the FAILURE is observed FIRST.
-      // The verdict must still be `failure` — proving the tie-break is on outcome
-      // severity, not on whichever row the scan returned first (`rows[0]`).
+    it("a RECOVERED turn (transient failure → later success) resolves to 'success' (live-2026-06-18 §4 fix)", async () => {
+      // The dominant single-agent case: a tool call fails, the agent retries and
+      // succeeds. Same `tool` tier, equal 0.9 confidence; the SUCCESS is the LATEST
+      // (terminal) observation → the turn recovered → resolves `success`, so it is
+      // ELIGIBLE for skill synthesis and does NOT penalize the memories it used.
+      // (Pre-fix severity-wins resolved this to `failure` — the §4 defect.)
       await store.observe(makeObs({ source: "tool", outcome: "failure", confidence: 0.9, observedAt: 1_000 }));
       await store.observe(makeObs({ source: "tool", outcome: "success", confidence: 0.9, observedAt: 2_000 }));
+      const res = await store.resolve(TRAJ, SCOPE_A);
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      expect(res.value.outcome).toBe("success");
+    });
+
+    it("on an EXACT-timestamp tie, severity still wins — a concurrent failure is never masked (WR-01 safety)", async () => {
+      // Genuinely simultaneous same-tier (tool+pipeline are both tier 0) same-confidence
+      // signals at the SAME observed_at (e.g. concurrent DAG-node siblings): recency
+      // cannot decide, so the more-severe `failure` wins — preserving the original
+      // "never mask a real failure" guarantee for the concurrent case. (Distinct sources
+      // so both rows survive the idempotency tuple.)
+      await store.observe(makeObs({ source: "tool", outcome: "success", confidence: 0.9, observedAt: 5_000 }));
+      await store.observe(makeObs({ source: "pipeline", outcome: "failure", confidence: 0.9, observedAt: 5_000 }));
       const res = await store.resolve(TRAJ, SCOPE_A);
       expect(res.ok).toBe(true);
       if (!res.ok) return;

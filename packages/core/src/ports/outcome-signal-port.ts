@@ -134,4 +134,24 @@ export interface OutcomeSignalPort {
    * enable flag. Synchronous (a single SQLite transaction).
    */
   prune(retentionDays: number): OutcomePruneResult;
+
+  /**
+   * READ. Enumerate the DISTINCT per-turn `(trajectoryId, sessionId)` pairs the
+   * ledger holds for this `(tenant, agent)` scope, most-recent-first (bounded).
+   *
+   * Exists so a consumer (skill synthesis, WS2) can discover the REAL per-turn
+   * trajectory identities the outcome signal is keyed on and `resolve()` each —
+   * instead of guessing an id from a session view. This closes the live-2026-06-18
+   * defect where the synthesis source emitted the `sessionKey` while outcomes are
+   * keyed by the per-turn `traceId`, so `resolve(sessionKey)` always fused to
+   * `unknown` and NO skill could ever be selected on the single-agent path.
+   *
+   * OPTIONAL: only the sqlite adapter implements it; a consumer MUST fail-closed
+   * (treat absent / `err` as "no source trajectories") rather than fall back to a
+   * non-resolvable identity. Scoped + fail-closed on an unresolved scope, exactly
+   * like {@link resolve}.
+   */
+  listTrajectoryIds?(
+    scope: LearningScope,
+  ): Promise<Result<Array<{ trajectoryId: string; sessionId: string }>, Error>>;
 }

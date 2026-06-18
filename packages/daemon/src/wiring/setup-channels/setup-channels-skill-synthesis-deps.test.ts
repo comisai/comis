@@ -66,15 +66,21 @@ describe("buildSkillSynthesisCronDeps", () => {
     expect(arg.policy).toEqual({ profile: "full", allow: [], deny: [] });
   });
 
-  it("flattens the LCD-merged session transcripts into source trajectories (buildSourceTrajectories, NOT raw listDetailed)", async () => {
+  it("emits one source trajectory per resolvable PER-TURN traceId, with the session transcript as text (buildSourceTrajectories)", async () => {
     const sessionStore = {
       listDetailed: vi.fn(() => [{ sessionKey: "s1", userId: "u1", tenantId: "t", channelId: "c", metadata: null, createdAt: 1, updatedAt: 2, messageCount: 2 }]),
       loadByFormattedKey: vi.fn(() => ({ messages: [{ role: "user", content: "do X" }, { role: "assistant", content: "did X" }], metadata: {}, createdAt: 1, updatedAt: 2 })),
     };
-    const bundle = buildSkillSynthesisCronDeps(makeInput({ sessionStore: sessionStore as any }))!;
+    // The outcome ledger holds the per-turn traceId(s) for session s1 — the source
+    // must emit THOSE (resolvable), not the sessionKey.
+    const outcomeStore = {
+      observe: vi.fn(), prune: vi.fn(), resolve: vi.fn(),
+      listTrajectoryIds: vi.fn(async () => ({ ok: true as const, value: [{ trajectoryId: "turn-1", sessionId: "s1" }] })),
+    };
+    const bundle = buildSkillSynthesisCronDeps(makeInput({ sessionStore: sessionStore as any, outcomeStore: outcomeStore as any }))!;
     const trajectories = await bundle.buildSourceTrajectories("agent-1", "t");
     expect(trajectories).toHaveLength(1);
-    expect(trajectories[0].trajectoryId).toBe("s1");
+    expect(trajectories[0].trajectoryId).toBe("turn-1"); // the per-turn traceId resolve() keys on, NOT the sessionKey
     expect(trajectories[0].sessionId).toBe("s1");
     expect(trajectories[0].sender).toBe("u1");
     expect(trajectories[0].text).toContain("do X");
@@ -86,8 +92,69 @@ describe("buildSkillSynthesisCronDeps", () => {
       listDetailed: vi.fn(() => [{ sessionKey: "s1", userId: "u1", tenantId: "t", channelId: "c", metadata: null, createdAt: 1, updatedAt: 2, messageCount: 0 }]),
       loadByFormattedKey: vi.fn(() => ({ messages: [], metadata: {}, createdAt: 1, updatedAt: 2 })),
     };
-    const bundle = buildSkillSynthesisCronDeps(makeInput({ sessionStore: sessionStore as any }))!;
+    const outcomeStore = {
+      observe: vi.fn(), prune: vi.fn(), resolve: vi.fn(),
+      listTrajectoryIds: vi.fn(async () => ({ ok: true as const, value: [{ trajectoryId: "turn-1", sessionId: "s1" }] })),
+    };
+    const bundle = buildSkillSynthesisCronDeps(makeInput({ sessionStore: sessionStore as any, outcomeStore: outcomeStore as any }))!;
     const trajectories = await bundle.buildSourceTrajectories("agent-1", "t");
     expect(trajectories).toHaveLength(0);
+  });
+
+  it("fails closed to empty when the outcome store cannot enumerate ids (no non-resolvable fallback)", async () => {
+    const sessionStore = {
+      listDetailed: vi.fn(() => [{ sessionKey: "s1", userId: "u1", tenantId: "t", channelId: "c", metadata: null, createdAt: 1, updatedAt: 2, messageCount: 2 }]),
+      loadByFormattedKey: vi.fn(() => ({ messages: [{ role: "user", content: "do X" }], metadata: {}, createdAt: 1, updatedAt: 2 })),
+    };
+    // listTrajectoryIds absent ⇒ must NOT fall back to emitting the sessionKey (the pre-fix bug).
+    const outcomeStore = { observe: vi.fn(), prune: vi.fn(), resolve: vi.fn() };
+    const bundle = buildSkillSynthesisCronDeps(makeInput({ sessionStore: sessionStore as any, outcomeStore: outcomeStore as any }))!;
+    expect(await bundle.buildSourceTrajectories("agent-1", "t")).toHaveLength(0);
+  });
+
+  // ── REGRESSION (live VPS incident 2026-06-18): trajectory-identity mismatch ──
+  // The synthesis SELECT step resolves each source trajectory's `trajectoryId`
+  // against the outcome signal. The outcome signal keys outcome_events by the
+  // PER-TURN traceId (setup-learning.ts:146 `trajectoryId = payload.traceId`); the
+  // sessionKey lives only in the `session_id` column. But buildSourceTrajectories
+  // emits `trajectoryId = sessionKey` (setup-channels-skill-synthesis-deps.ts:101).
+  // So resolve(sessionKey) finds ZERO rows → `unknown` → fail-closed skip → no skill
+  // can EVER be synthesized on the single-agent/chat-API path. Live: 11 resolved
+  // success trajectories, 3 synthesis runs, every run `candidates:1, selected:0`.
+  // REGRESSION GUARD (live VPS incident 2026-06-18, FIXED): the synthesis SELECT
+  // step resolves each source trajectory's `trajectoryId`. Outcomes are keyed by the
+  // PER-TURN traceId, not the sessionKey — so the source must emit a traceId that
+  // resolves. Pre-fix it emitted the sessionKey → resolve()=`unknown` → `selected:0`
+  // forever. This test FAILED on the pre-fix code (`expected 'unknown' to be 'success'`);
+  // the per-turn-source fix makes it pass. See gap analysis §3/§9.
+  it("emits a trajectoryId the outcome signal can resolve (the §3 identity mismatch — FIXED)", async () => {
+    const SESSION_KEY = "default:openai-api:openai";
+    const TURN_TRACE_ID = "942cc2e5-48e9-434e-8d1d-aa55fb1f06d6"; // the per-turn id outcomes are keyed on
+    const sessionStore = {
+      listDetailed: vi.fn(() => [{ sessionKey: SESSION_KEY, userId: "u1", tenantId: "t", channelId: "openai", metadata: null, createdAt: 1, updatedAt: 2, messageCount: 2 }]),
+      loadByFormattedKey: vi.fn(() => ({ messages: [{ role: "user", content: "scaffold a python module and run it" }, { role: "assistant", content: "done, output 7" }], metadata: {}, createdAt: 1, updatedAt: 2 })),
+    };
+    // Fake outcome store modelling the REAL invariant: the success is keyed by the
+    // per-turn traceId — NOT the sessionKey. listTrajectoryIds surfaces it; resolve()
+    // matches trajectory_id.
+    const outcomeStore = {
+      observe: vi.fn(),
+      prune: vi.fn(),
+      listTrajectoryIds: vi.fn(async () => ({ ok: true as const, value: [{ trajectoryId: TURN_TRACE_ID, sessionId: SESSION_KEY }] })),
+      resolve: vi.fn(async (id: string) =>
+        id === TURN_TRACE_ID
+          ? { ok: true as const, value: { outcome: "success" as const, confidence: 0.9, sources: ["tool" as const], recalledIds: [], usedSkillIds: [] } }
+          : { ok: true as const, value: { outcome: "unknown" as const, confidence: 0, sources: [], recalledIds: [], usedSkillIds: [] } }),
+    };
+    const bundle = buildSkillSynthesisCronDeps(makeInput({ sessionStore: sessionStore as any, outcomeStore: outcomeStore as any }))!;
+    const trajectories = await bundle.buildSourceTrajectories("agent-1", "t");
+    expect(trajectories).toHaveLength(1);
+    expect(trajectories[0].trajectoryId).toBe(TURN_TRACE_ID);
+    // The SELECT step does exactly this resolve — the emitted id MUST resolve to the
+    // real outcome, otherwise synthesis is starved (selected:0) forever.
+    const resolved = await bundle.outcomeSignal.resolve(trajectories[0].trajectoryId, { tenantId: "t", agentId: "agent-1" });
+    expect(resolved.ok).toBe(true);
+    if (!resolved.ok) return;
+    expect(resolved.value.outcome).toBe("success");
   });
 });
