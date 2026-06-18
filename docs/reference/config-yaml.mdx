@@ -153,7 +153,7 @@ The values shown are real (not placeholders). Save it as `~/.comis/config.yaml`,
 
 ## Quick Reference
 
-All 41 top-level configuration sections at a glance:
+All 42 top-level configuration sections at a glance:
 
 | Section | Type | Description |
 |---------|------|-------------|
@@ -197,6 +197,7 @@ All 41 top-level configuration sections at a glance:
 | `documentation` | `DocumentationConfig` | Documentation links for system prompt |
 | `telegramFileRefGuard` | `TelegramFileRefGuardConfig` | Telegram file reference guard |
 | `tooling` | `ToolingConfig` | Tool-first capability layer -- MCP/skill hints, install-detour mode |
+| `orchestration` | `OrchestrationConfig` | Small-model DAG-authoring gates (all default `false`; flipped on by the operator on telemetry) |
 | `executor` | `ExecutorConfig` | Credential-broker executor configuration (optional; omit unless using the broker) |
 
 ## Core Settings
@@ -2105,6 +2106,32 @@ Top-level fields:
 - `installDetours.mode` — `"observe"` / `"advise"` / `"soft-stop"` (default `"advise"`). Controls how the install-detour validator acts when an exec command would `pip install` / `npm install` a package that overlaps with an already-connected MCP server or skill.
 
 Operator typos in any cluster reference (under `capabilityClusters.builtinAssignments[*]`, `mcp.capabilityHints[*].cluster`, or `skills.capabilityHints[*].cluster`) emit a Pino WARN at daemon startup with `errorKind: "config"`, an operator-actionable hint, and the offending `{ configPath, unresolvedClusterId }` payload — the daemon does NOT crash; unresolved cluster references fall back to `external-integrations` (for MCP hints) or `prompt-skills` (for skill hints). Check `pm2 logs comis` or `journalctl -u comis` after restart to surface typos.
+
+## orchestration
+
+Small-model DAG-authoring gates. These flags help a **weaker** model author multi-agent execution graphs that a frontier model would write correctly on its own — by repairing a schema-invalid graph to its intended canonical template, synthesizing a graph from a one-line intent, and grammar-constraining the tool schema for local providers. Operator-only — the `orchestration` tree is not agent-configurable.
+
+<Warning>
+  **The entire authoring layer ships gated-off — every flag defaults to `false`.** With all three flags off, the repair producer, the `from_intent` synthesizer, and the GBNF constrain path are unreachable and behavior is byte-identical to a build without this section. Flip a flag on **only on real telemetry**: run the daemon for a representative window so the [`pipeline:authored`](/developer-guide/event-bus) event accrues, read the `pipeline_authoring` finding (and the pre-committed build/defer gate) from [`obs.fleet.health`](/reference/json-rpc#obs-fleet-health), and enable the relevant flag only once small-tier authoring is materially below frontier. This is the measure-first gate — the capability is built but inert until the data justifies it.
+</Warning>
+
+**orchestration.authoring** fields:
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `repairProducer` | `boolean` | `false` | **AUTHOR-01.** Enable the conservative weak-model graph repair producer. When a weak-tier model emits a schema-invalid pipeline graph, the daemon attempts a deterministic match to a canonical template (`research-fanout` / `debate` / `vote` / `map-reduce`) and repairs it; an ambiguous match returns a structured "did you mean this template?" instead of synthesizing. The calling tier is resolved **server-side** (never tool-supplied). Off → the existing fail-closed validation error throws unchanged. |
+| `intentAction` | `boolean` | `false` | **AUTHOR-02.** Enable the `pipeline` tool's `from_intent` action and its deterministic synthesizer — a one-line intent (`{ pattern, agents \| tasks, rounds?, budget? }`) expands into a validated graph. Off → the daemon refuses any `from_intent` call before a graph runs. See [Pipelines: from_intent](/agent-tools/pipelines#from-intent). |
+| `gbnfConstrain` | `boolean` | `false` | **AUTHOR-03 (best-effort).** Grammar-constrain the raw `pipeline` tool schema for GBNF-eligible local providers (the local/default family — never a cloud provider by name). This is a removal/relaxation-only structural transform; it **never widens field value validation**. The daemon-side schema validation remains the single source of truth. Off → byte-identical schema normalization. |
+
+Governance is preserved regardless of these flags: a repaired or synthesized graph runs the **same** validation, denylist, and child⊆parent sandbox checks as a hand-authored graph — the producer/synthesizer return a graph and never execute one directly. See [Execution Graphs: Small-model authoring](/agents/execution-graphs#small-model-authoring) for the behavior and [Event Bus](/developer-guide/event-bus) for the `graph:repaired` and `graph:synthesized_from_intent` audit events.
+
+```yaml
+orchestration:
+  authoring:
+    repairProducer: false   # AUTHOR-01 — flip on once telemetry justifies it
+    intentAction: false     # AUTHOR-02
+    gbnfConstrain: false    # AUTHOR-03 (best-effort)
+```
 
 ## Streaming & Messaging
 
