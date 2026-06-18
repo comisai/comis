@@ -337,9 +337,7 @@ export interface OrchestratorApiDeps {
   graphCoordinator?: import("../graph/graph-coordinator.js").GraphCoordinator;
   // Named graph persistence deps
   namedGraphStore?: import("@comis/memory").NamedGraphStore;
-  /** Node type registry for driver config validation. The legacy GraphHandlerDeps
-   *  declared an inline shape; the @comis/scheduler / graph-local
-   *  NodeTypeRegistry type is structurally compatible. */
+  /** Node type registry for driver config validation (structurally compatible with the graph-local / @comis/scheduler NodeTypeRegistry). */
   nodeTypeRegistry?: import("../graph/node-type-registry.js").NodeTypeRegistry;
   // Heartbeat deps
   perAgentRunner?: PerAgentHeartbeatRunner;
@@ -354,30 +352,15 @@ export interface OrchestratorApiDeps {
   persistDeps?: PersistToConfigDeps;
   /** graph-handlers reads deps.securityConfig.agentToAgent.enabled. */
   securityConfig: { agentToAgent?: { enabled?: boolean; waitTimeoutMs: number; subAgentToolGroups?: string[] } };
-  /** graph / subagent handlers read deps.logger.info/warn. Required
-   *  (matches other slices for multi-extends parity; DaemonApiDeps.logger is required). */
+  /** graph / subagent handlers read deps.logger.info/warn. Required (multi-extends parity; DaemonApiDeps.logger is required). */
   logger: ComisLogger;
   /** graph-handlers reads deps.dataDir for graph-runs output. */
   dataDir?: string;
   /** subagent-handlers reads deps.subAgentRunner.list/kill/steer. */
   subAgentRunner: ReturnType<typeof createSubAgentRunner>;
-  /** graph-handlers (graph-mutate.ts) reads deps.eventBus to emit the
-   *  counts-only `pipeline:authored` telemetry event (TELEM-01). Optional and
-   *  the SAME `AppContainer["eventBus"]` shape as MemoryApiDeps /
-   *  WorkspaceApiDeps / MediaApiDeps / ObservabilityApiDeps so the
-   *  ApiDispatchDeps multi-extends stays well-formed (the dispatcher spreads a
-   *  single eventBus across every slice). */
+  // TELEM-01 (Plan 173-02): graph-mutate.ts emits `pipeline:authored` via eventBus, tier from getProviderCapabilityClass+deps.agents at rpc-dispatch.ts (when-absent: AUDIT-orchestrator.md). Both optional; eventBus shape matches sibling slices (ApiDispatchDeps parity).
   eventBus?: AppContainer["eventBus"];
-  /** Resolve a provider's operator-pinned capabilityClass override (the same
-   *  providers.entries source the executor's ModelProfile uses; threaded from
-   *  daemon.ts). The graph-handler wiring (rpc-dispatch.ts) composes this with
-   *  deps.agents to build the per-agent `resolveCapabilityClass` for the
-   *  `pipeline:authored` tier (TELEM-01). Same shape as SetupToolsDeps'
-   *  getProviderCapabilityClass. Optional/undefined ⇒ the emit records
-   *  "unknown". */
-  getProviderCapabilityClass?: (
-    provider: string | undefined,
-  ) => import("@comis/agent").CapabilityClass | undefined;
+  getProviderCapabilityClass?: (provider: string | undefined) => import("@comis/agent").CapabilityClass | undefined;
 }
 
 /**
