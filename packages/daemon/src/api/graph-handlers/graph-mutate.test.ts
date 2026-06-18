@@ -28,8 +28,28 @@ import { describe, it, expect, vi } from "vitest";
 import { ok } from "@comis/shared";
 import type { CapabilityClass, TemplateMatch } from "@comis/agent";
 
+// AUTHOR-02 (Phase 174-04): a DELEGATING spy over graph-helpers so the M-1
+// marker-no-leak test can capture the EXACT params object reaching
+// buildGraphInput (the marker is not in INTERNAL_FIELD_NAMES, so only the
+// handler's explicit delete removes it before this call). The spy delegates to
+// the real implementations, so every other test in this file exercises the
+// real buildGraphInput / validateTypeConfigs behavior unchanged.
+vi.mock("./graph-helpers.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./graph-helpers.js")>();
+  return {
+    ...actual,
+    buildGraphInput: vi.fn(actual.buildGraphInput),
+    validateTypeConfigs: vi.fn(actual.validateTypeConfigs),
+  };
+});
+
 import { bindGraphMutateHandlers } from "./graph-mutate.js";
+import * as graphHelpers from "./graph-helpers.js";
 import type { GraphHandlerDeps } from "./graph-helpers.js";
+
+/** The delegating spies (typed as Mock) for argument capture. */
+const buildGraphInputSpy = graphHelpers.buildGraphInput as unknown as ReturnType<typeof vi.fn>;
+const validateTypeConfigsSpy = graphHelpers.validateTypeConfigs as unknown as ReturnType<typeof vi.fn>;
 
 // ---------------------------------------------------------------------------
 // Fixtures — payloads proven valid / invalid against buildGraphInput
@@ -459,5 +479,203 @@ describe("graph mutate — gated server-side capabilityClass feed (AUTHOR-01)", 
       handlers["graph.define"]!({ nodes: CYCLIC_NODES, _agentId: "strongbot" }),
     ).rejects.toThrow(/Graph validation failed/);
     expect(repairedPayloads(emit)).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AUTHOR-02 (Phase 174-04): the daemon-side from_intent gate + marker handling
+// + synthesis audit emit + governance-not-bypassed.
+//
+// from_intent synthesizes a graph in the skills tool and dispatches it through
+// graph.execute with an in-band `_synthesizedFromIntent` marker. The daemon
+// execute handler:
+//   - reads the marker BEFORE stripInternalFields,
+//   - REFUSES when the marker is set AND orchestration.authoring.intentAction is
+//     off (the FLAGS-OFF chokepoint — before any graph runs),
+//   - explicit-deletes the marker after the strip (it is NOT in
+//     INTERNAL_FIELD_NAMES, and GraphExecuteContract.request is a loose z.record,
+//     so the strip alone leaves it — M-1 marker-no-leak),
+//   - emits graph:synthesized_from_intent best-effort on a GOVERNED synthesis,
+//   - and a synthesized graph traverses the IDENTICAL define-time governance
+//     (buildGraphInput parse/sort + validateTypeConfigs) a hand-authored graph
+//     hits — governance is on the shared path, NOT re-implemented or skipped.
+// ---------------------------------------------------------------------------
+
+/** Pull graph:synthesized_from_intent payloads off a captured emit mock. */
+function synthesizedPayloads(emit: ReturnType<typeof vi.fn>): Array<Record<string, unknown>> {
+  return emit.mock.calls
+    .filter((c) => c[0] === "graph:synthesized_from_intent")
+    .map((c) => c[1] as Record<string, unknown>);
+}
+
+const FLAGS_INTENT_ON = { repairProducer: false, intentAction: true, gbnfConstrain: false };
+const FLAGS_INTENT_OFF = { repairProducer: false, intentAction: false, gbnfConstrain: false };
+
+/** Capture the graph passed to graphCoordinator.run (the post-governance graph). */
+function makeRunCapture() {
+  const seen: Array<Record<string, unknown>> = [];
+  const run = vi.fn(async (input: Record<string, unknown>) => {
+    seen.push(input);
+    return ok("graph-synth-1");
+  });
+  return { run, seen };
+}
+
+describe("graph.execute — from_intent gate + marker + synthesis emit (AUTHOR-02)", () => {
+  it("Test 1 (FLAGS-OFF refusal): _synthesizedFromIntent set + intentAction OFF → policy refusal, NO graph runs", async () => {
+    const emit = vi.fn();
+    const { run, seen } = makeRunCapture();
+    const handlers = bindGraphMutateHandlers(
+      makeDeps({ emit, run, authoringConfig: FLAGS_INTENT_OFF }),
+    );
+
+    await expect(
+      handlers["graph.execute"]!({
+        nodes: VALID_NODES,
+        _synthesizedFromIntent: "debate",
+        _agentId: "bot",
+      }),
+    ).rejects.toThrow(/intentAction|from_intent .*disabled|disabled by policy/i);
+    // The gate fires BEFORE the coordinator — no graph ran.
+    expect(seen).toHaveLength(0);
+    expect(synthesizedPayloads(emit)).toHaveLength(0);
+  });
+
+  it("Test 2 (flag-on emit): intentAction ON → the synthesized execute proceeds AND emits graph:synthesized_from_intent once (pattern + nodeCount, counts-only)", async () => {
+    const emit = vi.fn();
+    const { run } = makeRunCapture();
+    const handlers = bindGraphMutateHandlers(
+      makeDeps({ emit, run, authoringConfig: FLAGS_INTENT_ON }),
+    );
+
+    const result = await handlers["graph.execute"]!({
+      nodes: VALID_NODES,
+      _synthesizedFromIntent: "debate",
+      _agentId: "bot",
+      _callerSessionKey: "sess-1",
+    });
+    expect(result).toMatchObject({ async: true });
+
+    const payloads = synthesizedPayloads(emit);
+    expect(payloads).toHaveLength(1);
+    expect(payloads[0]!.pattern).toBe("debate");
+    expect(payloads[0]!.nodeCount).toBe(VALID_NODES.length);
+    // Correlation ids ride envelope-only; no graph body leaks (§2.7).
+    expect(payloads[0]!.agentId).toBe("bot");
+    expect(payloads[0]!.sessionKey).toBe("sess-1");
+    expect(payloads[0]).not.toHaveProperty("nodes");
+    expect(payloads[0]).not.toHaveProperty("label");
+    expect(JSON.stringify(payloads[0])).not.toContain("Research topic");
+  });
+
+  it("Test 3 (governance NOT bypassed — PRIMARY path assertion): a synthesized graph traverses the IDENTICAL define-time governance (buildGraphInput + validateTypeConfigs) a hand-authored graph.execute hits", async () => {
+    const emit = vi.fn();
+    const { run, seen } = makeRunCapture();
+    const handlers = bindGraphMutateHandlers(
+      makeDeps({ emit, run, authoringConfig: FLAGS_INTENT_ON }),
+    );
+
+    // A from_intent-marked but structurally INVALID (cyclic) graph must hit the
+    // SAME parse/validateAndSortGraph governance a hand-authored execute hits —
+    // i.e. it is rejected, not waved through because it is "synthesized".
+    await expect(
+      handlers["graph.execute"]!({
+        nodes: CYCLIC_NODES,
+        _synthesizedFromIntent: "debate",
+        _agentId: "bot",
+      }),
+    ).rejects.toThrow(/Graph validation failed/);
+    // Governance rejected it BEFORE the coordinator — same path, no synthesis bypass.
+    expect(seen).toHaveLength(0);
+    // No emit on a graph that failed governance (the emit reflects a GOVERNED graph).
+    expect(synthesizedPayloads(emit)).toHaveLength(0);
+
+    // And a VALID synthesized graph traverses the IDENTICAL governance call-path:
+    // buildGraphInput (parse + validateAndSortGraph) AND validateTypeConfigs are
+    // both invoked on the synthesized nodes, exactly as a hand-authored
+    // graph.execute invokes them — governance is on the SHARED path, not
+    // re-implemented or skipped for synthesis (L-2 path-equivalence).
+    buildGraphInputSpy.mockClear();
+    validateTypeConfigsSpy.mockClear();
+    const handlers2Run = makeRunCapture();
+    const handlers2 = bindGraphMutateHandlers(
+      makeDeps({ emit: vi.fn(), run: handlers2Run.run, authoringConfig: FLAGS_INTENT_ON }),
+    );
+    await handlers2["graph.execute"]!({
+      nodes: VALID_NODES,
+      _synthesizedFromIntent: "debate",
+      _agentId: "bot",
+    });
+    // The exact same define-time governance functions ran on the synthesized graph.
+    expect(buildGraphInputSpy).toHaveBeenCalledTimes(1);
+    expect(validateTypeConfigsSpy).toHaveBeenCalledTimes(1);
+    expect(handlers2Run.seen).toHaveLength(1);
+    const coordInput = handlers2Run.seen[0]!;
+    // The coordinator received a validated graph with an executionOrder (proof
+    // validateAndSortGraph ran on the shared path).
+    const graph = coordInput.graph as { graph: { nodes: unknown[] }; executionOrder: string[] };
+    expect(Array.isArray(graph.executionOrder)).toBe(true);
+    expect(graph.graph.nodes.length).toBe(VALID_NODES.length);
+  });
+
+  it("Test 4 (marker does NOT leak — M-1): the _synthesizedFromIntent marker is stripped before buildGraphInput (NOT in INTERNAL_FIELD_NAMES → explicit delete required)", async () => {
+    buildGraphInputSpy.mockClear();
+    const emit = vi.fn();
+    const { run, seen } = makeRunCapture();
+    const handlers = bindGraphMutateHandlers(
+      makeDeps({ emit, run, authoringConfig: FLAGS_INTENT_ON }),
+    );
+
+    await handlers["graph.execute"]!({
+      nodes: VALID_NODES,
+      _synthesizedFromIntent: "debate",
+      _agentId: "bot",
+    });
+    // PRIMARY M-1 assertion: the params object reaching buildGraphInput carries
+    // NO _synthesizedFromIntent key. stripInternalFields alone leaves it (not in
+    // the 15-name allowlist); the handler's explicit delete must remove it.
+    expect(buildGraphInputSpy).toHaveBeenCalledTimes(1);
+    const paramsToBuild = buildGraphInputSpy.mock.calls[0]![0] as Record<string, unknown>;
+    expect(paramsToBuild).not.toHaveProperty("_synthesizedFromIntent");
+    // Belt-and-suspenders: the marker also appears nowhere in the coordinator graph.
+    expect(seen).toHaveLength(1);
+    expect(JSON.stringify(seen[0])).not.toContain("_synthesizedFromIntent");
+  });
+
+  it("Test 5 (emit best-effort): a throwing emit does NOT break a valid synthesized execute", async () => {
+    const warn = vi.fn();
+    const emit = vi.fn((event: string) => {
+      if (event === "graph:synthesized_from_intent") throw new Error("obs buffer SQLITE_BUSY");
+    });
+    const { run, seen } = makeRunCapture();
+    const handlers = bindGraphMutateHandlers(
+      makeDeps({ emit, run, authoringConfig: FLAGS_INTENT_ON, logger: { warn } }),
+    );
+
+    // The execute still succeeds despite the emit throw (telemetry never breaks
+    // the measured op — mirrors emitPipelineAuthored).
+    const result = await handlers["graph.execute"]!({
+      nodes: VALID_NODES,
+      _synthesizedFromIntent: "debate",
+      _agentId: "bot",
+    });
+    expect(result).toMatchObject({ async: true });
+    expect(seen).toHaveLength(1); // the coordinator ran
+    expect(warn).toHaveBeenCalled(); // the throw was logged at WARN
+  });
+
+  it("Test 6 (no marker = byte-identical): a normal graph.execute with NO _synthesizedFromIntent does NOT gate, emit, or otherwise change", async () => {
+    const emit = vi.fn();
+    const { run, seen } = makeRunCapture();
+    // intentAction OFF — a NON-from_intent execute must be wholly unaffected.
+    const handlers = bindGraphMutateHandlers(
+      makeDeps({ emit, run, authoringConfig: FLAGS_INTENT_OFF }),
+    );
+
+    const result = await handlers["graph.execute"]!({ nodes: VALID_NODES, _agentId: "bot" });
+    expect(result).toMatchObject({ async: true });
+    expect(seen).toHaveLength(1);
+    // No synthesis emit, no refusal (the gate only engages on the marker).
+    expect(synthesizedPayloads(emit)).toHaveLength(0);
   });
 });
