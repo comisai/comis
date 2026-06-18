@@ -1288,7 +1288,8 @@ describe("subagent:budget_exceeded event type", () => {
 
     // Source-grep the breach event block for forbidden body fields (counts-only
     // contract — never task text, output, or response bodies; AGENTS.md §2.7).
-    const src = readFileSync(resolve(here, "./events-agent.ts"), "utf8");
+    // The block lives in events-orchestration.ts (extracted from AgentEvents).
+    const src = readFileSync(resolve(here, "./events-orchestration.ts"), "utf8");
     const match = src.match(/"subagent:budget_exceeded":\s*\{[\s\S]*?\n\s*\};/);
     expect(match, "subagent:budget_exceeded event block must exist").toBeTruthy();
     const block = match![0];

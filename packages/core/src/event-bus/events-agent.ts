@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * AgentEvents: Skill, tool, model, audit, observability (token/latency), and graph lifecycle events.
+ * AgentEvents: Skill, tool, model, audit, and observability (token/latency) events.
  *
- * Find events by prefix: skill:*, tool:*, model:*, audit:*, observability:*, graph:*
+ * Find events by prefix: skill:*, tool:*, model:*, audit:*, observability:*.
+ * Graph orchestration (graph:* / subagent:*) lives in OrchestrationEvents
+ * (events-orchestration.ts).
  */
-import type { NodeStatus, GraphStatus } from "../domain/execution-graph.js";
 import type { ErrorKind } from "../logging/log-fields.js";
 import type { ScriptClass } from "../text/script-classes.js";
 import type { GenerationPass } from "../text/generation-quality.js";
@@ -463,74 +464,6 @@ export interface AgentEvents {
     adjustedTrustLevel: string;
     patterns: string[];
     blocked: boolean;
-  };
-
-  /** Graph execution started (coordinator began running a validated DAG) */
-  "graph:started": {
-    graphId: string;
-    label?: string;
-    nodeCount: number;
-    timestamp: number;
-  };
-
-  /** Graph node transitioned to a new status (running, completed, failed, skipped) */
-  "graph:node_updated": {
-    graphId: string;
-    nodeId: string;
-    status: NodeStatus;
-    previousStatus?: NodeStatus;
-    durationMs?: number;
-    error?: string;
-    /** Per-node token spend for the completed node (BUDGET-03). */
-    tokensUsed?: number;
-    /** Per-node cost for the completed node (BUDGET-03). */
-    cost?: number;
-    timestamp: number;
-  };
-
-  /**
-   * A graph node's sub-agent exceeded its per-node token budget (BUDGET-03).
-   * Counts/ids only — NEVER task text or output (AGENTS.md §2.7). Mirrors the
-   * memory:consolidated minimal-payload convention.
-   */
-  "subagent:budget_exceeded": {
-    graphId: string;
-    nodeId: string;
-    agentId: string;
-    /** The per-node cap that was breached. */
-    tokenBudget: number;
-    /** The node's actual run token spend. */
-    tokensUsed: number;
-    timestamp: number;
-  };
-
-  /** Graph reached terminal state (completed, failed, or cancelled) */
-  "graph:completed": {
-    graphId: string;
-    status: GraphStatus;
-    durationMs: number;
-    nodeCount: number;
-    nodesCompleted: number;
-    nodesFailed: number;
-    nodesSkipped: number;
-    cancelReason?: "timeout" | "budget" | "manual";
-    timestamp: number;
-    /** 3.3: Aggregate cache read tokens across all graph nodes. */
-    graphCacheReadTokens?: number;
-    /** 3.3: Aggregate cache write tokens across all graph nodes. */
-    graphCacheWriteTokens?: number;
-    /** 3.3: Cache effectiveness ratio (reads / (reads + writes)). */
-    graphCacheEffectiveness?: number;
-    /** 3.3: Per-node cache effectiveness breakdown. */
-    nodeEffectiveness?: Record<string, number>;
-  };
-
-  /** Node type driver reached a lifecycle phase (initialized, progress, completed, failed, aborted) */
-  "graph:driver_lifecycle": {
-    graphId: string;
-    nodeId: string;
-    typeId: string;
-    phase: "initialized" | "progress" | "completed" | "partial_complete" | "failed" | "aborted";
   };
 
   /** Provider declared degraded based on cross-agent failure aggregation */
