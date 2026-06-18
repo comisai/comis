@@ -429,19 +429,7 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
       const validated = await buildGraphInput(userParams, capabilityClass, repairContext(deps, rawParams));
       validateTypeConfigs(validated.graph, deps.nodeTypeRegistry);
 
-      // DEFER-174-SAVE (IN-01, 174-REVIEW): graph.save persists the ORIGINAL
-      // raw nodes, NOT `validated.graph.nodes`. So when repairProducer is on +
-      // the tier is weak, buildGraphInput may REPAIR an invalid graph (the
-      // artifact that passed validation), yet the artifact SAVED is the
-      // original pre-repair graph — a later load+execute re-validates and
-      // re-repairs/rejects it. Persisting raw nodes is PRE-EXISTING graph.save
-      // behavior (it preserves the author's exact nodes incl. ${VAR} templates
-      // that topo-sort/parse would transform); the async repair branch only
-      // makes the validated-vs-saved divergence newly reachable. Switching to
-      // `validated.graph.nodes` is a round-trip SEMANTICS change to graph.save
-      // beyond Phase 174's scope (and would strip templates / reorder / inject
-      // defaults), so it is deferred — not silently changed here. Tracked in
-      // .planning/phases/174-.../deferred-items.md (DEFER-174-SAVE).
+      // DEFER-174-SAVE (IN-01): persists ORIGINAL raw nodes, not the validated/repaired graph (pre-existing graph.save behavior; rationale: deferred-items.md).
       deps.namedGraphStore.save({
         id,
         tenantId,
