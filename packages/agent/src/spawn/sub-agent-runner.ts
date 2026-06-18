@@ -30,6 +30,7 @@ import { suppressError } from "@comis/shared";
 import { sanitizeAssistantResponse } from "../provider/response/sanitize-pipeline.js";
 import { randomUUID } from "node:crypto";
 import type { AnnouncementBatcher, AnnouncementDeadLetterQueue } from "./announcement-ports.js";
+import type { DeliveryDedup } from "./announce-key.js";
 import {
   classifyAbortReason,
   buildAnnouncementMessage,
@@ -195,6 +196,12 @@ export interface SubAgentRunnerDeps {
   batcher?: AnnouncementBatcher;
   /** Optional dead-letter queue for persisting failed announcement deliveries */
   deadLetterQueue?: AnnouncementDeadLetterQueue;
+  /**
+   * WR-02: shared, bounded delivered-key store, forwarded to deliverAnnouncement
+   * + deliverFailureNotification so the failure-path dedup is correct whether or
+   * not a batcher is wired. The daemon injects the SAME instance the batcher uses.
+   */
+  deliveryDedup?: DeliveryDedup;
   /** Optional active run registry for aborting in-flight SDK sessions on kill. */
   activeRunRegistry?: {
     get(sessionKey: string): { abort(): Promise<void> } | undefined;

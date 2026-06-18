@@ -33,6 +33,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | memoryAdapter | optional | sub-agent completion summaries skipped (line 1147 `if (deps.memoryAdapter)` guard) | packages/agent/src/spawn/sub-agent-runner.ts:174 |
 | batcher | optional | announcements bypass coalescing and emit individually (deps.batcher absent → direct send path) | packages/agent/src/spawn/sub-agent-runner.ts:189 |
 | deadLetterQueue | optional | failed announcement deliveries are lost (no persistence; line 596 `if (deps.deadLetterQueue)` guard) | packages/agent/src/spawn/sub-agent-runner.ts:191 |
+| deliveryDedup | optional | failure-path dedup falls back to the batcher's set when present; absent + no batcher → no cross-path dedup (deps.deliveryDedup?. optional-chain in deliverAnnouncement/deliverFailureNotification) | packages/agent/src/spawn/sub-agent-runner.ts:204 |
 | activeRunRegistry | optional | superseded by sessionResolver when present; structural-only retention for daemon construction-site type compatibility (no direct deps.activeRunRegistry access in runner — see JSDoc at lines 196-203) | packages/agent/src/spawn/sub-agent-runner.ts:193 |
 | sessionResolver | optional | abort path falls back to no-op when neither resolver nor registry resolves a handle (line 545 `if (deps.sessionResolver)` guard) | packages/agent/src/spawn/sub-agent-runner.ts:205 |
 | resultCondenser | optional | sub-agent result delivered verbatim without condensation (line 1015 `if (deps.resultCondenser)` guard) | packages/agent/src/spawn/sub-agent-runner.ts:209 |

@@ -16,7 +16,7 @@
 import type { NormalizedMessage, SessionKey, DeliveryService, DeliverToChannelOptions, ClockPort, TimerPort, AppContainer, FileLockPort, ChannelPort } from "@comis/core";
 import { tryGetContext, safePath, systemNowMs } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
-import { createResultCondenser, createNarrativeCaster, createLifecycleHooks, resolveOperationModel, resolveProviderFamily, createSubAgentRunner, classifyErrorContext } from "@comis/agent";
+import { createResultCondenser, createNarrativeCaster, createLifecycleHooks, resolveOperationModel, resolveProviderFamily, createSubAgentRunner, classifyErrorContext, createDeliveryDedup } from "@comis/agent";
 import {
   createCrossSessionSender,
   createAnnouncementBatcher,
@@ -257,12 +257,21 @@ export function setupCrossSession(deps: {
     logger: deps.logger?.child({ submodule: "dead-letter-queue" }),
   });
 
+  // WR-02/WR-03: ONE bounded delivered-key store shared across every
+  // completion-delivery surface — the batcher success path, the no-batcher
+  // success branches in deliverAnnouncement, the failure path
+  // (deliverFailureNotification), and DLQ recovery (WR-01). A single instance is
+  // what makes cross-path dedup hold whether or not the batcher is on the path;
+  // it is bounded (FIFO) so it never leaks for the daemon lifetime.
+  const deliveryDedup = createDeliveryDedup();
+
   // Announcement batcher coalesces near-simultaneous sub-agent completions.
   const announcementBatcher = createAnnouncementBatcher({
     announceToParent,
     sendToChannel,
     logger: deps.logger?.child({ submodule: "announcement-batcher" }),
     deadLetterQueue,
+    deliveryDedup,
     // DELIVERY-02: inject the transient/permanent classifier + backoff so the
     // batcher self-heals transient fallback failures (retry-with-backoff) and
     // fast-paths permanent ones to the DLQ. computeRetryBackoff is an
@@ -348,6 +357,7 @@ export function setupCrossSession(deps: {
     narrativeCaster,
     lifecycleHooks,
     deadLetterQueue,
+    deliveryDedup,
     clock: deps.clock,
     timers: deps.timers,
   });

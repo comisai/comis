@@ -467,6 +467,128 @@ describe("deliverFailureNotification idempotency (DELIVERY-03)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// WR-02: in a NO-BATCHER construction the success path must still mark delivered
+// so the failure path dedups. Pre-fix, deliverAnnouncement only marked a key
+// indirectly THROUGH the batcher; its non-batcher success branches (direct
+// announceToParent / direct sendToChannel) delivered to the user but never
+// marked, so deliverFailureNotification's dedup was silently inert whenever the
+// runner was constructed without a batcher. A shared DeliveryDedup injected into
+// BOTH closes the hole: a success then a sweep-driven failure on the same key
+// must NOT double-deliver, with or without a batcher.
+// ---------------------------------------------------------------------------
+
+describe("deliverAnnouncement / deliverFailureNotification shared dedup without a batcher (WR-02)", () => {
+  it("a direct-channel success marks the shared dedup so a later failure notification is suppressed", async () => {
+    const { deliverAnnouncement } = await import("./sub-agent-result-processor.js");
+    const { createDeliveryDedup } = await import("./announce-key.js");
+    const deliveryDedup = createDeliveryDedup();
+
+    const announceSend = vi.fn().mockResolvedValue(true);
+    const failureSend = vi.fn().mockResolvedValue(true);
+
+    // SUCCESS via deliverAnnouncement's DIRECT branch (no batcher, no announceToParent).
+    await deliverAnnouncement(
+      {
+        announcementText: "[System Message]\nResult: ok",
+        announceChannelType: "discord",
+        announceChannelId: "chan-1",
+        callerAgentId: "agent-main",
+        callerSessionKey: "default:u1:c1",
+        runId: "r1",
+      },
+      { sendToChannel: announceSend, deliveryDedup },
+    );
+    expect(announceSend).toHaveBeenCalledOnce();
+    // The shared dedup now carries the key even though no batcher was wired.
+    expect(deliveryDedup.has("default:u1:c1::r1")).toBe(true);
+
+    // A sweep-driven FAILURE notification for the SAME run must dedup against
+    // the shared set and NOT send a second user-facing message.
+    await deliverFailureNotification(
+      {
+        channelType: "discord",
+        channelId: "chan-1",
+        task: "t",
+        runtimeMs: 100,
+        runId: "r1",
+        callerSessionKey: "default:u1:c1",
+      },
+      { sendToChannel: failureSend, deliveryDedup },
+    );
+    expect(failureSend).not.toHaveBeenCalled();
+  });
+
+  it("a parent-injection success marks the shared dedup (announceToParent branch) without a batcher", async () => {
+    const { deliverAnnouncement } = await import("./sub-agent-result-processor.js");
+    const { createDeliveryDedup } = await import("./announce-key.js");
+    const deliveryDedup = createDeliveryDedup();
+
+    const announceToParent = vi.fn().mockResolvedValue(undefined);
+    const sendToChannel = vi.fn().mockResolvedValue(true);
+
+    await deliverAnnouncement(
+      {
+        announcementText: "[System Message]\nResult: ok",
+        announceChannelType: "telegram",
+        announceChannelId: "chat-1",
+        callerAgentId: "agent-main",
+        callerSessionKey: "default:u2:c2",
+        runId: "r2",
+      },
+      { sendToChannel, announceToParent, deliveryDedup },
+    );
+
+    // Parent injection succeeded → the key is marked on the shared dedup.
+    expect(announceToParent).toHaveBeenCalledOnce();
+    expect(deliveryDedup.has("default:u2:c2::r2")).toBe(true);
+  });
+
+  it("the failure path dedups against the shared dedup even when no batcher is present", async () => {
+    const { createDeliveryDedup } = await import("./announce-key.js");
+    const deliveryDedup = createDeliveryDedup();
+    const sendToChannel = vi.fn().mockResolvedValue(true);
+
+    const params = {
+      channelType: "discord",
+      channelId: "chan-1",
+      task: "t",
+      runtimeMs: 100,
+      runId: "r3",
+      callerSessionKey: "default:u3:c3",
+    };
+
+    // First failure notification sends + marks the shared dedup; the second is a no-op.
+    await deliverFailureNotification(params, { sendToChannel, deliveryDedup });
+    await deliverFailureNotification(params, { sendToChannel, deliveryDedup });
+
+    expect(sendToChannel).toHaveBeenCalledOnce();
+    expect(deliveryDedup.has("default:u3:c3::r3")).toBe(true);
+  });
+
+  it("does NOT mark the shared dedup when the direct send fails (key stays open, Pitfall 3)", async () => {
+    const { deliverAnnouncement } = await import("./sub-agent-result-processor.js");
+    const { createDeliveryDedup } = await import("./announce-key.js");
+    const deliveryDedup = createDeliveryDedup();
+    const sendToChannel = vi.fn().mockRejectedValue(new Error("network down"));
+
+    await deliverAnnouncement(
+      {
+        announcementText: "[System Message]\nResult: ok",
+        announceChannelType: "discord",
+        announceChannelId: "chan-1",
+        callerAgentId: "agent-main",
+        callerSessionKey: "default:u4:c4",
+        runId: "r4",
+      },
+      { sendToChannel, deliveryDedup },
+    );
+
+    // Failed delivery must NOT mark — a later retry / failure notification must still fire.
+    expect(deliveryDedup.has("default:u4:c4::r4")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // classifyErrorContext - HTTP 5xx detection (operator-precedence regression).
 // The old expression
 // `lowerMsg.includes("provider") || lowerMsg.includes("5") && lowerMsg.includes("00")`

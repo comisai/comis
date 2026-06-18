@@ -27,7 +27,7 @@ import { withTimeout } from "@comis/shared";
 import { mkdir, readdir, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { AnnouncementBatcher, AnnouncementDeadLetterQueue } from "./announcement-ports.js";
-import { buildAnnounceKey } from "./announce-key.js";
+import { buildAnnounceKey, type DeliveryDedup } from "./announce-key.js";
 import { ANNOUNCE_PARENT_TIMEOUT_MS, type SubAgentRunnerDeps, type SubAgentRunnerLogger } from "./sub-agent-runner.js";
 
 // ---------------------------------------------------------------------------
@@ -505,6 +505,14 @@ export async function deliverAnnouncement(params: {
   logger?: SubAgentRunnerLogger;
   batcher?: AnnouncementBatcher;
   deadLetterQueue?: AnnouncementDeadLetterQueue;
+  /**
+   * WR-02: shared, bounded delivered-key store. When the batcher is absent the
+   * batcher cannot mark the key, so the non-batcher success branches mark this
+   * sink instead — keeping the failure-path dedup (`deliverFailureNotification`)
+   * correct whether or not a batcher is wired. The daemon wiring injects the
+   * SAME instance the batcher uses.
+   */
+  deliveryDedup?: DeliveryDedup;
 }): Promise<void> {
   const { announceChannelType, announceChannelId, callerAgentId, callerSessionKey, runId } = params;
 
@@ -558,6 +566,11 @@ export async function deliverAnnouncement(params: {
         systemScheduleTimeout,
         "announceToParent",
       );
+      // WR-02: mark delivered on this non-batcher success branch (there is no
+      // batcher here to mark) so the failure path dedups. Marked ONLY after the
+      // confirmed await — a failed/timed-out injection falls through to the
+      // direct send below and stays unmarked.
+      if (announceKey) deps.deliveryDedup?.mark(announceKey);
       deps.logger?.debug({ runId, channelType: announceChannelType }, "Sub-agent announcement injected into parent session");
       return;
     } catch (announceErr) {
@@ -574,7 +587,13 @@ export async function deliverAnnouncement(params: {
   // Extract thread context from ALS so fallback delivery lands in the correct thread
   const ctx = tryGetContext();
   const threadId = ctx?.deliveryOrigin?.threadId;
-  await deps.sendToChannel(announceChannelType, announceChannelId, stripAnnouncementInstruction(announcementText), threadId ? { threadId } : undefined).catch((sendErr) => {
+  try {
+    const ok = await deps.sendToChannel(announceChannelType, announceChannelId, stripAnnouncementInstruction(announcementText), threadId ? { threadId } : undefined);
+    // WR-02: mark delivered ONLY on a confirmed success (ok === true). A throw
+    // or a `false` return (transport refused without throwing) leaves the key
+    // open so the failure path / a retry can re-notify (Pitfall 3).
+    if (ok && announceKey) deps.deliveryDedup?.mark(announceKey);
+  } catch (sendErr) {
     deps.logger?.warn({
       runId,
       channelType: announceChannelType,
@@ -597,7 +616,7 @@ export async function deliverAnnouncement(params: {
         idempotencyKey: announceKey,  // DELIVERY-01: same key threaded onto the DLQ entry
       });
     }
-  });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -621,7 +640,15 @@ export async function deliverFailureNotification(
     /** DELIVERY-03: formatted caller session key — needed to build the shared announceKey. */
     callerSessionKey?: string;
   },
-  deps: Pick<SubAgentRunnerDeps, "sendToChannel" | "logger" | "batcher">,
+  deps: Pick<SubAgentRunnerDeps, "sendToChannel" | "logger" | "batcher"> & {
+    /**
+     * WR-02: shared, bounded delivered-key store. Lets the failure-path dedup
+     * work WITHOUT a batcher (the batcher used to be the only sink). When both a
+     * batcher and a dedup are injected they are the SAME underlying set (the
+     * batcher delegates to it), so checking/marking either is consistent.
+     */
+    deliveryDedup?: DeliveryDedup;
+  },
 ): Promise<void> {
   const taskPreview = params.task.length > 100
     ? params.task.slice(0, 97) + "..."
@@ -641,7 +668,12 @@ export async function deliverFailureNotification(
   // == its success-key, so a second sweep does not double-notify. Undefined for
   // a top-level spawn (no callerSessionKey) → no dedup, behaves as today.
   const announceKey = buildAnnounceKey(params.callerSessionKey, params.runId);
-  if (announceKey && deps.batcher?.hasDelivered(announceKey)) {
+  // WR-02: dedup against the shared set whether reached via the batcher OR the
+  // directly-injected DeliveryDedup (the no-batcher path). They are the same
+  // underlying set in production; checking either suppresses a double-notify.
+  const alreadyDelivered = announceKey !== undefined
+    && (deps.batcher?.hasDelivered(announceKey) === true || deps.deliveryDedup?.has(announceKey) === true);
+  if (alreadyDelivered) {
     deps.logger?.debug({
       runId: params.runId,
       hint: "duplicate failure notification suppressed",
@@ -657,8 +689,13 @@ export async function deliverFailureNotification(
   try {
     await deps.sendToChannel(params.channelType, params.channelId, message, threadId ? { threadId } : undefined);
     // Mark delivered ONLY after a successful send (Pitfall 3 — a failed send
-    // must stay retry-eligible / re-notifiable). No-op without a key/batcher.
-    if (announceKey) deps.batcher?.markDelivered(announceKey);
+    // must stay retry-eligible / re-notifiable). Mark BOTH sinks: the batcher
+    // (when wired) and the shared dedup (WR-02 — so dedup holds without a
+    // batcher). Both resolve to the same set in production. No-op without a key.
+    if (announceKey) {
+      deps.batcher?.markDelivered(announceKey);
+      deps.deliveryDedup?.mark(announceKey);
+    }
   } catch (sendErr) {
     deps.logger?.warn({
       runId: params.runId,

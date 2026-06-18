@@ -163,6 +163,18 @@ vi.mock("@comis/agent", () => ({
   resolveProviderFamily: mockResolveProviderFamily,
   createSubAgentRunner: mockCreateSubAgentRunner,
   createSpawnPacketBuilder: mockCreateSpawnPacketBuilder,
+  // WR-02: shared bounded delivered-key store, constructed eagerly in the
+  // wiring and handed to both the batcher and the runner. A minimal real-shaped
+  // stub (has/mark/size) so the wiring can pass it through opaquely.
+  classifyErrorContext: vi.fn(() => ({ errorType: "Unknown", retryable: false })),
+  createDeliveryDedup: vi.fn(() => {
+    const keys = new Set<string>();
+    return {
+      has: (k: string) => keys.has(k),
+      mark: (k: string) => { keys.add(k); },
+      get size() { return keys.size; },
+    };
+  }),
 }));
 
 // resolveWorkspaceDir lives in @comis/core.
@@ -435,6 +447,29 @@ describe("setupCrossSession", () => {
       toolGroups: ["coding"],
       includeMcpTools: true,
     });
+  });
+
+  // -------------------------------------------------------------------------
+  // WR-02: the SAME bounded DeliveryDedup instance must reach both the batcher
+  // and the sub-agent runner. A wiring that constructed two separate dedups
+  // would silently break cross-path dedup (success via deliverAnnouncement vs
+  // failure via deliverFailureNotification would not collide).
+  // -------------------------------------------------------------------------
+
+  it("shares ONE deliveryDedup instance between the batcher and the sub-agent runner", async () => {
+    const setupCrossSession = await getSetupCrossSession();
+    const deps = createMinimalDeps();
+    const result = setupCrossSession(deps);
+
+    // The runner received a deliveryDedup (forwarded to deliverAnnouncement /
+    // deliverFailureNotification).
+    const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
+    expect(runnerArgs.deliveryDedup).toBeDefined();
+
+    // Mark a key via the runner's dedup, then assert the (real) batcher sees it
+    // through hasDelivered — proving both received the identical instance.
+    runnerArgs.deliveryDedup.mark("default:u1:c1::run-shared");
+    expect(result.announcementBatcher.hasDelivered("default:u1:c1::run-shared")).toBe(true);
   });
 
   // -------------------------------------------------------------------------
