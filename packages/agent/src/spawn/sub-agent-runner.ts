@@ -902,7 +902,19 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
             "align the child's skills sandbox config or set security.agentToAgent.sandboxNoDowngrade:false to disable",
           errorKind: "precondition" as const,
         }, "Sub-agent spawn refused: sandbox downgrade");
-        // Plan 03: emit security:sandbox_downgrade_refused here (enum tuples only).
+        // Typed refusal event (SANDBOX-03): both postures as enum TUPLES + the
+        // violated dimension labels + the two agent ids — labels only, NO
+        // paths/hosts/uid-numbers/credential values (§2.7 / T-172-01f). Fires
+        // here, before the throw, at the exact point a run/session would
+        // otherwise be created. comparePosture's violatedDimensions feeds it.
+        deps.eventBus.emit("security:sandbox_downgrade_refused", {
+          timestamp: clock.now(),
+          parentAgentId: params.callerAgentId,
+          childAgentId: params.agentId,
+          violatedDimensions: cmp.violatedDimensions,
+          parentPosture,
+          childPosture,
+        });
         // @allow-throw: spawn() consumed exclusively by daemon RPC handlers; @allow-throw boundary.
         throw new Error(
           `Spawn refused: child "${params.agentId}" sandbox posture is less confined than parent "${params.callerAgentId}" on: ${violated}.`,

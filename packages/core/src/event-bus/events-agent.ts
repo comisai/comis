@@ -466,6 +466,41 @@ export interface AgentEvents {
     blocked: boolean;
   };
 
+  /**
+   * Fail-closed sub-agent spawn refusal: the child's resolved sandbox posture
+   * was LESS confined than its spawner's on ≥1 dimension (SANDBOX-02/03). Fires
+   * at the spawn chokepoint BEFORE any run/session is created.
+   *
+   * §2.7 / D-EVENT: enum-tuple payload ONLY — both postures as closed-union
+   * LABELS + the violated dimension labels + the two agent ids + a timestamp.
+   * NEVER the underlying paths/hosts/uid-numbers/credential values that would
+   * leak the operator's sandbox topology. Pino auto-redaction is a net, not a
+   * license (T-172-01f).
+   */
+  "security:sandbox_downgrade_refused": {
+    timestamp: number;
+    /** the spawner's agent id (an id, not a secret) */
+    parentAgentId: string;
+    /** the prospective child's agent id (an id, not a secret) */
+    childAgentId: string;
+    /** the dimension(s) on which the child was LESS confined — enum labels, never values */
+    violatedDimensions: ("exec" | "filesystem" | "network" | "uid")[];
+    /** spawner posture as enum tuples — labels only; NO paths/hosts/credential values (§2.7) */
+    parentPosture: {
+      exec: "always" | "never";
+      filesystem?: "workspace" | "listed-paths" | "home" | "full";
+      network?: "none" | "listed-hosts" | "full";
+      uid?: "dedicated" | "daemon";
+    };
+    /** child posture as enum tuples — labels only; NO paths/hosts/credential values (§2.7) */
+    childPosture: {
+      exec: "always" | "never";
+      filesystem?: "workspace" | "listed-paths" | "home" | "full";
+      network?: "none" | "listed-hosts" | "full";
+      uid?: "dedicated" | "daemon";
+    };
+  };
+
   /** Provider declared degraded based on cross-agent failure aggregation */
   "provider:degraded": { provider: string; failingAgents: number; timestamp: number };
 

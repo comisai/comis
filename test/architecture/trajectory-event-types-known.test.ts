@@ -308,6 +308,13 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
   "session:sub_agent_spawn_queued",
   "session:sub_agent_spawn_rejected",
   "session:sub_agent_spawned",
+  // security:sandbox_downgrade_refused (SANDBOX-03) — fires at the SAME spawn
+  // chokepoint as session:sub_agent_spawn_rejected above when a child's sandbox
+  // posture is a downgrade. Same class: a sub-agent-tree event, not a per-session
+  // turn step (the per-session trajectory writer does not span the spawn tree).
+  // 100% capture via the structured Pino WARN at the refusal site + this typed
+  // event for alerting — same discipline as tool:install_detour_detected.
+  "security:sandbox_downgrade_refused",
 
   // -------------------------------------------------------------------
   // Steering injection - orchestrator-driven mid-execution control.

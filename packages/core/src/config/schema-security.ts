@@ -67,6 +67,15 @@ const AgentToAgentBaseSchema = z.strictObject({
     tokenBudget: z.number().int().positive().nullable().default(null),
     /** Sub-agent completion delivery resilience (DELIVERY-01/02). Joins the existing security.agentToAgent section — ZERO new SECTION_REGISTRY entries (D1). Consumers read security.agentToAgent.delivery.maxRetries — never `?? 3` at the call site (§6.4). */
     delivery: DeliveryConfigSchema.default(() => DeliveryConfigSchema.parse({})),
+    /**
+     * Fail-closed sandbox no-downgrade invariant (SANDBOX-02). When true (default — pure safety),
+     * a sub-agent spawn is REFUSED before any run/session is created if the child's resolved sandbox
+     * posture is LESS confined than its spawner's on any dimension (emitting security:sandbox_downgrade_refused).
+     * Joins the existing security.agentToAgent section — ZERO new SECTION_REGISTRY entries (D1).
+     * Set false to disable the gate. No migration shim (§2.9) — the refusal is the intended behavior change.
+     * Consumers read security.agentToAgent.sandboxNoDowngrade — never `?? true` at the call site (§6.4).
+     */
+    sandboxNoDowngrade: z.boolean().default(true),
   });
 
 export const AgentToAgentConfigSchema = AgentToAgentBaseSchema.extend({
