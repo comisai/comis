@@ -264,7 +264,7 @@ task templates.
 
 ## The pipeline tool
 
-Agents create and manage execution graphs using the `pipeline` built-in tool. It supports 9 actions: `define`, `execute`, `status`, `outputs`, `cancel`, `save`, `load`, `list`, and `delete`.
+Agents create and manage execution graphs using the `pipeline` built-in tool. It supports 10 actions: `define`, `execute`, `status`, `outputs`, `cancel`, `save`, `load`, `list`, `delete`, and `from_intent` (the gated-off one-line-intent synthesizer).
 
 See the [Pipeline Tool Guide](/agent-tools/pipelines) for the complete action reference with examples.
 
@@ -288,23 +288,53 @@ Without this setting, the `pipeline` tool will not be available to agents.
 
 See [Configuration Reference](/reference/config-yaml) for all security settings.
 
+## Small-model authoring
+
+Frontier models write valid execution graphs directly. Weaker models sometimes emit a graph that is *almost* right -- the correct shape but a schema slip -- or would benefit from describing the workflow in one line rather than hand-writing every node. The small-model authoring layer helps them, and it is **gated off by default**: every flag under [`orchestration.authoring`](/reference/config-yaml#orchestration) defaults to `false`, so without operator action nothing below is reachable and graph authoring behaves exactly as it always has. The operator flips a flag on only once production telemetry (the [`pipeline:authored`](/developer-guide/event-bus) event surfaced via [`obs.fleet.health`](/reference/json-rpc#obs-fleet-health)) shows small-tier authoring is materially below frontier -- the measure-first gate.
+
+**Governance is preserved end to end.** None of the paths below execute a graph directly: the repair producer and the intent synthesizer *return* a graph, which is then dispatched through the same `graph.execute` path a hand-authored graph takes. A synthesized or repaired graph runs the **identical** validation, tool denylist, and child⊆parent sandbox-intersection checks as one you wrote by hand. The authoring layer can never produce a graph that bypasses governance.
+
+### Conservative repair (AUTHOR-01)
+
+When a weak-tier model emits a schema-invalid graph and `orchestration.authoring.repairProducer` is on, the daemon attempts a **deterministic, conservative** match of the raw graph to one of the four canonical templates (`research-fanout`, `debate`, `vote`, `map-reduce`) by shape -- node count, the fan-in topology, and disambiguating keywords. It repairs the graph **only on a single unambiguous match**; it never guesses. If the shape fits more than one template, the daemon returns a structured **"did you mean this template?"** response rather than synthesizing a graph the model did not intend. A no-match (or a repaired graph that still fails validation) returns the unchanged fail-closed validation error. The calling model's tier is resolved **server-side** from the authoring agent -- a tool-supplied `capabilityClass` is never trusted -- and only weak tiers take the repair path (frontier authoring is left untouched). A successful repair emits the [`graph:repaired`](/developer-guide/event-bus) audit event (counts/ids only).
+
+### Synthesis from a one-line intent (AUTHOR-02)
+
+When `orchestration.authoring.intentAction` is on, the `pipeline` tool exposes a `from_intent` action: instead of hand-writing the node list, an agent expresses a one-line intent -- a canonical `pattern` plus a few agent or task names -- and the daemon deterministically expands it into a validated graph. For example, the bull-vs-bear debate above is authorable from one line:
+
+```yaml
+tool: pipeline
+action: from_intent
+pattern: debate
+agents: ["bull", "bear"]   # PRO, CON
+rounds: 2
+```
+
+The synthesizer maps the `pattern` to its canonical template, fills the agent/task slots, and runs the same parse + validation a hand-authored graph runs before dispatching through `graph.execute`. An invalid intent (for example `debate` with fewer than two agents) is rejected before any graph runs; gated off, the daemon refuses the `from_intent` call entirely. A governed synthesis emits the [`graph:synthesized_from_intent`](/developer-guide/event-bus) audit event. See [Pipelines: from_intent](/agent-tools/pipelines#from-intent) for the full pattern reference.
+
+### Grammar-constrained schema (AUTHOR-03, best-effort)
+
+When `orchestration.authoring.gbnfConstrain` is on, the daemon grammar-constrains the raw `pipeline` tool schema for GBNF-eligible local providers (the local/default family -- never a cloud provider inferred by name), nudging a local model toward emitting structurally-valid graph JSON. This is **best-effort and removal/relaxation-only**: it never widens field *value* validation, and the daemon-side schema validation remains the single source of truth for what a graph may contain. GBNF makes a valid emission more likely; it does not replace -- and cannot weaken -- the daemon's governance.
+
 ## Events
 
-The graph coordinator emits three events during execution:
+The graph coordinator emits three lifecycle events during execution, plus two audit events for the (gated-off) small-model authoring layer:
 
 | Event | When | Key fields |
 |-------|------|------------|
 | `graph:started` | Graph execution begins | `graphId`, `label`, `nodeCount` |
 | `graph:node_updated` | A node transitions to a new status | `graphId`, `nodeId`, `status`, `durationMs`, `error` |
 | `graph:completed` | Graph reaches terminal state | `graphId`, `status`, `durationMs`, `nodesCompleted`, `nodesFailed`, `nodesSkipped`, `cancelReason` |
+| `graph:repaired` | A weak-model graph is repaired to a canonical template (gated off; AUTHOR-01) | `pattern`, `nodeCount`, `capabilityClass` |
+| `graph:synthesized_from_intent` | A graph is synthesized from a one-line intent (gated off; AUTHOR-02) | `pattern`, `nodeCount` |
 
-See [Event Bus](/developer-guide/event-bus) for the full event reference.
+Both authoring events are counts/ids/enums only -- never a graph body, a node config value, a task/label string, or the intent text -- and fire only after the graph passes the same validation a hand-authored graph runs. See [Event Bus](/developer-guide/event-bus) for the full event reference.
 
 ## Related
 
 <CardGroup cols={2}>
   <Card title="Pipeline Tool Guide" icon="diagram-project" href="/agent-tools/pipelines">
-    Complete reference for the pipeline tool's 9 actions
+    Complete reference for the pipeline tool's 10 actions
   </Card>
   <Card title="Visual Builder" icon="window-maximize" href="/web-dashboard/pipelines">
     Design and run graphs from the web dashboard
