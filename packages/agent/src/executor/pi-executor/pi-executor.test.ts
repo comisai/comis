@@ -693,6 +693,30 @@ describe("PiExecutor", () => {
       expect(deps.budgetGuard.resetExecution).toHaveBeenCalled();
     });
 
+    // BUDGET-01: the per-execution token cap rides ExecutionOverrides.tokenBudget
+    // into resetExecution(cap) — the child's BudgetGuard per-execution ceiling.
+    it("passes overrides.tokenBudget to budgetGuard.resetExecution as the per-execution cap", async () => {
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+
+      await executor.execute(
+        testMessage, testSessionKey, undefined, undefined, undefined,
+        undefined, undefined,
+        { tokenBudget: 5_000 } as never,
+      );
+
+      expect(deps.budgetGuard.resetExecution).toHaveBeenCalledWith(5_000);
+    });
+
+    it("calls budgetGuard.resetExecution with no cap when overrides.tokenBudget is absent (byte-identical no-budget path)", async () => {
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+
+      await executor.execute(testMessage, testSessionKey);
+
+      expect(deps.budgetGuard.resetExecution).toHaveBeenCalledWith(undefined);
+    });
+
     it("uses overrides.stepCounter instead of deps.stepCounter when provided", async () => {
       const deps = createMockDeps();
       const executor = createPiExecutor(testConfig, deps);

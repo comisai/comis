@@ -1160,6 +1160,31 @@ describe("createSubAgentRunner", () => {
       30,
       undefined,
       undefined,  // graphOverrides (undefined for non-graph spawns)
+      undefined,  // tokenBudget (undefined when no per-spawn budget set — BUDGET-01)
+    );
+  });
+
+  // BUDGET-01: a per-spawn tokenBudget is threaded to executeAgent as the 7th
+  // arg, where the daemon wiring lands it on executionOverrides → the child's
+  // BudgetGuard per-execution cap.
+  it("tokenBudget is passed to executeAgent as the 7th argument when set on SpawnParams", async () => {
+    const runner = createSubAgentRunner(deps);
+    runner.spawn({
+      task: "budgeted task",
+      agentId: "default",
+      tokenBudget: 5_000,
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(deps.executeAgent).toHaveBeenCalledWith(
+      "default",
+      expect.objectContaining({ tenantId: "default" }),
+      "budgeted task",
+      undefined,
+      undefined,
+      undefined,
+      5_000,
     );
   });
 

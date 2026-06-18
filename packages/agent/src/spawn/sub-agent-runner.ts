@@ -144,6 +144,8 @@ export interface SubAgentRunnerDeps {
     maxSteps?: number,
     callerAgentId?: string,
     overrides?: { graphId?: string; nodeId?: string; reuseSessionKey?: string; graphNodeDepth?: number },
+    /** Per-spawn token budget — becomes the child's BudgetGuard per-execution cap (BUDGET-01). */
+    tokenBudget?: number,
   ) => Promise<{
     response: string;
     tokensUsed: { total: number; cacheRead?: number; cacheWrite?: number };
@@ -303,6 +305,10 @@ export interface SpawnParams {
   announceChannelId?: string;
   model?: string;
   max_steps?: number;
+  /** Per-spawn token budget — becomes the child's BudgetGuard per-execution cap (BUDGET-01).
+   *  Threaded SpawnParams -> ExecuteSubAgentFn -> ExecutionOverrides -> resetExecution(cap).
+   *  When absent, the child enforces config.perExecution exactly as today. */
+  tokenBudget?: number;
   expected_outputs?: string[];
   /** Originating channel context for default announcement routing */
   requesterOrigin?: DeliveryOrigin;
@@ -1178,6 +1184,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
               : params.reuseSessionKey
                 ? { reuseSessionKey: params.reuseSessionKey }
                 : undefined,
+            params.tokenBudget,
           ),
         );
 

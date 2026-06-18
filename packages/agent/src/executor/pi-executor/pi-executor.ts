@@ -234,7 +234,10 @@ export function createPiExecutor(
       );
       const activeStepCounter = executionOverrides?.stepCounter ?? deps.stepCounter;
       activeStepCounter.reset();
-      deps.budgetGuard.resetExecution();
+      // BUDGET-01: a per-spawn tokenBudget becomes THIS execution's effective
+      // per-execution cap (min(config.perExecution, cap)); undefined ⇒ no cap
+      // override, byte-identical to the no-budget path.
+      deps.budgetGuard.resetExecution(executionOverrides?.tokenBudget);
 
       // 4. Resolve model using ModelRegistry
       //    Apply per-node model override from ExecutionOverrides and normalize shortcuts before registry lookup

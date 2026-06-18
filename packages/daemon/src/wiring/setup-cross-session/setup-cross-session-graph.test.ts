@@ -207,5 +207,40 @@ describe("setup-cross-session-graph", () => {
         source: "operation_default",
       });
     });
+
+    // -----------------------------------------------------------------------
+    // BUDGET-01: the per-spawn tokenBudget (the 7th executeSubAgent arg) rides
+    // the existing executionOverrides channel into the child executor, where
+    // pi-executor feeds it to budgetGuard.resetExecution(cap) as the child's
+    // per-execution cap. Absent ⇒ no tokenBudget on the overrides (no-op,
+    // byte-identical to today).
+    // -----------------------------------------------------------------------
+    it("BUDGET-01: threads the 7th tokenBudget arg onto executionOverrides for the child executor", async () => {
+      const { deps, capturedOverrides, executor } = makeGraphDeps({});
+      const executeSubAgent = buildExecuteSubAgent(deps);
+
+      await executeSubAgent(
+        "agent-2",
+        sessionKey as Parameters<typeof executeSubAgent>[1],
+        "task",
+        undefined,
+        undefined,
+        undefined,
+        5_000,
+      );
+
+      expect(executor.execute).toHaveBeenCalledOnce();
+      expect(capturedOverrides[0].tokenBudget).toBe(5_000);
+    });
+
+    it("BUDGET-01: omits tokenBudget from executionOverrides when no per-spawn budget is given", async () => {
+      const { deps, capturedOverrides, executor } = makeGraphDeps({});
+      const executeSubAgent = buildExecuteSubAgent(deps);
+
+      await executeSubAgent("agent-2", sessionKey as Parameters<typeof executeSubAgent>[1], "task");
+
+      expect(executor.execute).toHaveBeenCalledOnce();
+      expect(capturedOverrides[0].tokenBudget).toBeUndefined();
+    });
   });
 });
