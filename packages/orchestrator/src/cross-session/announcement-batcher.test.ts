@@ -229,6 +229,114 @@ describe("AnnouncementBatcher", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Idempotent success-path delivery (DELIVERY-01).
+// A delivered-key Set makes a second delivery of the same idempotencyKey a
+// no-op. Mark ONLY on success (Pitfall 3): a both-paths-failed item stays
+// un-marked so Plan 02's retry is preserved. undefined keys are never deduped.
+// ---------------------------------------------------------------------------
+
+describe("AnnouncementBatcher idempotent delivery (DELIVERY-01)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("pre-enqueue dedup: a SECOND enqueue of an already-delivered key is a no-op (announceToParent stays at 1)", async () => {
+    const deps = makeDeps();
+    const batcher = createAnnouncementBatcher(deps);
+
+    // First delivery for key "K".
+    batcher.enqueue(makeAnnouncement({ runId: "run-1", idempotencyKey: "K" }));
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(deps.announceToParent).toHaveBeenCalledOnce();
+
+    // Second enqueue of the SAME key after the first delivered → no-op.
+    batcher.enqueue(makeAnnouncement({ runId: "run-2", idempotencyKey: "K" }));
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(deps.announceToParent).toHaveBeenCalledOnce(); // still 1 — second was suppressed
+    expect(deps.sendToChannel).not.toHaveBeenCalled();
+  });
+
+  it("in-batch dedup: two items with the SAME key in one batch deliver once for that key", async () => {
+    const deps = makeDeps();
+    const batcher = createAnnouncementBatcher(deps);
+
+    // Two same-key items + one distinct-key item land in the same batch window
+    // (same caller → same batchKey). The two "K" items must collapse to one.
+    batcher.enqueue(makeAnnouncement({ runId: "run-1", idempotencyKey: "K" }));
+    batcher.enqueue(makeAnnouncement({ runId: "run-2", idempotencyKey: "K" }));
+    batcher.enqueue(makeAnnouncement({ runId: "run-3", idempotencyKey: "OTHER" }));
+
+    await vi.advanceTimersByTimeAsync(2000);
+
+    // One combined announceToParent for the batch; the combined text must NOT
+    // contain three "### Task" sections — the duplicate "K" was dropped.
+    expect(deps.announceToParent).toHaveBeenCalledOnce();
+    const combined = deps.announceToParent.mock.calls[0]![2] as string;
+    expect(combined).toContain("### Task 1");
+    expect(combined).toContain("### Task 2");
+    expect(combined).not.toContain("### Task 3"); // only 2 unique keys survived
+  });
+
+  it("hasDelivered/markDelivered are exposed and reflect the set", () => {
+    const deps = makeDeps();
+    const batcher = createAnnouncementBatcher(deps);
+
+    expect(batcher.hasDelivered("K")).toBe(false);
+    batcher.markDelivered("K");
+    expect(batcher.hasDelivered("K")).toBe(true);
+  });
+
+  it("marks a key delivered ONLY after a successful send (single-item success path)", async () => {
+    const deps = makeDeps();
+    const batcher = createAnnouncementBatcher(deps);
+
+    batcher.enqueue(makeAnnouncement({ runId: "run-1", idempotencyKey: "K" }));
+    expect(batcher.hasDelivered("K")).toBe(false); // not yet delivered (before debounce)
+
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(deps.announceToParent).toHaveBeenCalledOnce();
+    expect(batcher.hasDelivered("K")).toBe(true); // marked after success
+  });
+
+  it("does NOT mark delivered when BOTH announceToParent and the fallback sendToChannel fail (retry preserved for Plan 02)", async () => {
+    const deps = makeDeps({
+      announceToParent: vi.fn().mockReturnValue(new Promise(() => {})), // hangs → fallback
+      sendToChannel: vi.fn().mockRejectedValue(new Error("send failed")),
+      deadLetterQueue: { enqueue: vi.fn() },
+    });
+    const batcher = createAnnouncementBatcher(deps);
+
+    batcher.enqueue(makeAnnouncement({ runId: "run-1", idempotencyKey: "K" }));
+    await vi.advanceTimersByTimeAsync(2000);   // debounce → announceToParent
+    await vi.advanceTimersByTimeAsync(301_000); // 300s timeout → fallback sendToChannel (rejects)
+
+    expect(deps.sendToChannel).toHaveBeenCalledOnce();
+    // Pitfall 3: a fully-failed delivery must NOT be marked — the key stays open
+    // so a later retry (Plan 02) can re-attempt it.
+    expect(batcher.hasDelivered("K")).toBe(false);
+  });
+
+  it("never dedups an item whose idempotencyKey is undefined (top-level spawns unaffected)", async () => {
+    const deps = makeDeps();
+    const batcher = createAnnouncementBatcher(deps);
+
+    // Two undefined-key items for the same caller in separate batch windows —
+    // each must deliver (no key to dedup on).
+    batcher.enqueue(makeAnnouncement({ runId: "run-1", idempotencyKey: undefined }));
+    await vi.advanceTimersByTimeAsync(2000);
+    batcher.enqueue(makeAnnouncement({ runId: "run-2", idempotencyKey: undefined }));
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(deps.announceToParent).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // sanitizeForUser unit tests
 // ---------------------------------------------------------------------------
 
