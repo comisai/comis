@@ -158,4 +158,54 @@ describe("matchRawGraphToTemplate (AUTHOR-01 conservative matcher)", () => {
     expect(matchRawGraphToTemplate({ nodes: "not-an-array" }).kind).toBe("no-match");
     expect(matchRawGraphToTemplate({ nodes: [] }).kind).toBe("no-match");
   });
+
+  // -------------------------------------------------------------------------
+  // WR-01 (174-REVIEW): the shape-unique `debate` branch must NOT match on
+  // shape alone. `debate` is the only 3-node 2+1 template, so PRE-FIX ANY
+  // 3-node fan-in graph repaired to debate — and fillDagTemplate REPLACES the
+  // user's tasks with "Argue FOR/AGAINST..." canonical strings. So a genuine
+  // 2-way analysis/aggregate intent (not adversarial at all) got silently
+  // rewritten into a pro/con debate it never asked for. The fix gates the
+  // shape-unique match on a debate keyword hit (corroborating the intent),
+  // returning the structured did-you-mean instead of a false synthesis.
+  // -------------------------------------------------------------------------
+  it("WR-01: a 3-node fan-in graph whose content is NOT a debate → did-you-mean (NOT a silent debate rewrite)", () => {
+    const rawGraph = {
+      label: "quarterly revenue analysis",
+      nodes: [
+        // Two INDEPENDENT analysis tasks feeding an aggregator — a research/
+        // aggregate intent, with zero debate/argue/advocate/verdict vocabulary.
+        { nodeId: "north", task: "Analyze the North region sales figures", dependsOn: [] },
+        { nodeId: "south", task: "Analyze the South region sales figures", dependsOn: [] },
+        { nodeId: "rollup", task: "Combine both regional analyses into a single report", dependsOn: ["north", "south"] },
+      ],
+    };
+
+    const m = matchRawGraphToTemplate(rawGraph);
+    // PRE-FIX: kind === "matched", pattern === "debate" (the false synthesis).
+    // POST-FIX: the shape is debate-unique but the content does not corroborate,
+    // so the matcher returns did-you-mean rather than rewriting the tasks.
+    expect(m.kind).toBe("ambiguous");
+    if (m.kind !== "ambiguous") return;
+    expect(m.candidates).toContain("debate");
+  });
+
+  it("WR-01: a 3-node fan-in graph WITH debate vocabulary still matches debate (no false negative)", () => {
+    // The conservatism must not over-correct: a genuinely debate-worded graph
+    // (the Test-1 shape) still matches — the keyword corroborates the intent.
+    const rawGraph = {
+      label: "should we adopt the new framework",
+      nodes: [
+        { nodeId: "pro", task: "Advocate FOR adopting the framework", dependsOn: [] },
+        { nodeId: "con", task: "Advocate AGAINST adopting the framework", dependsOn: [] },
+        { nodeId: "mod", task: "Moderate and deliver a balanced verdict", dependsOn: ["pro", "con"] },
+      ],
+    };
+
+    const m = matchRawGraphToTemplate(rawGraph);
+    expect(m.kind).toBe("matched");
+    if (m.kind !== "matched") return;
+    expect(m.pattern).toBe("debate");
+    assertGovernanceClean(m.filledNodes, "debate");
+  });
 });

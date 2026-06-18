@@ -9,10 +9,13 @@
  * repairDagWithBoundedRetries reprompt seam is the agent-side path; the daemon
  * RPC handler has no model loop, so the repair here is template-match only).
  *
- * Returns "matched" ONLY when exactly one template fits unambiguously
- * (T-174-FALSESYNTH: never fabricate a graph the user did not intend);
- * otherwise "ambiguous" (>=2 plausible canonical shapes — surface a structured
- * did-you-mean) or "no-match" (fall through to the existing fail-closed throw).
+ * Returns "matched" ONLY when exactly one template fits unambiguously by SHAPE
+ * AND the graph's task/nodeId text corroborates that template's intent via a
+ * disambiguating keyword (WR-01: shape alone is never enough — buildMatch
+ * discards the user's tasks for the canonical strings, so a shape-only match
+ * would silently rewrite the intent); otherwise "ambiguous" (a plausible shape
+ * the content does not confirm, or >=2 plausible canonical shapes — surface a
+ * structured did-you-mean) or "no-match" (fall through to the fail-closed throw).
  *
  * On "matched", slot values are filled via fillDagTemplate, which JSON-escapes
  * weak-model slot values (CR-03) so the filled graph parses clean.
@@ -181,10 +184,12 @@ function inferSlots(
 
 /**
  * Conservatively match a weak-model raw graph to a canonical template by SHAPE
- * (node count + dependency topology + slot inference). Deterministic, no model
- * call. Returns "matched" ONLY when exactly one template fits unambiguously;
- * otherwise "ambiguous" (>=2 plausible) or "no-match". On "matched", the slot
- * values are filled via fillDagTemplate (which JSON-escapes weak-model values).
+ * (node count + dependency topology) corroborated by KEYWORD (WR-01).
+ * Deterministic, no model call. Returns "matched" ONLY when exactly one
+ * template fits the shape AND a disambiguating keyword confirms the intent;
+ * otherwise "ambiguous" (shape fits but content does not corroborate, or >=2
+ * plausible) or "no-match". On "matched", the slot values are filled via
+ * fillDagTemplate (which JSON-escapes weak-model values).
  */
 export function matchRawGraphToTemplate(rawGraph: unknown): TemplateMatch {
   const nodes = extractNodes(rawGraph);
@@ -205,14 +210,28 @@ export function matchRawGraphToTemplate(rawGraph: unknown): TemplateMatch {
 
   if (shapeCandidates.length === 0) return { kind: "no-match" };
 
-  // A single template fits the shape (e.g. debate's unique 3-node 2+1) → matched.
+  // The graph text (nodeId + task) used to corroborate the matched template's
+  // INTENT against its shape (WR-01). buildMatch's fillDagTemplate REPLACES the
+  // user's tasks with the canonical template strings, so a `matched` on shape
+  // alone silently rewrites the user's intent — every `matched` must be gated
+  // on at least one disambiguating keyword, never on shape alone.
+  const text = graphText(nodes);
+
+  // A single template fits the shape (e.g. debate's unique 3-node 2+1). SHAPE
+  // alone is NOT enough (WR-01): the user's tasks would be discarded for the
+  // canonical strings. Require the candidate's keyword set to corroborate the
+  // intent; on a keyword miss, return the structured did-you-mean (no false
+  // synthesis) — the shape is plausible but the content does not confirm it.
   if (shapeCandidates.length === 1) {
-    return buildMatch(shapeCandidates[0]!, rawGraph, nodes);
+    const only = shapeCandidates[0]!;
+    if (!TEMPLATE_KEYWORDS[only].test(text)) {
+      return { kind: "ambiguous", candidates: [only] };
+    }
+    return buildMatch(only, rawGraph, nodes);
   }
 
   // Several templates share the shape → disambiguate by keywords. A template is
   // a keyword candidate only if its keyword set matches the graph text.
-  const text = graphText(nodes);
   const keywordCandidates = shapeCandidates.filter((p) => TEMPLATE_KEYWORDS[p].test(text));
 
   if (keywordCandidates.length === 1) {
