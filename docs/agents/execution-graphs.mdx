@@ -157,13 +157,17 @@ There are two distinct token guardrails, and they apply at different scopes:
 
 1. The node's own `tokenBudget`, when set.
 2. The operator default `security.agentToAgent.tokenBudget` (a positive integer applies the same cap to every node; see [Configuration](/reference/config-yaml#security)).
-3. The **inherited graph share** -- `budget.max_tokens` divided by the total node count -- but only when the graph sets a token budget.
+3. The **inherited graph share** -- `budget.max_tokens` divided by the total node count -- but only when the graph sets a token budget. The share is floored at 1 token, so an under-provisioned budget (`max_tokens` smaller than the node count) yields a tight-but-usable per-node cap rather than a 0 cap that would brick every node.
 4. Otherwise **unbounded** -- a graph with no budget set anywhere behaves exactly as before.
 
 The two checks run **in series, node-first**: when a single node's overage *also* tips the cumulative graph budget, that node fails its own budget first, then the graph aborts. This ordering is deterministic -- never a race -- so one runaway sub-agent is contained to its own node rather than silently consuming the entire graph's allowance.
 
 <Note>
 The per-node `tokenBudget` field is present on the graph node schema and is honored by the coordinator. Today it is reached through the operator default and the inherited graph share (above); a dedicated per-node authoring key on the `pipeline` tool is a planned follow-up. To bound an individual node now, set a graph `budget.max_tokens` (each node inherits its share) or the operator default.
+</Note>
+
+<Note>
+The per-node `tokenBudget` (and the operator default / inherited share that feed it) applies to **regular** graph nodes. **Driver-typed nodes** (a node with a `typeId`, e.g. a debate or iterate driver that spawns multiple sub-agent rounds) are **not** bounded by the per-node token budget today -- they are governed instead by the **cumulative graph budget** (`budget.max_tokens` / `budget.max_cost`), which sums every driver round's spend and cancels the graph when the total is exceeded. Per-node budgeting for driver nodes (a cumulative-across-rounds cap with a mid-round hard stop) is a planned follow-up; to bound a driver node today, set the cumulative graph budget.
 </Note>
 
 ### Graph lifecycle
