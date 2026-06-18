@@ -481,6 +481,26 @@ export interface AgentEvents {
     previousStatus?: NodeStatus;
     durationMs?: number;
     error?: string;
+    /** Per-node token spend for the completed node (BUDGET-03). */
+    tokensUsed?: number;
+    /** Per-node cost for the completed node (BUDGET-03). */
+    cost?: number;
+    timestamp: number;
+  };
+
+  /**
+   * A graph node's sub-agent exceeded its per-node token budget (BUDGET-03).
+   * Counts/ids only — NEVER task text or output (AGENTS.md §2.7). Mirrors the
+   * memory:consolidated minimal-payload convention.
+   */
+  "subagent:budget_exceeded": {
+    graphId: string;
+    nodeId: string;
+    agentId: string;
+    /** The per-node cap that was breached. */
+    tokenBudget: number;
+    /** The node's actual run token spend. */
+    tokensUsed: number;
     timestamp: number;
   };
 
