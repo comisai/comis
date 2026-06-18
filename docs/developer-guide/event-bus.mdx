@@ -140,6 +140,7 @@ Skill lifecycle, tool execution, audit logging, observability (tokens and latenc
 | `subagent:budget_exceeded` | graphId, nodeId, agentId, tokenBudget, tokensUsed, timestamp |
 | `subagent:delivery_retried` | runId, channelType, attempt, transient, timestamp |
 | `subagent:delivery_deadlettered` | runId, channelType, attempt, transient, timestamp |
+| `subagent:steered` | runId, agentId, mode, timestamp |
 | `memory:review_completed` | agentId, sessionsReviewed, memoriesExtracted, duplicatesSkipped, durationMs, timestamp |
 | `model:auth_cooldown` | keyName, provider, cooldownMs, failureCount, timestamp |
 | `model:catalog_loaded` | providerCount, modelCount, timestamp |
@@ -198,6 +199,8 @@ See [Execution Graphs: Small-model authoring](/agents/execution-graphs#small-mod
 
 - `subagent:delivery_retried` fires once **per retry** of a *transient* delivery failure. `runId` is the sub-agent run, `channelType` is the target channel, `attempt` is the 1-based retry number, and `transient` is always `true` (only transient failures are retried).
 - `subagent:delivery_deadlettered` fires when a delivery is finally **dead-lettered** -- either after exhausting `security.agentToAgent.delivery.maxRetries` retries for a transient failure, or immediately for a permanent one. `attempt` is the number of retries that were exhausted (`0` for an immediate permanent dead-letter), and `transient` records whether the dead-letter followed an exhausted transient retry (`true`) or a permanent failure (`false`).
+
+**Mid-flight steering:** `subagent:steered` fires when [`subagent.steer`](/reference/json-rpc#subagent-steer) **injects** a steering message into a running child -- i.e. only when [`security.agentToAgent.steerInject`](/reference/config-yaml#security) is `true` (default `false`); the flag-off kill+respawn path does not emit it. Like the other `subagent:*` events, the payload is counts/ids/mode only -- `runId` is the steered run (the work is preserved; the same run continues), `agentId` is the owning agent, and `mode` is the closed union `"steer" | "followup"` recording which path landed the inject (`steer` when the child was streaming, `followup` when it was idle). The steering message body is **never** included -- no `message`, `text`, or task string is ever on the bus (§2.7).
 
 See [Resilience: Self-healing delivery retries](/agents/resilience#self-healing-delivery-retries) for the transient/permanent classification and the backoff schedule.
 
