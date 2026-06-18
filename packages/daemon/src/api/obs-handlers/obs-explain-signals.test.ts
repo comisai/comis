@@ -899,10 +899,18 @@ describe("toIncidentSignals — OBS-02 learning.outcome_observed aggregation", (
     });
   });
 
-  it("outcomeResolved is FALSE when the terminal outcome is `unknown` (the unresolved-shadow case)", () => {
-    const s = toIncidentSignals([learn(1, "success", "tool"), learn(2, "unknown", "pipeline")]);
+  it("outcomeResolved is FALSE only when NO turn resolved (all-`unknown` shadow case)", () => {
+    const s = toIncidentSignals([learn(1, "unknown", "pipeline"), learn(2, "unknown", "pipeline")]);
     expect(s.learning?.outcomeResolved).toBe(false);
     expect(s.learning?.outcome).toBe("unknown");
+  });
+
+  it("outcomeResolved stays TRUE when an earlier turn resolved but the session ended on `unknown` (live 2026-06-18)", () => {
+    // A resolved success followed by a tool-less recall turn (`unknown`) must NOT be
+    // flagged unresolved — the verdict means "NO signal resolved", not "last didn't".
+    const s = toIncidentSignals([learn(1, "success", "tool"), learn(2, "unknown", "pipeline")]);
+    expect(s.learning?.outcomeResolved).toBe(true);
+    expect(s.learning?.outcome).toBe("success");
   });
 
   it("omits the learning section entirely when the trajectory has no learning records", () => {

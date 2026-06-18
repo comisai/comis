@@ -78,6 +78,28 @@ describe("obs-explain-signal-folds — EXTENDED learning fold (OBS-02, P2 skills
     expect(sig!.skillFailures).toEqual([]);
   });
 
+  // Live VPS finding 2026-06-18: a session that resolved an outcome on an EARLIER turn
+  // but ended on a no-signal turn (e.g. a tool-less recall reply → `unknown`) was wrongly
+  // flagged `outcome_unresolved` because the fold used LAST-record-wins. The verdict means
+  // "NO signal resolved", so it must key on "ever resolved".
+  it("a resolved success followed by a trailing `unknown` stays outcomeResolved=true (not clobbered)", () => {
+    const state = emptyLearningFold();
+    accumulateLearningRecord(state, { outcome: "success", source: "tool" }); // turn 1 resolved
+    accumulateLearningRecord(state, { outcome: "unknown", source: "pipeline" }); // turn 2 no signal
+    const sig = buildLearningSignal(state);
+    expect(sig!.outcomeResolved).toBe(true);
+    expect(sig!.outcome).toBe("success"); // the resolved result, not the trailing unknown
+  });
+
+  it("an all-`unknown` session is outcomeResolved=false and reports `unknown`", () => {
+    const state = emptyLearningFold();
+    accumulateLearningRecord(state, { outcome: "unknown", source: "pipeline" });
+    accumulateLearningRecord(state, { outcome: "unknown", source: "pipeline" });
+    const sig = buildLearningSignal(state);
+    expect(sig!.outcomeResolved).toBe(false);
+    expect(sig!.outcome).toBe("unknown");
+  });
+
   it("a learning.skill_validated FAILURE (staticOk:false) marks the used skills as failing", () => {
     const state = emptyLearningFold();
     accumulateSkillInvokedRecord(state, { skillName: "synthesized_a" });

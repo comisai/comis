@@ -54,6 +54,14 @@ const LEARNING_SOURCES: readonly LearningSource[] = ["tool", "pipeline", "correc
 export interface LearningFoldState {
   count: number;
   outcome?: LearningOutcome;
+  /**
+   * Whether ANY record in the session resolved to a non-`unknown` outcome. The
+   * `outcome_unresolved` verdict means "NO signal tier resolved an outcome" — so it
+   * must key on "ever resolved", NOT the LAST record (a trailing no-signal turn, e.g.
+   * a tool-less recall reply, otherwise clobbers an earlier resolved success and the
+   * session is wrongly flagged unresolved). Live VPS finding 2026-06-18.
+   */
+  everResolved: boolean;
   sources: Set<LearningSource>;
   /** Distinct learned-skill ids invoked this session (`skill.prompt_invoked`). IDs only. */
   skillsUsed: Set<string>;
@@ -78,6 +86,7 @@ export interface LearningFoldState {
 export function emptyLearningFold(): LearningFoldState {
   return {
     count: 0,
+    everResolved: false,
     sources: new Set(),
     skillsUsed: new Set(),
     validationFailed: false,
@@ -109,7 +118,19 @@ function readAbstainSignal(state: LearningFoldState, data: Record<string, unknow
 export function accumulateLearningRecord(state: LearningFoldState, data: Record<string, unknown>): void {
   state.count += 1;
   const outcome = narrow(LEARNING_OUTCOMES, data.outcome);
-  if (outcome !== undefined) state.outcome = outcome;
+  if (outcome !== undefined) {
+    // Last NON-UNKNOWN wins: a resolved outcome (success/failure/corrected) is the
+    // session's meaningful result and is never clobbered by a later `unknown` (a
+    // trailing no-signal turn). Only fall back to `unknown` when nothing has resolved
+    // yet, so an all-unknown session still reports `unknown`. `everResolved` (NOT the
+    // last record) is what `outcomeResolved` keys on. Live VPS finding 2026-06-18.
+    if (outcome !== "unknown") {
+      state.outcome = outcome;
+      state.everResolved = true;
+    } else if (state.outcome === undefined) {
+      state.outcome = "unknown";
+    }
+  }
   const source = narrow(LEARNING_SOURCES, data.source);
   if (source !== undefined) state.sources.add(source);
   readAbstainSignal(state, data);
@@ -197,7 +218,7 @@ export function buildLearningSignal(state: LearningFoldState): IncidentLearningS
   const outcomeFailed = state.outcome === "failure" || state.outcome === "corrected";
   const skillsUsed = [...state.skillsUsed];
   return {
-    outcomeResolved: state.outcome !== undefined && state.outcome !== "unknown",
+    outcomeResolved: state.everResolved,
     ...(state.outcome !== undefined ? { outcome: state.outcome } : {}),
     sources: [...state.sources],
     skillsUsed,
