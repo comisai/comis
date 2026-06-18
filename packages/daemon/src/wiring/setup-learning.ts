@@ -166,6 +166,7 @@ function observeNonFatal(
   source: "tool" | "pipeline" | "explicit",
   confidence: number,
   usedSkillIds?: ReadonlyArray<string>,
+  recalledIds?: ReadonlyArray<string>,
 ): Promise<void> {
   return deps.outcomeStore
     .observe({
@@ -180,6 +181,13 @@ function observeNonFatal(
       // used_skill_ids COLUMN is written; resolve() union-dedups across rows. Omitted
       // (the tool/pipeline paths) ⇒ the column stays NULL, byte-identical to pre-ATTR-02.
       ...(usedSkillIds !== undefined && usedSkillIds.length > 0 ? { usedSkillIds: [...usedSkillIds] } : {}),
+      // OUTCOME-06 / RANK-01 (live 2026-06-18): thread the per-turn recalled+used memory
+      // ids onto observe() so the recalled_ids COLUMN is written; resolve() union-dedups
+      // them onto `verdict.recalledIds`, which is what the outcome-gated reward seam keys
+      // on (success→recordUsage, failure/corrected→recordFailure → failure_count). Omitted
+      // (tool/pipeline/skill paths) ⇒ NULL, byte-identical. Without this carrier the
+      // outcome-gated recall reward was DORMANT (recalledIds always empty).
+      ...(recalledIds !== undefined && recalledIds.length > 0 ? { recalledIds: [...recalledIds] } : {}),
       observedAt: deps.clock.now(),
     })
     .then((r) => {
@@ -677,6 +685,26 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
     // it threads the used-skill ids onto the column WITHOUT asserting an outcome verdict
     // (resolve() fuses the real tool/pipeline outcome; this row only carries ids).
     void observeNonFatal(deps, scope, "unknown", "explicit", ATTRIBUTION_CONFIDENCE, p.usedSkillIds);
+  });
+
+  // ---- OUTCOME-06 / RANK-01 recall-use attribution write-back (live 2026-06-18) ----
+  // The executor emits `memory:recall_used` after a turn (executor-post-execution.ts) with
+  // the recalled+used memory ids. wireMemoryUsefulness consumes it for the CORROBORATING
+  // usage feed (used_count) — but nothing wrote those ids onto the OUTCOME ledger, so
+  // `verdict.recalledIds` was ALWAYS empty and the PRIMARY outcome-gated reward seam
+  // (resolve → success:recordUsage / failure:recordFailure→failure_count) was DORMANT.
+  // Mirror the ATTR-02 skill-use carrier: a neutral `explicit`/`unknown` row (NEVER wins
+  // resolve() fusion — the deterministic tool/pipeline rows outrank it) that carries the
+  // recalled ids so the recalled_ids COLUMN is written and resolve() union-dedups them.
+  // Default-OFF via `learningOutcomeEnabled` (byte-identical when off); a non-empty
+  // carrier required (no empty attribution row).
+  deps.eventBus.on("memory:recall_used", (p) => {
+    const agentId = p.agentId ?? tryGetContext()?.agentId;
+    if (agentId === undefined || !deps.learningOutcomeEnabled(agentId)) return;
+    if (p.usedIds.length === 0) return; // nothing recalled+used → no carrier row
+    const scope = resolveScope({ agentId: p.agentId, traceId: p.traceId, sessionKey: p.sessionKey });
+    if (scope === undefined) return;
+    void observeNonFatal(deps, scope, "unknown", "explicit", ATTRIBUTION_CONFIDENCE, undefined, p.usedIds);
   });
 
   // NB: `graph:driver_lifecycle` is intentionally NOT subscribed (WR-02) — it is

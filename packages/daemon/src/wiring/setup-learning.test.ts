@@ -850,6 +850,91 @@ describe("wireLearningOutcome — memory:skill_used → observe(usedSkillIds) (A
   });
 });
 
+// Live VPS finding 2026-06-18: the OUTCOME-gated recall reward (RANK-01) was DORMANT —
+// the executor emits memory:recall_used with the recalled+used ids, but the daemon never
+// observed them onto the outcome ledger, so verdict.recalledIds was ALWAYS empty and the
+// resolve's recordUsage/recordFailure (failure_count) never fired. Mirror the ATTR-02
+// skill carrier: a neutral carrier row writes the recalled_ids column.
+describe("wireLearningOutcome — memory:recall_used → observe(recalledIds) (OUTCOME-06/RANK-01 loop close)", () => {
+  function recallUsedPayload(over?: { usedIds?: string[]; agentId?: string }) {
+    return {
+      agentId: over?.agentId ?? AGENT,
+      sessionKey: SESSION_KEY,
+      traceId: TRACE,
+      usedIds: over?.usedIds ?? ["mem-a", "mem-b"],
+      ignoredIds: [] as string[],
+      usedCount: (over?.usedIds ?? ["mem-a", "mem-b"]).length,
+      ignoredCount: 0,
+      timestamp: NOW,
+    };
+  }
+
+  it("threads the recalled+used ids into an observe() call so the recalled_ids column is written", async () => {
+    const bus = new TypedEventBus();
+    const { store, observe } = makeStubStore();
+    wireLearningOutcome({
+      eventBus: bus,
+      outcomeStore: store,
+      usefulnessStore: mockUsefulnessStore().store,
+      learningTuningEnabled: () => false,
+      learningForgettingEnabled: () => false,
+      clock: createFakeClock(NOW),
+      logger: createMockLogger(),
+      learningOutcomeEnabled: () => true,
+    });
+
+    bus.emit("memory:recall_used", recallUsedPayload({ usedIds: ["mem-a", "mem-b"] }));
+    await flushMicrotasks();
+
+    expect(observe).toHaveBeenCalledTimes(1);
+    const obs = observe.mock.calls[0]![0];
+    expect(obs.recalledIds).toEqual(["mem-a", "mem-b"]);
+    expect(obs.outcome).toBe("unknown"); // a pure attribution carrier — never wins fusion
+    expect(obs.trajectoryId).toBe(TRACE);
+    expect(obs.agentId).toBe(AGENT);
+  });
+
+  it("byte-identity: learningOutcomeEnabled => false → memory:recall_used triggers ZERO observe calls", async () => {
+    const bus = new TypedEventBus();
+    const { store, observe } = makeStubStore();
+    wireLearningOutcome({
+      eventBus: bus,
+      outcomeStore: store,
+      usefulnessStore: mockUsefulnessStore().store,
+      learningTuningEnabled: () => false,
+      learningForgettingEnabled: () => false,
+      clock: createFakeClock(NOW),
+      logger: createMockLogger(),
+      learningOutcomeEnabled: () => false,
+    });
+
+    bus.emit("memory:recall_used", recallUsedPayload());
+    await flushMicrotasks();
+
+    expect(observe).not.toHaveBeenCalled();
+  });
+
+  it("an empty usedIds recall carrier writes NOTHING (no attribution → no observe)", async () => {
+    const bus = new TypedEventBus();
+    const { store, observe } = makeStubStore();
+    wireLearningOutcome({
+      eventBus: bus,
+      outcomeStore: store,
+      usefulnessStore: mockUsefulnessStore().store,
+      learningTuningEnabled: () => false,
+      learningForgettingEnabled: () => false,
+      clock: createFakeClock(NOW),
+      logger: createMockLogger(),
+      learningOutcomeEnabled: () => true,
+    });
+
+    bus.emit("memory:recall_used", recallUsedPayload({ usedIds: [] }));
+    await flushMicrotasks();
+
+    expect(observe).not.toHaveBeenCalled();
+  });
+});
+
 // ── SURFACE-04/05/06 + OBS-01: the promote/demote loop at the resolve seam ──
 //
 // On a graph:completed → resolve() carrying the ATTR-02 `usedSkillIds`, a `success`
