@@ -217,6 +217,11 @@ export function placeCacheBreakpoints(
     }
   }
 
+  // A compaction summary is a NATURAL, stable cache boundary — when present, keep it as the
+  // semi-stable marker (the C-FIX-2b stability anchor below applies ONLY to the drifting
+  // 50%-token path).
+  const semiStableFromCompaction = semiStableIdx >= 0;
+
   // Place at 50% cumulative token threshold (not 50% message index).
   // Token-density placement ensures sessions with tool-heavy early messages
   // place the breakpoint at the actual token midpoint.
@@ -254,18 +259,23 @@ export function placeCacheBreakpoints(
     }
   }
 
-  // FIRST-SEGMENT GUARD (cache C-FIX-2, 2026-06-18): the first message marker must sit WITHIN
-  // the Anthropic CACHE_LOOKBACK_WINDOW content blocks of the conversation start. A token-dense
-  // turn can push the 50%-token semi-stable marker past the window, leaving the
-  // system->first-marker segment uncacheable. Relocate it EARLIER to the latest user message
-  // still within the window (repositioning only -- no extra slot).
-  if (semiStableIdx > 0 && blocksInRange(0, semiStableIdx) > CACHE_LOOKBACK_WINDOW) {
-    for (let i = semiStableIdx - 1; i >= 0; i--) {
-      if ((messages[i] as any).role === "user" && blocksInRange(0, i) <= CACHE_LOOKBACK_WINDOW) {
-        semiStableIdx = i;
-        break;
-      }
+  // STABILITY ANCHOR (cache C-FIX-2b, 2026-06-18): for a conversation longer than the lookback
+  // window, anchor the first marker to the LATEST user message at/before block W -- a FIXED
+  // position (the conversation is append-only, so block W maps to the same message as it grows).
+  // The first marker therefore does NOT drift turn-to-turn, so each turn re-marks the SAME message
+  // the previous turn cached -> incremental cache HITS. This SUPERSEDES the C-FIX-2a first-segment
+  // guard (which only relocated when the 50%-token marker drifted PAST the window; for shorter-
+  // but-still-long turns the 50%-token marker still moved m14->m18 each turn -> read-drops +
+  // ~18K-token re-writes of token-dense segments). Also keeps the first segment within the window.
+  // Short conversations (<= window) keep the 50%-token semi-stable (no lookback pressure there).
+  // A compaction summary is left as-is (it is already a stable boundary).
+  if (!semiStableFromCompaction && blocksInRange(0, messages.length - 1) > CACHE_LOOKBACK_WINDOW) {
+    let anchor = -1;
+    const scanEnd = lastUserIdx >= 0 ? lastUserIdx : messages.length - 1;
+    for (let i = 0; i <= scanEnd && blocksInRange(0, i) <= CACHE_LOOKBACK_WINDOW; i++) {
+      if ((messages[i] as any).role === "user") anchor = i;
     }
+    if (anchor > 0) semiStableIdx = anchor;
   }
 
   // Place breakpoint #2 if above threshold

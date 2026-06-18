@@ -99,6 +99,22 @@ describe("placeCacheBreakpoints — lookback-window coverage on long conversatio
     }
   });
 
+  it("anchors the first marker to a STABLE block-boundary position as the conversation grows (C-FIX-2b incremental hits)", () => {
+    // The markers must NOT drift turn-to-turn: a drifting 50%-token marker lands on different
+    // messages each turn, so the cache prefix the previous turn wrote is no longer marked →
+    // read-drops + ~18K token re-writes. Anchoring to the latest user at/before block W gives a
+    // FIXED position (append-only), so two conversations sharing a prefix mark the SAME message.
+    function conv(n: number): Array<Record<string, unknown>> {
+      const r: string[] = [];
+      for (let i = 0; i < n; i++) r.push(i % 2 === 0 ? "user" : "assistant");
+      return makeMessages(r);
+    }
+    const m30 = conv(30); placeCacheBreakpoints(m30, { minTokens: 0, maxBreakpoints: 2, strategy: "multi-zone" });
+    const m36 = conv(36); placeCacheBreakpoints(m36, { minTokens: 0, maxBreakpoints: 2, strategy: "multi-zone" });
+    // First marker stable across lengths (was: drifted with 50%-token → cache misses).
+    expect(markerIndices(m36)[0]).toBe(markerIndices(m30)[0]);
+  });
+
   it("short conversations are unaffected (no bridge needed; original recent-zone behavior)", () => {
     const msgs = makeMessages(["user", "assistant", "user", "assistant", "user", "assistant", "user", "assistant"]);
     const placed = placeCacheBreakpoints(msgs, { minTokens: 0, maxBreakpoints: 2, strategy: "multi-zone" });
