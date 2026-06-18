@@ -63,6 +63,50 @@ describe("placeCacheBreakpoints — pure", () => {
   });
 });
 
+describe("placeCacheBreakpoints — lookback-window coverage on long conversations (cache C-FIX-2, 2026-06-18)", () => {
+  // Live evidence: on a long tool turn the markers clustered as semi-stable@blk13 +
+  // recent@blk35 + SDK@blk38 — the recent marker is REDUNDANT with the SDK's end marker
+  // (3 blocks apart) while the gap blk13→blk35 (22 blocks) had NO marker and exceeded the
+  // Anthropic 20-block lookback window → that middle segment missed the cache every turn.
+  // The fix keeps the FIRST marker within the window of the start and BRIDGES the mid gap
+  // (priority over the redundant recent marker), so no inter-marker gap exceeds the window.
+  const CACHE_LOOKBACK_WINDOW = 20;
+
+  function markerIndices(msgs: Array<Record<string, unknown>>): number[] {
+    const out: number[] = [];
+    for (let i = 0; i < msgs.length; i++) {
+      const c = msgs[i]!.content;
+      if (Array.isArray(c) && c.some((b) => (b as Record<string, unknown>).cache_control)) out.push(i);
+    }
+    return out;
+  }
+
+  it("bounds every gap (start→first, first→second) within the lookback window on a long conversation", () => {
+    // 50 alternating 1-block messages → 50%-token semi-stable ≈ idx 25 (> 20 from start) and
+    // the recent zone ≈ idx 48 (clustered with the would-be SDK end marker), leaving a >20 gap.
+    const roles: string[] = [];
+    for (let i = 0; i < 50; i++) roles.push(i % 2 === 0 ? "user" : "assistant");
+    const msgs = makeMessages(roles);
+    placeCacheBreakpoints(msgs, { minTokens: 0, maxBreakpoints: 2, strategy: "multi-zone" });
+    const idx = markerIndices(msgs); // 1 block per message → index == block offset
+    expect(idx.length).toBeGreaterThanOrEqual(1);
+    // First marker within the lookback window of the conversation start (block 0).
+    expect(idx[0]!).toBeLessThanOrEqual(CACHE_LOOKBACK_WINDOW);
+    // No gap between consecutive Comis markers exceeds the window (the mid-gap is bridged,
+    // not left to a recent marker clustered at the end).
+    for (let i = 1; i < idx.length; i++) {
+      expect(idx[i]! - idx[i - 1]!).toBeLessThanOrEqual(CACHE_LOOKBACK_WINDOW);
+    }
+  });
+
+  it("short conversations are unaffected (no bridge needed; original recent-zone behavior)", () => {
+    const msgs = makeMessages(["user", "assistant", "user", "assistant", "user", "assistant", "user", "assistant"]);
+    const placed = placeCacheBreakpoints(msgs, { minTokens: 0, maxBreakpoints: 2, strategy: "multi-zone" });
+    expect(placed).toBeGreaterThan(0);
+    expect(markerIndices(msgs)[0]!).toBeLessThanOrEqual(CACHE_LOOKBACK_WINDOW);
+  });
+});
+
 describe("placeSingleBreakpoint — pure", () => {
   it("returns 0 when fewer than 2 messages", () => {
     const msgs = makeMessages(["user"]);

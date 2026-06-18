@@ -191,6 +191,17 @@ export function placeCacheBreakpoints(
     return tokens;
   }
 
+  // Count content blocks for messages[start..end] (inclusive) -- the UNIT of Anthropic's
+  // lookback window. A message contributes its content-array length (1 for string content).
+  function blocksInRange(start: number, end: number): number {
+    let n = 0;
+    for (let i = Math.max(0, start); i <= end && i < messages.length; i++) {
+      const content = (messages[i] as any).content;
+      n += Array.isArray(content) ? content.length : 1;
+    }
+    return n;
+  }
+
   // Find compaction summary position (breakpoint #2 candidate)
   let semiStableIdx = -1;
   for (let i = 0; i < messages.length; i++) {
@@ -243,11 +254,49 @@ export function placeCacheBreakpoints(
     }
   }
 
+  // FIRST-SEGMENT GUARD (cache C-FIX-2, 2026-06-18): the first message marker must sit WITHIN
+  // the Anthropic CACHE_LOOKBACK_WINDOW content blocks of the conversation start. A token-dense
+  // turn can push the 50%-token semi-stable marker past the window, leaving the
+  // system->first-marker segment uncacheable. Relocate it EARLIER to the latest user message
+  // still within the window (repositioning only -- no extra slot).
+  if (semiStableIdx > 0 && blocksInRange(0, semiStableIdx) > CACHE_LOOKBACK_WINDOW) {
+    for (let i = semiStableIdx - 1; i >= 0; i--) {
+      if ((messages[i] as any).role === "user" && blocksInRange(0, i) <= CACHE_LOOKBACK_WINDOW) {
+        semiStableIdx = i;
+        break;
+      }
+    }
+  }
+
   // Place breakpoint #2 if above threshold
   if (semiStableIdx >= 0 && placed < remaining) {
     const tokensToPoint = estimateTokensInRange(0, semiStableIdx);
     if (tokensToPoint >= minTokens) {
       addCacheControlToLastBlock(messages[semiStableIdx] as any, resolvedRetention ?? retention);
+      placed++;
+    }
+  }
+
+  // LOOKBACK GAP BRIDGE (cache C-FIX-2, 2026-06-18, evidence-based): when the span from the
+  // semi-stable marker to the LAST user message (where the SDK auto-marker lands) exceeds the
+  // lookback window, the MIDDLE of the conversation has no cache anchor -> that segment misses
+  // every turn (live tool turn: markers clustered semi-stable@blk13 + recent@blk35 + SDK@blk38
+  // left a 22-block gap blk13->blk35). The Comis "recent" marker is REDUNDANT with the SDK's
+  // last-user marker (a few blocks apart), so spend the slot on a BRIDGE at the last user within
+  // one window of semi-stable -- PRIORITY over the recent zone; the SDK marker still covers the end.
+  if (
+    semiStableIdx >= 0 &&
+    lastUserIdx > semiStableIdx &&
+    placed < remaining &&
+    blocksInRange(semiStableIdx + 1, lastUserIdx) > CACHE_LOOKBACK_WINDOW
+  ) {
+    let bridgeIdx = -1;
+    for (let i = semiStableIdx + 1; i < lastUserIdx; i++) {
+      if (blocksInRange(semiStableIdx + 1, i) > CACHE_LOOKBACK_WINDOW) break;
+      if ((messages[i] as any).role === "user") bridgeIdx = i;
+    }
+    if (bridgeIdx > semiStableIdx && estimateTokensInRange(semiStableIdx + 1, bridgeIdx) >= minTokens) {
+      addCacheControlToLastBlock(messages[bridgeIdx] as any, resolvedRetention ?? retention);
       placed++;
     }
   }

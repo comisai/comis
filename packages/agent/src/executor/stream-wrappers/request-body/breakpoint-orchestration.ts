@@ -224,6 +224,15 @@ export function runCacheBreakpointPhase(
       const content = Array.isArray(msg.content) ? msg.content as Array<Record<string, unknown>> : [];
       const hasUntrusted = content.some((b) => typeof b.text === "string" && (b.text as string).includes("<<<UNTRUSTED_"));
       if (!hasUntrusted) continue;
+      // Only anchor a LARGE untrusted block — the ~32KB link-understanding case this Fix exists
+      // for. A SMALL untrusted tool_result (e.g. an `echo` result) is cheap to re-upload and the
+      // SDK's last-user marker already covers it; anchoring it would waste a breakpoint slot that
+      // the lookback gap-bridge needs (cache C-FIX-2, 2026-06-18: small tool_results were stealing
+      // the slot, leaving the mid-conversation gap unbridged on alternating tool turns). The
+      // delimiter-wrap security is independent of this cost anchor, so gating on size is safe.
+      const EFIX_MIN_UNTRUSTED_CHARS = 16384; // ~4K tokens — clearly "large", well below ~32KB
+      const untrustedChars = content.reduce((sum, b) => sum + (typeof b.text === "string" ? (b.text as string).length : 0), 0);
+      if (untrustedChars < EFIX_MIN_UNTRUSTED_CHARS) continue;
       // Place (or upgrade) cache_control to 1h on the last block of this message.
       const lastBlock = content[content.length - 1];
       const alreadyPlaced = lastBlock != null && lastBlock.cache_control != null;
