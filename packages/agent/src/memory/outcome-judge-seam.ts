@@ -250,6 +250,27 @@ export function createOutcomeJudgeSeam(
           signal: controller.signal,
         },
       );
+      // A pi-ai error response does NOT throw — it returns `stopReason:"error"` with
+      // empty `content` and an `errorMessage` (e.g. a 404 from a retired/invalid model
+      // id). Treat that as a FAILURE the operator can see, not a benign empty verdict:
+      // without this, an unresolvable fast-tier model silently yields `unknown` forever
+      // (the live 2026-06-18 `claude-3-5-haiku-latest` 404 — diagnosable only after a
+      // raw-response dump). The WARN names the model + the error so the NEXT occurrence
+      // is one log line.
+      const r = response as { stopReason?: string; errorMessage?: string; content?: unknown[] };
+      if (r.stopReason === "error" || (Array.isArray(r.content) && r.content.length === 0)) {
+        logger.warn(
+          {
+            agentId,
+            errorKind: "dependency" as const,
+            step: "outcome-judge" as const,
+            model: `${provider}/${modelId}`,
+            hint: `outcome judge model returned an error/empty response (${r.errorMessage ?? "no content"}) — no verdict; verify the resolved fast-tier model id is valid for ${provider}`,
+          },
+          "Outcome judge model returned error/empty response (non-fatal)",
+        );
+        return undefined;
+      }
       return extractResponseText(response);
     } catch (llmErr) {
       logger.warn(

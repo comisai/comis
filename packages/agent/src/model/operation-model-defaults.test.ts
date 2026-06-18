@@ -48,6 +48,16 @@ describe("resolveOperationDefaults", () => {
     expect(result.mid!).toMatch(/^claude-/);
   });
 
+  it("never resolves a floating `-latest` alias (PINNED ids only — live-2026-06-18 anthropic `claude-3-5-haiku-latest` 404)", () => {
+    // A `-latest` alias drifts and 404s once the provider retires it; the cost-gated
+    // seams then silently yield empty verdicts. Operation-tier picks MUST be pinned ids.
+    for (const provider of ["anthropic", "openai", "google", "openrouter"]) {
+      const result = resolveOperationDefaults(provider);
+      if (result.fast !== undefined) expect(result.fast.endsWith("-latest")).toBe(false);
+      if (result.mid !== undefined) expect(result.mid.endsWith("-latest")).toBe(false);
+    }
+  });
+
   it("returns OpenRouter model IDs for openrouter provider (not Anthropic)", () => {
     const result = resolveOperationDefaults("openrouter");
     const catalogIds = new Set(getModels("openrouter").map((m) => m.id));
@@ -158,8 +168,11 @@ describe("resolveOperationDefaults — top-of-cohort selection", () => {
     for (const provider of ["anthropic", "openai", "mistral", "xai"] as const) {
       const result = resolveOperationDefaults(provider);
       const all = getModels(provider);
+      // Mirror production: operation-tier picks exclude floating `-latest` aliases
+      // (so anthropic fast now resolves the pinned `claude-haiku-4-5-20251001`, not the
+      // retired `claude-3-5-haiku-latest` alias that 404'd live on 2026-06-18).
       const priced = all
-        .filter((m) => m.input?.includes("text") && totalCost(m) > 0)
+        .filter((m) => m.input?.includes("text") && totalCost(m) > 0 && !m.id.endsWith("-latest"))
         .sort((a, b) => totalCost(a) - totalCost(b));
       if (priced.length === 0) continue;
       for (const [tier, pct] of [
@@ -195,7 +208,8 @@ describe("resolveOperationDefaults — top-of-cohort selection", () => {
     let anyChecked = false;
     for (const provider of getProviders()) {
       const all = getModels(provider as KnownProvider);
-      const priced = all.filter((m) => m.input?.includes("text") && totalCost(m) > 0);
+      // Mirror production: operation-tier picks exclude floating `-latest` aliases.
+      const priced = all.filter((m) => m.input?.includes("text") && totalCost(m) > 0 && !m.id.endsWith("-latest"));
       if (priced.length === 1) {
         anyChecked = true;
         const result = resolveOperationDefaults(provider as KnownProvider);
@@ -215,8 +229,9 @@ describe("resolveOperationDefaults — top-of-cohort selection", () => {
     // contamination cannot happen.
     const result = resolveOperationDefaults("anthropic");
     const all = getModels("anthropic");
+    // Mirror production: operation-tier picks exclude floating `-latest` aliases.
     const priced = all
-      .filter((m) => m.input?.includes("text") && totalCost(m) > 0)
+      .filter((m) => m.input?.includes("text") && totalCost(m) > 0 && !m.id.endsWith("-latest"))
       .sort((a, b) => totalCost(a) - totalCost(b));
     const fastIdx = Math.min(priced.length - 1, Math.floor(priced.length * 0.1));
     const midIdx = Math.min(priced.length - 1, Math.floor(priced.length * 0.5));

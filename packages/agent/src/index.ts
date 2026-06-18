@@ -628,6 +628,14 @@ export * from "./background/index.js";
 export { createCorrectionDetectorSeam } from "./memory/index.js";
 export type { CorrectionVerdict } from "./memory/index.js";
 
+// Verified Learning WS1 (OUTCOME-04, Phase 202). The cost-gated LLM outcome-judge
+// seam the daemon constructs on the `outcomeJudge` fast tier as the FALLBACK source
+// for a CONVERSATIONAL turn (an `unknown` deterministic resolve). Re-exported beside
+// its daemon consumer (setup-learning-reactions wiring) so the public-export-consumers
+// gate never sees an orphan. The prompt + triple-bound + the reward cap stay
+// agent-internal (the daemon `observe()`s the seam's already-capped `cappedConfidence`).
+export { createOutcomeJudgeSeam } from "./memory/index.js";
+
 // Verified Learning WS2 (P2 Skills, Phase 201 Plan 04). The LLM-backed
 // procedural-synthesis adapter the daemon constructs on the `skillSynthesis` mid
 // tier (SKILL-02). Re-exported from the memory sub-barrel beside its daemon

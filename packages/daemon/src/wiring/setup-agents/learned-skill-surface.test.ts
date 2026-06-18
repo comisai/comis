@@ -141,7 +141,7 @@ describe("mergeLearnedSkillsXml — append after platform", () => {
     expect(xml).not.toContain("<location>.learned-skills/L1/SKILL.md</location>");
   });
 
-  it("filters to active ∧ !mutating — mutating/stale/candidate/archived NEVER surface", () => {
+  it("filters to (active|candidate) ∧ !mutating — candidate DOES surface (use-based promotion); mutating/stale/archived NEVER", () => {
     const xml = mergeLearnedSkillsXml(
       [platform("P1")],
       [
@@ -154,9 +154,11 @@ describe("mergeLearnedSkillsXml — append after platform", () => {
       workDir,
     );
     expect(xml).toContain("<name>Good</name>");
+    // live-2026-06-18 deadlock fix: a read-only candidate surfaces so it can be TRIED
+    // and promoted candidate→active via a corroborated-success reuse.
+    expect(xml).toContain("<name>Cand</name>");
     expect(xml).not.toContain("<name>Mut</name>");
     expect(xml).not.toContain("<name>Stale</name>");
-    expect(xml).not.toContain("<name>Cand</name>");
     expect(xml).not.toContain("<name>Arch</name>");
   });
 });
@@ -345,8 +347,8 @@ function makeRegistryForSurface(): import("@comis/skills").SkillRegistry {
 
 describe("WR-01: createRefreshableLearnedSkillSurface re-refresh picks up a promoted skill", () => {
   it("a promote (list() now returns the skill active) surfaces it on a subsequent refresh()", async () => {
-    // list() starts empty (the skill is candidate → filtered), then returns it ACTIVE
-    // after a 'promote' — exactly the transition the resolve-seam loop drives.
+    // list() starts empty, then returns the skill ACTIVE after a 'promote' — the
+    // re-refresh picks up the new surfaceable set (SURFACE-03 next-session pickup).
     let listed: LearnedSkill[] = [];
     const store = {
       admit: async () => ok({ id: "x", admitted: true }),

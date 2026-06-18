@@ -115,6 +115,27 @@ describe("createOutcomeJudgeSeam", () => {
     expect(out).toBeUndefined();
   });
 
+  it("is DIAGNOSABLE: a non-thrown `stopReason:error` response yields undefined + WARNs the model (live-2026-06-18 404)", async () => {
+    // pi-ai does NOT throw on an API error (e.g. a 404 from a retired model id) — it
+    // RETURNS `{stopReason:"error", content:[], errorMessage}`. Pre-fix the seam read the
+    // empty content as "" → an `unknown` verdict with NO warn, so an unresolvable fast-tier
+    // model made the judge silently never fire. It must now WARN (naming the model) + bail.
+    (completeSimple as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      role: "assistant",
+      content: [],
+      stopReason: "error",
+      errorMessage: '404 {"type":"error","error":{"type":"not_found_error","message":"model: claude-3-5-haiku-latest"}}',
+    });
+    const deps = makeDeps();
+    const judge = createOutcomeJudgeSeam(deps as never);
+    const out = await judge("trajectory text");
+    expect(out).toBeUndefined();
+    expect((deps.logger as never as { warn: ReturnType<typeof vi.fn> }).warn).toHaveBeenCalledWith(
+      expect.objectContaining({ errorKind: "dependency", step: "outcome-judge", model: expect.stringContaining("claude-haiku") }),
+      expect.stringContaining("error/empty response"),
+    );
+  });
+
   it("is non-fatal: a model-resolution failure yields undefined + WARNs (no completeSimple call)", async () => {
     (getModel as ReturnType<typeof vi.fn>).mockImplementation(() => {
       throw new Error("unknown model");

@@ -1,11 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Memory and embedding subsystem setup: embedding provider, caching,
- * SQLite memory adapter, fingerprint-based reindexing, background batch
- * indexing, session store, memory API, and embedding queue.
- * Extracted from daemon.ts steps 6.5 through 6.5.4 plus session store
- * and memory API creation to isolate the most complex independent
- * subsystem from the main wiring sequence.
+ * Memory + embedding subsystem setup: embedding provider/caching, SQLite memory
+ * adapter, reindexing, batch indexing, session store, memory API, embedding queue.
  * @module
  */
 
@@ -51,6 +47,7 @@ import { wireMemoryUsefulness } from "./setup-memory-usefulness-wiring.js";
 import { resolveUserRepresentationHistoryCapOption } from "./setup-memory-history-cap.js";
 import { setupLearningOutcomeWiring } from "./setup-learning.js";
 import { buildReactionWiringDeps, wireLearningReactions, wireLearningCorrection } from "./setup-learning-reactions.js";
+import { buildOutcomeJudgeWiring } from "./setup-learning-judge.js";
 
 // ---------------------------------------------------------------------------
 // Result type
@@ -631,14 +628,16 @@ export async function setupMemory(deps: {
       ),
   });
 
-  // 6.5.2f'. Outcome-signal subscriber (WS1) + the RANK-01/FORGET-02 reward/failure write at resolve() (closed graph; byte-identity-gated per-agent learning{Outcome,Tuning,Forgetting} + the cost master-switch).
+  // 6.5.2f'. WS1 outcome subscriber + RANK/FORGET reward-at-resolve + OUTCOME-04 LLM-judge fallback (own leaf, byte-identity-gated); lcdStore created here for the judge transcript reader.
+  const lcdStore = createLcdStore(db);
+  const judge = buildOutcomeJudgeWiring(container, clock, memoryLogger, lcdStore);
   setupLearningOutcomeWiring({
-    eventBus: container.eventBus,
-    outcomeStore, learnedSkillStore,
+    eventBus: container.eventBus, outcomeStore, learnedSkillStore,
     usefulnessStore, clock,
     logger: memoryLogger,
     config: container.config,
     learnedSkillSurfaceRegistry: deps.learnedSkillSurfaceRegistry,
+    outcomeJudge: judge.outcomeJudge, learningOutcomeJudgeEnabled: judge.learningOutcomeJudgeEnabled, readTurnTranscript: judge.readTurnTranscript,
   });
 
   // 6.5.2f''. Reaction + correction outcome wiring (Verified Learning WS1, Phase 199 — the corroborating sources) behind the byte-identity gate; bulk lives in the co-located helper.
@@ -647,8 +646,7 @@ export async function setupMemory(deps: {
     clock, timers);
   wireLearningReactions(reactionWiring.deps);
   wireLearningCorrection(reactionWiring.deps);
-  const recordOutboundMessage = reactionWiring.recordOutboundMessage;
-  const destroyReactionWiring = reactionWiring.destroyReactionWiring; // WR-01: teardown for the daemon shutdown path
+  const { recordOutboundMessage, destroyReactionWiring } = reactionWiring; // WR-01: destroy* tears down the reaction/session maps + rate-limiter timers at shutdown
 
   // 6.5.3. Wire caching: L1(L2(provider)) when persistent, L1(provider) otherwise
   let cachedPort: EmbeddingPort | undefined;
@@ -734,8 +732,7 @@ export async function setupMemory(deps: {
     embeddingQueue = createEmbeddingQueue(db, cachedPort);
   }
 
-  const sessionStore = createSessionStore(db);
-  const lcdStore = createLcdStore(db);
+  const sessionStore = createSessionStore(db); // lcdStore is created earlier (6.5.2d-sexies) for the judge reader
   const provenanceStore = buildProvenanceReadStore(db); // DIST-03 read side (Phase 173 carry-in); same db handle; threaded to createMemoryRecall's down-weighting pass (built-but-not-wired fix)
   const contextBrowse = createLcdBrowseStore(db); // ContextBrowsePort (context.conversations)
   const memoryApi: MemoryApi = createMemoryApi(db, memoryAdapter, sessionStore, memoryConfig);

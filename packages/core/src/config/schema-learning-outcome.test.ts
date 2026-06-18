@@ -14,21 +14,33 @@ import type { AgentEvents } from "../event-bus/events-agent.js";
  * (`enabled:true`) — the Verified-Learning loop works out of the box (opt-out).
  * The master kill switch `memory.costFeatures.enabled` (default true) is the real
  * gate; flipping it off force-disables the loop at the cron registration site.
- * `judge.enabled` STAYS off (dormant). The schema is `z.strictObject` (unknown
- * keys rejected) with `.default()` on every field. It attaches to
- * `PerAgentConfigSchema`.
+ * `judge.enabled` now also defaults ON (opt-out) — the LLM outcome judge is the
+ * FALLBACK source that learns from a CONVERSATIONAL turn (one with no
+ * deterministic tool/pipeline outcome, which would otherwise resolve to `unknown`
+ * and derive no learning). It is STILL force-disabled by `memory.costFeatures.
+ * enabled: false` and only runs on an `unknown` resolve (bounds its cost). The
+ * schema is `z.strictObject` (unknown keys rejected) with `.default()` on every
+ * field. It attaches to `PerAgentConfigSchema`.
  */
 describe("LearningOutcomeConfigSchema — per-agent outcome-signal config (default ON, opt-out)", () => {
-  it("parse({}) yields the documented default-ON block (enabled:true, tool/pipeline sources, judge off)", () => {
+  it("parse({}) yields the documented default-ON block (enabled:true, tool/pipeline sources, judge ON)", () => {
     const cfg = LearningOutcomeConfigSchema.parse({});
     expect(cfg.enabled).toBe(true);
     expect(cfg.sources).toEqual(["tool", "pipeline"]);
-    // judge STAYS dormant — it is the LLM-judge seam, gated off independently.
-    expect(cfg.judge.enabled).toBe(false);
+    // judge now defaults ON (opt-out) — the conversational-turn fallback source.
+    expect(cfg.judge.enabled).toBe(true);
     expect(cfg.minConfidenceToLearn).toBe(0.6);
     expect(cfg.retentionDays).toBe(30);
     expect(cfg.reactionMap.success).toEqual(["👍", "✅"]);
     expect(cfg.reactionMap.failure).toEqual(["👎", "❌"]);
+  });
+
+  it("judge.enabled is opt-out: an explicit `judge: { enabled: false }` is honored (and the sub-block is strict)", () => {
+    expect(LearningOutcomeConfigSchema.parse({ judge: { enabled: false } }).judge.enabled).toBe(false);
+    // Zod v4 footgun guard: a POPULATED outer default must still apply the inner
+    // field default, so an empty `judge: {}` yields the ON default, not undefined.
+    expect(LearningOutcomeConfigSchema.parse({ judge: {} }).judge.enabled).toBe(true);
+    expect(LearningOutcomeConfigSchema.safeParse({ judge: { enabled: true, bogus: 1 } }).success).toBe(false);
   });
 
   it("correction is a default-ON cost-gate sub-block (enabled:true — opt-out, gated by the master cost switch)", () => {

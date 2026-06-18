@@ -171,6 +171,28 @@ export function createLlmSkillSynthesisAdapter(deps: LlmSkillSynthesisAdapterDep
       );
     }
 
+    // A pi-ai API error does NOT throw — it RETURNS `{stopReason:"error", content:[],
+    // errorMessage}` (e.g. a retired/invalid model id 404). Treat it like the thrown
+    // branch above: WARN naming the model + skip the cluster (err), NOT a silent empty-
+    // candidate parse. Without this a broken synthesis model yields 0 skills forever with
+    // no signal (the live-2026-06-18 judge precedent — createOutcomeJudgeSeam now does the
+    // same detection). The deterministic !ok branch only catches a THROWN/transport fault.
+    const resp = responseResult.value as { content?: unknown[]; stopReason?: string; errorMessage?: string };
+    if (resp.stopReason === "error" || (Array.isArray(resp.content) && resp.content.length === 0)) {
+      logger.warn(
+        {
+          submodule: "llm-skill-synthesis-adapter",
+          step: "synthesize" as const,
+          errorKind: "dependency" as const,
+          model: `${provider}/${modelId}`,
+          clusterSize: clusterTrajIds.length,
+          hint: `synthesis model returned an error/empty response (${resp.errorMessage ?? "no content"}) — cluster skipped; verify the resolved mid-tier model id is valid for ${provider}`,
+        },
+        "skill synthesis model returned error/empty response",
+      );
+      return err(new Error(`Skill synthesis model error/empty: ${resp.errorMessage ?? "no content"}`));
+    }
+
     // TOTAL parse — never throws; a malformed payload yields [] (no partial
     // corrupt candidate reaches validation/admission).
     const candidates = parseSynthesisResult(extractResponseText(responseResult.value as { content?: unknown[] }));

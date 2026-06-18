@@ -28,20 +28,24 @@ import {
   type OutcomeSignalPort,
   type MemoryUsefulnessStore,
   type LearnedSkillStorePort,
-  type ResolvedOutcome,
   type ClockPort,
   type ComisLogger,
   type AppConfig,
 } from "@comis/core";
 
 import { deriveTenantFromSessionKey } from "./setup-memory-usefulness-wiring.js";
-import { createSkillTrendTracker, type SkillTrendTracker } from "./setup-learning-skill-trend.js";
+import { createSkillTrendTracker } from "./setup-learning-skill-trend.js";
 import { markTrajectoryResolved } from "./setup-learning-dedup.js";
 import {
   failureCorroborated,
   CORROBORATION_MIN_INDEPENDENT,
   MAX_TRACKED_FAILURE_MEMORIES,
 } from "./setup-learning-corroboration.js";
+// OUTCOME-04 judge fallback lives in its own leaf (no cycle: setup-learning → judge only).
+import { maybeUpgradeWithJudge, type OutcomeJudge, type JudgeScope } from "./setup-learning-judge.js";
+// SURFACE-04/05/06 skill promote/demote loop lives in its own leaf (no cycle: it imports
+// failureCorroborated from setup-learning-corroboration.ts, nothing from here).
+import { applySkillOutcomeTransitions } from "./setup-learning-skill-transitions.js";
 // Re-export for the existing importers (setup-learning.test.ts) — moved to the leaf
 // to keep this file under the 800-line cap; the gate logic is unchanged.
 export { failureCorroborated, CORROBORATION_MIN_INDEPENDENT, MAX_TRACKED_FAILURE_MEMORIES };
@@ -115,6 +119,20 @@ export interface LearningOutcomeWiringDeps {
    * learning disabled) ⇒ no refresh (byte-identical). The boot refresh still runs.
    */
   refreshLearnedSkillSurface?: (agentId: string) => void;
+  /**
+   * OUTCOME-04 conversational-breadth fallback (built in the setup-learning-judge leaf):
+   * the cost-gated LLM outcome-judge seam, invoked ONLY when the deterministic resolve fused
+   * to `unknown` AND {@link learningOutcomeJudgeEnabled} is on — i.e. a CONVERSATIONAL turn
+   * with no tool/pipeline signal. Returns the verdict's `outcome` + the CODE-capped reward
+   * (≤ 0.7) the daemon `observe()`s as a `source:"judge"` row. OPTIONAL — absent (a pre-judge
+   * caller, or the judge disabled for every agent) ⇒ the upgrade path is never entered
+   * (byte-identical). These three fields ARE the {@link JudgeUpgradeDeps} structural subset.
+   */
+  outcomeJudge?: OutcomeJudge;
+  /** Per-agent judge enable (costFeatures && learningOutcome.enabled && judge.enabled); absent ⇒ never runs. */
+  learningOutcomeJudgeEnabled?: (agentId: string) => boolean;
+  /** LCD-backed per-turn transcript reader; absent/empty ⇒ the judge never runs (byte-identical). */
+  readTurnTranscript?: (scope: JudgeScope) => string | undefined;
 }
 
 /** High-confidence default for a clean deterministic tool/pipeline signal. */
@@ -268,143 +286,14 @@ function recordNonFatal(
     });
 }
 
-/**
- * WR-05: build the scope-qualified key the in-process skill gauges (corroboration
- * tally + trend tracker) MUST key on — `(tenantId, agentId, skillName)`. Keying on
- * the bare skill NAME aliases two different (tenant, agent) scopes that each surface
- * a skill of the same name, so tenant A's failures could drive tenant B's skill
- * toward demotion (a cross-tenant integrity leak). This composite is the same tuple
- * the store's row id derives from, so it is unique per (tenant, agent, name) without
- * a store round-trip. The space separators mirror `learnedSkillId`'s join.
- */
-function skillGaugeKey(tenantId: string, agentId: string, skillName: string): string {
-  return `${tenantId} ${agentId} ${skillName}`;
-}
+// SURFACE-04/05/06: the learned-skill promote/demote loop (applySkillOutcomeTransitions
+// + runSkillTransition + skillGaugeKey + SkillOutcomeDeps) lives in the
+// setup-learning-skill-transitions.ts leaf (imported above) to keep this file under the
+// 800-line cap. It imports `failureCorroborated` from setup-learning-corroboration.ts
+// directly (no back-import here → no cycle).
 
-/** Per-call dependencies for {@link applySkillOutcomeTransitions} (the resolve-seam loop body). */
-interface SkillOutcomeDeps {
-  /** The learned-skill adapter (the name-keyed promote/demote target). */
-  skillStore: LearnedSkillStorePort;
-  /** The per-agent `promoteAtProofCount` threshold (candidate→active proof bar). */
-  threshold: number;
-  /** WR-05: scope-qualified corroboration tally (skillGaugeKey → distinct failing sessions). */
-  skillFailureCorroborationTally: Map<string, Set<string>>;
-  /** WR-05: the decay-aware trend tracker (keyed on the SAME scope-qualified key). */
-  skillTrend: SkillTrendTracker;
-  /** WR-01: refresh the per-agent surface cache after a promote/demote moved a row, so
-   *  the NEXT session's freeze captures the new active set (SURFACE-03 next-session
-   *  pickup, never a frozen-snapshot mutation). Absent ⇒ no refresh. */
-  refreshSurface?: (agentId: string) => void;
-}
-
-/**
- * SURFACE-04/05/06 + OBS-01 — the resolve-seam learned-skill promote/demote body,
- * fire-and-forget / non-fatal. AWAITS the name-keyed store transition to read
- * rows-changed (CR-01: the loop holds skill NAMES, not the hash id; the store resolves
- * name→id internally AND reports whether a row moved) and increments the counter +
- * emits ONLY when a row actually transitioned (the telemetry stops lying about 0-row
- * writes). Scope-qualifies the corroboration/trend keys (WR-05). On a real transition
- * it refreshes the per-agent surface cache (WR-01). NEVER throws (each store call is
- * wrapped; a reject/err WARNs and is skipped).
- */
-async function applySkillOutcomeTransitions(
-  deps: LearningOutcomeWiringDeps,
-  scope: OutcomeScope,
-  verdict: ResolvedOutcome,
-  skillDeps: SkillOutcomeDeps,
-): Promise<void> {
-  const { skillStore, threshold, skillFailureCorroborationTally, skillTrend, refreshSurface } = skillDeps;
-  const skillScope = { tenantId: scope.tenantId, agentId: scope.agentId, now: deps.clock.now() };
-  const skillStart = deps.clock.now();
-  let promoted = 0;
-  let demoted = 0;
-
-  for (const skillName of verdict.usedSkillIds) {
-    // WR-05: never key the in-process gauges on the bare name (cross-tenant alias).
-    const gaugeKey = skillGaugeKey(scope.tenantId, scope.agentId, skillName);
-    if (verdict.outcome === "success") {
-      // SURFACE-04: promoteByName bumps proof_count; candidate→active at the proof
-      // bar (store-side CASE). Count ONLY when a real row changed (CR-01). The
-      // success also feeds the trend so a strong recent history resists a later
-      // (possibly induced) demote.
-      const changed = await runSkillTransition(deps, scope.agentId, "skill_promote", () =>
-        skillStore.promoteByName(skillName, skillScope, threshold),
-      );
-      skillTrend.updateSkillTrend(gaugeKey, "success", deps.clock.now());
-      if (changed) promoted += 1;
-    } else if (verdict.outcome === "failure" || verdict.outcome === "corrected") {
-      // SURFACE-05: corroboration gate (≥2 distinct-session OR 1 deterministic), THEN
-      // the decay-aware trend — demote ONLY on a WEAKENING standing so a single
-      // corroborated failure on a well-reused skill stays put (§12 first-RED).
-      if (failureCorroborated(gaugeKey, scope.sessionId, verdict.sources, skillFailureCorroborationTally)) {
-        const trend = skillTrend.updateSkillTrend(gaugeKey, "failure", deps.clock.now());
-        if (trend === "weakening") {
-          const changed = await runSkillTransition(deps, scope.agentId, "skill_demote", () =>
-            skillStore.demoteByName(skillName, skillScope),
-          );
-          if (changed) demoted += 1;
-        }
-      }
-    }
-  }
-
-  // SURFACE-06 emits — plain eventBus.emit (Plan 03 typed the keys + bridged them).
-  // COUNTS ONLY — a body/script/id-list field is a compile error. Emitted ONLY on a
-  // REAL transition count (CR-01: a 0-row write never reaches here).
-  if (promoted > 0) deps.eventBus.emit("learning:skill_promoted", { agentId: scope.agentId, count: promoted, timestamp: deps.clock.now() });
-  if (demoted > 0) deps.eventBus.emit("learning:skill_demoted", { agentId: scope.agentId, count: demoted, timestamp: deps.clock.now() });
-  // OBS-01: one INFO completion line per resolve that moved a skill, with durationMs
-  // (counts/ids only — never a procedure body).
-  if (promoted > 0 || demoted > 0) {
-    deps.logger.info(
-      { agentId: scope.agentId, promoted, demoted, durationMs: deps.clock.now() - skillStart },
-      "Learned-skill promote/demote complete",
-    );
-    // WR-01: a real transition changed the active set — refresh the per-agent surface
-    // cache so the NEXT session's freeze captures it (next-session pickup, SURFACE-03).
-    refreshSurface?.(scope.agentId);
-  }
-}
-
-/**
- * Run one name-keyed skill transition, non-fatal, returning whether a row changed.
- * Mirrors {@link recordNonFatal} (WARNs with hint+errorKind on err/reject) but reads the
- * `{ changed }` result so the caller gates the counter/emit on a REAL row move. A
- * reject or err yields `false` (treated as "did not transition").
- */
-async function runSkillTransition(
-  deps: LearningOutcomeWiringDeps,
-  agentId: string,
-  kind: "skill_promote" | "skill_demote",
-  run: () => Promise<{ ok: boolean; value?: { changed: boolean } }>,
-): Promise<boolean> {
-  try {
-    const r = await run();
-    if (!r.ok) {
-      deps.logger.warn(
-        {
-          agentId,
-          errorKind: "internal" as const,
-          hint: `outcome ${kind} write failed; the ${kind} state transition was not persisted for this trajectory`,
-        },
-        `outcome ${kind} write failed (non-fatal)`,
-      );
-      return false;
-    }
-    return r.value?.changed === true;
-  } catch (e: unknown) {
-    deps.logger.warn(
-      {
-        agentId,
-        err: e instanceof Error ? e : new Error(String(e)),
-        errorKind: "internal" as const,
-        hint: `outcome ${kind} write threw; the ${kind} state transition was not persisted for this trajectory`,
-      },
-      `outcome ${kind} write threw (non-fatal)`,
-    );
-    return false;
-  }
-}
+// OUTCOME-04: `maybeUpgradeWithJudge` (the unknown→judge upgrade) lives in the
+// setup-learning-judge.ts leaf (imported above) to keep this file under the 800-line cap.
 
 /**
  * Stand up the observe/resolve subscriber on the daemon's bus. Fire-and-forget /
@@ -465,7 +354,7 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
     if (!markTrajectoryResolved(scope.trajectoryId, resolvedTrajectories)) return;
     void deps.outcomeStore
       .resolve(scope.trajectoryId, { tenantId: scope.tenantId, agentId: scope.agentId })
-      .then((r) => {
+      .then(async (r) => {
         total += 1;
         if (!r.ok) {
           deps.logger.warn(
@@ -478,7 +367,11 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
           );
           return;
         }
-        const verdict = r.value;
+        // OUTCOME-04: an `unknown` deterministic verdict (a CONVERSATIONAL turn with no
+        // tool/pipeline signal) gets ONE cheap-model judge pass as the fallback source;
+        // a non-`unknown` verdict is returned unchanged (the judge never runs). The
+        // dedup already ran at the top — this is the SAME chain (no second chain).
+        const verdict = await maybeUpgradeWithJudge(deps, scope, r.value);
         // Fail-closed coverage: an `unknown` verdict is NOT counted as resolved.
         if (verdict.outcome !== "unknown") resolved += 1;
 
@@ -688,6 +581,18 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
     if (scope === undefined) return; // no trajectory identity (absent traceId) → skip
     resolveAndConsume(scope, deps.clock.now());
   });
+
+  // ---- SURFACE-ADMIT (live-2026-06-18): refresh the per-agent surface the MOMENT a
+  // synthesis run ADMITS a skill. Without this a freshly-admitted candidate stays invisible
+  // until the next daemon boot — and promotion is USE-gated (the agent must SEE the skill to
+  // use it), so the post-promote/demote refresh can NEVER fire: a second-order deadlock that
+  // leaves a learned skill permanently dormant on a long-running daemon. `learning:skill_
+  // synthesized.count` IS the admitted count (events-learning.ts emits v.admitted). NOT gated
+  // by learningOutcomeEnabled (this is a SKILLS signal); refreshSurface is undefined when no
+  // registry is wired ⇒ byte-identical no-op. Mirrors the post-promote/demote refresh. ----
+  deps.eventBus.on("learning:skill_synthesized", (p) => {
+    if (p.count > 0) refreshSurface?.(p.agentId);
+  });
 }
 
 /** Dependencies for {@link setupLearningOutcomeWiring}. */
@@ -719,6 +624,16 @@ export interface SetupLearningOutcomeDeps {
    * re-refresh (the boot snapshot stands; byte-identical for non-surfacing agents).
    */
   learnedSkillSurfaceRegistry?: import("./setup-agents/learned-skill-surface-registry.js").LearnedSkillSurfaceRegistry;
+  /**
+   * OUTCOME-04: the cost-gated LLM outcome-judge fallback (built in the setup-learning-judge
+   * leaf via `buildOutcomeJudgeWiring`, called from setup-memory.ts). OPTIONAL — when absent
+   * (no agent has the judge on / no cheap-model key) the upgrade path is never entered.
+   */
+  outcomeJudge?: OutcomeJudge;
+  /** Per-agent judge enable (costFeatures && learningOutcome.enabled && judge.enabled). */
+  learningOutcomeJudgeEnabled?: (agentId: string) => boolean;
+  /** LCD-backed per-turn transcript reader for the judge to score. */
+  readTurnTranscript?: (scope: JudgeScope) => string | undefined;
 }
 
 /**
@@ -765,5 +680,10 @@ export function setupLearningOutcomeWiring(deps: SetupLearningOutcomeDeps): void
     refreshLearnedSkillSurface: deps.learnedSkillSurfaceRegistry
       ? (agentId: string): void => deps.learnedSkillSurfaceRegistry!.refresh(agentId)
       : undefined,
+    // OUTCOME-04: the conversational-breadth LLM-judge fallback (built in setup-memory via
+    // buildOutcomeJudgeWiring). Absent ⇒ the upgrade path is never entered (byte-identical).
+    outcomeJudge: deps.outcomeJudge,
+    learningOutcomeJudgeEnabled: deps.learningOutcomeJudgeEnabled,
+    readTurnTranscript: deps.readTurnTranscript,
   });
 }
