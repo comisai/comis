@@ -339,9 +339,17 @@ export function mountGatewayRoutes(deps: GatewayRouteDeps): void {
       // for the openai-compatible chat API — without runWithContext every executor log line is
       // traceId-less (no trace stitching) and the degraded reply cannot carry
       // its incident ref. One context per inbound request, minted here.
+      // The traceId is minted OUTSIDE runWithContext so it can be returned to the route
+      // and carried on the per-turn diagnostic:message_processed emit — the SAME key the
+      // tool:executed observe() writes outcome_events with, so the Verified Learning
+      // resolve loop (setup-learning.ts) finds the rows for this single-agent chat-API
+      // turn (it fires neither graph:completed nor the channel pipeline's emit). Live
+      // finding 2026-06-18: without this, chat-API turn outcomes were observed but NEVER
+      // resolved (no reward/forget/skill-promote) and were invisible to obs.
+      const turnTraceId = randomUUID();
       const result = await runWithContext(
         {
-          traceId: randomUUID(),
+          traceId: turnTraceId,
           tenantId: sk.tenantId,
           userId: sk.userId,
           sessionKey: formatSessionKey(sk),
@@ -356,8 +364,11 @@ export function mountGatewayRoutes(deps: GatewayRouteDeps): void {
         response: result.response,
         tokensUsed: result.tokensUsed,
         finishReason: result.finishReason,
+        traceId: turnTraceId,
+        agentId: defaultAgentId,
       };
     },
+    eventBus: container.eventBus,
     logger: gatewayLogger,
   });
   openaiApi.route("/chat/completions", completionsApp);

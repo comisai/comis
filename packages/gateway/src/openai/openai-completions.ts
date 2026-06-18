@@ -13,7 +13,7 @@ import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import type { SSEStreamingApi } from "hono/streaming";
 import { suppressError } from "@comis/shared";
-import { systemNowMs } from "@comis/core";
+import { systemNowMs, type TypedEventBus } from "@comis/core";
 import {
   ChatCompletionRequestSchema,
   createOpenAIError,
@@ -44,6 +44,12 @@ export interface OpenaiCompletionsDeps {
     response: string;
     tokensUsed: { input: number; output: number; total: number };
     finishReason: string;
+    /** The turn's trajectory id (=== the runWithContext traceId). Carried back so the
+     *  completion emit can attribute the turn (the `comis explain` / Verified Learning
+     *  resolve key). Optional for back-compat with callers that don't thread it. */
+    traceId?: string;
+    /** The agent that ran the turn (the executor's resolved agentId). Optional. */
+    agentId?: string;
   }>;
 
   /** Optional model alias resolution. Returns undefined if model not found. */
@@ -51,11 +57,69 @@ export interface OpenaiCompletionsDeps {
     modelId: string,
   ) => { provider: string; modelId: string } | undefined;
 
+  /**
+   * Optional event bus. When present, the route emits one
+   * `diagnostic:message_processed` per completed turn (streaming AND non-streaming) —
+   * the OpenAI-compat chat API is a turn-completion path that bypasses the channel
+   * `execution-pipeline` (which emits the event for channel turns) and never fires
+   * `graph:completed` (DAG-only). Without this emit a single-agent chat-API turn's
+   * outcome is observed but NEVER resolved (no RANK reward / FORGET accrual / SURFACE
+   * promote-demote) and the turn is invisible to obs (`comis explain` / delivery tracer).
+   */
+  eventBus?: Pick<TypedEventBus, "emit">;
+
   /** Logger for request lifecycle events. */
   logger: {
     info(...args: unknown[]): void;
     error(...args: unknown[]): void;
   };
+}
+
+/**
+ * Emit one `diagnostic:message_processed` for a completed OpenAI-compat turn.
+ *
+ * The OpenAI chat API bypasses the channel `execution-pipeline` (the sole other
+ * emitter) and never fires `graph:completed`, so without this the Verified Learning
+ * resolve loop (setup-learning.ts) and the obs delivery/persistence tracers never see
+ * chat-API turns. Mirrors `execution-pipeline.ts`'s `emitDiagnostic`. No-op when no
+ * `eventBus` is wired. Non-fatal — a throwing subscriber must never break the response.
+ */
+function emitTurnDiagnostic(
+  deps: OpenaiCompletionsDeps,
+  args: {
+    result: { tokensUsed: { total: number }; finishReason: string; traceId?: string; agentId?: string };
+    sessionKey: { userId: string; channelId: string; peerId: string };
+    completionId: string;
+    receivedAt: number;
+  },
+): void {
+  if (!deps.eventBus) return;
+  const now = systemNowMs();
+  const elapsed = now - args.receivedAt;
+  try {
+    deps.eventBus.emit("diagnostic:message_processed", {
+      messageId: args.completionId,
+      channelId: args.sessionKey.channelId,
+      channelType: "openai",
+      agentId: args.result.agentId ?? "default",
+      sessionKey: `${args.sessionKey.userId}:${args.sessionKey.channelId}`,
+      traceId: args.result.traceId,
+      receivedAt: args.receivedAt,
+      executionDurationMs: elapsed,
+      deliveryDurationMs: 0,
+      totalDurationMs: elapsed,
+      tokensUsed: args.result.tokensUsed.total,
+      cost: 0,
+      success: args.result.finishReason !== "error",
+      finishReason: args.result.finishReason,
+      timestamp: now,
+    });
+  } catch (err) {
+    deps.logger.error(
+      { err, hint: "diagnostic:message_processed subscriber threw", errorKind: "internal" as const },
+      "OpenAI turn diagnostic emit failed (non-fatal)",
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -78,6 +142,7 @@ async function handleStreamingCompletion(params: {
   completionId: string;
   created: number;
   sessionKey: { userId: string; channelId: string; peerId: string };
+  receivedAt: number;
 }): Promise<void> {
   const {
     stream,
@@ -88,6 +153,7 @@ async function handleStreamingCompletion(params: {
     completionId,
     created,
     sessionKey,
+    receivedAt,
   } = params;
 
   // First chunk: role announcement
@@ -154,6 +220,9 @@ async function handleStreamingCompletion(params: {
     await stream.writeSSE({ data: "[DONE]" });
     return;
   }
+
+  // Turn completed — emit the per-turn diagnostic (resolve + obs). Streaming path.
+  emitTurnDiagnostic(deps, { result, sessionKey, completionId, receivedAt });
 
   // Final chunk with finish_reason
   const finishChunk: ChatCompletionChunk = {
@@ -231,6 +300,8 @@ export function createOpenaiCompletionsRoute(
       }
 
       const body = parseResult.data;
+      // Turn-lifecycle clock for the diagnostic:message_processed emit (resolve + obs).
+      const receivedAt = systemNowMs();
 
       // Extract system messages (concatenate all system role messages in order)
       const systemParts: string[] = [];
@@ -293,6 +364,7 @@ export function createOpenaiCompletionsRoute(
             completionId,
             created,
             sessionKey,
+            receivedAt,
           });
         });
       }
@@ -305,6 +377,8 @@ export function createOpenaiCompletionsRoute(
         systemPrompt,
         sessionKey,
       });
+
+      // Turn completed — emit the per-turn diagnostic (resolve + obs). Non-streaming path.
 
       const completion: ChatCompletion = {
         id: completionId,
