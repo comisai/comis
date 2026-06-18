@@ -237,9 +237,11 @@ const PipelineParams = Type.Object({
   agents: Type.Optional(
     Type.Array(Type.String(), { description: "from_intent: agent names for the pattern's roles — debate: [PRO, CON] (e.g. [\"bull\", \"bear\"]); vote: the voter pool; map-reduce: the mapper pool." }),
   ),
-  rounds: Type.Optional(
-    Type.Integer({ description: "from_intent: optional number of rounds (reserved; accepted for debate/collaborate-style patterns)." }),
-  ),
+  // WR-02: from_intent produces TEMPLATE-shaped graphs (plain agent nodes), NOT
+  // the typed orchestration drivers — so a top-level `rounds` param had no
+  // effect (the synthesizer never expanded it). It is intentionally NOT exposed
+  // here (no no-op param, §2.3). To run a multi-round debate DRIVER, use
+  // action: define/execute with a node `type_id: "debate"` + `type_config.rounds`.
 });
 
 type PipelineParamsType = Static<typeof PipelineParams>;
@@ -462,6 +464,12 @@ export function createPipelineTool(rpcCall: RpcCall, logger?: ToolLogger, approv
           // DAEMON-SIDE, keyed off the _synthesizedFromIntent marker — so the
           // daemon refuses an un-flagged from_intent at the chokepoint and the
           // tool surface stays uniform (no flag read here).
+          //
+          // WR-02: from_intent expands the canonical TEMPLATE — plain agent
+          // nodes ({nodeId, task, dependsOn}), NOT the typed orchestration
+          // drivers (a synthesized "debate" is a one-shot pro/con fan-in, not
+          // the multi-round `type_id: debate` driver). For the typed driver,
+          // use action: define/execute with `type_id` + `type_config`.
           const pattern = readStringParam(p, "pattern", false) as SynthesisPattern | undefined;
           if (!pattern) {
             throwToolError("missing_param", "Missing required parameter: pattern.", {
@@ -473,7 +481,6 @@ export function createPipelineTool(rpcCall: RpcCall, logger?: ToolLogger, approv
             pattern,
             ...(Array.isArray(p.agents) && { agents: p.agents as string[] }),
             ...(Array.isArray(p.tasks) && { tasks: p.tasks as string[] }),
-            ...(typeof p.rounds === "number" && { rounds: p.rounds }),
             ...(params.budget !== undefined && {
               budget: {
                 ...(params.budget.max_tokens !== undefined && { maxTokens: params.budget.max_tokens }),

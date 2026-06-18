@@ -1274,6 +1274,35 @@ describe("createPipelineTool — from_intent action (AUTHOR-02)", () => {
     expect(rpcCall).not.toHaveBeenCalled();
   });
 
+  // -------------------------------------------------------------------------
+  // WR-02 (174-REVIEW): the top-level `rounds` param was INERT on from_intent —
+  // synthesizeFromIntent expands the canonical TEMPLATE (plain agent nodes, no
+  // typed driver) and NEVER expanded `rounds`, so the param was accepted but
+  // did nothing (a misleading no-op param — AGENTS.md §2.3). Decision: REMOVE
+  // it from the from_intent surface (wiring it to drive typed-driver synthesis
+  // is the larger typed-driver follow-up). The NESTED type_config.rounds (the
+  // real debate-driver knob on define/execute) is a SEPARATE field and stays.
+  // -------------------------------------------------------------------------
+  it("WR-02: the top-level from_intent param surface does NOT expose the inert `rounds` param", () => {
+    const tool = createPipelineTool(rpcCall);
+    const params = tool.parameters as unknown as { properties: Record<string, unknown> };
+    // pattern/agents/tasks remain (the real from_intent slots).
+    expect(params.properties.pattern).toBeDefined();
+    expect(params.properties.agents).toBeDefined();
+    expect(params.properties.tasks).toBeDefined();
+    // The inert top-level `rounds` is gone.
+    expect(params.properties.rounds).toBeUndefined();
+  });
+
+  it("WR-02: the NESTED type_config.rounds (the typed debate driver) is preserved", () => {
+    const tool = createPipelineTool(rpcCall);
+    const params = tool.parameters as unknown as {
+      properties: { nodes: { items: { properties: { type_config: { properties: Record<string, Record<string, unknown>> } } } } };
+    };
+    const tcProps = params.properties.nodes.items.properties.type_config.properties;
+    expect(tcProps.rounds.type).toBe("integer");
+  });
+
   it("Test 2b (unknown pattern throws pre-dispatch): from_intent with a bogus pattern → tool error, no rpcCall", async () => {
     const tool = createPipelineTool(rpcCall);
     await expect(

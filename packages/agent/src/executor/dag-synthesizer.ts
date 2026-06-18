@@ -2,13 +2,19 @@
 /**
  * Deterministic intent → ExecutionGraph synthesizer (AUTHOR-02 / Phase 174-04).
  *
- * Expands a one-line intent — `{ pattern, agents|tasks, rounds?, budget? }` —
- * into a VALIDATED ExecutionGraph by mapping `pattern` to one of the
+ * Expands a one-line intent — `{ pattern, agents|tasks, budget? }` — into a
+ * VALIDATED ExecutionGraph by mapping `pattern` to one of the
  * CANONICAL_DAG_TEMPLATES (research-fanout / debate / vote / map-reduce),
  * deriving the template's slot values from `agents`/`tasks`, filling via
  * fillDagTemplate (which JSON-escapes weak-model slot values, CR-03), then
  * re-running the SAME governance a hand-authored graph takes
  * (parseExecutionGraph + validateAndSortGraph).
+ *
+ * WR-02: the synthesized graph is TEMPLATE-shaped — plain `{ nodeId, task,
+ * dependsOn }` nodes, NOT the typed orchestration drivers. A synthesized
+ * "debate" is a one-shot pro/con fan-in approximation, not the multi-round
+ * `type_id: debate` driver; the typed drivers are authored via define/execute
+ * with `type_id` + `type_config`. (No `rounds` param — it would be inert here.)
  *
  * This is THE small-model differentiator: the model expresses *what* (a pattern
  * + a few names) rather than the nested type_config union the raw pipeline
@@ -51,8 +57,6 @@ export interface SynthesisIntent {
   agents?: string[];
   /** Alternative driver of the TOPIC / TASK slots (tasks[0] is the topic). */
   tasks?: string[];
-  /** Optional; reserved for future driver-node expansion (accepted, not yet expanded). */
-  rounds?: number;
   /** Optional resource budget, passed through onto the synthesized graph. */
   budget?: { maxTokens?: number; maxCost?: number };
 }

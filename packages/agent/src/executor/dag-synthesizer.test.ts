@@ -3,7 +3,7 @@
  * Tests for dag-synthesizer.ts — the deterministic intent → ExecutionGraph
  * synthesizer (AUTHOR-02 / Phase 174-04).
  *
- * Contract: synthesizeFromIntent({ pattern, agents|tasks, rounds?, budget? })
+ * Contract: synthesizeFromIntent({ pattern, agents|tasks, budget? })
  * deterministically expands one of the CANONICAL_DAG_TEMPLATES (research-fanout
  * / debate / vote / map-reduce) into a VALIDATED ExecutionGraph via
  * fillDagTemplate + parseExecutionGraph + validateAndSortGraph. It RETURNS a
@@ -52,8 +52,8 @@ describe("synthesizeFromIntent (AUTHOR-02 deterministic intent synthesizer)", ()
   // ONE-LINE intent → a valid 3-node debate graph with PRO_AGENT=bull,
   // CON_AGENT=bear (pro-advocate, con-advocate, moderator fan-in).
   // -------------------------------------------------------------------------
-  it("Test 2 (bull-vs-bear): { pattern:'debate', agents:['bull','bear'], rounds:2 } → a valid 3-node debate graph with the advocate agents filled", () => {
-    const r = synthesizeFromIntent({ pattern: "debate", agents: ["bull", "bear"], rounds: 2 });
+  it("Test 2 (bull-vs-bear): { pattern:'debate', agents:['bull','bear'] } → a valid 3-node debate graph with the advocate agents filled", () => {
+    const r = synthesizeFromIntent({ pattern: "debate", agents: ["bull", "bear"] });
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     // The canonical debate TEMPLATE shape: 3 plain nodes (no typed driver).

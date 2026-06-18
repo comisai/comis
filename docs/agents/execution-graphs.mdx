@@ -307,10 +307,11 @@ tool: pipeline
 action: from_intent
 pattern: debate
 agents: ["bull", "bear"]   # PRO, CON
-rounds: 2
 ```
 
 The synthesizer maps the `pattern` to its canonical template, fills the agent/task slots, and runs the same parse + validation a hand-authored graph runs before dispatching through `graph.execute`. An invalid intent (for example `debate` with fewer than two agents) is rejected before any graph runs; gated off, the daemon refuses the `from_intent` call entirely. A governed synthesis emits the [`graph:synthesized_from_intent`](/developer-guide/event-bus) audit event. See [Pipelines: from_intent](/agent-tools/pipelines#from-intent) for the full pattern reference.
+
+`from_intent` produces **template-shaped** graphs — plain agent nodes in the named fan-out → fan-in shape — not the typed orchestration drivers. A synthesized `debate` is a one-shot pro/con fan-in into a moderator, not the multi-round `type_id: debate` driver; for the typed multi-round drivers (with `type_config.rounds` / `synthesizer`), author the graph with `define`/`execute` and per-node `type_id` + `type_config`. Accordingly, `from_intent` takes no `rounds` parameter.
 
 ### Grammar-constrained schema (AUTHOR-03, best-effort)
 
