@@ -138,6 +138,11 @@ const DEDICATED_SCRIPT_SIGNALS: ReadonlySet<string> = new Set([
   // below — excluded here so it is not ALSO counted in the generic
   // `health_signal:voice_degraded` rollup (the double-report KNOB-03 guards against).
   "voice_degraded",
+  // TELEM-01 (Plan 173-03): pipeline_authoring gets the dedicated finding below
+  // (the small-tier invalid rate). Excluded here so it is NOT also rolled into the
+  // generic `health_signal:pipeline_authoring` count — the finding + this entry
+  // MOVE TOGETHER (listing it here without the dedicated branch silently drops it).
+  "pipeline_authoring",
 ]);
 
 /** OBS-04 (Phase 196): the closed domain `errorKind` (an `SttErrorKind`) carried
@@ -176,6 +181,81 @@ function scriptZeroHitFromRow(row: DiagnosticRow): { scriptClass: string; lane: 
   } catch {
     return null;
   }
+}
+
+/** TELEM-01 (Plan 173-03): `{tier, schemaValid}` from a pipeline_authoring row's
+ *  details JSON. Defensive parse cloning `scriptZeroHitFromRow` — a non-pipeline /
+ *  malformed / missing row folds to `null` (the row is then ignored by both the
+ *  reducer and the dedicated finding; counts only, no body ever surfaces, never
+ *  throws). Returns the closed `tier` enum verbatim (untrusted-row safe: it is only
+ *  rendered into a count, never echoed as a body). */
+function pipelineAuthoringFromRow(row: DiagnosticRow): { tier: string; schemaValid: boolean } | null {
+  if (row.details === undefined) return null;
+  try {
+    const parsed = JSON.parse(row.details) as { signal?: unknown; tier?: unknown; schemaValid?: unknown };
+    if (parsed.signal !== "pipeline_authoring") return null;
+    const tier = typeof parsed.tier === "string" && parsed.tier.length > 0 ? parsed.tier : "unknown";
+    const schemaValid = parsed.schemaValid === true;
+    return { tier, schemaValid };
+  } catch {
+    return null; // malformed details JSON — counts only, no body.
+  }
+}
+
+/**
+ * TELEM-01 (Plan 173-03): the pipeline-authoring aggregate the Phase-174 gate
+ * (Plan 04's `pipelineAuthoringGate`) consumes — computed compute-on-read over the
+ * windowed `health_signal` rows (no persisted rollup; Open Q2 / D-AGGREGATE).
+ *
+ * PROVISIONAL: declared LOCALLY here at Plan 03. Plan 04 makes `@comis/observability`
+ * the single source of this type and this file then IMPORTS it (MEDIUM-4) — the
+ * field NAMES + ORDER below MUST match Plan 04's `PipelineAuthoringAggregate`
+ * EXACTLY (`smallTierInvocations`, `smallTierValidRate`, `frontierValidRate`) so the
+ * swap is mechanical.
+ *
+ * The small/local tier = capabilityClass "small" OR "nano" (D-TIER); frontier =
+ * "frontier". "mid" and "unknown" rows are in NEITHER cohort (they are not the
+ * comparison tiers). Rates are 0 (never NaN) when the cohort is empty.
+ */
+export interface PipelineAuthoringAggregate {
+  /** Count of small|nano rows. */
+  smallTierInvocations: number;
+  /** (small|nano rows where schemaValid===true) / smallTierInvocations; 0 when smallTierInvocations===0. */
+  smallTierValidRate: number;
+  /** (frontier rows where schemaValid===true) / frontier total; 0 when no frontier rows. */
+  frontierValidRate: number;
+}
+
+/**
+ * Reduce the windowed `health_signal` rows to the `PipelineAuthoringAggregate`.
+ * PURE — no I/O, no globals, no Date.now(); malformed / non-pipeline rows fold out
+ * (counted in neither cohort, never throws). Exported so Plan 04 / fleet-health.ts
+ * can feed the gate.
+ */
+export function pipelineAuthoringAggregateFromRows(
+  rows: readonly DiagnosticRow[],
+): PipelineAuthoringAggregate {
+  let smallTotal = 0;
+  let smallValid = 0;
+  let frontierTotal = 0;
+  let frontierValid = 0;
+  for (const row of rows) {
+    const parsed = pipelineAuthoringFromRow(row);
+    if (parsed === null) continue;
+    if (parsed.tier === "small" || parsed.tier === "nano") {
+      smallTotal += 1;
+      if (parsed.schemaValid) smallValid += 1;
+    } else if (parsed.tier === "frontier") {
+      frontierTotal += 1;
+      if (parsed.schemaValid) frontierValid += 1;
+    }
+    // "mid" / "unknown": counted in neither cohort (D-TIER).
+  }
+  return {
+    smallTierInvocations: smallTotal,
+    smallTierValidRate: smallTotal > 0 ? smallValid / smallTotal : 0,
+    frontierValidRate: frontierTotal > 0 ? frontierValid / frontierTotal : 0,
+  };
 }
 
 /**
@@ -261,6 +341,35 @@ export function buildFindings(
       detail: `${genQualityCount} memory-generation pass(es) whose output diverged from the source (non-Latin source → Latin output, empty, or unparseable)`,
       count: genQualityCount,
       hint: "a memory-generation pass (consolidation/reasoning/user-representation) is producing low-quality output for non-Latin sources; the memory-pipeline model is too weak — configure a stronger memory model or pin providers.entries.<id>.capabilities.capabilityClass to frontier/mid (the R6 memory-ops override). Visibility only — not gated",
+    });
+  }
+
+  // TELEM-01 (Plan 173-03): dedicated pipeline_authoring finding — the HEADLINE
+  // metric is the small-model pipeline-authoring failure rate = (small-tier rows
+  // where schemaValid===false) / (small-tier rows total) over the window (D-TIER:
+  // small|nano = the small tier). Counts + a static hint ONLY (no source/generated
+  // graph body — the pipelineAuthoringFromRow parser reads only the closed tier +
+  // the schemaValid boolean). Fires only when smallTotal > 0 (no finding on zero
+  // small-tier traffic — mirrors the GENQ-01/voice if-guards). The reducer above is
+  // the same compute-on-read fold; here we re-walk for the invalid COUNT the finding
+  // names.
+  let smallTotal = 0;
+  let smallInvalid = 0;
+  for (const row of healthSignals) {
+    const parsed = pipelineAuthoringFromRow(row);
+    if (parsed === null) continue;
+    if (parsed.tier === "small" || parsed.tier === "nano") {
+      smallTotal += 1;
+      if (!parsed.schemaValid) smallInvalid += 1;
+    }
+  }
+  if (smallTotal > 0) {
+    const pct = ((smallInvalid / smallTotal) * 100).toFixed(1);
+    findings.push({
+      code: "pipeline_authoring",
+      detail: `${smallInvalid}/${smallTotal} small-tier pipeline authorings invalid (rate ${pct}%)`,
+      count: smallInvalid,
+      hint: "small/local models are failing to author valid pipeline DAGs; this is the Phase-174 (small-model-authorable DAGs) gate metric — review before enabling orchestration.authoring.*",
     });
   }
 
