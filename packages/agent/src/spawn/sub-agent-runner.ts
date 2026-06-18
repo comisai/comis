@@ -899,6 +899,16 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     // top-level spawn (no parent posture to compare against). Posture is resolved
     // via the INJECTED `deps.resolvePosture` dep — the runner never reaches
     // `config.agents[...]` (D-RESOLVEDEP).
+    //
+    // ORDERING (IN-02, intentional): this fail-closed gate runs BEFORE the
+    // children/queue branch and the allowlist check (line ~1051). A spawn that is
+    // BOTH a downgrade AND not-allowlisted is therefore attributed to the
+    // downgrade refusal. We keep this order on purpose: both branches refuse the
+    // spawn (no security difference — only the reason/event differs), and moving
+    // the allowlist earlier would hoist it above the queue SIDE-EFFECT branch
+    // too, perturbing the load-bearing "refuse before any run/session/queue"
+    // placement that the queued-path gate test pins. Security placement wins over
+    // reason attribution.
     const sandboxNoDowngrade = deps.config.sandboxNoDowngrade;
     if (sandboxNoDowngrade !== false && deps.resolvePosture && params.callerAgentId) {
       const parentPosture = deps.resolvePosture(params.callerAgentId);
