@@ -40,7 +40,6 @@
  */
 import { parseFormattedSessionKey } from "@comis/core";
 import type { RunHandle } from "../executor/active-run-registry.js";
-import type { SubAgentRun } from "./sub-agent-runner.js";
 
 /** Minimal pino-compatible logger (mirrors SubAgentRunnerLogger). */
 interface SteerRunLogger {
@@ -51,13 +50,29 @@ interface SteerRunLogger {
 }
 
 /**
+ * The minimal slice of a SubAgentRun this helper reads. Declared locally (NOT
+ * imported from sub-agent-runner.ts) so the dependency stays one-directional
+ * (runner → helper); importing the runner's `SubAgentRun` type here would form
+ * a sub-agent-runner ↔ steer-run source-level cycle (no-cycles.test.ts counts
+ * type-only imports). The runner's full SubAgentRun is structurally assignable
+ * to this shape, so `runs: Map<string, SubAgentRun>` flows in unchanged.
+ */
+export interface SteerableRun {
+  runId: string;
+  agentId: string;
+  sessionKey: string;
+  announceChannelType?: string;
+  announceChannelId?: string;
+}
+
+/**
  * Composite key for the resolver lookup. Mirrors `deriveCompositeForRun`
  * (sub-agent-runner.ts:76-87) — duplicated here as a tiny private helper so
- * this leaf module does not import the runner's (large) internals beyond the
- * `SubAgentRun` type. Single source of truth for the FORMULA is the runner's
- * doc-comment; if it drifts, the 175-00 spike fails loudly.
+ * this leaf module does not import the runner's (large) internals. Single
+ * source of truth for the FORMULA is the runner's doc-comment; if it drifts,
+ * the 175-00 spike fails loudly.
  */
-function deriveCompositeForRun(run: SubAgentRun): {
+function deriveCompositeForRun(run: SteerableRun): {
   agentId: string;
   channelType: string;
   channelId: string;
@@ -77,7 +92,7 @@ function deriveCompositeForRun(run: SubAgentRun): {
  */
 export interface SteerRunDeps {
   /** READ only — never mutated (no status change, no spawn). */
-  runs: Map<string, SubAgentRun>;
+  runs: Map<string, SteerableRun>;
   /** Composite-key resolver (the A1-chosen lookup, mirrors killRun). */
   sessionResolver?: {
     resolveActiveSession(key: {

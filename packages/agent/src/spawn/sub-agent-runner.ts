@@ -43,7 +43,7 @@ import {
   type ValidationResult,
 } from "./sub-agent-result-processor.js";
 import { comparePosture, type SandboxPosture } from "./sandbox-posture.js";
-import { steerRun as steerRunHelper, type SteerRunDeps } from "./steer-run.js";
+import { steerRun as steerRunHelper, type SteerRunDeps, type SteerableRun } from "./steer-run.js";
 import type { RunHandle } from "../executor/active-run-registry.js";
 
 // ---------------------------------------------------------------------------
@@ -2018,7 +2018,10 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     message: string,
   ): Promise<{ steered: boolean; mode?: "steer" | "followup"; error?: string }> {
     const steerDeps: SteerRunDeps = {
-      runs,
+      // SubAgentRun structurally satisfies SteerableRun (the minimal slice the
+      // helper reads); Map is invariant in its value type, so cast at the
+      // boundary. steerRun READS only — it never `set`s into the map.
+      runs: runs as unknown as Map<string, SteerableRun>,
       // Runtime handle is complete (pi-executor.ts:1161); the narrowed {abort()}
       // Deps type omits steer/followUp/isStreaming/isCompacting that the runtime
       // object carries — re-type to the full RunHandle for the inject delegation.
