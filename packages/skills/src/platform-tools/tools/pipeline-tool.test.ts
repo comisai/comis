@@ -1207,3 +1207,110 @@ describe("createPipelineTool", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// AUTHOR-02 (Phase 174-04): the from_intent action.
+//
+// from_intent synthesizes a graph from a one-line intent (a canonical pattern +
+// a few names) via @comis/agent's synthesizeFromIntent, then dispatches it
+// through the EXISTING graph.execute path with the _synthesizedFromIntent
+// marker (the daemon-side gate + audit chokepoint — read-before-strip +
+// delete-after-strip). The synthesizer returns a graph; the tool never executes
+// one. The gate is daemon-side (Task 3), so the tool surface here is uniform —
+// no flag read in the tool.
+// ---------------------------------------------------------------------------
+
+describe("createPipelineTool — from_intent action (AUTHOR-02)", () => {
+  let rpcCall: ReturnType<typeof mockRpcCall>;
+
+  beforeEach(() => {
+    rpcCall = mockRpcCall();
+  });
+
+  it("Test 1 (bull-vs-bear from one line): from_intent debate → graph.execute with the 3 debate nodes + the _synthesizedFromIntent marker", async () => {
+    const tool = createPipelineTool(rpcCall);
+    await tool.execute("tc-fi-1", {
+      action: "from_intent",
+      pattern: "debate",
+      agents: ["bull", "bear"],
+    } as never);
+
+    expect(rpcCall).toHaveBeenCalledTimes(1);
+    const [method, args] = rpcCall.mock.calls[0]!;
+    expect(method).toBe("graph.execute");
+    const a = args as Record<string, unknown>;
+    // The synthesized graph is dispatched through the normal execute path.
+    expect(Array.isArray(a.nodes)).toBe(true);
+    expect((a.nodes as unknown[]).length).toBe(3);
+    // The marker rides in-band for the daemon-side gate + audit (Task 3).
+    expect(a._synthesizedFromIntent).toBe("debate");
+    // The advocate agents were filled into the synthesized nodes.
+    expect(JSON.stringify(a.nodes)).toContain("bull");
+    expect(JSON.stringify(a.nodes)).toContain("bear");
+  });
+
+  it("Test 1b: from_intent returns the rpc result of graph.execute", async () => {
+    rpcCall.mockResolvedValueOnce({ graphId: "g-77", async: true });
+    const tool = createPipelineTool(rpcCall);
+    const res = await tool.execute("tc-fi-1b", {
+      action: "from_intent",
+      pattern: "research-fanout",
+      tasks: ["AI safety"],
+    } as never);
+    // jsonResult wraps the rpc value — assert the graphId survives to the caller.
+    expect(JSON.stringify(res)).toContain("g-77");
+  });
+
+  it("Test 2 (invalid intent throws pre-dispatch): debate with one agent → tool error, NO graph dispatched", async () => {
+    const tool = createPipelineTool(rpcCall);
+    await expect(
+      tool.execute("tc-fi-2", {
+        action: "from_intent",
+        pattern: "debate",
+        agents: ["only-one"],
+      } as never),
+    ).rejects.toThrow(/\[invalid_value\]/);
+    // The synthesizer failed → graph.execute was NEVER called.
+    expect(rpcCall).not.toHaveBeenCalled();
+  });
+
+  it("Test 2b (unknown pattern throws pre-dispatch): from_intent with a bogus pattern → tool error, no rpcCall", async () => {
+    const tool = createPipelineTool(rpcCall);
+    await expect(
+      tool.execute("tc-fi-2b", {
+        action: "from_intent",
+        pattern: "bogus",
+        tasks: ["x"],
+      } as never),
+    ).rejects.toThrow(/\[invalid_value\]/);
+    expect(rpcCall).not.toHaveBeenCalled();
+  });
+
+  it("Test 3 (FLAGS-OFF surface unchanged — define byte-identical): a normal define still calls graph.define with the same shape, no _synthesizedFromIntent", async () => {
+    const tool = createPipelineTool(rpcCall);
+    await tool.execute("tc-fi-3", {
+      action: "define",
+      nodes: [{ node_id: "a", task: "Run" }],
+    } as never);
+    expect(rpcCall).toHaveBeenCalledWith("graph.define", expect.objectContaining({
+      nodes: [{ nodeId: "a", task: "Run" }],
+    }));
+    // The from_intent marker NEVER leaks onto a non-from_intent action.
+    const [, args] = rpcCall.mock.calls[0]!;
+    expect((args as Record<string, unknown>)._synthesizedFromIntent).toBeUndefined();
+  });
+
+  it("Test 3b (execute byte-identical): a normal execute does NOT carry the _synthesizedFromIntent marker", async () => {
+    const tool = createPipelineTool(rpcCall);
+    await tool.execute("tc-fi-3b", {
+      action: "execute",
+      nodes: [{ node_id: "a", task: "Run" }],
+    } as never);
+    expect(rpcCall).toHaveBeenCalledWith("graph.execute", expect.objectContaining({
+      nodes: [{ nodeId: "a", task: "Run" }],
+    }));
+    const [, args] = rpcCall.mock.calls[0]!;
+    expect((args as Record<string, unknown>)._synthesizedFromIntent).toBeUndefined();
+  });
+});
+
