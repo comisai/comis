@@ -9,9 +9,12 @@
  *  - `clearStaleToolResults` (internal; consumed by factory)
  *  - `clearStaleThinkingBlocks` (public; also consumed by factory)
  *  - `reorderContentForStablePrefix` (internal; consumed by factory)
+ *  - `stripTransientRecallFromHistory` (public; also consumed by factory)
  *
  * @module
  */
+
+import { stripInlineRecalledMemory } from "../../../rag/hybrid-memory-injector.js";
 
 /** Minimum content length (chars) for a tool result to be considered clearable. */
 export const MICROCOMPACT_MIN_CONTENT_LENGTH = 1000;
@@ -245,4 +248,60 @@ export function reorderContentForStablePrefix(messages: Array<Record<string, unk
       msg.content = [...nonText, ...text];
     }
   }
+}
+
+/**
+ * Strip the TRANSIENT inline-recall block from every HISTORICAL user message,
+ * keeping it only on the latest user message (the current turn).
+ *
+ * Why: `envelope-wrapper` prepends a top-1 RAG recall block
+ * (`[Relevant context from memory: … (recorded …)]`) to the current user turn
+ * for attention. That block is query-varying and per-turn — it is meant to be
+ * TRANSIENT (the LCD store strips it at ingest for exactly this reason). But the
+ * SDK's in-memory conversation accumulates the un-stripped, recall-prefixed
+ * messages, so the message list sent to Anthropic carries the recall block on
+ * historical turns. Whether a given historical message still shows the block then
+ * diverges between requests, mutating the CACHED PREFIX every turn → the prefix
+ * never matches → cache_creation is re-paid on the whole growing suffix.
+ *
+ * Removing it from the cached prefix (all but the latest user message) makes those
+ * messages byte-stable turn-over-turn while preserving the inline recall on the
+ * current turn (the uncached tail). Mirrors `clearStaleThinkingBlocks` — a
+ * prefix-stabilizing strip that runs after structuredClone and before any
+ * cache_control marker placement.
+ *
+ * Mutates messages in place. Returns the number of messages whose text changed.
+ */
+export function stripTransientRecallFromHistory(messages: Array<Record<string, unknown>>): number {
+  // Index of the latest user message — its recall block is the current turn's and stays.
+  let lastUserIdx = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i]!.role === "user") { lastUserIdx = i; break; }
+  }
+  if (lastUserIdx <= 0) return 0; // nothing historical to strip
+
+  let stripped = 0;
+  for (let i = 0; i < lastUserIdx; i++) {
+    const msg = messages[i]!;
+    if (msg.role !== "user") continue;
+    const content = msg.content;
+
+    if (typeof content === "string") {
+      const cleaned = stripInlineRecalledMemory(content);
+      if (cleaned !== content) { msg.content = cleaned; stripped++; }
+      continue;
+    }
+
+    if (Array.isArray(content)) {
+      // The recall block was prepended to the message text → it lives at the start
+      // of the first text block (image/media blocks may precede it after reorder).
+      const blocks = content as Array<Record<string, unknown>>;
+      const textBlock = blocks.find(b => b.type === "text");
+      if (textBlock && typeof textBlock.text === "string") {
+        const cleaned = stripInlineRecalledMemory(textBlock.text);
+        if (cleaned !== textBlock.text) { textBlock.text = cleaned; stripped++; }
+      }
+    }
+  }
+  return stripped;
 }

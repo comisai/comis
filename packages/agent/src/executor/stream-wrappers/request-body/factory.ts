@@ -42,7 +42,7 @@ import {
 } from "./context-window.js";
 import { isResponsesApiProvider, injectStoreFlag } from "./store-flag.js";
 import { injectServiceTier } from "./service-tier.js";
-import { reorderContentForStablePrefix } from "./tool-result-clearing.js";
+import { reorderContentForStablePrefix, stripTransientRecallFromHistory } from "./tool-result-clearing.js";
 import { sortToolsForCacheStability } from "./cache-breakpoints.js";
 import { applyRenderedToolCache } from "./tool-cache.js";
 import {
@@ -196,6 +196,17 @@ export function createRequestBodyInjector(
           // Reorder content blocks for stable prefix (before any cache marker placement)
           if (needsCacheBreakpoints && Array.isArray(result.messages)) {
             reorderContentForStablePrefix(result.messages as Array<Record<string, unknown>>);
+            // Strip the TRANSIENT inline-recall block from historical user messages so
+            // the cached prefix is byte-stable turn-over-turn. The block is per-turn,
+            // query-varying recall (kept only on the latest user message for attention);
+            // left on history it mutates the prefix every request → cache_creation churn.
+            const recallStripped = stripTransientRecallFromHistory(result.messages as Array<Record<string, unknown>>);
+            if (recallStripped > 0) {
+              logger.debug(
+                { recallStripped, sessionKey: config.sessionKey },
+                "Stripped transient inline-recall from cached prefix",
+              );
+            }
           }
 
           // TTL expiry guard for skipCacheWrite -- when the parent's cache write

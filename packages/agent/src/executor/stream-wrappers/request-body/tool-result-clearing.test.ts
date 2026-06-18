@@ -11,7 +11,14 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { clearStaleThinkingBlocks } from "./index.js";
+import { clearStaleThinkingBlocks, stripTransientRecallFromHistory } from "./index.js";
+
+/** A representative inline-recall block as envelope-wrapper prepends it (hybrid-memory-injector template). */
+const recall = (content: string) =>
+  `[Relevant context from memory: ${content} (recorded 2026-06-18)]\n`;
+/** The stable per-turn envelope that follows the (transient) recall block. */
+const envelope = (ts: string) =>
+  `[System context]\n## Current Date & Time\n${ts}\n[End system context]\n\n`;
 
 describe("clearStaleThinkingBlocks (pure)", () => {
   it("removes thinking blocks from assistant messages beyond keepWindow", () => {
@@ -143,5 +150,71 @@ describe("clearStaleThinkingBlocks (pure)", () => {
 
     // First assistant: 2 thinking blocks cleared, second assistant: 1 thinking cleared
     expect(cleared).toBe(3);
+  });
+});
+
+describe("stripTransientRecallFromHistory (pure)", () => {
+  // The inline RAG block is TRANSIENT (per-turn, query-varying) and must not live
+  // in the CACHED PREFIX, or it mutates the prefix every request → cache miss.
+  // It is kept ONLY on the latest user message (current turn, uncached tail) for
+  // attention; stripped from every historical user message. (Mirrors the
+  // LCD-ingest strip — the store/prefix must hold the actual conversation, not
+  // the per-turn recall.)
+
+  it("strips the leading recall block from a historical user message (string content)", () => {
+    const messages: Array<Record<string, unknown>> = [
+      { role: "user", content: recall("cat facts") + envelope("2026-06-18T16:14:38.874Z") + "One fact about cats" },
+      { role: "assistant", content: "A cat's nose print is unique." },
+      { role: "user", content: recall("echo step-1") + envelope("2026-06-18T16:15:00.000Z") + "Run echo step-1" },
+    ];
+
+    const stripped = stripTransientRecallFromHistory(messages);
+
+    expect(stripped).toBe(1); // only the historical (index 0) user message
+    // Historical message: recall gone, stable envelope + text intact
+    expect(messages[0]!.content).toBe(envelope("2026-06-18T16:14:38.874Z") + "One fact about cats");
+    // Latest user message: recall KEPT (current-turn attention, uncached tail)
+    expect(messages[2]!.content).toBe(recall("echo step-1") + envelope("2026-06-18T16:15:00.000Z") + "Run echo step-1");
+  });
+
+  it("strips from the first text block of a historical user message (array content)", () => {
+    const messages: Array<Record<string, unknown>> = [
+      { role: "user", content: [
+        { type: "text", text: recall("cat facts") + envelope("2026-06-18T16:14:38.874Z") + "One fact about cats" },
+      ]},
+      { role: "assistant", content: [{ type: "text", text: "ok" }] },
+      { role: "user", content: [{ type: "text", text: recall("now") + "current question" }] },
+    ];
+
+    const stripped = stripTransientRecallFromHistory(messages);
+
+    expect(stripped).toBe(1);
+    expect((messages[0]!.content as any[])[0].text).toBe(envelope("2026-06-18T16:14:38.874Z") + "One fact about cats");
+    // latest kept
+    expect((messages[2]!.content as any[])[0].text).toBe(recall("now") + "current question");
+  });
+
+  it("leaves messages without a recall block untouched", () => {
+    const messages: Array<Record<string, unknown>> = [
+      { role: "user", content: envelope("2026-06-18T16:14:38.874Z") + "plain question" },
+      { role: "assistant", content: "answer" },
+      { role: "user", content: "latest" },
+    ];
+
+    const stripped = stripTransientRecallFromHistory(messages);
+
+    expect(stripped).toBe(0);
+    expect(messages[0]!.content).toBe(envelope("2026-06-18T16:14:38.874Z") + "plain question");
+  });
+
+  it("is a no-op when there is only one user message (nothing historical)", () => {
+    const messages: Array<Record<string, unknown>> = [
+      { role: "user", content: recall("x") + "only turn" },
+    ];
+
+    const stripped = stripTransientRecallFromHistory(messages);
+
+    expect(stripped).toBe(0);
+    expect(messages[0]!.content).toBe(recall("x") + "only turn"); // current turn keeps recall
   });
 });
