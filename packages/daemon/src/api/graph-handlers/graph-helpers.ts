@@ -170,21 +170,16 @@ export function transformNodes(rawNodes: unknown[]): unknown[] {
 // ---------------------------------------------------------------------------
 // O3: capabilityClass routing predicate
 //
-// WR-01 producer status (deferred to Phase 157): the routing PREDICATE and the
-// consumer branch below are wired and unit-tested, but NO producer currently
-// supplies a real capabilityClass on graph RPC params — it is not in the
-// GraphDefine/Execute/Save request contracts and the pipeline tool does not
-// send it (the natural producer hook is the per-agent rpcCall injection in
-// daemon's setup-tools.ts, which today injects _agentId/_callerSessionKey but
-// not a resolved capabilityClass). So in production capabilityClass is always
-// undefined → isWeakCapabilityClass(undefined) === false → the capable
-// direct-emit path. The weak branch is exercised only by unit tests that pass
-// the argument directly. Phase 157 lands BOTH the producer (resolved
-// ModelProfile.capabilityClass threaded to the RPC boundary) and the matching
-// async repair consumer (repairDagWithBoundedRetries); wiring the producer
-// before the repair exists would only route weak agents to a hard fail-closed
-// throw with no recourse. Until then this is a documented, traceable deferral —
-// not silently dead code.
+// PRODUCER STATUS (wired by Phase 174-03 / AUTHOR-01): the producer is the
+// gated SERVER-SIDE tier feed in graph-mutate.ts (resolveAuthoringTier →
+// resolveCapabilityClass(_agentId)), threaded into buildGraphInput's `repair`
+// context. It is GATED on orchestration.authoring.repairProducer: when the gate
+// is OFF (the default) resolveAuthoringTier returns undefined →
+// isWeakCapabilityClass(undefined) === false → the capable direct-emit path
+// (byte-identical to pre-174). When the gate is ON and the agent's real
+// (server-resolved, NOT tool-supplied — T-174-SPOOF) tier is small/nano, the
+// weak branch runs the conservative deterministic repair below. The tool param
+// `userParams.capabilityClass` is NEVER read for the tier.
 // ---------------------------------------------------------------------------
 
 /** Capability class values that select the weak-model (template/repair) path. */
@@ -196,9 +191,8 @@ type CapabilityClassParam = "frontier" | "mid" | "small" | "nano" | undefined;
  * Capable models (frontier, mid) and unknown (undefined) route to the existing
  * direct-emit path unchanged.
  *
- * WR-01: no producer feeds a real value yet (see the block above) — this is
- * always called with undefined in production until Phase 157. Exported for unit
- * testing, which passes the argument directly.
+ * Fed undefined when the repairProducer gate is off (the default) → the capable
+ * path. Exported for unit testing, which passes the argument directly.
  */
 export function isWeakCapabilityClass(
   capabilityClass: CapabilityClassParam,
