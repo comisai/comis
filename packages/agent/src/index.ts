@@ -625,7 +625,10 @@ export type { TemplateMatch, CanonicalTemplatePattern } from "./executor/dag-tem
 // — it RETURNS a validated graph, never executes one; the tool dispatches it
 // through the existing graph.execute path so governance applies automatically.
 export { synthesizeFromIntent } from "./executor/dag-synthesizer.js";
-export type { SynthesisIntent, SynthesisPattern } from "./executor/dag-synthesizer.js";
+// SynthesisPattern is consumed by the from_intent tool action (@comis/skills);
+// SynthesisIntent stays module-local (the tool builds the intent inline) — no
+// cross-package consumer, so it is NOT re-exported from the barrel.
+export type { SynthesisPattern } from "./executor/dag-synthesizer.js";
 export { resolveOperationDefaults, OPERATION_TIER_MAP, OPERATION_TIMEOUT_DEFAULTS, OPERATION_CACHE_DEFAULTS } from "./model/operation-model-defaults.js";
 export { resolveCompactionModel } from "./model/compaction-model-resolver.js";
 
