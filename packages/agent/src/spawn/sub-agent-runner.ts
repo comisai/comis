@@ -43,6 +43,8 @@ import {
   type ValidationResult,
 } from "./sub-agent-result-processor.js";
 import { comparePosture, type SandboxPosture } from "./sandbox-posture.js";
+import { steerRun as steerRunHelper, type SteerRunDeps } from "./steer-run.js";
+import type { RunHandle } from "../executor/active-run-registry.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -1995,6 +1997,42 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     return { killed: true };
   }
 
+  /**
+   * STEER-01: inject a steer message into a RUNNING child's live SDK session
+   * (mid-flight steering), distinct from killRun. Delegates to the steer-run.ts
+   * helper to keep the mechanism OUT of this (already large) file.
+   *
+   * L2 — widen the resolver/registry surface at the delegation boundary: this
+   * runner's `deps.sessionResolver`/`deps.activeRunRegistry` are typed to the
+   * narrowed `{ abort(): Promise<void> }` (the kill path only needs abort, and
+   * the narrow type avoids a daemon→agent import cycle in those Deps). steerRun
+   * needs the FULL RunHandle (steer/followUp/isStreaming/isCompacting). The
+   * RUNTIME handle is complete — pi-executor.ts:1161 builds all five and
+   * registers it under the SAME key the resolver composes (175-00 spike). So
+   * we re-type the lookups to the full RunHandle at this boundary; this is a
+   * pure TS surface widening over an object that already has the methods, not
+   * a behavior change.
+   */
+  async function steerRun(
+    runId: string,
+    message: string,
+  ): Promise<{ steered: boolean; mode?: "steer" | "followup"; error?: string }> {
+    const steerDeps: SteerRunDeps = {
+      runs,
+      // Runtime handle is complete (pi-executor.ts:1161); the narrowed {abort()}
+      // Deps type omits steer/followUp/isStreaming/isCompacting that the runtime
+      // object carries — re-type to the full RunHandle for the inject delegation.
+      sessionResolver: deps.sessionResolver as
+        | { resolveActiveSession(key: { agentId: string; channelType: string; channelId: string }): RunHandle | undefined }
+        | undefined,
+      activeRunRegistry: deps.activeRunRegistry as
+        | { get(sessionKey: string): RunHandle | undefined }
+        | undefined,
+      logger: deps.logger,
+    };
+    return steerRunHelper(steerDeps, runId, message);
+  }
+
   async function shutdown(): Promise<void> {
     sweepInterval.cancel();
 
@@ -2042,5 +2080,5 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     return { deduped: true, existingRunId: lastDedupHit.existingRunId, ageMs: lastDedupHit.ageMs };
   }
 
-  return { spawn, getRunStatus, listRuns, killRun, shutdown, setGraphCoordinator, lastSpawnDedupInfo };
+  return { spawn, getRunStatus, listRuns, killRun, steerRun, shutdown, setGraphCoordinator, lastSpawnDedupInfo };
 }

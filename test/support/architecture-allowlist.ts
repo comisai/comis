@@ -345,8 +345,8 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
   },
   {
     file: "packages/agent/src/spawn/sub-agent-runner.ts",
-    lines: 1715,
-    reason: "Executor-adjacent file (1,715L re-measured; +7L drift from prior measurement); gated by the SubAgentRunnerDeps audit; the audit closed (AUDIT.md exists) but the natural module seams require focused-follow-up care (default-defer)",
+    lines: 2085,
+    reason: "Executor-adjacent file; gated by the SubAgentRunnerDeps audit; the audit closed (AUDIT.md exists) but the natural module seams require focused-follow-up care (default-defer). STEER-01 (Phase 175) added only a thin steerRun() delegation (~38L) — the inject mechanism lives in the separate steer-run.ts helper (≤800L) precisely to avoid growing this file.",
     removedIn: "deferred",
   },
   {
