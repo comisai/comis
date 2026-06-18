@@ -25,6 +25,7 @@ import {
   GraphDeleteContract,
   GraphDeleteRunContract,
   stripInternalFields,
+  systemNowMs,
 } from "@comis/core";
 import { extractUserVariables, substituteUserVariables } from "../../graph/user-variables.js";
 import type { RpcHandler } from "../types.js";
@@ -45,6 +46,34 @@ import {
  * delete / deleteRun). Object-spread compatible with `Record<string, RpcHandler>`.
  */
 export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, RpcHandler> {
+  // TELEM-01 (Phase 173-02): emit a counts-only `pipeline:authored` per
+  // authoring invocation (define + execute), where schema validity and the
+  // resolved capabilityClass tier converge. Counts/ids/closed-enums ONLY — no
+  // node task, type_config value, label, or any pipeline body reaches the bus
+  // (§2.7 / D-EVENT). The tier is resolved DAEMON-SIDE from the RAW _agentId
+  // (Spoofing mitigation T-173-03) via the injected resolver — never a
+  // tool-supplied param — and fail-safes to "unknown" when unresolvable
+  // (Pitfall 2: record honestly, never silently drop, never default to
+  // "frontier"). `repaired` is the literal false: the weak-model repair
+  // producer is Phase 174 / AUTHOR-01 and is NOT wired here.
+  const emitPipelineAuthored = (
+    action: "define" | "execute",
+    schemaValid: boolean,
+    rawParams: Record<string, unknown>,
+  ): void => {
+    const capabilityClass =
+      deps.resolveCapabilityClass?.(rawParams._agentId as string | undefined) ?? "unknown";
+    deps.eventBus?.emit("pipeline:authored", {
+      action,
+      capabilityClass,
+      schemaValid,
+      repaired: false,
+      agentId: rawParams._agentId as string | undefined,
+      sessionKey: rawParams._callerSessionKey as string | undefined,
+      timestamp: systemNowMs(),
+    });
+  };
+
   return {
     [GraphDefineContract.method]: async (rawParams) => {
       // Bespoke pre-Zod validation FIRST (preserves user-friendly error
@@ -69,7 +98,19 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
       // single localized change in Phase 157.
       const capabilityClass = userParams.capabilityClass as
         "frontier" | "mid" | "small" | "nano" | undefined;
-      const validated = buildGraphInput(userParams, capabilityClass);
+      // TELEM-01: capture the REAL buildGraphInput parse+validate verdict.
+      // buildGraphInput THROWS on parse/validate failure — emit schemaValid:false
+      // and re-throw (the existing user-facing error contract is unchanged);
+      // on success emit schemaValid:true BEFORE the later type_config/warning
+      // logic so a valid-but-otherwise-rejected call still counts as authored.
+      let validated;
+      try {
+        validated = buildGraphInput(userParams, capabilityClass);
+      } catch (e) {
+        emitPipelineAuthored("define", false, rawParams);
+        throw e;
+      }
+      emitPipelineAuthored("define", true, rawParams);
       validateTypeConfigs(validated.graph, deps.nodeTypeRegistry);
       const { warnings, errors } = validateGraphWarnings(validated.graph);
 
@@ -100,7 +141,17 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
       // capable direct-emit path. Retained as the single Phase-157 wiring point.
       const capabilityClass = userParams.capabilityClass as
         "frontier" | "mid" | "small" | "nano" | undefined;
-      const validated = buildGraphInput(userParams, capabilityClass);
+      // TELEM-01: same try/catch verdict capture as graph.define — emit
+      // schemaValid:false on a parse/validate throw (still re-throwing), true
+      // on success, before the coordinator dispatch.
+      let validated;
+      try {
+        validated = buildGraphInput(userParams, capabilityClass);
+      } catch (e) {
+        emitPipelineAuthored("execute", false, rawParams);
+        throw e;
+      }
+      emitPipelineAuthored("execute", true, rawParams);
       validateTypeConfigs(validated.graph, deps.nodeTypeRegistry);
 
       // Apply user-variable substitution if variables provided

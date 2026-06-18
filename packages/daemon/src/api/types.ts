@@ -361,6 +361,13 @@ export interface OrchestratorApiDeps {
   dataDir?: string;
   /** subagent-handlers reads deps.subAgentRunner.list/kill/steer. */
   subAgentRunner: ReturnType<typeof createSubAgentRunner>;
+  /** graph-handlers (graph-mutate.ts) reads deps.eventBus to emit the
+   *  counts-only `pipeline:authored` telemetry event (TELEM-01). Optional and
+   *  the SAME `AppContainer["eventBus"]` shape as MemoryApiDeps /
+   *  WorkspaceApiDeps / MediaApiDeps / ObservabilityApiDeps so the
+   *  ApiDispatchDeps multi-extends stays well-formed (the dispatcher spreads a
+   *  single eventBus across every slice). */
+  eventBus?: AppContainer["eventBus"];
 }
 
 /**

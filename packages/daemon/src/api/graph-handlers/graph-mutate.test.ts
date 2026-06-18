@@ -231,9 +231,11 @@ describe("pipeline:authored — counts/ids/enums-only (no body leak)", () => {
     expect(JSON.stringify(payload)).not.toContain("TOP-SECRET");
     expect(JSON.stringify(payload)).not.toContain("secret-label");
     expect(JSON.stringify(payload)).not.toContain("secret graph label");
-    // Positive: the allowed key set only.
+    // Positive: the allowed counts/ids/enums key set ONLY (agentId/sessionKey
+    // are envelope ids per the EventMap["pipeline:authored"] contract, present
+    // even when undefined — never a body field).
     expect(Object.keys(payload).sort()).toEqual(
-      ["action", "agentId", "capabilityClass", "repaired", "schemaValid", "timestamp"].sort(),
+      ["action", "agentId", "capabilityClass", "repaired", "schemaValid", "sessionKey", "timestamp"].sort(),
     );
   });
 });

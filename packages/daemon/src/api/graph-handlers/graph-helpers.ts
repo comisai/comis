@@ -52,6 +52,21 @@ export const IS_DEV = systemGetEnv("NODE_ENV") !== "production";
 import type { OrchestratorApiDeps } from "../types.js";
 export type GraphHandlerDeps = OrchestratorApiDeps & {
   graphCoordinator: import("../../graph/graph-coordinator.js").GraphCoordinator;
+  /**
+   * TELEM-01 (Phase 173-02): resolve the calling agent's capabilityClass tier
+   * from its `_agentId` for the `pipeline:authored` emit (graph-mutate.ts).
+   * INJECTED dep (mirrors the 172 `resolvePosture` pattern) — the tier is
+   * resolved DAEMON-SIDE, never read from a tool-supplied param (Spoofing
+   * mitigation T-173-03). Wired at the createGraphHandlers({...}) call in
+   * rpc-dispatch.ts. Returns `undefined` when the agent/provider cannot be
+   * mapped; the emit then records "unknown" (never silently dropped). A wiring
+   * test (rpc-dispatch.test.ts) proves it is actually constructed in production
+   * so the metric is not a permanent "unknown" (the 172-WR-02 fail-default
+   * class / T-173-13 silent-metric-loss).
+   */
+  resolveCapabilityClass?: (
+    agentId: string | undefined,
+  ) => import("@comis/agent").CapabilityClass | undefined;
 };
 
 /** A single validation issue returned to the LLM for self-correction. */
