@@ -300,6 +300,66 @@ describe("BudgetGuard", () => {
     });
   });
 
+  // -------------------------------------------------------------------------
+  // BUDGET-01: resetExecution(cap?) sets an OPTIONAL per-execution effective
+  // cap for THIS run, scoped to one execution (cleared/replaced on the next
+  // resetExecution). The shared per-agent guard must never leak one spawn's
+  // tight cap into the agent's other runs (Pitfall 1), and a child can only
+  // TIGHTEN — never RAISE — its budget above config.perExecution (min()).
+  // -------------------------------------------------------------------------
+  describe("resetExecution per-execution cap override", () => {
+    it("enforces the tighter per-execution cap passed to resetExecution over config.perExecution", () => {
+      const guard = createBudgetGuard(defaultConfig); // config.perExecution = 10_000
+      guard.resetExecution(2_000);
+      guard.recordUsage(1_500);
+      // 1_500 + 600 = 2_100 > 2_000 effective cap, even though config is 10_000.
+      const result = guard.checkBudget(600);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.scope).toBe("per-execution");
+        expect(result.error.currentUsage).toBe(1_500);
+        expect(result.error.cap).toBe(2_000);
+        expect(result.error.estimated).toBe(600);
+      }
+    });
+
+    it("clears the tight cap on a subsequent bare resetExecution (no cross-run leak)", () => {
+      const guard = createBudgetGuard(defaultConfig); // config.perExecution = 10_000
+      guard.resetExecution(2_000); // sub-agent A: a tight 2_000 cap
+      guard.resetExecution(); // sub-agent B on the SAME shared guard: back to config
+      guard.recordUsage(5_000);
+      // 5_000 + 0 = 5_000 < config.perExecution 10_000 — A's tight cap did NOT persist.
+      const result = guard.checkBudget(0);
+      expect(result.ok).toBe(true);
+    });
+
+    it("behaves exactly as today when resetExecution is called with no arg (config.perExecution bounds it)", () => {
+      const guard = createBudgetGuard(defaultConfig); // config.perExecution = 10_000
+      guard.resetExecution();
+      guard.recordUsage(9_000);
+      expect(guard.checkBudget(500).ok).toBe(true); // 9_500 <= 10_000
+      const over = guard.checkBudget(1_500); // 10_500 > 10_000
+      expect(over.ok).toBe(false);
+      if (!over.ok) {
+        expect(over.error.scope).toBe("per-execution");
+        expect(over.error.cap).toBe(10_000);
+      }
+    });
+
+    it("takes min(config.perExecution, cap) so a child cannot raise its budget above config", () => {
+      const guard = createBudgetGuard(defaultConfig); // config.perExecution = 10_000
+      guard.resetExecution(50_000); // cap > config — config must still bound it.
+      guard.recordUsage(9_000);
+      // Effective cap is min(10_000, 50_000) = 10_000, so 9_000 + 1_500 = 10_500 > 10_000.
+      const result = guard.checkBudget(1_500);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.scope).toBe("per-execution");
+        expect(result.error.cap).toBe(10_000);
+      }
+    });
+  });
+
   describe("BudgetError", () => {
     it("is an instance of Error", () => {
       const error = new BudgetError("per-execution", 8000, 10000, 3000);

@@ -49,8 +49,15 @@ export interface BudgetGuard {
   checkBudget(estimatedTokens: number): Result<void, BudgetError>;
   /** Record actual token usage after an LLM call completes. */
   recordUsage(tokens: number): void;
-  /** Reset per-execution counter (called at start of new execution). */
-  resetExecution(): void;
+  /**
+   * Reset per-execution counter and set an OPTIONAL per-execution effective cap
+   * for THIS run (called at the start of every execution). The cap is scoped to
+   * a single execution — it is cleared/replaced on the next resetExecution, so a
+   * tight sub-agent budget never leaks into the agent's other runs on the shared
+   * per-agent guard. checkBudget then enforces min(config.perExecution, cap): a
+   * child can only TIGHTEN, never RAISE, its per-execution budget (BUDGET-01).
+   */
+  resetExecution(cap?: number): void;
   /** Return current usage across all three budget windows. */
   getSnapshot(): BudgetSnapshot;
 }
@@ -88,6 +95,9 @@ export function createBudgetGuard(
   logger?: { debug: (...args: unknown[]) => void; warn: (...args: unknown[]) => void },
 ): BudgetGuard {
   let executionTotal = 0;
+  // Per-execution effective cap for the CURRENT run, set via resetExecution(cap).
+  // undefined ⇒ enforce config.perExecution (byte-identical to the no-budget path).
+  let effectiveExecutionCap: number | undefined;
   let lastEstimate = 0;
   const entries: WindowEntry[] = [];
 
@@ -127,11 +137,15 @@ export function createBudgetGuard(
     checkBudget(estimatedTokens: number): Result<void, BudgetError> {
       prune();
 
-      // Check per-execution first
-      if (executionTotal + estimatedTokens > config.perExecution) {
-        return err(
-          new BudgetError("per-execution", executionTotal, config.perExecution, estimatedTokens),
-        );
+      // Check per-execution first. A per-spawn effective cap (set via
+      // resetExecution(cap)) can only TIGHTEN the budget — min() means a child
+      // never raises its ceiling above the agent's config.perExecution.
+      const execCap =
+        effectiveExecutionCap === undefined
+          ? config.perExecution
+          : Math.min(config.perExecution, effectiveExecutionCap);
+      if (executionTotal + estimatedTokens > execCap) {
+        return err(new BudgetError("per-execution", executionTotal, execCap, estimatedTokens));
       }
 
       // Check per-hour
@@ -169,8 +183,12 @@ export function createBudgetGuard(
       lastEstimate = 0;
     },
 
-    resetExecution(): void {
+    resetExecution(cap?: number): void {
       executionTotal = 0;
+      // Scope the effective cap to THIS run only — replaced (or cleared to
+      // undefined) on the next reset, so the shared per-agent guard never
+      // bleeds one spawn's tight cap into another run.
+      effectiveExecutionCap = cap;
     },
 
     getSnapshot(): BudgetSnapshot {
