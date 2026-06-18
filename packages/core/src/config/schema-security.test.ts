@@ -123,3 +123,50 @@ describe("AgentToAgentConfigSchema.subAgentSessionPersistence", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// AgentToAgentConfigSchema.tokenBudget (BUDGET-03) — per-spawn token budget
+// default; co-located under the existing security.agentToAgent section (D1),
+// so NO new SECTION_REGISTRY entry. null (default) = inherit graph share when a
+// graph budget is set, else unbounded (today's behavior).
+// ---------------------------------------------------------------------------
+
+describe("AgentToAgentConfigSchema.tokenBudget", () => {
+  it("defaults to null when omitted", () => {
+    const result = AgentToAgentConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.tokenBudget).toBeNull();
+    }
+  });
+
+  it("accepts a positive-integer value and preserves it", () => {
+    const result = AgentToAgentConfigSchema.safeParse({ tokenBudget: 100_000 });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.tokenBudget).toBe(100_000);
+    }
+  });
+
+  it("rejects zero, negative, and fractional values (positive int when non-null)", () => {
+    expect(AgentToAgentConfigSchema.safeParse({ tokenBudget: 0 }).success).toBe(false);
+    expect(AgentToAgentConfigSchema.safeParse({ tokenBudget: -1 }).success).toBe(false);
+    expect(AgentToAgentConfigSchema.safeParse({ tokenBudget: 2.5 }).success).toBe(false);
+  });
+
+  it("accepts explicit null (inherit / unbounded)", () => {
+    const result = AgentToAgentConfigSchema.safeParse({ tokenBudget: null });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.tokenBudget).toBeNull();
+    }
+  });
+
+  it("is present in SecurityConfigSchema parsed output defaulting to null", () => {
+    const result = SecurityConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.agentToAgent.tokenBudget).toBeNull();
+    }
+  });
+});
