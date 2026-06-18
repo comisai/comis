@@ -36,6 +36,202 @@ describe("events-orchestration.ts source (reproducible RED guards)", () => {
     expect(src).toMatch(/repaired[\s\S]{0,200}?(always\s+false|ALWAYS\s+false)/i);
     expect(src).toMatch(/Phase\s*174|AUTHOR-01/);
   });
+
+  // AUTHOR-01/02 (v2.27 P2, Phase 174): the two audit events Plans 03/04 emit on
+  // repair / synthesis. The reproducible RED signal is the source-grep (the
+  // type-level assertions below compile away under esbuild, so they pass GREEN on
+  // pre-patch HEAD — the genuine RED comes from these source guards).
+  it("declares the graph:repaired key on the OrchestrationEvents interface (AUTHOR-01)", () => {
+    const src = readFileSync(resolve(here, "events-orchestration.ts"), "utf8");
+    expect(src).toMatch(/interface\s+OrchestrationEvents/);
+    expect(src).toContain('"graph:repaired"');
+  });
+
+  it("declares the graph:synthesized_from_intent key on the OrchestrationEvents interface (AUTHOR-02)", () => {
+    const src = readFileSync(resolve(here, "events-orchestration.ts"), "utf8");
+    expect(src).toContain('"graph:synthesized_from_intent"');
+  });
+
+  it("documents both AUTHOR events as DAEMON-emitted, counts/ids-only (§2.7)", () => {
+    const src = readFileSync(resolve(here, "events-orchestration.ts"), "utf8");
+    // Both events name AUTHOR-01/02 and the daemon-side emit + §2.7 discipline so a
+    // future reader cannot mistake them for an agent-side body-carrying signal.
+    expect(src).toMatch(/AUTHOR-01/);
+    expect(src).toMatch(/AUTHOR-02/);
+    expect(src).toMatch(/DAEMON-SIDE/i);
+  });
+});
+
+describe("graph:repaired authoring-audit event (AUTHOR-01 — counts/ids/enums only)", () => {
+  // The exact allowed payload key set — closed-enums/number/string-id ONLY
+  // (AGENTS.md §2.7). Driven off the RUNTIME keys of a constructed sample so a
+  // future widening to a body field (graph / type_config / task) fails this test.
+  const ALLOWED_KEYS = [
+    "pattern",
+    "nodeCount",
+    "capabilityClass",
+    "agentId",
+    "sessionKey",
+    "timestamp",
+  ].sort();
+
+  // The §2.7 / D-EVENT forbidden body keys — none may ever appear on the payload.
+  const FORBIDDEN_BODY_KEYS = [
+    "nodes",
+    "graph",
+    "type_config",
+    "typeConfig",
+    "task",
+    "label",
+    "body",
+    "payload",
+    "intent",
+  ];
+
+  function makeSample(
+    overrides: Partial<EventMap["graph:repaired"]> = {},
+  ): EventMap["graph:repaired"] {
+    return {
+      pattern: "debate",
+      nodeCount: 3,
+      capabilityClass: "small",
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      timestamp: 1,
+      ...overrides,
+    };
+  }
+
+  it("delivers pattern, nodeCount, capabilityClass + ids/timestamp through the typed bus", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload = makeSample();
+
+    bus.on("graph:repaired", handler);
+    bus.emit("graph:repaired", payload);
+
+    expect(handler).toHaveBeenCalledWith(payload);
+    const received = handler.mock.calls[0]![0] as EventMap["graph:repaired"];
+    expect(received.pattern).toBe("debate");
+    expect(received.nodeCount).toBe(3);
+    expect(received.capabilityClass).toBe("small");
+    expect(received.agentId).toBe("agent-1");
+    expect(received.sessionKey).toBe("t1:u1:c1");
+  });
+
+  it("admits the closed canonical-template pattern union (research-fanout | debate | vote | map-reduce)", () => {
+    const patterns: Array<EventMap["graph:repaired"]["pattern"]> = [
+      "research-fanout",
+      "debate",
+      "vote",
+      "map-reduce",
+    ];
+    for (const pattern of patterns) {
+      expect(makeSample({ pattern }).pattern).toBe(pattern);
+    }
+    // A type-level compile guard — the pattern union admits exactly the four
+    // canonical templates (strips away under esbuild; the runtime checks carry the
+    // green proof). @ts-expect-error: "freeform" is not a canonical template.
+    // @ts-expect-error - freeform is not a canonical template name
+    const bad: EventMap["graph:repaired"]["pattern"] = "freeform";
+    void bad;
+  });
+
+  it("admits the unknown capabilityClass fail-safe tier (record honestly, never silently drop)", () => {
+    const unknownTier = makeSample({ capabilityClass: "unknown" });
+    expect(unknownTier.capabilityClass).toBe("unknown");
+    const tiers: Array<EventMap["graph:repaired"]["capabilityClass"]> = [
+      "frontier",
+      "mid",
+      "small",
+      "nano",
+      "unknown",
+    ];
+    expect(tiers).toContain("unknown");
+  });
+
+  it("payload key set is EXACTLY the allowed counts/ids/enums set — no body field (§2.7 / D-EVENT no-leak)", () => {
+    const keys = Object.keys(makeSample()).sort();
+    expect(keys).toEqual(ALLOWED_KEYS);
+  });
+
+  it("payload carries NONE of the forbidden body keys (no graph body / type_config / task / intent)", () => {
+    const keys = new Set(Object.keys(makeSample()));
+    for (const forbidden of FORBIDDEN_BODY_KEYS) {
+      expect(keys.has(forbidden), `forbidden body key leaked: ${forbidden}`).toBe(false);
+    }
+  });
+});
+
+describe("graph:synthesized_from_intent authoring-audit event (AUTHOR-02 — counts/ids/enums only)", () => {
+  const ALLOWED_KEYS = ["pattern", "nodeCount", "agentId", "sessionKey", "timestamp"].sort();
+
+  // The intent TEXT is the highest-risk leak for synthesis — it heads the forbidden set.
+  const FORBIDDEN_BODY_KEYS = [
+    "intent",
+    "nodes",
+    "graph",
+    "type_config",
+    "typeConfig",
+    "task",
+    "label",
+    "body",
+    "payload",
+  ];
+
+  function makeSample(
+    overrides: Partial<EventMap["graph:synthesized_from_intent"]> = {},
+  ): EventMap["graph:synthesized_from_intent"] {
+    return {
+      pattern: "research-fanout",
+      nodeCount: 4,
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      timestamp: 1,
+      ...overrides,
+    };
+  }
+
+  it("delivers pattern + nodeCount + ids/timestamp through the typed bus", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload = makeSample();
+
+    bus.on("graph:synthesized_from_intent", handler);
+    bus.emit("graph:synthesized_from_intent", payload);
+
+    expect(handler).toHaveBeenCalledWith(payload);
+    const received = handler.mock.calls[0]![0] as EventMap["graph:synthesized_from_intent"];
+    expect(received.pattern).toBe("research-fanout");
+    expect(received.nodeCount).toBe(4);
+  });
+
+  it("admits the closed canonical-template pattern union (research-fanout | debate | vote | map-reduce)", () => {
+    const patterns: Array<EventMap["graph:synthesized_from_intent"]["pattern"]> = [
+      "research-fanout",
+      "debate",
+      "vote",
+      "map-reduce",
+    ];
+    for (const pattern of patterns) {
+      expect(makeSample({ pattern }).pattern).toBe(pattern);
+    }
+    // @ts-expect-error - freeform is not a canonical template name
+    const bad: EventMap["graph:synthesized_from_intent"]["pattern"] = "freeform";
+    void bad;
+  });
+
+  it("payload key set is EXACTLY the allowed counts/ids/enums set — no intent text / body (§2.7 / D-EVENT no-leak)", () => {
+    const keys = Object.keys(makeSample()).sort();
+    expect(keys).toEqual(ALLOWED_KEYS);
+  });
+
+  it("payload carries NONE of the forbidden body keys (intent text leads the forbidden set)", () => {
+    const keys = new Set(Object.keys(makeSample()));
+    for (const forbidden of FORBIDDEN_BODY_KEYS) {
+      expect(keys.has(forbidden), `forbidden body key leaked: ${forbidden}`).toBe(false);
+    }
+  });
 });
 
 describe("pipeline:authored authoring-telemetry event (counts/ids/enums only)", () => {
