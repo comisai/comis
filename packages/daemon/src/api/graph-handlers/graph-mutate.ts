@@ -61,17 +61,40 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
     schemaValid: boolean,
     rawParams: Record<string, unknown>,
   ): void => {
-    const capabilityClass =
-      deps.resolveCapabilityClass?.(rawParams._agentId as string | undefined) ?? "unknown";
-    deps.eventBus?.emit("pipeline:authored", {
-      action,
-      capabilityClass,
-      schemaValid,
-      repaired: false,
-      agentId: rawParams._agentId as string | undefined,
-      sessionKey: rawParams._callerSessionKey as string | undefined,
-      timestamp: systemNowMs(),
-    });
+    // WR-01 (Phase 173 review): the emit MUST be best-effort — telemetry can
+    // never break the operation it measures. `deps.eventBus.emit` delegates to
+    // Node's EventEmitter with NO listener error isolation, and the subscribed
+    // `pipeline:authored` listener pushes into the obs diagnostic buffer whose
+    // synchronous SQLite flush (on its 50th item) can throw SQLITE_BUSY/FULL/
+    // disk-error. On the SUCCESS path this emit is called OUTSIDE the handler's
+    // buildGraphInput try (and, for graph.execute, BEFORE graphCoordinator.run),
+    // so an unguarded throw here would fail a VALID graph.define/execute purely
+    // because a telemetry insert failed — and on the invalid path it would mask
+    // the user-facing graph-validation error. Swallow any emit throw and log it
+    // at WARN (hint + errorKind) so the measured operation always proceeds.
+    try {
+      const capabilityClass =
+        deps.resolveCapabilityClass?.(rawParams._agentId as string | undefined) ?? "unknown";
+      deps.eventBus?.emit("pipeline:authored", {
+        action,
+        capabilityClass,
+        schemaValid,
+        repaired: false,
+        agentId: rawParams._agentId as string | undefined,
+        sessionKey: rawParams._callerSessionKey as string | undefined,
+        timestamp: systemNowMs(),
+      });
+    } catch (err) {
+      deps.logger?.warn(
+        {
+          err,
+          action,
+          errorKind: "internal" as const,
+          hint: "pipeline:authored telemetry emit failed (likely an obs-buffer SQLite flush throw); the graph operation proceeds unaffected",
+        },
+        "pipeline-authoring telemetry emit failed (best-effort)",
+      );
+    }
   };
 
   return {

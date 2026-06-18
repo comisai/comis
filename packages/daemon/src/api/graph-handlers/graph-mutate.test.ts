@@ -57,6 +57,10 @@ interface FakeDepsOverrides {
   emit?: ReturnType<typeof vi.fn>;
   resolveCapabilityClass?: (agentId: string | undefined) => CapabilityClass | undefined;
   a2aEnabled?: boolean;
+  /** Override the logger (WR-01: assert the best-effort emit logs at WARN). */
+  logger?: Partial<Record<"info" | "warn" | "debug" | "error", ReturnType<typeof vi.fn>>>;
+  /** Override graphCoordinator.run (WR-01: assert run still dispatches). */
+  run?: ReturnType<typeof vi.fn>;
 }
 
 function makeDeps(overrides: FakeDepsOverrides = {}): GraphHandlerDeps {
@@ -64,7 +68,7 @@ function makeDeps(overrides: FakeDepsOverrides = {}): GraphHandlerDeps {
   return {
     // graphCoordinator.run is awaited by graph.execute; return ok(graphId).
     graphCoordinator: {
-      run: vi.fn(async () => ok("graph-123")),
+      run: overrides.run ?? vi.fn(async () => ok("graph-123")),
       cancel: vi.fn(() => true),
     },
     securityConfig: {
@@ -72,7 +76,7 @@ function makeDeps(overrides: FakeDepsOverrides = {}): GraphHandlerDeps {
     },
     // nodeTypeRegistry undefined → validateTypeConfigs is a no-op.
     nodeTypeRegistry: undefined,
-    logger: { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn() },
+    logger: { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn(), ...overrides.logger },
     eventBus: { emit, on: vi.fn() },
     resolveCapabilityClass: overrides.resolveCapabilityClass,
   } as unknown as GraphHandlerDeps;
@@ -236,6 +240,74 @@ describe("pipeline:authored — counts/ids/enums-only (no body leak)", () => {
     // even when undefined — never a body field).
     expect(Object.keys(payload).sort()).toEqual(
       ["action", "agentId", "capabilityClass", "repaired", "schemaValid", "sessionKey", "timestamp"].sort(),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WR-01: the emit is BEST-EFFORT — a throwing bus listener (the diagnostic
+// buffer's synchronous SQLite flush on its 50th item can throw SQLITE_BUSY/FULL;
+// TypedEventBus.emit has NO listener error isolation) must NEVER break the
+// measured graph.define/execute. The telemetry throw is swallowed (logged WARN),
+// never surfaced as the operation's result.
+// ---------------------------------------------------------------------------
+
+describe("pipeline:authored — emit is best-effort (telemetry never breaks the measured op, WR-01)", () => {
+  /** An eventBus whose emit throws (simulates the diagnosticBuffer→SQLite flush
+   *  throwing SQLITE_BUSY out of EventEmitter.emit — no listener isolation). */
+  const throwingEmit = () =>
+    vi.fn(() => {
+      throw new Error("SQLITE_BUSY: database is locked");
+    });
+
+  it("graph.define SUCCESS path still resolves when the bus emit throws (telemetry failure swallowed)", async () => {
+    const emit = throwingEmit();
+    const warn = vi.fn();
+    const handlers = bindGraphMutateHandlers(makeDeps({ emit, logger: { warn } }));
+
+    // The valid define must succeed despite the telemetry throw.
+    const result = await handlers["graph.define"]!({ nodes: VALID_NODES });
+    expect(result).toMatchObject({ valid: true, nodeCount: 2 });
+    // The emit was attempted (and threw)…
+    expect(emit).toHaveBeenCalledTimes(1);
+    // …and was logged at WARN with an errorKind + hint, not surfaced.
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]![0]).toMatchObject({ errorKind: expect.any(String) });
+  });
+
+  it("graph.execute SUCCESS path still resolves when the bus emit throws (emit is BEFORE coordinator.run)", async () => {
+    const emit = throwingEmit();
+    const run = vi.fn(async () => ok("graph-xyz"));
+    const handlers = bindGraphMutateHandlers(makeDeps({ emit, run, logger: { warn: vi.fn() } }));
+
+    const result = await handlers["graph.execute"]!({ nodes: VALID_NODES });
+    expect(result).toMatchObject({ graphId: "graph-xyz", async: true });
+    // The pipeline STILL dispatched (the emit throw did not short-circuit run).
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it("graph.define INVALID path re-throws the ORIGINAL graph-validation error, NOT the telemetry throw", async () => {
+    const emit = throwingEmit();
+    const handlers = bindGraphMutateHandlers(makeDeps({ emit, logger: { warn: vi.fn() } }));
+
+    // The user-facing contract is the GRAPH error, never "SQLITE_BUSY".
+    await expect(handlers["graph.define"]!({ nodes: CYCLIC_NODES })).rejects.toThrow(
+      /Graph validation failed/,
+    );
+    await expect(handlers["graph.define"]!({ nodes: CYCLIC_NODES })).rejects.not.toThrow(
+      /SQLITE_BUSY/,
+    );
+  });
+
+  it("graph.execute INVALID path re-throws the ORIGINAL graph-validation error, NOT the telemetry throw", async () => {
+    const emit = throwingEmit();
+    const handlers = bindGraphMutateHandlers(makeDeps({ emit, logger: { warn: vi.fn() } }));
+
+    await expect(handlers["graph.execute"]!({ nodes: CYCLIC_NODES })).rejects.toThrow(
+      /Graph validation failed/,
+    );
+    await expect(handlers["graph.execute"]!({ nodes: CYCLIC_NODES })).rejects.not.toThrow(
+      /SQLITE_BUSY/,
     );
   });
 });
