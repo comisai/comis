@@ -158,8 +158,10 @@ export function normalizeToolSchemasForProvider(
   const isGemini = caps.providerFamily === "google";
   const isXai = ctx.compat?.toolSchemaProfile === "xai";
   // GBNF gate derives SOLELY from the explicit compat profile — never from
-  // the provider name or baseUrl (D-08). Threading the profile from config
-  // is Plan 175-04's job; this pipeline only honors what arrives in ctx.
+  // the provider name or baseUrl (D-08). The gbnfConstrain authoring gate
+  // arrives SEPARATELY in ctx.gbnfConstrain (threaded from
+  // config.orchestration.authoring.gbnfConstrain at the executor call site,
+  // CR-01); this pipeline only honors what arrives in ctx.
   const isGbnf = ctx.compat?.toolSchemaProfile === "gbnf";
   const providerLower = ctx.provider.toLowerCase();
 

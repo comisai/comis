@@ -564,6 +564,12 @@ export async function setupSingleAgent(
     getProviderType: (p: string) => container.config.providers?.entries?.[p]?.type,
     getModelCompat: (p: string, id: string) =>
       container.config.providers?.entries?.[p]?.models?.find((m) => m.id === id)?.comisCompat,
+    // AUTHOR-03 (174-05 / CR-01): thread the gbnfConstrain authoring gate into
+    // the executor's tool-schema normalization. Closure (not a static read)
+    // because orchestration.authoring is runtime-mutable via config.write and
+    // a boot snapshot would go stale (mirrors getProviderType above). Gated-off
+    // (the .default(false)) ⇒ false ⇒ FLAGS-OFF byte-identical.
+    getGbnfConstrain: () => container.config.orchestration?.authoring?.gbnfConstrain ?? false,
     maxSendsPerExecution: container.config.messages?.maxSendsPerExecution,
     // Runtime adapter ports threaded into the executor.
     clock: deps.clock,

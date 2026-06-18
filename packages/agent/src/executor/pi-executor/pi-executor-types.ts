@@ -300,6 +300,13 @@ export interface PiExecutorDeps {
   /** Resolve a model's user-declared comisCompat from providers.entries.<provider>.models[].
    *  Consumer: normalizeModelCompat (closes the built-but-not-wired comisCompat gap). */
   getModelCompat?: (provider: string, modelId: string) => import("@comis/core").ModelCompatConfig | undefined;
+  /** AUTHOR-03 (174-05 / CR-01): live read of
+   *  `config.orchestration.authoring.gbnfConstrain`. Resolver form because the
+   *  gate is runtime-mutable via config.write (not in IMMUTABLE_CONFIG_PREFIXES)
+   *  — a boot snapshot would go stale. Forwarded through frozenDeps into the
+   *  tool-assembly pipeline (applyProviderNormalization). Absent ⇒ false ⇒
+   *  FLAGS-OFF byte-identical (the gbnf authoring transform never engages). */
+  getGbnfConstrain?: () => boolean;
   /** Optional Gemini CachedContent lifecycle manager for explicit cache reuse. */
   geminiCacheManager?: GeminiCacheManager;
   /** Resolve platform message character limit for a channel type.
