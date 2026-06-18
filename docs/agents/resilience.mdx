@@ -212,6 +212,25 @@ security:
   bounds how many times a *transient* delivery failure is retried before the
   message is dead-lettered. Permanent failures are dead-lettered immediately.
 
+### Self-healing delivery retries
+
+When a completion delivery falls back to a direct channel send and that send
+fails, the batcher classifies the failure before deciding what to do:
+
+- **Transient** (network blips — connection reset/refused, socket hang up,
+  timeouts, HTTP 5xx, rate limits) — retried up to `maxRetries` times with
+  exponential backoff (1s, 2s, 4s, … capped at 30s) before dead-lettering. The
+  common case (a momentary `ECONNRESET`/`ETIMEDOUT`) self-heals on the next
+  attempt instead of being dead-lettered on the first blip.
+- **Permanent** (budget exceeded, context exhausted, step-limit reached,
+  killed) — dead-lettered immediately, with no wasted retries.
+
+- **What the operator sees:** a `subagent:delivery_retried` event per retry
+  attempt and a `subagent:delivery_deadlettered` event when a delivery is finally
+  dead-lettered (its `transient` flag records whether retries were exhausted or
+  the failure was permanent). Both carry counts and ids only — never the
+  announcement text or the error string.
+
 ## Ghost sweep
 
 The ghost sweep catches sub-agent runs that are stuck in a "running" state past
