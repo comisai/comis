@@ -2,9 +2,9 @@
 
 **Generated:** 2026-05-12
 **Status:** FINAL
-**Interface source:** `packages/daemon/src/api/types.ts:214–248`
+**Interface source:** `packages/daemon/src/api/types.ts:331–381`
 **Construction site:** `packages/daemon/src/daemon.ts:1863` (`buildRpcDispatchDeps`); call site at `packages/daemon/src/daemon.ts:2066`
-**Field count:** 17 (10 required + 7 optional + 0 stale-fallback)
+**Field count:** 19 (10 required + 9 optional + 0 stale-fallback)
 **Location rationale:** Co-located with @comis/daemon package. `files: ["dist", "bundled-skills"]` in `packages/daemon/package.json` excludes from npm tarball.
 
 ## Field Classification
@@ -30,6 +30,8 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | logger | required | — | packages/daemon/src/api/types.ts:244 |
 | dataDir | optional | graph-handlers cannot write graph-run output files to disk; runs execute in memory only and the audit trail under `<dataDir>/graph-runs/` is not produced | packages/daemon/src/api/types.ts:246 |
 | subAgentRunner | required | — | packages/daemon/src/api/types.ts:248 |
+| eventBus | optional | graph-handlers cannot emit the counts-only `pipeline:authored` telemetry event (TELEM-01); the small-model pipeline-authoring fleet metric stays empty (handlers otherwise function) | packages/daemon/src/api/types.ts:370 |
+| getProviderCapabilityClass | optional | the per-agent `resolveCapabilityClass` wired at rpc-dispatch.ts:200 returns undefined, so every `pipeline:authored` records `capabilityClass:"unknown"` (the tier is recorded honestly, never dropped) | packages/daemon/src/api/types.ts:378 |
 
 ## Removed Fields (stale-fallback — deleted)
 
@@ -38,7 +40,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 ## Summary
 
 - **Pre-audit count:** 17
-- **Final count:** 17 (10 required + 7 optional)
+- **Final count:** 19 (10 required + 9 optional)
 - **Removed (stale-fallback):** 0
 - **`stale-fallback` classification rows:** 0 (architecture test enforces; no row may carry this terminal value at any commit)
 

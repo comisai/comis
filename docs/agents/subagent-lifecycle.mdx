@@ -285,6 +285,23 @@ security:
 See the [Config YAML Reference](/reference/config-yaml) for the full list of
 all `security.agentToAgent` options.
 
+## Steering a running sub-agent
+
+The `subagents` tool's `steer` action redirects a sub-agent that is already running, and it is **distinct from `kill`**:
+
+- **`kill`** terminates the child and tears it down cleanly. The run ends with the `killed` end reason and its in-flight work is discarded.
+- **`steer`** sends a high-priority steering message to the child. *How* that message is delivered is gated behind [`security.agentToAgent.steerInject`](/reference/config-yaml#security) (default `false`):
+  - **Flag off (default)** -- `steer` falls back to **kill + respawn**: the running child is killed and a fresh run is spawned with the steering message as its new task. The prior transcript and progress are discarded, and the run gets a new `runId`. This is today's behavior, unchanged.
+  - **Flag on** -- `steer` **injects** the message into the *running* child's live session, preserving its transcript and progress (no kill, no respawn; the same `runId` continues).
+
+**Next-step-boundary semantics (inject mode).** An injected steer is **not** a mid-tool-call interrupt. The child finishes its current step, the transcript for that step commits, and the steering message then lands as a user turn in the child's *next* context assembly. The child keeps everything it had done up to that boundary -- the steer adjusts course without throwing away work. (When the child is mid-stream the inject rides the streaming path; when it is idle it lands as a follow-up turn. The [`subagent:steered`](/developer-guide/event-bus) event records which via its `mode` field -- counts/ids/mode only, never the message body.)
+
+**A steer is a message, not a privilege grant.** A steered child's tool set is fixed at spawn time, so it **cannot** be steered into using a tool on the sub-agent tool denylist -- a steered request for a denied tool is still refused with `denied to ALL sub-agents -- the parent must perform this step`, and the child's sandbox posture is unchanged. The steer text cannot widen what the child is allowed to do; it can only redirect what the child works on within its existing governance. See [`subagent.steer`](/reference/json-rpc#subagent-steer) for the RPC surface and its discriminated-union response.
+
+**`steer` targets a *running* child.** If the target run has already `completed`/`failed` or is still `queued`, `steer` fails fast with `Run <id> is not running (status: <status>) -- cannot steer; use kill+respawn instead.` (mirroring `kill`'s precondition error) rather than attempting an inject against a child that has no live session.
+
+**`steer` is intentionally ungated, unlike `kill`.** `kill` requires an explicit confirmation (it discards the child's in-flight work, a destructive teardown). `steer` has no confirmation gate: in inject mode it is non-destructive (the transcript and progress are preserved), and even in the flag-off kill+respawn fallback it is a course-correction, not a bare teardown. A steer is a steering *message*, so the asymmetry is deliberate.
+
 ## End reasons
 
 When a sub-agent's lifecycle ends, one of six end reasons is recorded:

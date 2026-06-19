@@ -35,6 +35,7 @@ import { MemoryConfigSchema } from "./schema-memory.js";
 import { MessagesConfigSchema } from "./schema-messages.js";
 import { ModelsConfigSchema } from "./schema-models.js";
 import { MonitoringConfigSchema } from "./schema-observability.js";
+import { OrchestrationConfigSchema } from "./schema-orchestration.js";
 import { PluginsConfigSchema } from "./schema-plugins.js";
 import { ProvidersConfigSchema } from "./schema-providers.js";
 import { QueueConfigSchema } from "./schema-queue.js";
@@ -105,9 +106,9 @@ export interface ManagedSectionRedirect {
 export interface SectionRegistryEntry {
   /** Canonical Zod schema for the section. Same object shared across views. */
   readonly schema: z.ZodType;
-  /** True if section appears in the schema-serializer view (17 sections). */
+  /** True if section appears in the schema-serializer view (18 sections). */
   readonly schemaSerializable: boolean;
-  /** True if section appears in the field-metadata view (19 sections). */
+  /** True if section appears in the field-metadata view (20 sections). */
   readonly fieldMetadataVisible: boolean;
   /**
    * Set on the 3 top-level fully-managed sections (providers, channels,
@@ -119,26 +120,28 @@ export interface SectionRegistryEntry {
 }
 
 /**
- * The 24 unique config sections. Bool flags select per-view membership.
+ * The 25 unique config sections. Bool flags select per-view membership.
  *
- * - 17 sections have schemaSerializable=true
- * - 19 sections have fieldMetadataVisible=true
- * - 12 sections appear in both views (intersection)
+ * - 18 sections have schemaSerializable=true
+ * - 20 sections have fieldMetadataVisible=true
+ * - 13 sections appear in both views (intersection)
  * - 3 sections (providers, channels, agents) have managedRedirect (top-level managed)
  *
  * Insertion order is significant: schema-serializer.ts and field-metadata.ts
  * derive their SECTION_SCHEMAS maps via Object.fromEntries(Object.entries(...)),
  * which preserves this order, which in turn drives getConfigSections() output
- * order. The 17 schemaSerializable=true entries appear in this order:
+ * order. The 18 schemaSerializable=true entries appear in this order:
  *   agents, channels, memory, security, routing, daemon, scheduler, gateway,
  *   integrations, monitoring, diagnostics, browser, models, providers,
- *   messages, approvals, tooling.
- * The 19 fieldMetadataVisible=true entries appear in this order:
+ *   messages, approvals, tooling, orchestration.
+ * The 20 fieldMetadataVisible=true entries appear in this order:
  *   agents, channels, memory, security, routing, daemon, scheduler, gateway,
  *   integrations, monitoring, diagnostics, plugins, queue, streaming,
- *   autoReplyEngine, sendPolicy, embedding, envelope, tooling.
+ *   autoReplyEngine, sendPolicy, embedding, envelope, tooling, orchestration.
  * The 7 fieldMetadata-only entries (plugins → envelope) are inserted between
  * `diagnostics` and `tooling` so both filtered subsequences are stable.
+ * `orchestration` (both views, gated-off Phase 174) is appended last after
+ * `tooling`, so it extends both subsequences consistently with insertion order.
  */
 export const SECTION_REGISTRY: Readonly<Record<string, SectionRegistryEntry>> = Object.freeze({
   // The 11 common (both views) at the head — matches both legacy orders up to index 9, then diagnostics at index 10.
@@ -304,9 +307,19 @@ export const SECTION_REGISTRY: Readonly<Record<string, SectionRegistryEntry>> = 
   },
   envelope: { schema: EnvelopeConfigSchema, schemaSerializable: false, fieldMetadataVisible: true },
 
-  // Tooling is the last entry in BOTH legacy orderings — placed last here so
-  // both filtered subsequences end with it.
+  // Tooling is the last entry in BOTH legacy orderings — placed before
+  // orchestration so both filtered subsequences keep it adjacent to the tail.
   tooling: { schema: ToolingConfigSchema, schemaSerializable: true, fieldMetadataVisible: true },
+
+  // Orchestration authoring gate (Phase 174 / v2.27 P2). Both views (like
+  // tooling/approvals); plain boolean flags, so NO managedRedirect (it carries
+  // no managed write surface). Appended last so it extends BOTH the
+  // schemaSerializable and fieldMetadataVisible subsequences consistently.
+  orchestration: {
+    schema: OrchestrationConfigSchema,
+    schemaSerializable: true,
+    fieldMetadataVisible: true,
+  },
 });
 
 /**

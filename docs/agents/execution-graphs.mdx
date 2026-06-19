@@ -146,6 +146,30 @@ Graphs support resource limits at both the node and graph level:
 - **Graph-level timeout** (`timeout_ms` on the graph) -- cancels all remaining nodes if the entire graph exceeds the time limit
 - **Budget limits** (`budget.max_tokens`, `budget.max_cost`) -- cancels the graph if cumulative token usage or cost across all nodes exceeds the limit
 
+### Token budgets
+
+There are two distinct token guardrails, and they apply at different scopes:
+
+- **Per-node token budget** -- a `tokenBudget` cap on a *single* node's sub-agent. It is enforced two ways: as a live mid-run hard stop (the sub-agent's tool calls are blocked once it has spent its cap) and as a post-completion accounting check. A node that exceeds its budget **fails** -- it is not retried, even when `retries` is set, because a retry would re-burn the budget. The graph's `on_failure` policy then decides the cascade: under `fail-fast` the failure aborts downstream dependents, under `continue` siblings whose barrier is still satisfiable keep running.
+- **Cumulative graph budget** (`budget.max_tokens` / `budget.max_cost`) -- bounds the *total* spend summed across every node, and cancels the whole graph when the total is exceeded.
+
+**Where a node's per-node budget comes from** (first match wins):
+
+1. The node's own `tokenBudget`, when set.
+2. The operator default `security.agentToAgent.tokenBudget` (a positive integer applies the same cap to every node; see [Configuration](/reference/config-yaml#security)).
+3. The **inherited graph share** -- `budget.max_tokens` divided by the total node count -- but only when the graph sets a token budget. The share is floored at 1 token, so an under-provisioned budget (`max_tokens` smaller than the node count) yields a tight-but-usable per-node cap rather than a 0 cap that would brick every node.
+4. Otherwise **unbounded** -- a graph with no budget set anywhere behaves exactly as before.
+
+The two checks run **in series, node-first**: when a single node's overage *also* tips the cumulative graph budget, that node fails its own budget first, then the graph aborts. This ordering is deterministic -- never a race -- so one runaway sub-agent is contained to its own node rather than silently consuming the entire graph's allowance.
+
+<Note>
+The per-node `tokenBudget` field is present on the graph node schema and is honored by the coordinator. Today it is reached through the operator default and the inherited graph share (above); a dedicated per-node authoring key on the `pipeline` tool is a planned follow-up. To bound an individual node now, set a graph `budget.max_tokens` (each node inherits its share) or the operator default.
+</Note>
+
+<Note>
+The per-node `tokenBudget` (and the operator default / inherited share that feed it) applies to **regular** graph nodes. **Driver-typed nodes** (a node with a `typeId`, e.g. a debate or iterate driver that spawns multiple sub-agent rounds) are **not** bounded by the per-node token budget today -- they are governed instead by the **cumulative graph budget** (`budget.max_tokens` / `budget.max_cost`), which sums every driver round's spend and cancels the graph when the total is exceeded. Per-node budgeting for driver nodes (a cumulative-across-rounds cap with a mid-round hard stop) is a planned follow-up; to bound a driver node today, set the cumulative graph budget.
+</Note>
+
 ### Graph lifecycle
 
 Every graph follows the same lifecycle:
@@ -240,7 +264,7 @@ task templates.
 
 ## The pipeline tool
 
-Agents create and manage execution graphs using the `pipeline` built-in tool. It supports 9 actions: `define`, `execute`, `status`, `outputs`, `cancel`, `save`, `load`, `list`, and `delete`.
+Agents create and manage execution graphs using the `pipeline` built-in tool. It supports 10 actions: `define`, `execute`, `status`, `outputs`, `cancel`, `save`, `load`, `list`, `delete`, and `from_intent` (the gated-off one-line-intent synthesizer).
 
 See the [Pipeline Tool Guide](/agent-tools/pipelines) for the complete action reference with examples.
 
@@ -264,23 +288,54 @@ Without this setting, the `pipeline` tool will not be available to agents.
 
 See [Configuration Reference](/reference/config-yaml) for all security settings.
 
+## Small-model authoring
+
+Frontier models write valid execution graphs directly. Weaker models sometimes emit a graph that is *almost* right -- the correct shape but a schema slip -- or would benefit from describing the workflow in one line rather than hand-writing every node. The small-model authoring layer helps them, and it is **gated off by default**: every flag under [`orchestration.authoring`](/reference/config-yaml#orchestration) defaults to `false`, so without operator action nothing below is reachable and graph authoring behaves exactly as it always has. The operator flips a flag on only once production telemetry (the [`pipeline:authored`](/developer-guide/event-bus) event surfaced via [`obs.fleet.health`](/reference/json-rpc#obs-fleet-health)) shows small-tier authoring is materially below frontier -- the measure-first gate.
+
+**Governance is preserved end to end.** None of the paths below execute a graph directly: the repair producer and the intent synthesizer *return* a graph, which is then dispatched through the same `graph.execute` path a hand-authored graph takes. A synthesized or repaired graph runs the **identical** validation, tool denylist, and child⊆parent sandbox-intersection checks as one you wrote by hand. The authoring layer can never produce a graph that bypasses governance.
+
+### Conservative repair (AUTHOR-01)
+
+When a weak-tier model emits a schema-invalid graph and `orchestration.authoring.repairProducer` is on, the daemon attempts a **deterministic, conservative** match of the raw graph to one of the four canonical templates (`research-fanout`, `debate`, `vote`, `map-reduce`) by shape -- node count, the fan-in topology, and disambiguating keywords. It repairs the graph **only on a single unambiguous match**; it never guesses. If the shape fits more than one template, the daemon returns a structured **"did you mean this template?"** response rather than synthesizing a graph the model did not intend. A no-match (or a repaired graph that still fails validation) returns the unchanged fail-closed validation error. The calling model's tier is resolved **server-side** from the authoring agent -- a tool-supplied `capabilityClass` is never trusted -- and only weak tiers take the repair path (frontier authoring is left untouched). A successful repair emits the [`graph:repaired`](/developer-guide/event-bus) audit event (counts/ids only).
+
+### Synthesis from a one-line intent (AUTHOR-02)
+
+When `orchestration.authoring.intentAction` is on, the `pipeline` tool exposes a `from_intent` action: instead of hand-writing the node list, an agent expresses a one-line intent -- a canonical `pattern` plus a few agent or task names -- and the daemon deterministically expands it into a validated graph. For example, the bull-vs-bear debate above is authorable from one line:
+
+```yaml
+tool: pipeline
+action: from_intent
+pattern: debate
+agents: ["bull", "bear"]   # PRO, CON
+```
+
+The synthesizer maps the `pattern` to its canonical template, fills the agent/task slots, and runs the same parse + validation a hand-authored graph runs before dispatching through `graph.execute`. An invalid intent (for example `debate` with fewer than two agents) is rejected before any graph runs; gated off, the daemon refuses the `from_intent` call entirely. A governed synthesis emits the [`graph:synthesized_from_intent`](/developer-guide/event-bus) audit event. See [Pipelines: from_intent](/agent-tools/pipelines#from-intent) for the full pattern reference.
+
+`from_intent` produces **template-shaped** graphs — plain agent nodes in the named fan-out → fan-in shape — not the typed orchestration drivers. A synthesized `debate` is a one-shot pro/con fan-in into a moderator, not the multi-round `type_id: debate` driver; for the typed multi-round drivers (with `type_config.rounds` / `synthesizer`), author the graph with `define`/`execute` and per-node `type_id` + `type_config`. Accordingly, `from_intent` takes no `rounds` parameter.
+
+### Grammar-constrained schema (AUTHOR-03, best-effort)
+
+When `orchestration.authoring.gbnfConstrain` is on, the daemon grammar-constrains the raw `pipeline` tool schema for GBNF-eligible local providers (the local/default family -- never a cloud provider inferred by name), nudging a local model toward emitting structurally-valid graph JSON. This is **best-effort and removal/relaxation-only**: it never widens field *value* validation, and the daemon-side schema validation remains the single source of truth for what a graph may contain. GBNF makes a valid emission more likely; it does not replace -- and cannot weaken -- the daemon's governance.
+
 ## Events
 
-The graph coordinator emits three events during execution:
+The graph coordinator emits three lifecycle events during execution, plus two audit events for the (gated-off) small-model authoring layer:
 
 | Event | When | Key fields |
 |-------|------|------------|
 | `graph:started` | Graph execution begins | `graphId`, `label`, `nodeCount` |
 | `graph:node_updated` | A node transitions to a new status | `graphId`, `nodeId`, `status`, `durationMs`, `error` |
 | `graph:completed` | Graph reaches terminal state | `graphId`, `status`, `durationMs`, `nodesCompleted`, `nodesFailed`, `nodesSkipped`, `cancelReason` |
+| `graph:repaired` | A weak-model graph is repaired to a canonical template (gated off; AUTHOR-01) | `pattern`, `nodeCount`, `capabilityClass` |
+| `graph:synthesized_from_intent` | A graph is synthesized from a one-line intent (gated off; AUTHOR-02) | `pattern`, `nodeCount` |
 
-See [Event Bus](/developer-guide/event-bus) for the full event reference.
+Both authoring events are counts/ids/enums only -- never a graph body, a node config value, a task/label string, or the intent text -- and fire only after the graph passes the same validation a hand-authored graph runs. See [Event Bus](/developer-guide/event-bus) for the full event reference.
 
 ## Related
 
 <CardGroup cols={2}>
   <Card title="Pipeline Tool Guide" icon="diagram-project" href="/agent-tools/pipelines">
-    Complete reference for the pipeline tool's 9 actions
+    Complete reference for the pipeline tool's 10 actions
   </Card>
   <Card title="Visual Builder" icon="window-maximize" href="/web-dashboard/pipelines">
     Design and run graphs from the web dashboard

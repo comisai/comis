@@ -181,7 +181,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "integer"
   },
   {
-    "default": "single",
+    "default": "auto",
     "immutable": true,
     "path": "agents.cacheBreakpointStrategy",
     "type": "string"
@@ -871,7 +871,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   },
   {
     "default": {
-      "enabled": false,
+      "enabled": true,
       "maxActiveCaches": 20
     },
     "immutable": true,
@@ -879,7 +879,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "object"
   },
   {
-    "default": false,
+    "default": true,
     "immutable": true,
     "path": "agents.geminiCache.enabled",
     "type": "boolean"
@@ -7764,8 +7764,13 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("secur
   {
     "default": {
       "allowAgents": [],
+      "delivery": {
+        "maxRetries": 3
+      },
       "enabled": true,
       "maxPingPongTurns": 3,
+      "sandboxNoDowngrade": true,
+      "steerInject": false,
       "subAgentMaxSteps": 50,
       "subAgentMcpTools": "inherit",
       "subAgentRetentionMs": 3600000,
@@ -7794,6 +7799,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("secur
         "resultTagPrefix": "Subagent Result",
         "stuckKillThresholdMs": 180000
       },
+      "tokenBudget": null,
       "waitTimeoutMs": 60000
     },
     "immutable": true,
@@ -7805,6 +7811,20 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("secur
     "immutable": true,
     "path": "security.agentToAgent.allowAgents",
     "type": "array"
+  },
+  {
+    "default": {
+      "maxRetries": 3
+    },
+    "immutable": true,
+    "path": "security.agentToAgent.delivery",
+    "type": "object"
+  },
+  {
+    "default": 3,
+    "immutable": true,
+    "path": "security.agentToAgent.delivery.maxRetries",
+    "type": "integer"
   },
   {
     "default": true,
@@ -7832,6 +7852,18 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("secur
     "immutable": true,
     "path": "security.agentToAgent.maxPingPongTurns",
     "type": "integer"
+  },
+  {
+    "default": true,
+    "immutable": true,
+    "path": "security.agentToAgent.sandboxNoDowngrade",
+    "type": "boolean"
+  },
+  {
+    "default": false,
+    "immutable": true,
+    "path": "security.agentToAgent.steerInject",
+    "type": "boolean"
   },
   {
     "default": 50,
@@ -8003,6 +8035,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("secur
     "default": 180000,
     "immutable": true,
     "path": "security.agentToAgent.subagentContext.stuckKillThresholdMs",
+    "type": "integer"
+  },
+  {
+    "default": null,
+    "immutable": true,
+    "path": "security.agentToAgent.tokenBudget",
     "type": "integer"
   },
   {
@@ -8360,7 +8398,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
           "perExecution": 2000000,
           "perHour": 10000000
         },
-        "cacheBreakpointStrategy": "single",
+        "cacheBreakpointStrategy": "auto",
         "cacheRetention": "long",
         "circuitBreaker": {
           "failureThreshold": 5,
@@ -8397,7 +8435,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
         "enforceFinalTag": false,
         "fastMode": false,
         "geminiCache": {
-          "enabled": false,
+          "enabled": true,
           "maxActiveCaches": 20
         },
         "learningForgetting": {
@@ -13716,6 +13754,46 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
   },
   {
     "default": {
+      "authoring": {
+        "gbnfConstrain": false,
+        "intentAction": false,
+        "repairProducer": false
+      }
+    },
+    "immutable": false,
+    "path": "orchestration",
+    "type": "object"
+  },
+  {
+    "default": {
+      "gbnfConstrain": false,
+      "intentAction": false,
+      "repairProducer": false
+    },
+    "immutable": false,
+    "path": "orchestration.authoring",
+    "type": "object"
+  },
+  {
+    "default": false,
+    "immutable": false,
+    "path": "orchestration.authoring.gbnfConstrain",
+    "type": "boolean"
+  },
+  {
+    "default": false,
+    "immutable": false,
+    "path": "orchestration.authoring.intentAction",
+    "type": "boolean"
+  },
+  {
+    "default": false,
+    "immutable": false,
+    "path": "orchestration.authoring.repairProducer",
+    "type": "boolean"
+  },
+  {
+    "default": {
       "classes": {
         "attachment": {
           "retentionMs": 604800000
@@ -14261,8 +14339,13 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
       },
       "agentToAgent": {
         "allowAgents": [],
+        "delivery": {
+          "maxRetries": 3
+        },
         "enabled": true,
         "maxPingPongTurns": 3,
+        "sandboxNoDowngrade": true,
+        "steerInject": false,
         "subAgentMaxSteps": 50,
         "subAgentMcpTools": "inherit",
         "subAgentRetentionMs": 3600000,
@@ -14291,6 +14374,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
           "resultTagPrefix": "Subagent Result",
           "stuckKillThresholdMs": 180000
         },
+        "tokenBudget": null,
         "waitTimeoutMs": 60000
       },
       "auditLog": true,
@@ -14338,8 +14422,13 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
   {
     "default": {
       "allowAgents": [],
+      "delivery": {
+        "maxRetries": 3
+      },
       "enabled": true,
       "maxPingPongTurns": 3,
+      "sandboxNoDowngrade": true,
+      "steerInject": false,
       "subAgentMaxSteps": 50,
       "subAgentMcpTools": "inherit",
       "subAgentRetentionMs": 3600000,
@@ -14368,6 +14457,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
         "resultTagPrefix": "Subagent Result",
         "stuckKillThresholdMs": 180000
       },
+      "tokenBudget": null,
       "waitTimeoutMs": 60000
     },
     "immutable": true,
@@ -14379,6 +14469,20 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "immutable": true,
     "path": "security.agentToAgent.allowAgents",
     "type": "array"
+  },
+  {
+    "default": {
+      "maxRetries": 3
+    },
+    "immutable": true,
+    "path": "security.agentToAgent.delivery",
+    "type": "object"
+  },
+  {
+    "default": 3,
+    "immutable": true,
+    "path": "security.agentToAgent.delivery.maxRetries",
+    "type": "integer"
   },
   {
     "default": true,
@@ -14406,6 +14510,18 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "immutable": true,
     "path": "security.agentToAgent.maxPingPongTurns",
     "type": "integer"
+  },
+  {
+    "default": true,
+    "immutable": true,
+    "path": "security.agentToAgent.sandboxNoDowngrade",
+    "type": "boolean"
+  },
+  {
+    "default": false,
+    "immutable": true,
+    "path": "security.agentToAgent.steerInject",
+    "type": "boolean"
   },
   {
     "default": 50,
@@ -14577,6 +14693,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "default": 180000,
     "immutable": true,
     "path": "security.agentToAgent.subagentContext.stuckKillThresholdMs",
+    "type": "integer"
+  },
+  {
+    "default": null,
+    "immutable": true,
+    "path": "security.agentToAgent.tokenBudget",
     "type": "integer"
   },
   {
@@ -15689,7 +15811,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
       "type": "object"
     },
     "cacheBreakpointStrategy": {
-      "default": "single",
+      "default": "auto",
       "enum": [
         "auto",
         "multi-zone",
@@ -16532,12 +16654,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
     "geminiCache": {
       "additionalProperties": false,
       "default": {
-        "enabled": false,
+        "enabled": true,
         "maxActiveCaches": 20
       },
       "properties": {
         "enabled": {
-          "default": false,
+          "default": true,
           "type": "boolean"
         },
         "maxActiveCaches": {
@@ -25677,8 +25799,13 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("sec
       "additionalProperties": false,
       "default": {
         "allowAgents": [],
+        "delivery": {
+          "maxRetries": 3
+        },
         "enabled": true,
         "maxPingPongTurns": 3,
+        "sandboxNoDowngrade": true,
+        "steerInject": false,
         "subAgentMaxSteps": 50,
         "subAgentMcpTools": "inherit",
         "subAgentRetentionMs": 3600000,
@@ -25707,6 +25834,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("sec
           "resultTagPrefix": "Subagent Result",
           "stuckKillThresholdMs": 180000
         },
+        "tokenBudget": null,
         "waitTimeoutMs": 60000
       },
       "properties": {
@@ -25717,6 +25845,24 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("sec
             "type": "string"
           },
           "type": "array"
+        },
+        "delivery": {
+          "additionalProperties": false,
+          "default": {
+            "maxRetries": 3
+          },
+          "properties": {
+            "maxRetries": {
+              "default": 3,
+              "maximum": 10,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "maxRetries"
+          ],
+          "type": "object"
         },
         "enabled": {
           "default": true,
@@ -25742,6 +25888,14 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("sec
           "maximum": 5,
           "minimum": 0,
           "type": "integer"
+        },
+        "sandboxNoDowngrade": {
+          "default": true,
+          "type": "boolean"
+        },
+        "steerInject": {
+          "default": false,
+          "type": "boolean"
         },
         "subAgentMaxSteps": {
           "default": 50,
@@ -25942,6 +26096,19 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("sec
           ],
           "type": "object"
         },
+        "tokenBudget": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "waitTimeoutMs": {
           "default": 60000,
           "exclusiveMinimum": 0,
@@ -25959,6 +26126,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("sec
         "subAgentToolGroups",
         "subAgentMcpTools",
         "subAgentSessionPersistence",
+        "tokenBudget",
+        "delivery",
+        "sandboxNoDowngrade",
+        "steerInject",
         "subagentContext"
       ],
       "type": "object"
@@ -26712,7 +26883,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "type": "object"
           },
           "cacheBreakpointStrategy": {
-            "default": "single",
+            "default": "auto",
             "enum": [
               "auto",
               "multi-zone",
@@ -27555,12 +27726,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "geminiCache": {
             "additionalProperties": false,
             "default": {
-              "enabled": false,
+              "enabled": true,
               "maxActiveCaches": 20
             },
             "properties": {
               "enabled": {
-                "default": false,
+                "default": true,
                 "type": "boolean"
               },
               "maxActiveCaches": {
@@ -31006,7 +31177,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "perExecution": 2000000,
             "perHour": 10000000
           },
-          "cacheBreakpointStrategy": "single",
+          "cacheBreakpointStrategy": "auto",
           "cacheRetention": "long",
           "circuitBreaker": {
             "failureThreshold": 5,
@@ -31043,7 +31214,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "enforceFinalTag": false,
           "fastMode": false,
           "geminiCache": {
-            "enabled": false,
+            "enabled": true,
             "maxActiveCaches": 20
           },
           "learningForgetting": {
@@ -37847,6 +38018,50 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
       ],
       "type": "object"
     },
+    "orchestration": {
+      "additionalProperties": false,
+      "default": {
+        "authoring": {
+          "gbnfConstrain": false,
+          "intentAction": false,
+          "repairProducer": false
+        }
+      },
+      "properties": {
+        "authoring": {
+          "additionalProperties": false,
+          "default": {
+            "gbnfConstrain": false,
+            "intentAction": false,
+            "repairProducer": false
+          },
+          "properties": {
+            "gbnfConstrain": {
+              "default": false,
+              "type": "boolean"
+            },
+            "intentAction": {
+              "default": false,
+              "type": "boolean"
+            },
+            "repairProducer": {
+              "default": false,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "intentAction",
+            "repairProducer",
+            "gbnfConstrain"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "authoring"
+      ],
+      "type": "object"
+    },
     "outputRetention": {
       "additionalProperties": false,
       "default": {
@@ -38856,8 +39071,13 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
         },
         "agentToAgent": {
           "allowAgents": [],
+          "delivery": {
+            "maxRetries": 3
+          },
           "enabled": true,
           "maxPingPongTurns": 3,
+          "sandboxNoDowngrade": true,
+          "steerInject": false,
           "subAgentMaxSteps": 50,
           "subAgentMcpTools": "inherit",
           "subAgentRetentionMs": 3600000,
@@ -38886,6 +39106,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "resultTagPrefix": "Subagent Result",
             "stuckKillThresholdMs": 180000
           },
+          "tokenBudget": null,
           "waitTimeoutMs": 60000
         },
         "auditLog": true,
@@ -38934,8 +39155,13 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "additionalProperties": false,
           "default": {
             "allowAgents": [],
+            "delivery": {
+              "maxRetries": 3
+            },
             "enabled": true,
             "maxPingPongTurns": 3,
+            "sandboxNoDowngrade": true,
+            "steerInject": false,
             "subAgentMaxSteps": 50,
             "subAgentMcpTools": "inherit",
             "subAgentRetentionMs": 3600000,
@@ -38964,6 +39190,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "resultTagPrefix": "Subagent Result",
               "stuckKillThresholdMs": 180000
             },
+            "tokenBudget": null,
             "waitTimeoutMs": 60000
           },
           "properties": {
@@ -38974,6 +39201,24 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "type": "string"
               },
               "type": "array"
+            },
+            "delivery": {
+              "additionalProperties": false,
+              "default": {
+                "maxRetries": 3
+              },
+              "properties": {
+                "maxRetries": {
+                  "default": 3,
+                  "maximum": 10,
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "maxRetries"
+              ],
+              "type": "object"
             },
             "enabled": {
               "default": true,
@@ -38999,6 +39244,14 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "maximum": 5,
               "minimum": 0,
               "type": "integer"
+            },
+            "sandboxNoDowngrade": {
+              "default": true,
+              "type": "boolean"
+            },
+            "steerInject": {
+              "default": false,
+              "type": "boolean"
             },
             "subAgentMaxSteps": {
               "default": 50,
@@ -39199,6 +39452,19 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               ],
               "type": "object"
             },
+            "tokenBudget": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
             "waitTimeoutMs": {
               "default": 60000,
               "exclusiveMinimum": 0,
@@ -39216,6 +39482,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "subAgentToolGroups",
             "subAgentMcpTools",
             "subAgentSessionPersistence",
+            "tokenBudget",
+            "delivery",
+            "sandboxNoDowngrade",
+            "steerInject",
             "subagentContext"
           ],
           "type": "object"
@@ -40290,6 +40560,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
     "integrations",
     "monitoring",
     "observability",
+    "orchestration",
     "diagnostics",
     "plugins",
     "queue",
@@ -40338,6 +40609,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSections() 
   "providers",
   "messages",
   "approvals",
-  "tooling"
+  "tooling",
+  "orchestration"
 ]"
 `;

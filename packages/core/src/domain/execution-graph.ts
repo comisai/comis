@@ -113,6 +113,8 @@ export const GraphNodeSchema = z.strictObject({
   timeoutMs: z.number().int().positive().optional(),
   /** Maximum agentic steps for the sub-agent */
   maxSteps: z.number().int().positive().optional(),
+  /** Per-spawn token budget for this node's sub-agent. Becomes the child's BudgetGuard per-execution cap; a breach fails THIS node honoring on_failure (BUDGET-01/02). */
+  tokenBudget: z.number().int().positive().optional(),
   /** Barrier mode for fan-in nodes: all (default), majority (>50%), best-effort (any completed) */
   barrierMode: z.enum(["all", "majority", "best-effort"]).default("all"),
   /** Number of automatic retries on failure (0-3, default 1) */

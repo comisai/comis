@@ -16,13 +16,14 @@
 import type { NormalizedMessage, SessionKey, DeliveryService, DeliverToChannelOptions, ClockPort, TimerPort, AppContainer, FileLockPort, ChannelPort } from "@comis/core";
 import { tryGetContext, safePath, systemNowMs } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
-import { createResultCondenser, createNarrativeCaster, createLifecycleHooks, resolveOperationModel, resolveProviderFamily, createSubAgentRunner } from "@comis/agent";
+import { createResultCondenser, createNarrativeCaster, createLifecycleHooks, resolveOperationModel, resolveProviderFamily, createSubAgentRunner, classifyErrorContext, createDeliveryDedup, resolvePostureFromSkills } from "@comis/agent";
 import {
   createCrossSessionSender,
   createAnnouncementBatcher,
   createAnnouncementDeadLetterQueue,
 } from "@comis/orchestrator";
 import { randomUUID } from "node:crypto";
+import { computeRetryBackoff } from "../../graph/graph-node-lifecycle.js";
 import { buildExecuteSubAgent } from "./setup-cross-session-graph.js";
 import { registerProxyTypingListeners } from "./setup-cross-session-events.js";
 
@@ -256,12 +257,32 @@ export function setupCrossSession(deps: {
     logger: deps.logger?.child({ submodule: "dead-letter-queue" }),
   });
 
+  // WR-02/WR-03: ONE bounded delivered-key store shared across every
+  // completion-delivery surface — the batcher success path, the no-batcher
+  // success branches in deliverAnnouncement, the failure path
+  // (deliverFailureNotification), and DLQ recovery (WR-01). A single instance is
+  // what makes cross-path dedup hold whether or not the batcher is on the path;
+  // it is bounded (FIFO) so it never leaks for the daemon lifetime.
+  const deliveryDedup = createDeliveryDedup();
+
   // Announcement batcher coalesces near-simultaneous sub-agent completions.
   const announcementBatcher = createAnnouncementBatcher({
     announceToParent,
     sendToChannel,
     logger: deps.logger?.child({ submodule: "announcement-batcher" }),
     deadLetterQueue,
+    deliveryDedup,
+    // DELIVERY-02: inject the transient/permanent classifier + backoff so the
+    // batcher self-heals transient fallback failures (retry-with-backoff) and
+    // fast-paths permanent ones to the DLQ. computeRetryBackoff is an
+    // intra-package import (daemon owns it); classifyErrorContext comes from
+    // @comis/agent — both injected here so the orchestrator never imports either
+    // (no dependency inversion). The batcher only ever classifies transport
+    // errors, so endReason is bound to "failed".
+    classifyErrorContext: (msg: string) => classifyErrorContext(msg, "failed"),
+    computeRetryBackoff,
+    maxRetries: container.config.security.agentToAgent.delivery.maxRetries,
+    eventBus: container.eventBus,
   });
 
   // Resolve condensation model via 5-level priority chain
@@ -323,6 +344,21 @@ export function setupCrossSession(deps: {
     announceToParent,
     eventBus: container.eventBus,
     config: container.config.security.agentToAgent,
+    // Sandbox no-downgrade posture resolver (SANDBOX-02). The runner is a
+    // @comis/agent leaf with no full-config import, so it CANNOT reach
+    // container.config.agents — we inject a closure that resolves each agent's
+    // posture from its per-agent skills config. The two-arg form mirrors the
+    // effectiveAgentId inherit-caller fallback in setup-cross-session-graph.ts
+    // (:197-199): a child with no dedicated config inherits the caller's config,
+    // so its resolved posture matches what it will actually run under (equal to
+    // the caller ⇒ not a phantom downgrade). resolvePostureFromSkills folds an
+    // absent slice to the most-confined default (fail-closed).
+    resolvePosture: (agentId: string, callerAgentId?: string) => {
+      const effectiveAgentId = (agentId in container.config.agents)
+        ? agentId
+        : (callerAgentId && callerAgentId in container.config.agents ? callerAgentId : agentId);
+      return resolvePostureFromSkills(container.config.agents[effectiveAgentId]?.skills);
+    },
     tenantId: container.config.tenantId,
     dataDir: container.config.dataDir || ".",
     logger: deps.logger?.child({ submodule: "sub-agent-runner" }),
@@ -336,6 +372,7 @@ export function setupCrossSession(deps: {
     narrativeCaster,
     lifecycleHooks,
     deadLetterQueue,
+    deliveryDedup,
     clock: deps.clock,
     timers: deps.timers,
   });

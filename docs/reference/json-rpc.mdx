@@ -853,6 +853,10 @@ The boot-time `config_posture` diagnostic row carries `servedBelowConfiguredCoun
 
 When transcriptions/syntheses degraded across the window, `findings[]` gains a `voice_health` code: the **count of degraded STT/TTS turns** and the **dominant voice `errorKind`** in the `detail` (e.g. `model_load_failed`, `auth_required`), with a hint pointing at `comis explain` and -- for the keyless-engine load/download failures -- the whisper model cache + disk + the local engine probe. The finding rolls up the `voice_degraded` `health_signal` diagnostic rows the daemon voice path emits on a failure; like every fleet finding it carries **counts + a short code + a closed errorKind label + a static hint only -- no raw provider body or secret, safe to paste**. A malformed row folds to a no-count defensively (never an assembly error), and there is no finding when no voice turn degraded. See [Voice → Observability and cost](/media/voice#observability-and-cost).
 
+When small/local-tier models author pipeline DAGs over the window, `findings[]` gains a `pipeline_authoring` code reporting the **small-model pipeline-authoring failure rate** -- the count of small/nano-tier authorings that failed schema validation over the small/nano-tier total, plus the rate. It rolls up the `pipeline_authoring` `health_signal` diagnostic rows the daemon emits from each [`pipeline:authored`](/developer-guide/event-bus) event (`define`/`execute`); like every fleet finding it carries **counts + a short code + a static hint only -- no pipeline body, no node `type_config`, no secret, safe to paste**. The hint names the Phase 174 build/defer gate. The finding fires only when at least one small/nano-tier authoring ran in the window; `mid`- and `unknown`-tier authorings are in neither cohort. The denominator counts every contract-parse-reachable authoring invocation -- a present-but-malformed call that fails the request-contract parse **or** the graph parse/validate step is counted as invalid; only the bespoke pre-checks (a `define` with no `nodes`, an `execute` rejected by the agent-to-agent policy gate) are excluded, since neither is an authoring attempt.
+
+This finding is the metric behind a **pre-committed, measure-first decision rule**. The report carries a deterministic `pipelineAuthoringGate` verdict `{ buildAuthor, reason }`, computed by a pure reducer over the windowed authoring rows -- the same window always reproduces the same verdict (no LLM, no clock). **Phase 174 (small-model-authorable DAGs) is built only when this rule fires `buildAuthor: true`**, which happens only when both gates pass: small-tier invocations are non-trivial (**at least 20** over the window) AND small-tier author-validity is materially below frontier (**at least 15 percentage points** below). Otherwise it defers -- and with no telemetry, the default state for a fresh deployment, it returns `buildAuthor: false` with a reason naming insufficient telemetry. The thresholds are pinned in code so a silent retune is caught; the verdict is auditable from `comis fleet` once a v2.27+ daemon has accumulated authoring telemetry.
+
 This is the cross-session **sibling** of [`obs.explain`](#obs-explain): `obs.explain` post-mortems ONE session; `obs.fleet.health` rolls up a WINDOW of sessions.
 
 `sinceHours` is optional; the **24h** default is applied in the handler. The report is digest-only: `findings[]` is capped top-N and `topErrorKinds` is merged + capped (counts only), with an honest `truncations[]` ledger recording anything the bounding pass dropped. An optional `coverage` block reports READ-coverage of the fleet sources -- the session-summary store (`{ found, rows }`), the multi-day session index (`{ daysRead, daysMissing }`), and the billing source (`{ present }`) -- so a silently-empty window (e.g. `rows: 0` or `daysMissing > 0`) is self-evident rather than masquerading as a clean zero-activity fleet.
@@ -861,7 +865,7 @@ This is the cross-session **sibling** of [`obs.explain`](#obs-explain): `obs.exp
 |----------|-------|
 | **Scope** | `admin` |
 | **Parameters** | `{ sinceHours?: number }` -- the aggregation window in hours (positive). Optional; defaults to `24` in the handler. |
-| **Returns** | A `FleetHealthReport`: `{ schemaVersion, windowHours, sessions: { total, degraded, degradedRate }, degradedByCause, topErrorKinds[], breakerTripTotal, toolStats, cost: { costUsd, totalTokens }, activity: { activeAgents[], activeChannels[], exitReasons, turnTotal, tokenTotal }, findings[], likelyRootCause, suggestedNextSteps[], truncations[], coverage? }` |
+| **Returns** | A `FleetHealthReport`: `{ schemaVersion, windowHours, sessions: { total, degraded, degradedRate }, degradedByCause, topErrorKinds[], breakerTripTotal, toolStats, cost: { costUsd, totalTokens }, activity: { activeAgents[], activeChannels[], exitReasons, turnTotal, tokenTotal }, findings[], likelyRootCause, pipelineAuthoringGate?: { buildAuthor, reason }, suggestedNextSteps[], truncations[], coverage? }` |
 
 <CodeGroup>
 ```json Request
@@ -893,13 +897,15 @@ This is the cross-session **sibling** of [`obs.explain`](#obs-explain): `obs.exp
     },
     "findings": [
       { "code": "fleet_recurring_health_signal", "detail": "lcd_divergence recurred across the window", "count": 14, "hint": "inspect the LCD compaction path" },
-      { "code": "voice_health", "detail": "6 degraded STT/TTS turn(s); top errorKind model_load_failed", "count": 6, "hint": "run `comis explain` on an affected voice session; for model_load_failed/model_download_failed check the whisper model cache + disk + the local engine probe (a keyless engine), or set the provider's audio API key for auth_required" }
+      { "code": "voice_health", "detail": "6 degraded STT/TTS turn(s); top errorKind model_load_failed", "count": 6, "hint": "run `comis explain` on an affected voice session; for model_load_failed/model_download_failed check the whisper model cache + disk + the local engine probe (a keyless engine), or set the provider's audio API key for auth_required" },
+      { "code": "pipeline_authoring", "detail": "3/12 small-tier pipeline authorings invalid (25.0%)", "count": 3, "hint": "small-model pipeline-authoring failure rate; gates Phase 174 (small-model-authorable DAGs) -- see pipelineAuthoringGate" }
     ],
     "likelyRootCause": {
       "code": "fleet_high_degraded_rate",
       "detail": "over half the window's sessions degraded",
       "suggestedNextSteps": ["obs.explain the worst session", "raise the breaker threshold"]
     },
+    "pipelineAuthoringGate": { "buildAuthor": false, "reason": "insufficient telemetry: 12 small-tier invocations (< 20)" },
     "suggestedNextSteps": ["raise the breaker threshold"],
     "truncations": [],
     "coverage": { "sessionSummary": { "found": true, "rows": 40 }, "sessionIndex": { "daysRead": 1, "daysMissing": 0 }, "billing": { "present": true } }
@@ -3812,7 +3818,7 @@ Sub-agent lifecycle management: list running sub-agents, kill stuck executions, 
 |--------|-------|-------------|
 | `subagent.list` | `admin` | List recent sub-agent runs |
 | `subagent.kill` | `admin` | Kill a running sub-agent |
-| `subagent.steer` | `admin` | Inject a steering message into a running sub-agent |
+| `subagent.steer` | `admin` | Steer a running sub-agent -- inject a message into the live child (flag on) or kill+respawn (flag off, default) |
 
 ### `subagent.list`
 
@@ -3879,8 +3885,15 @@ Sub-agent lifecycle management: list running sub-agents, kill stuck executions, 
 | Property | Value |
 |----------|-------|
 | **Scope** | `admin` |
-| **Parameters** | `{ target: string, message: string }` -- inject a user-turn message into the sub-agent's conversation |
-| **Returns** | Steer confirmation |
+| **Parameters** | `{ target: string, message: string }` -- `target` is the runId; `message` is the steering text |
+| **Returns** | A discriminated union on `status` (see below) |
+
+Behavior is gated on [`security.agentToAgent.steerInject`](/reference/config-yaml#security) (default `false`):
+
+- **Flag off (default)** -- kills the running child and respawns a fresh run with `message` as the new task. Returns `{ status: "steered", oldRunId, newRunId }`. The child's transcript and progress are discarded.
+- **Flag on** -- injects `message` into the *running* child's live session at its next step boundary, preserving the transcript and prior work (no kill, no respawn -- the same runId continues). Returns `{ status: "steered_inject", runId }`. The message lands as a user turn after the current step commits (it does not interrupt a tool call mid-execution).
+
+Rate-limited to one steer per `target` every 2 seconds (shared across both modes). A steered message is a message, not a capability grant: the child's tool set is fixed at spawn, so a steered request for a tool on the sub-agent tool denylist is still refused (the [defense-in-depth](/security/defense-in-depth) governance applies regardless of message source).
 
 </Accordion>
 

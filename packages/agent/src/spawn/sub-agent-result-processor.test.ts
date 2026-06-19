@@ -328,6 +328,267 @@ describe("deliverFailureNotification", () => {
 });
 
 // ---------------------------------------------------------------------------
+// deliverFailureNotification idempotency (DELIVERY-03)
+//
+// The failure path must dedup on the SAME announceKey = `${callerSessionKey}::${runId}`
+// that the success path (deliverAnnouncement) builds, sharing the batcher's
+// deliveredKeys via hasDelivered/markDelivered (D-SHAREDDEDUP from Plan 01).
+// A Phase-170 budget-failed node delivered twice must notify ONCE.
+//
+// NOTE: these tests pass `callerSessionKey` + a `batcher` with hasDelivered/
+// markDelivered into deliverFailureNotification — neither exists on the
+// pre-patch signature, so the suite fails to compile against pre-patch code.
+// That compile-failure IS the RED for the signature change (§2.10).
+// ---------------------------------------------------------------------------
+
+/** A stub batcher whose delivered-key set is a real shared Set (mirrors the orchestrator batcher). */
+function makeStubBatcher() {
+  const deliveredKeys = new Set<string>();
+  const markDelivered = vi.fn((key: string) => { deliveredKeys.add(key); });
+  const hasDelivered = vi.fn((key: string) => deliveredKeys.has(key));
+  return {
+    enqueue: vi.fn(),
+    flush: vi.fn().mockResolvedValue(undefined),
+    shutdown: vi.fn().mockResolvedValue(undefined),
+    get pending() { return 0; },
+    hasDelivered,
+    markDelivered,
+  };
+}
+
+describe("deliverFailureNotification idempotency (DELIVERY-03)", () => {
+  it("is idempotent on the same (callerSessionKey, runId): second call is a no-op", async () => {
+    const sendToChannel = vi.fn().mockResolvedValue(true);
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
+    const batcher = makeStubBatcher();
+
+    const params = {
+      channelType: "discord",
+      channelId: "chan-1",
+      task: "budget-capped task",
+      runtimeMs: 1234,
+      runId: "r1",
+      callerSessionKey: "default:u1:c1",
+    };
+
+    await deliverFailureNotification(params, { sendToChannel, logger, batcher });
+    await deliverFailureNotification(params, { sendToChannel, logger, batcher });
+
+    // First delivery sent once; the second short-circuits before sendToChannel.
+    expect(sendToChannel).toHaveBeenCalledOnce();
+    expect(batcher.hasDelivered).toHaveBeenCalledWith("default:u1:c1::r1");
+  });
+
+  it("marks the SAME key the success path would mark (cross-path collision)", async () => {
+    const sendToChannel = vi.fn().mockResolvedValue(true);
+    const batcher = makeStubBatcher();
+
+    await deliverFailureNotification(
+      {
+        channelType: "telegram",
+        channelId: "chat-2",
+        task: "t",
+        runtimeMs: 500,
+        runId: "r1",
+        callerSessionKey: "default:u1:c1",
+      },
+      { sendToChannel, batcher },
+    );
+
+    // Proves a budget-failed node's failure-key == its success-key (deliverAnnouncement:514).
+    expect(batcher.markDelivered).toHaveBeenCalledOnce();
+    expect(batcher.markDelivered).toHaveBeenCalledWith("default:u1:c1::r1");
+  });
+
+  it("does NOT mark delivered when sendToChannel rejects (key stays retry-eligible, Pitfall 3)", async () => {
+    const sendToChannel = vi.fn().mockRejectedValue(new Error("network down"));
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
+    const batcher = makeStubBatcher();
+
+    await deliverFailureNotification(
+      {
+        channelType: "discord",
+        channelId: "chan-fail",
+        task: "t",
+        runtimeMs: 2000,
+        runId: "r1",
+        callerSessionKey: "default:u1:c1",
+      },
+      { sendToChannel, logger, batcher },
+    );
+
+    expect(sendToChannel).toHaveBeenCalledOnce();
+    expect(batcher.markDelivered).not.toHaveBeenCalled();
+    expect(batcher.hasDelivered("default:u1:c1::r1")).toBe(false);
+    // Still never throws.
+    expect(logger.warn).toHaveBeenCalledOnce();
+  });
+
+  it("no-op dedup when callerSessionKey is absent (top-level spawn) — always sends", async () => {
+    const sendToChannel = vi.fn().mockResolvedValue(true);
+    const batcher = makeStubBatcher();
+
+    const params = {
+      channelType: "discord",
+      channelId: "chan-1",
+      task: "t",
+      runtimeMs: 100,
+      runId: "r-top",
+      // no callerSessionKey
+    };
+
+    await deliverFailureNotification(params, { sendToChannel, batcher });
+    await deliverFailureNotification(params, { sendToChannel, batcher });
+
+    // No key → no dedup → both sends fire; the batcher dedup pair is never consulted.
+    expect(sendToChannel).toHaveBeenCalledTimes(2);
+    expect(batcher.hasDelivered).not.toHaveBeenCalled();
+    expect(batcher.markDelivered).not.toHaveBeenCalled();
+  });
+
+  it("behaves as today when deps.batcher is absent (no dedup, always sends, never throws)", async () => {
+    const sendToChannel = vi.fn().mockResolvedValue(true);
+
+    const params = {
+      channelType: "discord",
+      channelId: "chan-1",
+      task: "t",
+      runtimeMs: 100,
+      runId: "r1",
+      callerSessionKey: "default:u1:c1",
+    };
+
+    // No batcher in deps → behaves exactly as the pre-patch path.
+    await deliverFailureNotification(params, { sendToChannel });
+    await deliverFailureNotification(params, { sendToChannel });
+
+    expect(sendToChannel).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WR-02: in a NO-BATCHER construction the success path must still mark delivered
+// so the failure path dedups. Pre-fix, deliverAnnouncement only marked a key
+// indirectly THROUGH the batcher; its non-batcher success branches (direct
+// announceToParent / direct sendToChannel) delivered to the user but never
+// marked, so deliverFailureNotification's dedup was silently inert whenever the
+// runner was constructed without a batcher. A shared DeliveryDedup injected into
+// BOTH closes the hole: a success then a sweep-driven failure on the same key
+// must NOT double-deliver, with or without a batcher.
+// ---------------------------------------------------------------------------
+
+describe("deliverAnnouncement / deliverFailureNotification shared dedup without a batcher (WR-02)", () => {
+  it("a direct-channel success marks the shared dedup so a later failure notification is suppressed", async () => {
+    const { deliverAnnouncement } = await import("./sub-agent-result-processor.js");
+    const { createDeliveryDedup } = await import("./announce-key.js");
+    const deliveryDedup = createDeliveryDedup();
+
+    const announceSend = vi.fn().mockResolvedValue(true);
+    const failureSend = vi.fn().mockResolvedValue(true);
+
+    // SUCCESS via deliverAnnouncement's DIRECT branch (no batcher, no announceToParent).
+    await deliverAnnouncement(
+      {
+        announcementText: "[System Message]\nResult: ok",
+        announceChannelType: "discord",
+        announceChannelId: "chan-1",
+        callerAgentId: "agent-main",
+        callerSessionKey: "default:u1:c1",
+        runId: "r1",
+      },
+      { sendToChannel: announceSend, deliveryDedup },
+    );
+    expect(announceSend).toHaveBeenCalledOnce();
+    // The shared dedup now carries the key even though no batcher was wired.
+    expect(deliveryDedup.has("default:u1:c1::r1")).toBe(true);
+
+    // A sweep-driven FAILURE notification for the SAME run must dedup against
+    // the shared set and NOT send a second user-facing message.
+    await deliverFailureNotification(
+      {
+        channelType: "discord",
+        channelId: "chan-1",
+        task: "t",
+        runtimeMs: 100,
+        runId: "r1",
+        callerSessionKey: "default:u1:c1",
+      },
+      { sendToChannel: failureSend, deliveryDedup },
+    );
+    expect(failureSend).not.toHaveBeenCalled();
+  });
+
+  it("a parent-injection success marks the shared dedup (announceToParent branch) without a batcher", async () => {
+    const { deliverAnnouncement } = await import("./sub-agent-result-processor.js");
+    const { createDeliveryDedup } = await import("./announce-key.js");
+    const deliveryDedup = createDeliveryDedup();
+
+    const announceToParent = vi.fn().mockResolvedValue(undefined);
+    const sendToChannel = vi.fn().mockResolvedValue(true);
+
+    await deliverAnnouncement(
+      {
+        announcementText: "[System Message]\nResult: ok",
+        announceChannelType: "telegram",
+        announceChannelId: "chat-1",
+        callerAgentId: "agent-main",
+        callerSessionKey: "default:u2:c2",
+        runId: "r2",
+      },
+      { sendToChannel, announceToParent, deliveryDedup },
+    );
+
+    // Parent injection succeeded → the key is marked on the shared dedup.
+    expect(announceToParent).toHaveBeenCalledOnce();
+    expect(deliveryDedup.has("default:u2:c2::r2")).toBe(true);
+  });
+
+  it("the failure path dedups against the shared dedup even when no batcher is present", async () => {
+    const { createDeliveryDedup } = await import("./announce-key.js");
+    const deliveryDedup = createDeliveryDedup();
+    const sendToChannel = vi.fn().mockResolvedValue(true);
+
+    const params = {
+      channelType: "discord",
+      channelId: "chan-1",
+      task: "t",
+      runtimeMs: 100,
+      runId: "r3",
+      callerSessionKey: "default:u3:c3",
+    };
+
+    // First failure notification sends + marks the shared dedup; the second is a no-op.
+    await deliverFailureNotification(params, { sendToChannel, deliveryDedup });
+    await deliverFailureNotification(params, { sendToChannel, deliveryDedup });
+
+    expect(sendToChannel).toHaveBeenCalledOnce();
+    expect(deliveryDedup.has("default:u3:c3::r3")).toBe(true);
+  });
+
+  it("does NOT mark the shared dedup when the direct send fails (key stays open, Pitfall 3)", async () => {
+    const { deliverAnnouncement } = await import("./sub-agent-result-processor.js");
+    const { createDeliveryDedup } = await import("./announce-key.js");
+    const deliveryDedup = createDeliveryDedup();
+    const sendToChannel = vi.fn().mockRejectedValue(new Error("network down"));
+
+    await deliverAnnouncement(
+      {
+        announcementText: "[System Message]\nResult: ok",
+        announceChannelType: "discord",
+        announceChannelId: "chan-1",
+        callerAgentId: "agent-main",
+        callerSessionKey: "default:u4:c4",
+        runId: "r4",
+      },
+      { sendToChannel, deliveryDedup },
+    );
+
+    // Failed delivery must NOT mark — a later retry / failure notification must still fire.
+    expect(deliveryDedup.has("default:u4:c4::r4")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // classifyErrorContext - HTTP 5xx detection (operator-precedence regression).
 // The old expression
 // `lowerMsg.includes("provider") || lowerMsg.includes("5") && lowerMsg.includes("00")`
@@ -379,6 +640,109 @@ describe("classifyErrorContext HTTP-5xx detection", () => {
 });
 
 // ---------------------------------------------------------------------------
+// classifyErrorContext - transport-errno widening (DELIVERY-02).
+// The bare Node errno spellings do NOT contain "timeout"/"timed out"
+// (e.g. "ETIMEDOUT".toLowerCase() === "etimedout"), and ECONNRESET /
+// ECONNREFUSED / "socket hang up" / "fetch failed" / "network request failed"
+// match NONE of the existing transient tokens — so on pre-patch code they fall
+// through to Unknown → retryable:false → immediate dead-letter, defeating the
+// most common transient delivery failure. The widening adds an explicit
+// transport-errno branch so these self-heal (retry-with-backoff in the batcher).
+// ---------------------------------------------------------------------------
+
+describe("classifyErrorContext transport-errno widening (DELIVERY-02)", () => {
+  it("classifies bare transport errno spellings as retryable (transient delivery blips)", () => {
+    // All FAIL on pre-patch code (Unknown / retryable:false); the widening flips
+    // each to retryable:true. Case-insensitive on the raw message.
+    const transientTransport = [
+      "ETIMEDOUT",
+      "ECONNRESET",
+      "ECONNREFUSED",
+      "EPIPE",
+      "socket hang up",
+      "fetch failed",
+      "Network request failed", // mixed case proves case-insensitivity
+    ];
+    for (const msg of transientTransport) {
+      const result = classifyErrorContext(msg, "failed");
+      expect(result.retryable, `msg: ${msg}`).toBe(true);
+    }
+  });
+
+  it("classifies errno tokens embedded in a longer message as retryable", () => {
+    // Real delivery errors wrap the errno in surrounding text.
+    const result = classifyErrorContext("send failed: connect ECONNREFUSED 127.0.0.1:443", "failed");
+    expect(result.retryable).toBe(true);
+  });
+
+  // REGRESSION-GUARD: the widening must NOT make genuinely permanent failures
+  // retryable, and must NOT collide with the existing numeric false-positive
+  // pins. These stay exactly as pre-patch (retryable:false / NOT ProviderError).
+  it("keeps genuinely permanent failures non-retryable after the widening", () => {
+    expect(classifyErrorContext("token budget exceeded", "failed").retryable).toBe(false);
+    expect(classifyErrorContext("max steps reached", "failed").retryable).toBe(false);
+    expect(classifyErrorContext("context window exhausted", "failed").retryable).toBe(false);
+    // killed endReason is permanent regardless of message.
+    expect(classifyErrorContext("ECONNRESET", "killed").retryable).toBe(false);
+  });
+
+  it("does NOT let transport tokens collide with the numeric 5xx false-positive guards", () => {
+    // These must still NOT be ProviderError AND must stay retryable:false — the
+    // new transport tokens share no substring with them.
+    const stillPermanent = [
+      "50000 tokens consumed",
+      "processed 5000 messages",
+      "Step 5 failed at 12:00:00",
+    ];
+    for (const msg of stillPermanent) {
+      const result = classifyErrorContext(msg, "failed");
+      expect(result.errorType, `msg: ${msg}`).not.toBe("ProviderError");
+      expect(result.retryable, `msg: ${msg}`).toBe(false);
+    }
+  });
+
+  // INFO-CLASSIFIER: the two natural-language phrases "connection reset" /
+  // "connection refused" are pure exposure — their errno twins (ECONNRESET /
+  // ECONNREFUSED) already match every genuine Node transport error (which always
+  // carries the errno spelling), so the phrases are redundant for real failures
+  // but could over-match a PERMANENT error that quotes them as content. Drop the
+  // redundant phrases (clean tightening, errno-style only) while keeping the
+  // errno-less real phrasings (fetch failed / socket hang up). Mirrors the
+  // existing 5xx false-positive guard the file already carries.
+  it("does NOT classify a permanent error that merely quotes 'connection refused' as retryable", () => {
+    // A tool/model error that embeds the phrase as quoted content is NOT a
+    // transport blip — it must stay non-retryable (no errno present).
+    const result = classifyErrorContext('Tool reported: "connection refused by policy"', "failed");
+    expect(result.errorType).not.toBe("TransportError");
+    expect(result.retryable).toBe(false);
+  });
+
+  it("does NOT classify a permanent error that merely quotes 'connection reset' as retryable", () => {
+    const result = classifyErrorContext('validation failed: expected "connection reset" flag', "failed");
+    expect(result.errorType).not.toBe("TransportError");
+    expect(result.retryable).toBe(false);
+  });
+
+  it("still classifies a genuine ECONNREFUSED / ECONNRESET transport error as retryable (coverage preserved)", () => {
+    // The errno-bearing forms — the real Node transport failures — keep self-healing.
+    expect(classifyErrorContext("connect ECONNREFUSED 127.0.0.1:443", "failed").retryable).toBe(true);
+    expect(classifyErrorContext("read ECONNRESET", "failed").retryable).toBe(true);
+  });
+
+  it("is re-exported from the spawn barrel so the daemon wiring can inject it (DELIVERY-02)", async () => {
+    // Characterization pin (Task 2): classifyErrorContext must reach the
+    // @comis/agent public surface via the spawn/index.js barrel — the path
+    // packages/agent/src/index.ts re-exports from — so setup-cross-session
+    // can inject it into the orchestrator batcher (it cannot import the agent
+    // internal directly). The dist-import smoke check covers the full barrel.
+    const spawnBarrel = await import("./index.js");
+    expect(typeof spawnBarrel.classifyErrorContext).toBe("function");
+    // The barrel symbol is the same function as the module export.
+    expect(spawnBarrel.classifyErrorContext("ECONNRESET", "failed").retryable).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // announcement scrub
 // ---------------------------------------------------------------------------
 
@@ -418,5 +782,127 @@ describe("announcement scrub", () => {
     expect(sendToChannel).toHaveBeenCalled();
     const deliveredText = sendToChannel.mock.calls[0]![2] as string;
     expect(deliveredText).not.toContain(rawToken);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// deliverAnnouncement idempotency-key threading (DELIVERY-01).
+// The key `${callerSessionKey}::${runId}` is built ONCE at the entry and
+// threaded as data through the batcher enqueue and the fallback DLQ entry —
+// never reconstructed downstream. `::` delimits the session key's own colons.
+// ---------------------------------------------------------------------------
+
+describe("deliverAnnouncement idempotency key (DELIVERY-01)", () => {
+  it("sets idempotencyKey = `${callerSessionKey}::${runId}` on the batcher enqueue", async () => {
+    const { deliverAnnouncement } = await import("./sub-agent-result-processor.js");
+    const enqueue = vi.fn();
+    const batcher = {
+      enqueue,
+      flush: vi.fn().mockResolvedValue(undefined),
+      shutdown: vi.fn().mockResolvedValue(undefined),
+      get pending() { return 0; },
+    };
+
+    await deliverAnnouncement(
+      {
+        announcementText: "[System Message]\nResult: ok",
+        announceChannelType: "discord",
+        announceChannelId: "chan-1",
+        callerAgentId: "agent-main",
+        callerSessionKey: "default:user1:chan1",
+        runId: "run-xyz",
+      },
+      { sendToChannel: vi.fn().mockResolvedValue(true), batcher },
+    );
+
+    expect(enqueue).toHaveBeenCalledOnce();
+    const arg = enqueue.mock.calls[0]![0] as { idempotencyKey?: string };
+    expect(arg.idempotencyKey).toBe("default:user1:chan1::run-xyz");
+  });
+
+  it("does NOT fabricate a key and does NOT enqueue when callerSessionKey is absent (top-level spawn)", async () => {
+    const { deliverAnnouncement } = await import("./sub-agent-result-processor.js");
+    const enqueue = vi.fn();
+    const sendToChannel = vi.fn().mockResolvedValue(true);
+    const batcher = {
+      enqueue,
+      flush: vi.fn().mockResolvedValue(undefined),
+      shutdown: vi.fn().mockResolvedValue(undefined),
+      get pending() { return 0; },
+    };
+
+    await deliverAnnouncement(
+      {
+        announcementText: "[System Message]\nResult: ok",
+        announceChannelType: "discord",
+        announceChannelId: "chan-1",
+        // no callerAgentId / callerSessionKey → top-level spawn
+        runId: "run-top",
+      },
+      { sendToChannel, batcher },
+    );
+
+    // The batcher enqueue path requires callerAgentId + callerSessionKey;
+    // without them, delivery goes direct (no fabricated key).
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(sendToChannel).toHaveBeenCalledOnce();
+  });
+
+  it("threads the same idempotencyKey onto the fallback DLQ entry when the direct send fails", async () => {
+    const { deliverAnnouncement } = await import("./sub-agent-result-processor.js");
+    const dlqEnqueue = vi.fn();
+    const deadLetterQueue = {
+      enqueue: dlqEnqueue,
+      drain: vi.fn().mockResolvedValue(undefined),
+      size: vi.fn().mockReturnValue(0),
+    };
+
+    await deliverAnnouncement(
+      {
+        announcementText: "[System Message]\nResult: ok",
+        announceChannelType: "telegram",
+        announceChannelId: "chat-1",
+        callerAgentId: "agent-main",
+        callerSessionKey: "default:user2:chan2",
+        runId: "run-dlq",
+      },
+      {
+        // No batcher, no announceToParent → goes straight to the direct send,
+        // which rejects → fallback DLQ enqueue.
+        sendToChannel: vi.fn().mockRejectedValue(new Error("send failed")),
+        deadLetterQueue,
+      },
+    );
+
+    expect(dlqEnqueue).toHaveBeenCalledOnce();
+    const entry = dlqEnqueue.mock.calls[0]![0] as { idempotencyKey?: string };
+    expect(entry.idempotencyKey).toBe("default:user2:chan2::run-dlq");
+  });
+
+  it("leaves idempotencyKey undefined on the fallback DLQ entry when callerSessionKey is absent", async () => {
+    const { deliverAnnouncement } = await import("./sub-agent-result-processor.js");
+    const dlqEnqueue = vi.fn();
+    const deadLetterQueue = {
+      enqueue: dlqEnqueue,
+      drain: vi.fn().mockResolvedValue(undefined),
+      size: vi.fn().mockReturnValue(0),
+    };
+
+    await deliverAnnouncement(
+      {
+        announcementText: "[System Message]\nResult: ok",
+        announceChannelType: "telegram",
+        announceChannelId: "chat-1",
+        runId: "run-nokey",
+      },
+      {
+        sendToChannel: vi.fn().mockRejectedValue(new Error("send failed")),
+        deadLetterQueue,
+      },
+    );
+
+    expect(dlqEnqueue).toHaveBeenCalledOnce();
+    const entry = dlqEnqueue.mock.calls[0]![0] as { idempotencyKey?: string };
+    expect(entry.idempotencyKey).toBeUndefined();
   });
 });

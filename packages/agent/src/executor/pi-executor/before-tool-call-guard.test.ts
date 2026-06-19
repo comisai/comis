@@ -10,6 +10,7 @@ import { describe, it, expect } from "vitest";
 import { ok, err } from "@comis/shared";
 import { createBeforeToolCallGuard } from "./before-tool-call-guard.js";
 import { createTurnLoopDetector } from "../turn-loop-detector.js";
+import { createBudgetGuard } from "../../budget/budget-guard.js";
 
 describe("createBeforeToolCallGuard", () => {
   it("blocks when step counter is exhausted", async () => {
@@ -138,6 +139,40 @@ describe("createBeforeToolCallGuard", () => {
 
     const guard = createBeforeToolCallGuard(stepCounter, budgetGuard, circuitBreaker, undefined, undefined, detector);
     const result = await guard({ toolCall: { name: "read" }, args: { path: "/never-seen" } });
+
+    expect(result).toBeUndefined();
+  });
+
+  // -------------------------------------------------------------------------
+  // BUDGET-01: the mid-run hard stop fires off the per-execution EFFECTIVE cap
+  // set via resetExecution(cap), not just config.perExecution. Built with a
+  // REAL createBudgetGuard so the resetExecution(cap?) seam is exercised
+  // end-to-end (not a stub) — proving a runaway child is blocked at the next
+  // tool call once its tight cap is hit.
+  // -------------------------------------------------------------------------
+  it("blocks the next tool call once the per-execution effective cap from resetExecution is reached", async () => {
+    const stepCounter = { shouldHalt: () => false, increment: () => 1, reset: () => {}, getCount: () => 0 };
+    const circuitBreaker = { isOpen: () => false, recordSuccess: () => {}, recordFailure: () => {}, getState: () => "closed" as const, reset: () => {} };
+    // Real guard: config.perExecution is roomy (10_000) but the spawn caps THIS run at 1_000.
+    const budgetGuard = createBudgetGuard({ perExecution: 10_000, perHour: 50_000, perDay: 200_000 });
+    budgetGuard.resetExecution(1_000);
+    budgetGuard.recordUsage(1_500); // over the 1_000 effective cap (checkBudget(0) → 1_500 > 1_000)
+
+    const guard = createBeforeToolCallGuard(stepCounter, budgetGuard, circuitBreaker);
+    const result = await guard({ toolCall: { name: "read" }, args: { path: "/a" } });
+
+    expect(result).toEqual({ block: true, reason: "Token budget exhausted" });
+  });
+
+  it("does not block on the effective cap when the run is still under it", async () => {
+    const stepCounter = { shouldHalt: () => false, increment: () => 1, reset: () => {}, getCount: () => 0 };
+    const circuitBreaker = { isOpen: () => false, recordSuccess: () => {}, recordFailure: () => {}, getState: () => "closed" as const, reset: () => {} };
+    const budgetGuard = createBudgetGuard({ perExecution: 10_000, perHour: 50_000, perDay: 200_000 });
+    budgetGuard.resetExecution(1_000);
+    budgetGuard.recordUsage(500); // still under the 1_000 effective cap
+
+    const guard = createBeforeToolCallGuard(stepCounter, budgetGuard, circuitBreaker);
+    const result = await guard({ toolCall: { name: "read" }, args: { path: "/a" } });
 
     expect(result).toBeUndefined();
   });

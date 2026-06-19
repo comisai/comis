@@ -9,8 +9,9 @@
  * @module
  */
 
-import { parseFormattedSessionKey, type SessionKey, systemNowMs, systemSetTimeout, systemClearTimeout, systemScheduleTimeout } from "@comis/core";
+import { parseFormattedSessionKey, type SessionKey, type TypedEventBus, systemNowMs, systemSetTimeout, systemClearTimeout, systemScheduleTimeout } from "@comis/core";
 import { withTimeout } from "@comis/shared";
+import { createDeliveryDedup, type DeliveryDedup } from "@comis/agent";
 
 /** Hard timeout for announceToParent calls (300 seconds / 5 minutes).
  *  Parent agents may call slow tools (image generation at 120s, web search, etc.)
@@ -31,6 +32,8 @@ export interface QueuedAnnouncement {
   callerAgentId: string;
   callerSessionKey: string;
   runId: string;
+  /** Idempotency key `${callerSessionKey}::${runId}` (DELIVERY-01). Built once at the delivery entry; opaque here. Undefined for a top-level spawn (no callerSessionKey). */
+  idempotencyKey?: string;
 }
 
 export interface AnnouncementBatcherDeps {
@@ -57,8 +60,35 @@ export interface AnnouncementBatcherDeps {
       failedAt: number;
       attemptCount: number;
       lastError?: string;
+      /** Idempotency key `${callerSessionKey}::${runId}` (DELIVERY-01), carried onto the dead-letter entry. */
+      idempotencyKey?: string;
     }): void;
   };
+  // -------------------------------------------------------------------------
+  // DELIVERY-02 self-healing retry (all OPTIONAL — injected from the daemon
+  // wiring via DI; absent → the fallback stays single-attempt-then-DLQ as
+  // before, so existing construction/tests are byte-identical).
+  // -------------------------------------------------------------------------
+  /**
+   * Classify a fallback delivery failure as transient (retryable) or permanent.
+   * Narrow structural return so the orchestrator does NOT import the agent type;
+   * the daemon wiring binds `@comis/agent`'s `classifyErrorContext(msg, "failed")`.
+   */
+  classifyErrorContext?: (errorMessage: string) => { retryable: boolean };
+  /** Pure exponential backoff (ms) for retry `attempt` (1-based). Injected from `@comis/daemon`'s `computeRetryBackoff` (orchestrator cannot import daemon). */
+  computeRetryBackoff?: (attempt: number) => number;
+  /** Max retry attempts for a transient failure before dead-lettering (default 3). From `security.agentToAgent.delivery.maxRetries`. */
+  maxRetries?: number;
+  /** Typed event bus for the counts/ids-only delivery_retried / delivery_deadlettered events (§2.7). */
+  eventBus?: Pick<TypedEventBus, "emit">;
+  /**
+   * Shared, BOUNDED delivered-key store (WR-02/WR-03). When injected by the
+   * daemon wiring, the SAME instance is also handed to the no-batcher success
+   * branches (`deliverAnnouncement`) and the failure path / DLQ recovery, so
+   * every completion-delivery surface dedups against one set. Absent → the
+   * batcher owns an internal bounded dedup (still capped — never leaks).
+   */
+  deliveryDedup?: DeliveryDedup;
 }
 
 export interface AnnouncementBatcher {
@@ -66,6 +96,10 @@ export interface AnnouncementBatcher {
   flush(): Promise<void>;
   shutdown(): Promise<void>;
   readonly pending: number;
+  /** DELIVERY-01: has this idempotency key already been delivered (success-path dedup)? Shared with the failure path in Plan 03 (D-SHAREDDEDUP). */
+  hasDelivered(key: string): boolean;
+  /** DELIVERY-01: mark an idempotency key delivered. Caller marks ONLY after a successful send (never before the await) so a transient retry is preserved. */
+  markDelivered(key: string): void;
 }
 
 // ---------------------------------------------------------------------------
@@ -158,11 +192,109 @@ export function sanitizeForUser(text: string): string {
 // ---------------------------------------------------------------------------
 
 const DEFAULT_DEBOUNCE_MS = 2000;
+/** Default transient-retry cap when `deps.maxRetries` is not injected (matches `security.agentToAgent.delivery.maxRetries` default). */
+const DEFAULT_MAX_RETRIES = 3;
 
 export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): AnnouncementBatcher {
   const debounceMs = deps.debounceMs ?? DEFAULT_DEBOUNCE_MS;
   const queues = new Map<string, QueuedAnnouncement[]>();
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
+  // DELIVERY-01: idempotency keys whose delivery has SUCCEEDED. In-memory floor
+  // (the documented at-least-once-across-restart boundary — the DLQ bounds
+  // cross-restart re-delivery by runId/attemptCount/maxAgeMs). Marked ONLY on a
+  // successful send (Pitfall 3) so a transient failure can still be retried.
+  // WR-03: BOUNDED (FIFO) so it never leaks for the daemon lifetime — uses the
+  // injected shared dedup when present (WR-01/02: the no-batcher success
+  // branches + DLQ recovery mark the SAME set), else an internal bounded one.
+  const deliveredKeys: DeliveryDedup = deps.deliveryDedup ?? createDeliveryDedup();
+
+  /** DELIVERY-01: mark a delivered item's key (no-op for undefined-keyed / top-level spawns). Call ONLY after a successful send. */
+  function markDeliveredIfKeyed(item: QueuedAnnouncement): void {
+    if (item.idempotencyKey) deliveredKeys.mark(item.idempotencyKey);
+  }
+
+  /** AGENTS §2.2: no raw setTimeout — sleep via the sanctioned systemScheduleTimeout. */
+  function sleep(ms: number): Promise<void> {
+    if (ms <= 0) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      systemScheduleTimeout(resolve, ms);
+    });
+  }
+
+  /**
+   * DELIVERY-02: send `text` to the item's announce channel, self-healing
+   * transient failures. Used per-item in BOTH the single-item and the
+   * multi-item-batch fallback branches. Returns true on success (and marks the
+   * key delivered), false on terminal failure (the caller enqueues the DLQ).
+   *
+   * - No `classifyErrorContext` injected → legacy single-attempt: try once,
+   *   return false on throw (byte-identical to pre-DELIVERY-02).
+   * - Classified PERMANENT → emit delivery_deadlettered{transient:false,attempt:0},
+   *   return false immediately (zero retries).
+   * - Classified TRANSIENT → retry up to maxRetries with computeRetryBackoff
+   *   backoff, emitting delivery_retried per attempt; on success mark + return
+   *   true; on exhaustion emit delivery_deadlettered{transient:true} + return false.
+   *
+   * `text` is the already-sanitized announcement (scrubbed by the caller before
+   * the first attempt) — retries reuse it; the scrub is never bypassed (T-171-07).
+   *
+   * Returns `{ delivered, lastError }` — on terminal failure the caller enqueues
+   * the DLQ and uses `lastError` for the entry's diagnostic field.
+   */
+  async function sendWithRetry(item: QueuedAnnouncement, text: string): Promise<{ delivered: boolean; lastError?: string }> {
+    let lastError: string;
+    try {
+      await deps.sendToChannel(item.announceChannelType, item.announceChannelId, text);
+      markDeliveredIfKeyed(item);
+      return { delivered: true };
+    } catch (err) {
+      lastError = err instanceof Error ? err.message : String(err);
+      // No classifier injected → legacy single-attempt path (caller → DLQ).
+      if (!deps.classifyErrorContext) return { delivered: false, lastError };
+
+      const { retryable } = deps.classifyErrorContext(lastError);
+      if (!retryable) {
+        deps.eventBus?.emit("subagent:delivery_deadlettered", {
+          runId: item.runId,
+          channelType: item.announceChannelType,
+          attempt: 0,
+          transient: false,
+          timestamp: systemNowMs(),
+        });
+        return { delivered: false, lastError };
+      }
+
+      const maxRetries = deps.maxRetries ?? DEFAULT_MAX_RETRIES;
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        await sleep(deps.computeRetryBackoff?.(attempt) ?? 0);
+        deps.eventBus?.emit("subagent:delivery_retried", {
+          runId: item.runId,
+          channelType: item.announceChannelType,
+          attempt,
+          transient: true,
+          timestamp: systemNowMs(),
+        });
+        try {
+          await deps.sendToChannel(item.announceChannelType, item.announceChannelId, text);
+          markDeliveredIfKeyed(item);
+          return { delivered: true };
+        } catch (retryErr) {
+          lastError = retryErr instanceof Error ? retryErr.message : String(retryErr);
+          // keep retrying until the cap, then fall through to dead-letter
+        }
+      }
+
+      // Transient but exhausted → dead-letter.
+      deps.eventBus?.emit("subagent:delivery_deadlettered", {
+        runId: item.runId,
+        channelType: item.announceChannelType,
+        attempt: maxRetries,
+        transient: true,
+        timestamp: systemNowMs(),
+      });
+      return { delivered: false, lastError };
+    }
+  }
 
   // -------------------------------------------------------------------------
   // Internal delivery
@@ -170,10 +302,33 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
 
   async function deliverBatch(key: string): Promise<void> {
     timers.delete(key);
-    const items = queues.get(key);
+    const queued = queues.get(key);
     queues.delete(key);
 
-    if (!items || items.length === 0) return;
+    if (!queued || queued.length === 0) return;
+
+    // DELIVERY-01 dedup: drop items whose key is already delivered (handles a
+    // rapid re-enqueue inside the same debounce window) AND collapse same-key
+    // duplicates within this batch (keep the first). undefined-keyed items are
+    // never deduped — every top-level-spawn delivery proceeds.
+    const seen = new Set<string>();
+    const items: QueuedAnnouncement[] = [];
+    for (const item of queued) {
+      const k = item.idempotencyKey;
+      if (k !== undefined) {
+        if (deliveredKeys.has(k) || seen.has(k)) { // WR-03: bounded dedup lookup
+          deps.logger?.debug(
+            { runId: item.runId, hint: "duplicate delivery suppressed" },
+            "Announcement dedup no-op",
+          );
+          continue;
+        }
+        seen.add(k);
+      }
+      items.push(item);
+    }
+
+    if (items.length === 0) return;
 
     const first = items[0]!;
 
@@ -202,6 +357,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
             systemScheduleTimeout,
             "announceToParent",
           );
+          markDeliveredIfKeyed(first); // DELIVERY-01: mark on success only
           return;
         } catch (err) {
           // Batch state fields in timeout WARN for diagnostics
@@ -209,25 +365,25 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
             { batchKey: key, err, batchSize: 1, itemsDelivered: 0, itemsRemaining: 1, isPartialDelivery: false, errorKind: "internal" as const, hint: "Parent session injection failed/timed out; falling back to direct send" },
             "Announcement single-item delivery failed",
           );
-          try {
-            await deps.sendToChannel(first.announceChannelType, first.announceChannelId, sanitizeForUser(first.announcementText));
-          } catch (sendErr) {
+          // DELIVERY-02: self-healing fallback — transient retries with backoff,
+          // permanent dead-letters immediately. Scrub the text ONCE, reuse on retries.
+          const sanitizedText = sanitizeForUser(first.announcementText);
+          const { delivered, lastError } = await sendWithRetry(first, sanitizedText);
+          if (!delivered && deps.deadLetterQueue) {
             deps.logger?.warn(
-              { batchKey: key, runId: first.runId, err: sendErr, errorKind: "network" as const, hint: "Single-item fallback direct send failed" },
+              { batchKey: key, runId: first.runId, errorKind: "network" as const, hint: "Single-item fallback direct send failed after retry/classify; dead-lettering" },
               "Single-item batcher fallback delivery failed",
             );
-            // Persist to DLQ on single-item fallback delivery failure
-            if (deps.deadLetterQueue) {
-              deps.deadLetterQueue.enqueue({
-                announcementText: sanitizeForUser(first.announcementText),
-                channelType: first.announceChannelType,
-                channelId: first.announceChannelId,
-                runId: first.runId,
-                failedAt: systemNowMs(),
-                attemptCount: 0,
-                lastError: sendErr instanceof Error ? sendErr.message : String(sendErr),
-              });
-            }
+            deps.deadLetterQueue.enqueue({
+              announcementText: sanitizedText,
+              channelType: first.announceChannelType,
+              channelId: first.announceChannelId,
+              runId: first.runId,
+              failedAt: systemNowMs(),
+              attemptCount: 0,
+              ...(lastError ? { lastError } : {}),
+              idempotencyKey: first.idempotencyKey, // DELIVERY-01
+            });
           }
           return;
         }
@@ -260,34 +416,42 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
           systemScheduleTimeout,
           "announceToParent",
         );
+        // DELIVERY-01: the combined announce delivered all batch items at once.
+        for (const item of items) markDeliveredIfKeyed(item);
       } catch (err) {
         deps.logger?.warn(
           { batchKey: key, batchSize: items.length, itemsDelivered: 0, itemsRemaining: items.length, isPartialDelivery: false, err, errorKind: "internal" as const, hint: "Parent session injection failed/timed out; falling back to direct send" },
           "Announcement batched delivery failed",
         );
-        // Fallback: deliver each item individually via direct channel send
+        // Fallback: deliver each item individually via direct channel send.
+        // DELIVERY-02: each item self-heals through sendWithRetry (transient →
+        // retry-with-backoff; permanent → immediate dead-letter) — the SAME
+        // retry/classify logic as the single-item branch, applied per item.
         let fallbackDelivered = 0;
         for (const item of items) {
-          await deps.sendToChannel(item.announceChannelType, item.announceChannelId, sanitizeForUser(item.announcementText)).then(() => {
+          // Scrub ONCE per item, reuse on retries (T-171-07 — never bypass the scrub).
+          const sanitizedText = sanitizeForUser(item.announcementText);
+          const { delivered, lastError } = await sendWithRetry(item, sanitizedText);
+          if (delivered) {
             fallbackDelivered++;
-          }).catch((sendErr) => {
-            deps.logger?.warn(
-              { batchKey: key, runId: item.runId, batchSize: items.length, itemsDelivered: fallbackDelivered, itemsRemaining: items.length - fallbackDelivered, isPartialDelivery: fallbackDelivered > 0, err: sendErr, errorKind: "network" as const, hint: "Fallback direct send also failed for batch item" },
-              "Batch item fallback delivery failed",
-            );
-            // Persist to DLQ on fallback delivery failure
-            if (deps.deadLetterQueue) {
-              deps.deadLetterQueue.enqueue({
-                announcementText: sanitizeForUser(item.announcementText),
-                channelType: item.announceChannelType,
-                channelId: item.announceChannelId,
-                runId: item.runId,
-                failedAt: systemNowMs(),
-                attemptCount: 0,
-                lastError: sendErr instanceof Error ? sendErr.message : String(sendErr),
-              });
-            }
-          });
+            continue;
+          }
+          deps.logger?.warn(
+            { batchKey: key, runId: item.runId, batchSize: items.length, itemsDelivered: fallbackDelivered, itemsRemaining: items.length - fallbackDelivered, isPartialDelivery: fallbackDelivered > 0, errorKind: "network" as const, hint: "Fallback direct send failed for batch item after retry/classify; dead-lettering" },
+            "Batch item fallback delivery failed",
+          );
+          if (deps.deadLetterQueue) {
+            deps.deadLetterQueue.enqueue({
+              announcementText: sanitizedText,
+              channelType: item.announceChannelType,
+              channelId: item.announceChannelId,
+              runId: item.runId,
+              failedAt: systemNowMs(),
+              attemptCount: 0,
+              ...(lastError ? { lastError } : {}),
+              idempotencyKey: item.idempotencyKey, // DELIVERY-01
+            });
+          }
         }
       }
     } catch (err) {
@@ -363,6 +527,10 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
         count += queue.length;
       }
       return count;
+    },
+    hasDelivered: (key: string) => deliveredKeys.has(key),
+    markDelivered: (key: string) => {
+      deliveredKeys.mark(key);
     },
   };
 }

@@ -1554,6 +1554,34 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       source: "explicit",
       timestamp: 0,
     },
+    // TELEM-01: counts/enums/booleans only — the correlation invariant must hold
+    // (no agentId/sessionKey leak into the trajectory record data).
+    "pipeline:authored": {
+      action: "execute",
+      capabilityClass: "small",
+      schemaValid: true,
+      repaired: false,
+      timestamp: 0,
+    },
+    "graph:repaired": {
+      pattern: "debate",
+      nodeCount: 3,
+      capabilityClass: "small",
+      timestamp: 0,
+    },
+    "graph:synthesized_from_intent": {
+      pattern: "research-fanout",
+      nodeCount: 4,
+      timestamp: 0,
+    },
+    // STEER-01: counts/ids + the closed-union mode only — the correlation
+    // invariant must hold (no sessionKey/traceId leak into the record data).
+    "subagent:steered": {
+      runId: "run-1",
+      agentId: "agent-1",
+      mode: "steer",
+      timestamp: 0,
+    },
   };
 
   it.each(Object.keys(TRAJECTORY_BRIDGE_MAPPING))(
@@ -1613,6 +1641,203 @@ describe("TRAJECTORY_BRIDGE_MAPPING -- architecture-test surface", () => {
     expect(TRAJECTORY_BRIDGE_MAPPING["delivery:complete"]).toBe("delivery.dispatched");
     // Context engine pipeline → context.compiled.
     expect(TRAJECTORY_BRIDGE_MAPPING["context:pipeline"]).toBe("context.compiled");
+  });
+});
+
+describe("TRAJECTORY_BRIDGE_MAPPING -- pipeline:authored (TELEM-01, arch-closure)", () => {
+  it("maps pipeline:authored -> pipeline.authored (mirrors the memory:generation_quality entry)", () => {
+    expect(TRAJECTORY_BRIDGE_MAPPING["pipeline:authored"]).toBe("pipeline.authored");
+  });
+
+  it("pipeline:authored is a member of TrajectoryBridgedEventName (keyof the mapping — EventMap-membership arch closure)", () => {
+    // keyof closure: the key is enumerable on the const mapping (the arch test
+    // enumerates Object.keys to confirm every EventMap member is mapped-or-allowlisted).
+    const keys = Object.keys(TRAJECTORY_BRIDGE_MAPPING);
+    expect(keys).toContain("pipeline:authored");
+    // The reserved trajectory type name is a valid TrajectoryEventType.
+    const allTypes = new Set<string>(TRAJECTORY_EVENT_TYPES as readonly string[]);
+    expect(allTypes.has("pipeline.authored")).toBe(true);
+  });
+
+  it("bridge translates pipeline:authored to a content-free record (counts/enums/booleans only — H1 / §2.7)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("pipeline:authored", {
+      action: "execute",
+      capabilityClass: "small",
+      schemaValid: false,
+      repaired: false,
+      agentId: "agent-X",
+      sessionKey: "skey-X",
+      timestamp: 1000,
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0]!.type).toBe("pipeline.authored");
+    const data = recorder.calls[0]!.data as Record<string, unknown>;
+    // The counts/enums/booleans cross; the correlation ids are envelope-only.
+    expect(data.action).toBe("execute");
+    expect(data.capabilityClass).toBe("small");
+    expect(data.schemaValid).toBe(false);
+    expect(data.repaired).toBe(false);
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    // No pipeline body / type_config ever crosses the bridge.
+    for (const forbidden of ["nodes", "graph", "type_config", "typeConfig", "task", "label", "body"]) {
+      expect(data[forbidden], `forbidden body key on trajectory record: ${forbidden}`).toBeUndefined();
+    }
+  });
+});
+
+describe("TRAJECTORY_BRIDGE_MAPPING -- graph:repaired + graph:synthesized_from_intent (AUTHOR-01/02, arch-closure)", () => {
+  it("maps graph:repaired -> graph.repaired (AUTHOR-01; mirrors the pipeline:authored entry)", () => {
+    expect(TRAJECTORY_BRIDGE_MAPPING["graph:repaired"]).toBe("graph.repaired");
+  });
+
+  it("maps graph:synthesized_from_intent -> graph.synthesized_from_intent (AUTHOR-02)", () => {
+    expect(TRAJECTORY_BRIDGE_MAPPING["graph:synthesized_from_intent"]).toBe(
+      "graph.synthesized_from_intent",
+    );
+  });
+
+  it("both AUTHOR events are members of TrajectoryBridgedEventName (keyof the mapping — EventMap-membership arch closure)", () => {
+    const keys = Object.keys(TRAJECTORY_BRIDGE_MAPPING);
+    expect(keys).toContain("graph:repaired");
+    expect(keys).toContain("graph:synthesized_from_intent");
+    // The reserved trajectory type names are valid TrajectoryEventType members.
+    const allTypes = new Set<string>(TRAJECTORY_EVENT_TYPES as readonly string[]);
+    expect(allTypes.has("graph.repaired")).toBe(true);
+    expect(allTypes.has("graph.synthesized_from_intent")).toBe(true);
+  });
+
+  it("bridge translates graph:repaired to a content-free record (pattern enum + nodeCount + tier only — §2.7 / H1)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("graph:repaired", {
+      pattern: "debate",
+      nodeCount: 3,
+      capabilityClass: "small",
+      agentId: "agent-X",
+      sessionKey: "skey-X",
+      timestamp: 1000,
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0]!.type).toBe("graph.repaired");
+    const data = recorder.calls[0]!.data as Record<string, unknown>;
+    // The closed enum + counts cross; the correlation ids are envelope-only.
+    expect(data.pattern).toBe("debate");
+    expect(data.nodeCount).toBe(3);
+    expect(data.capabilityClass).toBe("small");
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    // No graph body / type_config / task ever crosses the bridge.
+    for (const forbidden of ["nodes", "graph", "type_config", "typeConfig", "task", "label", "body", "intent"]) {
+      expect(data[forbidden], `forbidden body key on trajectory record: ${forbidden}`).toBeUndefined();
+    }
+  });
+
+  it("bridge translates graph:synthesized_from_intent to a content-free record (NO intent text crosses — §2.7 / H1)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("graph:synthesized_from_intent", {
+      pattern: "research-fanout",
+      nodeCount: 4,
+      agentId: "agent-X",
+      sessionKey: "skey-X",
+      timestamp: 1000,
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0]!.type).toBe("graph.synthesized_from_intent");
+    const data = recorder.calls[0]!.data as Record<string, unknown>;
+    expect(data.pattern).toBe("research-fanout");
+    expect(data.nodeCount).toBe(4);
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    // The intent text (the highest-risk synthesis leak) heads the forbidden set.
+    for (const forbidden of ["intent", "nodes", "graph", "type_config", "typeConfig", "task", "label", "body"]) {
+      expect(data[forbidden], `forbidden body key on trajectory record: ${forbidden}`).toBeUndefined();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// STEER-01 (v2.27 P3, Phase 175): the subagent:steered event — bridge-mapped
+// for OPERATOR TRAJECTORY VISIBILITY (a steer is a meaningful per-session event
+// an operator wants in `comis explain`), mirroring the 173/174 entries
+// (pipeline:authored / graph:repaired / graph:synthesized_from_intent). This is
+// a recording choice, NOT a closure-gate requirement: the closure gate scans
+// agent/orchestrator emit sites only and subagent:steered is daemon-emitted
+// (Plan 02, subagent-handlers.ts) — so it does not trip the gate (the unmapped
+// subagent:budget_exceeded precedent). The translator is content-free: runId/
+// agentId/mode counts/ids ONLY — NEVER the steer message body (§2.7 / H1).
+// ---------------------------------------------------------------------------
+describe("TRAJECTORY_BRIDGE_MAPPING -- subagent:steered (STEER-01, operator visibility)", () => {
+  it("maps subagent:steered -> subagent.steered (mirrors the graph:repaired entry)", () => {
+    expect(TRAJECTORY_BRIDGE_MAPPING["subagent:steered"]).toBe("subagent.steered");
+  });
+
+  it("subagent:steered is a member of TrajectoryBridgedEventName + subagent.steered is a valid TrajectoryEventType (arch closure)", () => {
+    const keys = Object.keys(TRAJECTORY_BRIDGE_MAPPING);
+    expect(keys).toContain("subagent:steered");
+    const allTypes = new Set<string>(TRAJECTORY_EVENT_TYPES as readonly string[]);
+    expect(allTypes.has("subagent.steered")).toBe(true);
+  });
+
+  it("bridge translates subagent:steered to a content-free record (runId/agentId/mode only — NO message body crosses, §2.7 / H1)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("subagent:steered", {
+      runId: "run-77",
+      agentId: "agent-X",
+      mode: "steer",
+      sessionKey: "skey-X",
+      traceId: "trace-X",
+      timestamp: 1000,
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0]!.type).toBe("subagent.steered");
+    const data = recorder.calls[0]!.data as Record<string, unknown>;
+    // The run identity + the closed-union mode cross.
+    expect(data.runId).toBe("run-77");
+    expect(data.mode).toBe("steer");
+    // agentId/sessionKey/traceId are envelope-only correlation ids handled by the
+    // recorder envelope (TrajectoryRecorderInit + AsyncLocalStorage) — the
+    // translator MUST NOT echo them into data (the graph:repaired precedent).
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.traceId).toBeUndefined();
+    // The steer MESSAGE BODY (the highest-risk leak) must NEVER cross the bridge.
+    for (const forbidden of ["message", "text", "body", "content"]) {
+      expect(data[forbidden], `forbidden body key on trajectory record: ${forbidden}`).toBeUndefined();
+    }
+  });
+
+  it("the followup mode round-trips through the bridge (closed-union steer|followup)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("subagent:steered", {
+      runId: "run-78",
+      agentId: "agent-Y",
+      mode: "followup",
+      timestamp: 1000,
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    const data = recorder.calls[0]!.data as Record<string, unknown>;
+    expect(data.mode).toBe("followup");
   });
 });
 
@@ -3169,7 +3394,7 @@ describe("attachTrajectoryToEventBus -- dedup events", () => {
 // ---------------------------------------------------------------------------
 
 describe("health:budget_exceeded entry (bridge entry count guard)", () => {
-  it("bridge entry count is exactly 97 (+3 T2.2 background_task promoted/completed/failed; +2 D3 breaker + 1 D7 offload Phase 151; +1 session:summary Phase 152; +1 context:budget_computed W2; +1 execution:tool_schema_unsupported Phase 175; +2 OBS-01 script signals Phase 180; +2 RECALL-01 memory:recalled/reranked; +1 GENQ-01 memory:generation_quality; +4 OBS-04 image:* Phase 186; +3 media.vision:* VIS-04 Phase 187; +5 video:* OBS-04 Phase 192; +6 voice media.stt/tts:* OBS-02/03 Phase 196; +1 OUTCOME-08 learning:outcome_observed v2.26 Phase 198; +3 RANK-06/FORGET-06 memory:online_tuning_applied + learning:memory_demoted/evicted v2.26 Phase 200; +2 SKILL-09 learning:skill_synthesized/skill_validated v2.26 Phase 201; +2 SURFACE-06 learning:skill_promoted/demoted v2.26 Phase 202; +2 REVISE-/GENERAL- learning:user_model_revised/memory_generalized v2.26 Phase 203)", () => {
+  it("bridge entry count is exactly 100 (+3 T2.2 background_task promoted/completed/failed; +2 D3 breaker + 1 D7 offload Phase 151; +1 session:summary Phase 152; +1 context:budget_computed W2; +1 execution:tool_schema_unsupported Phase 175; +2 OBS-01 script signals Phase 180; +2 RECALL-01 memory:recalled/reranked; +1 GENQ-01 memory:generation_quality; +4 OBS-04 image:* Phase 186; +3 media.vision:* VIS-04 Phase 187; +5 video:* OBS-04 Phase 192; +6 voice media.stt/tts:* OBS-02/03 Phase 196; +1 OUTCOME-08 learning:outcome_observed v2.26 Phase 198; +3 RANK-06/FORGET-06 memory:online_tuning_applied + learning:memory_demoted/evicted v2.26 Phase 200; +2 SKILL-09 learning:skill_synthesized/skill_validated v2.26 Phase 201; +2 SURFACE-06 learning:skill_promoted/demoted v2.26 Phase 202; +2 REVISE-/GENERAL- learning:user_model_revised/memory_generalized v2.26 Phase 203; +1 TELEM-01 pipeline:authored v2.27 Phase 173; +2 AUTHOR-01/02 graph:repaired + graph:synthesized_from_intent v2.27 Phase 174)", () => {
     // 55 + tool:breaker_opened + tool:breaker_reset (D3) + tool:result_offloaded (D7)
     // + session:summary (F2/D5, Phase 152)
     // + execution:tool_schema_unsupported (GBNF-02, Phase 175 Plan 05)
@@ -3201,7 +3426,25 @@ describe("health:budget_exceeded entry (bridge entry count guard)", () => {
     //   Verified Learning WS6/WS7, Phase 203 Plan 05 — APPEND-ONLY; the daemon-side user-model-
     //   revision + generalization telemetry, COUNTS ONLY (superseded/corroborated/inserted +
     //   generalized/clustersConsidered), NEVER a profile / memory body / entry id — SEC-01).
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(97);
+    // + pipeline:authored (TELEM-01, v2.27 P1, Phase 173 Plan 01 — APPEND-ONLY; the
+    //   authoring-telemetry signal, counts/enums/booleans ONLY (action/capabilityClass/
+    //   schemaValid/repaired), NEVER a pipeline body / type_config value / node task — §2.7.
+    //   Mapping reserves the type for arch closure; the live per-session recordEvent emit is
+    //   a deferred follow-up — getRecorder is not reachable on the graph-handler deps at P1).
+    // + graph:repaired + graph:synthesized_from_intent (AUTHOR-01/02, v2.27 P2, Phase 174
+    //   Plan 02 — APPEND-ONLY beside pipeline:authored; the two daemon-side authoring-AUDIT
+    //   events Plans 03/04 emit on conservative repair / intent-synthesis, counts/ids/enums
+    //   ONLY (pattern closed-enum + nodeCount + capabilityClass tier), NEVER a graph body /
+    //   type_config value / node task / intent text — §2.7. Mapping reserves the types for
+    //   arch closure of the keyof TrajectoryBridgedEventName).
+    // + subagent:steered (STEER-01, v2.27 P3, Phase 175 Plan 01 — APPEND-ONLY beside the
+    //   AUTHOR-01/02 entries; the daemon-side in-flight-steer event Plan 02 emits at the
+    //   inject site, bridged for OPERATOR TRAJECTORY VISIBILITY (`comis explain`). Counts/
+    //   ids/closed-enum-mode ONLY (runId + mode), NEVER the steer message body — §2.7.
+    //   Daemon-emitted → outside the agent/orchestrator closure-gate scan, so no
+    //   EVENTS_NOT_TRAJECTORY_MAPPED entry is needed; the unmapped subagent:budget_exceeded
+    //   is the precedent. The mapping is purely for trajectory recording).
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(101);
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {

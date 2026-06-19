@@ -31,6 +31,7 @@ import {
   type ValidationResult,
   type AbortClassification,
 } from "./sub-agent-result-processor.js";
+import { createDeliveryDedup } from "./announce-key.js";
 import type { ClockPort, TimerPort, TimerHandle } from "@comis/core";
 
 // ---------------------------------------------------------------------------
@@ -1160,6 +1161,31 @@ describe("createSubAgentRunner", () => {
       30,
       undefined,
       undefined,  // graphOverrides (undefined for non-graph spawns)
+      undefined,  // tokenBudget (undefined when no per-spawn budget set — BUDGET-01)
+    );
+  });
+
+  // BUDGET-01: a per-spawn tokenBudget is threaded to executeAgent as the 7th
+  // arg, where the daemon wiring lands it on executionOverrides → the child's
+  // BudgetGuard per-execution cap.
+  it("tokenBudget is passed to executeAgent as the 7th argument when set on SpawnParams", async () => {
+    const runner = createSubAgentRunner(deps);
+    runner.spawn({
+      task: "budgeted task",
+      agentId: "default",
+      tokenBudget: 5_000,
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(deps.executeAgent).toHaveBeenCalledWith(
+      "default",
+      expect.objectContaining({ tenantId: "default" }),
+      "budgeted task",
+      undefined,
+      undefined,
+      undefined,
+      5_000,
     );
   });
 
@@ -3777,5 +3803,462 @@ describe("sub-agent-runner uses BackgroundSessionResolver for parent-session loo
       .join("\n");
     // No literal activeRunRegistry.get( in the source.
     expect(stripped).not.toMatch(/activeRunRegistry\.get\(/);
+  });
+
+  // -------------------------------------------------------------------------
+  // WR-01: the runner must pass an onDelivered sink into deadLetterQueue.drain
+  // so a DLQ-recovered announcement marks the shared deliveredKeys set —
+  // otherwise a later failure sweep double-notifies the same run.
+  // -------------------------------------------------------------------------
+
+  it("marks the shared deliveryDedup when a DLQ drain recovers a keyed announcement", async () => {
+    vi.useRealTimers(); // shutdown awaits a real microtask chain
+
+    const deliveryDedup = createDeliveryDedup();
+    // Stub DLQ whose drain re-delivers a keyed entry and invokes onDelivered.
+    const drain = vi.fn(
+      async (
+        _send: unknown,
+        onDelivered?: (idempotencyKey: string) => void,
+      ): Promise<void> => {
+        onDelivered?.("default:u1:c1::recovered-run");
+      },
+    );
+    const deadLetterQueue = {
+      enqueue: vi.fn(),
+      drain,
+      size: vi.fn().mockReturnValue(0),
+    };
+
+    const runner = createSubAgentRunner({
+      ...createMockDeps(),
+      // The DLQ recovery path registers a provider:recovered listener, so the
+      // event bus needs `on` here (the default mock only stubs `emit`).
+      eventBus: { emit: vi.fn(), on: vi.fn() } as unknown as SubAgentRunnerDeps["eventBus"],
+      deadLetterQueue: deadLetterQueue as unknown as SubAgentRunnerDeps["deadLetterQueue"],
+      deliveryDedup,
+    });
+
+    // shutdown() drains the DLQ (one of the three drain call sites).
+    await runner.shutdown();
+
+    expect(drain).toHaveBeenCalled();
+    // The recovered key is now in the shared dedup → a later failure sweep
+    // sees hasDelivered === true and suppresses the duplicate notification.
+    expect(deliveryDedup.has("default:u1:c1::recovered-run")).toBe(true);
+  });
+});
+
+// ===========================================================================
+// Sandbox no-downgrade gate (SANDBOX-02, Phase 172 Plan 02)
+//
+// The fail-closed posture gate at the single spawn chokepoint: a spawned child
+// may never be LESS confined than its spawner. The load-bearing security
+// assertion is "refuse BEFORE any run/session/event" — proven on BOTH the
+// immediate (normal) and the queued spawn branches. Posture is resolved via an
+// INJECTED resolvePosture dep (NOT by reaching config.agents inside the runner).
+// ===========================================================================
+
+describe("sandbox no-downgrade gate", () => {
+  // A posture map keyed by agentId, returned by the mock resolvePosture dep.
+  // `parent` is confined (exec:always); `loose-child` is a downgrade
+  // (exec:never); `equal-child` matches the parent; `confined-child` is an
+  // upgrade (more confined than an unconfined parent).
+  function makePostureResolver(
+    byAgent: Record<string, { exec: "always" | "never" }>,
+  ): (agentId: string, callerAgentId?: string) => { exec: "always" | "never" } {
+    return (agentId: string, callerAgentId?: string) => {
+      // Mirror the daemon's effectiveAgentId inherit-caller fallback: an agent
+      // with no entry inherits the caller's posture.
+      if (Object.prototype.hasOwnProperty.call(byAgent, agentId)) {
+        return byAgent[agentId];
+      }
+      if (callerAgentId && Object.prototype.hasOwnProperty.call(byAgent, callerAgentId)) {
+        return byAgent[callerAgentId];
+      }
+      // No entry for either ⇒ most-confined default (matches resolvePostureFromSkills(undefined)).
+      return { exec: "always" };
+    };
+  }
+
+  function createGateDeps(
+    resolvePosture: (agentId: string, callerAgentId?: string) => { exec: "always" | "never" },
+    overrides: Partial<SubAgentRunnerDeps> = {},
+  ): SubAgentRunnerDeps {
+    return {
+      sessionStore: { save: vi.fn(), delete: vi.fn() },
+      // never resolves -- keeps children "running" so the children-limit path is reachable
+      executeAgent: vi.fn().mockReturnValue(new Promise(() => {})),
+      sendToChannel: vi.fn().mockResolvedValue(true),
+      eventBus: { emit: vi.fn() } as unknown as SubAgentRunnerDeps["eventBus"],
+      config: {
+        enabled: true,
+        maxPingPongTurns: 3,
+        allowAgents: [],
+        subAgentRetentionMs: 3_600_000,
+        waitTimeoutMs: 60_000,
+        subAgentMaxSteps: 50,
+        subAgentToolGroups: ["coding"],
+        subagentContext: {
+          maxSpawnDepth: 3,
+          maxChildrenPerAgent: 5,
+        },
+      } as SubAgentRunnerDeps["config"],
+      tenantId: "default",
+      clock: testClock,
+      timers: testTimers,
+      resolvePosture: resolvePosture as unknown as SubAgentRunnerDeps["resolvePosture"],
+      ...overrides,
+    };
+  }
+
+  // -------------------------------------------------------------------------
+  // LOAD-BEARING: refuse before any run/session/event — immediate (normal) path
+  // -------------------------------------------------------------------------
+  it("refuses a downgrade spawn BEFORE any run/session/event on the immediate path", () => {
+    const resolvePosture = makePostureResolver({
+      parent: { exec: "always" },
+      "loose-child": { exec: "never" },
+    });
+    const deps = createGateDeps(resolvePosture);
+    const runner = createSubAgentRunner(deps);
+
+    expect(() =>
+      runner.spawn({
+        task: "escalate task",
+        agentId: "loose-child",
+        callerAgentId: "parent",
+        callerSessionKey: "default:user1:ch1",
+        depth: 0,
+        maxDepth: 3,
+      }),
+    ).toThrow(/sandbox posture is less confined/i);
+
+    // The fail-closed invariant: NO side effects of any kind.
+    expect(deps.sessionStore.save).not.toHaveBeenCalled();
+    expect(deps.executeAgent).not.toHaveBeenCalled();
+    expect(runner.listRuns()).toHaveLength(0);
+    // No spawn / queued / rejected lifecycle event for this refusal.
+    expect(deps.eventBus.emit).not.toHaveBeenCalledWith(
+      "session:sub_agent_spawned",
+      expect.anything(),
+    );
+    expect(deps.eventBus.emit).not.toHaveBeenCalledWith(
+      "session:sub_agent_spawn_queued",
+      expect.anything(),
+    );
+
+    // SANDBOX-03: the typed refusal event fires (before the throw, at the same
+    // point a run/session would otherwise be created) carrying both postures as
+    // enum tuples + the violated dimension(s) + the parent/child ids — NO secrets.
+    expect(deps.eventBus.emit).toHaveBeenCalledWith(
+      "security:sandbox_downgrade_refused",
+      expect.objectContaining({
+        parentAgentId: "parent",
+        childAgentId: "loose-child",
+        violatedDimensions: ["exec"],
+        parentPosture: { exec: "always" },
+        childPosture: { exec: "never" },
+      }),
+    );
+  });
+
+  // -------------------------------------------------------------------------
+  // LOAD-BEARING: refuse before any run/session/event — queued path
+  // -------------------------------------------------------------------------
+  it("refuses a downgrade spawn BEFORE the queue enqueue on the queued path", () => {
+    const resolvePosture = makePostureResolver({
+      parent: { exec: "always" },
+      "loose-child": { exec: "never" },
+    });
+    const deps = createGateDeps(resolvePosture);
+    const runner = createSubAgentRunner(deps);
+
+    // Saturate the children limit with 5 EQUAL-posture children (caller == child
+    // agentId "parent" ⇒ equal ⇒ not refused). The 6th spawn would queue.
+    for (let i = 0; i < 5; i++) {
+      runner.spawn({
+        task: `child task ${i}`,
+        agentId: "parent",
+        callerAgentId: "parent",
+        callerSessionKey: "default:user1:ch1",
+        depth: 0,
+        maxDepth: 3,
+      });
+    }
+    expect(runner.listRuns()).toHaveLength(5);
+
+    // The 6th spawn is a DOWNGRADE child — at the children limit it would
+    // normally QUEUE. The gate sits before the children/queue branch, so it
+    // must THROW before any queued run is created.
+    expect(() =>
+      runner.spawn({
+        task: "escalate while saturated",
+        agentId: "loose-child",
+        callerAgentId: "parent",
+        callerSessionKey: "default:user1:ch1",
+        depth: 0,
+        maxDepth: 3,
+      }),
+    ).toThrow(/sandbox posture is less confined/i);
+
+    // No queued run was created (still exactly the 5 running children).
+    expect(runner.listRuns()).toHaveLength(5);
+    expect(runner.listRuns().every((r) => r.status === "running")).toBe(true);
+    expect(deps.eventBus.emit).not.toHaveBeenCalledWith(
+      "session:sub_agent_spawn_queued",
+      expect.objectContaining({ agentId: "loose-child" }),
+    );
+  });
+
+  // -------------------------------------------------------------------------
+  // Equal posture allowed
+  // -------------------------------------------------------------------------
+  it("allows a spawn when child posture equals the parent", () => {
+    const resolvePosture = makePostureResolver({
+      parent: { exec: "always" },
+      "equal-child": { exec: "always" },
+    });
+    const deps = createGateDeps(resolvePosture);
+    const runner = createSubAgentRunner(deps);
+
+    const runId = runner.spawn({
+      task: "equal task",
+      agentId: "equal-child",
+      callerAgentId: "parent",
+      callerSessionKey: "default:user1:ch1",
+      depth: 0,
+      maxDepth: 3,
+    });
+
+    expect(typeof runId).toBe("string");
+    expect(runner.getRunStatus(runId)?.status).toBe("running");
+    expect(deps.executeAgent).toHaveBeenCalledTimes(1);
+  });
+
+  // -------------------------------------------------------------------------
+  // Upgrade (more-confined child) allowed
+  // -------------------------------------------------------------------------
+  it("allows a spawn when the child is MORE confined than the parent (upgrade)", () => {
+    const resolvePosture = makePostureResolver({
+      "loose-parent": { exec: "never" },
+      "confined-child": { exec: "always" },
+    });
+    const deps = createGateDeps(resolvePosture);
+    const runner = createSubAgentRunner(deps);
+
+    const runId = runner.spawn({
+      task: "upgrade task",
+      agentId: "confined-child",
+      callerAgentId: "loose-parent",
+      callerSessionKey: "default:user1:ch1",
+      depth: 0,
+      maxDepth: 3,
+    });
+
+    expect(typeof runId).toBe("string");
+    expect(runner.getRunStatus(runId)?.status).toBe("running");
+  });
+
+  // -------------------------------------------------------------------------
+  // Missing-child-config-safe-default
+  // -------------------------------------------------------------------------
+  it("does NOT refuse a config-less child vs a config-less parent (both fold to most-confined)", () => {
+    // Neither id is in the posture map ⇒ both resolve to most-confined default ⇒ equal.
+    const resolvePosture = makePostureResolver({});
+    const deps = createGateDeps(resolvePosture);
+    const runner = createSubAgentRunner(deps);
+
+    const runId = runner.spawn({
+      task: "unconfigured task",
+      agentId: "no-config-child",
+      callerAgentId: "no-config-parent",
+      callerSessionKey: "default:user1:ch1",
+      depth: 0,
+      maxDepth: 3,
+    });
+
+    expect(typeof runId).toBe("string");
+    expect(runner.getRunStatus(runId)?.status).toBe("running");
+  });
+
+  it("DOES refuse a config-less (unconfined) child vs a confined parent", () => {
+    // Parent confined (exec:always); child has no entry but the resolver mock
+    // returns an explicit unconfined posture for it ⇒ downgrade.
+    const resolvePosture = makePostureResolver({
+      "confined-parent": { exec: "always" },
+      "loose-child": { exec: "never" },
+    });
+    const deps = createGateDeps(resolvePosture);
+    const runner = createSubAgentRunner(deps);
+
+    expect(() =>
+      runner.spawn({
+        task: "escalate task",
+        agentId: "loose-child",
+        callerAgentId: "confined-parent",
+        callerSessionKey: "default:user1:ch1",
+        depth: 0,
+        maxDepth: 3,
+      }),
+    ).toThrow(/sandbox posture is less confined/i);
+    expect(runner.listRuns()).toHaveLength(0);
+  });
+
+  // -------------------------------------------------------------------------
+  // Gate disabled via config
+  // -------------------------------------------------------------------------
+  it("does NOT refuse a downgrade when config.sandboxNoDowngrade is false", () => {
+    const resolvePosture = makePostureResolver({
+      parent: { exec: "always" },
+      "loose-child": { exec: "never" },
+    });
+    const deps = createGateDeps(resolvePosture, {
+      config: {
+        enabled: true,
+        maxPingPongTurns: 3,
+        allowAgents: [],
+        subAgentRetentionMs: 3_600_000,
+        waitTimeoutMs: 60_000,
+        subAgentMaxSteps: 50,
+        subAgentToolGroups: ["coding"],
+        sandboxNoDowngrade: false,
+        subagentContext: { maxSpawnDepth: 3, maxChildrenPerAgent: 5 },
+      } as SubAgentRunnerDeps["config"],
+    });
+    const runner = createSubAgentRunner(deps);
+
+    const runId = runner.spawn({
+      task: "downgrade-but-allowed",
+      agentId: "loose-child",
+      callerAgentId: "parent",
+      callerSessionKey: "default:user1:ch1",
+      depth: 0,
+      maxDepth: 3,
+    });
+
+    expect(typeof runId).toBe("string");
+    expect(runner.getRunStatus(runId)?.status).toBe("running");
+  });
+
+  // -------------------------------------------------------------------------
+  // Resolver absent (older wiring) — gate inert
+  // -------------------------------------------------------------------------
+  it("is inert (no refusal) when no resolvePosture dep is wired", () => {
+    // createMockDeps() has no resolvePosture — the older-wiring inert path.
+    const deps = createMockDeps();
+    const runner = createSubAgentRunner(deps);
+
+    const runId = runner.spawn({
+      task: "no-resolver task",
+      agentId: "loose-child",
+      callerAgentId: "parent",
+      callerSessionKey: "default:user1:ch1",
+      depth: 0,
+      maxDepth: 3,
+    });
+
+    expect(typeof runId).toBe("string");
+    expect(runner.getRunStatus(runId)?.status).toBe("running");
+  });
+
+  // -------------------------------------------------------------------------
+  // WR-02: make the fail-OPEN observable. When the gate is enabled but no
+  // resolver was injected, the gate is silently inert (a security control that
+  // no-ops). Emit a one-time construction WARN so an operator sees the fail-open
+  // in the logs — defense-in-depth alongside the daemon-wiring test.
+  // -------------------------------------------------------------------------
+  it("emits a one-time construction WARN when sandboxNoDowngrade is enabled but no resolver is injected", () => {
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
+    const deps = {
+      ...createMockDeps(),
+      config: {
+        enabled: true,
+        maxPingPongTurns: 3,
+        allowAgents: [],
+        subAgentRetentionMs: 3_600_000,
+        waitTimeoutMs: 60_000,
+        subAgentMaxSteps: 50,
+        subAgentToolGroups: ["coding"],
+        sandboxNoDowngrade: true,
+      } as SubAgentRunnerDeps["config"],
+      logger: logger as unknown as SubAgentRunnerDeps["logger"],
+      // resolvePosture intentionally absent ⇒ fail-open.
+    };
+
+    createSubAgentRunner(deps);
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorKind: "config",
+        hint: expect.stringContaining("no posture resolver"),
+      }),
+      expect.stringMatching(/no-downgrade gate is INERT/i),
+    );
+  });
+
+  it("does NOT warn at construction when the resolver IS injected", () => {
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
+    const resolvePosture = makePostureResolver({});
+    const deps = createGateDeps(resolvePosture, {
+      logger: logger as unknown as SubAgentRunnerDeps["logger"],
+    });
+
+    createSubAgentRunner(deps);
+
+    expect(logger.warn).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.stringMatching(/no-downgrade gate is INERT/i),
+    );
+  });
+
+  it("does NOT warn at construction when sandboxNoDowngrade is explicitly false (gate intentionally off)", () => {
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
+    const deps = {
+      ...createMockDeps(),
+      config: {
+        enabled: true,
+        maxPingPongTurns: 3,
+        allowAgents: [],
+        subAgentRetentionMs: 3_600_000,
+        waitTimeoutMs: 60_000,
+        subAgentMaxSteps: 50,
+        subAgentToolGroups: ["coding"],
+        sandboxNoDowngrade: false,
+      } as SubAgentRunnerDeps["config"],
+      logger: logger as unknown as SubAgentRunnerDeps["logger"],
+    };
+
+    createSubAgentRunner(deps);
+
+    expect(logger.warn).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.stringMatching(/no-downgrade gate is INERT/i),
+    );
+  });
+
+  // -------------------------------------------------------------------------
+  // Top-level spawn (no callerAgentId) — no parent to compare against
+  // -------------------------------------------------------------------------
+  it("allows a top-level spawn with no callerAgentId (no spawner posture to compare)", () => {
+    // resolvePosture would mark "loose-child" a downgrade vs a confined parent,
+    // but a top-level spawn has no parent ⇒ the gate does not fire.
+    const resolvePosture = makePostureResolver({
+      "loose-child": { exec: "never" },
+    });
+    const deps = createGateDeps(resolvePosture);
+    const runner = createSubAgentRunner(deps);
+
+    const runId = runner.spawn({
+      task: "top-level task",
+      agentId: "loose-child",
+      callerSessionKey: "default:user1:ch1",
+      depth: 0,
+      maxDepth: 3,
+      // callerAgentId intentionally omitted
+    });
+
+    expect(typeof runId).toBe("string");
+    expect(runner.getRunStatus(runId)?.status).toBe("running");
   });
 });

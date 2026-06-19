@@ -1,6 +1,6 @@
 {
-  "totalMinified": 125564,
-  "totalGzipped": 12428,
+  "totalMinified": 125884,
+  "totalGzipped": 12493,
   "budget": {
     "minified": 126000,
     "gzipped": 38912
@@ -151,7 +151,7 @@
     "obs.delivery.stats": 414,
     "obs.diagnostics": 596,
     "obs.explain": 8043,
-    "obs.fleet.health": 3320,
+    "obs.fleet.health": 3502,
     "obs.getCacheStats": 358,
     "obs.reset": 571,
     "obs.reset.table": 483,
@@ -193,7 +193,7 @@
     "slack.action": 268,
     "subagent.kill": 369,
     "subagent.list": 434,
-    "subagent.steer": 470,
+    "subagent.steer": 652,
     "system.ping": 324,
     "telegram.action": 268,
     "tokens.create": 564,

@@ -66,7 +66,7 @@ Without this setting, the `pipeline` tool will not be available.
 
 ## Actions
 
-The pipeline tool supports 9 actions. The default action is `execute` if no action is specified.
+The pipeline tool supports 10 actions. The default action is `execute` if no action is specified.
 
 ### define
 
@@ -203,6 +203,33 @@ graph_id: "abc-123-def"
 ```
 
 Nodes that have not completed yet return `null`. The `source` field indicates whether outputs were retrieved from the in-memory coordinator (`"memory"`) or from persisted output files on disk (`"disk"`).
+
+### from_intent
+
+Synthesize a multi-agent graph from a **one-line intent** — a canonical `pattern` plus a few agent/task names — and run it, without hand-writing the node list. The synthesizer deterministically expands one of four canonical patterns and dispatches the result through the same `execute` path, so all graph validation and sub-agent governance apply automatically.
+
+```yaml
+tool: pipeline
+action: from_intent
+pattern: debate          # research-fanout | debate | vote | map-reduce
+agents: ["bull", "bear"] # debate: [PRO, CON]; vote: voter pool; map-reduce: mapper pool
+tasks: ["should we ship v2?"]  # fills the TOPIC/TASK slot (tasks[0])
+```
+
+Patterns:
+
+| Pattern | Shape | Slot inputs |
+|---------|-------|-------------|
+| `research-fanout` | N researchers → synthesize | `tasks[0]` (the topic) |
+| `debate` | pro vs con → moderator | `agents: [PRO, CON]` (2 required) + `tasks[0]` |
+| `vote` | N voters → aggregate | `tasks[0]` (+ optional `agents` naming the pool) |
+| `map-reduce` | N mappers → reduce | `tasks[0]` (+ optional `agents` naming the pool) |
+
+An invalid intent (for example `debate` with fewer than two agents) is rejected before any graph runs. `from_intent` is gated by the `orchestration.authoring.intentAction` config flag (default `false`); when the flag is off the daemon refuses the call. Each successful synthesis emits a `graph:synthesized_from_intent` audit event.
+
+<Note>
+  `from_intent` produces **template-shaped** graphs — plain agent nodes (`{ nodeId, task, dependsOn }`) wired in the named fan-out → fan-in shape. It does **not** emit the typed orchestration drivers: a synthesized `debate` is a one-shot pro/con fan-in into a moderator node, **not** the multi-round `type_id: debate` driver (with `type_config.rounds` / `synthesizer`). For the typed multi-round drivers, author the graph with `define`/`execute` and per-node `type_id` + `type_config` (see [Node configuration](#node-configuration) below). `from_intent` accordingly takes no `rounds` parameter.
+</Note>
 
 ## Node configuration
 

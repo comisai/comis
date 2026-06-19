@@ -14,7 +14,7 @@
 
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { Command } from "commander";
-import { registerAuthCommand } from "./auth.js";
+import { registerAuthCommand, resolveCliConfigPath, DEFAULT_CONFIG_PATHS } from "./auth.js";
 
 // loginOpenAICodexOAuth makes real network calls (device-code polling, browser
 // OAuth server). Mock it so action-body tests exit:1 immediately instead of
@@ -552,5 +552,28 @@ describe("loadStorageMode env-ref resolution", () => {
     ).resolves.not.toThrow();
 
     exitSpy.mockRestore();
+  });
+});
+
+describe("resolveCliConfigPath — default config discovery (no explicit COMIS_CONFIG_PATHS)", () => {
+  it("honors an explicit COMIS_CONFIG_PATHS (first colon-separated entry) over everything", () => {
+    // existsFn returns true for nothing relevant — explicit path wins regardless.
+    expect(resolveCliConfigPath({ COMIS_CONFIG_PATHS: "/x/cfg.yaml:/y/other.yaml" }, () => false))
+      .toBe("/x/cfg.yaml");
+  });
+
+  it("follows $COMIS_DATA_DIR/config.yaml when set (no COMIS_CONFIG_PATHS) — the daemon's data-dir convention", () => {
+    const exists = (p: string) => p === "/data/config.yaml";
+    expect(resolveCliConfigPath({ COMIS_DATA_DIR: "/data" }, exists)).toBe("/data/config.yaml");
+  });
+
+  it("falls back to the first EXISTING default path (e.g. /etc/comis) when no env vars are set", () => {
+    // Previously auth.ts checked ONLY ~/.comis/config.yaml and would have missed this.
+    const exists = (p: string) => p === "/etc/comis/config.yaml";
+    expect(resolveCliConfigPath({}, exists)).toBe("/etc/comis/config.yaml");
+  });
+
+  it("returns the conventional ~/.comis/config.yaml when nothing exists (fresh install)", () => {
+    expect(resolveCliConfigPath({}, () => false)).toBe(DEFAULT_CONFIG_PATHS[0]);
   });
 });

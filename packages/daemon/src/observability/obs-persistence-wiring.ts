@@ -403,6 +403,40 @@ export function generationQualityEventToRow(
   };
 }
 
+/**
+ * TELEM-01 (Plan 173-03): map a `pipeline:authored` event to a `health_signal`
+ * diagnostic row. The GENQ-01 clone — a new `signal:"pipeline_authoring"` label
+ * rides the EXISTING `health_signal` category (NO schema migration). `details` is
+ * closed enums + booleans ONLY (action / tier / schemaValid / repaired) — NEVER a
+ * pipeline body, a type_config value, a node task/label, or a graph (§2.7).
+ *
+ * severity is INFO for a VALID author so a valid authoring does NOT inflate the
+ * fleet degrade count (A2 — the BENIGN_DAG_DEGRADED_REASONS precedent); WARNING for
+ * an INVALID one (the operator-visible small-model authoring miss). The fleet
+ * FINDING reads the rate over both, so severity only affects degrade-count
+ * inflation, not the headline metric.
+ */
+export function pipelineAuthoredEventToRow(
+  payload: EventMap["pipeline:authored"],
+): DiagnosticRow {
+  return {
+    timestamp: payload.timestamp,
+    category: "health_signal",
+    severity: payload.schemaValid ? "info" : "warning",
+    agentId: payload.agentId,
+    sessionKey: payload.sessionKey,
+    message: "pipeline:authored",
+    details: JSON.stringify({
+      signal: "pipeline_authoring",
+      action: payload.action,
+      tier: payload.capabilityClass,
+      schemaValid: payload.schemaValid,
+      repaired: payload.repaired,
+    }),
+    traceId: undefined,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Factory types
 // ---------------------------------------------------------------------------
@@ -546,6 +580,12 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
   // diagnosticBuffer). Fires only on a detected issue, so each row is a regression.
   eventBus.on("memory:generation_quality", (payload) => {
     diagnosticBuffer.push(generationQualityEventToRow(payload));
+  });
+  // TELEM-01 (Plan 173-03): the pipeline-authoring signal → health_signal row (same
+  // diagnosticBuffer, NO migration). Fires per `pipeline` define/execute invocation;
+  // the fleet lens rolls the small-tier invalid rate into a dedicated finding.
+  eventBus.on("pipeline:authored", (payload) => {
+    diagnosticBuffer.push(pipelineAuthoredEventToRow(payload));
   });
 
   // c. Periodic channel snapshot timer

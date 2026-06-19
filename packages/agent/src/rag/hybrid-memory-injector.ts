@@ -38,6 +38,20 @@ export function stripInlineRecalledMemory(text: string): string {
   return text.replace(INLINE_RECALL_BLOCK_RE, "");
 }
 
+/**
+ * Split a user message's text into its leading inline-recall block and the rest.
+ * Returns `{ recall: null, rest: text }` when no block is present. Used by the
+ * request-body layer (cache #C4) to move the TRANSIENT recall block onto the
+ * UNCACHED tail (a separate trailing content block, after the cache fence) so it
+ * is visible to the model yet never cached — preventing the cached-prefix mutation
+ * that occurs when C-FIX-3 strips the recall the turn after it goes historical.
+ */
+export function extractInlineRecalledMemory(text: string): { recall: string | null; rest: string } {
+  const m = INLINE_RECALL_BLOCK_RE.exec(text);
+  if (!m) return { recall: null, rest: text };
+  return { recall: m[0], rest: text.slice(m[0].length) };
+}
+
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------

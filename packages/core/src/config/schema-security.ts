@@ -27,6 +27,17 @@ export const ActionConfirmationConfigSchema = z.strictObject({
     autoApprove: z.array(z.string()).default([]),
   });
 
+/**
+ * Sub-agent completion delivery resilience config (DELIVERY-01/02).
+ * Nests under `security.agentToAgent.delivery` — joins the already-registered
+ * section, so it adds ZERO new SECTION_REGISTRY entries (D1, mirrors the
+ * Phase-170 tokenBudget precedent). Every field `.default()` (AGENTS.md §6.4).
+ */
+const DeliveryConfigSchema = z.strictObject({
+    /** Max retry attempts for a transient delivery failure before dead-lettering (DELIVERY-02). 0 = dead-letter on the first transient blip; capped at 10 to bound retry-storm amplification (T-171-04). */
+    maxRetries: z.number().int().min(0).max(10).default(3),
+  });
+
 const AgentToAgentBaseSchema = z.strictObject({
     /** Enable cross-agent session messaging */
     enabled: z.boolean().default(true),
@@ -52,6 +63,30 @@ const AgentToAgentBaseSchema = z.strictObject({
     graphMaxResultLength: z.number().int().positive().optional(),
     /** Cross-graph global sub-agent cap (max concurrent sub-agents across all graphs) */
     graphMaxGlobalSubAgents: z.number().int().positive().optional(),
+    /** Per-spawn token budget for graph sub-agents (BUDGET-01/03). null (default) = inherit the graph share (graphBudget.maxTokens / total node count) ONLY when a graph budget is set; else unbounded (today's behavior, byte-identical). A graph node's own tokenBudget overrides this. */
+    tokenBudget: z.number().int().positive().nullable().default(null),
+    /** Sub-agent completion delivery resilience (DELIVERY-01/02). Joins the existing security.agentToAgent section — ZERO new SECTION_REGISTRY entries (D1). Consumers read security.agentToAgent.delivery.maxRetries — never `?? 3` at the call site (§6.4). */
+    delivery: DeliveryConfigSchema.default(() => DeliveryConfigSchema.parse({})),
+    /**
+     * Fail-closed sandbox no-downgrade invariant (SANDBOX-02). When true (default — pure safety),
+     * a sub-agent spawn is REFUSED before any run/session is created if the child's resolved sandbox
+     * posture is LESS confined than its spawner's on any dimension (emitting security:sandbox_downgrade_refused).
+     * Joins the existing security.agentToAgent section — ZERO new SECTION_REGISTRY entries (D1).
+     * Set false to disable the gate. No migration shim (§2.9) — the refusal is the intended behavior change.
+     * Consumers read security.agentToAgent.sandboxNoDowngrade — never `?? true` at the call site (§6.4).
+     */
+    sandboxNoDowngrade: z.boolean().default(true),
+    /**
+     * Real mid-flight steering inject (STEER-01). When true, `subagent.steer`
+     * injects the message into the RUNNING child at its next step boundary
+     * (transcript + progress preserved) instead of kill+respawn; default false =
+     * today's kill+respawn behavior, byte-identical. Joins the existing
+     * security.agentToAgent section — ZERO new SECTION_REGISTRY entries (D1).
+     * Ships gated-off; the operator enables it on observed steering demand.
+     * Consumers read security.agentToAgent.steerInject — never `?? false` at the
+     * call site (§6.4).
+     */
+    steerInject: z.boolean().default(false),
   });
 
 export const AgentToAgentConfigSchema = AgentToAgentBaseSchema.extend({

@@ -25,6 +25,7 @@ import {
   GraphDeleteContract,
   GraphDeleteRunContract,
   stripInternalFields,
+  systemNowMs,
 } from "@comis/core";
 import { extractUserVariables, substituteUserVariables } from "../../graph/user-variables.js";
 import type { RpcHandler } from "../types.js";
@@ -45,6 +46,130 @@ import {
  * delete / deleteRun). Object-spread compatible with `Record<string, RpcHandler>`.
  */
 export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, RpcHandler> {
+  // TELEM-01 (Phase 173-02): emit a counts-only `pipeline:authored` per
+  // authoring invocation (define + execute), where schema validity and the
+  // resolved capabilityClass tier converge. Counts/ids/closed-enums ONLY — no
+  // node task, type_config value, label, or any pipeline body reaches the bus
+  // (§2.7 / D-EVENT). The tier is resolved DAEMON-SIDE from the RAW _agentId
+  // (Spoofing mitigation T-173-03) via the injected resolver — never a
+  // tool-supplied param — and fail-safes to "unknown" when unresolvable
+  // (Pitfall 2: record honestly, never silently drop, never default to
+  // "frontier"). `repaired` is the literal false: the weak-model repair
+  // producer is Phase 174 / AUTHOR-01 and is NOT wired here.
+  //
+  // METRIC DENOMINATOR (Phase 173 review WR-02): an authoring invocation is
+  // counted on every CONTRACT-PARSE-REACHABLE path — graph.define emits on a
+  // strict-contract parse rejection (below) AND a buildGraphInput throw;
+  // graph.execute (a loose z.record contract) emits on the buildGraphInput
+  // throw. The bespoke pre-Zod guards (define's "Missing required parameter:
+  // nodes" empty-call check, execute's a2a-disabled policy gate) emit NOTHING —
+  // an empty/garbage call or a policy rejection is not an authoring attempt.
+  // This boundary is deliberate (documented in fleet-findings.ts's
+  // pipeline_authoring finding + docs/developer-guide/event-bus.mdx).
+  const emitPipelineAuthored = (
+    action: "define" | "execute",
+    schemaValid: boolean,
+    rawParams: Record<string, unknown>,
+  ): void => {
+    // WR-01 (Phase 173 review): the emit MUST be best-effort — telemetry can
+    // never break the operation it measures. `deps.eventBus.emit` delegates to
+    // Node's EventEmitter with NO listener error isolation, and the subscribed
+    // `pipeline:authored` listener pushes into the obs diagnostic buffer whose
+    // synchronous SQLite flush (on its 50th item) can throw SQLITE_BUSY/FULL/
+    // disk-error. On the SUCCESS path this emit is called OUTSIDE the handler's
+    // buildGraphInput try (and, for graph.execute, BEFORE graphCoordinator.run),
+    // so an unguarded throw here would fail a VALID graph.define/execute purely
+    // because a telemetry insert failed — and on the invalid path it would mask
+    // the user-facing graph-validation error. Swallow any emit throw and log it
+    // at WARN (hint + errorKind) so the measured operation always proceeds.
+    try {
+      const capabilityClass =
+        deps.resolveCapabilityClass?.(rawParams._agentId as string | undefined) ?? "unknown";
+      deps.eventBus?.emit("pipeline:authored", {
+        action,
+        capabilityClass,
+        schemaValid,
+        repaired: false,
+        agentId: rawParams._agentId as string | undefined,
+        sessionKey: rawParams._callerSessionKey as string | undefined,
+        timestamp: systemNowMs(),
+      });
+    } catch (err) {
+      deps.logger?.warn(
+        {
+          err,
+          action,
+          errorKind: "internal" as const,
+          hint: "pipeline:authored telemetry emit failed (likely an obs-buffer SQLite flush throw); the graph operation proceeds unaffected",
+        },
+        "pipeline-authoring telemetry emit failed (best-effort)",
+      );
+    }
+  };
+
+  // AUTHOR-01 (Phase 174-03): resolve the calling agent's capabilityClass tier
+  // for the buildGraphInput repair decision, GATED on repairProducer. When the
+  // gate is off (or absent) this returns undefined so buildGraphInput takes the
+  // capable direct path — byte-identical to pre-174 (D-GATED-OFF). The tier is
+  // resolved SERVER-SIDE from the RAW _agentId (Spoofing mitigation T-174-SPOOF /
+  // T-173-03), reusing 173's injected resolveCapabilityClass — the tool-supplied
+  // capabilityClass param is NEVER read for the tier.
+  const resolveAuthoringTier = (
+    d: GraphHandlerDeps,
+    rawParams: Record<string, unknown>,
+  ): "frontier" | "mid" | "small" | "nano" | undefined =>
+    d.authoringConfig?.repairProducer
+      ? d.resolveCapabilityClass?.(rawParams._agentId as string | undefined)
+      : undefined;
+
+  // AUTHOR-01: assemble the repair context buildGraphInput needs for the gated
+  // weak-model branch (the injected matcher + gate + best-effort emit inputs).
+  // Correlation ids ride from the RAW params (envelope-only — never body).
+  const repairContext = (d: GraphHandlerDeps, rawParams: Record<string, unknown>) => ({
+    authoringConfig: d.authoringConfig,
+    repairMatch: d.repairMatch,
+    eventBus: d.eventBus,
+    logger: d.logger,
+    agentId: rawParams._agentId as string | undefined,
+    sessionKey: rawParams._callerSessionKey as string | undefined,
+  });
+
+  // AUTHOR-02 (Phase 174-04): best-effort audit emit for a from_intent synthesis
+  // (mirrors emitPipelineAuthored's WR-01 guard — telemetry never breaks the
+  // measured op). Counts/ids/closed-enums ONLY (pattern + GOVERNED node count +
+  // correlation ids; NEVER the graph body / node task / one-line intent — §2.7).
+  // Called AFTER buildGraphInput + validateTypeConfigs, so it reflects a GOVERNED graph.
+  const emitGraphSynthesized = (
+    pattern: "research-fanout" | "debate" | "vote" | "map-reduce",
+    nodeCount: number,
+    rawParams: Record<string, unknown>,
+  ): void => {
+    try {
+      deps.eventBus?.emit("graph:synthesized_from_intent", {
+        pattern,
+        nodeCount,
+        agentId: rawParams._agentId as string | undefined,
+        sessionKey: rawParams._callerSessionKey as string | undefined,
+        timestamp: systemNowMs(),
+      });
+    } catch (err) {
+      deps.logger?.warn(
+        {
+          err,
+          pattern,
+          errorKind: "internal" as const,
+          hint: "graph:synthesized_from_intent audit emit failed (likely an obs-buffer SQLite flush throw); the synthesized graph proceeds unaffected",
+        },
+        "from-intent synthesis audit emit failed (best-effort)",
+      );
+    }
+  };
+
+  /** The closed set of canonical from_intent patterns (mirrors the synthesizer). */
+  const SYNTH_PATTERNS = ["research-fanout", "debate", "vote", "map-reduce"] as const;
+  const isSynthPattern = (v: string): v is (typeof SYNTH_PATTERNS)[number] =>
+    (SYNTH_PATTERNS as readonly string[]).includes(v);
+
   return {
     [GraphDefineContract.method]: async (rawParams) => {
       // Bespoke pre-Zod validation FIRST (preserves user-friendly error
@@ -56,20 +181,43 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
       }
 
       const userParams = stripInternalFields(rawParams);
-      GraphDefineContract.request.parse(userParams);
+      // WR-02 (Phase 173 review): a present-but-malformed authoring call that
+      // fails the STRICT GraphDefineContract z.object (e.g. a wrong-typed
+      // contract field) throws HERE, before buildGraphInput — yet it is a
+      // genuine small-model "authored an invalid pipeline" attempt. Emit
+      // schemaValid:false so it lands in the gate denominator (the metric counts
+      // every contract-parse-reachable authoring, not only buildGraphInput-
+      // reachable ones), then re-throw (the user-facing error contract is
+      // unchanged). The bespoke "Missing required parameter: nodes" pre-check
+      // above is deliberately NOT counted — an empty/garbage call is not an
+      // authoring attempt (see the pipeline:authored doc comment for the
+      // metric's exact boundary).
+      try {
+        GraphDefineContract.request.parse(userParams);
+      } catch (e) {
+        emitPipelineAuthored("define", false, rawParams);
+        throw e;
+      }
 
-      // O3 (WR-01) producer deferred to Phase 157: no current producer sets
-      // capabilityClass on graph RPC params — it is absent from the contract
-      // request schema and the pipeline tool does not send it. Until Phase 157
-      // wires the producer (the resolved-ModelProfile capabilityClass threaded
-      // from the agent's rpcCall boundary) AND the matching weak-model repair
-      // consumer (see buildGraphInput / repairDagWithBoundedRetries in
-      // graph-helpers.ts), this is always undefined → the capable direct-emit
-      // path. The read is intentionally retained so the producer wiring is a
-      // single localized change in Phase 157.
-      const capabilityClass = userParams.capabilityClass as
-        "frontier" | "mid" | "small" | "nano" | undefined;
-      const validated = buildGraphInput(userParams, capabilityClass);
+      // AUTHOR-01 (Phase 174-03): resolve the calling agent's tier SERVER-SIDE,
+      // gated on repairProducer. FLAGS-OFF (or absent) ⇒ undefined ⇒ the capable
+      // direct-emit path ⇒ byte-identical to pre-174. NEVER read the tool-supplied
+      // userParams.capabilityClass for the tier (the spoofing surface 173 closed,
+      // T-174-SPOOF / T-173-03 — a weak model claiming "frontier" to skip repair).
+      const capabilityClass = resolveAuthoringTier(deps, rawParams);
+      // TELEM-01: capture the REAL buildGraphInput parse+validate verdict.
+      // buildGraphInput THROWS on parse/validate failure — emit schemaValid:false
+      // and re-throw (the existing user-facing error contract is unchanged);
+      // on success emit schemaValid:true BEFORE the later type_config/warning
+      // logic so a valid-but-otherwise-rejected call still counts as authored.
+      let validated;
+      try {
+        validated = await buildGraphInput(userParams, capabilityClass, repairContext(deps, rawParams));
+      } catch (e) {
+        emitPipelineAuthored("define", false, rawParams);
+        throw e;
+      }
+      emitPipelineAuthored("define", true, rawParams);
       validateTypeConfigs(validated.graph, deps.nodeTypeRegistry);
       const { warnings, errors } = validateGraphWarnings(validated.graph);
 
@@ -92,16 +240,61 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
         throw new Error("Agent-to-agent messaging is disabled by policy.");
       }
 
+      // AUTHOR-02 (Phase 174-04): read the from_intent marker BEFORE the strip
+      // (mirrors the _agentId/_callerSessionKey precedent — internal fields are
+      // read from rawParams). It is the in-band signal the from_intent tool sets
+      // so the daemon can GATE + AUDIT the synthesis at this chokepoint (the
+      // synthesizer runs in the skills tool, separated from here by JSON-RPC).
+      const synthPattern = rawParams._synthesizedFromIntent as string | undefined;
+      // FLAGS-OFF refusal (D-GATED-OFF / T-174-INTENT-GATE): refuse a from_intent
+      // dispatch when orchestration.authoring.intentAction is off, BEFORE any
+      // graph runs. A non-from_intent execute (no marker) is wholly unaffected —
+      // byte-identical to pre-174.
+      if (synthPattern && !deps.authoringConfig?.intentAction) {
+        throw new Error(
+          "from_intent authoring is disabled by policy (orchestration.authoring.intentAction).",
+        );
+      }
+
       const userParams = stripInternalFields(rawParams);
+      // M-1 (T-174-MARKER-LEAK): _synthesizedFromIntent is NOT in
+      // INTERNAL_FIELD_NAMES (a single-use graph-handler-local marker, not a
+      // shared dispatcher field), and GraphExecuteContract.request is a loose
+      // z.record — so the strip alone leaves it on userParams → it would reach
+      // buildGraphInput. Remove it explicitly so it never reaches the graph builder.
+      delete userParams._synthesizedFromIntent;
+      // WR-02 (Phase 173 review): unlike graph.define, GraphExecuteContract is a
+      // LOOSE z.record(z.string(), z.unknown()) — it accepts essentially any
+      // object, so a present-but-malformed authoring call does NOT throw here.
+      // It instead reaches buildGraphInput below, which already emits
+      // schemaValid:false via its own try/catch. There is therefore no
+      // contract-parse-level denominator gap on the execute path; no emit guard
+      // is needed around this parse.
       GraphExecuteContract.request.parse(userParams);
 
-      // O3 (WR-01) producer deferred to Phase 157 — see graph.define above.
-      // No producer sets capabilityClass yet, so this is always undefined →
-      // capable direct-emit path. Retained as the single Phase-157 wiring point.
-      const capabilityClass = userParams.capabilityClass as
-        "frontier" | "mid" | "small" | "nano" | undefined;
-      const validated = buildGraphInput(userParams, capabilityClass);
+      // AUTHOR-01 (Phase 174-03): server-side gated tier — see graph.define.
+      // FLAGS-OFF ⇒ undefined ⇒ capable path (byte-identical). The tool-supplied
+      // userParams.capabilityClass is never read for the tier (T-174-SPOOF).
+      const capabilityClass = resolveAuthoringTier(deps, rawParams);
+      // TELEM-01: same try/catch verdict capture as graph.define — emit
+      // schemaValid:false on a parse/validate throw (still re-throwing), true
+      // on success, before the coordinator dispatch.
+      let validated;
+      try {
+        validated = await buildGraphInput(userParams, capabilityClass, repairContext(deps, rawParams));
+      } catch (e) {
+        emitPipelineAuthored("execute", false, rawParams);
+        throw e;
+      }
+      emitPipelineAuthored("execute", true, rawParams);
       validateTypeConfigs(validated.graph, deps.nodeTypeRegistry);
+
+      // AUTHOR-02 (Phase 174-04): emit the synthesis audit AFTER governance
+      // succeeded, so it reflects a GOVERNED graph (T-174-SYNTH-EMIT best-effort).
+      // Only when the marker was set AND intentAction is on (FLAGS-OFF already threw).
+      if (synthPattern && deps.authoringConfig?.intentAction && isSynthPattern(synthPattern)) {
+        emitGraphSynthesized(synthPattern, validated.graph.nodes.length, rawParams);
+      }
 
       // Apply user-variable substitution if variables provided
       const variables = userParams.variables as Record<string, string> | undefined;
@@ -229,14 +422,14 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
       const tenantId = deps.tenantId ?? "default";
       const agentId = (rawParams.agentId as string) ?? deps.defaultAgentId;
 
-      // Validate structure (typeId/typeConfig pairing, DAG sort, Zod schema)
-      // O3 (WR-01) producer deferred to Phase 157 — see graph.define above.
-      // Always undefined today → capable direct-emit path.
-      const capabilityClass = userParams.capabilityClass as
-        "frontier" | "mid" | "small" | "nano" | undefined;
-      const validated = buildGraphInput(userParams, capabilityClass);
+      // Validate structure (typeId/typeConfig pairing, DAG sort, Zod schema).
+      // AUTHOR-01 (Phase 174-03): server-side gated tier — see graph.define.
+      // FLAGS-OFF ⇒ undefined ⇒ capable direct path (byte-identical).
+      const capabilityClass = resolveAuthoringTier(deps, rawParams);
+      const validated = await buildGraphInput(userParams, capabilityClass, repairContext(deps, rawParams));
       validateTypeConfigs(validated.graph, deps.nodeTypeRegistry);
 
+      // DEFER-174-SAVE (IN-01): persists ORIGINAL raw nodes, not the validated/repaired graph (pre-existing graph.save behavior; rationale: deferred-items.md).
       deps.namedGraphStore.save({
         id,
         tenantId,

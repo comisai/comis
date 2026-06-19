@@ -66,6 +66,8 @@ export interface GraphRunState {
   syntheticRunResults: Map<string, string>;
   /** Per-node cache token data captured from completion events */
   nodeCacheData: Map<string, { cacheReadTokens: number; cacheWriteTokens: number }>;
+  /** Per-node full-run token spend captured from completion events (BUDGET-03). */
+  nodeTokenSpend: Map<string, number>;
   /** Promise resolving to sorted tool superset for cache prefix sharing. */
   toolSupersetPromise?: Promise<string[]>;
   /** Resolved tool superset names for graph sub-agent spawns. */
@@ -132,6 +134,8 @@ export interface GraphCoordinatorDeps {
       callerAgentId?: string;
       model?: string;
       max_steps?: number;
+      /** Per-spawn token budget (BUDGET-01). The child's own per-execution cap. */
+      tokenBudget?: number;
       callerType?: "agent" | "graph";
       graphSharedDir?: string;
       graphTraceId?: string;
@@ -165,6 +169,10 @@ export interface GraphCoordinatorDeps {
   defaultAgentId: string;
   maxConcurrency?: number;       // default 4
   maxResultLength?: number;      // default 12000
+  /** Operator default per-node token budget inherit-share source (security.agentToAgent.tokenBudget).
+   *  null = no operator default (per-node budgets resolve from node.tokenBudget or the graph-budget
+   *  inherit-share only). BUDGET-02/03, D3. */
+  subAgentTokenBudget?: number | null;
   graphRetentionMs?: number;     // default 3_600_000 (1 hour)
   logger?: {
     info(obj: Record<string, unknown>, msg: string): void;
@@ -224,6 +232,9 @@ export interface GraphCoordinatorDeps {
 export interface CoordinatorConfig {
   maxConcurrency: number;
   maxResultLength: number;
+  /** Operator default per-node token budget inherit-share source (BUDGET-02/03, D3).
+   *  null = no operator default. */
+  subAgentTokenBudget: number | null;
   graphRetentionMs: number;
   maxGlobalSubAgents: number;
   maxParallelSpawns: number;

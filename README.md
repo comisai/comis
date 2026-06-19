@@ -87,6 +87,7 @@ Requirements: Node.js **22.19+** for npm/source installs. Production deployments
 | **Multi-agent operations** | Run specialized agents with separate memory, models, budgets, permissions, and routing. Spawn sub-agents or build DAG workflows from natural language. |
 | **Memory that learns, not just remembers** | Comis consolidates repeated facts, builds user profiles, learns from use, and keeps recall trust-aware. Under the hood: SQLite + FTS5 + vectors, local storage, and [published benchmark manifests](benchmarks/results/) for reproducible claims. |
 | **Context that can scale** | A context engine keeps active turns useful, supports lossless DAG-backed recovery with `ctx_search` / `ctx_expand`, and avoids silently throwing away important work. |
+| **Prompt cost that stays low** | Comis manages each provider's prompt cache so long sessions pay cached-read rates instead of full input — Anthropic `cache_control` breakpoints, OpenAI automatic prefix caching, and Gemini explicit `CachedContent` — and keeps the prefix byte-stable across turns so the cache keeps hitting. A 76-call Claude Opus session held a **16.9× cache read/write ratio** (94% of input served from cache). |
 | **Developer-friendly architecture** | TypeScript monorepo, hexagonal ports/adapters, `Result<T, E>` error handling, architecture tests, and clear extension points for channels, skills, tools, and storage. |
 
 ---

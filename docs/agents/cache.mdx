@@ -39,23 +39,70 @@ prevents.
 | 9 | **Cache-write suppression on sub-agents** | Sub-agents read the parent's cache but do not write fresh long-TTL entries of their own | No double-billing the same prefix |
 | 10 | **Per-zone retention** | The recent-message zone always uses "short"; older zones get "long" after escalation | Recent content churns; older content is stable, so each gets the right TTL |
 | 11 | **Anthropic ephemeral cache** | `cache_control: { type: "ephemeral", ttl: "5m" or "1h" }` markers placed at the right block boundaries | Native Anthropic cache, used by 100% of Claude calls |
-| 12 | **Gemini CachedContent** | Explicit `CachedContent` API with SHA-256 content hashing + 50% TTL refresh on active sessions | Gemini's per-object cache lifecycle, opt-in via `geminiCache.enabled` |
+| 12 | **Gemini CachedContent** | Explicit `CachedContent` API with SHA-256 content hashing + 50% TTL refresh on active sessions | Gemini's per-object cache lifecycle, **on by default** via `geminiCache.enabled` (opt-out) |
 | 13 | **OpenAI completion-storage flag** | `store: true` on Responses-API requests when `storeCompletions` is set | Lets OpenAI keep generated outputs available for replay/debugging |
 | 14 | **Microcompaction at write time** | Tool results above the per-tool inline threshold are saved to disk and replaced with a tiny reference at the moment they are written | Keeps verbose tool output out of every future turn's prefix |
 | 15 | **Schema stripping** | After `discover_tools` injects a schema block, it is replaced in history with a one-line summary on subsequent turns | Recovers ~1.7K tokens per discovery, which would otherwise sit in the cached prefix forever |
 | 16 | **Tool deferral with discovery** | Non-essential tool schemas are removed from the `tools` array and re-injected only when the agent calls `discover_tools` | Saves ~81% of the tokens the LLM would spend on tool definitions every turn |
+| 17 | **Anthropic prefix stabilizers** | Strips replayed thinking from every assistant turn, defers transient memory-recall to an uncached tail block, and pins the cache anchor to a fixed position | Keeps the `cache_control` prefix byte-identical turn over turn so markers register reads instead of re-writing the whole prefix |
+| 18 | **OpenAI prefix stabilizers** | Defers the current turn's recall to a trailing (uncached, never-persisted) `input` item, and strips replayed reasoning items, on the OpenAI Responses auto-cached prefix | Stops the automatic `prompt_cache_key` prefix collapsing to the instructions+tools floor each time recalled memory or aged reasoning rotates |
 
-The numbered list lives in three files:
+The numbered list lives across the executor and context engine:
 `packages/agent/src/executor/adaptive-cache-retention.ts` (rows 1–3, 10),
 `packages/agent/src/context-engine/context-engine.ts` (row 4),
 `packages/agent/src/spawn/lifecycle-hooks.ts` (rows 5, 8–9),
 `packages/agent/src/executor/cache-break-detection.ts` and `cache-break-diff-writer.ts` (rows 6–7),
-`packages/agent/src/executor/gemini-cache-manager.ts` (row 12),
-`packages/agent/src/executor/stream-wrappers/request-body-injector.ts` (rows 11, 13),
+`packages/agent/src/executor/gemini-cache-manager.ts` + `gemini-cache-injector.ts` (row 12),
+`packages/agent/src/executor/stream-wrappers/request-body/` — `breakpoint-orchestration.ts` (rows 11, 17 Anthropic markers), `store-flag.ts` (row 13 + the `usesResponsesInputApi` gate), `tool-result-clearing.ts` (rows 17–18 stabilizers), all wired by `factory.ts`,
 and `packages/skills/src/builtin/...` (rows 14–16 wire into the executor).
 
 The rest of this page explains the most user-visible of these optimizations
 in detail.
+
+---
+
+## Provider cache support
+
+Comis caches against three different provider mechanisms, verified end-to-end across **Anthropic** (Claude), **OpenAI** (native `openai`, `openai-codex`, and Azure), and **Google** (Gemini). Each provider caches differently, so Comis adapts its strategy per provider — and, critically, **stabilizes the prefix the same way for all three** so the cache actually hits.
+
+| Provider | Mechanism | How Comis drives it | Knobs that apply |
+|----------|-----------|--------------------|------------------|
+| **Anthropic** | Explicit `cache_control` breakpoints — you mark prefix blocks and the API caches up to the marker | Places ≤4 breakpoints at zone boundaries (max 4/request, 20-block lookback), escalates TTL adaptively, and keeps the marked prefix byte-stable | `cacheRetention`, `adaptiveCacheRetention`, `cacheBreakpointStrategy`, the cache fence |
+| **OpenAI** | **Automatic prefix caching** — no markers; the API caches the longest matching prefix, keyed by `prompt_cache_key` | Names `prompt_cache_key` from the session key (each agent and sub-agent gets its own namespace) and stabilizes the auto-cached prefix | none — TTL/breakpoint knobs do not apply (`storeCompletions` is replay storage, not caching) |
+| **Google** | **Explicit `CachedContent`** server-side object + implicit prefix caching for the tail | Creates/refreshes a CachedContent object for the system instruction + tool schemas, keyed by a SHA-256 content hash | `geminiCache.enabled` (default `true`), `geminiCache.maxActiveCaches` |
+
+### Anthropic — `cache_control` breakpoints + prefix stabilizers
+
+Claude caches a prompt prefix only when the bytes up to the `cache_control` marker are byte-for-byte identical to the previous turn. Comis places the markers (zones, ≤4 breakpoints, 20-block lookback — rows 4, 10, 11) and **actively keeps the prefix byte-stable** (row 17) so the markers register cache *reads* instead of re-writing:
+
+- **Strip replayed thinking.** Extended-thinking blocks are stripped from every replayed assistant message so the cached history matches the durable, no-thinking form and never mutates when a turn transitions active → historical.
+- **Defer transient recall to the uncached tail.** The per-turn memory-recall block (`[Relevant context from memory: …]`) is moved off the cache-marked query block onto a trailing **uncached** block — still visible to the model, never cached — so the prefix does not change when that recall rotates out next turn.
+- **Pinned cache anchor.** The semi-stable anchor breakpoint is pinned to a fixed position (the compaction summary, else the second user message) so it never re-anchors and re-writes the `[0..anchor]` span.
+
+Reported per response as `cache_read_input_tokens` / `cache_creation_input_tokens`. A 5-minute write costs ~1.25× the input rate, a 1-hour write ~2×, and a read ~0.1×. The minimum cacheable prefix is model-dependent (~4096 tokens on Opus / Haiku 4.5, ~1024–2048 on Sonnet and older); below it the marker is silently ignored.
+
+### OpenAI — automatic prefix caching
+
+The OpenAI Responses and Completions APIs cache automatically — there are no `cache_control` markers and no TTL knob. The API caches the longest prefix it has already seen, keyed by `prompt_cache_key`, which Comis derives from the session key so **each agent and each sub-agent caches in its own isolated namespace**. Running Anthropic's `cache_control` machinery on an OpenAI request body would strip the `type:"function"` tool shape and 400 the request, so Comis disables breakpoints for OpenAI and instead protects the **auto-cached prefix** the same way it protects the Anthropic one (row 18):
+
+- **Defer recall to a trailing item.** The current turn's recall block is re-attached as a separate trailing `input` item (transient, never persisted) so each user turn is byte-identical to its future historical clean form — the auto-cached prefix no longer collapses to the instructions+tools floor when recall rotates.
+- **Strip replayed reasoning** (native `openai` and Azure only). With `store: false` the SDK keeps reasoning for recent turns but drops it from aging ones — an early-index prefix mutation. Comis removes replayed reasoning consistently so the prefix stays byte-stable. `openai-codex` keeps its reasoning stable and was already optimal, so it is excluded.
+
+Reported as `cached_tokens` in usage. With the stabilizers on, reads grow monotonically; an occasional single `cached_tokens: 0` between otherwise-monotonic reads is OpenAI's own best-effort eviction, **not** a Comis cache break — the request body is byte-stable by construction.
+
+<Note>
+`storeCompletions` (→ `store: true`) is unrelated to caching — it asks OpenAI to retain the generated output for later replay/debugging. Leaving it `false` does not affect prefix-cache hit rates.
+</Note>
+
+### Google — explicit CachedContent
+
+Gemini caching is **on by default** for Gemini agents (`geminiCache.enabled: true`). Comis creates a server-side `CachedContent` object holding the system instruction + tool schemas, injects its name into each request, and strips those fields from the body to avoid double-billing. Staleness is detected by comparing a **SHA-256 content hash** — not field presence. (The field-presence check is what previously kept the cache from ever hitting: pi-ai leaves `toolConfig` undefined when no tool choice is set, which the old guard mistook for a change and so it created and evicted the cache on every call.) TTL is fixed at 3600s with a 50%-interval refresh on active sessions.
+
+The explicit cache is **shallow by design** — it covers the system instruction + tools (a guaranteed, stable discount), while Gemini's implicit prefix caching covers the conversation tail. Below the per-model minimum (~4096 tokens for gemini-3-pro / gemini-3.1-pro) the manager passes through uncached and implicit caching still applies. Reported as `cachedContentTokenCount` (constant across turns once the cache is live). Only Google AI Studio providers use the explicit path (not Vertex AI). Set `geminiCache.enabled: false` to opt out — e.g. a system prompt that churns every turn, which would thrash the per-object cache.
+
+<Note>
+The cache fence, adaptive TTL escalation, and `cacheRetention` apply **only** to the Anthropic `cache_control` path. OpenAI prefix caching and Gemini CachedContent manage their own lifecycles, so those knobs have no effect there.
+</Note>
 
 ---
 
@@ -108,7 +155,7 @@ Concretely:
 The fence index is stored in pre-trim space and correctly translated after the history window trims old messages from the front of the session, so protection survives across turns with long histories.
 
 <Warning>
-The cache fence is provider-specific. It applies to Anthropic sessions. Gemini uses explicit CachedContent API instead (see the Gemini section in the configuration table).
+The cache fence is part of the **Anthropic** `cache_control` path. OpenAI uses automatic prefix caching keyed by `prompt_cache_key`, and Gemini uses the explicit CachedContent API — both manage their own prefixes (see [Provider cache support](#provider-cache-support)). The fence has no effect on those providers; instead the OpenAI and Gemini prefixes are kept stable by the per-provider stabilizers described above.
 </Warning>
 
 ---
@@ -233,7 +280,7 @@ These are the config keys most relevant to cache behavior. All live under the pe
 |-----|---------|-----------------|
 | `cacheRetention` | `"long"` | Base TTL hint: `"none"`, `"short"` (5m), or `"long"` (1h) |
 | `adaptiveCacheRetention` | `true` | Whether to escalate from short to long after warm-up turns |
-| `cacheBreakpointStrategy` | `"single"` | Breakpoint placement: `"single"`, `"multi-zone"`, or `"auto"` |
+| `cacheBreakpointStrategy` | `"auto"` | Breakpoint placement: `"auto"` (→ multi-zone, recommended), `"multi-zone"`, or `"single"`. `"single"` places one breakpoint and can cause lookback-window cache misses (excessive cache writes) on long tool-using turns. |
 | `cacheRetentionOverrides` | `{}` | Per-model-prefix overrides, e.g. `"claude-haiku": "none"` |
 | `advancedCacheOptimization.enableRecentZonePromotion` | `true` | Promote recent-zone breakpoint from 5m to 1h in slow channels |
 
@@ -241,7 +288,7 @@ These are the config keys most relevant to cache behavior. All live under the pe
 
 | Key | Default | What it controls |
 |-----|---------|-----------------|
-| `geminiCache.enabled` | `false` | Enable Gemini CachedContent API |
+| `geminiCache.enabled` | `true` | Enable Gemini CachedContent API (on by default for Gemini agents; set `false` to opt out) |
 | `geminiCache.maxActiveCaches` | `20` | Max simultaneous cached content objects per agent |
 
 <Note>
@@ -286,4 +333,4 @@ For Gemini agents, `cacheRetention` has no effect. Gemini uses the CachedContent
 
 **If a tool produces very large results** (build logs, full file contents, API responses), the default 8K microcompaction threshold will offload them automatically. The agent can still read the full content on demand. If the offloaded path is causing confusion, raise `maxToolResultChars` per-agent to keep more content inline.
 
-**For Gemini agents,** enable `geminiCache` once your system prompt stabilizes. The CachedContent API gives explicit per-object lifecycle control and is more predictable than the Anthropic implicit prefix cache for long-lived agents.
+**For Gemini agents,** `geminiCache` is **on by default** — the CachedContent API caches the system instruction + tools server-side (guaranteed discount on cached input tokens) and is more predictable than relying on implicit prefix caching alone. Below the per-model minimum (~4096 tokens for gemini-3-pro / gemini-3.1-pro) the manager passes through uncached and Gemini's implicit cache still covers the conversation tail. Set `geminiCache.enabled: false` to opt out (e.g. if your system prompt churns every turn, which would thrash the cache).

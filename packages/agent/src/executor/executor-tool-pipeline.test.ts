@@ -358,6 +358,113 @@ describe("applyProviderNormalization — provider-specific tool normalization an
 });
 
 // ---------------------------------------------------------------------------
+// CR-01 (174-REVIEW): gbnfConstrain (AUTHOR-03) must be threaded END-TO-END
+// through applyProviderNormalization → normalizeToolSchemasForProvider. The
+// 174-05 read-side gate honors ctx.gbnfConstrain, but nothing forwarded the
+// config flag at the production call site, so flipping it ON did NOTHING
+// (the recurring "works-in-isolation-never-wired" class — 172-WR-02 /
+// 173-BLOCKER-2). These tests assert the flag ACTUALLY engages the Layer 3.5
+// transform THROUGH the pipeline helper, and that FLAGS-OFF stays
+// byte-identical end-to-end.
+// ---------------------------------------------------------------------------
+
+describe("CR-01: gbnfConstrain threaded through applyProviderNormalization (end-to-end wiring)", () => {
+  /** A gbnf-eligible local provider NOT pinned to the gbnf profile. */
+  const ELIGIBLE = { provider: "my-ollama", modelId: "qwen3.6:35b" };
+
+  /** Fresh hostile tool, as the live toolset supplies it (deep-cloned). */
+  function makeHostileTool(): ToolDefinition {
+    return makeTool({
+      name: hostileMcpTool.name,
+      description: hostileMcpTool.description,
+      parameters: structuredClone(hostileMcpTool.parameters) as ToolDefinition["parameters"],
+    });
+  }
+
+  it("flag ON: engages the Layer 3.5 GBNF transform on a gbnf-eligible provider via the pipeline", () => {
+    const withFlag = applyProviderNormalization({
+      tools: [makeHostileTool()],
+      provider: ELIGIBLE.provider,
+      modelId: ELIGIBLE.modelId,
+      gbnfConstrain: true,
+    });
+
+    // The transform collapses the nullable anyOf assignee to its non-null
+    // branch + a "(nullable)" hint and adds an explicit empty properties map
+    // to the free-form metadata object — observable proof Layer 3.5 ran.
+    const props = (withFlag[0].parameters as { properties: Record<string, Record<string, unknown>> }).properties;
+    expect(props.assignee).toEqual({ type: "string", description: "who (nullable)" });
+    expect(props.metadata).toEqual({ type: "object", properties: {} });
+    expect(props.retries).toEqual({ type: "integer", description: "(nullable)" });
+  });
+
+  it("flag ON via the pipeline equals the gbnf-profile transform output (same engaged scope)", () => {
+    // The pipeline flag-on path and the explicit gbnf-profile path must
+    // produce byte-identical schemas — the flag engages the SAME Layer 3.5.
+    const viaFlag = applyProviderNormalization({
+      tools: [makeHostileTool()],
+      provider: ELIGIBLE.provider,
+      modelId: ELIGIBLE.modelId,
+      gbnfConstrain: true,
+    });
+    const viaProfile = applyProviderNormalization({
+      tools: [makeHostileTool()],
+      provider: ELIGIBLE.provider,
+      modelId: ELIGIBLE.modelId,
+      compat: { toolSchemaProfile: "gbnf" },
+    });
+    expect(JSON.stringify(viaFlag[0].parameters)).toBe(JSON.stringify(viaProfile[0].parameters));
+  });
+
+  it("flag OFF (and absent) is byte-identical to no transform on a gbnf-eligible provider (FLAGS-OFF invariant)", () => {
+    const off = applyProviderNormalization({
+      tools: [makeHostileTool()],
+      provider: ELIGIBLE.provider,
+      modelId: ELIGIBLE.modelId,
+      gbnfConstrain: false,
+    });
+    const absent = applyProviderNormalization({
+      tools: [makeHostileTool()],
+      provider: ELIGIBLE.provider,
+      modelId: ELIGIBLE.modelId,
+    });
+    // Off === absent (the field changes nothing when false).
+    expect(JSON.stringify(off[0].parameters)).toBe(JSON.stringify(absent[0].parameters));
+    // And neither engaged the transform: the nullable anyOf survives untouched
+    // (Layer 3.5 would have collapsed it + appended a "(nullable)" hint).
+    // prepareArguments differs by closure identity, so compare only params.
+    const props = (off[0].parameters as { properties: Record<string, unknown> }).properties;
+    expect(props.assignee).toEqual({ anyOf: [{ type: "string" }, { type: "null" }], description: "who" });
+  });
+
+  it("flag ON on a CLOUD-family provider (anthropic) does NOT engage GBNF (D-08 blast radius)", () => {
+    // IN-03: the engaged scope is gbnf-ELIGIBLE (local/default family) only;
+    // the flag never infers GBNF from a cloud provider name.
+    const result = applyProviderNormalization({
+      tools: [makeHostileTool()],
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-5-20250929",
+      gbnfConstrain: true,
+    });
+    // anthropic keyword-strips (Layer 1) but does NOT collapse the nullable
+    // anyOf (that is Layer 3.5, which must stay inert here).
+    const props = (result[0].parameters as { properties: Record<string, Record<string, unknown>> }).properties;
+    expect(props.assignee.anyOf).toBeDefined();
+  });
+
+  it("wiring: assembleTools reads config.orchestration.authoring.gbnfConstrain and forwards it to applyProviderNormalization (source pin)", () => {
+    // Source-grep wiring pin (CR-02 precedent above): the unit tests prove the
+    // helper forwards the flag; this proves the production caller reads the
+    // config gate and passes it down (guards against the dead-wiring class).
+    const here = dirname(fileURLToPath(import.meta.url));
+    const source = readFileSync(resolve(here, "executor-tool-assembly.ts"), "utf-8");
+    // The assembly site must reference both the config gate and the param.
+    expect(source).toMatch(/orchestration\?\.authoring\?\.gbnfConstrain|getGbnfConstrain/);
+    expect(source).toMatch(/gbnfConstrain:/);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // applyMutationSerializer
 // ---------------------------------------------------------------------------
 

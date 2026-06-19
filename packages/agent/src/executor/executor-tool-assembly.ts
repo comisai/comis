@@ -696,6 +696,12 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
       provider: resolvedModel.provider,
       modelId: resolvedModel.id,
       compat: modelCompat,
+      // AUTHOR-03 (CR-01): thread the gbnfConstrain authoring gate end-to-end.
+      // The flag lives on the top-level AppConfig (config.orchestration.authoring),
+      // NOT PerAgentConfig — so it arrives via a deps resolver that reads
+      // container.config live (runtime-mutable; see getGbnfConstrain JSDoc).
+      // Absent resolver ⇒ false ⇒ FLAGS-OFF byte-identical.
+      gbnfConstrain: deps.getGbnfConstrain?.() ?? false,
     });
   }
 

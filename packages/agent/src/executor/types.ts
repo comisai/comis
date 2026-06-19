@@ -94,6 +94,11 @@ export interface ExecutionOverrides {
   /** Override the shared StepCounter with a fresh instance.
    *  When provided, this counter is used instead of the deps.stepCounter. */
   stepCounter?: StepCounter;
+  /** Per-execution token cap for sub-agent isolation (BUDGET-01).
+   *  Fed to budgetGuard.resetExecution(cap); checkBudget enforces
+   *  min(config.perExecution, tokenBudget) so a runaway child is stopped
+   *  mid-run. Absent ⇒ resetExecution() with no cap (config.perExecution). */
+  tokenBudget?: number;
   /** Spawn packet for sub-agent context injection.
    *  When provided, prompt assembly uses it to build an enriched system prompt. */
   spawnPacket?: SpawnPacket;

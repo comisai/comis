@@ -133,6 +133,7 @@ import { createTurnLoopDetector } from "../turn-loop-detector.js";
 import { buildPromptingSnapshot } from "./pi-executor-prompting.js";
 import type { PiExecutorDeps } from "./pi-executor-types.js";
 export type { PiExecutorDeps } from "./pi-executor-types.js";
+import type { ExecutionBudgetWindow } from "../../budget/budget-guard.js";
 import { computeOutputHeadroom } from "../../context-engine/output-headroom.js";
 
 /** Number of turns to restrict breakpoints after server eviction. */
@@ -234,7 +235,14 @@ export function createPiExecutor(
       );
       const activeStepCounter = executionOverrides?.stepCounter ?? deps.stepCounter;
       activeStepCounter.reset();
-      deps.budgetGuard.resetExecution();
+      // BUDGET-01: a per-spawn tokenBudget becomes THIS execution's effective
+      // per-execution cap (min(config.perExecution, cap)); undefined ⇒ no cap
+      // override, byte-identical to the no-budget path.
+      // CR-01: resetExecution returns an EXECUTION-LOCAL window owning this run's
+      // per-execution total + cap. Thread it (not the shared per-agent guard)
+      // into the before-tool-call guard and the event bridge so two concurrent
+      // same-agent executions never clobber each other's per-execution budget.
+      const budgetWindow = deps.budgetGuard.resetExecution(executionOverrides?.tokenBudget);
 
       // 4. Resolve model using ModelRegistry
       //    Apply per-node model override from ExecutionOverrides and normalize shortcuts before registry lookup
@@ -454,6 +462,7 @@ export function createPiExecutor(
           modelProfile,
           windowProvenance,
           activeStepCounter,
+          budgetWindow,
           sessionAdapter,
           cacheRetentionRef,
           adaptiveRetentionRef,
@@ -505,6 +514,10 @@ interface RunSessionLockedContext {
    *  threaded as a sibling of modelProfile into both budget call sites. */
   readonly windowProvenance: WindowProvenance;
   readonly activeStepCounter: StepCounter;
+  /** CR-01: the per-execution budget window for THIS run — threaded into the
+   *  before-tool-call guard and the event bridge instead of the shared per-agent
+   *  guard, so concurrent same-agent executions never share the per-execution cap/total. */
+  readonly budgetWindow: ExecutionBudgetWindow;
   readonly sessionAdapter: ComisSessionManager;
   readonly cacheRetentionRef: MutableRef<CacheRetention | undefined>;
   readonly adaptiveRetentionRef: MutableRef<AdaptiveCacheRetention | undefined>;
@@ -520,6 +533,7 @@ async function runSessionLocked(
     _directives, _prevTimestamp, executionOverrides, executionStartMs,
     effectiveTimeout, sepEnabled, executionPlanRef, safetyReinforcement,
     resolvedModel, modelCompat, modelProfile, windowProvenance, activeStepCounter,
+    budgetWindow,
     sessionAdapter,
     cacheRetentionRef, adaptiveRetentionRef, minTokensOverrideRef,
   } = ctx;
@@ -866,7 +880,7 @@ async function runSessionLocked(
   // not load pi-mono extensions, so this override is safe.
   // v0.65.0: setBeforeToolCall() removed; beforeToolCall is now a direct property.
   session.agent.beforeToolCall =
-    createBeforeToolCallGuard(activeStepCounter, deps.budgetGuard, deps.circuitBreaker, toolRetryBreaker, messageSendLimiter, turnLoopDetector);
+    createBeforeToolCallGuard(activeStepCounter, budgetWindow, deps.circuitBreaker, toolRetryBreaker, messageSendLimiter, turnLoopDetector);
 
   // Mid-turn tool injection -- when discover_tools returns sideEffects.discoveredTools,
   // inject the full ToolDefinitions into the live agentic loop tools array so the LLM can
@@ -1297,7 +1311,9 @@ async function runSessionLocked(
   });
   const bridge = createPiEventBridge({
     eventBus: deps.eventBus,
-    budgetGuard: deps.budgetGuard,
+    // CR-01: this run's execution-local window (NOT the shared per-agent guard),
+    // so recordUsage / the turn-end budget check are scoped to THIS execution.
+    budgetGuard: budgetWindow,
     costTracker: deps.costTracker,
     stepCounter: activeStepCounter,
     circuitBreaker: deps.circuitBreaker,
@@ -1629,7 +1645,8 @@ async function runSessionLocked(
       deps: {
         eventBus: deps.eventBus,
         logger: deps.logger,
-        budgetGuard: deps.budgetGuard,
+        // CR-01: this run's execution-local window (precheck + envelope snapshot).
+        budgetGuard: budgetWindow,
         costTracker: deps.costTracker,
         authRotation: deps.authRotation,
         fallbackModels: deps.fallbackModels,

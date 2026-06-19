@@ -11,6 +11,7 @@ import {
   scriptZeroHitEventToRow,
   summaryLanguageMismatchEventToRow,
   generationQualityEventToRow,
+  pipelineAuthoredEventToRow,
   setupObsPersistence,
 } from "./obs-persistence-wiring.js";
 import type { EventMap } from "@comis/core";
@@ -612,6 +613,86 @@ describe("generationQualityEventToRow", () => {
 });
 
 // ---------------------------------------------------------------------------
+// TELEM-01 (Plan 173-03) — pipelineAuthoredEventToRow (the fleet authoring path).
+// The GENQ-01 clone: a `pipeline:authored` event → a `health_signal` DiagnosticRow
+// with `signal:"pipeline_authoring"`. details carries closed enums + booleans ONLY
+// (action/tier/schemaValid/repaired) — NEVER a pipeline body, a type_config value,
+// a node task/label, or a graph (§2.7). severity is INFO for a valid author (so a
+// valid authoring does NOT inflate the fleet degrade count — A2) and WARNING for an
+// invalid one (the operator-visible small-model miss).
+// ---------------------------------------------------------------------------
+
+describe("pipelineAuthoredEventToRow", () => {
+  it("maps an INVALID small-tier author to a warning health_signal row (enums + booleans only)", () => {
+    const row = pipelineAuthoredEventToRow({
+      action: "define",
+      capabilityClass: "small",
+      schemaValid: false,
+      repaired: false,
+      timestamp: 1,
+    });
+
+    expect(row.timestamp).toBe(1);
+    expect(row.category).toBe("health_signal");
+    expect(row.severity).toBe("warning"); // invalid = the operator-visible miss
+    expect(row.message).toBe("pipeline:authored");
+    expect(row.traceId).toBeUndefined();
+    // No session/agent on this payload → undefined on the row.
+    expect(row.agentId).toBeUndefined();
+    expect(row.sessionKey).toBeUndefined();
+
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(details).toEqual({
+      signal: "pipeline_authoring",
+      action: "define",
+      tier: "small",
+      schemaValid: false,
+      repaired: false,
+    });
+  });
+
+  it("A2: maps a VALID author to severity:info (valid authorings do not inflate the fleet degrade count)", () => {
+    const row = pipelineAuthoredEventToRow({
+      action: "execute",
+      capabilityClass: "frontier",
+      schemaValid: true,
+      repaired: false,
+      agentId: "agent-1",
+      sessionKey: "t:u:c",
+      timestamp: 2,
+    });
+    expect(row.severity).toBe("info");
+    expect(row.agentId).toBe("agent-1");
+    expect(row.sessionKey).toBe("t:u:c");
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(details.action).toBe("execute");
+    expect(details.tier).toBe("frontier");
+    expect(details.schemaValid).toBe(true);
+  });
+
+  it("NO-LEAK (§2.7 core control): the row carries counts/labels/booleans ONLY — no graph/task/type_config body", () => {
+    const row = pipelineAuthoredEventToRow({
+      action: "define",
+      capabilityClass: "nano",
+      schemaValid: false,
+      repaired: false,
+      timestamp: 3,
+    });
+    const serialized = JSON.stringify(row);
+    // No pipeline body / type_config / node task / label / graph string anywhere.
+    expect(serialized).not.toMatch(/type_config|typeConfig|"nodes"|"task"|"label"|"graph"/);
+    // details has EXACTLY the closed counts/labels/booleans — no extra body field.
+    expect(Object.keys(JSON.parse(row.details ?? "{}"))).toEqual([
+      "signal",
+      "action",
+      "tier",
+      "schemaValid",
+      "repaired",
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // setupObsPersistence
 // ---------------------------------------------------------------------------
 
@@ -708,6 +789,9 @@ describe("setupObsPersistence", () => {
     // OBS-01 (Phase 180): the 2 multilingual health_signal subscriptions.
     expect(eventBus.on).toHaveBeenCalledWith("context:script_zero_hit", expect.any(Function));
     expect(eventBus.on).toHaveBeenCalledWith("context:summary_language_mismatch", expect.any(Function));
+    // TELEM-01 (Plan 173-03): the pipeline-authoring health_signal subscription
+    // (beside the GENQ-01 .on).
+    expect(eventBus.on).toHaveBeenCalledWith("pipeline:authored", expect.any(Function));
 
     // Cleanup
     clearInterval(result.snapshotTimer);
@@ -750,16 +834,20 @@ describe("setupObsPersistence", () => {
     eventBus.emit("context:summary_language_mismatch", {
       agentId: "a1", sessionKey: "sk-1", sourceScript: "hebrew", summaryScript: "latin", depth: 1, timestamp: 1004,
     });
+    // f. TELEM-01: a pipeline:authored signal (an invalid small-tier author).
+    eventBus.emit("pipeline:authored", {
+      action: "define", capabilityClass: "small", schemaValid: false, repaired: false, sessionKey: "sk-1", timestamp: 1005,
+    });
 
     // Flush the diagnostic buffer.
     vi.advanceTimersByTime(500);
 
-    // Exactly one health_signal row per event (5 total), each with the right message.
+    // Exactly one health_signal row per event (6 total), each with the right message.
     const calls = (obsStore.insertDiagnostic as ReturnType<typeof vi.fn>).mock.calls;
     const healthRows = calls
       .map((c) => c[0] as { category?: string; message?: string; details?: string })
       .filter((r) => r.category === "health_signal");
-    expect(healthRows).toHaveLength(5);
+    expect(healthRows).toHaveLength(6);
     const messages = healthRows.map((r) => r.message).sort();
     expect(messages).toEqual([
       "context:dag_degraded",
@@ -767,7 +855,11 @@ describe("setupObsPersistence", () => {
       "context:summary_language_mismatch",
       "health:budget_exceeded",
       "mcp:server:reconnect_failed",
+      "pipeline:authored",
     ]);
+    // The pipeline-authoring row carries the closed signal label.
+    const pipelineRow = healthRows.find((r) => r.message === "pipeline:authored")!;
+    expect(JSON.parse(pipelineRow.details ?? "{}").signal).toBe("pipeline_authoring");
 
     // The MCP row never carries the error body (bounded payload).
     const mcpRow = healthRows.find((r) => r.message === "mcp:server:reconnect_failed")!;

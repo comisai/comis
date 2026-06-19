@@ -47,6 +47,26 @@ function parseResult(result: ToolResult): Record<string, unknown> {
   return JSON.parse(jsonStart >= 0 ? raw.slice(jsonStart) : raw);
 }
 
+/**
+ * True when a parsed web_fetch result is a transient httpbin.org outage (5xx
+ * status or a network/timeout error) rather than a code defect. httpbin can pass
+ * the load-time `/status/200` probe (HTTPBIN_UP) and then 503 on `/html` or
+ * `/json` mid-test — a probe-vs-fetch race. web_fetch surfaces that as
+ * `{ error: "HTTP 5xx: …", status: 5xx }` (web-fetch-tool.ts), so the success-path
+ * assertions can't run; the test should SKIP rather than false-fail.
+ */
+function isTransientFetchOutage(parsed: Record<string, unknown>): boolean {
+  const status = parsed.status;
+  if (typeof status === "number" && status >= 500) return true;
+  const err = parsed.error;
+  return (
+    typeof err === "string" &&
+    /(HTTP 5\d\d|fetch failed|aborted|ENOTFOUND|ECONNRESET|ECONNREFUSED|ETIMEDOUT|timed out|network)/i.test(
+      err,
+    )
+  );
+}
+
 // ---------------------------------------------------------------------------
 // web_fetch
 // ---------------------------------------------------------------------------
@@ -58,7 +78,7 @@ describe("web_fetch", () => {
 
   it.skipIf(!HTTPBIN_UP)(
     "fetches HTML with readability extraction",
-    async () => {
+    async (ctx) => {
       // Use httpbin.org/html which returns a simple HTML page (Moby-Dick excerpt).
       // example.com may not resolve on all DNS servers (NXDOMAIN on some corporate/CI DNS).
       const tool = createWebFetchTool();
@@ -70,6 +90,8 @@ describe("web_fetch", () => {
       expect(result.content.length).toBeGreaterThanOrEqual(1);
 
       const parsed = parseResult(result);
+      // httpbin 503'd between the load-time probe and this fetch — skip, don't fail.
+      if (isTransientFetchOutage(parsed)) ctx.skip();
       expect(parsed.url).toContain("httpbin.org");
       expect(parsed.status).toBe(200);
       expect(parsed.contentType).toContain("text/html");
@@ -84,13 +106,15 @@ describe("web_fetch", () => {
 
   it.skipIf(!HTTPBIN_UP)(
     "fetches JSON from httpbin",
-    async () => {
+    async (ctx) => {
       const tool = createWebFetchTool();
       const result = (await tool.execute("test-fetch-json", {
         url: "https://httpbin.org/json",
       })) as ToolResult;
 
       const parsed = parseResult(result);
+      // httpbin 503'd between the load-time probe and this fetch — skip, don't fail.
+      if (isTransientFetchOutage(parsed)) ctx.skip();
       expect(parsed.status).toBe(200);
       expect(parsed.contentType).toContain("application/json");
       expect(parsed.extractor).toBe("json");
@@ -123,7 +147,7 @@ describe("web_fetch", () => {
 
   it.skipIf(!HTTPBIN_UP)(
     "respects maxChars truncation",
-    async () => {
+    async (ctx) => {
       // httpbin /html has enough content that 100 chars will trigger truncation.
       // Use minChars=100 (minClamp) since implementation clamps at 100 minimum.
       const tool = createWebFetchTool();
@@ -133,6 +157,8 @@ describe("web_fetch", () => {
       })) as ToolResult;
 
       const parsed = parseResult(result);
+      // httpbin 503'd between the load-time probe and this fetch — skip, don't fail.
+      if (isTransientFetchOutage(parsed)) ctx.skip();
       expect(parsed.truncated).toBe(true);
       expect(typeof parsed.text).toBe("string");
       // The text is wrapped with dynamic UNTRUSTED_{hex} markers.

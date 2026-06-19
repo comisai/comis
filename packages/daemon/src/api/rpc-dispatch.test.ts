@@ -605,3 +605,102 @@ describe("createRpcDispatch", () => {
     expect(logSerialized).toContain(ID_SENTINEL);
   });
 });
+
+// ---------------------------------------------------------------------------
+// TELEM-01 WIRING (the 172-WR-02 lesson, T-173-13): the createGraphHandlers
+// deps MUST actually carry a constructed `resolveCapabilityClass` — without it
+// every pipeline:authored emit fail-defaults to "unknown" and the small-model
+// authoring metric is permanently 0 / dead (a silent DoS on the gate). A typed-
+// but-never-constructed dep would pass tsc and ship a dead metric; this asserts
+// the production path at rpc-dispatch.ts:200 builds the resolver AND that it is
+// LIVE (closes over deps.agents + getProviderCapabilityClass), not a no-op.
+// ---------------------------------------------------------------------------
+
+describe("createRpcDispatch — pipeline:authored tier resolver wiring (TELEM-01 / T-173-13)", () => {
+  const mockLogger = {
+    debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(),
+    fatal: vi.fn(), trace: vi.fn(), child: vi.fn().mockReturnThis(),
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // Deps that make the (deps.graphCoordinator || deps.namedGraphStore) branch at
+  // rpc-dispatch.ts:200 TAKEN, and supply the two inputs the resolver closes
+  // over: an agents map (agentId -> {provider}) and getProviderCapabilityClass
+  // (provider -> tier). "weakbot" runs on the "ollama" provider, which resolves
+  // to the "small" tier.
+  const graphMockDeps = {
+    logger: mockLogger,
+    container: { eventBus: { emit: vi.fn(), on: vi.fn() }, config: { providers: { entries: {} }, dataDir: "." } },
+    graphCoordinator: { run: vi.fn(), cancel: vi.fn() },
+    agents: { weakbot: { provider: "ollama" } },
+    getProviderCapabilityClass: (provider: string | undefined) =>
+      provider === "ollama" ? ("small" as const) : undefined,
+  } as never;
+
+  it("constructs resolveCapabilityClass on the createGraphHandlers deps (defined, a function — not a typed-only dead metric)", async () => {
+    const { createGraphHandlers } = await import("./graph-handlers/index.js");
+    const { createRpcDispatch } = await import("./rpc-dispatch.js");
+
+    createRpcDispatch(graphMockDeps);
+
+    const factoryDeps = (createGraphHandlers as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as
+      | { resolveCapabilityClass?: unknown }
+      | undefined;
+    expect(factoryDeps).toBeDefined();
+    expect(typeof factoryDeps!.resolveCapabilityClass).toBe("function");
+  });
+
+  it("the wired resolver returns the REAL tier (small) for a known agent — NOT a permanent unknown", async () => {
+    const { createGraphHandlers } = await import("./graph-handlers/index.js");
+    const { createRpcDispatch } = await import("./rpc-dispatch.js");
+
+    createRpcDispatch(graphMockDeps);
+
+    const factoryDeps = (createGraphHandlers as ReturnType<typeof vi.fn>).mock.calls[0]![0] as {
+      resolveCapabilityClass: (agentId: string | undefined) => string | undefined;
+    };
+    // weakbot -> ollama -> small (the resolver is LIVE: it closes over both
+    // deps.agents and deps.getProviderCapabilityClass; a no-op would yield
+    // undefined → the emit would record "unknown").
+    expect(factoryDeps.resolveCapabilityClass("weakbot")).toBe("small");
+    // An unknown agent yields undefined (the emit then records "unknown" honestly).
+    expect(factoryDeps.resolveCapabilityClass("ghost")).toBeUndefined();
+    expect(factoryDeps.resolveCapabilityClass(undefined)).toBeUndefined();
+  });
+
+  // AUTHOR-01 (174-03) wiring: createGraphHandlers MUST also carry the gate
+  // (authoringConfig, from container.config.orchestration.authoring) AND the
+  // injected conservative repair matcher (repairMatch = matchRawGraphToTemplate
+  // from @comis/agent — the daemon→agent boundary is crossed here, the
+  // composition site, never inside the pure helper). A typed-but-unwired
+  // repairMatch would make the repair branch permanently unreachable in prod.
+  it("constructs authoringConfig + repairMatch on the createGraphHandlers deps (AUTHOR-01 — repair branch is reachable in prod)", async () => {
+    const { createGraphHandlers } = await import("./graph-handlers/index.js");
+    const { createRpcDispatch } = await import("./rpc-dispatch.js");
+
+    const depsWithGate = {
+      ...graphMockDeps,
+      container: {
+        eventBus: { emit: vi.fn(), on: vi.fn() },
+        config: {
+          providers: { entries: {} },
+          dataDir: ".",
+          orchestration: { authoring: { repairProducer: true, intentAction: false, gbnfConstrain: false } },
+        },
+      },
+    } as never;
+    createRpcDispatch(depsWithGate);
+
+    const factoryDeps = (createGraphHandlers as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as
+      | { authoringConfig?: { repairProducer?: boolean }; repairMatch?: unknown }
+      | undefined;
+    expect(factoryDeps).toBeDefined();
+    // The gate is threaded from config (the value the operator flips).
+    expect(factoryDeps!.authoringConfig).toMatchObject({ repairProducer: true });
+    // The repair matcher is a live function (the injected @comis/agent matcher).
+    expect(typeof factoryDeps!.repairMatch).toBe("function");
+  });
+});

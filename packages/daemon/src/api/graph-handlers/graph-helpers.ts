@@ -3,19 +3,13 @@
 /**
  * Graph handler helpers.
  *
- * Pure helpers shared across the mutate / query / export handler bundles.
- * No closures, no factory: every helper is a pure function or interface so
- * the dependency graph stays one-directional (mutate / query / export →
- * graph-helpers).
- *
- *   - GraphHandlerDeps type re-export (composition of OrchestratorApiDeps)
- *   - ValidationIssue interface (warning record shape)
- *   - transformNodes (snake_case to camelCase node param adapter)
- *   - validateGraphWarnings (soft validation; emits LLM-friendly warnings)
- *   - schemaToExample (Zod schema introspection for LLM hints)
- *   - validateTypeConfigs (typeConfig validation against driver schemas)
- *   - buildGraphInput (RPC params → validated graph + execution order)
- *   - IS_DEV (NODE_ENV !== "production" dev-mode flag)
+ * Pure helpers shared across the mutate / query / export handler bundles
+ * (GraphHandlerDeps, ValidationIssue, transformNodes, validateGraphWarnings,
+ * schemaToExample, validateTypeConfigs, buildGraphInput, IS_DEV). No closures,
+ * no factory: every helper is a pure function or interface so the dependency
+ * graph stays one-directional (mutate / query / export → graph-helpers →
+ * graph-repair). The conservative weak-model repair branch lives in the sibling
+ * graph-repair.ts (DEFER-174-FILESIZE-01).
  *
  * @module
  */
@@ -26,16 +20,33 @@ import {
   type ExecutionGraph,
   systemGetEnv,
 } from "@comis/core";
+// AUTHOR-01 (Phase 174-03): the daemon consumes the injected matcher's result
+// types (the matcher fn itself is imported only at the rpc-dispatch composition
+// site and injected via deps.repairMatch — never a direct import in this pure
+// helper). Type-only imports introduce no runtime daemon→agent coupling. The
+// graph:repaired emit + CanonicalTemplatePattern usage moved to graph-repair.ts.
+import type { CapabilityClass, TemplateMatch } from "@comis/agent";
 import { z } from "zod";
-
-// ---------------------------------------------------------------------------
-// Dev-mode response parse helper
-// ---------------------------------------------------------------------------
+// DEFER-174-FILESIZE-01: the routing predicate, repair context, and the
+// conservative deterministic weak-model repair branch (AUTHOR-01, Phase 174-03)
+// live in the sibling `graph-repair.ts` to keep this file under the
+// graph-handlers/ 500-line cap (§2.8 shrink-only — behavior byte-identical).
+// `isWeakCapabilityClass` + the two repair types are re-exported below so the
+// canonical import surface of `./graph-helpers.js` is unchanged (the
+// graph-helpers tests import `isWeakCapabilityClass` from this module).
+import {
+  isWeakCapabilityClass,
+  attemptWeakModelRepair,
+  type CapabilityClassParam,
+  type BuildGraphRepairContext,
+} from "./graph-repair.js";
+export { isWeakCapabilityClass };
+export type { CapabilityClassParam, BuildGraphRepairContext };
 
 /**
  * Run `contract.response.parse(result)` only when NODE_ENV !== "production".
- * Daemon side is the trust boundary; in production the trust check is
- * the in-handler logic, not the contract parse.
+ * Daemon side is the trust boundary; in production the trust check is the
+ * in-handler logic, not the contract parse.
  */
 export const IS_DEV = systemGetEnv("NODE_ENV") !== "production";
 
@@ -52,6 +63,44 @@ export const IS_DEV = systemGetEnv("NODE_ENV") !== "production";
 import type { OrchestratorApiDeps } from "../types.js";
 export type GraphHandlerDeps = OrchestratorApiDeps & {
   graphCoordinator: import("../../graph/graph-coordinator.js").GraphCoordinator;
+  /**
+   * TELEM-01 (Phase 173-02): resolve the calling agent's capabilityClass tier
+   * from its `_agentId` for the `pipeline:authored` emit (graph-mutate.ts).
+   * INJECTED dep (mirrors the 172 `resolvePosture` pattern) — the tier is
+   * resolved DAEMON-SIDE, never read from a tool-supplied param (Spoofing
+   * mitigation T-173-03). Wired at the createGraphHandlers({...}) call in
+   * rpc-dispatch.ts. Returns `undefined` when the agent/provider cannot be
+   * mapped; the emit then records "unknown" (never silently dropped). A wiring
+   * test (rpc-dispatch.test.ts) proves it is actually constructed in production
+   * so the metric is not a permanent "unknown" (the 172-WR-02 fail-default
+   * class / T-173-13 silent-metric-loss).
+   */
+  resolveCapabilityClass?: (
+    agentId: string | undefined,
+  ) => CapabilityClass | undefined;
+  /**
+   * AUTHOR-01 (Phase 174-03): the orchestration.authoring gate
+   * (config.orchestration.authoring). When `repairProducer` is true AND the
+   * calling agent resolves to a weak tier, an invalid graph routes to the
+   * conservative deterministic repair (template-match + fillDagTemplate) instead
+   * of the fail-closed Phase-157 throw. ABSENT / `repairProducer:false` ⇒ the
+   * tier is never resolved ⇒ byte-identical to today (D-GATED-OFF). Threaded
+   * from config at the rpc-dispatch composition site.
+   */
+  authoringConfig?: {
+    repairProducer: boolean;
+    intentAction: boolean;
+    gbnfConstrain: boolean;
+  };
+  /**
+   * AUTHOR-01 (Phase 174-03): the injected conservative repair matcher
+   * (`matchRawGraphToTemplate` from @comis/agent). INJECTED — never a direct
+   * daemon→agent import inside this pure helper; the boundary is crossed only at
+   * the rpc-dispatch composition site (which legitimately imports @comis/agent),
+   * mirroring the `resolveCapabilityClass` precedent. Returns a deterministic
+   * "matched"/"ambiguous"/"no-match" verdict (no model reprompt).
+   */
+  repairMatch?: (rawGraph: unknown) => TemplateMatch;
 };
 
 /** A single validation issue returned to the LLM for self-correction. */
@@ -79,12 +128,10 @@ export function transformNodes(rawNodes: unknown[]): unknown[] {
     // Bug-1 (OR-01) — collapse the redundant `agent` node type, in ALL its forms,
     // to a regular single-agent node. The `agent` driver's config
     // (`{agent, model?, max_steps?}`) merely duplicates fields a regular
-    // {agent, task} node already carries, so it is pure redundancy. Weak models
-    // emit it three malformed/redundant ways, each tripping the validator's
-    // both-or-neither refine:
-    //   (1) type_id:"agent" with NO type_config
-    //   (2) type_config:{agent:X} with NO type_id   ← the live 8-node NVDA DAG
-    //   (3) type_id:"agent" WITH type_config:{agent:X}
+    // {agent, task} node already carries. Weak models emit it three malformed
+    // ways, each tripping the validator's both-or-neither refine: (1) type_id:
+    // "agent" with NO type_config; (2) type_config:{agent:X} with NO type_id (the
+    // live 8-node NVDA DAG); (3) type_id:"agent" WITH type_config:{agent:X}.
     // Collapse all three to a regular node (lifting agent/model/max_steps out of
     // the config), keeping the both-or-neither rule strict for the SIX real typed
     // nodes (debate/vote/refine/collaborate/approval-gate/map-reduce — none of
@@ -113,6 +160,11 @@ export function transformNodes(rawNodes: unknown[]): unknown[] {
       ...(node.barrier_mode ?? node.barrierMode
         ? { barrierMode: node.barrier_mode ?? node.barrierMode } : {}),
       ...(node.retries !== undefined ? { retries: node.retries } : {}),
+      // P0-A: forward the per-node tokenBudget override (GraphNodeSchema field, highest-
+      // precedence budget source — resolveNodeBudgetWithSource capSource "node"). Without
+      // this it was silently dropped here, so an author-set per-node cap never bound the node.
+      ...((node.token_budget ?? node.tokenBudget) !== undefined
+        ? { tokenBudget: node.token_budget ?? node.tokenBudget } : {}),
       ...(node.context_mode ?? node.contextMode
         ? { contextMode: node.context_mode ?? node.contextMode } : {}),
       // Drop typeId+typeConfig entirely for the agent footgun (collapse to a regular
@@ -123,44 +175,11 @@ export function transformNodes(rawNodes: unknown[]): unknown[] {
   });
 }
 
-// ---------------------------------------------------------------------------
-// O3: capabilityClass routing predicate
-//
-// WR-01 producer status (deferred to Phase 157): the routing PREDICATE and the
-// consumer branch below are wired and unit-tested, but NO producer currently
-// supplies a real capabilityClass on graph RPC params — it is not in the
-// GraphDefine/Execute/Save request contracts and the pipeline tool does not
-// send it (the natural producer hook is the per-agent rpcCall injection in
-// daemon's setup-tools.ts, which today injects _agentId/_callerSessionKey but
-// not a resolved capabilityClass). So in production capabilityClass is always
-// undefined → isWeakCapabilityClass(undefined) === false → the capable
-// direct-emit path. The weak branch is exercised only by unit tests that pass
-// the argument directly. Phase 157 lands BOTH the producer (resolved
-// ModelProfile.capabilityClass threaded to the RPC boundary) and the matching
-// async repair consumer (repairDagWithBoundedRetries); wiring the producer
-// before the repair exists would only route weak agents to a hard fail-closed
-// throw with no recourse. Until then this is a documented, traceable deferral —
-// not silently dead code.
-// ---------------------------------------------------------------------------
-
-/** Capability class values that select the weak-model (template/repair) path. */
-type CapabilityClassParam = "frontier" | "mid" | "small" | "nano" | undefined;
-
-/**
- * Returns true when the capability class indicates a weak model (small or nano).
- * Weak models route to the template/repair path in buildGraphInput.
- * Capable models (frontier, mid) and unknown (undefined) route to the existing
- * direct-emit path unchanged.
- *
- * WR-01: no producer feeds a real value yet (see the block above) — this is
- * always called with undefined in production until Phase 157. Exported for unit
- * testing, which passes the argument directly.
- */
-export function isWeakCapabilityClass(
-  capabilityClass: CapabilityClassParam,
-): boolean {
-  return capabilityClass === "small" || capabilityClass === "nano";
-}
+/** The ValidatedGraph shape returned by validateAndSortGraph (ok branch). */
+type ValidatedGraphResult = Extract<
+  ReturnType<typeof validateAndSortGraph>,
+  { ok: true }
+>["value"];
 
 /**
  * Build a validated graph from RPC params.
@@ -168,19 +187,24 @@ export function isWeakCapabilityClass(
  * parseExecutionGraph, and validates with validateAndSortGraph. Throws
  * descriptive errors on parse or validation failure.
  *
- * When capabilityClass is "small" or "nano" (weak model path):
- *   - If the graph is already valid: returns the ValidatedGraph immediately (fast-path).
- *   - If the graph is invalid: throws fail-closed with a Phase-157-deferred comment.
- *     Phase 157 will replace the throw with an async repairDagWithBoundedRetries call
- *     (the daemon→agent import is deferred to avoid introducing it here prematurely).
+ * ASYNC (AUTHOR-01 / Phase 174-03): the weak-model invalid branch may run the
+ * conservative repair (graph-repair.ts), so the function returns a Promise. ALL
+ * call sites await it (3 production in graph-mutate.ts + the O3 test call sites).
  *
- * When capabilityClass is "frontier", "mid", or undefined (capable path):
- *   - Existing direct-emit path is byte-identical — no behavior change.
+ *   - Capable tier (frontier / mid / undefined): the existing direct path —
+ *     byte-identical, no behavior change. The repairProducer gate resolves the
+ *     tier to undefined when OFF (the default), so this is also the FLAGS-OFF path.
+ *   - Weak tier (small / nano): a valid graph returns immediately (fast-path); an
+ *     invalid graph delegates to attemptWeakModelRepair (graph-repair.ts), which
+ *     conservatively repairs an unambiguous match (re-governed), throws a
+ *     structured did-you-mean on ambiguity, or falls through to the fail-closed
+ *     throw below on no-match / failed re-validation.
  */
-export function buildGraphInput(
+export async function buildGraphInput(
   params: Record<string, unknown>,
   capabilityClass?: CapabilityClassParam,
-) {
+  repair?: BuildGraphRepairContext,
+): Promise<ValidatedGraphResult> {
   const rawNodes = params.nodes as unknown[];
   if (!rawNodes || !Array.isArray(rawNodes) || rawNodes.length === 0) {
     throw new Error("Missing required parameter: nodes");
@@ -212,22 +236,29 @@ export function buildGraphInput(
     return validateResult.value;
   }
 
-  // Weak path (small / nano): fast-path on valid graph, fail-closed on invalid.
+  // Weak path (small / nano): fast-path on valid graph.
   if (validateResult.ok) {
     // Graph is already valid — return immediately without repair.
     return validateResult.value;
   }
 
-  // Graph is invalid. Fail-closed with a clear deferred comment.
-  // Phase 157: replace this throw with:
-  //   const result = await repairDagWithBoundedRetries(rawGraph, realRepromptFn, 2);
-  //   if (!result.ok) throw new Error(`Graph repair exhausted (Phase 157): ${result.error}`);
-  //   return result.value;
-  // WR-01: this weak branch is unreachable in production today because no
-  // producer supplies capabilityClass (see the O3 predicate block above) — both
-  // the producer AND this async repairDagWithBoundedRetries consumer (plus its
-  // daemon→@comis/agent import) land together in Phase 157. The routing
-  // predicate is wired and tested; the production producer is the deferred piece.
+  // Weak + INVALID. AUTHOR-01: the conservative, gated, deterministic repair
+  // (extracted into graph-repair.ts — DEFER-174-FILESIZE-01; behavior unchanged).
+  // (FLAGS-OFF can never reach here — capabilityClass resolves undefined when the
+  // gate is off, so isWeakCapabilityClass is false above and the capable path
+  // ran. This is reached ONLY when repairProducer is on AND the server-resolved
+  // tier is weak.) An unambiguous match re-governed clean returns the repaired
+  // graph; an ambiguous shape throws a structured did-you-mean from within the
+  // repair helper (T-174-FALSESYNTH); no-match / gate-off / a repaired graph that
+  // itself fails re-validation falls through to the fail-closed throw below.
+  const repaired = attemptWeakModelRepair(rawGraph, capabilityClass, repair);
+  if (repaired.kind === "repaired") {
+    return repaired.value;
+  }
+
+  // FLAGS-OFF (and no-match / failed-repair): the existing fail-closed throw.
+  // Phase 174 (the former Phase 157) IS the repair consumer above; this throw
+  // remains the recourse when the gate is off or no conservative match exists.
   throw new Error(
     `Graph validation failed (weak model, Phase 157 repair deferred): ${validateResult.error.message}`,
   );

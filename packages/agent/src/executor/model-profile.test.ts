@@ -24,6 +24,7 @@
 import { describe, it, expect } from "vitest";
 import {
   resolveModelProfile,
+  capabilityClassFromProvider,
 } from "./model-profile.js";
 import type { ModelProfile, CapabilityClass } from "./model-profile.js";
 
@@ -594,6 +595,34 @@ describe("resolveModelProfile — K2 boundary invariants", () => {
     it("unknown/undefined model fails closed to supportsPromptCache=false", () => {
       const profile = resolveModelProfile(undefined);
       expect(profile.supportsPromptCache).toBe(false);
+    });
+  });
+
+  // TELEM-01 fix (2026-06-19): the standalone provider→capabilityClass heuristic that the
+  // daemon-side resolvers (pipeline:authored tier, AUTHOR-01 repair) fall back to when no
+  // operator override is pinned. Live bug: pipeline:authored emitted capabilityClass:"unknown"
+  // for an anthropic agent because the override-only resolver returned undefined.
+  describe("capabilityClassFromProvider (provider-family heuristic)", () => {
+    it("maps anthropic family → frontier (incl. amazon-bedrock alias)", () => {
+      expect(capabilityClassFromProvider("anthropic")).toBe("frontier");
+      expect(capabilityClassFromProvider("amazon-bedrock")).toBe("frontier");
+    });
+    it("maps openai family → frontier (incl. openai-codex / azure aliases)", () => {
+      expect(capabilityClassFromProvider("openai")).toBe("frontier");
+      expect(capabilityClassFromProvider("openai-codex")).toBe("frontier");
+      expect(capabilityClassFromProvider("azure-openai-responses")).toBe("frontier");
+    });
+    it("maps google family → mid", () => {
+      expect(capabilityClassFromProvider("google")).toBe("mid");
+      expect(capabilityClassFromProvider("google-vertex")).toBe("mid");
+    });
+    it("maps all other providers → small (fail-safe)", () => {
+      expect(capabilityClassFromProvider("ollama")).toBe("small");
+      expect(capabilityClassFromProvider("groq")).toBe("small");
+    });
+    it("returns undefined for an undefined/empty provider (caller decides fail-safe)", () => {
+      expect(capabilityClassFromProvider(undefined)).toBeUndefined();
+      expect(capabilityClassFromProvider("")).toBeUndefined();
     });
   });
 });

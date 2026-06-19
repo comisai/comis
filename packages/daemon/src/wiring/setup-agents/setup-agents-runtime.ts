@@ -558,12 +558,12 @@ export async function setupSingleAgent(
       const probed = deps.servedWindowByProvider?.get(resolved.provider);
       return probed !== undefined ? { providerKey: resolved.provider, window: probed } : undefined;
     })(),
-    // GBNF-01: resolver form (not static values) because per-execution model
-    // overrides can switch providers mid-agent — a static agent-primary type
-    // would mis-gate (WR-04 getProviderCapabilityClass precedent).
+    // Resolver form (config is runtime-mutable / per-exec variable): providers
+    // switch mid-agent (GBNF-01, WR-04) + authoring flips via config.write. getGbnfConstrain off-default ⇒ FLAGS-OFF identical (CR-01).
     getProviderType: (p: string) => container.config.providers?.entries?.[p]?.type,
     getModelCompat: (p: string, id: string) =>
       container.config.providers?.entries?.[p]?.models?.find((m) => m.id === id)?.comisCompat,
+    getGbnfConstrain: () => container.config.orchestration?.authoring?.gbnfConstrain ?? false,
     maxSendsPerExecution: container.config.messages?.maxSendsPerExecution,
     // Runtime adapter ports threaded into the executor.
     clock: deps.clock,

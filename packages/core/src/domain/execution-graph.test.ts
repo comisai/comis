@@ -152,6 +152,46 @@ describe("GraphNodeSchema", () => {
     });
     expect(result.success).toBe(false);
   });
+
+  // -------------------------------------------------------------------------
+  // tokenBudget (BUDGET-01) — per-node sub-agent token cap, like maxSteps.
+  // -------------------------------------------------------------------------
+
+  it("accepts a node with a positive-integer tokenBudget and preserves the value", () => {
+    const result = GraphNodeSchema.safeParse({
+      nodeId: "a",
+      task: "Do A",
+      tokenBudget: 50_000,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.tokenBudget).toBe(50_000);
+    }
+  });
+
+  it("rejects a non-positive or non-integer tokenBudget (zero, negative, fractional)", () => {
+    expect(GraphNodeSchema.safeParse({ nodeId: "a", task: "Do A", tokenBudget: 0 }).success).toBe(false);
+    expect(GraphNodeSchema.safeParse({ nodeId: "a", task: "Do A", tokenBudget: -5 }).success).toBe(false);
+    expect(GraphNodeSchema.safeParse({ nodeId: "a", task: "Do A", tokenBudget: 1.5 }).success).toBe(false);
+  });
+
+  it("treats tokenBudget as optional (a node without it parses, field is undefined)", () => {
+    const result = GraphNodeSchema.safeParse({ nodeId: "a", task: "Do A" });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.tokenBudget).toBeUndefined();
+    }
+  });
+
+  it("still rejects an unknown key after adding tokenBudget (strictObject not loosened)", () => {
+    const result = GraphNodeSchema.safeParse({
+      nodeId: "a",
+      task: "Do A",
+      tokenBudget: 50_000,
+      bogusKey: 1,
+    });
+    expect(result.success).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -46,6 +46,7 @@
  */
 
 import { homedir } from "node:os";
+import { existsSync } from "node:fs";
 import type { Command } from "commander";
 import open from "open";
 import {
@@ -85,6 +86,54 @@ import { requireDaemonOrExit } from "../util/daemon-required.js";
 
 const PROVIDER_OPENAI_CODEX = "openai-codex" as const;
 const ACTIVE_THRESHOLD_MS = 5 * 60_000; // 5 minutes — match status logic
+
+// ---------------------------------------------------------------------------
+// CLI config-path resolution.
+//
+// Mirrors the daemon's resolution (COMIS_CONFIG_PATHS, else DEFAULT_CONFIG_PATHS)
+// + the data-dir convention, so `comis auth …` finds the SAME config the daemon
+// uses WITHOUT requiring an explicit COMIS_CONFIG_PATHS on the command line.
+//
+// Before this, auth.ts checked ONLY `${HOME}/.comis/config.yaml` (a single path).
+// A config at `/etc/comis/config.yaml`, a `config.local.yaml`, or a daemon run
+// with COMIS_DATA_DIR pointing elsewhere was therefore MISSED — and on a miss,
+// `loadStorageMode` silently defaulted to FILE (plaintext) OAuth credential
+// storage even when the operator had configured `security.storage: encrypted`,
+// writing OAuth tokens to plaintext `auth-profiles.json`. This resolver closes
+// that gap; the loud warning in `loadStorageMode` closes the silent-downgrade.
+// ---------------------------------------------------------------------------
+
+/** The same default config locations the daemon + `comis config`/`models` check. */
+export const DEFAULT_CONFIG_PATHS = [
+  safePath(homedir(), ".comis", "config.yaml"),
+  safePath(homedir(), ".comis", "config.local.yaml"),
+  "/etc/comis/config.yaml",
+  "/etc/comis/config.local.yaml",
+];
+
+/**
+ * Resolve the config path the CLI should read. Precedence:
+ *  1. `COMIS_CONFIG_PATHS` (first colon-separated entry) — explicit override.
+ *  2. `$COMIS_DATA_DIR/config.yaml` (then `config.local.yaml`) when COMIS_DATA_DIR
+ *     is set — follows the daemon's data-dir convention.
+ *  3. The first EXISTING `DEFAULT_CONFIG_PATHS` entry (~/.comis, /etc/comis).
+ *  4. Fallback: the conventional `~/.comis/config.yaml` (DEFAULT_CONFIG_PATHS[0]).
+ *
+ * Pure given injected `env` + `existsFn` (the latter defaults to the real fs).
+ */
+export function resolveCliConfigPath(
+  env: NodeJS.ProcessEnv,
+  existsFn: (p: string) => boolean = existsSync,
+): string {
+  const explicit = env.COMIS_CONFIG_PATHS?.split(":")[0];
+  if (explicit) return explicit;
+  const dataDir = env.COMIS_DATA_DIR;
+  const candidates = [
+    ...(dataDir ? [safePath(dataDir, "config.yaml"), safePath(dataDir, "config.local.yaml")] : []),
+    ...DEFAULT_CONFIG_PATHS,
+  ];
+  return candidates.find(existsFn) ?? DEFAULT_CONFIG_PATHS[0]!;
+}
 
 // ---------------------------------------------------------------------------
 // OAuthError discrimination helpers.
@@ -185,9 +234,7 @@ const logger = createConsoleLogger("info", { name: "auth-cli" });
  */
 async function loadStorageMode(): Promise<CredentialStorageMode> {
   // eslint-disable-next-line no-restricted-syntax -- CLI bootstrap before SecretManager
-  const envPaths = process.env.COMIS_CONFIG_PATHS;
-  const configPath =
-    envPaths?.split(":")[0] ?? safePath(homedir(), ".comis", "config.yaml");
+  const configPath = resolveCliConfigPath(process.env);
 
   // Load ~/.comis/.env before validating — resolves ${VAR} refs before
   // schema validation (consistent with daemon's loadLayered({getSecret})).
@@ -197,6 +244,17 @@ async function loadStorageMode(): Promise<CredentialStorageMode> {
   // eslint-disable-next-line no-restricted-syntax -- CLI bootstrap before SecretManager
   const loadResult = loadConfigFile(configPath, { getSecret: (k) => process.env[k] });
   if (!loadResult.ok) {
+    // No config found at the resolved path → default to FILE (plaintext) storage.
+    // WARN loudly rather than silently: writing OAuth tokens to plaintext when the
+    // operator may have configured `security.storage: encrypted` is a security
+    // footgun (it was exactly how openai-codex tokens once landed in plaintext
+    // auth-profiles.json). Tell the user where we looked + how to fix it.
+    info(
+      `No Comis config found at ${configPath} — defaulting to FILE (plaintext) OAuth ` +
+        "credential storage. If you intend encrypted storage, point the CLI at your config " +
+        "(set COMIS_CONFIG_PATHS or COMIS_DATA_DIR, or run as the daemon user) so tokens are " +
+        "stored encrypted in secrets.db.",
+    );
     return "file"; // no config file → default to file storage
   }
   const validateResult = validateConfig(loadResult.value);
@@ -219,9 +277,7 @@ function openOAuthStoreFromConfig(): OAuthCredentialStorePort {
   // CLI invocation — short-lived and stateless.
   const fileLock = createFileLock();
   // eslint-disable-next-line no-restricted-syntax -- CLI bootstrap before SecretManager
-  const envPaths = process.env.COMIS_CONFIG_PATHS;
-  const configPath =
-    envPaths?.split(":")[0] ?? safePath(homedir(), ".comis", "config.yaml");
+  const configPath = resolveCliConfigPath(process.env);
 
   // Load .env before validating — resolves ${VAR} refs (same as loadStorageMode).
   loadEnvFile(safePath(dataDir, ".env"));

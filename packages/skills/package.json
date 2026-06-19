@@ -39,6 +39,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@comis/agent": "workspace:*",
     "@comis/core": "workspace:*",
     "@comis/observability": "workspace:*",
     "@comis/shared": "workspace:*",

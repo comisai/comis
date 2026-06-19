@@ -153,7 +153,7 @@ The values shown are real (not placeholders). Save it as `~/.comis/config.yaml`,
 
 ## Quick Reference
 
-All 41 top-level configuration sections at a glance:
+All 42 top-level configuration sections at a glance:
 
 | Section | Type | Description |
 |---------|------|-------------|
@@ -197,6 +197,7 @@ All 41 top-level configuration sections at a glance:
 | `documentation` | `DocumentationConfig` | Documentation links for system prompt |
 | `telegramFileRefGuard` | `TelegramFileRefGuardConfig` | Telegram file reference guard |
 | `tooling` | `ToolingConfig` | Tool-first capability layer -- MCP/skill hints, install-detour mode |
+| `orchestration` | `OrchestrationConfig` | Small-model DAG-authoring gates (all default `false`; flipped on by the operator on telemetry) |
 | `executor` | `ExecutorConfig` | Credential-broker executor configuration (optional; omit unless using the broker) |
 
 ## Core Settings
@@ -503,11 +504,11 @@ Array of broadcast group objects for simultaneous multi-channel message delivery
 
 #### Gemini Cache (agents.*.geminiCache)
 
-Per-agent configuration for Gemini explicit CachedContent caching. When enabled, Comis creates server-side cached content on Google AI Studio for guaranteed 90% discount on cached input tokens.
+Per-agent configuration for Gemini explicit CachedContent caching. On by default for Gemini agents: Comis creates server-side cached content on Google AI Studio for a guaranteed discount on cached input tokens (system instruction + tools).
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `enabled` | `boolean` | `false` | Enable Gemini explicit CachedContent caching. Only activates for Google AI Studio providers (not Vertex AI). |
+| `enabled` | `boolean` | `true` | Enable Gemini explicit CachedContent caching (on by default; set `false` to opt out). Only activates for Google AI Studio providers (not Vertex AI), and only above the per-model minimum (~4096 tokens for gemini-3-pro/3.1-pro). |
 | `maxActiveCaches` | `number` | `20` | Maximum active cached contents per agent. Must be a positive integer. Oldest entries are evicted (LRU) when this limit is reached. |
 
 <Info>
@@ -1475,6 +1476,17 @@ Security configuration for log redaction, audit logging, permissions, action con
 | `subAgentMaxSteps` | `number` | `50` | Default max steps for sub-agent execution |
 | `subAgentToolGroups` | `enum[]` | `["coding"]` | Default tool profile groups: `minimal`, `coding`, `messaging`, `supervisor`, `full` |
 | `subAgentMcpTools` | `enum` | `"inherit"` | MCP tool inheritance: `inherit` or `none` |
+| `tokenBudget` | `number \| null` | `null` | Per-spawn token budget for graph sub-agents. `null` (default) means inherit the graph share -- `budget.max_tokens` divided by the total node count -- but **only when the graph sets a token budget**; otherwise sub-agents are unbounded (today's behavior, unchanged). A positive integer caps every graph node's sub-agent at that many tokens. A graph node's own per-node budget overrides this default. A breach fails that node (honoring the graph's `on_failure`). See [Execution Graphs: Token budgets](/agents/execution-graphs#token-budgets). |
+| `sandboxNoDowngrade` | `boolean` | `true` | Fail-closed **no-downgrade invariant** on the sub-agent spawn path: a child spawn is **refused before any run or session is created** if the child's resolved sandbox posture would be *less confined* than its spawner's on any dimension, and a [`security:sandbox_downgrade_refused`](/developer-guide/event-bus) event is emitted. Posture is compared across exec / filesystem / network / uid; missing config folds to the most-confined value (the posture is never inferred more permissive than reality). For sub-agents today the **exec sandbox** dimension is the active one (exec `always` is more confined than exec `never`); the filesystem/network/uid dimensions are present in the comparator but inert until the deferred terminal path lands. See the [Threat Model](/security/threat-model) and [Skill Sandboxing](/security/sandbox) for the invariant. **Migration note** -- this is the one operator-visible behavior change in v2.27: a config where a parent agent's exec sandbox is `always` and a child it spawns is `never` will now have that spawn **refused** (previously allowed). The refusal is the intended default-on behavior; set `false` to disable -- like all `security.*` keys it is runtime-immutable, so toggling the off-switch means editing `config.yaml` and restarting the daemon (agents cannot self-disable it). No migration shim. |
+| `steerInject` | `boolean` | `false` | Selects how [`subagent.steer`](/reference/json-rpc#subagent-steer) delivers a steering message to a running child. **`false` (default)** -- kill the running child and respawn a fresh run with the message as the new task (the child's transcript and progress are discarded). **`true`** -- inject the message into the *running* child's live session at its next step boundary, preserving the transcript and prior work (no kill, no respawn; the same runId continues). The injected message is a user turn, never a capability grant -- a steered request for a tool on the sub-agent tool denylist is still refused, and the child's sandbox posture is unchanged. Ships **off**; enable once you observe operators wanting to steer children mid-run. Like all `security.*` keys it is runtime-immutable (edit `config.yaml` and restart the daemon). |
+
+**Delivery (security.agentToAgent.delivery)**
+
+Bounds the self-healing retry on sub-agent completion delivery. See [Resilience: Self-healing delivery retries](/agents/resilience#self-healing-delivery-retries).
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `maxRetries` | `number` | `3` | Maximum retry attempts for a **transient** sub-agent completion-delivery failure (connection reset/refused, socket hang up, timeout, HTTP 5xx, rate limit) before the message is dead-lettered. Range `0`–`10`. Retries use exponential backoff (1s, 2s, 4s, … capped at 30s). A **permanent** failure (budget breach, killed, context exhausted, step-limit) dead-letters immediately regardless of this value. |
 
 **Subagent Context (security.agentToAgent.subagentContext)**
 
@@ -2095,6 +2107,32 @@ Top-level fields:
 - `installDetours.mode` — `"observe"` / `"advise"` / `"soft-stop"` (default `"advise"`). Controls how the install-detour validator acts when an exec command would `pip install` / `npm install` a package that overlaps with an already-connected MCP server or skill.
 
 Operator typos in any cluster reference (under `capabilityClusters.builtinAssignments[*]`, `mcp.capabilityHints[*].cluster`, or `skills.capabilityHints[*].cluster`) emit a Pino WARN at daemon startup with `errorKind: "config"`, an operator-actionable hint, and the offending `{ configPath, unresolvedClusterId }` payload — the daemon does NOT crash; unresolved cluster references fall back to `external-integrations` (for MCP hints) or `prompt-skills` (for skill hints). Check `pm2 logs comis` or `journalctl -u comis` after restart to surface typos.
+
+## orchestration
+
+Small-model DAG-authoring gates. These flags help a **weaker** model author multi-agent execution graphs that a frontier model would write correctly on its own — by repairing a schema-invalid graph to its intended canonical template, synthesizing a graph from a one-line intent, and grammar-constraining the tool schema for local providers. Operator-only — the `orchestration` tree is not agent-configurable.
+
+<Warning>
+  **The entire authoring layer ships gated-off — every flag defaults to `false`.** With all three flags off, the repair producer, the `from_intent` synthesizer, and the GBNF constrain path are unreachable and behavior is byte-identical to a build without this section. Flip a flag on **only on real telemetry**: run the daemon for a representative window so the [`pipeline:authored`](/developer-guide/event-bus) event accrues, read the `pipeline_authoring` finding (and the pre-committed build/defer gate) from [`obs.fleet.health`](/reference/json-rpc#obs-fleet-health), and enable the relevant flag only once small-tier authoring is materially below frontier. This is the measure-first gate — the capability is built but inert until the data justifies it.
+</Warning>
+
+**orchestration.authoring** fields:
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `repairProducer` | `boolean` | `false` | **AUTHOR-01.** Enable the conservative weak-model graph repair producer. When a weak-tier model emits a schema-invalid pipeline graph, the daemon attempts a deterministic match to a canonical template (`research-fanout` / `debate` / `vote` / `map-reduce`) and repairs it; an ambiguous match returns a structured "did you mean this template?" instead of synthesizing. The calling tier is resolved **server-side** (never tool-supplied). Off → the existing fail-closed validation error throws unchanged. |
+| `intentAction` | `boolean` | `false` | **AUTHOR-02.** Enable the `pipeline` tool's `from_intent` action and its deterministic synthesizer — a one-line intent (`{ pattern, agents \| tasks, budget? }`) expands into a validated, **template-shaped** graph (plain agent nodes, not the typed multi-round drivers). Off → the daemon refuses any `from_intent` call before a graph runs. See [Pipelines: from_intent](/agent-tools/pipelines#from-intent). |
+| `gbnfConstrain` | `boolean` | `false` | **AUTHOR-03 (best-effort).** Grammar-constrain the raw `pipeline` tool schema for GBNF-eligible local providers (the local/default family — never a cloud provider by name). This is a removal/relaxation-only structural transform; it **never widens field value validation**. The daemon-side schema validation remains the single source of truth. Off → byte-identical schema normalization. |
+
+Governance is preserved regardless of these flags: a repaired or synthesized graph runs the **same** validation, denylist, and child⊆parent sandbox checks as a hand-authored graph — the producer/synthesizer return a graph and never execute one directly. See [Execution Graphs: Small-model authoring](/agents/execution-graphs#small-model-authoring) for the behavior and [Event Bus](/developer-guide/event-bus) for the `graph:repaired` and `graph:synthesized_from_intent` audit events.
+
+```yaml
+orchestration:
+  authoring:
+    repairProducer: false   # AUTHOR-01 — flip on once telemetry justifies it
+    intentAction: false     # AUTHOR-02
+    gbnfConstrain: false    # AUTHOR-03 (best-effort)
+```
 
 ## Streaming & Messaging
 

@@ -152,18 +152,41 @@ const mockCreateSpawnPacketBuilder = vi.hoisted(() => vi.fn((deps: any) => ({
   }),
 })));
 
-vi.mock("@comis/agent", () => ({
-  createStepCounter: mockCreateStepCounter,
-  createResultCondenser: mockCreateResultCondenser,
-  createNarrativeCaster: mockCreateNarrativeCaster,
-  createLifecycleHooks: mockCreateLifecycleHooks,
-  createEphemeralComisSessionManager: mockCreateEphemeralComisSessionManager,
-  createComisSessionManager: mockCreateComisSessionManager,
-  resolveOperationModel: mockResolveOperationModel,
-  resolveProviderFamily: mockResolveProviderFamily,
-  createSubAgentRunner: mockCreateSubAgentRunner,
-  createSpawnPacketBuilder: mockCreateSpawnPacketBuilder,
-}));
+vi.mock("@comis/agent", async (importOriginal) => {
+  // SANDBOX-02 / WR-02: the wiring injects a `resolvePosture` closure built over
+  // the REAL `resolvePostureFromSkills` (it folds an agent's per-agent skills
+  // config into a SandboxPosture). Pull the genuine implementation through so the
+  // wiring test can invoke the injected closure end-to-end and prove the gate is
+  // armed with a WORKING resolver — not merely that the token is present. The
+  // other factories stay mocked (they construct heavy daemon services).
+  const actual = await importOriginal<typeof import("@comis/agent")>();
+  return {
+    createStepCounter: mockCreateStepCounter,
+    createResultCondenser: mockCreateResultCondenser,
+    createNarrativeCaster: mockCreateNarrativeCaster,
+    createLifecycleHooks: mockCreateLifecycleHooks,
+    createEphemeralComisSessionManager: mockCreateEphemeralComisSessionManager,
+    createComisSessionManager: mockCreateComisSessionManager,
+    resolveOperationModel: mockResolveOperationModel,
+    resolveProviderFamily: mockResolveProviderFamily,
+    createSubAgentRunner: mockCreateSubAgentRunner,
+    createSpawnPacketBuilder: mockCreateSpawnPacketBuilder,
+    // Real pure primitive — the injected posture resolver depends on it.
+    resolvePostureFromSkills: actual.resolvePostureFromSkills,
+    // WR-02: shared bounded delivered-key store, constructed eagerly in the
+    // wiring and handed to both the batcher and the runner. A minimal real-shaped
+    // stub (has/mark/size) so the wiring can pass it through opaquely.
+    classifyErrorContext: vi.fn(() => ({ errorType: "Unknown", retryable: false })),
+    createDeliveryDedup: vi.fn(() => {
+      const keys = new Set<string>();
+      return {
+        has: (k: string) => keys.has(k),
+        mark: (k: string) => { keys.add(k); },
+        get size() { return keys.size; },
+      };
+    }),
+  };
+});
 
 // resolveWorkspaceDir lives in @comis/core.
 vi.mock("@comis/core", async (importOriginal) => {
@@ -218,6 +241,9 @@ function createMinimalDeps(overrides: Record<string, any> = {}) {
             subAgentMaxSteps: 50,
             subAgentToolGroups: ["coding"],
             subAgentMcpTools: "inherit",
+            // DELIVERY-02: the batcher reads delivery.maxRetries for the
+            // transient-retry cap (schema-defaulted in real config).
+            delivery: { maxRetries: 3 },
           },
         },
         tenantId: "test-tenant",
@@ -432,6 +458,29 @@ describe("setupCrossSession", () => {
       toolGroups: ["coding"],
       includeMcpTools: true,
     });
+  });
+
+  // -------------------------------------------------------------------------
+  // WR-02: the SAME bounded DeliveryDedup instance must reach both the batcher
+  // and the sub-agent runner. A wiring that constructed two separate dedups
+  // would silently break cross-path dedup (success via deliverAnnouncement vs
+  // failure via deliverFailureNotification would not collide).
+  // -------------------------------------------------------------------------
+
+  it("shares ONE deliveryDedup instance between the batcher and the sub-agent runner", async () => {
+    const setupCrossSession = await getSetupCrossSession();
+    const deps = createMinimalDeps();
+    const result = setupCrossSession(deps);
+
+    // The runner received a deliveryDedup (forwarded to deliverAnnouncement /
+    // deliverFailureNotification).
+    const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
+    expect(runnerArgs.deliveryDedup).toBeDefined();
+
+    // Mark a key via the runner's dedup, then assert the (real) batcher sees it
+    // through hasDelivered — proving both received the identical instance.
+    runnerArgs.deliveryDedup.mark("default:u1:c1::run-shared");
+    expect(result.announcementBatcher.hasDelivered("default:u1:c1::run-shared")).toBe(true);
   });
 
   // -------------------------------------------------------------------------
@@ -1064,6 +1113,7 @@ describe("setupCrossSession", () => {
                 subAgentMaxSteps: 15,
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
+                delivery: { maxRetries: 3 }, // DELIVERY-02 batcher retry cap
               },
             },
             tenantId: "test-tenant",
@@ -1261,6 +1311,7 @@ describe("setupCrossSession", () => {
                 subAgentMaxSteps: 50,
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "none",
+                delivery: { maxRetries: 3 }, // DELIVERY-02 batcher retry cap
               },
             },
             tenantId: "test-tenant",
@@ -1341,6 +1392,7 @@ describe("setupCrossSession", () => {
                 subAgentMaxSteps: 50,
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
+                delivery: { maxRetries: 3 }, // DELIVERY-02 batcher retry cap
               },
             },
             tenantId: "test-tenant",
@@ -1403,6 +1455,7 @@ describe("setupCrossSession", () => {
                 subAgentMaxSteps: 50,
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
+                delivery: { maxRetries: 3 }, // DELIVERY-02 batcher retry cap
               },
             },
             tenantId: "test-tenant",
@@ -1458,6 +1511,7 @@ describe("setupCrossSession", () => {
                 subAgentMaxSteps: 50,
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
+                delivery: { maxRetries: 3 }, // DELIVERY-02 batcher retry cap
               },
             },
             tenantId: "test-tenant",
@@ -1520,6 +1574,7 @@ describe("setupCrossSession", () => {
                 subAgentMaxSteps: 50,
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
+                delivery: { maxRetries: 3 }, // DELIVERY-02 batcher retry cap
               },
             },
             tenantId: "test-tenant",
@@ -1576,6 +1631,7 @@ describe("setupCrossSession", () => {
                 subAgentMaxSteps: 50,
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
+                delivery: { maxRetries: 3 }, // DELIVERY-02 batcher retry cap
               },
             },
             tenantId: "test-tenant",
@@ -1626,6 +1682,7 @@ describe("setupCrossSession", () => {
                 subAgentMaxSteps: 50,
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
+                delivery: { maxRetries: 3 }, // DELIVERY-02 batcher retry cap
               },
             },
             tenantId: "test-tenant",
@@ -1675,6 +1732,7 @@ describe("setupCrossSession", () => {
                 subAgentMaxSteps: 50,
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
+                delivery: { maxRetries: 3 }, // DELIVERY-02 batcher retry cap
               },
             },
             tenantId: "test-tenant",
@@ -1731,6 +1789,7 @@ describe("setupCrossSession", () => {
                 subAgentMaxSteps: 50,
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
+                delivery: { maxRetries: 3 }, // DELIVERY-02 batcher retry cap
               },
             },
             tenantId: "test-tenant",
@@ -1772,6 +1831,7 @@ describe("setupCrossSession", () => {
                   subAgentMaxSteps: 50,
                   subAgentToolGroups: ["coding"],
                   subAgentMcpTools: "inherit",
+                  delivery: { maxRetries: 3 }, // DELIVERY-02 batcher retry cap
                 },
               },
               tenantId: "test-tenant",
@@ -2162,6 +2222,7 @@ describe("setupCrossSession", () => {
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
                 subAgentSessionPersistence: false,
+                delivery: { maxRetries: 3 }, // DELIVERY-02 batcher retry cap
               },
             },
             tenantId: "test-tenant",
@@ -2210,6 +2271,7 @@ describe("setupCrossSession", () => {
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
                 subAgentSessionPersistence: true,
+                delivery: { maxRetries: 3 }, // DELIVERY-02 batcher retry cap
               },
             },
             tenantId: "test-tenant",
@@ -2272,6 +2334,7 @@ describe("setupCrossSession", () => {
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
                 subAgentSessionPersistence: true,
+                delivery: { maxRetries: 3 }, // DELIVERY-02 batcher retry cap
               },
             },
             tenantId: "test-tenant",
@@ -2599,6 +2662,7 @@ describe("setupCrossSession", () => {
                 subAgentMaxSteps: 50,
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
+                delivery: { maxRetries: 3 }, // DELIVERY-02 batcher retry cap
               },
             },
             tenantId: "test-tenant",
@@ -2736,6 +2800,7 @@ describe("setupCrossSession", () => {
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
                 subagentContext: {},
+                delivery: { maxRetries: 3 }, // DELIVERY-02 batcher retry cap
               },
             },
             tenantId: "test-tenant",
@@ -2780,6 +2845,7 @@ describe("setupCrossSession", () => {
                 subAgentMaxSteps: 50,
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
+                delivery: { maxRetries: 3 }, // DELIVERY-02 batcher retry cap
               },
             },
             tenantId: "test-tenant",
@@ -2927,6 +2993,87 @@ describe("setupCrossSession", () => {
 
       // Reuse sessions force "long" retention even when resolution says "short"
       expect(capturedOverrides[0].cacheRetention).toBe("long");
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // SANDBOX-02 / WR-02: the production wiring path ARMS the no-downgrade gate.
+  //
+  // The fail-closed gate is inert when `resolvePosture` is absent (deps.* check
+  // in sub-agent-runner.ts). A source-grep architecture test pins the injection
+  // token, but a grep cannot prove the resolver is actually REACHABLE + WORKING
+  // on the live spawn path. These tests construct the runner through the REAL
+  // setupCrossSession and assert the resolver is injected AND functional, so a
+  // future refactor that drops or breaks the injection turns a test red rather
+  // than silently shipping an inert P0 control ("built but not wired").
+  // -------------------------------------------------------------------------
+
+  describe("sandbox no-downgrade gate wiring (WR-02)", () => {
+    function depsWithSkills() {
+      return createMinimalDeps({
+        container: {
+          config: {
+            agents: {
+              // Confined parent: exec sandbox left at the most-confined default.
+              "default": { name: "Default" },
+              "confined-agent": { name: "Confined", skills: { execSandbox: { enabled: "always" } } },
+              // A child whose operator skills config DISABLES the exec sandbox —
+              // a real posture downgrade the gate must be able to see.
+              "loose-agent": { name: "Loose", skills: { execSandbox: { enabled: "never" } } },
+            },
+            security: {
+              agentToAgent: {
+                enabled: true,
+                allowList: [],
+                subAgentMaxSteps: 50,
+                subAgentToolGroups: ["coding"],
+                subAgentMcpTools: "inherit",
+                sandboxNoDowngrade: true,
+                delivery: { maxRetries: 3 },
+              },
+            },
+            tenantId: "test-tenant",
+          },
+          eventBus: { on: vi.fn(), emit: vi.fn() },
+        },
+      });
+    }
+
+    it("injects a defined resolvePosture into the real createSubAgentRunner (gate is armed, not inert)", async () => {
+      const setupCrossSession = await getSetupCrossSession();
+      setupCrossSession(depsWithSkills());
+
+      const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
+      // The load-bearing assertion: absence here is the silent fail-OPEN the
+      // gate guards against. A refactor that stops injecting it fails THIS.
+      expect(runnerArgs.resolvePosture).toBeDefined();
+      expect(typeof runnerArgs.resolvePosture).toBe("function");
+    });
+
+    it("injects a WORKING resolver that folds per-agent skills config into the real posture", async () => {
+      const setupCrossSession = await getSetupCrossSession();
+      setupCrossSession(depsWithSkills());
+
+      const resolvePosture = mockCreateSubAgentRunner.mock.calls[0][0].resolvePosture;
+
+      // exec:never agent → loose posture the gate would refuse under a confined parent.
+      expect(resolvePosture("loose-agent")).toEqual({ exec: "never" });
+      // exec:always agent → confined.
+      expect(resolvePosture("confined-agent")).toEqual({ exec: "always" });
+      // Unknown agent with no caller → most-confined default (fail-closed).
+      expect(resolvePosture("nonexistent-agent")).toEqual({ exec: "always" });
+    });
+
+    it("resolver honors the effectiveAgentId inherit-caller fallback (child with no config inherits the caller posture)", async () => {
+      const setupCrossSession = await getSetupCrossSession();
+      setupCrossSession(depsWithSkills());
+
+      const resolvePosture = mockCreateSubAgentRunner.mock.calls[0][0].resolvePosture;
+
+      // A child with no dedicated config inherits the CALLER's posture, matching
+      // what it will actually run under (setup-cross-session-graph effectiveAgentId).
+      expect(resolvePosture("child-no-config", "loose-agent")).toEqual({ exec: "never" });
+      expect(resolvePosture("child-no-config", "confined-agent")).toEqual({ exec: "always" });
     });
   });
 });

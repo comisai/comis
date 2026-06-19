@@ -63,6 +63,72 @@ describe("placeCacheBreakpoints — pure", () => {
   });
 });
 
+describe("placeCacheBreakpoints — tail-reaching coverage on long conversations (cache C-FIX-4, 2026-06-18)", () => {
+  // Live evidence superseded C-FIX-2: Anthropic honors at most 4 cache_control breakpoints, and
+  // TWO are consumed outside placeCacheBreakpoints (the system/tools marker + the SDK's auto-marker
+  // on the LAST message). Placing 3 Comis markers (semi-stable + bridge + recent) pushed the total
+  // to 5 → Anthropic SILENTLY DROPPED the tail-reaching markers → the cache froze at the early
+  // markers and re-wrote the whole growing suffix every turn (O(N²); read frozen at 54961). The fix:
+  // cap Comis at 2 markers (anchor + recent) so the total stays ≤4 and the RECENT marker reaches
+  // the tail (its fresh write caches the whole prefix; live: single-tail read 54961→142941).
+  const CACHE_LOOKBACK_WINDOW = 20;
+
+  function markerIndices(msgs: Array<Record<string, unknown>>): number[] {
+    const out: number[] = [];
+    for (let i = 0; i < msgs.length; i++) {
+      const c = msgs[i]!.content;
+      if (Array.isArray(c) && c.some((b) => (b as Record<string, unknown>).cache_control)) out.push(i);
+    }
+    return out;
+  }
+
+  it("places AT MOST 2 markers (leaving room for system + SDK within Anthropic's 4-limit)", () => {
+    const roles: string[] = [];
+    for (let i = 0; i < 50; i++) roles.push(i % 2 === 0 ? "user" : "assistant");
+    const msgs = makeMessages(roles);
+    const placed = placeCacheBreakpoints(msgs, { minTokens: 0, maxBreakpoints: 4, strategy: "multi-zone" });
+    expect(placed).toBeLessThanOrEqual(2); // even when given maxBreakpoints:4, Comis reserves 2 for system+SDK
+    expect(markerIndices(msgs).length).toBeLessThanOrEqual(2);
+  });
+
+  it("places the RECENT marker in the tail zone (chains the SDK last-message marker), not stranded early", () => {
+    // 50 alternating 1-block messages. The load-bearing marker must be at the second-to-last user
+    // message (idx 48), NOT clustered at the start — otherwise the tail is never cached.
+    const roles: string[] = [];
+    for (let i = 0; i < 50; i++) roles.push(i % 2 === 0 ? "user" : "assistant");
+    const msgs = makeMessages(roles);
+    placeCacheBreakpoints(msgs, { minTokens: 0, maxBreakpoints: 4, strategy: "multi-zone" });
+    const idx = markerIndices(msgs); // 1 block per message → index == block offset
+    expect(idx.length).toBeGreaterThanOrEqual(1);
+    // The LAST Comis marker reaches the recent/tail zone: second-to-last user message.
+    // Messages 0..49 alternate user(even)/assistant(odd) → last user=48, second-to-last user=46.
+    expect(idx[idx.length - 1]!).toBe(46);
+  });
+
+  it("anchors the first marker to a STABLE block-boundary position as the conversation grows (C-FIX-2b incremental hits)", () => {
+    // The markers must NOT drift turn-to-turn: a drifting 50%-token marker lands on different
+    // messages each turn, so the cache prefix the previous turn wrote is no longer marked →
+    // read-drops + ~18K token re-writes. Anchoring to the latest user at/before block W gives a
+    // FIXED position (append-only), so two conversations sharing a prefix mark the SAME message.
+    function conv(n: number): Array<Record<string, unknown>> {
+      const r: string[] = [];
+      for (let i = 0; i < n; i++) r.push(i % 2 === 0 ? "user" : "assistant");
+      return makeMessages(r);
+    }
+    const m30 = conv(30); placeCacheBreakpoints(m30, { minTokens: 0, maxBreakpoints: 2, strategy: "multi-zone" });
+    const m36 = conv(36); placeCacheBreakpoints(m36, { minTokens: 0, maxBreakpoints: 2, strategy: "multi-zone" });
+    // First marker stable across lengths (was: drifted with 50%-token → cache misses).
+    expect(markerIndices(m36)[0]).toBe(markerIndices(m30)[0]);
+  });
+
+  it("short conversations are unaffected (no bridge needed; original recent-zone behavior)", () => {
+    const msgs = makeMessages(["user", "assistant", "user", "assistant", "user", "assistant", "user", "assistant"]);
+    const placed = placeCacheBreakpoints(msgs, { minTokens: 0, maxBreakpoints: 2, strategy: "multi-zone" });
+    expect(placed).toBeGreaterThan(0);
+    expect(markerIndices(msgs)[0]!).toBeLessThanOrEqual(CACHE_LOOKBACK_WINDOW);
+  });
+});
+
 describe("placeSingleBreakpoint — pure", () => {
   it("returns 0 when fewer than 2 messages", () => {
     const msgs = makeMessages(["user"]);

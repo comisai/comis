@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * AgentEvents: Skill, tool, model, audit, observability (token/latency), and graph lifecycle events.
+ * AgentEvents: Skill, tool, model, audit, and observability (token/latency) events.
  *
- * Find events by prefix: skill:*, tool:*, model:*, audit:*, observability:*, graph:*
+ * Find events by prefix: skill:*, tool:*, model:*, audit:*, observability:*.
+ * Graph orchestration (graph:* / subagent:*) lives in OrchestrationEvents
+ * (events-orchestration.ts).
  */
-import type { NodeStatus, GraphStatus } from "../domain/execution-graph.js";
 import type { ErrorKind } from "../logging/log-fields.js";
 import type { ScriptClass } from "../text/script-classes.js";
 import type { GenerationPass } from "../text/generation-quality.js";
@@ -465,52 +466,39 @@ export interface AgentEvents {
     blocked: boolean;
   };
 
-  /** Graph execution started (coordinator began running a validated DAG) */
-  "graph:started": {
-    graphId: string;
-    label?: string;
-    nodeCount: number;
+  /**
+   * Fail-closed sub-agent spawn refusal: the child's resolved sandbox posture
+   * was LESS confined than its spawner's on ≥1 dimension (SANDBOX-02/03). Fires
+   * at the spawn chokepoint BEFORE any run/session is created.
+   *
+   * §2.7 / D-EVENT: enum-tuple payload ONLY — both postures as closed-union
+   * LABELS + the violated dimension labels + the two agent ids + a timestamp.
+   * NEVER the underlying paths/hosts/uid-numbers/credential values that would
+   * leak the operator's sandbox topology. Pino auto-redaction is a net, not a
+   * license (T-172-01f).
+   */
+  "security:sandbox_downgrade_refused": {
     timestamp: number;
-  };
-
-  /** Graph node transitioned to a new status (running, completed, failed, skipped) */
-  "graph:node_updated": {
-    graphId: string;
-    nodeId: string;
-    status: NodeStatus;
-    previousStatus?: NodeStatus;
-    durationMs?: number;
-    error?: string;
-    timestamp: number;
-  };
-
-  /** Graph reached terminal state (completed, failed, or cancelled) */
-  "graph:completed": {
-    graphId: string;
-    status: GraphStatus;
-    durationMs: number;
-    nodeCount: number;
-    nodesCompleted: number;
-    nodesFailed: number;
-    nodesSkipped: number;
-    cancelReason?: "timeout" | "budget" | "manual";
-    timestamp: number;
-    /** 3.3: Aggregate cache read tokens across all graph nodes. */
-    graphCacheReadTokens?: number;
-    /** 3.3: Aggregate cache write tokens across all graph nodes. */
-    graphCacheWriteTokens?: number;
-    /** 3.3: Cache effectiveness ratio (reads / (reads + writes)). */
-    graphCacheEffectiveness?: number;
-    /** 3.3: Per-node cache effectiveness breakdown. */
-    nodeEffectiveness?: Record<string, number>;
-  };
-
-  /** Node type driver reached a lifecycle phase (initialized, progress, completed, failed, aborted) */
-  "graph:driver_lifecycle": {
-    graphId: string;
-    nodeId: string;
-    typeId: string;
-    phase: "initialized" | "progress" | "completed" | "partial_complete" | "failed" | "aborted";
+    /** the spawner's agent id (an id, not a secret) */
+    parentAgentId: string;
+    /** the prospective child's agent id (an id, not a secret) */
+    childAgentId: string;
+    /** the dimension(s) on which the child was LESS confined — enum labels, never values */
+    violatedDimensions: ("exec" | "filesystem" | "network" | "uid")[];
+    /** spawner posture as enum tuples — labels only; NO paths/hosts/credential values (§2.7) */
+    parentPosture: {
+      exec: "always" | "never";
+      filesystem?: "workspace" | "listed-paths" | "home" | "full";
+      network?: "none" | "listed-hosts" | "full";
+      uid?: "dedicated" | "daemon";
+    };
+    /** child posture as enum tuples — labels only; NO paths/hosts/credential values (§2.7) */
+    childPosture: {
+      exec: "always" | "never";
+      filesystem?: "workspace" | "listed-paths" | "home" | "full";
+      network?: "none" | "listed-hosts" | "full";
+      uid?: "dedicated" | "daemon";
+    };
   };
 
   /** Provider declared degraded based on cross-agent failure aggregation */

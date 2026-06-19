@@ -53,6 +53,11 @@ import { createDaemonHandlers } from "./daemon-handlers.js";
 import { createMcpHandlers } from "./mcp-handlers.js";
 import { createMcpOauthHandlers } from "./mcp-oauth-handlers.js";
 import { createGraphHandlers } from "./graph-handlers/index.js";
+// AUTHOR-01 (Phase 174-03): the daemon composition site is the boundary-clean
+// place to import @comis/agent and inject the conservative repair matcher into
+// the graph handlers (buildGraphInput receives it via deps.repairMatch — never a
+// direct daemon→agent import in the pure helper).
+import { matchRawGraphToTemplate, capabilityClassFromProvider } from "@comis/agent";
 import { createWorkspaceHandlers } from "./workspace-handlers.js";
 import { createHeartbeatHandlers } from "./heartbeat-handlers.js";
 import { createSkillHandlers } from "./skill-handlers.js";
@@ -214,6 +219,41 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
       tenantId: deps.tenantId,
       dataDir: deps.container.config.dataDir || ".",
       nodeTypeRegistry: deps.nodeTypeRegistry,
+      // TELEM-01 (Phase 173-02): construct the per-agent capabilityClass
+      // resolver for the daemon-side `pipeline:authored` emit. Resolve the tier
+      // server-side from the agent's provider (deps.agents[agentId].provider →
+      // getProviderCapabilityClass) — NEVER a tool-supplied param (Spoofing
+      // mitigation T-173-03). Constructing it HERE (not just typing it) is the
+      // load-bearing guard against the 172-WR-02 silent-dead-metric class
+      // (T-173-13): without this line every emit fail-defaults to "unknown".
+      resolveCapabilityClass: (agentId) =>
+        // IN-02 (Phase 173 review): a dynamic-key READ (not a write) on the typed
+        // Record<string, PerAgentConfig>; the key is the server-trusted agentId.
+        // A key like "__proto__" returns the prototype's `provider` (undefined) →
+        // fail-safes to "unknown", never a pollution write. No eslint-disable is
+        // needed (unlike the sibling object-injection sites): security/detect-
+        // object-injection does NOT flag a logical-expression key (`agentId ?? ""`),
+        // so adding the directive here is reported as unused — this plain comment
+        // documents the intentional safe read instead.
+        //
+        // TELEM-01 fix (2026-06-19): fall back to the provider-family heuristic when no operator
+        // `providers.entries.<p>.capabilities.capabilityClass` override is pinned. Without this
+        // fallback the override-only resolver returned undefined for every un-pinned config (the
+        // common case), so `pipeline:authored` always emitted capabilityClass:"unknown" and P1's
+        // small-model-authoring-rate metric was dead. The heuristic (anthropic/openai→frontier,
+        // google→mid, else→small) is the same one the executor's live ModelProfile derives.
+        (() => {
+          const provider = deps.agents[agentId ?? ""]?.provider;
+          return deps.getProviderCapabilityClass?.(provider) ?? capabilityClassFromProvider(provider);
+        })(),
+      // AUTHOR-01 (Phase 174-03): thread the orchestration.authoring gate +
+      // inject the conservative repair matcher. The daemon→agent boundary is
+      // crossed HERE (the composition site legitimately imports @comis/agent),
+      // never inside buildGraphInput — mirroring the resolveCapabilityClass
+      // injection above. With repairProducer:false (the default) the gate is off
+      // and buildGraphInput is byte-identical to pre-174.
+      authoringConfig: deps.container.config.orchestration?.authoring,
+      repairMatch: matchRawGraphToTemplate,
     }) : {}),
     // approval-handlers consumes WorkspaceApiDeps; spread `...deps` so the
     // cluster slice's required fields (e.g. mcpClientManager, execGit,

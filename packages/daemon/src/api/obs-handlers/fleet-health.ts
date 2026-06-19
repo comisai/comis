@@ -54,10 +54,11 @@ import {
   type ClockPort,
 } from "@comis/core";
 import { reduceFleetWindow, type ObservabilityStore } from "@comis/memory";
+import { pipelineAuthoringGate } from "@comis/observability";
 import type { RpcHandler } from "../types.js";
 import { IS_DEV, type ObsHandlerDeps } from "./obs-helpers.js";
 import { readSessionIndexWindow } from "./fleet-session-index.js";
-import { buildFindings, type Finding } from "./fleet-findings.js";
+import { buildFindings, pipelineAuthoringAggregateFromRows, type Finding } from "./fleet-findings.js";
 
 /** Default data directory (lazy). Mirrors obs-explain.ts / fleet-session-index.ts. */
 function defaultDataDir(): string {
@@ -289,6 +290,14 @@ export async function assembleFleetHealthReport(
   const modelHealth = deps.obsStore?.queryDiagnostics({ category: "model_health", sinceMs }) ?? [];
   const configPosture = deps.obsStore?.queryDiagnostics({ category: "config_posture", sinceMs }) ?? [];
 
+  // TELEM-02 — the pre-committed pipeline-authoring decision verdict (gates Phase
+  // 174). PURE + deterministic: the windowed pipeline_authoring rows -> the
+  // aggregate -> the gate. No-data -> defer. Structurally `{buildAuthor, reason}`,
+  // so it assigns into the core-schema-typed report field with no cast.
+  const pipelineAuthoringVerdict = pipelineAuthoringGate(
+    pipelineAuthoringAggregateFromRows(healthSignals),
+  );
+
   // findings[] — counts + codes + hints ONLY (no raw bodies).
   const allFindings = buildFindings(healthSignals, modelHealth, configPosture);
   const truncations: TruncationEntry[] = [];
@@ -347,6 +356,10 @@ export async function assembleFleetHealthReport(
     },
     findings,
     likelyRootCause,
+    // TELEM-02 — the pipeline-authoring gate verdict (declared in
+    // FleetHealthReportSchema so .parse() preserves it; rides the existing
+    // admin-gated obs.fleet.health — no new RPC surface).
+    pipelineAuthoringGate: pipelineAuthoringVerdict,
     suggestedNextSteps,
     truncations,
     coverage: {

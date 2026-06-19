@@ -1241,3 +1241,345 @@ describe("tool:install_detour_detected event type", () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// subagent:budget_exceeded + enriched graph:node_updated (BUDGET-03).
+// Counts/ids-only event mirroring memory:consolidated; the hygiene pin keeps
+// task/output/body fields off the breach payload (AGENTS.md §2.7).
+// ---------------------------------------------------------------------------
+
+describe("subagent:budget_exceeded event type", () => {
+  it("type-checks and round-trips with ids + the two token numbers only", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["subagent:budget_exceeded"] = {
+      graphId: "graph-1",
+      nodeId: "node-a",
+      agentId: "agent-1",
+      tokenBudget: 50_000,
+      tokensUsed: 51_234,
+      timestamp: Date.now(),
+    };
+
+    bus.on("subagent:budget_exceeded", handler);
+    bus.emit("subagent:budget_exceeded", payload);
+
+    expect(handler).toHaveBeenCalledWith(payload);
+    const r = handler.mock.calls[0]![0] as EventMap["subagent:budget_exceeded"];
+    expect(r.graphId).toBe("graph-1");
+    expect(r.nodeId).toBe("node-a");
+    expect(r.agentId).toBe("agent-1");
+    expect(r.tokenBudget).toBe(50_000);
+    expect(r.tokensUsed).toBe(51_234);
+  });
+
+  it("payload carries exactly the 6 counts/ids keys — no body/task/output", () => {
+    const payload: EventMap["subagent:budget_exceeded"] = {
+      graphId: "g",
+      nodeId: "n",
+      agentId: "a",
+      tokenBudget: 1,
+      tokensUsed: 2,
+      timestamp: 3,
+    };
+    expect(Object.keys(payload).sort()).toEqual(
+      ["agentId", "graphId", "nodeId", "timestamp", "tokenBudget", "tokensUsed"].sort(),
+    );
+
+    // Source-grep the breach event block for forbidden body fields (counts-only
+    // contract — never task text, output, or response bodies; AGENTS.md §2.7).
+    // The block lives in events-orchestration.ts (extracted from AgentEvents).
+    const src = readFileSync(resolve(here, "./events-orchestration.ts"), "utf8");
+    const match = src.match(/"subagent:budget_exceeded":\s*\{[\s\S]*?\n\s*\};/);
+    expect(match, "subagent:budget_exceeded event block must exist").toBeTruthy();
+    const block = match![0];
+    for (const forbidden of ["task", "output", "response", "body", "content", "result"]) {
+      expect(block, `no \`${forbidden}:\` field`).not.toMatch(
+        new RegExp(`^\\s*(?:readonly\\s+)?${forbidden}\\??:`, "m"),
+      );
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// subagent:delivery_retried + subagent:delivery_deadlettered (DELIVERY-02/03).
+// Counts/ids-only events mirroring subagent:budget_exceeded — ids + attempt
+// count + a closed-union `transient` tag + timestamp ONLY. The hygiene pin
+// keeps announcement text / error strings / bodies off the payload (§2.7).
+// ---------------------------------------------------------------------------
+
+describe("subagent:delivery_retried event type", () => {
+  it("type-checks and round-trips with runId + channelType + attempt + transient + timestamp", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["subagent:delivery_retried"] = {
+      runId: "run-1",
+      channelType: "discord",
+      attempt: 2,
+      transient: true,
+      timestamp: Date.now(),
+    };
+
+    bus.on("subagent:delivery_retried", handler);
+    bus.emit("subagent:delivery_retried", payload);
+
+    expect(handler).toHaveBeenCalledWith(payload);
+    const r = handler.mock.calls[0]![0] as EventMap["subagent:delivery_retried"];
+    expect(r.runId).toBe("run-1");
+    expect(r.channelType).toBe("discord");
+    expect(r.attempt).toBe(2);
+    // Closed-union literal: a retry is always for a transient failure.
+    expect(r.transient).toBe(true);
+  });
+
+  it("payload carries exactly the 5 counts/ids keys — no body/text/error", () => {
+    const payload: EventMap["subagent:delivery_retried"] = {
+      runId: "r",
+      channelType: "telegram",
+      attempt: 1,
+      transient: true,
+      timestamp: 3,
+    };
+    expect(Object.keys(payload).sort()).toEqual(
+      ["attempt", "channelType", "runId", "timestamp", "transient"].sort(),
+    );
+
+    const src = readFileSync(resolve(here, "./events-orchestration.ts"), "utf8");
+    const match = src.match(/"subagent:delivery_retried":\s*\{[\s\S]*?\n\s*\};/);
+    expect(match, "subagent:delivery_retried event block must exist").toBeTruthy();
+    const block = match![0];
+    for (const forbidden of ["announcementText", "text", "err", "error", "lastError", "body", "content", "response", "result"]) {
+      expect(block, `no \`${forbidden}:\` field`).not.toMatch(
+        new RegExp(`^\\s*(?:readonly\\s+)?${forbidden}\\??:`, "m"),
+      );
+    }
+  });
+});
+
+describe("subagent:delivery_deadlettered event type", () => {
+  it("type-checks and round-trips; transient is a boolean (transient retries-exhausted OR permanent immediate)", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["subagent:delivery_deadlettered"] = {
+      runId: "run-9",
+      channelType: "slack",
+      attempt: 3,
+      transient: false,
+      timestamp: Date.now(),
+    };
+
+    bus.on("subagent:delivery_deadlettered", handler);
+    bus.emit("subagent:delivery_deadlettered", payload);
+
+    expect(handler).toHaveBeenCalledWith(payload);
+    const r = handler.mock.calls[0]![0] as EventMap["subagent:delivery_deadlettered"];
+    expect(r.runId).toBe("run-9");
+    expect(r.attempt).toBe(3);
+    expect(r.transient).toBe(false);
+  });
+
+  it("payload carries exactly the 5 counts/ids keys — no body/text/error", () => {
+    const payload: EventMap["subagent:delivery_deadlettered"] = {
+      runId: "r",
+      channelType: "irc",
+      attempt: 0,
+      transient: true,
+      timestamp: 7,
+    };
+    expect(Object.keys(payload).sort()).toEqual(
+      ["attempt", "channelType", "runId", "timestamp", "transient"].sort(),
+    );
+
+    const src = readFileSync(resolve(here, "./events-orchestration.ts"), "utf8");
+    const match = src.match(/"subagent:delivery_deadlettered":\s*\{[\s\S]*?\n\s*\};/);
+    expect(match, "subagent:delivery_deadlettered event block must exist").toBeTruthy();
+    const block = match![0];
+    for (const forbidden of ["announcementText", "text", "err", "error", "lastError", "body", "content", "response", "result"]) {
+      expect(block, `no \`${forbidden}:\` field`).not.toMatch(
+        new RegExp(`^\\s*(?:readonly\\s+)?${forbidden}\\??:`, "m"),
+      );
+    }
+  });
+});
+
+describe("graph:node_updated enriched with tokensUsed/cost (BUDGET-03)", () => {
+  it("carries optional tokensUsed and cost and a listener reads them", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["graph:node_updated"] = {
+      graphId: "graph-1",
+      nodeId: "node-a",
+      status: "completed",
+      durationMs: 1200,
+      tokensUsed: 8_192,
+      cost: 0.0123,
+      timestamp: Date.now(),
+    };
+
+    bus.on("graph:node_updated", handler);
+    bus.emit("graph:node_updated", payload);
+
+    expect(handler).toHaveBeenCalledWith(payload);
+    const r = handler.mock.calls[0]![0] as EventMap["graph:node_updated"];
+    expect(r.tokensUsed).toBe(8_192);
+    expect(r.cost).toBeCloseTo(0.0123);
+  });
+
+  it("still type-checks when tokensUsed/cost are omitted (byte-identical when absent)", () => {
+    const payload: EventMap["graph:node_updated"] = {
+      graphId: "graph-1",
+      nodeId: "node-a",
+      status: "running",
+      timestamp: Date.now(),
+    };
+    expect(payload.tokensUsed).toBeUndefined();
+    expect(payload.cost).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// security:sandbox_downgrade_refused (SANDBOX-03). A fail-closed spawn refusal
+// emits this typed event carrying BOTH postures as enum tuples + the violated
+// dimensions + agent ids — labels only, NO secrets (no paths/hosts/uids-as-
+// values/credentials). Mirrors the security:injection_detected family shape and
+// the tool:install_detour_detected §2.7 no-secrets discipline.
+// ---------------------------------------------------------------------------
+
+describe("security:sandbox_downgrade_refused event type", () => {
+  it("round-trips both postures as enum tuples + violated dimensions + ids only", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["security:sandbox_downgrade_refused"] = {
+      timestamp: Date.now(),
+      parentAgentId: "parent-agent",
+      childAgentId: "child-agent",
+      violatedDimensions: ["exec", "network"],
+      parentPosture: { exec: "always", network: "none" },
+      childPosture: { exec: "never", network: "full" },
+    };
+
+    bus.on("security:sandbox_downgrade_refused", handler);
+    bus.emit("security:sandbox_downgrade_refused", payload);
+
+    expect(handler).toHaveBeenCalledWith(payload);
+    const received =
+      handler.mock.calls[0]![0] as EventMap["security:sandbox_downgrade_refused"];
+    expect(received.parentAgentId).toBe("parent-agent");
+    expect(received.childAgentId).toBe("child-agent");
+    expect(received.violatedDimensions).toEqual(["exec", "network"]);
+    expect(received.parentPosture.exec).toBe("always");
+    expect(received.childPosture.exec).toBe("never");
+  });
+
+  it("accepts every closed-union posture enum label across all four dimensions", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["security:sandbox_downgrade_refused"] = {
+      timestamp: Date.now(),
+      parentAgentId: "p",
+      childAgentId: "c",
+      violatedDimensions: ["exec", "filesystem", "network", "uid"],
+      parentPosture: {
+        exec: "always",
+        filesystem: "workspace",
+        network: "none",
+        uid: "dedicated",
+      },
+      childPosture: {
+        exec: "never",
+        filesystem: "full",
+        network: "listed-hosts",
+        uid: "daemon",
+      },
+    };
+
+    bus.on("security:sandbox_downgrade_refused", handler);
+    bus.emit("security:sandbox_downgrade_refused", payload);
+
+    const received =
+      handler.mock.calls[0]![0] as EventMap["security:sandbox_downgrade_refused"];
+    expect(received.childPosture.filesystem).toBe("full");
+    expect(received.childPosture.uid).toBe("daemon");
+  });
+
+  it("runtime payload exposes ONLY enum labels + ids + timestamp — every posture value is an allowed enum label and no key is secret-shaped", () => {
+    // Runtime structural no-secrets assertion (the §2.7 discipline, mirroring
+    // the 170/171 events). Serialize the payload and assert (a) no key matches
+    // a secret-shaped name, and (b) every posture value is one of the allowed
+    // closed-union enum labels — never a path/host/uid value.
+    const payload: EventMap["security:sandbox_downgrade_refused"] = {
+      timestamp: Date.now(),
+      parentAgentId: "parent-agent",
+      childAgentId: "child-agent",
+      violatedDimensions: ["exec"],
+      parentPosture: { exec: "always", filesystem: "workspace", network: "none", uid: "dedicated" },
+      childPosture: { exec: "never", filesystem: "home", network: "listed-hosts", uid: "daemon" },
+    };
+
+    const allKeys = new Set<string>();
+    const collectKeys = (obj: unknown): void => {
+      if (obj && typeof obj === "object" && !Array.isArray(obj)) {
+        for (const [k, v] of Object.entries(obj)) {
+          allKeys.add(k);
+          collectKeys(v);
+        }
+      }
+    };
+    collectKeys(payload);
+
+    // Forbidden = key names that would carry operator topology / credentials.
+    // The four dimension KEYS (`exec`/`filesystem`/`network`/`uid`) are the
+    // spec'd closed-union enum-tuple field names and are explicitly allowed —
+    // the value-allowlist check below proves each carries only an enum LABEL,
+    // never the underlying path/host/uid-number that would leak the topology.
+    const allowedKeys = new Set<string>([
+      "timestamp", "parentAgentId", "childAgentId", "violatedDimensions",
+      "parentPosture", "childPosture",
+      "exec", "filesystem", "network", "uid",
+    ]);
+    const secretShaped = /paths?|hosts?|credential|token|secret|password|url|cwd|dir|value|prefix|body|content/i;
+    for (const key of allKeys) {
+      expect(allowedKeys.has(key), `unexpected key "${key}" in refusal payload`).toBe(true);
+      expect(secretShaped.test(key), `key "${key}" must not be secret-shaped`).toBe(false);
+    }
+
+    // Every posture value must be one of the allowed enum labels for its
+    // dimension — proving the postures carry LABELS, never operator topology.
+    const allowed = new Set<string>([
+      "always", "never",
+      "workspace", "listed-paths", "home", "full",
+      "none", "listed-hosts",
+      "dedicated", "daemon",
+    ]);
+    for (const posture of [payload.parentPosture, payload.childPosture]) {
+      for (const value of Object.values(posture)) {
+        expect(allowed.has(value), `posture value "${value}" must be an allowed enum label`).toBe(true);
+      }
+    }
+    for (const dim of payload.violatedDimensions) {
+      expect(["exec", "filesystem", "network", "uid"]).toContain(dim);
+    }
+  });
+
+  it("payload type contains no forbidden privacy-leak fields", () => {
+    // Source-grep the event block: the closed shape MUST NOT carry raw paths,
+    // hosts, credential values, or any free-form value field — only the
+    // posture enum tuples + agent ids + timestamp (AGENTS.md §2.7).
+    const src = readFileSync(resolve(here, "./events-agent.ts"), "utf8");
+    const match = src.match(
+      /"security:sandbox_downgrade_refused":\s*\{[\s\S]*?\n {2}\};/,
+    );
+    expect(match, "sandbox-downgrade-refused event block must exist").toBeTruthy();
+    const block = match![0];
+
+    expect(block, "no `paths:` field").not.toMatch(/^\s*(?:readonly\s+)?paths:/m);
+    expect(block, "no `hosts:` field").not.toMatch(/^\s*(?:readonly\s+)?hosts:/m);
+    expect(block, "no `allowedPaths:` field").not.toMatch(/^\s*(?:readonly\s+)?allowedPaths:/m);
+    expect(block, "no `credentialPaths:` field").not.toMatch(/^\s*(?:readonly\s+)?credentialPaths:/m);
+    expect(block, "no `uidValue:`/`uid:` numeric field").not.toMatch(/^\s*(?:readonly\s+)?uid(?:Value)?:\s*number/m);
+    // Required structural fields present (postures as enum tuples + ids):
+    expect(block, "parentPosture present").toMatch(/parentPosture:/);
+    expect(block, "childPosture present").toMatch(/childPosture:/);
+    expect(block, "violatedDimensions present").toMatch(/violatedDimensions:/);
+  });
+});

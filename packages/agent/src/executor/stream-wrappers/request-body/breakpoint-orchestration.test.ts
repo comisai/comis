@@ -64,7 +64,9 @@ describe("runCacheBreakpointPhase — Fix E: UNTRUSTED_ block 1h cache anchor", 
         role: "user",
         content: [
           { type: "text", text: "Please summarize:" },
-          { type: "text", text: "<<<UNTRUSTED_HTML>>>...32KB of link-understanding output...</UNTRUSTED_HTML>>>" },
+          // LARGE untrusted block (the ~32KB link-understanding case the anchor exists for).
+          // C-FIX-2 gates the anchor on size, so the fixture must be genuinely large.
+          { type: "text", text: "<<<UNTRUSTED_HTML>>>" + "x".repeat(20000) + "</UNTRUSTED_HTML>>>" },
         ],
       },
     ];
@@ -106,6 +108,31 @@ describe("runCacheBreakpointPhase — Fix E: UNTRUSTED_ block 1h cache anchor", 
     expect(has1h).toBe(false);
   });
 
+  it("does NOT anchor a SMALL untrusted block — frees the breakpoint slot for the lookback bridge (cache C-FIX-2)", () => {
+    // A small untrusted tool_result (e.g. an `echo` result) is cheap to re-upload and the SDK's
+    // last-user marker already covers it. The anchor exists for LARGE blocks (~32KB); firing on a
+    // small one steals the slot the lookback gap-bridge needs (the alternating-tool-turn gap).
+    const messages: Array<Record<string, unknown>> = [
+      { role: "user", content: [{ type: "text", text: "hello" }] },
+      { role: "assistant", content: [{ type: "text", text: "hi" }] },
+      {
+        role: "user",
+        content: [{ type: "text", text: "<<<UNTRUSTED_TOOL>>>step-3\n<<</UNTRUSTED_TOOL>>>" }], // small (~40 chars)
+      },
+    ];
+    const result = makeResult(messages);
+
+    runCacheBreakpointPhase(result, model, makeConfig(), true, false, 0, makeLogger());
+
+    const targetMsg = (result.messages as Array<Record<string, unknown>>)[2]!;
+    const content = targetMsg.content as Array<Record<string, unknown>>;
+    const has1h = content.some((b) => {
+      const cc = b.cache_control as { type?: string; ttl?: string } | undefined;
+      return cc?.type === "ephemeral" && cc?.ttl === "1h";
+    });
+    expect(has1h).toBe(false);
+  });
+
   it("upgrades an already-placed 5m cache_control to 1h on the UNTRUSTED_ message", () => {
     const messages: Array<Record<string, unknown>> = [
       { role: "user", content: [{ type: "text", text: "hello" }] },
@@ -116,7 +143,7 @@ describe("runCacheBreakpointPhase — Fix E: UNTRUSTED_ block 1h cache anchor", 
           { type: "text", text: "Please summarize:" },
           {
             type: "text",
-            text: "<<<UNTRUSTED_HTML>>>...32KB...</UNTRUSTED_HTML>>>",
+            text: "<<<UNTRUSTED_HTML>>>" + "x".repeat(20000) + "</UNTRUSTED_HTML>>>", // LARGE (C-FIX-2 size gate)
             cache_control: { type: "ephemeral" }, // pre-placed 5m TTL
           },
         ],
@@ -172,7 +199,9 @@ describe("runCacheBreakpointPhase — Fix E: UNTRUSTED_ block 1h cache anchor", 
       // Pad each message with enough text so placeCacheBreakpoints'
       // minTokens=0 path always treats the recent zone as eligible.
       const text = i === 10
-        ? "Please summarize: <<<UNTRUSTED_HTML>>>...32KB of link-understanding output...<<<END_UNTRUSTED_HTML>>>"
+        // Genuinely large (>16KB) so the Fix-E UNTRUSTED size-gate fires and anchors a 1h marker
+        // here (the precondition the monotonicity invariant exercises).
+        ? `Please summarize: <<<UNTRUSTED_HTML>>>${"link-understanding output ".repeat(800)}<<<END_UNTRUSTED_HTML>>>`
         : `message ${i}: lorem ipsum dolor sit amet consectetur adipiscing elit`;
       messages.push({ role, content: [{ type: "text", text }] });
     }

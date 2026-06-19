@@ -40,9 +40,9 @@ import {
   parseHeaderList,
   sessionBetaHeaderLatches,
 } from "./context-window.js";
-import { isResponsesApiProvider, injectStoreFlag } from "./store-flag.js";
+import { isResponsesApiProvider, usesResponsesInputApi, injectStoreFlag } from "./store-flag.js";
 import { injectServiceTier } from "./service-tier.js";
-import { reorderContentForStablePrefix } from "./tool-result-clearing.js";
+import { reorderContentForStablePrefix, stripTransientRecallFromHistory, stripReplayThinking, deferRecallToUncachedTail, stripTransientRecallFromResponsesInput, deferRecallToTrailingResponsesItem, stripReplayReasoningFromResponsesInput } from "./tool-result-clearing.js";
 import { sortToolsForCacheStability } from "./cache-breakpoints.js";
 import { applyRenderedToolCache } from "./tool-cache.js";
 import {
@@ -87,7 +87,19 @@ export function createRequestBodyInjector(
         ?? isAnthropicFamily(model.provider);
       const needsResponsesApiInjection = isResponsesApiProvider(model as { api?: string });
 
-      if (!needsCacheBreakpoints && !needsResponsesApiInjection) {
+      // ALL OpenAI Responses-family providers drive the same `input` item array and need the
+      // auto-cached prefix stabilised (cache #C4-OAI): native openai (`openai-responses`),
+      // Azure (`azure-openai-responses`), and codex (`openai-codex-responses` /
+      // provider:"openai-codex"). The cache-breakpoint machinery is correctly skipped for them
+      // (running cache_control on a Responses body strips type:"function" tools -> backend 400);
+      // we install onPayload only to defer the per-turn inline-recall block off the user turns
+      // onto an uncached trailing item so the prefix does not collapse to the instructions+tools
+      // floor every time the recalled memory rotates (see the deferral block below). NOTE: this
+      // was previously gated `provider === "openai-codex"` only, which left the native `openai`
+      // provider (gpt-5.5 -> openai-responses) unstabilised — 5 floor-collapses live.
+      const needsResponsesInputStabilizer = usesResponsesInputApi(model as { api?: string; provider?: string });
+
+      if (!needsCacheBreakpoints && !needsResponsesApiInjection && !needsResponsesInputStabilizer) {
         return next(model, context, options);
       }
 
@@ -196,6 +208,41 @@ export function createRequestBodyInjector(
           // Reorder content blocks for stable prefix (before any cache marker placement)
           if (needsCacheBreakpoints && Array.isArray(result.messages)) {
             reorderContentForStablePrefix(result.messages as Array<Record<string, unknown>>);
+            // Strip the TRANSIENT inline-recall block from historical user messages so
+            // the cached prefix is byte-stable turn-over-turn. The block is per-turn,
+            // query-varying recall (kept only on the latest user message for attention);
+            // left on history it mutates the prefix every request → cache_creation churn.
+            const recallStripped = stripTransientRecallFromHistory(result.messages as Array<Record<string, unknown>>);
+            if (recallStripped > 0) {
+              logger.debug(
+                { recallStripped, sessionKey: config.sessionKey },
+                "Stripped transient inline-recall from cached prefix",
+              );
+            }
+            // cache break #C1/#C2: strip thinking from EVERY replayed assistant message
+            // (including the active/last one) so the cached prefix matches the durable (LCD)
+            // no-thinking form and never mutates when an assistant transitions active→historical.
+            const thinkingStripped = stripReplayThinking(result.messages as Array<Record<string, unknown>>);
+            if (thinkingStripped > 0) {
+              // Notify the cache-break detector: this is a DELIBERATE content modification
+              // (matching the durable LCD form), so a one-time read-token change as a message's
+              // thinking is stripped must be SUPPRESSED, not flagged as a server eviction.
+              config.onContentModification?.();
+              logger.debug(
+                { thinkingStripped, sessionKey: config.sessionKey },
+                "Stripped replay thinking from cached prefix",
+              );
+            }
+            // cache #C4: move the current turn's inline-recall block onto the UNCACHED tail
+            // (a trailing block after the cache fence) so it's visible to the model but never
+            // cached — preventing the prefix mutation when C-FIX-3 strips it next turn.
+            const recallDeferred = deferRecallToUncachedTail(result.messages as Array<Record<string, unknown>>);
+            if (recallDeferred > 0) {
+              logger.debug(
+                { recallDeferred, sessionKey: config.sessionKey },
+                "Deferred inline-recall to the uncached tail",
+              );
+            }
           }
 
           // TTL expiry guard for skipCacheWrite -- when the parent's cache write
@@ -377,6 +424,49 @@ export function createRequestBodyInjector(
 
           // Concern 4: store (Responses API + storeCompletions)
           injectStoreFlag(result, needsResponsesApiInjection, config.storeCompletions);
+
+          // Cache #C4-OAI: stabilise the OpenAI Responses auto-cached prefix.
+          // The per-turn inline-recall block ("[Relevant context from memory: ...]") is
+          // prepended to the CURRENT user turn (envelope-wrapper) but recall is TRANSIENT —
+          // the LCD/history rebuild emits each user turn CLEAN. So the latest user item is sent
+          // WITH recall (cached this turn), then next turn it goes historical and is rebuilt
+          // WITHOUT recall -> the auto-cached prefix diverges at that item -> cached_tokens
+          // collapses to the instructions+tools floor (~21.5k) once per turn (confirmed live:
+          // a clean A/B showed 4 floor-collapses with this OFF, 0 with it ON).
+          // Fix (OpenAI analog of the Anthropic deferRecallToUncachedTail): strip recall off the
+          // user items and re-attach the current-turn recall as a SEPARATE trailing item, so the
+          // user turns are byte-identical to their future historical clean form and the prefix
+          // is stable. The model still sees recall (trailing = freshest position); the trailing
+          // item is transient (never persisted) so it never enters the cached prefix.
+          // Tool-safe: matches role:"user" only (never function_call/reasoning items).
+          // Unconditional (mirrors the always-on Anthropic deferRecallToUncachedTail).
+          if (needsResponsesInputStabilizer && Array.isArray((result as Record<string, unknown>).input)) {
+            result.input = structuredClone((result as Record<string, unknown>).input);
+            const inputItems = result.input as Array<Record<string, unknown>>;
+            // 1. Defensive: strip recall from any HISTORICAL user item (no-op when history is
+            //    already clean, which it is when recall is transient).
+            const strippedCount = stripTransientRecallFromResponsesInput(inputItems);
+            // 2. Recall #C4-OAI: defer recall on the LATEST user item to a trailing (uncached,
+            //    never persisted) item, so the latest item is byte-identical to its future
+            //    historical clean form and the auto-cached prefix never mutates at the turn boundary.
+            const deferred = deferRecallToTrailingResponsesItem(inputItems);
+            // 3. Reasoning #C5-OAI: strip ALL replayed reasoning items — ONLY on the native
+            //    openai / Azure Responses path (needsResponsesApiInjection). With `store:false`
+            //    the SDK keeps reasoning for recent turns but drops it from aging turns -> an
+            //    early-index prefix mutation -> floor-collapse. Removing them consistently every
+            //    call keeps the prefix byte-stable (verified: monotonic, 0 collapses, no 400).
+            //    Codex (provider:"openai-codex") keeps its reasoning stable and was already
+            //    optimal, so it is excluded to avoid the (bounded) reasoning-continuity cost.
+            const reasoningStripped = needsResponsesApiInjection
+              ? stripReplayReasoningFromResponsesInput(inputItems)
+              : 0;
+            if (strippedCount > 0 || deferred > 0 || reasoningStripped > 0) {
+              logger.debug(
+                { sessionKey: config.sessionKey, recallStrippedOai: strippedCount, recallDeferredOai: deferred, reasoningStrippedOai: reasoningStripped },
+                "Stabilised OpenAI Responses prefix: deferred recall + stripped replayed reasoning",
+              );
+            }
+          }
 
           return result;
         },

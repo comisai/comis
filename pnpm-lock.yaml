@@ -988,6 +988,9 @@ importers:
 
   packages/skills:
     dependencies:
+      '@comis/agent':
+        specifier: workspace:*
+        version: link:../agent
       '@comis/core':
         specifier: workspace:*
         version: link:../core

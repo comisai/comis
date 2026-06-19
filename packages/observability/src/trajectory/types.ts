@@ -106,6 +106,35 @@ export const TRAJECTORY_EVENT_TYPES = [
   "learning.user_model_revised",
   "learning.memory_generalized",
 
+  // TELEM-01 (v2.27 P1, Phase 173): a `pipeline` tool invocation was authored —
+  // the reserved trajectory type for the counts-only pipeline:authored event
+  // (action / capabilityClass tier / schemaValid / repaired). Mirrors the
+  // memory.generation_quality triple. Content-free: closed enums + booleans ONLY,
+  // never a pipeline body / type_config value / node task (§2.7 / H1). The bridge
+  // mapping reserves this type for arch closure (every EventMap member is
+  // mapped-or-allowlisted); the live per-session recordEvent emit is a documented
+  // deferred follow-up (getRecorder is not reachable on the graph-handler deps at
+  // P1 — the FLEET aggregate, Plan 03/04, is the P1 deliverable).
+  "pipeline.authored",
+
+  // AUTHOR-01/02 (v2.27 P2, Phase 174): the reserved trajectory types for the two
+  // counts-only authoring-AUDIT events Plans 03/04 emit on a conservative repair /
+  // intent-synthesis. APPEND-ONLY beside pipeline.authored. Content-free: closed
+  // canonical-template pattern enum + numeric nodeCount (+ tier on repaired) ONLY,
+  // never a graph body / type_config value / node task / intent text (§2.7 / H1).
+  // Daemon-side emit (graph-helpers.ts); bridged for arch closure + `comis explain`.
+  "graph.repaired",
+  "graph.synthesized_from_intent",
+
+  // STEER-01 (v2.27 P3, Phase 175): the reserved trajectory type for the
+  // counts-only subagent:steered event Plan 02 emits when a running child is
+  // steered in-flight (transcript preserved) instead of kill+respawn. APPEND-ONLY
+  // beside the AUTHOR-01/02 types. Content-free: runId + the closed-union mode
+  // (steer|followup) ONLY, never the steer message body (§2.7 / H1). Daemon-side
+  // emit (subagent-handlers.ts); bridged for OPERATOR TRAJECTORY VISIBILITY
+  // (`comis explain`).
+  "subagent.steered",
+
   // Background task lifecycle (T2.2 / F9): promote/complete/fail of a long-running tool
   // detached past the execute() boundary (content-free — ids + durationMs only).
   "background_task.promoted",
