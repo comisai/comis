@@ -21,6 +21,7 @@ import { MessagesConfigSchema } from "./schema-messages.js";
 import { ModelsConfigSchema } from "./schema-models.js";
 import { MonitoringConfigSchema } from "./schema-observability.js";
 import { ObservabilityConfigSchema } from "./schema-observability.js";
+import { OrchestrationConfigSchema } from "./schema-orchestration.js";
 import { PluginsConfigSchema } from "./schema-plugins.js";
 import { ProvidersConfigSchema } from "./schema-providers.js";
 import { QueueConfigSchema } from "./schema-queue.js";
@@ -73,6 +74,13 @@ export const AppConfigSchema = z.strictObject({
     monitoring: MonitoringConfigSchema.default(() => MonitoringConfigSchema.parse({})),
     /** Observability persistence configuration */
     observability: ObservabilityConfigSchema.default(() => ObservabilityConfigSchema.parse({})),
+    /**
+     * Orchestration authoring gates (Phase 174 / v2.27 P2). SHIPPED GATED-OFF:
+     * `orchestration.authoring.{intentAction,repairProducer,gbnfConstrain}` all
+     * default false, so an absent section parses to the inert all-false gate and
+     * behavior is byte-identical to today (the load-bearing invariant).
+     */
+    orchestration: OrchestrationConfigSchema.default(() => OrchestrationConfigSchema.parse({})),
     /**
      * Diagnostics configuration scaffold. Subsections:
      *   - `diagnostics.trajectory` — per-session trajectory JSONL knobs

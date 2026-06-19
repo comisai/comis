@@ -182,7 +182,7 @@ The four session tools (`session_search`, `session_status`, `sessions_history`, 
     |-----------|------|----------|-------------|
     | `action` | string | No | One of `list` (default), `kill`, `steer` |
     | `target` | string | For kill/steer | Run ID of the target subagent |
-    | `message` | string | For steer | New task description for the subagent |
+    | `message` | string | For steer | The steering message for the subagent |
     | `recent_minutes` | integer | No | Include runs from the last N minutes (default 30, for `list`) |
 
     **Actions:**
@@ -190,8 +190,8 @@ The four session tools (`session_search`, `session_status`, `sessions_history`, 
     | Action | What It Does |
     |--------|-------------|
     | `list` | Show all running sub-agents with their status and progress |
-    | `kill` | Terminate a sub-agent by its run ID |
-    | `steer` | Redirect a running sub-agent with a new task message |
+    | `kill` | Terminate a sub-agent by its run ID (discards its in-flight work) |
+    | `steer` | Redirect a running sub-agent with a steering message. By default this kills the child and respawns it with the message as the new task; when [`security.agentToAgent.steerInject`](/reference/config-yaml#security) is enabled it instead **injects** the message into the running child at its next step boundary, preserving its transcript and progress. A steer never widens the child's tool set -- a denied tool stays denied. See [Steering a running sub-agent](/agents/subagent-lifecycle#steering-a-running-sub-agent). |
 
     **Example -- Check on sub-agents:**
     ```yaml

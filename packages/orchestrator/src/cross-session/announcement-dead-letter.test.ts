@@ -496,3 +496,103 @@ describe("AnnouncementDeadLetterQueue", () => {
     expect(dlq.size()).toBe(3);
   });
 });
+
+// ---------------------------------------------------------------------------
+// WR-01: a DLQ-recovered delivery must record its idempotency key as delivered.
+// The whole point of DELIVERY-03 is that a budget-failed node's failure-key ==
+// its success-key, so a second sweep does not double-notify — but that depends
+// on the key being in the shared deliveredKeys set. The DLQ delivers to the
+// user on drain() but had no way to mark the key, re-opening the double-notify
+// window. drain() now accepts an onDelivered sink the wiring binds to
+// deliveryDedup.mark / batcher.markDelivered.
+// ---------------------------------------------------------------------------
+
+describe("AnnouncementDeadLetterQueue drain marks recovered keys (WR-01)", () => {
+  let tmpDir: string;
+  let filePath: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "dlq-wr01-"));
+    filePath = join(tmpDir, "dlq.jsonl");
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("invokes onDelivered with the entry's idempotencyKey on a successful re-delivery", async () => {
+    const eventBus = createMockEventBus();
+    const entry = makeFullEntry({
+      runId: "run-recover-1",
+      idempotencyKey: "default:u1:c1::run-recover-1",
+    });
+    await writeFile(filePath, JSON.stringify(entry) + "\n", "utf-8");
+
+    const dlq = createAnnouncementDeadLetterQueue({ filePath, eventBus, retryIntervalMs: 0 });
+    const sendToChannel = vi.fn().mockResolvedValue(true);
+    const onDelivered = vi.fn();
+
+    await dlq.drain(sendToChannel, onDelivered);
+
+    expect(sendToChannel).toHaveBeenCalledOnce();
+    expect(onDelivered).toHaveBeenCalledOnce();
+    expect(onDelivered).toHaveBeenCalledWith("default:u1:c1::run-recover-1");
+    expect(dlq.size()).toBe(0);
+  });
+
+  it("does NOT invoke onDelivered when the re-delivery fails (key stays open)", async () => {
+    const eventBus = createMockEventBus();
+    const entry = makeFullEntry({
+      runId: "run-recover-fail",
+      idempotencyKey: "default:u1:c1::run-recover-fail",
+    });
+    await writeFile(filePath, JSON.stringify(entry) + "\n", "utf-8");
+
+    const dlq = createAnnouncementDeadLetterQueue({ filePath, eventBus, retryIntervalMs: 0 });
+    const sendToChannel = vi.fn().mockResolvedValue(false); // delivery failed
+    const onDelivered = vi.fn();
+
+    await dlq.drain(sendToChannel, onDelivered);
+
+    expect(sendToChannel).toHaveBeenCalledOnce();
+    expect(onDelivered).not.toHaveBeenCalled();
+    // Entry remains for a future retry.
+    expect(dlq.size()).toBe(1);
+  });
+
+  it("does NOT invoke onDelivered for an UN-keyed entry but still delivers it (no regression)", async () => {
+    const eventBus = createMockEventBus();
+    // No idempotencyKey — a pre-existing/top-level-spawn DLQ row.
+    const entry = makeFullEntry({ runId: "run-recover-nokey" });
+    await writeFile(filePath, JSON.stringify(entry) + "\n", "utf-8");
+
+    const dlq = createAnnouncementDeadLetterQueue({ filePath, eventBus, retryIntervalMs: 0 });
+    const sendToChannel = vi.fn().mockResolvedValue(true);
+    const onDelivered = vi.fn();
+
+    await dlq.drain(sendToChannel, onDelivered);
+
+    // Delivered successfully, but no key → no mark.
+    expect(sendToChannel).toHaveBeenCalledOnce();
+    expect(onDelivered).not.toHaveBeenCalled();
+    expect(dlq.size()).toBe(0);
+  });
+
+  it("drain() without an onDelivered sink still delivers (backward-shape-safe optional param)", async () => {
+    const eventBus = createMockEventBus();
+    const entry = makeFullEntry({
+      runId: "run-recover-nosink",
+      idempotencyKey: "default:u1:c1::run-recover-nosink",
+    });
+    await writeFile(filePath, JSON.stringify(entry) + "\n", "utf-8");
+
+    const dlq = createAnnouncementDeadLetterQueue({ filePath, eventBus, retryIntervalMs: 0 });
+    const sendToChannel = vi.fn().mockResolvedValue(true);
+
+    // No second arg — must not throw.
+    await dlq.drain(sendToChannel);
+
+    expect(sendToChannel).toHaveBeenCalledOnce();
+    expect(dlq.size()).toBe(0);
+  });
+});

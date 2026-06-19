@@ -124,6 +124,15 @@ const KNOWN_ACCEPTABLE: LogPattern[] = [
   // test daemon, not a regression.
   { level: "warn", msg: /LLM cost-bearing memory features are ACTIVE/ },
 
+  // learningOutcome.correction.enabled defaults to true (opt-out, gated by the
+  // master cost switch — schema-learning-outcome.ts). When correction is on but no
+  // cheap-model API key resolves (the common case on a default-config test daemon
+  // with no real provider key), buildReactionWiringDeps emits ONE startup WARN that
+  // the correction signal is a no-op until a key is set (setup-learning-reactions.ts).
+  // Intentional default-ON operator notice, not a regression. (The "API key" text is
+  // in the `hint` field, not `msg`, so the daemon-lifecycle "API key" filter misses it.)
+  { level: "warn", msg: /correction detector unavailable \(non-fatal, default-deferred\)/ },
+
   // Benign control-plane guard: channel-manager.injectMessage warns + skips when a
   // heartbeat/continuation injection targets a channel type with no registered
   // adapter (non-deterministic at startup — races adapter registration; also fires

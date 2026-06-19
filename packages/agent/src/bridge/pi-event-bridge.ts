@@ -45,7 +45,7 @@ import { sanitizeMcpToolNameForAnalytics } from "../executor/cache-detection/ind
 import { classifyError } from "../executor/error-classifier.js";
 import { getSessionPromptSkillLocations } from "../executor/prompt-assembly.js";
 import { suggestClosestTool } from "./tool-name-suggest.js";
-import type { BudgetGuard } from "../budget/budget-guard.js";
+import type { ExecutionBudgetWindow } from "../budget/budget-guard.js";
 import type { CostTracker } from "../budget/cost-tracker.js";
 import type { StepCounter } from "../executor/step-counter.js";
 import type { CircuitBreaker } from "../safety/circuit-breaker.js";
@@ -157,7 +157,10 @@ export interface TtlSplitEstimate {
 /** Dependencies required by the PiEventBridge. */
 export interface PiEventBridgeDeps {
   eventBus: TypedEventBus;
-  budgetGuard: BudgetGuard;
+  // CR-01: the per-execution budget window for THIS run (the shared per-agent
+  // BudgetGuard is structurally assignable for the legacy single-execution path).
+  // recordUsage accrues into this window; checkBudgetLimit reads it.
+  budgetGuard: ExecutionBudgetWindow;
   costTracker: CostTracker;
   stepCounter: StepCounter;
   circuitBreaker: CircuitBreaker;

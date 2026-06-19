@@ -121,7 +121,15 @@ const TARGET_GRAPH: Record<WorkspacePackage, ReadonlySet<string>> = {
   // store (`<server>.json` / `<server>.client.json` / `<server>.meta.json` at
   // 0o600 in 0o700 dir under ~/.comis/mcp-tokens/). Observability depends only
   // on @comis/core + @comis/shared (both already skills deps) so the edge is acyclic.
-  skills: new Set(["shared", "core", "observability"]),
+  //
+  // @comis/agent edge (AUTHOR-02 / Phase 174-04): pipeline-tool.ts's from_intent
+  // action imports `synthesizeFromIntent` to deterministically expand a one-line
+  // intent into a validated ExecutionGraph (then dispatches it via graph.execute
+  // so governance applies). The edge is FORWARD + acyclic: agent depends only on
+  // shared/core/observability/scheduler (none of which reach skills — see the
+  // agent entry's "no skills entry here" note), so skills → agent introduces no
+  // cycle (verified via cycles + cycles:refs).
+  skills: new Set(["shared", "core", "observability", "agent"]),
   // agent: structurally references skills' types only (comments) — no actual
   // import edge, so no skills entry here. No @comis/infra edge: logger
   // contract types canonically live in @comis/core. No @comis/memory edge:

@@ -535,7 +535,16 @@ export type { LifecycleHooksDeps } from "./spawn/index.js";
 export { createEphemeralComisSessionManager } from "./spawn/index.js";
 export { createSubAgentRunner, ANNOUNCE_PARENT_TIMEOUT_MS } from "./spawn/index.js";
 export type { SubAgentRunnerDeps, SubAgentRun, SpawnParams, SubAgentRunnerLogger } from "./spawn/index.js";
-export { sweepResultFiles, buildAnnouncementMessage, deliverFailureNotification } from "./spawn/index.js";
+export { sweepResultFiles, buildAnnouncementMessage, deliverFailureNotification, classifyErrorContext } from "./spawn/index.js";
+export { createDeliveryDedup } from "./spawn/index.js";
+export type { DeliveryDedup } from "./spawn/index.js";
+export { comparePosture, resolvePostureFromSkills } from "./spawn/index.js";
+export type {
+  SandboxPosture,
+  PostureDimension,
+  PostureComparison,
+  SkillsPostureSlice,
+} from "./spawn/index.js";
 
 // Context engine
 export { createContextEngine } from "./context-engine/index.js";
@@ -601,12 +610,25 @@ export { resolveModelProfile } from "./executor/model-profile.js";
 export type { CapabilityClass } from "./executor/model-profile.js";
 // O2 (WR-02): canonical DAG template seeding. seedDefaultDagTemplates is wired
 // into daemon bootstrap (idempotent INSERT-OR-IGNORE) so the four canonical
-// small-model templates exist in the named-graph store at startup. Only the
-// seeder is exported — fillDagTemplate / CANONICAL_DAG_TEMPLATES and the
-// DagTemplate types stay package-internal until their Phase-157 weak-model
-// repair consumer exists (exporting them now would be dead public API; see the
-// O3 producer deferral in graph-helpers.ts and dag-templates.ts).
+// small-model templates exist in the named-graph store at startup.
 export { seedDefaultDagTemplates } from "./executor/dag-templates.js";
+// AUTHOR-01 (Phase 174-03, the former "Phase 157"): the deterministic,
+// conservative repair matcher. INJECTED into the daemon's buildGraphInput via
+// deps.repairMatch (rpc-dispatch composition site) — the daemon never imports
+// dag-templates directly. fillDagTemplate / CANONICAL_DAG_TEMPLATES stay
+// package-internal (the matcher is the only weak-model repair consumer; it fills
+// internally), so only the matcher fn + its result types cross the boundary.
+export { matchRawGraphToTemplate } from "./executor/dag-template-match.js";
+export type { TemplateMatch, CanonicalTemplatePattern } from "./executor/dag-template-match.js";
+// AUTHOR-02 (Phase 174-04): the deterministic intent → ExecutionGraph
+// synthesizer. Imported by the pipeline tool's from_intent action (@comis/skills)
+// — it RETURNS a validated graph, never executes one; the tool dispatches it
+// through the existing graph.execute path so governance applies automatically.
+export { synthesizeFromIntent } from "./executor/dag-synthesizer.js";
+// SynthesisPattern is consumed by the from_intent tool action (@comis/skills);
+// SynthesisIntent stays module-local (the tool builds the intent inline) — no
+// cross-package consumer, so it is NOT re-exported from the barrel.
+export type { SynthesisPattern } from "./executor/dag-synthesizer.js";
 export { resolveOperationDefaults, OPERATION_TIER_MAP, OPERATION_TIMEOUT_DEFAULTS, OPERATION_CACHE_DEFAULTS } from "./model/operation-model-defaults.js";
 export { resolveCompactionModel } from "./model/compaction-model-resolver.js";
 

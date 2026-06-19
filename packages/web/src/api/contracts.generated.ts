@@ -8552,6 +8552,22 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
             "billing"
           ],
           "additionalProperties": false
+        },
+        "pipelineAuthoringGate": {
+          "type": "object",
+          "properties": {
+            "buildAuthor": {
+              "type": "boolean"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "buildAuthor",
+            "reason"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [
@@ -10734,25 +10750,46 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
     },
     "response": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "type": "object",
-      "properties": {
-        "status": {
-          "type": "string",
-          "const": "steered"
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "const": "steered"
+            },
+            "oldRunId": {
+              "type": "string"
+            },
+            "newRunId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "status",
+            "oldRunId",
+            "newRunId"
+          ],
+          "additionalProperties": false
         },
-        "oldRunId": {
-          "type": "string"
-        },
-        "newRunId": {
-          "type": "string"
+        {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "const": "steered_inject"
+            },
+            "runId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "status",
+            "runId"
+          ],
+          "additionalProperties": false
         }
-      },
-      "required": [
-        "status",
-        "oldRunId",
-        "newRunId"
-      ],
-      "additionalProperties": false
+      ]
     },
     "scopes": [
       "admin"

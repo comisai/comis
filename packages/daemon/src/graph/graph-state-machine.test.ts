@@ -319,6 +319,79 @@ describe("createGraphStateMachine", () => {
   });
 
   // -------------------------------------------------------------------------
+  // markNodeFailed terminal-fail (budget breach) — D2
+  // -------------------------------------------------------------------------
+
+  describe("markNodeFailed terminal-fail (budget breach)", () => {
+    it("budget-class terminal fail with retries>0 does NOT retry (status failed, retrying empty)", () => {
+      // D2: a budget breach must bypass the retry path even when retries remain,
+      // because a retry would just re-burn the budget.
+      const sm = createGraphStateMachine(buildGraph([{ nodeId: "A", retries: 2 }]));
+      sm.markNodeRunning("A", "run-1");
+      const result = sm.markNodeFailed("A", "Node token budget exceeded", undefined, { terminal: true });
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value.retrying).toEqual([]);
+      }
+      // Node is terminally failed, NOT sent back to "ready".
+      expect(sm.getNodeState("A")?.status).toBe("failed");
+      expect(sm.getNodeState("A")?.error).toBe("Node token budget exceeded");
+    });
+
+    it("ordinary fail with retries>0 still retries (terminal flag is opt-in — byte-identical)", () => {
+      // The SAME node config (retries:2) with a NORMAL fail (no terminal flag)
+      // must retry exactly as today: status back to "ready", retrying:[nodeId].
+      const sm = createGraphStateMachine(buildGraph([{ nodeId: "A", retries: 2 }]));
+      sm.markNodeRunning("A", "run-1");
+      const result = sm.markNodeFailed("A", "boom");
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value.retrying).toEqual(["A"]);
+      }
+      expect(sm.getNodeState("A")?.status).toBe("ready");
+    });
+
+    it("under on_failure:continue a terminal budget-fail does NOT skip a still-satisfiable sibling", () => {
+      // The terminal flag changes only retry-eligibility, not the cascade.
+      // D depends on B and C (best-effort: all terminal + >=1 completed). When B
+      // terminal-fails (budget) but C can still complete, D must stay pending,
+      // never get skipped — the continue cascade is honored.
+      const sm = createGraphStateMachine(buildGraph([
+        { nodeId: "B", retries: 2 },
+        { nodeId: "C" },
+        { nodeId: "D", dependsOn: ["B", "C"], barrierMode: "best-effort" },
+      ], { onFailure: "continue" }));
+      sm.markNodeRunning("B", "run-b");
+      const result = sm.markNodeFailed("B", "Node token budget exceeded", undefined, { terminal: true });
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        // B failed terminally (no retry), but D is NOT skipped — C can still satisfy.
+        expect(result.value.retrying).toEqual([]);
+        expect(result.value.skipped).not.toContain("D");
+      }
+      expect(sm.getNodeState("B")?.status).toBe("failed");
+      expect(sm.getNodeState("D")?.status).toBe("pending");
+    });
+
+    it("under on_failure:fail-fast a terminal budget-fail cascades skip to dependents", () => {
+      // fail-fast: any failed dep cascades skip. The terminal flag does not alter this.
+      const sm = createGraphStateMachine(buildGraph([
+        { nodeId: "B", retries: 2 },
+        { nodeId: "E", dependsOn: ["B"] },
+      ], { onFailure: "fail-fast" }));
+      sm.markNodeRunning("B", "run-b");
+      const result = sm.markNodeFailed("B", "Node token budget exceeded", undefined, { terminal: true });
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value.retrying).toEqual([]);
+        expect(result.value.skipped).toContain("E");
+      }
+      expect(sm.getNodeState("B")?.status).toBe("failed");
+      expect(sm.getNodeState("E")?.status).toBe("skipped");
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // Invalid transitions
   // -------------------------------------------------------------------------
 

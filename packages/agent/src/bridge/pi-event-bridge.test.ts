@@ -5901,6 +5901,77 @@ describe("session-index emit sites", () => {
 });
 
 // ---------------------------------------------------------------------------
+// STEER-01 (Phase 175): a steer cannot grant a denied tool.
+//
+// The mid-flight steer (subagent.steer flag-on) writes ONLY the SDK steering
+// queue — it NEVER re-runs tool assembly (steer-run.test.ts Test 7 proves that
+// absence structurally: SteerRunDeps carries no tool-grant function). So a
+// steered child's active tool set stays FIXED at what spawn assembled, with the
+// SUB_AGENT_TOOL_DENYLIST removed (sub-agent-tool-denylist.ts:180-181). This
+// block pins the RUNTIME classification a steered request for a denied tool
+// would hit: the bridge enriches the SDK "Tool not found" into the explicit
+// "denied to ALL sub-agents" message (classifyUnreachableTool,
+// pi-event-bridge.ts:137) — independent of the message source. Invariant-
+// pinning regression test for the phase's denylist-non-bypass guarantee (no
+// production change to the denylist or the bridge).
+// ---------------------------------------------------------------------------
+describe("STEER-01 denylist non-bypass — a steer cannot grant a denied tool", () => {
+  // Two denylist members (gateway = SIGUSR2 config mutation; agents_manage =
+  // agent CRUD) — a steered request for EITHER returns the denylist message.
+  it.each(["gateway", "agents_manage"])(
+    "'Tool %s not found' on a steered child returns the 'denied to ALL sub-agents' classification",
+    (deniedTool) => {
+      // A sub-agent whose active set was fixed at spawn (here ['full'] — the
+      // broadest profile, yet the denylist still wins).
+      const subAgentDeps = createMockDeps({
+        activeToolGroups: ["full"],
+      } as unknown as Partial<PiEventBridgeDeps>);
+      const { listener } = createPiEventBridge(subAgentDeps);
+
+      // The SDK reports the denied tool unreachable (the steered child asked for
+      // it; the spawn-fixed tool set never contained it).
+      const result = { message: `Tool ${deniedTool} not found` };
+      listener(makeToolExecutionEndEvent(deniedTool, `tc-steer-deny-${deniedTool}`, true, result) as any);
+
+      const warnCalls = (subAgentDeps.logger.warn as ReturnType<typeof vi.fn>).mock.calls;
+      const toolFailWarn = warnCalls.find(
+        (c) => c[1] === "Tool execution failed" && c[0]?.toolName === deniedTool,
+      );
+      expect(toolFailWarn).toBeDefined();
+      expect(toolFailWarn![0].errorText).toBe(
+        `Tool '${deniedTool}' is denied to ALL sub-agents — the parent must perform this step.`,
+      );
+    },
+  );
+
+  it("the denylist classification is independent of message source — same string with or without a prior steer (no steer-specific branch widens the tool set)", () => {
+    // The classifier (classifyUnreachableTool) takes only (toolName, activeGroups)
+    // — there is NO steer parameter that could widen the active set. Drive the
+    // SAME denied tool through TWO bridges with identical activeToolGroups and
+    // assert byte-identical enrichment: a steer changes nothing about tool
+    // governance (it is a message, never a capability).
+    const depsA = createMockDeps({ activeToolGroups: ["coding"] } as unknown as Partial<PiEventBridgeDeps>);
+    const depsB = createMockDeps({ activeToolGroups: ["coding"] } as unknown as Partial<PiEventBridgeDeps>);
+    const { listener: listenerA } = createPiEventBridge(depsA);
+    const { listener: listenerB } = createPiEventBridge(depsB);
+
+    listenerA(makeToolExecutionEndEvent("memory_manage", "tc-src-a", true, { message: "Tool memory_manage not found" }) as any);
+    listenerB(makeToolExecutionEndEvent("memory_manage", "tc-src-b", true, { message: "Tool memory_manage not found" }) as any);
+
+    const findWarn = (d: PiEventBridgeDeps) =>
+      (d.logger.warn as ReturnType<typeof vi.fn>).mock.calls.find(
+        (c) => c[1] === "Tool execution failed" && c[0]?.toolName === "memory_manage",
+      );
+    const warnA = findWarn(depsA);
+    const warnB = findWarn(depsB);
+    expect(warnA).toBeDefined();
+    expect(warnB).toBeDefined();
+    expect(warnA![0].errorText).toBe("Tool 'memory_manage' is denied to ALL sub-agents — the parent must perform this step.");
+    expect(warnA![0].errorText).toBe(warnB![0].errorText);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // ATTR-01: read-path ↔ frozen skill-location cross-reference → skill:prompt_invoked
 // + the named per-turn carrier write (m.turnUsedSkillIds, read back via
 // bridge.getUsedSkillIds()). The P2 BLOCKER — without it the skill loop is

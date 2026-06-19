@@ -27,6 +27,7 @@ import { withTimeout } from "@comis/shared";
 import { mkdir, readdir, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { AnnouncementBatcher, AnnouncementDeadLetterQueue } from "./announcement-ports.js";
+import { buildAnnounceKey, type DeliveryDedup } from "./announce-key.js";
 import { ANNOUNCE_PARENT_TIMEOUT_MS, type SubAgentRunnerDeps, type SubAgentRunnerLogger } from "./sub-agent-runner.js";
 
 // ---------------------------------------------------------------------------
@@ -250,6 +251,37 @@ export async function persistFailureRecord(params: {
 // ---------------------------------------------------------------------------
 
 /**
+ * Transport-layer failures are transient (DELIVERY-02): they self-heal on a
+ * retry-with-backoff in the announcement batcher. The bare Node errno spellings
+ * do NOT contain "timeout"/"timed out" (e.g. "ETIMEDOUT".toLowerCase() is
+ * "etimedout"), so the existing timeout branch misses them — match these
+ * explicitly. Matched case-insensitively as a substring of the error message
+ * (real delivery errors wrap the errno in surrounding text, e.g.
+ * "connect ECONNREFUSED 127.0.0.1:443").
+ *
+ * INFO-CLASSIFIER: deliberately errno-style only, PLUS the errno-less real
+ * phrasings emitted by undici/fetch ("fetch failed", "network request failed",
+ * "socket hang up"). The natural-language phrases "connection reset" /
+ * "connection refused" are intentionally OMITTED: every genuine Node transport
+ * error carries its errno spelling (ECONNRESET / ECONNREFUSED, already matched
+ * here), so those phrases add no real-failure coverage but DO over-match a
+ * PERMANENT error that quotes them as content (e.g. a tool result
+ * `"connection refused by policy"`). Keeping the list errno-anchored bounds the
+ * false-positive surface (mirrors the 5xx `\b5\d{2}\b` word-boundary guard).
+ */
+const TRANSIENT_TRANSPORT_TOKENS = [
+  "etimedout",
+  "econnreset",
+  "econnrefused",
+  "epipe",
+  "enetunreach",
+  "eai_again",
+  "socket hang up",
+  "fetch failed",
+  "network request failed",
+];
+
+/**
  * Classify an error message and endReason into structured error context
  * for offline analysis and retry decisions.
  */
@@ -287,6 +319,14 @@ export function classifyErrorContext(
         retryable = false;
       } else if (lowerMsg.includes("timeout") || lowerMsg.includes("timed out")) {
         errorType = "ExecutionTimeout";
+        retryable = true;
+      } else if (TRANSIENT_TRANSPORT_TOKENS.some((token) => lowerMsg.includes(token))) {
+        // DELIVERY-02: transport-layer blips (ECONNRESET/ECONNREFUSED/EPIPE/
+        // "socket hang up"/"fetch failed"/...) are transient — the batcher
+        // retries them with backoff before dead-lettering. Placed AFTER the
+        // budget/timeout branches (which precede it) so a permanent budget
+        // message never reaches here.
+        errorType = "TransportError";
         retryable = true;
       } else if (lowerMsg.includes("rate limit") || lowerMsg.includes("429")) {
         errorType = "RateLimited";
@@ -473,8 +513,22 @@ export async function deliverAnnouncement(params: {
   logger?: SubAgentRunnerLogger;
   batcher?: AnnouncementBatcher;
   deadLetterQueue?: AnnouncementDeadLetterQueue;
+  /**
+   * WR-02: shared, bounded delivered-key store. When the batcher is absent the
+   * batcher cannot mark the key, so the non-batcher success branches mark this
+   * sink instead — keeping the failure-path dedup (`deliverFailureNotification`)
+   * correct whether or not a batcher is wired. The daemon wiring injects the
+   * SAME instance the batcher uses.
+   */
+  deliveryDedup?: DeliveryDedup;
 }): Promise<void> {
   const { announceChannelType, announceChannelId, callerAgentId, callerSessionKey, runId } = params;
+
+  // DELIVERY-01 / INFO-DRY: build the idempotency key ONCE here via the shared
+  // helper (single source of truth — the failure path uses the same builder),
+  // then thread it as data through the batcher and the dead-letter entry; never
+  // reconstruct it downstream. Undefined for a top-level spawn (no callerSessionKey).
+  const announceKey = buildAnnounceKey(callerSessionKey, runId);
 
   // Scrub announcement text before any delivery path (batcher, parent, or direct channel).
   const announceScrub = scrubSecretsFromText(params.announcementText);
@@ -497,6 +551,7 @@ export async function deliverAnnouncement(params: {
       callerAgentId,
       callerSessionKey,
       runId,
+      idempotencyKey: announceKey,
     });
     deps.logger?.debug({ runId, channelType: announceChannelType }, "Sub-agent announcement queued for batching");
     return;
@@ -519,6 +574,11 @@ export async function deliverAnnouncement(params: {
         systemScheduleTimeout,
         "announceToParent",
       );
+      // WR-02: mark delivered on this non-batcher success branch (there is no
+      // batcher here to mark) so the failure path dedups. Marked ONLY after the
+      // confirmed await — a failed/timed-out injection falls through to the
+      // direct send below and stays unmarked.
+      if (announceKey) deps.deliveryDedup?.mark(announceKey);
       deps.logger?.debug({ runId, channelType: announceChannelType }, "Sub-agent announcement injected into parent session");
       return;
     } catch (announceErr) {
@@ -535,7 +595,13 @@ export async function deliverAnnouncement(params: {
   // Extract thread context from ALS so fallback delivery lands in the correct thread
   const ctx = tryGetContext();
   const threadId = ctx?.deliveryOrigin?.threadId;
-  await deps.sendToChannel(announceChannelType, announceChannelId, stripAnnouncementInstruction(announcementText), threadId ? { threadId } : undefined).catch((sendErr) => {
+  try {
+    const ok = await deps.sendToChannel(announceChannelType, announceChannelId, stripAnnouncementInstruction(announcementText), threadId ? { threadId } : undefined);
+    // WR-02: mark delivered ONLY on a confirmed success (ok === true). A throw
+    // or a `false` return (transport refused without throwing) leaves the key
+    // open so the failure path / a retry can re-notify (Pitfall 3).
+    if (ok && announceKey) deps.deliveryDedup?.mark(announceKey);
+  } catch (sendErr) {
     deps.logger?.warn({
       runId,
       channelType: announceChannelType,
@@ -555,9 +621,10 @@ export async function deliverAnnouncement(params: {
         attemptCount: 0,
         lastError: sendErr instanceof Error ? sendErr.message : String(sendErr),
         threadId,  // Persist thread context for retried deliveries
+        idempotencyKey: announceKey,  // DELIVERY-01: same key threaded onto the DLQ entry
       });
     }
-  });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -570,6 +637,16 @@ export async function deliverAnnouncement(params: {
  * or any LLM. It sends a fixed-format message via `sendToChannel`, avoiding
  * the circular dependency when the LLM provider is the cause of the failure.
  * Never throws -- delivery errors are logged as warnings.
+ *
+ * DEFER-171-01 (WR-04): this path is SINGLE-ATTEMPT by design. DELIVERY-03's
+ * requirement was failure-path IDEMPOTENCY (the shared dedup above), NOT the
+ * transient retry/DLQ self-healing the SUCCESS fallback got in DELIVERY-02
+ * (`sendWithRetry` in the batcher). Mirroring that here means injecting the
+ * classifier/backoff/maxRetries/eventBus (and a DLQ) and a parallel retry loop
+ * — a materially restructured failure path, out of scope for P0-B. The
+ * asymmetry with the hardened success path is therefore a documented decision,
+ * not an oversight (see the phase deferred-items.md). On a transient transport
+ * blip the notification is dropped (logged with a hint), pending that follow-up.
  */
 export async function deliverFailureNotification(
   params: {
@@ -578,8 +655,18 @@ export async function deliverFailureNotification(
     task: string;
     runtimeMs: number;
     runId: string;
+    /** DELIVERY-03: formatted caller session key — needed to build the shared announceKey. */
+    callerSessionKey?: string;
   },
-  deps: Pick<SubAgentRunnerDeps, "sendToChannel" | "logger">,
+  deps: Pick<SubAgentRunnerDeps, "sendToChannel" | "logger" | "batcher"> & {
+    /**
+     * WR-02: shared, bounded delivered-key store. Lets the failure-path dedup
+     * work WITHOUT a batcher (the batcher used to be the only sink). When both a
+     * batcher and a dedup are injected they are the SAME underlying set (the
+     * batcher delegates to it), so checking/marking either is consistent.
+     */
+    deliveryDedup?: DeliveryDedup;
+  },
 ): Promise<void> {
   const taskPreview = params.task.length > 100
     ? params.task.slice(0, 97) + "..."
@@ -591,6 +678,27 @@ export async function deliverFailureNotification(
     `Runtime: ${(params.runtimeMs / 1000).toFixed(1)}s`,
   ].join("\n");
 
+  // DELIVERY-03 / INFO-DRY: build the SAME idempotency key as the success path
+  // via the shared `buildAnnounceKey` helper (one source of truth — divergence
+  // would silently break the cross-path dedup) and dedup against the SAME
+  // deliveredKeys set (reached via the batcher's hasDelivered/markDelivered,
+  // D-SHAREDDEDUP). A Phase-170 budget-failed node routes here; its failure-key
+  // == its success-key, so a second sweep does not double-notify. Undefined for
+  // a top-level spawn (no callerSessionKey) → no dedup, behaves as today.
+  const announceKey = buildAnnounceKey(params.callerSessionKey, params.runId);
+  // WR-02: dedup against the shared set whether reached via the batcher OR the
+  // directly-injected DeliveryDedup (the no-batcher path). They are the same
+  // underlying set in production; checking either suppresses a double-notify.
+  const alreadyDelivered = announceKey !== undefined
+    && (deps.batcher?.hasDelivered(announceKey) === true || deps.deliveryDedup?.has(announceKey) === true);
+  if (alreadyDelivered) {
+    deps.logger?.debug({
+      runId: params.runId,
+      hint: "duplicate failure notification suppressed",
+    }, "Failure notification dedup no-op");
+    return;
+  }
+
   // Extract thread context from ALS so failure notifications
   // land in the correct Telegram topic / thread.
   const ctx = tryGetContext();
@@ -598,6 +706,14 @@ export async function deliverFailureNotification(
 
   try {
     await deps.sendToChannel(params.channelType, params.channelId, message, threadId ? { threadId } : undefined);
+    // Mark delivered ONLY after a successful send (Pitfall 3 — a failed send
+    // must stay retry-eligible / re-notifiable). Mark BOTH sinks: the batcher
+    // (when wired) and the shared dedup (WR-02 — so dedup holds without a
+    // batcher). Both resolve to the same set in production. No-op without a key.
+    if (announceKey) {
+      deps.batcher?.markDelivered(announceKey);
+      deps.deliveryDedup?.mark(announceKey);
+    }
   } catch (sendErr) {
     deps.logger?.warn({
       runId: params.runId,

@@ -535,6 +535,21 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "LlmSkillSynthesisAdapterDeps",
       "SkillSynthesisJobDeps",
       "SkillSynthesisJobResult",
+      // Sandbox-posture primitive (SANDBOX-01/02, phase 172). resolvePostureFromSkills
+      // SHRANK out of this baseline — Plan 02's daemon wiring
+      // (setup-cross-session-runtime.ts) now name-imports it cross-package to build
+      // the injected resolvePosture closure, so the walker finds a real consumer.
+      // The comparator + types below stay ahead-of-consumer: the Plan 02 spawn gate
+      // consumes comparePosture + SandboxPosture INTRA-package (sub-agent-runner.ts via
+      // the relative ./sandbox-posture.js import), which the cross-package walker skips
+      // as a self-import (the buildRecallTrace / resetServedWindowWarnForTest precedent).
+      // PostureDimension/PostureComparison/SkillsPostureSlice have no cross-package value
+      // or type importer by name. Shrink each as a real cross-package consumer lands.
+      "comparePosture",
+      "SandboxPosture",
+      "PostureDimension",
+      "PostureComparison",
+      "SkillsPostureSlice",
     ])],
     // @comis/channels: baseline orphans tracked here. The 5 delivery
     // helpers + the Markdown IR pipeline (incl. telegram-file-ref-guard)
@@ -755,6 +770,20 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
     // @comis/core: baseline orphans tracked here. See inline comments
     // throughout this set for per-entry rationale.
     ["@comis/core", new Set<string>([
+      // ── orchestration authoring gate (Phase 174 / v2.27 P2) ──
+      // The orchestration.authoring.{intentAction,repairProducer,gbnfConstrain}
+      // gate ships GATED-OFF (every flag .default(false); the 173 gate returned
+      // DEFER). The schema lands FIRST so downstream plans receive the exact
+      // gate shape; the production consumers are Plans 02-05 (events / repair
+      // producer / from_intent synthesizer / GBNF constrain), which read the
+      // flags from @comis/core. Until those land, the only callers are this
+      // schema's own tests + the section-registry/serializer derivations
+      // (intra-core, excluded from the consumer scan). Shrink each entry as a
+      // real cross-package production caller lands.
+      "OrchestrationConfigSchema",
+      "OrchestrationAuthoringConfigSchema",
+      "OrchestrationConfig",
+      "OrchestrationAuthoringConfig",
       // ── capability default-activation ──
       // The default-activation framework: a declarative capability registry +
       // empty measured-winner set + pure resolver + frozen-trust invariant.

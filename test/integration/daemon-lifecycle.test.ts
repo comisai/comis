@@ -156,6 +156,12 @@ describe("Daemon Lifecycle", () => {
         // defaults to true — opt-out posture; the daemon emits one startup
         // WARN naming the budget impact). Intentional operator notice, not a regression.
         if (msg.includes("cost-bearing memory features are ACTIVE")) return false;
+        // Exclude the correction-detector default-deferred notice
+        // (learningOutcome.correction.enabled defaults to true — opt-out; when no
+        // cheap-model API key resolves the daemon emits one startup WARN that the
+        // correction signal is a no-op until a key is set). The "API key" text lives
+        // in the `hint` field (not `msg`), so the "API key" filter above misses it.
+        if (msg.includes("correction detector unavailable")) return false;
         // Exclude the benign control-plane guard that fires non-deterministically
         // when a heartbeat/continuation injection races channel-adapter registration
         // at startup (channel-manager.injectMessage warns + skips when no adapter is

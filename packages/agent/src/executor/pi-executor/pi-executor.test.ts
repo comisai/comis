@@ -364,13 +364,21 @@ function createMockDeps(overrides?: Partial<PiExecutorDeps>): PiExecutorDeps {
       getState: vi.fn(),
       reset: vi.fn(),
     },
-    budgetGuard: {
-      recordUsage: vi.fn(),
-      checkBudget: vi.fn().mockReturnValue(ok(undefined)),
-      estimateCost: vi.fn(),
-      resetExecution: vi.fn(),
-      getSnapshot: vi.fn().mockReturnValue({ perExecution: 0, perHour: 0, perDay: 0 }),
-    },
+    budgetGuard: (() => {
+      // CR-01: resetExecution now returns an execution-local window. The mock
+      // window carries the same checkBudget/recordUsage/estimateCost/getSnapshot
+      // surface; resetExecution returns it so the executor threads a real handle.
+      const win = {
+        recordUsage: vi.fn(),
+        checkBudget: vi.fn().mockReturnValue(ok(undefined)),
+        estimateCost: vi.fn(),
+        getSnapshot: vi.fn().mockReturnValue({ perExecution: 0, perHour: 0, perDay: 0 }),
+      };
+      return {
+        ...win,
+        resetExecution: vi.fn().mockReturnValue(win),
+      };
+    })(),
     costTracker: {
       record: vi.fn(),
     } as any,
@@ -691,6 +699,30 @@ describe("PiExecutor", () => {
 
       expect(deps.stepCounter.reset).toHaveBeenCalled();
       expect(deps.budgetGuard.resetExecution).toHaveBeenCalled();
+    });
+
+    // BUDGET-01: the per-execution token cap rides ExecutionOverrides.tokenBudget
+    // into resetExecution(cap) — the child's BudgetGuard per-execution ceiling.
+    it("passes overrides.tokenBudget to budgetGuard.resetExecution as the per-execution cap", async () => {
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+
+      await executor.execute(
+        testMessage, testSessionKey, undefined, undefined, undefined,
+        undefined, undefined,
+        { tokenBudget: 5_000 } as never,
+      );
+
+      expect(deps.budgetGuard.resetExecution).toHaveBeenCalledWith(5_000);
+    });
+
+    it("calls budgetGuard.resetExecution with no cap when overrides.tokenBudget is absent (byte-identical no-budget path)", async () => {
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+
+      await executor.execute(testMessage, testSessionKey);
+
+      expect(deps.budgetGuard.resetExecution).toHaveBeenCalledWith(undefined);
     });
 
     it("uses overrides.stepCounter instead of deps.stepCounter when provided", async () => {

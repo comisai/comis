@@ -81,7 +81,7 @@ export interface SessionsApiDeps {
   };
   crossSessionSender: ReturnType<typeof createCrossSessionSender>;
   subAgentRunner: ReturnType<typeof createSubAgentRunner>;
-  securityConfig: { agentToAgent?: { enabled?: boolean; waitTimeoutMs: number; subAgentToolGroups?: string[] } };
+  securityConfig: { agentToAgent?: { enabled?: boolean; waitTimeoutMs: number; subAgentToolGroups?: string[]; steerInject?: boolean } };
   tenantId: string;
   /** Structured logger threaded through every cluster slice (DaemonApiDeps
    *  is required; SessionsApiDeps mirrors required for multi-extends parity). */
@@ -337,9 +337,7 @@ export interface OrchestratorApiDeps {
   graphCoordinator?: import("../graph/graph-coordinator.js").GraphCoordinator;
   // Named graph persistence deps
   namedGraphStore?: import("@comis/memory").NamedGraphStore;
-  /** Node type registry for driver config validation. The legacy GraphHandlerDeps
-   *  declared an inline shape; the @comis/scheduler / graph-local
-   *  NodeTypeRegistry type is structurally compatible. */
+  /** Node type registry for driver config validation (structurally compatible with the graph-local / @comis/scheduler NodeTypeRegistry). */
   nodeTypeRegistry?: import("../graph/node-type-registry.js").NodeTypeRegistry;
   // Heartbeat deps
   perAgentRunner?: PerAgentHeartbeatRunner;
@@ -353,14 +351,16 @@ export interface OrchestratorApiDeps {
   /** heartbeat-handlers reads deps.persistDeps for YAML writes. */
   persistDeps?: PersistToConfigDeps;
   /** graph-handlers reads deps.securityConfig.agentToAgent.enabled. */
-  securityConfig: { agentToAgent?: { enabled?: boolean; waitTimeoutMs: number; subAgentToolGroups?: string[] } };
-  /** graph / subagent handlers read deps.logger.info/warn. Required
-   *  (matches other slices for multi-extends parity; DaemonApiDeps.logger is required). */
+  securityConfig: { agentToAgent?: { enabled?: boolean; waitTimeoutMs: number; subAgentToolGroups?: string[]; steerInject?: boolean } };
+  /** graph / subagent handlers read deps.logger.info/warn. Required (multi-extends parity; DaemonApiDeps.logger is required). */
   logger: ComisLogger;
   /** graph-handlers reads deps.dataDir for graph-runs output. */
   dataDir?: string;
   /** subagent-handlers reads deps.subAgentRunner.list/kill/steer. */
   subAgentRunner: ReturnType<typeof createSubAgentRunner>;
+  // TELEM-01 (Plan 173-02): graph-mutate.ts emits `pipeline:authored` via eventBus, tier from getProviderCapabilityClass+deps.agents at rpc-dispatch.ts (when-absent: AUDIT-orchestrator.md). Both optional; eventBus shape matches sibling slices (ApiDispatchDeps parity).
+  eventBus?: AppContainer["eventBus"];
+  getProviderCapabilityClass?: (provider: string | undefined) => import("@comis/agent").CapabilityClass | undefined;
 }
 
 /**

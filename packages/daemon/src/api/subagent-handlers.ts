@@ -7,8 +7,11 @@
  *   subagent.list, subagent.kill, subagent.steer
  *
  * List returns filtered runs from SubAgentRunner. Kill marks a running
- * run as failed. Steer kills the current run and respawns with a new task,
- * rate-limited at 2s per target.
+ * run as failed. Steer is flag-gated on security.agentToAgent.steerInject
+ * (STEER-01): OFF (default) → kill+respawn with a new task (status "steered");
+ * ON → inject the message into the running child's live session at its next
+ * step boundary (no kill/respawn, same runId, status "steered_inject").
+ * Rate-limited at 2s per target (shared across both branches).
  *
  * Per-method pipeline: bespoke pre-Zod guards FIRST (using rawParams reads
  * — preserves user-friendly error messages matching the existing
@@ -117,6 +120,61 @@ export function createSubagentHandlers(deps: SubagentHandlerDeps): Record<string
         if (now - ts > ONE_HOUR) {
           steerTimestamps.delete(key);
         }
+      }
+
+      // STEER-01: flag-gated branch. Flag ON → inject into the live child (no
+      // kill, no respawn — transcript + progress preserved, same runId). Flag
+      // OFF (default) → the historical kill+respawn, BYTE-IDENTICAL. The 2s
+      // rate-limit above is shared by both branches.
+      if (deps.securityConfig.agentToAgent?.steerInject) {
+        const run = deps.subAgentRunner.getRunStatus(target);
+        if (!run) {
+          throw new Error(`Unknown run ID: ${target}`);
+        }
+        // WR-02: mirror killRun's status guard (sub-agent-runner.ts:1910-1912).
+        // getRunStatus returns a run for ANY status still inside the retention
+        // window; a steer aimed at a completed/failed/queued run has no live
+        // handle, so fail fast with an actionable status-named error instead of
+        // proceeding to the generic "No live session" throw from steerRun.
+        if (run.status !== "running") {
+          throw new Error(
+            `Run ${target} is not running (status: ${run.status}) — cannot steer; use kill+respawn instead.`,
+          );
+        }
+        const steerResult = await deps.subAgentRunner.steerRun(target, message);
+        if (!steerResult.steered) {
+          // WR-03 (§2.7): the inject-failure branch is a path an operator must
+          // diagnose. Log a WARN with an actionable hint + errorKind before the
+          // throw (which the @allow-throw dispatcher converts to a JSON-RPC
+          // error) — never the steer message body. The success branch already
+          // logs INFO + emits subagent:steered; this gives the failure branch
+          // the matching observability so `comis explain` / daemon.log can
+          // distinguish a no-live-handle miss from a finished run.
+          deps.logger?.warn(
+            {
+              runId: target,
+              agentId: run.agentId,
+              hint: "Steer could not reach a live child session; the run may have finished or its SDK handle was not registered under the resolved key — verify with subagent.list, or use kill+respawn",
+              errorKind: "precondition" as const,
+            },
+            "Sub-agent steer inject failed (no live session)",
+          );
+          throw new Error(steerResult.error!);
+        }
+        // Counts/ids/mode only — NEVER the steer message body (AGENTS.md §2.7).
+        deps.eventBus?.emit("subagent:steered", {
+          runId: target,
+          agentId: run.agentId,
+          mode: steerResult.mode!,
+          timestamp: systemNowMs(),
+        });
+        deps.logger?.info(
+          { runId: target, agentId: run.agentId, mode: steerResult.mode },
+          "Sub-agent steered (inject) at next step boundary",
+        );
+        const injectResult = { status: "steered_inject" as const, runId: target };
+        if (IS_DEV) SubagentSteerContract.response.parse(injectResult);
+        return injectResult;
       }
 
       // Kill the current run

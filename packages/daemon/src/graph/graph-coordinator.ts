@@ -81,6 +81,7 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
   const config: CoordinatorConfig = {
     maxConcurrency: deps.maxConcurrency ?? 4,
     maxResultLength: deps.maxResultLength ?? 12000,
+    subAgentTokenBudget: deps.subAgentTokenBudget ?? null,
     graphRetentionMs: deps.graphRetentionMs ?? 3_600_000,
     maxGlobalSubAgents: deps.maxGlobalSubAgents ?? 20,
     maxParallelSpawns: deps.maxParallelSpawns ?? 10,
@@ -217,6 +218,7 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
       waitHandlers: new Map(),
       syntheticRunResults: new Map(),
       nodeCacheData: new Map(),
+      nodeTokenSpend: new Map(),
       maxAnnouncementChars: config.maxAnnouncementChars,
     };
 

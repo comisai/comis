@@ -30,6 +30,7 @@ import { suppressError } from "@comis/shared";
 import { sanitizeAssistantResponse } from "../provider/response/sanitize-pipeline.js";
 import { randomUUID } from "node:crypto";
 import type { AnnouncementBatcher, AnnouncementDeadLetterQueue } from "./announcement-ports.js";
+import type { DeliveryDedup } from "./announce-key.js";
 import {
   classifyAbortReason,
   buildAnnouncementMessage,
@@ -41,6 +42,9 @@ import {
   type AbortClassification,
   type ValidationResult,
 } from "./sub-agent-result-processor.js";
+import { comparePosture, type SandboxPosture } from "./sandbox-posture.js";
+import { steerRun as steerRunHelper, type SteerRunDeps, type SteerableRun } from "./steer-run.js";
+import type { RunHandle } from "../executor/active-run-registry.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -53,23 +57,35 @@ export const ANNOUNCE_PARENT_TIMEOUT_MS = 300_000;
 
 /**
  * Build the composite-key triple from a SubAgentRun for resolver lookups.
- * Sub-agent runs only carry a formatted `sessionKey` string +
- * `agentId` + optional announce-channel context, so:
- *   - agentId    -> run.agentId
- *   - channelType-> run.announceChannelType ?? "sub-agent"
- *   - channelId  -> run.announceChannelId
- *                   ?? parseFormattedSessionKey(run.sessionKey)?.channelId
- *                   ?? run.sessionKey  (last-resort: the formatted key
- *                                       itself; never empty so the
- *                                       resolver's empty-field guard
- *                                       does not trip)
+ * MUST compose (via BackgroundSessionResolver.formatComposite) to the EXACT key
+ * the executor registers the live handle under (pi-executor.ts:1152-1156):
  *
- * The "sub-agent" channelType fallback acknowledges that production
- * SubAgentRun does not carry the original inbound channelType -- the
- * abort path is best-effort regardless (the SDK session may already be
- * in cleanup), so a no-op when the resolver does not find a handle is
- * acceptable. There is a runtime semantic gap (deviation: composite-key
- * triple vs registered formatted-key shape).
+ *   formatSessionKey({ tenantId: agentId ?? "default",
+ *                      channelId: `${originChannelType}:${msg.channelId}`,
+ *                      userId: msg.channelId })
+ *
+ * where for a sub-agent run `originChannelType = deliveryOrigin?.channelType ??
+ * channelType ?? "gateway"` and `msg.channelId = subSessionKey.channelId` (the
+ * executor ALWAYS receives subSessionKey -- line 1289). So:
+ *   - agentId    -> run.agentId
+ *   - channelType-> run.announceChannelType ?? "gateway"  (announce runs
+ *                   propagate announceChannelType into ALS as deliveryOrigin
+ *                   -- line 1267/1286; no-announce runs default to "gateway")
+ *   - channelId  -> parseFormattedSessionKey(run.sessionKey)?.channelId
+ *                   ?? run.sessionKey  (the PARSED sub-session channelId, NOT
+ *                   run.announceChannelId -- the executor keys on
+ *                   subSessionKey.channelId, never the announce channelId; the
+ *                   last-resort raw key keeps the resolver's empty-field guard
+ *                   from tripping)
+ *
+ * WR-01 (175-REVIEW.md): the prior formula used "sub-agent" for channelType and
+ * `run.announceChannelId ?? parsed?.channelId` for channelId, which DIVERGED
+ * from the registration key. For steer (steer-run.ts) that miss was FATAL
+ * (the inject's whole purpose is to reach the live handle); for the kill /
+ * ghost-sweep / watchdog aborts below it was a silent best-effort no-op
+ * (latent). Aligning the formula fixes steer AND makes those aborts actually
+ * reach the handle. Keep this BYTE-IDENTICAL to steer-run.ts:deriveCompositeForRun
+ * -- the 175-00 spike fails loudly on drift.
  */
 function deriveCompositeForRun(run: SubAgentRun): {
   agentId: string;
@@ -79,8 +95,8 @@ function deriveCompositeForRun(run: SubAgentRun): {
   const parsed = parseFormattedSessionKey(run.sessionKey);
   return {
     agentId: run.agentId,
-    channelType: run.announceChannelType ?? "sub-agent",
-    channelId: run.announceChannelId ?? parsed?.channelId ?? run.sessionKey,
+    channelType: run.announceChannelType ?? "gateway",
+    channelId: parsed?.channelId ?? run.sessionKey,
   };
 }
 
@@ -144,6 +160,8 @@ export interface SubAgentRunnerDeps {
     maxSteps?: number,
     callerAgentId?: string,
     overrides?: { graphId?: string; nodeId?: string; reuseSessionKey?: string; graphNodeDepth?: number },
+    /** Per-spawn token budget — becomes the child's BudgetGuard per-execution cap (BUDGET-01). */
+    tokenBudget?: number,
   ) => Promise<{
     response: string;
     tokensUsed: { total: number; cacheRead?: number; cacheWrite?: number };
@@ -172,6 +190,18 @@ export interface SubAgentRunnerDeps {
   eventBus: TypedEventBus;
   config: AgentToAgentConfig;
   tenantId: string;
+  /**
+   * Resolve an agent's sandbox posture from its per-agent skills config
+   * (SANDBOX-01) for the fail-closed no-downgrade gate (SANDBOX-02). Injected by
+   * the daemon wiring (which holds `container.config.agents`); the runner stays a
+   * `@comis/agent` leaf with no full-config import — it never reaches
+   * `config.agents[...]` itself. The two-arg form mirrors the daemon's
+   * `effectiveAgentId` inherit-caller fallback: a child with no dedicated config
+   * inherits the caller's posture, so the gate compares the posture the child
+   * will actually run under. **Absent ⇒ the gate is inert** (no posture to
+   * compare; older test wiring). The daemon ALWAYS wires it in production.
+   */
+  resolvePosture?: (agentId: string, callerAgentId?: string) => SandboxPosture;
   /** Optional structured logger for lifecycle diagnostics. */
   logger?: SubAgentRunnerLogger;
   /** Optional memory adapter for persisting sub-agent completion summaries. */
@@ -193,6 +223,12 @@ export interface SubAgentRunnerDeps {
   batcher?: AnnouncementBatcher;
   /** Optional dead-letter queue for persisting failed announcement deliveries */
   deadLetterQueue?: AnnouncementDeadLetterQueue;
+  /**
+   * WR-02: shared, bounded delivered-key store, forwarded to deliverAnnouncement
+   * + deliverFailureNotification so the failure-path dedup is correct whether or
+   * not a batcher is wired. The daemon injects the SAME instance the batcher uses.
+   */
+  deliveryDedup?: DeliveryDedup;
   /** Optional active run registry for aborting in-flight SDK sessions on kill. */
   activeRunRegistry?: {
     get(sessionKey: string): { abort(): Promise<void> } | undefined;
@@ -303,6 +339,10 @@ export interface SpawnParams {
   announceChannelId?: string;
   model?: string;
   max_steps?: number;
+  /** Per-spawn token budget — becomes the child's BudgetGuard per-execution cap (BUDGET-01).
+   *  Threaded SpawnParams -> ExecuteSubAgentFn -> ExecutionOverrides -> resetExecution(cap).
+   *  When absent, the child enforces config.perExecution exactly as today. */
+  tokenBudget?: number;
   expected_outputs?: string[];
   /** Originating channel context for default announcement routing */
   requesterOrigin?: DeliveryOrigin;
@@ -407,6 +447,21 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   const runs = new Map<string, SubAgentRun>();
   const activePromises = new Set<Promise<void>>();
 
+  // WR-02: make the fail-OPEN observable. The sandbox no-downgrade gate (below)
+  // silently no-ops when `resolvePosture` is absent — a P0 security control that
+  // does nothing. Production composition (setup-cross-session-runtime.ts) ALWAYS
+  // injects the resolver (a daemon-wiring test pins this), but a future second
+  // construction path could omit it and ship an inert gate. Emit a one-time
+  // construction WARN so the fail-open surfaces in the logs rather than silently.
+  if (deps.config.sandboxNoDowngrade !== false && !deps.resolvePosture) {
+    deps.logger?.warn({
+      hint:
+        "sandboxNoDowngrade is on but no posture resolver was injected — the no-downgrade gate is INERT; " +
+        "wire resolvePosture into createSubAgentRunner (see setup-cross-session-runtime.ts) or set security.agentToAgent.sandboxNoDowngrade:false",
+      errorKind: "config" as const,
+    }, "Sandbox no-downgrade gate is INERT: no posture resolver injected");
+  }
+
   // ---------------------------------------------------------------------
   // In-flight spawn dedup:
   //   Maps `(callerSessionKey + agentId + task)` triples to in-flight runIds.
@@ -509,6 +564,15 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
 
   const SWEEP_INTERVAL_MS = 300_000;
   const MAX_RUNS = 1000;
+
+  // WR-01: DLQ recovery sink — when a dead-lettered announcement is finally
+  // re-delivered on drain(), record its idempotency key in the shared
+  // deliveredKeys set so a later failure sweep (deliverFailureNotification)
+  // does not double-notify the same run. No-op when no shared dedup is wired.
+  const markRecoveredDelivered = (idempotencyKey: string): void => {
+    deps.deliveryDedup?.mark(idempotencyKey);
+    deps.batcher?.markDelivered(idempotencyKey);
+  };
 
   const sweepInterval = timers.setInterval(() => {
     const now = clock.now();
@@ -677,6 +741,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           task: run.task,
           runtimeMs: runningDurationMs,
           runId,
+          callerSessionKey: run.callerSessionKey,  // DELIVERY-03: shared dedup key
         // eslint-disable-next-line no-restricted-syntax -- intentional fire-and-forget
         }, deps).catch(() => { /* deliverFailureNotification already handles errors internally */ });
       }
@@ -705,7 +770,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     // Dead-letter queue periodic drain
     if (deps.deadLetterQueue) {
       suppressError(
-        deps.deadLetterQueue.drain(deps.sendToChannel),
+        deps.deadLetterQueue.drain(deps.sendToChannel, markRecoveredDelivered),
         "dead-letter-sweep-drain",
       );
     }
@@ -717,7 +782,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   if (deps.deadLetterQueue) {
     deps.eventBus.on("provider:recovered", () => {
       suppressError(
-        deps.deadLetterQueue!.drain(deps.sendToChannel),
+        deps.deadLetterQueue!.drain(deps.sendToChannel, markRecoveredDelivered),
         "dead-letter-recovery-drain",
       );
     });
@@ -832,6 +897,67 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         }, "Sub-agent spawn rejected: required tools unreachable");
         // @allow-throw: spawn() consumed exclusively by daemon RPC handlers.
         throw new RequiredToolsUnreachableError(unreachable);
+      }
+    }
+
+    // Sandbox no-downgrade gate (SANDBOX-02). The single fail-closed posture
+    // check at the spawn chokepoint: a spawned child may never be LESS confined
+    // than its spawner. Placed AFTER the required_tools gate and BEFORE the
+    // children/queue branch, so ONE check fires before any `runs.set` / runId /
+    // session on BOTH the immediate (line ~1019) and queued (line ~949) paths —
+    // satisfying "refuse before any child run/session is created".
+    //
+    // Gated by the typed `config.sandboxNoDowngrade` field (default true;
+    // `undefined !== false` ⇒ active, so an explicit `false` is the ONLY off
+    // state). Inert when `resolvePosture` is absent (older test wiring) or for a
+    // top-level spawn (no parent posture to compare against). Posture is resolved
+    // via the INJECTED `deps.resolvePosture` dep — the runner never reaches
+    // `config.agents[...]` (D-RESOLVEDEP).
+    //
+    // ORDERING (IN-02, intentional): this fail-closed gate runs BEFORE the
+    // children/queue branch and the allowlist check (line ~1051). A spawn that is
+    // BOTH a downgrade AND not-allowlisted is therefore attributed to the
+    // downgrade refusal. We keep this order on purpose: both branches refuse the
+    // spawn (no security difference — only the reason/event differs), and moving
+    // the allowlist earlier would hoist it above the queue SIDE-EFFECT branch
+    // too, perturbing the load-bearing "refuse before any run/session/queue"
+    // placement that the queued-path gate test pins. Security placement wins over
+    // reason attribution.
+    const sandboxNoDowngrade = deps.config.sandboxNoDowngrade;
+    if (sandboxNoDowngrade !== false && deps.resolvePosture && params.callerAgentId) {
+      const parentPosture = deps.resolvePosture(params.callerAgentId);
+      const childPosture = deps.resolvePosture(params.agentId, params.callerAgentId);
+      const cmp = comparePosture(parentPosture, childPosture);
+      if (cmp.isDowngrade) {
+        const violated = cmp.violatedDimensions.join(", ");
+        deps.logger?.warn({
+          agentId: params.agentId,
+          parentAgentId: params.callerAgentId,
+          childAgentId: params.agentId,
+          // Enum labels only — never posture values/paths/hosts (§2.7).
+          violatedDimensions: cmp.violatedDimensions,
+          hint:
+            `Spawn refused: child sandbox posture is less confined than its spawner on ${violated}; ` +
+            "align the child's skills sandbox config or set security.agentToAgent.sandboxNoDowngrade:false to disable",
+          errorKind: "precondition" as const,
+        }, "Sub-agent spawn refused: sandbox downgrade");
+        // Typed refusal event (SANDBOX-03): both postures as enum TUPLES + the
+        // violated dimension labels + the two agent ids — labels only, NO
+        // paths/hosts/uid-numbers/credential values (§2.7 / T-172-01f). Fires
+        // here, before the throw, at the exact point a run/session would
+        // otherwise be created. comparePosture's violatedDimensions feeds it.
+        deps.eventBus.emit("security:sandbox_downgrade_refused", {
+          timestamp: clock.now(),
+          parentAgentId: params.callerAgentId,
+          childAgentId: params.agentId,
+          violatedDimensions: cmp.violatedDimensions,
+          parentPosture,
+          childPosture,
+        });
+        // @allow-throw: spawn() consumed exclusively by daemon RPC handlers; @allow-throw boundary.
+        throw new Error(
+          `Spawn refused: child "${params.agentId}" sandbox posture is less confined than parent "${params.callerAgentId}" on: ${violated}.`,
+        );
       }
     }
 
@@ -1178,6 +1304,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
               : params.reuseSessionKey
                 ? { reuseSessionKey: params.reuseSessionKey }
                 : undefined,
+            params.tokenBudget,
           ),
         );
 
@@ -1414,6 +1541,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
               task: params.task,
               runtimeMs,
               runId,
+              callerSessionKey: params.callerSessionKey,  // DELIVERY-03: shared dedup key
             }, deps);
           }
         } else if (params.announceChannelType && params.announceChannelId) {
@@ -1579,6 +1707,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
             task: params.task,
             runtimeMs,
             runId,
+            callerSessionKey: params.callerSessionKey,  // DELIVERY-03: shared dedup key
           }, deps);
         } else {
           // Log explicit reason when failure announcement cannot be routed
@@ -1686,6 +1815,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           task: params.task,
           runtimeMs,
           runId,
+          callerSessionKey: params.callerSessionKey,  // DELIVERY-03: shared dedup key
         // eslint-disable-next-line no-restricted-syntax -- intentional fire-and-forget
         }, deps).catch(() => { /* deliverFailureNotification already handles errors internally */ });
       }
@@ -1879,6 +2009,45 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     return { killed: true };
   }
 
+  /**
+   * STEER-01: inject a steer message into a RUNNING child's live SDK session
+   * (mid-flight steering), distinct from killRun. Delegates to the steer-run.ts
+   * helper to keep the mechanism OUT of this (already large) file.
+   *
+   * L2 — widen the resolver/registry surface at the delegation boundary: this
+   * runner's `deps.sessionResolver`/`deps.activeRunRegistry` are typed to the
+   * narrowed `{ abort(): Promise<void> }` (the kill path only needs abort, and
+   * the narrow type avoids a daemon→agent import cycle in those Deps). steerRun
+   * needs the FULL RunHandle (steer/followUp/isStreaming/isCompacting). The
+   * RUNTIME handle is complete — pi-executor.ts:1161 builds all five and
+   * registers it under the SAME key the resolver composes (175-00 spike). So
+   * we re-type the lookups to the full RunHandle at this boundary; this is a
+   * pure TS surface widening over an object that already has the methods, not
+   * a behavior change.
+   */
+  async function steerRun(
+    runId: string,
+    message: string,
+  ): Promise<{ steered: boolean; mode?: "steer" | "followup"; error?: string }> {
+    const steerDeps: SteerRunDeps = {
+      // SubAgentRun structurally satisfies SteerableRun (the minimal slice the
+      // helper reads); Map is invariant in its value type, so cast at the
+      // boundary. steerRun READS only — it never `set`s into the map.
+      runs: runs as unknown as Map<string, SteerableRun>,
+      // Runtime handle is complete (pi-executor.ts:1161); the narrowed {abort()}
+      // Deps type omits steer/followUp/isStreaming/isCompacting that the runtime
+      // object carries — re-type to the full RunHandle for the inject delegation.
+      sessionResolver: deps.sessionResolver as
+        | { resolveActiveSession(key: { agentId: string; channelType: string; channelId: string }): RunHandle | undefined }
+        | undefined,
+      activeRunRegistry: deps.activeRunRegistry as
+        | { get(sessionKey: string): RunHandle | undefined }
+        | undefined,
+      logger: deps.logger,
+    };
+    return steerRunHelper(steerDeps, runId, message);
+  }
+
   async function shutdown(): Promise<void> {
     sweepInterval.cancel();
 
@@ -1890,7 +2059,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     // Drain dead-letter queue before shutdown
     if (deps.deadLetterQueue) {
       try {
-        await deps.deadLetterQueue.drain(deps.sendToChannel);
+        await deps.deadLetterQueue.drain(deps.sendToChannel, markRecoveredDelivered);
       } catch {
         // Best-effort drain on shutdown
       }
@@ -1926,5 +2095,5 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     return { deduped: true, existingRunId: lastDedupHit.existingRunId, ageMs: lastDedupHit.ageMs };
   }
 
-  return { spawn, getRunStatus, listRuns, killRun, shutdown, setGraphCoordinator, lastSpawnDedupInfo };
+  return { spawn, getRunStatus, listRuns, killRun, steerRun, shutdown, setGraphCoordinator, lastSpawnDedupInfo };
 }

@@ -648,6 +648,8 @@ function buildGraphCoordinatorDeps(deps: {
     maxConcurrency: (a2aSec.graphMaxConcurrency as number | undefined) ?? graphDefaults.maxConcurrency,
     maxResultLength: a2aSec.graphMaxResultLength as number | undefined,
     maxGlobalSubAgents: a2aSec.graphMaxGlobalSubAgents as number | undefined,
+    // BUDGET-02/03 (D3): operator default per-node token-budget inherit-share source.
+    subAgentTokenBudget: (a2aSec.tokenBudget as number | null | undefined) ?? null,
     logger: agentLogger?.child?.({ submodule: "graph-coordinator" }),
     dataDir: container.config.dataDir || dataDir,
     nodeTypeRegistry: channels.nodeTypeRegistry, activeRunRegistry,

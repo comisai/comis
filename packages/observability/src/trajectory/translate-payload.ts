@@ -22,6 +22,7 @@
  */
 
 import type { TrajectoryBridgedEventName } from "./event-bus-bridge.js";
+import { translateOrchestrationPayload } from "./translate-orchestration-payload.js";
 import { translateVideoPayload } from "./translate-video-payload.js";
 import { translateVisionPayload } from "./translate-vision-payload.js";
 import { translateVoicePayload } from "./translate-voice-payload.js";
@@ -261,14 +262,17 @@ export function translatePayload(
         formatViolation: payload.formatViolation,
       };
 
-    case "learning:outcome_observed":
-      // OUTCOME-08: trajectoryId + closed-enum outcome/source + numeric confidence ONLY (no body/alpha/recalled ids; agentId/sessionKey/traceId are envelope ids — §2.7 / SEC-01).
+    // ---- v2.27 authoring / sub-agent orchestration (TELEM-01 + AUTHOR-01/02 + STEER-01) ---- delegated to translate-orchestration-payload.ts (file-size split, Phase 175; content-free + envelope-stripped — closed enums + numbers/booleans + a run id ONLY, never a graph body, the synthesis INTENT TEXT, or the steer MESSAGE BODY; §2.7 / H1).
+    case "pipeline:authored":
+    case "graph:repaired":
+    case "graph:synthesized_from_intent":
+    case "subagent:steered":
+      return translateOrchestrationPayload(eventName, payload);
+
+    case "learning:outcome_observed": // OUTCOME-08: trajectoryId + closed-enum outcome/source + numeric confidence ONLY (no body/alpha/recalled ids; agentId/sessionKey/traceId envelope-only — §2.7 / SEC-01).
       return { trajectoryId: payload.trajectoryId, outcome: payload.outcome, source: payload.source, confidence: payload.confidence };
-
-    case "memory:online_tuning_applied":
-      // RANK-06: bandit-applied COUNTS + the per-intent dim ONLY — NEVER an alpha value or FEED content (§2.7 / SEC-01); agentId/timestamp are envelope ids.
+    case "memory:online_tuning_applied": // RANK-06: bandit-applied COUNTS + the per-intent dim ONLY — NEVER an alpha value or FEED content (§2.7 / SEC-01); agentId/timestamp envelope-only.
       return { updated: payload.updated, clampHits: payload.clampHits, signalCount: payload.signalCount, intent: payload.intent, durationMs: payload.durationMs };
-
     case "learning:memory_demoted":
     case "learning:memory_evicted":
     case "learning:skill_synthesized":

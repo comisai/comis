@@ -27,7 +27,8 @@
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+import type { TemplateMatch } from "@comis/agent";
 
 import { transformNodes, isWeakCapabilityClass, buildGraphInput } from "./graph-helpers.js";
 
@@ -204,12 +205,12 @@ describe("buildGraphInput — full 8-node NVDA DAG (type_config:{agent} no type_
     ],
   };
 
-  it("does NOT throw on the full 8-node config-only DAG (was: Graph validation failed nodes.0..7)", () => {
-    expect(() => buildGraphInput(PARAMS)).not.toThrow();
+  it("does NOT throw on the full 8-node config-only DAG (was: Graph validation failed nodes.0..7)", async () => {
+    await expect(buildGraphInput(PARAMS)).resolves.toBeDefined();
   });
 
-  it("collapses all 8 nodes to regular single-agent nodes with the right agentIds + edges", () => {
-    const result = buildGraphInput(PARAMS);
+  it("collapses all 8 nodes to regular single-agent nodes with the right agentIds + edges", async () => {
+    const result = await buildGraphInput(PARAMS);
     expect(result.graph.nodes).toHaveLength(8);
     for (const n of result.graph.nodes) {
       expect(n.typeId).toBeUndefined();
@@ -234,12 +235,12 @@ describe("buildGraphInput — lone typeId:agent DAG no longer rejected (OR-01, l
     ],
   };
 
-  it("does NOT throw on the lone-typeId:agent NVDA payload (was: Graph validation failed)", () => {
-    expect(() => buildGraphInput(NVDA_PARAMS)).not.toThrow();
+  it("does NOT throw on the lone-typeId:agent NVDA payload (was: Graph validation failed)", async () => {
+    await expect(buildGraphInput(NVDA_PARAMS)).resolves.toBeDefined();
   });
 
-  it("normalizes each node to a regular single-agent node (agentId set, typeId undefined)", () => {
-    const result = buildGraphInput(NVDA_PARAMS);
+  it("normalizes each node to a regular single-agent node (agentId set, typeId undefined)", async () => {
+    const result = await buildGraphInput(NVDA_PARAMS);
     expect(result.graph.nodes).toHaveLength(4);
     for (const n of result.graph.nodes) {
       expect(n.agentId).toBe("ta-analyst");
@@ -295,8 +296,14 @@ describe("isWeakCapabilityClass", () => {
 // ---------------------------------------------------------------------------
 
 describe("buildGraphInput — capabilityClass routing (O3)", () => {
-  it("capable path: capabilityClass='frontier' returns ValidatedGraph (unchanged direct path)", () => {
-    const result = buildGraphInput(VALID_GRAPH_PARAMS, "frontier");
+  // M-2 (Phase 174-03): buildGraphInput is now ASYNC (the weak-invalid branch may
+  // run the repair). ALL FIVE call sites below are AWAITED — the values/assertions
+  // are UNCHANGED, only the calls become `await` and the throw-assertions become
+  // `await expect(...).rejects.toThrow(...)`. No behavior change, just the Promise
+  // plumbing (the byte-identical seam: with no repair context the Phase-157 throw
+  // is exactly as before).
+  it("capable path: capabilityClass='frontier' returns ValidatedGraph (unchanged direct path)", async () => {
+    const result = await buildGraphInput(VALID_GRAPH_PARAMS, "frontier");
     expect(result).toBeDefined();
     expect(result.graph).toBeDefined();
     expect(result.executionOrder).toBeDefined();
@@ -304,41 +311,160 @@ describe("buildGraphInput — capabilityClass routing (O3)", () => {
     expect(result.graph.nodes).toHaveLength(2);
   });
 
-  it("capable path: capabilityClass omitted returns the same ValidatedGraph as with 'frontier'", () => {
-    const withFrontier = buildGraphInput(VALID_GRAPH_PARAMS, "frontier");
-    const withUndefined = buildGraphInput(VALID_GRAPH_PARAMS);
+  it("capable path: capabilityClass omitted returns the same ValidatedGraph as with 'frontier'", async () => {
+    const withFrontier = await buildGraphInput(VALID_GRAPH_PARAMS, "frontier");
+    const withUndefined = await buildGraphInput(VALID_GRAPH_PARAMS);
     expect(withUndefined.executionOrder).toEqual(withFrontier.executionOrder);
     expect(withUndefined.graph.nodes.map((n) => n.nodeId)).toEqual(
       withFrontier.graph.nodes.map((n) => n.nodeId),
     );
   });
 
-  it("weak path: capabilityClass='small' with a valid graph returns ValidatedGraph (fast-path)", () => {
-    const result = buildGraphInput(VALID_GRAPH_PARAMS, "small");
+  it("weak path: capabilityClass='small' with a valid graph returns ValidatedGraph (fast-path)", async () => {
+    const result = await buildGraphInput(VALID_GRAPH_PARAMS, "small");
     expect(result).toBeDefined();
     expect(result.graph).toBeDefined();
     expect(result.executionOrder).toBeDefined();
     expect(Array.isArray(result.executionOrder)).toBe(true);
   });
 
-  it("weak path: capabilityClass='nano' with a valid graph returns ValidatedGraph (fast-path)", () => {
-    const result = buildGraphInput(VALID_GRAPH_PARAMS, "nano");
+  it("weak path: capabilityClass='nano' with a valid graph returns ValidatedGraph (fast-path)", async () => {
+    const result = await buildGraphInput(VALID_GRAPH_PARAMS, "nano");
     expect(result).toBeDefined();
     expect(result.graph).toBeDefined();
     expect(result.executionOrder).toBeDefined();
   });
 
-  it("weak path: capabilityClass='small' with a cyclic (invalid) graph throws fail-closed with Phase-157 comment", () => {
-    expect(() => buildGraphInput(CYCLIC_GRAPH_PARAMS, "small")).toThrow();
+  it("weak path: capabilityClass='small' with a cyclic (invalid) graph throws fail-closed with Phase-157 comment", async () => {
+    await expect(buildGraphInput(CYCLIC_GRAPH_PARAMS, "small")).rejects.toThrow();
   });
 
-  it("weak path: capabilityClass='small' with a cyclic graph throw message mentions Phase 157", () => {
+  it("weak path: capabilityClass='small' with a cyclic graph throw message mentions Phase 157 (FLAGS-OFF, no repair context)", async () => {
     let msg = "";
     try {
-      buildGraphInput(CYCLIC_GRAPH_PARAMS, "small");
+      await buildGraphInput(CYCLIC_GRAPH_PARAMS, "small");
     } catch (e) {
       msg = (e as Error).message;
     }
     expect(msg).toMatch(/157/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AUTHOR-01 (Phase 174-03): the gated weak-model repair branch in buildGraphInput.
+// The capable + weak-valid paths are unchanged (tested above); these pin the
+// un-commented weak-INVALID branch: gated repair to a canonical template, the
+// structured did-you-mean on ambiguity, governance re-run on the repaired graph,
+// best-effort emit, and FLAGS-OFF byte-identical (Phase-157 throw unchanged).
+// ---------------------------------------------------------------------------
+
+const FLAGS_ON_AUTHORING = { repairProducer: true, intentAction: false, gbnfConstrain: false };
+
+/** A repairMatch stub returning a valid filled `debate` (2 leaves + 1 fan-in). */
+const matchToDebate: (rawGraph: unknown) => TemplateMatch = () => ({
+  kind: "matched",
+  pattern: "debate",
+  filledNodes: [
+    { nodeId: "pro", task: "Argue FOR", dependsOn: [] },
+    { nodeId: "con", task: "Argue AGAINST", dependsOn: [] },
+    { nodeId: "judge", task: "Verdict", dependsOn: ["pro", "con"] },
+  ],
+});
+
+describe("buildGraphInput — weak-model repair branch (AUTHOR-01)", () => {
+  it("Test 1 (FLAGS-OFF byte-identical seam): repairProducer:false + weak + invalid → still rejects with the Phase-157 message", async () => {
+    const emit = vi.fn();
+    await expect(
+      buildGraphInput(CYCLIC_GRAPH_PARAMS, "small", {
+        authoringConfig: { repairProducer: false, intentAction: false, gbnfConstrain: false },
+        repairMatch: matchToDebate, // present, but gate is OFF → never consulted
+        eventBus: { emit, on: vi.fn() } as never,
+      }),
+    ).rejects.toThrow(/157/);
+    // The matcher and emit were never reached (the gate short-circuits).
+    expect(emit).not.toHaveBeenCalled();
+  });
+
+  it("Test 2 (repair): repairProducer:true + weak + invalid graph that unambiguously matches debate → resolves to the repaired ValidatedGraph + emits graph:repaired once", async () => {
+    const emit = vi.fn();
+    const result = await buildGraphInput(CYCLIC_GRAPH_PARAMS, "small", {
+      authoringConfig: FLAGS_ON_AUTHORING,
+      repairMatch: matchToDebate,
+      eventBus: { emit, on: vi.fn() } as never,
+      agentId: "weakbot",
+    });
+    // The repaired graph is the debate template (3 nodes), governance-clean.
+    expect(result.graph.nodes).toHaveLength(3);
+    expect(result.executionOrder.length).toBe(3);
+    // graph:repaired emitted exactly once, counts/ids/enums only.
+    const repaired = emit.mock.calls.filter((c) => c[0] === "graph:repaired");
+    expect(repaired).toHaveLength(1);
+    expect(repaired[0]![1]).toMatchObject({
+      pattern: "debate",
+      nodeCount: 3,
+      capabilityClass: "small",
+      agentId: "weakbot",
+    });
+  });
+
+  it("Test 3 (did-you-mean): repairProducer:true + weak + ambiguous match → rejects with a structured did-you-mean (no synthesis)", async () => {
+    const ambiguous: (rawGraph: unknown) => TemplateMatch = () => ({
+      kind: "ambiguous",
+      candidates: ["research-fanout", "vote", "map-reduce"],
+    });
+    await expect(
+      buildGraphInput(CYCLIC_GRAPH_PARAMS, "small", {
+        authoringConfig: FLAGS_ON_AUTHORING,
+        repairMatch: ambiguous,
+      }),
+    ).rejects.toThrow(/Did you mean one of these templates:.*from_intent/);
+  });
+
+  it("Test 3b (no-match): repairProducer:true + weak + no-match → falls through to the Phase-157 throw", async () => {
+    const noMatch: (rawGraph: unknown) => TemplateMatch = () => ({ kind: "no-match" });
+    await expect(
+      buildGraphInput(CYCLIC_GRAPH_PARAMS, "small", {
+        authoringConfig: FLAGS_ON_AUTHORING,
+        repairMatch: noMatch,
+      }),
+    ).rejects.toThrow(/157/);
+  });
+
+  it("Test 4 (governance preserved): a repaired graph that would itself fail validation is NOT returned — falls through to the Phase-157 throw", async () => {
+    // The matcher returns a "matched" whose filledNodes are themselves cyclic →
+    // the re-run parse+sort governance rejects them, so buildGraphInput must NOT
+    // return an unvalidated graph (D-SAME-VALIDATION §9).
+    const matchCyclic: (rawGraph: unknown) => TemplateMatch = () => ({
+      kind: "matched",
+      pattern: "debate",
+      filledNodes: [
+        { nodeId: "x", task: "X", dependsOn: ["y"] },
+        { nodeId: "y", task: "Y", dependsOn: ["x"] },
+      ],
+    });
+    await expect(
+      buildGraphInput(CYCLIC_GRAPH_PARAMS, "small", {
+        authoringConfig: FLAGS_ON_AUTHORING,
+        repairMatch: matchCyclic,
+      }),
+    ).rejects.toThrow(/157/);
+  });
+
+  it("Test 5 (emit best-effort): a throwing graph:repaired emit does NOT break the valid repaired graph", async () => {
+    const throwingEmit = vi.fn(() => {
+      throw new Error("SQLITE_BUSY: database is locked");
+    });
+    const warn = vi.fn();
+    const result = await buildGraphInput(CYCLIC_GRAPH_PARAMS, "small", {
+      authoringConfig: FLAGS_ON_AUTHORING,
+      repairMatch: matchToDebate,
+      eventBus: { emit: throwingEmit, on: vi.fn() } as never,
+      logger: { info: vi.fn(), warn, debug: vi.fn(), error: vi.fn() } as never,
+    });
+    // The repaired graph is returned despite the telemetry throw…
+    expect(result.graph.nodes).toHaveLength(3);
+    // …and the throw was logged at WARN (errorKind), never surfaced.
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]![0]).toMatchObject({ errorKind: expect.any(String) });
   });
 });

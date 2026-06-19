@@ -23,7 +23,7 @@ import type {
 } from "@comis/core";
 import type { ComisLogger } from "@comis/core";
 import type { CommandDirectives } from "../command-directive-types.js";
-import type { BudgetGuard } from "../../budget/budget-guard.js";
+import type { ExecutionBudgetWindow } from "../../budget/budget-guard.js";
 import type { CostTracker } from "../../budget/cost-tracker.js";
 import type { ExecutionResult, ExecutionOverrides } from "../types.js";
 import type { EffectiveTimeout } from "../pi-executor/session-bootstrap.js";
@@ -94,7 +94,10 @@ export interface RunPromptParams {
   deps: {
     eventBus: TypedEventBus;
     logger: ComisLogger;
-    budgetGuard: BudgetGuard;
+    // CR-01: per-execution budget window for THIS run (precheck estimateCost/
+    // checkBudget + the envelope snapshot read it). The shared per-agent guard
+    // is structurally assignable for the legacy path.
+    budgetGuard: ExecutionBudgetWindow;
     costTracker: CostTracker;
     authRotation?: AuthRotationAdapter;
     fallbackModels?: string[];

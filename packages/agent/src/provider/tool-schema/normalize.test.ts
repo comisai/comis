@@ -851,4 +851,174 @@ describe("normalizeToolSchemasForProvider", () => {
       expect(infoFn).not.toHaveBeenCalled();
     });
   });
+
+  // AUTHOR-03 (best-effort, Phase 174-05): the gbnfConstrain authoring gate.
+  // The flag threads `config.orchestration.authoring.gbnfConstrain` into the
+  // Layer 3.5 entry so an operator can engage the GBNF structural transform on
+  // the raw pipeline escape hatch for GBNF-eligible (local/default-family)
+  // providers EVEN WHEN they have not been pinned to the explicit gbnf profile.
+  // It is REMOVAL/RELAXATION ONLY (never widens field VALUE validation — the
+  // daemon driver Zod stays the single source of truth) and is gated D-08-strict:
+  // it never engages GBNF on a CLOUD-family provider (anthropic/google/xai) by
+  // name. The load-bearing invariant: FLAGS-OFF is byte-identical to today.
+  describe("AUTHOR-03 gbnfConstrain authoring gate (Layer 3.5)", () => {
+    // A gbnf-profile provider where the structural transform is observable: the
+    // hostile fixture's `retries: ["integer","null"]` type array collapses to a
+    // scalar `{type:"integer"}` only when Layer 3.5 engages.
+    const gbnfProfileCtx: ToolNormalizationContext = {
+      provider: "my-ollama",
+      modelId: "qwen3.6:35b",
+      compat: { toolSchemaProfile: "gbnf" },
+    };
+    // The SAME local provider WITHOUT the explicit gbnf profile. Pre-patch this
+    // short-circuits the early-return (no keyword set, not gemini, not xai, not
+    // gbnf) and Layer 3.5 never runs — the flag is what newly engages it.
+    const eligibleNoProfileCtx: ToolNormalizationContext = {
+      provider: "my-ollama",
+      modelId: "qwen3.6:35b",
+    };
+
+    // Test 1 (flag-on, the RED-bearing case): on a GBNF-eligible local provider
+    // that is NOT pinned to the gbnf profile, gbnfConstrain:true engages the
+    // Layer 3.5 structural transform for the raw pipeline schema. Assert via the
+    // same observable as the existing gbnf gate test: the ["integer","null"]
+    // type array collapses to the scalar type. Pre-patch (flag ignored, early
+    // return taken) the array survives → this fails RED.
+    it("flag-on, gbnf-eligible provider (no profile): engages the Layer 3.5 transform", () => {
+      const result = normalizeToolSchemasForProvider(asToolDefs([hostileMcpTool]), {
+        ...eligibleNoProfileCtx,
+        gbnfConstrain: true,
+      });
+
+      const props = (result[0].parameters as Record<string, unknown>)
+        .properties as Record<string, Record<string, unknown>>;
+      // ["integer","null"] collapsed to the scalar type — Layer 3.5 ran.
+      expect(props.retries).toEqual({ type: "integer", description: "(nullable)" });
+    });
+
+    // The flag is at minimum no-op-or-stronger on an already-gbnf-profile
+    // provider (never weaker than today).
+    it("flag-on, gbnf-profile provider: still engages the transform (never weaker)", () => {
+      const result = normalizeToolSchemasForProvider(asToolDefs([hostileMcpTool]), {
+        ...gbnfProfileCtx,
+        gbnfConstrain: true,
+      });
+      const props = (result[0].parameters as Record<string, unknown>)
+        .properties as Record<string, Record<string, unknown>>;
+      expect(props.retries).toEqual({ type: "integer", description: "(nullable)" });
+    });
+
+    // Test 2 (value validation untouched): the transform is removal/relaxation
+    // only — it does NOT strip pattern/format and does NOT relax a required
+    // field into optional (mirror clean-for-gbnf.test.ts:417 discipline). The
+    // daemon driver Zod remains the single source of truth for field VALUES.
+    it("flag-on: never widens VALUE validation (pattern/format survive, required stays required)", () => {
+      const result = normalizeToolSchemasForProvider(asToolDefs([hostileMcpTool]), {
+        ...eligibleNoProfileCtx,
+        gbnfConstrain: true,
+      });
+
+      const schema = result[0].parameters as Record<string, unknown>;
+      const props = schema.properties as Record<string, Record<string, unknown>>;
+      // pattern/format survive (the proactive transform never strips them).
+      expect(props.due.pattern).toBe("\\d{4}-\\d{2}-\\d{2}");
+      expect(props.due.format).toBe("date");
+      // required is not relaxed into optional.
+      expect(schema.required).toEqual(["due"]);
+    });
+
+    // Test 3 (FLAGS-OFF byte-identical — THE load-bearing test): with
+    // gbnfConstrain:false (or absent), the normalize output is DEEP-EQUAL to the
+    // same call without the new field — across (a) a gbnf-profile provider, (b) a
+    // gbnf-eligible local provider with no profile, (c) gemini and (d) xai. The
+    // gate is inert when off.
+    describe("FLAGS-OFF byte-identical (the load-bearing invariant)", () => {
+      const families: ReadonlyArray<{
+        label: string;
+        baseCtx: ToolNormalizationContext;
+        tool: () => ToolDefinition;
+      }> = [
+        {
+          label: "gbnf-profile provider",
+          baseCtx: gbnfProfileCtx,
+          tool: () => asToolDefs([hostileMcpTool])[0],
+        },
+        {
+          label: "gbnf-eligible local provider (no profile)",
+          baseCtx: eligibleNoProfileCtx,
+          tool: () => asToolDefs([hostileMcpTool])[0],
+        },
+        {
+          label: "gemini provider",
+          baseCtx: { provider: "google", modelId: "gemini-2.5-flash" },
+          tool: () =>
+            makeTool("gemini_tool", {
+              type: "object",
+              properties: { name: { type: "string", minLength: 1 } },
+              additionalProperties: false,
+            }),
+        },
+        {
+          label: "xai provider",
+          baseCtx: {
+            provider: "xai",
+            modelId: "grok-2",
+            compat: { toolSchemaProfile: "xai" },
+          },
+          tool: () =>
+            makeTool("xai_tool", {
+              type: "object",
+              properties: { name: { type: "string", minLength: 1, format: "email" } },
+            }),
+        },
+      ];
+
+      for (const family of families) {
+        it(`gbnfConstrain:false is deep-equal to the absent field on a ${family.label}`, () => {
+          const withoutField = normalizeToolSchemasForProvider(
+            [family.tool()],
+            family.baseCtx,
+          );
+          const withFalse = normalizeToolSchemasForProvider([family.tool()], {
+            ...family.baseCtx,
+            gbnfConstrain: false,
+          });
+          // Byte-identity (JSON) pins key-order too, not just deep-equality.
+          expect(JSON.stringify(withFalse)).toBe(JSON.stringify(withoutField));
+        });
+      }
+    });
+
+    // Test 4 (cloud-family provider + flag-on is still inert — D-08): gbnfConstrain
+    // :true on a CLOUD-family provider (anthropic) does NOT engage the GBNF
+    // transform. The authoring flag hardens the raw hatch only where GBNF
+    // actually applies (local/default family) — the GBNF gate never derives GBNF
+    // from a cloud provider name. anthropic's own Layer-1 keyword strip still
+    // runs (that is its existing path, unchanged by the flag).
+    it("flag-on, CLOUD-family provider (anthropic): does NOT engage GBNF (D-08)", () => {
+      // A type-array node: GBNF would collapse it; anthropic's Layer 1 leaves
+      // `type` untouched (it strips minLength/pattern, not type unions).
+      const tool = makeTool("anthropic_tool", {
+        type: "object",
+        properties: { retries: { type: ["integer", "null"], description: "x" } },
+      });
+      const anthropicCtx: ToolNormalizationContext = {
+        provider: "anthropic",
+        modelId: "claude-sonnet-4",
+      };
+      const withFlag = normalizeToolSchemasForProvider([tool], {
+        ...anthropicCtx,
+        gbnfConstrain: true,
+      });
+      const withoutFlag = normalizeToolSchemasForProvider([tool], anthropicCtx);
+
+      // The flag is inert on a cloud provider: deep-equal to the no-flag call.
+      expect(JSON.stringify(withFlag)).toBe(JSON.stringify(withoutFlag));
+      // And specifically the GBNF transform did NOT run: the ["integer","null"]
+      // type array survives un-collapsed (GBNF would have scalarized it).
+      const props = (withFlag[0].parameters as Record<string, unknown>)
+        .properties as Record<string, Record<string, unknown>>;
+      expect(props.retries.type).toEqual(["integer", "null"]);
+    });
+  });
 });

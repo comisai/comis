@@ -92,6 +92,13 @@ export function handleGraphCompletion(
     ? { graphCacheReadTokens, graphCacheWriteTokens, graphCacheEffectiveness, nodeEffectiveness }
     : {};
 
+  // IN-01: surface the per-node token-spend breakdown (the production reader of
+  // gs.nodeTokenSpend, otherwise a dead write). Present only when at least one
+  // node recorded spend — byte-identical to today's payload otherwise.
+  const nodeTokenSpendFields = gs.nodeTokenSpend.size > 0
+    ? { nodeTokenSpend: Object.fromEntries(gs.nodeTokenSpend) }
+    : {};
+
   deps.eventBus.emit("graph:completed", {
     graphId: gs.graphId,
     status: gs.stateMachine.getGraphStatus(),
@@ -104,6 +111,8 @@ export function handleGraphCompletion(
     timestamp: systemNowMs(),
     // 3.3: Graph-level cache aggregation
     ...cacheRollupFields,
+    // IN-01: per-node token-spend breakdown
+    ...nodeTokenSpendFields,
   });
 
   // 2c. Write _run-metadata.json to disk

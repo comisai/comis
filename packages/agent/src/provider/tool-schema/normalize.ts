@@ -77,6 +77,19 @@ export interface ToolNormalizationContext {
   provider: string;
   modelId: string;
   compat?: ModelCompatConfig;
+  /**
+   * AUTHOR-03 (best-effort, Phase 174-05): when true, the raw pipeline tool
+   * schema receives the GBNF Layer 3.5 structural transform to harden the raw
+   * escape hatch on GBNF-eligible (local/default-family) providers EVEN WHEN
+   * they are not pinned to the explicit `compat.toolSchemaProfile === "gbnf"`
+   * profile. Default/absent = false = unchanged behavior (the transform is
+   * driven solely by the gbnf profile). Removal/relaxation only — never widens
+   * field VALUE validation (the daemon driver Zod is the single source of
+   * truth). Gated D-08-strict: it never engages GBNF on a cloud-family provider
+   * (anthropic/google/xai) by name. Threaded from
+   * `config.orchestration.authoring.gbnfConstrain` at the call site.
+   */
+  gbnfConstrain?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -145,8 +158,10 @@ export function normalizeToolSchemasForProvider(
   const isGemini = caps.providerFamily === "google";
   const isXai = ctx.compat?.toolSchemaProfile === "xai";
   // GBNF gate derives SOLELY from the explicit compat profile — never from
-  // the provider name or baseUrl (D-08). Threading the profile from config
-  // is Plan 175-04's job; this pipeline only honors what arrives in ctx.
+  // the provider name or baseUrl (D-08). The gbnfConstrain authoring gate
+  // arrives SEPARATELY in ctx.gbnfConstrain (threaded from
+  // config.orchestration.authoring.gbnfConstrain at the executor call site,
+  // CR-01); this pipeline only honors what arrives in ctx.
   const isGbnf = ctx.compat?.toolSchemaProfile === "gbnf";
   const providerLower = ctx.provider.toLowerCase();
 
@@ -159,11 +174,24 @@ export function normalizeToolSchemasForProvider(
     ? providerLower
     : (isGemini ? "google" : providerLower);
 
+  // AUTHOR-03 (174-05): the gbnfConstrain authoring gate. GBNF-eligible providers
+  // are the local/default family — EXACTLY the set the early-return below treats
+  // as "no cleaning needed" (no keyword set, not gemini, not xai). When the
+  // operator flips `config.orchestration.authoring.gbnfConstrain` on, Layer 3.5
+  // engages for these providers to harden the raw pipeline escape hatch even
+  // when they are not pinned to the explicit gbnf profile. Gated D-08-strict:
+  // gbnfEligible EXCLUDES cloud families (anthropic/google/xai), so the flag
+  // never infers GBNF from a cloud provider name. `applyGbnf` (NOT `isGbnf`)
+  // drives every Layer 3.5 site below.
+  const gbnfEligible = !isGemini && !isXai && !hasKeywordStripping;
+  const applyGbnf = isGbnf || ((ctx.gbnfConstrain ?? false) && gbnfEligible);
+
   // Early return: if no provider-specific cleaning needed, just apply Layer 4.
-  // `!isGbnf` is load-bearing: local providers (no keyword set, not gemini,
+  // `!applyGbnf` is load-bearing: local providers (no keyword set, not gemini,
   // not xai) are EXACTLY the providers the gbnf layer exists for — without it
-  // they short-circuit here and silently skip Layer 3.5.
-  if (!isGemini && !isXai && !isGbnf && !hasKeywordStripping) {
+  // they short-circuit here and silently skip Layer 3.5. FLAGS-OFF
+  // (gbnfConstrain falsy) ⇒ applyGbnf === isGbnf ⇒ this condition is unchanged.
+  if (!isGemini && !isXai && !applyGbnf && !hasKeywordStripping) {
     return ensureTopLevelObject(tools);
   }
 
@@ -211,8 +239,9 @@ export function normalizeToolSchemasForProvider(
     // Layer 3.5: GBNF structural transforms for llama.cpp-family local
     // providers (removal/relaxation only — pattern/format deliberately
     // survive; reactive stripping on grammar-400 lives in the executor,
-    // GBNF-02).
-    if (isGbnf) {
+    // GBNF-02). `applyGbnf` = the gbnf profile OR the gbnfConstrain authoring
+    // gate on a gbnf-eligible provider (174-05); FLAGS-OFF ⇒ === isGbnf.
+    if (applyGbnf) {
       // CR-01 (175-REVIEW): force the Layer-4 top-level object contract
       // BEFORE the gbnf transforms. T4 (missing-type injection) fires on
       // typeless nodes and infers "string" for a bare/description-only TOP
@@ -269,7 +298,7 @@ export function normalizeToolSchemasForProvider(
   // closed transform vocabulary, never schema bodies — I7); subsequent
   // calls stay at the per-tool trace above.
   if (
-    isGbnf &&
+    applyGbnf &&
     gbnfTransformedTools.length > 0 &&
     !gbnfSummaryLoggedForProvider.has(ctx.provider)
   ) {

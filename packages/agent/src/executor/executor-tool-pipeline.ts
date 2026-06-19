@@ -220,6 +220,15 @@ export interface ProviderNormalizeParams {
   provider: string;
   modelId: string;
   compat?: { supportsTools?: boolean; toolSchemaProfile?: "default" | "xai" | "gbnf"; toolCallArgumentsEncoding?: "json" | "html-entities"; nativeWebSearchTool?: boolean };
+  /**
+   * AUTHOR-03 (174-05 / CR-01): the value of
+   * `config.orchestration.authoring.gbnfConstrain`, threaded from the
+   * assembly call site. When true, the Layer 3.5 GBNF transform engages for
+   * gbnf-ELIGIBLE (local/default-family) providers even when they are not
+   * pinned to the explicit `compat.toolSchemaProfile === "gbnf"` profile.
+   * Default/absent = false = unchanged behavior (FLAGS-OFF byte-identical).
+   */
+  gbnfConstrain?: boolean;
 }
 
 /**
@@ -241,6 +250,10 @@ export function applyProviderNormalization(params: ProviderNormalizeParams): Too
     provider: params.provider,
     modelId: params.modelId,
     compat: params.compat,
+    // AUTHOR-03 (CR-01): forward the authoring gate so the Layer 3.5 GBNF
+    // transform actually engages on gbnf-eligible providers when the operator
+    // flips it on. Absent ⇒ undefined ⇒ FLAGS-OFF byte-identical.
+    gbnfConstrain: params.gbnfConstrain,
   });
 
   // prepareArguments runs BEFORE TypeBox schema validation in the SDK agent loop

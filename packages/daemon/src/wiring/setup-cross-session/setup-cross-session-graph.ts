@@ -95,6 +95,9 @@ export type ExecuteSubAgentFn = (
   maxSteps?: number,
   callerAgentId?: string,
   graphOverrides?: { graphId?: string; nodeId?: string; reuseSessionKey?: string; graphNodeDepth?: number },
+  /** Per-spawn token budget — rides executionOverrides into the child's
+   *  BudgetGuard per-execution cap (BUDGET-01). Absent ⇒ no per-execution cap. */
+  tokenBudget?: number,
 ) => Promise<{ response: string; tokensUsed: { total: number; cacheRead?: number; cacheWrite?: number }; cost: { total: number; cacheSaved?: number }; finishReason: string; stepsExecuted: number; toolCallHistory?: string[] }>;
 
 /**
@@ -117,6 +120,7 @@ export function buildExecuteSubAgent(deps: ExecuteSubAgentDeps): ExecuteSubAgent
     maxSteps,
     callerAgentId,
     graphOverrides,
+    tokenBudget,
   ) => {
     deps.logger?.debug({
       agentId,
@@ -488,6 +492,10 @@ export function buildExecuteSubAgent(deps: ExecuteSubAgentDeps): ExecuteSubAgent
       // Thread effective tool groups so pi-event-bridge can enrich
       // "Tool X not found" errors with delegation routing hints.
       activeToolGroups: effectiveToolGroups,
+      // BUDGET-01: a per-spawn token budget becomes the child's per-execution
+      // cap (pi-executor feeds it to budgetGuard.resetExecution). Omitted when
+      // absent so the no-budget path stays byte-identical to today.
+      ...(tokenBudget !== undefined && { tokenBudget }),
     };
     const result = ctx
       ? await runWithContext(ctx, () =>

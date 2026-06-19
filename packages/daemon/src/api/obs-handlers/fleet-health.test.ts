@@ -37,8 +37,10 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import Database from "better-sqlite3";
-import { systemDateFrom, systemNowMs } from "@comis/core";
+import { systemDateFrom, systemNowMs, FleetHealthReportSchema } from "@comis/core";
 import type { FleetHealthReport } from "@comis/core";
+import { pipelineAuthoringGate } from "@comis/observability";
+import { pipelineAuthoringAggregateFromRows } from "./fleet-findings.js";
 import { initSchema, createObservabilityStore } from "@comis/memory";
 import type { ObservabilityStore } from "@comis/memory";
 import { createFakeClock } from "../../../../../test/support/fake-clock.js";
@@ -555,6 +557,79 @@ function insertPostureRow(store: ObservabilityStore, timestamp: number, details:
 function emptyDataDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "fleet-served-below-"));
 }
+
+// ---------------------------------------------------------------------------
+// TELEM-02 (Plan 173-04) — the pipelineAuthoringGate verdict surfaced on the
+// FleetHealthReport. Seeds `pipeline_authoring` health_signal rows, asserts the
+// assembler computes pipelineAuthoringGate(pipelineAuthoringAggregateFromRows())
+// and surfaces it, AND that the returned report ROUND-TRIPS the verdict through
+// FleetHealthReportSchema.parse() (guards against schema/daemon drift).
+// ---------------------------------------------------------------------------
+
+/** Insert one `pipeline_authoring` health_signal row at `ts`. */
+function insertPipelineAuthoringRow(
+  store: ObservabilityStore,
+  ts: number,
+  tier: string,
+  schemaValid: boolean,
+): void {
+  store.insertDiagnostic({
+    timestamp: ts,
+    category: "health_signal",
+    severity: schemaValid ? "info" : "warning",
+    message: "pipeline:authored",
+    details: JSON.stringify({ signal: "pipeline_authoring", action: "define", tier, schemaValid, repaired: false }),
+  });
+}
+
+describe("assembleFleetHealthReport — TELEM-02 pipelineAuthoringGate verdict", () => {
+  it("surfaces buildAuthor:true when >= 20 small-tier rows are materially below frontier — and the verdict round-trips .parse()", async () => {
+    const now = systemNowMs();
+    const clock = createFakeClock(now);
+    const store = makeStore();
+    // 20 small-tier authorings, all invalid (0% valid); 5 frontier, all valid (100%).
+    for (let i = 0; i < 20; i++) insertPipelineAuthoringRow(store, now - (i + 1) * 10, "small", false);
+    for (let i = 0; i < 5; i++) insertPipelineAuthoringRow(store, now - (i + 100) * 10, "frontier", true);
+
+    const report = await assembleFleetHealthReport({ obsStore: store, dataDir: emptyDataDir(), clock }, 24);
+
+    expect(report.pipelineAuthoringGate).toBeDefined();
+    expect(report.pipelineAuthoringGate?.buildAuthor).toBe(true);
+    // The verdict SURVIVES the wire parse (BLOCKER-1 guard against schema drift).
+    const parsed = FleetHealthReportSchema.parse(report);
+    expect(parsed.pipelineAuthoringGate?.buildAuthor).toBe(true);
+  });
+
+  it("surfaces buildAuthor:false (defer) when there is no pipeline_authoring telemetry (the build-from-scratch state)", async () => {
+    const now = systemNowMs();
+    const clock = createFakeClock(now);
+    const store = makeStore();
+    seedStore(store, now); // health_signal rows, but NONE are pipeline_authoring.
+
+    const report = await assembleFleetHealthReport({ obsStore: store, dataDir: emptyDataDir(), clock }, 24);
+
+    expect(report.pipelineAuthoringGate?.buildAuthor).toBe(false);
+    expect(report.pipelineAuthoringGate?.reason).toMatch(/insufficient telemetry/);
+    // Round-trips the defer verdict too.
+    const parsed = FleetHealthReportSchema.parse(report);
+    expect(parsed.pipelineAuthoringGate?.buildAuthor).toBe(false);
+  });
+
+  it("the reducer + the gate COMPOSE: the report's verdict equals pipelineAuthoringGate(pipelineAuthoringAggregateFromRows(rows)) — one deterministic path", async () => {
+    const now = systemNowMs();
+    const clock = createFakeClock(now);
+    const store = makeStore();
+    for (let i = 0; i < 25; i++) insertPipelineAuthoringRow(store, now - (i + 1) * 10, "small", i % 5 === 0);
+    for (let i = 0; i < 4; i++) insertPipelineAuthoringRow(store, now - (i + 100) * 10, "frontier", true);
+
+    const report = await assembleFleetHealthReport({ obsStore: store, dataDir: emptyDataDir(), clock }, 24);
+
+    // Recompute via the SAME windowed rows the assembler reads.
+    const rows = store.queryDiagnostics({ category: "health_signal" });
+    const expected = pipelineAuthoringGate(pipelineAuthoringAggregateFromRows(rows));
+    expect(report.pipelineAuthoringGate).toEqual(expected);
+  });
+});
 
 describe("buildFindings — config_posture:served_below_configured (KNOB-03)", () => {
   it("KNOB-03-3: emits the dedicated finding with the row's count, the provider-count detail, and the Ollama-knob hint", async () => {

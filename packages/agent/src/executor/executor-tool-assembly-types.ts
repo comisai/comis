@@ -130,6 +130,16 @@ export interface ToolAssemblyDeps {
   /** Wall-clock + monotonic time reads. */
   clock: import("@comis/core").ClockPort;
   /**
+   * AUTHOR-03 (174-05 / CR-01): live read of
+   * `config.orchestration.authoring.gbnfConstrain`. Resolver form (not a
+   * static boolean) because the gate is runtime-mutable via config.write
+   * (`orchestration` is NOT in IMMUTABLE_CONFIG_PREFIXES), so a boot-time
+   * snapshot would go stale — mirrors the `getProviderType`/`getModelCompat`
+   * resolver precedent on PiExecutorDeps. Absent ⇒ false ⇒ FLAGS-OFF
+   * byte-identical (the gbnf authoring transform never engages).
+   */
+  getGbnfConstrain?: () => boolean;
+  /**
    * ObservabilityStore for SystemPromptReport SQLite persistence.
    * Forwarded from PiExecutorDeps via frozenDeps spread in
    * pi-executor.ts. Threaded through to prompt-assembly.ts deps for

@@ -17,6 +17,13 @@ import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type, type Static } from "typebox";
 import type { ApprovalGate } from "@comis/core";
 import { tryGetContext } from "@comis/core";
+// AUTHOR-02 (Phase 174-04): the deterministic intent → ExecutionGraph
+// synthesizer. It RETURNS a validated graph; the from_intent action below
+// dispatches it through the EXISTING graph.execute path (so governance applies
+// automatically — the synthesizer never executes). skills→agent is a clean
+// project-reference edge (agent does not transitively reach skills; verified via
+// cycles:refs).
+import { synthesizeFromIntent, type SynthesisPattern } from "@comis/agent";
 import {
   jsonResult,
   readStringParam,
@@ -138,8 +145,9 @@ const PipelineParams = Type.Object({
         Type.Literal("list"),
         Type.Literal("delete"),
         Type.Literal("outputs"),
+        Type.Literal("from_intent"),
       ],
-      { description: "Pipeline action (default: execute). Valid values: define (validate graph structure), execute (run pipeline), status (check graph state), cancel (terminate running graph), save (persist named graph), load (retrieve saved graph), list (enumerate saved graphs), delete (soft-delete saved graph), outputs (retrieve node results)" },
+      { description: "Pipeline action (default: execute). Valid values: define (validate graph structure), execute (run pipeline), status (check graph state), cancel (terminate running graph), save (persist named graph), load (retrieve saved graph), list (enumerate saved graphs), delete (soft-delete saved graph), outputs (retrieve node results), from_intent (synthesize a multi-agent graph from a one-line intent: a pattern + a few agent/task names — then run it)" },
     ),
   ),
   nodes: Type.Optional(
@@ -208,6 +216,32 @@ const PipelineParams = Type.Object({
       description: "Key-value map of ${VAR} substitutions to apply before execution",
     }),
   ),
+  // AUTHOR-02 (Phase 174-04): from_intent params. These are TOP-LEVEL tool
+  // params, distinct from the NESTED type_config.agents / type_config.rounds on
+  // a PipelineNode (different scope — no field collision). Consumed ONLY by the
+  // from_intent action; ignored by every other action.
+  pattern: Type.Optional(
+    Type.Union(
+      [
+        Type.Literal("research-fanout"),
+        Type.Literal("debate"),
+        Type.Literal("vote"),
+        Type.Literal("map-reduce"),
+      ],
+      { description: "from_intent: the canonical multi-agent pattern to synthesize. research-fanout (N researchers → synthesize), debate (pro vs con → moderator), vote (N voters → aggregate), map-reduce (N mappers → reduce)." },
+    ),
+  ),
+  tasks: Type.Optional(
+    Type.Array(Type.String(), { description: "from_intent: the topic/task the synthesized graph works on (tasks[0] fills the TOPIC/TASK slot). Use instead of, or alongside, agents." }),
+  ),
+  agents: Type.Optional(
+    Type.Array(Type.String(), { description: "from_intent: agent names for the pattern's roles — debate: [PRO, CON] (e.g. [\"bull\", \"bear\"]); vote: the voter pool; map-reduce: the mapper pool." }),
+  ),
+  // WR-02: from_intent produces TEMPLATE-shaped graphs (plain agent nodes), NOT
+  // the typed orchestration drivers — so a top-level `rounds` param had no
+  // effect (the synthesizer never expanded it). It is intentionally NOT exposed
+  // here (no no-op param, §2.3). To run a multi-round debate DRIVER, use
+  // action: define/execute with a node `type_id: "debate"` + `type_config.rounds`.
 });
 
 type PipelineParamsType = Static<typeof PipelineParams>;
@@ -333,7 +367,7 @@ function deriveEdgesFromDependsOn(
  * @param approvalGate - Optional approval gate for save and execute actions
  * @returns AgentTool implementing the pipeline management interface
  */
-const VALID_ACTIONS = ["define", "execute", "status", "cancel", "save", "load", "list", "delete", "outputs"] as const;
+const VALID_ACTIONS = ["define", "execute", "status", "cancel", "save", "load", "list", "delete", "outputs", "from_intent"] as const;
 
 export function createPipelineTool(rpcCall: RpcCall, logger?: ToolLogger, approvalGate?: ApprovalGate): AgentTool<typeof PipelineParams> {
   const cancelGate = createActionGate("graph.cancel");
@@ -414,6 +448,61 @@ export function createPipelineTool(rpcCall: RpcCall, logger?: ToolLogger, approv
               },
             }),
           };
+          return jsonResult(result);
+        }
+
+        if (action === "from_intent") {
+          // AUTHOR-02 (Phase 174-04): synthesize a graph from a one-line intent
+          // (a canonical pattern + a few names) via the deterministic
+          // @comis/agent synthesizer, then dispatch it through the EXISTING
+          // graph.execute path. The synthesizer RETURNS a validated graph; it
+          // NEVER executes one — flowing through graph.execute means the
+          // synthesized graph hits the SAME define-time governance
+          // (parse/sort/validateTypeConfigs) AND spawn-time governance
+          // (denylist + child⊆parent) a hand-authored graph hits (§9). The gate
+          // (orchestration.authoring.intentAction) + the audit emit are
+          // DAEMON-SIDE, keyed off the _synthesizedFromIntent marker — so the
+          // daemon refuses an un-flagged from_intent at the chokepoint and the
+          // tool surface stays uniform (no flag read here).
+          //
+          // WR-02: from_intent expands the canonical TEMPLATE — plain agent
+          // nodes ({nodeId, task, dependsOn}), NOT the typed orchestration
+          // drivers (a synthesized "debate" is a one-shot pro/con fan-in, not
+          // the multi-round `type_id: debate` driver). For the typed driver,
+          // use action: define/execute with `type_id` + `type_config`.
+          const pattern = readStringParam(p, "pattern", false) as SynthesisPattern | undefined;
+          if (!pattern) {
+            throwToolError("missing_param", "Missing required parameter: pattern.", {
+              param: "pattern",
+              hint: "Provide a canonical pattern: research-fanout, debate, vote, or map-reduce.",
+            });
+          }
+          const synth = synthesizeFromIntent({
+            pattern,
+            ...(Array.isArray(p.agents) && { agents: p.agents as string[] }),
+            ...(Array.isArray(p.tasks) && { tasks: p.tasks as string[] }),
+            ...(params.budget !== undefined && {
+              budget: {
+                ...(params.budget.max_tokens !== undefined && { maxTokens: params.budget.max_tokens }),
+                ...(params.budget.max_cost !== undefined && { maxCost: params.budget.max_cost }),
+              },
+            }),
+          });
+          if (!synth.ok) {
+            throwToolError("invalid_value", synth.error, {
+              param: "pattern",
+              hint: "Provide a valid pattern plus the slot inputs it needs (e.g. debate needs 2 agents).",
+            });
+          }
+          logger?.debug({ toolName: "pipeline", action: "from_intent", pattern, nodeCount: synth.value.nodes.length }, "Pipeline graph synthesized from intent");
+          const result = await rpcCall("graph.execute", {
+            nodes: synth.value.nodes,
+            ...(synth.value.label !== undefined && { label: synth.value.label }),
+            // The in-band marker is the daemon-side gate + audit chokepoint
+            // (read-before-strip + explicit delete-after-strip — it is NOT in
+            // INTERNAL_FIELD_NAMES, so the daemon removes it before buildGraphInput).
+            _synthesizedFromIntent: pattern,
+          });
           return jsonResult(result);
         }
 

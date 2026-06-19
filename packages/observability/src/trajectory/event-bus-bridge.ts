@@ -95,6 +95,44 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // enums + booleans — H1); the source/generated body never crosses the bus.
   "memory:generation_quality": "memory.generation_quality",
 
+  // TELEM-01 (v2.27 P1, Phase 173): a `pipeline` tool invocation was authored —
+  // counts-only (action / capabilityClass tier / schemaValid / repaired). Mapped
+  // here for trajectory-type ARCH closure (every EventMap member is mapped-or-
+  // allowlisted) and to reserve the `pipeline.authored` trajectory type. The live
+  // per-session recordEvent emit is a DEFERRED follow-up: at P1 `getRecorder` is
+  // NOT reachable on the graph-handler deps (it rides the image-handler slice, not
+  // the createGraphHandlers spread) — the P1 path is the FLEET aggregate (Plan
+  // 03/04), which needs only eventBus. Content-free (closed enums + booleans —
+  // H1); no pipeline body / type_config value / node task crosses the bus.
+  "pipeline:authored": "pipeline.authored",
+
+  // AUTHOR-01/02 (v2.27 P2, Phase 174): the two authoring-AUDIT events Plans 03/04
+  // emit DAEMON-SIDE on a conservative repair / intent-synthesis (the repair +
+  // synthesis producers the P1 pipeline:authored.repaired flag documented as
+  // deferred). APPEND-ONLY beside pipeline:authored. Mapped here for trajectory-type
+  // ARCH closure (every EventMap member is mapped-or-allowlisted) + to reserve the
+  // graph.repaired / graph.synthesized_from_intent trajectory types. NOTE: these
+  // emit from @comis/daemon (graph-helpers.ts), so the trajectory-event-types-known
+  // arch gate — which walks only packages/agent + packages/orchestrator — does not
+  // require them; the registration is for consistency with pipeline:authored AND
+  // arch-test closure of the keyof TrajectoryBridgedEventName. Content-free (closed
+  // enums + numbers — H1); no graph body / type_config / node task / intent text
+  // crosses the bus.
+  "graph:repaired": "graph.repaired",
+  "graph:synthesized_from_intent": "graph.synthesized_from_intent",
+
+  // STEER-01 (v2.27 P3, Phase 175): a running sub-agent was steered IN-FLIGHT (a
+  // high-priority message injected at the child's next step boundary, transcript
+  // preserved) instead of kill+respawn. Emitted DAEMON-SIDE at the inject site
+  // (Plan 02, subagent-handlers.ts), so the trajectory-event-types-known arch gate
+  // — which walks only packages/agent + packages/orchestrator — does NOT require it
+  // (the unmapped subagent:budget_exceeded precedent); the registration here is
+  // purely for OPERATOR TRAJECTORY VISIBILITY (a steer is a meaningful per-session
+  // event in `comis explain`), mirroring the graph:repaired entry above. Content-free
+  // (runId + the closed-union mode steer|followup — H1); the steer MESSAGE BODY never
+  // crosses the bus.
+  "subagent:steered": "subagent.steered",
+
   // OUTCOME-08 (v2.26 Verified Learning WS1): a finished trajectory's resolved net
   // task-outcome, emitted DAEMON-SIDE after OutcomeSignalPort.resolve (learningOutcome.
   // enabled-gated, default OFF). DAEMON emit (NOT agent/orchestrator) so the arch

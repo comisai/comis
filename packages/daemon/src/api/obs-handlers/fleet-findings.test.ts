@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from "vitest";
 import type { DiagnosticRow } from "@comis/memory";
-import { buildFindings } from "./fleet-findings.js";
+import { buildFindings, pipelineAuthoringAggregateFromRows } from "./fleet-findings.js";
 
 // ---------------------------------------------------------------------------
 // EMB-01 — the dedicated multilingual fleet advisory (standing state).
@@ -358,5 +358,183 @@ describe("buildFindings — OBS-04 voice_health finding", () => {
     expect(voiceIdx).toBeGreaterThanOrEqual(0);
     expect(modelIdx).toBeGreaterThanOrEqual(0);
     expect(voiceIdx).toBeLessThan(modelIdx); // count 5 before count 2
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TELEM-01 (Plan 173-03) — the dedicated pipeline_authoring finding + the pure
+// pipelineAuthoringAggregateFromRows reducer.
+//
+// The GENQ-01 clone: pipeline:authored persists a `health_signal` row with
+// signal:"pipeline_authoring" + {tier, schemaValid}. buildFindings rolls the
+// SMALL-TIER (small|nano — D-TIER) invalid rate into ONE dedicated finding (the
+// Phase-174 gate metric). The pure reducer computes the aggregate Plan 04's gate
+// consumes: {smallTierInvocations, smallTierValidRate, frontierValidRate}.
+//
+// RED: neither the reducer nor the finding exists yet on the pre-patch code —
+// `pipelineAuthoringAggregateFromRows` is undefined and NO pipeline_authoring
+// finding is produced, so every assertion below fails.
+// ---------------------------------------------------------------------------
+
+const PIPELINE_CODE = "pipeline_authoring";
+
+/** A `health_signal` row at `ts` labelled `pipeline_authoring`. */
+function pipelineAuthoringRow(
+  ts: number,
+  tier: string,
+  schemaValid: boolean,
+  action: "define" | "execute" = "define",
+): DiagnosticRow {
+  return {
+    timestamp: ts,
+    category: "health_signal",
+    severity: schemaValid ? "info" : "warning",
+    message: "pipeline:authored",
+    details: JSON.stringify({ signal: "pipeline_authoring", action, tier, schemaValid, repaired: false }),
+  };
+}
+
+describe("pipelineAuthoringAggregateFromRows", () => {
+  it("groups small|nano as the small tier and computes the small + frontier valid rates", () => {
+    const rows = [
+      pipelineAuthoringRow(1, "small", true),
+      pipelineAuthoringRow(2, "small", false),
+      pipelineAuthoringRow(3, "nano", false), // nano folds into the small tier
+      pipelineAuthoringRow(4, "frontier", true),
+      pipelineAuthoringRow(5, "frontier", true),
+      pipelineAuthoringRow(6, "frontier", false),
+      pipelineAuthoringRow(7, "mid", false), // mid: counted in NEITHER cohort
+      pipelineAuthoringRow(8, "unknown", true), // unknown: counted in NEITHER cohort
+    ];
+    const agg = pipelineAuthoringAggregateFromRows(rows);
+    expect(agg.smallTierInvocations).toBe(3); // 2 small + 1 nano
+    expect(agg.smallTierValidRate).toBeCloseTo(1 / 3, 10); // 1 of 3 small-tier valid
+    expect(agg.frontierValidRate).toBeCloseTo(2 / 3, 10); // 2 of 3 frontier valid
+  });
+
+  it("returns {0,0,0} on empty rows (no-data → the gate defers)", () => {
+    expect(pipelineAuthoringAggregateFromRows([])).toEqual({
+      smallTierInvocations: 0,
+      smallTierValidRate: 0,
+      frontierValidRate: 0,
+    });
+  });
+
+  it("rates are 0 when the cohort is empty (no small-tier rows, no frontier rows)", () => {
+    const onlyFrontier = pipelineAuthoringAggregateFromRows([
+      pipelineAuthoringRow(1, "frontier", true),
+    ]);
+    expect(onlyFrontier.smallTierInvocations).toBe(0);
+    expect(onlyFrontier.smallTierValidRate).toBe(0); // empty small cohort → 0, not NaN
+    expect(onlyFrontier.frontierValidRate).toBe(1);
+
+    const onlySmall = pipelineAuthoringAggregateFromRows([pipelineAuthoringRow(1, "small", true)]);
+    expect(onlySmall.frontierValidRate).toBe(0); // empty frontier cohort → 0, not NaN
+  });
+
+  it("folds a malformed / non-pipeline row out of both cohorts (defensive parse, never throws)", () => {
+    const malformed: DiagnosticRow = {
+      timestamp: 1,
+      category: "health_signal",
+      severity: "warning",
+      message: "health_signal",
+      details: "not json {",
+    };
+    const otherSignal: DiagnosticRow = {
+      timestamp: 2,
+      category: "health_signal",
+      severity: "warning",
+      message: "health_signal",
+      details: JSON.stringify({ signal: "voice_degraded", errorKind: "timeout" }),
+    };
+    const good = pipelineAuthoringRow(3, "small", false);
+    expect(() => pipelineAuthoringAggregateFromRows([malformed, otherSignal, good])).not.toThrow();
+    const agg = pipelineAuthoringAggregateFromRows([malformed, otherSignal, good]);
+    expect(agg.smallTierInvocations).toBe(1); // only the good small row counts
+    expect(agg.smallTierValidRate).toBe(0);
+  });
+});
+
+describe("buildFindings — TELEM-01 pipeline_authoring finding", () => {
+  it("emits ONE dedicated finding reporting the small-tier invalid count/total + rate percent", () => {
+    const findings = buildFindings(
+      [
+        pipelineAuthoringRow(1, "small", false),
+        pipelineAuthoringRow(2, "small", false),
+        pipelineAuthoringRow(3, "nano", true),
+        pipelineAuthoringRow(4, "frontier", true), // not a small-tier row
+      ],
+      [],
+      [],
+    );
+    const finding = findings.filter((f) => f.code === PIPELINE_CODE);
+    expect(finding).toHaveLength(1);
+    // 2 invalid of 3 small-tier rows.
+    expect(finding[0]!.count).toBe(2);
+    expect(finding[0]!.detail).toMatch(/2\/3/);
+    expect(finding[0]!.detail).toMatch(/66\.7%|67%|66/); // rate percent named
+    // The hint names the Phase-174 gate metric.
+    expect(finding[0]!.hint).toMatch(/Phase-?174|orchestration\.authoring/i);
+  });
+
+  it("does NOT emit the finding when there are zero small-tier rows (zero small-tier guard)", () => {
+    const findings = buildFindings(
+      [
+        pipelineAuthoringRow(1, "frontier", false),
+        pipelineAuthoringRow(2, "mid", false),
+        pipelineAuthoringRow(3, "unknown", true),
+      ],
+      [],
+      [],
+    );
+    expect(findings.some((f) => f.code === PIPELINE_CODE)).toBe(false);
+  });
+
+  it("no double-report: pipeline_authoring does NOT also appear in the generic health_signal rollup", () => {
+    const findings = buildFindings(
+      [pipelineAuthoringRow(1, "small", false), pipelineAuthoringRow(2, "small", false)],
+      [],
+      [],
+    );
+    // At most one finding mentions pipeline_authoring — the dedicated one.
+    const mentions = findings.filter(
+      (f) => f.code === PIPELINE_CODE || f.code === "health_signal:pipeline_authoring",
+    );
+    expect(mentions).toHaveLength(1);
+    expect(mentions[0]!.code).toBe(PIPELINE_CODE);
+    // The generic `health_signal:pipeline_authoring` rollup must NOT exist.
+    expect(findings.some((f) => f.code === "health_signal:pipeline_authoring")).toBe(false);
+  });
+
+  it("folds a malformed pipeline_authoring details to no-throw and excludes it from the counts (defensive parse)", () => {
+    const malformed: DiagnosticRow = {
+      timestamp: 1,
+      category: "health_signal",
+      severity: "warning",
+      message: "pipeline:authored",
+      details: "not json {",
+    };
+    const good = pipelineAuthoringRow(2, "small", false);
+    expect(() => buildFindings([malformed, good], [], [])).not.toThrow();
+    const findings = buildFindings([malformed, good], [], []);
+    const finding = findings.find((f) => f.code === PIPELINE_CODE);
+    // The malformed row never parses → only the good small row counts.
+    expect(finding?.count).toBe(1);
+    expect(finding!.detail).toMatch(/1\/1/);
+  });
+
+  it("is SAFE TO PASTE — the detail+hint carry no graph/task/type_config body, no secret", () => {
+    const findings = buildFindings(
+      [pipelineAuthoringRow(1, "small", false), pipelineAuthoringRow(2, "nano", false)],
+      [],
+      [],
+    );
+    const finding = findings.find((f) => f.code === PIPELINE_CODE);
+    expect(finding).toBeDefined();
+    for (const text of [finding!.detail, finding!.hint]) {
+      expect(text).not.toMatch(/type_config|typeConfig|"nodes"|"task"|"label"/);
+      expect(text).not.toMatch(/https?:\/\//);
+      expect(text).not.toMatch(/Bearer|sk-/i);
+    }
   });
 });
