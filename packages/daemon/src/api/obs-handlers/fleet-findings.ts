@@ -144,6 +144,14 @@ const DEDICATED_SCRIPT_SIGNALS: ReadonlySet<string> = new Set([
   // generic `health_signal:pipeline_authoring` count — the finding + this entry
   // MOVE TOGETHER (listing it here without the dedicated branch silently drops it).
   "pipeline_authoring",
+  // ORCH-OBS (orchestration-observability): the three previously-dark daemon-side
+  // orchestration signals each get a dedicated finding below (named violated
+  // dimensions / transient-vs-permanent split / dominant cap source). Excluded from
+  // the generic rollup so they are not double-counted — each finding + its entry here
+  // MOVE TOGETHER (listing without the dedicated branch silently drops it).
+  "sandbox_downgrade_refused",
+  "delivery_deadlettered",
+  "node_budget_exceeded",
 ]);
 
 /** OBS-04 (Phase 196): the closed domain `errorKind` (an `SttErrorKind`) carried
@@ -200,6 +208,57 @@ function pipelineAuthoringFromRow(row: DiagnosticRow): { tier: string; schemaVal
     return { tier, schemaValid };
   } catch {
     return null; // malformed details JSON — counts only, no body.
+  }
+}
+
+/** ORCH-OBS: the closed violated-dimension labels from a `sandbox_downgrade_refused`
+ *  row's details JSON. Defensive parse cloning `pipelineAuthoringFromRow` — a
+ *  non-sandbox / malformed / missing row folds to `null` (ignored; counts only, no
+ *  body, never throws). Returns ONLY the closed dimension enum strings — never a
+ *  path/host/uid value (the row never carried them). */
+function sandboxDowngradeFromRow(row: DiagnosticRow): { dimensions: string[] } | null {
+  if (row.details === undefined) return null;
+  try {
+    const parsed = JSON.parse(row.details) as { signal?: unknown; dimensions?: unknown };
+    if (parsed.signal !== "sandbox_downgrade_refused") return null;
+    const dimensions = Array.isArray(parsed.dimensions)
+      ? parsed.dimensions.filter((d): d is string => typeof d === "string")
+      : [];
+    return { dimensions };
+  } catch {
+    return null;
+  }
+}
+
+/** ORCH-OBS: `{transient}` from a `delivery_deadlettered` row's details JSON.
+ *  Defensive parse — non-deadletter / malformed / missing folds to `null` (ignored).
+ *  `transient` true = retries exhausted, false = immediate permanent. Never reads the
+ *  runId or any body (the row never carried them). */
+function deliveryDeadletteredFromRow(row: DiagnosticRow): { transient: boolean } | null {
+  if (row.details === undefined) return null;
+  try {
+    const parsed = JSON.parse(row.details) as { signal?: unknown; transient?: unknown };
+    if (parsed.signal !== "delivery_deadlettered") return null;
+    return { transient: parsed.transient === true };
+  } catch {
+    return null;
+  }
+}
+
+/** ORCH-OBS: the closed `capSource` from a `node_budget_exceeded` row's details JSON.
+ *  Defensive parse — non-budget / malformed / missing / unrecognized capSource folds
+ *  to `null` (ignored). Returns the closed precedence enum verbatim (untrusted-row
+ *  safe: only ever rendered into a count + a `capSource=` label). */
+function nodeBudgetExceededFromRow(row: DiagnosticRow): { capSource: string } | null {
+  if (row.details === undefined) return null;
+  try {
+    const parsed = JSON.parse(row.details) as { signal?: unknown; capSource?: unknown };
+    if (parsed.signal !== "node_budget_exceeded") return null;
+    const capSource =
+      typeof parsed.capSource === "string" && parsed.capSource.length > 0 ? parsed.capSource : "unknown";
+    return { capSource };
+  } catch {
+    return null;
   }
 }
 
@@ -373,6 +432,90 @@ export function buildFindings(
       detail: `${smallInvalid}/${smallTotal} small-tier pipeline authorings invalid (rate ${pct}%)`,
       count: smallInvalid,
       hint: "small/local models are failing to author valid pipeline DAGs; this is the Phase-174 (small-model-authorable DAGs) gate metric — review before enabling orchestration.authoring.*",
+    });
+  }
+
+  // ORCH-OBS (orchestration-observability): dedicated sandbox_downgrade_refused
+  // finding — the count of fail-closed sub-agent spawn refusals + the violated
+  // sandbox dimensions (closed enum labels). A spawn refusal is fail-closed working,
+  // but it means an agent was configured to spawn a LESS-confined child (a
+  // misconfiguration or an escalation attempt) — an operator must see it. Counts +
+  // closed dimension labels + a STATIC hint ONLY (never a path/host/uid value — the
+  // row never carried them). Zero-traffic guard (the voice_health if-pattern).
+  let sandboxRefusedCount = 0;
+  const sandboxDimCounts = new Map<string, number>();
+  for (const row of healthSignals) {
+    const parsed = sandboxDowngradeFromRow(row);
+    if (parsed === null) continue;
+    sandboxRefusedCount += 1;
+    for (const dim of parsed.dimensions) {
+      sandboxDimCounts.set(dim, (sandboxDimCounts.get(dim) ?? 0) + 1);
+    }
+  }
+  if (sandboxRefusedCount > 0) {
+    const dims = [...sandboxDimCounts.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([d]) => d);
+    findings.push({
+      code: "sandbox_downgrade_refused",
+      detail:
+        dims.length > 0
+          ? `${sandboxRefusedCount} sub-agent spawn(s) refused for sandbox downgrade (dimension(s): ${dims.join(", ")})`
+          : `${sandboxRefusedCount} sub-agent spawn(s) refused for sandbox downgrade`,
+      count: sandboxRefusedCount,
+      hint: "a sub-agent was configured LESS confined than its spawner on the named dimension(s); align the child's skills.execSandbox posture with (or stricter than) the parent's, or remove the offending agent-to-agent spawn. run `comis explain` on the spawner's session",
+    });
+  }
+
+  // ORCH-OBS: dedicated delivery_deadlettered finding — the count of sub-agent
+  // completions PERMANENTLY DROPPED (self-healing delivery exhausted retries, or an
+  // immediate permanent failure). This is a SILENT degradation today (the graph
+  // reports completed while a node's result never reached the parent). Counts + the
+  // transient/permanent split ONLY — never a runId, an announcement body, or an error
+  // string. Zero-traffic guard.
+  let deadletterCount = 0;
+  let deadletterTransient = 0;
+  for (const row of healthSignals) {
+    const parsed = deliveryDeadletteredFromRow(row);
+    if (parsed === null) continue;
+    deadletterCount += 1;
+    if (parsed.transient) deadletterTransient += 1;
+  }
+  if (deadletterCount > 0) {
+    const permanent = deadletterCount - deadletterTransient;
+    findings.push({
+      code: "delivery_deadlettered",
+      detail: `${deadletterCount} sub-agent completion(s) dead-lettered (dropped): ${deadletterTransient} after retries, ${permanent} permanent`,
+      count: deadletterCount,
+      hint: "a sub-agent result was permanently dropped before reaching its parent (the graph still reports completed); run `comis explain` on the affected session and check the delivery channel health / retry budget (security.agentToAgent.delivery)",
+    });
+  }
+
+  // ORCH-OBS: dedicated node_budget_exceeded finding — the count of per-node token
+  // budget breaches + the DOMINANT cap source (which knob bound the node). Counts +
+  // the closed capSource label + a hint NAMING all three knobs ONLY (the per-node
+  // token numbers are per-incident — on the node error string + the WARN + `comis
+  // explain`). Zero-traffic guard.
+  let budgetCount = 0;
+  const capSourceCounts = new Map<string, number>();
+  for (const row of healthSignals) {
+    const parsed = nodeBudgetExceededFromRow(row);
+    if (parsed === null) continue;
+    budgetCount += 1;
+    capSourceCounts.set(parsed.capSource, (capSourceCounts.get(parsed.capSource) ?? 0) + 1);
+  }
+  if (budgetCount > 0) {
+    const topSource = [...capSourceCounts.entries()].sort(
+      (a, b) => b[1] - a[1] || a[0].localeCompare(b[0]),
+    )[0]?.[0];
+    findings.push({
+      code: "node_budget_exceeded",
+      detail:
+        topSource !== undefined
+          ? `${budgetCount} node(s) exceeded their token budget (dominant cap source: ${topSource})`
+          : `${budgetCount} node(s) exceeded their token budget`,
+      count: budgetCount,
+      hint: "graph nodes are being cut off by their token budget; raise the binding knob — the node's own `tokenBudget`, the operator default `security.agentToAgent.tokenBudget`, or the graph `budget.maxTokens` (inherit-share). run `comis explain` for the per-node numbers",
     });
   }
 
