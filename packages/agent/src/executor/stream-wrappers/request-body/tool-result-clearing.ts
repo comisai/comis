@@ -402,3 +402,124 @@ export function deferRecallToUncachedTail(messages: Array<Record<string, unknown
   }
   return 0;
 }
+
+/**
+ * Strip the TRANSIENT inline-recall block from every HISTORICAL user-message item in an
+ * OpenAI **Responses-API `input`** array, keeping it only on the latest user message.
+ *
+ * cache #C4-OAI (2026-06-19): the Anthropic prefix-stabilizers (C-FIX-3/#C4) are gated to
+ * Anthropic-family providers (the cache_control machinery would 400 the Responses tools), so
+ * they NEVER run for openai-codex — and Comis's request-body injector passes through entirely
+ * for it. Result: the recall block on a user item is present while it's the current turn but
+ * gets dropped once it goes historical (SDK-conversation vs LCD-reconstruction divergence) →
+ * the OpenAI `input` prefix MUTATES at that user item → automatic prefix-cache collapse to the
+ * instructions+tools floor (confirmed live: every cached_tokens drop coincided with a user
+ * item going r1→none). Consistently stripping recall from all HISTORICAL user items (keeping
+ * the latest for the model) makes the input prefix byte-stable → the auto-cache holds.
+ *
+ * TOOL-SAFE: only touches `type:"message", role:"user"` items' text — never the `type:"function"`
+ * tools / `function_call` / `reasoning` items (so it cannot trigger the Responses 400 the
+ * cache_control machinery does). Mutates in place. Returns the number of items changed.
+ */
+export function stripTransientRecallFromResponsesInput(input: Array<Record<string, unknown>>): number {
+  let lastUserIdx = -1;
+  for (let i = input.length - 1; i >= 0; i--) {
+    if (input[i]!.role === "user") { lastUserIdx = i; break; }
+  }
+  if (lastUserIdx <= 0) return 0; // nothing historical to strip
+
+  let stripped = 0;
+  for (let i = 0; i < lastUserIdx; i++) {
+    const it = input[i]!;
+    // Match user items by ROLE only. pi-ai emits Responses user items as
+    // { role:"user", content:[{type:"input_text",text}] } with NO item-level `type`
+    // (only assistant items carry type:"message"). function_call/function_call_output/
+    // reasoning items have no user role, so this stays tool-safe.
+    if (it.role !== "user") continue;
+    const content = it.content;
+    if (typeof content === "string") {
+      const cleaned = stripInlineRecalledMemory(content);
+      if (cleaned !== content) { it.content = cleaned; stripped++; }
+      continue;
+    }
+    if (Array.isArray(content)) {
+      // Responses user content = [{ type: "input_text", text }] (recall prepended to the text).
+      const textBlock = (content as Array<Record<string, unknown>>).find(b => typeof b.text === "string");
+      if (textBlock && typeof textBlock.text === "string") {
+        const cleaned = stripInlineRecalledMemory(textBlock.text);
+        if (cleaned !== textBlock.text) { textBlock.text = cleaned; stripped++; }
+      }
+    }
+  }
+  return stripped;
+}
+
+/**
+ * Defer the inline-recall block on the CURRENT (latest) user item of an OpenAI Responses
+ * `input` array off the cacheable prefix and onto the UNCACHED tail.
+ *
+ * cache #C4-OAI (2026-06-19): stripping recall from HISTORICAL items alone
+ * (`stripTransientRecallFromResponsesInput`) is INSUFFICIENT — the LATEST user item still
+ * carries recall, so this turn's auto-cache WRITE includes "U_latest + recall". Next turn that
+ * item goes historical and the LCD rebuild emits it CLEAN (recall is transient, never
+ * persisted) → the cached prefix MUTATES at that item → automatic prefix-cache collapse to the
+ * instructions+tools floor. Confirmed live: every cached_tokens drop coincided with a user
+ * item going r1→none one turn AFTER it was the current turn. Stripping historical items cannot
+ * undo a cache WRITE that already happened with recall embedded.
+ *
+ * Fix (mirrors the Anthropic `deferRecallToUncachedTail`): strip recall from the latest user
+ * item — so it is byte-identical to its future historical/clean form — and re-attach the recall
+ * as a SEPARATE trailing user item. The model still sees the recall this turn (last item =
+ * freshest position), but recall never embeds in a user item that gets cached-then-rebuilt-clean.
+ * The trailing item is transient (onPayload only, never persisted), so next turn it is simply
+ * absent and the prefix up to the clean latest user item is byte-stable → the auto-cache holds.
+ *
+ * TOOL-SAFE: only reads/writes type:"message",role:"user" items and appends one trailing user
+ * item — never touches function/function_call/reasoning items. Mutates in place. Returns 1 if it
+ * deferred a recall block, else 0.
+ */
+export function deferRecallToTrailingResponsesItem(input: Array<Record<string, unknown>>): number {
+  let lastUserIdx = -1;
+  for (let i = input.length - 1; i >= 0; i--) {
+    // Match by ROLE only — pi-ai user items have no item-level `type` (see
+    // stripTransientRecallFromResponsesInput). tool/reasoning items have no user role.
+    if (input[i]!.role === "user") { lastUserIdx = i; break; }
+  }
+  if (lastUserIdx < 0) return 0;
+  const msg = input[lastUserIdx]!;
+  const content = msg.content;
+  const wasString = typeof content === "string";
+
+  let recall: string;
+  if (wasString) {
+    const ex = extractInlineRecalledMemory(content as string);
+    // Keep recall inline if removing it would leave the query empty (recall-only turn): an
+    // empty user item is invalid, and a recall-only turn has no stable prefix to protect.
+    if (!ex.recall || ex.rest.trim().length === 0) return 0;
+    recall = ex.recall.trim();
+    msg.content = ex.rest;
+  } else if (Array.isArray(content)) {
+    const blocks = content as Array<Record<string, unknown>>;
+    const textBlock = blocks.find(
+      b => typeof b.text === "string" && RECALL_PREFIX_RE.test(b.text as string),
+    );
+    if (!textBlock) return 0;
+    const ex = extractInlineRecalledMemory(textBlock.text as string);
+    if (!ex.recall || ex.rest.trim().length === 0) return 0;
+    recall = ex.recall.trim();
+    textBlock.text = ex.rest;
+  } else {
+    return 0;
+  }
+
+  // Append the recall as a SEPARATE trailing user item (uncached tail), mirroring the latest
+  // item's shape: same content form (raw string vs input_text-block array) and the same
+  // item-level `type` presence (pi-ai user items have none; assistant items use "message").
+  const trailing: Record<string, unknown> = {
+    role: "user",
+    content: wasString ? recall : [{ type: "input_text", text: recall }],
+  };
+  if (typeof msg.type !== "undefined") trailing.type = msg.type;
+  input.push(trailing);
+  return 1;
+}

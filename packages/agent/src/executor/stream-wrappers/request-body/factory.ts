@@ -42,7 +42,7 @@ import {
 } from "./context-window.js";
 import { isResponsesApiProvider, injectStoreFlag } from "./store-flag.js";
 import { injectServiceTier } from "./service-tier.js";
-import { reorderContentForStablePrefix, stripTransientRecallFromHistory, stripReplayThinking, deferRecallToUncachedTail } from "./tool-result-clearing.js";
+import { reorderContentForStablePrefix, stripTransientRecallFromHistory, stripReplayThinking, deferRecallToUncachedTail, stripTransientRecallFromResponsesInput, deferRecallToTrailingResponsesItem } from "./tool-result-clearing.js";
 import { sortToolsForCacheStability } from "./cache-breakpoints.js";
 import { applyRenderedToolCache } from "./tool-cache.js";
 import {
@@ -87,7 +87,17 @@ export function createRequestBodyInjector(
         ?? isAnthropicFamily(model.provider);
       const needsResponsesApiInjection = isResponsesApiProvider(model as { api?: string });
 
-      if (!needsCacheBreakpoints && !needsResponsesApiInjection) {
+      // openai-codex drives the OpenAI Responses API (input = array of items) but is NOT
+      // flagged by isResponsesApiProvider (model.api !== "openai-responses"), so the
+      // cache-breakpoint machinery is correctly skipped (running cache_control on a Responses
+      // body strips type:"function" tools -> backend 400). We still install onPayload to
+      // stabilise the auto-cached prefix: defer the per-turn inline-recall block off the user
+      // turns onto an uncached trailing item so OpenAI's automatic prefix cache does not
+      // collapse to the instructions+tools floor every time the recalled memory rotates
+      // (cache #C4-OAI; see the deferral block below).
+      const needsResponsesInputStabilizer = model.provider === "openai-codex";
+
+      if (!needsCacheBreakpoints && !needsResponsesApiInjection && !needsResponsesInputStabilizer) {
         return next(model, context, options);
       }
 
@@ -412,6 +422,39 @@ export function createRequestBodyInjector(
 
           // Concern 4: store (Responses API + storeCompletions)
           injectStoreFlag(result, needsResponsesApiInjection, config.storeCompletions);
+
+          // Cache #C4-OAI: stabilise the OpenAI Responses auto-cached prefix.
+          // The per-turn inline-recall block ("[Relevant context from memory: ...]") is
+          // prepended to the CURRENT user turn (envelope-wrapper) but recall is TRANSIENT —
+          // the LCD/history rebuild emits each user turn CLEAN. So the latest user item is sent
+          // WITH recall (cached this turn), then next turn it goes historical and is rebuilt
+          // WITHOUT recall -> the auto-cached prefix diverges at that item -> cached_tokens
+          // collapses to the instructions+tools floor (~21.5k) once per turn (confirmed live:
+          // a clean A/B showed 4 floor-collapses with this OFF, 0 with it ON).
+          // Fix (OpenAI analog of the Anthropic deferRecallToUncachedTail): strip recall off the
+          // user items and re-attach the current-turn recall as a SEPARATE trailing item, so the
+          // user turns are byte-identical to their future historical clean form and the prefix
+          // is stable. The model still sees recall (trailing = freshest position); the trailing
+          // item is transient (never persisted) so it never enters the cached prefix.
+          // Tool-safe: matches role:"user" only (never function_call/reasoning items).
+          // Unconditional (mirrors the always-on Anthropic deferRecallToUncachedTail).
+          if (needsResponsesInputStabilizer && Array.isArray((result as Record<string, unknown>).input)) {
+            result.input = structuredClone((result as Record<string, unknown>).input);
+            const inputItems = result.input as Array<Record<string, unknown>>;
+            // 1. Defensive: strip recall from any HISTORICAL user item (no-op when history is
+            //    already clean, which it is when recall is transient).
+            const strippedCount = stripTransientRecallFromResponsesInput(inputItems);
+            // 2. THE FIX: defer recall on the LATEST user item to a trailing (uncached, never
+            //    persisted) item, so the latest item is byte-identical to its future historical
+            //    clean form and the auto-cached prefix never mutates at the turn boundary.
+            const deferred = deferRecallToTrailingResponsesItem(inputItems);
+            if (strippedCount > 0 || deferred > 0) {
+              logger.debug(
+                { sessionKey: config.sessionKey, recallStrippedOai: strippedCount, recallDeferredOai: deferred },
+                "Stabilised OpenAI Responses prefix: deferred current-turn recall to uncached tail",
+              );
+            }
+          }
 
           return result;
         },

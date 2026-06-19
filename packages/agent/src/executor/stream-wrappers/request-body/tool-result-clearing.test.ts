@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { clearStaleThinkingBlocks, stripTransientRecallFromHistory, stripReplayThinking, deferRecallToUncachedTail } from "./index.js";
+import { clearStaleThinkingBlocks, stripTransientRecallFromHistory, stripReplayThinking, deferRecallToUncachedTail, stripTransientRecallFromResponsesInput, deferRecallToTrailingResponsesItem } from "./index.js";
 
 /** A representative inline-recall block as envelope-wrapper prepends it (hybrid-memory-injector template). */
 const recall = (content: string) =>
@@ -333,5 +333,159 @@ describe("deferRecallToUncachedTail (pure) — cache #C4", () => {
     ];
     expect(deferRecallToUncachedTail(messages)).toBe(0);
     expect((messages[0]!.content as Array<Record<string, unknown>>).length).toBe(1);
+  });
+});
+
+describe("stripTransientRecallFromResponsesInput (pure) — cache #C4-OAI (OpenAI Responses input)", () => {
+  // OpenAI auto-cache collapses to the instructions+tools floor when a historical user input
+  // item's recall block is stripped inconsistently. Fix: strip recall from ALL historical
+  // user-message items (keep the latest), so the Responses `input` prefix is byte-stable.
+  const recallStr = (c: string) => `[Relevant context from memory: ${c} (recorded 2026-06-18)]\n`;
+
+  it("strips recall from historical user items (array content), keeps the latest user item", () => {
+    const input: Array<Record<string, unknown>> = [
+      { type: "message", role: "user", content: [{ type: "input_text", text: recallStr("old fact") + "first query" }] },
+      { type: "reasoning", summary: [] },
+      { type: "function_call", name: "bash", arguments: "{}" },
+      { type: "message", role: "assistant", content: [{ type: "output_text", text: "ok" }] },
+      { type: "message", role: "user", content: [{ type: "input_text", text: recallStr("new fact") + "second query" }] },
+    ];
+    const stripped = stripTransientRecallFromResponsesInput(input);
+    expect(stripped).toBe(1); // only the historical user item (idx 0)
+    expect((input[0]!.content as any[])[0].text).toBe("first query"); // recall removed
+    // latest user item (idx 4) KEEPS its recall (the model needs it this turn)
+    expect((input[4]!.content as any[])[0].text).toContain("[Relevant context from memory: new fact");
+    // tool/reasoning/function_call items are untouched (tool-safe)
+    expect(input[1]!.type).toBe("reasoning");
+    expect(input[2]!.type).toBe("function_call");
+  });
+
+  it("handles string content + is a no-op when only the latest user item has recall", () => {
+    const input: Array<Record<string, unknown>> = [
+      { type: "message", role: "user", content: "plain historical query" },
+      { type: "message", role: "assistant", content: "reply" },
+      { type: "message", role: "user", content: recallStr("fact") + "current query" },
+    ];
+    expect(stripTransientRecallFromResponsesInput(input)).toBe(0); // historical user has no recall
+    expect(input[2]!.content).toContain("[Relevant context from memory:"); // latest keeps it
+  });
+
+  it("matches real pi-ai user items (role:'user', NO item-level type)", () => {
+    const input: Array<Record<string, unknown>> = [
+      { role: "user", content: [{ type: "input_text", text: recallStr("old") + "q1" }] },
+      { type: "function_call_output", output: "ok" },
+      { role: "user", content: [{ type: "input_text", text: recallStr("new") + "q2" }] },
+    ];
+    expect(stripTransientRecallFromResponsesInput(input)).toBe(1); // historical idx0 cleaned
+    expect((input[0]!.content as any[])[0].text).toBe("q1");
+    expect((input[2]!.content as any[])[0].text).toContain("[Relevant context from memory: new"); // latest kept
+  });
+
+  it("does NOT touch non-message items or assistant items", () => {
+    const input: Array<Record<string, unknown>> = [
+      { type: "message", role: "user", content: [{ type: "input_text", text: recallStr("a") + "q1" }] },
+      { type: "message", role: "user", content: [{ type: "input_text", text: recallStr("b") + "q2" }] },
+    ];
+    // idx 1 is the latest user → kept; idx 0 historical → stripped
+    expect(stripTransientRecallFromResponsesInput(input)).toBe(1);
+    expect((input[0]!.content as any[])[0].text).toBe("q1");
+    expect((input[1]!.content as any[])[0].text).toContain("[Relevant context from memory: b");
+  });
+});
+
+describe("deferRecallToTrailingResponsesItem (pure) — cache #C4-OAI (latest-item recall defer)", () => {
+  const recallStr = (c: string) => `[Relevant context from memory: ${c} (recorded 2026-06-18)]\n`;
+
+  it("moves recall off the latest user item (array content) into a trailing user item", () => {
+    const input: Array<Record<string, unknown>> = [
+      { type: "message", role: "user", content: [{ type: "input_text", text: "first query" }] },
+      { type: "function_call", name: "bash", arguments: "{}" },
+      { type: "message", role: "user", content: [{ type: "input_text", text: recallStr("teal") + "current query" }] },
+    ];
+    const before = input.length;
+    expect(deferRecallToTrailingResponsesItem(input)).toBe(1);
+    // latest user item is now CLEAN (byte-identical to its future historical form)
+    expect((input[2]!.content as any[])[0].text).toBe("current query");
+    expect((input[2]!.content as any[])[0].text).not.toContain("[Relevant context from memory:");
+    // a trailing user item carrying the recall was appended (uncached tail)
+    expect(input.length).toBe(before + 1);
+    const trailing = input[input.length - 1]!;
+    expect(trailing.type).toBe("message");
+    expect(trailing.role).toBe("user");
+    expect((trailing.content as any[])[0].text).toContain("[Relevant context from memory: teal");
+    // tool item untouched
+    expect(input[1]!.type).toBe("function_call");
+  });
+
+  it("handles string content", () => {
+    const input: Array<Record<string, unknown>> = [
+      { type: "message", role: "user", content: "old" },
+      { type: "message", role: "user", content: recallStr("fact") + "new query" },
+    ];
+    expect(deferRecallToTrailingResponsesItem(input)).toBe(1);
+    expect(input[1]!.content).toBe("new query");
+    expect(input.length).toBe(3);
+    expect(input[2]!.content).toContain("[Relevant context from memory: fact");
+  });
+
+  it("is a no-op when the latest user item has no recall", () => {
+    const input: Array<Record<string, unknown>> = [
+      { type: "message", role: "user", content: [{ type: "input_text", text: recallStr("a") + "historical" }] },
+      { type: "message", role: "user", content: [{ type: "input_text", text: "plain current query" }] },
+    ];
+    expect(deferRecallToTrailingResponsesItem(input)).toBe(0);
+    expect(input.length).toBe(2); // nothing appended
+  });
+
+  it("matches real pi-ai user items (role:'user', NO item-level type) — defers + trailing has no type", () => {
+    // The live pi-ai Responses input emits user items WITHOUT an item-level `type` field
+    // (only assistant items carry type:"message"). The defer must match by role alone.
+    const input: Array<Record<string, unknown>> = [
+      { role: "user", content: [{ type: "input_text", text: recallStr("h1") + "q1" }] },
+      { type: "function_call", name: "bash", arguments: "{}" },
+      { type: "function_call_output", output: "ok" },
+      { type: "message", role: "assistant", content: [{ type: "output_text", text: "done" }] },
+      { role: "user", content: [{ type: "input_text", text: recallStr("cur") + "current" }] },
+    ];
+    expect(deferRecallToTrailingResponsesItem(input)).toBe(1);
+    expect((input[4]!.content as any[])[0].text).toBe("current"); // latest cleaned
+    const trailing = input[input.length - 1]!;
+    expect(trailing.role).toBe("user");
+    expect(trailing.type).toBeUndefined(); // mirrors the user-item shape (no type)
+    expect((trailing.content as any[])[0].text).toContain("[Relevant context from memory: cur");
+    expect(input[1]!.type).toBe("function_call"); // tool items untouched
+  });
+
+  it("keeps recall inline (no defer) when removing it would empty the query", () => {
+    const input: Array<Record<string, unknown>> = [
+      { type: "message", role: "user", content: recallStr("only") },
+    ];
+    expect(deferRecallToTrailingResponsesItem(input)).toBe(0);
+    expect(input.length).toBe(1);
+  });
+
+  it("strip-historical + defer-latest together leave NO recall on any non-trailing user item (prefix-stable)", () => {
+    const input: Array<Record<string, unknown>> = [
+      { type: "message", role: "user", content: [{ type: "input_text", text: recallStr("h1") + "q1" }] },
+      { type: "message", role: "assistant", content: [{ type: "output_text", text: "ok" }] },
+      { type: "message", role: "user", content: [{ type: "input_text", text: recallStr("h2") + "q2" }] },
+      { type: "message", role: "assistant", content: [{ type: "output_text", text: "ok2" }] },
+      { type: "message", role: "user", content: [{ type: "input_text", text: recallStr("cur") + "q3" }] },
+    ];
+    stripTransientRecallFromResponsesInput(input); // historical h1, h2 cleaned
+    deferRecallToTrailingResponsesItem(input);     // latest cur deferred to trailing
+    // every original user item is now clean
+    expect((input[0]!.content as any[])[0].text).toBe("q1");
+    expect((input[2]!.content as any[])[0].text).toBe("q2");
+    expect((input[4]!.content as any[])[0].text).toBe("q3");
+    // recall lives only in the trailing item (the uncached tail)
+    const trailing = input[input.length - 1]!;
+    expect((trailing.content as any[])[0].text).toContain("[Relevant context from memory: cur");
+    // no recall on any item except the trailing one
+    const nonTrailing = input.slice(0, -1);
+    for (const it of nonTrailing) {
+      const txt = Array.isArray(it.content) ? (it.content as any[]).map(b => b.text ?? "").join("") : String(it.content ?? "");
+      expect(txt).not.toContain("[Relevant context from memory:");
+    }
   });
 });
