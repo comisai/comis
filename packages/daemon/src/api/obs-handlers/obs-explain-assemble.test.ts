@@ -69,6 +69,7 @@ function makeSignals(overrides: Partial<IncidentSignals> = {}): IncidentSignals 
     failures: [makeFailure({ seq: 1 }), makeFailure({ seq: 2 }), makeFailure({ seq: 3 })],
     breakerEvents: [],
     offloads: [],
+    nodeBudgetBreaches: [],
     hasDoNotRetrySignal: false,
     repeatedFailureCount: { web_fetch: 8 },
     hasMisclassificationSignal: true,
@@ -104,6 +105,33 @@ function makeMetadata(overrides: Record<string, unknown> = {}): Record<string, u
     ...overrides,
   };
 }
+
+// ---------------------------------------------------------------------------
+// ORCH-OBS (orchestration-observability): the per-node budget-breach section is
+// surfaced when the signals carry breaches (capSource names WHICH knob bound the
+// node) and OMITTED when there are none (additive; schemaVersion stays 1).
+// ---------------------------------------------------------------------------
+
+describe("assembleIncidentReport — nodeBudgetBreaches (ORCH-OBS)", () => {
+  it("surfaces nodeBudgetBreaches with capSource when the signals carry a breach", () => {
+    const report = assembleIncidentReport(
+      makeSignals({
+        nodeBudgetBreaches: [{ seq: 5, nodeId: "greedy", capSource: "node", tokenBudget: 5000, tokensUsed: 17770 }],
+      }),
+      makeMetadata(),
+      null,
+      SESSION_KEY,
+      READ_COUNT,
+    );
+    expect(report.nodeBudgetBreaches).toHaveLength(1);
+    expect(report.nodeBudgetBreaches![0]).toMatchObject({ nodeId: "greedy", capSource: "node", tokenBudget: 5000, tokensUsed: 17770 });
+  });
+
+  it("OMITS nodeBudgetBreaches entirely when there are no breaches (additive — pre-extension report shape preserved)", () => {
+    const report = assembleIncidentReport(makeSignals({ nodeBudgetBreaches: [] }), makeMetadata(), null, SESSION_KEY, READ_COUNT);
+    expect(report.nodeBudgetBreaches).toBeUndefined();
+  });
+});
 
 // ---------------------------------------------------------------------------
 // cost — the F1-primary fallback chain (the X3 1.320669 invariant).

@@ -162,6 +162,24 @@ export const IncidentReportSchema = z.object({
       pointer: z.string(),
     }),
   ),
+  /** ORCH-OBS (orchestration-observability): per-node token-budget breaches
+   *  (BUDGET-03) reconstructed from the session's `subagent.budget_exceeded`
+   *  trajectory records. `capSource` names WHICH knob bound each node (node /
+   *  operator-default / inherit-share) so a breach is diagnosable from the report
+   *  alone — not just "a node failed". Counts/ids/closed-enum ONLY (§2.7); never a
+   *  task or output. Optional + additive (present only when the trajectory carries
+   *  breach records; schemaVersion stays 1). */
+  nodeBudgetBreaches: z
+    .array(
+      z.object({
+        seq: z.number(),
+        nodeId: z.string(),
+        capSource: z.enum(["node", "operator-default", "inherit-share", "unknown"]),
+        tokenBudget: z.number(),
+        tokensUsed: z.number(),
+      }),
+    )
+    .optional(),
   /** W3: the terminal per-call budget equation (optional — present only when the
    *  session's trajectory carries `context.budget` records; additive, schemaVersion
    *  stays 1). */
@@ -480,6 +498,16 @@ export interface IncidentSignals {
     toolName: string;
     originalChars: number;
     pointer: string;
+  }>;
+  /** ORCH-OBS: per-node token-budget breaches (BUDGET-03) folded from
+   *  `subagent.budget_exceeded` trajectory records — the per-incident view (capSource
+   *  + the two token numbers) the IncidentReport surfaces. */
+  nodeBudgetBreaches: Array<{
+    seq: number;
+    nodeId: string;
+    capSource: "node" | "operator-default" | "inherit-share" | "unknown";
+    tokenBudget: number;
+    tokensUsed: number;
   }>;
   // derived booleans/strings for the heuristic registry:
   breakerOpenedTool?: string; // from a tool.breaker_opened event OR a "DO NOT retry" log line's toolName

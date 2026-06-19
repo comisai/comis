@@ -74,6 +74,7 @@ interface Acc {
   failures: IncidentFailure[];
   breakerEvents: IncidentSignals["breakerEvents"];
   offloads: IncidentSignals["offloads"];
+  nodeBudgetBreaches: IncidentSignals["nodeBudgetBreaches"];
   breakerOpenedTool?: string;
   hasDoNotRetrySignal: boolean;
   /** Tools for which a log-shape breaker "opened" event was already synthesized
@@ -273,6 +274,28 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
       acc.breakerEvents.push({ seq: asNumber(rec.seq) ?? acc.seq++, event: "reset", toolName: tool });
       return;
     }
+    case "subagent.budget_exceeded": {
+      // ORCH-OBS (BUDGET-03): a per-node token-budget breach. The trajectory record
+      // carries the per-incident view (nodeId + capSource + the two token numbers)
+      // the IncidentReport surfaces so a breach is diagnosable from the report alone —
+      // WHICH knob bound the node, not just "a node failed". Content-free by
+      // construction (closed capSource enum + counts/ids).
+      const nodeId = asString(data.nodeId);
+      if (nodeId === undefined) return;
+      const capSourceRaw = asString(data.capSource);
+      const capSource =
+        capSourceRaw === "node" || capSourceRaw === "operator-default" || capSourceRaw === "inherit-share"
+          ? capSourceRaw
+          : "unknown";
+      acc.nodeBudgetBreaches.push({
+        seq: asNumber(rec.seq) ?? acc.seq++,
+        nodeId,
+        capSource,
+        tokenBudget: asNumber(data.tokenBudget) ?? 0,
+        tokensUsed: asNumber(data.tokensUsed) ?? 0,
+      });
+      return;
+    }
     case "context.budget": {
       // W3 (obs-llm-troubleshooting): the per-call budget equation emitted by the
       // LCD pre-flight (W2). LAST record wins — the terminal fit check explains
@@ -378,6 +401,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     failures: [],
     breakerEvents: [],
     offloads: [],
+    nodeBudgetBreaches: [],
     hasDoNotRetrySignal: false,
     synthesizedBreakerTools: new Set(),
     misclassTokenByTool: new Map(),
@@ -464,6 +488,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     failures: acc.failures,
     breakerEvents: acc.breakerEvents,
     offloads: acc.offloads,
+    nodeBudgetBreaches: acc.nodeBudgetBreaches,
     ...(acc.breakerOpenedTool !== undefined ? { breakerOpenedTool: acc.breakerOpenedTool } : {}),
     hasDoNotRetrySignal: acc.hasDoNotRetrySignal,
     ...(mostFailedTool !== undefined ? { mostFailedTool } : {}),

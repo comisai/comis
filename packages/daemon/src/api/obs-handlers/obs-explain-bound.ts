@@ -447,6 +447,25 @@ export function boundIncidentReport(
         continue;
       }
 
+      // ORCH-OBS: halve the per-node budget breaches last (optional + typically
+      // tiny — a graph has few nodes; only a pathological run needs trimming).
+      if (bounded.nodeBudgetBreaches !== undefined && bounded.nodeBudgetBreaches.length > 1) {
+        const half = Math.max(1, Math.floor(bounded.nodeBudgetBreaches.length / 2));
+        bounded = {
+          ...bounded,
+          nodeBudgetBreaches: bounded.nodeBudgetBreaches.slice(0, half),
+          truncations: [
+            ...bounded.truncations,
+            {
+              field: "nodeBudgetBreaches",
+              reason: `report exceeded ${SUMMARY_MAX_BYTES} bytes; nodeBudgetBreaches trimmed to ${half}`,
+              pointer: "obs.explain depth=full",
+            },
+          ],
+        };
+        continue;
+      }
+
       // Nothing discretionary left to shed — stop (the post-loop honesty check
       // below records the residual overage).
       break;

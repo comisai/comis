@@ -375,6 +375,10 @@ export function assembleIncidentReport(
     failures,
     breakerTimeline,
     offloads,
+    // ORCH-OBS: per-node token-budget breaches (BUDGET-03) reconstructed from the
+    // session's subagent.budget_exceeded records — capSource names WHICH knob bound
+    // each node. Absent when the session had no breach (additive; schemaVersion 1).
+    ...((signals.nodeBudgetBreaches ?? []).length > 0 ? { nodeBudgetBreaches: signals.nodeBudgetBreaches } : {}),
     // W3: the terminal per-call budget equation (absent for pre-W2 sessions).
     ...(signals.contextBudget !== undefined ? { contextBudget: signals.contextBudget } : {}),
     // RECALL-01: the memory-recall outcome (absent when the trajectory has no recall records).
