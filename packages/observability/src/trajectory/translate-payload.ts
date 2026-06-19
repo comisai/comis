@@ -263,10 +263,16 @@ export function translatePayload(
       };
 
     // ---- v2.27 authoring / sub-agent orchestration (TELEM-01 + AUTHOR-01/02 + STEER-01) ---- delegated to translate-orchestration-payload.ts (file-size split, Phase 175; content-free + envelope-stripped — closed enums + numbers/booleans + a run id ONLY, never a graph body, the synthesis INTENT TEXT, or the steer MESSAGE BODY; §2.7 / H1).
+    // ORCH-OBS appends three previously-dark sub-agent-lifecycle events (sandbox-downgrade
+    // refusal / dead-lettered delivery / per-node budget breach) to the SAME content-free,
+    // orchestration-translator-delegated group.
     case "pipeline:authored":
     case "graph:repaired":
     case "graph:synthesized_from_intent":
     case "subagent:steered":
+    case "security:sandbox_downgrade_refused":
+    case "subagent:delivery_deadlettered":
+    case "subagent:budget_exceeded":
       return translateOrchestrationPayload(eventName, payload);
 
     case "learning:outcome_observed": // OUTCOME-08: trajectoryId + closed-enum outcome/source + numeric confidence ONLY (no body/alpha/recalled ids; agentId/sessionKey/traceId envelope-only — §2.7 / SEC-01).

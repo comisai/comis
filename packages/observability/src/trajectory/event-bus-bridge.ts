@@ -133,6 +133,19 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // crosses the bus.
   "subagent:steered": "subagent.steered",
 
+  // ORCH-OBS (orchestration-observability): three previously-dark sub-agent-lifecycle
+  // events bridged for per-session `comis explain` visibility (the subagent:steered
+  // precedent). security:sandbox_downgrade_refused is agent-emitted (sub-agent-runner.ts)
+  // and fires WITHIN the spawning session → lands cleanly in that trajectory;
+  // subagent:delivery_deadlettered (orchestrator) + subagent:budget_exceeded (daemon
+  // coordinator) ride whichever session bridge is active. Content-free translators
+  // (translate-orchestration-payload.ts) forward closed labels/ids/numbers ONLY — never
+  // a path/host/uid value, an announcement body, or a task (§2.7 / H1). These ALSO feed
+  // the fleet lens via obs-persistence-wiring (the daemon-wide aggregate surface).
+  "security:sandbox_downgrade_refused": "security.sandbox_downgrade_refused",
+  "subagent:delivery_deadlettered": "subagent.delivery_deadlettered",
+  "subagent:budget_exceeded": "subagent.budget_exceeded",
+
   // OUTCOME-08 (v2.26 Verified Learning WS1): a finished trajectory's resolved net
   // task-outcome, emitted DAEMON-SIDE after OutcomeSignalPort.resolve (learningOutcome.
   // enabled-gated, default OFF). DAEMON emit (NOT agent/orchestrator) so the arch

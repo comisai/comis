@@ -135,6 +135,19 @@ export const TRAJECTORY_EVENT_TYPES = [
   // (`comis explain`).
   "subagent.steered",
 
+  // ORCH-OBS (orchestration-observability): the reserved trajectory types for three
+  // previously-dark sub-agent-lifecycle events — a fail-closed sandbox-downgrade spawn
+  // refusal (SANDBOX-02), a dead-lettered sub-agent delivery (DELIVERY-02), and a
+  // per-node token-budget breach (BUDGET-03). APPEND-ONLY beside subagent.steered.
+  // Bridged for per-session `comis explain` visibility (the subagent.steered
+  // daemon-side precedent); content-free: closed dimension/channel/capSource labels +
+  // ids/numbers ONLY, NEVER a path/host/uid value, an announcement body, or a task
+  // (§2.7 / H1). sandbox_downgrade_refused fires WITHIN the spawning session (clean
+  // landing); the other two ride whichever session bridge is active when they fire.
+  "security.sandbox_downgrade_refused",
+  "subagent.delivery_deadlettered",
+  "subagent.budget_exceeded",
+
   // Background task lifecycle (T2.2 / F9): promote/complete/fail of a long-running tool
   // detached past the execute() boundary (content-free — ids + durationMs only).
   "background_task.promoted",
