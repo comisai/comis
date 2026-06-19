@@ -115,10 +115,13 @@ export function applyNodeBudgetBreach(
     return { breached: false };
   }
 
-  // Terminal-fail the node (D2): a retry would only re-burn the budget.
+  // Terminal-fail the node (D2): a retry would only re-burn the budget. ORCH-OBS:
+  // name the cap SOURCE in the error too — the node error is the only surface
+  // graph.status + the IncidentReport failure list see (the WARN/event ride other
+  // paths), so an operator drilling a failed node learns WHICH knob bound it.
   const failRes = gs.stateMachine.markNodeFailed(
     nodeId,
-    `Node token budget exceeded (${spend} > ${nodeBudget})`,
+    `Node token budget exceeded (${spend} > ${nodeBudget}; cap source: ${capSource})`,
     priorSessionKey,
     { terminal: true },
   );
