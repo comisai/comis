@@ -160,6 +160,11 @@ export function transformNodes(rawNodes: unknown[]): unknown[] {
       ...(node.barrier_mode ?? node.barrierMode
         ? { barrierMode: node.barrier_mode ?? node.barrierMode } : {}),
       ...(node.retries !== undefined ? { retries: node.retries } : {}),
+      // P0-A: forward the per-node tokenBudget override (GraphNodeSchema field, highest-
+      // precedence budget source — resolveNodeBudgetWithSource capSource "node"). Without
+      // this it was silently dropped here, so an author-set per-node cap never bound the node.
+      ...((node.token_budget ?? node.tokenBudget) !== undefined
+        ? { tokenBudget: node.token_budget ?? node.tokenBudget } : {}),
       ...(node.context_mode ?? node.contextMode
         ? { contextMode: node.context_mode ?? node.contextMode } : {}),
       // Drop typeId+typeConfig entirely for the agent footgun (collapse to a regular

@@ -82,6 +82,23 @@ describe("transformNodes", () => {
     expect("mcpServers" in node).toBe(false);
   });
 
+  // P0-A fix (2026-06-19): the per-node tokenBudget override (highest-precedence budget
+  // source, in GraphNodeSchema + read by resolveNodeBudgetWithSource as capSource "node")
+  // was DROPPED by transformNodes — so an author-set per-node budget was silently ignored
+  // via graph.execute (live: a node with tokenBudget:5000 ran unbounded). Forward it.
+  it("forwards token_budget snake_case as tokenBudget", () => {
+    const node = transformNodes([{ node_id: "x", task: "t", token_budget: 5000 }])[0] as Record<string, unknown>;
+    expect(node.tokenBudget).toBe(5000);
+  });
+  it("forwards tokenBudget camelCase unchanged", () => {
+    const node = transformNodes([{ nodeId: "x", task: "t", tokenBudget: 7000 }])[0] as Record<string, unknown>;
+    expect(node.tokenBudget).toBe(7000);
+  });
+  it("omits tokenBudget key entirely when neither input variant is present", () => {
+    const node = transformNodes([{ node_id: "x", task: "t" }])[0] as Record<string, unknown>;
+    expect("tokenBudget" in node).toBe(false);
+  });
+
   it("preserves every existing snake_case to camelCase field mapping", () => {
     const result = transformNodes([
       {
