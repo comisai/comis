@@ -12,6 +12,9 @@ import {
   summaryLanguageMismatchEventToRow,
   generationQualityEventToRow,
   pipelineAuthoredEventToRow,
+  sandboxDowngradeRefusedEventToRow,
+  deliveryDeadletteredEventToRow,
+  nodeBudgetExceededEventToRow,
   setupObsPersistence,
 } from "./obs-persistence-wiring.js";
 import type { EventMap } from "@comis/core";
@@ -693,6 +696,142 @@ describe("pipelineAuthoredEventToRow", () => {
 });
 
 // ---------------------------------------------------------------------------
+// ORCH-OBS (orchestration-observability) — three daemon-side orchestration events
+// that were DARK (no fleet/trajectory surface): a fail-closed sandbox-downgrade
+// spawn refusal (P0-C), a dead-lettered sub-agent delivery (P0-B), and a per-node
+// token-budget breach (P0-A). Each maps to a `health_signal` DiagnosticRow (the
+// GENQ-01/TELEM-01 clone) carrying CLOSED enums/labels ONLY — never a path/host/
+// credential (sandbox), an announcement body/error (delivery), or a task/output
+// (budget). RED: the three mappers do not exist yet (undefined import).
+// ---------------------------------------------------------------------------
+
+describe("sandboxDowngradeRefusedEventToRow", () => {
+  it("maps a security:sandbox_downgrade_refused payload to a warning health_signal row (closed dimension labels only)", () => {
+    const row = sandboxDowngradeRefusedEventToRow({
+      timestamp: 7000,
+      parentAgentId: "researcher",
+      childAgentId: "unconfined-child",
+      violatedDimensions: ["exec"],
+      parentPosture: { exec: "always" },
+      childPosture: { exec: "never" },
+    });
+
+    expect(row.timestamp).toBe(7000);
+    expect(row.category).toBe("health_signal");
+    expect(row.severity).toBe("warning");
+    // Attributed to the SPAWNER (the agent that attempted the less-confined child).
+    expect(row.agentId).toBe("researcher");
+    expect(row.message).toBe("security:sandbox_downgrade_refused");
+    expect(row.traceId).toBeUndefined();
+    // Spawn chokepoint — no session.
+    expect(row.sessionKey).toBeUndefined();
+
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(details.signal).toBe("sandbox_downgrade_refused");
+    expect(details.dimensions).toEqual(["exec"]);
+  });
+
+  it("NO-LEAK (§2.7): carries ONLY the closed signal + violated-dimension labels — no path/host/uid/credential, no posture VALUES that leak topology", () => {
+    const row = sandboxDowngradeRefusedEventToRow({
+      timestamp: 1,
+      parentAgentId: "p",
+      childAgentId: "c",
+      violatedDimensions: ["exec", "network"],
+      parentPosture: { exec: "always", filesystem: "workspace", network: "none" },
+      childPosture: { exec: "never", filesystem: "full", network: "full" },
+    });
+    const serialized = JSON.stringify(row);
+    // The fail-closed labels (always/never/workspace/full) are NOT echoed into the row —
+    // only the violated-dimension NAMES cross over.
+    expect(serialized).not.toMatch(/workspace|"full"|listed-hosts|dedicated|daemon/);
+    expect(Object.keys(JSON.parse(row.details ?? "{}"))).toEqual(["signal", "dimensions"]);
+    expect(JSON.parse(row.details ?? "{}").dimensions).toEqual(["exec", "network"]);
+  });
+});
+
+describe("deliveryDeadletteredEventToRow", () => {
+  it("maps a subagent:delivery_deadlettered payload to a warning health_signal row (channelType + transient tag only)", () => {
+    const row = deliveryDeadletteredEventToRow({
+      runId: "run-abc",
+      channelType: "telegram",
+      attempt: 3,
+      transient: true,
+      timestamp: 8000,
+    });
+
+    expect(row.timestamp).toBe(8000);
+    expect(row.category).toBe("health_signal");
+    expect(row.severity).toBe("warning");
+    expect(row.message).toBe("subagent:delivery_deadlettered");
+    expect(row.traceId).toBeUndefined();
+
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(details.signal).toBe("delivery_deadlettered");
+    expect(details.channelType).toBe("telegram");
+    expect(details.transient).toBe(true);
+  });
+
+  it("NO-LEAK (§2.7): never carries the runId, the announcement body, or the error string", () => {
+    const row = deliveryDeadletteredEventToRow({
+      runId: "secret-run-id-12345",
+      channelType: "discord",
+      attempt: 0,
+      transient: false,
+      timestamp: 1,
+    });
+    const serialized = JSON.stringify(row);
+    expect(serialized).not.toContain("secret-run-id-12345");
+    expect(Object.keys(JSON.parse(row.details ?? "{}"))).toEqual(["signal", "channelType", "transient"]);
+    // A permanent dead-letter (immediate, transient:false) is recorded honestly.
+    expect(JSON.parse(row.details ?? "{}").transient).toBe(false);
+  });
+});
+
+describe("nodeBudgetExceededEventToRow", () => {
+  it("maps a subagent:budget_exceeded payload to a warning health_signal row (capSource label only)", () => {
+    const row = nodeBudgetExceededEventToRow({
+      graphId: "g1",
+      nodeId: "greedy",
+      agentId: "researcher",
+      tokenBudget: 5000,
+      tokensUsed: 17770,
+      capSource: "node",
+      timestamp: 9000,
+    });
+
+    expect(row.timestamp).toBe(9000);
+    expect(row.category).toBe("health_signal");
+    expect(row.severity).toBe("warning");
+    expect(row.agentId).toBe("researcher");
+    expect(row.message).toBe("subagent:budget_exceeded");
+    expect(row.traceId).toBeUndefined();
+
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(details.signal).toBe("node_budget_exceeded");
+    expect(details.capSource).toBe("node");
+  });
+
+  it("carries the capSource verbatim for each of the three precedence sources (closed enum)", () => {
+    for (const capSource of ["node", "operator-default", "inherit-share"] as const) {
+      const row = nodeBudgetExceededEventToRow({
+        graphId: "g", nodeId: "n", agentId: "a", tokenBudget: 1, tokensUsed: 2, capSource, timestamp: 1,
+      });
+      expect(JSON.parse(row.details ?? "{}").capSource).toBe(capSource);
+    }
+  });
+
+  it("NO-LEAK (§2.7): the row carries the capSource label ONLY — never the per-node token NUMBERS (those live on the node error + WARN), no task/output", () => {
+    const row = nodeBudgetExceededEventToRow({
+      graphId: "g", nodeId: "n", agentId: "a", tokenBudget: 5000, tokensUsed: 17770, capSource: "inherit-share", timestamp: 1,
+    });
+    expect(Object.keys(JSON.parse(row.details ?? "{}"))).toEqual(["signal", "capSource"]);
+    // The aggregate fleet count never needs the raw spend — those are per-incident (explain).
+    const serialized = JSON.stringify(row.details);
+    expect(serialized).not.toContain("17770");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // setupObsPersistence
 // ---------------------------------------------------------------------------
 
@@ -792,6 +931,10 @@ describe("setupObsPersistence", () => {
     // TELEM-01 (Plan 173-03): the pipeline-authoring health_signal subscription
     // (beside the GENQ-01 .on).
     expect(eventBus.on).toHaveBeenCalledWith("pipeline:authored", expect.any(Function));
+    // ORCH-OBS: the three previously-dark daemon-side orchestration subscriptions.
+    expect(eventBus.on).toHaveBeenCalledWith("security:sandbox_downgrade_refused", expect.any(Function));
+    expect(eventBus.on).toHaveBeenCalledWith("subagent:delivery_deadlettered", expect.any(Function));
+    expect(eventBus.on).toHaveBeenCalledWith("subagent:budget_exceeded", expect.any(Function));
 
     // Cleanup
     clearInterval(result.snapshotTimer);
@@ -838,16 +981,29 @@ describe("setupObsPersistence", () => {
     eventBus.emit("pipeline:authored", {
       action: "define", capabilityClass: "small", schemaValid: false, repaired: false, sessionKey: "sk-1", timestamp: 1005,
     });
+    // g. ORCH-OBS: a fail-closed sandbox-downgrade spawn refusal.
+    eventBus.emit("security:sandbox_downgrade_refused", {
+      timestamp: 1006, parentAgentId: "researcher", childAgentId: "unconfined-child",
+      violatedDimensions: ["exec"], parentPosture: { exec: "always" }, childPosture: { exec: "never" },
+    });
+    // h. ORCH-OBS: a dead-lettered sub-agent delivery.
+    eventBus.emit("subagent:delivery_deadlettered", {
+      runId: "run-x", channelType: "telegram", attempt: 3, transient: true, timestamp: 1007,
+    });
+    // i. ORCH-OBS: a per-node token-budget breach.
+    eventBus.emit("subagent:budget_exceeded", {
+      graphId: "g", nodeId: "greedy", agentId: "researcher", tokenBudget: 5000, tokensUsed: 17770, capSource: "node", timestamp: 1008,
+    });
 
     // Flush the diagnostic buffer.
     vi.advanceTimersByTime(500);
 
-    // Exactly one health_signal row per event (6 total), each with the right message.
+    // Exactly one health_signal row per event (9 total), each with the right message.
     const calls = (obsStore.insertDiagnostic as ReturnType<typeof vi.fn>).mock.calls;
     const healthRows = calls
       .map((c) => c[0] as { category?: string; message?: string; details?: string })
       .filter((r) => r.category === "health_signal");
-    expect(healthRows).toHaveLength(6);
+    expect(healthRows).toHaveLength(9);
     const messages = healthRows.map((r) => r.message).sort();
     expect(messages).toEqual([
       "context:dag_degraded",
@@ -856,10 +1012,17 @@ describe("setupObsPersistence", () => {
       "health:budget_exceeded",
       "mcp:server:reconnect_failed",
       "pipeline:authored",
+      "security:sandbox_downgrade_refused",
+      "subagent:budget_exceeded",
+      "subagent:delivery_deadlettered",
     ]);
     // The pipeline-authoring row carries the closed signal label.
     const pipelineRow = healthRows.find((r) => r.message === "pipeline:authored")!;
     expect(JSON.parse(pipelineRow.details ?? "{}").signal).toBe("pipeline_authoring");
+    // The three ORCH-OBS rows carry their closed signal labels.
+    expect(JSON.parse(healthRows.find((r) => r.message === "security:sandbox_downgrade_refused")!.details ?? "{}").signal).toBe("sandbox_downgrade_refused");
+    expect(JSON.parse(healthRows.find((r) => r.message === "subagent:delivery_deadlettered")!.details ?? "{}").signal).toBe("delivery_deadlettered");
+    expect(JSON.parse(healthRows.find((r) => r.message === "subagent:budget_exceeded")!.details ?? "{}").signal).toBe("node_budget_exceeded");
 
     // The MCP row never carries the error body (bounded payload).
     const mcpRow = healthRows.find((r) => r.message === "mcp:server:reconnect_failed")!;
