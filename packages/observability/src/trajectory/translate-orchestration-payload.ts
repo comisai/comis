@@ -18,12 +18,18 @@
  * @module
  */
 
-/** The four authoring / sub-agent orchestration EventBus event names the bridge maps. */
+/** The authoring / sub-agent orchestration EventBus event names the bridge maps. */
 export type OrchestrationBridgedEventName =
   | "pipeline:authored"
   | "graph:repaired"
   | "graph:synthesized_from_intent"
-  | "subagent:steered";
+  | "subagent:steered"
+  // ORCH-OBS (orchestration-observability): three previously-dark sub-agent-lifecycle
+  // events bridged for per-session `comis explain` visibility (the subagent:steered
+  // daemon-side precedent). Content-free: closed labels/ids/numbers ONLY.
+  | "security:sandbox_downgrade_refused"
+  | "subagent:delivery_deadlettered"
+  | "subagent:budget_exceeded";
 
 /**
  * Translate a v2.27 authoring / orchestration EventBus payload into the
@@ -50,6 +56,26 @@ export function translateOrchestrationPayload(
     case "subagent:steered":
       // STEER-01 (175): the steered runId + the closed-union mode (steer|followup) ONLY — NEVER the steer message body (the highest-risk leak); agentId/timestamp are envelope-only and stripped (the graph:repaired precedent).
       return { runId: payload.runId, mode: payload.mode };
+
+    case "security:sandbox_downgrade_refused":
+      // ORCH-OBS (SANDBOX-02): the violated sandbox DIMENSION labels ONLY (exec/filesystem/
+      // network/uid) — NEVER the postures' fail-closed values or any path/host/uid-number
+      // that would leak the operator's sandbox topology (§2.7). parent/child agent ids +
+      // timestamp are envelope-only and stripped.
+      return { dimensions: payload.violatedDimensions };
+
+    case "subagent:delivery_deadlettered":
+      // ORCH-OBS (DELIVERY-02): the dropped run id + the closed channelType + the transient
+      // (retries-exhausted vs immediate-permanent) tag ONLY — NEVER the announcement body or
+      // the error string (§2.7). timestamp envelope-only.
+      return { runId: payload.runId, channelType: payload.channelType, transient: payload.transient };
+
+    case "subagent:budget_exceeded":
+      // ORCH-OBS (BUDGET-03): the per-incident breach view for `comis explain` — graphId/
+      // nodeId ids + the closed capSource + the two token NUMBERS (counts, §2.7-safe; the
+      // explain view DOES want them, unlike the fleet aggregate) — NEVER a task or output.
+      // agentId/timestamp envelope-only.
+      return { graphId: payload.graphId, nodeId: payload.nodeId, capSource: payload.capSource, tokenBudget: payload.tokenBudget, tokensUsed: payload.tokensUsed };
 
     default: {
       // Exhaustiveness — the switch covers every OrchestrationBridgedEventName.

@@ -35,7 +35,11 @@ import { gzipSync } from "node:zlib";
 // reset_conversation runtimeSessionDestroyed, recall_trace tracingEnabled +
 // hint) pushed minified to 122,032 — bumped with headroom; gzipped stays
 // far under its own budget.
-export const BUDGET_MINIFIED_BYTES = 126_000;
+// 2026-06-19: ORCH-OBS nodeBudgetBreaches[] on the obs.explain IncidentReport
+// (+380 B → 126,225) overflowed the prior 126,000. Bumped to 127,000 with
+// headroom; the addition is bounded and gzip-friendly (gzipped total 12,575
+// stays far under the 38 KB gzipped wire budget).
+export const BUDGET_MINIFIED_BYTES = 127_000;
 
 /** Budget: 38 KB gzipped. */
 export const BUDGET_GZIPPED_BYTES = 38_912;

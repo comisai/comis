@@ -368,6 +368,47 @@ describe("toIncidentSignals — structured event shape (production)", () => {
   });
 });
 
+// ORCH-OBS (orchestration-observability): the subagent.budget_exceeded fold —
+// per-node token-budget breaches (BUDGET-03) reconstructed into the per-incident
+// nodeBudgetBreaches view (nodeId + capSource + the two token numbers) the
+// IncidentReport surfaces, so a breach is diagnosable from the report alone.
+describe("toIncidentSignals — subagent.budget_exceeded fold (ORCH-OBS)", () => {
+  it("folds a budget breach into nodeBudgetBreaches with the capSource + numbers", () => {
+    const s = toIncidentSignals([
+      {
+        traceSchema: "comis-trajectory",
+        type: "subagent.budget_exceeded",
+        seq: 5,
+        data: { graphId: "g1", nodeId: "greedy", capSource: "node", tokenBudget: 5000, tokensUsed: 17770 },
+      },
+    ]);
+    expect(s.nodeBudgetBreaches).toHaveLength(1);
+    expect(s.nodeBudgetBreaches[0]).toMatchObject({
+      nodeId: "greedy",
+      capSource: "node",
+      tokenBudget: 5000,
+      tokensUsed: 17770,
+    });
+  });
+
+  it("preserves each of the three precedence cap sources; an unrecognized one folds to 'unknown'", () => {
+    const s = toIncidentSignals([
+      { traceSchema: "comis-trajectory", type: "subagent.budget_exceeded", seq: 1, data: { nodeId: "a", capSource: "node", tokenBudget: 1, tokensUsed: 2 } },
+      { traceSchema: "comis-trajectory", type: "subagent.budget_exceeded", seq: 2, data: { nodeId: "b", capSource: "operator-default", tokenBudget: 1, tokensUsed: 2 } },
+      { traceSchema: "comis-trajectory", type: "subagent.budget_exceeded", seq: 3, data: { nodeId: "c", capSource: "inherit-share", tokenBudget: 1, tokensUsed: 2 } },
+      { traceSchema: "comis-trajectory", type: "subagent.budget_exceeded", seq: 4, data: { nodeId: "d", capSource: "bogus", tokenBudget: 1, tokensUsed: 2 } },
+    ]);
+    expect(s.nodeBudgetBreaches.map((b) => b.capSource)).toEqual(["node", "operator-default", "inherit-share", "unknown"]);
+  });
+
+  it("ignores a budget-breach record with no nodeId (defensive)", () => {
+    const s = toIncidentSignals([
+      { traceSchema: "comis-trajectory", type: "subagent.budget_exceeded", seq: 1, data: { capSource: "node" } },
+    ]);
+    expect(s.nodeBudgetBreaches).toHaveLength(0);
+  });
+});
+
 describe("toIncidentSignals — offload pointer edge cases", () => {
   it("collapses an absolute host path that does not pass through .comis to <offloaded>", () => {
     const s = toIncidentSignals([

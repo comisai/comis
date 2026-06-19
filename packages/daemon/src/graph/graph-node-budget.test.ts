@@ -176,6 +176,31 @@ describe("applyNodeBudgetBreach", () => {
       applyNodeBudgetBreach(deps, { subAgentTokenBudget: null }, gs, "n1", 5_000); // share = 3_000
       expect(findBreach(deps)![1]).toMatchObject({ capSource: "inherit-share", tokenBudget: 3_000 });
     });
+
+    // ORCH-OBS: the NODE ERROR STRING (the only surface graph.status + the
+    // IncidentReport failure list see — the WARN/event are not on those paths) must
+    // ALSO name the cap source, so an operator drilling a failed node learns WHICH
+    // knob bound it without grepping the WARN log. The numbers stay (spend > budget).
+    it("the node error string names the cap source for each precedence source", () => {
+      // node
+      let markNodeFailed = vi.fn(() => ({ ok: true, value: { skipped: [], newlyReady: [], retrying: [] } }));
+      let gs = makeGs({ nodes: [{ nodeId: "n1", tokenBudget: 1_000 }], markNodeFailed, graphBudget: { maxTokens: 9_000 } });
+      applyNodeBudgetBreach(makeDeps(), { subAgentTokenBudget: 4_000 }, gs, "n1", 5_000);
+      expect(markNodeFailed.mock.calls[0]![1]).toMatch(/5000 > 1000/);
+      expect(markNodeFailed.mock.calls[0]![1]).toMatch(/cap source: node/);
+
+      // operator-default
+      markNodeFailed = vi.fn(() => ({ ok: true, value: { skipped: [], newlyReady: [], retrying: [] } }));
+      gs = makeGs({ nodes: [{ nodeId: "n1" }], markNodeFailed, graphBudget: { maxTokens: 9_000 } });
+      applyNodeBudgetBreach(makeDeps(), { subAgentTokenBudget: 2_000 }, gs, "n1", 5_000);
+      expect(markNodeFailed.mock.calls[0]![1]).toMatch(/cap source: operator-default/);
+
+      // inherit-share
+      markNodeFailed = vi.fn(() => ({ ok: true, value: { skipped: [], newlyReady: [], retrying: [] } }));
+      gs = makeGs({ nodes: [{ nodeId: "n1" }, { nodeId: "n2" }], markNodeFailed, graphBudget: { maxTokens: 6_000 } });
+      applyNodeBudgetBreach(makeDeps(), { subAgentTokenBudget: null }, gs, "n1", 5_000);
+      expect(markNodeFailed.mock.calls[0]![1]).toMatch(/cap source: inherit-share/);
+    });
   });
 });
 

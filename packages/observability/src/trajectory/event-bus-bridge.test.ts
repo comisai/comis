@@ -1582,6 +1582,32 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       mode: "steer",
       timestamp: 0,
     },
+    // ORCH-OBS: the three sub-agent-lifecycle events — the correlation invariant
+    // must hold (agent ids / timestamp never leak into data).
+    "security:sandbox_downgrade_refused": {
+      parentAgentId: "researcher",
+      childAgentId: "unconfined-child",
+      violatedDimensions: ["exec"],
+      parentPosture: { exec: "always" },
+      childPosture: { exec: "never" },
+      timestamp: 0,
+    },
+    "subagent:delivery_deadlettered": {
+      runId: "run-dl",
+      channelType: "telegram",
+      attempt: 3,
+      transient: true,
+      timestamp: 0,
+    },
+    "subagent:budget_exceeded": {
+      graphId: "g1",
+      nodeId: "greedy",
+      agentId: "researcher",
+      tokenBudget: 5000,
+      tokensUsed: 17770,
+      capSource: "node",
+      timestamp: 0,
+    },
   };
 
   it.each(Object.keys(TRAJECTORY_BRIDGE_MAPPING))(
@@ -1838,6 +1864,97 @@ describe("TRAJECTORY_BRIDGE_MAPPING -- subagent:steered (STEER-01, operator visi
     expect(recorder.calls).toHaveLength(1);
     const data = recorder.calls[0]!.data as Record<string, unknown>;
     expect(data.mode).toBe("followup");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ORCH-OBS (orchestration-observability): three previously-dark sub-agent-lifecycle
+// events bridged for per-session `comis explain` visibility (the subagent:steered
+// daemon-side precedent). Content-free: closed labels/ids/numbers ONLY — never a
+// path/host/uid value (sandbox), an announcement/error body (delivery), or a task
+// (budget). RED: the three mapping keys + trajectory types + translator arms are absent.
+// ---------------------------------------------------------------------------
+
+describe("TRAJECTORY_BRIDGE_MAPPING -- ORCH-OBS sub-agent lifecycle (operator visibility)", () => {
+  it("maps the three events to their reserved trajectory types (arch closure)", () => {
+    expect(TRAJECTORY_BRIDGE_MAPPING["security:sandbox_downgrade_refused"]).toBe("security.sandbox_downgrade_refused");
+    expect(TRAJECTORY_BRIDGE_MAPPING["subagent:delivery_deadlettered"]).toBe("subagent.delivery_deadlettered");
+    expect(TRAJECTORY_BRIDGE_MAPPING["subagent:budget_exceeded"]).toBe("subagent.budget_exceeded");
+    const allTypes = new Set<string>(TRAJECTORY_EVENT_TYPES as readonly string[]);
+    expect(allTypes.has("security.sandbox_downgrade_refused")).toBe(true);
+    expect(allTypes.has("subagent.delivery_deadlettered")).toBe(true);
+    expect(allTypes.has("subagent.budget_exceeded")).toBe(true);
+  });
+
+  it("translates security:sandbox_downgrade_refused to dimensions ONLY (no posture values / path / host / uid topology, no agent ids)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("security:sandbox_downgrade_refused", {
+      timestamp: 1000,
+      parentAgentId: "researcher",
+      childAgentId: "unconfined-child",
+      violatedDimensions: ["exec", "network"],
+      parentPosture: { exec: "always", filesystem: "workspace", network: "none" },
+      childPosture: { exec: "never", filesystem: "full", network: "full" },
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0]!.type).toBe("security.sandbox_downgrade_refused");
+    const data = recorder.calls[0]!.data as Record<string, unknown>;
+    expect(data.dimensions).toEqual(["exec", "network"]);
+    // The fail-closed posture VALUES + the agent ids never cross (topology + §2.7).
+    const serialized = JSON.stringify(data);
+    expect(serialized).not.toMatch(/workspace|"full"|"none"|researcher|unconfined-child/);
+    expect(data.parentPosture).toBeUndefined();
+    expect(data.childPosture).toBeUndefined();
+    expect(data.parentAgentId).toBeUndefined();
+  });
+
+  it("translates subagent:delivery_deadlettered to runId/channelType/transient ONLY (no announcement/error body)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("subagent:delivery_deadlettered", {
+      runId: "run-dl",
+      channelType: "telegram",
+      attempt: 3,
+      transient: true,
+      timestamp: 1000,
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0]!.type).toBe("subagent.delivery_deadlettered");
+    const data = recorder.calls[0]!.data as Record<string, unknown>;
+    expect(data).toEqual({ runId: "run-dl", channelType: "telegram", transient: true });
+    for (const forbidden of ["message", "text", "body", "content", "error"]) {
+      expect(data[forbidden]).toBeUndefined();
+    }
+  });
+
+  it("translates subagent:budget_exceeded to the per-incident breach view (graphId/nodeId/capSource/tokenBudget/tokensUsed — explain wants the numbers)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("subagent:budget_exceeded", {
+      graphId: "g1",
+      nodeId: "greedy",
+      agentId: "researcher",
+      tokenBudget: 5000,
+      tokensUsed: 17770,
+      capSource: "node",
+      timestamp: 1000,
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0]!.type).toBe("subagent.budget_exceeded");
+    const data = recorder.calls[0]!.data as Record<string, unknown>;
+    expect(data).toEqual({ graphId: "g1", nodeId: "greedy", capSource: "node", tokenBudget: 5000, tokensUsed: 17770 });
+    // agentId is envelope-only (the steered precedent).
+    expect(data.agentId).toBeUndefined();
   });
 });
 
@@ -3444,7 +3561,14 @@ describe("health:budget_exceeded entry (bridge entry count guard)", () => {
     //   Daemon-emitted → outside the agent/orchestrator closure-gate scan, so no
     //   EVENTS_NOT_TRAJECTORY_MAPPED entry is needed; the unmapped subagent:budget_exceeded
     //   is the precedent. The mapping is purely for trajectory recording).
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(101);
+    // + security:sandbox_downgrade_refused + subagent:delivery_deadlettered +
+    //   subagent:budget_exceeded (ORCH-OBS orchestration-observability — APPEND-ONLY beside
+    //   subagent:steered; three previously-dark sub-agent-lifecycle events bridged for
+    //   per-session `comis explain` visibility. Content-free: closed dimension/channel/
+    //   capSource labels + ids/numbers ONLY, NEVER a path/host/uid value, an announcement
+    //   body, or a task — §2.7. The budget_exceeded entry retires the "unmapped precedent"
+    //   note above. These ALSO feed the fleet lens via obs-persistence-wiring).
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(104);
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {

@@ -20,6 +20,20 @@
  */
 import type { DiagnosticRow } from "@comis/memory";
 import type { PipelineAuthoringAggregate } from "@comis/observability";
+import {
+  chimericModelFromRow,
+  DEDICATED_SCRIPT_SIGNALS,
+  deliveryDeadletteredFromRow,
+  flaggedPostureKeys,
+  healthSignalLabel,
+  multilingualFromRow,
+  nodeBudgetExceededFromRow,
+  pipelineAuthoringFromRow,
+  sandboxDowngradeFromRow,
+  scriptZeroHitFromRow,
+  servedBelowConfiguredFromRow,
+  voiceDegradedFromRow,
+} from "./fleet-findings-extractors.js";
 
 /** One report finding. Shape-identical to `FleetHealthReport.findings[number]`. */
 export interface Finding {
@@ -27,180 +41,6 @@ export interface Finding {
   detail: string;
   count: number;
   hint: string;
-}
-
-/**
- * The closed `signal` label a Phase-160 `health_signal` row carries in its
- * `details` JSON (`lcd_divergence` / `alert_budget` / `mcp_reconnect_failed`).
- * Parsed defensively from the untrusted row — a missing/malformed label folds
- * into the generic `unknown` bucket (soft-fail, never throw, never a raw body).
- */
-function healthSignalLabel(row: DiagnosticRow): string {
-  if (row.details === undefined) return "unknown";
-  try {
-    const parsed = JSON.parse(row.details) as { signal?: unknown };
-    return typeof parsed.signal === "string" && parsed.signal.length > 0 ? parsed.signal : "unknown";
-  } catch {
-    return "unknown"; // malformed details JSON — counts only, no body.
-  }
-}
-
-/** KNOB-03: servedBelowConfiguredCount from a config_posture row's details JSON.
- *  Defensive parse — malformed/missing folds to 0 (soft-fail, counts only;
- *  the healthSignalLabel clone, T-176-13). */
-function servedBelowConfiguredFromRow(row: DiagnosticRow): number {
-  if (row.details === undefined) return 0;
-  try {
-    const parsed = JSON.parse(row.details) as { servedBelowConfiguredCount?: unknown };
-    const n = parsed.servedBelowConfiguredCount;
-    return typeof n === "number" && Number.isFinite(n) && n > 0 ? n : 0;
-  } catch {
-    return 0;
-  }
-}
-
-/** RESOLVE-01: chimericModelCount from a config_posture row's details JSON.
- *  Defensive parse — malformed/missing folds to 0 (the servedBelowConfigured clone). */
-function chimericModelFromRow(row: DiagnosticRow): number {
-  if (row.details === undefined) return 0;
-  try {
-    const parsed = JSON.parse(row.details) as { chimericModelCount?: unknown };
-    const n = parsed.chimericModelCount;
-    return typeof n === "number" && Number.isFinite(n) && n > 0 ? n : 0;
-  } catch {
-    return 0;
-  }
-}
-
-/** T1.3 (F6): the SPECIFIC flagged config keys from a config_posture row — CLOSED labels
- *  only (never raw details / secret values, per the H1 no-body rule), so a fleet finding
- *  NAMES which knob is off instead of "the flagged config keys" (the live friction was
- *  grepping daemon.log to learn it was gateway.tls + CANARY_SECRET). served-below +
- *  chimeric have dedicated findings, so they are NOT repeated here. Malformed folds to []. */
-function flaggedPostureKeys(row: DiagnosticRow): string[] {
-  if (row.details === undefined) return [];
-  try {
-    const d = JSON.parse(row.details) as {
-      tlsOff?: unknown;
-      canaryFallbackActive?: unknown;
-      strandedFindings?: unknown;
-    };
-    const keys: string[] = [];
-    if (d.tlsOff === true) keys.push("gateway.tls (off)");
-    if (d.canaryFallbackActive === true) keys.push("CANARY_SECRET (unset)");
-    if (Array.isArray(d.strandedFindings) && d.strandedFindings.length > 0) {
-      keys.push(`stranded secrets (${d.strandedFindings.length})`);
-    }
-    return keys;
-  } catch {
-    return [];
-  }
-}
-
-/** A single advisory multilingual flag from a model_health row. `undefined`
- *  means the key was absent or not a recognized value (omitted, no advisory). */
-type MultilingualFlag = boolean | "unknown" | undefined;
-
-/** EMB-01: the two advisory multilingual flags from a model_health row's details
- *  JSON. Defensive parse cloning servedBelowConfiguredFromRow — malformed/missing
- *  details folds to `{}` (soft-fail, never throws, NEVER echoes a body). A field
- *  is read only when it is a boolean or the exact string "unknown", else omitted
- *  (an old row that predates EMB-01 lacks the keys -> no advisory). */
-function multilingualFromRow(row: DiagnosticRow): {
-  embedding: MultilingualFlag;
-  reranker: MultilingualFlag;
-} {
-  if (row.details === undefined) return { embedding: undefined, reranker: undefined };
-  try {
-    const parsed = JSON.parse(row.details) as {
-      embeddingMultilingual?: unknown;
-      rerankerMultilingual?: unknown;
-    };
-    const coerce = (v: unknown): MultilingualFlag =>
-      typeof v === "boolean" || v === "unknown" ? v : undefined;
-    return {
-      embedding: coerce(parsed.embeddingMultilingual),
-      reranker: coerce(parsed.rerankerMultilingual),
-    };
-  } catch {
-    return { embedding: undefined, reranker: undefined };
-  }
-}
-
-/** OBS-01 (Phase 180): health_signal labels that get a DEDICATED fleet finding
- *  (the KNOB-03 precedent) and are therefore EXCLUDED from the generic
- *  `health_signal:<label>` rollup below — listing one here without adding its
- *  dedicated branch would silently drop it, so the two move together. */
-const DEDICATED_SCRIPT_SIGNALS: ReadonlySet<string> = new Set([
-  "script_zero_hit",
-  "summary_language_mismatch",
-  "generation_quality",
-  // OBS-04 (Phase 196): voice_degraded gets the dedicated `voice_health` finding
-  // below — excluded here so it is not ALSO counted in the generic
-  // `health_signal:voice_degraded` rollup (the double-report KNOB-03 guards against).
-  "voice_degraded",
-  // TELEM-01 (Plan 173-03): pipeline_authoring gets the dedicated finding below
-  // (the small-tier invalid rate). Excluded here so it is NOT also rolled into the
-  // generic `health_signal:pipeline_authoring` count — the finding + this entry
-  // MOVE TOGETHER (listing it here without the dedicated branch silently drops it).
-  "pipeline_authoring",
-]);
-
-/** OBS-04 (Phase 196): the closed domain `errorKind` (an `SttErrorKind`) carried
- *  on a `voice_degraded` health_signal row's details JSON, parsed defensively
- *  (the `scriptZeroHitFromRow` clone). Returns `null` when the row is not a
- *  voice_degraded signal; returns `{ errorKind: undefined }` when it IS voice but
- *  carries no/blank/non-string errorKind (an honest absence — the finding then
- *  renders a count-only detail). Malformed/missing details JSON folds to `null`
- *  (the row is ignored; counts only, no body ever surfaces, never throws). */
-function voiceDegradedFromRow(row: DiagnosticRow): { errorKind: string | undefined } | null {
-  if (row.details === undefined) return null;
-  try {
-    const parsed = JSON.parse(row.details) as { signal?: unknown; errorKind?: unknown };
-    if (parsed.signal !== "voice_degraded") return null;
-    const errorKind =
-      typeof parsed.errorKind === "string" && parsed.errorKind.length > 0 ? parsed.errorKind : undefined;
-    return { errorKind };
-  } catch {
-    return null; // malformed details JSON — counts only, no body.
-  }
-}
-
-/** OBS-01: `{scriptClass, lane}` from a script_zero_hit row's details JSON.
- *  Defensive parse cloning healthSignalLabel's style — malformed/missing folds
- *  to null (the row is then ignored by the dedicated grouping; counts only, no
- *  body ever surfaces). Returns the closed enums verbatim (untrusted-row safe:
- *  they are only ever rendered into a count + a script=/lane= label). */
-function scriptZeroHitFromRow(row: DiagnosticRow): { scriptClass: string; lane: string } | null {
-  if (row.details === undefined) return null;
-  try {
-    const parsed = JSON.parse(row.details) as { signal?: unknown; scriptClass?: unknown; lane?: unknown };
-    if (parsed.signal !== "script_zero_hit") return null;
-    const scriptClass = typeof parsed.scriptClass === "string" && parsed.scriptClass.length > 0 ? parsed.scriptClass : "unknown";
-    const lane = typeof parsed.lane === "string" && parsed.lane.length > 0 ? parsed.lane : "unknown";
-    return { scriptClass, lane };
-  } catch {
-    return null;
-  }
-}
-
-/** TELEM-01 (Plan 173-03): `{tier, schemaValid}` from a pipeline_authoring row's
- *  details JSON. Defensive parse cloning `scriptZeroHitFromRow` — a non-pipeline /
- *  malformed / missing row folds to `null` (the row is then ignored by both the
- *  reducer and the dedicated finding; counts only, no body ever surfaces, never
- *  throws). Returns the closed `tier` enum verbatim (untrusted-row safe: it is only
- *  rendered into a count, never echoed as a body). */
-function pipelineAuthoringFromRow(row: DiagnosticRow): { tier: string; schemaValid: boolean } | null {
-  if (row.details === undefined) return null;
-  try {
-    const parsed = JSON.parse(row.details) as { signal?: unknown; tier?: unknown; schemaValid?: unknown };
-    if (parsed.signal !== "pipeline_authoring") return null;
-    const tier = typeof parsed.tier === "string" && parsed.tier.length > 0 ? parsed.tier : "unknown";
-    const schemaValid = parsed.schemaValid === true;
-    return { tier, schemaValid };
-  } catch {
-    return null; // malformed details JSON — counts only, no body.
-  }
 }
 
 /**
@@ -373,6 +213,90 @@ export function buildFindings(
       detail: `${smallInvalid}/${smallTotal} small-tier pipeline authorings invalid (rate ${pct}%)`,
       count: smallInvalid,
       hint: "small/local models are failing to author valid pipeline DAGs; this is the Phase-174 (small-model-authorable DAGs) gate metric — review before enabling orchestration.authoring.*",
+    });
+  }
+
+  // ORCH-OBS (orchestration-observability): dedicated sandbox_downgrade_refused
+  // finding — the count of fail-closed sub-agent spawn refusals + the violated
+  // sandbox dimensions (closed enum labels). A spawn refusal is fail-closed working,
+  // but it means an agent was configured to spawn a LESS-confined child (a
+  // misconfiguration or an escalation attempt) — an operator must see it. Counts +
+  // closed dimension labels + a STATIC hint ONLY (never a path/host/uid value — the
+  // row never carried them). Zero-traffic guard (the voice_health if-pattern).
+  let sandboxRefusedCount = 0;
+  const sandboxDimCounts = new Map<string, number>();
+  for (const row of healthSignals) {
+    const parsed = sandboxDowngradeFromRow(row);
+    if (parsed === null) continue;
+    sandboxRefusedCount += 1;
+    for (const dim of parsed.dimensions) {
+      sandboxDimCounts.set(dim, (sandboxDimCounts.get(dim) ?? 0) + 1);
+    }
+  }
+  if (sandboxRefusedCount > 0) {
+    const dims = [...sandboxDimCounts.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([d]) => d);
+    findings.push({
+      code: "sandbox_downgrade_refused",
+      detail:
+        dims.length > 0
+          ? `${sandboxRefusedCount} sub-agent spawn(s) refused for sandbox downgrade (dimension(s): ${dims.join(", ")})`
+          : `${sandboxRefusedCount} sub-agent spawn(s) refused for sandbox downgrade`,
+      count: sandboxRefusedCount,
+      hint: "a sub-agent was configured LESS confined than its spawner on the named dimension(s); align the child's skills.execSandbox posture with (or stricter than) the parent's, or remove the offending agent-to-agent spawn. run `comis explain` on the spawner's session",
+    });
+  }
+
+  // ORCH-OBS: dedicated delivery_deadlettered finding — the count of sub-agent
+  // completions PERMANENTLY DROPPED (self-healing delivery exhausted retries, or an
+  // immediate permanent failure). This is a SILENT degradation today (the graph
+  // reports completed while a node's result never reached the parent). Counts + the
+  // transient/permanent split ONLY — never a runId, an announcement body, or an error
+  // string. Zero-traffic guard.
+  let deadletterCount = 0;
+  let deadletterTransient = 0;
+  for (const row of healthSignals) {
+    const parsed = deliveryDeadletteredFromRow(row);
+    if (parsed === null) continue;
+    deadletterCount += 1;
+    if (parsed.transient) deadletterTransient += 1;
+  }
+  if (deadletterCount > 0) {
+    const permanent = deadletterCount - deadletterTransient;
+    findings.push({
+      code: "delivery_deadlettered",
+      detail: `${deadletterCount} sub-agent completion(s) dead-lettered (dropped): ${deadletterTransient} after retries, ${permanent} permanent`,
+      count: deadletterCount,
+      hint: "a sub-agent result was permanently dropped before reaching its parent (the graph still reports completed); run `comis explain` on the affected session and check the delivery channel health / retry budget (security.agentToAgent.delivery)",
+    });
+  }
+
+  // ORCH-OBS: dedicated node_budget_exceeded finding — the count of per-node token
+  // budget breaches + the DOMINANT cap source (which knob bound the node). Counts +
+  // the closed capSource label + a hint NAMING all three knobs ONLY (the per-node
+  // token numbers are per-incident — on the node error string + the WARN + `comis
+  // explain`). Zero-traffic guard.
+  let budgetCount = 0;
+  const capSourceCounts = new Map<string, number>();
+  for (const row of healthSignals) {
+    const parsed = nodeBudgetExceededFromRow(row);
+    if (parsed === null) continue;
+    budgetCount += 1;
+    capSourceCounts.set(parsed.capSource, (capSourceCounts.get(parsed.capSource) ?? 0) + 1);
+  }
+  if (budgetCount > 0) {
+    const topSource = [...capSourceCounts.entries()].sort(
+      (a, b) => b[1] - a[1] || a[0].localeCompare(b[0]),
+    )[0]?.[0];
+    findings.push({
+      code: "node_budget_exceeded",
+      detail:
+        topSource !== undefined
+          ? `${budgetCount} node(s) exceeded their token budget (dominant cap source: ${topSource})`
+          : `${budgetCount} node(s) exceeded their token budget`,
+      count: budgetCount,
+      hint: "graph nodes are being cut off by their token budget; raise the binding knob — the node's own `tokenBudget`, the operator default `security.agentToAgent.tokenBudget`, or the graph `budget.maxTokens` (inherit-share). run `comis explain` for the per-node numbers",
     });
   }
 

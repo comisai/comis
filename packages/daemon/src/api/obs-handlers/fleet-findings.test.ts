@@ -538,3 +538,156 @@ describe("buildFindings — TELEM-01 pipeline_authoring finding", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// ORCH-OBS (orchestration-observability) — three dedicated fleet findings for the
+// previously-dark daemon-side orchestration health_signals. Each mirrors the
+// voice_health pattern: a closed `signal` label, a zero-traffic if-guard, counts +
+// closed labels ONLY (safe to paste), defensive parse. RED: none of the three arms
+// exist yet, so NO finding is produced — every assertion fails on the pre-patch code.
+// ---------------------------------------------------------------------------
+
+/** A `health_signal` row labelled `sandbox_downgrade_refused`, carrying the closed
+ *  violated-dimension labels. */
+function sandboxRefusedRow(ts: number, dimensions: string[]): DiagnosticRow {
+  return {
+    timestamp: ts,
+    category: "health_signal",
+    severity: "warning",
+    message: "security:sandbox_downgrade_refused",
+    details: JSON.stringify({ signal: "sandbox_downgrade_refused", dimensions }),
+  };
+}
+
+describe("buildFindings — ORCH-OBS sandbox_downgrade_refused finding", () => {
+  const CODE = "sandbox_downgrade_refused";
+
+  it("emits ONE finding with the refusal count + the violated dimensions named", () => {
+    const findings = buildFindings(
+      [sandboxRefusedRow(1_000, ["exec"]), sandboxRefusedRow(2_000, ["exec", "network"])],
+      [],
+      [],
+    );
+    const f = findings.filter((x) => x.code === CODE);
+    expect(f).toHaveLength(1);
+    expect(f[0]!.count).toBe(2);
+    expect(f[0]!.detail).toMatch(/2 sub-agent spawn\(s\) refused/);
+    // The dimensions an operator must reconcile are named (closed labels).
+    expect(f[0]!.detail).toMatch(/exec/);
+    // The hint points at the sandbox-posture knob.
+    expect(f[0]!.hint).toMatch(/execSandbox|sandbox|posture/i);
+  });
+
+  it("does NOT emit when there are zero sandbox_downgrade_refused rows (zero-traffic guard)", () => {
+    const findings = buildFindings(
+      [{ timestamp: 1, category: "health_signal", severity: "warning", message: "health_signal", details: JSON.stringify({ signal: "lcd_divergence" }) }],
+      [],
+      [],
+    );
+    expect(findings.some((x) => x.code === CODE)).toBe(false);
+  });
+
+  it("is SAFE TO PASTE + folds malformed details to no-throw", () => {
+    const malformed: DiagnosticRow = { timestamp: 1, category: "health_signal", severity: "warning", message: "x", details: "not json {" };
+    expect(() => buildFindings([malformed, sandboxRefusedRow(2, ["uid"])], [], [])).not.toThrow();
+    const f = buildFindings([sandboxRefusedRow(1, ["filesystem"])], [], []).find((x) => x.code === CODE)!;
+    for (const text of [f.detail, f.hint]) {
+      expect(text).not.toMatch(/https?:\/\//);
+      expect(text).not.toMatch(/Bearer|sk-/i);
+      expect(text).not.toMatch(/\/home\/|\/tmp\/|uid=\d/); // no path/host/uid-number topology
+    }
+  });
+});
+
+/** A `health_signal` row labelled `delivery_deadlettered`. */
+function deadletterRow(ts: number, channelType: string, transient: boolean): DiagnosticRow {
+  return {
+    timestamp: ts,
+    category: "health_signal",
+    severity: "warning",
+    message: "subagent:delivery_deadlettered",
+    details: JSON.stringify({ signal: "delivery_deadlettered", channelType, transient }),
+  };
+}
+
+describe("buildFindings — ORCH-OBS delivery_deadlettered finding", () => {
+  const CODE = "delivery_deadlettered";
+
+  it("emits ONE finding with the dropped count + the transient/permanent split", () => {
+    const findings = buildFindings(
+      [deadletterRow(1, "telegram", true), deadletterRow(2, "discord", true), deadletterRow(3, "slack", false)],
+      [],
+      [],
+    );
+    const f = findings.filter((x) => x.code === CODE);
+    expect(f).toHaveLength(1);
+    expect(f[0]!.count).toBe(3);
+    expect(f[0]!.detail).toMatch(/3 sub-agent completion\(s\) dead-lettered/);
+    // 2 after-retries (transient) + 1 permanent (immediate) split is named.
+    expect(f[0]!.detail).toMatch(/2 .*retr/i);
+    expect(f[0]!.detail).toMatch(/1 permanent/i);
+    expect(f[0]!.hint).toMatch(/comis explain|deliver/i);
+  });
+
+  it("does NOT emit on zero deadletter rows (zero-traffic guard)", () => {
+    const findings = buildFindings(
+      [{ timestamp: 1, category: "health_signal", severity: "warning", message: "h", details: JSON.stringify({ signal: "lcd_divergence" }) }],
+      [],
+      [],
+    );
+    expect(findings.some((x) => x.code === CODE)).toBe(false);
+  });
+
+  it("is SAFE TO PASTE — no runId, no announcement body, no error string", () => {
+    const f = buildFindings([deadletterRow(1, "telegram", false)], [], []).find((x) => x.code === CODE)!;
+    for (const text of [f.detail, f.hint]) {
+      expect(text).not.toMatch(/run-|Error:|at .*\.ts:/);
+      expect(text).not.toMatch(/https?:\/\//);
+    }
+  });
+});
+
+/** A `health_signal` row labelled `node_budget_exceeded`, carrying the closed capSource. */
+function budgetRow(ts: number, capSource: string): DiagnosticRow {
+  return {
+    timestamp: ts,
+    category: "health_signal",
+    severity: "warning",
+    message: "subagent:budget_exceeded",
+    details: JSON.stringify({ signal: "node_budget_exceeded", capSource }),
+  };
+}
+
+describe("buildFindings — ORCH-OBS node_budget_exceeded finding", () => {
+  const CODE = "node_budget_exceeded";
+
+  it("emits ONE finding with the breach count + the dominant cap source named", () => {
+    const findings = buildFindings(
+      [budgetRow(1, "node"), budgetRow(2, "node"), budgetRow(3, "inherit-share")],
+      [],
+      [],
+    );
+    const f = findings.filter((x) => x.code === CODE);
+    expect(f).toHaveLength(1);
+    expect(f[0]!.count).toBe(3);
+    expect(f[0]!.detail).toMatch(/3 node\(s\) exceeded their token budget/);
+    // The dominant capSource (node, 2 of 3) is named so the operator knows WHICH knob.
+    expect(f[0]!.detail).toMatch(/node/);
+    expect(f[0]!.hint).toMatch(/tokenBudget|budget\.maxTokens|agentToAgent\.tokenBudget/);
+  });
+
+  it("does NOT emit on zero budget rows (zero-traffic guard)", () => {
+    const findings = buildFindings([{ timestamp: 1, category: "health_signal", severity: "warning", message: "h", details: JSON.stringify({ signal: "lcd_divergence" }) }], [], []);
+    expect(findings.some((x) => x.code === CODE)).toBe(false);
+  });
+
+  it("is SAFE TO PASTE + folds malformed details (defensive parse)", () => {
+    const malformed: DiagnosticRow = { timestamp: 1, category: "health_signal", severity: "warning", message: "x", details: "not json {" };
+    expect(() => buildFindings([malformed, budgetRow(2, "operator-default")], [], [])).not.toThrow();
+    const f = buildFindings([budgetRow(1, "operator-default")], [], []).find((x) => x.code === CODE)!;
+    for (const text of [f.detail, f.hint]) {
+      expect(text).not.toMatch(/https?:\/\//);
+      expect(text).not.toMatch(/Bearer|sk-/i);
+    }
+  });
+});
