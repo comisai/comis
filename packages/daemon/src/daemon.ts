@@ -487,8 +487,23 @@ function buildChannelManagerDeps(deps: {
     continuationTracker, approvalGate, interactiveCallbackWiring,
     piSessionAdapters, costTrackers, deliveryQueue, executionTrackers,
     onSuspiciousContent, dataDir, clock, timers, activityBreaker, activityStream, activityRendererFactoryOverride,
-    executionPlanPorts,
+    executionPlanPorts, oauthManagers,
   } = agents;
+  // LEARN-01: per-agent OAuth access-token resolver (auto-refreshing) so the
+  // background memory/learning cron jobs run on an OAuth main provider
+  // (openai-codex) instead of skipping for "no API key". Wraps the SAME
+  // OAuthTokenManager.getApiKey the interactive + media-bundle paths use.
+  const resolveCronAccessToken = async (
+    agentId: string,
+    provider: string,
+  ): Promise<string | undefined> => {
+    const mgr = oauthManagers?.get(agentId);
+    if (!mgr) return undefined;
+    const r = await mgr.getApiKey(provider, {
+      oauthProfiles: container.config.agents?.[agentId]?.oauthProfiles,
+    });
+    return r.ok ? r.value : undefined;
+  };
   // Complete three-layer forget for channel /new + /reset (live 2026-06-11).
   const channelConversationReset = createConversationReset({ lcdStore: agents.lcdStore, piSessionAdapters, tenantId: container.config.tenantId, logger });
   // Build exportSessionBundle DI closure for the /export-trajectory slash
@@ -512,6 +527,8 @@ function buildChannelManagerDeps(deps: {
   return {
     container, executors, defaultAgentId, sessionManager, sessionStore,
     logger, channelsLogger, clock, timers,
+    resolveAccessToken: resolveCronAccessToken, // LEARN-01: OAuth-provider background jobs
+
     // the orchestrator-facing redacted ActivityStream (setupObservability)
     // injected into the inbound coordinatorFactory as its activityStreamPort.
     // the process-singleton circuit breaker shared across every coordinator.

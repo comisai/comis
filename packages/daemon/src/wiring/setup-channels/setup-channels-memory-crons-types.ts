@@ -50,6 +50,14 @@ export interface MemoryCronContext {
   container: AppContainer;
   logger: ComisLogger;
   clock: ClockPort;
+  /**
+   * Resolve a per-agent OAuth access token for a provider (auto-refreshing),
+   * threaded from the daemon's per-agent OAuthTokenManager map. Lets the
+   * background jobs run on an OAuth main provider (e.g. openai-codex) instead
+   * of skipping for "no API key" (LEARN-01). Undefined ⇒ no OAuth resolution
+   * wired (jobs fall back to static-key/keyless resolution only).
+   */
+  resolveAccessToken?: (agentId: string, provider: string) => Promise<string | undefined>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- container.config.agents PerAgentConfig map (erased at the dispatch boundary)
   agents: Record<string, any>;
   tenantId?: string;

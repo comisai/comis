@@ -89,6 +89,10 @@ export interface ChannelsDeps {
   /** System clock (composition root). Threaded to buildActivityRenderers so the
    *  EditPlace renderer gates its delete on outcome.delivery.deliveredAtMs. */
   clock: ClockPort;
+  /** Per-agent OAuth access-token resolver (LEARN-01) — forwarded to the cron
+   *  event listeners so background memory/learning jobs run on an OAuth main
+   *  provider (openai-codex) instead of skipping for "no API key". */
+  resolveAccessToken?: (agentId: string, provider: string) => Promise<string | undefined>;
   /** System timers (composition root). Threaded to buildActivityRenderers so the
    *  EditPlace renderer debounces edits via TimerPort (no raw setTimeout). */
   timers: TimerPort;
@@ -390,6 +394,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
     sessionStore: deps.sessionStore,
     logger,
     clock: deps.clock,
+    resolveAccessToken: deps.resolveAccessToken, // LEARN-01: OAuth-provider background jobs
     adaptersByType,
     deliveryService,
     assembleToolsForAgent: deps.assembleToolsForAgent,
