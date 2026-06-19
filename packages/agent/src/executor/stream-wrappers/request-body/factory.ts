@@ -40,9 +40,9 @@ import {
   parseHeaderList,
   sessionBetaHeaderLatches,
 } from "./context-window.js";
-import { isResponsesApiProvider, injectStoreFlag } from "./store-flag.js";
+import { isResponsesApiProvider, usesResponsesInputApi, injectStoreFlag } from "./store-flag.js";
 import { injectServiceTier } from "./service-tier.js";
-import { reorderContentForStablePrefix, stripTransientRecallFromHistory, stripReplayThinking, deferRecallToUncachedTail, stripTransientRecallFromResponsesInput, deferRecallToTrailingResponsesItem } from "./tool-result-clearing.js";
+import { reorderContentForStablePrefix, stripTransientRecallFromHistory, stripReplayThinking, deferRecallToUncachedTail, stripTransientRecallFromResponsesInput, deferRecallToTrailingResponsesItem, stripReplayReasoningFromResponsesInput } from "./tool-result-clearing.js";
 import { sortToolsForCacheStability } from "./cache-breakpoints.js";
 import { applyRenderedToolCache } from "./tool-cache.js";
 import {
@@ -87,15 +87,17 @@ export function createRequestBodyInjector(
         ?? isAnthropicFamily(model.provider);
       const needsResponsesApiInjection = isResponsesApiProvider(model as { api?: string });
 
-      // openai-codex drives the OpenAI Responses API (input = array of items) but is NOT
-      // flagged by isResponsesApiProvider (model.api !== "openai-responses"), so the
-      // cache-breakpoint machinery is correctly skipped (running cache_control on a Responses
-      // body strips type:"function" tools -> backend 400). We still install onPayload to
-      // stabilise the auto-cached prefix: defer the per-turn inline-recall block off the user
-      // turns onto an uncached trailing item so OpenAI's automatic prefix cache does not
-      // collapse to the instructions+tools floor every time the recalled memory rotates
-      // (cache #C4-OAI; see the deferral block below).
-      const needsResponsesInputStabilizer = model.provider === "openai-codex";
+      // ALL OpenAI Responses-family providers drive the same `input` item array and need the
+      // auto-cached prefix stabilised (cache #C4-OAI): native openai (`openai-responses`),
+      // Azure (`azure-openai-responses`), and codex (`openai-codex-responses` /
+      // provider:"openai-codex"). The cache-breakpoint machinery is correctly skipped for them
+      // (running cache_control on a Responses body strips type:"function" tools -> backend 400);
+      // we install onPayload only to defer the per-turn inline-recall block off the user turns
+      // onto an uncached trailing item so the prefix does not collapse to the instructions+tools
+      // floor every time the recalled memory rotates (see the deferral block below). NOTE: this
+      // was previously gated `provider === "openai-codex"` only, which left the native `openai`
+      // provider (gpt-5.5 -> openai-responses) unstabilised — 5 floor-collapses live.
+      const needsResponsesInputStabilizer = usesResponsesInputApi(model as { api?: string; provider?: string });
 
       if (!needsCacheBreakpoints && !needsResponsesApiInjection && !needsResponsesInputStabilizer) {
         return next(model, context, options);
@@ -444,14 +446,24 @@ export function createRequestBodyInjector(
             // 1. Defensive: strip recall from any HISTORICAL user item (no-op when history is
             //    already clean, which it is when recall is transient).
             const strippedCount = stripTransientRecallFromResponsesInput(inputItems);
-            // 2. THE FIX: defer recall on the LATEST user item to a trailing (uncached, never
-            //    persisted) item, so the latest item is byte-identical to its future historical
-            //    clean form and the auto-cached prefix never mutates at the turn boundary.
+            // 2. Recall #C4-OAI: defer recall on the LATEST user item to a trailing (uncached,
+            //    never persisted) item, so the latest item is byte-identical to its future
+            //    historical clean form and the auto-cached prefix never mutates at the turn boundary.
             const deferred = deferRecallToTrailingResponsesItem(inputItems);
-            if (strippedCount > 0 || deferred > 0) {
+            // 3. Reasoning #C5-OAI: strip ALL replayed reasoning items — ONLY on the native
+            //    openai / Azure Responses path (needsResponsesApiInjection). With `store:false`
+            //    the SDK keeps reasoning for recent turns but drops it from aging turns -> an
+            //    early-index prefix mutation -> floor-collapse. Removing them consistently every
+            //    call keeps the prefix byte-stable (verified: monotonic, 0 collapses, no 400).
+            //    Codex (provider:"openai-codex") keeps its reasoning stable and was already
+            //    optimal, so it is excluded to avoid the (bounded) reasoning-continuity cost.
+            const reasoningStripped = needsResponsesApiInjection
+              ? stripReplayReasoningFromResponsesInput(inputItems)
+              : 0;
+            if (strippedCount > 0 || deferred > 0 || reasoningStripped > 0) {
               logger.debug(
-                { sessionKey: config.sessionKey, recallStrippedOai: strippedCount, recallDeferredOai: deferred },
-                "Stabilised OpenAI Responses prefix: deferred current-turn recall to uncached tail",
+                { sessionKey: config.sessionKey, recallStrippedOai: strippedCount, recallDeferredOai: deferred, reasoningStrippedOai: reasoningStripped },
+                "Stabilised OpenAI Responses prefix: deferred recall + stripped replayed reasoning",
               );
             }
           }

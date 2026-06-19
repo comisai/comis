@@ -455,6 +455,41 @@ export function stripTransientRecallFromResponsesInput(input: Array<Record<strin
 }
 
 /**
+ * Strip ALL replayed `reasoning` items from an OpenAI Responses `input` array — the OpenAI
+ * analog of {@link stripReplayThinking}.
+ *
+ * cache #C5-OAI (2026-06-19): on the native openai Responses API (`store: false`), the
+ * pi-coding-agent conversation manager keeps `reasoning` items (which carry `encrypted_content`
+ * for cross-step continuity) for RECENT turns but DROPS them from OLDER turns as the
+ * conversation grows. A reasoning item present at an early index one turn is therefore gone the
+ * next → the auto-cached prefix MUTATES at that index → a floor-collapse (confirmed live:
+ * `DIV@2 reasoning->function_call` coincided with a cacheRead drop to the ~22.5k floor; with
+ * this strip the same conversation is fully monotonic 19968→35840, zero collapses).
+ *
+ * Stripping only the OLD ones can't byte-stabilise (a kept current-turn reasoning item is cached
+ * this turn, then goes historical and is dropped next turn — the same boundary mutation). The
+ * only byte-stable option is removing them CONSISTENTLY, every call. SAFE: the SDK already drops
+ * aged reasoning and OpenAI still returns 200 (verified live: all turns ok, no 400). QUALITY
+ * CAVEAT (bounded, reversible — the C-FIX-8 analog): the model re-reasons each step instead of
+ * resuming the encrypted chain; reasoning-quality impact is unmeasured but the conclusions
+ * (assistant messages + tool results) remain in context. Gated by the caller to the native
+ * `openai`/Azure Responses path (codex keeps its reasoning stable and was already optimal).
+ *
+ * TOOL-SAFE: only removes `type:"reasoning"` items — never function_call / function_call_output
+ * / message items. Mutates in place. Returns the count removed.
+ */
+export function stripReplayReasoningFromResponsesInput(input: Array<Record<string, unknown>>): number {
+  let removed = 0;
+  for (let i = input.length - 1; i >= 0; i--) {
+    if (input[i]!.type === "reasoning") {
+      input.splice(i, 1);
+      removed++;
+    }
+  }
+  return removed;
+}
+
+/**
  * Defer the inline-recall block on the CURRENT (latest) user item of an OpenAI Responses
  * `input` array off the cacheable prefix and onto the UNCACHED tail.
  *

@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { clearStaleThinkingBlocks, stripTransientRecallFromHistory, stripReplayThinking, deferRecallToUncachedTail, stripTransientRecallFromResponsesInput, deferRecallToTrailingResponsesItem } from "./index.js";
+import { clearStaleThinkingBlocks, stripTransientRecallFromHistory, stripReplayThinking, deferRecallToUncachedTail, stripTransientRecallFromResponsesInput, deferRecallToTrailingResponsesItem, stripReplayReasoningFromResponsesInput } from "./index.js";
 
 /** A representative inline-recall block as envelope-wrapper prepends it (hybrid-memory-injector template). */
 const recall = (content: string) =>
@@ -487,5 +487,45 @@ describe("deferRecallToTrailingResponsesItem (pure) — cache #C4-OAI (latest-it
       const txt = Array.isArray(it.content) ? (it.content as any[]).map(b => b.text ?? "").join("") : String(it.content ?? "");
       expect(txt).not.toContain("[Relevant context from memory:");
     }
+  });
+});
+
+describe("stripReplayReasoningFromResponsesInput (pure) — cache #C5-OAI (reasoning replay)", () => {
+  it("removes contentless reasoning placeholders, keeps everything else (prefix-stable)", () => {
+    const input: Array<Record<string, unknown>> = [
+      { role: "user", content: [{ type: "input_text", text: "q1" }] },
+      { type: "reasoning", id: "rs_1", summary: [] },           // contentless -> strip
+      { type: "function_call", name: "bash", arguments: "{}" },
+      { type: "function_call_output", output: "ok" },
+      { type: "message", role: "assistant", content: [{ type: "output_text", text: "done" }] },
+      { type: "reasoning", id: "rs_2", summary: [] },           // contentless -> strip
+      { role: "user", content: [{ type: "input_text", text: "q2" }] },
+    ];
+    const removed = stripReplayReasoningFromResponsesInput(input);
+    expect(removed).toBe(2);
+    // no reasoning items remain
+    expect(input.some(it => it.type === "reasoning")).toBe(false);
+    // everything else preserved in order
+    expect(input.map(it => it.type ?? it.role)).toEqual(["user", "function_call", "function_call_output", "message", "user"]);
+  });
+
+  it("strips reasoning items regardless of encrypted_content (byte-stable prefix)", () => {
+    const input: Array<Record<string, unknown>> = [
+      { type: "reasoning", id: "rs_a", encrypted_content: "gAAAA-encrypted-blob", summary: [] },
+      { type: "reasoning", id: "rs_b", summary: [] },
+      { type: "function_call", name: "x", arguments: "{}" },
+    ];
+    expect(stripReplayReasoningFromResponsesInput(input)).toBe(2);
+    expect(input.length).toBe(1);
+    expect(input[0]!.type).toBe("function_call");
+  });
+
+  it("is a no-op when there are no reasoning items", () => {
+    const input: Array<Record<string, unknown>> = [
+      { role: "user", content: "q" },
+      { type: "function_call", name: "x", arguments: "{}" },
+    ];
+    expect(stripReplayReasoningFromResponsesInput(input)).toBe(0);
+    expect(input.length).toBe(2);
   });
 });
