@@ -8,8 +8,13 @@ import { AgentConfigSchema } from "./schema-agent/index.js";
 // ---------------------------------------------------------------------------
 
 describe("GeminiCacheConfigSchema", () => {
-  it("produces correct defaults from empty object", () => {
+  it("produces correct defaults from empty object (explicit caching ON by default)", () => {
     const result = GeminiCacheConfigSchema.parse({});
+    expect(result).toEqual({ enabled: true, maxActiveCaches: 20 });
+  });
+
+  it("accepts an explicit opt-OUT", () => {
+    const result = GeminiCacheConfigSchema.parse({ enabled: false });
     expect(result).toEqual({ enabled: false, maxActiveCaches: 20 });
   });
 
@@ -39,9 +44,9 @@ describe("GeminiCacheConfigSchema", () => {
 // ---------------------------------------------------------------------------
 
 describe("AgentConfigSchema geminiCache integration", () => {
-  it("includes geminiCache with correct defaults when omitted", () => {
+  it("includes geminiCache with correct defaults when omitted (ON by default)", () => {
     const config = AgentConfigSchema.parse({});
-    expect(config.geminiCache).toEqual({ enabled: false, maxActiveCaches: 20 });
+    expect(config.geminiCache).toEqual({ enabled: true, maxActiveCaches: 20 });
   });
 
   it("applies maxActiveCaches default when only enabled is set", () => {

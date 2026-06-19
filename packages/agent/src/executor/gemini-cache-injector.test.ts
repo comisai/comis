@@ -293,13 +293,14 @@ describe("createGeminiCacheInjector", () => {
     expect(configObj.systemInstruction).toBe("You are a helpful assistant.");
   });
 
-  it("evicts stale cache when expected fields missing from config", async () => {
+  it("evicts stale cache when entry contentHash mismatches the request", async () => {
     vi.mocked(isGoogleFamily).mockReturnValue(true);
     vi.mocked(isGoogleAIStudio).mockReturnValue(true);
 
+    // Entry hash differs from the (mocked) computed request hash "mock-hash-abc123" -> stale.
     const entry: CacheEntry = {
       name: "cachedContents/stale123",
-      contentHash: "mock-hash-abc123",
+      contentHash: "stale-old-hash-zzz",
       model: "gemini-2.5-flash",
       agentId: "test-agent",
       sessionKey: "test-session",
@@ -312,19 +313,8 @@ describe("createGeminiCacheInjector", () => {
     const cfg = createConfig();
     const wrapper = createGeminiCacheInjector(cfg, logger);
 
-    // Create a payload with systemInstruction missing from config (stale scenario)
-    const stalePayload = {
-      model: "gemini-2.5-flash",
-      contents: [],
-      config: {
-        // systemInstruction intentionally MISSING
-        tools: [{ functionDeclarations: [] }],
-        toolConfig: { functionCallingConfig: { mode: "AUTO" } },
-        temperature: 0.7,
-      },
-    };
-
-    const next = mockNextWithOnPayload(stalePayload);
+    const payload = buildGeminiPayload();
+    const next = mockNextWithOnPayload(payload);
     const wrappedFn = wrapper(next);
 
     const result = wrappedFn(GOOGLE_MODEL, { messages: [] } as never, {});
@@ -336,8 +326,57 @@ describe("createGeminiCacheInjector", () => {
     expect(cacheManager.dispose).toHaveBeenCalledWith("test-session");
 
     // Payload should NOT have cachedContent injected
-    const configObj = stalePayload.config as Record<string, unknown>;
+    const configObj = payload.config as Record<string, unknown>;
     expect(configObj.cachedContent).toBeUndefined();
+  });
+
+  it("HITS the cache when toolConfig is undefined (no false staleness — the D03 bug)", async () => {
+    // Regression: pi-ai sets config.toolConfig = undefined whenever there is no toolChoice
+    // (google.js), and omits `tools` when there are none. The old guard treated those undefined
+    // fields as "stale" and evicted the cache on every such request -> it never hit. With the
+    // hash-based guard, an undefined toolConfig is a valid, hash-consistent state and the cache
+    // is injected normally.
+    vi.mocked(isGoogleFamily).mockReturnValue(true);
+    vi.mocked(isGoogleAIStudio).mockReturnValue(true);
+
+    const entry: CacheEntry = {
+      name: "cachedContents/hit-no-toolcfg",
+      contentHash: "mock-hash-abc123", // matches the mocked computeCacheContentHash
+      model: "gemini-3.1-pro-preview",
+      agentId: "test-agent",
+      sessionKey: "test-session",
+      expiresAt: Date.now() + 3600_000,
+      createdAt: Date.now(),
+      cachedTokens: 5000,
+    };
+    vi.mocked(cacheManager.getOrCreate).mockResolvedValue(ok(entry));
+
+    const cfg = createConfig();
+    const wrapper = createGeminiCacheInjector(cfg, logger);
+
+    // Realistic normal request: systemInstruction + tools present, toolConfig explicitly undefined.
+    const payload = {
+      model: "gemini-3.1-pro-preview",
+      contents: [{ role: "user", parts: [{ text: "Hello" }] }],
+      config: {
+        systemInstruction: "You are a helpful assistant.",
+        tools: [{ functionDeclarations: [{ name: "tool_a", description: "A tool" }] }],
+        toolConfig: undefined,
+        temperature: 0.7,
+      },
+    };
+    const next = mockNextWithOnPayload(payload);
+    const wrappedFn = wrapper(next);
+
+    const result = wrappedFn(GOOGLE_MODEL, { messages: [] } as never, {});
+    for await (const _chunk of result) { /* consume */ }
+
+    // Cache HIT: cachedContent injected, fields stripped, NOT evicted.
+    const configObj = payload.config as Record<string, unknown>;
+    expect(configObj.cachedContent).toBe("cachedContents/hit-no-toolcfg");
+    expect(configObj.systemInstruction).toBeUndefined();
+    expect(configObj.tools).toBeUndefined();
+    expect(cacheManager.dispose).not.toHaveBeenCalled();
   });
 
   it("calls onCacheHit when cache entry is successfully injected", async () => {

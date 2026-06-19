@@ -871,7 +871,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   },
   {
     "default": {
-      "enabled": false,
+      "enabled": true,
       "maxActiveCaches": 20
     },
     "immutable": true,
@@ -879,7 +879,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "object"
   },
   {
-    "default": false,
+    "default": true,
     "immutable": true,
     "path": "agents.geminiCache.enabled",
     "type": "boolean"
@@ -8397,7 +8397,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
         "enforceFinalTag": false,
         "fastMode": false,
         "geminiCache": {
-          "enabled": false,
+          "enabled": true,
           "maxActiveCaches": 20
         },
         "learningForgetting": {
@@ -16532,12 +16532,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
     "geminiCache": {
       "additionalProperties": false,
       "default": {
-        "enabled": false,
+        "enabled": true,
         "maxActiveCaches": 20
       },
       "properties": {
         "enabled": {
-          "default": false,
+          "default": true,
           "type": "boolean"
         },
         "maxActiveCaches": {
@@ -27555,12 +27555,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "geminiCache": {
             "additionalProperties": false,
             "default": {
-              "enabled": false,
+              "enabled": true,
               "maxActiveCaches": 20
             },
             "properties": {
               "enabled": {
-                "default": false,
+                "default": true,
                 "type": "boolean"
               },
               "maxActiveCaches": {
@@ -31043,7 +31043,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "enforceFinalTag": false,
           "fastMode": false,
           "geminiCache": {
-            "enabled": false,
+            "enabled": true,
             "maxActiveCaches": 20
           },
           "learningForgetting": {

@@ -503,11 +503,11 @@ Array of broadcast group objects for simultaneous multi-channel message delivery
 
 #### Gemini Cache (agents.*.geminiCache)
 
-Per-agent configuration for Gemini explicit CachedContent caching. When enabled, Comis creates server-side cached content on Google AI Studio for guaranteed 90% discount on cached input tokens.
+Per-agent configuration for Gemini explicit CachedContent caching. On by default for Gemini agents: Comis creates server-side cached content on Google AI Studio for a guaranteed discount on cached input tokens (system instruction + tools).
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `enabled` | `boolean` | `false` | Enable Gemini explicit CachedContent caching. Only activates for Google AI Studio providers (not Vertex AI). |
+| `enabled` | `boolean` | `true` | Enable Gemini explicit CachedContent caching (on by default; set `false` to opt out). Only activates for Google AI Studio providers (not Vertex AI), and only above the per-model minimum (~4096 tokens for gemini-3-pro/3.1-pro). |
 | `maxActiveCaches` | `number` | `20` | Maximum active cached contents per agent. Must be a positive integer. Oldest entries are evicted (LRU) when this limit is reached. |
 
 <Info>

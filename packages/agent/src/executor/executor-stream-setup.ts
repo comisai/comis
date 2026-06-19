@@ -498,7 +498,10 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
   // Gemini cache injector -- mutually exclusive with
   // requestBodyInjector via isGoogleFamily/isAnthropicFamily provider guards.
   if (deps.geminiCacheManager) {
-    const geminiCacheConfig = config.geminiCache ?? { enabled: false, maxActiveCaches: 20 };
+    // Explicit Gemini CachedContent caching is ON by default (GeminiCacheConfigSchema). This
+    // fallback only applies when geminiCache is entirely absent from the resolved config, and
+    // mirrors that default so the cache floor is never silently lost.
+    const geminiCacheConfig = config.geminiCache ?? { enabled: true, maxActiveCaches: 20 };
     wrappers.push(
       createGeminiCacheInjector(
         {

@@ -166,20 +166,28 @@ export function createGeminiCacheInjector(
             return resolvedParams;
           }
 
-          // Assertion -- all three fields must be present for stripping
-          if (
-            configObj.systemInstruction === undefined ||
-            configObj.tools === undefined ||
-            configObj.toolConfig === undefined
-          ) {
+          // Staleness guard by CONTENT HASH, not field presence.
+          // getOrCreate is called with the freshly-computed `contentHash` and rebuilds the
+          // cache whenever the hash differs, so the returned entry's `contentHash` always
+          // matches this request's cacheable content -- if it ever diverges, the entry is
+          // genuinely stale, so evict and pass through uncached.
+          //
+          // The old guard required systemInstruction AND tools AND toolConfig to all be
+          // *present*, but pi-ai sets `config.toolConfig = undefined` on every request without
+          // a toolChoice (google.js) and omits `tools` when there are none -- both valid,
+          // hash-consistent states. That guard therefore fired on essentially every normal
+          // Gemini request, creating then immediately evicting the cache so it NEVER hit
+          // (which is why explicit Gemini caching had to ship disabled). Deleting an absent key
+          // is a safe no-op, so stripping is unconditional once the hash matches.
+          if (entry.contentHash !== contentHash) {
             logger.warn(
               {
                 sessionKey: config.sessionKey,
                 cacheName: entry.name,
-                hint: "Expected fields missing from config -- cache entry stale, evicting",
+                hint: "Cache entry contentHash != request contentHash -- entry stale, evicting",
                 errorKind: "validation" as ErrorKind,
               },
-              "Gemini cache injector: stale cache detected",
+              "Gemini cache injector: stale cache detected (hash mismatch)",
             );
             suppressError(
               config.cacheManager.dispose(config.sessionKey),
@@ -189,7 +197,8 @@ export function createGeminiCacheInjector(
             return resolvedParams;
           }
 
-          // Inject cachedContent and strip inherited fields atomically
+          // Inject cachedContent and strip inherited fields atomically (delete is a safe no-op
+          // for fields that are legitimately absent, e.g. toolConfig when there is no toolChoice).
           configObj.cachedContent = entry.name;
           delete configObj.systemInstruction;
           delete configObj.tools;
