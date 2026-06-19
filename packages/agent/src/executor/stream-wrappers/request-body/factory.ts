@@ -42,7 +42,7 @@ import {
 } from "./context-window.js";
 import { isResponsesApiProvider, injectStoreFlag } from "./store-flag.js";
 import { injectServiceTier } from "./service-tier.js";
-import { reorderContentForStablePrefix, stripTransientRecallFromHistory, stripHistoricalThinking } from "./tool-result-clearing.js";
+import { reorderContentForStablePrefix, stripTransientRecallFromHistory, stripReplayThinking } from "./tool-result-clearing.js";
 import { sortToolsForCacheStability } from "./cache-breakpoints.js";
 import { applyRenderedToolCache } from "./tool-cache.js";
 import {
@@ -207,10 +207,10 @@ export function createRequestBodyInjector(
                 "Stripped transient inline-recall from cached prefix",
               );
             }
-            // cache break #C1: strip thinking from historical assistant messages so the
-            // cached prefix matches the durable (LCD) no-historical-thinking form. The
-            // current cycle's thinking (last assistant message) is kept for Anthropic.
-            const thinkingStripped = stripHistoricalThinking(result.messages as Array<Record<string, unknown>>);
+            // cache break #C1/#C2: strip thinking from EVERY replayed assistant message
+            // (including the active/last one) so the cached prefix matches the durable (LCD)
+            // no-thinking form and never mutates when an assistant transitions active→historical.
+            const thinkingStripped = stripReplayThinking(result.messages as Array<Record<string, unknown>>);
             if (thinkingStripped > 0) {
               // Notify the cache-break detector: this is a DELIBERATE content modification
               // (matching the durable LCD form), so a one-time read-token change as a message's
@@ -218,7 +218,7 @@ export function createRequestBodyInjector(
               config.onContentModification?.();
               logger.debug(
                 { thinkingStripped, sessionKey: config.sessionKey },
-                "Stripped historical thinking from cached prefix",
+                "Stripped replay thinking from cached prefix",
               );
             }
           }

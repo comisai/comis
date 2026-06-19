@@ -57,7 +57,25 @@ export type { CadenceTrackerEntry } from "./cadence-tracker.js";
 // When the prefix hash changes on consecutive turns, the cache prefix is unstable
 // and every turn will miss cache reads beyond the system prompt.
 // ---------------------------------------------------------------------------
-export const sessionPrefixStability = new Map<string, { hash: number; fenceIdx: number; consecutiveChanges: number; msgHashes?: number[]; msgSigs?: string[] }>();
+export const sessionPrefixStability = new Map<string, {
+  hash: number;
+  fenceIdx: number;
+  consecutiveChanges: number;
+  msgHashes?: number[];
+  msgSigs?: string[];
+  /** Per-message hashes over the FULL array (not fence-limited) from the previous call —
+   *  lets the diagnostic see a mutation in the newly-promoted (prev.fence, curr.fence] region
+   *  that the fence-limited `msgHashes` misses. */
+  fullHashes?: number[];
+  fullSigs?: string[];
+  /** Monotonic call counter for this session (windowed mutation accumulation). */
+  callCount?: number;
+  /** Call indices where a non-benign cached-region message mutation was observed.
+   *  Windowed (recent only) so a ONCE-PER-TURN mutation accumulates across turn
+   *  boundaries even though within-turn calls are clean (the #C2 blind spot: the
+   *  consecutive counter reset on benign within-turn growth, so it never fired). */
+  cacheMutations?: number[];
+}>();
 
 export function clearSessionPrefixStability(sessionKey: string): void {
   sessionPrefixStability.delete(sessionKey);

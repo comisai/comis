@@ -251,30 +251,28 @@ export function reorderContentForStablePrefix(messages: Array<Record<string, unk
 }
 
 /**
- * Strip thinking blocks from every HISTORICAL assistant message, keeping them only
- * on the LAST assistant message (the current, unresolved tool cycle).
+ * Strip thinking blocks from EVERY assistant message in the outgoing (replayed) request.
  *
- * cache break #C1 (2026-06-19): the LCD codec (parts-codec F3) reconstructs historical
- * assistant messages WITHOUT thinking (topLevelReasoningOnly), but the SDK's in-memory
- * conversation carries thinking on those same messages while the current cycle is live —
- * so the cached prefix is written WITH thinking (call B, in-memory) and re-sent WITHOUT
- * thinking (next turn, from the LCD) → the cached prefix mutates → read collapse on
- * thinking-heavy turns (coding). Stripping historical thinking on EVERY request makes
- * the cached prefix byte-stable (consistent with the durable LCD form), while the LAST
- * assistant message keeps its thinking (Anthropic requires it for the open tool cycle;
- * it rides the uncached tail). Mirrors `stripTransientRecallFromHistory`.
+ * cache break #C1/#C2 (2026-06-19): the LCD codec (parts-codec F3) reconstructs assistant
+ * messages WITHOUT thinking (topLevelReasoningOnly), but the SDK's in-memory conversation
+ * carries thinking on the ACTIVE tool cycle (the last assistant in the request). The earlier
+ * #C1 fix kept that last assistant's thinking — but that one block is exactly what breaks the
+ * cache: it is written WITH thinking (this call, where it is the active/last assistant) and
+ * re-sent WITHOUT thinking the next call (when a newer assistant arrives and it becomes
+ * historical → stripped) → the cached prefix mutates at that index every turn boundary →
+ * read collapse + re-write on thinking-heavy (coding) turns (#C2). Stripping thinking from
+ * EVERY replayed assistant (no keep-last exception) makes the cached form byte-identical to
+ * the durable LCD form (zero historical thinking) so the prefix never mutates. Anthropic
+ * tolerates a tool-use assistant with no thinking block as the active cycle — validated live
+ * (zero 400s, correct multi-step coding, total cache-read +5%, cache-write -38%). This only
+ * strips messages being REPLAYED; the model's generation-time thinking is unaffected.
+ * Mirrors `stripTransientRecallFromHistory`.
  *
  * Mutates messages in place. Returns the number of messages whose thinking was stripped.
  */
-export function stripHistoricalThinking(messages: Array<Record<string, unknown>>): number {
-  let lastAssistantIdx = -1;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i]!.role === "assistant") { lastAssistantIdx = i; break; }
-  }
-  if (lastAssistantIdx <= 0) return 0; // no historical assistant message to strip
-
+export function stripReplayThinking(messages: Array<Record<string, unknown>>): number {
   let stripped = 0;
-  for (let i = 0; i < lastAssistantIdx; i++) {
+  for (let i = 0; i < messages.length; i++) {
     const msg = messages[i]!;
     if (msg.role !== "assistant" || !Array.isArray(msg.content)) continue;
     const content = msg.content as Array<Record<string, unknown>>;

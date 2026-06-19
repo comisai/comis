@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { clearStaleThinkingBlocks, stripTransientRecallFromHistory, stripHistoricalThinking } from "./index.js";
+import { clearStaleThinkingBlocks, stripTransientRecallFromHistory, stripReplayThinking } from "./index.js";
 
 /** A representative inline-recall block as envelope-wrapper prepends it (hybrid-memory-injector template). */
 const recall = (content: string) =>
@@ -153,15 +153,23 @@ describe("clearStaleThinkingBlocks (pure)", () => {
   });
 });
 
-describe("stripHistoricalThinking (pure) — cache break #C1", () => {
-  // Thinking blocks are cached in-memory WITH thinking on the current cycle (call B),
-  // but the LCD (parts-codec F3) reconstructs historical assistant messages WITHOUT
-  // thinking → the cached prefix mutates the next turn → cache read collapse on
-  // thinking-heavy (coding) turns. Fix: strip thinking from ALL historical assistant
-  // messages on EVERY request (matching the LCD), keeping only the LAST assistant
-  // message's thinking (the current, unresolved tool cycle Anthropic requires).
+describe("stripReplayThinking (pure) — cache break #C1/#C2", () => {
+  // Thinking blocks are cached in-memory WITH thinking on the active tool cycle (the
+  // last assistant in the outgoing request, kept by the earlier C-FIX-6 design), but
+  // the LCD (parts-codec F3) reconstructs assistant messages WITHOUT thinking. So the
+  // active assistant is cached WITH thinking and re-sent WITHOUT it the next call (when
+  // it becomes historical and gets stripped) → the cached prefix mutates → cache-read
+  // collapse on thinking-heavy (coding) turns, re-written every turn boundary.
+  //
+  // cache #C2 (2026-06-19): the residual collapse was the keep-LAST exception itself —
+  // it cached one assistant WITH thinking that the next call always strips. Fix: strip
+  // thinking from EVERY replayed assistant message (no keep-last exception), making the
+  // cached form byte-identical to the durable LCD form (zero historical thinking).
+  // Anthropic tolerates a tool-use assistant with no thinking block as the active cycle
+  // (validated live: zero 400s, correct multi-step coding, total cache-read +5%, write -38%).
+  // Generation-time thinking is unaffected — this only strips the messages being REPLAYED.
 
-  it("strips thinking from historical assistant messages, keeps the last assistant's thinking", () => {
+  it("strips thinking from ALL replayed assistant messages, including the last (active) one", () => {
     const messages: Array<Record<string, unknown>> = [
       { role: "user", content: [{ type: "text", text: "u1" }] },
       { role: "assistant", content: [{ type: "thinking", thinking: "old reasoning" }, { type: "text", text: "a1" }] },
@@ -170,24 +178,27 @@ describe("stripHistoricalThinking (pure) — cache break #C1", () => {
       { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "ok" }] },
       { role: "assistant", content: [{ type: "thinking", thinking: "CURRENT reasoning" }, { type: "tool_use", id: "t2", name: "bash", input: {} }] },
     ];
-    const stripped = stripHistoricalThinking(messages);
-    expect(stripped).toBe(2); // idx 1 and idx 3 (historical assistants)
+    const stripped = stripReplayThinking(messages);
+    expect(stripped).toBe(3); // idx 1, 3, AND 5 (the active assistant too)
     expect((messages[1]!.content as any[]).some(b => b.type === "thinking")).toBe(false);
     expect((messages[3]!.content as any[]).some(b => b.type === "thinking")).toBe(false);
-    // LAST assistant (idx 5, current cycle) KEEPS its thinking (Anthropic requirement).
-    expect((messages[5]!.content as any[]).some(b => b.type === "thinking")).toBe(true);
+    // The LAST/active assistant (idx 5) is ALSO stripped — no keep-last exception.
+    expect((messages[5]!.content as any[]).some(b => b.type === "thinking")).toBe(false);
+    // Non-thinking blocks (tool_use, text) are preserved.
+    expect((messages[5]!.content as any[]).some(b => b.type === "tool_use")).toBe(true);
   });
 
-  it("is a no-op when only the last assistant message has thinking", () => {
+  it("strips thinking even when only the last assistant message has it", () => {
     const messages: Array<Record<string, unknown>> = [
       { role: "user", content: [{ type: "text", text: "u1" }] },
       { role: "assistant", content: [{ type: "text", text: "a1" }] },
       { role: "user", content: [{ type: "text", text: "u2" }] },
       { role: "assistant", content: [{ type: "thinking", thinking: "current" }, { type: "text", text: "a2" }] },
     ];
-    const stripped = stripHistoricalThinking(messages);
-    expect(stripped).toBe(0);
-    expect((messages[3]!.content as any[]).some(b => b.type === "thinking")).toBe(true);
+    const stripped = stripReplayThinking(messages);
+    expect(stripped).toBe(1);
+    expect((messages[3]!.content as any[]).some(b => b.type === "thinking")).toBe(false);
+    expect((messages[3]!.content as any[]).some(b => b.type === "text")).toBe(true);
   });
 
   it("no-op on a conversation with no thinking blocks (echo-style tool turns)", () => {
@@ -197,7 +208,7 @@ describe("stripHistoricalThinking (pure) — cache break #C1", () => {
       { role: "user", content: [{ type: "tool_result", tool_use_id: "t", content: "ok" }] },
       { role: "assistant", content: [{ type: "text", text: "done" }] },
     ];
-    expect(stripHistoricalThinking(messages)).toBe(0);
+    expect(stripReplayThinking(messages)).toBe(0);
   });
 });
 

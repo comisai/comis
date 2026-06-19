@@ -32,7 +32,7 @@ function messageSignature(m: Record<string, unknown>): string {
   const c = m.content;
   const text = typeof c === "string" ? c :
     Array.isArray(c) ? (c as Array<Record<string, unknown>>).map(b =>
-      `${(b as any).type}:${String((b as any).text ?? (b as any).thinking ?? "")}:${JSON.stringify((b as any).content ?? (b as any).input ?? "")}`
+      `${String(b.type)}:${String(b.text ?? b.thinking ?? "")}:${JSON.stringify(b.content ?? b.input ?? "")}`
     ).join("|") : "";
   return `${m.role}:${text}`;
 }
@@ -44,24 +44,29 @@ function hashEachMessage(messages: Array<Record<string, unknown>>, endIdx: numbe
 
 /**
  * Redaction-safe STRUCTURAL signature of a message: role + block count + thinking-block
- * count + total content length. Carries NO message text — only shape/size — so it is safe
- * to log, yet reveals what changed (e.g. a cleared thinking block → t-count drops; an
- * offloaded tool_result → length drops). Format: `<role>|b<blocks>|t<thinking>|len<chars>`.
+ * count + a had-inline-recall bit + total content length. Carries NO message text — only
+ * shape/size/flags — so it is safe to log, yet reveals what changed (a cleared thinking
+ * block → t drops; an offloaded tool_result → len drops; a stripped inline-recall block →
+ * r drops 1→0). Format: `<role>|b<blocks>|t<thinking>|r<0|1>|len<chars>`.
  */
 function messageStructSig(m: Record<string, unknown>): string {
   const c = m.content;
-  let blocks = 1, thinking = 0, len = 0;
+  let blocks = 1, thinking = 0, len = 0, hadRecall = 0;
+  const RECALL_RE = /\[Relevant context from memory:/;
   if (typeof c === "string") {
     len = c.length;
+    if (RECALL_RE.test(c)) hadRecall = 1;
   } else if (Array.isArray(c)) {
     const arr = c as Array<Record<string, unknown>>;
     blocks = arr.length;
     for (const b of arr) {
       if (b.type === "thinking") thinking++;
-      len += String(b.text ?? b.thinking ?? b.content ?? "").length;
+      const text = String(b.text ?? b.thinking ?? b.content ?? "");
+      len += text.length;
+      if (RECALL_RE.test(text)) hadRecall = 1;
     }
   }
-  return `${m.role}|b${blocks}|t${thinking}|len${len}`;
+  return `${m.role}|b${blocks}|t${thinking}|r${hadRecall}|len${len}`;
 }
 
 /** Per-message structural sigs for the prefix [0..endIdx]. */
@@ -69,11 +74,11 @@ function structEachMessage(messages: Array<Record<string, unknown>>, endIdx: num
   return messages.slice(0, endIdx + 1).map(messageStructSig);
 }
 
-/** Parse the `t<n>`/`len<n>` fields out of a struct sig (returns {t,len} or undefined). */
-function parseSig(sig: string | undefined): { t: number; len: number } | undefined {
+/** Parse the `t<n>`/`r<n>`/`len<n>` fields out of a struct sig (returns {t,r,len} or undefined). */
+function parseSig(sig: string | undefined): { t: number; r: number; len: number } | undefined {
   if (!sig) return undefined;
-  const t = /\|t(\d+)\|/.exec(sig); const len = /\|len(\d+)$/.exec(sig);
-  return { t: t ? Number(t[1]) : 0, len: len ? Number(len[1]) : 0 };
+  const t = /\|t(\d+)\|/.exec(sig); const r = /\|r(\d+)\|/.exec(sig); const len = /\|len(\d+)$/.exec(sig);
+  return { t: t ? Number(t[1]) : 0, r: r ? Number(r[1]) : 0, len: len ? Number(len[1]) : 0 };
 }
 
 /**
@@ -106,6 +111,10 @@ function classifyPrefixMutation(
   // (clearStaleThinkingBlocks / clearStaleToolResults) mutated a CACHED message.
   const p = parseSig(prevSig); const c = parseSig(currSig);
   if (p && c) {
+    // r1→r0 = the inline-recall block was stripped as a user message went historical
+    // (C-FIX-3) — a one-time transient-by-design transition. Classify it FIRST and on its
+    // own so the diagnostic can treat it as benign (it would otherwise read as content-cleared).
+    if (p.r > c.r) return "inline-recall";
     if (p.t > c.t) classes.push("thinking-cleared");
     else if (p.len - c.len > 500) classes.push("content-cleared");
   }
@@ -122,16 +131,11 @@ function classifyPrefixMutation(
 }
 
 /**
- * Hash role + first 200 chars of content for messages up to endIdx (inclusive).
- */
-function hashMessageSlice(messages: Array<Record<string, unknown>>, endIdx: number): number {
-  return computeHash(messages.slice(0, endIdx + 1).map(messageSignature));
-}
-
-/**
  * Run the prefix-stability diagnostic. Mutates the module-level
- * `sessionPrefixStability` map. Logs a WARN when 3+ consecutive changes
- * are observed against the same fence position.
+ * `sessionPrefixStability` map. Logs a WARN when a cached-region message mutates on
+ * THRESHOLD+ calls within a recent WINDOW — catching both a persistent same-message
+ * mutation and a once-per-turn mutation at a different message each turn (cache #C2),
+ * across the FULL cached prefix (not just the previous fence region).
  */
 export function runPrefixStabilityDiagnostic(
   result: Record<string, unknown>,
@@ -143,83 +147,90 @@ export function runPrefixStabilityDiagnostic(
   if (diagFenceIdx < 0) return;
 
   const msgs = result.messages as Array<Record<string, unknown>>;
-  const prefixHash = hashMessageSlice(msgs, diagFenceIdx);
-  const msgHashes = hashEachMessage(msgs, diagFenceIdx);
-  const msgSigs = structEachMessage(msgs, diagFenceIdx);
+  const lastIdx = msgs.length - 1;
+  // FULL-array per-message hashes/sigs (NOT fence-limited). The old Case-A check only
+  // re-verified [0..prev.fence] and was blind to a mutation in the newly-promoted
+  // (prev.fence, fence] region — exactly where cache #C2's thinking-strip transition lived.
+  const fullHashes = hashEachMessage(msgs, lastIdx);
+  const fullSigs = structEachMessage(msgs, lastIdx);
   const prev = sessionPrefixStability.get(config.sessionKey);
+  const callCount = (prev?.callCount ?? 0) + 1;
 
-  if (!prev) {
-    // First observation -- store baseline, no comparison needed
-    sessionPrefixStability.set(config.sessionKey, { hash: prefixHash, fenceIdx: diagFenceIdx, consecutiveChanges: 0, msgHashes, msgSigs });
+  // Accumulate cached-region mutations over a WINDOW of recent calls rather than
+  // CONSECUTIVE calls. cache #C2 mutated a DIFFERENT historical assistant at each turn
+  // boundary while within-turn calls were clean; the old consecutive counter reset on
+  // every benign within-turn call, so a once-per-turn mutation never reached its threshold.
+  const WINDOW = 10;
+  const THRESHOLD = 3;
+
+  if (!prev || diagFenceIdx < prev.fenceIdx) {
+    // First observation, or fence shrank (compaction) — (re)baseline, empty mutation window.
+    sessionPrefixStability.set(config.sessionKey, { hash: 0, fenceIdx: diagFenceIdx, consecutiveChanges: 0, fullHashes, fullSigs, callCount, cacheMutations: [] });
     return;
   }
 
-  if (diagFenceIdx < prev.fenceIdx) {
-    // Case C: Fence shrank (compaction reset) -- reset counter entirely
-    sessionPrefixStability.set(config.sessionKey, { hash: prefixHash, fenceIdx: diagFenceIdx, consecutiveChanges: 0, msgHashes, msgSigs });
-    return;
-  }
+  // First message that DIFFERS from the previous request across the FULL common prefix.
+  const fd = firstDivergentMessage(prev.fullHashes, fullHashes);
+  let mutations = (prev.cacheMutations ?? []).filter(c => c > callCount - WINDOW);
 
-  if (diagFenceIdx > prev.fenceIdx) {
-    // Case A: Fence grew (normal conversation growth).
-    // Re-hash using the old fence boundary to check if old prefix content is intact.
-    const oldRangeHash = hashMessageSlice(msgs, prev.fenceIdx);
-    if (oldRangeHash === prev.hash) {
-      // Old prefix content unchanged -- benign growth, reset counter
-      sessionPrefixStability.set(config.sessionKey, { hash: prefixHash, fenceIdx: diagFenceIdx, consecutiveChanges: 0, msgHashes, msgSigs });
-    } else {
-      // Old prefix content was mutated -- genuine instability
-      const changes = prev.consecutiveChanges + 1;
-      sessionPrefixStability.set(config.sessionKey, { hash: prefixHash, fenceIdx: diagFenceIdx, consecutiveChanges: changes, msgHashes, msgSigs });
-      if (changes >= 3) emitUnstableWarn(logger, config.sessionKey, changes, msgs, prev.msgHashes, msgHashes, prev.msgSigs, msgSigs);
+  // A divergence at/below the fence is a mutation of content we are trying to CACHE — a
+  // wasted cache write. (A divergence ABOVE the fence is just new tail content = benign growth.)
+  if (fd >= 0 && fd <= diagFenceIdx) {
+    const pSig = prev.fullSigs?.[fd];
+    const cSig = fullSigs[fd];
+    const mutationClass = classifyPrefixMutation(msgs[fd], pSig, cSig);
+    // inline-recall is transient BY DESIGN — C-FIX-3 strips it from a user message the turn
+    // AFTER it carried the current turn's recall. That is a one-time transition per message,
+    // not a recurring bug, so it must NOT accumulate toward the WARN.
+    if (!mutationClass.includes("inline-recall")) {
+      mutations = [...mutations, callCount];
+      if (mutations.length >= THRESHOLD) {
+        emitUnstableWarn(logger, config.sessionKey, mutations.length, WINDOW, fd, pSig, cSig, mutationClass);
+      }
     }
-    return;
   }
 
-  // Case B: Same fence position -- direct hash comparison
-  if (prev.hash !== prefixHash) {
-    const changes = prev.consecutiveChanges + 1;
-    sessionPrefixStability.set(config.sessionKey, { hash: prefixHash, fenceIdx: diagFenceIdx, consecutiveChanges: changes, msgHashes, msgSigs });
-    if (changes >= 3) emitUnstableWarn(logger, config.sessionKey, changes, msgs, prev.msgHashes, msgHashes, prev.msgSigs, msgSigs);
-  } else {
-    // Prefix stable -- reset counter
-    sessionPrefixStability.set(config.sessionKey, { hash: prefixHash, fenceIdx: diagFenceIdx, consecutiveChanges: 0, msgHashes, msgSigs });
-  }
+  sessionPrefixStability.set(config.sessionKey, {
+    hash: 0,
+    fenceIdx: diagFenceIdx,
+    consecutiveChanges: mutations.length,
+    fullHashes,
+    fullSigs,
+    callCount,
+    cacheMutations: mutations,
+  });
 }
 
 /**
- * Emit the "Unstable prefix detected" WARN, naming the FIRST divergent prefix
- * message and its cache-poison class. This is the productized PREFIXDBG: an
- * operator reading this one line knows WHICH message mutated and WHY (inline-recall
- * / datetime-preamble / thinking-block), instead of re-deriving it with ad-hoc logging.
+ * Emit the "Unstable prefix detected" WARN, naming the divergent prefix message and its
+ * cache-poison class. Productized PREFIXDBG: an operator reading this one line knows WHICH
+ * message mutated and WHY (inline-recall / datetime-preamble / thinking-block / content-cleared),
+ * instead of re-deriving it with ad-hoc logging. Fires on a windowed count of cached-region
+ * mutations (not consecutive), so a ONCE-PER-TURN mutation at a different message each turn
+ * (cache #C2) accumulates here instead of slipping past a consecutive counter.
  */
 function emitUnstableWarn(
   logger: ComisLogger,
   sessionKey: string,
-  changes: number,
-  msgs: Array<Record<string, unknown>>,
-  prevMsgHashes: number[] | undefined,
-  currMsgHashes: number[],
-  prevMsgSigs: string[] | undefined,
-  currMsgSigs: string[],
+  mutationCount: number,
+  window: number,
+  firstDivergentIndex: number,
+  prevSig: string | undefined,
+  currSig: string | undefined,
+  mutationClass: string,
 ): void {
-  const firstDivergentIndex = firstDivergentMessage(prevMsgHashes, currMsgHashes);
-  const prevSig = firstDivergentIndex >= 0 ? prevMsgSigs?.[firstDivergentIndex] : undefined;
-  const currSig = firstDivergentIndex >= 0 ? currMsgSigs[firstDivergentIndex] : undefined;
-  const mutationClass = firstDivergentIndex >= 0
-    ? classifyPrefixMutation(msgs[firstDivergentIndex], prevSig, currSig)
-    : "unknown";
   logger.warn(
     {
       sessionKey,
-      consecutiveChanges: changes,
+      cacheRegionMutations: mutationCount,
+      window,
       firstDivergentIndex,
       mutationClass,
       // Redaction-safe structural sigs (counts + length only, NO message text) so an
       // operator sees exactly what changed at the divergent message without ad-hoc logging.
       prevSig,
       currSig,
-      hint: `Cache prefix changing every turn — first divergent message #${firstDivergentIndex} [${mutationClass}] mutated ${prevSig ?? "?"} → ${currSig ?? "?"}; this per-request-varying/cleared content must stay OUT of the cached prefix (see C-FIX-3). Cache writes are wasted.`,
+      hint: `Cached-prefix content mutated at message #${firstDivergentIndex} [${mutationClass}] (${mutationCount} cached-region mutations in the last ${window} calls): ${prevSig ?? "?"} → ${currSig ?? "?"}. Already-sent content inside the cache fence must be byte-stable — re-sending it changed wastes the cache write (see C-FIX-3 / stripReplayThinking). A once-per-turn mutation at a DIFFERENT message each turn still accumulates here.`,
       errorKind: "internal" as const,
     },
     "Unstable prefix detected",

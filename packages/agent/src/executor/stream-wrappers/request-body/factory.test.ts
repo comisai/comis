@@ -19,6 +19,7 @@ import {
   clearSessionRenderedToolCache,
 } from "../tool-schema-cache.js";
 import { SYSTEM_PROMPT_DYNAMIC_BOUNDARY, resolveBreakpointStrategy } from "../config-resolver.js";
+import { runPrefixStabilityDiagnostic } from "./prefix-stability.js";
 import type { RequestBodyInjectorConfig } from "./index.js";
 import { createSessionLatch } from "../../session-latch.js";
 import type { SessionLatch } from "../../session-latch.js";
@@ -5426,25 +5427,28 @@ describe("clearStaleThinkingBlocks (integration)", () => {
       ],
     }, model);
 
-    // First assistant beyond keepWindow=1 should have thinking cleared
+    // First assistant: thinking cleared
     const msgs = result.messages as any[];
     const firstAssistant = msgs[1];
     expect(firstAssistant.content.length).toBe(1);
     expect(firstAssistant.content[0].type).toBe("text");
-    // Second assistant within keepWindow should retain thinking
+    // Second/active assistant: thinking ALSO cleared now — stripReplayThinking (#C2) runs
+    // before microcompact and strips thinking from EVERY replayed assistant regardless of
+    // keepWindow (clearStaleThinkingBlocks is a no-op for thinking once stripReplayThinking ran).
     const secondAssistant = msgs[3];
-    expect(secondAssistant.content.length).toBe(2);
-    expect(secondAssistant.content[0].type).toBe("thinking");
+    expect(secondAssistant.content.length).toBe(1);
+    expect(secondAssistant.content[0].type).toBe("text");
     // onContentModification should have been called
     expect(onContentModification).toHaveBeenCalled();
   });
 
-  it("strips HISTORICAL thinking even when cache is warm (cache break #C1: consistent with LCD)", async () => {
-    // cache break #C1: historical thinking MUST be stripped on every request — warm OR stale —
-    // because the durable LCD (parts-codec F3) always reconstructs historical assistant messages
-    // WITHOUT thinking. Keeping it "when warm" was exactly the inconsistency that mutated the
-    // cached prefix (cached WITH thinking, re-sent WITHOUT) → read collapse. The LAST assistant
-    // message keeps its thinking (the open tool cycle Anthropic requires).
+  it("strips ALL replayed thinking even when cache is warm (cache break #C1/#C2: consistent with LCD)", async () => {
+    // cache break #C1/#C2: thinking MUST be stripped from EVERY replayed assistant on every
+    // request — warm OR stale, historical AND the active/last one — because the durable LCD
+    // (parts-codec F3) always reconstructs assistant messages WITHOUT thinking. Keeping the
+    // last assistant's thinking (the earlier #C1 keep-last design) was exactly the residual
+    // inconsistency that mutated the cached prefix (#C2): cached WITH thinking while active,
+    // re-sent WITHOUT once it goes historical → read collapse + re-write each turn boundary.
     const onContentModification = vi.fn();
     const base = createMockStreamFn();
     const wrapper = createRequestBodyInjector(
@@ -5477,7 +5481,7 @@ describe("clearStaleThinkingBlocks (integration)", () => {
         ]},
         { role: "user", content: [{ type: "text", text: "Next" }] },
         { role: "assistant", content: [
-          { type: "thinking", thinking: "Current-cycle thinking — kept (last assistant)" },
+          { type: "thinking", thinking: "Active-cycle thinking — now ALSO stripped (#C2)" },
           { type: "text", text: "Latest" },
         ]},
       ],
@@ -5487,8 +5491,9 @@ describe("clearStaleThinkingBlocks (integration)", () => {
     // Historical assistant (idx 1): thinking STRIPPED even though warm → byte-stable cached prefix.
     expect(msgs[1].content.length).toBe(1);
     expect(msgs[1].content[0].type).toBe("text");
-    // LAST assistant (idx 3): thinking KEPT (open cycle, Anthropic requirement, rides uncached tail).
-    expect(msgs[3].content.some((b: any) => b.type === "thinking")).toBe(true);
+    // LAST/active assistant (idx 3): thinking ALSO STRIPPED now (#C2) — no keep-last exception.
+    expect(msgs[3].content.some((b: any) => b.type === "thinking")).toBe(false);
+    expect(msgs[3].content.some((b: any) => b.type === "text")).toBe(true);
     // The deliberate strip notifies the cache-break detector (suppress the one-time read change).
     expect(onContentModification).toHaveBeenCalled();
   });
@@ -6638,7 +6643,7 @@ describe("fence-aware microcompaction", () => {
     it("WARN classifies a CONTENT-cleared structural delta (no content leak)", async () => {
       const testLogger = createMockLogger();
       // NOTE: a thinking-cleared cached-prefix mutation can no longer be PRODUCED — cache break
-      // #C1 fixed it by stripping historical thinking consistently (stripHistoricalThinking). So
+      // #C1/#C2 fixed it by stripping thinking from EVERY replayed assistant (stripReplayThinking). So
       // this exercises the classifier's other structural-delta branch: a large content SHRINK on a
       // historical assistant message (e.g. a cleared/offloaded tool_result) → "content-cleared".
       // The diagnostic reports the class from the structural delta (block count + length), WITHOUT
@@ -6672,6 +6677,66 @@ describe("fence-aware microcompaction", () => {
       expect(typeof payload.prevSig).toBe("string");
       expect(typeof payload.currSig).toBe("string");
       expect(String(payload.prevSig)).not.toContain("xxxx");
+    });
+
+    // The two cases below test the diagnostic DIRECTLY (not via onPayload) because the full
+    // pipeline runs stripReplayThinking + stripTransientRecallFromHistory BEFORE the diagnostic,
+    // which would erase the transitions under test. Direct calls control exactly what the
+    // diagnostic observes.
+    function runDiag(fenceIdx: number, messages: Array<Record<string, unknown>>, logger: ReturnType<typeof createMockLogger>, key: string): void {
+      runPrefixStabilityDiagnostic(
+        { messages },
+        { sessionKey: key, getCacheFenceIndex: () => fenceIdx } as unknown as RequestBodyInjectorConfig,
+        logger,
+      );
+    }
+
+    it("warns on a once-per-turn cache-region mutation in the newly-promoted region (#C2-class regression guard)", () => {
+      const testLogger = createMockLogger();
+      const KEY = "direct-c2-regression";
+      clearSessionPrefixStability(KEY);
+      // A message just ABOVE the fence holds a big (un-offloaded) result; once it crosses BELOW
+      // the fence it is offloaded/cleared → shrinks (content-cleared) — a DIFFERENT message each
+      // turn, with benign growth in between. The OLD diagnostic missed this class entirely: Case-A
+      // only re-verified [0..prev.fence] (the just-promoted region is excluded) and the consecutive
+      // counter reset on every benign within-turn/growth call. The full-prefix WINDOWED check catches it.
+      const big = "x".repeat(700);
+      const mk = (count: number, fence: number): Array<Record<string, unknown>> =>
+        Array.from({ length: count }, (_, i) => ({
+          role: i % 2 === 0 ? "user" : "assistant",
+          content: [{ type: "text", text: i === fence + 1 ? `m-${i}-${big}` : `m-${i}` }],
+        }));
+      runDiag(3, mk(8, 3), testLogger, KEY);   // baseline (big at idx 4)
+      runDiag(5, mk(10, 5), testLogger, KEY);  // idx 4 shrank (#1), big now idx 6
+      runDiag(7, mk(12, 7), testLogger, KEY);  // idx 6 shrank (#2)
+      runDiag(9, mk(14, 9), testLogger, KEY);  // idx 8 shrank (#3 → WARN)
+      expect(countUnstableWarns(testLogger)).toBeGreaterThanOrEqual(1);
+      const warn = (testLogger.warn as ReturnType<typeof vi.fn>).mock.calls.find(
+        (c: unknown[]) => typeof c[1] === "string" && c[1].includes("Unstable prefix detected"),
+      );
+      expect(String((warn![0] as Record<string, unknown>).mutationClass)).toContain("content-cleared");
+    });
+
+    it("does NOT warn on inline-recall transitions (transient by design, C-FIX-3)", () => {
+      const testLogger = createMockLogger();
+      const KEY = "direct-recall-transient";
+      clearSessionPrefixStability(KEY);
+      // Same once-per-turn-different-message shape, but the shrinking content is the inline-recall
+      // block (C-FIX-3 strips it from a user message the turn after it carried the current turn's
+      // recall). The diagnostic must classify the r1→r0 transition as inline-recall and NOT
+      // accumulate it (it would otherwise read as content-cleared and warn — a false positive).
+      const recall = "[Relevant context from memory: a durable fact (recorded 2026-01-01)]\n\n";
+      const mk = (count: number, fence: number): Array<Record<string, unknown>> =>
+        Array.from({ length: count }, (_, i) => ({
+          role: i % 2 === 0 ? "user" : "assistant",
+          // fence is odd here, so fence+1 is an even (user) index — the current-turn recall carrier.
+          content: [{ type: "text", text: (i % 2 === 0 && i === fence + 1) ? `${recall}u-${i}` : `${i % 2 === 0 ? "u" : "a"}-${i}` }],
+        }));
+      runDiag(3, mk(8, 3), testLogger, KEY);   // baseline (recall at user 4)
+      runDiag(5, mk(10, 5), testLogger, KEY);  // user 4 lost recall (r1→r0, excluded)
+      runDiag(7, mk(12, 7), testLogger, KEY);  // user 6 lost recall
+      runDiag(9, mk(14, 9), testLogger, KEY);  // user 8 lost recall
+      expect(countUnstableWarns(testLogger)).toBe(0);
     });
   });
 });
