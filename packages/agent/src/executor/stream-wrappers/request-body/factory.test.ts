@@ -6105,7 +6105,7 @@ describe("zone-aware retention", () => {
 // Token-density semi-stable placement tests
 // ---------------------------------------------------------------------------
 
-describe("token-density semi-stable placement", () => {
+describe("stable semi-stable anchor (cache C-FIX-10)", () => {
   let logger: ReturnType<typeof createMockLogger>;
 
   beforeEach(() => {
@@ -6152,7 +6152,7 @@ describe("token-density semi-stable placement", () => {
     return indices;
   }
 
-  it("uniform messages: semi-stable breakpoint near message-count midpoint", async () => {
+  it("anchors at the 2nd user message (fixed position, not token-density midpoint)", async () => {
     const base = createMockStreamFn();
     const wrapper = createRequestBodyInjector({
       getCacheRetention: () => "long",
@@ -6167,26 +6167,23 @@ describe("token-density semi-stable placement", () => {
     const receivedOptions = base.mock.calls[0][2] as Record<string, unknown>;
     const onPayload = receivedOptions.onPayload as (payload: any, model: any) => Promise<any>;
 
-    // 20 alternating user/assistant messages, each ~500 tokens, NO compaction summary
+    // 20 alternating user/assistant messages, each ~1500 tokens, NO compaction summary
     const msgs: Array<{ role: string; text: string }> = [];
     for (let i = 0; i < 20; i++) {
-      msgs.push({ role: i % 2 === 0 ? "user" : "assistant", text: textForTokens(500) });
+      msgs.push({ role: i % 2 === 0 ? "user" : "assistant", text: textForTokens(1500) });
     }
 
     const payload = makeApiPayload(msgs, 1);
     const result = await onPayload(payload, model);
 
     const bpIndices = findBreakpointIndices(result);
-    // Semi-stable breakpoint (first message breakpoint) should be near midpoint for uniform sizes
-    // With uniform 500-token messages, 50% token threshold is at message ~10
+    // cache C-FIX-10: the semi-stable anchor is PINNED to the 2nd user message (index 2),
+    // a fixed position — NOT the drifting 50%-token midpoint (which used to land near index 10).
     expect(bpIndices.length).toBeGreaterThanOrEqual(1);
-    const semiStableIdx = bpIndices[0]!;
-    // Token midpoint = index midpoint for uniform sizes: between 8 and 12
-    expect(semiStableIdx).toBeGreaterThanOrEqual(8);
-    expect(semiStableIdx).toBeLessThanOrEqual(12);
+    expect(bpIndices[0]).toBe(2);
   });
 
-  it("tool-heavy early messages: semi-stable breakpoint much earlier than index midpoint", async () => {
+  it("anchor is position-based: front-loaded token density does NOT move it", async () => {
     const base = createMockStreamFn();
     const wrapper = createRequestBodyInjector({
       getCacheRetention: () => "long",
@@ -6201,16 +6198,14 @@ describe("token-density semi-stable placement", () => {
     const receivedOptions = base.mock.calls[0][2] as Record<string, unknown>;
     const onPayload = receivedOptions.onPayload as (payload: any, model: any) => Promise<any>;
 
-    // 20 messages: first 4 have 5000 tokens each, remaining 16 have 200 tokens each
-    // Total tokens ~ 20,000 + 3,200 = 23,200. Half = 11,600.
-    // Cumulative: msg0=5000, msg1=10000, msg2=15000 > 11,600 -- crosses at message 2
-    // Semi-stable breakpoint should be at index <= 4 (much earlier than midpoint ~10)
+    // Token density front-loaded (first 4 messages huge) — the OLD 50%-token anchor would land
+    // at index ~2-4; C-FIX-10's fixed anchor ignores token density and stays at the 2nd user message.
     const msgs: Array<{ role: string; text: string }> = [];
     for (let i = 0; i < 4; i++) {
       msgs.push({ role: i % 2 === 0 ? "user" : "assistant", text: textForTokens(5000) });
     }
     for (let i = 4; i < 20; i++) {
-      msgs.push({ role: i % 2 === 0 ? "user" : "assistant", text: textForTokens(200) });
+      msgs.push({ role: i % 2 === 0 ? "user" : "assistant", text: textForTokens(1500) });
     }
 
     const payload = makeApiPayload(msgs, 1);
@@ -6218,13 +6213,38 @@ describe("token-density semi-stable placement", () => {
 
     const bpIndices = findBreakpointIndices(result);
     expect(bpIndices.length).toBeGreaterThanOrEqual(1);
-    const semiStableIdx = bpIndices[0]!;
-    // Token density is front-loaded: 50% threshold crossed by message ~2-3
-    // Semi-stable breakpoint must be at index <= 4 (user message at or before crossing)
-    expect(semiStableIdx).toBeLessThanOrEqual(4);
+    expect(bpIndices[0]).toBe(2); // still the 2nd user message, regardless of token distribution
   });
 
-  it("compaction summary present: uses summary position, not token-density scan", async () => {
+  it("anchor stays fixed at the 2nd user message as the conversation grows (no re-anchor)", async () => {
+    const base = createMockStreamFn();
+    const wrapper = createRequestBodyInjector({
+      getCacheRetention: () => "long",
+      cacheBreakpointStrategy: "multi-zone",
+    }, logger);
+    const wrappedFn = wrapper(base);
+
+    const model = { id: "claude-sonnet-4-5-20250929", provider: "anthropic" } as any;
+    const context = makeContext([]);
+    wrappedFn(model, context, {});
+
+    const receivedOptions = base.mock.calls[0][2] as Record<string, unknown>;
+    const onPayload = receivedOptions.onPayload as (payload: any, model: any) => Promise<any>;
+
+    const mk = (n: number) => {
+      const msgs: Array<{ role: string; text: string }> = [];
+      for (let i = 0; i < n; i++) msgs.push({ role: i % 2 === 0 ? "user" : "assistant", text: textForTokens(1500) });
+      return makeApiPayload(msgs, 1);
+    };
+    // Short conversation then a much longer one — the anchor must NOT move (the C-FIX-2b
+    // 50%→pinned re-anchor at the ~20-block threshold is eliminated).
+    const r1 = await onPayload(mk(10), model);
+    const r2 = await onPayload(mk(30), model);
+    expect(findBreakpointIndices(r1)[0]).toBe(2);
+    expect(findBreakpointIndices(r2)[0]).toBe(2);
+  });
+
+  it("compaction summary present: uses summary position, not the 2nd-user anchor", async () => {
     const base = createMockStreamFn();
     const wrapper = createRequestBodyInjector({
       getCacheRetention: () => "long",
@@ -6256,42 +6276,6 @@ describe("token-density semi-stable placement", () => {
     expect(bpIndices[0]).toBe(0);
   });
 
-  it("backward scan finds user message when token threshold crosses at assistant message", async () => {
-    const base = createMockStreamFn();
-    const wrapper = createRequestBodyInjector({
-      getCacheRetention: () => "long",
-      cacheBreakpointStrategy: "multi-zone",
-    }, logger);
-    const wrappedFn = wrapper(base);
-
-    const model = { id: "claude-sonnet-4-5-20250929", provider: "anthropic" } as any;
-    const context = makeContext([]);
-    wrappedFn(model, context, {});
-
-    const receivedOptions = base.mock.calls[0][2] as Record<string, unknown>;
-    const onPayload = receivedOptions.onPayload as (payload: any, model: any) => Promise<any>;
-
-    // Build messages where 50% token crossing happens at an assistant message:
-    // msg0 (user, 1000 tokens), msg1 (assistant, very large 8000 tokens -- pushes past 50%),
-    // msg2 (user, 500), msg3 (assistant, 500), ... remaining are small
-    // Total ~ 1000 + 8000 + remaining ~4000 = 13000. Half = 6500.
-    // Cumulative: msg0=1000, msg1=9000 > 6500 -- crosses at msg1 (assistant)
-    // Backward scan should find msg0 (user) as the semi-stable breakpoint
-    const msgs: Array<{ role: string; text: string }> = [];
-    msgs.push({ role: "user", text: textForTokens(1000) });
-    msgs.push({ role: "assistant", text: textForTokens(8000) });
-    for (let i = 2; i < 20; i++) {
-      msgs.push({ role: i % 2 === 0 ? "user" : "assistant", text: textForTokens(500) });
-    }
-
-    const payload = makeApiPayload(msgs, 1);
-    const result = await onPayload(payload, model);
-
-    const bpIndices = findBreakpointIndices(result);
-    expect(bpIndices.length).toBeGreaterThanOrEqual(1);
-    // The token crossing is at index 1 (assistant), backward scan finds user at index 0
-    expect(bpIndices[0]).toBe(0);
-  });
 });
 
 // ---------------------------------------------------------------------------

@@ -12,7 +12,6 @@ import type { CacheRetention } from "@earendil-works/pi-ai";
 import {
   CHARS_PER_TOKEN_RATIO,
   CHARS_PER_TOKEN_RATIO_STRUCTURED,
-  CACHE_LOOKBACK_WINDOW,
 } from "../../../context-engine/index.js";
 import { addCacheControlToLastBlock } from "./cache-control-block.js";
 import { sessionCadenceTracker } from "./cadence-tracker.js";
@@ -84,13 +83,13 @@ export function placeSingleBreakpoint(
 /**
  * Place cache breakpoints at strategic positions within the messages array.
  *
- * Zone strategy (up to 3 custom breakpoints):
- * - Breakpoint #2 (semi-stable zone): After the compaction summary or the
- *   boundary between old and recent messages.
- * - Breakpoint #3 (recent zone): On the second-to-last user message (the
- *   SDK places #4 on the last user message).
- * - Breakpoint #3.5 (mid zone): At the midpoint between semi-stable and
- *   second-to-last user -- covers the gap in longer conversations.
+ * Budget = 4 − system − SDK-auto(last message) = 2 Comis message markers (cache C-FIX-4):
+ * - Semi-stable ANCHOR: a FIXED early boundary — the compaction summary if present, else the
+ *   2nd user message (cache C-FIX-10). Pinned (never moves) so it is cached once and never
+ *   re-written. A cheap durable fallback; superseded the drifting 50%-token/C-FIX-2b anchor
+ *   whose movement churn became the dominant waste once #C2/#C4 removed the recurring drops.
+ * - RECENT: the second-to-last user message, adjacent to the SDK's last-message marker; the
+ *   load-bearing marker whose fresh write caches the whole growing prefix.
  *
  * @param messages - The messages array from the Anthropic API payload
  * @param options - Breakpoint placement options
@@ -197,18 +196,18 @@ export function placeCacheBreakpoints(
     return tokens;
   }
 
-  // Count content blocks for messages[start..end] (inclusive) -- the UNIT of Anthropic's
-  // lookback window. A message contributes its content-array length (1 for string content).
-  function blocksInRange(start: number, end: number): number {
-    let n = 0;
-    for (let i = Math.max(0, start); i <= end && i < messages.length; i++) {
-      const content = (messages[i] as any).content;
-      n += Array.isArray(content) ? content.length : 1;
-    }
-    return n;
-  }
-
-  // Find compaction summary position (breakpoint #2 candidate)
+  // Semi-stable anchor: a STABLE early boundary cached ONCE as a durable fallback.
+  //
+  // cache C-FIX-10 (2026-06-19): this SUPERSEDES the C-FIX-2b "latest user ≤ block W" + 50%-token
+  // anchor. Those provided a LARGE fallback for the recurring read-drops of the pre-#C2/#C4 era,
+  // but the anchor MOVED — the 50%-token point drifted, and there was a one-time 50%→pinned regime
+  // jump when the conversation crossed the ~20-block lookback threshold — and EVERY move re-writes
+  // [0..anchor]. Once #C2 (replay-thinking) + #C4 (inline-recall) eliminated the recurring drops,
+  // that big moving anchor became pure overhead. A FIXED anchor that never re-writes wins (live A/B,
+  // 2 rounds, identical coding+recall session: cache-WRITE −~20%, READ +~3%). The recent + SDK
+  // markers carry the bulk; the anchor is just a cheap, never-rewritten fallback. Prefer a
+  // compaction summary (a natural stable boundary); otherwise pin to the 2nd user message — a FIXED
+  // position (the conversation is append-only, so it never moves turn-to-turn).
   let semiStableIdx = -1;
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i] as any;
@@ -222,66 +221,16 @@ export function placeCacheBreakpoints(
       }
     }
   }
-
-  // A compaction summary is a NATURAL, stable cache boundary — when present, keep it as the
-  // semi-stable marker (the C-FIX-2b stability anchor below applies ONLY to the drifting
-  // 50%-token path).
-  const semiStableFromCompaction = semiStableIdx >= 0;
-
-  // Place at 50% cumulative token threshold (not 50% message index).
-  // Token-density placement ensures sessions with tool-heavy early messages
-  // place the breakpoint at the actual token midpoint.
-  if (semiStableIdx === -1 && secondToLastUserIdx > 2) {
-    const totalTokens = estimateTokensInRange(0, secondToLastUserIdx);
-    const halfTokens = totalTokens / 2;
-    let cumulative = 0;
-    let crossingIdx = -1;
-
-    for (let i = 0; i <= secondToLastUserIdx; i++) {
-      cumulative += estimateTokensInRange(i, i);
-      if (cumulative >= halfTokens) {
-        crossingIdx = i;
-        break;
-      }
+  // No compaction summary → pin to the 2nd user message (the first exchange), a fixed stable
+  // position. Guarded to stay strictly before the recent marker; for a short conversation
+  // (≤2 user messages before the current turn) the recent marker already covers the prefix,
+  // so leave the anchor unplaced rather than overlap/invert the markers.
+  if (semiStableIdx === -1) {
+    let uc = 0;
+    for (let i = 0; i < messages.length; i++) {
+      if ((messages[i] as any).role === "user") { uc++; if (uc === 2) { semiStableIdx = i; break; } }
     }
-
-    // Find nearest user message at or before the crossing point
-    if (crossingIdx >= 0) {
-      for (let i = crossingIdx; i >= 0; i--) {
-        if ((messages[i] as any).role === "user") {
-          semiStableIdx = i;
-          break;
-        }
-      }
-      // Fallback: if no user message at/before crossing, scan forward
-      if (semiStableIdx === -1) {
-        for (let i = crossingIdx + 1; i <= secondToLastUserIdx; i++) {
-          if ((messages[i] as any).role === "user") {
-            semiStableIdx = i;
-            break;
-          }
-        }
-      }
-    }
-  }
-
-  // STABILITY ANCHOR (cache C-FIX-2b, 2026-06-18): for a conversation longer than the lookback
-  // window, anchor the first marker to the LATEST user message at/before block W -- a FIXED
-  // position (the conversation is append-only, so block W maps to the same message as it grows).
-  // The first marker therefore does NOT drift turn-to-turn, so each turn re-marks the SAME message
-  // the previous turn cached -> incremental cache HITS. This SUPERSEDES the C-FIX-2a first-segment
-  // guard (which only relocated when the 50%-token marker drifted PAST the window; for shorter-
-  // but-still-long turns the 50%-token marker still moved m14->m18 each turn -> read-drops +
-  // ~18K-token re-writes of token-dense segments). Also keeps the first segment within the window.
-  // Short conversations (<= window) keep the 50%-token semi-stable (no lookback pressure there).
-  // A compaction summary is left as-is (it is already a stable boundary).
-  if (!semiStableFromCompaction && blocksInRange(0, messages.length - 1) > CACHE_LOOKBACK_WINDOW) {
-    let anchor = -1;
-    const scanEnd = lastUserIdx >= 0 ? lastUserIdx : messages.length - 1;
-    for (let i = 0; i <= scanEnd && blocksInRange(0, i) <= CACHE_LOOKBACK_WINDOW; i++) {
-      if ((messages[i] as any).role === "user") anchor = i;
-    }
-    if (anchor > 0) semiStableIdx = anchor;
+    if (semiStableIdx >= secondToLastUserIdx) semiStableIdx = -1;
   }
 
   // Breakpoint #1 (semi-stable anchor): a stable early boundary (compaction summary or the
