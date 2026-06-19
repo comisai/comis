@@ -55,6 +55,22 @@ interface LinkProcessResult {
   errors: string[];
 }
 
+/**
+ * True when every recorded error is a transient httpbin.org outage (5xx, abort/
+ * timeout, or DNS/connection failure) rather than a code defect. httpbin can pass
+ * the `/status/200` load-time probe (HTTPBIN_UP) and then 503 on `/html` mid-test —
+ * a probe-vs-fetch race. In that window the pipeline behaved correctly (it
+ * gracefully recorded the fetch failure); the success-path assertions simply
+ * cannot be exercised, so the test should SKIP rather than false-fail. Errors are
+ * shaped `"<url>: <reason>"` by link-runner.ts.
+ */
+function isHttpbinOutage(errors: string[]): boolean {
+  if (errors.length === 0) return false;
+  const transient =
+    /(HTTP 5\d\d|aborted|ENOTFOUND|ECONNRESET|ECONNREFUSED|ETIMEDOUT|fetch failed|network|timed out)/i;
+  return errors.every((e) => /httpbin\.org/.test(e) && transient.test(e));
+}
+
 // ---------------------------------------------------------------------------
 // Test suite
 // ---------------------------------------------------------------------------
@@ -89,13 +105,16 @@ describe("TOOL-LINK: Link Understanding Integration", () => {
 
   it.skipIf(!HTTPBIN_UP)(
     "link.process enriches text containing a real URL",
-    async () => {
+    async (ctx) => {
       const originalText =
         "Check out https://httpbin.org/html for test content";
 
       const result = (await rpcCall("link.process", {
         text: originalText,
       })) as LinkProcessResult;
+
+      // httpbin 503'd between the load-time probe and this fetch — skip, don't fail.
+      if (isHttpbinOutage(result.errors)) ctx.skip();
 
       expect(result.linksProcessed).toBeGreaterThanOrEqual(1);
       expect(result.enrichedText.length).toBeGreaterThan(originalText.length);
@@ -130,13 +149,16 @@ describe("TOOL-LINK: Link Understanding Integration", () => {
 
   it.skipIf(!HTTPBIN_UP)(
     "link.process handles multiple URLs in one message",
-    async () => {
+    async (ctx) => {
       const originalText =
         "See https://httpbin.org/html and https://httpbin.org/json for examples";
 
       const result = (await rpcCall("link.process", {
         text: originalText,
       })) as LinkProcessResult;
+
+      // httpbin 503'd between the load-time probe and this fetch — skip, don't fail.
+      if (isHttpbinOutage(result.errors)) ctx.skip();
 
       expect(result.linksProcessed).toBeGreaterThanOrEqual(2);
       expect(result.enrichedText.length).toBeGreaterThan(originalText.length);
