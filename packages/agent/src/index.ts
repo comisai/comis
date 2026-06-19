@@ -606,7 +606,7 @@ export type { OperationModelResolution } from "./model/operation-model-resolver.
 // pi-executor does per-execution (CR-01: R6 was never reaching production). Only
 // the resolver + CapabilityClass type cross the package boundary; the memory jobs
 // (also in @comis/agent) own the resolveMemoryOpsStrategy call internally.
-export { resolveModelProfile } from "./executor/model-profile.js";
+export { resolveModelProfile, capabilityClassFromProvider } from "./executor/model-profile.js";
 export type { CapabilityClass } from "./executor/model-profile.js";
 // O2 (WR-02): canonical DAG template seeding. seedDefaultDagTemplates is wired
 // into daemon bootstrap (idempotent INSERT-OR-IGNORE) so the four canonical

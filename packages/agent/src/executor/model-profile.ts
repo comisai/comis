@@ -88,6 +88,27 @@ export const FAIL_CLOSED_PROFILE: Readonly<ModelProfile> = {
   reasoningStyle: "none",
 } as const;
 
+/**
+ * Resolve a CapabilityClass from a provider string via the provider-family heuristic ALONE
+ * (no model entry, no contextWindow — K2 invariant). The same family mapping resolveModelProfile
+ * uses: anthropic / openai family → "frontier"; google family → "mid"; all others → "small".
+ * Returns undefined for an undefined provider (the caller decides the fail-safe). Single-sourced
+ * to resolveProviderCapabilities so canonical aliases (amazon-bedrock→anthropic, google-vertex→
+ * google, azure-openai-responses→openai) resolve correctly.
+ *
+ * This is the standalone heuristic the daemon-side resolvers fall back to when no operator
+ * `providers.entries.<p>.capabilities.capabilityClass` override is pinned — without it the
+ * `pipeline:authored` telemetry tier (TELEM-01) and AUTHOR-01 repair routing silently
+ * fail-default to "unknown"/undefined for every un-pinned config (i.e. the common case).
+ */
+export function capabilityClassFromProvider(provider: string | undefined): CapabilityClass | undefined {
+  if (!provider) return undefined;
+  const family = resolveProviderCapabilities(provider).providerFamily;
+  if (family === "anthropic" || family === "openai") return "frontier";
+  if (family === "google") return "mid";
+  return "small";
+}
+
 // ---------------------------------------------------------------------------
 // Pure resolver function
 // ---------------------------------------------------------------------------
@@ -159,19 +180,11 @@ export function resolveModelProfile(
     // Explicit config override wins unconditionally
     capabilityClass = capabilityClassOverride;
   } else {
-    // CR-01: use canonical provider-family mapping (single-sourced to capabilities.ts)
-    // so all provider aliases (amazon-bedrock, google-vertex, azure-openai-responses,
-    // bedrock, gcp-vertex, etc.) map to their correct family — not the raw provider string.
-    const family = resolveProviderCapabilities(resolvedModel.provider).providerFamily;
-    if (family === "anthropic" || family === "openai") {
-      capabilityClass = "frontier";
-    } else if (family === "google") {
-      capabilityClass = "mid";
-    } else {
-      // All other providers (ollama, cerebras, groq, custom, etc.) → "small"
-      // Fail-safe: unknown/local models default to high scaffold + locked security
-      capabilityClass = "small";
-    }
+    // CR-01: provider-family mapping (single-sourced via capabilityClassFromProvider →
+    // resolveProviderCapabilities) so all aliases (amazon-bedrock, google-vertex,
+    // azure-openai-responses, bedrock, gcp-vertex, etc.) map to their correct family.
+    // resolvedModel.provider is always defined here; "small" is the fail-safe direction.
+    capabilityClass = capabilityClassFromProvider(resolvedModel.provider) ?? "small";
   }
 
   // Derived from capabilityClass (lookup tables — no magic)

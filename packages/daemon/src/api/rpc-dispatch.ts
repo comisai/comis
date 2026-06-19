@@ -57,7 +57,7 @@ import { createGraphHandlers } from "./graph-handlers/index.js";
 // place to import @comis/agent and inject the conservative repair matcher into
 // the graph handlers (buildGraphInput receives it via deps.repairMatch — never a
 // direct daemon→agent import in the pure helper).
-import { matchRawGraphToTemplate } from "@comis/agent";
+import { matchRawGraphToTemplate, capabilityClassFromProvider } from "@comis/agent";
 import { createWorkspaceHandlers } from "./workspace-handlers.js";
 import { createHeartbeatHandlers } from "./heartbeat-handlers.js";
 import { createSkillHandlers } from "./skill-handlers.js";
@@ -235,7 +235,17 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
         // object-injection does NOT flag a logical-expression key (`agentId ?? ""`),
         // so adding the directive here is reported as unused — this plain comment
         // documents the intentional safe read instead.
-        deps.getProviderCapabilityClass?.(deps.agents[agentId ?? ""]?.provider),
+        //
+        // TELEM-01 fix (2026-06-19): fall back to the provider-family heuristic when no operator
+        // `providers.entries.<p>.capabilities.capabilityClass` override is pinned. Without this
+        // fallback the override-only resolver returned undefined for every un-pinned config (the
+        // common case), so `pipeline:authored` always emitted capabilityClass:"unknown" and P1's
+        // small-model-authoring-rate metric was dead. The heuristic (anthropic/openai→frontier,
+        // google→mid, else→small) is the same one the executor's live ModelProfile derives.
+        (() => {
+          const provider = deps.agents[agentId ?? ""]?.provider;
+          return deps.getProviderCapabilityClass?.(provider) ?? capabilityClassFromProvider(provider);
+        })(),
       // AUTHOR-01 (Phase 174-03): thread the orchestration.authoring gate +
       // inject the conservative repair matcher. The daemon→agent boundary is
       // crossed HERE (the composition site legitimately imports @comis/agent),
