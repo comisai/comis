@@ -7741,6 +7741,43 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
             "additionalProperties": false
           }
         },
+        "nodeBudgetBreaches": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "seq": {
+                "type": "number"
+              },
+              "nodeId": {
+                "type": "string"
+              },
+              "capSource": {
+                "type": "string",
+                "enum": [
+                  "node",
+                  "operator-default",
+                  "inherit-share",
+                  "unknown"
+                ]
+              },
+              "tokenBudget": {
+                "type": "number"
+              },
+              "tokensUsed": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "seq",
+              "nodeId",
+              "capSource",
+              "tokenBudget",
+              "tokensUsed"
+            ],
+            "additionalProperties": false
+          }
+        },
         "contextBudget": {
           "type": "object",
           "properties": {

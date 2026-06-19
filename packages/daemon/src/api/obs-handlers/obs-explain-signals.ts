@@ -30,24 +30,20 @@
  */
 
 import { fingerprint, IncidentContextBudgetSchema, IncidentPromptTimeoutSchema } from "@comis/core";
-import type { IncidentContextBudget, IncidentFailure, IncidentPromptTimeout, IncidentSignals } from "@comis/core";
+import type { IncidentSignals } from "@comis/core";
 import {
   asString,
   asNumber,
   relativizeDiskPath,
   previewAndDigest,
   applyMediaRecord,
-  type IncidentImageSignal,
-  type IncidentVisionSignal,
-  type IncidentVideoSignal,
-  type IncidentVoiceSignal,
 } from "./obs-explain-signals-fields.js";
 import {
   accumulateLearningRecord, accumulateSkillInvokedRecord, accumulateSkillSynthesizedRecord,
   accumulateSkillValidatedRecord, accumulateToolSchemaRecord, buildLearningSignal,
   accumulateUserModelRevisedRecord, accumulateMemoryGeneralizedRecord, emptyLearningFold,
-  type LearningFoldState,
 } from "./obs-explain-signal-folds.js";
+import type { Acc } from "./obs-explain-signals-acc.js";
 
 // ---------------------------------------------------------------------------
 // Tunable thresholds (module-top constants per the naming contract).
@@ -64,65 +60,6 @@ export const BREAKER_N = 5;
 /** Token literals the misclassification heuristic looks for in a failure body. */
 const MISCLASS_TOKEN_RE = /"?status"?\s*:?\s*(200|403)|\b(200|403)\b|status/i;
 const DO_NOT_RETRY_RE = /DO NOT retry/i;
-
-// ---------------------------------------------------------------------------
-// Internal mutable accumulator (collapsed into IncidentSignals at the end).
-// ---------------------------------------------------------------------------
-
-interface Acc {
-  toolStats: Map<string, { ok: number; failed: number; errorKinds: Map<string, number> }>;
-  failures: IncidentFailure[];
-  breakerEvents: IncidentSignals["breakerEvents"];
-  offloads: IncidentSignals["offloads"];
-  nodeBudgetBreaches: IncidentSignals["nodeBudgetBreaches"];
-  breakerOpenedTool?: string;
-  hasDoNotRetrySignal: boolean;
-  /** Tools for which a log-shape breaker "opened" event was already synthesized
-   * (dedup — the breaker opens once per tool even across repeated DO-NOT-retry
-   * lines). Structured tool.breaker_opened events are NOT deduped here (they are
-   * explicit telemetry, one push each). */
-  synthesizedBreakerTools: Set<string>;
-  /** Per-tool: did any failure body carry a status/200/403 token? */
-  misclassTokenByTool: Map<string, string>;
-  /** W3: the LAST context.budget trajectory record (the terminal fit check). */
-  contextBudget?: IncidentContextBudget;
-  /** LAT-04: the LAST execution.prompt_timeout record (the terminal kill
-   *  explains the end state — a retry-path kill earlier in the session is
-   *  superseded by the kill that actually ended it). */
-  promptTimeout?: IncidentPromptTimeout;
-  /** GBNF-02: the LAST `execution.tool_schema_unsupported` record — the
-   *  strip-retry self-heal outcome (one strip-retry per session means at most
-   *  a handful; the terminal repair state explains the end). */
-  toolSchemaUnsupported?: IncidentSignals["toolSchemaUnsupported"];
-  /** RECALL-01: aggregated over `memory.recalled` records — how many recalls ran,
-   *  how many returned zero injected memories, and the TERMINAL recall's shape. */
-  recallCount: number;
-  recallZeroHits: number;
-  lastRecall?: { lanes: number; finalCount: number; rerankerAvailable: boolean };
-  learning: LearningFoldState; // OBS-02 (198): see obs-explain-learning-fold.ts
-  /** The image (186) / vision (187) / video (192) / voice (196) turns reconstructed
-   *  from the session's image.* / media.vision.* / video.* / media.stt / media.tts
-   *  records (folded by `applyMediaRecord`). Each is undefined until its record class
-   *  is seen. The paired *OutcomeSeq makes each fold seq-aware (IN-04 — a stale
-   *  lower-seq terminal never overwrites a newer one). */
-  image?: IncidentImageSignal;
-  imageOutcomeSeq: number;
-  vision?: IncidentVisionSignal;
-  visionOutcomeSeq: number;
-  video?: IncidentVideoSignal;
-  videoOutcomeSeq: number;
-  voice?: IncidentVoiceSignal;
-  voiceOutcomeSeq: number;
-  /** W8: event-shape tool.result toolCallIds already counted (dedup — the same
-   *  call must not count twice if its result event is duplicated across sources). */
-  seenToolResultCallIds: Set<string>;
-  /** W8: agentId from the first record envelope that carries one. */
-  agentId?: string;
-  /** W8: channel identity from the session.started record's data. */
-  channel?: { type: string; id: string };
-  sessionKey: string;
-  seq: number;
-}
 
 function ensureTool(acc: Acc, tool: string): { ok: number; failed: number; errorKinds: Map<string, number> } {
   let entry = acc.toolStats.get(tool);

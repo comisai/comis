@@ -22,6 +22,7 @@
  */
 
 import type { TrajectoryBridgedEventName } from "./event-bus-bridge.js";
+import { translateImagePayload } from "./translate-image-payload.js";
 import { translateOrchestrationPayload } from "./translate-orchestration-payload.js";
 import { translateVideoPayload } from "./translate-video-payload.js";
 import { translateVisionPayload } from "./translate-vision-payload.js";
@@ -737,38 +738,12 @@ export function translatePayload(
         windowMs: payload.windowMs,
       };
 
-    // ---- Image generation (OBS-04, Phase 186) ----
-    // CONTENT-FREE (T-186-08): ids/labels/numbers/booleans ONLY — never the prompt, image
-    // bytes, a credential, or a raw provider message. `costUsd` rides image.generated so
-    // `comis explain` reconstructs the cost (OBS-03 Route a). agentId/sessionKey/timestamp
-    // are envelope-only + stripped; optional fields spread presence-conditionally.
-
+    // ---- Image generation (OBS-04, Phase 186) ---- delegated to translate-image-payload.ts (file-size split; content-free + envelope-stripped, the precedent the vision/video/voice arms below mirror — image was the last media lifecycle still inline).
     case "image:requested":
-      return {
-        provider: payload.provider,
-        mainProvider: payload.mainProvider,
-      };
-
     case "image:generated":
-      return {
-        provider: payload.provider,
-        outcome: payload.outcome,
-        ...(payload.model !== undefined ? { model: payload.model } : {}),
-        ...(payload.costUsd !== undefined ? { costUsd: payload.costUsd } : {}),
-        ...(payload.sizeBytes !== undefined ? { sizeBytes: payload.sizeBytes } : {}),
-      };
-
     case "image:delivered":
-      return {
-        channelType: payload.channelType,
-        delivered: payload.delivered,
-      };
-
     case "image:failed":
-      return {
-        errorKind: payload.errorKind,
-        provider: payload.provider,
-      };
+      return translateImagePayload(eventName, payload);
 
     // ---- Vision analysis (VIS-04, Phase 187) ---- delegated to translate-vision-payload.ts (file-size split, Phase 196; content-free + envelope-stripped, mirroring the image:* arms above + the video:* delegation below). The `path` label is VIS-03's "which path" signal; `costUsd` rides media.vision:completed (VIS-04 Route a).
     case "media.vision:requested":
