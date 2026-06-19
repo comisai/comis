@@ -14,7 +14,7 @@
  * @module
  */
 
-import { stripInlineRecalledMemory } from "../../../rag/hybrid-memory-injector.js";
+import { stripInlineRecalledMemory, extractInlineRecalledMemory } from "../../../rag/hybrid-memory-injector.js";
 
 /** Minimum content length (chars) for a tool result to be considered clearable. */
 export const MICROCOMPACT_MIN_CONTENT_LENGTH = 1000;
@@ -336,4 +336,69 @@ export function stripTransientRecallFromHistory(messages: Array<Record<string, u
     }
   }
   return stripped;
+}
+
+/** Matches a deferred trailing recall block (used to detect/skip it on later passes). */
+const RECALL_PREFIX_RE = /^\s*\[Relevant context from memory:/;
+
+/**
+ * Move the inline-recall block on the CURRENT (latest) user message off the cached
+ * prefix and onto the UNCACHED tail.
+ *
+ * cache #C4 (2026-06-19): `envelope-wrapper` prepends the top-1 RAG recall block to the
+ * current user query, and pi-ai marks that message's last block with cache_control — so
+ * the recall is CACHED while it's the current turn. The next call, that message goes
+ * historical and `stripTransientRecallFromHistory` (C-FIX-3) removes the recall → the
+ * cached prefix mutates at that message → read collapse + a re-write of everything after
+ * it (the dominant turn-boundary re-write, formerly mislabeled "#C3 / 4-marker cap").
+ *
+ * Unlike thinking (regenerated, so strippable everywhere — see `stripReplayThinking`),
+ * recall is FUNCTIONAL input the model needs on the current turn, so it can't be removed.
+ * Instead: split it out of the cache-marked query block (the query KEEPS its cache_control,
+ * staying cached and byte-stable) and append it as a SEPARATE trailing block with NO
+ * cache_control. Anthropic caches up to the marked query block; the trailing recall block
+ * sits AFTER the fence → visible to the model, never cached → no mutation when it later
+ * goes historical and is stripped. The query block is byte-identical to its
+ * recall-stripped historical form next turn, so it stays a cache hit.
+ *
+ * Runs AFTER `stripTransientRecallFromHistory` (which keeps recall on the latest message)
+ * and BEFORE/independent of marker placement (the SDK marker is already on the last block).
+ * Mutates messages in place. Returns 1 if it deferred a recall block, else 0.
+ */
+export function deferRecallToUncachedTail(messages: Array<Record<string, unknown>>): number {
+  let lastUserIdx = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i]!.role === "user") { lastUserIdx = i; break; }
+  }
+  if (lastUserIdx < 0) return 0;
+  const msg = messages[lastUserIdx]!;
+  const content = msg.content;
+
+  if (typeof content === "string") {
+    const { recall, rest } = extractInlineRecalledMemory(content);
+    if (!recall || rest.trim().length === 0) return 0;
+    msg.content = [
+      { type: "text", text: rest },
+      { type: "text", text: recall.trim() },
+    ];
+    return 1;
+  }
+
+  if (Array.isArray(content)) {
+    const blocks = content as Array<Record<string, unknown>>;
+    // The recall-bearing block (recall is prepended to the message text). Target it by
+    // content so the cache_control (on the last block) is preserved on the query remainder.
+    const recallBlock = blocks.find(
+      b => b.type === "text" && typeof b.text === "string" && RECALL_PREFIX_RE.test(b.text as string),
+    );
+    if (!recallBlock) return 0;
+    const { recall, rest } = extractInlineRecalledMemory(recallBlock.text as string);
+    if (!recall || rest.trim().length === 0) return 0;
+    recallBlock.text = rest; // query remainder keeps its cache_control → stays cached + stable
+    // Append the recall AFTER the cache fence (the SDK marker is on the last block) so it
+    // rides the uncached tail. No cache_control on this block.
+    blocks.push({ type: "text", text: recall.trim() });
+    return 1;
+  }
+  return 0;
 }

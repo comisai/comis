@@ -42,7 +42,7 @@ import {
 } from "./context-window.js";
 import { isResponsesApiProvider, injectStoreFlag } from "./store-flag.js";
 import { injectServiceTier } from "./service-tier.js";
-import { reorderContentForStablePrefix, stripTransientRecallFromHistory, stripReplayThinking } from "./tool-result-clearing.js";
+import { reorderContentForStablePrefix, stripTransientRecallFromHistory, stripReplayThinking, deferRecallToUncachedTail } from "./tool-result-clearing.js";
 import { sortToolsForCacheStability } from "./cache-breakpoints.js";
 import { applyRenderedToolCache } from "./tool-cache.js";
 import {
@@ -219,6 +219,16 @@ export function createRequestBodyInjector(
               logger.debug(
                 { thinkingStripped, sessionKey: config.sessionKey },
                 "Stripped replay thinking from cached prefix",
+              );
+            }
+            // cache #C4: move the current turn's inline-recall block onto the UNCACHED tail
+            // (a trailing block after the cache fence) so it's visible to the model but never
+            // cached — preventing the prefix mutation when C-FIX-3 strips it next turn.
+            const recallDeferred = deferRecallToUncachedTail(result.messages as Array<Record<string, unknown>>);
+            if (recallDeferred > 0) {
+              logger.debug(
+                { recallDeferred, sessionKey: config.sessionKey },
+                "Deferred inline-recall to the uncached tail",
               );
             }
           }

@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { clearStaleThinkingBlocks, stripTransientRecallFromHistory, stripReplayThinking } from "./index.js";
+import { clearStaleThinkingBlocks, stripTransientRecallFromHistory, stripReplayThinking, deferRecallToUncachedTail } from "./index.js";
 
 /** A representative inline-recall block as envelope-wrapper prepends it (hybrid-memory-injector template). */
 const recall = (content: string) =>
@@ -275,5 +275,63 @@ describe("stripTransientRecallFromHistory (pure)", () => {
 
     expect(stripped).toBe(0);
     expect(messages[0]!.content).toBe(recall("x") + "only turn"); // current turn keeps recall
+  });
+});
+
+describe("deferRecallToUncachedTail (pure) — cache #C4", () => {
+  // The current turn's recall block is cached (pi-ai marks the last user block) then
+  // stripped when it goes historical (C-FIX-3) → cached-prefix mutation. Fix: split the
+  // recall out of the cache-marked query block and append it as a SEPARATE trailing block
+  // with NO cache_control, so it rides the uncached tail (visible to the model, never cached).
+
+  it("splits recall off the cache-marked query block into a trailing UNCACHED block", () => {
+    const messages: Array<Record<string, unknown>> = [
+      { role: "assistant", content: "prior" },
+      { role: "user", content: [
+        // pi-ai marked the last block (query + prepended recall) with cache_control.
+        { type: "text", text: recall("teal is my favorite color") + "What did I say my favorite color was?", cache_control: { type: "ephemeral" } },
+      ] },
+    ];
+    const deferred = deferRecallToUncachedTail(messages);
+    expect(deferred).toBe(1);
+    const blocks = messages[1]!.content as Array<Record<string, unknown>>;
+    expect(blocks.length).toBe(2);
+    // Query block: recall removed, cache_control PRESERVED → stays cached + byte-stable.
+    expect(blocks[0]!.text).toBe("What did I say my favorite color was?");
+    expect(blocks[0]!.cache_control).toEqual({ type: "ephemeral" });
+    // Trailing recall block: present (model still sees it) but NO cache_control (uncached tail).
+    expect(blocks[1]!.text).toBe("[Relevant context from memory: teal is my favorite color (recorded 2026-06-18)]");
+    expect(blocks[1]!.cache_control).toBeUndefined();
+  });
+
+  it("handles string content (converts to query block + trailing recall block)", () => {
+    const messages: Array<Record<string, unknown>> = [
+      { role: "user", content: recall("a fact") + "the query" },
+    ];
+    expect(deferRecallToUncachedTail(messages)).toBe(1);
+    const blocks = messages[0]!.content as Array<Record<string, unknown>>;
+    expect(blocks.map(b => b.text)).toEqual(["the query", "[Relevant context from memory: a fact (recorded 2026-06-18)]"]);
+    expect(blocks[1]!.cache_control).toBeUndefined();
+  });
+
+  it("only operates on the LATEST user message, not historical ones", () => {
+    const messages: Array<Record<string, unknown>> = [
+      { role: "user", content: [{ type: "text", text: recall("old") + "old query" }] },
+      { role: "assistant", content: "reply" },
+      { role: "user", content: [{ type: "text", text: recall("new") + "new query", cache_control: { type: "ephemeral" } }] },
+    ];
+    expect(deferRecallToUncachedTail(messages)).toBe(1);
+    // Historical user (idx 0) untouched (C-FIX-3 handles that one separately).
+    expect((messages[0]!.content as Array<Record<string, unknown>>).length).toBe(1);
+    // Latest user (idx 2) split into query + trailing recall.
+    expect((messages[2]!.content as Array<Record<string, unknown>>).length).toBe(2);
+  });
+
+  it("no-op when the latest user message has no recall block", () => {
+    const messages: Array<Record<string, unknown>> = [
+      { role: "user", content: [{ type: "text", text: "just a plain query", cache_control: { type: "ephemeral" } }] },
+    ];
+    expect(deferRecallToUncachedTail(messages)).toBe(0);
+    expect((messages[0]!.content as Array<Record<string, unknown>>).length).toBe(1);
   });
 });
