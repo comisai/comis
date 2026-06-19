@@ -76,6 +76,13 @@ vi.mock("@comis/core", async () => {
     })),
     loadConfigFile: vi.fn(() => ({ ok: false, error: new Error("no config") })),
     validateConfig: vi.fn(),
+    // loadStorageMode now reads the mode via preReadStorageMode (a direct YAML
+    // scan, no ${VAR} substitution) rather than the mockable loadConfigFile —
+    // so these file-mode rendering/login tests must pin it to "file" here, else
+    // it would read the host's real ~/.comis/config.yaml (encrypted) and route
+    // every subcommand through requireDaemonOrExit (exit:4). Storage-mode
+    // resolution itself is covered in auth.test.ts.
+    preReadStorageMode: vi.fn(() => "file"),
     safePath: vi.fn((...parts: string[]) => parts.join("/")),
   };
 });
