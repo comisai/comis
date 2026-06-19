@@ -63,7 +63,11 @@ export function buildCronSchedule(kind: CronSchedule["kind"], params: Record<str
     case "every":
       return { kind: "every" as const, everyMs: params.schedule_every_ms as number };
     case "at":
-      return { kind: "at" as const, at: params.schedule_at as string };
+      return {
+        kind: "at" as const,
+        at: params.schedule_at as string,
+        tz: params.timezone as string | undefined,
+      };
     default: {
       const _exhaustive: never = kind;
       // @allow-throw: called from daemon RPC handlers (cron-handlers.ts); RPC dispatcher converts to JSON-RPC error response.

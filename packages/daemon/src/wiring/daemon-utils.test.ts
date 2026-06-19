@@ -102,6 +102,18 @@ describe("buildCronSchedule", () => {
     expect(result).toEqual({ kind: "at", at: "2026-01-01T00:00:00Z" });
   });
 
+  // Live VPS incident 2026-06-19 (UC-A3): the "at" branch dropped `timezone`,
+  // so a naive "remind me at 9am" for a Pacific user fired at 9am UTC. The tz
+  // must now flow onto the one-shot schedule (mirroring the "cron" branch).
+  it("threads timezone onto an at schedule for naive wall-clock reminders", () => {
+    const result = buildCronSchedule("at", {
+      schedule_at: "2026-06-20T09:00:00",
+      timezone: "America/Los_Angeles",
+    });
+
+    expect(result).toEqual({ kind: "at", at: "2026-06-20T09:00:00", tz: "America/Los_Angeles" });
+  });
+
   it("throws for unknown schedule kind", () => {
     expect(() => buildCronSchedule("invalid", {})).toThrow("Unknown schedule kind");
   });

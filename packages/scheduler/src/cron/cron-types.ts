@@ -27,6 +27,13 @@ export const CronScheduleSchema = z.discriminatedUnion("kind", [
       kind: z.literal("at"),
       /** ISO 8601 datetime string for one-shot execution */
       at: z.string().min(1),
+      /**
+       * IANA timezone (e.g. "America/Los_Angeles") in which a NAIVE `at`
+       * datetime (no offset) is interpreted; omit for UTC/system-local. Mirrors
+       * the "cron" kind's `tz`. Without this, "remind me at 9am" for a Pacific
+       * user fired at 9am UTC (= 2am Pacific) — the wrong wall-clock time.
+       */
+      tz: z.string().optional(),
     }),
 ]);
 

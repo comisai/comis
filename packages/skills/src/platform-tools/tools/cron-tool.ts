@@ -63,9 +63,9 @@ const CronToolParams = Type.Object({
     Type.Integer({ description: "Interval in milliseconds (for schedule_kind=every)" }),
   ),
   schedule_at: Type.Optional(
-    Type.String({ description: "ISO 8601 datetime string (for schedule_kind=at)" }),
+    Type.String({ description: "ISO 8601 datetime string for schedule_kind=at (a naive wall-clock like 2026-06-20T09:00:00 is interpreted in `timezone`, or UTC if none)" }),
   ),
-  timezone: Type.Optional(Type.String({ description: "IANA timezone (e.g. America/New_York)" })),
+  timezone: Type.Optional(Type.String({ description: "IANA timezone (e.g. America/Los_Angeles). REQUIRED for any time-of-day schedule (schedule_kind=cron or at) so it fires at the USER'S local wall-clock time, not the server's. Set it to the user's known timezone (from memory/USER.md); without it a naive time like 09:00 is interpreted in the server timezone (UTC). E.g. a Pacific user's 'remind me at 9am' must pass timezone=America/Los_Angeles." })),
   payload_kind: Type.Optional(
     Type.Union([Type.Literal("system_event"), Type.Literal("agent_turn")], {
       description: "Payload type. Valid values: system_event (cron/system triggers), agent_turn (agent-initiated runs)",
