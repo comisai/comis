@@ -315,7 +315,15 @@ export function wireAuditSink(deps: WireAuditSinkDeps): void {
       }
     }
     // AUDIT-03: the now-activated dormant level-35 audit line (scrubbed row).
-    logger?.audit({ kind: row.kind, outcome: row.outcome, agentId: row.agentId, traceId: row.traceId, refs: row.refs }, row.kind);
+    // `.audit()` is a CUSTOM Pino level registered ONLY by the @comis/infra
+    // logger factory — `logger?.audit?.(...)` (method optional-chain, not just
+    // the null-guard `logger?.`) so a logger BUILT WITHOUT that factory (a test
+    // capture logger, a minimal Pino) makes this SUPPLEMENTARY line a no-op
+    // rather than crashing the audit subscriber with `audit is not a function`.
+    // The DURABLE audit (the obs_audit_events row + security-audit.jsonl above)
+    // already fired, so the audit trail stays intact; production uses the infra
+    // logger (has `.audit()`) → behavior is byte-identical (the line still fires).
+    logger?.audit?.({ kind: row.kind, outcome: row.outcome, agentId: row.agentId, traceId: row.traceId, refs: row.refs }, row.kind);
   }
 
   // audit:event carries its own tenantId/agentId; fall back to the trace ctx /

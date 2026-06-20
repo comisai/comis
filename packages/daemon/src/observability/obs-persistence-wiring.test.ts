@@ -19,9 +19,13 @@ import {
 } from "./obs-persistence-wiring.js";
 import {
   auditEventToRow,
+  wireAuditSink,
   AUDIT_JSONL_DEFAULT_MAX_SIZE_BYTES,
   AUDIT_JSONL_DEFAULT_MAX_FILES,
 } from "./obs-audit-sink.js";
+import type { AuditRowSink } from "./obs-audit-sink.js";
+import type { AuditEventRow } from "@comis/memory";
+import type { ComisLogger } from "@comis/infra";
 import type { EventMap } from "@comis/core";
 import { runWithContext } from "@comis/core";
 import Database from "better-sqlite3";
@@ -1790,6 +1794,131 @@ describe("setupObsPersistence — audit sink (real store + tmp JSONL)", () => {
     expect(errCall).toBeDefined();
     expect((errCall![0] as { errorKind: string }).errorKind).toBe("resource");
     expect((errCall![0] as { hint: string }).hint).toContain("security-audit.jsonl");
+  });
+});
+
+// ===========================================================================
+// AUDIT-03 regression — `.audit()` is a CUSTOM Pino level (35) registered ONLY
+// by the @comis/infra logger factory. A logger built WITHOUT that factory (a
+// test capture logger, a minimal Pino logger) lacks `.audit`. Phase 176-02/03
+// activated the dormant level-35 line at obs-audit-sink.ts:318 as
+// `logger?.audit(...)` — the `?.` guards a NULL logger but NOT a non-null
+// logger missing the `audit` method, so the subscriber threw
+// `TypeError: logger?.audit is not a function` for EVERY audit:event,
+// breaking test/integration/secret-rpc-residency.test.ts. The supplementary
+// level-35 line must degrade to a no-op (the DURABLE row + JSONL fire BEFORE
+// it), never crash the audit subscriber.
+// ===========================================================================
+
+describe("wireAuditSink — a logger missing the custom .audit() level (AUDIT-03 regression)", () => {
+  let db: Database.Database;
+  let store: ReturnType<typeof createObservabilityStore>;
+  let dataDir: string;
+  let auditLogPath: string;
+
+  // A real SQLite-backed audit buffer surface (push → insert) so the durable
+  // row is asserted against actual persistence, not a mock.
+  function makeRealAuditBuffer(): AuditRowSink {
+    return {
+      push(row: AuditEventRow): void {
+        store.insertAuditEvent(row);
+      },
+    };
+  }
+
+  // A minimal eventBus mirroring the realDeps() shape above.
+  function makeBus() {
+    const listeners = new Map<string, Array<(p: unknown) => void>>();
+    return {
+      bus: {
+        on: (e: string, h: (p: unknown) => void) => {
+          const arr = listeners.get(e) ?? []; arr.push(h); listeners.set(e, arr);
+        },
+        off: () => {}, once: () => {},
+      } as never,
+      emit: (e: string, p: unknown) => { for (const h of listeners.get(e) ?? []) h(p); },
+    };
+  }
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    initSchema(db, 1536);
+    store = createObservabilityStore(db);
+    dataDir = fs.mkdtempSync(nodePath.join(os.tmpdir(), "obs-audit-partial-"));
+    auditLogPath = nodePath.join(dataDir, "logs", "security-audit.jsonl");
+  });
+
+  afterEach(() => {
+    db.close();
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it("does NOT throw and STILL writes the durable row + JSONL when the logger lacks .audit()", () => {
+    // A PARTIAL logger: implements info/debug/warn/error/trace/fatal/child but
+    // NOT the custom `audit` level (the shape of any non-infra-factory logger).
+    // Cast to ComisLogger — this is exactly the type the call site trusts.
+    const partialLogger = {
+      info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
+      trace: vi.fn(), fatal: vi.fn(),
+      child: vi.fn(function (this: unknown) { return partialLogger; }),
+      // NO `audit` method — this is the regression trigger.
+    } as unknown as ComisLogger;
+
+    const { bus, emit } = makeBus();
+    wireAuditSink({
+      eventBus: bus,
+      auditBuffer: makeRealAuditBuffer(),
+      logger: partialLogger,
+      dataDir,
+      logRotation: { maxSizeBytes: 10_000_000, maxFiles: 5 },
+    });
+
+    // Pre-fix: this throws `TypeError: logger?.audit is not a function`.
+    expect(() =>
+      emit("audit:event", {
+        timestamp: 1000, agentId: "a1", tenantId: "t1", actionType: "file.delete",
+        kind: "audit", outcome: "success", metadata: { count: 1 },
+      }),
+    ).not.toThrow();
+
+    // The DURABLE audit trail is intact: the SQLite row landed...
+    const rows = store.queryAuditEvents({ kind: "audit" });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.outcome).toBe("success");
+    // ...and the 0600 security-audit.jsonl line was written too.
+    const jsonl = fs.readFileSync(auditLogPath, "utf8");
+    expect(jsonl.length).toBeGreaterThan(0);
+    expect(jsonl).toContain("file.delete");
+  });
+
+  it("STILL invokes .audit() on a full logger that implements the custom level (healthy path unchanged)", () => {
+    const auditLines: Array<Record<string, unknown>> = [];
+    const fullLogger = {
+      info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
+      trace: vi.fn(), fatal: vi.fn(),
+      audit: vi.fn((rec: Record<string, unknown>) => { auditLines.push(rec); }),
+      child: vi.fn(function (this: unknown) { return fullLogger; }),
+    } as unknown as ComisLogger;
+
+    const { bus, emit } = makeBus();
+    wireAuditSink({
+      eventBus: bus,
+      auditBuffer: makeRealAuditBuffer(),
+      logger: fullLogger,
+      dataDir,
+      logRotation: { maxSizeBytes: 10_000_000, maxFiles: 5 },
+    });
+
+    emit("audit:event", {
+      timestamp: 1000, agentId: "a1", tenantId: "t1", actionType: "file.delete",
+      kind: "audit", outcome: "success", metadata: { count: 1 },
+    });
+
+    // The supplementary level-35 line still fires for a logger that has it
+    // (production uses the infra factory → byte-identical behavior).
+    expect((fullLogger.audit as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(1);
+    expect(auditLines).toHaveLength(1);
+    expect(auditLines[0]!.kind).toBe("audit");
   });
 });
 
