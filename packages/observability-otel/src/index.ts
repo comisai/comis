@@ -40,6 +40,16 @@ export type {
   MetricLabel,
 } from "./metric-catalog.js";
 
+// The emitted-metric-name SET (derived from METRIC_CATALOG, histograms expanded
+// to their _bucket/_sum/_count families) — the truth set the Grafana/Prometheus
+// expr↔metric drift guard (`test/architecture/grafana-dashboard-metrics.test.ts`)
+// checks every panel + rule `expr` against (PROM-04 / PROM-02). One catalog, one
+// set, no second definition to drift.
+export {
+  EMITTED_METRIC_NAMES,
+  EMITTED_METRIC_NAMES_SORTED,
+} from "./dashboard-metric-names.js";
+
 // The build-time probe of the installed @opentelemetry/exporter-prometheus —
 // records whether the `/metrics` surface can render OpenMetrics exemplars
 // (gates Plan 03's PROM-04 test).

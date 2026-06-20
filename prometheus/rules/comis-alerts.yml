@@ -1,0 +1,92 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Comis Prometheus ALERTING rules (PROM-02; design §6 WS7).
+#
+# Five alerts mirroring the in-process signals Comis already emits. Every `expr`
+# references ONLY a metric the OTel PrometheusExporter emits (the single
+# METRIC_CATALOG → EMITTED_METRIC_NAMES set); the bidirectional drift guard
+# (`test/architecture/grafana-dashboard-metrics.test.ts`) fails CI on drift.
+#
+# SINGLE SOURCE OF TRUTH — the ComisSpendApproachingCeiling threshold (0.8) EQUALS
+# WS3's `observability.spend.warnAtFraction` default (the in-process kill-switch
+# `spend_warning` line). `test/architecture/prometheus-rules.test.ts` asserts the
+# literal in this file equals `ObservabilityConfigSchema.parse({}).spend.warnAtFraction`,
+# so the dashboard alert and the kill-switch fire off the SAME number. If you
+# change one, the test forces you to change the other.
+#
+# Operator/CI-deferred: `promtool check rules` (semantic PromQL lint) runs on
+# Linux/CI (promtool absent on the authoring host). The in-repo guard asserts
+# YAML structure + the threshold equality + the expr↔metric mapping. No fake run.
+groups:
+  - name: comis_alerts
+    rules:
+      # Spend approaching the configured ceiling — the dashboard mirror of the
+      # in-process `spend_warning` (fires at warnAtFraction = 0.8 of the ceiling).
+      # THRESHOLD 0.8 == observability.spend.warnAtFraction (single source — see header).
+      - alert: ComisSpendApproachingCeiling
+        expr: |
+          (comis_spend_usd / clamp_min(comis_spend_ceiling_usd, 0.000001)) >= 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Comis spend for scope {{ $labels.scope }} is >= 80% of its ceiling"
+          description: >
+            comis_spend_usd / comis_spend_ceiling_usd has crossed 0.8 (the
+            warnAtFraction line) for scope {{ $labels.scope }}. The in-process
+            kill-switch is at or past its spend_warning point; the next reserve
+            may be refused at the ceiling.
+          runbook: "Drill into the worst session: `comis fleet --since 6` then `comis explain <sessionKey>`."
+
+      # Degraded-rate spike — uses the recorded ratio (comis:sessions_degraded:ratio5m).
+      - alert: ComisDegradedRateHigh
+        expr: comis:sessions_degraded:ratio5m > 0.2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Comis degraded-session rate > 20% over 5m"
+          description: >
+            More than 20% of sessions are degraded (recorded series
+            comis:sessions_degraded:ratio5m). Investigate the top errorKinds.
+          runbook: "`comis fleet --since 6` to surface the recurring errorKind, then `comis explain <sessionKey>`."
+
+      # Breaker-trip burst — a sudden rise in circuit-breaker trips.
+      - alert: ComisBreakerTripBurst
+        expr: sum(rate(comis_breaker_trips_total[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Comis circuit-breaker trips are bursting"
+          description: >
+            rate(comis_breaker_trips_total[5m]) exceeded the burst threshold — a
+            tool or provider is failing repeatedly.
+          runbook: "`comis explain <sessionKey>` shows the breaker timeline + the failing tool."
+
+      # Pricing-gap — unknown-priced turns rising (we are flying blind on cost, E1).
+      - alert: ComisPricingGap
+        expr: sum(rate(comis_pricing_turns_total{state="unknown"}[15m])) > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Comis has turns with unknown pricing state"
+          description: >
+            comis_pricing_turns_total{state="unknown"} is rising — some turns
+            cannot be priced (a model missing from the pricing catalog), so cost
+            and spend-ceiling accounting under-count.
+          runbook: "Check `config_posture` in `comis fleet`; add the model to the pricing catalog."
+
+      # Audit-sink failure — audit events failing to persist (security blind spot).
+      - alert: ComisAuditSinkFailure
+        expr: sum(rate(comis_audit_events_total{outcome="failure"}[10m])) > 0
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Comis audit events are failing (outcome=failure)"
+          description: >
+            comis_audit_events_total{outcome="failure"} is non-zero — the durable
+            audit sink is rejecting writes. Security/governance events may be lost.
+          runbook: "Inspect the daemon log for audit-sink errors; verify ~/.comis disk + permissions."
