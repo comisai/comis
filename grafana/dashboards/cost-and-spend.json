@@ -1,0 +1,101 @@
+{
+  "__comis_note": "Comis dashboards-as-code (PROM-03; design §6 WS7). Every panel expr references a metric the Comis OTel PrometheusExporter emits (the single METRIC_CATALOG); test/architecture/grafana-dashboard-metrics.test.ts is the CI drift guard. E7 drill-down: PROMETHEUS_EXEMPLARS_SUPPORTED===false (the /metrics pull surface renders no OpenMetrics exemplars on exporter-prometheus@0.219.0), so each panel's data link keys on the comis.trace_id span attribute (carried on the OTLP path) templated into a `comis explain` reference — see docs/operations/prometheus-grafana.mdx.",
+  "uid": "comis-cost-and-spend",
+  "title": "Comis — Cost & Spend",
+  "tags": ["comis", "cost", "spend"],
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": {
+    "list": [
+      { "name": "datasource", "type": "datasource", "query": "prometheus", "label": "Data source", "current": {} },
+      { "name": "tenant", "type": "query", "datasource": "${datasource}", "query": "label_values(comis_cost_usd_total, tenant)", "includeAll": true, "multi": true, "label": "Tenant" },
+      { "name": "agent", "type": "query", "datasource": "${datasource}", "query": "label_values(comis_cost_usd_total, agent)", "includeAll": true, "multi": true, "label": "Agent" },
+      { "name": "provider", "type": "query", "datasource": "${datasource}", "query": "label_values(comis_cost_usd_total, provider)", "includeAll": true, "multi": true, "label": "Provider" },
+      { "name": "model", "type": "query", "datasource": "${datasource}", "query": "label_values(comis_cost_usd_total, model)", "includeAll": true, "multi": true, "label": "Model" }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Corrected $/min by agent",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD", "links": [ { "title": "Explain a spiking session", "url": "/observe/explain?ref=${__data.fields.comis_trace_id}", "targetBlank": true } ] }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "datasource": "${datasource}", "expr": "sum by (agent) (rate(comis_cost_usd_total{tenant=~\"$tenant\", agent=~\"$agent\", provider=~\"$provider\", model=~\"$model\"}[5m]) * 60)", "legendFormat": "{{agent}}" }
+      ],
+      "links": [ { "title": "comis explain (drill-down)", "url": "/observe/explain?ref=${__data.fields.comis_trace_id}", "targetBlank": true } ]
+    },
+    {
+      "id": 2,
+      "title": "Corrected $/min by provider/model",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "datasource": "${datasource}", "expr": "sum by (provider, model) (rate(comis_cost_usd_total{tenant=~\"$tenant\", agent=~\"$agent\", provider=~\"$provider\", model=~\"$model\"}[5m]) * 60)", "legendFormat": "{{provider}}/{{model}}" }
+      ],
+      "links": [ { "title": "comis explain (drill-down)", "url": "/observe/explain?ref=${__data.fields.comis_trace_id}", "targetBlank": true } ]
+    },
+    {
+      "id": 3,
+      "title": "Spend vs ceiling — headroom by scope",
+      "type": "gauge",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "datasource": "${datasource}", "expr": "comis_spend_headroom_usd", "legendFormat": "headroom {{scope}}" },
+        { "refId": "B", "datasource": "${datasource}", "expr": "comis_spend_usd", "legendFormat": "spend {{scope}}" },
+        { "refId": "C", "datasource": "${datasource}", "expr": "comis_spend_ceiling_usd", "legendFormat": "ceiling {{scope}}" }
+      ],
+      "links": [ { "title": "comis explain (drill-down)", "url": "/observe/explain?ref=${__data.fields.comis_trace_id}", "targetBlank": true } ]
+    },
+    {
+      "id": 4,
+      "title": "Pricing coverage (priced / free / unknown)",
+      "type": "piechart",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 8 },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "targets": [
+        { "refId": "A", "datasource": "${datasource}", "expr": "sum by (state) (rate(comis_pricing_turns_total[1h]))", "legendFormat": "{{state}}" }
+      ],
+      "links": [ { "title": "comis explain (drill-down)", "url": "/observe/explain?ref=${__data.fields.comis_trace_id}", "targetBlank": true } ]
+    },
+    {
+      "id": 5,
+      "title": "Cache savings ($)",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "datasource": "${datasource}", "expr": "sum(rate(comis_cache_saved_usd_total{agent=~\"$agent\", provider=~\"$provider\", model=~\"$model\"}[1h]) * 3600)", "legendFormat": "saved $/h" }
+      ],
+      "links": [ { "title": "comis explain (drill-down)", "url": "/observe/explain?ref=${__data.fields.comis_trace_id}", "targetBlank": true } ]
+    },
+    {
+      "id": 6,
+      "title": "Cost-correction delta ($)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "datasource": "${datasource}", "expr": "sum by (provider, model) (rate(comis_cost_correction_usd_total{provider=~\"$provider\", model=~\"$model\"}[5m]))", "legendFormat": "{{provider}}/{{model}}" }
+      ],
+      "links": [ { "title": "comis explain (drill-down)", "url": "/observe/explain?ref=${__data.fields.comis_trace_id}", "targetBlank": true } ]
+    },
+    {
+      "id": 7,
+      "title": "Total tokens by type",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "datasource": "${datasource}", "expr": "sum by (type) (rate(comis_tokens_total{tenant=~\"$tenant\", agent=~\"$agent\", provider=~\"$provider\", model=~\"$model\"}[5m]))", "legendFormat": "{{type}}" }
+      ],
+      "links": [ { "title": "comis explain (drill-down)", "url": "/observe/explain?ref=${__data.fields.comis_trace_id}", "targetBlank": true } ]
+    }
+  ]
+}

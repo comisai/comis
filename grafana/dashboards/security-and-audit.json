@@ -1,0 +1,66 @@
+{
+  "__comis_note": "Comis dashboards-as-code (PROM-03; design §6 WS7). Every panel expr references an emitted METRIC_CATALOG metric (CI drift guard: test/architecture/grafana-dashboard-metrics.test.ts). E7 drill-down keys on the comis.trace_id span attribute (PROMETHEUS_EXEMPLARS_SUPPORTED===false) — see docs/operations/prometheus-grafana.mdx.",
+  "uid": "comis-security-and-audit",
+  "title": "Comis — Security & Audit",
+  "tags": ["comis", "security", "audit"],
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "30s",
+  "time": { "from": "now-24h", "to": "now" },
+  "templating": {
+    "list": [
+      { "name": "datasource", "type": "datasource", "query": "prometheus", "label": "Data source", "current": {} },
+      { "name": "tenant", "type": "query", "datasource": "${datasource}", "query": "label_values(comis_cost_usd_total, tenant)", "includeAll": true, "multi": true, "label": "Tenant" },
+      { "name": "agent", "type": "query", "datasource": "${datasource}", "query": "label_values(comis_cost_usd_total, agent)", "includeAll": true, "multi": true, "label": "Agent" },
+      { "name": "provider", "type": "query", "datasource": "${datasource}", "query": "label_values(comis_cost_usd_total, provider)", "includeAll": true, "multi": true, "label": "Provider" },
+      { "name": "model", "type": "query", "datasource": "${datasource}", "query": "label_values(comis_cost_usd_total, model)", "includeAll": true, "multi": true, "label": "Model" }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Audit-event rate by kind",
+      "type": "timeseries",
+      "gridPos": { "h": 9, "w": 16, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "ops", "links": [ { "title": "Explain the audited session", "url": "/observe/explain?ref=${__data.fields.comis_trace_id}", "targetBlank": true } ] }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "datasource": "${datasource}", "expr": "sum by (kind) (rate(comis_audit_events_total[5m]))", "legendFormat": "{{kind}}" }
+      ],
+      "links": [ { "title": "comis explain (drill-down)", "url": "/observe/explain?ref=${__data.fields.comis_trace_id}", "targetBlank": true } ]
+    },
+    {
+      "id": 2,
+      "title": "Audit failures (outcome=failure)",
+      "type": "stat",
+      "gridPos": { "h": 9, "w": 8, "x": 16, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "datasource": "${datasource}", "expr": "sum(rate(comis_audit_events_total{outcome=\"failure\"}[10m]))", "legendFormat": "audit failures" }
+      ],
+      "links": [ { "title": "comis explain (drill-down)", "url": "/observe/explain?ref=${__data.fields.comis_trace_id}", "targetBlank": true } ]
+    },
+    {
+      "id": 3,
+      "title": "Secret-access rate by outcome",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 9 },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "datasource": "${datasource}", "expr": "sum by (outcome) (rate(comis_secret_access_total[5m]))", "legendFormat": "{{outcome}}" }
+      ],
+      "links": [ { "title": "comis explain (drill-down)", "url": "/observe/explain?ref=${__data.fields.comis_trace_id}", "targetBlank": true } ]
+    },
+    {
+      "id": 4,
+      "title": "Prompt-injection detections by outcome",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 9 },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "datasource": "${datasource}", "expr": "sum by (outcome) (rate(comis_injection_detected_total[5m]))", "legendFormat": "{{outcome}}" }
+      ],
+      "links": [ { "title": "comis explain (drill-down)", "url": "/observe/explain?ref=${__data.fields.comis_trace_id}", "targetBlank": true } ]
+    }
+  ]
+}
