@@ -50,24 +50,18 @@ export {
   EXEMPLAR_CAPABILITY_NOTE,
 } from "./exemplar-capability.js";
 
-/**
- * The read-only spend totals the daemon threads from the 177 `SpendAccumulator`
- * (`@comis/agent`) into this extension's `comis_spend_*` observable gauges.
- *
- * Declared structurally (NOT imported from `@comis/agent`) so the extension does
- * not take a build-graph dependency on `@comis/agent` — the daemon, which owns
- * both references, injects the live accumulator's `getSnapshot()` result shape.
- * Mirrors `SpendAccumulator.getSnapshot()` (added in 178-01 Task 3): content-free
- * dollar counts keyed by the `${tenantId} ${agentId}` / `tenantId` scope keys.
- */
-export interface SpendSnapshotReader {
-  /** A read-only view of current spend totals (billed + in-flight reservations). */
-  getSnapshot(): {
-    readonly perAgent: ReadonlyMap<string, number>;
-    readonly perTenant: ReadonlyMap<string, number>;
-    readonly global: number;
-  };
-}
+// The bus → instrument subscriber + the content-free re-redaction boundary (E3).
+// Loaded ONLY via the daemon's config-gated await import() (N2 — core/daemon
+// never value-import this). The registration entry-point (registerOtelExporter)
+// is added in Plan 02 Task 2.
+export { wireMetricMapping } from "./metric-mapping.js";
+export type { WireMetricMappingDeps, SpendCeilingsView } from "./metric-mapping.js";
+export { redactAttributes } from "./redact-attributes.js";
+
+// The structural read-only spend-snapshot contract (the comis_spend_* gauge
+// source the daemon injects from the 177 SpendAccumulator).
+export type { SpendSnapshotReader } from "./spend-snapshot.js";
+import type { SpendSnapshotReader } from "./spend-snapshot.js";
 
 /**
  * The dependency contract the daemon's config-gated load seam passes into the

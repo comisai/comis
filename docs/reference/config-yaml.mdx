@@ -2872,6 +2872,21 @@ Observability persistence layer. Stores channel health snapshots, execution metr
 | `spend.perTurnMax` | `number` | `0.5` | Conservative per-turn USD reservation held at admission (there is no pre-flight cost estimate), reconciled to the actual billed amount after the turn. Bounds a single in-flight turn's overshoot past a ceiling. |
 | `spend.pricingFallback` | `"snapshot"` | `"snapshot"` | Pricing source for enforcement. Only `snapshot` (the dated model-catalog rate) exists today; a transient pricing-fetch failure falls back to it rather than aborting. No live price fetch is in scope (forward-extensibility placeholder). |
 | `spend.onUnknownPricing` | `"warn"` \| `"abort"` | `"warn"` | Behaviour when a remote model burns tokens with no catalog price. `warn` fails loud (the default); `abort` (with `action: abort`) trips `spend_unpriceable`. |
+| `otel.enabled` | `boolean` | `false` | Enable the OTLP push surface (traces/metrics/logs) via the opt-in `@comis/observability-otel` extension. Ships OFF — the daemon loads the extension only when this or `prometheus.enabled` is true (a config-gated dynamic import; core stays OpenTelemetry-free otherwise). |
+| `otel.endpoint` | `string` | `""` | OTLP collector endpoint URL. `""` uses the standard OTel env/SDK default (`OTEL_EXPORTER_OTLP_ENDPOINT`). |
+| `otel.protocol` | `"http/protobuf"` \| `"grpc"` | `"http/protobuf"` | OTLP transport. Only `http/protobuf` ships today; `grpc` validates but falls back to `http/protobuf` with a WARN (a documented later addition). |
+| `otel.traces` | `boolean` | `true` | Emit OTLP trace spans (per-turn/tool/graph), correlated by the Comis `traceId` carried as the `comis.trace_id` span attribute. Active only when `otel.enabled`. |
+| `otel.metrics` | `boolean` | `true` | Emit OTLP metrics off the single metric catalog. Active only when `otel.enabled`. |
+| `otel.logs` | `boolean` | `true` | Emit bus events as OTLP log records (re-redacted). Active only when `otel.enabled`. |
+| `otel.genaiSemconv` | `boolean` | `false` | Opt into the latest (pre-stable `Development`) GenAI semantic convention (the `OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_latest_experimental` gate). Default keeps the pre-1.36 shape. Content never leaks regardless — re-redaction is independent. |
+| `otel.captureContent` | `boolean` | `false` | Capture the 3 GenAI content span attributes (input/output messages, system instructions). Spec opt-in → default OFF (omitted). Even when on, `sanitizeForPersistence` re-redacts at the exporter boundary. |
+| `prometheus.enabled` | `boolean` | `false` | Enable the standalone Prometheus `/metrics` pull surface (independent of `otel.enabled` — serves valid exposition with no OTLP collector). Realized by the OTel `PrometheusExporter`, which opens its own loopback HTTP listener (not the gateway). |
+| `prometheus.host` | `string` | `"127.0.0.1"` | Bind host for the `/metrics` listener. Loopback by default — never `0.0.0.0` implicitly. |
+| `prometheus.port` | `number` | `9464` | Bind port for the `/metrics` listener (1–65535). |
+| `prometheus.path` | `string` | `"/metrics"` | The scrape path the exporter serves. |
+| `prometheus.auth` | `"trusted-operator"` | `"trusted-operator"` | Access posture. The OTel exporter has no built-in auth; the posture is realized as the loopback bind + the operator's reverse proxy/firewall (NOT gateway-token-gated). |
+| `prometheus.exemplars` | `boolean` | `true` | Whether exemplars are desired. NOTE: the pinned exporter does not render OpenMetrics exemplars on the pull surface — the `trace_id` rides as a span attribute instead. Forward-looking knob. |
+| `prometheus.cardinalityCap` | `number` | `10000` | Max active series before a WARN-with-hint fires (the label-explosion DoS guard); the `comis_prometheus_series` self-metric exposes the count. |
 
 ```yaml
 observability:
@@ -2892,6 +2907,23 @@ observability:
     perTurnMax: 0.5       # per-turn admission reservation
     pricingFallback: snapshot
     onUnknownPricing: warn # 'abort' to refuse unpriced remote spend
+  otel:                   # OTLP push — opt-in extension, ships OFF + content-free
+    enabled: false        # set true to load @comis/observability-otel and export OTLP
+    endpoint: ""          # OTLP collector URL ("" uses the OTel env/SDK default)
+    protocol: http/protobuf # 'grpc' falls back to http/protobuf with a WARN today
+    traces: true
+    metrics: true
+    logs: true
+    genaiSemconv: false   # latest GenAI semconv opt-in (pre-stable, will churn)
+    captureContent: false # capture the 3 GenAI content attrs (re-redacted even if on)
+  prometheus:             # /metrics pull — opt-in, standalone, loopback-bound, ships OFF
+    enabled: false        # set true to serve /metrics (independent of otel.enabled)
+    host: 127.0.0.1       # loopback by default — never 0.0.0.0 implicitly
+    port: 9464
+    path: /metrics
+    auth: trusted-operator # loopback + your reverse proxy/firewall (no built-in auth)
+    exemplars: true
+    cardinalityCap: 10000  # WARN above this many active series (label-explosion guard)
 ```
 
 <Info>

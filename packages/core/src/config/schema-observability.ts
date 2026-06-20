@@ -247,6 +247,90 @@ export const AlertBudgetConfigSchema = z.strictObject({
 });
 
 /**
+ * OpenTelemetry (OTLP push) configuration (OTEL-01/02/03) — the opt-in export
+ * surface for the `@comis/observability-otel` extension. Ships OFF
+ * (`enabled:false`) and CONTENT-FREE by default: the GenAI semconv stays at the
+ * pre-stable shape (`genaiSemconv:false`) and the 3 message/content span
+ * attributes are spec-`Opt-In` and OMITTED (`captureContent:false`) — and even
+ * with both on, `sanitizeForPersistence` re-redacts at the exporter (E3).
+ *
+ * `protocol` ships ONLY `http/protobuf` this phase (the `-proto` exporters are
+ * installed); `grpc` validates but FALLS BACK to `-proto` with a WARN+hint at
+ * runtime (a documented later addition — no silent wrong-transport, T-178-09).
+ * The seam that loads this is the config-gated `await import()` in
+ * `setupObservability` (daemon), gated on `enabled || prometheus.enabled`.
+ */
+const OtelConfigSchema = z.strictObject({
+  /** Master switch for the OTLP push surface (traces/metrics/logs). Default off. */
+  enabled: z.boolean().default(false),
+  /** OTLP collector endpoint URL; `''` means use the OTel env/SDK default. */
+  endpoint: z.string().default(""),
+  /**
+   * OTLP transport. `http/protobuf` ships this phase (the `-proto` exporters);
+   * `grpc` validates but falls back to `-proto` with a WARN+hint at runtime
+   * (documented later addition — T-178-09).
+   */
+  protocol: z.enum(["http/protobuf", "grpc"]).default("http/protobuf"),
+  /** Emit OTLP trace spans (per-turn/tool/graph). Default on (when `enabled`). */
+  traces: z.boolean().default(true),
+  /** Emit OTLP metrics off the single catalog. Default on (when `enabled`). */
+  metrics: z.boolean().default(true),
+  /** Emit bus events as OTLP log records (scrubbed). Default on (when `enabled`). */
+  logs: z.boolean().default(true),
+  /**
+   * Opt into the LATEST (pre-stable `Development`) GenAI semconv shape (the
+   * `OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_latest_experimental` gate). Default off
+   * (pre-1.36 shape). Content STILL never leaks: re-redaction is independent (E3).
+   */
+  genaiSemconv: z.boolean().default(false),
+  /**
+   * Capture the 3 GenAI content span attributes (input/output messages,
+   * system_instructions). Spec-`Opt-In` → default off (omitted). Even when on,
+   * `sanitizeForPersistence` re-redacts at the exporter boundary (E3).
+   */
+  captureContent: z.boolean().default(false),
+});
+
+/**
+ * Prometheus (`/metrics` pull) configuration (PROM-01) — the standalone scrape
+ * surface, INDEPENDENT of `otel.enabled` (it serves valid exposition with no
+ * OTLP collector). Realized by the OTel `PrometheusExporter`, which opens its OWN
+ * loopback HTTP listener (NOT the gateway). Ships OFF (`enabled:false`) and
+ * LOOPBACK-bound (`host:'127.0.0.1'`) — never `0.0.0.0` implicitly (T-178-08).
+ *
+ * `auth` is the literal `'trusted-operator'`: the OTel exporter has NO built-in
+ * auth, so the posture is realized as the loopback bind + the operator's reverse
+ * proxy/firewall (documented honestly — NOT gateway-token-gated). `cardinalityCap`
+ * (default 10000) WARNs with a hint on breach; the `comis_prometheus_series`
+ * self-metric exposes the active series count (T-178-07).
+ */
+const PrometheusConfigSchema = z.strictObject({
+  /** Master switch for the `/metrics` pull surface (independent of `otel.enabled`). Default off. */
+  enabled: z.boolean().default(false),
+  /** Bind host for the exporter's loopback HTTP listener. Default 127.0.0.1 (never 0.0.0.0 implicitly). */
+  host: z.string().default("127.0.0.1"),
+  /** Bind port for the exporter's HTTP listener. */
+  port: z.number().int().min(1).max(65535).default(9464),
+  /** The scrape path the exporter serves. */
+  path: z.string().default("/metrics"),
+  /**
+   * Access posture. ONLY `'trusted-operator'` — the OTel PrometheusExporter has
+   * no built-in auth; the posture is the loopback bind + the operator's reverse
+   * proxy/firewall (NOT gateway-token-gated; documented honestly).
+   */
+  auth: z.literal("trusted-operator").default("trusted-operator"),
+  /**
+   * Whether exemplars are desired on the pull surface. NOTE: the installed
+   * `@opentelemetry/exporter-prometheus@0.219.0` does NOT render OpenMetrics
+   * exemplars (`PROMETHEUS_EXEMPLARS_SUPPORTED===false`); the `trace_id` rides as
+   * a span attribute instead (Pitfall 4/6). Kept as a forward-looking knob.
+   */
+  exemplars: z.boolean().default(true),
+  /** Max active series before a WARN-with-hint fires (the label-explosion DoS guard). */
+  cardinalityCap: z.number().int().positive().default(10000),
+});
+
+/**
  * Root observability configuration schema.
  *
  * Has sensible defaults so an empty object produces a valid ObservabilityConfig.
@@ -264,6 +348,10 @@ export const ObservabilityConfigSchema = z.strictObject({
   audit: AuditConfigSchema.default(() => AuditConfigSchema.parse({})),
   /** Spend kill-switch policy (SPEND-01) — ships off (null ceilings, action 'warn'). */
   spend: SpendConfigSchema.default(() => SpendConfigSchema.parse({})),
+  /** OpenTelemetry OTLP push policy (OTEL-01/02/03) — opt-in extension, ships off + content-free. */
+  otel: OtelConfigSchema.default(() => OtelConfigSchema.parse({})),
+  /** Prometheus `/metrics` pull policy (PROM-01) — opt-in, standalone, loopback-bound, ships off. */
+  prometheus: PrometheusConfigSchema.default(() => PrometheusConfigSchema.parse({})),
 });
 
 export type ObservabilityConfig = z.infer<typeof ObservabilityConfigSchema>;
@@ -274,4 +362,6 @@ export type AlertBudgetConfig = z.infer<typeof AlertBudgetConfigSchema>;
 export type AlertBudgetThreshold = z.infer<typeof AlertBudgetThresholdSchema>;
 export type AuditConfig = z.infer<typeof AuditConfigSchema>;
 export type SpendConfig = z.infer<typeof SpendConfigSchema>;
-export { LogRotationConfigSchema, AuditConfigSchema, SpendConfigSchema };
+export type OtelConfig = z.infer<typeof OtelConfigSchema>;
+export type PrometheusConfig = z.infer<typeof PrometheusConfigSchema>;
+export { LogRotationConfigSchema, AuditConfigSchema, SpendConfigSchema, OtelConfigSchema, PrometheusConfigSchema };

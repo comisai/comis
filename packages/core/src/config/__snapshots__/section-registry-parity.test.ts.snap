@@ -13568,11 +13568,30 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
         "maxFiles": 5,
         "maxSizeBytes": 52428800
       },
+      "otel": {
+        "captureContent": false,
+        "enabled": false,
+        "endpoint": "",
+        "genaiSemconv": false,
+        "logs": true,
+        "metrics": true,
+        "protocol": "http/protobuf",
+        "traces": true
+      },
       "persistence": {
         "cacheBreaks": true,
         "enabled": true,
         "retentionDays": 30,
         "snapshotIntervalMs": 300000
+      },
+      "prometheus": {
+        "auth": "trusted-operator",
+        "cardinalityCap": 10000,
+        "enabled": false,
+        "exemplars": true,
+        "host": "127.0.0.1",
+        "path": "/metrics",
+        "port": 9464
       },
       "spend": {
         "action": "warn",
@@ -13751,6 +13770,69 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
   },
   {
     "default": {
+      "captureContent": false,
+      "enabled": false,
+      "endpoint": "",
+      "genaiSemconv": false,
+      "logs": true,
+      "metrics": true,
+      "protocol": "http/protobuf",
+      "traces": true
+    },
+    "immutable": false,
+    "path": "observability.otel",
+    "type": "object"
+  },
+  {
+    "default": false,
+    "immutable": false,
+    "path": "observability.otel.captureContent",
+    "type": "boolean"
+  },
+  {
+    "default": false,
+    "immutable": false,
+    "path": "observability.otel.enabled",
+    "type": "boolean"
+  },
+  {
+    "default": "",
+    "immutable": false,
+    "path": "observability.otel.endpoint",
+    "type": "string"
+  },
+  {
+    "default": false,
+    "immutable": false,
+    "path": "observability.otel.genaiSemconv",
+    "type": "boolean"
+  },
+  {
+    "default": true,
+    "immutable": false,
+    "path": "observability.otel.logs",
+    "type": "boolean"
+  },
+  {
+    "default": true,
+    "immutable": false,
+    "path": "observability.otel.metrics",
+    "type": "boolean"
+  },
+  {
+    "default": "http/protobuf",
+    "immutable": false,
+    "path": "observability.otel.protocol",
+    "type": "string"
+  },
+  {
+    "default": true,
+    "immutable": false,
+    "path": "observability.otel.traces",
+    "type": "boolean"
+  },
+  {
+    "default": {
       "cacheBreaks": true,
       "enabled": true,
       "retentionDays": 30,
@@ -13782,6 +13864,62 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "default": 300000,
     "immutable": false,
     "path": "observability.persistence.snapshotIntervalMs",
+    "type": "integer"
+  },
+  {
+    "default": {
+      "auth": "trusted-operator",
+      "cardinalityCap": 10000,
+      "enabled": false,
+      "exemplars": true,
+      "host": "127.0.0.1",
+      "path": "/metrics",
+      "port": 9464
+    },
+    "immutable": false,
+    "path": "observability.prometheus",
+    "type": "object"
+  },
+  {
+    "default": "trusted-operator",
+    "immutable": false,
+    "path": "observability.prometheus.auth",
+    "type": "string"
+  },
+  {
+    "default": 10000,
+    "immutable": false,
+    "path": "observability.prometheus.cardinalityCap",
+    "type": "integer"
+  },
+  {
+    "default": false,
+    "immutable": false,
+    "path": "observability.prometheus.enabled",
+    "type": "boolean"
+  },
+  {
+    "default": true,
+    "immutable": false,
+    "path": "observability.prometheus.exemplars",
+    "type": "boolean"
+  },
+  {
+    "default": "127.0.0.1",
+    "immutable": false,
+    "path": "observability.prometheus.host",
+    "type": "string"
+  },
+  {
+    "default": "/metrics",
+    "immutable": false,
+    "path": "observability.prometheus.path",
+    "type": "string"
+  },
+  {
+    "default": 9464,
+    "immutable": false,
+    "path": "observability.prometheus.port",
     "type": "integer"
   },
   {
@@ -37902,11 +38040,30 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "maxFiles": 5,
           "maxSizeBytes": 52428800
         },
+        "otel": {
+          "captureContent": false,
+          "enabled": false,
+          "endpoint": "",
+          "genaiSemconv": false,
+          "logs": true,
+          "metrics": true,
+          "protocol": "http/protobuf",
+          "traces": true
+        },
         "persistence": {
           "cacheBreaks": true,
           "enabled": true,
           "retentionDays": 30,
           "snapshotIntervalMs": 300000
+        },
+        "prometheus": {
+          "auth": "trusted-operator",
+          "cardinalityCap": 10000,
+          "enabled": false,
+          "exemplars": true,
+          "host": "127.0.0.1",
+          "path": "/metrics",
+          "port": 9464
         },
         "spend": {
           "action": "warn",
@@ -38115,6 +38272,68 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           ],
           "type": "object"
         },
+        "otel": {
+          "additionalProperties": false,
+          "default": {
+            "captureContent": false,
+            "enabled": false,
+            "endpoint": "",
+            "genaiSemconv": false,
+            "logs": true,
+            "metrics": true,
+            "protocol": "http/protobuf",
+            "traces": true
+          },
+          "properties": {
+            "captureContent": {
+              "default": false,
+              "type": "boolean"
+            },
+            "enabled": {
+              "default": false,
+              "type": "boolean"
+            },
+            "endpoint": {
+              "default": "",
+              "type": "string"
+            },
+            "genaiSemconv": {
+              "default": false,
+              "type": "boolean"
+            },
+            "logs": {
+              "default": true,
+              "type": "boolean"
+            },
+            "metrics": {
+              "default": true,
+              "type": "boolean"
+            },
+            "protocol": {
+              "default": "http/protobuf",
+              "enum": [
+                "http/protobuf",
+                "grpc"
+              ],
+              "type": "string"
+            },
+            "traces": {
+              "default": true,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "enabled",
+            "endpoint",
+            "protocol",
+            "traces",
+            "metrics",
+            "logs",
+            "genaiSemconv",
+            "captureContent"
+          ],
+          "type": "object"
+        },
         "persistence": {
           "additionalProperties": false,
           "default": {
@@ -38150,6 +38369,63 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "retentionDays",
             "snapshotIntervalMs",
             "cacheBreaks"
+          ],
+          "type": "object"
+        },
+        "prometheus": {
+          "additionalProperties": false,
+          "default": {
+            "auth": "trusted-operator",
+            "cardinalityCap": 10000,
+            "enabled": false,
+            "exemplars": true,
+            "host": "127.0.0.1",
+            "path": "/metrics",
+            "port": 9464
+          },
+          "properties": {
+            "auth": {
+              "const": "trusted-operator",
+              "default": "trusted-operator",
+              "type": "string"
+            },
+            "cardinalityCap": {
+              "default": 10000,
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "enabled": {
+              "default": false,
+              "type": "boolean"
+            },
+            "exemplars": {
+              "default": true,
+              "type": "boolean"
+            },
+            "host": {
+              "default": "127.0.0.1",
+              "type": "string"
+            },
+            "path": {
+              "default": "/metrics",
+              "type": "string"
+            },
+            "port": {
+              "default": 9464,
+              "maximum": 65535,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "enabled",
+            "host",
+            "port",
+            "path",
+            "auth",
+            "exemplars",
+            "cardinalityCap"
           ],
           "type": "object"
         },
@@ -38266,7 +38542,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
         "logRotation",
         "alertBudget",
         "audit",
-        "spend"
+        "spend",
+        "otel",
+        "prometheus"
       ],
       "type": "object"
     },
