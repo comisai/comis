@@ -39,8 +39,22 @@ const PACKAGES_ROOT = resolve(REPO_ROOT, "packages");
 
 const EXTENSION_PACKAGE = "@comis/observability-otel";
 
+// The published `comisai` umbrella facade bundles EVERY @comis/* package
+// (including this opt-in extension — decision A1) and namespace-re-exports each
+// from `packages/comis/src/index.ts` + a per-package mirror file. Those
+// value-imports are the umbrella's whole job and are REQUIRED by the
+// umbrella-bundling 5-way alignment gate; they do NOT violate N2 because the
+// umbrella is the published bundle, NOT part of the always-on core/daemon build
+// (core + daemon build:clean with the extension dist absent — proven by the plan
+// verification). Allowlisted exactly as composition-root.test.ts allowlists the
+// umbrella facade re-exports (FACADE_REEXPORT_ALLOWLIST).
+const UMBRELLA_FACADE_ALLOWLIST: readonly string[] = [
+  "packages/comis/src/index.ts",
+  "packages/comis/src/observability-otel.ts",
+] as const;
+
 describe("build-without-extension — N2: no static value-import of the opt-in extension", () => {
-  it(`no packages/*/src production file value-imports ${EXTENSION_PACKAGE} (type-only + runtime await import allowed)`, () => {
+  it(`no packages/*/src production file (outside the comisai umbrella facade) value-imports ${EXTENSION_PACKAGE}`, () => {
     const { violations, checkedFiles } = findForbiddenImports({
       rootDir: PACKAGES_ROOT,
       forbiddenPackage: EXTENSION_PACKAGE,
@@ -48,23 +62,25 @@ describe("build-without-extension — N2: no static value-import of the opt-in e
       valueImportsOnly: true,
     });
 
-    // The extension package itself is the one place its own modules import each
-    // other by the relative path; the forbidden-package scan keys on the bare
-    // `@comis/observability-otel` specifier, so intra-package relative imports
-    // never match. There is therefore no legitimate value-import to allowlist:
-    // core/daemon (and every other package) must reach it only via the
-    // config-gated runtime `await import(...)` + a type-only import.
+    // Drop the umbrella-facade value-imports (the published bundle re-exports
+    // every package; see UMBRELLA_FACADE_ALLOWLIST). Everything else — core,
+    // daemon, and the other always-on packages — must reach the extension ONLY
+    // via the config-gated runtime `await import(...)` + a type-only import.
+    const offenders = violations.filter(
+      (v) => !UMBRELLA_FACADE_ALLOWLIST.some((p) => v.file.endsWith(p)),
+    );
+
     expect(
-      violations,
+      offenders,
       formatViolations({
-        description: `production source must not VALUE-import ${EXTENSION_PACKAGE} — the opt-in extension is reached only via a config-gated runtime \`await import(...)\` (gated on otel.enabled || prometheus.enabled) and a type-only \`import type { OtelExporterDeps }\`. A static value-import would force core/daemon build:clean to require the extension's dist/ (N2 violation).`,
-        violations: violations.map((v) => ({
+        description: `production source (outside the comisai umbrella facade) must not VALUE-import ${EXTENSION_PACKAGE} — the opt-in extension is reached only via a config-gated runtime \`await import(...)\` (gated on otel.enabled || prometheus.enabled) and a type-only \`import type { OtelExporterDeps }\`. A static value-import would force core/daemon build:clean to require the extension's dist/ (N2 violation).`,
+        violations: offenders.map((v) => ({
           file: v.file,
           line: v.line,
           column: v.column,
           snippet: v.snippet,
         })),
-        suggestedFix: `Use \`import type { OtelExporterDeps } from "${EXTENSION_PACKAGE}"\` for types, and \`const mod = await import("${EXTENSION_PACKAGE}")\` (config-gated, try/catch) for the runtime registration. Never a static \`import { ... } from "${EXTENSION_PACKAGE}"\`.`,
+        suggestedFix: `Use a type-only \`import type { OtelExporterDeps }\` from the extension for types, and a config-gated runtime dynamic-import (try/catch) for the runtime registration. Never a static named/namespace value-import of the extension. (The comisai umbrella facade is allowlisted — it bundles every package.)`,
         designRef: "observability-excellence-implementation.md §6 WS2 (N2 — core/daemon build with the extension absent)",
       }),
     ).toEqual([]);

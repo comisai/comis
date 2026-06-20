@@ -13,6 +13,7 @@ import * as agent from "@comis/agent";
 import * as channels from "@comis/channels";
 import * as orchestrator from "@comis/orchestrator";
 import * as observability from "@comis/observability";
+import * as observabilityOtel from "@comis/observability-otel";
 import * as cli from "@comis/cli";
 import * as daemon from "@comis/daemon";
 
@@ -28,6 +29,7 @@ export {
   channels,
   orchestrator,
   observability,
+  observabilityOtel,
   cli,
   daemon,
 };
