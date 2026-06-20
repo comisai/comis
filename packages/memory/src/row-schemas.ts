@@ -523,6 +523,8 @@ export const TokenUsageDbRowSchema = z.strictObject({
   cost_correction: z.number().nullable(),
   pending_cache_investment_usd: z.number().nullable(),
   pricing_state: z.string().nullable(),
+  // COST-01: the JSON-stringified distinct-tool array (content-free; nullable).
+  tool_tag: z.string().nullable(),
 });
 
 /**

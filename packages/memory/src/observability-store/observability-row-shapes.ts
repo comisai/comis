@@ -54,6 +54,9 @@ export interface TokenUsageDbRow {
   cost_correction: number | null;
   pending_cache_investment_usd: number | null;
   pricing_state: string | null;
+  // COST-01: the JSON-stringified distinct-tool array (nullable — NULL on
+  // pre-tool_tag rows / no-tool turns).
+  tool_tag: string | null;
 }
 
 export interface DeliveryDbRow {
@@ -151,7 +154,27 @@ export function tokenUsageFromRow(row: TokenUsageDbRow): TokenUsageRow {
       row.pending_cache_investment_usd === null ? undefined : row.pending_cache_investment_usd,
     pricingState:
       row.pricing_state === null ? undefined : (row.pricing_state as "priced" | "free" | "unknown"),
+    // COST-01: parse the JSON distinct-tool array back (NULL/malformed → undefined,
+    // never a throw — observability reads degrade, never crash the read path).
+    toolTag: parseToolTag(row.tool_tag),
   };
+}
+
+/**
+ * Parse the persisted `tool_tag` column (a JSON-stringified `string[]`) back to a
+ * string array. Returns `undefined` for NULL or any non-array/malformed value —
+ * the read path degrades silently (a corrupt obs row never crashes a query).
+ */
+function parseToolTag(raw: string | null): string[] | undefined {
+  if (raw === null) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) && parsed.every((t) => typeof t === "string")
+      ? (parsed as string[])
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export function deliveryFromRow(row: DeliveryDbRow): DeliveryRow {

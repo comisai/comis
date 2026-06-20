@@ -760,16 +760,20 @@ describe("ObservabilityStore — insertTokenUsage tool_tag persist round-trip (C
       store.insertTokenUsage(makeTokenRow({ toolTag: ["bash", "read"] })),
     ).not.toThrow();
 
-    const raw = db.prepare(`SELECT tool_tag FROM obs_token_usage`).get() as { tool_tag: string | null };
+    const rawCol = db.prepare(`SELECT tool_tag FROM obs_token_usage`).get() as { tool_tag: string | null };
     // Stored as a JSON-stringified DISTINCT tool array (content-free — names only).
-    expect(raw.tool_tag).toBe(JSON.stringify(["bash", "read"]));
-    expect(JSON.parse(raw.tool_tag ?? "null")).toEqual(["bash", "read"]);
+    expect(rawCol.tool_tag).toBe(JSON.stringify(["bash", "read"]));
+    // And the full-row camelCase mapper reads it back as a string[] (end-to-end).
+    const raw = db.prepare(`SELECT * FROM obs_token_usage`).get() as TokenUsageDbRow;
+    expect(tokenUsageFromRow(raw).toolTag).toEqual(["bash", "read"]);
   });
 
-  it("Test 8b: a row with NO toolTag persists tool_tag NULL (no throw, no backward-compat shim)", () => {
+  it("Test 8b: a row with NO toolTag persists tool_tag NULL → undefined on read-back (no throw, no shim)", () => {
     expect(() => store.insertTokenUsage(makeTokenRow())).not.toThrow();
-    const raw = db.prepare(`SELECT tool_tag FROM obs_token_usage`).get() as { tool_tag: string | null };
-    expect(raw.tool_tag).toBeNull();
+    const rawCol = db.prepare(`SELECT tool_tag FROM obs_token_usage`).get() as { tool_tag: string | null };
+    expect(rawCol.tool_tag).toBeNull();
+    const raw = db.prepare(`SELECT * FROM obs_token_usage`).get() as TokenUsageDbRow;
+    expect(tokenUsageFromRow(raw).toolTag).toBeUndefined();
   });
 });
 

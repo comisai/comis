@@ -232,6 +232,8 @@ describe("row-schemas — internal DB row runtime parses", () => {
       cost_correction: 0.0005,
       pending_cache_investment_usd: 0.001,
       pricing_state: "priced",
+      // COST-01: the JSON distinct-tool array column (nullable).
+      tool_tag: JSON.stringify(["bash", "read"]),
     };
     expect(TokenUsageDbRowSchema.safeParse(sample).success).toBe(true);
   });

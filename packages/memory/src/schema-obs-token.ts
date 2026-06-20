@@ -29,12 +29,13 @@ import type Database from "better-sqlite3";
  *    `memory_usefulness` rebuild — no `foreign_keys` pragma bracketing is needed.
  *    Guarded by a presence check, so it is a no-op on an already-migrated DB.
  *
- * 2. ADD the 5 new columns via the `ensureMemoryColumns` guarded-ALTER idiom
+ * 2. ADD the 6 new columns via the `ensureMemoryColumns` guarded-ALTER idiom
  *    (`warmup_turn`/`cache_eligible` as INTEGER 0/1 flags, `cost_correction`/
- *    `pending_cache_investment_usd` as REAL, `pricing_state` as TEXT). All nullable
+ *    `pending_cache_investment_usd` as REAL, `pricing_state` as TEXT, and the
+ *    COST-01 `tool_tag` as TEXT — the JSON distinct-tool array). All nullable
  *    → O(1), no rewrite, no backfill (existing rows get NULL).
  *
- * Net post-condition (fresh OR existing DB): the 5 columns present, `cache_retention`
+ * Net post-condition (fresh OR existing DB): the 6 columns present, `cache_retention`
  * absent. Called AFTER the `obs_token_usage` CREATE in `initSchema`.
  *
  * @param db - An open better-sqlite3 Database whose `obs_token_usage` table exists.
@@ -105,6 +106,11 @@ export function ensureObsTokenColumns(db: Database.Database): void {
   if (!cols2.has("pending_cache_investment_usd"))
     db.exec(`ALTER TABLE obs_token_usage ADD COLUMN pending_cache_investment_usd REAL`);
   if (!cols2.has("pricing_state")) db.exec(`ALTER TABLE obs_token_usage ADD COLUMN pricing_state TEXT`);
+  // COST-01 (Phase 179): the per-turn tool tag — the IDENTICAL 6th additive,
+  // forward-only, nullable ALTER (no migration framework, no dual-read shim).
+  // Stores the JSON-stringified DISTINCT tool array (content-free names only);
+  // NULL on existing rows (they survive verbatim) and on no-tool turns.
+  if (!cols2.has("tool_tag")) db.exec(`ALTER TABLE obs_token_usage ADD COLUMN tool_tag TEXT`);
 }
 
 /**
