@@ -16,6 +16,7 @@ import {
   securityMdViolatesIsolatedVm,
   readmeViolatesSdkIndependence,
   claimsDocNamesAbsentIsolationLibrary,
+  auditDocClaimsDurabilityWithoutSink,
 } from "./security-doc-claims.test.js";
 
 describe("security-doc-claims guard detects reverted claims", () => {
@@ -117,6 +118,32 @@ describe("security-doc-claims guard detects reverted claims", () => {
         "isolated-vm",
         depsWithout,
       ),
+    ).toBe(false);
+  });
+
+  // AUDIT-06 (Phase 176): RED-state proof for the audit.mdx durability↔sink checker.
+  it("auditDocClaimsDurabilityWithoutSink FLAGS a daemon.log-only persistence over-claim", () => {
+    // The pre-correction claim: durable persistence asserted, NO real sink named.
+    expect(
+      auditDocClaimsDurabilityWithoutSink(
+        "Audit events live in the daemon log file and persists across restarts.",
+      ),
+    ).toBe(true);
+  });
+
+  it("auditDocClaimsDurabilityWithoutSink does NOT flag once a real sink is named", () => {
+    // The corrected claim: durable persistence backed by the real obs_audit_events sink.
+    expect(
+      auditDocClaimsDurabilityWithoutSink(
+        "Audit events persist across restarts in the obs_audit_events SQLite table and the security-audit.jsonl file.",
+      ),
+    ).toBe(false);
+  });
+
+  it("auditDocClaimsDurabilityWithoutSink does NOT flag a doc that makes no durability claim", () => {
+    // No persistence/durability assertion → nothing to back (the early return).
+    expect(
+      auditDocClaimsDurabilityWithoutSink("Audit events are emitted on the in-memory event bus."),
     ).toBe(false);
   });
 

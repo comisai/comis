@@ -143,8 +143,41 @@ export function claimsDocNamesAbsentIsolationLibrary(
   return new RegExp(escapeRegex(library), "i").test(claimsText) && !depNames.has(library);
 }
 
+/**
+ * AUDIT-06 (Phase 176): returns true if `audit.mdx` claims the audit is durably
+ * PERSISTED (survives restart) WITHOUT naming the backing durable sink(s) the
+ * codebase actually writes — `obs_audit_events` (the SQLite table) and/or
+ * `security-audit.jsonl` (the 0600 rotated JSONL). The historical over-claim
+ * named ONLY `~/.comis/logs/daemon.log` as the durable store while there were
+ * ZERO `.audit()` callers — the doc was flatly wrong (the gap Plan 03 closed +
+ * Plan 05 documents). RED when the doc still over-claims; GREEN once the doc
+ * names a real sink AND that sink exists.
+ *
+ * The persistence claim is detected by the doc asserting durability ("persist"
+ * across restarts) OR naming the daemon-log file as the store of record; the
+ * backing-sink check is satisfied by the doc naming EITHER real sink token.
+ * Exported so a meta-test can confirm the RED state (an accidental
+ * logic-inversion would otherwise make the assertion vacuous — the
+ * `claimsDocNamesAbsentIsolationLibrary` precedent).
+ */
+export function auditDocClaimsDurabilityWithoutSink(auditDocText: string): boolean {
+  const claimsDurablePersistence =
+    /persists? across restarts/i.test(auditDocText) ||
+    /\bdurable\b/i.test(auditDocText) ||
+    /survives? (?:a )?restart/i.test(auditDocText);
+  if (!claimsDurablePersistence) return false; // makes no persistence claim → nothing to back
+  const namesRealSink =
+    /obs_audit_events/i.test(auditDocText) || /security-audit\.jsonl/i.test(auditDocText);
+  return !namesRealSink;
+}
+
 const SECURITY_MD = sanitizeDocText(readDoc("SECURITY.md"));
 const README_MD   = sanitizeDocText(readDoc("README.md"));
+// AUDIT-06 (Phase 176): the audit doc is scanned for the durability-claim↔sink
+// invariant. Scanned WITH code fences stripped so the `grep '...'` examples (which
+// legitimately reference daemon.log) do not satisfy the sink check — the PROSE
+// claim must name the real sink. THREAT_MODEL.md stays EXCLUDED by design (below).
+const AUDIT_MDX = sanitizeDocText(readDoc("docs/security/audit.mdx"));
 const dependencyNames = collectDependencyNames();
 
 describe("security documentation claims match the codebase", () => {
@@ -180,5 +213,26 @@ describe("security documentation claims match the codebase", () => {
       existsSync(resolve(REPO_ROOT, "THREAT_MODEL.md")),
       "THREAT_MODEL.md not found — run the threat model publishing task first.",
     ).toBe(true);
+  });
+
+  // AUDIT-06 (Phase 176): audit.mdx's durable-persistence claim must name the
+  // real backing sink (obs_audit_events / security-audit.jsonl), not over-claim a
+  // daemon.log-only store that historically had zero .audit() callers. RED on the
+  // pre-correction doc; GREEN once the doc names a real sink (Plan 05) AND that
+  // sink exists (Plan 03). THREAT_MODEL.md is deliberately NOT in the scanned set.
+  it("audit.mdx does not claim durable persistence without naming a backing sink", () => {
+    expect(
+      auditDocClaimsDurabilityWithoutSink(AUDIT_MDX),
+      "docs/security/audit.mdx claims the audit persists across restarts but does not name the real durable sink (obs_audit_events / security-audit.jsonl). Correct the Storage & Retention section — daemon.log is NOT the durable store of record.",
+    ).toBe(false);
+  });
+
+  // AUDIT-06: THREAT_MODEL.md stays EXCLUDED from the scanned set by design — it
+  // legitimately names non-mechanisms/corrections. This pins that exclusion so a
+  // future change cannot silently start scanning it (the inverse-regression guard).
+  it("THREAT_MODEL.md is NOT in the audit claim↔sink scanned set (excluded by design)", () => {
+    const scanned = [SECURITY_MD, README_MD, AUDIT_MDX];
+    const threatModel = readDoc("THREAT_MODEL.md");
+    expect(scanned.includes(threatModel)).toBe(false);
   });
 });
