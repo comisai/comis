@@ -33,13 +33,18 @@
 import { stat, readFile } from "node:fs/promises";
 // All OAuth helpers + file-lock adapter consumed from @comis/core so the CLI
 // has zero @comis/agent imports.
-import { createFileLock, redactEmailForLog, rewriteOAuthError, runOAuthTlsPreflight, selectOAuthCredentialStore, systemGetEnv, systemNowMs } from "@comis/core";
+import { createFileLock, redactEmailForLog, rewriteOAuthError, runOAuthTlsPreflight, selectOAuthCredentialStore, systemGetEnv, systemNowMs, AuthListContract } from "@comis/core";
 import type {
   OAuthProfile,
   OAuthCredentialStorePort,
 } from "@comis/core";
 import type { DoctorCheck, DoctorContext, DoctorFinding } from "../types.js";
 import { formatRelativeExpiry } from "../../output/relative-time.js";
+// OBS-4 (live VPS 2026-06-19): in encrypted mode the CLI can't bootstrap the
+// store, but a RUNNING daemon can — so the profile-expiry check routes through
+// the daemon's auth.list RPC (token-free projection) instead of skipping.
+import { isDaemonRunning } from "../../sync-tooling/daemon-guard.js";
+import { withClient, callTyped } from "../../client/rpc-client.js";
 
 const CATEGORY = "oauth";
 const NEAR_EXPIRY_THRESHOLD_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
@@ -99,22 +104,64 @@ async function checkProfiles(
   const storage = context.config?.security?.storage ?? "file";
 
   if (storage === "encrypted") {
-    // CLI cannot bootstrap encrypted store without SECRETS_MASTER_KEY.
-    // Surface as skip + operator hint (doctor reads only the active store,
-    // does not cross-check inactive).
-    return [
-      {
-        category: CATEGORY,
-        check: "Profile store",
-        status: "skip",
-        message:
-          "OAuth storage mode is 'encrypted' — doctor cannot read profiles from CLI",
-        suggestion:
-          "Run doctor on the daemon host (with SECRETS_MASTER_KEY set), " +
-          "or set security.storage to 'file' in config.yaml to use the plaintext file backend.",
-        repairable: false,
-      },
-    ];
+    // The CLI cannot bootstrap the encrypted store directly (no
+    // SECRETS_MASTER_KEY), but a RUNNING daemon reads it — so route the
+    // per-profile expiry check through the daemon's auth.list RPC (the same
+    // token-free projection `comis auth list` uses). Only skip when the daemon
+    // is unreachable (then doctor genuinely cannot read from the CLI). OBS-4:
+    // doctor used to skip unconditionally in encrypted mode, so OAuth expiry
+    // health was invisible in the production posture — exactly when you'd want it.
+    const daemonUp = await isDaemonRunning(1000);
+    if (!daemonUp) {
+      return [
+        {
+          category: CATEGORY,
+          check: "Profile store",
+          status: "skip",
+          message:
+            "OAuth storage mode is 'encrypted' and the daemon is not running — cannot read profiles from the CLI",
+          suggestion:
+            "Start the daemon (it reads the encrypted store) and re-run doctor, " +
+            "or set security.storage to 'file' in config.yaml to use the plaintext file backend.",
+          repairable: false,
+        },
+      ];
+    }
+    try {
+      const result = await withClient((client) =>
+        callTyped(client, AuthListContract, {}),
+      );
+      if (result.profiles.length === 0) {
+        return [
+          {
+            category: CATEGORY,
+            check: "Profile inventory",
+            status: "skip",
+            message: "No OAuth profiles stored",
+            repairable: false,
+          },
+        ];
+      }
+      // The RPC projection (provider/profileId/expires/email) carries every
+      // field profileExpiryFinding reads; refresh-test is unavailable here (the
+      // daemon holds the tokens), so it is omitted in the encrypted path.
+      return result.profiles.map((p) =>
+        profileExpiryFinding(p as unknown as OAuthProfile),
+      );
+    } catch (e) {
+      return [
+        {
+          category: CATEGORY,
+          check: "Profile store",
+          status: "skip",
+          message: `OAuth storage is 'encrypted'; reading profiles via the daemon failed: ${e instanceof Error ? e.message : String(e)}`,
+          suggestion:
+            "Ensure the daemon is healthy and the gateway token is valid, " +
+            "or set security.storage to 'file' in config.yaml.",
+          repairable: false,
+        },
+      ];
+    }
   }
 
   // env mode has no OAuth credential store — credentials are supplied

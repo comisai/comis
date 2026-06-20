@@ -7,7 +7,7 @@
  * @module
  */
 
-import type { NormalizedMessage, SessionKey, AppContainer, AppConfig } from "@comis/core";
+import type { NormalizedMessage, SessionKey, AppContainer, AppConfig, UserTrustLevel, ElevatedReplyConfig } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor } from "@comis/agent";
 import {
@@ -34,6 +34,48 @@ import {
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { randomUUID } from "node:crypto";
+// RESTART-01: defer a mid-turn config-change SIGUSR2 until the synchronous
+// chat/responses-API response flushes.
+import { withConfigMutationFence } from "../api/shared/persist-to-config.js";
+
+// ---------------------------------------------------------------------------
+// Context trust resolution for the token-authenticated API surfaces
+// (OpenAI chat-completions + responses). The message CONTENT is still user
+// input, so these paths default to the "user" UserTrustLevel — privileged
+// platform tools (memory_manage delete/flush, agents_manage, …) stay gated.
+//
+// An operator can elevate the whole API surface to admin by setting the
+// agent's `elevatedReply.defaultTrustLevel: admin` (the chat API's senderId is
+// a random per-request peerId, so senderTrustMap can never target it — but the
+// senderTrustMap branch is honored too for completeness / the responses path).
+// This reconciles the two trust systems: previously `defaultTrustLevel: admin`
+// only un-deferred the admin tools (made them visible) while the platform-tool
+// execution guard still saw a HARD-CODED "user" and denied them
+// ("permission_denied: requires admin, current level is user") — an incoherent
+// half-state where the agent is handed a tool it cannot run. Mapping: the
+// privileged elevatedReply value "admin" → UserTrustLevel "admin"; everything
+// else (external/learned/system/unset) → "user" (the prior, safe default).
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve the {@link UserTrustLevel} for a token-authenticated API request from
+ * the agent's elevated-reply config. Pure: same inputs → same output.
+ *
+ * @param elevatedReply - the agent's elevatedReply config (may be undefined)
+ * @param senderId - the inbound message senderId (for senderTrustMap lookup)
+ * @returns "admin" iff the resolved elevatedReply trust is exactly "admin";
+ *          otherwise "user" (never auto-elevates, never downgrades to guest).
+ */
+export function resolveContextTrustLevel(
+  elevatedReply: ElevatedReplyConfig | undefined,
+  senderId: string,
+): UserTrustLevel {
+  const resolved =
+    elevatedReply?.senderTrustMap?.[senderId] ??
+    elevatedReply?.defaultTrustLevel ??
+    "external";
+  return resolved === "admin" ? "admin" : "user";
+}
 
 // ---------------------------------------------------------------------------
 // Deps type
@@ -347,19 +389,27 @@ export function mountGatewayRoutes(deps: GatewayRouteDeps): void {
       // finding 2026-06-18: without this, chat-API turn outcomes were observed but NEVER
       // resolved (no reward/forget/skill-promote) and were invisible to obs.
       const turnTraceId = randomUUID();
-      const result = await runWithContext(
+      // RESTART-01: hold the config-mutation fence across the turn so a
+      // config-mutating tool (heartbeat_manage/config.patch/…) that schedules a
+      // SIGUSR2 restart mid-turn defers it until this synchronous HTTP response
+      // flushes — otherwise the daemon restarts under the in-flight request and
+      // the caller gets "Empty reply from server" even though the config applied.
+      const result = await withConfigMutationFence(() => runWithContext(
         {
           traceId: turnTraceId,
           tenantId: sk.tenantId,
           userId: sk.userId,
           sessionKey: formatSessionKey(sk),
           startedAt: systemNowMs(),
-          // Token-authenticated caller, but the message CONTENT is user input.
-          trustLevel: "user",
+          // Token-authenticated caller, but the message CONTENT is user input,
+          // so the platform-tool trust defaults to "user". An operator may
+          // elevate the whole chat API to admin via the agent's
+          // elevatedReply.defaultTrustLevel — see resolveContextTrustLevel.
+          trustLevel: resolveContextTrustLevel(agents[defaultAgentId]?.elevatedReply, msg.senderId),
           channelType: "openai",
         },
         () => getExecutor(defaultAgentId).execute(msg, sk, tools, onDelta, defaultAgentId),
-      );
+      ));
       return {
         response: result.response,
         tokensUsed: result.tokensUsed,
@@ -422,19 +472,25 @@ export function mountGatewayRoutes(deps: GatewayRouteDeps): void {
       // for the OpenResponses API — without runWithContext every executor log line is
       // traceId-less (no trace stitching) and the degraded reply cannot carry
       // its incident ref. One context per inbound request, minted here.
-      const result = await runWithContext(
+      // RESTART-01: hold the config-mutation fence across the turn (see the
+      // chat-completions path) so a mid-turn config-mutating tool's SIGUSR2
+      // restart defers until this synchronous response flushes.
+      const result = await withConfigMutationFence(() => runWithContext(
         {
           traceId: randomUUID(),
           tenantId: sk.tenantId,
           userId: sk.userId,
           sessionKey: formatSessionKey(sk),
           startedAt: systemNowMs(),
-          // Token-authenticated caller, but the message CONTENT is user input.
-          trustLevel: "user",
+          // Token-authenticated caller, but the message CONTENT is user input,
+          // so the platform-tool trust defaults to "user". An operator may
+          // elevate via the agent's elevatedReply.defaultTrustLevel —
+          // see resolveContextTrustLevel.
+          trustLevel: resolveContextTrustLevel(agents[defaultAgentId]?.elevatedReply, msg.senderId),
           channelType: "responses",
         },
         () => getExecutor(defaultAgentId).execute(msg, sk, tools, onDelta, defaultAgentId),
-      );
+      ));
       return {
         response: result.response,
         tokensUsed: result.tokensUsed,

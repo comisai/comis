@@ -906,3 +906,87 @@ describe("resolveInitialModel with providerAliases", () => {
     expect(result.fallbackMessage).toBeDefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// LOCAL-3 RED — local OpenAI-compat providers (ollama / lm-studio) expose
+// their OpenAI-compatible API under `/v1`. A user who configures the bare
+// server root (`http://127.0.0.1:11434`, ollama's documented address) made
+// pi-ai POST to `<root>/chat/completions` and get a cryptic
+// "404 page not found" — the whole turn failing with empty content. When the
+// configured baseUrl is a host-only origin, normalize it by appending `/v1`
+// so the request lands on the OpenAI-compat mount. A baseUrl that already
+// carries a path (including `/v1`) is respected as-is.
+//   Live incident 2026-06-20: qwen3.6:35b on a local macOS daemon returned
+//   "AI didn't produce a response"; ollama's GIN log showed `POST
+//   "/chat/completions" 404` while `/v1/chat/completions` returned 200.
+// ---------------------------------------------------------------------------
+describe("registerCustomProviders — local OpenAI-compat baseUrl /v1 normalization", () => {
+  function captureLogger() {
+    const warns: Array<{ obj: Record<string, unknown>; msg: string }> = [];
+    const debugs: Array<{ obj: Record<string, unknown>; msg: string }> = [];
+    return {
+      logger: {
+        warn: (obj: Record<string, unknown>, msg: string) => warns.push({ obj, msg }),
+        debug: (obj: Record<string, unknown>, msg: string) => debugs.push({ obj, msg }),
+      },
+    };
+  }
+
+  function localEntry(
+    type: string,
+    baseUrl: string,
+  ): CustomProviderRegistration {
+    return {
+      type,
+      baseUrl,
+      apiKeyName: "",
+      enabled: true,
+      headers: {},
+      models: [{ id: "local-model", name: "Local Model" }],
+    };
+  }
+
+  function registerLocal(providerName: string, type: string, baseUrl: string) {
+    const secretManager = createSecretManager({});
+    const authStorage = createAuthStorageAdapter({
+      secretManager,
+      customProviderEntries: { [providerName]: { enabled: true } },
+    });
+    const registry = createModelRegistryAdapter(authStorage);
+    const { logger } = captureLogger();
+    const { registered } = registerCustomProviders(
+      registry,
+      { [providerName]: localEntry(type, baseUrl) },
+      secretManager,
+      logger,
+    );
+    expect(registered).toBe(1);
+    return registry.find(providerName, "local-model");
+  }
+
+  it("appends /v1 to a bare-origin ollama baseUrl", () => {
+    const found = registerLocal("ollama", "ollama", "http://127.0.0.1:11434");
+    expect(found).toBeDefined();
+    expect(found!.baseUrl).toBe("http://127.0.0.1:11434/v1");
+  });
+
+  it("appends /v1 to a bare-origin ollama baseUrl with a trailing slash", () => {
+    const found = registerLocal("ollama", "ollama", "http://127.0.0.1:11434/");
+    expect(found!.baseUrl).toBe("http://127.0.0.1:11434/v1");
+  });
+
+  it("preserves an ollama baseUrl that already ends in /v1", () => {
+    const found = registerLocal("ollama", "ollama", "http://127.0.0.1:11434/v1");
+    expect(found!.baseUrl).toBe("http://127.0.0.1:11434/v1");
+  });
+
+  it("preserves an ollama baseUrl that carries a custom proxy path", () => {
+    const found = registerLocal("ollama", "ollama", "http://proxy.local/ollama/openai");
+    expect(found!.baseUrl).toBe("http://proxy.local/ollama/openai");
+  });
+
+  it("appends /v1 to a bare-origin lm-studio baseUrl", () => {
+    const found = registerLocal("lmstudio", "lm-studio", "http://localhost:1234");
+    expect(found!.baseUrl).toBe("http://localhost:1234/v1");
+  });
+});

@@ -143,7 +143,12 @@ export function registerAllToolMetadata(): void {
 
   // Cron tool -- action enum + per-action required param validation
   const VALID_CRON_ACTIONS = ["add", "list", "update", "remove", "status", "runs", "run", "wake"];
-  const VALID_SCHEDULE_KINDS = ["cron", "every", "at"];
+  // "in" = deterministic relative one-shot (now + schedule_in_seconds), the
+  // reliable path for "remind me in N minutes" — keep in lockstep with
+  // CronScheduleSchema (CRON-IN-01). Omitting it here silently rejected the
+  // model's correct `schedule_kind:"in"` with "Valid: cron, every, at", forcing
+  // it back onto the timezone-error-prone `at` path (live 2026-06-20).
+  const VALID_SCHEDULE_KINDS = ["cron", "every", "at", "in"];
 
   registerToolMetadata("cron", {
     validateInput: (params) => {
@@ -157,6 +162,12 @@ export function registerAllToolMetadata(): void {
         if (params.schedule_kind && typeof params.schedule_kind === "string") {
           if (!VALID_SCHEDULE_KINDS.includes(params.schedule_kind)) {
             return `Invalid schedule_kind: "${params.schedule_kind}". Valid: ${VALID_SCHEDULE_KINDS.join(", ")}`;
+          }
+          if (params.schedule_kind === "in") {
+            const secs = params.schedule_in_seconds;
+            if (typeof secs !== "number" || !Number.isFinite(secs) || secs <= 0) {
+              return "Missing/invalid schedule_in_seconds: schedule_kind=in needs a positive number of seconds from now (e.g. 'in 2 minutes' → 120)";
+            }
           }
         }
       }

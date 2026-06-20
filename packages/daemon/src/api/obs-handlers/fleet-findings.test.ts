@@ -40,6 +40,25 @@ function modelHealthRow(
   };
 }
 
+/** A DEGRADED model_health row: severity "warning", embeddingAvailable=false
+ *  (recordModelHealth sets severity "warning" exactly when the embedding
+ *  provider is absent — the primary degraded-recall cause). */
+function degradedModelHealthRow(ts: number): DiagnosticRow {
+  return {
+    timestamp: ts,
+    category: "model_health",
+    severity: "warning",
+    message: "model_health",
+    details: JSON.stringify({
+      embeddingAvailable: false,
+      rerankerModelPresent: false,
+      rerankerBuilt: false,
+      embeddingMultilingual: "unknown",
+      rerankerMultilingual: "unknown",
+    }),
+  };
+}
+
 describe("buildFindings — EMB-01 multilingual advisory (standing state)", () => {
   it("emits ONE embedder advisory from the LATEST row when a newer model_health row reports embeddingMultilingual=false (older true is superseded)", () => {
     const older = modelHealthRow(1_000, { embeddingMultilingual: true, rerankerMultilingual: true });
@@ -348,9 +367,12 @@ describe("buildFindings — OBS-04 voice_health finding", () => {
       voiceDegradedRow(4_000, "network"),
       voiceDegradedRow(5_000, "network"),
     ];
+    // WARNING-severity (embeddingAvailable=false) rows — the only ones that count
+    // as "provider degradation" after the LOCAL re-test fix below; healthy info
+    // boots no longer inflate the count.
     const modelRows: DiagnosticRow[] = [
-      modelHealthRow(1_000, { embeddingMultilingual: true, rerankerMultilingual: true }),
-      modelHealthRow(2_000, { embeddingMultilingual: true, rerankerMultilingual: true }),
+      degradedModelHealthRow(1_000),
+      degradedModelHealthRow(2_000),
     ];
     const findings = buildFindings(voiceRows, modelRows, []);
     const voiceIdx = findings.findIndex((f) => f.code === VOICE_CODE);
@@ -689,5 +711,51 @@ describe("buildFindings — ORCH-OBS node_budget_exceeded finding", () => {
       expect(text).not.toMatch(/https?:\/\//);
       expect(text).not.toMatch(/Bearer|sk-/i);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// LOCAL re-test 2026-06-20 — the generic `model_health` "provider degradation"
+// rollup counted EVERY model_health row, including the once-per-boot HEALTHY
+// snapshot (severity "info", embeddingAvailable=true). recordModelHealth writes
+// ONE row per boot with severity "info" when the embedding provider is present
+// and "warning" only when it is absent (the primary degraded-recall cause). A
+// keyless macOS daemon with a working local embedder that had rebooted 8× thus
+// showed "8 model-health signal(s) (provider degradation)" — 8 benign healthy
+// boots mislabeled as degradation (the BENIGN_*_REASONS anti-pattern: routine
+// events inflating warning counts). Only severity "warning" rows are real
+// degradation; the multilingual advisory (read from the latest row) is
+// severity-independent and must keep firing.
+// ---------------------------------------------------------------------------
+describe("buildFindings — model_health 'provider degradation' counts only degraded (warning) rows", () => {
+  const MH_CODE = "model_health";
+
+  it("emits NO provider-degradation finding when every model_health row is a healthy info-severity boot (8-reboot keyless case)", () => {
+    const rows: DiagnosticRow[] = Array.from({ length: 8 }, (_v, i) =>
+      modelHealthRow(1_000 * (i + 1), { embeddingMultilingual: true, rerankerMultilingual: true }),
+    );
+    const findings = buildFindings([], rows, []);
+    expect(findings.some((f) => f.code === MH_CODE)).toBe(false);
+  });
+
+  it("counts ONLY warning-severity (embeddingAvailable=false) rows as provider degradation", () => {
+    const rows: DiagnosticRow[] = [
+      modelHealthRow(1_000, { embeddingMultilingual: true, rerankerMultilingual: true }), // info
+      degradedModelHealthRow(2_000), // warning
+      modelHealthRow(3_000, { embeddingMultilingual: true, rerankerMultilingual: true }), // info
+    ];
+    const mh = buildFindings([], rows, []).find((f) => f.code === MH_CODE);
+    expect(mh).toBeDefined();
+    expect(mh?.count).toBe(1);
+  });
+
+  it("keeps the multilingual advisory firing on a healthy info row while NOT emitting a degradation finding", () => {
+    // Latest row: healthy (info) but English-leaning embedder.
+    const rows: DiagnosticRow[] = [
+      modelHealthRow(5_000, { embeddingMultilingual: false, rerankerMultilingual: true }),
+    ];
+    const findings = buildFindings([], rows, []);
+    expect(findings.some((f) => f.code === EMBED_CODE)).toBe(true); // advisory: severity-independent
+    expect(findings.some((f) => f.code === MH_CODE)).toBe(false); // but no "provider degradation" for a healthy boot
   });
 });

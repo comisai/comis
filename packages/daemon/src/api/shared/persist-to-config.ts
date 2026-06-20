@@ -145,6 +145,34 @@ export function _resetMutationFence(): void {
   pendingConfigMutations = 0;
 }
 
+/** Current fence depth. For test assertions only. */
+export function _pendingConfigMutations(): number {
+  return pendingConfigMutations;
+}
+
+/**
+ * Run `fn` inside a config-mutation fence so any SIGUSR2 restart that a
+ * config-mutating tool schedules MID-`fn` is deferred until `fn` settles.
+ *
+ * RESTART-01 (live VPS 2026-06-20): a config-mutating agent tool
+ * (heartbeat_manage / config.patch / agents_manage / …) called inside a
+ * SYNCHRONOUS chat/responses-API turn triggered a debounced SIGUSR2 that
+ * restarted the daemon UNDER the in-flight HTTP request → the request died
+ * with "Empty reply from server" even though the config WAS applied. Wrapping
+ * the turn in the fence lets it complete + flush its response first; the
+ * restart then fires (~2s debounce) cleanly afterward. No-op when the turn
+ * schedules no restart (the fence only gates a pending SIGUSR2). The fence is
+ * always released, even when `fn` throws.
+ */
+export async function withConfigMutationFence<T>(fn: () => Promise<T>): Promise<T> {
+  enterConfigMutationFence();
+  try {
+    return await fn();
+  } finally {
+    leaveConfigMutationFence();
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------

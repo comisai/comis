@@ -141,6 +141,7 @@ function normalizeCronAddParams(params: Record<string, unknown>): Record<string,
     timezone: schedule?.tz,
     schedule_every_ms: schedule?.everyMs,
     schedule_at: schedule?.at,
+    schedule_in_seconds: schedule?.seconds,
   };
 }
 

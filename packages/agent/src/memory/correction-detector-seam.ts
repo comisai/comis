@@ -65,7 +65,8 @@
 
 import { systemSetTimeout, systemClearTimeout, wrapExternalContent } from "@comis/core";
 import type { ClockPort, ComisLogger } from "@comis/core";
-import { completeSimple, getModel } from "@earendil-works/pi-ai";
+import { completeSimple } from "@earendil-works/pi-ai";
+import { resolveJudgeModel, type CustomCompletionsModelSpec } from "./judge-model-resolver.js";
 import { z } from "zod";
 import { parseLenientJson } from "./llm-json.js";
 
@@ -100,6 +101,14 @@ export interface CorrectionDetectorSeamDeps {
   logger: ComisLogger;
   /** Scope tag for the failure logs. */
   agentId: string;
+  /**
+   * Custom OpenAI-compatible model spec (resolved, normalized `…/v1` baseUrl) for
+   * building the judge Model when the pi-ai catalog has no entry for
+   * `provider/modelId` — a custom YAML provider (ollama/lm-studio/…). Undefined
+   * for built-in providers. Without it, correction detection SKIPPED on every
+   * keyless/local turn (the same bug as the outcome judge, live 2026-06-20).
+   */
+  customModel?: CustomCompletionsModelSpec;
 }
 
 /**
@@ -219,34 +228,22 @@ function parseVerdict(raw: string): CorrectionVerdict {
 export function createCorrectionDetectorSeam(
   deps: CorrectionDetectorSeamDeps,
 ): (followUpUserTurn: string) => Promise<CorrectionVerdict | undefined> {
-  const { provider, modelId, apiKey, maxOutputTokens, clock, logger, agentId } = deps;
+  const { provider, modelId, apiKey, maxOutputTokens, clock, logger, agentId, customModel } = deps;
 
   /** Issue one bounded, non-fatal cheap-model call; return raw text or undefined. */
   async function callModel(systemPrompt: string, userText: string): Promise<string | undefined> {
-    let model;
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- provider/modelId are dynamic strings
-      model = getModel(provider as any, modelId as any);
-    } catch (modelErr) {
-      logger.warn(
-        {
-          agentId,
-          err: modelErr,
-          errorKind: "dependency" as const,
-          step: "correction-detector" as const,
-          hint: `could not resolve model ${provider}/${modelId} — skipping this correction detection`,
-        },
-        "Correction detector model resolution failed (non-fatal)",
-      );
-      return undefined;
-    }
+    // Catalog first; else construct from the custom-provider spec (ollama/lm-studio/…)
+    // so correction detection runs on keyless/local deployments instead of skipping.
+    const model = resolveJudgeModel(provider, modelId, customModel);
     if (!model) {
       logger.warn(
         {
           agentId,
           errorKind: "dependency" as const,
           step: "correction-detector" as const,
-          hint: `model not found ${provider}/${modelId} — skipping this correction detection`,
+          hint: customModel
+            ? `could not build correction model ${provider}/${modelId} from the custom baseUrl — skipping this correction detection`
+            : `model ${provider}/${modelId} is not in the pi-ai catalog and no custom provider baseUrl was supplied — set providers.entries.${provider}.baseUrl or use a built-in provider for the correction tier`,
         },
         "Correction detector model not found (non-fatal)",
       );

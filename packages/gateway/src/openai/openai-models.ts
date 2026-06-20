@@ -80,12 +80,24 @@ export function createOpenaiModelsRoute(deps: OpenaiModelsDeps): Hono {
   });
 
   // GET /:model_id -- single model lookup
-  // Model IDs use "provider/modelId" format, so we use a wildcard param
+  // Model IDs use "provider/modelId" format (a slash), so a `/*` wildcard is
+  // required. Read the id from the ROUTING wildcard param — NOT c.req.path,
+  // which is the FULL original path (e.g. "/v1/models/openai-codex/gpt-5.5"
+  // when this sub-app is mounted at /v1/models). The previous `path.slice(1)`
+  // kept the "v1/models/" mount prefix, so it never matched the catalog's
+  // "provider/modelId" ids → every single-model retrieve 404'd, even for an id
+  // straight out of GET /v1/models (live VPS incident 2026-06-19). Hono strips
+  // the mount prefix for routing, so `param("*")` is the correct relative id.
   app.get("/*", (c) => {
-    const modelId = c.req.path.slice(1); // strip leading "/"
+    // c.req.path is the FULL original path; when mounted at /v1/models it is
+    // e.g. "/v1/models/openai-codex/gpt-5.5". We can't know the mount prefix in
+    // here, so match the catalog id as the trailing "/provider/modelId" segment
+    // (works whether mounted or standalone). decodeURIComponent handles a
+    // percent-encoded slash in the id.
+    const reqPath = decodeURIComponent(c.req.path);
     const entries = deps.getCatalogEntries();
     const entry = entries.find(
-      (e) => `${e.provider}/${e.modelId}` === modelId,
+      (e) => reqPath.endsWith(`/${e.provider}/${e.modelId}`),
     );
 
     if (!entry) {

@@ -37,7 +37,7 @@ vi.mock("@comis/core", async (importOriginal) => {
   };
 });
 
-import { mountGatewayRoutes, type GatewayRouteDeps } from "./setup-gateway-routes.js";
+import { mountGatewayRoutes, resolveContextTrustLevel, type GatewayRouteDeps } from "./setup-gateway-routes.js";
 import {
   createMappedWebhookEndpoint,
   getPresetMappings,
@@ -77,6 +77,35 @@ function createMockDeps(overrides: Partial<GatewayRouteDeps> = {}): GatewayRoute
     ...overrides,
   };
 }
+
+// ---------------------------------------------------------------------------
+// resolveContextTrustLevel — reconciles elevatedReply trust with the
+// UserTrustLevel that platform-tool guards read (live VPS incident 2026-06-19:
+// `elevatedReply.defaultTrustLevel: admin` un-deferred memory_manage but the
+// chat-API context still hard-coded "user", so execution was denied with
+// "permission_denied: requires admin, current level is user").
+// ---------------------------------------------------------------------------
+describe("resolveContextTrustLevel", () => {
+  it("maps defaultTrustLevel:admin → admin (the chat-API elevation lever)", () => {
+    // chat-API senderId is a random per-request peerId, so only defaultTrustLevel
+    // can ever apply — it MUST reach the platform-tool gate as UserTrustLevel admin.
+    expect(resolveContextTrustLevel({ defaultTrustLevel: "admin" } as any, "chatcmpl-random-xyz")).toBe("admin");
+  });
+  it("defaults to user when defaultTrustLevel is external/unset (the safe prior default)", () => {
+    expect(resolveContextTrustLevel({ defaultTrustLevel: "external" } as any, "x")).toBe("user");
+    expect(resolveContextTrustLevel({} as any, "x")).toBe("user");
+    expect(resolveContextTrustLevel(undefined, "x")).toBe("user");
+  });
+  it("honors a senderTrustMap admin entry (responses-path / mappable senders)", () => {
+    expect(
+      resolveContextTrustLevel({ senderTrustMap: { "678314278": "admin" }, defaultTrustLevel: "external" } as any, "678314278"),
+    ).toBe("admin");
+  });
+  it("never elevates non-admin elevatedReply values (learned/system → user)", () => {
+    expect(resolveContextTrustLevel({ defaultTrustLevel: "learned" } as any, "x")).toBe("user");
+    expect(resolveContextTrustLevel({ defaultTrustLevel: "system" } as any, "x")).toBe("user");
+  });
+});
 
 describe("mountGatewayRoutes", () => {
   beforeEach(() => {

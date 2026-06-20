@@ -15,7 +15,8 @@
 
 import { randomUUID } from "node:crypto";
 import type { Attachment, AppContainer, ChannelPort, ClockPort, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore, RelationshipStore, TunedAlphaStore, MemoryUsefulnessStore, MemoryLifecyclePort, OutcomeSignalPort, LearnedSkillStorePort, NormalizedMessage, SessionKey, TranscriptionPort, DeliveryService } from "@comis/core";
-import { formatSessionKey, runWithContext, createDeliveryOrigin, systemNowMs, KEYLESS_PROVIDER_TYPES, KEYLESS_API_KEY_SENTINEL } from "@comis/core";
+import { formatSessionKey, runWithContext, createDeliveryOrigin, systemNowMs } from "@comis/core";
+import { resolveCronJobCredential, cronCredentialSkipHint } from "./setup-channels-cron-credential.js";
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry, OperationModelResolution, SkillApprovalGate } from "@comis/agent";
 import type { createSessionStore, MemoryApi } from "@comis/memory";
@@ -43,6 +44,8 @@ export interface CronEventListenerDeps {
   logger: ComisLogger;
   /** Composition-root clock — threaded to runMemoryReview for relative-date resolution. */
   clock: ClockPort;
+  /** Per-agent auto-refreshing OAuth token resolver (wraps OAuthTokenManager); lets background memory/learning jobs run on an OAuth main provider instead of skipping "no API key" (LEARN-01). Undefined ⇒ static-key/keyless only. */
+  resolveAccessToken?: (agentId: string, provider: string) => Promise<string | undefined>;
   adaptersByType: Map<string, ChannelPort>;
   deliveryService: DeliveryService;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AgentTool generic requires complex type parameters from pi-ai SDK
@@ -70,13 +73,9 @@ export interface CronEventListenerDeps {
    *  the sentinel cannot run, but the cron is off-by-default so a default-config agent never
    *  reaches it. */
   consolidationStore?: MemoryConsolidationStore;
-  /** Triple store — the deductive current-truth write path.
-   *  Threaded into runMemoryReasoning by the opt-in `__MEMORY_REASONING__` sentinel
-   *  below. Built in setup-memory on the SAME db handle the memory adapter owns;
-   *  injected as the port TYPE (agent↛memory cut). Threaded the full daemon → registry
-   *  → credentials chain — a missing thread would make the deductive
-   *  write a silent no-op. Absent => the reasoning sentinel cannot run, but the cron is
-   *  off-by-default so a default-config agent never reaches it. */
+  /** Triple store — deductive current-truth write path, threaded into runMemoryReasoning via
+   *  the opt-in `__MEMORY_REASONING__` sentinel below (port TYPE, agent↛memory cut; same db
+   *  handle as the memory adapter). Absent ⇒ sentinel can't run; cron is off-by-default. */
   tripleStore?: TripleStorePort;
   /** Per-user representation store — the offline-builder
    *  upsert write path. Threaded into runUserRepresentationBuild by the opt-in
@@ -185,11 +184,11 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
         providerFamily: resolveProviderFamily(agentConfig.provider ?? "anthropic"),
       });
       const providerEntry = container.config.providers?.entries?.[resolved.provider];
-      const apiKeyName = providerEntry?.apiKeyName || `${resolved.provider.toUpperCase()}_API_KEY`;
-      const apiKey = container.secretManager.get(apiKeyName) ?? (KEYLESS_PROVIDER_TYPES.has(resolved.provider) ? KEYLESS_API_KEY_SENTINEL : "");
+      const cred = await resolveCronJobCredential(container, agentId, resolved.provider, deps.resolveAccessToken);
+      const apiKey = cred.apiKey;
       if (!apiKey) {
-        logger.warn({ agentId, provider: resolved.provider, hint: `Set ${apiKeyName} in secrets for memory review`, errorKind: "config" as const }, "Skipping memory review -- no API key");
-        payload.onComplete?.({ status: "error", error: `No API key for ${resolved.provider}` });
+        logger.warn({ agentId, provider: resolved.provider, hint: cronCredentialSkipHint(cred, resolved.provider, "memory review"), errorKind: "config" as const }, "Skipping memory review -- no API key");
+        payload.onComplete?.({ status: "error", error: `No API key for ` + resolved.provider });
         return;
       }
 
@@ -248,6 +247,7 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
       usefulnessStore: deps.usefulnessStore,
       memoryApi: deps.memoryApi,
       skillSynthesis: buildSkillSynthesisCronDeps(deps), // SKILL-08/09 closed-graph bundle; undefined ⇒ off
+      resolveAccessToken: deps.resolveAccessToken, // LEARN-01: OAuth-provider background jobs
     });
     if (handledMemoryCron) return;
 

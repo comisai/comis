@@ -37,7 +37,47 @@ import {
   type OutcomeSignalPort,
   type ResolvedOutcome,
 } from "@comis/core";
-import { createOutcomeJudgeSeam, resolveOperationModel, resolveProviderFamily } from "@comis/agent";
+import { createOutcomeJudgeSeam, resolveOperationModel, resolveProviderFamily, normalizeOpenAICompatBaseUrl, type CustomCompletionsModelSpec } from "@comis/agent";
+
+/**
+ * Provider-config fields {@link buildCustomJudgeModelSpec} reads. `apiKeyName` is
+ * declared (though unused here) so the narrower `{ apiKeyName?: string }` shapes
+ * the reaction/usefulness containers expose stay assignable — TS's weak-type rule
+ * rejects a source that shares NO property with an all-optional target.
+ */
+export interface JudgeProviderEntry {
+  apiKeyName?: string;
+  type?: string;
+  baseUrl?: string;
+  models?: ReadonlyArray<{ id: string; contextWindow?: number; maxTokens?: number; reasoning?: boolean }>;
+}
+
+/**
+ * Build the custom-provider judge model spec from a provider config entry so the
+ * memory/learning judge seams (outcome / correction / usefulness) run on a custom
+ * YAML provider (ollama / lm-studio / vLLM / …) whose model is absent from pi-ai's
+ * built-in catalog. Returns `undefined` for built-in providers (no baseUrl) — the
+ * seam's catalog lookup handles those. Applies the SAME `/v1` normalization
+ * `registerCustomProviders` uses, and reads contextWindow/maxTokens/reasoning from
+ * the declared model entry. Shared by all three judge resolvers (live 2026-06-20).
+ */
+export function buildCustomJudgeModelSpec(
+  providerEntry: JudgeProviderEntry | undefined,
+  provider: string,
+  modelId: string,
+): CustomCompletionsModelSpec | undefined {
+  if (!providerEntry?.baseUrl) return undefined;
+  const baseUrl =
+    normalizeOpenAICompatBaseUrl(providerEntry.baseUrl, providerEntry.type ?? provider) ??
+    providerEntry.baseUrl;
+  const modelEntry = providerEntry.models?.find((m) => m.id === modelId);
+  return {
+    baseUrl,
+    contextWindow: modelEntry?.contextWindow,
+    maxTokens: modelEntry?.maxTokens,
+    reasoning: modelEntry?.reasoning,
+  };
+}
 
 /** Per-call output bound for the cheap outcome-judge verdict (a tiny JSON shape). */
 const OUTCOME_JUDGE_MAX_OUTPUT_TOKENS = 1024;
@@ -74,7 +114,21 @@ export interface OutcomeJudgeWiringContainer {
   config: {
     agents?: Record<string, JudgeAgentConfig | undefined>;
     memory?: { costFeatures?: { enabled?: boolean } };
-    providers?: { entries?: Record<string, { apiKeyName?: string } | undefined> };
+    providers?: {
+      entries?: Record<
+        string,
+        | {
+            apiKeyName?: string;
+            /** Custom-provider type (ollama/lm-studio/…) — drives the /v1 baseUrl normalization. */
+            type?: string;
+            /** Custom-provider base — when set, the judge can run on this endpoint even if pi-ai's catalog has no entry. */
+            baseUrl?: string;
+            /** Declared models — read for the judge model's contextWindow/maxTokens/reasoning. */
+            models?: ReadonlyArray<{ id: string; contextWindow?: number; maxTokens?: number; reasoning?: boolean }>;
+          }
+        | undefined
+      >;
+    };
   };
   secretManager: { get(name: string): string | undefined };
 }
@@ -119,6 +173,11 @@ function resolveOutcomeJudge(
     container.secretManager.get(apiKeyName) ??
     (KEYLESS_PROVIDER_TYPES.has(resolved.provider) ? KEYLESS_API_KEY_SENTINEL : "");
   if (!apiKey) return undefined; // no key → no-op judge (Defer != Retry)
+
+  // Custom YAML providers (ollama/lm-studio/…) aren't in pi-ai's catalog, so the
+  // seam would skip; build a custom-model spec so the judge runs locally too.
+  const customModel = buildCustomJudgeModelSpec(providerEntry, resolved.provider, resolved.modelId);
+
   const seam = createOutcomeJudgeSeam({
     provider: resolved.provider,
     modelId: resolved.modelId,
@@ -127,6 +186,7 @@ function resolveOutcomeJudge(
     clock,
     logger,
     agentId,
+    customModel,
   });
   return async (trajectoryContent: string) => {
     const verdict = await seam(trajectoryContent);

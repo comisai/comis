@@ -20,7 +20,12 @@ export function computeNextRunAtMs(schedule: CronSchedule, nowMs: number): numbe
     case "every":
       return computeEvery(schedule.everyMs, schedule.anchorMs, nowMs);
     case "at":
-      return computeAt(schedule.at, nowMs);
+      return computeAt(schedule.at, nowMs, schedule.tz);
+    case "in":
+      // Deterministic relative one-shot: now + N seconds. No timezone, no
+      // wall-clock parse — the whole point is to bypass the absolute-`at` + IANA
+      // conversion that small models get wrong (CRON-IN-01).
+      return nowMs + schedule.seconds * 1000;
   }
 }
 
@@ -58,8 +63,63 @@ function computeEvery(
   return next;
 }
 
-function computeAt(at: string, nowMs: number): number | undefined {
-  const dateMs = systemDateFrom(at).getTime();
+function computeAt(at: string, nowMs: number, tz?: string): number | undefined {
+  // When a tz is given AND `at` is a naive wall-clock (no explicit offset),
+  // interpret it in that zone. Otherwise fall back to system-local parsing
+  // (the prior behavior). An `at` that already carries an offset (Z / ±HH:MM)
+  // is unambiguous, so the tz is ignored for it.
+  const dateMs =
+    tz && !HAS_EXPLICIT_OFFSET.test(at)
+      ? zonedWallClockToUtcMs(at, tz)
+      : systemDateFrom(at).getTime();
   if (!Number.isFinite(dateMs)) return undefined;
   return dateMs > nowMs ? dateMs : undefined;
+}
+
+/** ISO-8601 trailing offset: "Z", "+02:00", "-0700", etc. */
+const HAS_EXPLICIT_OFFSET = /([zZ]|[+-]\d{2}:?\d{2})$/;
+
+/**
+ * Offset (ms) of `timeZone` at the instant `utcMs`: the wall-clock the zone
+ * shows for that instant, reinterpreted as UTC, minus the instant. DST-aware.
+ */
+function tzOffsetMs(utcMs: number, timeZone: string): number {
+  const dtf = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hourCycle: "h23",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+  const p: Record<string, number> = {};
+  // `formatToParts` accepts an epoch-ms number directly — passing `utcMs`
+  // keeps this a pure, deterministic conversion (no `new Date()` clock read,
+  // which the globals architecture invariant forbids in production source).
+  for (const part of dtf.formatToParts(utcMs)) {
+    if (part.type !== "literal") p[part.type] = Number(part.value);
+  }
+  const asUtc = Date.UTC(p.year!, p.month! - 1, p.day!, p.hour!, p.minute!, p.second!);
+  return asUtc - utcMs;
+}
+
+/**
+ * Convert a NAIVE ISO-8601 wall-clock datetime (no offset) interpreted in
+ * `timeZone` to a UTC epoch (ms). DST-aware via a one-step offset refinement
+ * (handles the offset that applies at the target instant, not just "now").
+ * Returns NaN for an unparseable datetime or an invalid IANA zone.
+ */
+function zonedWallClockToUtcMs(naiveIso: string, timeZone: string): number {
+  const asIfUtc = Date.parse(naiveIso.endsWith("Z") ? naiveIso : `${naiveIso}Z`);
+  if (!Number.isFinite(asIfUtc)) return NaN;
+  try {
+    const utc1 = asIfUtc - tzOffsetMs(asIfUtc, timeZone);
+    // Refine once so the offset is taken at the resolved instant (DST-correct).
+    return asIfUtc - tzOffsetMs(utc1, timeZone);
+  } catch {
+    // Invalid IANA timeZone → Intl throws a RangeError.
+    return NaN;
+  }
 }

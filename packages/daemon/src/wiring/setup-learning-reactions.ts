@@ -61,6 +61,7 @@ import {
   type CorrectionVerdict,
 } from "@comis/agent";
 import { deriveTenantFromSessionKey } from "./setup-memory-usefulness-wiring.js";
+import { buildCustomJudgeModelSpec } from "./setup-learning-judge.js";
 
 // ===========================================================================
 // 1. messageId → trajectory-scope map (bounded, in-memory daemon-lifetime)
@@ -608,6 +609,9 @@ function resolveCorrectionDetector(
     container.secretManager.get(apiKeyName) ??
     (KEYLESS_PROVIDER_TYPES.has(resolved.provider) ? KEYLESS_API_KEY_SENTINEL : "");
   if (!apiKey) return undefined; // no key → no-op detector (Defer != Retry)
+  // Custom YAML providers (ollama/lm-studio/…) aren't in pi-ai's catalog → the
+  // seam would skip; build a spec so correction detection runs locally too.
+  const customModel = buildCustomJudgeModelSpec(providerEntry, resolved.provider, resolved.modelId);
   return createCorrectionDetectorSeam({
     provider: resolved.provider,
     modelId: resolved.modelId,
@@ -616,6 +620,7 @@ function resolveCorrectionDetector(
     clock,
     logger,
     agentId,
+    customModel,
   });
 }
 

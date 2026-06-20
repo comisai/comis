@@ -95,5 +95,58 @@ describe("computeNextRunAtMs", () => {
       const next = computeNextRunAtMs(schedule, nowMs);
       expect(next).toBeUndefined();
     });
+
+    // Live VPS incident 2026-06-19 (UC-A3): a Pacific user's "remind me at 9am"
+    // was stored as a NAIVE "2026-06-20T09:00:00" and fired at 09:00 UTC
+    // (= 02:00 Pacific), the wrong wall-clock time. The "at" schedule now
+    // carries an optional tz; a naive `at` is interpreted in that zone.
+    it("interprets a naive `at` in the provided tz (summer/PDT, UTC-7)", () => {
+      const schedule: CronSchedule = { kind: "at", at: "2026-06-20T09:00:00", tz: "America/Los_Angeles" };
+      const nowMs = new Date("2026-06-01T00:00:00Z").getTime();
+      const next = computeNextRunAtMs(schedule, nowMs);
+      // 09:00 PDT == 16:00 UTC — NOT 09:00 UTC (the pre-fix bug).
+      expect(next).toBe(new Date("2026-06-20T16:00:00Z").getTime());
+    });
+
+    it("is DST-aware (winter/PST, UTC-8)", () => {
+      const schedule: CronSchedule = { kind: "at", at: "2026-01-15T09:00:00", tz: "America/Los_Angeles" };
+      const nowMs = new Date("2026-01-01T00:00:00Z").getTime();
+      const next = computeNextRunAtMs(schedule, nowMs);
+      // 09:00 PST == 17:00 UTC.
+      expect(next).toBe(new Date("2026-01-15T17:00:00Z").getTime());
+    });
+
+    it("ignores tz when `at` already carries an explicit offset", () => {
+      const schedule: CronSchedule = { kind: "at", at: "2026-06-20T09:00:00Z", tz: "America/Los_Angeles" };
+      const nowMs = new Date("2026-06-01T00:00:00Z").getTime();
+      const next = computeNextRunAtMs(schedule, nowMs);
+      expect(next).toBe(new Date("2026-06-20T09:00:00Z").getTime());
+    });
+
+    it("an invalid tz yields no run (NaN → undefined), never a wrong-zone time", () => {
+      const schedule: CronSchedule = { kind: "at", at: "2026-06-20T09:00:00", tz: "Not/AZone" };
+      const nowMs = new Date("2026-06-01T00:00:00Z").getTime();
+      expect(computeNextRunAtMs(schedule, nowMs)).toBeUndefined();
+    });
+  });
+
+  // CRON-IN-01 (live 2026-06-20): "remind me in 2 minutes" on a keyless small
+  // model was scheduled ~7h off — it picked kind "at" and paired the injected
+  // UTC hour with the user's display timezone. The relative "in" kind resolves
+  // deterministically as now + N seconds, with NO timezone parse, so the error
+  // class cannot occur.
+  describe('kind "in" (relative, timezone-free)', () => {
+    it("fires exactly N seconds from now", () => {
+      const nowMs = new Date("2026-06-20T09:33:30Z").getTime();
+      const schedule: CronSchedule = { kind: "in", seconds: 120 };
+      expect(computeNextRunAtMs(schedule, nowMs)).toBe(nowMs + 120_000);
+    });
+
+    it("is independent of any timezone (same delta regardless of system zone)", () => {
+      const schedule: CronSchedule = { kind: "in", seconds: 3600 };
+      for (const nowMs of [0, 1_000_000, new Date("2026-12-31T23:59:00Z").getTime()]) {
+        expect(computeNextRunAtMs(schedule, nowMs)).toBe(nowMs + 3_600_000);
+      }
+    });
   });
 });

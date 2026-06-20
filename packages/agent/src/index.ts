@@ -475,7 +475,7 @@ export { createAuthStorageAdapter, DEFAULT_PROVIDER_KEYS } from "./model/auth-st
 export type { AuthStorageAdapterOptions } from "./model/auth-storage-adapter.js";
 
 // Model registry adapter (ModelRegistry creation + initial model resolution)
-export { createModelRegistryAdapter, registerCustomProviders, resolveInitialModel } from "./model/model-registry-adapter.js";
+export { createModelRegistryAdapter, registerCustomProviders, resolveInitialModel, normalizeOpenAICompatBaseUrl } from "./model/model-registry-adapter.js";
 export type { CustomProviderRegistration, CustomProviderLogger, RegisterCustomProvidersResult } from "./model/model-registry-adapter.js";
 
 // Session key mapper (SessionKey to/from filesystem path)
@@ -657,6 +657,9 @@ export type { CorrectionVerdict } from "./memory/index.js";
 // gate never sees an orphan. The prompt + triple-bound + the reward cap stay
 // agent-internal (the daemon `observe()`s the seam's already-capped `cappedConfidence`).
 export { createOutcomeJudgeSeam } from "./memory/index.js";
+// CustomCompletionsModelSpec is consumed by the daemon's judge resolvers;
+// resolveJudgeModel stays package-internal (the seams import it relatively).
+export type { CustomCompletionsModelSpec } from "./memory/index.js";
 
 // Verified Learning WS2 (P2 Skills, Phase 201 Plan 04). The LLM-backed
 // procedural-synthesis adapter the daemon constructs on the `skillSynthesis` mid

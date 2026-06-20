@@ -61,6 +61,8 @@ export const CronAddContract = defineContract({
     timezone: z.string().optional(),
     schedule_every_ms: z.number().optional(),
     schedule_at: z.string().optional(),
+    /** Relative one-shot: seconds from now (schedule_kind="in"). Timezone-free — for "in N minutes/hours" reminders. */
+    schedule_in_seconds: z.number().optional(),
     // Optional model + session strategy + wake mode (read directly by handler).
     model: z.string().optional(),
     session_target: z.string().optional(),

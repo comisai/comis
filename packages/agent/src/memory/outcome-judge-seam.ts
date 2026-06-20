@@ -52,8 +52,9 @@
 
 import { systemSetTimeout, systemClearTimeout, wrapExternalContent } from "@comis/core";
 import type { ClockPort, ComisLogger } from "@comis/core";
-import { completeSimple, getModel } from "@earendil-works/pi-ai";
+import { completeSimple } from "@earendil-works/pi-ai";
 import { z } from "zod";
+import { resolveJudgeModel, type CustomCompletionsModelSpec } from "./judge-model-resolver.js";
 import { parseLenientJson } from "./llm-json.js";
 
 /** Hard abort ceiling per LLM call (mirrors the usefulness-judge seam LLM timeout). */
@@ -86,6 +87,14 @@ export interface OutcomeJudgeSeamDeps {
   logger: ComisLogger;
   /** Scope tag for the failure logs. */
   agentId: string;
+  /**
+   * Custom OpenAI-compatible model spec (the resolved, normalized `…/v1` baseUrl)
+   * used to build the judge Model when the pi-ai catalog has no entry for
+   * `provider/modelId` — i.e. a custom YAML provider (ollama, lm-studio, vLLM, …).
+   * Undefined for built-in catalog providers (the catalog path is unchanged).
+   * Without this the judge SKIPPED on every keyless/local turn (live 2026-06-20).
+   */
+  customModel?: CustomCompletionsModelSpec;
 }
 
 /**
@@ -200,34 +209,22 @@ function parseVerdict(raw: string): OutcomeVerdict {
 export function createOutcomeJudgeSeam(
   deps: OutcomeJudgeSeamDeps,
 ): (trajectoryContent: string) => Promise<OutcomeVerdict | undefined> {
-  const { provider, modelId, apiKey, maxOutputTokens, clock, logger, agentId } = deps;
+  const { provider, modelId, apiKey, maxOutputTokens, clock, logger, agentId, customModel } = deps;
 
   /** Issue one bounded, non-fatal cheap-model call; return raw text or undefined. */
   async function callModel(systemPrompt: string, userText: string): Promise<string | undefined> {
-    let model;
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- provider/modelId are dynamic strings
-      model = getModel(provider as any, modelId as any);
-    } catch (modelErr) {
-      logger.warn(
-        {
-          agentId,
-          err: modelErr,
-          errorKind: "dependency" as const,
-          step: "outcome-judge" as const,
-          hint: `could not resolve model ${provider}/${modelId} — skipping this outcome judge`,
-        },
-        "Outcome judge model resolution failed (non-fatal)",
-      );
-      return undefined;
-    }
+    // Catalog first; else construct from the custom-provider spec (ollama/lm-studio/…)
+    // so the judge runs on keyless/local deployments instead of silently skipping.
+    const model = resolveJudgeModel(provider, modelId, customModel);
     if (!model) {
       logger.warn(
         {
           agentId,
           errorKind: "dependency" as const,
           step: "outcome-judge" as const,
-          hint: `model not found ${provider}/${modelId} — skipping this outcome judge`,
+          hint: customModel
+            ? `could not build judge model ${provider}/${modelId} from the custom baseUrl — skipping this outcome judge`
+            : `model ${provider}/${modelId} is not in the pi-ai catalog and no custom provider baseUrl was supplied — set providers.entries.${provider}.baseUrl (custom/local providers) or use a built-in provider for the outcomeJudge tier`,
         },
         "Outcome judge model not found (non-fatal)",
       );

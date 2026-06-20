@@ -14,7 +14,7 @@
 
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { Command } from "commander";
-import { registerAuthCommand, resolveCliConfigPath, DEFAULT_CONFIG_PATHS } from "./auth.js";
+import { registerAuthCommand, resolveCliConfigPath, loadStorageMode, DEFAULT_CONFIG_PATHS } from "./auth.js";
 
 // loginOpenAICodexOAuth makes real network calls (device-code polling, browser
 // OAuth server). Mock it so action-body tests exit:1 immediately instead of
@@ -552,6 +552,85 @@ describe("loadStorageMode env-ref resolution", () => {
     ).resolves.not.toThrow();
 
     exitSpy.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// loadStorageMode with secrets in the ENCRYPTED store (live VPS incident
+// 2026-06-19: `comis auth list` reported "No OAuth profiles stored" against a
+// daemon that was successfully USING an encrypted openai-codex OAuth profile).
+//
+// In encrypted mode the load-bearing secrets (COMIS_GATEWAY_TOKEN, bot token)
+// live in secrets.db — UNREACHABLE from the CLI (no SECRETS_MASTER_KEY-backed
+// store access). The prior fix (plan 260602-rtj) only resolved refs that live
+// in ~/.comis/.env; it does NOT cover the encrypted-secrets-db reality, where
+// loadConfigFile({ getSecret: process.env }) fails the ${VAR} substitution and
+// loadStorageMode silently degraded to "file" → the encrypted OAuth profiles
+// became invisible to `auth list/logout/status`.
+//
+// Reading security.storage needs NONE of those secrets. loadStorageMode must
+// pre-read the mode from YAML (preReadStorageMode: no substitution, no Zod)
+// and return "encrypted". RED on pre-patch code (returns "file").
+// ---------------------------------------------------------------------------
+describe("loadStorageMode with secrets in the encrypted store (not .env)", () => {
+  let tmpDir: string;
+  let configPath: string;
+
+  beforeEach(async () => {
+    vi.resetAllMocks();
+    const nodeFs = await import("node:fs");
+    const nodeOs = await import("node:os");
+    const nodePath = await import("node:path");
+    tmpDir = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), "comis-encstore-"));
+    configPath = nodePath.join(tmpDir, "config.yaml");
+    // Encrypted-mode config whose gateway token + bot token are ${VAR} refs
+    // resolved ONLY from the encrypted secrets.db — there is NO .env carrying
+    // them (the .env here holds only the master key, mirroring the live box).
+    nodeFs.writeFileSync(
+      configPath,
+      [
+        "security:",
+        "  storage: encrypted",
+        "gateway:",
+        "  tokens:",
+        "    - id: default",
+        '      secret: "${COMIS_GATEWAY_TOKEN}"',
+        "channels:",
+        "  telegram:",
+        "    enabled: true",
+        '    botToken: "${TELEGRAM_BOT_TOKEN}"',
+      ].join("\n"),
+    );
+    nodeFs.writeFileSync(nodePath.join(tmpDir, ".env"), "SECRETS_MASTER_KEY=deadbeef\n");
+    // eslint-disable-next-line no-restricted-syntax -- test sets env for isolation
+    process.env.COMIS_CONFIG_PATHS = configPath;
+    // eslint-disable-next-line no-restricted-syntax -- test sets env for isolation
+    process.env.COMIS_DATA_DIR = tmpDir;
+    // Critical: the refs are NOT in process.env (they live in secrets.db).
+    // eslint-disable-next-line no-restricted-syntax -- ensure unresolved
+    delete process.env.COMIS_GATEWAY_TOKEN;
+    // eslint-disable-next-line no-restricted-syntax -- ensure unresolved
+    delete process.env.TELEGRAM_BOT_TOKEN;
+  });
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    // eslint-disable-next-line no-restricted-syntax -- cleanup
+    delete process.env.COMIS_CONFIG_PATHS;
+    // eslint-disable-next-line no-restricted-syntax -- cleanup
+    delete process.env.COMIS_DATA_DIR;
+    const nodeFs = await import("node:fs");
+    nodeFs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("returns 'encrypted' when the config sets it but secrets are unreachable from the CLI", async () => {
+    // PRE-FIX (RED): loadConfigFile({ getSecret: process.env }) fails the
+    // ${COMIS_GATEWAY_TOKEN} substitution → loadStorageMode returns "file".
+    // POST-FIX (GREEN): preReadStorageMode reads `security.storage: encrypted`
+    // straight from YAML, needing no secret → returns "encrypted".
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    await expect(loadStorageMode()).resolves.toBe("encrypted");
   });
 });
 

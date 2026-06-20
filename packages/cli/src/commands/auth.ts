@@ -53,6 +53,7 @@ import {
   loadConfigFile,
   loadEnvFile,
   validateConfig,
+  preReadStorageMode,
   safePath,
   validateProfileId,
   redactEmailForLog,
@@ -232,41 +233,41 @@ const logger = createConsoleLogger("info", { name: "auth-cli" });
  * Returns synchronously today; declared async to leave headroom for a
  * future config-fetch-via-RPC path without breaking call sites.
  */
-async function loadStorageMode(): Promise<CredentialStorageMode> {
+export async function loadStorageMode(): Promise<CredentialStorageMode> {
   // eslint-disable-next-line no-restricted-syntax -- CLI bootstrap before SecretManager
   const configPath = resolveCliConfigPath(process.env);
 
-  // Load ~/.comis/.env before validating — resolves ${VAR} refs before
-  // schema validation (consistent with daemon's loadLayered({getSecret})).
-  // eslint-disable-next-line no-restricted-syntax -- CLI bootstrap before SecretManager
-  const dataDir = process.env.COMIS_DATA_DIR ?? safePath(homedir(), ".comis");
-  loadEnvFile(safePath(dataDir, ".env"));
-  // eslint-disable-next-line no-restricted-syntax -- CLI bootstrap before SecretManager
-  const loadResult = loadConfigFile(configPath, { getSecret: (k) => process.env[k] });
-  if (!loadResult.ok) {
-    // No config found at the resolved path → default to FILE (plaintext) storage.
-    // WARN loudly rather than silently: writing OAuth tokens to plaintext when the
-    // operator may have configured `security.storage: encrypted` is a security
-    // footgun (it was exactly how openai-codex tokens once landed in plaintext
-    // auth-profiles.json). Tell the user where we looked + how to fix it.
+  // Genuinely-missing config → default to FILE (plaintext) storage, the
+  // operator-friendly behavior for a freshly-installed CLI with no daemon.
+  // WARN loudly: writing OAuth tokens to plaintext when the operator may have
+  // configured `security.storage: encrypted` is a security footgun (it was
+  // exactly how openai-codex tokens once landed in plaintext auth-profiles.json).
+  // This branch now fires ONLY when the file is truly absent — so the message
+  // is accurate again (previously it also fired when the file existed but a
+  // ${VAR} ref failed to resolve, pointing the operator the wrong way).
+  if (!existsSync(configPath)) {
     info(
       `No Comis config found at ${configPath} — defaulting to FILE (plaintext) OAuth ` +
         "credential storage. If you intend encrypted storage, point the CLI at your config " +
         "(set COMIS_CONFIG_PATHS or COMIS_DATA_DIR, or run as the daemon user) so tokens are " +
         "stored encrypted in secrets.db.",
     );
-    return "file"; // no config file → default to file storage
+    return "file";
   }
-  const validateResult = validateConfig(loadResult.value);
-  if (!validateResult.ok) {
-    error(
-      `Failed to load config: ${validateResult.error.message}. ` +
-        "Hint: run `comis configure` or fix the YAML at " +
-        `${configPath} before retrying.`,
-    );
-    process.exit(1);
-  }
-  return validateResult.value.security.storage;
+
+  // Read security.storage WITHOUT resolving ${VAR} refs or running full Zod
+  // validation. In encrypted mode the load-bearing secrets (gateway token, bot
+  // token) live in secrets.db — UNREACHABLE from the CLI — so a getSecret-based
+  // load (loadConfigFile) fails the ${VAR} substitution and silently degrades
+  // to "file", hiding the encrypted OAuth profiles from `auth list/logout/
+  // status` (live VPS incident 2026-06-19: the daemon was successfully USING an
+  // encrypted openai-codex profile while `comis auth list` reported "No OAuth
+  // profiles stored"). preReadStorageMode is the daemon's own boot pre-read:
+  // a lightweight YAML scan, no substitution, no validation, schema-default
+  // "encrypted". Reading the storage mode needs none of those secrets. The CLI
+  // reads only the first resolved path — resolveCliConfigPath already encodes
+  // the COMIS_CONFIG_PATHS / COMIS_DATA_DIR precedence (first-entry-wins).
+  return preReadStorageMode([configPath]);
 }
 
 function openOAuthStoreFromConfig(): OAuthCredentialStorePort {

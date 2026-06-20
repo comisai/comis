@@ -7,6 +7,11 @@ import { z } from "zod";
  * - "cron": standard cron expression with optional timezone
  * - "every": interval-based (everyMs milliseconds, optional anchor)
  * - "at": one-shot at a specific ISO 8601 datetime
+ * - "in": one-shot a RELATIVE number of seconds from now (no timezone math).
+ *   Exists so "remind me in 2 minutes" resolves deterministically as now+N —
+ *   small models reliably botch the absolute "at" + IANA-tz conversion (a
+ *   keyless qwen3.6:35b scheduled "in 2 minutes" ~7h off by pairing the injected
+ *   UTC hour with the user's display timezone; CRON-IN-01, live 2026-06-20).
  */
 export const CronScheduleSchema = z.discriminatedUnion("kind", [
   z.strictObject({
@@ -27,6 +32,18 @@ export const CronScheduleSchema = z.discriminatedUnion("kind", [
       kind: z.literal("at"),
       /** ISO 8601 datetime string for one-shot execution */
       at: z.string().min(1),
+      /**
+       * IANA timezone (e.g. "America/Los_Angeles") in which a NAIVE `at`
+       * datetime (no offset) is interpreted; omit for UTC/system-local. Mirrors
+       * the "cron" kind's `tz`. Without this, "remind me at 9am" for a Pacific
+       * user fired at 9am UTC (= 2am Pacific) — the wrong wall-clock time.
+       */
+      tz: z.string().optional(),
+    }),
+  z.strictObject({
+      kind: z.literal("in"),
+      /** Seconds from the scheduling instant (now) — deterministic, timezone-free. */
+      seconds: z.number().int().positive(),
     }),
 ]);
 

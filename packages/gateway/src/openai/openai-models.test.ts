@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { Hono } from "hono";
 import {
   createOpenaiModelsRoute,
   type OpenaiModelsDeps,
@@ -152,6 +153,36 @@ describe("openai-models", () => {
       const body = await res.json();
       expect(body.id).toBe("openai/gpt-4o");
       expect(body.owned_by).toBe("openai");
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Single-model retrieve when MOUNTED (live VPS incident 2026-06-19).
+  // In production the route mounts at /v1/models, so c.req.path is the FULL
+  // "/v1/models/openai/gpt-4o". The prior c.req.path.slice(1) kept the
+  // "v1/models/" prefix and never matched the catalog → GET of an id straight
+  // from GET /v1/models returned 404. The standalone tests above missed it
+  // because, un-mounted, slice(1) accidentally yields the bare id. These mount
+  // the route exactly as production does.
+  // -------------------------------------------------------------------------
+  describe("GET /v1/models/:model_id when MOUNTED at /v1/models", () => {
+    function mountedApp(deps?: OpenaiModelsDeps) {
+      const root = new Hono();
+      root.route("/v1/models", createApp(deps));
+      return root;
+    }
+
+    it("retrieves a model by the SAME provider/modelId id that GET /v1/models advertises", async () => {
+      const res = await mountedApp().request("/v1/models/openai/gpt-4o");
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.id).toBe("openai/gpt-4o");
+      expect(body.owned_by).toBe("openai");
+    });
+
+    it("still 404s an unknown id when mounted", async () => {
+      const res = await mountedApp().request("/v1/models/unknown/no-such-model");
+      expect(res.status).toBe(404);
     });
   });
 });

@@ -29,7 +29,8 @@
  * @module
  */
 
-import { KEYLESS_PROVIDER_TYPES, KEYLESS_API_KEY_SENTINEL } from "@comis/core";
+import { resolveCronJobCredential, cronCredentialSkipHint } from "./setup-channels-cron-credential.js";
+import { buildCustomJudgeModelSpec } from "../setup-learning-judge.js";
 import {
   resolveOperationModel,
   resolveProviderFamily,
@@ -101,12 +102,11 @@ export async function handleWireMemoryCronSentinel(
       operationModels: agentConfig.operationModels ?? {},
       providerFamily: resolveProviderFamily(agentConfig.provider ?? "anthropic"),
     });
-    const providerEntry = container.config.providers?.entries?.[resolved.provider];
-    const apiKeyName = providerEntry?.apiKeyName || `${resolved.provider.toUpperCase()}_API_KEY`;
-    const apiKey = container.secretManager.get(apiKeyName) ?? (KEYLESS_PROVIDER_TYPES.has(resolved.provider) ? KEYLESS_API_KEY_SENTINEL : "");
+    const cred = await resolveCronJobCredential(container, agentId, resolved.provider, ctx.resolveAccessToken);
+    const apiKey = cred.apiKey;
     if (!apiKey) {
-      logger.warn({ agentId, provider: resolved.provider, hint: `Set ${apiKeyName} in secrets for usefulness judge`, errorKind: "config" as const }, "Skipping usefulness judge -- no API key");
-      payload.onComplete?.({ status: "error", error: `No API key for ${resolved.provider}` });
+      logger.warn({ agentId, provider: resolved.provider, hint: cronCredentialSkipHint(cred, resolved.provider, "usefulness judge"), errorKind: "config" as const }, "Skipping usefulness judge -- no API key");
+      payload.onComplete?.({ status: "error", error: `No API key for ` + resolved.provider });
       return true;
     }
 
@@ -123,6 +123,13 @@ export async function handleWireMemoryCronSentinel(
     // Build the OFFLINE seam (prompt + lenient/allowlist parser stay agent-internal) and
     // run ONE verdict over the candidate ids. answer="" in this scaffold (no turn transcript
     // threaded yet); the seam short-circuits an empty candidate set with no cost.
+    // Custom YAML providers (ollama/lm-studio/…) aren't in pi-ai's catalog → the
+    // seam would skip; build a spec so usefulness judging runs locally too.
+    const usefulnessCustomModel = buildCustomJudgeModelSpec(
+      container.config.providers?.entries?.[resolved.provider],
+      resolved.provider,
+      resolved.modelId,
+    );
     const judge = createUsefulnessJudgeSeam({
       provider: resolved.provider,
       modelId: resolved.modelId,
@@ -131,6 +138,7 @@ export async function handleWireMemoryCronSentinel(
       clock,
       logger: judgeLogger,
       agentId,
+      customModel: usefulnessCustomModel,
     });
     const verdict = await judge({ candidateIds, answer: "" });
 
@@ -248,12 +256,11 @@ export async function handleWireMemoryCronSentinel(
       operationModels: agentConfig.operationModels ?? {},
       providerFamily: resolveProviderFamily(agentConfig.provider ?? "anthropic"),
     });
-    const providerEntry = container.config.providers?.entries?.[resolved.provider];
-    const apiKeyName = providerEntry?.apiKeyName || `${resolved.provider.toUpperCase()}_API_KEY`;
-    const apiKey = container.secretManager.get(apiKeyName) ?? (KEYLESS_PROVIDER_TYPES.has(resolved.provider) ? KEYLESS_API_KEY_SENTINEL : "");
+    const cred = await resolveCronJobCredential(container, agentId, resolved.provider, ctx.resolveAccessToken);
+    const apiKey = cred.apiKey;
     if (!apiKey) {
-      logger.warn({ agentId, provider: resolved.provider, hint: `Set ${apiKeyName} in secrets for triple extraction`, errorKind: "config" as const }, "Skipping triple extraction -- no API key");
-      payload.onComplete?.({ status: "error", error: `No API key for ${resolved.provider}` });
+      logger.warn({ agentId, provider: resolved.provider, hint: cronCredentialSkipHint(cred, resolved.provider, "triple extraction"), errorKind: "config" as const }, "Skipping triple extraction -- no API key");
+      payload.onComplete?.({ status: "error", error: `No API key for ` + resolved.provider });
       return true;
     }
 
@@ -350,12 +357,11 @@ export async function handleWireMemoryCronSentinel(
       operationModels: agentConfig.operationModels ?? {},
       providerFamily: resolveProviderFamily(agentConfig.provider ?? "anthropic"),
     });
-    const providerEntry = container.config.providers?.entries?.[resolved.provider];
-    const apiKeyName = providerEntry?.apiKeyName || `${resolved.provider.toUpperCase()}_API_KEY`;
-    const apiKey = container.secretManager.get(apiKeyName) ?? (KEYLESS_PROVIDER_TYPES.has(resolved.provider) ? KEYLESS_API_KEY_SENTINEL : "");
+    const cred = await resolveCronJobCredential(container, agentId, resolved.provider, ctx.resolveAccessToken);
+    const apiKey = cred.apiKey;
     if (!apiKey) {
-      logger.warn({ agentId, provider: resolved.provider, hint: `Set ${apiKeyName} in secrets for skill synthesis`, errorKind: "config" as const }, "Skipping skill synthesis -- no API key");
-      payload.onComplete?.({ status: "error", error: `No API key for ${resolved.provider}` });
+      logger.warn({ agentId, provider: resolved.provider, hint: cronCredentialSkipHint(cred, resolved.provider, "skill synthesis"), errorKind: "config" as const }, "Skipping skill synthesis -- no API key");
+      payload.onComplete?.({ status: "error", error: `No API key for ` + resolved.provider });
       return true;
     }
 

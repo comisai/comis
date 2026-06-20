@@ -17,7 +17,8 @@
  * @module
  */
 
-import { parseFormattedSessionKey, KEYLESS_PROVIDER_TYPES, KEYLESS_API_KEY_SENTINEL } from "@comis/core";
+import { parseFormattedSessionKey } from "@comis/core";
+import { resolveCronJobCredential, cronCredentialSkipHint } from "./setup-channels-cron-credential.js";
 import { resolveOperationModel, resolveProviderFamily, runMemoryConsolidation, runMemoryReasoning, createReasoningSeam, runUserRepresentationBuild, createUserRepresentationSeam, runRelationshipBuild, createRelationshipSeam, runOnlineTuning, type UserRepresentationSourceMemory, type RelationshipSourceMemory, type OnlineTuningFeedEntry } from "@comis/agent";
 import { resolveMemoryOpsCapability } from "./resolve-memory-ops-capability.js";
 import { handleWireMemoryCronSentinel } from "./setup-channels-memory-crons-wire.js";
@@ -76,11 +77,11 @@ export async function handleMemoryCronSentinel(
     });
 
     const providerEntry = container.config.providers?.entries?.[resolved.provider];
-    const apiKeyName = providerEntry?.apiKeyName || `${resolved.provider.toUpperCase()}_API_KEY`;
-    const apiKey = container.secretManager.get(apiKeyName) ?? (KEYLESS_PROVIDER_TYPES.has(resolved.provider) ? KEYLESS_API_KEY_SENTINEL : "");
+    const cred = await resolveCronJobCredential(container, agentId, resolved.provider, ctx.resolveAccessToken);
+    const apiKey = cred.apiKey;
     if (!apiKey) {
-      logger.warn({ agentId, provider: resolved.provider, hint: `Set ${apiKeyName} in secrets for memory consolidation`, errorKind: "config" as const }, "Skipping memory consolidation -- no API key");
-      payload.onComplete?.({ status: "error", error: `No API key for ${resolved.provider}` });
+      logger.warn({ agentId, provider: resolved.provider, hint: cronCredentialSkipHint(cred, resolved.provider, "memory consolidation"), errorKind: "config" as const }, "Skipping memory consolidation -- no API key");
+      payload.onComplete?.({ status: "error", error: `No API key for ` + resolved.provider });
       return true;
     }
     const consolidationResult = await runMemoryConsolidation({
@@ -144,12 +145,11 @@ export async function handleMemoryCronSentinel(
       providerFamily: resolveProviderFamily(agentConfig.provider ?? "anthropic"),
     });
 
-    const providerEntry = container.config.providers?.entries?.[resolved.provider];
-    const apiKeyName = providerEntry?.apiKeyName || `${resolved.provider.toUpperCase()}_API_KEY`;
-    const apiKey = container.secretManager.get(apiKeyName) ?? (KEYLESS_PROVIDER_TYPES.has(resolved.provider) ? KEYLESS_API_KEY_SENTINEL : "");
+    const cred = await resolveCronJobCredential(container, agentId, resolved.provider, ctx.resolveAccessToken);
+    const apiKey = cred.apiKey;
     if (!apiKey) {
-      logger.warn({ agentId, provider: resolved.provider, hint: `Set ${apiKeyName} in secrets for memory reasoning`, errorKind: "config" as const }, "Skipping memory reasoning -- no API key");
-      payload.onComplete?.({ status: "error", error: `No API key for ${resolved.provider}` });
+      logger.warn({ agentId, provider: resolved.provider, hint: cronCredentialSkipHint(cred, resolved.provider, "memory reasoning"), errorKind: "config" as const }, "Skipping memory reasoning -- no API key");
+      payload.onComplete?.({ status: "error", error: `No API key for ` + resolved.provider });
       return true;
     }
 
@@ -225,12 +225,11 @@ export async function handleMemoryCronSentinel(
       providerFamily: resolveProviderFamily(agentConfig.provider ?? "anthropic"),
     });
 
-    const providerEntry = container.config.providers?.entries?.[resolved.provider];
-    const apiKeyName = providerEntry?.apiKeyName || `${resolved.provider.toUpperCase()}_API_KEY`;
-    const apiKey = container.secretManager.get(apiKeyName) ?? (KEYLESS_PROVIDER_TYPES.has(resolved.provider) ? KEYLESS_API_KEY_SENTINEL : "");
+    const cred = await resolveCronJobCredential(container, agentId, resolved.provider, ctx.resolveAccessToken);
+    const apiKey = cred.apiKey;
     if (!apiKey) {
-      logger.warn({ agentId, provider: resolved.provider, hint: `Set ${apiKeyName} in secrets for user representation build`, errorKind: "config" as const }, "Skipping user representation build -- no API key");
-      payload.onComplete?.({ status: "error", error: `No API key for ${resolved.provider}` });
+      logger.warn({ agentId, provider: resolved.provider, hint: cronCredentialSkipHint(cred, resolved.provider, "user representation build"), errorKind: "config" as const }, "Skipping user representation build -- no API key");
+      payload.onComplete?.({ status: "error", error: `No API key for ` + resolved.provider });
       return true;
     }
 
@@ -489,12 +488,11 @@ export async function handleMemoryCronSentinel(
       providerFamily: resolveProviderFamily(agentConfig.provider ?? "anthropic"),
     });
 
-    const providerEntry = container.config.providers?.entries?.[resolved.provider];
-    const apiKeyName = providerEntry?.apiKeyName || `${resolved.provider.toUpperCase()}_API_KEY`;
-    const apiKey = container.secretManager.get(apiKeyName) ?? (KEYLESS_PROVIDER_TYPES.has(resolved.provider) ? KEYLESS_API_KEY_SENTINEL : "");
+    const cred = await resolveCronJobCredential(container, agentId, resolved.provider, ctx.resolveAccessToken);
+    const apiKey = cred.apiKey;
     if (!apiKey) {
-      logger.warn({ agentId, provider: resolved.provider, hint: `Set ${apiKeyName} in secrets for social modeling build`, errorKind: "config" as const }, "Skipping social modeling build -- no API key");
-      payload.onComplete?.({ status: "error", error: `No API key for ${resolved.provider}` });
+      logger.warn({ agentId, provider: resolved.provider, hint: cronCredentialSkipHint(cred, resolved.provider, "social modeling build"), errorKind: "config" as const }, "Skipping social modeling build -- no API key");
+      payload.onComplete?.({ status: "error", error: `No API key for ` + resolved.provider });
       return true;
     }
 

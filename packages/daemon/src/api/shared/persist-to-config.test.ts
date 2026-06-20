@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { persistToConfig, _resetSigusr1Timer, _resetMutationFence, enterConfigMutationFence, leaveConfigMutationFence, type PersistToConfigDeps, type PersistToConfigOpts } from "./persist-to-config.js";
+import { persistToConfig, _resetSigusr1Timer, _resetMutationFence, _pendingConfigMutations, enterConfigMutationFence, leaveConfigMutationFence, withConfigMutationFence, type PersistToConfigDeps, type PersistToConfigOpts } from "./persist-to-config.js";
 import { AppConfigSchema } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import { mkdirSync, mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync, statSync } from "node:fs";
@@ -815,6 +815,30 @@ describe("config mutation fence", () => {
     vi.useRealTimers();
     vi.restoreAllMocks();
     rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  // RESTART-01: withConfigMutationFence wraps a synchronous chat/responses turn
+  // so a config-mutating tool's SIGUSR2 defers until the response flushes.
+  it("withConfigMutationFence holds the fence during fn and releases after", async () => {
+    expect(_pendingConfigMutations()).toBe(0);
+    let depthDuringFn = -1;
+    const result = await withConfigMutationFence(async () => {
+      depthDuringFn = _pendingConfigMutations();
+      return "ok";
+    });
+    expect(result).toBe("ok");
+    expect(depthDuringFn).toBeGreaterThan(0); // held during fn
+    expect(_pendingConfigMutations()).toBe(0); // released after
+  });
+
+  it("withConfigMutationFence releases the fence even when fn throws", async () => {
+    await expect(
+      withConfigMutationFence(async () => {
+        expect(_pendingConfigMutations()).toBeGreaterThan(0);
+        throw new Error("turn failed");
+      }),
+    ).rejects.toThrow("turn failed");
+    expect(_pendingConfigMutations()).toBe(0); // released on throw → no permanent SIGUSR2 block
   });
 
   it("SIGUSR2 deferred while fence > 0, fires after fence reaches 0", async () => {
