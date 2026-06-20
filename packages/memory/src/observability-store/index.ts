@@ -54,6 +54,14 @@ export {
 } from "./audit-mutations.js";
 export type { AuditQueryParams, AppendAuditJsonlParams } from "./audit-mutations.js";
 
+// PERSIST-01 (Phase 176 Plan 04): the cache-break row-builder + the rate-by-reason
+// query the daemon's obs-persistence-wiring consumes. cacheBreakEventToRow builds a
+// content-free category:'cache_break' DiagnosticRow with a computed est-$;
+// queryCacheBreakRateByReason is the GROUP BY over the existing obs_diagnostics index.
+export { cacheBreakEventToRow } from "./observability-mutations.js";
+export { queryCacheBreakRateByReason } from "./observability-queries.js";
+export type { CacheBreakReasonRate } from "./observability-queries.js";
+
 /**
  * Create an ObservabilityStore bound to the given database.
  *

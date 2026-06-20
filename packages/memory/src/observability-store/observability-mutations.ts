@@ -9,6 +9,8 @@
  */
 
 import type Database from "better-sqlite3";
+import type { EventMap } from "@comis/core";
+import { resolveModelPricing } from "@comis/core";
 import type {
   ObservabilityStore,
   TokenUsageRow,
@@ -27,6 +29,64 @@ export type ObservabilityMutations = Pick<
   | "insertChannelSnapshot"
   | "insertSystemPromptReport"
 >;
+
+/**
+ * PERSIST-01: map an `observability:cache_break` event to a content-free
+ * `obs_diagnostics` row under `category:"cache_break"` (Landmine L4 — a DISTINCT
+ * category, NOT "health_signal", so "rate by reason" is a clean
+ * `GROUP BY json_extract(details,'$.reason')` over the existing
+ * `idx_obs_diag_category` — NO new table, §14). Mirrors the daemon's
+ * `sandboxDowngradeRefusedEventToRow` row-builder mold.
+ *
+ * **est-$ is COMPUTED here (decision #1, Landmine L1).** The event carries NO
+ * dollar field, so the directly-lost cache-read saving is reconstructed as
+ * `tokenDrop × resolveModelPricing(provider, model).cacheRead`: a catalog-priced
+ * model yields a non-zero estimate; an unknown model yields 0 (ZERO_COST.cacheRead
+ * === 0 — honest best-effort, never a fabricated cost). The companion
+ * `pricing_state` column on `obs_token_usage` (PERSIST-03) surfaces the unknown so
+ * an operator sees coverage.
+ *
+ * **I3 content-free (the load-bearing constraint).** The event's `toolsAdded`/
+ * `toolsRemoved`/`toolsSchemaChanged` are tool-NAME arrays (already MCP-sanitized to
+ * bare `'mcp'` at the emit, but STILL names) — they are NEVER stored. They are
+ * reduced to a `changedDimsDigest` carrying only the COUNTS of changed dimensions
+ * (the SHAPE of the change) plus the numeric `systemCharDelta`, so no tool name or
+ * system/query text crosses into a persisted row.
+ */
+export function cacheBreakEventToRow(
+  payload: EventMap["observability:cache_break"],
+): DiagnosticRow {
+  // est-$ (decision #1, Landmine L1): the event has no $ field, so compute the
+  // directly-lost cache-read saving from the catalog. The model may be absent
+  // (`model?`) — fall back to "" so resolveModelPricing returns ZERO_COST (→ 0).
+  const cacheReadRate = resolveModelPricing(payload.provider, payload.model ?? "").cacheRead;
+  const estCostUsd = payload.tokenDrop * cacheReadRate;
+
+  return {
+    timestamp: payload.timestamp,
+    category: "cache_break",
+    severity: "warning",
+    agentId: payload.agentId,
+    sessionKey: payload.sessionKey,
+    message: "observability:cache_break",
+    details: JSON.stringify({
+      reason: payload.reason,
+      prevCacheRead: payload.previousCacheRead,
+      curCacheRead: payload.currentCacheRead,
+      delta: payload.tokenDrop,
+      // I3: COUNTS only — never the tool-name arrays. The shape of the change,
+      // not its contents.
+      changedDimsDigest: {
+        added: payload.toolsAdded?.length ?? 0,
+        removed: payload.toolsRemoved?.length ?? 0,
+        schemaChanged: payload.toolsSchemaChanged?.length ?? 0,
+        systemCharDelta: payload.systemCharDelta ?? 0,
+      },
+      estCostUsd,
+    }),
+    traceId: undefined,
+  };
+}
 
 /**
  * Prepare mutation statements and return the write-side slice of the

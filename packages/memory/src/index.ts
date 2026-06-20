@@ -307,6 +307,15 @@ export {
 } from "./observability-store/index.js";
 export type { AuditQueryParams } from "./observability-store/index.js";
 
+// PERSIST-01 (Phase 176 Plan 04): the cache-break row-builder + the rate-by-reason
+// analytics query the daemon's obs-persistence-wiring (the cache_break subscriber)
+// and the fleet/explain surfaces consume.
+export {
+  cacheBreakEventToRow,
+  queryCacheBreakRateByReason,
+} from "./observability-store/index.js";
+export type { CacheBreakReasonRate } from "./observability-store/index.js";
+
 // Fleet window-rollup reducer (A2, v2.15 Phase 159). reduceFleetWindow is the
 // PURE cross-session reduce over the A1 SessionSummaryRollup[] (synthetic
 // excluded on the real `source` field). Barrel-surfaced AHEAD of its in-repo
