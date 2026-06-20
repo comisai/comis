@@ -446,8 +446,20 @@ export function handleBudgetExceeded(
 
   handleGraphCompletion(state, deps, gs);
 
+  // SPEND-04: the graph cumulative-budget seam (this function) interoperates with
+  // the daemon-wide spend kill-switch (Phase 177) via the OPEN `reason` param — a
+  // spend-ceiling breach routes through HERE with `"spend_exceeded"`, not a parallel
+  // graph kill-path. The two ceilings are DISTINCT: `graph.budget.maxTokens/maxCost`
+  // is the per-graph cumulative cap (reasons `"tokens"`/`"cost"`); the spend ceiling
+  // is the per-(agent|tenant|global) dollar kill-switch (`observability.spend.*`).
+  // Name the right knob so an operator drilling the WARN tunes the ceiling that
+  // actually fired. Counts-only payload — never a `$` amount as a body (§2.7).
+  const hint =
+    reason === "spend_exceeded"
+      ? "A spend ceiling (observability.spend.{perAgentUsd,perTenantUsd,daemonGlobalUsd}) was exceeded during graph execution; raise it or set observability.spend.action"
+      : "Graph budget is configurable via graph.budget.maxTokens/maxCost";
   deps.logger?.warn(
-    { graphId: gs.graphId, cumulativeTokens: gs.cumulativeTokens, cumulativeCost: gs.cumulativeCost, hint: "Graph budget is configurable via graph.budget.maxTokens/maxCost", errorKind: "resource" as const },
+    { graphId: gs.graphId, cumulativeTokens: gs.cumulativeTokens, cumulativeCost: gs.cumulativeCost, reason, hint, errorKind: "resource" as const },
     "Graph execution budget exceeded",
   );
 }
