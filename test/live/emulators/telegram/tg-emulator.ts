@@ -88,8 +88,9 @@ export interface RecordedOutbound {
 
 /**
  * A chat reference. For the 204 DM round-trip a chat is identified by its
- * numeric `chatId`; the emulator keys its per-chat state (pending updates, ack
- * offset, outbound log, reactions) on it.
+ * numeric `chatId`; the emulator keys its per-chat ORACLE state (outbound log +
+ * reactions) on it. The long-poll pending queue is bot-global, not per-chat
+ * (see {@link ChatOracle}).
  */
 export interface ChatRef {
   /** The Telegram chat id. */
@@ -123,7 +124,7 @@ export interface TgEmulator extends ChannelEmulator {
   lastBotReply(chat: ChatRef): RecordedOutbound | undefined;
   /** The emoji currently reacted onto a given bot message in a chat. */
   reactionsOn(chat: ChatRef, messageId: number): readonly string[];
-  /** Clear all recorded state (pending updates, outbounds, reactions, ack) for a chat. */
+  /** Clear a chat's recorded state: its oracle (outbounds + reactions) and its pending updates in the bot-global queue. */
   resetChat(chat: ChatRef): void;
 }
 
@@ -151,12 +152,13 @@ interface PollWaiter {
 }
 
 /**
- * Per-chat ORACLE state (outbound log + reactions). The long-poll queue/ack are
- * BOT-GLOBAL (see {@link createTgEmulator}) because grammy's runner polls
- * `getUpdates` once per bot with a SINGLE offset — it is not chat-scoped. The
- * `update_id` is globally monotonic (`nextUpdateId`), so a single bot-global
- * pending queue is naturally ordered and the per-(bot,chat) ack the plan
- * describes coincides with the bot-global ack for the spike's single DM.
+ * Per-chat ORACLE state (outbound log + reactions only). The long-poll pending
+ * queue is BOT-GLOBAL (see {@link createTgEmulator}) because grammy's runner
+ * polls `getUpdates` once per bot with a SINGLE offset — it is not chat-scoped.
+ * The `update_id` is globally monotonic (`nextUpdateId`), so a single
+ * bot-global pending queue is naturally ordered. The ack is not retained state:
+ * each poll's `offset` is applied at serve time, so the per-(bot,chat) ack the
+ * plan describes is just the bot-global serve filter for the spike's single DM.
  */
 interface ChatOracle {
   /** Recorded outbounds, in send order. */
@@ -222,12 +224,13 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
   // Per-chat ORACLE state only (outbound log + reactions).
   const chats = new Map<number, ChatOracle>();
   // BOT-GLOBAL long-poll state. grammy's runner polls `getUpdates` once per bot
-  // with a SINGLE offset (not chat-scoped), so the pending queue + ack pointer +
-  // blocked waiters are bot-global. `update_id` is globally monotonic, so the
-  // single queue stays ordered and the per-(bot,chat) ack the plan describes
-  // coincides with this bot-global ack for the spike's single DM.
+  // with a SINGLE offset (not chat-scoped), so the pending queue + blocked
+  // waiters are bot-global. `update_id` is globally monotonic, so the single
+  // queue stays ordered. There is NO retained ack pointer: the ack is applied
+  // at serve time per poll — `takeDeliverable` serves `update_id >= offset` and
+  // removes exactly the delivered updates — so the per-(bot,chat) ack the plan
+  // describes is just the bot-global serve filter for the spike's single DM.
   let pending: Update[] = [];
-  let ackOffset = 0;
   const waiters: PollWaiter[] = [];
   let nextMessageId = 100;
   // De-risk (RESEARCH A1/A2): log the FIRST getUpdates request once to confirm
@@ -412,8 +415,9 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
         return okEnvelope(true);
 
       case "getUpdates":
-        // EMU-02 — the TRUE long-poll (bot-global: one queue, one ack, one
-        // waiter set, as grammy's runner polls per-bot with a single offset).
+        // EMU-02 — the TRUE long-poll (bot-global: one pending queue, one
+        // waiter set, ack applied per-poll at serve time — as grammy's runner
+        // polls per-bot with a single offset).
         return serveGetUpdates(body, query);
 
       case "sendMessage":
