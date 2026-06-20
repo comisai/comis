@@ -2,7 +2,7 @@
 /**
  * Umbrella namespace smoke test for the `comisai` package barrel.
  *
- * Asserts shape parity between the umbrella's 12 namespace re-exports and
+ * Asserts shape parity between the umbrella's 14 namespace re-exports and
  * each underlying `@comis/<pkg>` barrel — for every namespace we check (a)
  * the export is a namespace object, (b) it has a stable sentinel property,
  * and (c) the sentinel is identity-equal (`===`) to the same property on
@@ -32,6 +32,7 @@ import * as directAgent from "@comis/agent";
 import * as directChannels from "@comis/channels";
 import * as directOrchestrator from "@comis/orchestrator";
 import * as directObservability from "@comis/observability";
+import * as directObservabilityOtel from "@comis/observability-otel";
 import * as directCli from "@comis/cli";
 import * as directDaemon from "@comis/daemon";
 
@@ -126,6 +127,16 @@ describe("comisai umbrella namespace re-exports — shape matches sub-package ba
     );
   });
 
+  it("exposes namespace 'observabilityOtel' whose sentinel 'METRIC_CATALOG' is identity-equal to @comis/observability-otel.METRIC_CATALOG", () => {
+    expect(typeof comis.observabilityOtel).toBe("object");
+    expect(comis.observabilityOtel).toHaveProperty("METRIC_CATALOG");
+    expect(
+      (comis.observabilityOtel as Record<string, unknown>).METRIC_CATALOG,
+    ).toBe(
+      (directObservabilityOtel as Record<string, unknown>).METRIC_CATALOG,
+    );
+  });
+
   it("exposes namespace 'cli' whose sentinel 'withClient' is identity-equal to @comis/cli.withClient", () => {
     expect(typeof comis.cli).toBe("object");
     expect(comis.cli).toHaveProperty("withClient");
@@ -142,7 +153,7 @@ describe("comisai umbrella namespace re-exports — shape matches sub-package ba
     );
   });
 
-  it("exports exactly 13 namespace re-exports — no silent additions, no silent deletions", () => {
+  it("exports exactly 14 namespace re-exports — no silent additions, no silent deletions", () => {
     const names = Object.keys(comis).sort();
     expect(names).toEqual([
       "agent",
@@ -154,11 +165,12 @@ describe("comisai umbrella namespace re-exports — shape matches sub-package ba
       "infra",
       "memory",
       "observability",
+      "observabilityOtel",
       "orchestrator",
       "scheduler",
       "shared",
       "skills",
     ]);
-    expect(names.length).toBe(13);
+    expect(names.length).toBe(14);
   });
 });
