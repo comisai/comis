@@ -37,7 +37,7 @@ import {
   type OutcomeSignalPort,
   type ResolvedOutcome,
 } from "@comis/core";
-import { createOutcomeJudgeSeam, resolveOperationModel, resolveProviderFamily } from "@comis/agent";
+import { createOutcomeJudgeSeam, resolveOperationModel, resolveProviderFamily, normalizeOpenAICompatBaseUrl, type CustomCompletionsModelSpec } from "@comis/agent";
 
 /** Per-call output bound for the cheap outcome-judge verdict (a tiny JSON shape). */
 const OUTCOME_JUDGE_MAX_OUTPUT_TOKENS = 1024;
@@ -74,7 +74,21 @@ export interface OutcomeJudgeWiringContainer {
   config: {
     agents?: Record<string, JudgeAgentConfig | undefined>;
     memory?: { costFeatures?: { enabled?: boolean } };
-    providers?: { entries?: Record<string, { apiKeyName?: string } | undefined> };
+    providers?: {
+      entries?: Record<
+        string,
+        | {
+            apiKeyName?: string;
+            /** Custom-provider type (ollama/lm-studio/…) — drives the /v1 baseUrl normalization. */
+            type?: string;
+            /** Custom-provider base — when set, the judge can run on this endpoint even if pi-ai's catalog has no entry. */
+            baseUrl?: string;
+            /** Declared models — read for the judge model's contextWindow/maxTokens/reasoning. */
+            models?: ReadonlyArray<{ id: string; contextWindow?: number; maxTokens?: number; reasoning?: boolean }>;
+          }
+        | undefined
+      >;
+    };
   };
   secretManager: { get(name: string): string | undefined };
 }
@@ -119,6 +133,26 @@ function resolveOutcomeJudge(
     container.secretManager.get(apiKeyName) ??
     (KEYLESS_PROVIDER_TYPES.has(resolved.provider) ? KEYLESS_API_KEY_SENTINEL : "");
   if (!apiKey) return undefined; // no key → no-op judge (Defer != Retry)
+
+  // Custom YAML providers (ollama/lm-studio/…) aren't in pi-ai's catalog, so the
+  // seam's catalog lookup would miss and the judge would SKIP. When the resolved
+  // provider has a configured baseUrl, build a custom-model spec (with the SAME
+  // /v1 normalization registerCustomProviders applies) so the judge runs on the
+  // local endpoint too. Built-in providers leave this undefined (catalog wins).
+  let customModel: CustomCompletionsModelSpec | undefined;
+  if (providerEntry?.baseUrl) {
+    const normalizedBaseUrl =
+      normalizeOpenAICompatBaseUrl(providerEntry.baseUrl, providerEntry.type ?? resolved.provider) ??
+      providerEntry.baseUrl;
+    const modelEntry = providerEntry.models?.find((m) => m.id === resolved.modelId);
+    customModel = {
+      baseUrl: normalizedBaseUrl,
+      contextWindow: modelEntry?.contextWindow,
+      maxTokens: modelEntry?.maxTokens,
+      reasoning: modelEntry?.reasoning,
+    };
+  }
+
   const seam = createOutcomeJudgeSeam({
     provider: resolved.provider,
     modelId: resolved.modelId,
@@ -127,6 +161,7 @@ function resolveOutcomeJudge(
     clock,
     logger,
     agentId,
+    customModel,
   });
   return async (trajectoryContent: string) => {
     const verdict = await seam(trajectoryContent);
