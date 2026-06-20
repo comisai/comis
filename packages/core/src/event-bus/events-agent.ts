@@ -11,6 +11,16 @@ import type { ScriptClass } from "../text/script-classes.js";
 import type { GenerationPass } from "../text/generation-quality.js";
 import type { AuditKind } from "../security/audit.js";
 
+/**
+ * SPEND-05 (Phase 177-01): the closed scope enum that rides the
+ * `observability:spend_*` wire (mirrors how {@link AuditKind} rides
+ * `audit:event`). The daemon-wide spend accumulator (`@comis/agent`
+ * `budget/spend-accumulator.ts`) and the abort wiring import it so the scope of a
+ * warn/exceed is a closed-union LABEL, never a free string. Per-(tenant,agent),
+ * per-tenant, and daemon-global are the three ceilings.
+ */
+export type SpendScopeKind = "agent" | "tenant" | "global";
+
 export interface AgentEvents {
   /** Skill loaded from disk and validated */
   "skill:loaded": { skillName: string; source: string; timestamp: number };
@@ -344,6 +354,46 @@ export interface AgentEvents {
     model?: string;
     /** Effort/thinking value at time of break. */
     effortValue?: string;
+  };
+
+  /** SPEND-05 (Phase 177-01): spend approaching a ceiling (fired at
+   *  `warnAtFraction`, default 0.8, BEFORE the kill-switch trips). Content-free
+   *  (§2.7): dollar amounts as NUMBERS, scope as the closed {@link SpendScopeKind}
+   *  enum, ids only — NEVER a message/prompt/query body. */
+  "observability:spend_warning": {
+    timestamp: number;
+    agentId: string;
+    sessionKey: string;
+    scope: SpendScopeKind;
+    spentUsd: number;
+    capUsd: number;
+    fraction: number;
+  };
+
+  /** SPEND-05 (Phase 177-01): a spend ceiling was exceeded — the dollars
+   *  kill-switch tripped for this scope. Content-free (§2.7): `estUsd` is the
+   *  reservation that breached; amounts are NUMBERS, scope is a closed enum, ids
+   *  only — NEVER a message/prompt/query body. */
+  "observability:spend_exceeded": {
+    timestamp: number;
+    agentId: string;
+    sessionKey: string;
+    scope: SpendScopeKind;
+    spentUsd: number;
+    capUsd: number;
+    estUsd: number;
+  };
+
+  /** SPEND-05 (Phase 177-01): a remote model burned tokens with UNKNOWN pricing
+   *  (fail-loud, not fail-open — the ffe11736 danger). Content-free (§2.7):
+   *  provider/model are config ids/enums (a model id is a config value, NOT user
+   *  content) + turn ids — NEVER a message/prompt/query body. */
+  "observability:spend_unpriceable": {
+    timestamp: number;
+    agentId: string;
+    sessionKey: string;
+    provider: string;
+    model: string;
   };
 
   /** Model failover: attempt to switch from one model to another.

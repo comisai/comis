@@ -506,10 +506,15 @@ export interface MessagingEvents {
     timestamp: number;
   };
 
-  /** Execution aborted by user /stop command or programmatic abort */
+  /** Execution aborted by user /stop command or programmatic abort.
+   *  SPEND-02 (Phase 177-01): `spend_exceeded` is the dollars kill-switch abort —
+   *  ADDITIVE, distinct from the token-budget `budget_exceeded` so the
+   *  dollars-vs-tokens cause stays clear in the terminal. The unpriceable nuance
+   *  rides the distinct `observability:spend_unpriceable` event, NOT a second
+   *  reason member (RESEARCH A3). */
   "execution:aborted": {
     sessionKey: SessionKey;
-    reason: "user_stop" | "budget_exceeded" | "circuit_breaker" | "max_steps" | "context_exhausted" | "pipeline_timeout" | "loop_detected";
+    reason: "user_stop" | "budget_exceeded" | "circuit_breaker" | "max_steps" | "context_exhausted" | "pipeline_timeout" | "loop_detected" | "spend_exceeded";
     agentId: string;
     timestamp: number;
   };
