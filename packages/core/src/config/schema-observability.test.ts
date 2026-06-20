@@ -255,4 +255,91 @@ describe("ObservabilityConfigSchema", () => {
       expect(result.success).toBe(false);
     });
   });
+
+  // spend key (SPEND-01) — the kill-switch opt-in surface. Ships OFF: all
+  // three ceilings default null, action 'warn'. Mirrors the audit block's
+  // default + strict-reject + enum-validation shape.
+  describe("spend (SPEND-01)", () => {
+    it("resolves safe defaults: all three ceilings null (off), action 'warn', warnAtFraction 0.8, perTurnMax 0.5, pricingFallback 'snapshot', onUnknownPricing 'warn'", () => {
+      const result = ObservabilityConfigSchema.safeParse({});
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.spend).toEqual({
+          perAgentUsd: null,
+          perTenantUsd: null,
+          daemonGlobalUsd: null,
+          perTurnMax: 0.5,
+          action: "warn",
+          warnAtFraction: 0.8,
+          pricingFallback: "snapshot",
+          onUnknownPricing: "warn",
+        });
+      }
+    });
+
+    it("null ceilings = off: the three ceilings each default null (the opt-in invariant)", () => {
+      const result = ObservabilityConfigSchema.safeParse({});
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.spend.perAgentUsd).toBeNull();
+        expect(result.data.spend.perTenantUsd).toBeNull();
+        expect(result.data.spend.daemonGlobalUsd).toBeNull();
+      }
+    });
+
+    it("rejects a typo'd key under spend (strictObject)", () => {
+      const result = ObservabilityConfigSchema.safeParse({ spend: { perAgentUsdd: 5 } });
+      expect(result.success).toBe(false);
+    });
+
+    it("parses valid ceilings + actions and round-trips them", () => {
+      const result = ObservabilityConfigSchema.safeParse({
+        spend: { perAgentUsd: 10, action: "abort", onUnknownPricing: "abort" },
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.spend.perAgentUsd).toBe(10);
+        expect(result.data.spend.action).toBe("abort");
+        expect(result.data.spend.onUnknownPricing).toBe("abort");
+        // unset ceilings stay null (off).
+        expect(result.data.spend.perTenantUsd).toBeNull();
+        expect(result.data.spend.daemonGlobalUsd).toBeNull();
+      }
+    });
+
+    it("rejects a zero ceiling (positive required)", () => {
+      const result = ObservabilityConfigSchema.safeParse({ spend: { perAgentUsd: 0 } });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects a negative ceiling (positive required)", () => {
+      const result = ObservabilityConfigSchema.safeParse({ spend: { daemonGlobalUsd: -1 } });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects a zero perTurnMax (positive required)", () => {
+      const result = ObservabilityConfigSchema.safeParse({ spend: { perTurnMax: 0 } });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects warnAtFraction above 1 (bounded [0,1])", () => {
+      const result = ObservabilityConfigSchema.safeParse({ spend: { warnAtFraction: 1.5 } });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects warnAtFraction below 0 (bounded [0,1])", () => {
+      const result = ObservabilityConfigSchema.safeParse({ spend: { warnAtFraction: -0.1 } });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects an invalid action enum value", () => {
+      const result = ObservabilityConfigSchema.safeParse({ spend: { action: "kill" } });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects an invalid pricingFallback enum value (single current member 'snapshot')", () => {
+      const result = ObservabilityConfigSchema.safeParse({ spend: { pricingFallback: "live" } });
+      expect(result.success).toBe(false);
+    });
+  });
 });
