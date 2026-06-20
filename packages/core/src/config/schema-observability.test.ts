@@ -220,4 +220,39 @@ describe("ObservabilityConfigSchema", () => {
       expect(result.success).toBe(false);
     });
   });
+
+  // audit key + persistence.cacheBreaks (PERSIST-01 / AUDIT-01).
+  describe("audit + persistence.cacheBreaks", () => {
+    it("parses audit:{persist,sink} + persistence:{cacheBreaks} on the strictObject", () => {
+      const result = ObservabilityConfigSchema.safeParse({
+        audit: { persist: true, sink: "both" },
+        persistence: { cacheBreaks: true },
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.audit.persist).toBe(true);
+        expect(result.data.audit.sink).toBe("both");
+        expect(result.data.persistence.cacheBreaks).toBe(true);
+      }
+    });
+
+    it("resolves safe defaults: audit deep-equals {persist:true,sink:'both'}; persistence.cacheBreaks===true", () => {
+      const result = ObservabilityConfigSchema.safeParse({});
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.audit).toEqual({ persist: true, sink: "both" });
+        expect(result.data.persistence.cacheBreaks).toBe(true);
+      }
+    });
+
+    it("rejects a typo'd TOP-LEVEL persist key (strictObject — proves no colliding persist was added)", () => {
+      const result = ObservabilityConfigSchema.safeParse({ persist: true });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects an invalid audit.sink enum value", () => {
+      const result = ObservabilityConfigSchema.safeParse({ audit: { sink: "nope" } });
+      expect(result.success).toBe(false);
+    });
+  });
 });
