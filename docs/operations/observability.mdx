@@ -515,7 +515,67 @@ See the [CLI reference](/reference/cli#comis-memory) for the full `comis memory`
 
 ---
 
-## 16. Existing Tracking Surfaces (pre-existing, preserved for completeness)
+## 16. Spend Governance (Cost Kill-Switch)
+
+The kill-switch turns the token/billing tracking of §17 into **enforcement**: a daemon-wide cost accumulator that can warn — or refuse new turns — once cumulative spend crosses a configured dollar ceiling. It ships **off and observe-only**, and is honest about what it cannot price. Configure it under `observability.spend` (config-yaml only, no env var — see the [config reference](/reference/config-yaml)).
+
+### Ships off, opt-in to abort
+
+All three ceilings default to `null` (off) and `action` defaults to `warn`. A deployment that does not opt in is never enforced and cannot be DoS-ed by a fat-fingered cap. Turning it on is two steps: set a ceiling (`perAgentUsd`, `perTenantUsd`, and/or `daemonGlobalUsd`) to observe in `warn` mode, then flip `action: abort` once you trust the numbers.
+
+| Dimension | Key | Scope |
+|-----------|-----|-------|
+| Per `(tenant, agent)` | `perAgentUsd` | one agent's cumulative spend |
+| Per tenant | `perTenantUsd` | all agents of one tenant — the cross-tenant isolation dimension; a breach aborts only that tenant, never a neighbour |
+| Daemon-global | `daemonGlobalUsd` | every agent and tenant on the daemon |
+
+### Restart-durable accumulator
+
+There is one source of truth: an in-memory accumulator, **rehydrated at boot** from the persisted `obs_token_usage.cost_total` rows (a rolling per-agent `SUM`) and **incremented live** from the `observability:token_usage` event the persistence subscriber already consumes. The persisted rows are its durability — a restart resumes the running total rather than resetting the ceiling to zero. (If the observability store is unavailable at boot the accumulator starts at `$0` — honest degradation, not a silent reset of a live ceiling.)
+
+### Cooperative abort
+
+Abort is **cooperative**, not a hard mid-turn kill — and this is the contract, not a hidden detail:
+
+- A breach **halts subsequent turns** (the next admission is rejected).
+- **In-flight turns complete and bill** — a turn already running when the ceiling trips is not torn down.
+- The **realized ceiling is therefore `configured + in-flight overshoot`**, never exactly the configured number.
+
+Admission is an **atomic check-and-reserve**: at the start of each turn the bridge reserves a conservative `perTurnMax` (there is no pre-flight cost estimate at that point), then reconciles the reservation to the actual billed amount after the turn. Because the reserve is synchronous, concurrent callers serialize and each sees the prior reservation — so the in-flight overshoot is bounded by `concurrency × perTurnMax`, not unbounded. A breach routes through the existing budget path and surfaces as `execution:aborted { reason: "spend_exceeded" }` / an `ExecutionResult.finishReason` of `spend_exceeded`. The graph `maxCost` control interoperates through the same seam.
+
+### Three-state honest pricing
+
+The kill-switch is **fail-loud, not fail-open** about pricing. Every model resolves to one of three states:
+
+| State | Meaning | Enforcement |
+|-------|---------|-------------|
+| `priced` | a catalog rate exists | enforced against the ceilings |
+| `free` | a local / on-device model (genuine `$0`) | counts as honest `$0`, **never** trips a ceiling — a local-first deployment is never false-DoS-ed |
+| `unknown` | a **remote** model with no catalog entry | fires `observability:spend_unpriceable`; trips the kill-switch only under `action: abort` **and** `onUnknownPricing: abort` |
+
+A *transient* pricing-fetch failure is different from `unknown`: it falls back to the dated `pricingFallback: snapshot` rate and **still enforces** the ceiling — a flaky lookup never causes a false abort, and never silently stops counting. This is the guard against the chimeric-model class of incident, where a remote model burned tokens under a phantom price.
+
+### Events (counts-only, content-free)
+
+Three typed events fire on the bus. All are **content-free** per the [§5 bounding rules](#5-defense-in-depth-bounding): dollar amounts as numbers, scope as the closed `agent | tenant | global` enum, and ids only — never a message, prompt, or query body.
+
+| Event | When |
+|-------|------|
+| `observability:spend_warning` | early — spend crosses `warnAtFraction` (default 0.8) of a ceiling, before it trips. Carries `{ scope, spentUsd, capUsd, fraction }`. |
+| `observability:spend_exceeded` | a ceiling was reached — the kill-switch tripped for that scope. Carries `{ scope, spentUsd, capUsd, estUsd }`. Emitted under both `warn` and `abort`. |
+| `observability:spend_unpriceable` | a remote model burned tokens with unknown pricing. Carries `{ provider, model }` (config ids, not user content). |
+
+```bash
+jq 'select(.event | startswith("observability:spend_"))' ~/.comis/logs/daemon.log
+```
+
+### Fleet finding — `config_posture:pricing_gap`
+
+`comis fleet` surfaces a `config_posture:pricing_gap` finding when one or more agents are burning tokens on **remote, unknown-priced** models — telling an operator their pricing coverage *before* they trust the ceiling. It is a **count plus a remediation hint only** (no model id or token in the body); free/local and priced agents are never counted. A newer healthy boot supersedes an older flag. If you see it, spend is being under-counted for those agents (honest `$0` applies only to local/free providers) — close the gap before relying on `action: abort`.
+
+---
+
+## 17. Existing Tracking Surfaces (pre-existing, preserved for completeness)
 
 <Note>
 The following tracking surfaces predate the observability work above and continue to operate as before. They are referenced by the web dashboard at [/web-dashboard/observability](/web-dashboard/observability).
@@ -565,7 +625,7 @@ Breakpoint budget auditing (INFO before each Anthropic API call), placement resu
 
 ---
 
-## 17. Related Pages
+## 18. Related Pages
 
 <CardGroup cols={2}>
   <Card title="Logging" icon="file-lines" href="/operations/logging">

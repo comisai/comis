@@ -2864,6 +2864,14 @@ Observability persistence layer. Stores channel health snapshots, execution metr
 | `persistence.cacheBreaks` | `boolean` | `true` | Persist detected prompt-cache breaks to `obs_diagnostics` (`category:'cache_break'`) + a `cache.break` trajectory record (rate-by-reason + est-$). |
 | `audit.persist` | `boolean` | `true` | Persist security-decision audit events (secret access, injection detection, command blocks, …) to the durable `obs_audit_events` table + `security-audit.jsonl`. Queryable via `comis security audit-log` / `obs.audit.query`. |
 | `audit.sink` | `"sqlite"` \| `"jsonl"` \| `"both"` | `"both"` | Which sink(s) receive audit records. Rotation of the JSONL rides the shared `logRotation` policy (no per-sink rotation knob). |
+| `spend.perAgentUsd` | `number` \| `null` | `null` | Per-agent cumulative USD ceiling. `null` = off (opt-in). |
+| `spend.perTenantUsd` | `number` \| `null` | `null` | Per-tenant cumulative USD ceiling — the cross-tenant isolation dimension; a tenant's breach aborts only that tenant. `null` = off. |
+| `spend.daemonGlobalUsd` | `number` \| `null` | `null` | Daemon-wide cumulative USD ceiling across all agents and tenants. `null` = off. |
+| `spend.action` | `"warn"` \| `"abort"` | `"warn"` | Behaviour on a ceiling breach. `warn` (the shipped default) observes only; `abort` halts subsequent turns. |
+| `spend.warnAtFraction` | `number` | `0.8` | Emit the early `observability:spend_warning` once spend crosses this fraction of a ceiling, before it trips (0–1). |
+| `spend.perTurnMax` | `number` | `0.5` | Conservative per-turn USD reservation held at admission (there is no pre-flight cost estimate), reconciled to the actual billed amount after the turn. Bounds a single in-flight turn's overshoot past a ceiling. |
+| `spend.pricingFallback` | `"snapshot"` | `"snapshot"` | Pricing source for enforcement. Only `snapshot` (the dated model-catalog rate) exists today; a transient pricing-fetch failure falls back to it rather than aborting. No live price fetch is in scope (forward-extensibility placeholder). |
+| `spend.onUnknownPricing` | `"warn"` \| `"abort"` | `"warn"` | Behaviour when a remote model burns tokens with no catalog price. `warn` fails loud (the default); `abort` (with `action: abort`) trips `spend_unpriceable`. |
 
 ```yaml
 observability:
@@ -2875,7 +2883,20 @@ observability:
   audit:
     persist: true
     sink: both
+  spend:                  # cost kill-switch — ships OFF (null ceilings, action 'warn')
+    perAgentUsd: null     # set a number to cap per-agent cumulative USD
+    perTenantUsd: null    # per-tenant cap (cross-tenant isolation)
+    daemonGlobalUsd: null # daemon-wide cap across all agents/tenants
+    action: warn          # 'warn' observes; 'abort' halts subsequent turns
+    warnAtFraction: 0.8   # early warning at 80% of a ceiling
+    perTurnMax: 0.5       # per-turn admission reservation
+    pricingFallback: snapshot
+    onUnknownPricing: warn # 'abort' to refuse unpriced remote spend
 ```
+
+<Info>
+The spend kill-switch is configurable in `config.yaml` only — there is **no** environment-variable form. See [Observability → Spend Governance](/operations/observability#16-spend-governance-cost-kill-switch) for the runtime behaviour (cooperative abort, three-state pricing, the events, and the `pricing_gap` fleet finding).
+</Info>
 
 </Accordion>
 
