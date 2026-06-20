@@ -604,19 +604,6 @@ export const AgentAggDbRowSchema = z.strictObject({
 });
 
 /**
- * Schema for the spend-accumulator BOOT-read row (LOW-1, 177-obs-loop):
- * `SELECT agent_id, SUM(cost_total) AS total_cost ... GROUP BY agent_id`.
- * `total_cost` is `.nullable()` — a SUM over zero matched rows yields SQL NULL
- * (the consumer guards a null/non-finite SUM to 0). Distinct from
- * `AgentAggDbRowSchema` (which also carries tokens/callCount/cache) — the
- * accumulator seeds ONLY the dollar headroom, so this is the minimal 2-column row.
- */
-export const RollingSpendDbRowSchema = z.strictObject({
-  agent_id: z.string(),
-  total_cost: z.number().nullable(),
-});
-
-/**
  * Schema for `session_key`-grouped aggregation rows.
  * SSOT for the file-internal `SessionAggDbRow` interface in observability-store.ts.
  */

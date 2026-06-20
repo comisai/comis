@@ -16,7 +16,6 @@ import {
   ChannelSnapshotDbRowSchema,
   ProviderAggDbRowSchema,
   AgentAggDbRowSchema,
-  RollingSpendDbRowSchema,
   SessionAggDbRowSchema,
   HourlyBucketDbRowSchema,
   DeliveryStatsDbRowSchema,
@@ -50,8 +49,21 @@ export const diagnosticMapper = createRowMapper(DiagnosticDbRowSchema);
 export const channelSnapshotMapper = createRowMapper(ChannelSnapshotDbRowSchema);
 export const providerAggMapper = createRowMapper(ProviderAggDbRowSchema);
 export const agentAggMapper = createRowMapper(AgentAggDbRowSchema);
-// LOW-1 (177-obs-loop): the spend-accumulator BOOT-read mapper (replaces the inline
-// `as {agent_id; total_cost}[]` cast in spend-queries.ts — AGENTS.md §6.8).
+/**
+ * LOW-1 (177-obs-loop): the spend-accumulator BOOT-read row —
+ * `SELECT agent_id, SUM(cost_total) AS total_cost ... GROUP BY agent_id`.
+ * Defined HERE (store-local, the SessionSummaryRollupDbRowSchema precedent below)
+ * rather than row-schemas.ts: it is consumed ONLY by `rollingSpendMapper` and the
+ * `row-schemas.ts` barrel is `export *`'d, so a public schema there would be a dead
+ * export. `total_cost` is `.nullable()` — a SUM over zero matched rows yields SQL
+ * NULL (the consumer guards a null/non-finite SUM to 0). Distinct from
+ * `AgentAggDbRowSchema` — the accumulator seeds ONLY the dollar headroom.
+ */
+export const RollingSpendDbRowSchema = z.strictObject({
+  agent_id: z.string(),
+  total_cost: z.number().nullable(),
+});
+/** The spend-accumulator BOOT-read mapper (replaces the inline cast — §6.8). */
 export const rollingSpendMapper = createRowMapper(RollingSpendDbRowSchema);
 export const sessionAggMapper = createRowMapper(SessionAggDbRowSchema);
 export const hourlyBucketMapper = createRowMapper(HourlyBucketDbRowSchema);
