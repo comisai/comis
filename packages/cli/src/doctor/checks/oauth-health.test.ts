@@ -43,8 +43,19 @@ vi.mock("@comis/core", async () => {
   };
 });
 
+// OBS-4: encrypted-mode oauth check routes through the daemon auth.list RPC.
+vi.mock("../../sync-tooling/daemon-guard.js", () => ({
+  isDaemonRunning: vi.fn(async () => false),
+}));
+vi.mock("../../client/rpc-client.js", () => ({
+  withClient: vi.fn(async (fn: (c: unknown) => unknown) => fn({})),
+  callTyped: vi.fn(async () => ({ profiles: [] })),
+}));
+
 const fs = await import("node:fs/promises");
 const agent = await import("@comis/core");
+const daemonGuard = await import("../../sync-tooling/daemon-guard.js");
+const rpcClient = await import("../../client/rpc-client.js");
 const { oauthHealthCheck } = await import("./oauth-health.js");
 
 // ---------------------------------------------------------------------------
@@ -264,21 +275,55 @@ describe("oauthHealthCheck — schema mismatch", () => {
 // Encrypted-mode skip
 // ---------------------------------------------------------------------------
 
-describe("oauthHealthCheck — encrypted-mode skip", () => {
-  it("encrypted storage yields one skip explaining CLI cannot read", async () => {
-    const ctx: DoctorContext = {
-      ...baseContext,
-      // Minimal config shape that exposes security.storage; cast to avoid
-      // building a full AppConfig.
-      config: { security: { storage: "encrypted" } } as unknown as DoctorContext["config"],
-    };
-    const findings = await oauthHealthCheck.run(ctx);
+describe("oauthHealthCheck — encrypted mode (OBS-4: route through daemon RPC)", () => {
+  const encryptedCtx: DoctorContext = {
+    ...baseContext,
+    config: { security: { storage: "encrypted" } } as unknown as DoctorContext["config"],
+  };
+
+  it("daemon DOWN: skips with a daemon-not-running hint (cannot read from CLI)", async () => {
+    vi.mocked(daemonGuard.isDaemonRunning).mockResolvedValue(false);
+    const findings = await oauthHealthCheck.run(encryptedCtx);
     const skip = findings.find(
       (f) => f.status === "skip" && /encrypted/i.test(f.message),
     );
     expect(skip).toBeDefined();
-    expect(skip!.suggestion ?? "").toContain("daemon host");
+    expect(skip!.message).toMatch(/daemon is not running/i);
   });
+
+  it("daemon UP: reads profiles via auth.list RPC and reports per-profile expiry (NOT a skip)", async () => {
+    // Pre-OBS-4 this ALWAYS returned a single skip regardless of the daemon.
+    vi.mocked(daemonGuard.isDaemonRunning).mockResolvedValue(true);
+    vi.mocked(rpcClient.callTyped).mockResolvedValue({
+      profiles: [
+        {
+          provider: "openai-codex",
+          profileId: "openai-codex:user@example.com",
+          expires: Date.now() + 9 * 24 * 60 * 60 * 1000, // 9d out → pass
+          email: "user@example.com",
+        },
+      ],
+    });
+    const findings = await oauthHealthCheck.run(encryptedCtx);
+    const profileFinding = findings.find((f) =>
+      f.check.startsWith("Profile openai-codex:"),
+    );
+    expect(profileFinding).toBeDefined();
+    expect(profileFinding!.status).toBe("pass");
+    // And it must NOT be the old unconditional encrypted skip.
+    expect(
+      findings.some((f) => /doctor cannot read profiles from CLI/i.test(f.message)),
+    ).toBe(false);
+  });
+
+  it("daemon UP but no profiles: honest 'No OAuth profiles stored' skip", async () => {
+    vi.mocked(daemonGuard.isDaemonRunning).mockResolvedValue(true);
+    vi.mocked(rpcClient.callTyped).mockResolvedValue({ profiles: [] });
+    const findings = await oauthHealthCheck.run(encryptedCtx);
+    expect(findings.some((f) => /No OAuth profiles stored/i.test(f.message))).toBe(true);
+  });
+  // (Token-leakage invariant is covered by the dedicated suite below + the
+  // RedactedOAuthProfile RPC projection, which carries no access/refresh fields.)
 });
 
 // ---------------------------------------------------------------------------
