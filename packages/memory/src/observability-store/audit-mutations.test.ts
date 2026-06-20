@@ -180,11 +180,12 @@ describe("audit-mutations — security-audit.jsonl writer (JSONL half)", () => {
 
   it("Test 4: rotates when incoming bytes exceed the passed rotateAtBytes cap", () => {
     const filePath = path.join(dir, "security-audit.jsonl");
-    // First write creates the file just under a tiny cap.
-    appendAuditJsonl({ filePath, record: { kind: "audit", n: 1 }, rotateAtBytes: 80, keepRotated: 5 });
+    // First write creates the file (rotation no-ops on a missing file).
+    appendAuditJsonl({ filePath, record: { kind: "audit", n: 1 }, rotateAtBytes: 10, keepRotated: 5 });
     expect(fs.existsSync(filePath)).toBe(true);
-    // Second write would exceed the cap → the existing file rotates to .1, a new main file is created.
-    appendAuditJsonl({ filePath, record: { kind: "audit", n: 2 }, rotateAtBytes: 80, keepRotated: 5 });
+    // The file is now ~22 bytes > the 10-byte cap, so the next append rotates
+    // the existing file to .1 and creates a fresh main file.
+    appendAuditJsonl({ filePath, record: { kind: "audit", n: 2 }, rotateAtBytes: 10, keepRotated: 5 });
 
     const rotated = fs.existsSync(filePath + ".1") || fs.existsSync(filePath + ".1.gz");
     expect(rotated).toBe(true);
