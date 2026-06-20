@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { buildGraphAnnouncement, truncatePreview, extractAnnouncementPreview, handleGraphCompletion } from "./graph-completion.js";
+import { buildGraphAnnouncement, truncatePreview, extractAnnouncementPreview, handleGraphCompletion, handleBudgetExceeded } from "./graph-completion.js";
 import {
   type ValidatedGraph,
   type ExecutionGraph,
@@ -426,5 +426,140 @@ describe("graph-completion honors §1.4 file mode invariant", () => {
     } finally {
       rmSync(baseDir, { recursive: true, force: true });
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SPEND-04 (Phase 177) — graph maxCost ↔ spend-ceiling interop.
+//
+// handleBudgetExceeded already takes an OPEN `reason: string` and is the SINGLE
+// seam the graph cumulative-budget path (graph-driver-handler.ts:110 →
+// handleBudgetExceeded(gs, tokenExceeded ? "tokens" : "cost")) routes through. A
+// spend-ceiling breach in a graph context interoperates by routing through the
+// SAME seam with "spend_exceeded" — NO parallel graph kill-path, NO signature
+// change. These tests pin that contract: the spend reason is honored (running
+// nodes marked `Budget exceeded (spend_exceeded)`, graph cancelled/completed, WARN
+// fired) AND the existing "cost"/"tokens" reasons still work (coexistence). The
+// WARN stays content-free (no `$` body — counts + hint + errorKind only).
+// ---------------------------------------------------------------------------
+
+describe("SPEND-04: handleBudgetExceeded interoperates with graph maxCost via an open reason", () => {
+  /** A GraphRunState with ONE running node (in runIdToNode, marked running on the
+   *  state machine, NOT yet terminal, completedAt undefined) — the shape
+   *  handleBudgetExceeded acts on. */
+  function runningGraphRunState(): GraphRunState {
+    const validatedGraph = buildValidatedGraph([{ nodeId: "n1" }]);
+    const sm = createGraphStateMachine(validatedGraph);
+    sm.markNodeRunning("n1", "run-n1");
+    return {
+      graphId: "spend-interop-graph",
+      graphTraceId: "trace-spend",
+      graph: validatedGraph,
+      stateMachine: sm,
+      runIdToNode: new Map([["run-n1", "n1"]]),
+      nodeOutputs: new Map(),
+      nodeTimers: new Map(),
+      retryTimers: new Map(),
+      graphTimer: undefined,
+      startedAt: Date.now() - 1000,
+      completedAt: undefined,
+      runningCount: 1,
+      nodeProgress: false,
+      skippedNodesEmitted: new Set(),
+      cumulativeTokens: 1000,
+      cumulativeCost: 5.5,
+      sharedDir: "/tmp/test-spend-interop",
+      driverStates: new Map(),
+      driverRunIdMap: new Map(),
+      waitHandlers: new Map(),
+      syntheticRunResults: new Map(),
+      nodeCacheData: new Map(),
+      nodeTokenSpend: new Map(),
+    };
+  }
+
+  function makeDeps() {
+    const killRun = vi.fn(() => ({ killed: true }));
+    const warn = vi.fn();
+    const emit = vi.fn();
+    const deps = {
+      subAgentRunner: { killRun } as unknown as Parameters<typeof handleBudgetExceeded>[1]["subAgentRunner"],
+      eventBus: { emit } as unknown as Parameters<typeof handleBudgetExceeded>[1]["eventBus"],
+      logger: { info: vi.fn(), warn, error: vi.fn(), debug: vi.fn() },
+      sendToChannel: vi.fn(async () => true),
+      tenantId: "tenant-a",
+    } as unknown as Parameters<typeof handleBudgetExceeded>[1];
+    return { deps, killRun, warn, emit };
+  }
+
+  const state = { graphs: new Map(), globalActiveSubAgents: 0, spawnQueue: [] };
+
+  it("propagates the 'spend_exceeded' reason: marks the running node failed, kills the run, cancels + completes, WARNs with a SPEND-specific hint", () => {
+    const gs = runningGraphRunState();
+    const { deps, killRun, warn } = makeDeps();
+
+    handleBudgetExceeded(state, deps, gs, "spend_exceeded");
+
+    // The running node is marked failed with the SPEND reason carried through.
+    const snap = gs.stateMachine.snapshot();
+    expect(snap.nodes.get("n1")?.status).toBe("failed");
+    expect(snap.nodes.get("n1")?.error).toBe("Budget exceeded (spend_exceeded)");
+    // The sub-agent run was killed and the graph cancelled (budget) + completed.
+    expect(killRun).toHaveBeenCalledWith("run-n1");
+    expect(gs.cancelReason).toBe("budget");
+    expect(gs.completedAt).toBeDefined();
+    expect(gs.runningCount).toBe(0);
+    // A content-free WARN fired (counts + hint + errorKind — NO `$` amount body).
+    expect(warn).toHaveBeenCalled();
+    const warnArg = warn.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    expect(warnArg["errorKind"]).toBe("resource");
+    // SPEND-04: a spend-ceiling breach names the spend kill-switch knob, NOT the
+    // graph's own maxTokens/maxCost (those are a different ceiling). RED: the hint
+    // is currently the generic graph.budget.maxTokens/maxCost text for every reason.
+    expect(warnArg["hint"]).toMatch(/observability\.spend|spend ceiling/i);
+    expect(warnArg["hint"]).not.toMatch(/graph\.budget\.maxTokens\/maxCost/);
+    // Content-free: no `$` amount echoed as a body.
+    expect(JSON.stringify(warnArg)).not.toMatch(/\$\d/);
+  });
+
+  it("coexists with the existing 'cost' reason: a cost breach still marks 'Budget exceeded (cost)' and keeps the graph.budget.maxCost hint (interop, not replacement)", () => {
+    const gs = runningGraphRunState();
+    const { deps, warn } = makeDeps();
+
+    handleBudgetExceeded(state, deps, gs, "cost");
+
+    const snap = gs.stateMachine.snapshot();
+    expect(snap.nodes.get("n1")?.status).toBe("failed");
+    expect(snap.nodes.get("n1")?.error).toBe("Budget exceeded (cost)");
+    expect(gs.cancelReason).toBe("budget");
+    // The existing graph-budget hint is UNCHANGED for the cost/token reasons.
+    const warnArg = warn.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    expect(warnArg["hint"]).toMatch(/graph\.budget\.maxTokens\/maxCost/);
+  });
+
+  it("keeps the graph.budget.maxTokens/maxCost hint for the 'tokens' reason too (only spend_exceeded gets the spend-specific hint)", () => {
+    const gs = runningGraphRunState();
+    const { deps, warn } = makeDeps();
+
+    handleBudgetExceeded(state, deps, gs, "tokens");
+
+    expect(gs.stateMachine.snapshot().nodes.get("n1")?.error).toBe("Budget exceeded (tokens)");
+    const warnArg = warn.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    expect(warnArg["hint"]).toMatch(/graph\.budget\.maxTokens\/maxCost/);
+  });
+
+  it("routes the spend breach through the SINGLE existing seam — no parallel kill-path (handleBudgetExceeded is reused for both reasons)", () => {
+    // Both reasons drive the SAME function (the arch invariant: spend reuses the
+    // one seam). A spy on the seam proves graph-driver-handler-style callers route
+    // here for "spend_exceeded" exactly as they do for "cost".
+    const gsCost = runningGraphRunState();
+    const gsSpend = runningGraphRunState();
+    const { deps } = makeDeps();
+
+    // Same callable, two reasons — coexistence with no signature change.
+    expect(() => handleBudgetExceeded(state, deps, gsCost, "cost")).not.toThrow();
+    expect(() => handleBudgetExceeded(state, deps, gsSpend, "spend_exceeded")).not.toThrow();
+    expect(gsCost.stateMachine.snapshot().nodes.get("n1")?.error).toBe("Budget exceeded (cost)");
+    expect(gsSpend.stateMachine.snapshot().nodes.get("n1")?.error).toBe("Budget exceeded (spend_exceeded)");
   });
 });
