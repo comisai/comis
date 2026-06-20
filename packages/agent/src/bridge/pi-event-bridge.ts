@@ -45,6 +45,7 @@ import { sanitizeMcpToolNameForAnalytics } from "../executor/cache-detection/ind
 import { classifyError } from "../executor/error-classifier.js";
 import { getSessionPromptSkillLocations } from "../executor/prompt-assembly.js";
 import { suggestClosestTool } from "./tool-name-suggest.js";
+import { toolFailureHint } from "./tool-failure-hint.js";
 import type { ExecutionBudgetWindow } from "../budget/budget-guard.js";
 import type { CostTracker } from "../budget/cost-tracker.js";
 import type { StepCounter } from "../executor/step-counter.js";
@@ -851,7 +852,10 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                 ...(sanitizedArgs && { toolArgs: sanitizedArgs }),
                 ...(mcpServer !== undefined && { mcpServer, mcpErrorType: classifyMcpErrorType(errorText) }),
                 errorKind: toolErrorKind ?? ("dependency" as const),
-                hint: "Tool execution failed; check errorText and toolArgs for root cause",
+                // Name the bracketed `[error_code]` the errorText carries
+                // (permission_denied / invalid_value / …) instead of a generic
+                // "check errorText" — §2.7 name-which-knob (UC-C2, 2026-06-20).
+                hint: toolFailureHint(errorText),
                 // D1 provenance — assigned at the mutation points above.
                 // matchedToken is untrusted tool output → sanitize+bound it
                 // exactly like errorText; the rest are enum-like/digest/number.
