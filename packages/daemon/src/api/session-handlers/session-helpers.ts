@@ -170,7 +170,14 @@ export function scanWorkspaceSessions(workspaceDir: string): JsonlSessionInfo[] 
         const filePath = safePath(channelPath, file);
         try {
           const st = statSync(filePath);
-          const sessionKey = `${tenantId}:${file.slice(0, -6)}`; // tenantId:filename-without-ext
+          // Canonical session key is `tenant:user:channel` (formatSessionKey) — the
+          // SAME form the LCD/`reset`/`explain` paths use. The directory layout is
+          // sessions/{tenant}/{channelDir}/{file}, so the file is the user/peer and
+          // channelDir is the channel. Dropping channelDir (the old
+          // `${tenant}:${file}`) produced a 2-part key that `sessions reset`
+          // rejected (0 rows) and that never dedups against the SQLite session_key
+          // (UX-1, live 2026-06-20).
+          const sessionKey = `${tenantId}:${file.slice(0, -6)}:${channelDir}`;
           const content = readFileSync(filePath, "utf-8");
           const lines = content.split("\n").filter(l => l.trim().length > 0);
 
