@@ -91,9 +91,12 @@ by reason, savings), fleet health (degraded rate, error kinds, breaker trips,
 turn-duration histograms), security & audit (`comis_audit_events_total`,
 secret-access, injection-detected), and reliability (run-duration histograms,
 offloads). The single source of truth for the metric set is the catalog in
-`@comis/observability-otel`; the shipped dashboards reference only metrics in that
-catalog (a CI drift guard fails the build if a panel ever references a metric the
-exporter does not emit).
+`@comis/observability-otel`, and every catalogued metric has a live producer
+(an event subscription that increments it, or a registered gauge) — a CI guard
+fails the build if a catalogued metric has no producer, and the dashboard/rule
+drift guard fails if a panel or alert ever references a metric the exporter does
+not actually **produce** (not merely one absent from the catalog). So a shipped
+panel never silently renders "No data" and a shipped alert can always fire.
 
 ### GenAI semantic conventions (pre-stable)
 
