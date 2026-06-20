@@ -889,3 +889,115 @@ describe("ObservabilityStore — getRollingSpendUsd (SPEND-03 boot rehydration)"
     expect(stripped).not.toMatch(/\.all\([^)]*\)\s+as\s+\{/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// COST-03 (Phase 179 Plan 03) — aggregateQuarterHourly: the aggregateHourly SQL
+// with a 900000-ms (15-min) divisor in place of 3600000. The CONSERVATION pin:
+// 4 distinct quarter-hour buckets inside one hour SUM (cost + tokens + callCount
+// + cacheSaved) to that hour's single aggregateHourly bucket. The export rows
+// additionally carry a pricingState/missingPricingCount coverage column (E1) so a
+// finance review sees how trustworthy the number is — content-free (a count + the
+// dominant 3-state enum), never a body/secret/query.
+//
+// RED-first: aggregateQuarterHourly does not exist on the store pre-patch, so the
+// import + call fail to type-check / throw — the conservation + coverage asserts
+// cannot run until the 900000 aggregate + its pricing-coverage columns land.
+// ---------------------------------------------------------------------------
+describe("ObservabilityStore — aggregateQuarterHourly (COST-03, the 900000-ms bucket)", () => {
+  let db: Database.Database;
+  let store: ObservabilityStore;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    initSchema(db, 1536);
+    store = createObservabilityStore(db);
+  });
+
+  const ONE_HOUR_MS = 60 * 60 * 1000;
+  const QUARTER_HOUR_MS = 15 * 60 * 1000;
+
+  it("the 4 quarter-hour buckets SUM to the single hourly total over the same window (conservation)", () => {
+    // Anchor all rows inside ONE clean hour (hourStart is a multiple of 3600000),
+    // one row in each of the four 15-min buckets. The quarter-hour split must
+    // reconstruct the hour exactly.
+    const hourStart = 4 * ONE_HOUR_MS; // a clean hour boundary (= a multiple of 900000 too)
+    store.insertTokenUsage(
+      makeTokenRow({ timestamp: hourStart + 1_000, costTotal: 0.10, totalTokens: 100, cacheSaved: 0.01 }),
+    );
+    store.insertTokenUsage(
+      makeTokenRow({ timestamp: hourStart + QUARTER_HOUR_MS + 2_000, costTotal: 0.20, totalTokens: 200, cacheSaved: 0.02 }),
+    );
+    store.insertTokenUsage(
+      makeTokenRow({ timestamp: hourStart + 2 * QUARTER_HOUR_MS + 3_000, costTotal: 0.30, totalTokens: 300, cacheSaved: 0.03 }),
+    );
+    store.insertTokenUsage(
+      makeTokenRow({ timestamp: hourStart + 3 * QUARTER_HOUR_MS + 4_000, costTotal: 0.40, totalTokens: 400, cacheSaved: 0.04 }),
+    );
+
+    const hourly = store.aggregateHourly(hourStart);
+    const quarter = store.aggregateQuarterHourly(hourStart);
+
+    // One hour bucket; four quarter-hour buckets.
+    expect(hourly).toHaveLength(1);
+    expect(quarter).toHaveLength(4);
+
+    // Every quarter bucket key is a multiple of 900000 and inside the hour.
+    for (const q of quarter) {
+      expect(q.bucket % QUARTER_HOUR_MS).toBe(0);
+      expect(q.bucket).toBeGreaterThanOrEqual(hourStart);
+      expect(q.bucket).toBeLessThan(hourStart + ONE_HOUR_MS);
+    }
+
+    // CONSERVATION: the four quarter buckets reconstruct the hour to the cent.
+    const qCost = quarter.reduce((s, q) => s + q.totalCost, 0);
+    const qTokens = quarter.reduce((s, q) => s + q.totalTokens, 0);
+    const qCalls = quarter.reduce((s, q) => s + q.callCount, 0);
+    const qCacheSaved = quarter.reduce((s, q) => s + q.totalCacheSaved, 0);
+    expect(qCost).toBeCloseTo(hourly[0]!.totalCost, 10);
+    expect(qTokens).toBe(hourly[0]!.totalTokens);
+    expect(qCalls).toBe(hourly[0]!.callCount);
+    expect(qCacheSaved).toBeCloseTo(hourly[0]!.totalCacheSaved, 10);
+    // And the hour itself is the sum of the four planted rows.
+    expect(hourly[0]!.totalCost).toBeCloseTo(1.0, 10);
+  });
+
+  it("carries a pricingState/missingPricingCount coverage column per bucket (content-free trustworthiness)", () => {
+    const hourStart = 8 * ONE_HOUR_MS;
+    // Bucket 0: two priced rows + one unknown-priced row → missingPricingCount 1,
+    // dominant state "priced".
+    store.insertTokenUsage(
+      makeTokenRow({ timestamp: hourStart + 1_000, costTotal: 0.10, pricingState: "priced" }),
+    );
+    store.insertTokenUsage(
+      makeTokenRow({ timestamp: hourStart + 2_000, costTotal: 0.20, pricingState: "priced" }),
+    );
+    store.insertTokenUsage(
+      makeTokenRow({ timestamp: hourStart + 3_000, costTotal: 0.0, pricingState: "unknown" }),
+    );
+    // Bucket 1: a single free row → missingPricingCount 0, dominant "free".
+    store.insertTokenUsage(
+      makeTokenRow({ timestamp: hourStart + QUARTER_HOUR_MS + 1_000, costTotal: 0.0, pricingState: "free" }),
+    );
+
+    const quarter = store.aggregateQuarterHourly(hourStart).sort((a, b) => a.bucket - b.bucket);
+    expect(quarter).toHaveLength(2);
+
+    // Bucket 0: 3 rows, exactly one is "unknown" → the coverage count is 1.
+    expect(quarter[0]!.missingPricingCount).toBe(1);
+    expect(quarter[0]!.pricingState).toBe("priced");
+    // Bucket 1: a single fully-known free row → no missing pricing.
+    expect(quarter[1]!.missingPricingCount).toBe(0);
+    expect(quarter[1]!.pricingState).toBe("free");
+  });
+
+  it("buckets a pre-tool_tag-era NULL pricing_state row as 'unknown' coverage (degrade honestly, never crash)", () => {
+    const hourStart = 12 * ONE_HOUR_MS;
+    // A row with NO pricingState (persists NULL) must count toward missingPricingCount —
+    // a NULL pricing signal is the opposite of trustworthy.
+    store.insertTokenUsage(makeTokenRow({ timestamp: hourStart + 1_000, costTotal: 0.5 }));
+    const quarter = store.aggregateQuarterHourly(hourStart);
+    expect(quarter).toHaveLength(1);
+    expect(quarter[0]!.missingPricingCount).toBe(1);
+    expect(quarter[0]!.totalCost).toBeCloseTo(0.5, 10);
+  });
+});
