@@ -656,7 +656,9 @@ export type { CorrectionVerdict } from "./memory/index.js";
 // its daemon consumer (setup-learning-reactions wiring) so the public-export-consumers
 // gate never sees an orphan. The prompt + triple-bound + the reward cap stay
 // agent-internal (the daemon `observe()`s the seam's already-capped `cappedConfidence`).
-export { createOutcomeJudgeSeam, resolveJudgeModel } from "./memory/index.js";
+export { createOutcomeJudgeSeam } from "./memory/index.js";
+// CustomCompletionsModelSpec is consumed by the daemon's judge resolvers;
+// resolveJudgeModel stays package-internal (the seams import it relatively).
 export type { CustomCompletionsModelSpec } from "./memory/index.js";
 
 // Verified Learning WS2 (P2 Skills, Phase 201 Plan 04). The LLM-backed
