@@ -2861,6 +2861,9 @@ Observability persistence layer. Stores channel health snapshots, execution metr
 | `persistence.enabled` | `boolean` | `true` | Enable observability persistence. |
 | `persistence.retentionDays` | `number` | `30` | Days to retain data before pruning (1-365). |
 | `persistence.snapshotIntervalMs` | `number` | `300000` | Interval in ms between channel health snapshots (min 60000). |
+| `persistence.cacheBreaks` | `boolean` | `true` | Persist detected prompt-cache breaks to `obs_diagnostics` (`category:'cache_break'`) + a `cache.break` trajectory record (rate-by-reason + est-$). |
+| `audit.persist` | `boolean` | `true` | Persist security-decision audit events (secret access, injection detection, command blocks, …) to the durable `obs_audit_events` table + `security-audit.jsonl`. Queryable via `comis security audit-log` / `obs.audit.query`. |
+| `audit.sink` | `"sqlite"` \| `"jsonl"` \| `"both"` | `"both"` | Which sink(s) receive audit records. Rotation of the JSONL rides the shared `logRotation` policy (no per-sink rotation knob). |
 
 ```yaml
 observability:
@@ -2868,6 +2871,10 @@ observability:
     enabled: true
     retentionDays: 30
     snapshotIntervalMs: 300000
+    cacheBreaks: true
+  audit:
+    persist: true
+    sink: both
 ```
 
 </Accordion>

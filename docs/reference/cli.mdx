@@ -1237,6 +1237,7 @@ Security audit and auto-remediation tools. Runs all check categories covering co
 |------------|-------------|
 | `security audit` | Run security audit checks |
 | `security fix` | Auto-remediate security findings (dry-run by default) |
+| `security audit-log` | Query the durable security-decision audit log (`obs_audit_events`) |
 
 #### `security audit`
 
@@ -1254,6 +1255,28 @@ Security audit and auto-remediation tools. Runs all check categories covering co
 | `-c, --config <paths...>` | `string[]` | - | Config file paths |
 | `--format <format>` | `table` \| `json` | `table` | Output format |
 
+#### `security audit-log`
+
+Query the **durable** security-decision audit log — the `obs_audit_events` SQLite
+table populated by the daemon (secret access, injection detection, command blocks,
+canary leaks, sandbox-downgrade refusals, and classified `audit:event` actions).
+Admin-scoped (the operator gateway token carries admin scope); rows are
+**content-free** (ids, closed-enum fields, a scrubbed `refs` blob — never a secret
+value). Reads the same events surfaced by the `obs.audit.query` RPC and the
+`obs_query {action:"audit"}` agent tool.
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--kind <kind>` | `string` | - | Filter by event family (e.g. `secret_access`, `injection_detected`) |
+| `--classification <class>` | `read` \| `mutate` \| `destructive` | - | Filter by risk class |
+| `--agent <id>` | `string` | - | Filter by agent id |
+| `--tenant <tenant>` | `string` | - | Filter by tenant scope (`""` matches system-scoped events) |
+| `--outcome <outcome>` | `success` \| `failure` \| `denied` | - | Filter by outcome |
+| `--since <ms>` | `number` | - | Lower time bound (inclusive epoch ms) |
+| `--until <ms>` | `number` | - | Upper time bound (inclusive epoch ms) |
+| `--limit <n>` | `number` | `200` | Max rows (clamped to 1000) |
+| `--format <format>` | `table` \| `json` | `table` | Output format |
+
 ```bash
 # Run security audit
 comis security audit -c ~/.comis/config.yaml
@@ -1266,6 +1289,12 @@ comis security fix -c ~/.comis/config.yaml
 
 # Apply fixes
 comis security fix --yes -c ~/.comis/config.yaml
+
+# Query the durable audit: a specific agent's secret accesses
+comis security audit-log --kind secret_access --agent customer-support --limit 20
+
+# All denied actions in the last hour, as JSON
+comis security audit-log --outcome denied --since "$(( $(date +%s000) - 3600000 ))" --format json
 ```
 
 ---

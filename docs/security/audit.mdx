@@ -45,7 +45,9 @@ For the complete list of all action classifications (178 actions across 21 categ
 
 ### Example Audit Log Entry
 
-A real (sanitized) audit event from `~/.comis/logs/daemon.log`:
+A real (sanitized) audit event — one scrubbed line from
+`~/.comis/logs/security-audit.jsonl` (the same shape appears as a `.audit()`-level
+line in `~/.comis/logs/daemon.*.log` and as a row in the `obs_audit_events` table):
 
 ```json
 {
@@ -78,7 +80,27 @@ only the *names* of secrets that were accessed and the paths involved. The
 
 ## Viewing Audit Logs
 
-There are three ways to access your audit events, depending on your needs.
+There are four ways to access your audit events, depending on your needs.
+
+### Query the durable audit (CLI / RPC / agent tool)
+
+The audit is a **durable, queryable** store (the `obs_audit_events` SQLite table).
+Query it directly — filter by kind, classification, agent, tenant, outcome, and a
+time window — through any of three admin-gated surfaces backed by the same
+`obs.audit.query` RPC:
+
+```bash
+# CLI — the durable security-decision audit log (admin-scoped)
+comis security audit-log --kind secret_access --agent customer-support --limit 20
+comis security audit-log --outcome denied --format json
+```
+
+The same query is available to an admin agent via the `obs_query` tool
+(`{action:"audit", filters:{kind?, classification?, agentId?, tenant?, outcome?,
+since?, until?, limit?}}`) and over JSON-RPC as `obs.audit.query`. All three
+return **content-free** rows — ids, the closed-enum fields, and a scrubbed `refs`
+blob; never a secret value. This is the best option for "what security-relevant
+actions ran, by whom, and how many" — including after a restart.
 
 ### Web Dashboard
 
@@ -90,14 +112,24 @@ This is the best option for quick investigations or spot-checking agent behavior
 
 ### Structured Log Files
 
-Audit events are written to the standard Comis log output as structured JSON. You can find them in your log files and filter by the audit event marker. Each event is a single JSON line, making it easy to parse with standard tools:
+Audit events are written to the dedicated `~/.comis/logs/security-audit.jsonl`
+file — one scrubbed JSON line per event (`0600`, rotated under
+`observability.logRotation`) — and ALSO appear as `.audit()`-level (35) lines in
+the standard structured log (`~/.comis/logs/daemon.*.log`). Each is a single JSON
+line, easy to parse with standard tools:
 
 ```bash
-# View recent audit events from the log file
-grep '"audit"' ~/.comis/logs/daemon.log | tail -20
+# Tail the dedicated audit trail (the durable, greppable JSONL)
+tail -20 ~/.comis/logs/security-audit.jsonl
+
+# Or filter the audit-level lines out of the structured daemon log
+grep '"level":35' ~/.comis/logs/daemon.*.log | tail -20
 ```
 
-This is useful when you need to search through events on the command line or when the web dashboard is not available.
+This is useful when you need to search through events on the command line or when
+the web dashboard is not available. For a structured, filterable query, prefer
+`comis security audit-log` (above) — it reads the same events from the durable
+`obs_audit_events` table.
 
 ### Log Aggregation
 
@@ -130,17 +162,27 @@ Timers use `unref()` so a pending aggregation does not block daemon shutdown, an
 
 ## Storage and Retention
 
-Audit events live in two places:
+Every audit event is persisted to a **durable, queryable** store and also
+emitted on the in-memory bus for real-time consumers. The two durable sinks that
+survive a daemon restart are the obs_audit_events SQLite table (the queryable
+store of record) and the security-audit.jsonl file (the greppable on-disk trail);
+the daemon log carries the same event as a structured `.audit()`-level line but is
+not the store of record:
 
 | Location | Format | Use case |
 |----------|--------|----------|
-| **Daemon log file** (`~/.comis/logs/daemon.log`) | One JSON line per event (Pino) | Default location; persists across restarts; ingested by log-aggregation tools |
+| **`obs_audit_events` table** (SQLite, in `~/.comis/`) | One row per event (content-free: ids, closed-enum kind/classification/outcome/severity, a scrubbed `refs` blob — never a secret value) | The durable store of record; survives restart; queryable via `obs_query {action:"audit"}`, the `obs.audit.query` RPC, and `comis security audit-log` |
+| **`~/.comis/logs/security-audit.jsonl`** | One scrubbed JSON line per event (`0600`, rotated under `observability.logRotation`) | Greppable on-disk audit trail; survives restart; the 6th observability stream |
+| **`~/.comis/logs/daemon.*.log`** | A `.audit()`-level (35) structured line per event (Pino) | Rides the standard structured log; ingested by log-aggregation tools |
 | **In-memory event bus** | TypedEventBus emission | Real-time consumption by the web dashboard, RPC subscribers, and the audit aggregator |
 
-Comis itself does not impose a retention policy on the log file -- rotation
-and retention are handled by your existing log-management stack (logrotate,
-journald, Datadog, etc.). The aggregator's in-memory state is only the
-current sliding window; once a summary fires, the bucket is freed.
+The `obs_audit_events` rows and the `security-audit.jsonl` lines are the
+authoritative durable record — they persist across restarts independent of any
+external log stack. Comis does not impose a retention policy on the JSONL/log
+files beyond the size-based rotation configured under `observability.logRotation`;
+SQLite-row retention follows `observability.persistence.retentionDays`. The
+aggregator's in-memory state is only the current sliding window; once a summary
+fires, the bucket is freed.
 
 ## Trace Correlation
 
@@ -149,8 +191,8 @@ Every audit event includes a Trace ID that connects it to the full request lifec
 When investigating an incident, start with the audit event that caught your attention, note its Trace ID, and filter your logs for that ID to see the complete picture.
 
 ```bash
-# Find all audit events for a specific trace
-grep 'trace-abc-123' ~/.comis/logs/daemon.log
+# Find all audit events for a specific trace (the durable JSONL audit trail)
+grep 'trace-abc-123' ~/.comis/logs/security-audit.jsonl
 ```
 
 This is especially valuable when debugging approval workflows, where a single user action may trigger classification, confirmation, approval, and execution events across multiple agents.
