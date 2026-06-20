@@ -18,7 +18,8 @@
  * The genuinely new mechanic over the proven `mock-telegram-server.ts` is the
  * §9 "trickiest bit": a TRUE long-poll `getUpdates` (offset/limit/timeout/ack
  * with a blocking waiter and NO dropped or duplicated updates) — NOT the mock's
- * drain-per-poll shortcut.
+ * empty-the-queue-on-every-poll shortcut (the anti-pattern this emulator
+ * deliberately avoids).
  *
  * Method table (every method returns the Telegram envelope `{ ok, result }`):
  *   - getMe         — boot identity; AWAITED by the adapter, blocks boot
