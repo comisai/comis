@@ -264,12 +264,9 @@ export function translatePayload(
       };
 
     case "observability:cache_break": {
-      // PERSIST-01: the closed reason + the tokenDrop/relative counts + a changed-dims
-      // DIGEST (the SHAPE of the change) ONLY. The toolsAdded/Removed/SchemaChanged
-      // arrays carry tool NAMES (MCP-sanitized at emit but still names) and are NEVER
-      // forwarded — reduced to counts; systemCharDelta is a number. No system/query
-      // text crosses the bus (§2.7 / I3 / H1). Mirrors the obs_diagnostics row-builder's
-      // changedDimsDigest shape so the trajectory and the SQLite row agree.
+      // PERSIST-01: closed reason + tokenDrop counts + a changed-dims DIGEST ONLY. The
+      // toolsAdded/Removed/SchemaChanged arrays (tool NAMES) are NEVER forwarded —
+      // reduced to counts (§2.7 / I3 / H1). Mirrors the row-builder's digest shape.
       const toLen = (v: unknown): number => (Array.isArray(v) ? v.length : 0);
       return {
         reason: payload.reason,

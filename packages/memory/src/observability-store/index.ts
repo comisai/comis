@@ -59,8 +59,8 @@ export type { AuditQueryParams, AppendAuditJsonlParams } from "./audit-mutations
 // content-free category:'cache_break' DiagnosticRow with a computed est-$;
 // queryCacheBreakRateByReason is the GROUP BY over the existing obs_diagnostics index.
 export { cacheBreakEventToRow } from "./observability-mutations.js";
-export { queryCacheBreakRateByReason } from "./observability-queries.js";
-export type { CacheBreakReasonRate } from "./observability-queries.js";
+export { queryCacheBreakRateByReason } from "./cache-break-queries.js";
+export type { CacheBreakReasonRate } from "./cache-break-queries.js";
 
 /**
  * Create an ObservabilityStore bound to the given database.

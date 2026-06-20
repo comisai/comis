@@ -11,7 +11,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import Database from "better-sqlite3";
 import { initSchema } from "../schema.js";
 import { createObservabilityStore } from "./index.js";
-import { queryCacheBreakRateByReason } from "./observability-queries.js";
+import { queryCacheBreakRateByReason } from "./cache-break-queries.js";
 import type { ObservabilityStore } from "./observability-store-types.js";
 
 function insertCacheBreak(

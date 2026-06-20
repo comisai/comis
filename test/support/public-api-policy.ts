@@ -2768,6 +2768,18 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // non-test value consumer of each lands.
       "reduceFleetWindow",
       "FleetWindowRollup",
+      // Cache-break rate-by-reason analytics query (PERSIST-01, Phase 176 Plan 04).
+      // queryCacheBreakRateByReason is the GROUP BY json_extract(details,'$.reason')
+      // over obs_diagnostics category:'cache_break'; CacheBreakReasonRate is its
+      // output row type. Barrel-exported from packages/memory/src/index.ts so a fleet/
+      // explain surface (a later plan — this plan only PERSISTS the rows + ships the
+      // queryable shape) can import it; the only current consumer is the daemon
+      // wiring TEST (the walker excludes *.test.ts), so both surface as orphans now.
+      // Same rationale + precedent as reduceFleetWindow/FleetWindowRollup above.
+      // (cacheBreakEventToRow is NOT listed — the daemon's cache_break subscriber is
+      // its real production consumer.) Remove when the fleet/explain consumer lands.
+      "queryCacheBreakRateByReason",
+      "CacheBreakReasonRate",
       // Video job store (v2.24 Phase 189, JOB-01). SHRUNK at Plan 02 (the async
       // poller wave): `createVideoJobStore` (constructed in main-helpers
       // buildVideoGenBundle), `VideoJobStore` + `VideoJobRecord` (the poller +
