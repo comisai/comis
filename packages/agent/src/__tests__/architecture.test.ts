@@ -745,7 +745,11 @@ describe("@comis/agent -- architecture invariants", () => {
    * OWN per-instance live ref; it is NOT a helper extracted from
    * createPiExecutor's closure and reads no PiExecutorState, so the
    * `state`-first contract does not apply — same posture as the co-equal
-   * top-level functions above).
+   * top-level functions above); trajectory-confinement.ts (a PURE
+   * path-resolution helper — `resolveTrajectoryConfinedBase(configDir,
+   * dataDir)` derives the confined trajectory base from config, reads no
+   * PiExecutorState and closure-captures nothing, so it is already
+   * independently testable; same non-state posture as execution-plan-holder).
    *
    * If the pi-executor/ directory does not exist yet, the assertion is
    * vacuously satisfied.
@@ -767,7 +771,8 @@ describe("@comis/agent -- architecture invariants", () => {
         f !== "before-tool-call-guard.ts" &&
         f !== "session-stats.ts" &&
         f !== "types.ts" &&
-        f !== "execution-plan-holder.ts",
+        f !== "execution-plan-holder.ts" &&
+        f !== "trajectory-confinement.ts",
     );
     const violations: Array<{ file: string; export: string; reason: string }> =
       [];
@@ -807,7 +812,7 @@ describe("@comis/agent -- architecture invariants", () => {
       violations,
       formatViolations({
         description:
-          "Every exported function in packages/agent/src/executor/pi-executor/ (excluding index.ts, pi-executor.ts, before-tool-call-guard.ts, session-stats.ts, types.ts) must accept its state via an explicit first parameter named `state`. Closure capture silently breaks under code motion — the explicit-state contract makes every helper independently testable and immune to drift.",
+          "Every exported function in packages/agent/src/executor/pi-executor/ (excluding index.ts, pi-executor.ts, before-tool-call-guard.ts, session-stats.ts, types.ts, execution-plan-holder.ts, trajectory-confinement.ts) must accept its state via an explicit first parameter named `state`. Closure capture silently breaks under code motion — the explicit-state contract makes every helper independently testable and immune to drift.",
         violations: violations.map((v) => ({
           file: `executor/pi-executor/${v.file}`,
           line: 0,

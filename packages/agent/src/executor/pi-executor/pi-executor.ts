@@ -123,6 +123,7 @@ import { randomUUID } from "node:crypto";
 // Closure-extracted helpers (state-first)
 import { installCompactionTrigger } from "./compaction-trigger.js";
 import { createDeltaResetComposer } from "./delta-reset.js";
+import { resolveTrajectoryConfinedBase } from "./trajectory-confinement.js";
 import { bootstrapSession, decodeExecutionOverrides, type MutableRef, type EffectiveTimeout } from "./session-bootstrap.js";
 import { runSafetyGates } from "./safety-gate.js";
 import { maybeRunBootstrapSweep } from "./maybe-run-bootstrap-sweep.js";
@@ -687,18 +688,18 @@ async function runSessionLocked(
   let cacheTrace: CacheTrace | null = null;
   let unsubscribeCacheTrace: (() => void) | undefined;
   try {
-    // When the operator has NOT overridden the trajectory dir (the default
-    // ~/.comis/ path applies), confine writes to ~/.comis/ so an
-    // ancestor-symlink escape is rejected at open().
-    // When the operator explicitly sets `diagnostics.trajectory.dir` to
-    // a non-~/.comis path (e.g., /var/log/comis/traj/), they own the
-    // legitimacy of that location — the confinement is skipped so we
-    // don't reject the operator's own write path. The option is opt-in
-    // by design.
-    const trajectoryConfinedBase =
-      deps.trajectoryConfig?.dir === undefined
-        ? safePath(os.homedir(), ".comis")
-        : undefined;
+    // Confine trajectory writes to the operator's resolved data root (so an
+    // ancestor-symlink escape is rejected at open()) UNLESS they explicitly set
+    // `diagnostics.trajectory.dir` — then they own that path and confinement is
+    // skipped. The base is `deps.dataDir` (config.dataDir / COMIS_DATA_DIR), NOT
+    // a hardcoded ~/.comis: a custom-dataDir install keeps its session files —
+    // and their co-located trajectory files — under that root, so a ~/.comis
+    // base would silently reject every write while the pointer still advertises
+    // the file (the 260611 session-index bug class). See resolveTrajectoryConfinedBase.
+    const trajectoryConfinedBase = resolveTrajectoryConfinedBase(
+      deps.trajectoryConfig?.dir,
+      deps.dataDir,
+    );
     // Recorder lifecycle:
     //   - `deps.trajectoryRegistry` present → session-scoped: registry
     //     owns the recorder + bridge subscription for the session's

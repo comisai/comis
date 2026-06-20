@@ -32,7 +32,8 @@
 
 import { wrapExternalContent } from "@comis/core";
 import type { MemoryConsolidationConfig, MemoryEntry, ClockPort } from "@comis/core";
-import { completeSimple, getModel } from "@earendil-works/pi-ai";
+import { completeSimple } from "@earendil-works/pi-ai";
+import { resolveJudgeModel, type CustomCompletionsModelSpec } from "./judge-model-resolver.js";
 import { systemSetTimeout, systemClearTimeout } from "@comis/core";
 import {
   CONSOLIDATION_PROMPT,
@@ -69,6 +70,10 @@ export interface LlmClusterDeps {
   provider: string;
   modelId: string;
   apiKey: string;
+  /** Custom-provider model spec (resolved `/v1` baseUrl) so a keyless/local YAML provider the
+   *  pi-ai catalog can't see still resolves a model — else consolidation skipped on keyless
+   *  (#223/DIALECTIC-FIX). Optional; structurally threaded from MemoryConsolidationDeps. */
+  customModel?: CustomCompletionsModelSpec;
   clock: ClockPort;
   logger: {
     debug(obj: Record<string, unknown>, msg: string): void;
@@ -148,8 +153,8 @@ async function runClusterCompletion(
 
   let model;
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- provider/modelId are dynamic strings
-    model = getModel(deps.provider as any, deps.modelId as any);
+    // Catalog-first, else construct from customModel (keyless/local) — #223/DIALECTIC-FIX.
+    model = resolveJudgeModel(deps.provider, deps.modelId, deps.customModel);
   } catch (modelErr) {
     logger.warn(
       {

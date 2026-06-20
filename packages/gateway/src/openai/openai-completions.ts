@@ -39,7 +39,7 @@ export interface OpenaiCompletionsDeps {
     message: string;
     systemPrompt?: string;
     sessionKey?: { userId: string; channelId: string; peerId: string };
-    onDelta?: (delta: string) => void;
+    onDelta?: (delta: string, kind?: "text" | "thinking") => void;
   }) => Promise<{
     response: string;
     tokensUsed: { input: number; output: number; total: number };
@@ -189,8 +189,13 @@ async function handleStreamingCompletion(params: {
   };
   await stream.writeSSE({ data: JSON.stringify(roleChunk) });
 
-  // Execute agent with onDelta callback for content streaming
-  const onDelta = (delta: string): void => {
+  // Execute agent with onDelta callback for content streaming. The executor threads a
+  // delta KIND (text vs thinking); SKIP "thinking" deltas so the OpenAI-compat stream
+  // never leaks the model's raw reasoning into delta.content — matching the non-stream
+  // path (which strips thinking) so streamed content == final content (reasoning-leak,
+  // live 2026-06-20). An absent kind (legacy callers) is treated as visible text.
+  const onDelta = (delta: string, kind?: "text" | "thinking"): void => {
+    if (kind === "thinking") return;
     const contentChunk: ChatCompletionChunk = {
       id: completionId,
       object: "chat.completion.chunk",

@@ -71,7 +71,6 @@ import {
   // createConsoleLogger is the Pino-free logger for CLI use.
   // CLI does not import from @comis/infra.
   createConsoleLogger,
-  type OAuthError,
 } from "@comis/core";
 // auth.list / auth.logout / auth.set RPC calls go through
 // `callTyped(client, <Contract>, params)` so the typed RPC surface
@@ -79,14 +78,20 @@ import {
 // see `packages/core/src/api-contracts/auth.ts`.
 import { AuthListContract, AuthLogoutContract, AuthSetContract } from "@comis/core";
 import { error, info, success } from "../output/format.js";
-import { renderTable } from "../output/table.js";
 import { formatRelativeExpiry } from "../output/relative-time.js";
 import { createClackAdapter } from "../wizard/clack-adapter.js";
 import { callTyped, withClient } from "../client/rpc-client.js";
 import { requireDaemonOrExit } from "../util/daemon-required.js";
+// OAuth-error + profile-display helpers (#217 split — keeps auth.ts ≤800 lines).
+import {
+  exitOnOAuthError,
+  isOAuthError,
+  profileStatus,
+  renderAuthProfileTable,
+  type DisplayProfile,
+} from "./auth-helpers.js";
 
 const PROVIDER_OPENAI_CODEX = "openai-codex" as const;
-const ACTIVE_THRESHOLD_MS = 5 * 60_000; // 5 minutes — match status logic
 
 // ---------------------------------------------------------------------------
 // CLI config-path resolution.
@@ -136,75 +141,11 @@ export function resolveCliConfigPath(
   return candidates.find(existsFn) ?? DEFAULT_CONFIG_PATHS[0]!;
 }
 
-// ---------------------------------------------------------------------------
-// OAuthError discrimination helpers.
-//
-// `exitOnOAuthError` translates a structured OAuthError into stderr output +
-// exit code 1; `isOAuthError` is a defensive type guard so the catch blocks
-// can route OAuthError values through the structured handler while letting
-// generic JS errors fall through to the existing `Failed to ${verb}: ${msg}`
-// pattern.
-//
-// Per CLAUDE.md "Logging" — CLI uses `format.ts` (stderr/stdout) NOT Pino;
-// this is the documented exception. The literal "Re-authenticate with: comis
-// auth login --provider <providerId>" line is the acceptance literal the
-// integration test grep-asserts (test/integration/oauth-refresh-token-reused.test.ts).
-// ---------------------------------------------------------------------------
-
-/**
- * Translate a structured OAuthError into stderr output + exit code 1.
- *
- * When `errorKind === "refresh_token_reused"`, the CLI prints the canonical
- * re-login command with exit code 1. Other errorKinds (invalid_grant, etc.)
- * get tailored messages; unknown OAuthErrors fall through to the generic
- * shape.
- *
- * Returns `never` — always exits the process.
- */
-function exitOnOAuthError(err: OAuthError): never {
-  if (err.errorKind === "refresh_token_reused") {
-    error(
-      "Refresh token was reused. The OpenAI account has been auto-locked for security.",
-    );
-    info(`Re-authenticate with: comis auth login --provider ${err.providerId}`);
-    process.exit(1);
-  }
-  if (err.errorKind === "invalid_grant") {
-    const profileSlug = err.profileId ?? "unknown";
-    error(
-      `Refresh token was rejected by OpenAI (invalid_grant) for profile "${profileSlug}".`,
-    );
-    info(`Re-authenticate with: comis auth login --provider ${err.providerId}`);
-    process.exit(1);
-  }
-  error(`OAuthError (${err.code}): ${err.message}`);
-  if (err.hint) info(err.hint);
-  process.exit(1);
-}
-
-/**
- * Type guard: detect an OAuthError shape on a caught unknown value.
- * Distinguishes the structured error from generic JS errors so the CLI can
- * route through `exitOnOAuthError` (above). Match against the 5 known
- * `OAuthError.code` values to avoid false positives on third-party errors
- * that happen to carry `code`/`providerId`/`message` keys.
- */
-function isOAuthError(value: unknown): value is OAuthError {
-  if (!value || typeof value !== "object") return false;
-  const v = value as Record<string, unknown>;
-  return (
-    typeof v.code === "string" &&
-    typeof v.message === "string" &&
-    typeof v.providerId === "string" &&
-    [
-      "NO_PROVIDER",
-      "NO_CREDENTIALS",
-      "REFRESH_FAILED",
-      "STORE_FAILED",
-      "PROFILE_NOT_FOUND",
-    ].includes(v.code)
-  );
-}
+// OAuthError discrimination helpers (exitOnOAuthError / isOAuthError), the
+// profile-status + table-render helpers, and ACTIVE_THRESHOLD_MS live in
+// `./auth-helpers.js` (#217 split — keeps this file under the ≤800-line cap;
+// behavior byte-identical). The re-login acceptance literal asserted by
+// test/integration/oauth-refresh-token-reused.test.ts now lives there.
 
 // Module-scoped logger. The CLI process runs short-lived commands; one
 // logger instance is shared across all 4 subcommands. Per CLAUDE.md, every
@@ -234,7 +175,6 @@ const logger = createConsoleLogger("info", { name: "auth-cli" });
  * future config-fetch-via-RPC path without breaking call sites.
  */
 export async function loadStorageMode(): Promise<CredentialStorageMode> {
-  // eslint-disable-next-line no-restricted-syntax -- CLI bootstrap before SecretManager
   const configPath = resolveCliConfigPath(process.env);
 
   // Genuinely-missing config → default to FILE (plaintext) storage, the
@@ -277,7 +217,6 @@ function openOAuthStoreFromConfig(): OAuthCredentialStorePort {
   // selectOAuthCredentialStore can stay scheduler-free. Single instance per
   // CLI invocation — short-lived and stateless.
   const fileLock = createFileLock();
-  // eslint-disable-next-line no-restricted-syntax -- CLI bootstrap before SecretManager
   const configPath = resolveCliConfigPath(process.env);
 
   // Load .env before validating — resolves ${VAR} refs (same as loadStorageMode).
@@ -321,52 +260,8 @@ function openOAuthStoreFromConfig(): OAuthCredentialStorePort {
   return selectOAuthCredentialStore({ storage: "file", dataDir, fileLock });
 }
 
-// ---------------------------------------------------------------------------
-// Internal: build a status string from an absolute expiry timestamp.
-// ---------------------------------------------------------------------------
-
-function profileStatus(expiresAtMs: number): "active" | "expired" {
-  return expiresAtMs - Date.now() > ACTIVE_THRESHOLD_MS ? "active" : "expired";
-}
-
-// ---------------------------------------------------------------------------
-// Internal: render the 5-column profile table used by `auth list` in both
-// file and encrypted modes. Profiles are typed as the token-free shape
-// returned by daemon RPC `auth.list` -- the file branch's OAuthProfile[] is
-// assignable structurally (it has all the same fields plus extras).
-// ---------------------------------------------------------------------------
-
-interface DisplayProfile {
-  provider: string;
-  profileId: string;
-  expires: number;
-  email?: string;
-  displayName?: string;
-}
-
-function renderAuthProfileTable(
-  profiles: DisplayProfile[],
-  providerFilter?: string,
-): void {
-  if (profiles.length === 0) {
-    if (providerFilter) {
-      info(`No OAuth profiles stored for provider "${providerFilter}".`);
-    } else {
-      info("No OAuth profiles stored.");
-    }
-    return;
-  }
-  renderTable(
-    ["Provider", "ProfileId", "Identity", "ExpiresIn", "Status"],
-    profiles.map((p) => [
-      p.provider,
-      p.profileId,
-      p.email ?? p.profileId.split(":")[1] ?? "—",
-      formatRelativeExpiry(p.expires),
-      profileStatus(p.expires),
-    ]),
-  );
-}
+// profileStatus + renderAuthProfileTable + DisplayProfile moved to
+// `./auth-helpers.js` (#217 split). Imported above.
 
 // ---------------------------------------------------------------------------
 // Public boundary

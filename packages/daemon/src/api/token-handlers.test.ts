@@ -36,6 +36,13 @@ function makeDeps(overrides?: Partial<TokenHandlerDeps>): TokenHandlerDeps {
       upsert: vi.fn(),
       remove: vi.fn(() => true),
     },
+    logger: {
+      info: vi.fn(),
+      warn: vi.fn(),
+      debug: vi.fn(),
+      error: vi.fn(),
+      child: vi.fn().mockReturnThis(),
+    },
     ...overrides,
   } as unknown as TokenHandlerDeps;
 }
@@ -646,6 +653,82 @@ describe("createTokenHandlers - token management", () => {
       const created = tokensArray.find((t) => t.id === "new-tok");
       expect(created).toBeDefined();
       expect(created).not.toHaveProperty("secret");
+    });
+
+    it("tokens.create PRESERVES an existing INLINE PLAINTEXT secret verbatim in the persisted config (admin-lockout regression)", async () => {
+      // Live 30-UC finding (2026-06-20): the operator's `default` admin token
+      // carried an INLINE PLAINTEXT secret in config.yaml (the install-wizard /
+      // quickstart shape) — NOT a ${VAR} ref, and NEVER minted via the RPC, so
+      // there is no GATEWAY_TOKEN_DEFAULT in the store to fall back on. The
+      // ref-only preservation DROPPED it → severed the admin token on the next
+      // reload (the 2× lockout). An EXISTING on-disk secret is load-bearing
+      // whether it's a ref OR inline plaintext: re-emit it verbatim. (Migrating
+      // it to the store can't work in `security.storage: file` mode — boot
+      // reads the file store, deps.secretStore is the encrypted one — so the
+      // migrated `default` would be unresolvable → lockout. Keeping it inline
+      // is mode-agnostic; persistToConfig's guard exempts an unchanged on-disk
+      // value, so the write still succeeds.) Only NEW minted secrets stay out.
+      const inlineSecret = "inline-admin-secret-48-chars-bbbbbbbbbbbbbbbbbbbb";
+      const persistDeps = makePersistDeps();
+      (persistDeps.container.config.gateway as { tokens: unknown }).tokens = [
+        { id: "default", secret: inlineSecret, scopes: ["*"] },
+      ];
+      mockReadOnDiskConfig.mockReturnValue({
+        gateway: { tokens: [{ id: "default", secret: inlineSecret, scopes: ["*"] }] },
+      });
+      const deps = makeDeps({
+        persistDeps,
+        tokenRegistry: createTokenRegistry([{ id: "default", scopes: ["*"] }]),
+      });
+      const handlers = createTokenHandlers(deps);
+
+      await handlers["tokens.create"]!({ id: "new-tok", scopes: ["ws"], _trustLevel: "admin" });
+
+      const [, callOpts] = mockPersistToConfig.mock.calls[0]!;
+      const tokensArray = (callOpts.patch as { gateway: { tokens: Array<{ id: string; secret?: string }> } }).gateway.tokens;
+      // The admin token's inline secret MUST survive the rewrite verbatim.
+      const existing = tokensArray.find((t) => t.id === "default");
+      expect(existing?.secret).toBe(inlineSecret);
+      // The newly minted token still persists secret-free (store-resolved).
+      const created = tokensArray.find((t) => t.id === "new-tok");
+      expect(created).toBeDefined();
+      expect(created).not.toHaveProperty("secret");
+    });
+
+    it("tokens.rotate PRESERVES a bystander's INLINE PLAINTEXT secret verbatim (the live 2× lockout path)", async () => {
+      // Live 30-UC finding (2026-06-20): rotating a SECONDARY token rewrote the
+      // whole gateway.tokens list and stripped the `default` admin entry's
+      // inline plaintext secret — 401 on the next restart. Rotating one token
+      // must never sever a bystander.
+      const inlineSecret = "inline-admin-secret-48-chars-cccccccccccccccccccc";
+      const persistDeps = makePersistDeps();
+      (persistDeps.container.config.gateway as { tokens: unknown }).tokens = [
+        { id: "default", secret: inlineSecret, scopes: ["*"] },
+        { id: "spin-tok", scopes: ["ws"] },
+      ];
+      mockReadOnDiskConfig.mockReturnValue({
+        gateway: {
+          tokens: [
+            { id: "default", secret: inlineSecret, scopes: ["*"] },
+            { id: "spin-tok", scopes: ["ws"] },
+          ],
+        },
+      });
+      const deps = makeDeps({
+        persistDeps,
+        tokenRegistry: createTokenRegistry([
+          { id: "default", scopes: ["*"] },
+          { id: "spin-tok", scopes: ["ws"] },
+        ]),
+      });
+      const handlers = createTokenHandlers(deps);
+
+      await handlers["tokens.rotate"]!({ id: "spin-tok", _trustLevel: "admin" });
+
+      const [, callOpts] = mockPersistToConfig.mock.calls[0]!;
+      const tokensArray = (callOpts.patch as { gateway: { tokens: Array<{ id: string; secret?: string }> } }).gateway.tokens;
+      const existing = tokensArray.find((t) => t.id === "default");
+      expect(existing?.secret).toBe(inlineSecret);
     });
 
     it("tokens.create stores the minted secret under GATEWAY_TOKEN_<ID> so the token survives restart", async () => {

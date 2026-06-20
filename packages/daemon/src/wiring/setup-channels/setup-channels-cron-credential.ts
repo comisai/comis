@@ -29,6 +29,23 @@
 
 import type { AppContainer } from "@comis/core";
 import { KEYLESS_PROVIDER_TYPES, KEYLESS_API_KEY_SENTINEL } from "@comis/core";
+import type { CustomCompletionsModelSpec } from "@comis/agent";
+import { buildCustomJudgeModelSpec, type JudgeProviderEntry } from "../setup-learning-judge.js";
+
+/**
+ * Spread-ready `{customModel?}` for a keyless/local cron/memory-ops seam — resolves the
+ * provider's `/v1` baseUrl spec so a YAML provider (ollama/lm-studio/…) the pi-ai catalog
+ * can't see still resolves a Model. Without it the memory-ops seams resolved "model not
+ * found" and SKIPPED on every keyless run (the #223 / DIALECTIC-FIX bug class, live 2026-06-20).
+ */
+export function cronCustomModelOpt(
+  providerEntry: JudgeProviderEntry | undefined,
+  provider: string,
+  modelId: string,
+): { customModel?: CustomCompletionsModelSpec } {
+  const cm = buildCustomJudgeModelSpec(providerEntry, provider, modelId);
+  return cm !== undefined ? { customModel: cm } : {};
+}
 
 /** Resolves a per-agent OAuth access token for a provider (auto-refreshing). */
 export type CronOAuthTokenResolver = (
