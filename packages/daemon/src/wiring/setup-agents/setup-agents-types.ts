@@ -89,6 +89,11 @@ export interface SingleAgentDeps {
    *  ONE daemon instance partitions by tenantId (aggregate per-tenant spend across
    *  sessions/agents); absent ⇒ the raw seam. */
   summarizerSpendBreaker?: import("@comis/agent").SummarizerSpendBreaker;
+  /** Phase 177: the single daemon-wide spend accumulator (the dollars
+   *  kill-switch). ONE instance (constructed in setupObservability); threaded
+   *  into each per-agent createPiExecutor so every bridge holds the SAME
+   *  reference (Pitfall 4). Absent ⇒ the bridge's spend path is a no-op. */
+  spendAccumulator?: import("@comis/agent").SpendAccumulator;
   /** Temporal-spread store. Threaded into each per-agent createPiExecutor
    *  (the executor recall read path -> createMemoryRecall). Built in setup-memory on the shared
    *  db handle; the segregated port TYPE (agent↛memory cut). Dormant until an operator enables

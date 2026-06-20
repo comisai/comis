@@ -41,10 +41,19 @@ export type { OverflowRecoveryConfig, OverflowRecoveryResult } from "./executor/
 export { createOverflowRecovery, createOverflowRecoveryWrapper } from "./executor/overflow-recovery.js";
 
 // Budget
-export { createBudgetGuard, BudgetError } from "./budget/budget-guard.js";
-export type { BudgetGuard, BudgetSnapshot } from "./budget/budget-guard.js";
+export { createBudgetGuard, BudgetError, checkSpendCeiling } from "./budget/budget-guard.js";
+export type { BudgetGuard, BudgetSnapshot, SpendGateOutcome, SpendGateConfig } from "./budget/budget-guard.js";
 export { createCostTracker } from "./budget/cost-tracker.js";
 export type { CostTracker, CostRecord, UsageInput } from "./budget/cost-tracker.js";
+// Spend kill-switch (Phase 177): the daemon-wide accumulator the wiring
+// constructs + the bridge holds a reference to.
+export { createSpendAccumulator, SpendError } from "./budget/spend-accumulator.js";
+export type {
+  SpendAccumulator,
+  SpendScope,
+  SpendReservation,
+  SpendCeilings,
+} from "./budget/spend-accumulator.js";
 export { createTurnBudgetTracker } from "./budget/turn-budget-tracker.js";
 export type { TurnBudgetTracker, TurnBudgetDecision, TurnBudgetStopReason } from "./budget/turn-budget-tracker.js";
 

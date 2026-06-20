@@ -68,7 +68,7 @@ export interface PiExecutorDeps {
   lastKnownModel?: import("../../model/last-known-model.js").LastKnownModelTracker;
   budgetGuard: BudgetGuard;
   costTracker: CostTracker;
-  stepCounter: StepCounter;
+  stepCounter: StepCounter; spendAccumulator?: import("../../budget/spend-accumulator.js").SpendAccumulator; spendConfig?: import("@comis/core").SpendConfig; // Phase 177 kill-switch: daemon-wide accumulator REFERENCE (per-turn bridge) + config; absent ⇒ no-op.
   eventBus: TypedEventBus;
   logger: ComisLogger;
   /**

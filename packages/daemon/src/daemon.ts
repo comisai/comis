@@ -118,6 +118,7 @@ import { createGatewayServer } from "@comis/gateway";
 import {
   setupLogging,
   setupObservability,
+  rehydrateSpendFromStore,
   setupHealth,
   setupMemory,
   setupAgents,
@@ -1453,6 +1454,11 @@ async function bootFoundation(
     // are read here at the sanctioned composition root (no env reads in the
     // substrate; injected logger).
     activityStream, disposeActivityStream,
+    // Phase 177: the single daemon-wide spend accumulator (the dollars
+    // kill-switch enforcement state). CONSTRUCTED inside setupObservability with
+    // the live recordSpend subscriber; REHYDRATED below at the boot root once
+    // obsStore exists; threaded into the per-agent bridge guards (same reference).
+    spendAccumulator,
   } = setupObservability({
     eventBus: container.eventBus,
     _createTokenTracker,
@@ -1460,6 +1466,10 @@ async function bootFoundation(
     activityLogger: logLevelManager.getLogger("activity-stream"),
     homeDir: mergedEnv["HOME"],
     dataDir,
+    // Phase 177: thread the boot ClockPort + config so the daemon-wide spend
+    // accumulator is constructed here (ceilings from config.observability.spend).
+    clock,
+    config: container.config,
     // runtime reachability: resolve the DEFAULT agent's activity.theme →
     // themeForName bundle and forward it so the process-wide ActivityStream's
     // subagent marker follows the configured theme (the four themes are now
@@ -1544,6 +1554,17 @@ async function bootFoundation(
     : undefined;
   const obsStore = obsBundle?.obsStore; // trajectory recorder is per-session (pi-executor.ts).
   const obsPersistence = obsBundle?.obsPersistence;
+
+  // Phase 177: REHYDRATE the daemon-wide spend accumulator from the persisted
+  // rolling dollars — at the boot composition root, AFTER obsStore exists (it
+  // owns getRollingSpendUsd, unreachable inside setupObservability). NO-OPS when
+  // obsStore is undefined (persistence disabled → no durable source → the
+  // accumulator starts at $0 and re-accrues live, a documented honest
+  // degradation, NOT a bug). 24h rolling window — matches the auto-prune horizon.
+  if (spendAccumulator) {
+    const SPEND_REHYDRATE_WINDOW_MS = 24 * 60 * 60 * 1000;
+    rehydrateSpendFromStore(spendAccumulator, obsStore, SPEND_REHYDRATE_WINDOW_MS);
+  }
 
   // OUTCOME-07: prune the append-only outcome_events ledger at EVERY boot,
   // UNCONDITIONALLY — deliberately OUTSIDE the obsConfig.persistence.enabled IIFE
@@ -1668,6 +1689,7 @@ async function bootFoundation(
     tokenTracker, sharedCostTracker,
     diagnosticCollector, billingEstimator, channelActivityTracker, deliveryTracer,
     activityStream, disposeActivityStream,
+    spendAccumulator, // Phase 177: daemon-wide spend accumulator → bootAgents → setupAgents → createPiExecutor → the bridge reference
     contextPipelineCollector,
     processMonitor,
     disposeEmbedding, cachedPort, memoryAdapter, db, sessionStore, memoryApi,
@@ -1733,6 +1755,7 @@ async function bootAgents(
     lcdStore, // Phase 128 LCD store; threaded into setupAgents -> createPiExecutor (contextStore) -> setupContextEngine -> the `dag` branch (context-engine.ts). Opt-in (version: "dag"); default pipeline. The agent receives the core ContextStorePort TYPE only (agent↛memory cut)
     provenanceStore, // Phase 173 DIST-03 read side; threaded into setupAgents -> createPiExecutor -> prompt-assembly -> createMemoryRecall's post-fusion provenance down-weighting pass (was BUILT but never injected in Phase 172). The agent receives the core LcdProvenanceReadStore TYPE only (agent↛memory cut)
     summarizerSpendBreaker, // R1 (132-05); daemon-owned per-tenant breaker; threaded into setupAgents -> createPiExecutor -> setupContextEngine so getSummarizerDeps gates the leaf seam per tenant (truncation-only degrade on open-breaker/over-cap)
+    spendAccumulator, // Phase 177; the single daemon-wide dollars kill-switch accumulator; threaded into setupAgents -> createPiExecutor -> the per-turn bridge (same reference)
     temporalStore, // threaded into setupAgents -> createPiExecutor -> createMemoryRecall (the recall temporal-spread read path); dormant until rag.lanes.temporal.enabled
     causalStore, // threaded into setupAgents -> createPiExecutor -> createMemoryRecall (the 5th causal read lane, dormant until rag.lanes.causal.enabled) AND the cron review -> runMemoryReview -> linkCausal (the write path) — one segregated port, both halves
     tripleStore, // threaded into setupAgents -> createPiExecutor -> createMemoryRecall (the 6th graph-spread read lane, dormant until rag.lanes.graphSpread.enabled); the agent receives the port TYPE only (the agent↛memory cut)
@@ -1881,7 +1904,7 @@ async function bootAgents(
     // from the SAME object SEP publishes into (Pitfall 1).
     executionPlanPorts, oauthManagers, // oauthManagers (184): DEFAULT agent's → buildImageGenBundle (CDX-01)
   } = await setupAgents({
-    container, memoryAdapter, sessionStore, agentLogger, rerankerPort, rerankerModelPresent, entityStore, lcdStore, provenanceStore, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, pinnedStore: memoryAdapter, userRepresentationStore, relationshipStore, tunedAlphaStore, learnedSkillStore, learnedSkillSurfaceRegistry, summarizerSpendBreaker, outboundMediaEnabled: true,
+    container, memoryAdapter, sessionStore, agentLogger, rerankerPort, rerankerModelPresent, entityStore, lcdStore, provenanceStore, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, pinnedStore: memoryAdapter, userRepresentationStore, relationshipStore, tunedAlphaStore, learnedSkillStore, learnedSkillSurfaceRegistry, summarizerSpendBreaker, spendAccumulator, outboundMediaEnabled: true,
     autonomousMediaEnabled: !container.config.integrations.media.transcription.autoTranscribe
       || !container.config.integrations.media.vision.enabled
       || !container.config.integrations.media.documentExtraction.enabled,

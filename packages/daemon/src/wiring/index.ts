@@ -10,7 +10,7 @@ export {
   mimeToExtension,
 } from "./daemon-utils.js";
 export { setupLogging, type LoggingResult } from "./setup-logging.js";
-export { setupObservability, type ObservabilityResult } from "./setup-observability.js";
+export { setupObservability, rehydrateSpendFromStore, type ObservabilityResult } from "./setup-observability.js";
 export { setupHealth, type HealthResult, setupMonitoring, type MonitoringResult } from "./setup-health.js";
 export { setupMemory, type MemoryResult } from "./setup-memory.js";
 export { setupMedia, createImageGenGetter, type MediaResult } from "./setup-media.js";

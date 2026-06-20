@@ -370,7 +370,7 @@ export interface BootContext {
   // The canonical ActivityStream (orchestrator-facing ActivityStreamPort)
   // + its drain hook, threaded from bootFoundation to bootShutdown.
   activityStream: ReturnType<typeof setupObservability>["activityStream"];
-  disposeActivityStream: ReturnType<typeof setupObservability>["disposeActivityStream"];
+  disposeActivityStream: ReturnType<typeof setupObservability>["disposeActivityStream"]; spendAccumulator: ReturnType<typeof setupObservability>["spendAccumulator"]; // spendAccumulator = Phase 177 dollars kill-switch (one daemon-wide ref → bootAgents → setupAgents → createPiExecutor → bridge).
   contextPipelineCollector: ReturnType<typeof createContextPipelineCollector>;
   // Process (1 field)
   processMonitor: ReturnType<typeof setupHealth>["processMonitor"];

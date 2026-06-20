@@ -8,10 +8,11 @@
  * @module
  */
 
-import type { AppContainer, ActivityTheme } from "@comis/core";
-import { systemSetInterval, getToolMetadata } from "@comis/core";
+import type { AppContainer, ActivityTheme, ClockPort, AppConfig } from "@comis/core";
+import { systemSetInterval, getToolMetadata, parseFormattedSessionKey } from "@comis/core";
 import { createActivityStream, type ActivityStream } from "@comis/observability";
-import { createCostTracker, createCacheBreakDiffWriter } from "@comis/agent";
+import { createCostTracker, createCacheBreakDiffWriter, createSpendAccumulator } from "@comis/agent";
+import type { SpendAccumulator, SpendScope } from "@comis/agent";
 import type { createTokenTracker } from "../observability/token-tracker.js";
 import type { TokenTracker } from "../observability/token-tracker.js";
 import { createDiagnosticCollector } from "../observability/diagnostic-collector.js";
@@ -51,6 +52,17 @@ export interface ObservabilityResult {
    * is orphaned across a restart.
    */
   disposeActivityStream: () => void;
+  /**
+   * The single daemon-wide spend accumulator (Phase 177 — the dollars
+   * kill-switch enforcement state). CONSTRUCTED here beside the cross-agent
+   * cost-tracker subscriber, with the live `recordSpend` subscriber registered
+   * on `observability:token_usage`. The per-agent bridge guards hold a REFERENCE
+   * to this SAME instance (Pitfall 4). REHYDRATION happens at the boot
+   * composition root (daemon.ts) via {@link rehydrateSpendFromStore} once
+   * `obsStore` exists. `undefined` when `clock`/`config` were not threaded
+   * (e.g. legacy/test call shapes) — the spend path is then inert.
+   */
+  spendAccumulator?: SpendAccumulator;
 }
 
 // ---------------------------------------------------------------------------
@@ -102,6 +114,19 @@ export function setupObservability(deps: {
    * Optional — when absent the stream uses its DEFAULT_MARKERS (default-parity).
    */
   theme?: ActivityTheme;
+  /**
+   * The boot {@link ClockPort} (the SAME one threaded elsewhere, e.g.
+   * daemon.ts:958/2544). Injected so the daemon-wide spend accumulator (Phase
+   * 177) is constructed here. Optional — when absent the spend accumulator is
+   * NOT constructed (legacy/test call shapes stay byte-identical).
+   */
+  clock?: ClockPort;
+  /**
+   * The full app config. Read here ONLY for `observability.spend.*` (the spend
+   * kill-switch ceilings). Optional — when absent (with `clock`) the accumulator
+   * is not constructed.
+   */
+  config?: AppConfig;
 }): ObservabilityResult {
   const { eventBus, _createTokenTracker } = deps;
 
@@ -133,6 +158,43 @@ export function setupObservability(deps: {
       },
     );
   });
+
+  // The single daemon-wide spend accumulator (Phase 177, E2) — the dollars
+  // kill-switch enforcement-state owner. CONSTRUCTED here beside the cross-agent
+  // cost-tracker (the established daemon-wide subscriber seam); everything it
+  // needs at construction is `clock` + `config.observability.spend` + `eventBus`.
+  // REHYDRATION is deferred to the boot composition root (daemon.ts) via
+  // `rehydrateSpendFromStore` because the persisted rolling-spend read lives on
+  // `obsStore`, which is not reachable until obsStore is built ~60-90 lines after
+  // this call (and only when persistence is enabled). When `clock`/`config` are
+  // absent the accumulator is not constructed (legacy/test call shapes stay
+  // byte-identical).
+  let spendAccumulator: SpendAccumulator | undefined;
+  if (deps.clock && deps.config) {
+    const spendCfg = deps.config.observability.spend;
+    spendAccumulator = createSpendAccumulator({
+      clock: deps.clock,
+      ceilings: {
+        perAgentUsd: spendCfg.perAgentUsd,
+        perTenantUsd: spendCfg.perTenantUsd,
+        daemonGlobalUsd: spendCfg.daemonGlobalUsd,
+        warnAtFraction: spendCfg.warnAtFraction,
+      },
+    });
+    const acc = spendAccumulator;
+
+    // Live increment from the SAME event the sharedCostTracker consumes (sees
+    // in-flight spend, no per-check SQL re-sum). The token_usage payload carries
+    // `sessionKey` but NO `tenantId`, so derive the tenant via the canonical
+    // `parseFormattedSessionKey` (L1) — NOT `agentId`-as-tenant, NOT a bare
+    // colon-split (which mishandles channelIds containing a colon) — so the
+    // per-tenant counter stays isolated (the cross-tenant-DoS guard).
+    eventBus.on("observability:token_usage", (payload) => {
+      const tenantId = parseFormattedSessionKey(payload.sessionKey)?.tenantId ?? "default";
+      const scope: SpendScope = { tenantId, agentId: payload.agentId };
+      acc.recordSpend(scope, payload.cost.total);
+    });
+  }
 
   // Log cache break events for operational observability
   if (deps.logger) {
@@ -222,5 +284,14 @@ export function setupObservability(deps: {
     // the correlation index. The shutdown chain invokes this so pending per-turn
     // bounded queues drain and no placeholder is orphaned across restart.
     disposeActivityStream: () => activityStream.dispose(),
+    // The daemon-wide spend accumulator (Phase 177). Threaded out so the boot
+    // root rehydrates it (after obsStore exists) and the per-agent bridge guards
+    // hold a reference to the SAME instance.
+    spendAccumulator,
   };
 }
+
+// REHYDRATION lives in a SEPARATE module (setup-spend-rehydration.ts) because
+// the persisted rolling-spend read is on obsStore, which the daemon builds AFTER
+// this call. Re-exported here so existing import sites resolve from the barrel.
+export { rehydrateSpendFromStore } from "./setup-spend-rehydration.js";
