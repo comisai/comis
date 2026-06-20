@@ -14,7 +14,7 @@ import type { SessionKey, TypedEventBus, ComisLogger } from "@comis/core";
 import { checkLoopLimit, emitLoopAbort, buildAbortRedirectMessage, checkSpendLimit, emitSpendAbort } from "./bridge-safety-controls.js";
 import type { ExecutionPlan } from "../planner/types.js";
 import type { SpendGateOutcome } from "../budget/budget-guard.js";
-import { SpendError } from "../budget/spend-accumulator.js";
+import { SpendError, type SpendWarn } from "../budget/spend-accumulator.js";
 
 const testSessionKey = "agent-a:discord:chan-1" as unknown as SessionKey;
 
@@ -175,7 +175,8 @@ function makeSpendEmit() {
   return { spendWarning: vi.fn(), spendExceeded: vi.fn(), spendUnpriceable: vi.fn() };
 }
 
-const okOutcome = (warn: boolean): SpendGateOutcome => ({
+// WR-1 (177-obs-loop): warn is the breaching DIMENSION (scope + total/cap) or null.
+const okOutcome = (warn: SpendWarn | null): SpendGateOutcome => ({
   kind: "ok",
   reservation: { scopeKey: "t a", tenantKey: "t", reservedUsd: 0.5 },
   warn,
@@ -201,17 +202,21 @@ describe("checkSpendLimit", () => {
     expect(emit.spendUnpriceable).not.toHaveBeenCalled();
   });
 
-  it("ok+warn emits spend_warning and does NOT abort", () => {
+  it("ok+warn emits spend_warning WITH the breaching dimension and does NOT abort", () => {
     const emit = makeSpendEmit();
-    const res = checkSpendLimit(okOutcome(true), "abort", "warn", false, emit);
+    // WR-1: a tenant-dimension warn must be FORWARDED verbatim to spendWarning so
+    // the emitted event names the correct scope/total/cap (not a hard-coded agent).
+    const tenantWarn: SpendWarn = { scope: "tenant", totalUsd: 9, capUsd: 10 };
+    const res = checkSpendLimit(okOutcome(tenantWarn), "abort", "warn", false, emit);
     expect(res.shouldAbort).toBe(false);
     expect(emit.spendWarning).toHaveBeenCalledOnce();
+    expect(emit.spendWarning).toHaveBeenCalledWith(tenantWarn);
     expect(emit.spendExceeded).not.toHaveBeenCalled();
   });
 
-  it("ok without warn emits nothing and does NOT abort", () => {
+  it("ok without warn (null) emits nothing and does NOT abort", () => {
     const emit = makeSpendEmit();
-    const res = checkSpendLimit(okOutcome(false), "abort", "warn", false, emit);
+    const res = checkSpendLimit(okOutcome(null), "abort", "warn", false, emit);
     expect(res.shouldAbort).toBe(false);
     expect(emit.spendWarning).not.toHaveBeenCalled();
   });
@@ -270,7 +275,7 @@ describe("checkSpendLimit", () => {
       spendUnpriceable: vi.fn(),
     };
     // Turn 1: sub-ceiling but past warnAtFraction → warning.
-    checkSpendLimit(okOutcome(true), "abort", "warn", false, emit);
+    checkSpendLimit(okOutcome({ scope: "agent", totalUsd: 8, capUsd: 10 }), "abort", "warn", false, emit);
     // Turn 2: now over the ceiling → exceeded.
     checkSpendLimit(exceededOutcome(), "abort", "warn", false, emit);
     expect(order).toEqual(["warning", "exceeded"]);

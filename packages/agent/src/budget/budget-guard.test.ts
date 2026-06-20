@@ -569,7 +569,8 @@ describe("checkSpendCeiling", () => {
       expect(res.value.kind).toBe("ok");
       if (res.value.kind === "ok") {
         expect(res.value.reservation.reservedUsd).toBe(0.5);
-        expect(res.value.warn).toBe(false);
+        // WR-1: warn is the breaching DIMENSION or null; below the warn line → null.
+        expect(res.value.warn).toBeNull();
       }
     }
   });
@@ -597,13 +598,20 @@ describe("checkSpendCeiling", () => {
     acc.recordSpend(SCOPE, 7.6); // 7.6 / 10
     const resolvePriced = () => "priced" as const;
 
-    // 7.6 + 0.5 = 8.1 → 0.81 >= 0.8 → warn true (still ok, not exceeded).
+    // 7.6 + 0.5 = 8.1 → 0.81 >= 0.8 → warn (still ok, not exceeded).
     const res = checkSpendCeiling(acc, SCOPE, "anthropic", "claude-opus", 0.5, warnCfg, true, resolvePriced);
 
     expect(res.ok).toBe(true);
     if (res.ok) {
       expect(res.value.kind).toBe("ok");
-      if (res.value.kind === "ok") expect(res.value.warn).toBe(true);
+      // WR-1: warn carries the breaching DIMENSION (agent scope here, post-reserve
+      // total 8.1, cap 10) — not a bare boolean.
+      if (res.value.kind === "ok") {
+        expect(res.value.warn).not.toBeNull();
+        expect(res.value.warn?.scope).toBe("agent");
+        expect(res.value.warn?.totalUsd).toBeCloseTo(8.1, 5);
+        expect(res.value.warn?.capUsd).toBe(10);
+      }
     }
   });
 

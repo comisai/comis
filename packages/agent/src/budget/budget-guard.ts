@@ -8,6 +8,7 @@ import type {
   SpendScope,
   SpendReservation,
   SpendError,
+  SpendWarn,
 } from "./spend-accumulator.js";
 
 /**
@@ -283,8 +284,9 @@ export function createBudgetGuard(
 /**
  * The outcome of the 3-state pricing gate + the atomic accumulator reserve. It is
  * the discriminated result the bridge routes on:
- *  - `ok`          — a reservation was granted (carries the `warn` flag so the
- *                    bridge can emit `observability:spend_warning`).
+ *  - `ok`          — a reservation was granted (carries the `warn` DIMENSION —
+ *                    the breaching scope + its total/cap, or `null` — so the
+ *                    bridge emits a scope-correct `observability:spend_warning`).
  *  - `free`        — a local/gateway-`free` model: NEVER trips a ceiling
  *                    (no false-DoS of local-first deployments).
  *  - `unpriceable` — a native-provider `unknown`-priced model that burned tokens
@@ -295,7 +297,7 @@ export function createBudgetGuard(
  *                    `execution:aborted{reason:"spend_exceeded"}` path.
  */
 export type SpendGateOutcome =
-  | { kind: "ok"; reservation: SpendReservation; warn: boolean }
+  | { kind: "ok"; reservation: SpendReservation; warn: SpendWarn | null }
   | { kind: "free" }
   | { kind: "unpriceable"; provider: string; model: string }
   | { kind: "exceeded"; error: SpendError };

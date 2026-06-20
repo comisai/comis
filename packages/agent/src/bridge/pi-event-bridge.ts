@@ -1784,14 +1784,20 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               let spendBreachCurrentUsd = 0;
               let spendBreachCapUsd = 0;
               const spendEmit: SpendEmitHooks = {
-                spendWarning: () =>
+                // WR-1 (177-obs-loop): emit the breaching warn DIMENSION the
+                // accumulator reported (the crossed scope + THAT dimension's
+                // post-reserve total + cap) — NOT a hard-coded scope:"agent" + the
+                // session-local cumulative cost + a first-non-null cap (an
+                // internally-inconsistent event when the tenant/global ceiling is
+                // the one that crossed — the security-review WR-1 finding).
+                spendWarning: (warn) =>
                   deps.eventBus.emit("observability:spend_warning", {
                     timestamp: systemNowMs(),
                     agentId: deps.agentId,
                     sessionKey: formatSessionKey(deps.sessionKey),
-                    scope: "agent",
-                    spentUsd: m.sessionCumulativeCostUsd,
-                    capUsd: spendCfg.perAgentUsd ?? spendCfg.perTenantUsd ?? spendCfg.daemonGlobalUsd ?? 0,
+                    scope: warn.scope,
+                    spentUsd: warn.totalUsd,
+                    capUsd: warn.capUsd,
                     fraction: spendCfg.warnAtFraction,
                   }),
                 spendExceeded: () =>

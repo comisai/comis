@@ -18,6 +18,7 @@ import type { SessionKey, TypedEventBus } from "@comis/core";
 import type { ComisLogger } from "@comis/core";
 import { systemNowMs } from "@comis/core";
 import type { ExecutionBudgetWindow, SpendGateOutcome } from "../budget/budget-guard.js";
+import type { SpendWarn } from "../budget/spend-accumulator.js";
 import type { StepCounter } from "../executor/step-counter.js";
 import type { CircuitBreaker } from "../safety/circuit-breaker.js";
 import type { ContextWindowGuard, ContextUsageData } from "../safety/context-window-guard.js";
@@ -214,8 +215,14 @@ export function emitBudgetAbort(
 
 /** The three thin emit hooks the bridge binds to the counts-only spend events. */
 export interface SpendEmitHooks {
-  /** Emit `observability:spend_warning` — fired sub-ceiling at `warnAtFraction`. */
-  spendWarning: () => void;
+  /**
+   * Emit `observability:spend_warning` — fired sub-ceiling at `warnAtFraction`.
+   * WR-1 (177-obs-loop): receives the breaching warn DIMENSION ({@link SpendWarn} —
+   * the crossed scope + its total/cap) so the emitted event is internally
+   * consistent (correct scope + that dimension's total + cap), not a hard-coded
+   * `scope:"agent"` + a session-local amount.
+   */
+  spendWarning: (warn: SpendWarn) => void;
   /** Emit `observability:spend_exceeded` — the ceiling tripped for this scope. */
   spendExceeded: () => void;
   /** Emit `observability:spend_unpriceable` — a remote-unknown model burned tokens. */
@@ -259,8 +266,9 @@ export function checkSpendLimit(
   }
 
   // ok → emit the early warning when sub-ceiling-but-past-warnAtFraction; never abort.
+  // WR-1: forward the breaching warn DIMENSION so the event names the correct scope.
   if (outcome.kind === "ok") {
-    if (outcome.warn) emit.spendWarning();
+    if (outcome.warn !== null) emit.spendWarning(outcome.warn);
     return { shouldAbort: false };
   }
 

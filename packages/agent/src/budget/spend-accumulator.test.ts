@@ -118,24 +118,55 @@ describe("createSpendAccumulator", () => {
     expect(rb.ok).toBe(true);
   });
 
-  it("warning precedes exceeded — at warnAtFraction (0.8) of a ceiling the reserve is ok WITH warn:true, then errs at the cap", () => {
+  it("warning precedes exceeded — at warnAtFraction (0.8) of a ceiling the reserve is ok WITH the warn DIMENSION, then errs at the cap", () => {
     const { acc } = makeAccumulator({ perAgentUsd: 10, warnAtFraction: 0.8 });
     // Reserve $8 from empty: post-reserve total 8 / cap 10 = 0.8 ≥ warnAt → ok + warn.
+    // WR-1 (177-obs-loop): warn is now the breaching DIMENSION {scope,totalUsd,capUsd},
+    // not a bare boolean — so the bridge can emit spend_warning with the CORRECT scope
+    // + that dimension's post-reserve total + cap (not a hard-coded session-local agent value).
     const r = acc.checkAndReserve(SCOPE, 8);
     expect(r.ok).toBe(true);
-    if (r.ok) expect(r.value.warn).toBe(true);
+    if (r.ok) {
+      expect(r.value.warn).toEqual({ scope: "agent", totalUsd: 8, capUsd: 10 });
+    }
 
-    // A small reserve below the warn line stays ok WITHOUT warn (fresh agent).
+    // A small reserve below the warn line stays ok WITHOUT a warn dimension (null) (fresh agent).
     const r2 = makeAccumulator({ perAgentUsd: 10, warnAtFraction: 0.8 }).acc.checkAndReserve(
       SCOPE,
       1,
     );
     expect(r2.ok).toBe(true);
-    if (r2.ok) expect(r2.value.warn).toBe(false);
+    if (r2.ok) expect(r2.value.warn).toBeNull();
 
     // Continue past the cap on the warned accumulator → err.
     const r3 = acc.checkAndReserve(SCOPE, 2.5);
     expect(r3.ok).toBe(false);
+  });
+
+  it("WR-1: a TENANT-ceiling warn reports scope:'tenant' with the tenant total/cap, NOT session-local agent values", () => {
+    // The security-review WR-1 bug: spend_warning hard-coded scope:"agent" + a
+    // session-local spentUsd even when the TENANT (or GLOBAL) ceiling crossed
+    // warnAtFraction → an internally-inconsistent event. The accumulator must
+    // report WHICH dimension crossed. Here the per-agent ceiling has ample
+    // headroom (100) but the per-tenant ceiling (10) is the one at 0.8.
+    const { acc } = makeAccumulator({ perAgentUsd: 100, perTenantUsd: 10, warnAtFraction: 0.8 });
+    // Two agents under the SAME tenant accrue $8.5 total: agent-x $5 + agent-y $3.5.
+    acc.recordSpend({ tenantId: "t", agentId: "agent-x" }, 5);
+    // A $0.5 reserve by agent-y pushes the tenant total to 5 + 3.5 + 0.5 = ...
+    acc.recordSpend({ tenantId: "t", agentId: "agent-y" }, 3.5);
+    // tenant total now 8.5; a $0.5 reserve → 9.0 / 10 = 0.9 ≥ 0.8 (tenant warns);
+    // agent-y total 3.5 + 0.5 = 4.0 / 100 = 0.04 (agent does NOT warn).
+    const r = acc.checkAndReserve({ tenantId: "t", agentId: "agent-y" }, 0.5);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.value.warn).not.toBeNull();
+      // The DIMENSION that crossed is the tenant — NOT a hard-coded "agent".
+      expect(r.value.warn?.scope).toBe("tenant");
+      // The tenant's post-reserve running total (9.0), NOT agent-y's session-local 4.0.
+      expect(r.value.warn?.totalUsd).toBeCloseTo(9.0, 5);
+      // The tenant's cap (10), NOT the per-agent cap (100).
+      expect(r.value.warn?.capUsd).toBe(10);
+    }
   });
 
   it("reconcile settles an estimate to the actual billed amount, releasing over-reserved headroom", () => {
@@ -160,7 +191,8 @@ describe("createSpendAccumulator", () => {
     acc.recordSpend(SCOPE, 1_000_000);
     const r = acc.checkAndReserve(SCOPE, 1_000_000);
     expect(r.ok).toBe(true);
-    if (r.ok) expect(r.value.warn).toBe(false);
+    // WR-1: warn is the breaching DIMENSION or null; all-null ceilings → null.
+    if (r.ok) expect(r.value.warn).toBeNull();
   });
 
   // -------------------------------------------------------------------------

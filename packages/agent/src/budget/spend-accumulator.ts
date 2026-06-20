@@ -56,6 +56,23 @@ export interface SpendReservation {
   reservedUsd: number;
 }
 
+/**
+ * The DIMENSION whose post-reserve fraction crossed `warnAtFraction` on a granted
+ * reserve (WR-1, 177-obs-loop). Carries the breaching scope + that dimension's
+ * own post-reserve running total + cap — so the bridge emits an internally
+ * CONSISTENT `observability:spend_warning` (correct scope, the dimension's total,
+ * the dimension's cap) instead of hard-coding `scope:"agent"` + a session-local
+ * amount + a first-non-null cap. Content-free: a closed enum + two NUMBERS only.
+ */
+export interface SpendWarn {
+  /** Which ceiling dimension crossed the warn threshold. */
+  scope: SpendScopeKind;
+  /** That dimension's post-reserve cumulative total (USD). */
+  totalUsd: number;
+  /** That dimension's ceiling (USD). */
+  capUsd: number;
+}
+
 /** The three running-total ceilings + the warn threshold. `null` = that ceiling is OFF. */
 export interface SpendCeilings {
   /** Per-(tenant,agent) USD cap. `null` disables this dimension. */
@@ -105,13 +122,16 @@ export interface SpendAccumulator {
    * would be exceeded (checked in that order) WITHOUT mutating any counter. On
    * success mutates all three counters by `estUsd` BEFORE returning — so K
    * event-loop-concurrent callers serialize and each sees the prior reservation.
-   * The granted reserve carries `warn: true` when any non-null ceiling's
-   * post-reserve fraction is at/above `warnAtFraction`.
+   * The granted reserve carries `warn`: the FIRST ceiling DIMENSION (checked in
+   * (tenant,agent) → tenant → global order) whose post-reserve fraction is
+   * at/above `warnAtFraction` (with that dimension's own total + cap), or `null`
+   * when none crossed (WR-1, 177-obs-loop — replaces the bare `warn: boolean` so
+   * the bridge emits a scope-correct `observability:spend_warning`).
    */
   checkAndReserve(
     scope: SpendScope,
     estUsd: number,
-  ): Result<SpendReservation & { warn: boolean }, SpendError>;
+  ): Result<SpendReservation & { warn: SpendWarn | null }, SpendError>;
   /**
    * Settle a reservation's estimate to the actual billed amount once the turn
    * completes: applies `actualUsd - reservation.reservedUsd` to all three counters
@@ -153,10 +173,30 @@ export function createSpendAccumulator(deps: {
     global += deltaUsd;
   }
 
-  /** Post-reserve fraction for a non-null cap; 0 when the cap is null/non-positive. */
-  function fractionAtOrAboveWarn(postReserveTotal: number, cap: number | null): boolean {
-    if (cap === null || cap <= 0) return false;
-    return postReserveTotal / cap >= ceilings.warnAtFraction;
+  /**
+   * The breaching warn DIMENSION (WR-1): the FIRST non-null ceiling — checked in
+   * the SAME (tenant,agent) → tenant → global order as the breach check — whose
+   * post-reserve fraction is at/above `warnAtFraction`, with that dimension's own
+   * post-reserve total + cap. `null` when none crossed. A null/non-positive cap is
+   * OFF (never warns).
+   */
+  function firstWarnDimension(
+    agentPost: number,
+    tenantPost: number,
+    globalPost: number,
+  ): SpendWarn | null {
+    const crossed = (post: number, cap: number | null): boolean =>
+      cap !== null && cap > 0 && post / cap >= ceilings.warnAtFraction;
+    if (crossed(agentPost, ceilings.perAgentUsd)) {
+      return { scope: "agent", totalUsd: agentPost, capUsd: ceilings.perAgentUsd as number };
+    }
+    if (crossed(tenantPost, ceilings.perTenantUsd)) {
+      return { scope: "tenant", totalUsd: tenantPost, capUsd: ceilings.perTenantUsd as number };
+    }
+    if (crossed(globalPost, ceilings.daemonGlobalUsd)) {
+      return { scope: "global", totalUsd: globalPost, capUsd: ceilings.daemonGlobalUsd as number };
+    }
+    return null;
   }
 
   return {
@@ -170,7 +210,7 @@ export function createSpendAccumulator(deps: {
       addToCounters(scope, actualUsd);
     },
 
-    checkAndReserve(scope, estUsd): Result<SpendReservation & { warn: boolean }, SpendError> {
+    checkAndReserve(scope, estUsd): Result<SpendReservation & { warn: SpendWarn | null }, SpendError> {
       // ── SYNCHRONOUS atomic body: NO `await` between the reads and the writes. ──
       const aKey = agentKeyOf(scope);
       const agentTotal = perAgent.get(aKey) ?? 0;
@@ -193,10 +233,14 @@ export function createSpendAccumulator(deps: {
       // so the next event-loop-concurrent caller sees this reservation.
       addToCounters(scope, estUsd);
 
-      const warn =
-        fractionAtOrAboveWarn(agentTotal + estUsd, ceilings.perAgentUsd) ||
-        fractionAtOrAboveWarn(tenantTotal + estUsd, ceilings.perTenantUsd) ||
-        fractionAtOrAboveWarn(globalTotal + estUsd, ceilings.daemonGlobalUsd);
+      // WR-1: report the breaching warn DIMENSION (scope + that dimension's own
+      // post-reserve total + cap), not a bare boolean — the bridge emits a
+      // scope-correct observability:spend_warning from it.
+      const warn = firstWarnDimension(
+        agentTotal + estUsd,
+        tenantTotal + estUsd,
+        globalTotal + estUsd,
+      );
 
       return ok({ scopeKey: aKey, tenantKey: scope.tenantId, reservedUsd: estUsd, warn });
     },
