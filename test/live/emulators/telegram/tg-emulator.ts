@@ -266,9 +266,12 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
 
     if (!loggedFirstPoll) {
       loggedFirstPoll = true;
-      // One-shot observation of the offset transport + runner timeout (A1/A2).
+      // One-shot observation of the offset transport + runner timeout (A1/A2):
+      // a single DEBUG (suppressed at default level, fires at most once) so the
+      // REAL grammy runner's transport/timeout is confirmed by observation in
+      // Plan 05, not assumed. `console` is fine in `test/` (no-console is not a
+      // harness rule).
       const transport = body["offset"] !== undefined ? "body" : query.has("offset") ? "query" : "none";
-      // eslint-disable-next-line no-console
       console.debug(
         `[tg-emulator] first getUpdates: offset=${String(offset)} (transport=${transport}) timeout=${String(timeoutSec)}s limit=${String(limit)}`,
       );
