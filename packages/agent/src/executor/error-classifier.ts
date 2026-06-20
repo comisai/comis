@@ -191,10 +191,14 @@ const ERROR_PATTERNS: ErrorPattern[] = [
   // "REFUSED" that the /refus/ content-filter pattern would otherwise steal
   // (mislabelling a network outage as a "content restriction"), and BEFORE
   // empty_response because the silent-failure handler wraps a connection error
-  // as "…produced empty response after retry … — <ECONNREFUSED…>" (F-17).
-  // Transient → retryable.
+  // as "…produced empty response after retry … — <providerError>" (F-17).
+  // The `…|error` arm catches the OpenAI-compat SDK's APIConnectionError, whose
+  // message is the BARE phrase "Connection error." (no errno token) — the live
+  // 30-UC UC-30 provider-down case (Ollama unreachable): without it the wrapper
+  // fell through to empty_response and the user saw "a tool call returned no
+  // output" for a network outage. Transient → retryable.
   {
-    test: /ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|EPIPE|socket hang ?up|fetch failed|getaddrinfo|network error|connect(?:ion)?[ _](?:refused|reset|timed out|failure)/i,
+    test: /ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|EPIPE|socket hang ?up|fetch failed|getaddrinfo|network error|connect(?:ion)?[ _](?:refused|reset|timed out|failure|error)/i,
     category: "provider_unreachable",
     userMessage:
       "Couldn't reach the AI provider due to a network or connection problem. Please try again in a moment.",
