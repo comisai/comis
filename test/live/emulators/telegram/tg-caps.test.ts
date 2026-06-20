@@ -29,6 +29,7 @@ import { dirname, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createTelegramPlugin } from "@comis/channels";
 import type { ChannelCapability } from "@comis/core";
+import { createMockLogger } from "../../../support/mock-logger.js";
 import { tgCaps, TG_MAX_MESSAGE_CHARS } from "./tg-caps.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -40,17 +41,12 @@ const CAPS_SOURCE = resolve(HERE, "tg-caps.ts");
  * construction is safe and reads the module-local `CAPABILITIES`.
  */
 function adapterCapabilities(): ChannelCapability {
+  // The factory only constructs the grammy Bot lazily — no network is touched
+  // until activate()/start(), so a bare construction safely reads the
+  // module-local `CAPABILITIES` declaration (the reconciliation TARGET).
   const plugin = createTelegramPlugin({
     botToken: "12345:test",
-    // A logger stub — the factory only constructs the grammy Bot lazily; no
-    // network is touched until activate()/start().
-    logger: {
-      debug: () => undefined,
-      info: () => undefined,
-      warn: () => undefined,
-      error: () => undefined,
-      child: () => adapterCapabilities && (undefined as never),
-    } as never,
+    logger: createMockLogger(),
   });
   return plugin.capabilities;
 }
