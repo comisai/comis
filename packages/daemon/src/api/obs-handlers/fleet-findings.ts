@@ -29,6 +29,7 @@ import {
   multilingualFromRow,
   nodeBudgetExceededFromRow,
   pipelineAuthoringFromRow,
+  pricingGapFromRow,
   sandboxDowngradeFromRow,
   scriptZeroHitFromRow,
   servedBelowConfiguredFromRow,
@@ -421,6 +422,20 @@ export function buildFindings(
         detail: `${chimeraCount} agent(s) configured with a native provider + a foreign model family (chimera — resolves a phantom capability profile)`,
         count: chimeraCount,
         hint: "align agents.<id>.provider with the model family (e.g. provider:anthropic ⇒ a claude model; for a qwen/llama model use an ollama/openrouter provider), or set the model id explicitly under the right provider",
+      });
+    }
+    // SPEND-05: dedicated pricing-gap finding from the SAME latest posture row.
+    // Configured agents burning tokens on remote-unknown-priced models (a NATIVE
+    // provider with no catalog rate — the ffe11736 fail-open where spend is silently
+    // under-counted as $0). Surfaces the kill-switch's pricing coverage so an operator
+    // sees how much spend the ceiling cannot account for. Counts + remediation only.
+    const pricingGapCount = pricingGapFromRow(latest);
+    if (pricingGapCount > 0) {
+      findings.push({
+        code: "config_posture:pricing_gap",
+        detail: `${pricingGapCount} agent(s) burning tokens on remote-unknown-priced models — spend is under-counted for these (honest $0 only applies to local/free providers)`,
+        count: pricingGapCount,
+        hint: "set the model id under a priced provider, or use a local/free provider where $0 is correct; run `comis explain` on an unknown-priced session for the pricing_state",
       });
     }
   }

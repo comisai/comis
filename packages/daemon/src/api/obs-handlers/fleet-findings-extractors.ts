@@ -54,6 +54,21 @@ export function chimericModelFromRow(row: DiagnosticRow): number {
   }
 }
 
+/** SPEND-05: pricingGapCount from a config_posture row's details JSON — configured
+ *  agents burning tokens on remote-unknown-priced models (resolvePricingState ==
+ *  "unknown"). Defensive parse — malformed/missing folds to 0 (the chimericModelFromRow
+ *  clone; counts only, never a model id / config value body). */
+export function pricingGapFromRow(row: DiagnosticRow): number {
+  if (row.details === undefined) return 0;
+  try {
+    const parsed = JSON.parse(row.details) as { pricingGapCount?: unknown };
+    const n = parsed.pricingGapCount;
+    return typeof n === "number" && Number.isFinite(n) && n > 0 ? n : 0;
+  } catch {
+    return 0;
+  }
+}
+
 /** T1.3 (F6): the SPECIFIC flagged config keys from a config_posture row — CLOSED labels
  *  only (never raw details / secret values, per the H1 no-body rule), so a fleet finding
  *  NAMES which knob is off instead of "the flagged config keys" (the live friction was

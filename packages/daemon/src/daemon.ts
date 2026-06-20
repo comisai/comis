@@ -195,7 +195,7 @@ import { createEmptyBootContext } from "./daemon-types.js";
 export type { DaemonInstance, DaemonOverrides } from "./daemon-types.js";
 import { setupObsPersistence } from "./observability/obs-persistence-wiring.js";
 import { recordModelHealth } from "./observability/record-model-health.js";
-import { buildConfigPostureRecord, countChimericModels } from "./observability/build-config-posture-record.js";
+import { buildConfigPostureRecord, countChimericModels, countPricingGaps } from "./observability/build-config-posture-record.js";
 import { setupDeliveryQueueLogging } from "./observability/delivery-queue-logger.js";
 import { createContextPipelineCollector } from "./observability/context-pipeline-collector.js";
 import { createLogLevelManager, expandTilde } from "./observability/log-infra.js";
@@ -2862,7 +2862,7 @@ async function bootShutdown(
   const canaryFallbackActive = !boot.env.get("CANARY_SECRET");
   // KNOB-03: derived from the SAME boot comparisons the KNOB-01 WARN used (no second comparison).
   const servedBelowConfiguredCount = [...(boot.servedWindowComparisons?.values() ?? [])].filter((c) => c.belowConfigured).length;
-  buildConfigPostureRecord(boot.obsStore, { tlsOff, allowInsecureHttp, strandedFindings: posture.findings, canaryFallbackActive, servedBelowConfiguredCount, chimericModelCount: countChimericModels(container.config.agents) }, boot.clock);
+  buildConfigPostureRecord(boot.obsStore, { tlsOff, allowInsecureHttp, strandedFindings: posture.findings, canaryFallbackActive, servedBelowConfiguredCount, chimericModelCount: countChimericModels(container.config.agents), pricingGapCount: countPricingGaps(container.config.agents) }, boot.clock);
 
   // Snapshot current config as last-known-good after successful startup.
   // Honor diagnostics.configAudit.enabled.
