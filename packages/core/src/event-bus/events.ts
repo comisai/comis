@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { MessagingEvents } from "./events-messaging.js";
 import type { AgentEvents } from "./events-agent.js";
+import type { ModelEvents } from "./events-model.js";
 import type { OrchestrationEvents } from "./events-orchestration.js";
 import type { LearningEvents } from "./events-learning.js";
 import type { TrajectoryEvents } from "./events-trajectory.js";
@@ -20,7 +21,8 @@ import type {
  *
  * Composed from domain-grouped sub-interfaces. Find events by subsystem:
  * - MessagingEvents: message, session, compaction, context, response, command
- * - AgentEvents: skill, tool, model, audit, observability (token/latency)
+ * - AgentEvents: skill, tool, audit, security, memory, observability (token/latency/spend)
+ * - ModelEvents: model-failover (model:*) + provider-health (provider:*) lifecycle
  * - OrchestrationEvents: multi-agent graph lifecycle (graph:*, subagent:budget_exceeded — BUDGET-03)
  * - LearningEvents: verified-learning write-back/telemetry (memory:skill_used — ATTR-02)
  * - TrajectoryEvents: trajectory-bridge lifecycle (prompt:submitted, session:started/ended/summary, memory:injected, tool:timeout)
@@ -35,6 +37,7 @@ import type {
 export interface EventMap
   extends MessagingEvents,
     AgentEvents,
+    ModelEvents,
     OrchestrationEvents,
     LearningEvents,
     TrajectoryEvents,

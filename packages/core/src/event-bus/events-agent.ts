@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * AgentEvents: Skill, tool, model, audit, and observability (token/latency) events.
+ * AgentEvents: Skill, tool, audit, security, memory, and observability
+ * (token/latency/spend) events.
  *
- * Find events by prefix: skill:*, tool:*, model:*, audit:*, observability:*.
- * Graph orchestration (graph:* / subagent:*) lives in OrchestrationEvents
- * (events-orchestration.ts).
+ * Find events by prefix: skill:*, tool:*, audit:*, observability:*, security:*,
+ * memory:*. Model-failover (model:*) + provider-health (provider:*) live in
+ * ModelEvents (events-model.ts). Graph orchestration (graph:* / subagent:*)
+ * lives in OrchestrationEvents (events-orchestration.ts).
  */
 import type { ErrorKind } from "../logging/log-fields.js";
 import type { ScriptClass } from "../text/script-classes.js";
@@ -396,63 +398,9 @@ export interface AgentEvents {
     model: string;
   };
 
-  /** Model failover: attempt to switch from one model to another.
-   *  Turn-scoping ids (agentId/sessionKey/traceId) are optional — emit sites
-   *  populate them so activity can attribute the event to a turn (§16.9). */
-  "model:fallback_attempt": {
-    fromProvider: string;
-    fromModel: string;
-    toProvider: string;
-    toModel: string;
-    error: string;
-    attemptNumber: number;
-    timestamp: number;
-    agentId?: string;
-    sessionKey?: string;
-    traceId?: string;
-  };
-
-  /** Model failover: all candidates exhausted */
-  "model:fallback_exhausted": {
-    provider: string;
-    model: string;
-    totalAttempts: number;
-    timestamp: number;
-    agentId?: string;
-    sessionKey?: string;
-    traceId?: string;
-  };
-
-  /** Last-known-working model fallback: attempt to use a recently successful model */
-  "model:lkw_fallback_attempt": {
-    fromProvider: string;
-    fromModel: string;
-    toProvider: string;
-    toModel: string;
-    timestamp: number;
-    agentId?: string;
-    sessionKey?: string;
-    traceId?: string;
-  };
-
-  /** Auth profile entered cooldown after failure */
-  "model:auth_cooldown": {
-    keyName: string;
-    provider: string;
-    cooldownMs: number;
-    failureCount: number;
-    timestamp: number;
-    agentId?: string;
-    sessionKey?: string;
-    traceId?: string;
-  };
-
-  /** Model catalog loaded from pi-ai static registry */
-  "model:catalog_loaded": {
-    providerCount: number;
-    modelCount: number;
-    timestamp: number;
-  };
+  // Model-failover (model:*) + provider-health (provider:*) events moved to
+  // events-model.ts (`ModelEvents`) for the file-size cap; composed into
+  // `EventMap` (events.ts) there, byte-identical shapes.
 
   /** Prompt injection attempt detected in user input or external content */
   "security:injection_detected": {
@@ -554,12 +502,6 @@ export interface AgentEvents {
       uid?: "dedicated" | "daemon";
     };
   };
-
-  /** Provider declared degraded based on cross-agent failure aggregation */
-  "provider:degraded": { provider: string; failingAgents: number; timestamp: number };
-
-  /** Provider recovered after successful call during degraded state */
-  "provider:recovered": { provider: string; timestamp: number };
 
   /** SEP extracted a plan from the LLM's first response */
   "sep:plan_extracted": {
