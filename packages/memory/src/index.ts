@@ -289,6 +289,7 @@ export type {
   AgentAggregation,
   SessionAggregation,
   HourlyBucket,
+  QuarterHourBucket,
   DeliveryStats,
   ObsTableName,
   ResetResult,

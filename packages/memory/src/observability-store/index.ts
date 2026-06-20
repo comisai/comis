@@ -18,6 +18,7 @@ import {
   type ObservabilityStore,
 } from "./observability-store-types.js";
 import { bindQueries } from "./observability-queries.js";
+import { bindAggregates } from "./observability-aggregates.js";
 import { bindSpendQueries } from "./spend-queries.js";
 import { bindMutations } from "./observability-mutations.js";
 import { bindReset } from "./observability-reset.js";
@@ -36,6 +37,7 @@ export type {
   AgentRollingSpend,
   SessionAggregation,
   HourlyBucket,
+  QuarterHourBucket,
   SessionSummaryRollup,
   DeliveryStats,
   ObsTableName,
@@ -77,6 +79,8 @@ export type { CacheBreakReasonRate } from "./cache-break-queries.js";
 export function createObservabilityStore(db: Database.Database): ObservabilityStore {
   const store: ObservabilityStore = {
     ...bindQueries(db),
+    // COST-03: the 900000-ms quarter-hour aggregate + the pricing-coverage column.
+    ...bindAggregates(db),
     // SPEND-03: the spend accumulator's boot rehydration read (getRollingSpendUsd).
     ...bindSpendQueries(db),
     ...bindMutations(db),

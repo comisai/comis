@@ -68,6 +68,30 @@ export const rollingSpendMapper = createRowMapper(RollingSpendDbRowSchema);
 export const sessionAggMapper = createRowMapper(SessionAggDbRowSchema);
 export const hourlyBucketMapper = createRowMapper(HourlyBucketDbRowSchema);
 /**
+ * COST-03 (Phase 179): the quarter-hour bucket row — the `HourlyBucketDbRow`
+ * columns PLUS the E1 pricing-coverage pair (`missing_pricing_count` =
+ * COUNT(pricing_state IS 'unknown' OR NULL); `priced_count`/`free_count` from
+ * which the bound method derives the dominant `pricingState`). Defined HERE
+ * (store-local, the `RollingSpendDbRowSchema` precedent) rather than
+ * row-schemas.ts: it is consumed ONLY by `quarterHourBucketMapper` in the
+ * sibling `observability-aggregates.ts`, and the `row-schemas.ts` barrel is
+ * `export *`'d, so a public schema there would be a dead export. The coverage
+ * counts are content-free (counts only — never an agent id / model name / body).
+ */
+export const QuarterHourBucketDbRowSchema = z.strictObject({
+  bucket: z.number(),
+  total_cost: z.number(),
+  total_tokens: z.number(),
+  call_count: z.number(),
+  total_cache_saved: z.number(),
+  total_cost_correction: z.number(),
+  priced_count: z.number(),
+  free_count: z.number(),
+  missing_pricing_count: z.number(),
+});
+/** The quarter-hour bucket mapper (COST-03, the 900000-ms aggregate). */
+export const quarterHourBucketMapper = createRowMapper(QuarterHourBucketDbRowSchema);
+/**
  * Schema for the per-session GROUP-BY result of `aggregateSessionsInWindow`
  * (A1, Phase 159) over `obs_diagnostics` `category='session_summary'`. The
  * health fields live INSIDE the `details` JSON string (parsed in the query
@@ -270,6 +294,32 @@ export interface HourlyBucket {
 }
 
 /**
+ * Quarter-hour (15-min) time bucket aggregation (COST-03). The {@link HourlyBucket}
+ * shape — keyed on a 900000-ms `bucket` instead of `hour` — PLUS the E1 pricing
+ * coverage so an export consumer (a finance review) sees how trustworthy the bucket's
+ * dollars are:
+ *   - `totalCostCorrection` — the SDK-vs-corrected cost delta summed over the bucket.
+ *   - `pricingState` — the bucket's DOMINANT 3-state signal (priced > free > unknown);
+ *     `unknown` when every row's pricing is unknown/NULL.
+ *   - `missingPricingCount` — how many rows in the bucket had an `unknown`/NULL pricing
+ *     state (the count whose dollars are NOT catalog-backed). Content-free: counts +
+ *     the enum, never an agent id / model name / body.
+ *
+ * The four quarter-hour buckets inside an hour SUM (cost/tokens/calls/cacheSaved) to
+ * that hour's single {@link HourlyBucket} — the conservation invariant the WS6 test pins.
+ */
+export interface QuarterHourBucket {
+  bucket: number;
+  totalCost: number;
+  totalTokens: number;
+  callCount: number;
+  totalCacheSaved: number;
+  totalCostCorrection: number;
+  pricingState: "priced" | "free" | "unknown";
+  missingPricingCount: number;
+}
+
+/**
  * Per-session health rollup (A1 `aggregateSessionsInWindow`) over the latest
  * (`MAX(id)`) `session_summary` row per `session_key`; fields parsed from its
  * `details` JSON. `source` is the provenance enum the A2 reducer filters on.
@@ -365,6 +415,14 @@ export interface ObservabilityStore extends CacheStatsQueriesSlice {
   aggregateByAgent(sinceMs?: number): AgentAggregation[];
   aggregateBySession(sessionKey: string, sinceMs?: number): SessionAggregation;
   aggregateHourly(sinceMs?: number): HourlyBucket[];
+  /**
+   * COST-03: the same hourly aggregate keyed on a 900000-ms (15-min) bucket
+   * instead of 3600000, each bucket carrying the E1 pricing-coverage pair
+   * (`pricingState`/`missingPricingCount`). The four quarter-hour buckets inside
+   * an hour SUM (cost/tokens/calls/cacheSaved) to the matching `aggregateHourly`
+   * bucket (the conservation invariant). Reuses the same `sinceMs` lower-bound.
+   */
+  aggregateQuarterHourly(sinceMs?: number): QuarterHourBucket[];
   /**
    * Per-agent rolling SUM(cost_total) over the last `windowMs` (the window bound
    * is derived from the current time INSIDE the method — the prune() precedent).
