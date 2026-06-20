@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import type { DiagnosticRow } from "@comis/memory";
 import { buildFindings, pipelineAuthoringAggregateFromRows } from "./fleet-findings.js";
+import { pricingGapFromRow } from "./fleet-findings-extractors.js";
 
 // ---------------------------------------------------------------------------
 // EMB-01 — the dedicated multilingual fleet advisory (standing state).
@@ -757,5 +758,105 @@ describe("buildFindings — model_health 'provider degradation' counts only degr
     const findings = buildFindings([], rows, []);
     expect(findings.some((f) => f.code === EMBED_CODE)).toBe(true); // advisory: severity-independent
     expect(findings.some((f) => f.code === MH_CODE)).toBe(false); // but no "provider degradation" for a healthy boot
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SPEND-05 (Phase 177) — the config_posture:pricing_gap fleet finding.
+//
+// The kill-switch is only honest if an operator can SEE its pricing-coverage gap:
+// how many configured agents burn tokens on remote-unknown-priced models (a NATIVE
+// provider with no catalog entry — the ffe11736 fail-open where spend is silently
+// under-counted as $0). The count is produced at boot from `resolvePricingState`
+// (== "unknown") into the config_posture row's `details` JSON; buildFindings reads
+// it defensively (the chimericModelFromRow mold) and emits ONE counts+hint-only
+// finding beside `config_posture:chimeric_model`. STANDING STATE (latest row only),
+// content-free (counts + remediation, never a model id / config value as a body).
+//
+// RED: neither `pricingGapFromRow` nor the `config_posture:pricing_gap` finding
+// exists yet — every assertion below fails on the pre-patch code.
+// ---------------------------------------------------------------------------
+
+const PRICING_GAP_CODE = "config_posture:pricing_gap";
+
+describe("pricingGapFromRow — defensive pricingGapCount extractor (chimericModelFromRow clone)", () => {
+  it("reads a valid positive pricingGapCount from the row's details JSON", () => {
+    expect(pricingGapFromRow(configPostureRow(1_000, { pricingGapCount: 3 }))).toBe(3);
+  });
+
+  it("folds a missing details field to 0", () => {
+    const row: DiagnosticRow = { timestamp: 1, category: "config_posture", severity: "info", message: "config_posture" };
+    expect(pricingGapFromRow(row)).toBe(0);
+  });
+
+  it("folds malformed details JSON to 0 (caught, never throws)", () => {
+    const malformed: DiagnosticRow = { timestamp: 1, category: "config_posture", severity: "warning", message: "x", details: "not json {" };
+    expect(pricingGapFromRow(malformed)).toBe(0);
+  });
+
+  it("folds a non-positive / non-finite / non-number count to 0", () => {
+    expect(pricingGapFromRow(configPostureRow(1_000, { pricingGapCount: 0 }))).toBe(0);
+    expect(pricingGapFromRow(configPostureRow(1_000, { pricingGapCount: -2 }))).toBe(0);
+    expect(pricingGapFromRow(configPostureRow(1_000, { pricingGapCount: Number.NaN }))).toBe(0);
+    expect(pricingGapFromRow(configPostureRow(1_000, { pricingGapCount: "5" }))).toBe(0);
+    expect(pricingGapFromRow(configPostureRow(1_000, {}))).toBe(0);
+  });
+});
+
+describe("buildFindings — SPEND-05 config_posture:pricing_gap finding (standing state, content-free)", () => {
+  it("emits the pricing_gap finding with the count from the latest posture row when pricingGapCount > 0", () => {
+    const findings = buildFindings([], [], [configPostureRow(1_000, { pricingGapCount: 3 })]);
+    const finding = findings.find((f) => f.code === PRICING_GAP_CODE);
+    expect(finding).toBeDefined();
+    expect(finding?.count).toBe(3);
+    expect(finding?.detail).toMatch(/remote-unknown-priced|under-counted|burning tokens/i);
+    expect(finding?.hint).toMatch(/priced provider|local\/free|comis explain/i);
+  });
+
+  it("does NOT emit the pricing_gap finding when pricingGapCount is 0", () => {
+    const findings = buildFindings([], [], [configPostureRow(1_000, { pricingGapCount: 0 })]);
+    expect(findings.some((f) => f.code === PRICING_GAP_CODE)).toBe(false);
+  });
+
+  it("does NOT emit the pricing_gap finding when there is no config_posture row", () => {
+    const findings = buildFindings([], [], []);
+    expect(findings.some((f) => f.code === PRICING_GAP_CODE)).toBe(false);
+  });
+
+  it("reads the LATEST row only (standing state — a newer 0 suppresses an older 5)", () => {
+    const findings = buildFindings(
+      [],
+      [],
+      [
+        configPostureRow(1_000, { pricingGapCount: 5 }),
+        configPostureRow(2_000, { pricingGapCount: 0 }),
+      ],
+    );
+    expect(findings.some((f) => f.code === PRICING_GAP_CODE)).toBe(false);
+  });
+
+  it("is content-free — the detail/hint never echo a raw model id or config value (only counts + remediation)", () => {
+    const findings = buildFindings(
+      [],
+      [],
+      [configPostureRow(1_000, { pricingGapCount: 2, modelId: "claude-opus-4", apiKey: "sk-leak" })],
+    );
+    const finding = findings.find((f) => f.code === PRICING_GAP_CODE);
+    expect(finding).toBeDefined();
+    expect(`${finding?.detail} ${finding?.hint}`).not.toMatch(/claude-opus-4|sk-leak/);
+  });
+
+  it("rides the existing count-desc / code-asc sort (no new sort logic)", () => {
+    const findings = buildFindings(
+      [],
+      [],
+      [configPostureRow(1_000, { pricingGapCount: 9, chimericModelCount: 1 })],
+    );
+    const idxGap = findings.findIndex((f) => f.code === PRICING_GAP_CODE);
+    const idxChimera = findings.findIndex((f) => f.code === "config_posture:chimeric_model");
+    expect(idxGap).toBeGreaterThanOrEqual(0);
+    expect(idxChimera).toBeGreaterThanOrEqual(0);
+    // count 9 (pricing_gap) sorts before count 1 (chimeric_model) under count-desc.
+    expect(idxGap).toBeLessThan(idxChimera);
   });
 });
