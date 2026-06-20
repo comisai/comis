@@ -17,6 +17,33 @@ const DEFAULT_VOICE = "en-US-AvaMultilingualNeural";
 const MAX_TEXT_LENGTH = 5000;
 
 /**
+ * OpenAI TTS voice names. The shared `media.tts.voice` config default is "alloy"
+ * (an OpenAI voice) but applies across ALL providers — so when the keyless-default
+ * provider is "edge", "alloy" leaks here and Edge rejects it ("Invalid voice
+ * 'alloy'"), breaking keyless TTS out-of-the-box (v2.25 keyless-default-voice
+ * regression, live 2026-06-20). Mapping a known OpenAI voice name to the Edge
+ * default keeps keyless TTS working while an explicit *Edge* voice still passes through.
+ */
+const OPENAI_VOICE_NAMES: ReadonlySet<string> = new Set([
+  "alloy", "echo", "fable", "onyx", "nova", "shimmer",
+  "ash", "ballad", "coral", "sage", "verse",
+]);
+
+/**
+ * Resolve the Edge voice. The candidate is the per-call voice, else the configured
+ * default (which the TTS factory sets from `media.tts.voice` — and that may itself be
+ * the leaked OpenAI default "alloy"). If the candidate is an OpenAI voice name (invalid
+ * for Edge), fall back to the hardcoded Edge {@link DEFAULT_VOICE} — NOT the configured
+ * default, since that is the very value that may be "alloy". An explicit valid Edge voice
+ * (per-call or configured) passes through unchanged.
+ */
+export function resolveEdgeVoice(requested: string | undefined, configuredDefault: string): string {
+  const candidate = requested ?? configuredDefault;
+  if (candidate && !OPENAI_VOICE_NAMES.has(candidate.toLowerCase())) return candidate;
+  return DEFAULT_VOICE;
+}
+
+/**
  * Create an Edge TTS adapter implementing TTSPort.
  *
  * Uses Microsoft Edge's free TTS service via edge-tts-universal.
@@ -37,7 +64,7 @@ export function createEdgeTTSAdapter(config: EdgeTTSAdapterConfig): TTSPort {
         );
       }
 
-      const voice = options?.voice ?? defaultVoice;
+      const voice = resolveEdgeVoice(options?.voice, defaultVoice);
 
       try {
         const tts = new EdgeTTS(text, voice, {

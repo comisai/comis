@@ -54,6 +54,7 @@ import type {
   ClockPort,
 } from "@comis/core";
 import { resolveMemoryOpsStrategy } from "./memory-capability-router.js";
+import type { CustomCompletionsModelSpec } from "./judge-model-resolver.js";
 import type { CapabilityClass } from "../executor/model-profile.js";
 import { randomUUID } from "node:crypto";
 import {
@@ -88,6 +89,10 @@ export interface MemoryConsolidationDeps {
   provider: string;
   modelId: string;
   apiKey: string;
+  /** Custom-provider model spec (resolved `/v1` baseUrl) so a keyless/local YAML provider the
+   *  pi-ai catalog can't see still resolves a model — else consolidation skipped on keyless
+   *  (#223/DIALECTIC-FIX). Structurally threaded into LlmClusterDeps. Optional for built-ins. */
+  customModel?: CustomCompletionsModelSpec;
   /** Wall-clock reads — every timestamp + `durationMs`. NEVER a wall-clock global. */
   clock: ClockPort;
   logger: {

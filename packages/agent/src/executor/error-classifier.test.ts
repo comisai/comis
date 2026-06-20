@@ -501,6 +501,31 @@ describe("classifyError — provider error masked as empty_response (F-17)", () 
     expect(result.userMessage.toLowerCase()).not.toContain("tool call");
   });
 
+  it("classifies a wrapped OpenAI-SDK 'Connection error.' as provider_unreachable, not empty_response (live 30-UC UC-30)", () => {
+    // Live 30-UC (2026-06-20): provider unreachable (Ollama down / dead port).
+    // The pi SDK's OpenAI-compat client throws APIConnectionError whose message
+    // is the BARE phrase "Connection error." (no ECONNREFUSED token). The
+    // silent-failure handler wraps it as "…produced empty response after retry
+    // … — Connection error.". The provider_unreachable regex required
+    // "connection refused/reset/timed out", so "Connection error." slipped
+    // through to empty_response → the user saw "a tool call returned no output"
+    // (false — there was no tool call; the provider was unreachable). The real,
+    // actionable cause must win. Ground truth captured live: daemon log
+    // `err:"Connection error.", hint:"Check LLM provider status",
+    // errorKind:"dependency"` per retry; user reply was the empty_response msg.
+    const error = new Error(
+      "Silent LLM failure: 12 LLM call(s) produced empty response after retry (finishReason: stop) — Connection error.",
+    );
+    const result = classifyError(error);
+    expect(result.category).toBe("provider_unreachable");
+    expect(result.retryable).toBe(true);
+    expect(result.userMessage.toLowerCase()).not.toContain("tool call");
+  });
+
+  it("classifies a bare OpenAI-SDK 'Connection error.' as provider_unreachable", () => {
+    expect(classifyError(new Error("Connection error.")).category).toBe("provider_unreachable");
+  });
+
   it("regression: a genuine empty response with NO provider error stays empty_response", () => {
     const error = new Error(
       "Silent LLM failure: 2 LLM call(s) produced empty response after retry (finishReason: stop)",

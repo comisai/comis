@@ -47,7 +47,6 @@ import { randomUUID } from "node:crypto";
 import {
   generateStrongToken,
   generateRotationId,
-  isEnvRefString,
   TokensListContract,
   TokensCreateContract,
   TokensRevokeContract,
@@ -57,8 +56,6 @@ import {
   systemNowMs,
 } from "@comis/core";
 import { persistToConfig, readOnDiskConfig } from "./shared/persist-to-config.js";
-
-import type { PersistToConfigDeps } from "./shared/persist-to-config.js";
 import type { RpcHandler } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -66,43 +63,59 @@ import type { RpcHandler } from "./types.js";
 // ---------------------------------------------------------------------------
 
 /**
- * Map the in-memory token entries to their persistable shape.
+ * Map the in-memory token entries to their persistable shape, keyed off the
+ * EXISTING on-disk secrets — `gateway.tokens` is rewritten wholesale on every
+ * token op, so an entry whose secret is lost here is SEVERED on the next
+ * config reload.
  *
- * Plaintext secrets are STRIPPED (secret-free persistence; boot resolves
- * `GATEWAY_TOKEN_<ID>` from env/secret store instead) — but `${VAR}` secret
- * REFERENCES are preserved verbatim: a ref is a pointer, not a secret, and
- * dropping one severs the existing token on the next config reload. The
- * references can only come from the ON-DISK YAML — `container.config` holds
- * the substituted plaintext. Live finding (2026-06-12 C7 run): tokens.create
- * rebuilt gateway.tokens from the in-memory view, severing the admin entry's
- * `${COMIS_GATEWAY_TOKEN}` ref; the post-persist reload minted an ephemeral
- * replacement and locked the operator out of the gateway.
+ *  - An EXISTING on-disk secret is preserved VERBATIM, whether it's a `${VAR}`
+ *    REFERENCE or an INLINE PLAINTEXT literal. Both are load-bearing: dropping
+ *    either severs that token. Re-emitting the on-disk literal is preservation,
+ *    not a fresh credential commit — `persistToConfig`'s plaintext guard
+ *    exempts a value that is unchanged from the on-disk config (it blocks only
+ *    NEWLY-introduced plaintext). The secret can only be read from the ON-DISK
+ *    YAML — `container.config` holds the substituted plaintext, so it cannot
+ *    tell a ref from a literal.
+ *  - A freshly-MINTED token (tokens.create/rotate) is NOT yet on disk, so it is
+ *    not captured here and persists SECRET-FREE; its secret was routed to the
+ *    store via `storeMintedTokenSecret` and boot resolves `GATEWAY_TOKEN_<ID>`.
+ *
+ * Why verbatim and not "migrate inline plaintext to the store + persist
+ * secret-free": that only works when `deps.secretStore` is the store boot
+ * reads. In `security.storage: file` mode it is NOT (boot reads the file store;
+ * `secretStore` is the encrypted one), so a migrated `default` would be
+ * unresolvable at boot → ephemeral → admin lockout. Keeping the inline secret
+ * is mode-agnostic and can never sever the admin token (live 30-UC, 2026-06-20).
+ *
+ * Live findings:
+ *  - 2026-06-12 C7 run: tokens.create rebuilt gateway.tokens from the in-memory
+ *    view, severing the admin entry's `${COMIS_GATEWAY_TOKEN}` ref. Fixed by
+ *    preserving refs.
+ *  - 2026-06-20 30-UC run: the admin `default` token's INLINE PLAINTEXT secret
+ *    (the install-wizard / quickstart shape) was still dropped by the ref-only
+ *    guard → same 2× lockout. Now any on-disk secret is preserved.
  */
 function persistableTokenEntries(
-  persistDeps: PersistToConfigDeps,
+  deps: TokenHandlerDeps,
   tokens: ReadonlyArray<{ id: string; secret?: unknown; scopes?: readonly string[] }>,
 ): Array<{ id: string; scopes: string[]; secret?: string }> {
-  const onDisk = readOnDiskConfig(persistDeps);
+  const onDisk = deps.persistDeps ? readOnDiskConfig(deps.persistDeps) : {};
   const onDiskTokens = ((onDisk.gateway as { tokens?: unknown } | undefined)?.tokens ?? []) as Array<{
     id?: unknown;
     secret?: unknown;
   }>;
-  const refById = new Map<string, string>();
+  const secretById = new Map<string, string>();
   for (const entry of onDiskTokens) {
-    if (
-      typeof entry?.id === "string" &&
-      typeof entry.secret === "string" &&
-      isEnvRefString(entry.secret)
-    ) {
-      refById.set(entry.id, entry.secret);
+    if (typeof entry?.id === "string" && typeof entry.secret === "string") {
+      secretById.set(entry.id, entry.secret);
     }
   }
   return tokens.map((t) => {
-    const ref = refById.get(t.id);
+    const onDiskSecret = secretById.get(t.id);
     return {
       id: t.id,
       scopes: [...(t.scopes ?? [])],
-      ...(ref !== undefined && { secret: ref }),
+      ...(onDiskSecret !== undefined && { secret: onDiskSecret }),
     };
   });
 }
@@ -329,7 +342,7 @@ export function createTokenHandlers(deps: TokenHandlerDeps): Record<string, RpcH
       if (deps.persistDeps) {
         const ctx = rawParams._context as { userId?: string; traceId?: string } | undefined;
         const existingTokens = persistableTokenEntries(
-          deps.persistDeps,
+          deps,
           deps.persistDeps.container.config.gateway?.tokens ?? [],
         );
         const persistResult = await persistToConfig(deps.persistDeps, {
@@ -402,7 +415,7 @@ export function createTokenHandlers(deps: TokenHandlerDeps): Record<string, RpcH
       if (deps.persistDeps) {
         const ctx = rawParams._context as { userId?: string; traceId?: string } | undefined;
         const existingTokens = persistableTokenEntries(
-          deps.persistDeps,
+          deps,
           deps.persistDeps.container.config.gateway?.tokens ?? [],
         );
         const filteredTokens = existingTokens.filter((t) => t.id !== id);
@@ -476,7 +489,7 @@ export function createTokenHandlers(deps: TokenHandlerDeps): Record<string, RpcH
       if (deps.persistDeps) {
         const ctx = rawParams._context as { userId?: string; traceId?: string } | undefined;
         const existingTokens = persistableTokenEntries(
-          deps.persistDeps,
+          deps,
           deps.persistDeps.container.config.gateway?.tokens ?? [],
         );
         const rotatedTokens = [...existingTokens.filter((t) => t.id !== id), { id: newId, scopes }];

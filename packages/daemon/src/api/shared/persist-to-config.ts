@@ -104,6 +104,64 @@ function maskRefsFromOnDisk(resolved: unknown, onDisk: unknown): unknown {
   return resolved;
 }
 
+// Preserved-secret masking for the plaintext-secret scan.
+//
+// The guard blocks a config-persist from INTRODUCING a new plaintext secret —
+// it must NOT abort merely because the operator already keeps an inline secret
+// (e.g. the quickstart/wizard `gateway.tokens[].secret` shape). A token op
+// rewrites the WHOLE tokens list, re-emitting that unchanged literal; treating
+// that as a fresh commit aborts EVERY config-mutating RPC for such an operator,
+// and the only secret-free alternative (dropping it) severs the token (the
+// 30-UC admin lockout, 2026-06-20).
+//
+// Exempt a leaf ONLY when its value is identical in BOTH the on-disk file AND
+// the live in-memory config — the operator's genuine, active, already-persisted
+// inline secret being carried through unchanged. A value present in only ONE
+// layer stays flagged, which keeps two distinct protections intact:
+//   - on-disk-only (loader-dropped / layer-divergence, absent from
+//     container.config) — a stale orphan the persist must still surface.
+//   - in-memory-only (no matching on-disk leaf) — a freshly written / patched
+//     plaintext, the very thing the guard exists to block.
+// Walk all three trees in lock-step; substitute a benign empty string at an
+// exempt leaf so `scanForSecrets` ignores it. Applies only to the VALIDATION
+// scan — the disk write keeps the real value verbatim. Misalignment errs toward
+// NOT masking (safe: blocks rather than leaks).
+function maskPreservedSecrets(scanned: unknown, onDisk: unknown, inMemory: unknown): unknown {
+  if (
+    typeof scanned === "string"
+    && typeof onDisk === "string"
+    && typeof inMemory === "string"
+    && scanned === onDisk
+    && scanned === inMemory
+  ) {
+    return "";
+  }
+  if (Array.isArray(scanned)) {
+    const d = Array.isArray(onDisk) ? onDisk : [];
+    const m = Array.isArray(inMemory) ? inMemory : [];
+    return scanned.map((v, i) => maskPreservedSecrets(v, d[i], m[i]));
+  }
+  if (
+    scanned !== null
+    && typeof scanned === "object"
+    && !Array.isArray(scanned)
+  ) {
+    const out: Record<string, unknown> = {};
+    const s = scanned as Record<string, unknown>;
+    const d = (onDisk !== null && typeof onDisk === "object" && !Array.isArray(onDisk))
+      ? (onDisk as Record<string, unknown>)
+      : {};
+    const m = (inMemory !== null && typeof inMemory === "object" && !Array.isArray(inMemory))
+      ? (inMemory as Record<string, unknown>)
+      : {};
+    for (const k of Object.keys(s)) {
+      out[k] = maskPreservedSecrets(s[k], d[k], m[k]);
+    }
+    return out;
+  }
+  return scanned;
+}
+
 // ---------------------------------------------------------------------------
 // Module-scoped debounce timer for SIGUSR2 coalescing.
 // Multiple rapid persistToConfig calls (e.g., 8 agent creates) coalesce
@@ -360,8 +418,25 @@ export async function persistToConfig(
     // shadow looked that way. Mask resolved values back to their `${VAR}`
     // literal at every path where updatedLocal carries an env-ref, then scan.
     // scanForSecrets's own env-ref exemption then drops the false positive.
-    const refMaskedFullMerged = maskRefsFromOnDisk(fullMerged, updatedLocal);
-    const secretFindings = [...scanForSecrets(refMaskedFullMerged), ...scanForSecrets(updatedLocal)];
+    // Then exempt any secret PRESERVED unchanged in BOTH the on-disk file and
+    // the live in-memory config — the operator's active inline secret (e.g. an
+    // inline `gateway.tokens[].secret`) being carried through, not a new commit.
+    // Without this, every config-mutating RPC aborts for any operator with an
+    // inline secret, and a token op can only persist by dropping that secret —
+    // severing the token (the 30-UC admin-lockout, 2026-06-20). On-disk-only or
+    // in-memory-only / patch-introduced plaintext is NOT exempt and still
+    // surfaces. The pre-patch container.config is the in-memory reference, so a
+    // value the PATCH introduces is never exempted.
+    const inMemory = deps.container.config as unknown;
+    const refMaskedFullMerged = maskPreservedSecrets(
+      maskRefsFromOnDisk(fullMerged, updatedLocal),
+      existingLocal,
+      inMemory,
+    );
+    const secretFindings = [
+      ...scanForSecrets(refMaskedFullMerged),
+      ...scanForSecrets(maskPreservedSecrets(updatedLocal, existingLocal, inMemory)),
+    ];
     if (secretFindings.length > 0) {
       const firstPath = secretFindings[0]!.path;
       return err(

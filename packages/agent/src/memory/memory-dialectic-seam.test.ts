@@ -75,6 +75,31 @@ describe("createDialecticSeam", () => {
     expect(typeof synthesize).toBe("function");
   });
 
+  it("resolves a custom (non-catalog) provider model via customModel spec so memory.ask runs keyless/local (live 2026-06-20: getModel('ollama','qwen3.6:35b')→not-found→abstain)", async () => {
+    // pi-ai's catalog cannot see custom-registered ollama/lm-studio models, so the
+    // bare getModel() missed and the dialectic abstained ("model not found") on EVERY
+    // keyless memory.ask — even with a capable (mid+) model. Mirrors the #223 judge fix.
+    (getModel as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      throw new Error("not in built-in catalog");
+    });
+    (completeSimple as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      llmText('{"answer":"MARLIN-30","citedIds":["id-1"]}'),
+    );
+    const synthesize = createDialecticSeam(
+      makeDeps({
+        provider: "ollama",
+        modelId: "qwen3.6:35b",
+        capabilityClass: "mid", // capable → NOT gated by the T-153 abstain
+        customModel: { baseUrl: "http://127.0.0.1:11434/v1" },
+      }) as never,
+    );
+    const out = await synthesize("what is my codename?", "[id-1] (recorded 2026-06-20) MARLIN-30");
+    // RED (pre-fix): getModel throws → "model not found" → { abstain: true }, completeSimple NEVER called.
+    // GREEN (post-fix): resolveJudgeModel constructs the openai-completions model from the spec → the LLM runs.
+    expect(completeSimple).toHaveBeenCalledTimes(1);
+    expect(out).toMatchObject({ abstain: false });
+  });
+
   it("issues EXACTLY ONE bounded completeSimple call (temperature 0, maxTokens, signal) and returns the grounded parse", async () => {
     (completeSimple as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
       llmText('{"answer":"UTC","citedIds":["id-a"]}'),

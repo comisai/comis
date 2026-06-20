@@ -32,7 +32,8 @@ import type { MemoryEntityStore, MemoryCausalStore } from "@comis/core";
 import type { MemoryEntry, MemorySource, TrustLevel, ClockPort } from "@comis/core";
 import type { SessionData, SessionKey } from "@comis/core";
 import { STRUCTURED_PROMPT, parseExtractionResult, resolveOccurredAt } from "./memory-extraction.js";
-import { completeSimple, getModel } from "@earendil-works/pi-ai";
+import { completeSimple } from "@earendil-works/pi-ai";
+import { resolveJudgeModel, type CustomCompletionsModelSpec } from "./judge-model-resolver.js";
 import { readFile, writeFile, rename } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 
@@ -90,11 +91,8 @@ export interface MemoryReviewDeps {
   provider: string;
   modelId: string;
   apiKey: string;
-  /**
-   * Wall-clock reads — the relative-date RESOLUTION reference + each stored
-   * entry's `createdAt`/event timestamps. Never `Date.now()` (globals rule);
-   * the daemon wires its `createSystemClock()` adapter here.
-   */
+  customModel?: CustomCompletionsModelSpec; // keyless/local model spec (#223/DIALECTIC-FIX)
+  /** Wall-clock reads — relative-date RESOLUTION ref + stored-entry timestamps. Never `Date.now()` (globals); daemon wires `createSystemClock()`. */
   clock: ClockPort;
   logger: ReviewLogger;
   /**
@@ -441,8 +439,7 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
   // Call LLM via completeSimple
   let model;
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- provider/modelId are dynamic strings
-    model = getModel(deps.provider as any, deps.modelId as any);
+    model = resolveJudgeModel(deps.provider, deps.modelId, deps.customModel);
   } catch (modelErr) {
     return err(new Error(`Failed to resolve model ${deps.provider}/${deps.modelId}: ${modelErr instanceof Error ? modelErr.message : String(modelErr)}`));
   }

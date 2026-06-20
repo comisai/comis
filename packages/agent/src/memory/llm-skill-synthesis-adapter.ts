@@ -29,7 +29,8 @@
 import { ok, err, fromPromise, type Result } from "@comis/shared";
 import { systemSetTimeout, systemClearTimeout, wrapExternalContent } from "@comis/core";
 import type { SkillSynthesisPort, SynthesisInput, CandidateSkill } from "@comis/core";
-import { completeSimple, getModel } from "@earendil-works/pi-ai";
+import { completeSimple } from "@earendil-works/pi-ai";
+import { resolveJudgeModel, type CustomCompletionsModelSpec } from "./judge-model-resolver.js";
 import { SKILL_SYNTHESIS_PROMPT, parseSynthesisResult } from "./skill-synthesis-prompt.js";
 
 // ---------------------------------------------------------------------------
@@ -65,6 +66,10 @@ export interface LlmSkillSynthesisAdapterDeps {
   modelId: string;
   /** The API key for the resolved provider (resolved daemon-side; never logged). */
   apiKey: string;
+  /** Custom-provider model spec (resolved `/v1` baseUrl) so a keyless/local YAML provider the
+   *  pi-ai catalog can't see still resolves a model — else skill synthesis skipped on keyless
+   *  (#223/DIALECTIC-FIX). Optional; built-in providers omit it. */
+  customModel?: CustomCompletionsModelSpec;
   /** Wall-clock reads for message timestamps — NEVER a wall-clock global. */
   clock: { now: () => number };
   /** Structural logger (counts/ids/step only — never procedure bodies, SEC-01 §7). */
@@ -107,7 +112,7 @@ function extractResponseText(response: { content?: unknown[] }): string {
  * content.
  */
 export function createLlmSkillSynthesisAdapter(deps: LlmSkillSynthesisAdapterDeps): SkillSynthesisPort {
-  const { provider, modelId, apiKey, clock, logger } = deps;
+  const { provider, modelId, apiKey, customModel, clock, logger } = deps;
 
   async function synthesize(input: SynthesisInput): Promise<Result<CandidateSkill[], Error>> {
     const { trajectoryText, clusterTrajIds } = input;
@@ -119,8 +124,8 @@ export function createLlmSkillSynthesisAdapter(deps: LlmSkillSynthesisAdapterDep
 
     let model;
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- provider/modelId are dynamic strings
-      model = getModel(provider as any, modelId as any);
+      // Catalog-first, else construct from customModel (keyless/local) — #223/DIALECTIC-FIX.
+      model = resolveJudgeModel(provider, modelId, customModel);
     } catch (modelErr) {
       return err(
         new Error(

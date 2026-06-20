@@ -35,7 +35,8 @@
 
 import { systemSetTimeout, systemClearTimeout } from "@comis/core";
 import type { ClockPort, ComisLogger } from "@comis/core";
-import { completeSimple, getModel } from "@earendil-works/pi-ai";
+import { completeSimple } from "@earendil-works/pi-ai";
+import { resolveJudgeModel, type CustomCompletionsModelSpec } from "./judge-model-resolver.js";
 import { buildDialecticPrompt, parseDialecticOutput, type DialecticParsed } from "./memory-dialectic-prompt.js";
 import { resolveMemoryOpsStrategy } from "./memory-capability-router.js";
 import type { CapabilityClass } from "../executor/model-profile.js";
@@ -72,6 +73,14 @@ export interface DialecticSeamDeps {
    * Optional; defaults to false.
    */
   hasCapableModelOverride?: boolean;
+  /**
+   * Custom-provider model spec (the resolved OpenAI-compat `…/v1` baseUrl) for a
+   * YAML provider (ollama / lm-studio / …) the pi-ai catalog does NOT know. Without
+   * it, a keyless/local memory.ask resolved "model not found" and abstained on EVERY
+   * ask — even with a capable model (live 2026-06-20; the #223 judge-resolver bug class
+   * applied to the dialectic seam). Optional: built-in providers omit it.
+   */
+  customModel?: CustomCompletionsModelSpec;
 }
 
 /** Pull the concatenated text parts out of a pi-ai completeSimple response. */
@@ -109,7 +118,7 @@ function extractResponseText(response: { content?: unknown[] }): string {
 export function createDialecticSeam(
   deps: DialecticSeamDeps,
 ): (question: string, groundingText: string) => Promise<DialecticParsed> {
-  const { provider, modelId, apiKey, maxOutputTokens, clock, logger, agentId } = deps;
+  const { provider, modelId, apiKey, maxOutputTokens, clock, logger, agentId, customModel } = deps;
   // R6: pre-resolve the capability routing (once per seam instance, not per call).
   // Defaults to "frontier" behavior when capabilityClass is absent (capable path).
   const capabilityClass = deps.capabilityClass ?? "frontier";
@@ -120,8 +129,10 @@ export function createDialecticSeam(
   async function callModel(systemPrompt: string, userText: string): Promise<string | undefined> {
     let model;
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- provider/modelId are dynamic strings
-      model = getModel(provider as any, modelId as any);
+      // Catalog-first, else construct from customModel (the resolved …/v1 baseUrl) so a
+      // keyless/local YAML provider the pi-ai catalog can't see still resolves — mirrors
+      // the #223 judge-model-resolver fix (this seam was the missed sibling).
+      model = resolveJudgeModel(provider, modelId, customModel);
     } catch (modelErr) {
       logger.warn(
         {
