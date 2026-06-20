@@ -1,0 +1,102 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * Schema assertions for the IncidentReport optional `audit?` + `cacheBreaks?`
+ * sections (AUDIT-05 + PERSIST-01, Phase 176 Plan 05).
+ *
+ * This file is NEW — there is no `incident-report.test.ts` on pre-patch HEAD (no
+ * core test imports `IncidentReportSchema`). It pins the two additive, content-free,
+ * presence-conditional sections (the `recall?`/`image?` mold) and the invariant
+ * that `schemaVersion` STAYS `1` (additive optional sections, NOT a compat shim).
+ *
+ * @module
+ */
+import { describe, it, expect } from "vitest";
+import { IncidentReportSchema } from "./observability.js";
+
+/** A minimal-but-valid IncidentReport (no optional sections) — the base fixture. */
+function baseReport(): Record<string, unknown> {
+  return {
+    schemaVersion: 1,
+    sessionKey: "default:user:telegram:1",
+    traceId: "t-1",
+    agentId: "default",
+    channel: { type: "telegram", id: "user" },
+    outcome: { endReason: "stop", degraded: false, severity: "ok" },
+    cost: { costUsd: 0, totalTokens: 0, cacheReadRatio: 0 },
+    timing: { durationMs: 0, turnCount: 1 },
+    toolStats: {},
+    failures: [],
+    breakerTimeline: [],
+    offloads: [],
+    summary: "clean session",
+    likelyRootCause: null,
+    suggestedNextSteps: [],
+    truncations: [],
+  };
+}
+
+describe("IncidentReportSchema audit? + cacheBreaks? sections (176-05)", () => {
+  it("parses a report WITHOUT the new optional sections (additive — pre-existing constructors)", () => {
+    const parsed = IncidentReportSchema.parse(baseReport());
+    expect(parsed.schemaVersion).toBe(1);
+    expect(parsed.audit).toBeUndefined();
+    expect(parsed.cacheBreaks).toBeUndefined();
+  });
+
+  it("accepts a cacheBreaks section ([{reason,count,estCostUsd}]); schemaVersion stays 1", () => {
+    const report = {
+      ...baseReport(),
+      cacheBreaks: [
+        { reason: "system_changed", count: 3, estCostUsd: 0.01 },
+        { reason: "tools_changed", count: 1, estCostUsd: 0 },
+      ],
+    };
+    const parsed = IncidentReportSchema.parse(report);
+    expect(parsed.schemaVersion).toBe(1);
+    expect(parsed.cacheBreaks).toHaveLength(2);
+    expect(parsed.cacheBreaks?.[0]).toEqual({
+      reason: "system_changed",
+      count: 3,
+      estCostUsd: 0.01,
+    });
+  });
+
+  it("accepts an audit section ({total, byKind}) — counts-by-kind, content-free", () => {
+    const report = {
+      ...baseReport(),
+      audit: { total: 5, byKind: { secret_access: 2, injection_detected: 3 } },
+    };
+    const parsed = IncidentReportSchema.parse(report);
+    expect(parsed.schemaVersion).toBe(1);
+    expect(parsed.audit?.total).toBe(5);
+    expect(parsed.audit?.byKind).toEqual({ secret_access: 2, injection_detected: 3 });
+  });
+
+  it("strips a planted value-shaped field from the audit section (content-free — T-176-19)", () => {
+    // z.object strips unknown keys on parse — a `value`/`secret` field can never
+    // ride the audit? section even if a caller tries to smuggle one.
+    const report = {
+      ...baseReport(),
+      audit: {
+        total: 1,
+        byKind: { secret_access: 1 },
+        value: "sk-leaked-secret",
+        secret: "nope",
+      },
+    };
+    const parsed = IncidentReportSchema.parse(report);
+    const audit = parsed.audit as Record<string, unknown> | undefined;
+    expect(audit).toBeDefined();
+    expect("value" in (audit ?? {})).toBe(false);
+    expect("secret" in (audit ?? {})).toBe(false);
+    expect(Object.keys(audit ?? {}).sort()).toEqual(["byKind", "total"]);
+  });
+
+  it("rejects a cacheBreaks entry missing estCostUsd (the shape is enforced)", () => {
+    const report = {
+      ...baseReport(),
+      cacheBreaks: [{ reason: "system_changed", count: 3 }],
+    };
+    expect(() => IncidentReportSchema.parse(report)).toThrow();
+  });
+});
