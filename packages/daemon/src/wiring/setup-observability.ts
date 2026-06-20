@@ -44,6 +44,8 @@ interface OtelExporterSeamDeps {
   clock: ClockPort;
   observability: AppConfig["observability"];
   spendAccumulator?: SpendAccumulator;
+  /** The daemon version label for `comis_build_info` (pkgJson.version). */
+  version?: string;
   logger?: import("@comis/core").ComisLogger;
 }
 
@@ -167,6 +169,11 @@ export async function setupObservability(deps: {
    * is not constructed and the OTel seam is skipped.
    */
   config?: AppConfig;
+  /**
+   * The daemon version (pkgJson.version) for the `comis_build_info{version}`
+   * gauge. Optional — when absent the extension labels it "unknown".
+   */
+  version?: string;
 }): Promise<ObservabilityResult> {
   const { eventBus, _createTokenTracker } = deps;
 
@@ -277,6 +284,8 @@ export async function setupObservability(deps: {
         // when no accumulator was constructed (clock/config absent → the
         // exactOptionalPropertyTypes-safe conditional spread).
         ...(spendAccumulator !== undefined ? { spendAccumulator } : {}),
+        // The daemon version label for comis_build_info (CR-01).
+        ...(deps.version !== undefined ? { version: deps.version } : {}),
         ...(deps.logger !== undefined ? { logger: deps.logger } : {}),
       });
     } catch (err) {

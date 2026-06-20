@@ -193,13 +193,13 @@ export const METRIC_CATALOG: readonly MetricDef[] = Object.freeze([
     ["reason", "scope"],
     "Prompt-cache breaks by reason (one of the 15 cache-break reasons) and scope.",
   ),
-  def(
-    "comis.cache.break.cost.usd",
-    "counter",
-    "usd",
-    ["reason"],
-    "Estimated USD cost of cache breaks (tokenDrop × cacheRead pricing) by reason.",
-  ),
+  // NOTE: comis.cache.break.cost.usd was REMOVED (CR-01). The
+  // `observability:cache_break` bus event carries NO cost field — `estCostUsd`
+  // is COMPUTED downstream in obs-explain-signals.ts from persisted records, not
+  // emitted on the bus. Wiring it would require a NEW emit (violates N1 — the
+  // extension only subscribes existing signals), so the metric was genuinely
+  // unsourced and is removed from the catalog + every dashboard panel + every
+  // Prometheus rule (the cost-by-reason view lives in `comis explain`, not here).
   // ── Pricing coverage (E1) ─────────────────────────────────────────────────
   def(
     "comis.pricing.turns",
@@ -348,7 +348,9 @@ export const METRIC_CATALOG: readonly MetricDef[] = Object.freeze([
   // ── Meta / self-cardinality ───────────────────────────────────────────────
   def(
     "comis.build_info",
-    "gauge",
+    // observableGauge — a constant series can only be emitted via a pull callback
+    // (registered in metric-mapping's wireMetaGauges).
+    "observableGauge",
     "",
     // version ONLY — NO commit (Pitfall 7 / decision #5: no git rev-parse at runtime).
     ["version"],
@@ -356,7 +358,8 @@ export const METRIC_CATALOG: readonly MetricDef[] = Object.freeze([
   ),
   def(
     "comis.up",
-    "gauge",
+    // observableGauge — constant 1 observed on every scrape (pull callback).
+    "observableGauge",
     "",
     [],
     "Exporter liveness gauge (constant 1 while the exporter runs).",

@@ -22,21 +22,10 @@
       "id": 1,
       "title": "Cache-break rate by reason (the standout signal)",
       "type": "timeseries",
-      "gridPos": { "h": 9, "w": 16, "x": 0, "y": 0 },
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 0 },
       "fieldConfig": { "defaults": { "unit": "ops", "links": [ { "title": "Explain the breaking session", "url": "/observe/explain?ref=${__data.fields.comis_trace_id}", "targetBlank": true } ] }, "overrides": [] },
       "targets": [
         { "refId": "A", "datasource": "${datasource}", "expr": "sum by (reason) (rate(comis_cache_break_total[5m]))", "legendFormat": "{{reason}}" }
-      ],
-      "links": [ { "title": "comis explain (drill-down)", "url": "/observe/explain?ref=${__data.fields.comis_trace_id}", "targetBlank": true } ]
-    },
-    {
-      "id": 2,
-      "title": "$ lost to cache breaks by reason",
-      "type": "timeseries",
-      "gridPos": { "h": 9, "w": 8, "x": 16, "y": 0 },
-      "fieldConfig": { "defaults": { "unit": "currencyUSD" }, "overrides": [] },
-      "targets": [
-        { "refId": "A", "datasource": "${datasource}", "expr": "sum by (reason) (rate(comis_cache_break_cost_usd_total[5m]) * 60)", "legendFormat": "{{reason}}" }
       ],
       "links": [ { "title": "comis explain (drill-down)", "url": "/observe/explain?ref=${__data.fields.comis_trace_id}", "targetBlank": true } ]
     },

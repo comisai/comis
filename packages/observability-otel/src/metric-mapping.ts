@@ -52,6 +52,8 @@ export interface WireMetricMappingDeps {
   readonly spendAccumulator?: SpendSnapshotReader;
   /** The per-scope spend ceilings (config) the headroom gauge subtracts from. */
   readonly ceilings?: SpendCeilingsView;
+  /** The daemon version label for `comis_build_info` (from `pkgJson.version`; "unknown" when absent). */
+  readonly version?: string;
 }
 
 /**
@@ -176,6 +178,46 @@ function wireSpendGauges(deps: WireMetricMappingDeps): void {
 }
 
 /**
+ * Register the meta gauges `comis_up` (exporter-liveness; constant 1 while the
+ * MeterProvider runs) and `comis_build_info{version}` (constant 1 carrying the
+ * daemon version label — version ONLY, NO commit; Pitfall 7 / decision #5: no
+ * git rev-parse at runtime). Both are pull-based `observableGauge`s — the only
+ * way to expose a constant series — observed on every scrape. `comis_up` going
+ * absent (no scrape) IS the liveness signal the fleet dashboard alerts on.
+ */
+function wireMetaGauges(deps: WireMetricMappingDeps): void {
+  const { meter } = deps;
+  const version = deps.version ?? "unknown";
+
+  const upGauge = meter.createObservableGauge("comis.up", {
+    description: "Exporter liveness gauge (constant 1 while the exporter runs).",
+    unit: "",
+  });
+  upGauge.addCallback((result) => result.observe(1));
+
+  const buildGauge = meter.createObservableGauge("comis.build_info", {
+    description: "Build info gauge (constant 1) carrying the daemon version label.",
+    unit: "",
+  });
+  // version is a config-derived id (pkgJson.version), NOT user content — a
+  // content-free closed-ish label (one value per running daemon).
+  buildGauge.addCallback((result) => result.observe(1, { version }));
+}
+
+/**
+ * Derive a content-free `outcome` for the per-turn counter from the SDK
+ * finish/stop signals on `token_usage` — a turn is `error` on a refusal /
+ * length-cut / loop-detected / budget-exceeded finish, else `success`. Closed
+ * label (NOT free text): the input is the SDK's own closed-ish enum, mapped to
+ * the two-value `outcome` the catalog declares.
+ */
+function turnOutcome(finishReason: string | undefined, stopReason: string | undefined): "success" | "error" {
+  const r = (finishReason ?? stopReason ?? "stop").toLowerCase();
+  if (r === "stop" || r === "tool_use" || r === "end_turn") return "success";
+  return "error";
+}
+
+/**
  * Subscribe the bus → instrument mapping. Returns nothing — the caller (the
  * exporter) owns the MeterProvider's lifecycle. Each handler maps a typed payload
  * to a content-free catalog instrument; the `traceId` (when present) rides as a
@@ -224,6 +266,17 @@ export function wireMetricMapping(deps: WireMetricMappingDeps): void {
       agent: payload.agentId,
       operation: "interactive",
     });
+    // Completed-turn counter (one per token_usage = one finished turn). outcome
+    // derived from the SDK finish/stop signal — a closed two-value label.
+    addCounter(instruments, "comis.turns", 1, {
+      agent: payload.agentId,
+      outcome: turnOutcome(payload.finishReason, payload.stopReason),
+    });
+    // Pricing coverage (E1): a turn that billed > $0 is `priced`, a $0 turn is
+    // `free` (local-first). The `unknown` state rides spend_unpriceable below.
+    addCounter(instruments, "comis.pricing.turns", 1, {
+      state: payload.cost.total > 0 ? "priced" : "free",
+    });
   });
 
   // ── observability:cache_break → cache-break by reason + scope ──
@@ -242,11 +295,19 @@ export function wireMetricMapping(deps: WireMetricMappingDeps): void {
   eventBus.on("observability:spend_exceeded", (payload) => {
     addCounter(instruments, "comis.spend.exceeded", 1, { scope: payload.scope });
   });
-  eventBus.on("observability:spend_unpriceable", (_payload) => {
+  eventBus.on("observability:spend_unpriceable", (payload) => {
     // Content-free: a single count (provider/model are config ids but kept off
-    // the label set here — the catalog's spend.unpriceable carries `scope` only;
-    // an unpriceable turn is not scoped by a ceiling, so emit the bare count).
+    // the spend.unpriceable label set — the catalog's spend.unpriceable carries
+    // `scope` only; an unpriceable turn is not scoped by a ceiling, bare count).
     addCounter(instruments, "comis.spend.unpriceable", 1, {});
+    // E1 pricing-coverage: an unpriceable turn is the `unknown` pricing state +
+    // the per-(provider,model) pricing-gap counter (provider/model are config
+    // ids — a model id is a config value, NOT user content; §2.7).
+    addCounter(instruments, "comis.pricing.turns", 1, { state: "unknown" });
+    addCounter(instruments, "comis.pricing.unknown", 1, {
+      provider: payload.provider,
+      model: payload.model,
+    });
   });
 
   // ── security:injection_detected → counts only (NEVER the patterns body) ──
@@ -255,6 +316,68 @@ export function wireMetricMapping(deps: WireMetricMappingDeps): void {
     void payload; // payload.patterns is content — deliberately NOT read into a label.
   });
 
+  // ── tool:executed → comis.tool_calls (agent/tool/outcome/error_kind) ──
+  eventBus.on("tool:executed", (payload) => {
+    addCounter(instruments, "comis.tool_calls", 1, {
+      // agentId may be undefined on some emit sites — sanitizeForPersistence
+      // drops undefined keys, so the label is simply absent then (no leak).
+      agent: payload.agentId,
+      tool: payload.toolName,
+      outcome: payload.success ? "success" : "failure",
+      // errorKind is the closed ErrorKind union (or absent on success).
+      error_kind: payload.errorKind,
+    });
+  });
+
+  // ── tool:breaker_opened → comis.breaker_trips (tool only — event has no agentId) ──
+  eventBus.on("tool:breaker_opened", (payload) => {
+    // errorTag is a normalized error tag (content) — deliberately NOT a label.
+    addCounter(instruments, "comis.breaker_trips", 1, { tool: payload.toolName });
+  });
+
+  // ── tool:result_offloaded → comis.offloads (tool only — diskPathRel is a path, never a label) ──
+  eventBus.on("tool:result_offloaded", (payload) => {
+    addCounter(instruments, "comis.offloads", 1, { tool: payload.toolName });
+  });
+
+  // ── session:summary → comis.sessions + comis.sessions.degraded (fleet rollup) ──
+  eventBus.on("session:summary", (payload) => {
+    const severity = payload.degraded ? "degraded" : "ok";
+    addCounter(instruments, "comis.sessions", 1, { agent: payload.agentId, severity });
+    if (payload.degraded) {
+      addCounter(instruments, "comis.sessions.degraded", 1, { agent: payload.agentId, severity });
+    }
+  });
+
+  // ── audit:event → comis.audit_events (the ComisAuditSinkFailure alert source) ──
+  eventBus.on("audit:event", (payload) => {
+    addCounter(instruments, "comis.audit_events", 1, {
+      // kind is the closed AuditKind union (or absent on un-migrated emits).
+      kind: payload.kind,
+      outcome: payload.outcome,
+      // classification (read|mutate|destructive) is the content-free severity proxy.
+      severity: payload.classification ?? "unknown",
+    });
+  });
+
+  // ── secret:accessed → comis.secret_access (outcome only — secretName is never a label) ──
+  eventBus.on("secret:accessed", (payload) => {
+    addCounter(instruments, "comis.secret_access", 1, { outcome: payload.outcome });
+  });
+
+  // ── memory:recalled → comis.recall + comis.recall.zero_hits (lane = the lanes count) ──
+  eventBus.on("memory:recalled", (payload) => {
+    // `lane` is the closed-ish lane dimension; the event reports a lanes COUNT,
+    // so we render it as a bounded string label (1..3) — content-free.
+    const lane = String(payload.lanes);
+    addCounter(instruments, "comis.recall", 1, { agent: payload.agentId, lane });
+    if (payload.finalCount === 0) {
+      addCounter(instruments, "comis.recall.zero_hits", 1, { agent: payload.agentId, lane });
+    }
+  });
+
   // The spend gauges (pull-based) — registered last so the accumulator ref is set.
   wireSpendGauges(deps);
+  // The meta gauges (comis_up + comis_build_info) — pull-based constants.
+  wireMetaGauges(deps);
 }

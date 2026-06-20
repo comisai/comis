@@ -1459,7 +1459,7 @@ async function bootFoundation(
     logger: logLevelManager.getLogger("observability"),
     activityLogger: logLevelManager.getLogger("activity-stream"),
     homeDir: mergedEnv["HOME"],
-    dataDir, clock, config: container.config, // Phase 177 (clock+config): construct the spend accumulator here (ceilings from config.observability.spend).
+    dataDir, clock, config: container.config, version: daemonVersion, // Phase 177 (clock+config): construct the spend accumulator here (ceilings from config.observability.spend). Phase 178/CR-01: daemonVersion → comis_build_info{version}.
     // runtime reachability: resolve the DEFAULT agent's activity.theme →
     // themeForName bundle and forward it so the process-wide ActivityStream's
     // subagent marker follows the configured theme (the four themes are now

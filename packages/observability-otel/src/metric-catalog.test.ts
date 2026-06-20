@@ -129,7 +129,10 @@ describe("metric-catalog", () => {
       "comis_cache_saved_usd_total",
       "comis_cache_read_ratio",
       "comis_cache_break_total",
-      "comis_cache_break_cost_usd_total",
+      // comis_cache_break_cost_usd_total REMOVED (CR-01) — the cache_break bus
+      // event carries no cost field; estCostUsd is computed downstream, not
+      // emitted, so the metric was unsourced. The $-lost-by-reason view lives in
+      // `comis explain`, not on the pull surface.
       "comis_pricing_turns_total",
       "comis_pricing_unknown_total",
       "comis_spend_usd",
@@ -169,7 +172,10 @@ describe("metric-catalog", () => {
     // via meter.createObservableGauge — Pitfall 3 / 178-01 Task 3).
     expect(byName.get("comis_spend_usd")?.type).toBe("observableGauge");
     expect(byName.get("comis_spend_headroom_usd")?.type).toBe("observableGauge");
-    expect(byName.get("comis_up")?.type).toBe("gauge");
+    // comis_up + comis_build_info are observableGauge (CR-01): a constant series
+    // can only be emitted via a pull callback (wireMetaGauges), never a sync gauge.
+    expect(byName.get("comis_up")?.type).toBe("observableGauge");
+    expect(byName.get("comis_build_info")?.type).toBe("observableGauge");
   });
 
   it("(c) comis_build_info carries ONLY a `version` label — never `commit` (decision #5 / Pitfall 7)", () => {

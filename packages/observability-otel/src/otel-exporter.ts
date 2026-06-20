@@ -48,6 +48,8 @@ export interface OtelExporterDeps {
   readonly observability: AppConfig["observability"];
   /** The 177 spend accumulator's read accessor — the `comis_spend_*` gauge source. */
   readonly spendAccumulator?: SpendSnapshotReader;
+  /** The daemon version label for `comis_build_info` (from `pkgJson.version`). */
+  readonly version?: string;
   /** Object-first logger for the grpc-fallback / cardinality WARNs (optional). */
   readonly logger?: ComisLogger;
 }
@@ -135,6 +137,7 @@ export function registerOtelExporter(deps: OtelExporterDeps): OtelExporterHandle
       meter,
       eventBus,
       ...(deps.spendAccumulator !== undefined ? { spendAccumulator: deps.spendAccumulator } : {}),
+      ...(deps.version !== undefined ? { version: deps.version } : {}),
       ceilings: {
         perAgentUsd: observability.spend.perAgentUsd,
         perTenantUsd: observability.spend.perTenantUsd,
