@@ -133,6 +133,35 @@ describe("createOpenaiCompletionsRoute", () => {
   });
 
   describe("streaming", () => {
+    it("does NOT stream thinking/reasoning deltas into delta.content (reasoning-leak; streamed must == final, live 2026-06-20)", async () => {
+      // qwen3.6 + other reasoning models emit thinking deltas (kind:"thinking"). The
+      // non-stream path strips them (final content = answer only); the stream MUST too.
+      // The executor threads onDelta(delta, kind) — the route had ignored the kind and
+      // wrote EVERY delta to content, leaking the model's raw reasoning to API clients.
+      const executeAgent = vi.fn().mockImplementation(async (params) => {
+        if (params.onDelta) {
+          params.onDelta("The user wants me to say hi. I should ", "thinking");
+          params.onDelta("just output it.", "thinking");
+          params.onDelta("Hi!", "text");
+        }
+        return { response: "Hi!", tokensUsed: { input: 5, output: 5, total: 10 }, finishReason: "stop" };
+      });
+      const app = createOpenaiCompletionsRoute(createMockDeps({ executeAgent }));
+      const res = await app.request("/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(validBody({ stream: true })),
+      });
+      const text = await res.text();
+      const content = text
+        .split("\n").filter((l) => l.startsWith("data:")).map((l) => l.replace(/^data:\s*/, "").trim())
+        .filter((d) => d !== "[DONE]")
+        .map((d) => { try { return JSON.parse(d).choices?.[0]?.delta?.content ?? ""; } catch { return ""; } })
+        .join("");
+      expect(content).toBe("Hi!"); // ONLY the text delta — no thinking leaked
+      expect(content).not.toContain("The user wants me to say hi");
+    });
+
     it("returns SSE chunks with role, content, finish, usage, and [DONE]", async () => {
       const executeAgent = vi.fn().mockImplementation(async (params) => {
         // Simulate streaming by calling onDelta
