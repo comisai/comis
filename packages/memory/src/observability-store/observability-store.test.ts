@@ -7,6 +7,9 @@
  * behavior-named cases: insert + retrieve latest, insert + list with
  * limit, and validation degrade.
  */
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, it, expect, beforeEach } from "vitest";
 import Database from "better-sqlite3";
 import { systemNowMs } from "@comis/core";
@@ -755,5 +758,24 @@ describe("ObservabilityStore — getRollingSpendUsd (SPEND-03 boot rehydration)"
 
   it("returns an empty array when there are no rows in the window", () => {
     expect(store.getRollingSpendUsd(ONE_HOUR_MS)).toEqual([]);
+  });
+
+  it("LOW-1 (177-obs-loop): spend-queries.ts validates rows via createRowMapper/parseRows (NO inline `as {...}[]` cast — AGENTS.md §6.8)", () => {
+    // The cast `.all(since) as { agent_id; total_cost }[]` bypassed the Zod row
+    // validation §6.8 mandates (the untyped-sqlite arch gate's regex only catches
+    // NAMED-type casts, so an inline OBJECT-literal cast slipped through silently —
+    // the security-review LOW-1 finding). The boot-read must route rows through a
+    // mapper like the cloned-from observability-queries.ts agentAggMapper.
+    const here = dirname(fileURLToPath(import.meta.url));
+    const src = readFileSync(resolve(here, "spend-queries.ts"), "utf-8");
+    const stripped = src
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("//"))
+      .join("\n");
+    // Routes the rows through a Zod mapper (parseRows), not a blind cast.
+    expect(stripped).toMatch(/\.parseRows\(/);
+    // No inline object-literal cast on the statement result (the §6.8 violation).
+    expect(stripped).not.toMatch(/\.all\([^)]*\)\s+as\s+\{/);
   });
 });

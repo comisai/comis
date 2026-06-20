@@ -19,7 +19,7 @@
 
 import type Database from "better-sqlite3";
 import { systemNowMs } from "@comis/core";
-import type { AgentRollingSpend, ObservabilityStore } from "./observability-store-types.js";
+import { rollingSpendMapper, type AgentRollingSpend, type ObservabilityStore } from "./observability-store-types.js";
 
 /** The read-side slice this module contributes to the ObservabilityStore handle. */
 export type SpendQueries = Pick<ObservabilityStore, "getRollingSpendUsd">;
@@ -47,15 +47,17 @@ export function bindSpendQueries(db: Database.Database): SpendQueries {
     // way) — this is a one-shot BOOT read, so it reads the clock once here rather
     // than taking a `sinceMs` param like the analytics aggregations do.
     const since = systemNowMs() - windowMs;
-    const rows = rollingSpendByAgentStmt.all(since) as {
-      agent_id: string;
-      total_cost: number | null;
-    }[];
+    // LOW-1 (177-obs-loop): route the rows through the Zod row mapper (§6.8) — the
+    // cloned-from observability-queries.ts agentAggMapper pattern — instead of an
+    // inline `as {...}[]` cast that bypassed validation. Degrade-on-validation-error
+    // to empty (a broken DB seeds zero headroom, never a NaN — the accumulator must
+    // never seed a NaN headroom).
+    const parsed = rollingSpendMapper.parseRows(rollingSpendByAgentStmt.all(since));
+    const rows = parsed.ok ? parsed.value : [];
     return rows.map((r) => ({
       agentId: r.agent_id,
       // A GROUP BY agent_id always has >=1 row, so SUM is non-null in practice;
-      // guard a non-finite/null SUM to 0 anyway (degrade-on-error discipline —
-      // the accumulator must never seed a NaN headroom).
+      // guard a non-finite/null SUM to 0 anyway (degrade-on-error discipline).
       totalCostUsd:
         typeof r.total_cost === "number" && Number.isFinite(r.total_cost) ? r.total_cost : 0,
     }));

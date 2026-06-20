@@ -16,6 +16,7 @@ import {
   ChannelSnapshotDbRowSchema,
   ProviderAggDbRowSchema,
   AgentAggDbRowSchema,
+  RollingSpendDbRowSchema,
   SessionAggDbRowSchema,
   HourlyBucketDbRowSchema,
   DeliveryStatsDbRowSchema,
@@ -49,6 +50,9 @@ export const diagnosticMapper = createRowMapper(DiagnosticDbRowSchema);
 export const channelSnapshotMapper = createRowMapper(ChannelSnapshotDbRowSchema);
 export const providerAggMapper = createRowMapper(ProviderAggDbRowSchema);
 export const agentAggMapper = createRowMapper(AgentAggDbRowSchema);
+// LOW-1 (177-obs-loop): the spend-accumulator BOOT-read mapper (replaces the inline
+// `as {agent_id; total_cost}[]` cast in spend-queries.ts — AGENTS.md §6.8).
+export const rollingSpendMapper = createRowMapper(RollingSpendDbRowSchema);
 export const sessionAggMapper = createRowMapper(SessionAggDbRowSchema);
 export const hourlyBucketMapper = createRowMapper(HourlyBucketDbRowSchema);
 /**
