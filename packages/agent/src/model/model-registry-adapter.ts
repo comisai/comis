@@ -103,6 +103,41 @@ function getBuiltInBaseUrl(type: string): string | undefined {
   return models[0]?.baseUrl;
 }
 
+/**
+ * Local self-hosted providers whose OpenAI-compatible API is mounted under
+ * `/v1` (`/v1/chat/completions`). Users naturally configure the bare server
+ * root for these (e.g. ollama's documented `http://127.0.0.1:11434`), but the
+ * `openai-completions` transport POSTs to `<baseUrl>/chat/completions` — so a
+ * root-only baseUrl yields `<root>/chat/completions`, which both servers
+ * answer with a bare "404 page not found" and the whole turn fails with empty
+ * content. pi-ai ships no built-in baseUrl for either, so the override is the
+ * only source and we must make the obvious value work.
+ */
+const OPENAI_COMPAT_V1_TYPES = new Set<string>(["ollama", "lm-studio"]);
+
+/**
+ * Normalize a user-supplied baseUrl for {@link OPENAI_COMPAT_V1_TYPES} so a
+ * host-only origin reaches the `/v1` OpenAI-compat mount. A baseUrl that
+ * already carries a path (including `/v1`, or a custom reverse-proxy path) is
+ * returned unchanged — we only fill in the missing mount for the bare-root
+ * case. Unparseable values and non-local types pass through untouched.
+ */
+function normalizeOpenAICompatBaseUrl(
+  baseUrl: string | undefined,
+  type: string,
+): string | undefined {
+  if (!baseUrl || !OPENAI_COMPAT_V1_TYPES.has(type)) return baseUrl;
+  let parsed: URL;
+  try {
+    parsed = new URL(baseUrl);
+  } catch {
+    return baseUrl; // malformed — leave for downstream validation to reject
+  }
+  // Only fill in the mount when the user gave a host-only origin ("" or "/").
+  if (parsed.pathname && parsed.pathname !== "/") return baseUrl;
+  return `${parsed.origin}/v1`;
+}
+
 function getBuiltInModelIds(type: string): Set<string> {
   if (!_builtInProviders.has(type)) return new Set();
   return new Set(getModels(type as KnownProvider).map((m) => m.id));
@@ -320,7 +355,9 @@ export function registerCustomProviders(
     try {
       registry.registerProvider(providerName, {
         api,
-        baseUrl: entry.baseUrl || getBuiltInBaseUrl(entry.type),
+        baseUrl:
+          normalizeOpenAICompatBaseUrl(entry.baseUrl, entry.type) ||
+          getBuiltInBaseUrl(entry.type),
         apiKey: resolvedApiKey,
         headers: headersResolved,
         models: hasModels
