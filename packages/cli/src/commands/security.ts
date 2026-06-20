@@ -36,6 +36,7 @@ import { webhookSecurityCheck } from "../security/checks/webhook-security.js";
 import { browserExposureCheck } from "../security/checks/browser-exposure.js";
 import type { AuditContext, Severity, AuditResult } from "../security/types.js";
 import { runSecurityFix } from "../security/fix-runner.js";
+import { runAuditLog, type AuditLogOptions } from "./security-audit-log.js";
 
 /** All security checks in execution order (14 total). */
 const ALL_CHECKS = [
@@ -118,6 +119,7 @@ function buildAuditContext(configPaths: string[]): AuditContext {
  * Provides:
  * - `comis security audit` -- run security checks
  * - `comis security fix` -- auto-remediate findings (dry-run by default)
+ * - `comis security audit-log` -- query the durable security-decision audit log (AUDIT-05)
  *
  * @param program - The root Commander program
  */
@@ -271,4 +273,23 @@ export function registerSecurityCommand(program: Command): void {
         }
       },
     );
+
+  // security audit-log (AUDIT-05) — the durable security-decision audit query.
+  // DISTINCT from `security audit` (the local check-runner): this is a REMOTE
+  // admin RPC (obs.audit.query) reading the persisted obs_audit_events. The
+  // handler lives in the flat `security-audit-log.ts` (the explain.ts/fleet.ts
+  // mold); ONLY callTyped is used there (the cli-uses-typed-rpc invariant).
+  security
+    .command("audit-log")
+    .description("Query the durable security-decision audit log (secret access, injection detection, command blocks)")
+    .option("--kind <kind>", "Filter by event family (e.g. secret_access, injection_detected)")
+    .option("--classification <class>", "Filter by risk class: read | mutate | destructive")
+    .option("--agent <id>", "Filter by agent id")
+    .option("--tenant <tenant>", 'Filter by tenant scope ("" matches system-scoped events)')
+    .option("--outcome <outcome>", "Filter by outcome: success | failure | denied")
+    .option("--since <ms>", "Lower time bound (inclusive epoch ms)")
+    .option("--until <ms>", "Upper time bound (inclusive epoch ms)")
+    .option("--limit <n>", "Max rows (default 200, clamped to 1000)")
+    .option("--format <format>", "Output format: table | json", "table")
+    .action((options: AuditLogOptions) => runAuditLog(options));
 }

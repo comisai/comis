@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Observability-domain RPC contracts. All 25 methods are admin-scoped.
+ * Observability-domain RPC contracts. All 26 methods are admin-scoped.
  *
  * Groups and method names:
  *   Diagnostics (1): obs.diagnostics
  *   Billing (5):     obs.billing.{byProvider,byAgent,bySession,total,usage24h}
+ *   Audit (1):       obs.audit.query  (read surface onto obs_audit_events — AUDIT-05,
+ *                    Phase 176; contract + wire schema in `audit-query.ts`)
  *   Channels (3):    obs.channels.{all,stale,get}
  *   Delivery (2):    obs.delivery.{recent,stats}
  *   Context (2):     obs.context.{pipeline,dag}  (gateway-scope gate only)
@@ -46,6 +48,14 @@ export type { IncidentReport, IncidentFailure, IncidentSignals, IncidentContextB
 import { ObsFleetHealthContract } from "./fleet-health-report.js";
 export { ObsFleetHealthContract, FleetHealthReportSchema } from "./fleet-health-report.js";
 export type { FleetHealthReport } from "./fleet-health-report.js";
+// The `obs.audit.query` contract + wire schema (AUDIT-05, Phase 176 Plan 05) live
+// in the sibling `audit-query.ts` (the read surface onto the now-durable
+// obs_audit_events table). Import for the OBSERVABILITY_CONTRACTS array below;
+// re-export the contract + schema so the `@comis/core` public surface + the
+// registered RPC set carry them (the ObsFleetHealthContract precedent).
+import { ObsAuditQueryContract } from "./audit-query.js";
+export { ObsAuditQueryContract } from "./audit-query.js";
+export type { AuditEventRowWire, AuditQueryResponse } from "./audit-query.js";
 // The five obs.billing.* contracts (+ their BillingSnapshot response schema)
 // live in the sibling `observability-billing.ts` (file-size split). Import for
 // the OBSERVABILITY_CONTRACTS array below; re-export so the `@comis/core`
@@ -667,6 +677,7 @@ export const OBSERVABILITY_CONTRACTS = [
   ObsBillingBySessionContract,
   ObsBillingTotalContract,
   ObsBillingUsage24hContract,
+  ObsAuditQueryContract,
   ObsCacheStatsWindowContract,
   ObsChannelsAllContract,
   ObsChannelsGetContract,
