@@ -196,6 +196,83 @@ describe("createSpendAccumulator", () => {
   });
 
   // -------------------------------------------------------------------------
+  // getSnapshot() — the read accessor for the OTel gauges (178-01 Task 3,
+  // Pitfall 3). The accumulator was WRITE-ONLY (rehydrate/recordSpend/
+  // checkAndReserve/reconcile); the comis_spend_usd / _ceiling_usd /
+  // _headroom_usd gauges have no source without a pure read. These pins fail on
+  // pre-patch code: `acc.getSnapshot` is `undefined` (a runtime
+  // "is not a function" — the runtime-observable RED, not tsc-only).
+  // -------------------------------------------------------------------------
+  it("getSnapshot exists as a read accessor (RED: undefined on the write-only pre-patch accumulator)", () => {
+    const { acc } = makeAccumulator();
+    expect(typeof acc.getSnapshot).toBe("function");
+  });
+
+  it("getSnapshot reflects per-(tenant,agent), per-tenant, and global billed spend", () => {
+    const { acc } = makeAccumulator();
+    acc.recordSpend({ tenantId: "t1", agentId: "a1" }, 0.5);
+    acc.recordSpend({ tenantId: "t1", agentId: "a2" }, 0.25);
+
+    const snap = acc.getSnapshot();
+    // perAgent is keyed by `${tenantId} ${agentId}` (agentKeyOf).
+    expect(snap.perAgent.get("t1 a1")).toBeCloseTo(0.5, 10);
+    expect(snap.perAgent.get("t1 a2")).toBeCloseTo(0.25, 10);
+    // perTenant aggregates both agents under t1.
+    expect(snap.perTenant.get("t1")).toBeCloseTo(0.75, 10);
+    // global is the daemon-wide running total.
+    expect(snap.global).toBeCloseTo(0.75, 10);
+  });
+
+  it("getSnapshot reflects in-flight reservations from checkAndReserve (headroom sees reserved, not just billed)", () => {
+    const { acc } = makeAccumulator({ perAgentUsd: 10 });
+    const r = acc.checkAndReserve({ tenantId: "t", agentId: "a" }, 3);
+    expect(r.ok).toBe(true);
+    const snap = acc.getSnapshot();
+    // The reserve mutated the counters BEFORE returning → the snapshot sees $3.
+    expect(snap.perAgent.get("t a")).toBeCloseTo(3, 10);
+    expect(snap.perTenant.get("t")).toBeCloseTo(3, 10);
+    expect(snap.global).toBeCloseTo(3, 10);
+  });
+
+  it("getSnapshot returns READ-ONLY views — a caller cannot corrupt the accumulator's enforcement state (T-178-02)", () => {
+    const { acc } = makeAccumulator({ perAgentUsd: 10 });
+    acc.recordSpend({ tenantId: "t", agentId: "a" }, 4);
+
+    const snap = acc.getSnapshot();
+    // A caller mutating the returned map must NOT change internal state. The
+    // returned maps are fresh copies, so a cast-and-set on the caller's copy is
+    // harmless to the accumulator.
+    (snap.perAgent as Map<string, number>).set("t a", 999);
+    (snap.perTenant as Map<string, number>).set("t", 999);
+
+    // Re-read: the accumulator's own counters are unchanged ($4, not $999).
+    const snap2 = acc.getSnapshot();
+    expect(snap2.perAgent.get("t a")).toBeCloseTo(4, 10);
+    expect(snap2.perTenant.get("t")).toBeCloseTo(4, 10);
+    expect(snap2.global).toBeCloseTo(4, 10);
+
+    // And enforcement still uses the authoritative $4 (a $6 reserve fits; a $7 errs).
+    expect(acc.checkAndReserve({ tenantId: "t", agentId: "a" }, 6).ok).toBe(true);
+  });
+
+  it("getSnapshot performs NO mutation and makes NO wall-clock call (budget/ discipline)", () => {
+    const { acc, clock } = makeAccumulator({ perAgentUsd: 10 });
+    acc.recordSpend({ tenantId: "t", agentId: "a" }, 2);
+    const before = clock.now();
+
+    // Calling getSnapshot repeatedly must not change totals nor advance/read time
+    // in a way that mutates state. (The fake clock does not auto-advance; we
+    // assert the accumulator's view is stable across reads.)
+    const s1 = acc.getSnapshot();
+    const s2 = acc.getSnapshot();
+    expect(s1.global).toBeCloseTo(2, 10);
+    expect(s2.global).toBeCloseTo(2, 10);
+    expect(s1.perAgent.get("t a")).toBeCloseTo(2, 10);
+    // The accumulator never throws from a read and never advances the clock.
+    expect(clock.now()).toBe(before);
+  });
+
+  // -------------------------------------------------------------------------
   // THE load-bearing DISCRIMINATING K-parallel concurrency test (SPEND-02).
   //
   // WHY the OLD form `NEAR_CEILING + Σreserved <= CONFIGURED + K*PER_TURN_MAX`
