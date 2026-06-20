@@ -517,7 +517,12 @@ export const TokenUsageDbRowSchema = z.strictObject({
   cost_cache_write: z.number(),
   cache_saved: z.number(),
   latency_ms: z.number(),
-  cache_retention: z.string().nullable(),
+  // PERSIST-02 cost-correctness columns (nullable; cache_retention DROPPED).
+  warmup_turn: z.number().nullable(),
+  cache_eligible: z.number().nullable(),
+  cost_correction: z.number().nullable(),
+  pending_cache_investment_usd: z.number().nullable(),
+  pricing_state: z.string().nullable(),
 });
 
 /**

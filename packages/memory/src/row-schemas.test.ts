@@ -222,7 +222,12 @@ describe("row-schemas — internal DB row runtime parses", () => {
       cost_cache_write: 0.0002,
       cache_saved: 0.0001,
       latency_ms: 150,
-      cache_retention: "auto",
+      // PERSIST-02 cost-correctness columns (cache_retention DROPPED).
+      warmup_turn: 1,
+      cache_eligible: 0,
+      cost_correction: 0.0005,
+      pending_cache_investment_usd: 0.001,
+      pricing_state: "priced",
     };
     expect(TokenUsageDbRowSchema.safeParse(sample).success).toBe(true);
   });

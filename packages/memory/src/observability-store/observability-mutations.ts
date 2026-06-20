@@ -38,13 +38,17 @@ export type ObservabilityMutations = Pick<
 export function bindMutations(db: Database.Database): ObservabilityMutations {
   // --- Prepared statements (fixed SQL, prepared once) ---
 
+  // The column list + placeholders + .run() args MUST stay in lockstep with the
+  // obs_token_usage schema (schema.ts ensureObsTokenColumns). cache_retention was
+  // DROPPED (dead); the 5 PERSIST-02 cost-correctness columns were added at the tail.
   const insertTokenUsageStmt = db.prepare(`
     INSERT INTO obs_token_usage (
       timestamp, trace_id, agent_id, channel_id, session_key,
       provider, model, prompt_tokens, completion_tokens, total_tokens,
       cache_read_tokens, cache_write_tokens, cost_input, cost_output, cost_total,
-      cost_cache_read, cost_cache_write, cache_saved, latency_ms, cache_retention
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      cost_cache_read, cost_cache_write, cache_saved, latency_ms,
+      warmup_turn, cache_eligible, cost_correction, pending_cache_investment_usd, pricing_state
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const insertDeliveryStmt = db.prepare(`
@@ -100,7 +104,13 @@ export function bindMutations(db: Database.Database): ObservabilityMutations {
       entry.costCacheWrite ?? 0,
       entry.cacheSaved ?? 0,
       entry.latencyMs,
-      entry.cacheRetention ?? null,
+      // PERSIST-02 cost-correctness columns (in the same order as the column list).
+      // SQLite has no boolean — the two flags coerce to 0/1; nulls when absent.
+      entry.warmupTurn === undefined ? null : entry.warmupTurn ? 1 : 0,
+      entry.cacheEligible === undefined ? null : entry.cacheEligible ? 1 : 0,
+      entry.costCorrection ?? null,
+      entry.pendingCacheInvestmentUsd ?? null,
+      entry.pricingState ?? null,
     );
   }
 

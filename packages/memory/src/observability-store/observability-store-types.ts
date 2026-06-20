@@ -97,8 +97,44 @@ export interface TokenUsageRow {
   costCacheWrite: number;
   cacheSaved: number;
   latencyMs: number;
-  /** Cache retention strategy for this call (workaround until explicit caching lands). */
-  cacheRetention?: string | null;
+  // PERSIST-02 cost-correctness fields (already emitted on observability:token_usage;
+  // persisted via insertTokenUsageStmt + the obs_token_usage columns). All optional —
+  // omission persists as NULL and reads back undefined.
+  /** Whether this turn was a cache-warmup turn (the first, uncached request of a session). */
+  warmupTurn?: boolean;
+  /** Whether the model/provider was eligible for prompt caching on this call. */
+  cacheEligible?: boolean;
+  /** SDK-vs-corrected cost delta (the cost-correction adjustment applied to this call). */
+  costCorrection?: number;
+  /** Estimated cache investment not yet recouped at this point in the session ($). */
+  pendingCacheInvestmentUsd?: number;
+  /** The honest three-state pricing signal for this provider/model (PERSIST-03). */
+  pricingState?: "priced" | "free" | "unknown";
+}
+
+/**
+ * A security-audit event row (AUDIT-01/02). The camelCase shape of an
+ * `obs_audit_events` table row. This plan (176-01) adds the row TYPE + the DDL
+ * only; the insert/query store methods + the scrubbed JSONL writer land in Plan 03.
+ *
+ * `tenantId` is the trace-resolved tenant, else the `''` system-scope sentinel
+ * (the column is NOT NULL). `agentId` is NULL for tenant/agent-less sources
+ * (e.g. `command:blocked`). `refs` is a scrubbed JSON blob (the `audit:event`
+ * metadata free-map routed through sanitizeForPersistence — never raw values).
+ */
+export interface AuditEventRow {
+  id: string;
+  tenantId: string;
+  agentId: string | null;
+  ts: number;
+  kind: string;
+  classification: string | null;
+  action: string | null;
+  actor: string | null;
+  outcome: string | null;
+  severity: string | null;
+  traceId: string | null;
+  refs: string | null;
 }
 
 /** A delivery row (insert or query result). */
@@ -332,7 +368,12 @@ export interface TokenUsageDbRow {
   cost_cache_write: number;
   cache_saved: number;
   latency_ms: number;
-  cache_retention: string | null;
+  // PERSIST-02 columns (nullable — pre-migration rows / omitted inserts are NULL).
+  warmup_turn: number | null;
+  cache_eligible: number | null;
+  cost_correction: number | null;
+  pending_cache_investment_usd: number | null;
+  pricing_state: string | null;
 }
 
 export interface DeliveryDbRow {
@@ -421,7 +462,15 @@ export function tokenUsageFromRow(row: TokenUsageDbRow): TokenUsageRow {
     costCacheWrite: row.cost_cache_write,
     cacheSaved: row.cache_saved,
     latencyMs: row.latency_ms,
-    cacheRetention: row.cache_retention,
+    // PERSIST-02: INTEGER 0/1 ↔ boolean for the two flags (NULL → undefined);
+    // REAL/TEXT passthroughs (NULL → undefined) for the rest.
+    warmupTurn: row.warmup_turn === null ? undefined : row.warmup_turn === 1,
+    cacheEligible: row.cache_eligible === null ? undefined : row.cache_eligible === 1,
+    costCorrection: row.cost_correction === null ? undefined : row.cost_correction,
+    pendingCacheInvestmentUsd:
+      row.pending_cache_investment_usd === null ? undefined : row.pending_cache_investment_usd,
+    pricingState:
+      row.pricing_state === null ? undefined : (row.pricing_state as "priced" | "free" | "unknown"),
   };
 }
 
