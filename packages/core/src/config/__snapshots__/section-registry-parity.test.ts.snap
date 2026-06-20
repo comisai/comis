@@ -13558,6 +13558,10 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
           }
         }
       },
+      "audit": {
+        "persist": true,
+        "sink": "both"
+      },
       "logRotation": {
         "compressAged": true,
         "maxAgeDays": 30,
@@ -13565,6 +13569,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
         "maxSizeBytes": 52428800
       },
       "persistence": {
+        "cacheBreaks": true,
         "enabled": true,
         "retentionDays": 30,
         "snapshotIntervalMs": 300000
@@ -13680,6 +13685,27 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
   },
   {
     "default": {
+      "persist": true,
+      "sink": "both"
+    },
+    "immutable": false,
+    "path": "observability.audit",
+    "type": "object"
+  },
+  {
+    "default": true,
+    "immutable": false,
+    "path": "observability.audit.persist",
+    "type": "boolean"
+  },
+  {
+    "default": "both",
+    "immutable": false,
+    "path": "observability.audit.sink",
+    "type": "string"
+  },
+  {
+    "default": {
       "compressAged": true,
       "maxAgeDays": 30,
       "maxFiles": 5,
@@ -13715,6 +13741,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
   },
   {
     "default": {
+      "cacheBreaks": true,
       "enabled": true,
       "retentionDays": 30,
       "snapshotIntervalMs": 300000
@@ -13722,6 +13749,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "immutable": false,
     "path": "observability.persistence",
     "type": "object"
+  },
+  {
+    "default": true,
+    "immutable": false,
+    "path": "observability.persistence.cacheBreaks",
+    "type": "boolean"
   },
   {
     "default": true,
@@ -37786,6 +37819,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             }
           }
         },
+        "audit": {
+          "persist": true,
+          "sink": "both"
+        },
         "logRotation": {
           "compressAged": true,
           "maxAgeDays": 30,
@@ -37793,6 +37830,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "maxSizeBytes": 52428800
         },
         "persistence": {
+          "cacheBreaks": true,
           "enabled": true,
           "retentionDays": 30,
           "snapshotIntervalMs": 300000
@@ -37927,6 +37965,33 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           ],
           "type": "object"
         },
+        "audit": {
+          "additionalProperties": false,
+          "default": {
+            "persist": true,
+            "sink": "both"
+          },
+          "properties": {
+            "persist": {
+              "default": true,
+              "type": "boolean"
+            },
+            "sink": {
+              "default": "both",
+              "enum": [
+                "sqlite",
+                "jsonl",
+                "both"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "persist",
+            "sink"
+          ],
+          "type": "object"
+        },
         "logRotation": {
           "additionalProperties": false,
           "default": {
@@ -37970,11 +38035,16 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
         "persistence": {
           "additionalProperties": false,
           "default": {
+            "cacheBreaks": true,
             "enabled": true,
             "retentionDays": 30,
             "snapshotIntervalMs": 300000
           },
           "properties": {
+            "cacheBreaks": {
+              "default": true,
+              "type": "boolean"
+            },
             "enabled": {
               "default": true,
               "type": "boolean"
@@ -37995,7 +38065,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "required": [
             "enabled",
             "retentionDays",
-            "snapshotIntervalMs"
+            "snapshotIntervalMs",
+            "cacheBreaks"
           ],
           "type": "object"
         },
@@ -38014,7 +38085,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
         "persistence",
         "trajectory",
         "logRotation",
-        "alertBudget"
+        "alertBudget",
+        "audit"
       ],
       "type": "object"
     },

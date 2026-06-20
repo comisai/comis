@@ -101,6 +101,27 @@ const ObservabilityPersistenceSchema = z.strictObject({
   retentionDays: z.number().int().min(1).max(365).default(30),
   /** Interval in milliseconds between channel health snapshots. */
   snapshotIntervalMs: z.number().int().min(60000).default(300000),
+  /**
+   * Whether detected prompt-cache breaks are persisted to obs_diagnostics
+   * (category 'cache_break') + the trajectory (PERSIST-01). Default on. NOTE:
+   * this lives under `persistence.*` deliberately — there is NO top-level
+   * `persist` key (the schema already owns persistence; a colliding `persist`
+   * would be the anti-pattern, Pitfall 5).
+   */
+  cacheBreaks: z.boolean().default(true),
+});
+
+/**
+ * Security-audit persistence configuration (AUDIT-01). Controls whether
+ * `audit:event`/`secret:accessed`/`security:*` records are durably persisted and
+ * to which sink(s). Rotation is NOT configured here — the audit JSONL is the 6th
+ * stream under the shared `logRotation` policy (no per-sink rotation knob).
+ */
+const AuditConfigSchema = z.strictObject({
+  /** Whether security-audit events are persisted (SQLite + JSONL). Default on. */
+  persist: z.boolean().default(true),
+  /** Which sink(s) receive audit records: the SQLite table, the JSONL file, or both. */
+  sink: z.enum(["sqlite", "jsonl", "both"]).default("both"),
 });
 
 /**
@@ -122,9 +143,10 @@ const TrajectoryObservabilityConfigSchema = z.strictObject({
 /**
  * Log rotation configuration schema.
  *
- * Cross-stream rotation policy applied to all 5 observability streams:
+ * Cross-stream rotation policy applied to all 6 observability streams:
  * daemon.log, cache-trace.jsonl, config-audit.jsonl,
- * session-index.YYYY-MM-DD.jsonl, and *.trajectory.jsonl.
+ * session-index.YYYY-MM-DD.jsonl, *.trajectory.jsonl, and
+ * security-audit.jsonl (the AUDIT-01 security-audit stream).
  *
  * Defaults: 50 MB max size, 5 files kept, 30 days retention, gzip enabled.
  * Visible via `comis config get observability.logRotation`.
@@ -202,6 +224,8 @@ export const ObservabilityConfigSchema = z.strictObject({
   logRotation: LogRotationConfigSchema.default(() => LogRotationConfigSchema.parse({})),
   /** Alert budget rate-aggregator policy. */
   alertBudget: AlertBudgetConfigSchema.default(() => AlertBudgetConfigSchema.parse({})),
+  /** Security-audit persistence policy (AUDIT-01). */
+  audit: AuditConfigSchema.default(() => AuditConfigSchema.parse({})),
 });
 
 export type ObservabilityConfig = z.infer<typeof ObservabilityConfigSchema>;
@@ -210,4 +234,5 @@ export type TrajectoryObservabilityConfig = z.infer<typeof TrajectoryObservabili
 export type LogRotationConfig = z.infer<typeof LogRotationConfigSchema>;
 export type AlertBudgetConfig = z.infer<typeof AlertBudgetConfigSchema>;
 export type AlertBudgetThreshold = z.infer<typeof AlertBudgetThresholdSchema>;
-export { LogRotationConfigSchema };
+export type AuditConfig = z.infer<typeof AuditConfigSchema>;
+export { LogRotationConfigSchema, AuditConfigSchema };
