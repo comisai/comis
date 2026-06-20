@@ -122,7 +122,7 @@ const OPENAI_COMPAT_V1_TYPES = new Set<string>(["ollama", "lm-studio"]);
  * returned unchanged — we only fill in the missing mount for the bare-root
  * case. Unparseable values and non-local types pass through untouched.
  */
-function normalizeOpenAICompatBaseUrl(
+export function normalizeOpenAICompatBaseUrl(
   baseUrl: string | undefined,
   type: string,
 ): string | undefined {

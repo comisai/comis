@@ -17,6 +17,8 @@
 
 export { createOutcomeJudgeSeam, JUDGE_REWARD_CAP } from "./outcome-judge-seam.js";
 export type { OutcomeJudgeSeamDeps, OutcomeVerdict } from "./outcome-judge-seam.js";
+export { resolveJudgeModel } from "./judge-model-resolver.js";
+export type { CustomCompletionsModelSpec } from "./judge-model-resolver.js";
 export { createCorrectionDetectorSeam, CORRECTION_REWARD_CAP } from "./correction-detector-seam.js";
 export type { CorrectionDetectorSeamDeps, CorrectionVerdict } from "./correction-detector-seam.js";
 
