@@ -32,7 +32,8 @@
 
 import { systemSetTimeout, systemClearTimeout } from "@comis/core";
 import type { ClockPort, ComisLogger } from "@comis/core";
-import { completeSimple, getModel } from "@earendil-works/pi-ai";
+import { completeSimple } from "@earendil-works/pi-ai";
+import { resolveJudgeModel, type CustomCompletionsModelSpec } from "./judge-model-resolver.js";
 import {
   buildRelationshipPrompt,
   parseRelationshipOutput,
@@ -58,6 +59,10 @@ export interface RelationshipSeamDeps {
   logger: ComisLogger;
   /** Scope tag for the failure logs. */
   agentId: string;
+  /** Custom-provider model spec (resolved `/v1` baseUrl) for a keyless/local YAML provider
+   *  the pi-ai catalog can't see — without it the relationship build skipped on keyless
+   *  (the #223/DIALECTIC-FIX bug class). Optional: built-in providers omit it. */
+  customModel?: CustomCompletionsModelSpec;
 }
 
 /** Pull the concatenated text parts out of a pi-ai completeSimple response. */
@@ -94,14 +99,14 @@ function extractResponseText(response: { content?: unknown[] }): string {
 export function createRelationshipSeam(
   deps: RelationshipSeamDeps,
 ): (sourceText: string) => Promise<RelationshipBuildOutput> {
-  const { provider, modelId, apiKey, maxOutputTokens, clock, logger, agentId } = deps;
+  const { provider, modelId, apiKey, maxOutputTokens, clock, logger, agentId, customModel } = deps;
 
   /** Issue one bounded, non-fatal cheap-model call; return raw text or undefined. */
   async function callModel(systemPrompt: string, userText: string): Promise<string | undefined> {
     let model;
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- provider/modelId are dynamic strings
-      model = getModel(provider as any, modelId as any);
+      // Catalog-first, else construct from customModel (keyless/local) — #223/DIALECTIC-FIX.
+      model = resolveJudgeModel(provider, modelId, customModel);
     } catch (modelErr) {
       logger.warn(
         {

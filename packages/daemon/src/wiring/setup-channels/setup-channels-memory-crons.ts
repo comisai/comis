@@ -21,6 +21,7 @@ import { parseFormattedSessionKey } from "@comis/core";
 import { resolveCronJobCredential, cronCredentialSkipHint } from "./setup-channels-cron-credential.js";
 import { resolveOperationModel, resolveProviderFamily, runMemoryConsolidation, runMemoryReasoning, createReasoningSeam, runUserRepresentationBuild, createUserRepresentationSeam, runRelationshipBuild, createRelationshipSeam, runOnlineTuning, type UserRepresentationSourceMemory, type RelationshipSourceMemory, type OnlineTuningFeedEntry } from "@comis/agent";
 import { resolveMemoryOpsCapability } from "./resolve-memory-ops-capability.js";
+import { cronCustomModelOpt } from "./setup-channels-cron-credential.js";
 import { handleWireMemoryCronSentinel } from "./setup-channels-memory-crons-wire.js";
 import type { MemoryCronPayload, MemoryCronContext } from "./setup-channels-memory-crons-types.js";
 
@@ -94,6 +95,7 @@ export async function handleMemoryCronSentinel(
       provider: resolved.provider,
       modelId: resolved.modelId,
       apiKey,
+      ...cronCustomModelOpt(providerEntry, resolved.provider, resolved.modelId),
       clock,
       logger: logger.child({ agentId, submodule: "memory-consolidation" }),
       // R6 (CR-01): small/nano cron model abstains via resolve-memory-ops-capability.ts (never fabricates into trusted storage).
@@ -174,6 +176,7 @@ export async function handleMemoryCronSentinel(
         clock,
         logger: reasoningLogger,
         agentId,
+        ...cronCustomModelOpt(container.config.providers?.entries?.[resolved.provider], resolved.provider, resolved.modelId),
       }),
     });
 
@@ -274,6 +277,7 @@ export async function handleMemoryCronSentinel(
       clock,
       logger: reprLogger,
       agentId,
+      ...cronCustomModelOpt(container.config.providers?.entries?.[resolved.provider], resolved.provider, resolved.modelId),
     });
 
     let anyError = false;
@@ -552,6 +556,7 @@ export async function handleMemoryCronSentinel(
       clock,
       logger: relLogger,
       agentId,
+      ...cronCustomModelOpt(container.config.providers?.entries?.[resolved.provider], resolved.provider, resolved.modelId),
     });
 
     let anyError = false;

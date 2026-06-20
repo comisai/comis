@@ -38,6 +38,8 @@ import {
   type DialecticSeamDeps,
 } from "@comis/agent";
 import { resolveMemoryOpsCapability } from "./setup-channels/resolve-memory-ops-capability.js";
+import { buildCustomJudgeModelSpec, type JudgeProviderEntry } from "./setup-learning-judge.js";
+import { KEYLESS_PROVIDER_TYPES, KEYLESS_API_KEY_SENTINEL } from "@comis/core";
 import type {
   PerAgentConfig,
   ProviderCapabilities,
@@ -111,7 +113,7 @@ export interface DialecticWiringDeps {
   /** Provider entries (for apiKeyName lookup + the R6 capabilities override) —
    *  `container.config.providers?.entries`. `capabilities` supplies the optional
    *  operator capabilityClass override the dialectic seam's R6 routing reads (CR-01). */
-  providers: Record<string, { apiKeyName?: string; capabilities?: ProviderCapabilities } | undefined>;
+  providers: Record<string, (JudgeProviderEntry & { capabilities?: ProviderCapabilities }) | undefined>;
   /** The daemon-constructed recall store set (the SAME stores prompt-assembly wires). */
   stores: DialecticStoreSet;
   /** The configured tenant (`container.config.tenantId`) — the (tenant, agent) scope for the
@@ -161,7 +163,7 @@ export interface DialecticBootSlice {
   container: {
     secretManager: { get: (name: string) => string | undefined };
     config: {
-      providers?: { entries?: Record<string, { apiKeyName?: string; capabilities?: ProviderCapabilities } | undefined> };
+      providers?: { entries?: Record<string, (JudgeProviderEntry & { capabilities?: ProviderCapabilities }) | undefined> };
       /** The configured tenant — the (tenant, agent) scope for the tuned-alpha read on
        *  the dialectic recall path (the SAME field daemon.ts reads for the handler's tenantId). */
       tenantId: string;
@@ -291,14 +293,19 @@ export function buildDialecticWiring(deps: DialecticWiringDeps): DialecticWiring
       providerFamily: resolveProviderFamily(agentConfig.provider ?? "anthropic"),
     });
 
-    // Resolve the apiKey BY NAME. No key ⇒ "" ⇒ the seam degrades to abstain at call time
-    // (the seam itself is the gate; the cron warn-and-continue discipline). NEVER log the value.
+    // Resolve the apiKey BY NAME. For a KEYLESS provider (ollama / lm-studio) there is no
+    // secret to resolve — use the keyless sentinel so the seam still RUNS (mirrors the #223
+    // judge resolver). A genuinely missing key on a key-REQUIRING provider ⇒ "" ⇒ abstain.
     const providerEntry = providers[resolved.provider];
     const apiKeyName = providerEntry?.apiKeyName || `${resolved.provider.toUpperCase()}_API_KEY`;
-    const apiKey = secretManager.get(apiKeyName) ?? "";
+    const apiKey =
+      secretManager.get(apiKeyName) ??
+      (KEYLESS_PROVIDER_TYPES.has(providerEntry?.type ?? resolved.provider)
+        ? KEYLESS_API_KEY_SENTINEL
+        : "");
     if (apiKey.length === 0) {
-      // Counts/NAME-only WARN (never the value) — the seam will abstain on every call until a
-      // key is set. Once per agent (memoized). Surfaced for operator observability.
+      // Counts/NAME-only WARN (never the value) — a key-REQUIRING provider with no key abstains
+      // on every call until a key is set (keyless providers never reach here). Once per agent.
       logger.warn(
         {
           agentId,
@@ -309,6 +316,16 @@ export function buildDialecticWiring(deps: DialecticWiringDeps): DialecticWiring
         "Dialectic enabled but no API key resolved — memory.ask will abstain",
       );
     }
+
+    // Custom-provider model spec (the resolved …/v1 baseUrl) so a keyless/local YAML provider
+    // the pi-ai catalog can't see still resolves a Model. Without it, memory.ask abstained
+    // "model not found" on every keyless ask — even with a CAPABLE model (live 2026-06-20; the
+    // #223 judge-resolver bug class, this seam was the missed sibling). Undefined for built-ins.
+    const customModel = buildCustomJudgeModelSpec(
+      providerEntry,
+      resolved.provider,
+      resolved.modelId,
+    );
 
     // R6 (CR-01): derive the capability routing for the cron/memory model that
     // actually makes the synthesis LLM call. A small/nano cron model (absent an
@@ -332,6 +349,7 @@ export function buildDialecticWiring(deps: DialecticWiringDeps): DialecticWiring
       // R6 routing (CR-01): keys on the cron/memory model, not the agent primary.
       capabilityClass: seamCapability.capabilityClass,
       hasCapableModelOverride: seamCapability.hasCapableModelOverride,
+      ...(customModel !== undefined ? { customModel } : {}),
     };
     const seam = createDialecticSeam(seamDeps);
     seamByAgent.set(agentId, seam);

@@ -55,6 +55,29 @@ describe("createUserRepresentationSeam", () => {
     expect(typeof build).toBe("function");
   });
 
+  it("resolves a custom (non-catalog) provider model via customModel so the keyless user-repr cron RUNS (live 2026-06-20: model-not-found → skip)", async () => {
+    // pi-ai's catalog can't see custom-registered ollama models, so the bare getModel()
+    // missed and the user-representation build SKIPPED on every keyless cron run → the
+    // keyless memory-quality pipeline was dead. Mirrors the #223/DIALECTIC-FIX.
+    (getModel as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      throw new Error("not in built-in catalog");
+    });
+    (completeSimple as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      llmText(JSON.stringify([{ entryType: "identity", content: "uses Comis" }])),
+    );
+    const build = createUserRepresentationSeam(
+      makeDeps({
+        provider: "ollama",
+        modelId: "qwen3.6:35b",
+        customModel: { baseUrl: "http://127.0.0.1:11434/v1" },
+      }) as never,
+    );
+    await build("- the operator uses Comis daily");
+    // RED (pre-fix): getModel throws → "model not found" → skip, completeSimple NEVER called.
+    // GREEN (post-fix): resolveJudgeModel constructs the openai-completions model → the LLM runs.
+    expect(completeSimple).toHaveBeenCalledTimes(1);
+  });
+
   it("issues ONE completeSimple call carrying the USER_REPRESENTATION_PROMPT + the source text", async () => {
     (completeSimple as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
       llmText(JSON.stringify([{ entryType: "identity", content: "lives in Paris" }])),

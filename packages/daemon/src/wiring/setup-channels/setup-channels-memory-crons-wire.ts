@@ -29,7 +29,7 @@
  * @module
  */
 
-import { resolveCronJobCredential, cronCredentialSkipHint } from "./setup-channels-cron-credential.js";
+import { resolveCronJobCredential, cronCredentialSkipHint, cronCustomModelOpt } from "./setup-channels-cron-credential.js";
 import { buildCustomJudgeModelSpec } from "../setup-learning-judge.js";
 import {
   resolveOperationModel,
@@ -373,7 +373,7 @@ export async function handleWireMemoryCronSentinel(
     // CLOSED-GRAPH CUT: the @comis/agent synthesis adapter (wraps the UNTRUSTED trajectory) is built
     // HERE on the resolved model; the @comis/memory store + @comis/skills validation adapter + the
     // LCD-merged source come in via the daemon-assembled bundle. The job consumes PORT TYPES only.
-    const synthesisAdapter = createLlmSkillSynthesisAdapter({ provider: resolved.provider, modelId: resolved.modelId, apiKey, clock, logger: skillLogger });
+    const synthesisAdapter = createLlmSkillSynthesisAdapter({ provider: resolved.provider, modelId: resolved.modelId, apiKey, clock, logger: skillLogger, ...cronCustomModelOpt(container.config.providers?.entries?.[resolved.provider], resolved.provider, resolved.modelId) });
     const validationAdapter = await skillSynthesis.buildValidationAdapter(agentId);
     const sourceTrajectories = await skillSynthesis.buildSourceTrajectories(agentId, skillTenantId);
 

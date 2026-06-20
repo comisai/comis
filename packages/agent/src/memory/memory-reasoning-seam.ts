@@ -31,7 +31,8 @@
 
 import { systemSetTimeout, systemClearTimeout } from "@comis/core";
 import type { ClockPort, ComisLogger } from "@comis/core";
-import { completeSimple, getModel } from "@earendil-works/pi-ai";
+import { completeSimple } from "@earendil-works/pi-ai";
+import { resolveJudgeModel, type CustomCompletionsModelSpec } from "./judge-model-resolver.js";
 import {
   DEDUCTIVE_PROMPT,
   INDUCTIVE_PROMPT,
@@ -59,6 +60,10 @@ export interface ReasoningSeamDeps {
   logger: ComisLogger;
   /** Scope tag for the failure logs. */
   agentId: string;
+  /** Custom-provider model spec (resolved `/v1` baseUrl) for a keyless/local YAML provider
+   *  the pi-ai catalog can't see — without it the reasoning seam skipped on keyless (the
+   *  #223/DIALECTIC-FIX bug class). Optional: built-in providers omit it. */
+  customModel?: CustomCompletionsModelSpec;
 }
 
 /** Pull the concatenated text parts out of a pi-ai completeSimple response. */
@@ -91,14 +96,14 @@ function extractResponseText(response: { content?: unknown[] }): string {
  * the same posture as the consolidation/extraction seams).
  */
 export function createReasoningSeam(deps: ReasoningSeamDeps): (clusterText: string) => Promise<ReasoningOutput> {
-  const { provider, modelId, apiKey, maxReasoningTokens, clock, logger, agentId } = deps;
+  const { provider, modelId, apiKey, maxReasoningTokens, clock, logger, agentId, customModel } = deps;
 
   /** Issue one bounded, non-fatal cheap-model call; return raw text or undefined. */
   async function callModel(systemPrompt: string, clusterText: string): Promise<string | undefined> {
     let model;
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- provider/modelId are dynamic strings
-      model = getModel(provider as any, modelId as any);
+      // Catalog-first, else construct from customModel (keyless/local) — #223/DIALECTIC-FIX.
+      model = resolveJudgeModel(provider, modelId, customModel);
     } catch (modelErr) {
       logger.warn(
         {

@@ -28,7 +28,8 @@
 
 import { systemSetTimeout, systemClearTimeout } from "@comis/core";
 import type { ClockPort, ComisLogger } from "@comis/core";
-import { completeSimple, getModel } from "@earendil-works/pi-ai";
+import { completeSimple } from "@earendil-works/pi-ai";
+import { resolveJudgeModel, type CustomCompletionsModelSpec } from "./judge-model-resolver.js";
 import {
   buildUserRepresentationPrompt,
   parseUserRepresentationOutput,
@@ -54,6 +55,14 @@ export interface UserRepresentationSeamDeps {
   logger: ComisLogger;
   /** Scope tag for the failure logs. */
   agentId: string;
+  /**
+   * Custom-provider model spec (resolved `/v1` baseUrl) for a YAML provider
+   * (ollama / lm-studio / …) the pi-ai catalog can't see. Without it, a keyless/local
+   * user-representation build resolved "model not found" and SKIPPED every run — the
+   * keyless memory-quality pipeline was dead (live 2026-06-20; the #223/DIALECTIC-FIX
+   * bug class). Optional: built-in providers omit it.
+   */
+  customModel?: CustomCompletionsModelSpec;
 }
 
 /** Pull the concatenated text parts out of a pi-ai completeSimple response. */
@@ -89,14 +98,15 @@ function extractResponseText(response: { content?: unknown[] }): string {
 export function createUserRepresentationSeam(
   deps: UserRepresentationSeamDeps,
 ): (sourceText: string) => Promise<UserRepresentationBuildOutput> {
-  const { provider, modelId, apiKey, maxOutputTokens, clock, logger, agentId } = deps;
+  const { provider, modelId, apiKey, maxOutputTokens, clock, logger, agentId, customModel } = deps;
 
   /** Issue one bounded, non-fatal cheap-model call; return raw text or undefined. */
   async function callModel(systemPrompt: string, userText: string): Promise<string | undefined> {
     let model;
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- provider/modelId are dynamic strings
-      model = getModel(provider as any, modelId as any);
+      // Catalog-first, else construct from customModel (keyless/local YAML provider) —
+      // mirrors the #223 judge-model-resolver / DIALECTIC-FIX.
+      model = resolveJudgeModel(provider, modelId, customModel);
     } catch (modelErr) {
       logger.warn(
         {

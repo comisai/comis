@@ -16,7 +16,7 @@
 import { randomUUID } from "node:crypto";
 import type { Attachment, AppContainer, ChannelPort, ClockPort, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore, RelationshipStore, TunedAlphaStore, MemoryUsefulnessStore, MemoryLifecyclePort, OutcomeSignalPort, LearnedSkillStorePort, NormalizedMessage, SessionKey, TranscriptionPort, DeliveryService } from "@comis/core";
 import { formatSessionKey, runWithContext, createDeliveryOrigin, systemNowMs } from "@comis/core";
-import { resolveCronJobCredential, cronCredentialSkipHint } from "./setup-channels-cron-credential.js";
+import { resolveCronJobCredential, cronCredentialSkipHint, cronCustomModelOpt } from "./setup-channels-cron-credential.js";
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry, OperationModelResolution, SkillApprovalGate } from "@comis/agent";
 import type { createSessionStore, MemoryApi } from "@comis/memory";
@@ -208,10 +208,9 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
         provider: resolved.provider,
         modelId: resolved.modelId,
         apiKey,
+        ...cronCustomModelOpt(providerEntry, resolved.provider, resolved.modelId),
         clock: deps.clock,
-        // Persist each stored memory's entity mentions. The store
-        // is scoped to (tenantId, agentId) in SQL — load-bearing isolation.
-        // Absent (older config / store not built) => emit-only behaviour.
+        // Persist each stored memory's entity mentions; scoped to (tenantId, agentId) in SQL. Absent => emit-only.
         entityStore: deps.entityStore,
         // Link each stored memory's extracted cause->effect pairs via
         // linkCausal. Scoped to (tenantId, agentId) in SQL. Absent =>
