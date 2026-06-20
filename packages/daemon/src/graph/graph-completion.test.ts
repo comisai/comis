@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { buildGraphAnnouncement, truncatePreview, extractAnnouncementPreview, handleGraphCompletion, handleBudgetExceeded } from "./graph-completion.js";
+import { buildGraphAnnouncement, truncatePreview, extractAnnouncementPreview, handleGraphCompletion, handleBudgetExceeded, computeSubtreeCost } from "./graph-completion.js";
 import {
   type ValidatedGraph,
   type ExecutionGraph,
@@ -563,5 +563,115 @@ describe("SPEND-04: handleBudgetExceeded interoperates with graph maxCost via an
     expect(() => handleBudgetExceeded(state, deps, gsSpend, "spend_exceeded")).not.toThrow();
     expect(gsCost.stateMachine.snapshot().nodes.get("n1")?.error).toBe("Budget exceeded (cost)");
     expect(gsSpend.stateMachine.snapshot().nodes.get("n1")?.error).toBe("Budget exceeded (spend_exceeded)");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// COST-02 (Task 2): subtree rollup over corrected $ + per-node surfacing.
+//
+// HEAD has NO subtree rollup — only the graph-WIDE gs.cumulativeCost. The
+// rollup sums a node + every DESCENDANT (a child rolls into its parent's
+// subtree total) over the per-node corrected-$ ledger gs.nodeCost, walking the
+// existing node→children edges (the reverse of dependsOn). It is PURE +
+// deterministic (no IO) so it is unit-testable and reusable by the COST-02 read
+// RPC. The rollup uses ONLY the per-graph gs (which IS the (tenant,agent)
+// scope), so two graphs in different scopes never cross-contaminate. The
+// per-node cumulative cost is also surfaced on graph:completed (the
+// nodeTokenSpend precedent): present only when gs.nodeCost is non-empty.
+// ---------------------------------------------------------------------------
+
+describe("COST-02: subtree rollup over corrected $ (computeSubtreeCost)", () => {
+  /** A GraphRunState carrying a parent + 2 children + 1 grandchild graph and a
+   *  per-node corrected-$ ledger, for rollup assertions (no completion drive). */
+  function rollupGs(nodeCost: Record<string, number>): GraphRunState {
+    const graph = buildValidatedGraph([
+      { nodeId: "parent" },
+      { nodeId: "childA", dependsOn: ["parent"] },
+      { nodeId: "childB", dependsOn: ["parent"] },
+      { nodeId: "grandchild", dependsOn: ["childA"] },
+    ]);
+    const gs = createMinimalGraphRunState([{ nodeId: "parent" }]);
+    gs.graph = graph;
+    gs.nodeCost = new Map(Object.entries(nodeCost));
+    return gs;
+  }
+
+  it("rolls up a node + all its descendants — a child's cost rolls into its parent's subtree total", () => {
+    // parent $0.02, childA $0.10, childB $0.05, grandchild $0.01.
+    const gs = rollupGs({ parent: 0.02, childA: 0.10, childB: 0.05, grandchild: 0.01 });
+
+    // RED on pre-patch: computeSubtreeCost does not exist (only a graph-wide sum).
+    // parent's subtree = parent + childA + childB + grandchild = 0.18.
+    expect(computeSubtreeCost(gs, "parent")).toBeCloseTo(0.18, 10);
+    // childA's subtree = childA + grandchild = 0.11 (childB is NOT under childA).
+    expect(computeSubtreeCost(gs, "childA")).toBeCloseTo(0.11, 10);
+    // a leaf's subtree is its own cost.
+    expect(computeSubtreeCost(gs, "childB")).toBeCloseTo(0.05, 10);
+    expect(computeSubtreeCost(gs, "grandchild")).toBeCloseTo(0.01, 10);
+  });
+
+  it("is additive: rollup(parent) === own(parent) + rollup(childA) + rollup(childB) (recursion composes)", () => {
+    const gs = rollupGs({ parent: 0.02, childA: 0.10, childB: 0.05, grandchild: 0.01 });
+
+    const own = (id: string) => gs.nodeCost.get(id) ?? 0;
+    const rollup = (id: string) => computeSubtreeCost(gs, id);
+
+    expect(rollup("parent")).toBeCloseTo(own("parent") + rollup("childA") + rollup("childB"), 10);
+    expect(rollup("childA")).toBeCloseTo(own("childA") + rollup("grandchild"), 10);
+  });
+
+  it("counts a node with no recorded cost as 0 in the rollup (no NaN)", () => {
+    // Only childA reported a cost; the rest are absent from the ledger.
+    const gs = rollupGs({ childA: 0.10 });
+    expect(computeSubtreeCost(gs, "parent")).toBeCloseTo(0.10, 10);
+    expect(computeSubtreeCost(gs, "grandchild")).toBe(0);
+  });
+
+  it("is (tenant,agent)-scoped: two graphs in different scopes do not cross-contaminate", () => {
+    // Each gs IS its own (tenant,agent) scope; the rollup reads only its own gs.
+    const gsA = rollupGs({ parent: 1.0, childA: 2.0, childB: 3.0, grandchild: 4.0 });
+    const gsB = rollupGs({ parent: 0.01, childA: 0.02, childB: 0.03, grandchild: 0.04 });
+
+    expect(computeSubtreeCost(gsA, "parent")).toBeCloseTo(10.0, 10);
+    expect(computeSubtreeCost(gsB, "parent")).toBeCloseTo(0.10, 10);
+    // gsA's totals are unaffected by gsB (separate gs instances, no global map).
+    expect(computeSubtreeCost(gsA, "childA")).toBeCloseTo(6.0, 10);
+  });
+});
+
+describe("COST-02: graph:completed surfaces the per-node cost ledger", () => {
+  function runCompletion(nodeCost: Record<string, number>) {
+    const gs = createMinimalGraphRunState([
+      { nodeId: "parent", status: "completed" },
+      { nodeId: "childA", status: "completed" },
+    ]);
+    gs.graph = buildValidatedGraph([
+      { nodeId: "parent" },
+      { nodeId: "childA", dependsOn: ["parent"] },
+    ]);
+    gs.completedAt = undefined; // not yet completed (helper pre-stamps it)
+    gs.nodeCost = new Map(Object.entries(nodeCost));
+
+    const emit = vi.fn();
+    const deps = {
+      eventBus: { emit, on: vi.fn(), off: vi.fn() },
+      logger: { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn() },
+    } as never;
+    handleGraphCompletion({} as never, deps, gs);
+    const completed = emit.mock.calls.find((c) => c[0] === "graph:completed");
+    return completed?.[1] as Record<string, unknown> | undefined;
+  }
+
+  it("includes nodeCost on graph:completed when per-node cost was recorded", () => {
+    const payload = runCompletion({ parent: 0.02, childA: 0.10 });
+    expect(payload).toBeDefined();
+    // Per-node corrected-$ ledger surfaced (content-free: nodeId → number only).
+    expect(payload!.nodeCost).toEqual({ parent: 0.02, childA: 0.10 });
+  });
+
+  it("omits nodeCost when no per-node cost was recorded (byte-identical to today)", () => {
+    const payload = runCompletion({});
+    expect(payload).toBeDefined();
+    expect(payload!.nodeCost).toBeUndefined();
   });
 });
