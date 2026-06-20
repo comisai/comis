@@ -7,9 +7,9 @@ export type {
   EventMap,
   MessagingEvents,
   AgentEvents,
-  // ModelEvents — model-failover (model:*) + provider-health (provider:*) lifecycle,
-  // extracted from AgentEvents for the file-size cap (composed into EventMap).
-  ModelEvents,
+  // ModelEvents (model:*/provider:* lifecycle) is extracted from AgentEvents for
+  // the file-size cap but is NOT re-exported here — like OrchestrationEvents /
+  // TrajectoryEvents, it stays internal and reaches consumers via EventMap.
   ChannelEvents,
   InfraEvents,
   // SpendScopeKind — the closed wire enum (agent|tenant|global) for the spend
