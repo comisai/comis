@@ -75,6 +75,18 @@ describe("registerOtelExporter (construction + lifecycle)", () => {
     handle = undefined;
   });
 
+  it("otel.enabled:true with traces + logs constructs the tracer + logger providers and shuts down (timeout-bounded, no collector)", async () => {
+    handle = registerOtelExporter({
+      eventBus: new TypedEventBus(),
+      clock,
+      observability: cfg({ otel: { enabled: true, metrics: false, traces: true, logs: true }, prometheus: { enabled: false } }),
+    });
+    // Construction must not throw; shutdown resolves within the bounded timeout
+    // even with no reachable OTLP collector (the OTLP flush is raced against 2s).
+    await expect(handle.shutdown()).resolves.toBeUndefined();
+    handle = undefined;
+  });
+
   it("prometheus.enabled:true is INDEPENDENT of otel.enabled (standalone /metrics listener)", async () => {
     const logs: Array<{ obj: unknown; msg: string }> = [];
     handle = registerOtelExporter({

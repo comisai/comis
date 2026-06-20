@@ -15,6 +15,8 @@ import { describe, it, expect, afterEach } from "vitest";
 import * as http from "node:http";
 import { TypedEventBus } from "@comis/core";
 import { registerOtelExporter } from "./otel-exporter.js";
+import { wireSeriesCardinality } from "./prometheus-surface.js";
+import { makeMetricFixture } from "./test-harness.js";
 
 /** A stub ClockPort (the extension never calls wall-clock directly). */
 const clock = { now: () => 0, nowMs: () => 0 } as never;
@@ -150,5 +152,58 @@ describe("PrometheusExporter standalone /metrics (PROM-01)", () => {
     handle = registerOtelExporter({ eventBus, clock, observability: standalonePrometheusConfig(port) });
     const body = await scrape(`http://127.0.0.1:${port}/metrics`);
     expect(body).toMatch(/comis_prometheus_series/);
+  });
+});
+
+describe("wireSeriesCardinality (the distinct-series taps + the cap WARN)", () => {
+  it("counts distinct content-free series from EVERY source event and reports comis_prometheus_series", async () => {
+    const fx = makeMetricFixture();
+    const eventBus = new TypedEventBus();
+    wireSeriesCardinality({ meter: fx.provider.getMeter("comis"), eventBus, cardinalityCap: 10000 });
+
+    // Drive one of every catalog source event so each tap (60-66) records a key.
+    eventBus.emit("observability:token_usage", {
+      timestamp: 1, traceId: "11111111-1111-1111-1111-111111111111", agentId: "a1", channelId: "c1",
+      executionId: "e1", provider: "anthropic", model: "claude-opus",
+      tokens: { prompt: 10, completion: 5, total: 15 },
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.05 },
+      latencyMs: 100, cacheReadTokens: 0, cacheWriteTokens: 0, sessionKey: "t:c:s",
+      savedVsUncached: 0, cacheEligible: false, warmupTurn: false, pendingCacheInvestmentUsd: 0,
+    } as never);
+    eventBus.emit("observability:cache_break", {
+      provider: "anthropic", reason: "tools_changed", tokenDrop: 100, tokenDropRelative: 0.1,
+      previousCacheRead: 200, currentCacheRead: 100, callCount: 2,
+      changes: { systemChanged: false, toolsChanged: true, metadataChanged: false, modelChanged: false, retentionChanged: false, addedTools: [], removedTools: [], changedSchemaTools: [], headersChanged: false, extraBodyChanged: false },
+      toolsChanged: [], ttlCategory: undefined, agentId: "a1", sessionKey: "t:c:s", timestamp: 1,
+    } as never);
+    eventBus.emit("observability:spend_warning", { timestamp: 1, agentId: "a1", sessionKey: "t:c:s", scope: "agent", spentUsd: 8, capUsd: 10, fraction: 0.8 } as never);
+    eventBus.emit("observability:spend_exceeded", { timestamp: 1, agentId: "a1", sessionKey: "t:c:s", scope: "tenant", spentUsd: 11, capUsd: 10, estUsd: 0.5 } as never);
+    eventBus.emit("observability:spend_unpriceable", { timestamp: 1, agentId: "a1", sessionKey: "t:c:s", provider: "x", model: "y" } as never);
+    eventBus.emit("security:injection_detected", { timestamp: 1, source: "user_input", patterns: ["x"], riskLevel: "high", agentId: "a1" } as never);
+
+    const metrics = await fx.collect();
+    const series = metrics.find((m) => m.descriptor.name === "comis.prometheus_series");
+    expect(series, "comis.prometheus_series must be observed").toBeTruthy();
+    // 4 token_usage series + 1 cache_break + 3 spend + 1 injection = 9 distinct keys.
+    const value = series!.dataPoints[0]!.value as number;
+    expect(value).toBeGreaterThanOrEqual(9);
+    await fx.shutdown();
+  });
+
+  it("does NOT re-WARN while still under the cap (re-arm path), and the gauge keeps observing", async () => {
+    const warns: string[] = [];
+    const fx = makeMetricFixture();
+    const eventBus = new TypedEventBus();
+    wireSeriesCardinality({
+      meter: fx.provider.getMeter("comis"),
+      eventBus,
+      cardinalityCap: 10000,
+      logger: { warn: (_o: unknown, msg: string) => warns.push(msg) } as never,
+    });
+    // Two collections, well under the cap → no WARN either time (re-arm branch).
+    await fx.collect();
+    await fx.collect();
+    expect(warns).toHaveLength(0);
+    await fx.shutdown();
   });
 });

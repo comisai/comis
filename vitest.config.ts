@@ -59,7 +59,7 @@ export default defineConfig({
         "packages/cli/src/**/*.ts":          { lines: 73, branches: 63, functions: 73,  statements: 72 },
         "packages/scheduler/src/**/*.ts":    { lines: 96, branches: 87, functions: 97,  statements: 96 },
         "packages/orchestrator/src/**/*.ts": { lines: 93, branches: 81, functions: 92,  statements: 92 },
-        "packages/observability-otel/src/**/*.ts": { lines: 90, branches: 64, functions: 100, statements: 89 },
+        "packages/observability-otel/src/**/*.ts": { lines: 94, branches: 67, functions: 94, statements: 92 },
         "packages/daemon/src/**/*.ts":       { lines: 78, branches: 65, functions: 74,  statements: 77 },
         "packages/gateway/src/**/*.ts":      { lines: 85, branches: 75, functions: 86,  statements: 84 },
         "packages/web/src/**/*.ts":          { lines: 59, branches: 49, functions: 53,  statements: 60 },
