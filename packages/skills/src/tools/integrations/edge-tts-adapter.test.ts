@@ -121,6 +121,28 @@ describe("createEdgeTTSAdapter", () => {
     expect(MockEdgeTTS).toHaveBeenCalledWith("Test", "override-voice", expect.any(Object));
   });
 
+  it("falls back to the Edge default for a leaked OpenAI voice name (keyless-TTS default-voice mismatch, live 2026-06-20)", async () => {
+    // The shared config default `media.tts.voice` is "alloy" (an OpenAI voice) but the
+    // keyless-default provider is "edge" — so "alloy" leaks here and Edge rejects it
+    // ("Invalid voice 'alloy'"), breaking keyless TTS out-of-the-box. The adapter must
+    // map a known OpenAI voice name to its Edge default so keyless TTS just works.
+    mockSynthesize.mockResolvedValue({ audio: createAudioBlob([9]) });
+    const adapter = createEdgeTTSAdapter({ defaultVoice: "en-US-AvaMultilingualNeural" });
+    const result = await adapter.synthesize("Hi", { voice: "alloy" });
+    expect(result.ok).toBe(true);
+    expect(MockEdgeTTS).toHaveBeenCalledWith("Hi", "en-US-AvaMultilingualNeural", expect.any(Object));
+  });
+
+  it("maps the leaked OpenAI default as the CONFIGURED default voice → Edge default (the live factory path: defaultVoice=config.voice='alloy')", async () => {
+    // The TTS factory passes `defaultVoice: config.voice` — so the leaked "alloy" arrives
+    // as the configured default (no per-call voice). It must STILL map to a valid Edge voice.
+    mockSynthesize.mockResolvedValue({ audio: createAudioBlob([3]) });
+    const adapter = createEdgeTTSAdapter({ defaultVoice: "alloy" });
+    const result = await adapter.synthesize("Hi");
+    expect(result.ok).toBe(true);
+    expect(MockEdgeTTS).toHaveBeenCalledWith("Hi", "en-US-AvaMultilingualNeural", expect.any(Object));
+  });
+
   it("should handle synthesis errors gracefully and sanitize", async () => {
     mockSynthesize.mockRejectedValue(new Error("WebSocket closed"));
 
