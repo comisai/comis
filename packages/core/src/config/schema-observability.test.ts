@@ -468,4 +468,58 @@ describe("ObservabilityConfigSchema", () => {
       expect(result.success).toBe(false);
     });
   });
+
+  // COST-01/COST-03 (Phase 179 P3): the two NEW additive config keys this
+  // milestone's P3 owns. costGranularity (WS4) + export (WS6) both ship ON.
+  // Mounted with the spend/prometheus `.default(() => Schema.parse({}))` form so
+  // an absent observability: block still parses; strictObject preserved.
+  describe("costGranularity + export (COST WS4/WS6)", () => {
+    it("defaults: costGranularity {perTool:true, subagentRollup:true} present from an empty object", () => {
+      const result = ObservabilityConfigSchema.safeParse({});
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.costGranularity.perTool).toBe(true);
+        expect(result.data.costGranularity.subagentRollup).toBe(true);
+      }
+    });
+
+    it("defaults: export {csv:true, quarterHourBuckets:true} present from an empty object", () => {
+      const result = ObservabilityConfigSchema.safeParse({});
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.export.csv).toBe(true);
+        expect(result.data.export.quarterHourBuckets).toBe(true);
+      }
+    });
+
+    it("accepts per-field overrides on both new keys", () => {
+      const result = ObservabilityConfigSchema.safeParse({
+        costGranularity: { perTool: false },
+        export: { quarterHourBuckets: false },
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.costGranularity.perTool).toBe(false);
+        // the untouched member keeps its default
+        expect(result.data.costGranularity.subagentRollup).toBe(true);
+        expect(result.data.export.quarterHourBuckets).toBe(false);
+        expect(result.data.export.csv).toBe(true);
+      }
+    });
+
+    it("rejects a typo'd key under costGranularity (strictObject preserved)", () => {
+      const result = ObservabilityConfigSchema.safeParse({ costGranularity: { perTtool: true } });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects a typo'd key under export (strictObject preserved)", () => {
+      const result = ObservabilityConfigSchema.safeParse({ export: { quarterHour: true } });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects a non-boolean perTool", () => {
+      const result = ObservabilityConfigSchema.safeParse({ costGranularity: { perTool: "yes" } });
+      expect(result.success).toBe(false);
+    });
+  });
 });
