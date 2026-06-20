@@ -308,7 +308,7 @@ describe("wireMetricMapping (OTEL-02 — bus → content-free instruments)", () 
     assertNoHighCardinalityLabel(turn!.attributes);
   });
 
-  it("spend_unpriceable → comis_pricing_turns_total{state:unknown} + comis_pricing_unknown_total{provider,model}", () => {
+  it("spend_unpriceable fires comis_pricing_turns_total{state:unknown} + comis_pricing_unknown_total{provider,model}", () => {
     const meter = makeFakeMeter();
     const eventBus = new TypedEventBus();
     wireMetricMapping({ meter: meter as never, eventBus });
@@ -412,7 +412,7 @@ describe("wireMetricMapping (OTEL-02 — bus → content-free instruments)", () 
     }
   });
 
-  it("audit:event → comis_audit_events_total{kind,outcome,severity} (the ComisAuditSinkFailure alert source)", () => {
+  it("audit:event fires comis_audit_events_total{kind,outcome,severity} (the ComisAuditSinkFailure alert source)", () => {
     const meter = makeFakeMeter();
     const eventBus = new TypedEventBus();
     wireMetricMapping({ meter: meter as never, eventBus });
@@ -431,7 +431,7 @@ describe("wireMetricMapping (OTEL-02 — bus → content-free instruments)", () 
     assertNoHighCardinalityLabel(audit!.attributes);
   });
 
-  it("secret:accessed → comis_secret_access_total{outcome}", () => {
+  it("secret:accessed fires comis_secret_access_total{outcome}", () => {
     const meter = makeFakeMeter();
     const eventBus = new TypedEventBus();
     wireMetricMapping({ meter: meter as never, eventBus });
