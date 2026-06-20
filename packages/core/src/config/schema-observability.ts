@@ -125,6 +125,42 @@ const AuditConfigSchema = z.strictObject({
 });
 
 /**
+ * Spend kill-switch configuration (SPEND-01). The operator's opt-in surface for
+ * the daemon-wide cost-enforcement accumulator. Ships OFF: all three ceilings
+ * default `null` (a deployment that does not opt in is never enforced and cannot
+ * be DoSed by a fat-fingered cap), and `action` defaults `warn` (observe-only).
+ * A non-null ceiling on any dimension turns enforcement on for that scope.
+ */
+const SpendConfigSchema = z.strictObject({
+  /** Per-agent cumulative USD ceiling. `null` = off (opt-in). */
+  perAgentUsd: z.number().positive().nullable().default(null),
+  /** Per-tenant cumulative USD ceiling (the cross-tenant isolation dimension). `null` = off. */
+  perTenantUsd: z.number().positive().nullable().default(null),
+  /** Daemon-wide cumulative USD ceiling across all agents/tenants. `null` = off. */
+  daemonGlobalUsd: z.number().positive().nullable().default(null),
+  /**
+   * The conservative per-turn RESERVATION the bridge reserves at admission —
+   * there is no pre-flight cost estimate at that point (Plan 03 Task 2), so a
+   * fixed amount is reserved up front and reconciled to the actual billed amount
+   * post-turn. A sane per-turn cap.
+   */
+  perTurnMax: z.number().positive().default(0.5),
+  /** Behaviour on a ceiling breach: `warn` (observe-only, the shipped default) or `abort`. */
+  action: z.enum(["warn", "abort"]).default("warn"),
+  /** Emit the early `observability:spend_warning` once spend crosses this fraction of a ceiling. */
+  warnAtFraction: z.number().min(0).max(1).default(0.8),
+  /**
+   * Forward-extensibility placeholder with a single current member, `"snapshot"`
+   * (the dated model-catalog snapshot rate). No live price fetch is in scope; a
+   * live HTTP feed would add a member here later. Kept as an enum (not a bare
+   * literal) so that a future member is an additive change, not a shape change.
+   */
+  pricingFallback: z.enum(["snapshot"]).default("snapshot"),
+  /** Behaviour when a remote model's price is unknown while it burns tokens: `warn` (fail loud, the default) or `abort`. */
+  onUnknownPricing: z.enum(["warn", "abort"]).default("warn"),
+});
+
+/**
  * Trajectory observability configuration schema.
  *
  * Defines the optional `dirOverride` that relocates the runtime trajectory
@@ -226,6 +262,8 @@ export const ObservabilityConfigSchema = z.strictObject({
   alertBudget: AlertBudgetConfigSchema.default(() => AlertBudgetConfigSchema.parse({})),
   /** Security-audit persistence policy (AUDIT-01). */
   audit: AuditConfigSchema.default(() => AuditConfigSchema.parse({})),
+  /** Spend kill-switch policy (SPEND-01) — ships off (null ceilings, action 'warn'). */
+  spend: SpendConfigSchema.default(() => SpendConfigSchema.parse({})),
 });
 
 export type ObservabilityConfig = z.infer<typeof ObservabilityConfigSchema>;
@@ -235,4 +273,5 @@ export type LogRotationConfig = z.infer<typeof LogRotationConfigSchema>;
 export type AlertBudgetConfig = z.infer<typeof AlertBudgetConfigSchema>;
 export type AlertBudgetThreshold = z.infer<typeof AlertBudgetThresholdSchema>;
 export type AuditConfig = z.infer<typeof AuditConfigSchema>;
-export { LogRotationConfigSchema, AuditConfigSchema };
+export type SpendConfig = z.infer<typeof SpendConfigSchema>;
+export { LogRotationConfigSchema, AuditConfigSchema, SpendConfigSchema };

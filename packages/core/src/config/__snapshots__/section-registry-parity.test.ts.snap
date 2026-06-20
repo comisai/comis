@@ -13574,6 +13574,16 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
         "retentionDays": 30,
         "snapshotIntervalMs": 300000
       },
+      "spend": {
+        "action": "warn",
+        "daemonGlobalUsd": null,
+        "onUnknownPricing": "warn",
+        "perAgentUsd": null,
+        "perTenantUsd": null,
+        "perTurnMax": 0.5,
+        "pricingFallback": "snapshot",
+        "warnAtFraction": 0.8
+      },
       "trajectory": {}
     },
     "immutable": false,
@@ -13773,6 +13783,69 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "immutable": false,
     "path": "observability.persistence.snapshotIntervalMs",
     "type": "integer"
+  },
+  {
+    "default": {
+      "action": "warn",
+      "daemonGlobalUsd": null,
+      "onUnknownPricing": "warn",
+      "perAgentUsd": null,
+      "perTenantUsd": null,
+      "perTurnMax": 0.5,
+      "pricingFallback": "snapshot",
+      "warnAtFraction": 0.8
+    },
+    "immutable": false,
+    "path": "observability.spend",
+    "type": "object"
+  },
+  {
+    "default": "warn",
+    "immutable": false,
+    "path": "observability.spend.action",
+    "type": "string"
+  },
+  {
+    "default": null,
+    "immutable": false,
+    "path": "observability.spend.daemonGlobalUsd",
+    "type": "number"
+  },
+  {
+    "default": "warn",
+    "immutable": false,
+    "path": "observability.spend.onUnknownPricing",
+    "type": "string"
+  },
+  {
+    "default": null,
+    "immutable": false,
+    "path": "observability.spend.perAgentUsd",
+    "type": "number"
+  },
+  {
+    "default": null,
+    "immutable": false,
+    "path": "observability.spend.perTenantUsd",
+    "type": "number"
+  },
+  {
+    "default": 0.5,
+    "immutable": false,
+    "path": "observability.spend.perTurnMax",
+    "type": "number"
+  },
+  {
+    "default": "snapshot",
+    "immutable": false,
+    "path": "observability.spend.pricingFallback",
+    "type": "string"
+  },
+  {
+    "default": 0.8,
+    "immutable": false,
+    "path": "observability.spend.warnAtFraction",
+    "type": "number"
   },
   {
     "default": {},
@@ -37835,6 +37908,16 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "retentionDays": 30,
           "snapshotIntervalMs": 300000
         },
+        "spend": {
+          "action": "warn",
+          "daemonGlobalUsd": null,
+          "onUnknownPricing": "warn",
+          "perAgentUsd": null,
+          "perTenantUsd": null,
+          "perTurnMax": 0.5,
+          "pricingFallback": "snapshot",
+          "warnAtFraction": 0.8
+        },
         "trajectory": {}
       },
       "properties": {
@@ -38070,6 +38153,102 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           ],
           "type": "object"
         },
+        "spend": {
+          "additionalProperties": false,
+          "default": {
+            "action": "warn",
+            "daemonGlobalUsd": null,
+            "onUnknownPricing": "warn",
+            "perAgentUsd": null,
+            "perTenantUsd": null,
+            "perTurnMax": 0.5,
+            "pricingFallback": "snapshot",
+            "warnAtFraction": 0.8
+          },
+          "properties": {
+            "action": {
+              "default": "warn",
+              "enum": [
+                "warn",
+                "abort"
+              ],
+              "type": "string"
+            },
+            "daemonGlobalUsd": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "onUnknownPricing": {
+              "default": "warn",
+              "enum": [
+                "warn",
+                "abort"
+              ],
+              "type": "string"
+            },
+            "perAgentUsd": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "perTenantUsd": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "perTurnMax": {
+              "default": 0.5,
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            "pricingFallback": {
+              "default": "snapshot",
+              "enum": [
+                "snapshot"
+              ],
+              "type": "string"
+            },
+            "warnAtFraction": {
+              "default": 0.8,
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            }
+          },
+          "required": [
+            "perAgentUsd",
+            "perTenantUsd",
+            "daemonGlobalUsd",
+            "perTurnMax",
+            "action",
+            "warnAtFraction",
+            "pricingFallback",
+            "onUnknownPricing"
+          ],
+          "type": "object"
+        },
         "trajectory": {
           "additionalProperties": false,
           "default": {},
@@ -38086,7 +38265,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
         "trajectory",
         "logRotation",
         "alertBudget",
-        "audit"
+        "audit",
+        "spend"
       ],
       "type": "object"
     },
