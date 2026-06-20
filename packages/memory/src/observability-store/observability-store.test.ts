@@ -12,9 +12,12 @@ import Database from "better-sqlite3";
 import { initSchema } from "../schema.js";
 import { createObservabilityStore } from "./index.js";
 import { reduceFleetWindow } from "./fleet-window-rollup.js";
+import { tokenUsageFromRow } from "./observability-store-types.js";
 import type {
   ObservabilityStore,
   SystemPromptReportRow,
+  TokenUsageRow,
+  TokenUsageDbRow,
 } from "./observability-store-types.js";
 
 function makeRow(overrides: Partial<SystemPromptReportRow> = {}): SystemPromptReportRow {
@@ -472,5 +475,191 @@ describe("ObservabilityStore — aggregateSessionsInWindow (A1)", () => {
     expect(d.lastTs).toBe(9_000); // the in-window row, not the backdated id=2 row
     expect(d.degraded).toBe(true);
     expect(d.costUsd).toBe(0.9);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PERSIST-02 (observability-excellence WS5) — the obs_token_usage cost-correctness
+// columns + the dead cache_retention DROP + the obs_audit_events DDL, plus the
+// load-bearing insertTokenUsageStmt write-path round-trip.
+//
+// These prove the schema change (ensureObsTokenColumns + the table-rebuild) AND
+// the FIXED prepared statement move together: without the statement edit, Test 6's
+// real insert→read-back either throws on the dropped cache_retention column or
+// silently never persists the 5 new columns.
+// ---------------------------------------------------------------------------
+
+/** A minimal valid TokenUsageRow with the new PERSIST-02 fields populated. */
+function makeTokenRow(overrides: Partial<TokenUsageRow> = {}): TokenUsageRow {
+  return {
+    timestamp: 1_700_000_000_000,
+    traceId: "trace-1",
+    agentId: "agent-1",
+    channelId: "chan-1",
+    sessionKey: "sess-1",
+    provider: "anthropic",
+    model: "claude-3-opus",
+    promptTokens: 100,
+    completionTokens: 50,
+    totalTokens: 150,
+    cacheReadTokens: 10,
+    cacheWriteTokens: 5,
+    costInput: 0.001,
+    costOutput: 0.002,
+    costTotal: 0.003,
+    costCacheRead: 0.0001,
+    costCacheWrite: 0.0002,
+    cacheSaved: 0.0005,
+    latencyMs: 1234,
+    ...overrides,
+  };
+}
+
+describe("schema — obs_token_usage PERSIST-02 columns + cache_retention DROP", () => {
+  let db: Database.Database;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    initSchema(db, 1536);
+  });
+
+  function tokenCols(): Set<string> {
+    return new Set(
+      (db.prepare(`PRAGMA table_info(obs_token_usage)`).all() as { name: string }[]).map(
+        (r) => r.name,
+      ),
+    );
+  }
+
+  it("Test 1: obs_token_usage gains the 5 cost-correctness columns", () => {
+    const cols = tokenCols();
+    expect(cols.has("warmup_turn")).toBe(true);
+    expect(cols.has("cache_eligible")).toBe(true);
+    expect(cols.has("cost_correction")).toBe(true);
+    expect(cols.has("pending_cache_investment_usd")).toBe(true);
+    expect(cols.has("pricing_state")).toBe(true);
+  });
+
+  it("Test 2: obs_token_usage no longer has the dead cache_retention column", () => {
+    expect(tokenCols().has("cache_retention")).toBe(false);
+  });
+
+  it("Test 3: ensureObsTokenColumns is idempotent — re-running initSchema does not throw and the column set is stable", () => {
+    const before = [...tokenCols()].sort();
+    expect(() => initSchema(db, 1536)).not.toThrow();
+    const after = [...tokenCols()].sort();
+    expect(after).toEqual(before);
+    // the rebuild guard must be a no-op the second time (cache_retention stays gone).
+    expect(tokenCols().has("cache_retention")).toBe(false);
+  });
+
+  it("Test 4: the obs_audit_events table + both indexes exist", () => {
+    const table = db
+      .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='obs_audit_events'`)
+      .get() as { name: string } | undefined;
+    expect(table?.name).toBe("obs_audit_events");
+
+    const indexes = new Set(
+      (
+        db
+          .prepare(`SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='obs_audit_events'`)
+          .all() as { name: string }[]
+      ).map((r) => r.name),
+    );
+    expect(indexes.has("obs_audit_scope")).toBe(true);
+    expect(indexes.has("obs_audit_kind")).toBe(true);
+  });
+
+  it("Test 5: a DB with pre-existing obs_token_usage rows survives the cache_retention rebuild verbatim", () => {
+    // Simulate a pre-176 DB: a fresh DB without the migration, carrying the dead
+    // cache_retention column + one row, then re-run initSchema to trigger the rebuild.
+    const legacy = new Database(":memory:");
+    legacy.exec(`
+      CREATE TABLE obs_token_usage (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp INTEGER NOT NULL, trace_id TEXT NOT NULL, agent_id TEXT NOT NULL,
+        channel_id TEXT DEFAULT '', session_key TEXT DEFAULT '',
+        provider TEXT NOT NULL, model TEXT NOT NULL,
+        prompt_tokens INTEGER NOT NULL, completion_tokens INTEGER NOT NULL, total_tokens INTEGER NOT NULL,
+        cache_read_tokens INTEGER DEFAULT 0, cache_write_tokens INTEGER DEFAULT 0,
+        cost_input REAL NOT NULL, cost_output REAL NOT NULL, cost_total REAL NOT NULL,
+        cost_cache_read REAL NOT NULL DEFAULT 0, cost_cache_write REAL NOT NULL DEFAULT 0,
+        cache_saved REAL NOT NULL DEFAULT 0, latency_ms INTEGER NOT NULL,
+        cache_retention TEXT DEFAULT NULL
+      );
+    `);
+    legacy
+      .prepare(
+        `INSERT INTO obs_token_usage (timestamp, trace_id, agent_id, provider, model,
+          prompt_tokens, completion_tokens, total_tokens, cost_input, cost_output, cost_total,
+          latency_ms, cache_retention)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(42, "t-legacy", "agent-legacy", "anthropic", "claude-legacy", 7, 3, 10, 0.5, 0.6, 1.1, 99, "ttl-5m");
+
+    initSchema(legacy, 1536);
+
+    const cols = new Set(
+      (legacy.prepare(`PRAGMA table_info(obs_token_usage)`).all() as { name: string }[]).map(
+        (r) => r.name,
+      ),
+    );
+    expect(cols.has("cache_retention")).toBe(false);
+    expect(cols.has("warmup_turn")).toBe(true);
+
+    const row = legacy
+      .prepare(`SELECT cost_total, provider, model FROM obs_token_usage WHERE trace_id = ?`)
+      .get("t-legacy") as { cost_total: number; provider: string; model: string };
+    expect(row.cost_total).toBe(1.1);
+    expect(row.provider).toBe("anthropic");
+    expect(row.model).toBe("claude-legacy");
+    legacy.close();
+  });
+});
+
+describe("ObservabilityStore — insertTokenUsage write-path round-trip (PERSIST-02/03)", () => {
+  let db: Database.Database;
+  let store: ObservabilityStore;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    initSchema(db, 1536);
+    store = createObservabilityStore(db);
+  });
+
+  it("Test 6: insertTokenUsage does not throw and the 5 new columns persist + read back (REAL round-trip, not a mock)", () => {
+    expect(() =>
+      store.insertTokenUsage(
+        makeTokenRow({
+          warmupTurn: true,
+          cacheEligible: false,
+          costCorrection: 0.01,
+          pendingCacheInvestmentUsd: 0.02,
+          pricingState: "priced",
+        }),
+      ),
+    ).not.toThrow();
+
+    const raw = db.prepare(`SELECT * FROM obs_token_usage`).get() as TokenUsageDbRow;
+    const back = tokenUsageFromRow(raw);
+    expect(back.warmupTurn).toBe(true);
+    expect(back.cacheEligible).toBe(false);
+    expect(back.costCorrection).toBe(0.01);
+    expect(back.pendingCacheInvestmentUsd).toBe(0.02);
+    expect(back.pricingState).toBe("priced");
+    // the existing fields still round-trip unchanged.
+    expect(back.costTotal).toBe(0.003);
+    expect(back.provider).toBe("anthropic");
+  });
+
+  it("Test 6b: omitted optional new fields persist as NULL → undefined on read-back (no throw)", () => {
+    expect(() => store.insertTokenUsage(makeTokenRow())).not.toThrow();
+    const raw = db.prepare(`SELECT * FROM obs_token_usage`).get() as TokenUsageDbRow;
+    const back = tokenUsageFromRow(raw);
+    expect(back.warmupTurn).toBeUndefined();
+    expect(back.cacheEligible).toBeUndefined();
+    expect(back.costCorrection).toBeUndefined();
+    expect(back.pendingCacheInvestmentUsd).toBeUndefined();
+    expect(back.pricingState).toBeUndefined();
   });
 });
