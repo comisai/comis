@@ -253,5 +253,42 @@ describe("ModelCatalog", () => {
     it("returns 'free' for another gateway family (openrouter)", () => {
       expect(resolvePricingState("openrouter", "anything")).toBe("free");
     });
+
+    // LOW-2 (177-obs-loop): the documented-but-untested branch — a catalog entry
+    // that IS PRESENT but carries ALL-ZERO rates (e.g. a scanned custom model) is
+    // treated as NOT-priced and FALLS THROUGH to the provider-family discriminator
+    // (model-catalog.ts:267-278). The result then depends ONLY on whether the
+    // provider is native: native → unknown (the ffe11736 silent-$0 danger), gateway
+    // → free ($0 is honest for a local runtime). Both directions are now pinned.
+    const zeroRateEntry = (provider: string, modelId: string): CatalogEntry => ({
+      provider,
+      modelId,
+      displayName: `${provider}/${modelId}`,
+      contextWindow: 8192,
+      maxTokens: 4096,
+      input: ["text"],
+      reasoning: false,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      validated: true,
+      validatedAt: 1,
+    });
+
+    it("LOW-2: a PRESENT all-zero-rate catalog entry on a NATIVE provider falls through to 'unknown'", () => {
+      const c = createModelCatalog();
+      c.mergeScanned([zeroRateEntry("anthropic", "custom-uncosted-model")]);
+      // The entry exists, but all rates are 0 → not "priced"; anthropic is native
+      // → the silent-$0 fail-open surfaces as "unknown", NOT a phantom "free".
+      expect(c.get("anthropic", "custom-uncosted-model")).toBeDefined();
+      expect(resolvePricingState("anthropic", "custom-uncosted-model", c)).toBe("unknown");
+    });
+
+    it("LOW-2: a PRESENT all-zero-rate catalog entry on a GATEWAY provider falls through to 'free'", () => {
+      const c = createModelCatalog();
+      c.mergeScanned([zeroRateEntry("ollama", "qwen3:custom")]);
+      // The entry exists with all-zero rates; ollama is a local runtime (absent
+      // from NATIVE_PROVIDER_FAMILY) → $0 is honest → "free", never "unknown".
+      expect(c.get("ollama", "qwen3:custom")).toBeDefined();
+      expect(resolvePricingState("ollama", "qwen3:custom", c)).toBe("free");
+    });
   });
 });
