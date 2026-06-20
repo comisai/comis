@@ -333,14 +333,26 @@ export function buildFindings(
     });
   }
 
-  if (modelHealth.length > 0) {
+  // The generic "provider degradation" rollup counts ONLY degraded rows
+  // (severity "warning" — recordModelHealth marks a row "warning" exactly when
+  // the embedding provider is absent at boot, the primary degraded-recall
+  // cause). The once-per-boot HEALTHY snapshot (severity "info", embedding
+  // present) is NOT degradation; counting every row inflated the fleet view —
+  // a keyless daemon that had rebooted N times showed "N provider-degradation
+  // signal(s)" from N healthy boots (BENIGN_*_REASONS: routine events must not
+  // inflate warning counts). The multilingual advisory below is STANDING STATE
+  // read from the latest row and stays severity-independent.
+  const degradedModelHealth = modelHealth.filter((r) => r.severity === "warning");
+  if (degradedModelHealth.length > 0) {
     findings.push({
       code: "model_health",
-      detail: `${modelHealth.length} model-health signal(s) (provider degradation)`,
-      count: modelHealth.length,
-      hint: "check provider status + rate-limit headroom; confirm the model/provider config",
+      detail: `${degradedModelHealth.length} model-health signal(s) (provider degradation)`,
+      count: degradedModelHealth.length,
+      hint: "check provider status + rate-limit headroom; confirm the model/provider config (a 'warning' row means the embedding provider was absent at boot — recall falls back to the FTS floor)",
     });
+  }
 
+  if (modelHealth.length > 0) {
     // EMB-01: multilingual advisory read from the LATEST model_health row
     // (STANDING STATE, not a reboot count — mirror the KNOB-03 latest-row pattern
     // below, NOT the generic count above; Pitfall 4). Counts/codes/hints only; the
