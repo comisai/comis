@@ -4,6 +4,10 @@ import { ok, err } from "@comis/shared";
 import { registerToolMetadata } from "@comis/core";
 import type { ModelOperationType, ErrorKind } from "@comis/core";
 import { BudgetError } from "../budget/budget-guard.js";
+import { createSpendAccumulator } from "../budget/spend-accumulator.js";
+import type { SpendAccumulator, SpendScope } from "../budget/spend-accumulator.js";
+import type { SpendConfig } from "@comis/core";
+import { createFakeClock } from "../../../../test/support/fake-clock.js";
 import { createPiEventBridge } from "./pi-event-bridge.js";
 import type { PiEventBridgeDeps } from "./pi-event-bridge.js";
 import { sanitizeToolArgs, extractErrorText } from "./bridge-event-handlers.js";
@@ -6068,5 +6072,125 @@ describe("ATTR-01 skill-use attribution (read-path → skill:prompt_invoked + ca
     const emit = deps.eventBus.emit as ReturnType<typeof vi.fn>;
     expect(emit.mock.calls.filter((c) => c[0] === "skill:prompt_invoked")).toHaveLength(0);
     expect([...bridge.getUsedSkillIds()]).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Spend kill-switch wiring (Phase 177-03 Task 2): ADMISSION-BOUNDED +
+// COOPERATIVE-ABORT. The bridge reserves a conservative perTurnMax at the
+// post-record check (no pre-flight estimate exists) and reconciles it at the
+// billing point; the live observability:token_usage subscriber is the sole
+// actual-adder (no double-count). The flags-off path (no spendAccumulator) is
+// byte-identical.
+// ---------------------------------------------------------------------------
+describe("createPiEventBridge — spend kill-switch wiring", () => {
+  let deps: PiEventBridgeDeps;
+
+  const SPEND_SCOPE: SpendScope = { tenantId: "t1", agentId: "test-agent" };
+  const baseSpendConfig: SpendConfig = {
+    perAgentUsd: null,
+    perTenantUsd: null,
+    daemonGlobalUsd: 1.0,
+    perTurnMax: 0.5,
+    action: "abort",
+    warnAtFraction: 0.8,
+    pricingFallback: "snapshot",
+    onUnknownPricing: "warn",
+  };
+
+  function makeAcc(nearCeilingUsd: number) {
+    const acc = createSpendAccumulator({
+      clock: createFakeClock(1_000_000),
+      ceilings: {
+        perAgentUsd: baseSpendConfig.perAgentUsd,
+        perTenantUsd: baseSpendConfig.perTenantUsd,
+        daemonGlobalUsd: baseSpendConfig.daemonGlobalUsd,
+        warnAtFraction: baseSpendConfig.warnAtFraction,
+      },
+    });
+    if (nearCeilingUsd > 0) acc.recordSpend(SPEND_SCOPE, nearCeilingUsd);
+    return acc;
+  }
+
+  beforeEach(() => {
+    deps = createMockDeps();
+  });
+
+  it("flags-off (no spendAccumulator) is byte-identical: a normal turn never aborts on spend", () => {
+    const { listener, getResult } = createPiEventBridge(deps);
+    listener(makeTurnEndEvent() as any);
+    expect(getResult().finishReason).not.toBe("spend_exceeded");
+    // No spend events emitted when the accumulator is absent.
+    const emit = deps.eventBus.emit as ReturnType<typeof vi.fn>;
+    expect(emit.mock.calls.filter((c) => String(c[0]).startsWith("observability:spend_"))).toHaveLength(0);
+  });
+
+  it("over-ceiling reservation under action 'abort' routes execution:aborted{reason:spend_exceeded}", () => {
+    // Pre-seed near the $1.0 ceiling so the $0.5 perTurnMax reservation breaches.
+    const acc = makeAcc(0.9);
+    deps = createMockDeps({
+      spendAccumulator: acc,
+      spendScope: SPEND_SCOPE,
+      spendConfig: baseSpendConfig,
+    } as Partial<PiEventBridgeDeps>);
+    const { listener, getResult } = createPiEventBridge(deps);
+
+    listener(makeTurnEndEvent() as any);
+
+    expect(getResult().finishReason).toBe("spend_exceeded");
+    expect(deps.onAbort).toHaveBeenCalled();
+    const emit = deps.eventBus.emit as ReturnType<typeof vi.fn>;
+    expect(emit).toHaveBeenCalledWith("execution:aborted", expect.objectContaining({
+      reason: "spend_exceeded",
+      agentId: "test-agent",
+    }));
+    expect(emit).toHaveBeenCalledWith("observability:spend_exceeded", expect.objectContaining({
+      scope: "global",
+      agentId: "test-agent",
+    }));
+  });
+
+  it("over-ceiling under action 'warn' (the shipped default) emits spend_exceeded but NEVER aborts", () => {
+    const acc = makeAcc(0.9);
+    deps = createMockDeps({
+      spendAccumulator: acc,
+      spendScope: SPEND_SCOPE,
+      spendConfig: { ...baseSpendConfig, action: "warn" },
+    } as Partial<PiEventBridgeDeps>);
+    const { listener, getResult } = createPiEventBridge(deps);
+
+    listener(makeTurnEndEvent() as any);
+
+    expect(getResult().finishReason).not.toBe("spend_exceeded");
+    expect(deps.onAbort).not.toHaveBeenCalled();
+    const emit = deps.eventBus.emit as ReturnType<typeof vi.fn>;
+    expect(emit.mock.calls.filter((c) => c[0] === "observability:spend_exceeded").length).toBeGreaterThan(0);
+  });
+
+  it("cooperative + no double-count: a granted reservation is reconciled (released) so the live subscriber is the sole actual-adder", () => {
+    // A spy accumulator: a clean (well-under-ceiling) turn must checkAndReserve
+    // then reconcile the reservation. The actual cost.total lands via the live
+    // token_usage subscriber (not wired here), so the bridge releases its hold.
+    const reserveResult = { ok: true as const, value: { scopeKey: "t1 test-agent", tenantKey: "t1", reservedUsd: 0.5, warn: false } };
+    const spyAcc: SpendAccumulator = {
+      rehydrate: vi.fn(),
+      recordSpend: vi.fn(),
+      checkAndReserve: vi.fn().mockReturnValue(reserveResult),
+      reconcile: vi.fn(),
+    };
+    deps = createMockDeps({
+      spendAccumulator: spyAcc,
+      spendScope: SPEND_SCOPE,
+      spendConfig: baseSpendConfig,
+    } as Partial<PiEventBridgeDeps>);
+    const { listener } = createPiEventBridge(deps);
+
+    listener(makeTurnEndEvent({ cost: { input: 0.001, output: 0.002, total: 0.003 } }) as any);
+
+    // The conservative perTurnMax was reserved at admission.
+    expect(spyAcc.checkAndReserve).toHaveBeenCalledWith(SPEND_SCOPE, baseSpendConfig.perTurnMax);
+    // The reservation was reconciled (released) — the bridge does NOT permanently
+    // add cost.total here; the live subscriber is the sole actual-adder.
+    expect(spyAcc.reconcile).toHaveBeenCalledWith(reserveResult.value, 0);
   });
 });
