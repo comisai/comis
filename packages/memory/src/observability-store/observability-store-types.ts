@@ -126,6 +126,14 @@ export interface TokenUsageRow {
   pendingCacheInvestmentUsd?: number;
   /** The honest three-state pricing signal for this provider/model (PERSIST-03). */
   pricingState?: "priced" | "free" | "unknown";
+  /**
+   * COST-01: the DISTINCT tool names (content-free ids — never args/output) that
+   * fired during the turn this usage row belongs to. Persisted JSON-stringified
+   * on the `tool_tag` column; omission persists as NULL and reads back undefined.
+   * The per-tool token/$ attribution itself is best-effort/labeled at the EMIT
+   * (even-split across these tools) — the persisted tag is just the distinct set.
+   */
+  toolTag?: string[];
 }
 
 /**

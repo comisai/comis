@@ -668,6 +668,112 @@ describe("ObservabilityStore — insertTokenUsage write-path round-trip (PERSIST
 });
 
 // ---------------------------------------------------------------------------
+// COST-01 (Phase 179 Plan 01) — the `tool_tag` column: the IDENTICAL 6th
+// additive guarded-ALTER via ensureObsTokenColumns (176 added 5), + the
+// insertTokenUsageStmt lockstep persist of the JSON-stringified DISTINCT tool
+// array. The tag is content-free (tool NAMES/ids only — never args/output);
+// per-tool $ attribution itself is best-effort/labeled and lives on the EMIT
+// (Task 2), not in the persisted shape.
+//
+// RED-first: Test 7 (column presence) + Test 8 (real round-trip stores+reads
+// ["bash","read"]) + Test 9 (an existing 5-column DB gains tool_tag with its
+// pre-existing rows read back tool_tag NULL — survive-verbatim) all fail on
+// pre-patch because the column does not exist / insertTokenUsage drops toolTag.
+// ---------------------------------------------------------------------------
+describe("schema — obs_token_usage tool_tag column (COST-01, the 6th additive ALTER)", () => {
+  let db: Database.Database;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    initSchema(db, 1536);
+  });
+
+  it("Test 7: ensureObsTokenColumns adds the tool_tag column", () => {
+    const cols = new Set(
+      (db.prepare(`PRAGMA table_info(obs_token_usage)`).all() as { name: string }[]).map(
+        (r) => r.name,
+      ),
+    );
+    expect(cols.has("tool_tag")).toBe(true);
+  });
+
+  it("Test 9: a pre-176 DB (5 cost-correctness cols, no tool_tag) gains it; pre-existing rows read tool_tag NULL (verbatim survival)", () => {
+    // Simulate an already-176-migrated DB that predates tool_tag: the 5
+    // cost-correctness columns present, tool_tag absent, carrying one row.
+    const legacy = new Database(":memory:");
+    legacy.exec(`
+      CREATE TABLE obs_token_usage (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp INTEGER NOT NULL, trace_id TEXT NOT NULL, agent_id TEXT NOT NULL,
+        channel_id TEXT DEFAULT '', session_key TEXT DEFAULT '',
+        provider TEXT NOT NULL, model TEXT NOT NULL,
+        prompt_tokens INTEGER NOT NULL, completion_tokens INTEGER NOT NULL, total_tokens INTEGER NOT NULL,
+        cache_read_tokens INTEGER DEFAULT 0, cache_write_tokens INTEGER DEFAULT 0,
+        cost_input REAL NOT NULL, cost_output REAL NOT NULL, cost_total REAL NOT NULL,
+        cost_cache_read REAL NOT NULL DEFAULT 0, cost_cache_write REAL NOT NULL DEFAULT 0,
+        cache_saved REAL NOT NULL DEFAULT 0, latency_ms INTEGER NOT NULL,
+        warmup_turn INTEGER, cache_eligible INTEGER, cost_correction REAL,
+        pending_cache_investment_usd REAL, pricing_state TEXT
+      );
+    `);
+    legacy
+      .prepare(
+        `INSERT INTO obs_token_usage (timestamp, trace_id, agent_id, provider, model,
+          prompt_tokens, completion_tokens, total_tokens, cost_input, cost_output, cost_total,
+          latency_ms, pricing_state)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(7, "t-pre-tooltag", "agent-x", "anthropic", "claude-x", 5, 5, 10, 0.1, 0.2, 0.3, 50, "priced");
+
+    initSchema(legacy, 1536);
+
+    const cols = new Set(
+      (legacy.prepare(`PRAGMA table_info(obs_token_usage)`).all() as { name: string }[]).map(
+        (r) => r.name,
+      ),
+    );
+    expect(cols.has("tool_tag")).toBe(true);
+
+    // The pre-existing row survives verbatim; its tool_tag is NULL.
+    const row = legacy
+      .prepare(`SELECT cost_total, pricing_state, tool_tag FROM obs_token_usage WHERE trace_id = ?`)
+      .get("t-pre-tooltag") as { cost_total: number; pricing_state: string; tool_tag: string | null };
+    expect(row.cost_total).toBe(0.3);
+    expect(row.pricing_state).toBe("priced");
+    expect(row.tool_tag).toBeNull();
+    legacy.close();
+  });
+});
+
+describe("ObservabilityStore — insertTokenUsage tool_tag persist round-trip (COST-01)", () => {
+  let db: Database.Database;
+  let store: ObservabilityStore;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    initSchema(db, 1536);
+    store = createObservabilityStore(db);
+  });
+
+  it("Test 8: a row with toolTag ['bash','read'] persists as the JSON array and reads back (REAL round-trip)", () => {
+    expect(() =>
+      store.insertTokenUsage(makeTokenRow({ toolTag: ["bash", "read"] })),
+    ).not.toThrow();
+
+    const raw = db.prepare(`SELECT tool_tag FROM obs_token_usage`).get() as { tool_tag: string | null };
+    // Stored as a JSON-stringified DISTINCT tool array (content-free — names only).
+    expect(raw.tool_tag).toBe(JSON.stringify(["bash", "read"]));
+    expect(JSON.parse(raw.tool_tag ?? "null")).toEqual(["bash", "read"]);
+  });
+
+  it("Test 8b: a row with NO toolTag persists tool_tag NULL (no throw, no backward-compat shim)", () => {
+    expect(() => store.insertTokenUsage(makeTokenRow())).not.toThrow();
+    const raw = db.prepare(`SELECT tool_tag FROM obs_token_usage`).get() as { tool_tag: string | null };
+    expect(raw.tool_tag).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // SPEND-03 — getRollingSpendUsd(windowMs): the spend-accumulator's BOOT
 // rehydration read (NOT a per-check read). A per-agent SUM(cost_total) over the
 // rolling window from obs_token_usage. The rows ARE the durability — this is the
