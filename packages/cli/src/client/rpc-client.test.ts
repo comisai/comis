@@ -67,7 +67,7 @@ function getLastWs(): MockWebSocket {
 }
 
 // Dynamic import after mock is registered
-const { createRpcClient, withClient, checkTransportSecurity, InsecureTransportError, isGatewayAuthRejection } = await import("./rpc-client.js");
+const { createRpcClient, withClient, checkTransportSecurity, InsecureTransportError, isGatewayAuthRejection, resolveGatewayConfigPath } = await import("./rpc-client.js");
 const { offlineSecretGet } = await import("../util/offline-secrets-store.js");
 
 /**
@@ -85,6 +85,41 @@ function connectLastWsAsync(): void {
     }
   }, 1);
 }
+
+// UX-2 (LOCAL re-test 2026-06-20): the CLI's gateway config resolution hardcoded
+// ~/.comis/config.yaml and ignored COMIS_CONFIG_PATHS, so a non-default data-dir
+// daemon (a test/second daemon on another port) was unreachable via the CLI even
+// with COMIS_CONFIG_PATHS exported — you had to discover COMIS_GATEWAY_URL. The
+// gateway config path must honor COMIS_CONFIG_PATHS (first ":"-separated entry,
+// matching the daemon), falling back to the default home location.
+describe("resolveGatewayConfigPath — honors COMIS_CONFIG_PATHS (UX-2)", () => {
+  const SAVED = process.env.COMIS_CONFIG_PATHS;
+  afterEach(() => {
+    if (SAVED === undefined) delete process.env.COMIS_CONFIG_PATHS;
+    else process.env.COMIS_CONFIG_PATHS = SAVED;
+  });
+
+  it("returns the first COMIS_CONFIG_PATHS entry when set", () => {
+    process.env.COMIS_CONFIG_PATHS = "/custom/livetest/config.yaml:/other/config.yaml";
+    expect(resolveGatewayConfigPath()).toBe("/custom/livetest/config.yaml");
+  });
+
+  it("trims whitespace around the first entry", () => {
+    process.env.COMIS_CONFIG_PATHS = "  /custom/config.yaml  ";
+    expect(resolveGatewayConfigPath()).toBe("/custom/config.yaml");
+  });
+
+  it("falls back to ~/.comis/config.yaml when COMIS_CONFIG_PATHS is unset", () => {
+    delete process.env.COMIS_CONFIG_PATHS;
+    // os.homedir is mocked to "/fake/home" at the top of this file.
+    expect(resolveGatewayConfigPath()).toBe("/fake/home/.comis/config.yaml");
+  });
+
+  it("falls back to the default when COMIS_CONFIG_PATHS is empty/blank", () => {
+    process.env.COMIS_CONFIG_PATHS = "   ";
+    expect(resolveGatewayConfigPath()).toBe("/fake/home/.comis/config.yaml");
+  });
+});
 
 describe("gateway auth rejection (W13 obs-llm-troubleshooting)", () => {
   beforeEach(() => {
