@@ -23,7 +23,42 @@ import {
   type SessionHandlerDeps,
   scanJsonlSessions,
   scanWorkspaceSessions,
+  loadJsonlSession,
 } from "./session-helpers.js";
+
+/**
+ * Enumerate sessions for BOTH list and search: SQLite (`listDetailed`) MERGED with
+ * the two JSONL sources — the agent-data-dir scan and the workspace scan (where the
+ * pi-agent session manager writes, e.g. the OpenAI-compat chat session). Returns a
+ * fresh, de-duplicated array (SQLite key wins; each JSONL key added once).
+ *
+ * Shared so search mode can NEVER again drift from list mode: search previously did
+ * `listDetailed()` ALONE and was blind to JSONL-only sessions, so `session.search`
+ * returned 0 hits for content `session.history`/`session.list` could see (live
+ * 2026-06-20: the chat-API session is JSONL-only — the SQLite `sessions` table was
+ * empty — so every search returned empty).
+ */
+export function enumerateListableSessions(
+  deps: SessionHandlerDeps,
+  tenantId: string | undefined,
+): ReturnType<SessionHandlerDeps["sessionStore"]["listDetailed"]> {
+  const sessions = [...deps.sessionStore.listDetailed(tenantId)];
+  if (deps.agentDataDir) {
+    const jsonlSessions = scanJsonlSessions(deps.agentDataDir, deps.agents);
+    const sqliteKeys = new Set(sessions.map((s) => s.sessionKey));
+    for (const js of jsonlSessions) {
+      if (!sqliteKeys.has(js.sessionKey)) sessions.push(js);
+    }
+  }
+  if (deps.defaultWorkspaceDir) {
+    const wsSessions = scanWorkspaceSessions(deps.defaultWorkspaceDir);
+    const existingKeys = new Set(sessions.map((s) => s.sessionKey));
+    for (const ws of wsSessions) {
+      if (!existingKeys.has(ws.sessionKey)) sessions.push(ws);
+    }
+  }
+  return sessions;
+}
 
 /**
  * Bind the session list + search handlers. Object-spread compatible with
@@ -44,29 +79,7 @@ export function bindSessionListHandlers(deps: SessionHandlerDeps): Record<string
       const kind = params.kind ?? "all";
       const sinceMinutes = params.since_minutes;
 
-      let sessions = deps.sessionStore.listDetailed(tenantId);
-
-      // Merge JSONL sessions that are not in SQLite
-      if (deps.agentDataDir) {
-        const jsonlSessions = scanJsonlSessions(deps.agentDataDir, deps.agents);
-        const sqliteKeys = new Set(sessions.map(s => s.sessionKey));
-        for (const js of jsonlSessions) {
-          if (!sqliteKeys.has(js.sessionKey)) {
-            sessions.push(js);
-          }
-        }
-      }
-
-      // Merge workspace JSONL sessions (pi-agent session manager writes here)
-      if (deps.defaultWorkspaceDir) {
-        const wsSessions = scanWorkspaceSessions(deps.defaultWorkspaceDir);
-        const existingKeys = new Set(sessions.map(s => s.sessionKey));
-        for (const ws of wsSessions) {
-          if (!existingKeys.has(ws.sessionKey)) {
-            sessions.push(ws);
-          }
-        }
-      }
+      let sessions = enumerateListableSessions(deps, tenantId);
 
       // Recency filter: only sessions active within N minutes
       if (sinceMinutes !== undefined) {
@@ -144,7 +157,7 @@ export function bindSessionListHandlers(deps: SessionHandlerDeps): Record<string
       const scope = params.scope ?? "all";
       const shouldSummarize = params.summarize !== false;
 
-      let sessions = deps.sessionStore.listDetailed(tenantId);
+      let sessions = enumerateListableSessions(deps, tenantId);
 
       // AgentId scoping: when _agentId is provided, filter to caller's sessions
       if (callerAgentId) {
@@ -211,7 +224,16 @@ export function bindSessionListHandlers(deps: SessionHandlerDeps): Record<string
       for (const session of sessions) {
         if (results.length >= limit) break;
 
-        const data = deps.sessionStore.loadByFormattedKey(session.sessionKey);
+        let data = deps.sessionStore.loadByFormattedKey(session.sessionKey);
+        // Workspace-JSONL fallback — MUST mirror session.history (session-read.ts):
+        // the OpenAI-compat chat session + any pi-agent-session-manager session is
+        // JSONL-only (the primary store's loadByFormattedKey returns null for it), so
+        // without this fallback session.search SKIPPED every such session → 0 hits for
+        // content session.history could read (live 2026-06-20). The enumerated entry
+        // carries the JSONL path from scanWorkspaceSessions.
+        if (!data && session.metadata?._workspaceJsonlPath) {
+          data = loadJsonlSession(session.metadata._workspaceJsonlPath as string);
+        }
         if (!data) continue;
 
         let bestMatch: { snippet: string; score: number; timestamp: number } | undefined;
