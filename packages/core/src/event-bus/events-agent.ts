@@ -226,20 +226,9 @@ export interface AgentEvents {
     agentId: string;
     tenantId: string;
     actionType: string;
-    /**
-     * Event family (AUDIT-03 / E4). The closed {@link AuditKind} union rides
-     * the wire so Plan 03's sink can persist it directly (deriving `kind`
-     * from `actionType` only as a defense-in-depth fallback when absent).
-     * Optional for backward-tolerance of un-migrated emits; all 6 in-repo
-     * sites set it.
-     */
+    /** Event family (AUDIT-03 / E4) — the closed {@link AuditKind} union rides the wire to Plan 03's sink (which derives kind from actionType only as a fallback). Optional for un-migrated emits; all 6 in-repo sites set it. */
     kind?: AuditKind;
-    /**
-     * Risk class — loosely typed at the event level. The schema
-     * (`AuditEventSchema`) is the closed `read|mutate|destructive` source of
-     * truth; the bogus `"security"`/`"write"`/`"neutral"` strings are no
-     * longer sent (they moved to `kind`).
-     */
+    /** Risk class — loosely typed here; AuditEventSchema's closed read|mutate|destructive is the source of truth. The bogus "security"/"write"/"neutral" strings moved to `kind` and are no longer sent. */
     classification?: string;
     outcome: "success" | "failure" | "denied";
     metadata?: Record<string, unknown>;

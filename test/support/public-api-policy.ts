@@ -949,6 +949,21 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // Same rationale + precedent as IncidentReportSchema above; remove if an
       // in-repo value consumer lands.
       "FleetHealthReportSchema",
+      // ── Audit schema reshape (AUDIT-03 / E4, Phase 176 Plan 02) ──
+      // AUDIT_KINDS (the closed kind value-list) + kindIsSecuritySignal (the
+      // exhaustiveness-guarded severity helper) + AuditKind (the inferred union
+      // type) are the reshaped audit contract surface. AuditKind has an
+      // INTRA-core consumer — events-agent.ts annotates the audit:event
+      // payload's `kind?: AuditKind` via the relative ../security/audit.js
+      // import, which the cross-package walker skips as a self-import
+      // (buildRecallTrace precedent). The cross-package value consumers land in
+      // Plan 03 (the daemon audit sink reads payload.kind, derives via
+      // kindIsSecuritySignal/AUDIT_KINDS). Surfaced here AHEAD of that consumer
+      // (the orchestration-authoring schema-first precedent). Shrink each entry
+      // as Plan 03's sink name-imports it.
+      "AUDIT_KINDS",
+      "kindIsSecuritySignal",
+      "AuditKind",
       "NodeStatusSchema",
       "GraphStatusSchema",
       "GraphNodeSchema",
