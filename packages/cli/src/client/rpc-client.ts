@@ -114,8 +114,28 @@ function resolveEnvRef(value: string): string {
  * Uses a minimal line-based parser to avoid importing the full YAML library.
  * Resolves `${VAR}` references in token values via ~/.comis/.env.
  */
+/**
+ * The config file the CLI reads to discover the gateway URL/token. Honors
+ * `COMIS_CONFIG_PATHS` (the first `":"`-separated entry, matching the daemon's
+ * own parsing) so the CLI targets the SAME daemon a non-default `COMIS_CONFIG_PATHS`
+ * pointed at — e.g. a test/second daemon on another port. Falls back to the
+ * standard `~/.comis/config.yaml` when unset or blank.
+ *
+ * UX-2 (LOCAL re-test 2026-06-20): without this the CLI always read
+ * `~/.comis/config.yaml`, so a `COMIS_DATA_DIR`/`COMIS_CONFIG_PATHS` daemon on
+ * :4777 was unreachable via the CLI unless you also set `COMIS_GATEWAY_URL`.
+ */
+export function resolveGatewayConfigPath(): string {
+  const fromEnv = systemGetEnv("COMIS_CONFIG_PATHS");
+  if (fromEnv) {
+    const first = fromEnv.split(":")[0]?.trim();
+    if (first) return first;
+  }
+  return os.homedir() + "/.comis/config.yaml";
+}
+
 function resolveFromConfig(): { url: string; token: string | undefined; tls: boolean } {
-  const configPath = os.homedir() + "/.comis/config.yaml";
+  const configPath = resolveGatewayConfigPath();
   if (!existsSync(configPath)) {
     return { url: FALLBACK_GATEWAY_URL, token: undefined, tls: false };
   }
