@@ -33,6 +33,7 @@ import { OTLPLogExporter } from "@opentelemetry/exporter-logs-otlp-proto";
 import { resourceFromAttributes } from "@opentelemetry/resources";
 import { ATTR_SERVICE_NAME } from "@opentelemetry/semantic-conventions";
 import type { AppConfig, ClockPort, TypedEventBus, ComisLogger } from "@comis/core";
+import { systemSetTimeout } from "@comis/core";
 import { wireMetricMapping } from "./metric-mapping.js";
 import type { SpendSnapshotReader } from "./spend-snapshot.js";
 import { wireSeriesCardinality } from "./prometheus-surface.js";
@@ -70,9 +71,9 @@ function withTimeout(fn: () => Promise<void>): Promise<void> {
   return Promise.race([
     fn().catch(() => undefined),
     new Promise<void>((resolve) => {
-      const t = setTimeout(resolve, SHUTDOWN_STEP_TIMEOUT_MS);
-      // Do not keep the event loop alive on this guard timer.
-      if (typeof t === "object" && t !== null && "unref" in t) (t as { unref(): void }).unref();
+      // systemSetTimeout — the sanctioned @comis/core timer wrapper; .unref()'d
+      // so the guard never keeps the event loop alive.
+      systemSetTimeout(resolve, SHUTDOWN_STEP_TIMEOUT_MS).unref();
     }),
   ]);
 }

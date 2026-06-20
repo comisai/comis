@@ -360,17 +360,17 @@ export interface BootContext {
   skillsLogger: ReturnType<typeof setupLogging>["skillsLogger"];
   memoryLogger: ReturnType<typeof setupLogging>["memoryLogger"];
   daemonVersion: string;
-  // Observability (9 fields)
-  tokenTracker: ReturnType<typeof setupObservability>["tokenTracker"];
-  sharedCostTracker: ReturnType<typeof setupObservability>["sharedCostTracker"];
-  diagnosticCollector: ReturnType<typeof setupObservability>["diagnosticCollector"];
-  billingEstimator: ReturnType<typeof setupObservability>["billingEstimator"];
-  channelActivityTracker: ReturnType<typeof setupObservability>["channelActivityTracker"];
-  deliveryTracer: ReturnType<typeof setupObservability>["deliveryTracer"];
+  // Observability (10). setupObservability is ASYNC (Phase 178 OTel seam) → Awaited.
+  tokenTracker: Awaited<ReturnType<typeof setupObservability>>["tokenTracker"];
+  sharedCostTracker: Awaited<ReturnType<typeof setupObservability>>["sharedCostTracker"];
+  diagnosticCollector: Awaited<ReturnType<typeof setupObservability>>["diagnosticCollector"];
+  billingEstimator: Awaited<ReturnType<typeof setupObservability>>["billingEstimator"];
+  channelActivityTracker: Awaited<ReturnType<typeof setupObservability>>["channelActivityTracker"];
+  deliveryTracer: Awaited<ReturnType<typeof setupObservability>>["deliveryTracer"];
   // The canonical ActivityStream (orchestrator-facing ActivityStreamPort)
   // + its drain hook, threaded from bootFoundation to bootShutdown.
-  activityStream: ReturnType<typeof setupObservability>["activityStream"];
-  disposeActivityStream: ReturnType<typeof setupObservability>["disposeActivityStream"]; spendAccumulator: ReturnType<typeof setupObservability>["spendAccumulator"]; // spendAccumulator = Phase 177 dollars kill-switch (one daemon-wide ref → bootAgents → setupAgents → createPiExecutor → bridge).
+  activityStream: Awaited<ReturnType<typeof setupObservability>>["activityStream"];
+  disposeActivityStream: Awaited<ReturnType<typeof setupObservability>>["disposeActivityStream"]; spendAccumulator: Awaited<ReturnType<typeof setupObservability>>["spendAccumulator"]; otelHandle: Awaited<ReturnType<typeof setupObservability>>["otelHandle"]; // spendAccumulator = Phase 177 dollars kill-switch (daemon-wide ref → bridge); otelHandle = Phase 178 OTLP/Prometheus exporter handle → setupShutdown.
   contextPipelineCollector: ReturnType<typeof createContextPipelineCollector>;
   // Process (1 field)
   processMonitor: ReturnType<typeof setupHealth>["processMonitor"];
