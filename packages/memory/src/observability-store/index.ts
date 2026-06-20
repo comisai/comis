@@ -20,6 +20,7 @@ import {
 import { bindQueries } from "./observability-queries.js";
 import { bindMutations } from "./observability-mutations.js";
 import { bindReset } from "./observability-reset.js";
+import { bindAuditMutations } from "./audit-mutations.js";
 import { buildCacheStatsQueries } from "./cache-stats-queries.js";
 
 export type {
@@ -28,6 +29,7 @@ export type {
   DeliveryRow,
   DiagnosticRow,
   ChannelSnapshotRow,
+  AuditEventRow,
   ProviderAggregation,
   AgentAggregation,
   SessionAggregation,
@@ -41,6 +43,16 @@ export type {
   DiagnosticQueryParams,
   SystemPromptReportRow,
 } from "./observability-store-types.js";
+
+// AUDIT-01: the audit sink helpers (insert/query + the 0600 rotated JSONL writer).
+export {
+  appendAuditJsonl,
+  bindAuditMutations,
+  DEFAULT_AUDIT_QUERY_LIMIT,
+  MAX_AUDIT_QUERY_LIMIT,
+  SECURITY_AUDIT_LOG_BASENAME,
+} from "./audit-mutations.js";
+export type { AuditQueryParams, AppendAuditJsonlParams } from "./audit-mutations.js";
 
 /**
  * Create an ObservabilityStore bound to the given database.
@@ -57,6 +69,8 @@ export function createObservabilityStore(db: Database.Database): ObservabilitySt
     ...bindQueries(db),
     ...bindMutations(db),
     ...bindReset(db),
+    // AUDIT-01: security-audit insert/query over the dedicated obs_audit_events table.
+    ...bindAuditMutations(db),
     // Durable cache-stats queries over `obs_token_usage`.
     ...buildCacheStatsQueries(db),
   };

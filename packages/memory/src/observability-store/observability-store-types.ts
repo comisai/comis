@@ -284,6 +284,34 @@ export interface DeliveryQueryParams {
   limit?: number;
 }
 
+/**
+ * Filter surface for `queryAuditEvents` (AUDIT-01) — mirrors the
+ * `obs_query {action:"audit"}` filter shape (decision #4). Every field is
+ * optional; absent fields widen the scan. All filters become bound parameters
+ * in a parameterized WHERE (never interpolated SQL). Declared HERE (beside the
+ * interface that consumes it) rather than in audit-mutations.ts so the store
+ * interface does not form a types↔impl `.d.ts` import cycle (the Plan-01
+ * row-shapes precedent).
+ */
+export interface AuditQueryParams {
+  /** Event family (the closed AuditKind union, passed as a string). */
+  kind?: string;
+  /** Risk class — a genuine `read|mutate|destructive` (chiefly the `audit` kind). */
+  classification?: string;
+  /** Agent that performed the action. */
+  agentId?: string;
+  /** Tenant scope (the `''` system-scope sentinel matches tenant-less events). */
+  tenant?: string;
+  /** Action outcome (`success|failure|denied`). */
+  outcome?: string;
+  /** Lower time bound (inclusive), epoch ms. */
+  since?: number;
+  /** Upper time bound (inclusive), epoch ms. */
+  until?: number;
+  /** Row cap. Defaults to a bounded value, clamped to a hard ceiling. */
+  limit?: number;
+}
+
 /** Query parameters for diagnostic queries. */
 export interface DiagnosticQueryParams {
   sinceMs?: number;
@@ -313,6 +341,14 @@ export interface ObservabilityStore extends CacheStatsQueriesSlice {
   // Diagnostics
   insertDiagnostic(entry: DiagnosticRow): void;
   queryDiagnostics(params?: DiagnosticQueryParams): DiagnosticRow[];
+
+  // Security audit (AUDIT-01/02). Insert/query the dedicated obs_audit_events
+  // table. `refs` is a pre-scrubbed JSON blob — the sink routes the
+  // `audit:event` metadata free-map through sanitizeForPersistence before
+  // building the row. AuditQueryParams is defined alongside the impl
+  // (audit-mutations.ts) and re-exported from the barrel.
+  insertAuditEvent(row: AuditEventRow): void;
+  queryAuditEvents(params: AuditQueryParams): AuditEventRow[];
 
   // Channel snapshots
   insertChannelSnapshot(entry: ChannelSnapshotRow): void;
