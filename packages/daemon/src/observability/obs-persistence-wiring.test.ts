@@ -15,9 +15,16 @@ import {
   sandboxDowngradeRefusedEventToRow,
   deliveryDeadletteredEventToRow,
   nodeBudgetExceededEventToRow,
+  auditEventToRow,
   setupObsPersistence,
 } from "./obs-persistence-wiring.js";
 import type { EventMap } from "@comis/core";
+import { runWithContext } from "@comis/core";
+import Database from "better-sqlite3";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as nodePath from "node:path";
+import { initSchema, createObservabilityStore } from "@comis/memory";
 import type { DiagnosticEvent } from "./diagnostic-collector.js";
 
 // ---------------------------------------------------------------------------
@@ -1314,6 +1321,240 @@ describe("setupObsPersistence", () => {
 
     // Cleanup
     clearInterval(result.snapshotTimer);
+    result.drainAll();
+  });
+});
+
+// ===========================================================================
+// AUDIT-01/02/04 — the audit sink (auditEventToRow + the 7 subscribers + the
+// metadata scrub + the .audit() log). Uses a REAL in-memory store + a REAL
+// tmp-dir JSONL so the content-free + round-trip invariants are asserted
+// against actual persistence, not mocks.
+// ===========================================================================
+
+describe("auditEventToRow (the content-free audit row-builder)", () => {
+  it("scrubs the audit:event metadata free-map into refs (AUDIT-04) and never carries a planted value", () => {
+    const row = auditEventToRow(
+      {
+        timestamp: 1000,
+        agentId: "a1",
+        tenantId: "t1",
+        actionType: "file.delete",
+        kind: "audit",
+        classification: "destructive",
+        outcome: "success",
+        metadata: { apiKey: "sk-PLANTED-SECRET", count: 3 },
+      },
+      "t1",
+      "a1",
+      undefined,
+    );
+    expect(row.kind).toBe("audit");
+    expect(row.classification).toBe("destructive");
+    expect(row.outcome).toBe("success");
+    expect(row.actor).toBeDefined();
+    // The planted value must NOT survive into refs.
+    expect(row.refs ?? "").not.toContain("sk-PLANTED-SECRET");
+  });
+
+  it("derives kind from actionType when payload.kind is absent (defense-in-depth fallback)", () => {
+    const row = auditEventToRow(
+      {
+        timestamp: 1000,
+        agentId: "a1",
+        tenantId: "t1",
+        actionType: "secrets.get",
+        outcome: "denied",
+      } as EventMap["audit:event"],
+      "t1",
+      "a1",
+      undefined,
+    );
+    // A stray un-migrated emit still classifies (not "audit"/empty).
+    expect(row.kind).toBeTruthy();
+    expect(row.kind).not.toBe("");
+  });
+});
+
+describe("setupObsPersistence — audit sink (real store + tmp JSONL)", () => {
+  let db: Database.Database;
+  let store: ReturnType<typeof createObservabilityStore>;
+  let dataDir: string;
+  let auditLogPath: string;
+
+  function realDeps(extra: Record<string, unknown> = {}) {
+    const auditLines: Array<Record<string, unknown>> = [];
+    const logger = {
+      info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
+      trace: vi.fn(), fatal: vi.fn(),
+      audit: vi.fn((rec: Record<string, unknown>) => { auditLines.push(rec); }),
+      child: vi.fn(() => logger),
+    };
+    const eventBus = (() => {
+      const listeners = new Map<string, Array<(p: unknown) => void>>();
+      return {
+        on: vi.fn((e: string, h: (p: unknown) => void) => {
+          const arr = listeners.get(e) ?? []; arr.push(h); listeners.set(e, arr);
+        }),
+        off: vi.fn(), once: vi.fn(),
+        emit: (e: string, p: unknown) => { for (const h of listeners.get(e) ?? []) h(p); },
+      };
+    })();
+    const deps = {
+      eventBus: eventBus as never,
+      obsStore: store,
+      db: { transaction: <T,>(fn: () => T) => fn },
+      channelActivityTracker: { getAll: () => [] } as never,
+      startupTimestamp: Date.now(),
+      snapshotIntervalMs: 300_000,
+      logger: logger as never,
+      dataDir,
+      logRotation: { maxSizeBytes: 10_000_000, maxFiles: 5 },
+      ...extra,
+    };
+    return { deps, eventBus, logger, auditLines };
+  }
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    initSchema(db, 1536);
+    store = createObservabilityStore(db);
+    dataDir = fs.mkdtempSync(nodePath.join(os.tmpdir(), "obs-audit-"));
+    auditLogPath = nodePath.join(dataDir, "logs", "security-audit.jsonl");
+  });
+
+  afterEach(() => {
+    db.close();
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it("Test 1: emitting audit:event persists a queryable obs_audit_events row", () => {
+    const { deps, eventBus } = realDeps();
+    const result = setupObsPersistence(deps as never);
+    eventBus.emit("audit:event", {
+      timestamp: 1000, agentId: "a1", tenantId: "t1", actionType: "file.delete",
+      kind: "audit", classification: "destructive", outcome: "success",
+      metadata: { count: 1 },
+    });
+    result.drainAll();
+
+    const rows = store.queryAuditEvents({ kind: "audit" });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.outcome).toBe("success");
+    expect(rows[0]!.actor).toBeTruthy();
+  });
+
+  it("Test 2: secret:accessed → row with secretName + outcome, NO value field", () => {
+    const { deps, eventBus } = realDeps();
+    const result = setupObsPersistence(deps as never);
+    eventBus.emit("secret:accessed", {
+      secretName: "OPENAI_API_KEY", agentId: "a1", outcome: "denied", timestamp: 1000,
+    });
+    result.drainAll();
+
+    const rows = store.queryAuditEvents({ kind: "secret_access" });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.outcome).toBe("denied");
+    const serialized = JSON.stringify(rows[0]);
+    expect(serialized).toContain("OPENAI_API_KEY");
+    expect(serialized).not.toMatch(/"value"/);
+  });
+
+  it("Test 3: each AUDIT-02 security/critic/command event produces a row", () => {
+    const { deps, eventBus } = realDeps();
+    const result = setupObsPersistence(deps as never);
+    eventBus.emit("security:injection_detected", { timestamp: 1, source: "user_input", patterns: ["p"], riskLevel: "high", agentId: "a1", sessionKey: "s" });
+    eventBus.emit("security:injection_rate_exceeded", { timestamp: 1, sessionKey: "s", count: 5, threshold: 3, action: "terminate" });
+    eventBus.emit("security:memory_tainted", { timestamp: 1, agentId: "a1", originalTrustLevel: "trusted", adjustedTrustLevel: "untrusted", patterns: ["p"], blocked: true });
+    eventBus.emit("critic.isolation.canary_leak", { timestamp: 1, agentId: "a1", canaryPrefix: "abc123" });
+    eventBus.emit("critic.isolation.implied_tool_call", { timestamp: 1, agentId: "a1", pattern: "call write_file" });
+    eventBus.emit("command:blocked", { agentId: "a1", commandPrefix: "rm -rf /", reason: "denylist", blocker: "denylist", timestamp: 1 });
+    result.drainAll();
+
+    const all = store.queryAuditEvents({ limit: 100 });
+    const kinds = all.map((r) => r.kind).sort();
+    expect(kinds).toContain("injection_detected");
+    expect(kinds).toContain("injection_rate_exceeded");
+    expect(kinds).toContain("canary_leak");
+    expect(kinds).toContain("implied_tool_call");
+    expect(kinds).toContain("command_blocked");
+    // memory_tainted maps to a security kind too.
+    expect(all.length).toBeGreaterThanOrEqual(6);
+  });
+
+  it("Test 4 (AUDIT-04): a planted metadata value lands in NEITHER the row NOR the JSONL", () => {
+    const { deps, eventBus } = realDeps();
+    const result = setupObsPersistence(deps as never);
+    eventBus.emit("audit:event", {
+      timestamp: 1000, agentId: "a1", tenantId: "t1", actionType: "file.delete",
+      kind: "audit", outcome: "success",
+      metadata: { apiKey: "sk-PLANTED-SECRET" },
+    });
+    result.drainAll();
+
+    const rows = store.queryAuditEvents({ kind: "audit" });
+    expect(rows).toHaveLength(1);
+    expect(JSON.stringify(rows[0])).not.toContain("sk-PLANTED-SECRET");
+    // And the JSONL line.
+    const jsonl = fs.readFileSync(auditLogPath, "utf8");
+    expect(jsonl).not.toContain("sk-PLANTED-SECRET");
+    expect(jsonl.length).toBeGreaterThan(0);
+  });
+
+  it("Test 5: the subscriber logs a scrubbed record via .audit() (level 35)", () => {
+    const { deps, eventBus, auditLines } = realDeps();
+    const result = setupObsPersistence(deps as never);
+    eventBus.emit("audit:event", {
+      timestamp: 1000, agentId: "a1", tenantId: "t1", actionType: "file.delete",
+      kind: "audit", outcome: "success", metadata: { apiKey: "sk-PLANTED-SECRET" },
+    });
+    result.drainAll();
+
+    expect(auditLines.length).toBeGreaterThanOrEqual(1);
+    const logged = JSON.stringify(auditLines);
+    expect(logged).toContain("audit");
+    expect(logged).not.toContain("sk-PLANTED-SECRET");
+  });
+
+  it("Test 6 (decision #2): a tenant-less event persists tenant_id='' when no trace context; uses the trace tenant when present", () => {
+    // No trace context → system-scoped, never dropped.
+    {
+      const { deps, eventBus } = realDeps();
+      const result = setupObsPersistence(deps as never);
+      eventBus.emit("command:blocked", { agentId: "a1", commandPrefix: "rm -rf /", reason: "x", blocker: "denylist", timestamp: 1 });
+      result.drainAll();
+      const rows = store.queryAuditEvents({ kind: "command_blocked" });
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.tenantId).toBe("");
+    }
+    // With a trace context carrying a tenant → the row uses it.
+    {
+      const { deps, eventBus } = realDeps();
+      const result = setupObsPersistence(deps as never);
+      runWithContext(
+        { tenantId: "tenant-from-trace", traceId: "00000000-0000-4000-8000-000000000000", startedAt: 1, trustLevel: "admin" },
+        () => {
+          eventBus.emit("secret:accessed", { secretName: "K", agentId: "a1", outcome: "success", timestamp: 1 });
+        },
+      );
+      result.drainAll();
+      const rows = store.queryAuditEvents({ kind: "secret_access" });
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.tenantId).toBe("tenant-from-trace");
+    }
+  });
+
+  it("subscribes to all 7 audit-source event families", () => {
+    const { deps, eventBus } = realDeps();
+    const result = setupObsPersistence(deps as never);
+    for (const e of [
+      "audit:event", "secret:accessed",
+      "security:injection_detected", "security:injection_rate_exceeded", "security:memory_tainted",
+      "critic.isolation.canary_leak", "critic.isolation.implied_tool_call",
+      "command:blocked",
+    ]) {
+      expect(eventBus.on).toHaveBeenCalledWith(e, expect.any(Function));
+    }
     result.drainAll();
   });
 });
