@@ -646,6 +646,112 @@ describe("persistToConfig", () => {
       expect(result.error).toContain("plaintext_secret_blocked");
     }
   });
+
+  // -------------------------------------------------------------------------
+  // Live 30-UC finding (2026-06-20): the guard must block NEWLY-introduced
+  // plaintext, NOT abort because the on-disk config ALREADY contains a
+  // plaintext secret. The operator's `default` admin token carried an inline
+  // `gateway.tokens[].secret` (quickstart/wizard shape); a token op rewrites
+  // the whole tokens list, re-emitting that unchanged literal. The ref-only
+  // guard treated the re-emitted plaintext as a new commit and either aborted
+  // the persist or forced dropping the secret — severing the admin token (the
+  // 2× lockout). A value UNCHANGED from on-disk is preservation, not a commit.
+  // -------------------------------------------------------------------------
+
+  // A high-entropy gateway-token secret (the value scanForSecrets flags at a
+  // `.secret` key — proven by the "STILL blocks a CHANGED" test below).
+  const INLINE_TOKEN_SECRET = "a1b2c3d4e5f60718293a4b5c6d7e8f9012a3b4c5d6e7f801";
+
+  it("does NOT block re-emitting an INLINE PLAINTEXT token secret UNCHANGED from the on-disk YAML (admin-lockout fix)", async () => {
+    // On-disk YAML: `default` with an inline plaintext secret (no env-ref).
+    writeFileSync(
+      configPath,
+      yamlStringify({
+        logLevel: "info",
+        gateway: { enabled: true, tokens: [{ id: "default", secret: INLINE_TOKEN_SECRET, scopes: ["*"] }] },
+      }),
+      "utf-8",
+    );
+    const containerConfig = AppConfigSchema.parse({
+      logLevel: "info",
+      gateway: { enabled: true, tokens: [{ id: "default", secret: INLINE_TOKEN_SECRET, scopes: ["*"] }] },
+    });
+    const deps: PersistToConfigDeps = {
+      container: {
+        config: containerConfig,
+        eventBus: { emit: vi.fn() },
+      } as unknown as PersistToConfigDeps["container"],
+      configPaths: [configPath],
+      defaultConfigPaths: [],
+      logger: createMockLogger(),
+    };
+    // Patch mimics persistableTokenEntries on tokens.create: default re-emitted
+    // verbatim (unchanged) + a new secret-free token appended.
+    const opts = makeOpts({
+      patch: {
+        gateway: {
+          tokens: [
+            { id: "default", secret: INLINE_TOKEN_SECRET, scopes: ["*"] },
+            { id: "new-tok", scopes: ["ws"] },
+          ],
+        },
+      },
+      actionType: "tokens.create",
+      entityId: "new-tok",
+    });
+
+    const result = await persistToConfig(deps, opts);
+    expect(result.ok).toBe(true);
+    // The admin token's inline secret survives on disk (never severed).
+    const parsed = parseYaml(readFileSync(configPath, "utf-8")) as Record<string, unknown>;
+    const tokens = (parsed.gateway as { tokens: Array<{ id: string; secret?: string }> }).tokens;
+    expect(tokens.find((t) => t.id === "default")?.secret).toBe(INLINE_TOKEN_SECRET);
+  });
+
+  it("STILL blocks a CHANGED / newly-added inline plaintext token secret (the exemption is narrow)", async () => {
+    // On-disk: only `default` with its inline secret.
+    writeFileSync(
+      configPath,
+      yamlStringify({
+        logLevel: "info",
+        gateway: { enabled: true, tokens: [{ id: "default", secret: INLINE_TOKEN_SECRET, scopes: ["*"] }] },
+      }),
+      "utf-8",
+    );
+    const containerConfig = AppConfigSchema.parse({
+      logLevel: "info",
+      gateway: { enabled: true, tokens: [{ id: "default", secret: INLINE_TOKEN_SECRET, scopes: ["*"] }] },
+    });
+    const deps: PersistToConfigDeps = {
+      container: {
+        config: containerConfig,
+        eventBus: { emit: vi.fn() },
+      } as unknown as PersistToConfigDeps["container"],
+      configPaths: [configPath],
+      defaultConfigPaths: [],
+      logger: createMockLogger(),
+    };
+    // Patch introduces a NEW token carrying a DIFFERENT inline plaintext secret
+    // (not on disk) — a fresh credential commit the guard must still reject.
+    const opts = makeOpts({
+      patch: {
+        gateway: {
+          tokens: [
+            { id: "default", secret: INLINE_TOKEN_SECRET, scopes: ["*"] },
+            { id: "rogue", secret: "f9e8d7c6b5a40312837465f5e6d7c8b9a0918273645f6e7d", scopes: ["ws"] },
+          ],
+        },
+      },
+      actionType: "tokens.create",
+      entityId: "rogue",
+    });
+
+    const result = await persistToConfig(deps, opts);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain("plaintext_secret_blocked");
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
