@@ -414,6 +414,33 @@ describe("AgentEvents payload structure", () => {
     expect(received.nodesSkipped).toBe(1);
   });
 
+  it("graph:completed carries the COST-02 per-node corrected-$ cost ledger (nodeCost) as a typed optional field", () => {
+    // Type contract: nodeCost is part of EventMap["graph:completed"] (the IN-01
+    // nodeTokenSpend mold). This payload assignment would NOT compile on
+    // pre-patch code (excess-property error) — `tsc` is the RED signal for a
+    // type-only field (AGENTS.md §2.10). Content-free: nodeId → dollars only.
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["graph:completed"] = {
+      graphId: "g-cost-02",
+      status: "completed",
+      durationMs: 1000,
+      nodeCount: 3,
+      nodesCompleted: 3,
+      nodesFailed: 0,
+      nodesSkipped: 0,
+      timestamp: Date.now(),
+      nodeTokenSpend: { parent: 20, childA: 100, childB: 50 },
+      nodeCost: { parent: 0.02, childA: 0.10, childB: 0.05 },
+    };
+
+    bus.on("graph:completed", handler);
+    bus.emit("graph:completed", payload);
+
+    const received = handler.mock.calls[0]![0] as EventMap["graph:completed"];
+    expect(received.nodeCost).toEqual({ parent: 0.02, childA: 0.10, childB: 0.05 });
+  });
+
   it("type safety: @ts-expect-error for missing required fields", () => {
     const bus = new TypedEventBus();
 

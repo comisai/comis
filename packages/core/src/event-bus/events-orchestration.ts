@@ -152,6 +152,15 @@ export interface OrchestrationEvents {
      * (otherwise a dead write). Counts/ids-only (§2.7). Mirrors nodeEffectiveness.
      */
     nodeTokenSpend?: Record<string, number>;
+    /**
+     * COST-02: per-node CUMULATIVE corrected-$ cost ledger (nodeId → dollars)
+     * for the run, sourced from the coordinator's nodeCost map (each node's
+     * summed event.cost — the same corrected dollars feeding the graph-wide
+     * total). The subtree rollup (computeSubtreeCost) derives a node + its
+     * descendants from this. Present only when at least one node recorded cost.
+     * Content-free (nodeId → number); the WEBUI-03 billing view consumes it.
+     */
+    nodeCost?: Record<string, number>;
   };
 
   /** Node type driver reached a lifecycle phase (initialized, progress, completed, failed, aborted) */
