@@ -2400,6 +2400,9 @@
         "schedule_at": {
           "type": "string"
         },
+        "schedule_in_seconds": {
+          "type": "number"
+        },
         "model": {
           "type": "string"
         },

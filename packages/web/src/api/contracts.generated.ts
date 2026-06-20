@@ -2522,6 +2522,9 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         "schedule_at": {
           "type": "string"
         },
+        "schedule_in_seconds": {
+          "type": "number"
+        },
         "model": {
           "type": "string"
         },
