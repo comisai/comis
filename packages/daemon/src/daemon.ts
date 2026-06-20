@@ -1452,8 +1452,7 @@ async function bootFoundation(
     // threaded into setupShutdown. The activity-stream logger + homeDir
     // are read here at the sanctioned composition root (no env reads in the
     // substrate; injected logger).
-    activityStream, disposeActivityStream, spendAccumulator, // spendAccumulator: Phase 177 dollars kill-switch — constructed + live-incremented in setupObservability, REHYDRATED below at the boot root, threaded into the per-agent bridges (same reference).
-    otelHandle, // Phase 178: the OTLP/Prometheus exporter handle (undefined unless otel/prometheus enabled); threaded into setupShutdown.
+    activityStream, disposeActivityStream, spendAccumulator, otelHandle, // spendAccumulator: Phase 177 kill-switch (live-incremented, REHYDRATED below, threaded to bridges); otelHandle: Phase 178 OTLP/Prometheus exporter handle → setupShutdown.
   } = await setupObservability({
     eventBus: container.eventBus,
     _createTokenTracker,
@@ -1670,8 +1669,7 @@ async function bootFoundation(
     schedulerLogger, skillsLogger, memoryLogger, daemonVersion,
     tokenTracker, sharedCostTracker,
     diagnosticCollector, billingEstimator, channelActivityTracker, deliveryTracer,
-    activityStream, disposeActivityStream, spendAccumulator, // spendAccumulator: Phase 177 dollars kill-switch → bootAgents → setupAgents → createPiExecutor → bridge.
-    otelHandle, // Phase 178: OTLP/Prometheus exporter handle → setupShutdown (shutdown chain).
+    activityStream, disposeActivityStream, spendAccumulator, otelHandle, // spendAccumulator: Phase 177 kill-switch → bridge; otelHandle: Phase 178 OTLP/Prometheus exporter → setupShutdown.
     contextPipelineCollector,
     processMonitor,
     disposeEmbedding, cachedPort, memoryAdapter, db, sessionStore, memoryApi,
@@ -2768,8 +2766,7 @@ async function bootShutdown(
     continuationTracker,
     lifecycleReactors,  // destroy lifecycle reactors on shutdown
     obsPersistence,  // drain write buffers before db.close
-    disposeActivityStream,  // drain + unsubscribe ActivityStream from EventBus
-    otelShutdown: otelHandle ? () => otelHandle.shutdown() : undefined,  // Phase 178: flush + close the OTLP/Prometheus exporter (stops the /metrics listener)
+    disposeActivityStream, otelShutdown: otelHandle ? () => otelHandle.shutdown() : undefined, // drain ActivityStream; Phase 178 flush+close OTLP/Prometheus exporter (stops /metrics listener)
     geminiCacheManager,  // Dispose all Gemini caches on shutdown
     trajectoryRegistry,  // Drain session-scoped trajectory recorders
     // 9 new teardown fields (8 production subscribers + setup-tools
