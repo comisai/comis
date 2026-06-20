@@ -3918,3 +3918,78 @@ describe("REVISE-/GENERAL- learning:user_model_revised / memory_generalized (cou
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// PERSIST-01 (Phase 176 Plan 04): observability:cache_break → cache.break
+// (content-free — counts/digest ONLY, never the tool-name arrays or system text)
+// ---------------------------------------------------------------------------
+
+describe("attachTrajectoryToEventBus -- cache break (PERSIST-01, content-free)", () => {
+  it("TRAJECTORY_BRIDGE_MAPPING maps observability:cache_break to cache.break", () => {
+    expect(
+      (TRAJECTORY_BRIDGE_MAPPING as Record<string, string>)["observability:cache_break"],
+    ).toBe("cache.break");
+  });
+
+  it("cache.break is a known TrajectoryEventType (enumerated in types.ts)", () => {
+    expect(TRAJECTORY_EVENT_TYPES as readonly string[]).toContain("cache.break");
+  });
+
+  it("cache_break_maps_to_cache.break forwarding reason + counts/digest ONLY", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("observability:cache_break", {
+      provider: "anthropic",
+      reason: "tools_changed",
+      tokenDrop: 1000,
+      tokenDropRelative: 0.5,
+      previousCacheRead: 2000,
+      currentCacheRead: 1000,
+      callCount: 3,
+      changes: {
+        systemChanged: false,
+        toolsChanged: true,
+        metadataChanged: false,
+        modelChanged: false,
+        retentionChanged: false,
+        addedTools: ["secret-tool-name", "internal_admin_api"],
+        removedTools: ["dropped_tool"],
+        changedSchemaTools: ["schema_changed_tool"],
+        headersChanged: false,
+        extraBodyChanged: false,
+      },
+      toolsChanged: ["secret-tool-name", "internal_admin_api", "dropped_tool"],
+      ttlCategory: undefined,
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      timestamp: 1000,
+      toolsAdded: ["secret-tool-name", "internal_admin_api"],
+      toolsRemoved: ["dropped_tool"],
+      toolsSchemaChanged: ["schema_changed_tool"],
+      systemCharDelta: 42,
+      model: "claude-3-5-sonnet-20241022",
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("cache.break");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    // Content-free fields: reason + counts + a changed-dims digest.
+    expect(data.reason).toBe("tools_changed");
+    expect(data.tokenDrop).toBe(1000);
+    expect(data.tokenDropRelative).toBe(0.5);
+    expect(data).toHaveProperty("changedDimsDigest");
+
+    // I3 / H1: NO tool-name arrays, NO system text crosses into the trajectory.
+    const serialized = JSON.stringify(data);
+    expect(serialized).not.toContain("secret-tool-name");
+    expect(serialized).not.toContain("internal_admin_api");
+    expect(serialized).not.toContain("dropped_tool");
+    expect(serialized).not.toContain("schema_changed_tool");
+    expect(serialized).not.toMatch(/toolsAdded|toolsRemoved|toolsSchemaChanged|toolsChanged/);
+    // Envelope-only correlation keys must NOT appear in data.
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+  });
+});

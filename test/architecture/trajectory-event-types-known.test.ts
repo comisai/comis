@@ -471,6 +471,19 @@ describe("trajectory-event-types-known -- bridge mapping coverage from emit site
     expect(mapped.has("tool:timeout")).toBe(true);
   });
 
+  // PERSIST-01 (Phase 176 Plan 04): observability:cache_break is now BRIDGED to a
+  // content-free cache.break trajectory record (was allowlisted as not-mapped). The
+  // enumerated content-free gate must KNOW cache.break so a future un-projected
+  // field can never silently cross into the trajectory (Pitfall 6 / A4).
+  it("observability:cache_break is trajectory-mapped to cache.break (PERSIST-01)", () => {
+    expect(mapped.has("observability:cache_break")).toBe(true);
+    expect(
+      (TRAJECTORY_BRIDGE_MAPPING as Record<string, string>)["observability:cache_break"],
+    ).toBe("cache.break");
+    // And it must NO LONGER be in the not-mapped allowlist (the disjoint invariant).
+    expect(EVENTS_NOT_TRAJECTORY_MAPPED.has("observability:cache_break")).toBe(false);
+  });
+
   it("EVENTS_NOT_TRAJECTORY_MAPPED is disjoint from TRAJECTORY_BRIDGE_MAPPING (no double-coverage)", () => {
     const intersection = [...EVENTS_NOT_TRAJECTORY_MAPPED].filter((e) => mapped.has(e));
     expect(intersection, "events in BOTH sets — pick one").toEqual([]);
