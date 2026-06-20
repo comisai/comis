@@ -9,6 +9,7 @@
  */
 
 import type Database from "better-sqlite3";
+import { systemNowMs } from "@comis/core";
 import {
   deliveryMapper,
   diagnosticMapper,
@@ -28,6 +29,7 @@ import {
   type ChannelSnapshotRow,
   type ProviderAggregation,
   type AgentAggregation,
+  type AgentRollingSpend,
   type SessionAggregation,
   type HourlyBucket,
   type SessionSummaryRollup,
@@ -51,6 +53,7 @@ export type ObservabilityQueries = Pick<
   | "aggregateBySession"
   | "aggregateHourly"
   | "aggregateSessionsInWindow"
+  | "getRollingSpendUsd"
   | "queryDelivery"
   | "deliveryStats"
   | "queryDiagnostics"
@@ -125,6 +128,19 @@ export function bindQueries(db: Database.Database): ObservabilityQueries {
   const aggByAgentSinceStmt = db.prepare(`
     SELECT agent_id, SUM(cost_total) as total_cost, SUM(total_tokens) as total_tokens, COUNT(*) as call_count, COALESCE(SUM(cache_saved), 0) as total_cache_saved
     FROM obs_token_usage WHERE timestamp >= ? GROUP BY agent_id
+  `);
+
+  // SPEND-03: the spend accumulator's BOOT rehydration read. A minimal per-agent
+  // rolling cost total — just the dollars (no tokens/callCount), since the
+  // accumulator seeds only headroom. Grouped by agent_id ONLY: obs_token_usage
+  // has no per-tenant key column (L1), so per-tenant accrues live-from-boot in the
+  // wiring (Plan 03). NOT a per-check read — the rows ARE the durability (no
+  // per-check re-aggregation).
+  const rollingSpendByAgentStmt = db.prepare(`
+    SELECT agent_id, SUM(cost_total) AS total_cost
+    FROM obs_token_usage
+    WHERE timestamp >= ?
+    GROUP BY agent_id
   `);
 
   const aggBySessionStmt = db.prepare(`
@@ -263,6 +279,26 @@ export function bindQueries(db: Database.Database): ObservabilityQueries {
       totalTokens: r.total_tokens,
       callCount: r.call_count,
       totalCacheSaved: r.total_cache_saved,
+    }));
+  }
+
+  function getRollingSpendUsd(windowMs: number): AgentRollingSpend[] {
+    // Derive the window floor from the current time INSIDE the method (the
+    // prune() precedent in observability-reset.ts uses systemNowMs() the same
+    // way) — this is a one-shot BOOT read, so it reads the clock once here rather
+    // than taking a `sinceMs` param like the analytics aggregations do.
+    const since = systemNowMs() - windowMs;
+    const rows = rollingSpendByAgentStmt.all(since) as {
+      agent_id: string;
+      total_cost: number | null;
+    }[];
+    return rows.map((r) => ({
+      agentId: r.agent_id,
+      // A GROUP BY agent_id always has ≥1 row, so SUM is non-null in practice;
+      // guard a non-finite/null SUM to 0 anyway (degrade-on-error discipline —
+      // the accumulator must never seed a NaN headroom).
+      totalCostUsd:
+        typeof r.total_cost === "number" && Number.isFinite(r.total_cost) ? r.total_cost : 0,
     }));
   }
 
@@ -476,6 +512,7 @@ export function bindQueries(db: Database.Database): ObservabilityQueries {
     aggregateBySession,
     aggregateHourly,
     aggregateSessionsInWindow,
+    getRollingSpendUsd,
     queryDelivery,
     deliveryStats,
     queryDiagnostics,

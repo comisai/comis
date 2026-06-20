@@ -215,6 +215,18 @@ export interface AgentAggregation {
   totalCacheSaved: number;
 }
 
+/**
+ * Per-agent rolling spend (SPEND-03) — the minimal boot-rehydration shape the
+ * spend accumulator seeds from. Just the agent + its windowed SUM(cost_total).
+ * Distinct from {@link AgentAggregation} (which carries tokens/callCount/cache):
+ * the accumulator needs ONLY the dollar total, so this stays a 2-field row that
+ * WS6 (Phase 179) extends with its cost buckets + pricing-coverage column.
+ */
+export interface AgentRollingSpend {
+  agentId: string;
+  totalCostUsd: number;
+}
+
 /** Aggregation for a specific session. */
 export interface SessionAggregation {
   sessionKey: string;
@@ -329,6 +341,14 @@ export interface ObservabilityStore extends CacheStatsQueriesSlice {
   aggregateByAgent(sinceMs?: number): AgentAggregation[];
   aggregateBySession(sessionKey: string, sinceMs?: number): SessionAggregation;
   aggregateHourly(sinceMs?: number): HourlyBucket[];
+  /**
+   * Per-agent rolling SUM(cost_total) over the last `windowMs` (the window bound
+   * is derived from the current time INSIDE the method — the prune() precedent).
+   * The spend accumulator's BOOT rehydration read (SPEND-03) — NOT a per-check
+   * read; the rows ARE the durability. Grouped by agent_id only (obs_token_usage
+   * has no tenant_id, L1).
+   */
+  getRollingSpendUsd(windowMs: number): AgentRollingSpend[];
 
   // Diagnostics — cross-session per-session rollup (A1, fleet aggregate)
   aggregateSessionsInWindow(sinceMs: number): SessionSummaryRollup[];

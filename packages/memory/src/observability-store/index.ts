@@ -32,6 +32,7 @@ export type {
   AuditEventRow,
   ProviderAggregation,
   AgentAggregation,
+  AgentRollingSpend,
   SessionAggregation,
   HourlyBucket,
   SessionSummaryRollup,
