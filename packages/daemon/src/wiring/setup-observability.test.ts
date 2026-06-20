@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { themeForName } from "@comis/core";
-import type { ActivityEvent, TurnActivityContext } from "@comis/core";
+import type { ActivityEvent, TurnActivityContext, SpendConfig } from "@comis/core";
+import { createFakeClock } from "../../../../test/support/fake-clock.js";
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks
@@ -12,6 +13,16 @@ const mockCreateCostTracker = vi.hoisted(() => vi.fn(() => ({
   getAll: vi.fn(() => []),
 })));
 
+// A spy spend accumulator: createSpendAccumulator returns this so the tests can
+// assert recordSpend/rehydrate are invoked with the derived scope.
+const mockSpendAccumulator = vi.hoisted(() => ({
+  rehydrate: vi.fn(),
+  recordSpend: vi.fn(),
+  checkAndReserve: vi.fn(),
+  reconcile: vi.fn(),
+}));
+const mockCreateSpendAccumulator = vi.hoisted(() => vi.fn(() => mockSpendAccumulator));
+
 const mockCreateDiagnosticCollector = vi.hoisted(() => vi.fn(() => ({ dispose: vi.fn() })));
 const mockCreateBillingEstimator = vi.hoisted(() => vi.fn(() => ({ estimate: vi.fn() })));
 const mockCreateChannelActivityTracker = vi.hoisted(() => vi.fn(() => ({ dispose: vi.fn() })));
@@ -19,6 +30,7 @@ const mockCreateDeliveryTracer = vi.hoisted(() => vi.fn(() => ({ dispose: vi.fn(
 
 vi.mock("@comis/agent", () => ({
   createCostTracker: mockCreateCostTracker,
+  createSpendAccumulator: mockCreateSpendAccumulator,
 }));
 
 vi.mock("../observability/diagnostic-collector.js", () => ({
@@ -366,5 +378,133 @@ describe("setupObservability", () => {
     expect(received).toHaveLength(1);
     expect(received[0].defaultLabel).toBe("[SUB] agent-1 subagent");
     expect(received[0].defaultLabel).not.toContain("🤖");
+  });
+
+  // -------------------------------------------------------------------------
+  // 11. Spend kill-switch (Phase 177-03): CONSTRUCT the daemon-wide accumulator
+  //     + the live recordSpend subscriber inside setupObservability. REHYDRATE
+  //     lives at the boot root (daemon.ts) — covered by rehydrateSpendFromStore.
+  // -------------------------------------------------------------------------
+
+  const spendConfig: SpendConfig = {
+    perAgentUsd: null,
+    perTenantUsd: null,
+    daemonGlobalUsd: 10,
+    perTurnMax: 0.5,
+    action: "warn",
+    warnAtFraction: 0.8,
+    pricingFallback: "snapshot",
+    onUnknownPricing: "warn",
+  };
+
+  function makeConfigWithSpend(): any {
+    return { observability: { spend: spendConfig } };
+  }
+
+  it("constructs exactly ONE daemon-wide spend accumulator when clock + config are provided", async () => {
+    const eventBus = createMockEventBus();
+    const setupObservability = await getSetupObservability();
+
+    const result = setupObservability({
+      eventBus: eventBus as any,
+      _createTokenTracker: mockCreateTokenTracker,
+      clock: createFakeClock(1_000_000) as any,
+      config: makeConfigWithSpend(),
+    } as any);
+
+    expect(mockCreateSpendAccumulator).toHaveBeenCalledTimes(1);
+    // The ceilings flow from observability.spend.
+    expect(mockCreateSpendAccumulator).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ceilings: expect.objectContaining({ daemonGlobalUsd: 10, warnAtFraction: 0.8 }),
+      }),
+    );
+    // Threaded out on the wiring object (so the per-agent guards hold a reference).
+    expect((result as any).spendAccumulator).toBe(mockSpendAccumulator);
+  });
+
+  it("increments the accumulator live from observability:token_usage, deriving tenant via parseFormattedSessionKey (NOT agentId)", async () => {
+    const eventBus = createMockEventBus();
+    const setupObservability = await getSetupObservability();
+
+    setupObservability({
+      eventBus: eventBus as any,
+      _createTokenTracker: mockCreateTokenTracker,
+      clock: createFakeClock(1_000_000) as any,
+      config: makeConfigWithSpend(),
+    } as any);
+
+    // A formatted sessionKey "tenantX:user1:channel1" → tenantId "tenantX".
+    eventBus.emit("observability:token_usage", {
+      agentId: "agent-1",
+      channelId: "channel1",
+      executionId: "exec-1",
+      sessionKey: "tenantX:user1:channel1",
+      tokens: { prompt: 100, completion: 50, total: 150 },
+      cost: { input: 0.001, output: 0.002, cacheRead: 0, cacheWrite: 0, total: 0.05 },
+      provider: "anthropic",
+      model: "claude",
+    });
+
+    expect(mockSpendAccumulator.recordSpend).toHaveBeenCalledWith(
+      { tenantId: "tenantX", agentId: "agent-1" }, // L1: tenant from the parser, NOT agentId
+      0.05,
+    );
+  });
+
+  it("does NOT construct an accumulator when clock/config are absent (existing call shape unaffected)", async () => {
+    const eventBus = createMockEventBus();
+    const setupObservability = await getSetupObservability();
+
+    const result = setupObservability({
+      eventBus: eventBus as any,
+      _createTokenTracker: mockCreateTokenTracker,
+    });
+
+    expect(mockCreateSpendAccumulator).not.toHaveBeenCalled();
+    expect((result as any).spendAccumulator).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// rehydrateSpendFromStore — the boot-root rehydration helper (Phase 177-03).
+// Pure + unit-testable without booting the daemon. obsStore is undefined when
+// persistence is disabled → no rehydration source → accumulator starts at $0
+// (honest degradation, NOT a bug).
+// ---------------------------------------------------------------------------
+describe("rehydrateSpendFromStore", () => {
+  async function getHelper() {
+    const mod = await import("./setup-observability.js");
+    return mod.rehydrateSpendFromStore;
+  }
+
+  it("rehydrates the accumulator ONCE with the boot rows mapped from getRollingSpendUsd", async () => {
+    const rehydrateSpendFromStore = await getHelper();
+    const acc = { rehydrate: vi.fn(), recordSpend: vi.fn(), checkAndReserve: vi.fn(), reconcile: vi.fn() };
+    const obsStore = {
+      getRollingSpendUsd: vi.fn(() => [
+        { agentId: "agent-1", totalCostUsd: 1.25 },
+        { agentId: "agent-2", totalCostUsd: 3.5 },
+      ]),
+    };
+
+    rehydrateSpendFromStore(acc as any, obsStore as any, 24 * 60 * 60 * 1000);
+
+    expect(obsStore.getRollingSpendUsd).toHaveBeenCalledWith(24 * 60 * 60 * 1000);
+    expect(acc.rehydrate).toHaveBeenCalledTimes(1);
+    // global + per-agent seeded; tenantId is a placeholder at boot (L1 — no tenant_id column).
+    expect(acc.rehydrate).toHaveBeenCalledWith([
+      { agentId: "agent-1", tenantId: "default", costUsd: 1.25 },
+      { agentId: "agent-2", tenantId: "default", costUsd: 3.5 },
+    ]);
+  });
+
+  it("no-ops when obsStore is undefined (persistence disabled → accumulator starts at $0)", async () => {
+    const rehydrateSpendFromStore = await getHelper();
+    const acc = { rehydrate: vi.fn(), recordSpend: vi.fn(), checkAndReserve: vi.fn(), reconcile: vi.fn() };
+
+    rehydrateSpendFromStore(acc as any, undefined, 24 * 60 * 60 * 1000);
+
+    expect(acc.rehydrate).not.toHaveBeenCalled();
   });
 });
