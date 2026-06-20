@@ -254,6 +254,93 @@ describe("TgEmulator — Tier-1 Bot API on the http-backend base (EMU-01..05)", 
       expect(secondUpdates.length).toBe(1);
       expect((secondUpdates[0]!["message"] as Record<string, unknown>)["text"]).toBe("p3");
     });
+
+    // -----------------------------------------------------------------------
+    // WR-01 — MULTI-WAITER / divergent-offset: a non-head waiter's ack must
+    // NOT corrupt the shared queue or starve another entitled waiter.
+    //
+    // The live grammy runner long-polls sequentially (waiters.length ≤ 1), so
+    // this is defensive-code correctness, not a live bug. But `tg-emulator.ts`
+    // is the channel-agnostic FOUNDATION Phase 209 reuses, and the unit tests
+    // already issue manual concurrent `getUpdates` — so the documented "no dup
+    // / no drop" guarantee must hold when ≥2 waiters carry divergent offsets.
+    // -----------------------------------------------------------------------
+    it("MULTI-WAITER: a head waiter with a high offset must not drop the update an undefined-offset waiter is entitled to", async () => {
+      // Waiter A blocks first with a high offset (entitled to nothing that
+      // exists yet) — it becomes the FIFO head waiter.
+      const pollHigh = callMethod(apiRoot, "getUpdates", { offset: 9999, timeout: 2 });
+      // Ensure A's request reaches the emulator and registers before B (loopback
+      // is sub-ms; this ordering makes A the head waiter deterministically).
+      await new Promise((r) => setTimeout(r, 50));
+      // Waiter B blocks second with NO offset — entitled to EVERY pending update.
+      const pollAny = callMethod(apiRoot, "getUpdates", { timeout: 2 });
+      await new Promise((r) => setTimeout(r, 50));
+
+      // Inject a single update (update_id = 1). Under the buggy wake logic the
+      // head waiter A applies its ack (filter update_id >= 9999) to the SHARED
+      // queue, permanently dropping update 1, then `break`s — so B starves and
+      // the update is lost. The fix must serve B with update 1.
+      emu.injectMessage({ chatId: CHAT_ID }, { id: 777, firstName: "Alice" }, "for-B-only");
+
+      const [highEnv, anyEnv] = await Promise.all([pollHigh, pollAny]);
+
+      // B (undefined offset) MUST receive the injected update — not dropped, not starved.
+      const anyUpdates = anyEnv.result as Array<Record<string, unknown>>;
+      expect(anyUpdates.length).toBe(1);
+      expect((anyUpdates[0]!["message"] as Record<string, unknown>)["text"]).toBe("for-B-only");
+
+      // A (offset 9999) is entitled to nothing that low → an honest empty,
+      // and crucially it did NOT consume or drop update 1.
+      expect(highEnv.result).toEqual([]);
+    });
+
+    it("MULTI-WAITER: when the head waiter is not deliverable, the wake loop continues and serves the next eligible waiter (no starvation)", async () => {
+      // BOTH waiters block on an empty queue. The head (offset 1000) will have
+      // nothing to serve when an update arrives; the tail (offset 1) will.
+      const pollHead = callMethod(apiRoot, "getUpdates", { offset: 1000, timeout: 2 });
+      await new Promise((r) => setTimeout(r, 50));
+      const pollTail = callMethod(apiRoot, "getUpdates", { offset: 1, timeout: 2 });
+      await new Promise((r) => setTimeout(r, 50));
+
+      // Inject update_id = 1 → only the tail (offset 1) is entitled. Under the
+      // buggy wake logic the head's `applyAck(1000)` drops it from the shared
+      // queue and `break`s, starving the tail until timeout. The fix must skip
+      // the undeliverable head and still serve the tail.
+      emu.injectMessage({ chatId: CHAT_ID }, { id: 777, firstName: "Alice" }, "u1");
+
+      const [headEnv, tailEnv] = await Promise.all([pollHead, pollTail]);
+
+      // The head (offset 1000) gets nothing — but must not block the tail.
+      expect(headEnv.result).toEqual([]);
+      // The tail (offset 1) is served update 1, proving the wake loop did not
+      // `break` on the undeliverable head (no starvation, no drop).
+      const tailUpdates = tailEnv.result as Array<Record<string, unknown>>;
+      expect(tailUpdates.length).toBe(1);
+      expect((tailUpdates[0]!["message"] as Record<string, unknown>)["text"]).toBe("u1");
+    });
+
+    it("MULTI-WAITER: two undefined-offset waiters split the pending queue with NO duplication (each update delivered once)", async () => {
+      // Two waiters both entitled to everything block concurrently.
+      const pollA = callMethod(apiRoot, "getUpdates", { timeout: 2 });
+      await new Promise((r) => setTimeout(r, 50));
+      const pollB = callMethod(apiRoot, "getUpdates", { timeout: 2 });
+      await new Promise((r) => setTimeout(r, 50));
+
+      // Inject two updates — they must be partitioned across the two waiters,
+      // never the same update handed to both.
+      emu.injectMessage({ chatId: CHAT_ID }, { id: 777, firstName: "Alice" }, "m1");
+      emu.injectMessage({ chatId: CHAT_ID }, { id: 777, firstName: "Alice" }, "m2");
+
+      const [aEnv, bEnv] = await Promise.all([pollA, pollB]);
+      const aUpdates = aEnv.result as Array<Record<string, unknown>>;
+      const bUpdates = bEnv.result as Array<Record<string, unknown>>;
+
+      const allIds = [...aUpdates, ...bUpdates].map((u) => u["update_id"] as number).sort((x, y) => x - y);
+      // Both updates delivered exactly once across the two waiters (no drop, no dup).
+      expect(allIds).toEqual([1, 2]);
+      const uniqueIds = new Set(allIds);
+      expect(uniqueIds.size).toBe(2);
+    });
   });
 
   // -------------------------------------------------------------------------

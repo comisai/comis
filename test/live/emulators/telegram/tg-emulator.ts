@@ -254,21 +254,37 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
   // -------------------------------------------------------------------------
 
   /**
-   * Drop pending updates the runner has acked (`update_id < offset`) and
-   * advance the ack pointer. The runner confirms by sending
-   * `offset = max(update_id) + 1` on the NEXT poll.
+   * Select the updates a SINGLE poll/waiter is entitled to — those with
+   * `update_id >= offset` (the Bot-API ack semantics: an `offset` confirms
+   * receipt of everything below it and requests everything at/above it),
+   * ascending, capped at `limit` — and remove EXACTLY those delivered updates
+   * from the shared `pending` queue.
+   *
+   * Crucially, this NEVER mutates the queue on behalf of a waiter that is not
+   * actually consuming an update: updates with `update_id < offset` are left in
+   * place (a concurrently-blocked waiter carrying a lower/undefined offset may
+   * still be entitled to them). That is what makes the bot-global queue safe
+   * when ≥2 waiters carry DIVERGENT offsets — the per-waiter ack of one waiter
+   * can no longer drop/starve another (WR-01). In the live single-consumer
+   * grammy path the runner sends `offset = max(update_id) + 1`, so everything
+   * below was already delivered+removed by the prior poll and this degrades to
+   * the previous "ack-then-serve" behavior with no observable difference.
+   *
+   * No dup / no drop: a delivered update is removed by its `update_id`, so it
+   * is handed to exactly one waiter and never re-served.
    */
-  function applyAck(offset: number | undefined): void {
-    if (offset === undefined) return;
-    if (offset > ackOffset) ackOffset = offset;
-    pending = pending.filter((u) => u.update_id >= offset);
-  }
-
-  /** Take up to `limit` pending updates (ascending), removing them from pending. */
-  function takePending(limit: number): Update[] {
-    const take = pending.slice(0, Math.max(0, limit));
-    if (take.length > 0) pending = pending.slice(take.length);
-    return take;
+  function takeDeliverable(offset: number | undefined, limit: number): Update[] {
+    const floor = offset ?? 0;
+    const cap = Math.max(0, limit);
+    if (cap === 0) return [];
+    // `pending` is kept ascending by `update_id` (injectMessage sorts on push).
+    const deliverable = pending.filter((u) => u.update_id >= floor).slice(0, cap);
+    if (deliverable.length === 0) return [];
+    const deliveredIds = new Set(deliverable.map((u) => u.update_id));
+    // Remove ONLY the delivered ids (not a prefix slice) so a non-contiguous
+    // selection — e.g. a gap below `offset` left for another waiter — stays put.
+    pending = pending.filter((u) => !deliveredIds.has(u.update_id));
+    return deliverable;
   }
 
   function serveGetUpdates(body: Record<string, unknown>, query: URLSearchParams): Promise<RouteResult> {
@@ -290,10 +306,11 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
       );
     }
 
-    // ACK first (drop confirmed updates), then serve what remains.
-    applyAck(offset);
-
-    const ready = takePending(limit);
+    // Serve the updates THIS poll is entitled to (`update_id >= offset`),
+    // removing only those delivered. The ack of confirmed (`< offset`) updates
+    // is implicit: they were delivered+removed on a prior poll, and any still
+    // queued belong to a lower-offset waiter and must not be dropped here.
+    const ready = takeDeliverable(offset, limit);
     if (ready.length > 0) {
       return Promise.resolve(okEnvelope(ready));
     }
@@ -334,20 +351,39 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
   }
 
   /**
-   * Wake blocked waiters (FIFO), handing each the pending updates it is entitled
-   * to (respecting its ack offset + limit). Called after an injection. No
-   * dup/no drop: a served update is removed from the bot-global pending queue.
+   * Wake blocked waiters (FIFO), handing each ONLY the pending updates it is
+   * entitled to (`update_id >= its offset`, capped at its limit). Called after
+   * an injection.
+   *
+   * Walk the waiter list rather than draining from the head: a waiter that has
+   * nothing deliverable (e.g. its offset is past everything pending) is SKIPPED
+   * (`continue`) — never `break` — so it cannot starve a later waiter that IS
+   * entitled to the pending updates (WR-01). And selection goes through
+   * {@link takeDeliverable}, which removes only the updates actually delivered
+   * to this waiter, so one waiter's per-waiter ack can never drop the updates a
+   * concurrently-blocked waiter (with a lower/undefined offset) is owed. No dup
+   * / no drop holds across divergent-offset waiters.
+   *
+   * On the live grammy path `waiters.length` is ≤ 1, so this is just a FIFO
+   * single-waiter resolve; the walk matters only for the manual concurrent
+   * `getUpdates` the foundation (and Phase 209) invites.
    */
   function wakeWaiters(): void {
-    while (waiters.length > 0 && pending.length > 0) {
-      const waiter = waiters[0]!;
-      applyAck(waiter.offset);
-      if (pending.length === 0) break;
-      const updates = takePending(waiter.limit);
-      if (updates.length === 0) break;
-      waiters.shift();
-      waiter.resolve(updates);
+    if (pending.length === 0 || waiters.length === 0) return;
+    const stillBlocked: PollWaiter[] = [];
+    const toResolve: Array<{ waiter: PollWaiter; updates: Update[] }> = [];
+    // Drain the current waiter set in FIFO order. `takeDeliverable` mutates the
+    // shared `pending`, so each waiter sees only what earlier waiters left.
+    for (const waiter of waiters.splice(0)) {
+      const updates = pending.length > 0 ? takeDeliverable(waiter.offset, waiter.limit) : [];
+      // Nothing deliverable → re-queue this waiter (skip, do NOT starve the
+      // rest); deliverable → mark it for resolution after the walk.
+      if (updates.length === 0) stillBlocked.push(waiter);
+      else toResolve.push({ waiter, updates });
     }
+    // Re-instate the waiters that got nothing, preserving FIFO order.
+    waiters.push(...stillBlocked);
+    for (const { waiter, updates } of toResolve) waiter.resolve(updates);
   }
 
   // -------------------------------------------------------------------------
