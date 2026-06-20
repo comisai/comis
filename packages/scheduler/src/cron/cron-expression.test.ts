@@ -129,4 +129,24 @@ describe("computeNextRunAtMs", () => {
       expect(computeNextRunAtMs(schedule, nowMs)).toBeUndefined();
     });
   });
+
+  // CRON-IN-01 (live 2026-06-20): "remind me in 2 minutes" on a keyless small
+  // model was scheduled ~7h off — it picked kind "at" and paired the injected
+  // UTC hour with the user's display timezone. The relative "in" kind resolves
+  // deterministically as now + N seconds, with NO timezone parse, so the error
+  // class cannot occur.
+  describe('kind "in" (relative, timezone-free)', () => {
+    it("fires exactly N seconds from now", () => {
+      const nowMs = new Date("2026-06-20T09:33:30Z").getTime();
+      const schedule: CronSchedule = { kind: "in", seconds: 120 };
+      expect(computeNextRunAtMs(schedule, nowMs)).toBe(nowMs + 120_000);
+    });
+
+    it("is independent of any timezone (same delta regardless of system zone)", () => {
+      const schedule: CronSchedule = { kind: "in", seconds: 3600 };
+      for (const nowMs of [0, 1_000_000, new Date("2026-12-31T23:59:00Z").getTime()]) {
+        expect(computeNextRunAtMs(schedule, nowMs)).toBe(nowMs + 3_600_000);
+      }
+    });
+  });
 });

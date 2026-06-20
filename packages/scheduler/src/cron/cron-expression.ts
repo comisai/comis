@@ -21,6 +21,11 @@ export function computeNextRunAtMs(schedule: CronSchedule, nowMs: number): numbe
       return computeEvery(schedule.everyMs, schedule.anchorMs, nowMs);
     case "at":
       return computeAt(schedule.at, nowMs, schedule.tz);
+    case "in":
+      // Deterministic relative one-shot: now + N seconds. No timezone, no
+      // wall-clock parse — the whole point is to bypass the absolute-`at` + IANA
+      // conversion that small models get wrong (CRON-IN-01).
+      return nowMs + schedule.seconds * 1000;
   }
 }
 

@@ -52,8 +52,8 @@ const CronToolParams = Type.Object({
   // add params
   name: Type.Optional(Type.String({ description: "Human-readable job name (for add/update)" })),
   schedule_kind: Type.Optional(
-    Type.Union([Type.Literal("cron"), Type.Literal("every"), Type.Literal("at")], {
-      description: "Schedule type. Valid values: cron (recurring cron expression), every (repeat at fixed interval), at (one-shot at specific datetime)",
+    Type.Union([Type.Literal("cron"), Type.Literal("every"), Type.Literal("at"), Type.Literal("in")], {
+      description: "Schedule type. Valid values: cron (recurring cron expression), every (repeat at fixed interval), at (one-shot at a specific datetime), in (one-shot a RELATIVE number of seconds from now). For a RELATIVE reminder like 'in 2 minutes' / 'in an hour', STRONGLY PREFER kind=in with schedule_in_seconds — it needs NO timezone and NO datetime math. Use 'at' only for an absolute clock time ('at 9am tomorrow').",
     }),
   ),
   schedule_expr: Type.Optional(
@@ -63,7 +63,10 @@ const CronToolParams = Type.Object({
     Type.Integer({ description: "Interval in milliseconds (for schedule_kind=every)" }),
   ),
   schedule_at: Type.Optional(
-    Type.String({ description: "ISO 8601 datetime string for schedule_kind=at (a naive wall-clock like 2026-06-20T09:00:00 is interpreted in `timezone`, or UTC if none)" }),
+    Type.String({ description: "ISO 8601 datetime string for schedule_kind=at (a naive wall-clock like 2026-06-20T09:00:00 is interpreted in `timezone`, or UTC if none). Do NOT use this for relative reminders ('in N minutes') — use schedule_kind=in + schedule_in_seconds, which avoids timezone-conversion mistakes." }),
+  ),
+  schedule_in_seconds: Type.Optional(
+    Type.Integer({ description: "Seconds from NOW for schedule_kind=in (e.g. 'in 2 minutes' → 120, 'in an hour' → 3600). Deterministic + timezone-free — the correct, reliable way to schedule any relative one-shot reminder." }),
   ),
   timezone: Type.Optional(Type.String({ description: "IANA timezone (e.g. America/Los_Angeles). REQUIRED for any time-of-day schedule (schedule_kind=cron or at) so it fires at the USER'S local wall-clock time, not the server's. Set it to the user's known timezone (from memory/USER.md); without it a naive time like 09:00 is interpreted in the server timezone (UTC). E.g. a Pacific user's 'remind me at 9am' must pass timezone=America/Los_Angeles." })),
   payload_kind: Type.Optional(
@@ -141,7 +144,8 @@ export function createCronTool(rpcCall: RpcCall): AgentTool<typeof CronToolParam
     name: "cron",
     label: "Cron Scheduler",
     description:
-      "Manage cron jobs, scheduled tasks, wake events. Write reminder text as user-facing message.",
+      "Manage cron jobs, scheduled tasks, wake events. Write reminder text as user-facing message. " +
+      "SCHEDULING RULE: for a RELATIVE reminder ('in 2 minutes', 'in an hour', 'remind me in 30 seconds', 'N minutes from now') you MUST use schedule_kind='in' with schedule_in_seconds = the number of seconds — do NOT compute an absolute datetime or timezone for a relative request (that is the #1 source of wrong-time reminders). Use schedule_kind='at' ONLY for an explicit clock time like 'at 9am tomorrow', and then always pass the user's timezone.",
     parameters: CronToolParams,
 
     async execute(
@@ -168,6 +172,7 @@ export function createCronTool(rpcCall: RpcCall): AgentTool<typeof CronToolParam
               schedule_expr: readStringParam(p, "schedule_expr", false),
               schedule_every_ms: readNumberParam(p, "schedule_every_ms", false),
               schedule_at: readStringParam(p, "schedule_at", false),
+              schedule_in_seconds: readNumberParam(p, "schedule_in_seconds", false),
               timezone: readStringParam(p, "timezone", false),
               payload_kind: readStringParam(p, "payload_kind", false),
               payload_text: readStringParam(p, "payload_text", false),

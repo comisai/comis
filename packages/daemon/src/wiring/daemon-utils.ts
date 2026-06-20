@@ -68,6 +68,9 @@ export function buildCronSchedule(kind: CronSchedule["kind"], params: Record<str
         at: params.schedule_at as string,
         tz: params.timezone as string | undefined,
       };
+    case "in":
+      // Relative one-shot — seconds from now, timezone-free (CRON-IN-01).
+      return { kind: "in" as const, seconds: params.schedule_in_seconds as number };
     default: {
       const _exhaustive: never = kind;
       // @allow-throw: called from daemon RPC handlers (cron-handlers.ts); RPC dispatcher converts to JSON-RPC error response.

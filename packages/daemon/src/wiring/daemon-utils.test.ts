@@ -114,8 +114,16 @@ describe("buildCronSchedule", () => {
     expect(result).toEqual({ kind: "at", at: "2026-06-20T09:00:00", tz: "America/Los_Angeles" });
   });
 
+  // CRON-IN-01 (live 2026-06-20): the relative one-shot maps schedule_in_seconds
+  // → {kind:"in", seconds} with NO timezone, so "remind me in 2 minutes" can't be
+  // mis-converted the way the small model botched the absolute "at" path.
+  it("builds a relative 'in' schedule from schedule_in_seconds (timezone-free)", () => {
+    const result = buildCronSchedule("in", { schedule_in_seconds: 120, timezone: "America/Los_Angeles" });
+    expect(result).toEqual({ kind: "in", seconds: 120 });
+  });
+
   it("throws for unknown schedule kind", () => {
-    expect(() => buildCronSchedule("invalid", {})).toThrow("Unknown schedule kind");
+    expect(() => buildCronSchedule("invalid" as never, {})).toThrow("Unknown schedule kind");
   });
 });
 
