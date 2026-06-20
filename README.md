@@ -132,6 +132,7 @@ Comis treats the LLM as an attack surface, not as a trusted process.
 - **Secrets are encrypted at rest** and resolved through the daemon's SecretManager.
 - **Credential broker mode** can keep real API keys out of an agent-driven CLI sandbox; the sandbox sees a placeholder and the broker injects the key at the network boundary.
 - **Exec tools run through sandbox providers** where available: Bubblewrap on Linux and `sandbox-exec` on macOS. Interactive terminal sessions fail closed when a jail cannot be materialized.
+- **The agent cannot reach its own keys or control plane.** Even with `exec` enabled, the Linux jail confines the agent to its workspace — the CLI, gateway token, master key, and secret store stay outside it, and privileged operations (secrets, tokens, config) are admin-scoped with no agent-callable tool. A prompt-injected agent cannot read your secrets, mint tokens, or drive the CLI to escalate.
 - **Untrusted content is wrapped and scanned** before it reaches prompts, memory, logs, or tool results.
 - **Risky actions require approval** through signed callbacks, and unknown action kinds classify conservatively.
 
@@ -196,7 +197,7 @@ Comis was built after studying [OpenClaw](https://github.com/openclaw/openclaw) 
 | Area | Comis | OpenClaw | Hermes Agent |
 | --- | --- | --- | --- |
 | Design center | Multi-agent, multi-operator platform | Personal assistant for a trusted operator | Single-tenant personal agent |
-| Exec posture | Configured on by default; kernel-enforced where supported | Docker sandbox is opt-in; default is host-first exec | Host-first by default; containers confine terminal backends, not the full agent |
+| Exec posture | Sandbox on by default (kernel-enforced on Linux); the agent can't reach the CLI, token, or secrets even with `exec` | Docker sandbox is opt-in; default is host-first exec | Host-first by default; containers confine terminal backends, not the full agent |
 | Secrets | AES-256-GCM store + credential broker option | Plaintext config/auth profiles supported; opt-in SecretRefs | Plaintext `.env` with optional Bitwarden flow |
 | Memory | Trust-aware, local, benchmarked, learns from use | No trust levels | No trust levels; learning loop not publicly benchmarked |
 | Channels | 9 | 23+ | 20+ platform adapters |
