@@ -36,7 +36,7 @@ import {
 } from "@comis/core";
 import type { SessionTrajectoryHandleRegistry } from "@comis/observability";
 import { buildTraceMetadata } from "@comis/observability";
-import type { ComisLogger } from "@comis/core";
+import type { ComisLogger, SpendConfig } from "@comis/core";
 import { suppressError } from "@comis/shared";
 import { randomUUID } from "node:crypto";
 import { resolveModelPricing } from "@comis/core";
@@ -46,7 +46,9 @@ import { classifyError } from "../executor/error-classifier.js";
 import { getSessionPromptSkillLocations } from "../executor/prompt-assembly.js";
 import { suggestClosestTool } from "./tool-name-suggest.js";
 import type { ExecutionBudgetWindow } from "../budget/budget-guard.js";
+import { checkSpendCeiling } from "../budget/budget-guard.js";
 import type { CostTracker } from "../budget/cost-tracker.js";
+import type { SpendAccumulator, SpendScope } from "../budget/spend-accumulator.js";
 import type { StepCounter } from "../executor/step-counter.js";
 import type { CircuitBreaker } from "../safety/circuit-breaker.js";
 import type { ToolRetryBreaker } from "../safety/tool-retry-breaker.js";
@@ -76,8 +78,8 @@ import * as pathModule from "node:path";
 import { appendSessionIndexEntry } from "@comis/observability";
 import { createBridgeMetrics, buildBridgeResult } from "./bridge-metrics.js";
 import { drainAt, type DrainInflightState } from "../executor/drain-helper.js";
-import { checkStepLimit, emitStepLimitAbort, checkLoopLimit, emitLoopAbort, checkBudgetLimit, emitBudgetAbort, checkBudgetTrajectory, checkContextWindow, emitContextAbort, checkCircuitBreaker, emitCircuitBreakerAbort, buildAbortRedirectMessage } from "./bridge-safety-controls.js";
-import type { LoopStateReporter } from "./bridge-safety-controls.js";
+import { checkStepLimit, emitStepLimitAbort, checkLoopLimit, emitLoopAbort, checkBudgetLimit, emitBudgetAbort, checkBudgetTrajectory, checkContextWindow, emitContextAbort, checkCircuitBreaker, emitCircuitBreakerAbort, buildAbortRedirectMessage, checkSpendLimit, emitSpendAbort } from "./bridge-safety-controls.js";
+import type { LoopStateReporter, SpendEmitHooks } from "./bridge-safety-controls.js";
 import {
   computeThinkingBlockHashes,
   diffThinkingBlocksAgainstPersisted,
@@ -207,6 +209,21 @@ export interface PiEventBridgeDeps {
   onToolExecutionEnd?: () => void;
   /** Returns current model ID for per-turn pricing resolution. Updated on manual /model switch. */
   getCurrentModel?: () => string;
+  /**
+   * Phase 177 — the daemon-wide spend accumulator (the dollars kill-switch
+   * enforcement state). The per-agent bridge holds a REFERENCE to the single
+   * daemon-wide instance (Pitfall 4). When ABSENT (flags off / not wired) the
+   * entire spend path is a no-op — the healthy path is byte-identical.
+   */
+  spendAccumulator?: SpendAccumulator;
+  /**
+   * The resolved `(tenant, agent)` this bridge reserves spend against — derived
+   * at the daemon composition root via `parseFormattedSessionKey` (L1). Required
+   * whenever `spendAccumulator` is present.
+   */
+  spendScope?: SpendScope;
+  /** `observability.spend.*` — drives the perTurnMax reservation, the action gate, and the pricing gate. */
+  spendConfig?: SpendConfig;
   /** Callback to record cache reads for adaptive retention escalation. */
   onCacheReads?: (tokens: number) => void;
   /** Callback to record a completed turn with cache write token count.
@@ -1736,6 +1753,109 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                 m.abortResponse = buildAbortRedirectMessage(deps.executionPlan?.current, m.finishReason);
                 m.aborted = true;
                 emitBudgetAbort(deps, m.totalTokens);
+              }
+            }
+
+            // Safety: the dollars kill-switch (Phase 177). ADMISSION-BOUNDED +
+            // COOPERATIVE-ABORT. The bridge has NO pre-flight cost estimate at this
+            // post-record point, so it reserves a conservative perTurnMax through
+            // the SYNCHRONOUS atomic accumulator (which serializes concurrent
+            // admissions), runs the 3-state pricing gate, and routes a breach
+            // through the single execution:aborted{reason:"spend_exceeded"} path.
+            //
+            // No double-count: the granted reservation is reconciled to $0 below —
+            // a PURE admission hold released at the billing point. The actual
+            // cost.total already landed via the daemon-wide observability:token_usage
+            // subscriber (emitted just above, ~:1671), which is the SOLE permanent
+            // actual-adder. The reservation only bounds concurrent admissions to a
+            // single turn's perTurnMax overshoot; it never permanently consumes the
+            // ceiling itself.
+            //
+            // When spendAccumulator is absent (flags off / not wired) this whole
+            // block is skipped — the healthy path is byte-identical.
+            if (deps.spendAccumulator && deps.spendScope && deps.spendConfig) {
+              const spendAcc = deps.spendAccumulator;
+              const spendCfg = deps.spendConfig;
+              const spendScope = deps.spendScope;
+              const spendModel = deps.getCurrentModel?.() ?? deps.model;
+              // Breach detail for the content-free spend_exceeded event, captured
+              // from the gate outcome before checkSpendLimit fires the emit hook.
+              let spendBreachScope: "agent" | "tenant" | "global" = "global";
+              let spendBreachCurrentUsd = 0;
+              let spendBreachCapUsd = 0;
+              const spendEmit: SpendEmitHooks = {
+                spendWarning: () =>
+                  deps.eventBus.emit("observability:spend_warning", {
+                    timestamp: systemNowMs(),
+                    agentId: deps.agentId,
+                    sessionKey: formatSessionKey(deps.sessionKey),
+                    scope: "agent",
+                    spentUsd: m.sessionCumulativeCostUsd,
+                    capUsd: spendCfg.perAgentUsd ?? spendCfg.perTenantUsd ?? spendCfg.daemonGlobalUsd ?? 0,
+                    fraction: spendCfg.warnAtFraction,
+                  }),
+                spendExceeded: () =>
+                  deps.eventBus.emit("observability:spend_exceeded", {
+                    timestamp: systemNowMs(),
+                    agentId: deps.agentId,
+                    sessionKey: formatSessionKey(deps.sessionKey),
+                    scope: spendBreachScope,
+                    spentUsd: spendBreachCurrentUsd,
+                    capUsd: spendBreachCapUsd,
+                    estUsd: spendCfg.perTurnMax,
+                  }),
+                spendUnpriceable: () =>
+                  deps.eventBus.emit("observability:spend_unpriceable", {
+                    timestamp: systemNowMs(),
+                    agentId: deps.agentId,
+                    sessionKey: formatSessionKey(deps.sessionKey),
+                    provider: deps.provider,
+                    model: spendModel,
+                  }),
+              };
+
+              // Atomic reserve of the conservative perTurnMax + the 3-state gate.
+              const gate = checkSpendCeiling(
+                spendAcc,
+                spendScope,
+                deps.provider,
+                spendModel,
+                spendCfg.perTurnMax,
+                { onUnknownPricing: spendCfg.onUnknownPricing, pricingFallback: spendCfg.pricingFallback },
+                usage.totalTokens > 0,
+              );
+
+              // checkSpendCeiling is Result-returning; an err here is unexpected
+              // (the gate maps a breach to an `exceeded` outcome, not an err), but
+              // be defensive: a defensive err means "do not abort" (fail-safe).
+              if (gate.ok) {
+                const outcome = gate.value;
+                // Surface the breach scope/amounts for the content-free event.
+                if (outcome.kind === "exceeded") {
+                  spendBreachScope = outcome.error.scope;
+                  spendBreachCurrentUsd = outcome.error.currentUsd;
+                  spendBreachCapUsd = outcome.error.capUsd;
+                }
+                const spendCheck = checkSpendLimit(
+                  outcome,
+                  spendCfg.action,
+                  spendCfg.onUnknownPricing,
+                  m.aborted,
+                  spendEmit,
+                );
+                if (spendCheck.shouldAbort) {
+                  m.finishReason = spendCheck.finishReason!;
+                  m.abortResponse = buildAbortRedirectMessage(deps.executionPlan?.current, m.finishReason);
+                  m.aborted = true;
+                  emitSpendAbort(deps);
+                }
+                // COOPERATIVE: release the admission hold to $0. The actual
+                // cost.total is recorded by the live token_usage subscriber, so
+                // reconciling to 0 (delta = 0 - perTurnMax) nets the reservation
+                // out of the counters and avoids double-counting.
+                if (outcome.kind === "ok") {
+                  spendAcc.reconcile(outcome.reservation, 0);
+                }
               }
             }
 
