@@ -29,11 +29,16 @@
  *
  * @module
  */
-import type { ClockPort } from "@comis/core";
+import type { ClockPort, SpendScopeKind } from "@comis/core";
 import { ok, err, type Result } from "@comis/shared";
 
-/** The closed scope of a ceiling breach (mirrors the `SpendScopeKind` wire enum). */
-export type SpendScopeKind = "agent" | "tenant" | "global";
+// The closed scope of a ceiling breach IS the `SpendScopeKind` wire enum
+// (agent|tenant|global). Imported from @comis/core (its source of truth — it
+// rides the `observability:spend_*` events) rather than re-declared, so the
+// enforcement scope and the event scope can never drift. Re-exported here so the
+// accumulator's consumers (the budget-guard / bridge wiring) keep a single
+// budget-local import site.
+export type { SpendScopeKind };
 
 /** The `(tenant, agent)` identity a reservation is made against. */
 export interface SpendScope {
