@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import type { ExecutionOverrides } from "./types.js";
+import type { ExecutionOverrides, ExecutionResult } from "./types.js";
 import type { ModelOperationType } from "@comis/core";
 
 describe("ExecutionOverrides type extensions", () => {
@@ -82,5 +82,46 @@ describe("ExecutionOverrides type extensions", () => {
   it("requires operationType field", () => {
     const overrides: ExecutionOverrides = { operationType: "interactive" };
     expect(overrides.operationType).toBe("interactive");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SPEND-02 (Phase 177-01): ExecutionResult.finishReason gains "spend_exceeded".
+//
+// A dedicated member (NOT a reuse of "budget_exceeded") keeps the dollars-vs-
+// tokens terminal cause distinct. SafetyCheckResult.finishReason is typed off
+// ExecutionResult["finishReason"] (bridge-safety-controls.ts), so Plan 03's
+// checkSpendLimit depends on this member existing. RED on pre-patch: the closed
+// union lacks "spend_exceeded", so the assignment below fails to COMPILE (per
+// AGENTS §2.10 a compile-RED is the failing state for a closed-type widen).
+// ---------------------------------------------------------------------------
+describe("ExecutionResult.finishReason spend_exceeded member", () => {
+  it("accepts spend_exceeded as a finishReason literal", () => {
+    const reason: ExecutionResult["finishReason"] = "spend_exceeded";
+    expect(reason).toBe("spend_exceeded");
+  });
+
+  it("still accepts the pre-existing finishReason members (additive widen, no member removed)", () => {
+    const members: ExecutionResult["finishReason"][] = [
+      "stop",
+      "max_steps",
+      "budget_exceeded",
+      "budget_exhausted",
+      "context_exhausted",
+      "loop_detected",
+      "prompt_timeout",
+      "error",
+      "spend_exceeded",
+    ];
+    expect(members).toContain("spend_exceeded");
+    // "budget_exceeded" (tokens) and "spend_exceeded" (dollars) are DISTINCT members.
+    expect(members.includes("budget_exceeded") && members.includes("spend_exceeded")).toBe(true);
+  });
+
+  it("rejects a non-member finishReason literal (closed union)", () => {
+    // @ts-expect-error - "spend_unpriceable" is not a finishReason member; the
+    // distinct observability:spend_unpriceable event carries that nuance (A3).
+    const bad: ExecutionResult["finishReason"] = "spend_unpriceable";
+    void bad;
   });
 });
