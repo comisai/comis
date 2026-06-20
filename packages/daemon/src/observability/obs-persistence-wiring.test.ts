@@ -1377,6 +1377,24 @@ describe("auditEventToRow (the content-free audit row-builder)", () => {
     // A stray un-migrated emit still classifies (not "audit"/empty).
     expect(row.kind).toBeTruthy();
     expect(row.kind).not.toBe("");
+    expect(row.kind).toBe("secret_access");
+  });
+
+  it.each([
+    ["secrets.get", "secret_access"],
+    ["auth.set", "auth_mutation"],
+    ["output_guard", "injection_detected"],
+    ["injection_rate_exceeded", "injection_rate_exceeded"],
+    ["hook_modification", "hook_blocked"],
+    ["totally.unknown.action", "audit"], // the generic-family fallback
+  ])("derives kind '%s' → '%s' (fallback map, all arms)", (actionType, expectedKind) => {
+    const row = auditEventToRow(
+      { timestamp: 1, agentId: "a", tenantId: "t", actionType, outcome: "success" } as EventMap["audit:event"],
+      "t",
+      "a",
+      undefined,
+    );
+    expect(row.kind).toBe(expectedKind);
   });
 });
 
@@ -1560,5 +1578,30 @@ describe("setupObsPersistence — audit sink (real store + tmp JSONL)", () => {
       expect(eventBus.on).toHaveBeenCalledWith(e, expect.any(Function));
     }
     result.drainAll();
+  });
+
+  it("T-176-11: a JSONL append failure logs ERROR with hint+errorKind and NEVER drops the SQLite row", () => {
+    // Make the <dataDir>/logs path UNWRITABLE by planting a FILE where the
+    // logs DIR must be — ensureConfigAuditParentDir/appendRegularFile then fail,
+    // exercising the try/catch branch.
+    fs.writeFileSync(nodePath.join(dataDir, "logs"), "not-a-dir");
+    const { deps, eventBus, logger } = realDeps();
+    const result = setupObsPersistence(deps as never);
+    eventBus.emit("audit:event", {
+      timestamp: 1000, agentId: "a1", tenantId: "t1", actionType: "file.delete",
+      kind: "audit", outcome: "success", metadata: { count: 1 },
+    });
+    result.drainAll();
+
+    // The SQLite row STILL persisted (the sink failure isolates to the JSONL).
+    expect(store.queryAuditEvents({ kind: "audit" })).toHaveLength(1);
+    // An ERROR was logged with the actionable hint + errorKind (never thrown past).
+    expect(logger.error).toHaveBeenCalled();
+    const errCall = logger.error.mock.calls.find(
+      (c: unknown[]) => (c[1] as string) === "audit-jsonl-append-failed",
+    );
+    expect(errCall).toBeDefined();
+    expect((errCall![0] as { errorKind: string }).errorKind).toBe("resource");
+    expect((errCall![0] as { hint: string }).hint).toContain("security-audit.jsonl");
   });
 });
