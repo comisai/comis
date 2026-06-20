@@ -10,8 +10,9 @@
  */
 
 import type { TypedEventBus, EventMap } from "@comis/core";
-import { systemNowMs, systemSetInterval, systemClearInterval } from "@comis/core";
+import { systemNowMs, systemSetInterval, systemClearInterval, resolvePricingState } from "@comis/core";
 import type { ObservabilityStore, TokenUsageRow, DeliveryRow, DiagnosticRow, ChannelSnapshotRow, AuditEventRow } from "@comis/memory";
+import { cacheBreakEventToRow } from "@comis/memory";
 import type { ComisLogger } from "@comis/infra";
 import type { DiagnosticEvent } from "./diagnostic-collector.js";
 // AUDIT-01/02/04 — the durable security-audit sink (row-builders + subscribers),
@@ -83,6 +84,17 @@ export function createObsWriteBuffer<T>(
  * suitable for SQLite insertion.
  * Flattens nested `tokens.{prompt,completion,total}` and `cost.{input,output,total}`
  * to top-level fields. Maps `payload.sessionKey` and cache cost fields.
+ *
+ * PERSIST-02/03 (Phase 176 Plan 04): this row-builder ALSO fills the four
+ * cost-correctness fields the event already carries but that were previously
+ * DROPPED here (`warmupTurn`, `cacheEligible`, `costCorrection.delta`,
+ * `pendingCacheInvestmentUsd`) plus `pricingState` (the three-state honest-pricing
+ * signal, PERSIST-03 — derived via `resolvePricingState`). Plan 01 added these five
+ * fields to `TokenUsageRow` AND updated the FIXED `insertTokenUsageStmt`
+ * (`observability-mutations.ts`) to PERSIST them — this plan owns the row-BUILDER,
+ * Plan 01 owns the write-PATH; a real insert→read-back round-trip proves the two
+ * halves meet. The boolean↔INTEGER coercion + NULL-on-absence is the write-path's
+ * job (not duplicated here).
  */
 export function tokenUsageEventToRow(
   payload: EventMap["observability:token_usage"],
@@ -107,6 +119,17 @@ export function tokenUsageEventToRow(
     costCacheWrite: payload.cost.cacheWrite,
     cacheSaved: payload.savedVsUncached,
     latencyMs: payload.latencyMs,
+    // PERSIST-02: the four previously-dropped cost-correctness fields (all already
+    // on the event). costCorrection on the row is the scalar DELTA (the row column
+    // is REAL); its ABSENCE is the "no correction needed" signal (the event omits
+    // costCorrection when delta === 0).
+    warmupTurn: payload.warmupTurn,
+    cacheEligible: payload.cacheEligible,
+    costCorrection: payload.costCorrection?.delta,
+    pendingCacheInvestmentUsd: payload.pendingCacheInvestmentUsd,
+    // PERSIST-03: the three-state honest-pricing signal (priced/free/unknown) so an
+    // operator sees pricing coverage (the ffe11736 chimera surfaces as "unknown").
+    pricingState: resolvePricingState(payload.provider, payload.model),
   };
 }
 
@@ -561,6 +584,12 @@ export interface ObsPersistenceDeps {
    * defaults to `{persist:true, sink:"both"}`.
    */
   auditConfig?: { persist: boolean; sink: "sqlite" | "jsonl" | "both" };
+  /**
+   * The `observability.persistence` policy — only `cacheBreaks` is read here
+   * (PERSIST-01): when `false`, the cache_break subscriber is NOT wired (opt-out).
+   * Optional; absent or `cacheBreaks !== false` → the subscriber is wired (default on).
+   */
+  persistence?: { cacheBreaks: boolean };
 }
 
 /** Result from setupObsPersistence(). */
@@ -598,6 +627,7 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
     dataDir,
     logRotation,
     auditConfig,
+    persistence,
   } = deps;
 
   // a. Create 5 write buffers with transactional flush functions
@@ -731,6 +761,21 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
   eventBus.on("subagent:budget_exceeded", (payload) => {
     diagnosticBuffer.push(nodeBudgetExceededEventToRow(payload));
   });
+
+  // PERSIST-01 (Phase 176 Plan 04): a detected prompt-cache break → an
+  // obs_diagnostics category:'cache_break' row, REUSING the EXISTING diagnosticBuffer
+  // (A3 — cache-break is a DiagnosticRow via insertDiagnostic; NO new buffer/table).
+  // The row carries the 15-reason discriminator + a COMPUTED est-$ + a changed-dims
+  // DIGEST (the tool-name arrays + system text are dropped in the row-builder — I3).
+  // "rate by reason over time, and what it cost" is then a clean GROUP BY
+  // (queryCacheBreakRateByReason). Gated on `persistence.cacheBreaks` (default on) so
+  // an operator can opt out. The cache.break TRAJECTORY record rides the per-session
+  // trajectory bridge (event-bus-bridge.ts) — a separate, complementary surface.
+  if (persistence?.cacheBreaks !== false) {
+    eventBus.on("observability:cache_break", (payload) => {
+      diagnosticBuffer.push(cacheBreakEventToRow(payload));
+    });
+  }
 
   // AUDIT-01/02/04: the durable security-audit sink — every audit-source event
   // (audit:event + secret:accessed + the 4 security:* + the 2 critic.isolation.*
