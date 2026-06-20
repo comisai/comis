@@ -16,8 +16,10 @@
  *     (`import type { OtelExporterDeps } from "@comis/observability-otel"`), so
  *     the daemon types the `await import()` result WITHOUT a static value-import
  *     or a tsconfig project-reference.
- *   - (Task 2) the single metric catalog (`METRIC_CATALOG` / `MetricDef`) and the
- *     build-time exemplar-capability probe (`PROMETHEUS_EXEMPLARS_SUPPORTED`).
+ *   - the single metric catalog (`METRIC_CATALOG` / `MetricDef` / `promNameFor`)
+ *     consumed by both the OTLP and Prometheus surfaces (Plan 02 — one mapping,
+ *     two readers).
+ *   - the build-time exemplar-capability probe (`PROMETHEUS_EXEMPLARS_SUPPORTED`).
  *
  * The runtime registration entry-point (`registerOtelExporter`) lands in Plan 02;
  * this plan ships the skeleton, the catalog, and the probe.
@@ -25,6 +27,28 @@
  * @module
  */
 import type { TypedEventBus, ClockPort, AppConfig } from "@comis/core";
+
+// The single metric definition (name/type/unit/labels) — consumed by BOTH the
+// OTLP push and Prometheus pull surfaces in Plan 02, so the two readers can
+// never drift. The closed MetricLabel union is the no-high-cardinality guard.
+export {
+  METRIC_CATALOG,
+  METRIC_LABELS,
+  promNameFor,
+} from "./metric-catalog.js";
+export type {
+  MetricDef,
+  MetricInstrumentType,
+  MetricLabel,
+} from "./metric-catalog.js";
+
+// The build-time probe of the installed @opentelemetry/exporter-prometheus —
+// records whether the `/metrics` surface can render OpenMetrics exemplars
+// (gates Plan 03's PROM-04 test).
+export {
+  PROMETHEUS_EXEMPLARS_SUPPORTED,
+  EXEMPLAR_CAPABILITY_NOTE,
+} from "./exemplar-capability.js";
 
 /**
  * The read-only spend totals the daemon threads from the 177 `SpendAccumulator`
