@@ -146,9 +146,6 @@ export {
   // Public so downstream packages (Plans 02-05) read the gate from @comis/core.
   OrchestrationConfigSchema,
   OrchestrationAuthoringConfigSchema,
-  // Spend kill-switch config (Phase 177) — public so @comis/agent's bridge +
-  // @comis/daemon's wiring read observability.spend.* from @comis/core.
-  SpendConfigSchema,
 } from "../config/index.js";
 
 export type {

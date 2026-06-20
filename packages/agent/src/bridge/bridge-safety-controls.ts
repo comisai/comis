@@ -212,7 +212,7 @@ export function emitBudgetAbort(
 // Spend kill-switch check (Phase 177-03 — the dollars kill-switch routing)
 // ---------------------------------------------------------------------------
 
-/** The three thin emit hooks bound to `deps.eventBus.emit("observability:spend_*", …)`. */
+/** The three thin emit hooks the bridge binds to the counts-only spend events. */
 export interface SpendEmitHooks {
   /** Emit `observability:spend_warning` — fired sub-ceiling at `warnAtFraction`. */
   spendWarning: () => void;
