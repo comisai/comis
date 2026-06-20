@@ -312,6 +312,17 @@ export const TRAJECTORY_EVENT_TYPES = [
   "media.tts.requested",
   "media.tts.completed",
   "media.tts.failed",
+
+  // WR-4 (177-obs-loop): the spend kill-switch lifecycle on the explain timeline.
+  // Previously the 3 observability:spend_* events were allowlisted as fleet-only
+  // rollups (NOT on the trajectory) — so a spend-killed session's WARNING / ABORT /
+  // UNPRICEABLE signals never reached `comis explain` or the deterministic verdict,
+  // the security-review WR-4 blind spot. Now bridged. Content-free: the closed
+  // SpendScopeKind enum + dollar amounts as NUMBERS + provider/model config ids
+  // ONLY — never a message/prompt/query body (§2.7 / H1; the milestone invariant).
+  "spend.warning",
+  "spend.exceeded",
+  "spend.unpriceable",
 ] as const;
 
 /** Closed union of trajectory event type strings. */

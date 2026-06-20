@@ -25,6 +25,7 @@ import type { TrajectoryBridgedEventName } from "./event-bus-bridge.js";
 import { translateCacheBreakPayload } from "./translate-cache-break-payload.js";
 import { translateImagePayload } from "./translate-image-payload.js";
 import { translateOrchestrationPayload } from "./translate-orchestration-payload.js";
+import { translateSpendPayload } from "./translate-spend-payload.js";
 import { translateVideoPayload } from "./translate-video-payload.js";
 import { translateVisionPayload } from "./translate-vision-payload.js";
 import { translateVoicePayload } from "./translate-voice-payload.js";
@@ -743,6 +744,16 @@ export function translatePayload(
         count: payload.count,
         windowMs: payload.windowMs,
       };
+
+    // ---- Spend kill-switch (WR-4, 177-obs-loop) ---- delegated to
+    // translate-spend-payload.ts (file-size split; content-free + envelope-stripped:
+    // the closed SpendScopeKind enum + dollar amounts as NUMBERS + provider/model
+    // CONFIG ids ONLY, never a message/prompt/query body — §2.7 / H1, the milestone
+    // invariant). agentId/sessionKey/timestamp are envelope-only and stripped.
+    case "observability:spend_warning":
+    case "observability:spend_exceeded":
+    case "observability:spend_unpriceable":
+      return translateSpendPayload(eventName, payload);
 
     // ---- Image generation (OBS-04, Phase 186) ---- delegated to translate-image-payload.ts (file-size split; content-free + envelope-stripped, the precedent the vision/video/voice arms below mirror — image was the last media lifecycle still inline).
     case "image:requested":

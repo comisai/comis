@@ -98,15 +98,12 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
   // Phase 176 Plan 04 — the cost-relevant break belongs on the per-session timeline),
   // so it is NOT listed here (the disjoint invariant — it lives in TRAJECTORY_BRIDGE_MAPPING).
   "observability:latency",
-  // Spend kill-switch telemetry (Phase 177) — content-free counts-only signals
-  // (dollar amounts as numbers, scope as a closed enum, ids only) consumed by the
-  // obs/fleet lenses (obs.explain / obs.fleet.health) + alerting, NOT turn-level
-  // trajectory steps. Same class as observability:latency + memory:recall_used.
-  // The terminal spend ABORT is already on the trajectory via execution:aborted
-  // (reason:"spend_exceeded") — these three carry the per-scope $ counts only.
-  "observability:spend_warning",
-  "observability:spend_exceeded",
-  "observability:spend_unpriceable",
+  // WR-4 (177-obs-loop): the three observability:spend_* events were REMOVED from
+  // this allowlist and MAPPED into TRAJECTORY_BRIDGE_MAPPING — a spend-killed
+  // session was undiagnosable via `comis explain` while these were fleet-only
+  // (the security-review WR-4 blind spot, violating this milestone's thesis). They
+  // now ride the per-session trajectory (spend.warning/exceeded/unpriceable),
+  // content-free. The disjoint invariant forbids listing a mapped event here.
 
   // -------------------------------------------------------------------
   // Graph / SEP — separate observability artifact owns these.

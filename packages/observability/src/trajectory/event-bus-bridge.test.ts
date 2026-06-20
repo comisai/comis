@@ -1636,6 +1636,27 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       capSource: "node",
       timestamp: 0,
     },
+    // WR-4 (177-obs-loop): spend kill-switch — content-free (scope enum + $ numbers
+    // + provider/model config ids); the envelope correlation keys are stripped.
+    "observability:spend_warning": {
+      scope: "tenant",
+      spentUsd: 8.4,
+      capUsd: 10,
+      fraction: 0.8,
+      timestamp: 0,
+    },
+    "observability:spend_exceeded": {
+      scope: "global",
+      spentUsd: 99.5,
+      capUsd: 100,
+      estUsd: 0.75,
+      timestamp: 0,
+    },
+    "observability:spend_unpriceable": {
+      provider: "anthropic",
+      model: "claude-opus-4",
+      timestamp: 0,
+    },
   };
 
   it.each(Object.keys(TRAJECTORY_BRIDGE_MAPPING))(
@@ -3601,7 +3622,13 @@ describe("health:budget_exceeded entry (bridge entry count guard)", () => {
     //   the per-session timeline. Content-free: the closed reason + tokenDrop counts + a
     //   changed-dims DIGEST ONLY, NEVER the tool-name arrays or system text — §2.7 / I3.
     //   MOVED OUT of EVENTS_NOT_TRAJECTORY_MAPPED, so the disjoint invariant holds).
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(105);
+    // + observability:spend_warning/exceeded/unpriceable (WR-4, 177-obs-loop —
+    //   APPEND-ONLY; the spend kill-switch signals MOVED OUT of
+    //   EVENTS_NOT_TRAJECTORY_MAPPED and bridged so a spend-killed session is
+    //   diagnosable via `comis explain` (the security-review WR-4 blind spot).
+    //   Content-free: the closed SpendScopeKind enum + dollar amounts as NUMBERS +
+    //   provider/model config ids ONLY, NEVER a message/prompt/query body — §2.7 / H1).
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(108);
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {

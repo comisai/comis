@@ -372,6 +372,20 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   "media.tts:requested": "media.tts.requested",
   "media.tts:completed": "media.tts.completed",
   "media.tts:failed": "media.tts.failed",
+
+  // WR-4 (177-obs-loop): the spend kill-switch's three signals. AGENT-emitted
+  // (pi-event-bridge.ts), so they ARE arch-scanned — previously allowlisted in
+  // EVENTS_NOT_TRAJECTORY_MAPPED as fleet-only rollups, which made a spend-killed
+  // session UNDIAGNOSABLE via `comis explain` (the security-review WR-4 blind spot
+  // — directly violating this milestone's thesis). Mapped here + REMOVED from the
+  // arch allowlist (the disjoint invariant). The terminal ABORT is ALSO on the
+  // trajectory via execution:aborted(reason:"spend_exceeded"); these carry the
+  // per-scope $ counts the verdict needs. Content-free translators forward the
+  // closed SpendScopeKind enum + dollar NUMBERS + provider/model config ids ONLY
+  // — never a message/prompt/query body (§2.7 / H1; the milestone invariant).
+  "observability:spend_warning": "spend.warning",
+  "observability:spend_exceeded": "spend.exceeded",
+  "observability:spend_unpriceable": "spend.unpriceable",
 } as const satisfies Record<string, TrajectoryEventType>;
 
 /**
