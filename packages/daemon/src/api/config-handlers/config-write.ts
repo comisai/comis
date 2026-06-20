@@ -49,7 +49,7 @@ import {
   rejectDuplicateMcpServerNames,
   restoreMcpServerEnv,
   runAgentCredentialGuard,
-  validateMcpEnvRefs,
+  validateMcpEnvRefs, valueChangeIndicator,
 } from "./config-helpers.js";
 import { coerceConfigValue, resolveSchemaForPath } from "./config-validate.js";
 
@@ -308,7 +308,7 @@ export function bindConfigWriteHandlers(
 
         const durationMs = systemNowMs() - startMs;
 
-        // Emit audit event on success
+        // AUDIT-04 / H1: a content-free indicator (sha256 prefix + length), NEVER the raw `value`.
         deps.container.eventBus.emit("audit:event", {
           timestamp: systemNowMs(),
           agentId: ctx?.agentId ?? (rawParams._agentId as string | undefined) ?? "system",
@@ -316,7 +316,7 @@ export function bindConfigWriteHandlers(
           actionType: "config.patch",
           classification: "destructive",
           outcome: "success",
-          metadata: { section, key, value, durationMs },
+          metadata: { section, key, ...valueChangeIndicator(value), durationMs },
         });
 
         deps.logger.info({ method: "config.patch", section, key, durationMs, outcome: "success" }, "Config patch applied");
@@ -364,7 +364,7 @@ export function bindConfigWriteHandlers(
         // the audit outcome carries it.
         rejectionMessage = errMsg;
 
-        // Emit audit event on failure
+        // AUDIT-04 / H1: same content-free indicator — a rejected patch's value is just as secret-bearing.
         deps.container.eventBus.emit("audit:event", {
           timestamp: systemNowMs(),
           agentId: ctx?.agentId ?? (rawParams._agentId as string | undefined) ?? "system",
@@ -372,7 +372,7 @@ export function bindConfigWriteHandlers(
           actionType: "config.patch",
           classification: "destructive",
           outcome: "failure",
-          metadata: { section, key, value, error: errMsg, durationMs },
+          metadata: { section, key, ...valueChangeIndicator(value), error: errMsg, durationMs },
         });
 
         // DEBUG not WARN: validation errors from LLM tool calls are routine,

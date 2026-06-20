@@ -17,7 +17,11 @@ import {
   nodeBudgetExceededEventToRow,
   setupObsPersistence,
 } from "./obs-persistence-wiring.js";
-import { auditEventToRow } from "./obs-audit-sink.js";
+import {
+  auditEventToRow,
+  AUDIT_JSONL_DEFAULT_MAX_SIZE_BYTES,
+  AUDIT_JSONL_DEFAULT_MAX_FILES,
+} from "./obs-audit-sink.js";
 import type { EventMap } from "@comis/core";
 import { runWithContext } from "@comis/core";
 import Database from "better-sqlite3";
@@ -1471,6 +1475,11 @@ describe("auditEventToRow (the content-free audit row-builder)", () => {
 
   it.each([
     ["secrets.get", "secret_access"],
+    // AUDIT-04 / M1: secret MUTATIONS derive to the secret_access security
+    // signal (previously fell through to the generic `audit` family / info).
+    ["secrets.set", "secret_access"],
+    ["secrets.delete", "secret_access"],
+    ["secrets.rotate", "secret_access"],
     ["auth.set", "auth_mutation"],
     ["output_guard", "injection_detected"],
     ["injection_rate_exceeded", "injection_rate_exceeded"],
@@ -1484,6 +1493,47 @@ describe("auditEventToRow (the content-free audit row-builder)", () => {
       undefined,
     );
     expect(row.kind).toBe(expectedKind);
+  });
+
+  it("AUDIT-04 / M1: a secrets.delete persists as a security-signal kind (severity warning), not generic info", () => {
+    // The emit sites now set kind explicitly; verify the row carries the
+    // security-signal kind + the "warning" severity (not "audit"/"info"), so a
+    // kind/severity-filtered audit query surfaces the secret mutation.
+    const row = auditEventToRow(
+      {
+        timestamp: 1000,
+        agentId: "system",
+        tenantId: "t1",
+        actionType: "secrets.delete",
+        kind: "secret_access",
+        classification: "destructive",
+        outcome: "success",
+        metadata: { name: "OPENAI_API_KEY", existed: true },
+      },
+      "t1",
+      "system",
+      undefined,
+    );
+    expect(row.kind).toBe("secret_access");
+    expect(row.severity).toBe("warning"); // security signal, NOT "info"
+    expect(row.kind).not.toBe("audit");
+  });
+});
+
+describe("AUDIT-01 / L1 — the security-audit.jsonl rotation fallback matches the schema default", () => {
+  it("the sink fallback (used when logRotation is omitted) equals LogRotationConfigSchema's 50 MB / 5 default — no drift", () => {
+    // SOURCE OF TRUTH: LogRotationConfigSchema in
+    // packages/core/src/config/schema-observability.ts
+    //   maxSizeBytes default = 50 * 1024 * 1024 (52_428_800)
+    //   maxFiles    default = 5
+    // The sink previously fell back to 10 MB / 5 — a silent disagreement with
+    // the 50 MB schema default (the L1 review finding). Pin them aligned; if the
+    // schema default changes, update these constants (and this test) together.
+    expect(AUDIT_JSONL_DEFAULT_MAX_SIZE_BYTES).toBe(50 * 1024 * 1024);
+    expect(AUDIT_JSONL_DEFAULT_MAX_SIZE_BYTES).toBe(52_428_800);
+    expect(AUDIT_JSONL_DEFAULT_MAX_FILES).toBe(5);
+    // Specifically NOT the old 10 MB drift value.
+    expect(AUDIT_JSONL_DEFAULT_MAX_SIZE_BYTES).not.toBe(10 * 1024 * 1024);
   });
 });
 
@@ -1610,6 +1660,54 @@ describe("setupObsPersistence — audit sink (real store + tmp JSONL)", () => {
     const jsonl = fs.readFileSync(auditLogPath, "utf8");
     expect(jsonl).not.toContain("sk-PLANTED-SECRET");
     expect(jsonl.length).toBeGreaterThan(0);
+  });
+
+  it("Test 4b (AUDIT-04 / H1): a no-prefix secret under the BENIGN `value` key never persists", () => {
+    // The config.patch leak shape — a 32-hex value the credential-keyed drop +
+    // pattern redactor both miss. The sink digests `value` by construction.
+    const { deps, eventBus } = realDeps();
+    const result = setupObsPersistence(deps as never);
+    const HEX32 = "deadbeefcafef00d0123456789abcdef";
+    eventBus.emit("audit:event", {
+      timestamp: 1000, agentId: "a1", tenantId: "t1", actionType: "config.patch",
+      kind: "audit", classification: "destructive", outcome: "success",
+      metadata: { section: "database", key: "url", value: HEX32, durationMs: 4 },
+    });
+    result.drainAll();
+
+    const rows = store.queryAuditEvents({ kind: "audit" });
+    expect(rows).toHaveLength(1);
+    expect(JSON.stringify(rows[0]), "the raw value must not reach the row").not.toContain(HEX32);
+    const refs = JSON.parse(rows[0]!.refs!) as Record<string, unknown>;
+    expect(refs.section).toBe("database"); // benign structural field survives
+    expect(refs.value, "the raw value must be dropped").toBeUndefined();
+    const jsonl = fs.readFileSync(auditLogPath, "utf8");
+    expect(jsonl, "the raw value must not reach security-audit.jsonl").not.toContain(HEX32);
+  });
+
+  it("Test 4c (AUDIT-04 / H2): command:blocked drops the commandPrefix body from the durable row/JSONL", () => {
+    const { deps, eventBus } = realDeps();
+    const result = setupObsPersistence(deps as never);
+    const SECRET_CMD = "mysql -uroot -pSup3rS3cretPlainPass --host internal-db.prod.corp app";
+    eventBus.emit("command:blocked", {
+      agentId: "a1", commandPrefix: SECRET_CMD, reason: "denylist", blocker: "denylist", timestamp: 1000,
+    });
+    result.drainAll();
+
+    const rows = store.queryAuditEvents({ kind: "command_blocked" });
+    expect(rows).toHaveLength(1);
+    const rowJson = JSON.stringify(rows[0]);
+    for (const leak of [SECRET_CMD, "Sup3rS3cretPlainPass", "internal-db.prod.corp"]) {
+      expect(rowJson, `'${leak}' must not reach the row`).not.toContain(leak);
+    }
+    const refs = JSON.parse(rows[0]!.refs!) as Record<string, unknown>;
+    expect(refs.blocker).toBe("denylist");
+    expect(refs.commandPrefix, "the command body must be dropped").toBeUndefined();
+    expect(refs.commandSha256, "a content-free correlation digest survives").toBeTruthy();
+    const jsonl = fs.readFileSync(auditLogPath, "utf8");
+    for (const leak of [SECRET_CMD, "Sup3rS3cretPlainPass", "internal-db.prod.corp"]) {
+      expect(jsonl, `'${leak}' must not reach security-audit.jsonl`).not.toContain(leak);
+    }
   });
 
   it("Test 5: the subscriber logs a scrubbed record via .audit() (level 35)", () => {

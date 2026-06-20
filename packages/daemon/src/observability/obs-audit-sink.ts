@@ -22,13 +22,71 @@
  * @module
  */
 
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import type { EventMap, AuditKind, TypedEventBus } from "@comis/core";
 import { tryGetContext, safePath } from "@comis/core";
 import type { AuditEventRow } from "@comis/memory";
 import { appendAuditJsonl, SECURITY_AUDIT_LOG_BASENAME } from "@comis/memory";
 import { sanitizeForPersistence, getDefaultConfigAuditConfinedBase } from "@comis/observability";
 import type { ComisLogger } from "@comis/infra";
+
+/**
+ * Rotation fallback for the security-audit.jsonl stream when an older caller
+ * omits `logRotation`. Aligned to `LogRotationConfigSchema`'s defaults
+ * (`packages/core/src/config/schema-observability.ts` — 50 MB / 5 files) so the
+ * two can't drift (the AUDIT-01/L1 review found the prior 10 MB literal here
+ * disagreed with the 50 MB schema default). NOT imported from the schema to
+ * avoid a daemon→core schema-coupling for two scalars; the doc-comment + this
+ * note are the binding.
+ */
+export const AUDIT_JSONL_DEFAULT_MAX_SIZE_BYTES = 50 * 1024 * 1024;
+export const AUDIT_JSONL_DEFAULT_MAX_FILES = 5;
+
+/**
+ * The closed set of free-form-content keys that an emit site may place in an
+ * `audit:event` `metadata` map or a tenant-less event's `refs` map. Their
+ * values are arbitrary user/command CONTENT (a raw config value, a command
+ * body) — NOT a closed label/count/id — so they routinely carry inline secrets
+ * a no-prefix value (a 32-hex key, a DB password, `mysql -p<pass>`) that
+ * neither the credential-KEYED-field drop nor the prefixed/keyworded pattern
+ * redactor catches (the AUDIT-04 / H1+H2 review leak). Content-free-by-
+ * construction: {@link digestFreeFormContentKeys} replaces each with a
+ * non-reversible `<key>Sha256` (first 12 hex) + `<key>Length` BEFORE the row is
+ * built, so the raw value can never reach the durable row/JSONL even if a
+ * future emit site forgets to pre-digest. The emit sites SHOULD also stop
+ * sending the raw value (cleaner payload + a correct full-value digest), but
+ * this sink chokepoint is the belt to that suspenders.
+ */
+const FREE_FORM_CONTENT_KEYS = ["value", "commandPrefix"] as const;
+
+/**
+ * Replace any {@link FREE_FORM_CONTENT_KEYS} present in a top-level map with a
+ * content-free `<key>Sha256` (first 12 hex of the SHA-256 of the stringified
+ * value) + `<key>Length` (char count of the stringified value), dropping the
+ * raw key. Returns a NEW map (input is not mutated); other keys pass through
+ * untouched (they are still routed through `sanitizeForPersistence` downstream).
+ * Absent keys are a no-op (byte-identical map shape for the healthy path).
+ */
+function digestFreeFormContentKeys(
+  map: Record<string, unknown>,
+): Record<string, unknown> {
+  let out: Record<string, unknown> | undefined;
+  for (const key of FREE_FORM_CONTENT_KEYS) {
+    if (!(key in map)) continue;
+    if (out === undefined) out = { ...map };
+    const raw = out[key];
+    delete out[key];
+    // null/undefined carry no content — record the length sentinel only.
+    if (raw === null || raw === undefined) {
+      out[`${key}Length`] = 0;
+      continue;
+    }
+    const str = typeof raw === "string" ? raw : JSON.stringify(raw);
+    out[`${key}Sha256`] = createHash("sha256").update(str).digest("hex").slice(0, 12);
+    out[`${key}Length`] = str.length;
+  }
+  return out ?? map;
+}
 
 /**
  * Minimal write-buffer surface the audit sink needs (`push` only) — declared
@@ -68,7 +126,18 @@ export function kindToSeverity(kind: string): string {
  */
 export function deriveKindFromActionType(actionType: string): AuditKind {
   switch (actionType) {
+    // AUDIT-04 / M1: secret MUTATIONS (set/delete/rotate) are a security signal
+    // too — alongside the secret READ (get). Before the mutation arms they
+    // emitted `classification:"destructive"` with no `kind`, falling through to
+    // the generic `audit` family (severity:"info") — invisible to a
+    // kind/severity-filtered audit query. Map them all to the `secret_access`
+    // security-signal kind (severity:"warning") so they surface in the
+    // security-audit grep. (The emit sites ALSO set `kind` explicitly now; this
+    // is the defense-in-depth fallback for any un-migrated/future emit.)
     case "secrets.get":
+    case "secrets.set":
+    case "secrets.delete":
+    case "secrets.rotate":
       return "secret_access";
     case "auth.set":
       return "auth_mutation";
@@ -106,9 +175,14 @@ export function auditEventToRow(
     payload.classification === "destructive"
       ? payload.classification
       : null;
-  // AUDIT-04: scrub the free-map at the sink. A planted value cannot survive.
+  // AUDIT-04: content-free-by-construction at the sink. First DIGEST any
+  // free-form-content key (`value`/`commandPrefix` — arbitrary content that the
+  // pattern redactor misses for no-prefix secrets, the H1/H2 review leak), then
+  // scrub the remaining free-map. A planted value cannot survive either step.
   const scrubbed =
-    payload.metadata !== undefined ? sanitizeForPersistence(payload.metadata) : undefined;
+    payload.metadata !== undefined
+      ? sanitizeForPersistence(digestFreeFormContentKeys(payload.metadata))
+      : undefined;
   return {
     id: randomUUID(),
     tenantId: resolvedTenant,
@@ -148,7 +222,10 @@ export interface BuildAuditRowArgs {
  * system-scope sentinel; the event is NEVER dropped — decision #2).
  */
 export function buildAuditRow(args: BuildAuditRowArgs): AuditEventRow {
-  const scrubbed = sanitizeForPersistence(args.refs);
+  // Same content-free-by-construction chokepoint as auditEventToRow: DIGEST any
+  // free-form-content key first (command:blocked's `commandPrefix` — the
+  // first-200-of-command body, routinely carrying inline secrets), then scrub.
+  const scrubbed = sanitizeForPersistence(digestFreeFormContentKeys(args.refs));
   return {
     id: randomUUID(),
     tenantId: args.tenant,
@@ -194,15 +271,16 @@ export function wireAuditSink(deps: WireAuditSinkDeps): void {
 
   // Defaults: persist on, both sinks. The JSONL path is the 6th stream under the
   // shared logRotation (no per-sink knob); rotation bounds come from logRotation
-  // (fallback to the config-audit 10MB/5 default when an older caller omits it).
+  // (fallback to the LogRotationConfigSchema 50 MB / 5 default — see the
+  // AUDIT_JSONL_DEFAULT_* constants — when an older caller omits it).
   const auditPersist = auditConfig?.persist ?? true;
   const auditSink = auditConfig?.sink ?? "both";
   const wantsSqlite = auditPersist && (auditSink === "sqlite" || auditSink === "both");
   const wantsJsonl = auditPersist && (auditSink === "jsonl" || auditSink === "both");
   const logPath = dataDir !== undefined ? safePath(dataDir, "logs", SECURITY_AUDIT_LOG_BASENAME) : undefined;
   const confinedBase = dataDir !== undefined ? getDefaultConfigAuditConfinedBase(logPath) : undefined;
-  const rotateAtBytes = logRotation?.maxSizeBytes ?? 10 * 1024 * 1024;
-  const keepRotated = logRotation?.maxFiles ?? 5;
+  const rotateAtBytes = logRotation?.maxSizeBytes ?? AUDIT_JSONL_DEFAULT_MAX_SIZE_BYTES;
+  const keepRotated = logRotation?.maxFiles ?? AUDIT_JSONL_DEFAULT_MAX_FILES;
 
   /**
    * The three audit sinks per event (AUDIT-01/02/03): the SQLite buffer, the
@@ -351,8 +429,14 @@ export function wireAuditSink(deps: WireAuditSinkDeps): void {
     }));
   });
 
-  // command:blocked — the commandPrefix is the first-200-only (defense-in-depth);
-  // STILL scrubbed uniformly. Tenant-less → trace ctx / '' sentinel.
+  // command:blocked — AUDIT-04 / H2: the `commandPrefix` is the first-200-of
+  // the COMMAND BODY (content) and routinely carries inline secrets
+  // (`mysql -p<pass>`, `psql postgres://user:pw@host`). Do NOT persist it in the
+  // durable row/JSONL; emit a content-free `commandSha256` (12 hex) +
+  // `commandLength` for correlation instead, plus the closed `blocker`/`reason`
+  // labels. (`buildAuditRow` ALSO digests any `commandPrefix` by construction —
+  // the belt — but we don't send the raw prefix here in the first place.)
+  // Tenant-less → trace ctx / '' sentinel.
   eventBus.on("command:blocked", (payload) => {
     const ctx = tryGetContext();
     persistAuditRow(buildAuditRow({
@@ -364,7 +448,12 @@ export function wireAuditSink(deps: WireAuditSinkDeps): void {
       action: "command_blocked",
       actor: payload.agentId,
       outcome: "denied",
-      refs: { commandPrefix: payload.commandPrefix, reason: payload.reason, blocker: payload.blocker },
+      refs: {
+        commandSha256: createHash("sha256").update(payload.commandPrefix).digest("hex").slice(0, 12),
+        commandLength: payload.commandPrefix.length,
+        reason: payload.reason,
+        blocker: payload.blocker,
+      },
     }));
   });
 

@@ -240,11 +240,15 @@ describe("AUDIT-04 — a planted audit:event metadata value never persists (cont
         `planted '${planted}' must not reach security-audit.jsonl`,
       ).not.toContain(planted);
 
-      // c. A change-indicator survives so the audit stays useful (content-free).
+      // c. A content-free change-indicator survives so the audit stays useful.
       const refs = JSON.parse(row.refs!) as Record<string, unknown>;
       expect(refs.section).toBe("database"); // benign structural field survives
-      expect(refs.key).toBe("url");
       expect(refs.value, "the raw value must be dropped").toBeUndefined();
+      // The digest + length replace the value (content-free correlation). Note
+      // the config `key` NAME is itself credential-masked by the substrate (the
+      // bare `key` token is a credential keyword) — orthogonal to this leak.
+      expect(refs.valueSha256, "a content-free digest survives").toBeTruthy();
+      expect(refs.valueLength).toBe(planted.length);
     }
   });
 
