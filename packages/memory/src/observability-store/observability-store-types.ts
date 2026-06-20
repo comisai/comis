@@ -343,29 +343,11 @@ export interface ObservabilityStore extends CacheStatsQueriesSlice {
   resetTable(table: ObsTableName): number;
 }
 
-// ---------------------------------------------------------------------------
-// snake_case DB row types + camelCase row-mapping helpers
-//
-// Extracted to observability-row-shapes.ts to keep this file under the 500-line
-// per-subdirectory cap. Re-exported here under their canonical names so consumers
-// (queries / mutations / the barrel / tests) keep importing them from this
-// module — no import churn.
-// ---------------------------------------------------------------------------
-
-export type {
-  TokenUsageDbRow,
-  DeliveryDbRow,
-  DiagnosticDbRow,
-  ChannelSnapshotDbRow,
-  SystemPromptReportDbRow,
-} from "./observability-row-shapes.js";
-export {
-  tokenUsageFromRow,
-  deliveryFromRow,
-  diagnosticFromRow,
-  snapshotFromRow,
-  systemPromptReportFromRow,
-} from "./observability-row-shapes.js";
+// The snake_case DB row types + camelCase `*FromRow` mappers live in
+// observability-row-shapes.ts (extracted to keep this file under the 500-line
+// per-subdirectory cap). They are NOT re-exported here — that would form an
+// import cycle (shapes.ts already type-imports the domain row interfaces from
+// this file). Consumers import them directly from `./observability-row-shapes.js`.
 
 // ---------------------------------------------------------------------------
 // Table name mapping

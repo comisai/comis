@@ -12,12 +12,11 @@ import Database from "better-sqlite3";
 import { initSchema } from "../schema.js";
 import { createObservabilityStore } from "./index.js";
 import { reduceFleetWindow } from "./fleet-window-rollup.js";
-import { tokenUsageFromRow } from "./observability-store-types.js";
+import { tokenUsageFromRow, type TokenUsageDbRow } from "./observability-row-shapes.js";
 import type {
   ObservabilityStore,
   SystemPromptReportRow,
   TokenUsageRow,
-  TokenUsageDbRow,
 } from "./observability-store-types.js";
 
 function makeRow(overrides: Partial<SystemPromptReportRow> = {}): SystemPromptReportRow {

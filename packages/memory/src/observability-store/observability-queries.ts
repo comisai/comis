@@ -20,10 +20,6 @@ import {
   sessionSummaryRollupMapper,
   deliveryStatsMapper,
   systemPromptReportMapper,
-  deliveryFromRow,
-  diagnosticFromRow,
-  snapshotFromRow,
-  systemPromptReportFromRow,
   type ObservabilityStore,
   type DeliveryRow,
   type DeliveryQueryParams,
@@ -38,6 +34,14 @@ import {
   type DeliveryStats,
   type SystemPromptReportRow,
 } from "./observability-store-types.js";
+// The *FromRow mappers live in observability-row-shapes.ts (extracted for the
+// file-size cap; imported here directly to avoid a store-types↔row-shapes cycle).
+import {
+  deliveryFromRow,
+  diagnosticFromRow,
+  snapshotFromRow,
+  systemPromptReportFromRow,
+} from "./observability-row-shapes.js";
 
 /** Shape of the subset of ObservabilityStore implemented by this module. */
 export type ObservabilityQueries = Pick<
