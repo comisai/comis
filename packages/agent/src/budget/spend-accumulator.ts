@@ -139,6 +139,21 @@ export interface SpendAccumulator {
    * not permanently consume the ceiling).
    */
   reconcile(reservation: SpendReservation, actualUsd: number): void;
+  /**
+   * Read-only snapshot of the three running totals for the OTel `comis_spend_*`
+   * gauges (the headroom-gauge source — Pitfall 3 / 178-01). A PURE read: no
+   * mutation, no wall-clock call, never throws (the `budget/` discipline). The
+   * returned maps are FRESH COPIES — a caller mutating them cannot corrupt the
+   * accumulator's authoritative enforcement counters (the kill-switch state, T-178-02).
+   * Content-free: dollar COUNTS only, keyed by the `${tenantId} ${agentId}` /
+   * `tenantId` scope keys — no message/query/body. `perAgent` reflects BOTH billed
+   * spend (`recordSpend`/`rehydrate`) and in-flight reservations (`checkAndReserve`).
+   */
+  getSnapshot(): {
+    perAgent: ReadonlyMap<string, number>;
+    perTenant: ReadonlyMap<string, number>;
+    global: number;
+  };
 }
 
 /** Compose the per-(tenant,agent) counter key. */
@@ -253,6 +268,21 @@ export function createSpendAccumulator(deps: {
       const tPrev = perTenant.get(reservation.tenantKey) ?? 0;
       perTenant.set(reservation.tenantKey, tPrev + delta);
       global += delta;
+    },
+
+    getSnapshot(): {
+      perAgent: ReadonlyMap<string, number>;
+      perTenant: ReadonlyMap<string, number>;
+      global: number;
+    } {
+      // Fresh shallow copies (the simplest correct read-only view): a caller
+      // mutating the returned maps cannot reach the closure's authoritative
+      // counters. No mutation, no clock call, never throws (budget/ discipline).
+      return {
+        perAgent: new Map(perAgent),
+        perTenant: new Map(perTenant),
+        global,
+      };
     },
   };
 }
