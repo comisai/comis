@@ -9,6 +9,7 @@
  */
 import { describe, it, expect, beforeEach } from "vitest";
 import Database from "better-sqlite3";
+import { systemNowMs } from "@comis/core";
 import { initSchema } from "../schema.js";
 import { createObservabilityStore } from "./index.js";
 import { reduceFleetWindow } from "./fleet-window-rollup.js";
@@ -660,5 +661,99 @@ describe("ObservabilityStore — insertTokenUsage write-path round-trip (PERSIST
     expect(back.costCorrection).toBeUndefined();
     expect(back.pendingCacheInvestmentUsd).toBeUndefined();
     expect(back.pricingState).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SPEND-03 — getRollingSpendUsd(windowMs): the spend-accumulator's BOOT
+// rehydration read (NOT a per-check read). A per-agent SUM(cost_total) over the
+// rolling window from obs_token_usage. The rows ARE the durability — this is the
+// accumulator's one source of truth at boot, replacing any per-check SQL re-sum.
+//
+// L1: obs_token_usage has NO tenant_id column (schema.ts) — the boot read groups
+// by agent_id ONLY; per-tenant accrues live-from-boot (documented honest
+// degradation, Plan 03). The window bound is derived from systemNowMs() inside
+// the method (the prune() precedent in observability-reset.ts), so the tests seed
+// timestamps relative to a captured `now` with offsets far larger than any
+// wall-clock drift between the two systemNowMs() reads.
+// ---------------------------------------------------------------------------
+describe("ObservabilityStore — getRollingSpendUsd (SPEND-03 boot rehydration)", () => {
+  let db: Database.Database;
+  let store: ObservabilityStore;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    initSchema(db, 1536);
+    store = createObservabilityStore(db);
+  });
+
+  const ONE_HOUR_MS = 60 * 60 * 1000;
+
+  it("returns the per-agent rolling SUM(cost_total) over the window", () => {
+    const now = systemNowMs();
+    // agent-a: two in-window rows (0.10 + 0.25 = 0.35).
+    store.insertTokenUsage(makeTokenRow({ agentId: "agent-a", timestamp: now - 1_000, costTotal: 0.10 }));
+    store.insertTokenUsage(makeTokenRow({ agentId: "agent-a", timestamp: now - 2_000, costTotal: 0.25 }));
+    // agent-b: one in-window row (0.40).
+    store.insertTokenUsage(makeTokenRow({ agentId: "agent-b", timestamp: now - 3_000, costTotal: 0.40 }));
+
+    const rows = store.getRollingSpendUsd(ONE_HOUR_MS);
+    const byAgent = Object.fromEntries(rows.map((r) => [r.agentId, r.totalCostUsd]));
+
+    expect(rows).toHaveLength(2);
+    expect(byAgent["agent-a"]).toBeCloseTo(0.35, 10);
+    expect(byAgent["agent-b"]).toBeCloseTo(0.40, 10);
+  });
+
+  it("excludes a row older than the window (window-bounded)", () => {
+    const now = systemNowMs();
+    // In-window.
+    store.insertTokenUsage(makeTokenRow({ agentId: "agent-a", timestamp: now - 1_000, costTotal: 0.10 }));
+    // Out-of-window: 2h ago, window is 1h — must NOT be summed.
+    store.insertTokenUsage(makeTokenRow({ agentId: "agent-a", timestamp: now - 2 * ONE_HOUR_MS, costTotal: 99.0 }));
+
+    const rows = store.getRollingSpendUsd(ONE_HOUR_MS);
+    const byAgent = Object.fromEntries(rows.map((r) => [r.agentId, r.totalCostUsd]));
+
+    // Only the in-window 0.10 counts; the 99.0 row is excluded.
+    expect(byAgent["agent-a"]).toBeCloseTo(0.10, 10);
+  });
+
+  it("matches a direct SQL SUM(cost_total) GROUP BY agent_id for the same window (same source of truth)", () => {
+    const now = systemNowMs();
+    store.insertTokenUsage(makeTokenRow({ agentId: "agent-a", timestamp: now - 1_000, costTotal: 0.10 }));
+    store.insertTokenUsage(makeTokenRow({ agentId: "agent-a", timestamp: now - 2_000, costTotal: 0.25 }));
+    store.insertTokenUsage(makeTokenRow({ agentId: "agent-b", timestamp: now - 3_000, costTotal: 0.40 }));
+    // An out-of-window row both paths must equally exclude.
+    store.insertTokenUsage(makeTokenRow({ agentId: "agent-b", timestamp: now - 5 * ONE_HOUR_MS, costTotal: 7.0 }));
+
+    const windowMs = ONE_HOUR_MS;
+    const method = Object.fromEntries(
+      store.getRollingSpendUsd(windowMs).map((r) => [r.agentId, r.totalCostUsd]),
+    );
+
+    // Direct hand-written SQL SUM for the same window. The method derives its
+    // `since` from systemNowMs() internally; bind a floor below the in-window
+    // rows but above the out-of-window one so the two agree on membership.
+    const sinceFloor = now - windowMs;
+    const direct = Object.fromEntries(
+      (
+        db
+          .prepare(
+            `SELECT agent_id, SUM(cost_total) AS total_cost
+             FROM obs_token_usage WHERE timestamp >= ? GROUP BY agent_id`,
+          )
+          .all(sinceFloor) as { agent_id: string; total_cost: number }[]
+      ).map((r) => [r.agent_id, r.total_cost]),
+    );
+
+    expect(method).toEqual(direct);
+    // And the values are the expected in-window sums.
+    expect(method["agent-a"]).toBeCloseTo(0.35, 10);
+    expect(method["agent-b"]).toBeCloseTo(0.40, 10);
+  });
+
+  it("returns an empty array when there are no rows in the window", () => {
+    expect(store.getRollingSpendUsd(ONE_HOUR_MS)).toEqual([]);
   });
 });
