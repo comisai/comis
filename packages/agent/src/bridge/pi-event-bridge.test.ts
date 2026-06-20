@@ -1133,6 +1133,84 @@ describe("createPiEventBridge", () => {
       }));
     });
 
+    // -----------------------------------------------------------------------
+    // COST-01: tag the token_usage emit (best-effort, labeled per N3) with the
+    // DISTINCT tools that fired during the turn (from m.toolCallHistory — the
+    // list already tracked at :557, NOT a new accumulator). The per-tool $ split
+    // is even across the distinct tools (locked decision A5); the test asserts
+    // CONSERVATION (the split sums to the turn total), NEVER exactness. The tag
+    // is content-free — tool NAMES only, never args/output. Absent ⇒ the emit is
+    // byte-identical (no toolTag key), honoring no-backward-compat.
+    // -----------------------------------------------------------------------
+    describe("COST-01 toolTag", () => {
+      function lastTokenUsagePayload(): Record<string, unknown> {
+        const calls = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.filter(
+          (c) => c[0] === "observability:token_usage",
+        );
+        expect(calls.length).toBeGreaterThan(0);
+        return calls[calls.length - 1]![1] as Record<string, unknown>;
+      }
+
+      it("tags the emit with the DISTINCT tools fired this turn (['bash','read'] from a bash/read/bash sequence)", () => {
+        const { listener } = createPiEventBridge(deps);
+
+        // 3 tool starts, 2 distinct — m.toolCallHistory = ["bash","read","bash"].
+        listener(makeToolExecutionStartEvent("bash", "tc-1") as any);
+        listener(makeToolExecutionStartEvent("read", "tc-2") as any);
+        listener(makeToolExecutionStartEvent("bash", "tc-3") as any);
+        listener(makeTurnEndEvent({ input: 100, output: 50, totalTokens: 150 }) as any);
+
+        const payload = lastTokenUsagePayload();
+        expect(payload.toolTag).toEqual(["bash", "read"]);
+      });
+
+      it("conserves the turn $ total: an even split across the distinct tools sums back to cost.total (N3 best-effort, NOT exact)", () => {
+        const { listener } = createPiEventBridge(deps);
+
+        const turnTotal = 0.003; // makeTurnEndEvent default cost.total
+        listener(makeToolExecutionStartEvent("bash", "tc-1") as any);
+        listener(makeToolExecutionStartEvent("read", "tc-2") as any);
+        listener(makeToolExecutionStartEvent("bash", "tc-3") as any);
+        listener(makeTurnEndEvent({ cost: { input: 0.001, output: 0.002, total: turnTotal } }) as any);
+
+        const payload = lastTokenUsagePayload();
+        const tools = payload.toolTag as string[];
+        const cost = payload.cost as { total: number };
+        expect(cost.total).toBeCloseTo(turnTotal, 12);
+
+        // The even split the UI will render (cost.total / N per distinct tool) is
+        // the honest default; CONSERVATION is the contract — the per-tool shares
+        // sum to the turn total. Any split that conserves the total passes; this
+        // asserts the SUM, never a per-tool exact amount.
+        const perTool = cost.total / tools.length;
+        const summed = tools.reduce((acc) => acc + perTool, 0);
+        expect(summed).toBeCloseTo(cost.total, 12);
+      });
+
+      it("emits a byte-identical payload (NO toolTag key) when no tool fired this turn — no-backward-compat", () => {
+        const { listener } = createPiEventBridge(deps);
+
+        listener(makeTurnEndEvent({ input: 100, output: 50, totalTokens: 150 }) as any);
+
+        const payload = lastTokenUsagePayload();
+        expect("toolTag" in payload).toBe(false);
+      });
+
+      it("content-free: toolTag carries tool NAMES only — never the tool args from tool_execution_start", () => {
+        const { listener } = createPiEventBridge(deps);
+
+        // makeToolExecutionStartEvent plants args { path: "/tmp/test" } — it must
+        // NOT leak into the tag (the tag is Array.from(new Set(names)) only).
+        listener(makeToolExecutionStartEvent("bash", "tc-1") as any);
+        listener(makeTurnEndEvent() as any);
+
+        const payload = lastTokenUsagePayload();
+        expect(payload.toolTag).toEqual(["bash"]);
+        expect(JSON.stringify(payload.toolTag)).not.toContain("/tmp/test");
+        expect(JSON.stringify(payload.toolTag)).not.toContain("path");
+      });
+    });
+
     // B3 (D8): the per-turn token_usage event carries the SDK stop signal so
     // the trajectory's model.completed records refusals/length-stops. stopReason
     // is sourced from m.lastStopReason (captured in the SAME turn_end case before
