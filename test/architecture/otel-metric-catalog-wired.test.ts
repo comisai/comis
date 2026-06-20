@@ -31,13 +31,13 @@
  * @module
  */
 import { describe, it, expect, beforeAll } from "vitest";
-import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { collectProducedOtelNames } from "../support/otel-produced-metrics.js";
+
 const here = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(here, "../..");
-const OTEL_SRC = resolve(REPO_ROOT, "packages/observability-otel/src");
 
 /**
  * The catalog comes from the COMPILED extension dist (the same pattern as
@@ -63,65 +63,17 @@ beforeAll(async () => {
   METRIC_CATALOG = mod.METRIC_CATALOG;
 });
 
-/** The producer source files scanned for catalog-metric increments / gauges. */
-const PRODUCER_FILES: ReadonlyArray<string> = [
-  resolve(OTEL_SRC, "metric-mapping.ts"),
-  resolve(OTEL_SRC, "prometheus-surface.ts"),
-  resolve(OTEL_SRC, "otel-exporter.ts"),
-] as const;
-
-/** Strip block + line comments so a metric named only in a comment is NOT a producer. */
-function stripComments(src: string): string {
-  return src
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .split(/\r?\n/)
-    .map((l) => {
-      const t = l.trim();
-      return t.startsWith("//") || t.startsWith("*") ? "" : l;
-    })
-    .join("\n");
-}
-
-/**
- * Collect the set of catalog `otelName`s that have a runtime PRODUCER across the
- * producer files. A producer is one of:
- *   - `addCounter(instruments, "comis.x", …)`     (push counter)
- *   - `recordHistogram(instruments, "comis.x", …)` (push histogram)
- *   - `createObservableGauge("comis.x", …)`        (pull gauge)
- *   - `createGauge("comis.x", …)`                  (sync gauge)
- * The literal `otelName` string is the join key (the catalog's source of truth).
- */
-function collectProducedMetricNames(): Set<string> {
-  const produced = new Set<string>();
-  // addCounter(instruments, "comis.x"  |  recordHistogram(instruments, "comis.x"
-  const incRe = /(?:addCounter|recordHistogram)\(\s*instruments\s*,\s*"(comis\.[a-z0-9_.]+)"/g;
-  // createObservableGauge("comis.x"  |  createGauge("comis.x"
-  const gaugeRe = /create(?:Observable)?Gauge\(\s*"(comis\.[a-z0-9_.]+)"/g;
-  for (const file of PRODUCER_FILES) {
-    let src: string;
-    try {
-      src = stripComments(readFileSync(file, "utf-8"));
-    } catch {
-      continue;
-    }
-    for (const m of src.matchAll(incRe)) produced.add(m[1] ?? "");
-    for (const m of src.matchAll(gaugeRe)) produced.add(m[1] ?? "");
-  }
-  produced.delete("");
-  return produced;
-}
-
 describe("otel-metric-catalog-wired — every METRIC_CATALOG entry has a producer (CR-01)", () => {
   it("sanity: the catalog loaded and the producer grep found a substantial set", () => {
     expect(METRIC_CATALOG.length, "METRIC_CATALOG not loaded from the extension").toBeGreaterThanOrEqual(29);
-    const produced = collectProducedMetricNames();
+    const produced = collectProducedOtelNames();
     // Floor: the producer grep itself works (≥10 producers found) — fail loud on
     // a regex/path miss rather than vacuously passing over an empty set.
     expect(produced.size, "producer grep found too few metrics — regex/path miss?").toBeGreaterThanOrEqual(10);
   });
 
   it("every catalog metric is incremented in metric-mapping/prometheus-surface OR registered as a gauge", () => {
-    const produced = collectProducedMetricNames();
+    const produced = collectProducedOtelNames();
     const unwired = METRIC_CATALOG.filter((d) => !produced.has(d.otelName)).map((d) => d.otelName);
     expect(
       unwired,

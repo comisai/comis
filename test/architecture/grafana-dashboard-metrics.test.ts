@@ -7,16 +7,25 @@
  *
  *   (a) **Dashboards** — parse every `grafana/dashboards/*.json`, extract every
  *       panel `targets[].expr`, tokenize the PromQL for `comis_*` metric names,
- *       and assert each is in the exporter's emitted-metric set
- *       ({@link EMITTED_METRIC_NAMES}, derived from the single METRIC_CATALOG with
- *       histograms expanded to `_bucket`/`_sum`/`_count`). A panel referencing a
- *       renamed/removed metric fails CI instead of silently blanking (T-178-10).
+ *       and assert each is in the exporter's PRODUCED-metric set (the catalog
+ *       entries that actually have a runtime producer, histograms expanded to
+ *       `_bucket`/`_sum`/`_count`). A panel referencing a renamed/removed/
+ *       catalogued-but-UNPRODUCED metric fails CI instead of silently blanking
+ *       (T-178-10).
  *
  *   (b) **Rules** — parse every `prometheus/rules/*.yml`, extract every
  *       recording/alert `expr`'s `comis_*` metric names, and assert each is
- *       emitted too (catches PROM-02 rule drift). Recorded-series names
+ *       PRODUCED too (catches PROM-02 rule drift). Recorded-series names
  *       (`comis:...` with a colon) are the rules' OWN outputs, not exporter
- *       metrics, and are excluded from the emitted-set check.
+ *       metrics, and are excluded from the produced-set check.
+ *
+ * **HG-01 (the corrected invariant).** This guard formerly checked expr metrics
+ * against `EMITTED_METRIC_NAMES` — the ENTIRE catalog. That certified a panel/
+ * rule on a catalogued-but-unproduced metric GREEN while it rendered "No data"
+ * in production (the CR-01 blind spot: 16 of 30 catalog metrics had no producer,
+ * yet `ComisAuditSinkFailure` and friends "passed"). It now checks against the
+ * PRODUCED set (catalog ∩ producers, via `buildProducedPromNames`), so a panel/
+ * rule on an unproduced metric FAILS — the property the docstring promises.
  *
  * **E7 data-link presence** — every dashboard panel that has targets MUST carry a
  * data link (`links[]`) whose URL templates a `comis explain` reference (the
@@ -43,6 +52,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { parse as parseYaml } from "yaml";
 
 import { formatViolations } from "../support/architecture-helpers.js";
+import { buildProducedPromNames, type CatalogDefLike } from "../support/otel-produced-metrics.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(here, "../..");
@@ -58,17 +68,26 @@ const RULES_DIR = resolve(REPO_ROOT, "prometheus/rules");
 const EXTENSION_DIST_URL = pathToFileURL(
   resolve(REPO_ROOT, "packages/observability-otel/dist/dashboard-metric-names.js"),
 ).href;
+const CATALOG_DIST_URL = pathToFileURL(
+  resolve(REPO_ROOT, "packages/observability-otel/dist/metric-catalog.js"),
+).href;
 
 let EMITTED: ReadonlySet<string>;
-let EMITTED_SORTED: readonly string[];
+// PRODUCED = catalog ∩ producers (histograms expanded) — the HG-01 truth set the
+// expr checks consult (NOT the full EMITTED set). A panel/rule on a catalogued-
+// but-unproduced metric is in EMITTED but NOT in PRODUCED → it fails.
+let PRODUCED: ReadonlySet<string>;
+let PRODUCED_SORTED: readonly string[];
 
 beforeAll(async () => {
-  const mod = (await import(EXTENSION_DIST_URL)) as {
+  const namesMod = (await import(EXTENSION_DIST_URL)) as {
     EMITTED_METRIC_NAMES: ReadonlySet<string>;
     EMITTED_METRIC_NAMES_SORTED: readonly string[];
   };
-  EMITTED = mod.EMITTED_METRIC_NAMES;
-  EMITTED_SORTED = mod.EMITTED_METRIC_NAMES_SORTED;
+  EMITTED = namesMod.EMITTED_METRIC_NAMES;
+  const catalogMod = (await import(CATALOG_DIST_URL)) as { METRIC_CATALOG: readonly CatalogDefLike[] };
+  PRODUCED = buildProducedPromNames(catalogMod.METRIC_CATALOG);
+  PRODUCED_SORTED = [...PRODUCED].sort();
 });
 
 // ── Artifact walkers ────────────────────────────────────────────────────────
@@ -156,13 +175,22 @@ function repoRel(abs: string): string {
 describe("grafana-dashboard-metrics — PROM-04 expr↔metric drift guard (bidirectional)", () => {
   // ── Sanity floors (fail loud on a glob/path miss) ──────────────────────────
 
-  it("sanity: the emitted-metric set loaded from the compiled catalog and is non-trivial", () => {
+  it("sanity: the emitted + PRODUCED metric sets loaded from the compiled catalog and are non-trivial", () => {
     expect(EMITTED, "EMITTED_METRIC_NAMES not loaded from the extension dist — was the extension built?").toBeTypeOf("object");
-    // 30 catalog entries; 2 histograms each add 3 child series → 36 names.
-    expect(EMITTED.size, `expected the catalog-derived set to be substantial, got ${EMITTED.size}`).toBeGreaterThanOrEqual(30);
+    // 29 catalog entries (cache.break.cost.usd removed in CR-01); 2 histograms
+    // each add 3 child series → 35 names.
+    expect(EMITTED.size, `expected the catalog-derived set to be substantial, got ${EMITTED.size}`).toBeGreaterThanOrEqual(29);
     // Spot-check a histogram family expanded (the _bucket child the p95 panel uses).
     expect(EMITTED.has("comis_run_duration_seconds_bucket")).toBe(true);
     expect(EMITTED.has("comis_cost_usd_total")).toBe(true);
+    // HG-01: the PRODUCED set (catalog ∩ producers) loaded and is non-trivial —
+    // after CR-01 every catalog metric is produced, so PRODUCED == EMITTED in
+    // size (the floor guards against a producer-grep/path miss vacuously
+    // shrinking it, which would make the drift checks pass over an empty set).
+    expect(PRODUCED, "PRODUCED set not built — producer grep / catalog dist miss?").toBeTypeOf("object");
+    expect(PRODUCED.size, `expected the produced set to be substantial, got ${PRODUCED.size}`).toBeGreaterThanOrEqual(29);
+    expect(PRODUCED.has("comis_audit_events_total"), "the ComisAuditSinkFailure alert source must be PRODUCED").toBe(true);
+    expect(PRODUCED.has("comis_run_duration_seconds_bucket")).toBe(true);
   });
 
   it("sanity: found the 5 dashboards and at least one panel with targets", () => {
@@ -198,19 +226,19 @@ describe("grafana-dashboard-metrics — PROM-04 expr↔metric drift guard (bidir
       }
     }
 
-    const violations = refs.filter((r) => !EMITTED.has(r.metric));
+    const violations = refs.filter((r) => !PRODUCED.has(r.metric));
     expect(
       violations,
       formatViolations({
         description:
-          "Grafana drift guard (a): every dashboard panel targets[].expr must reference a metric the Comis OTel PrometheusExporter actually emits (the single METRIC_CATALOG → EMITTED_METRIC_NAMES, histograms expanded). A panel referencing a renamed/removed metric silently blanks in production (T-178-10).",
+          "Grafana drift guard (a/HG-01): every dashboard panel targets[].expr must reference a metric the Comis OTel exporter actually PRODUCES (a catalog entry with a runtime producer — an addCounter/recordHistogram increment or a registered gauge — histograms expanded). A panel referencing a renamed/removed/catalogued-but-UNPRODUCED metric silently blanks in production (T-178-10 / CR-01).",
         violations: violations.map((v) => ({
           file: v.file,
           line: 0,
-          snippet: `references "${v.metric}" — NOT in the emitted-metric set\n    ${v.context}`,
+          snippet: `references "${v.metric}" — NOT in the PRODUCED-metric set\n    ${v.context}`,
         })),
-        suggestedFix: `Correct the panel expr to reference an emitted metric (NOT widen the catalog — the catalog is the source of truth from Plan 01). Emitted names: ${EMITTED_SORTED.join(", ")}`,
-        designRef: "observability-excellence-implementation.md §6 WS7 (PROM-04 — the expr↔metric drift guard); metric-catalog.ts",
+        suggestedFix: `Correct the panel expr to reference a PRODUCED metric, OR wire a producer for it in metric-mapping.ts (subscribe its bus event + increment). Do NOT just widen the catalog — a catalogued-but-unproduced metric is the CR-01 bug. Produced names: ${PRODUCED_SORTED.join(", ")}`,
+        designRef: "observability-excellence-implementation.md §6 WS7 (PROM-04 — the expr↔metric drift guard, HG-01 producer-set); metric-catalog.ts + metric-mapping.ts",
       }),
     ).toEqual([]);
   });
@@ -234,19 +262,19 @@ describe("grafana-dashboard-metrics — PROM-04 expr↔metric drift guard (bidir
       }
     }
 
-    const violations = refs.filter((r) => !EMITTED.has(r.metric));
+    const violations = refs.filter((r) => !PRODUCED.has(r.metric));
     expect(
       violations,
       formatViolations({
         description:
-          "Drift guard (b): every prometheus/rules/*.yml recording/alert expr must reference a metric the exporter emits. Recorded series (comis:... with a colon) are the rules' OWN outputs and are correctly excluded by the comis_ tokenizer.",
+          "Drift guard (b/HG-01): every prometheus/rules/*.yml recording/alert expr must reference a metric the exporter actually PRODUCES (a catalog entry with a runtime producer). A rule on a catalogued-but-unproduced metric never fires (the dead-alert class — e.g. ComisAuditSinkFailure before CR-01). Recorded series (comis:... with a colon) are the rules' OWN outputs and are correctly excluded by the comis_ tokenizer.",
         violations: violations.map((v) => ({
           file: v.file,
           line: 0,
-          snippet: `references "${v.metric}" — NOT in the emitted-metric set\n    ${v.context}`,
+          snippet: `references "${v.metric}" — NOT in the PRODUCED-metric set\n    ${v.context}`,
         })),
-        suggestedFix: `Correct the rule expr to reference an emitted metric. Emitted names: ${EMITTED_SORTED.join(", ")}`,
-        designRef: "observability-excellence-implementation.md §6 WS7 (PROM-02 recording/alert rules)",
+        suggestedFix: `Correct the rule expr to reference a PRODUCED metric, OR wire a producer for it in metric-mapping.ts. Produced names: ${PRODUCED_SORTED.join(", ")}`,
+        designRef: "observability-excellence-implementation.md §6 WS7 (PROM-02 recording/alert rules, HG-01 producer-set)",
       }),
     ).toEqual([]);
   });
