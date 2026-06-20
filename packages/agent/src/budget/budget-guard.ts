@@ -1,8 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { BudgetConfig } from "@comis/core";
-import { systemNowMs } from "@comis/core";
+import { systemNowMs, resolvePricingState } from "@comis/core";
 import { type Result, ok, err } from "@comis/shared";
 import { estimateTokens } from "@earendil-works/pi-coding-agent";
+import type {
+  SpendAccumulator,
+  SpendScope,
+  SpendReservation,
+  SpendError,
+} from "./spend-accumulator.js";
 
 /**
  * Budget enforcement error with diagnostic context.
@@ -268,4 +274,110 @@ export function createBudgetGuard(
       return currentWindow.getSnapshot();
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// Spend ceiling gate (Phase 177-03 — the dollars kill-switch enforcement READ)
+// ---------------------------------------------------------------------------
+
+/**
+ * The outcome of the 3-state pricing gate + the atomic accumulator reserve. It is
+ * the discriminated result the bridge routes on:
+ *  - `ok`          — a reservation was granted (carries the `warn` flag so the
+ *                    bridge can emit `observability:spend_warning`).
+ *  - `free`        — a local/gateway-`free` model: NEVER trips a ceiling
+ *                    (no false-DoS of local-first deployments).
+ *  - `unpriceable` — a native-provider `unknown`-priced model that burned tokens
+ *                    (the ffe11736 danger): the bridge ALWAYS emits
+ *                    `observability:spend_unpriceable` (fail LOUD); whether it
+ *                    aborts is gated on `onUnknownPricing`+`action` at the bridge.
+ *  - `exceeded`    — a ceiling breach: the bridge routes it through the single
+ *                    `execution:aborted{reason:"spend_exceeded"}` path.
+ */
+export type SpendGateOutcome =
+  | { kind: "ok"; reservation: SpendReservation; warn: boolean }
+  | { kind: "free" }
+  | { kind: "unpriceable"; provider: string; model: string }
+  | { kind: "exceeded"; error: SpendError };
+
+/** Spend-gate config slice (a subset of `observability.spend`). */
+export interface SpendGateConfig {
+  /** Behaviour when a native provider's price is unknown while it burns tokens. */
+  onUnknownPricing: "warn" | "abort";
+  /** The pricing fallback strategy on a transient resolve failure (snapshot only today). */
+  pricingFallback: "snapshot";
+}
+
+/**
+ * The 3-state pricing gate + the atomic per-(tenant,agent)/tenant/global ceiling
+ * reserve — the dollars kill-switch's enforcement READ. It lives in the enforcer
+ * module (NOT the pure recorder `cost-tracker.ts` — recorder ≠ enforcer).
+ *
+ * Discipline (the `budget/` arch gates): returns {@link Result}, never raises
+ * (the raw-throw gate); reads no wall clock (the accumulator owns time via its
+ * injected ClockPort — the globals gate); consumes the SHIPPED 3-state
+ * {@link resolvePricingState} directly, never a catalog-presence boolean (which
+ * fails both directions — a local-free model has no entry yet is NOT unknown, and
+ * a $0-cost catalog entry IS present yet is not priced).
+ *
+ * Fail-safe, never fail-open: a transient pricing-resolve throw falls back to the
+ * snapshot path (treat as priced) and STILL enforces the ceiling — it neither
+ * aborts on the transient itself nor treats it as "no limit".
+ *
+ * @param resolvePricingStateOverride - optional pricing-state resolver; when
+ *   omitted the body consumes the shipped {@link resolvePricingState} directly.
+ *   Injectable so the snapshot-fallback fail-safe path is unit-testable with a
+ *   throwing resolver (no module mock).
+ */
+export function checkSpendCeiling(
+  accumulator: SpendAccumulator,
+  scope: SpendScope,
+  provider: string,
+  model: string,
+  estUsd: number,
+  config: SpendGateConfig,
+  burnedTokens: boolean,
+  resolvePricingStateOverride?: (
+    provider: string,
+    model: string,
+  ) => "priced" | "free" | "unknown",
+): Result<SpendGateOutcome, SpendError> {
+  // 1. Resolve the 3-state pricing, defensively. A thrown/errored resolve is the
+  //    transient case: fall through to the snapshot path (treat as priced) — do
+  //    NOT fail open (never "no limit"), do NOT abort on the transient itself.
+  //    resolveModelPricing is a pure in-process lookup, so this is a guard; the
+  //    fail-safe behaviour is proven by injecting a throwing resolver.
+  let state: "priced" | "free" | "unknown";
+  try {
+    state =
+      resolvePricingStateOverride !== undefined
+        ? resolvePricingStateOverride(provider, model)
+        : resolvePricingState(provider, model);
+  } catch {
+    // pricingFallback === "snapshot": the dated snapshot rate is treated as
+    // priced — proceed to the atomic reserve below (fail-SAFE).
+    state = "priced";
+  }
+
+  // 2. Local/gateway-free → honest $0, NEVER trips a ceiling. Skip the reserve
+  //    entirely so a local-first deployment can never be falsely DoSed.
+  if (state === "free") return ok({ kind: "free" });
+
+  // 3. Native-provider unknown + actually burned tokens → the ffe11736 danger.
+  //    Surface the unpriceable signal ALWAYS (fail LOUD — the bridge emits
+  //    observability:spend_unpriceable regardless of action); the bridge gates
+  //    the abort on onUnknownPricing+action. NOT fail-open: we surface, we do
+  //    not silently pass a phantom $0.
+  if (state === "unknown" && burnedTokens) {
+    return ok({ kind: "unpriceable", provider, model });
+  }
+
+  // 4. Priced (or unknown-under-no-burn, or the snapshot fallback) → the atomic
+  //    per-(tenant,agent)→tenant→global reserve. The accumulator owns the
+  //    headroom check + the synchronous reserve; a breach is surfaced as an
+  //    `exceeded` outcome (Result-returning — the bridge decides the abort).
+  const r = accumulator.checkAndReserve(scope, estUsd);
+  return r.ok
+    ? ok({ kind: "ok", reservation: r.value, warn: r.value.warn })
+    : ok({ kind: "exceeded", error: r.error });
 }
