@@ -233,9 +233,10 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
   let pending: Update[] = [];
   const waiters: PollWaiter[] = [];
   let nextMessageId = 100;
-  // De-risk (RESEARCH A1/A2): log the FIRST getUpdates request once to confirm
-  // the offset transport + the runner's timeout by observation, not assumption.
-  // Inert after the spike — guarded so it fires at most once.
+  // De-risk (RESEARCH A1/A2): optionally log the FIRST getUpdates request once
+  // to confirm the offset transport + the runner's timeout by observation. Off
+  // by default — only prints when `COMIS_EMULATOR_DEBUG` is set (see
+  // serveGetUpdates) — and guarded so it fires at most once per emulator.
   let loggedFirstPoll = false;
 
   function chatOracle(chatId: number): ChatOracle {
@@ -296,13 +297,15 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
     const limit = limitRaw === undefined || limitRaw <= 0 ? 100 : limitRaw;
     const timeoutSec = readNum(body, query, "timeout") ?? 0;
 
-    if (!loggedFirstPoll) {
+    // One-shot observation of the offset transport + runner timeout (A1/A2) so
+    // the REAL grammy runner's transport/timeout can be confirmed by
+    // observation when de-risking. GATED behind `COMIS_EMULATOR_DEBUG`: Node's
+    // `console.debug` is NOT suppressed at the default level (it writes to
+    // stderr like `console.log`; only the browser console hides `debug`), so an
+    // ungated print would pollute every CI run. Opt in explicitly to see it.
+    // `console`/`process.env` are fine in `test/` (outside the packages rules).
+    if (!loggedFirstPoll && process.env["COMIS_EMULATOR_DEBUG"]) {
       loggedFirstPoll = true;
-      // One-shot observation of the offset transport + runner timeout (A1/A2):
-      // a single DEBUG (suppressed at default level, fires at most once) so the
-      // REAL grammy runner's transport/timeout is confirmed by observation in
-      // Plan 05, not assumed. `console` is fine in `test/` (no-console is not a
-      // harness rule).
       const transport = body["offset"] !== undefined ? "body" : query.has("offset") ? "query" : "none";
       console.debug(
         `[tg-emulator] first getUpdates: offset=${String(offset)} (transport=${transport}) timeout=${String(timeoutSec)}s limit=${String(limit)}`,
