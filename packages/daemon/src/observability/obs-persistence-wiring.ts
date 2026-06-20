@@ -11,9 +11,12 @@
 
 import type { TypedEventBus, EventMap } from "@comis/core";
 import { systemNowMs, systemSetInterval, systemClearInterval } from "@comis/core";
-import type { ObservabilityStore, TokenUsageRow, DeliveryRow, DiagnosticRow, ChannelSnapshotRow } from "@comis/memory";
+import type { ObservabilityStore, TokenUsageRow, DeliveryRow, DiagnosticRow, ChannelSnapshotRow, AuditEventRow } from "@comis/memory";
 import type { ComisLogger } from "@comis/infra";
 import type { DiagnosticEvent } from "./diagnostic-collector.js";
+// AUDIT-01/02/04 — the durable security-audit sink (row-builders + subscribers),
+// extracted to keep this file under the 800-line cap (the Plan-01/02 precedent).
+import { wireAuditSink } from "./obs-audit-sink.js";
 import type { ChannelActivityTracker } from "./channel-activity-tracker.js";
 
 // ===========================================================================
@@ -540,11 +543,29 @@ export interface ObsPersistenceDeps {
   startupTimestamp: number;
   snapshotIntervalMs: number;
   logger?: ComisLogger;
+  /**
+   * Data directory (`~/.comis`) — the security-audit.jsonl lives at
+   * `<dataDir>/logs/security-audit.jsonl` (AUDIT-01). Optional: when absent the
+   * audit JSONL sink is skipped (the SQLite + `.audit()` sinks still fire);
+   * production always passes it.
+   */
+  dataDir?: string;
+  /**
+   * The shared `observability.logRotation` policy — the security-audit.jsonl is
+   * the 6th stream under it (no per-sink rotation knob). Optional with a sane
+   * fallback so existing callers/tests need not pass it.
+   */
+  logRotation?: { maxSizeBytes: number; maxFiles: number };
+  /**
+   * The `observability.audit` policy (persist on/off + sink selection). Optional;
+   * defaults to `{persist:true, sink:"both"}`.
+   */
+  auditConfig?: { persist: boolean; sink: "sqlite" | "jsonl" | "both" };
 }
 
 /** Result from setupObsPersistence(). */
 export interface ObsPersistenceResult {
-  /** Synchronous drain of all 4 write buffers. */
+  /** Synchronous drain of all 5 write buffers (incl. the audit buffer). */
   drainAll(): void;
   /** Periodic channel snapshot timer handle (for shutdown cleanup). */
   snapshotTimer: ReturnType<typeof setInterval>;
@@ -557,8 +578,11 @@ export interface ObsPersistenceResult {
 /**
  * Wire dual-write persistence: subscribe to event bus events and push
  * observability data to SQLite via batched write buffers.
- * Creates 4 write buffers (tokenUsage, delivery, diagnostic, channelSnapshot)
- * and subscribes NEW listeners alongside existing in-memory collectors.
+ * Creates 5 write buffers (tokenUsage, delivery, diagnostic, channelSnapshot,
+ * audit) and subscribes NEW listeners alongside existing in-memory collectors.
+ * The audit buffer (AUDIT-01) feeds the dedicated obs_audit_events table; each
+ * audit-source event ALSO writes a scrubbed 0600 security-audit.jsonl line and
+ * a `.audit()` (level 35) log line.
  * @param deps - Persistence wiring dependencies
  * @returns drainAll() for shutdown and snapshotTimer for cleanup
  */
@@ -571,9 +595,12 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
     startupTimestamp,
     snapshotIntervalMs,
     logger,
+    dataDir,
+    logRotation,
+    auditConfig,
   } = deps;
 
-  // a. Create 4 write buffers with transactional flush functions
+  // a. Create 5 write buffers with transactional flush functions
   const tokenUsageBuffer = createObsWriteBuffer<TokenUsageRow>({
     flushFn: (items) => {
       db.transaction(() => {
@@ -609,6 +636,20 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
       db.transaction(() => {
         for (const item of items) {
           obsStore.insertChannelSnapshot(item);
+        }
+      })();
+    },
+  });
+
+  // AUDIT-01: a DEDICATED audit buffer (§14 — distinct obs_audit_events table +
+  // actor/outcome/severity columns + retention), cloned from the tokenUsage
+  // factory. Its own flushFn → insertAuditEvent (the SQLite half). The JSONL
+  // half + the .audit() log fire synchronously per event in wireAuditSink.
+  const auditBuffer = createObsWriteBuffer<AuditEventRow>({
+    flushFn: (items) => {
+      db.transaction(() => {
+        for (const item of items) {
+          obsStore.insertAuditEvent(item);
         }
       })();
     },
@@ -691,6 +732,23 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
     diagnosticBuffer.push(nodeBudgetExceededEventToRow(payload));
   });
 
+  // AUDIT-01/02/04: the durable security-audit sink — every audit-source event
+  // (audit:event + secret:accessed + the 4 security:* + the 2 critic.isolation.*
+  // + command:blocked, and the sandbox_downgrade_refused MIRROR) → an
+  // obs_audit_events row (the buffer) + a scrubbed 0600 security-audit.jsonl line
+  // + a `.audit()` log line. The metadata free-map is scrubbed in the
+  // row-builder (AUDIT-04); tenant-less events resolve from the trace context
+  // else tenant_id='' (decision #2). The existing sandbox_downgrade_refused
+  // obs_diagnostics row above is KEPT (I1′ additive — the event lands in BOTH).
+  wireAuditSink({
+    eventBus,
+    auditBuffer,
+    ...(logger !== undefined ? { logger } : {}),
+    ...(dataDir !== undefined ? { dataDir } : {}),
+    ...(logRotation !== undefined ? { logRotation } : {}),
+    ...(auditConfig !== undefined ? { auditConfig } : {}),
+  });
+
   // c. Periodic channel snapshot timer
   const snapshotTimer = systemSetInterval(() => {
     const channels = channelActivityTracker.getAll();
@@ -709,7 +767,7 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
   snapshotTimer.unref();
 
   if (logger) {
-    logger.info({ buffers: 4, snapshotIntervalMs }, "Observability persistence wiring initialized");
+    logger.info({ buffers: 5, snapshotIntervalMs }, "Observability persistence wiring initialized");
   }
 
   // d. Return drainAll and snapshotTimer for shutdown
@@ -718,6 +776,7 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
     deliveryBuffer.drain();
     diagnosticBuffer.drain();
     channelSnapshotBuffer.drain();
+    auditBuffer.drain();
   }
 
   return { drainAll, snapshotTimer };

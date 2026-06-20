@@ -284,6 +284,7 @@ export type {
   DeliveryRow,
   DiagnosticRow,
   ChannelSnapshotRow,
+  AuditEventRow,
   ProviderAggregation,
   AgentAggregation,
   SessionAggregation,
@@ -294,6 +295,16 @@ export type {
   PruneResult,
   SystemPromptReportRow,
 } from "./observability-store/index.js";
+
+// AUDIT-01: the security-audit sink helpers (the 0600 rotated JSONL writer +
+// the bounded query-param shape) the daemon's obs-persistence-wiring consumes.
+export {
+  appendAuditJsonl,
+  SECURITY_AUDIT_LOG_BASENAME,
+  DEFAULT_AUDIT_QUERY_LIMIT,
+  MAX_AUDIT_QUERY_LIMIT,
+} from "./observability-store/index.js";
+export type { AuditQueryParams, AppendAuditJsonlParams } from "./observability-store/index.js";
 
 // Fleet window-rollup reducer (A2, v2.15 Phase 159). reduceFleetWindow is the
 // PURE cross-session reduce over the A1 SessionSummaryRollup[] (synthetic

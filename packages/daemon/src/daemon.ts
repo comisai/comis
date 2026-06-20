@@ -1528,6 +1528,14 @@ async function bootFoundation(
           startupTimestamp: startupStartMs,
           snapshotIntervalMs: obsConfig.persistence.snapshotIntervalMs,
           logger: daemonLogger,
+          // AUDIT-01: the security-audit.jsonl lives under <dataDir>/logs and
+          // rides the shared observability.logRotation policy (the 6th stream).
+          dataDir: container.config.dataDir || dataDir,
+          logRotation: {
+            maxSizeBytes: obsConfig.logRotation.maxSizeBytes,
+            maxFiles: obsConfig.logRotation.maxFiles,
+          },
+          auditConfig: { persist: obsConfig.audit.persist, sink: obsConfig.audit.sink },
         });
         return { obsStore: store, obsPersistence: persistence };
       })()

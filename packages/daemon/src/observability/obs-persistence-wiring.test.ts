@@ -15,9 +15,9 @@ import {
   sandboxDowngradeRefusedEventToRow,
   deliveryDeadletteredEventToRow,
   nodeBudgetExceededEventToRow,
-  auditEventToRow,
   setupObsPersistence,
 } from "./obs-persistence-wiring.js";
+import { auditEventToRow } from "./obs-audit-sink.js";
 import type { EventMap } from "@comis/core";
 import { runWithContext } from "@comis/core";
 import Database from "better-sqlite3";
@@ -877,6 +877,10 @@ describe("setupObsPersistence", () => {
       insertDelivery: vi.fn(),
       insertDiagnostic: vi.fn(),
       insertChannelSnapshot: vi.fn(),
+      // AUDIT-01: the audit subscribers (incl. the sandbox_downgrade_refused
+      // mirror) call insertAuditEvent; queryAuditEvents on the read side.
+      insertAuditEvent: vi.fn(),
+      queryAuditEvents: vi.fn(() => []),
       queryDelivery: vi.fn(),
       queryDiagnostics: vi.fn(),
       latestChannelSnapshots: vi.fn(),
@@ -1205,7 +1209,7 @@ describe("setupObsPersistence", () => {
     result.drainAll();
   });
 
-  it("drainAll() flushes all 4 buffers", () => {
+  it("drainAll() flushes all 5 buffers (incl. the audit buffer)", () => {
     const eventBus = createMockEventBus();
     const obsStore = createMockObsStore();
     const db = createMockDb();
