@@ -973,6 +973,34 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       formatViolation: false,
       timestamp: 1000,
     },
+    "observability:cache_break": {
+      provider: "anthropic",
+      reason: "tools_changed",
+      tokenDrop: 1000,
+      tokenDropRelative: 0.5,
+      previousCacheRead: 2000,
+      currentCacheRead: 1000,
+      callCount: 3,
+      changes: {
+        systemChanged: false,
+        toolsChanged: true,
+        metadataChanged: false,
+        modelChanged: false,
+        retentionChanged: false,
+        addedTools: ["tool-a"],
+        removedTools: [],
+        changedSchemaTools: [],
+        headersChanged: false,
+        extraBodyChanged: false,
+      },
+      toolsChanged: ["tool-a"],
+      ttlCategory: undefined,
+      toolsAdded: ["tool-a"],
+      toolsRemoved: [],
+      toolsSchemaChanged: [],
+      systemCharDelta: 10,
+      model: "claude-3-5-sonnet-20241022",
+    },
     "learning:outcome_observed": {
       agentId: "default",
       trajectoryId: "trace-lo-1",
@@ -3568,7 +3596,12 @@ describe("health:budget_exceeded entry (bridge entry count guard)", () => {
     //   capSource labels + ids/numbers ONLY, NEVER a path/host/uid value, an announcement
     //   body, or a task — §2.7. The budget_exceeded entry retires the "unmapped precedent"
     //   note above. These ALSO feed the fleet lens via obs-persistence-wiring).
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(104);
+    // + observability:cache_break (PERSIST-01, Phase 176 Plan 04 — APPEND-ONLY beside the
+    //   memory.recalled/generation_quality block; a detected prompt-cache break bridged to
+    //   the per-session timeline. Content-free: the closed reason + tokenDrop counts + a
+    //   changed-dims DIGEST ONLY, NEVER the tool-name arrays or system text — §2.7 / I3.
+    //   MOVED OUT of EVENTS_NOT_TRAJECTORY_MAPPED, so the disjoint invariant holds).
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(105);
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {

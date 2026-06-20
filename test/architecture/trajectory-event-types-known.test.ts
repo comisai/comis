@@ -94,7 +94,9 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
   // Model catalog + observability metadata not tied to a single turn.
   // -------------------------------------------------------------------
   "model:catalog_loaded",
-  "observability:cache_break",
+  // NB: observability:cache_break is now BRIDGED to the trajectory (PERSIST-01,
+  // Phase 176 Plan 04 — the cost-relevant break belongs on the per-session timeline),
+  // so it is NOT listed here (the disjoint invariant — it lives in TRAJECTORY_BRIDGE_MAPPING).
   "observability:latency",
 
   // -------------------------------------------------------------------

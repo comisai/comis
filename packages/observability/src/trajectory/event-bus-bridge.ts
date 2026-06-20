@@ -95,6 +95,15 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // enums + booleans — H1); the source/generated body never crosses the bus.
   "memory:generation_quality": "memory.generation_quality",
 
+  // PERSIST-01 (Phase 176 Plan 04, observability-excellence): a detected prompt-cache
+  // break (15 CacheBreakReason values) — emitted in packages/agent but previously
+  // UNMAPPED (allowlisted as a daemon-level rollup), invisible to `comis explain`. Now
+  // bridged so the cost-relevant break shows on the per-session timeline beside the
+  // obs_diagnostics category:'cache_break' row. Content-free (the closed reason + the
+  // tokenDrop/relative counts + a changed-dims DIGEST — H1/I3); the translator drops
+  // the toolsAdded/Removed/SchemaChanged tool-NAME arrays and the system text entirely.
+  "observability:cache_break": "cache.break",
+
   // TELEM-01 (v2.27 P1, Phase 173): a `pipeline` tool invocation was authored —
   // counts-only (action / capabilityClass tier / schemaValid / repaired). Mapped
   // here for trajectory-type ARCH closure (every EventMap member is mapped-or-

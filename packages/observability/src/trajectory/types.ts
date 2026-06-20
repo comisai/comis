@@ -77,6 +77,10 @@ export const TRAJECTORY_EVENT_TYPES = [
   "memory.reranked",
   // GENQ-01: a memory-generation pass's output diverged from its source (content-free).
   "memory.generation_quality",
+  // PERSIST-01 (Phase 176 Plan 04): a detected prompt-cache break on the per-session
+  // timeline — the closed reason + tokenDrop counts + a changed-dims DIGEST ONLY,
+  // NEVER the tool-name arrays or system text (content-free, H1/I3).
+  "cache.break",
   // OUTCOME-08 (v2.26 Verified Learning WS1): a finished trajectory's resolved net
   // task-outcome (daemon-side emit, learningOutcome.enabled-gated). Counts/ids/closed-enums
   // ONLY — no bodies/alpha (SEC-01). Bridged so `comis explain` can reconstruct it (OBS-02).

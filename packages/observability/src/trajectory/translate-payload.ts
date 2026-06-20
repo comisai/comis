@@ -263,6 +263,27 @@ export function translatePayload(
         formatViolation: payload.formatViolation,
       };
 
+    case "observability:cache_break": {
+      // PERSIST-01: the closed reason + the tokenDrop/relative counts + a changed-dims
+      // DIGEST (the SHAPE of the change) ONLY. The toolsAdded/Removed/SchemaChanged
+      // arrays carry tool NAMES (MCP-sanitized at emit but still names) and are NEVER
+      // forwarded — reduced to counts; systemCharDelta is a number. No system/query
+      // text crosses the bus (§2.7 / I3 / H1). Mirrors the obs_diagnostics row-builder's
+      // changedDimsDigest shape so the trajectory and the SQLite row agree.
+      const toLen = (v: unknown): number => (Array.isArray(v) ? v.length : 0);
+      return {
+        reason: payload.reason,
+        tokenDrop: payload.tokenDrop,
+        tokenDropRelative: payload.tokenDropRelative,
+        changedDimsDigest: {
+          added: toLen(payload.toolsAdded),
+          removed: toLen(payload.toolsRemoved),
+          schemaChanged: toLen(payload.toolsSchemaChanged),
+          systemCharDelta: typeof payload.systemCharDelta === "number" ? payload.systemCharDelta : 0,
+        },
+      };
+    }
+
     // ---- v2.27 authoring / sub-agent orchestration (TELEM-01 + AUTHOR-01/02 + STEER-01) ---- delegated to translate-orchestration-payload.ts (file-size split, Phase 175; content-free + envelope-stripped — closed enums + numbers/booleans + a run id ONLY, never a graph body, the synthesis INTENT TEXT, or the steer MESSAGE BODY; §2.7 / H1).
     // ORCH-OBS appends three previously-dark sub-agent-lifecycle events (sandbox-downgrade
     // refusal / dead-lettered delivery / per-node budget breach) to the SAME content-free,
