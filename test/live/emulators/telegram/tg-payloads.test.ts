@@ -93,7 +93,7 @@ describe("makeMessageUpdate runtime shape", () => {
     // Exactly the two keys the message round-trip needs — nothing else.
     expect(Object.keys(update).sort()).toEqual(["message", "update_id"]);
     // None of the deferred/unhandled kinds are present at runtime.
-    const u = update as Record<string, unknown>;
+    const u = update as unknown as Record<string, unknown>;
     expect(u["channel_post"]).toBeUndefined();
     expect(u["edited_message"]).toBeUndefined();
     expect(u["callback_query"]).toBeUndefined();
