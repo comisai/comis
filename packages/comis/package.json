@@ -125,6 +125,7 @@
     "@comis/daemon",
     "@comis/orchestrator",
     "@comis/observability",
+    "@comis/observability-otel",
     "@comis/web",
     "bindings",
     "file-uri-to-path"
@@ -143,6 +144,7 @@
     "@comis/daemon": "workspace:*",
     "@comis/orchestrator": "workspace:*",
     "@comis/observability": "workspace:*",
+    "@comis/observability-otel": "workspace:*",
     "@comis/web": "workspace:*",
     "@agentclientprotocol/sdk": "0.22.1",
     "@clack/core": "1.4.1",
