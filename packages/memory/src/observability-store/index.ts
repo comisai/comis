@@ -18,6 +18,7 @@ import {
   type ObservabilityStore,
 } from "./observability-store-types.js";
 import { bindQueries } from "./observability-queries.js";
+import { bindSpendQueries } from "./spend-queries.js";
 import { bindMutations } from "./observability-mutations.js";
 import { bindReset } from "./observability-reset.js";
 import { bindAuditMutations } from "./audit-mutations.js";
@@ -76,6 +77,8 @@ export type { CacheBreakReasonRate } from "./cache-break-queries.js";
 export function createObservabilityStore(db: Database.Database): ObservabilityStore {
   const store: ObservabilityStore = {
     ...bindQueries(db),
+    // SPEND-03: the spend accumulator's boot rehydration read (getRollingSpendUsd).
+    ...bindSpendQueries(db),
     ...bindMutations(db),
     ...bindReset(db),
     // AUDIT-01: security-audit insert/query over the dedicated obs_audit_events table.
