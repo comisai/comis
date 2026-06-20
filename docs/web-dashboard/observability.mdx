@@ -10,7 +10,7 @@ The Observe section in the sidebar contains **six sub-views**, each accessible a
 
 ## Where the metrics come from
 
-All Observe data is sourced from Comis's own in-process collectors and persisted to SQLite (in `~/.comis/`) -- there is no external Prometheus, OpenTelemetry, or InfluxDB. The dashboard reads them via JSON-RPC:
+All Observe data is sourced from Comis's own in-process collectors and persisted to SQLite (in `~/.comis/`). This native dashboard is the **zero-dependency lens** -- it needs no external services. If you prefer the standards lens, Comis also ships an **opt-in** OpenTelemetry/Prometheus export surface (off by default): a loopback `/metrics` endpoint plus Grafana dashboards-as-code and a one-command docker-compose stand-up -- see [Prometheus & Grafana](/operations/prometheus-grafana). The two render the same signals. The native dashboard reads them via JSON-RPC:
 
 | Sub-view | Primary RPC methods |
 |----------|---------------------|
@@ -21,7 +21,7 @@ All Observe data is sourced from Comis's own in-process collectors and persisted
 | Context Engine | `contextEngine.getLastMetrics`, `contextEngine.getLayerConfig` |
 | Context DAG | `context.dag.list`, `context.dag.tree`, `context.dag.search`, `context.dag.node` |
 
-Auto-refresh runs every 30 seconds; SSE event `metrics:update` triggers an extra refresh as soon as new data is recorded. There is no `/metrics` Prometheus endpoint exposed by default.
+Auto-refresh runs every 30 seconds; SSE event `metrics:update` triggers an extra refresh as soon as new data is recorded. A Prometheus `/metrics` endpoint is **not** exposed by default, but can be enabled via the opt-in [Prometheus & Grafana](/operations/prometheus-grafana) surface (loopback-bound on `127.0.0.1:9464`).
 
 <Info>
 The Overview page at `/observe/overview` also contains five internal tabs -- **Overview**, **Billing**, **Delivery**, **Channels**, and **Diagnostics** -- that surface the same data as the standalone sub-views (plus a Channels tab unique to this page). The sidebar links route to the standalone components (e.g., `/observe/billing`); the Overview's internal tabs offer a unified view within a single page.

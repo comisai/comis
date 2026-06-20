@@ -10,6 +10,14 @@ Here's everything Comis keeps on disk — and why.
 
 `~/.comis/` is the single directory where Comis stores all runtime state: your config, secrets, conversation memory, logs, and the pm2 supervisor file. It is created automatically the first time you run `comis init` or start the daemon.
 
+<Note>
+The opt-in [Prometheus & Grafana](/operations/prometheus-grafana) surface adds **no
+file** to `~/.comis/` — it opens a loopback network listener (`/metrics` on
+`127.0.0.1:9464`), not a data-dir path. The Grafana/Prometheus artifacts
+(dashboards, rules, docker-compose) live in the Comis source repository, not the
+data directory.
+</Note>
+
 ## Directory layout
 
 ```
