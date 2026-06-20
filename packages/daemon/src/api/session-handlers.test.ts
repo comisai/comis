@@ -176,7 +176,10 @@ describe("createSessionHandlers - session management", () => {
       try {
         const rows = scanWorkspaceSessions(root);
         expect(rows).toHaveLength(1);
-        expect(rows[0]?.sessionKey).toBe("default:chat-1");
+        // Canonical tenant:user:channel key (UX-1): the channel directory is part
+        // of the key, so sessions/default/chat-1/chat-1.jsonl => default:chat-1:chat-1
+        // (the resettable/parseable form the LCD/reset/explain paths use).
+        expect(rows[0]?.sessionKey).toBe("default:chat-1:chat-1");
       } finally {
         rmSync(root, { recursive: true, force: true });
       }
