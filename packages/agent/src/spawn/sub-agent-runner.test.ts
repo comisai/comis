@@ -2882,6 +2882,21 @@ describe("classifyAbortReason", () => {
     expect(result.severity).toBe("actionable");
   });
 
+  // WR-3 (177-obs-loop): spend_exceeded -> budget (NOT the "unknown" + "check
+  // daemon logs" catch-all). A sub-agent killed by the dollars kill-switch was
+  // classified category:"unknown" with a "check the daemon logs" hint (the
+  // default branch) — the exact wrong-way, non-actionable pointer the security
+  // review flagged. It must reuse the budget category with the actionable
+  // observability.spend.* hint emitSpendAbort already uses.
+  it("WR-3 maps spend_exceeded to the budget category with an actionable observability.spend.* hint", () => {
+    const result = classifyAbortReason("spend_exceeded");
+    expect(result.category).toBe("budget");
+    expect(result.severity).toBe("actionable");
+    expect(result.hint).toContain("observability.spend.");
+    // Never the catch-all "check the daemon logs" misdirection.
+    expect(result.hint).not.toContain("daemon logs");
+  });
+
   // context_loop -> context_full
   it("maps context_loop to context_full category", () => {
     const result = classifyAbortReason("context_loop");
