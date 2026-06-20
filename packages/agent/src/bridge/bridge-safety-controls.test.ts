@@ -11,8 +11,10 @@
 import { describe, it, expect, vi } from "vitest";
 import type { SessionKey, TypedEventBus, ComisLogger } from "@comis/core";
 
-import { checkLoopLimit, emitLoopAbort, buildAbortRedirectMessage } from "./bridge-safety-controls.js";
+import { checkLoopLimit, emitLoopAbort, buildAbortRedirectMessage, checkSpendLimit, emitSpendAbort } from "./bridge-safety-controls.js";
 import type { ExecutionPlan } from "../planner/types.js";
+import type { SpendGateOutcome } from "../budget/budget-guard.js";
+import { SpendError } from "../budget/spend-accumulator.js";
 
 const testSessionKey = "agent-a:discord:chan-1" as unknown as SessionKey;
 
@@ -158,5 +160,156 @@ describe("R2: buildAbortRedirectMessage — pre-lock abort sites (no plan, msg.t
     const response = buildAbortRedirectMessage(undefined, "circuit_open", msgText);
     expect(response).toContain("circuit_open");
     expect(response).toContain(msgText);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Spend kill-switch routing (Phase 177-03 Task 2): checkSpendLimit + emitSpendAbort
+// mirror the checkBudgetLimit/emitBudgetAbort mold. ONE abort reason
+// "spend_exceeded"; the unpriceable nuance rides the distinct
+// observability:spend_unpriceable event. warn-default never aborts.
+// ---------------------------------------------------------------------------
+
+/** A set of fake emit hooks for the three spend events. */
+function makeSpendEmit() {
+  return { spendWarning: vi.fn(), spendExceeded: vi.fn(), spendUnpriceable: vi.fn() };
+}
+
+const okOutcome = (warn: boolean): SpendGateOutcome => ({
+  kind: "ok",
+  reservation: { scopeKey: "t a", tenantKey: "t", reservedUsd: 0.5 },
+  warn,
+});
+const exceededOutcome = (): SpendGateOutcome => ({
+  kind: "exceeded",
+  error: new SpendError("agent", 0.9, 1.0, 0.5),
+});
+const unpriceableOutcome = (): SpendGateOutcome => ({
+  kind: "unpriceable",
+  provider: "anthropic",
+  model: "qwen-x",
+});
+const freeOutcome = (): SpendGateOutcome => ({ kind: "free" });
+
+describe("checkSpendLimit", () => {
+  it("free outcome never aborts and emits nothing", () => {
+    const emit = makeSpendEmit();
+    const res = checkSpendLimit(freeOutcome(), "abort", "abort", false, emit);
+    expect(res.shouldAbort).toBe(false);
+    expect(emit.spendWarning).not.toHaveBeenCalled();
+    expect(emit.spendExceeded).not.toHaveBeenCalled();
+    expect(emit.spendUnpriceable).not.toHaveBeenCalled();
+  });
+
+  it("ok+warn emits spend_warning and does NOT abort", () => {
+    const emit = makeSpendEmit();
+    const res = checkSpendLimit(okOutcome(true), "abort", "warn", false, emit);
+    expect(res.shouldAbort).toBe(false);
+    expect(emit.spendWarning).toHaveBeenCalledOnce();
+    expect(emit.spendExceeded).not.toHaveBeenCalled();
+  });
+
+  it("ok without warn emits nothing and does NOT abort", () => {
+    const emit = makeSpendEmit();
+    const res = checkSpendLimit(okOutcome(false), "abort", "warn", false, emit);
+    expect(res.shouldAbort).toBe(false);
+    expect(emit.spendWarning).not.toHaveBeenCalled();
+  });
+
+  it("exceeded under action 'abort' emits spend_exceeded AND returns shouldAbort with spend_exceeded reasons", () => {
+    const emit = makeSpendEmit();
+    const res = checkSpendLimit(exceededOutcome(), "abort", "warn", false, emit);
+    expect(emit.spendExceeded).toHaveBeenCalledOnce();
+    expect(res.shouldAbort).toBe(true);
+    expect(res.finishReason).toBe("spend_exceeded");
+    expect(res.eventReason).toBe("spend_exceeded");
+  });
+
+  it("exceeded under action 'warn' (the shipped default) emits spend_exceeded but NEVER aborts", () => {
+    const emit = makeSpendEmit();
+    const res = checkSpendLimit(exceededOutcome(), "warn", "warn", false, emit);
+    expect(emit.spendExceeded).toHaveBeenCalledOnce();
+    expect(res.shouldAbort).toBe(false); // opt-in invariant: warn-default signals only
+  });
+
+  it("does not double-abort when already aborted (exceeded + abort + aborted=true)", () => {
+    const emit = makeSpendEmit();
+    const res = checkSpendLimit(exceededOutcome(), "abort", "warn", true, emit);
+    // The event still fires (the breach is real), but no second abort is routed.
+    expect(emit.spendExceeded).toHaveBeenCalledOnce();
+    expect(res.shouldAbort).toBe(false);
+  });
+
+  it("unpriceable always emits spend_unpriceable; aborts ONLY when action='abort' AND onUnknownPricing='abort'", () => {
+    // action warn → no abort (but still fail-loud)
+    const e1 = makeSpendEmit();
+    const r1 = checkSpendLimit(unpriceableOutcome(), "warn", "abort", false, e1);
+    expect(e1.spendUnpriceable).toHaveBeenCalledOnce();
+    expect(r1.shouldAbort).toBe(false);
+
+    // action abort but onUnknownPricing warn → no abort (but still fail-loud)
+    const e2 = makeSpendEmit();
+    const r2 = checkSpendLimit(unpriceableOutcome(), "abort", "warn", false, e2);
+    expect(e2.spendUnpriceable).toHaveBeenCalledOnce();
+    expect(r2.shouldAbort).toBe(false);
+
+    // both abort → abort (and fail-loud)
+    const e3 = makeSpendEmit();
+    const r3 = checkSpendLimit(unpriceableOutcome(), "abort", "abort", false, e3);
+    expect(e3.spendUnpriceable).toHaveBeenCalledOnce();
+    expect(r3.shouldAbort).toBe(true);
+    expect(r3.finishReason).toBe("spend_exceeded");
+  });
+
+  it("spend_warning fires on a strictly-earlier turn than spend_exceeded (ordering)", () => {
+    // Single emit object spanning two turns; record the global call order.
+    const order: string[] = [];
+    const emit = {
+      spendWarning: vi.fn(() => order.push("warning")),
+      spendExceeded: vi.fn(() => order.push("exceeded")),
+      spendUnpriceable: vi.fn(),
+    };
+    // Turn 1: sub-ceiling but past warnAtFraction → warning.
+    checkSpendLimit(okOutcome(true), "abort", "warn", false, emit);
+    // Turn 2: now over the ceiling → exceeded.
+    checkSpendLimit(exceededOutcome(), "abort", "warn", false, emit);
+    expect(order).toEqual(["warning", "exceeded"]);
+  });
+});
+
+describe("emitSpendAbort", () => {
+  it("emits execution:aborted with reason spend_exceeded", () => {
+    const eventBus = makeEventBus();
+    const logger = makeLogger();
+    emitSpendAbort({ eventBus, sessionKey: testSessionKey, agentId: "agent-a", logger });
+    expect(eventBus.emit).toHaveBeenCalledWith(
+      "execution:aborted",
+      expect.objectContaining({ reason: "spend_exceeded", agentId: "agent-a" }),
+    );
+  });
+
+  it("logs a content-free WARN: errorKind resource + an actionable hint, NO $ amount in the message body", () => {
+    const eventBus = makeEventBus();
+    const logger = makeLogger();
+    emitSpendAbort({ eventBus, sessionKey: testSessionKey, agentId: "agent-a", logger });
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ errorKind: "resource", hint: expect.any(String) }),
+      expect.any(String),
+    );
+    // Content-free: the structured fields carry NO dollar amount, and the message
+    // body string carries no "$".
+    const [obj, msg] = (logger.warn as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(JSON.stringify(obj)).not.toContain("$");
+    expect(obj).not.toHaveProperty("spentUsd");
+    expect(obj).not.toHaveProperty("capUsd");
+    expect(String(msg)).not.toContain("$");
+  });
+
+  it("invokes the optional onAbort hook before emitting", () => {
+    const eventBus = makeEventBus();
+    const logger = makeLogger();
+    const onAbort = vi.fn();
+    emitSpendAbort({ eventBus, sessionKey: testSessionKey, agentId: "agent-a", logger, onAbort });
+    expect(onAbort).toHaveBeenCalledOnce();
   });
 });
