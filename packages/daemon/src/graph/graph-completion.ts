@@ -30,6 +30,55 @@ export interface GraphAnnouncement {
 }
 
 // ---------------------------------------------------------------------------
+// COST-02: per-subagent corrected-$ subtree rollup
+// ---------------------------------------------------------------------------
+
+/**
+ * Sum a node's own corrected-$ cost plus the cost of every descendant (the
+ * node's subtree), reading the per-node cumulative ledger `gs.nodeCost`
+ * (populated in handleSubAgentCompleted from each completion's `event.cost`,
+ * the same corrected dollars feeding `gs.cumulativeCost`).
+ *
+ * "Descendants" walk the node→children edges — the REVERSE of `dependsOn` (a
+ * node lists its upstream parents in `dependsOn`, so a node's children are the
+ * nodes that name it in their `dependsOn`). A child's cost therefore rolls into
+ * its parent's subtree total; the recursion composes
+ * (`rollup(p) === own(p) + Σ rollup(child)`), the Hermes structure but over
+ * CORRECTED dollars rather than estimates (the E5 beat).
+ *
+ * PURE + deterministic (no IO) — unit-testable in isolation and reusable by the
+ * COST-02 read RPC. (tenant,agent)-scoped: reads ONLY the per-graph `gs` (which
+ * IS that scope), so two graphs in different scopes never cross-contaminate.
+ * A cycle-safe visited set guards against malformed graphs (sorted/validated
+ * graphs are acyclic, but the rollup must never infinite-loop).
+ *
+ * @param gs - The per-graph run state (owns the gs.nodeCost ledger + the graph).
+ * @param nodeId - The subtree root to roll up.
+ * @returns The corrected-$ sum of the node + all transitive descendants.
+ */
+export function computeSubtreeCost(gs: GraphRunState, nodeId: string): number {
+  // Build the node→children adjacency once (reverse of dependsOn).
+  const children = new Map<string, string[]>();
+  for (const node of gs.graph.graph.nodes) {
+    for (const parentId of node.dependsOn) {
+      const bucket = children.get(parentId);
+      if (bucket) bucket.push(node.nodeId);
+      else children.set(parentId, [node.nodeId]);
+    }
+  }
+
+  const visited = new Set<string>();
+  const walk = (id: string): number => {
+    if (visited.has(id)) return 0; // cycle guard (acyclic by validation, defensive here)
+    visited.add(id);
+    let sum = gs.nodeCost.get(id) ?? 0; // absent → 0 (no NaN)
+    for (const childId of children.get(id) ?? []) sum += walk(childId);
+    return sum;
+  };
+  return walk(nodeId);
+}
+
+// ---------------------------------------------------------------------------
 // Graph completion
 // ---------------------------------------------------------------------------
 
@@ -99,6 +148,14 @@ export function handleGraphCompletion(
     ? { nodeTokenSpend: Object.fromEntries(gs.nodeTokenSpend) }
     : {};
 
+  // COST-02: surface the per-node CUMULATIVE corrected-$ cost ledger (the
+  // production reader of gs.nodeCost). Content-free (nodeId → number); present
+  // only when non-empty — byte-identical otherwise (the nodeTokenSpend mold).
+  // The subtree rollups derive from this via computeSubtreeCost (below).
+  const nodeCostFields = gs.nodeCost.size > 0
+    ? { nodeCost: Object.fromEntries(gs.nodeCost) }
+    : {};
+
   deps.eventBus.emit("graph:completed", {
     graphId: gs.graphId,
     status: gs.stateMachine.getGraphStatus(),
@@ -113,6 +170,8 @@ export function handleGraphCompletion(
     ...cacheRollupFields,
     // IN-01: per-node token-spend breakdown
     ...nodeTokenSpendFields,
+    // COST-02: per-node cumulative corrected-$ cost ledger
+    ...nodeCostFields,
   });
 
   // 2c. Write _run-metadata.json to disk
