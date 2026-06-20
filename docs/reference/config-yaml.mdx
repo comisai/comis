@@ -2887,6 +2887,10 @@ Observability persistence layer. Stores channel health snapshots, execution metr
 | `prometheus.auth` | `"trusted-operator"` | `"trusted-operator"` | Access posture. The OTel exporter has no built-in auth; the posture is realized as the loopback bind + the operator's reverse proxy/firewall (NOT gateway-token-gated). |
 | `prometheus.exemplars` | `boolean` | `true` | Whether exemplars are desired. NOTE: the pinned exporter does not render OpenMetrics exemplars on the pull surface — the `trace_id` rides as a span attribute instead. Forward-looking knob. |
 | `prometheus.cardinalityCap` | `number` | `10000` | Max active series before a WARN-with-hint fires (the label-explosion DoS guard); the `comis_prometheus_series` self-metric exposes the count. |
+| `costGranularity.perTool` | `boolean` | `true` | Tag each `observability:token_usage` row with the distinct tools that fired the turn (persisted as `tool_tag` on `obs_token_usage`). The per-tool $ attribution is **best-effort** — an even split across the turn's tools that conserves the turn total, never exact per-tool accounting. |
+| `costGranularity.subagentRollup` | `boolean` | `true` | Surface the per-subagent corrected-$ rollup (a node + its subtree) on the cost views. |
+| `export.csv` | `boolean` | `true` | Offer CSV (alongside JSON) on the cost-export surface (the `comis cost export` CLI + the SPA billing view). |
+| `export.quarterHourBuckets` | `boolean` | `true` | Expose 15-minute (quarter-hour) cost buckets in addition to the hourly aggregate. |
 
 ```yaml
 observability:
@@ -2924,6 +2928,12 @@ observability:
     auth: trusted-operator # loopback + your reverse proxy/firewall (no built-in auth)
     exemplars: true
     cardinalityCap: 10000  # WARN above this many active series (label-explosion guard)
+  costGranularity:        # per-tool + per-subagent cost attribution — ship ON
+    perTool: true         # tag token_usage with the turn's tools (best-effort, even split)
+    subagentRollup: true  # surface the per-subagent corrected-$ rollup
+  export:                 # cost-export surface — ships ON
+    csv: true             # offer CSV (alongside JSON) on `comis cost export` + the SPA
+    quarterHourBuckets: true # expose 15-minute buckets in addition to hourly
 ```
 
 <Info>

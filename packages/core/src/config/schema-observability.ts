@@ -331,6 +331,32 @@ const PrometheusConfigSchema = z.strictObject({
 });
 
 /**
+ * Cost-attribution granularity configuration (COST-01/COST-02, WS4). Controls
+ * whether the per-tool tag (`tool_tag` on `obs_token_usage`) and the per-subagent
+ * corrected-$ rollup are computed/surfaced. Both ship ON. NOTE: the per-tool
+ * attribution is best-effort/labeled (N3) — an even split across the turn's tools
+ * that conserves the total, never exact per-tool accounting.
+ */
+const CostGranularitySchema = z.strictObject({
+  /** Tag each token_usage row with the distinct tools that fired the turn (COST-01). Default on. */
+  perTool: z.boolean().default(true),
+  /** Roll up corrected-$ per subagent node/subtree (COST-02). Default on. */
+  subagentRollup: z.boolean().default(true),
+});
+
+/**
+ * Cost-export configuration (COST-03, WS6). Controls the CSV export surface and
+ * quarter-hour time bucketing for the cost views/CLI. Both ship ON. (These are
+ * NEW names — no collision with the existing `persistence`/`audit` keys, §14.)
+ */
+const ExportConfigSchema = z.strictObject({
+  /** Offer CSV (alongside JSON) on the cost export surface (CLI + SPA). Default on. */
+  csv: z.boolean().default(true),
+  /** Expose 15-minute (quarter-hour) cost buckets in addition to hourly. Default on. */
+  quarterHourBuckets: z.boolean().default(true),
+});
+
+/**
  * Root observability configuration schema.
  *
  * Has sensible defaults so an empty object produces a valid ObservabilityConfig.
@@ -352,6 +378,10 @@ export const ObservabilityConfigSchema = z.strictObject({
   otel: OtelConfigSchema.default(() => OtelConfigSchema.parse({})),
   /** Prometheus `/metrics` pull policy (PROM-01) — opt-in, standalone, loopback-bound, ships off. */
   prometheus: PrometheusConfigSchema.default(() => PrometheusConfigSchema.parse({})),
+  /** Cost-attribution granularity (COST-01/02, WS4) — per-tool tag + per-subagent rollup, ship on. */
+  costGranularity: CostGranularitySchema.default(() => CostGranularitySchema.parse({})),
+  /** Cost-export surface (COST-03, WS6) — CSV + quarter-hour bucketing, ship on. */
+  export: ExportConfigSchema.default(() => ExportConfigSchema.parse({})),
 });
 
 export type ObservabilityConfig = z.infer<typeof ObservabilityConfigSchema>;
@@ -364,4 +394,14 @@ export type AuditConfig = z.infer<typeof AuditConfigSchema>;
 export type SpendConfig = z.infer<typeof SpendConfigSchema>;
 export type OtelConfig = z.infer<typeof OtelConfigSchema>;
 export type PrometheusConfig = z.infer<typeof PrometheusConfigSchema>;
-export { LogRotationConfigSchema, AuditConfigSchema, SpendConfigSchema, OtelConfigSchema, PrometheusConfigSchema };
+export type CostGranularityConfig = z.infer<typeof CostGranularitySchema>;
+export type ExportConfig = z.infer<typeof ExportConfigSchema>;
+export {
+  LogRotationConfigSchema,
+  AuditConfigSchema,
+  SpendConfigSchema,
+  OtelConfigSchema,
+  PrometheusConfigSchema,
+  CostGranularitySchema,
+  ExportConfigSchema,
+};
