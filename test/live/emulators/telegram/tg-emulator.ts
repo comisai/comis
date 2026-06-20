@@ -42,7 +42,11 @@
  */
 
 import type { Update, User } from "grammy/types";
-import { createHttpBackend, type HttpBackend, type RouteResult } from "../../harness/backends/http-backend.js";
+import {
+  createHttpBackend,
+  type HttpBackend,
+  type RouteResult,
+} from "../../harness/backends/http-backend.js";
 import type { ChannelCaps, ChannelEmulator } from "../../harness/channel-emulator.js";
 import { makeMessageUpdate, makeUser, nextUpdateId } from "./tg-payloads.js";
 import { tgCaps } from "./tg-caps.js";
@@ -98,6 +102,15 @@ export interface ChatRef {
  * delegate to the http-backend base.
  */
 export interface TgEmulator extends ChannelEmulator {
+  /**
+   * The SHARED loopback http-backend base this emulator composes. Exposed so the
+   * control API (Plan 04, `registerControlApi(emulator.backend, emulator)`) can
+   * register its `/control/*` routes on the SAME loopback port as the Bot API
+   * (SEC-01: one port, namespaced). The emulator still owns the base's
+   * lifecycle — `start()`/`stop()` delegate to it; callers MUST NOT call
+   * `backend.start()`/`stop()` directly.
+   */
+  readonly backend: HttpBackend;
   /**
    * Queue an inbound text message from `from` in `chat` for the next
    * `getUpdates` long-poll (builds a grammy-typed `Update` via `tg-payloads`).
@@ -456,6 +469,9 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
 
   const emulator: TgEmulator = {
     caps: tgCaps satisfies ChannelCaps,
+    // The shared base — the control API (Plan 04) registers /control/* on it so
+    // the control surface and the Bot API share ONE loopback port (SEC-01).
+    backend,
 
     start() {
       return backend.start();
