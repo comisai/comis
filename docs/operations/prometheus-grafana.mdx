@@ -73,6 +73,12 @@ front. The endpoint is content-free — it carries no message bodies, query stri
 or secrets — but the metric values (costs, error rates, spend) are operational
 data you should not expose to an untrusted network. The `auth: "trusted-operator"`
 config value names this posture; it does **not** add a credential check.
+
+A **non-loopback bind is not rejected** (it is a valid deliberate choice behind a
+reverse proxy), but it is logged loudly: at startup, when `prometheus.enabled` and
+`host` is anything other than `127.0.0.1` / `::1` / `localhost`, the daemon emits a
+`WARN` (`prometheus-non-loopback-bind`) naming the configured host and the
+unauthenticated exposure. Set `host: "127.0.0.1"` to silence it.
 </Warning>
 
 ## What's exported (content-free)
@@ -81,9 +87,21 @@ Every metric is an id, enum, or count — never message content, never a secret.
 The label set is deliberately **low-cardinality** (`agent`, `tenant`, `provider`,
 `model`, `operation`, `reason`, `state`, `outcome`, `kind`, …); session, trace,
 and user ids are **never** labels (a label-cardinality blowup is a denial-of-service
-and a PII surface). Secrets and content are re-redacted at the exporter boundary
-independently of any upstream scrubbing, so nothing leaks even with the GenAI
-semantic-convention attributes enabled.
+and a PII surface). Both label **keys and values** are bounded: the `reason` label
+maps to the closed cache-break-reason set (an unknown reason buckets to `other`),
+`provider`/`model` are the config-resolved ids (not raw request strings), and the
+`cardinalityCap` (default 10 000) is **enforced**, not just warned — once the
+distinct-series estimate reaches the cap, further distinct series collapse into a
+single `_overflow` bucket (and a `WARN` fires), so a label mistake cannot grow the
+series set without bound.
+
+The exporter boundary enforces a **closed attribute allowlist**: only the known
+metric-label keys and the known span/log attribute keys leave the daemon; any
+other key is dropped before it can become a label or span attribute. Allowed
+values are then re-redacted independently of any upstream scrubbing — so nothing
+leaks even with the GenAI semantic-convention attributes enabled, and a future
+careless attribute addition cannot smuggle a high-entropy secret out under a
+benign key.
 
 The exported series cover cost & spend (corrected `comis_cost_usd_total`, the
 spend-vs-ceiling gauges, pricing coverage), cache health (`comis_cache_break_total`

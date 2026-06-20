@@ -568,4 +568,133 @@ describe("setupObservability", () => {
     );
     otelMockState.shouldThrow = false;
   });
+
+  // -------------------------------------------------------------------------
+  // 13. MD-01: a non-loopback prometheus.host bind is a deliberate-but-risky
+  //     posture — emit a startup WARN-with-hint naming the exposure (the
+  //     /metrics surface serves operational shape unauthenticated). Do NOT
+  //     reject 0.0.0.0 (a valid choice behind a reverse proxy) — just warn.
+  // -------------------------------------------------------------------------
+
+  it("MD-01: WARNs with a hint when prometheus.enabled + a NON-loopback host (0.0.0.0) — names the unauthenticated exposure", async () => {
+    otelMockState.shouldThrow = false;
+    const eventBus = createMockEventBus();
+    const mockLogger = { info: vi.fn(), warn: vi.fn() };
+    const setupObservability = await getSetupObservability();
+
+    await setupObservability({
+      eventBus: eventBus as any,
+      _createTokenTracker: mockCreateTokenTracker,
+      logger: mockLogger as any,
+      clock: createFakeClock(1_000_000) as any,
+      config: configWith({
+        otel: { enabled: false },
+        prometheus: { enabled: true, host: "0.0.0.0" },
+      }),
+    } as any);
+
+    // A WARN with a hint fired, and the hint names the exposure + the knob.
+    const nonLoopbackWarn = mockLogger.warn.mock.calls.find(
+      ([obj]) =>
+        obj &&
+        typeof obj === "object" &&
+        typeof (obj as any).hint === "string" &&
+        /metrics|loopback|reverse.proxy|unauthenticated/i.test((obj as any).hint),
+    );
+    expect(nonLoopbackWarn, "a non-loopback bind must WARN with an exposure hint").toBeTruthy();
+    // The hint names the actual host (the "name the knob" discipline).
+    expect(JSON.stringify(nonLoopbackWarn![0])).toContain("0.0.0.0");
+    // The extension still loads (the bind is a valid deliberate choice, not rejected).
+    expect(mockRegisterOtelExporter).toHaveBeenCalledTimes(1);
+  });
+
+  it("MD-01: does NOT WARN for a loopback host (127.0.0.1 / ::1 / localhost) — the safe default is silent", async () => {
+    otelMockState.shouldThrow = false;
+    const setupObservability = await getSetupObservability();
+
+    for (const host of ["127.0.0.1", "::1", "localhost"]) {
+      vi.clearAllMocks();
+      const eventBus = createMockEventBus();
+      const mockLogger = { info: vi.fn(), warn: vi.fn() };
+      await setupObservability({
+        eventBus: eventBus as any,
+        _createTokenTracker: mockCreateTokenTracker,
+        logger: mockLogger as any,
+        clock: createFakeClock(1_000_000) as any,
+        config: configWith({ otel: { enabled: false }, prometheus: { enabled: true, host } }),
+      } as any);
+
+      const exposureWarn = mockLogger.warn.mock.calls.find(
+        ([obj]) =>
+          obj &&
+          typeof obj === "object" &&
+          typeof (obj as any).hint === "string" &&
+          /loopback|reverse.proxy|unauthenticated/i.test((obj as any).hint),
+      );
+      expect(exposureWarn, `loopback host '${host}' must NOT trigger the exposure WARN`).toBeUndefined();
+    }
+  });
+
+  it("MD-01: does NOT WARN about the bind when prometheus is DISABLED (even with a non-loopback host configured)", async () => {
+    otelMockState.shouldThrow = false;
+    const eventBus = createMockEventBus();
+    const mockLogger = { info: vi.fn(), warn: vi.fn() };
+    const setupObservability = await getSetupObservability();
+
+    await setupObservability({
+      eventBus: eventBus as any,
+      _createTokenTracker: mockCreateTokenTracker,
+      logger: mockLogger as any,
+      clock: createFakeClock(1_000_000) as any,
+      // prometheus off → the host is inert; no exposure exists to warn about.
+      config: configWith({ otel: { enabled: false }, prometheus: { enabled: false, host: "0.0.0.0" } }),
+    } as any);
+
+    const exposureWarn = mockLogger.warn.mock.calls.find(
+      ([obj]) => obj && typeof obj === "object" && /metrics|loopback/i.test(String((obj as any).hint ?? "")),
+    );
+    expect(exposureWarn, "a disabled prometheus surface must not warn about its host").toBeUndefined();
+  });
+
+  // -------------------------------------------------------------------------
+  // 14. LOW-1: the clock is forwarded to the extension ONLY when present —
+  //     never `clock: undefined` cast to ClockPort (the legacy/test call shape
+  //     passes no clock). The extension never calls clock, but an unsound
+  //     `undefined as ClockPort` is still a latent contract lie.
+  // -------------------------------------------------------------------------
+
+  it("LOW-1: forwards clock to the extension ONLY when present — no `clock: undefined` when clock is absent", async () => {
+    otelMockState.shouldThrow = false;
+    const eventBus = createMockEventBus();
+    const setupObservability = await getSetupObservability();
+
+    // Enable prometheus so the seam runs, but pass NO clock (the legacy shape).
+    await setupObservability({
+      eventBus: eventBus as any,
+      _createTokenTracker: mockCreateTokenTracker,
+      config: configWith({ otel: { enabled: false }, prometheus: { enabled: true } }),
+    } as any);
+
+    expect(mockRegisterOtelExporter).toHaveBeenCalledTimes(1);
+    const deps = mockRegisterOtelExporter.mock.calls[0]![0] as Record<string, unknown>;
+    // The `clock` key must be ABSENT (conditionally spread) — never present-with-undefined.
+    expect("clock" in deps, "clock must not be forwarded as `undefined` (the unsound cast)").toBe(false);
+  });
+
+  it("LOW-1: forwards the real clock when one IS provided", async () => {
+    otelMockState.shouldThrow = false;
+    const eventBus = createMockEventBus();
+    const clock = createFakeClock(1_000_000) as any;
+    const setupObservability = await getSetupObservability();
+
+    await setupObservability({
+      eventBus: eventBus as any,
+      _createTokenTracker: mockCreateTokenTracker,
+      clock,
+      config: configWith({ otel: { enabled: false }, prometheus: { enabled: true } }),
+    } as any);
+
+    const deps = mockRegisterOtelExporter.mock.calls[0]![0] as Record<string, unknown>;
+    expect(deps["clock"]).toBe(clock);
+  });
 });

@@ -41,7 +41,14 @@ import type { DeliveryTracer } from "../observability/delivery-tracer.js";
  */
 interface OtelExporterSeamDeps {
   eventBus: AppContainer["eventBus"];
-  clock: ClockPort;
+  /**
+   * The boot clock. OPTIONAL (LOW-1): the legacy/test call shape may not thread a
+   * clock, and the extension never calls wall-clock APIs — so it is forwarded ONLY
+   * when present (a conditional spread), never as `undefined as ClockPort` (an
+   * unsound contract lie). The extension's own `OtelExporterDeps.clock` stays
+   * required; structural assignability holds because we omit the key when absent.
+   */
+  clock?: ClockPort;
   observability: AppConfig["observability"];
   spendAccumulator?: SpendAccumulator;
   /** The daemon version label for `comis_build_info` (pkgJson.version). */
@@ -262,6 +269,34 @@ export async function setupObservability(deps: {
   const promCfg = deps.config?.observability?.prometheus;
   if ((otelCfg?.enabled === true || promCfg?.enabled === true) && deps.config !== undefined) {
     const observability = deps.config.observability;
+    // MD-01: the `/metrics` pull surface has NO built-in auth (the OTel
+    // PrometheusExporter serves the operational shape — metric names, labels,
+    // series counts — unauthenticated; `prometheus.auth:'trusted-operator'` is
+    // ADVISORY, realized by the loopback bind + the operator's reverse
+    // proxy/firewall). A non-loopback bind is a VALID deliberate choice (e.g.
+    // behind a reverse proxy), so we do NOT reject it — but it is a real exposure
+    // an operator must opt into knowingly, so we WARN loudly and name both the
+    // exposure and the configured host (the "name the knob" discipline).
+    if (promCfg?.enabled === true) {
+      const host = promCfg.host;
+      const isLoopback = host === "127.0.0.1" || host === "::1" || host === "localhost";
+      if (!isLoopback) {
+        deps.logger?.warn(
+          {
+            host,
+            port: promCfg.port,
+            errorKind: "config" as const,
+            hint:
+              `observability.prometheus.host is bound to a NON-loopback address ('${host}'); the /metrics ` +
+              `endpoint serves operational shape (metric names, labels, series counts) UNAUTHENTICATED — the ` +
+              `OTel PrometheusExporter has no built-in auth and 'auth: trusted-operator' is advisory. Put it ` +
+              `behind a reverse proxy / firewall, or set observability.prometheus.host to '127.0.0.1' (the ` +
+              `loopback default) to silence this.`,
+          },
+          "prometheus-non-loopback-bind",
+        );
+      }
+    }
     try {
       // Runtime-resolved (the daemon does NOT statically depend on the extension
       // — N2). The specifier is held in a WIDENED `string` (not a string literal)
@@ -276,9 +311,11 @@ export async function setupObservability(deps: {
       const mod = (await import(extensionSpecifier)) as unknown as OtelExtensionModule;
       otelHandle = mod.registerOtelExporter({
         eventBus,
-        // Forward the boot clock when present; the extension itself never calls
-        // wall-clock APIs, but the contract carries it for parity.
-        clock: deps.clock as ClockPort,
+        // LOW-1: forward the boot clock ONLY when present (conditional spread) —
+        // never `deps.clock as ClockPort` (which passes `undefined as ClockPort`
+        // on the legacy/test call shape, an unsound contract lie). The extension
+        // never calls wall-clock APIs, so omitting the key when absent is safe.
+        ...(deps.clock !== undefined ? { clock: deps.clock } : {}),
         observability,
         // The 177 accumulator reference (the comis_spend_* gauge source). Omitted
         // when no accumulator was constructed (clock/config absent → the
