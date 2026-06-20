@@ -48,6 +48,11 @@ const HARD_FAILURE_END_REASONS: ReadonlySet<string> = new Set([
   "circuit_open",
   "budget_exceeded",
   "budget_exhausted",
+  // WR-2 (177-obs-loop): the dollars kill-switch abort is a hard failure (never
+  // "ok") — so `comis explain` marks severity:"failed" and `comis fleet`
+  // degradedByCause buckets the spend-killed session on the named "spend_exceeded"
+  // cause instead of leaving it in the generic "error" bucket.
+  "spend_exceeded",
 ]);
 
 /**

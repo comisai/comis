@@ -302,6 +302,22 @@ describe("buildSessionEndMetadata", () => {
     expect(buildSessionHealthRollup({}, "output_starved").degraded).toBe(true);
   });
 
+  it("WR-2 (177-obs-loop): spend_exceeded is a named terminal cause in END_REASON_MAP (not the generic 'error' catch-all)", () => {
+    // The dollars kill-switch sets finishReason:"spend_exceeded"
+    // (bridge-safety-controls.checkSpendLimit). Before this fix END_REASON_MAP
+    // had NO spend_exceeded key, so the reason fell through the `?? "error"`
+    // catch-all → a spend-killed session was indistinguishable from a tool crash
+    // in obs.explain / obs.fleet.health (the security-review WR-2 finding). It
+    // must carry its OWN named endReason (the prompt_timeout/QT2/QT3 precedent —
+    // an in-union reason mapped EXPLICITLY, never the catch-all).
+    expect(END_REASON_MAP.spend_exceeded).toBe("spend_exceeded");
+    // The value reaches sessionEnd.endReason through the real builder.
+    expect(buildSessionEndMetadata({ ...baseArgs, finishReason: "spend_exceeded" }).sessionEnd?.endReason).toBe("spend_exceeded");
+    // Still degraded (the named cause is not "success") — restores the CAUSE the
+    // fleet degradedByCause record buckets on (degraded was already true).
+    expect(buildSessionHealthRollup({}, "spend_exceeded").degraded).toBe(true);
+  });
+
   it("falls back to 'error' for unmapped finishReasons", () => {
     const result = buildSessionEndMetadata({ ...baseArgs, finishReason: "some_unknown_reason" });
     expect(result.sessionEnd?.endReason).toBe("error");
@@ -319,7 +335,7 @@ describe("buildSessionEndMetadata", () => {
       "stop", "end_turn", "error", "max_steps",
       "budget_exceeded", "budget_exhausted", "circuit_open", "provider_degraded",
       "context_loop", "context_exhausted", "output_starved", "session_reset", "loop_detected",
-      "completed_with_tool_errors", "prompt_timeout",
+      "completed_with_tool_errors", "prompt_timeout", "spend_exceeded",
     ];
     for (const reason of ALL_FINISH_REASONS) {
       const mappedEndReason = END_REASON_MAP[reason] ?? "error";
