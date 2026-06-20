@@ -26,7 +26,6 @@ import {
 // helper). Type-only imports introduce no runtime daemon→agent coupling. The
 // graph:repaired emit + CanonicalTemplatePattern usage moved to graph-repair.ts.
 import type { CapabilityClass, TemplateMatch } from "@comis/agent";
-import { z } from "zod";
 // DEFER-174-FILESIZE-01: the routing predicate, repair context, and the
 // conservative deterministic weak-model repair branch (AUTHOR-01, Phase 174-03)
 // live in the sibling `graph-repair.ts` to keep this file under the
