@@ -366,6 +366,45 @@ export const IncidentReportSchema = z.object({
       memoriesGeneralized: z.number().optional(),
     })
     .optional(),
+  /** PERSIST-01 (observability-excellence, Phase 176): the prompt-cache breaks the
+   *  session incurred, aggregated per-reason from its `cache.break` trajectory
+   *  records (Plan 04). `estCostUsd` is the directly-lost cache-read saving summed
+   *  per reason (`tokenDrop × resolveModelPricing.cacheRead`; 0 for an unknown
+   *  model — honest). Counts + a closed reason label + a number ONLY — never the
+   *  changed tool NAMES (the trajectory carries only the changed-dims digest). The
+   *  `cacheBreaks?` section answers "did caching break this session, why, and what
+   *  did it cost". Optional + additive (present only when the trajectory carries
+   *  cache.break records — undefined, never [], when none; schemaVersion stays 1).
+   *  The `recall?`/`image?` content-free presence-conditional mold. */
+  cacheBreaks: z
+    .array(
+      z.object({
+        /** The closed CacheBreakReason discriminator (e.g. "system_changed", "tools_changed"). */
+        reason: z.string(),
+        /** How many cache breaks of this reason the session incurred. */
+        count: z.number(),
+        /** The summed directly-lost cache-read saving in USD (0 for an unknown-priced model). */
+        estCostUsd: z.number(),
+      }),
+    )
+    .optional(),
+  /** AUDIT-05 (observability-excellence, Phase 176): the security-decision audit
+   *  events the session produced, aggregated counts-by-kind from the durable
+   *  `obs_audit_events` (Plan 03) scoped to the session's (tenant, agent, traceId).
+   *  Content-free: a total + a `{kind → count}` record ONLY — NO actor names beyond
+   *  ids, NO secret value, NO `refs` blob (the rows are already scrubbed at write).
+   *  The `audit?` section answers "what security-relevant actions ran in this
+   *  session, and how many of each". Optional + additive (present only when the
+   *  session produced audit events — undefined when none; schemaVersion stays 1).
+   *  The `recall?`/`cacheBreaks?` content-free presence-conditional mold. */
+  audit: z
+    .object({
+      /** Total audit events the session produced. */
+      total: z.number(),
+      /** Per-kind counts (the closed AuditKind discriminator → count). Content-free. */
+      byKind: z.record(z.string(), z.number()),
+    })
+    .optional(),
   summary: z.string(),
   likelyRootCause: z
     .object({
@@ -578,6 +617,14 @@ export interface IncidentSignals {
     lastFinalCount: number;
     rerankerAvailable: boolean;
   };
+  /**
+   * PERSIST-01 (176-05): cache breaks folded per-reason from the session's
+   * `cache.break` trajectory records (Plan 04). Bounded + deterministically
+   * ordered (count desc, reason asc). Counts + a closed reason label + a summed
+   * est-$ ONLY (never the changed tool names). Absent ⇒ no cache breaks in the
+   * trajectory (omitted from the report — the `recall?` presence-conditional mold).
+   */
+  cacheBreaks?: Array<{ reason: string; count: number; estCostUsd: number }>;
   /**
    * OBS-03/OBS-04 (Phase 186): the image-generation turn reconstructed from the
    * session's `image.*` trajectory records (the terminal image.generated /

@@ -383,6 +383,13 @@ export function assembleIncidentReport(
     ...(signals.contextBudget !== undefined ? { contextBudget: signals.contextBudget } : {}),
     // RECALL-01: the memory-recall outcome (absent when the trajectory has no recall records).
     ...(signals.recall !== undefined ? { recall: signals.recall } : {}),
+    // PERSIST-01 (176-05): the per-reason cache breaks (absent when the session
+    // had none). Bounded to CACHE_BREAKS_CAP highest-count-first; the bound pass
+    // (obs-explain-bound.ts) records a truncations[] breadcrumb when it sheds the
+    // tail (GBIII I2). Content-free (counts + closed reason label + a number).
+    ...(signals.cacheBreaks !== undefined && signals.cacheBreaks.length > 0
+      ? { cacheBreaks: signals.cacheBreaks }
+      : {}),
     // OBS-03/OBS-04 (186): the image-generation turn reconstructed from the
     // trajectory's image.* records (absent when the session generated no image).
     // The cost rides here so `comis explain` shows it (Route a — NOT cost.costUsd,

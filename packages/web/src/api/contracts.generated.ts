@@ -8154,6 +8154,51 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
           ],
           "additionalProperties": false
         },
+        "cacheBreaks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "reason": {
+                "type": "string"
+              },
+              "count": {
+                "type": "number"
+              },
+              "estCostUsd": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "reason",
+              "count",
+              "estCostUsd"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "audit": {
+          "type": "object",
+          "properties": {
+            "total": {
+              "type": "number"
+            },
+            "byKind": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "type": "number"
+              }
+            }
+          },
+          "required": [
+            "total",
+            "byKind"
+          ],
+          "additionalProperties": false
+        },
         "summary": {
           "type": "string"
         },

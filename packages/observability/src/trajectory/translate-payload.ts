@@ -22,6 +22,7 @@
  */
 
 import type { TrajectoryBridgedEventName } from "./event-bus-bridge.js";
+import { translateCacheBreakPayload } from "./translate-cache-break-payload.js";
 import { translateImagePayload } from "./translate-image-payload.js";
 import { translateOrchestrationPayload } from "./translate-orchestration-payload.js";
 import { translateVideoPayload } from "./translate-video-payload.js";
@@ -263,23 +264,10 @@ export function translatePayload(
         formatViolation: payload.formatViolation,
       };
 
-    case "observability:cache_break": {
-      // PERSIST-01: closed reason + tokenDrop counts + a changed-dims DIGEST ONLY. The
-      // toolsAdded/Removed/SchemaChanged arrays (tool NAMES) are NEVER forwarded —
-      // reduced to counts (§2.7 / I3 / H1). Mirrors the row-builder's digest shape.
-      const toLen = (v: unknown): number => (Array.isArray(v) ? v.length : 0);
-      return {
-        reason: payload.reason,
-        tokenDrop: payload.tokenDrop,
-        tokenDropRelative: payload.tokenDropRelative,
-        changedDimsDigest: {
-          added: toLen(payload.toolsAdded),
-          removed: toLen(payload.toolsRemoved),
-          schemaChanged: toLen(payload.toolsSchemaChanged),
-          systemCharDelta: typeof payload.systemCharDelta === "number" ? payload.systemCharDelta : 0,
-        },
-      };
-    }
+    // PERSIST-01 (+AUDIT-05 est-$): content-free reason/counts/digest + computed est-$;
+    // delegated to translate-cache-break-payload.ts (file-size split).
+    case "observability:cache_break":
+      return translateCacheBreakPayload(payload);
 
     // ---- v2.27 authoring / sub-agent orchestration (TELEM-01 + AUTHOR-01/02 + STEER-01) ---- delegated to translate-orchestration-payload.ts (file-size split, Phase 175; content-free + envelope-stripped — closed enums + numbers/booleans + a run id ONLY, never a graph body, the synthesis INTENT TEXT, or the steer MESSAGE BODY; §2.7 / H1).
     // ORCH-OBS appends three previously-dark sub-agent-lifecycle events (sandbox-downgrade

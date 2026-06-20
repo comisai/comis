@@ -75,6 +75,16 @@ const MAX_RECORDS = 5_000;
 const DIAGNOSTICS_QUERY_LIMIT = 1000;
 
 /**
+ * Bounded window queried from `obs_audit_events` (tenant-scoped) before the
+ * caller's traceId filter (AUDIT-05). `AuditQueryParams` has no traceId predicate,
+ * so the reader scopes by tenant + this cap and the assembler narrows to the
+ * session's traceId AFTER — the same recency-horizon pattern as the diagnostics
+ * rollup. The store ALSO clamps `limit` to its own hard ceiling (Plan 03), so this
+ * is the read-side bound (GBIII I2 — bounded reports).
+ */
+const AUDIT_QUERY_LIMIT = 1000;
+
+/**
  * The four bounded source readers `obs.explain` consumes. One DI seam: the
  * real implementation reads files; tests inject fixture records.
  */
@@ -83,6 +93,21 @@ export interface IncidentSourceReader {
   readCacheTraceRecords(sessionKey: string): Promise<Array<Record<string, unknown>>>;
   readSessionMetadata(sessionKey: string): Promise<Record<string, unknown> | null>;
   readDiagnosticsRollup(sessionKey: string): Promise<Record<string, unknown> | null>;
+  /**
+   * AUDIT-05 (176-05): the `obs_audit_events` rows for this session's tenant
+   * (the audit persists via SQLite, NOT a trajectory record — Plan 03 — so the
+   * `audit?` IncidentReport section is sourced HERE, not from the trajectory
+   * stream). Tenant-scoped via `AuditQueryParams.tenant` + a bounded window; the
+   * caller (`assembleIncidentReportFromSources`) filters by the resolved
+   * `traceId` AFTER (AuditQueryParams has no traceId predicate). Returns the
+   * content-free rows (already scrubbed at write); soft-fails to `[]`.
+   *
+   * OPTIONAL: the production `makeRealReader` always implements it; a fixture
+   * reader that omits it simply produces no `audit?` section (the section is
+   * additive + presence-conditional — the same posture as a session with no
+   * audit events). Pre-176-05 fixture readers therefore need no change.
+   */
+  readAuditEvents?(sessionKey: string): Promise<Array<Record<string, unknown>>>;
 }
 
 /** Default data directory (lazy). Mirrors obs-trace.ts. */
@@ -226,6 +251,21 @@ export function makeRealReader(
       });
       const match = rows.find((r) => r.sessionKey === sessionKey);
       return match === undefined ? null : (match as unknown as Record<string, unknown>);
+    },
+
+    async readAuditEvents(sessionKey: string): Promise<Array<Record<string, unknown>>> {
+      if (obsStore === undefined) return []; // No store — the audit? section is omitted.
+      // AuditQueryParams has NO traceId predicate, so scope by the session's
+      // TENANT (the first sessionKey segment) + a bounded limit, and let the
+      // caller filter by the resolved traceId AFTER. An unparseable key yields no
+      // tenant scope — query the bounded window unfiltered (the caller's traceId
+      // filter still narrows it to this session).
+      const key = parseFormattedSessionKey(sessionKey);
+      const rows = obsStore.queryAuditEvents({
+        ...(key !== undefined ? { tenant: key.tenantId } : {}),
+        limit: AUDIT_QUERY_LIMIT,
+      });
+      return rows as unknown as Array<Record<string, unknown>>;
     },
   };
 }

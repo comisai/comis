@@ -52,6 +52,10 @@ export interface Acc {
   recallCount: number;
   recallZeroHits: number;
   lastRecall?: { lanes: number; finalCount: number; rerankerAvailable: boolean };
+  /** PERSIST-01 (176-05): cache breaks folded per-reason from `cache.break` records
+   *  (Plan 04) — `{count, estCostUsd}` summed per closed reason. Counts + a number
+   *  ONLY (never the changed tool names — the trajectory carries only the digest). */
+  cacheBreaksByReason: Map<string, { count: number; estCostUsd: number }>;
   learning: LearningFoldState; // OBS-02 (198): see obs-explain-learning-fold.ts
   /** The image (186) / vision (187) / video (192) / voice (196) turns reconstructed
    *  from the session's image.* / media.vision.* / video.* / media.stt / media.tts

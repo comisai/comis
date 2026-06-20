@@ -278,6 +278,21 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
       };
       return;
     }
+    case "cache.break": {
+      // PERSIST-01 (176-05): fold the cache-break per reason → {count, estCostUsd}.
+      // The bridged record (Plan 04 + 176-05) carries a closed `reason`, `tokenDrop`,
+      // and a COMPUTED `estCostUsd` (the directly-lost cache-read saving) — counts +
+      // a number ONLY, never the changed tool names (only the changed-dims digest
+      // crosses the trajectory boundary, I3). A blank/missing reason folds to "unknown".
+      const reason = asString(data.reason) ?? "unknown";
+      const estCostUsd = asNumber(data.estCostUsd) ?? 0;
+      const prev = acc.cacheBreaksByReason.get(reason) ?? { count: 0, estCostUsd: 0 };
+      acc.cacheBreaksByReason.set(reason, {
+        count: prev.count + 1,
+        estCostUsd: prev.estCostUsd + estCostUsd,
+      });
+      return;
+    }
     // OBS-02: fold learning-family records → the learning block — outcome (198) / skills (201) / revision+generalization (203); ids/counts only (SEC-01).
     case "learning.outcome_observed": accumulateLearningRecord(acc.learning, data); return;
     case "skill.prompt_invoked": accumulateSkillInvokedRecord(acc.learning, data); return;
@@ -345,6 +360,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     seenToolResultCallIds: new Set(),
     recallCount: 0,
     recallZeroHits: 0,
+    cacheBreaksByReason: new Map(),
     learning: emptyLearningFold(),
     sessionKey: "",
     seq: 0,
@@ -447,6 +463,22 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
             lastFinalCount: acc.lastRecall.finalCount,
             rerankerAvailable: acc.lastRecall.rerankerAvailable,
           },
+        }
+      : {}),
+    // PERSIST-01 (176-05): collapse the per-reason cache-break fold → a bounded,
+    // deterministically-ordered array (count desc, then reason asc — the fleet
+    // degradedByCause ordering). Present ONLY when the session had ≥1 cache break
+    // (undefined, never [], when none). estCostUsd rounded to cents-precision to
+    // avoid float-noise in the digest.
+    ...(acc.cacheBreaksByReason.size > 0
+      ? {
+          cacheBreaks: [...acc.cacheBreaksByReason.entries()]
+            .map(([reason, v]) => ({
+              reason,
+              count: v.count,
+              estCostUsd: Math.round(v.estCostUsd * 1e6) / 1e6,
+            }))
+            .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason)),
         }
       : {}),
     ...(learning !== undefined ? { learning } : {}),
