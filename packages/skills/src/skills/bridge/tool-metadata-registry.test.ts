@@ -437,6 +437,23 @@ describe("tool-metadata-registry -- cron validator", () => {
     const result = await validate({ action: "add", payload_kind: "text", payload_text: "hello", schedule_kind: "cron" });
     expect(result).toBeUndefined();
   });
+
+  // CRON-IN-01 (live 2026-06-20): the model correctly emitted schedule_kind:"in"
+  // for "remind me in 2 minutes" but this validator rejected it ("Valid: cron,
+  // every, at"), forcing a fallback to the timezone-error-prone "at" path.
+  it("accepts add with schedule_kind=in + positive schedule_in_seconds", async () => {
+    const validate = getCronValidator()!;
+    const result = await validate({ action: "add", payload_kind: "text", payload_text: "stretch", schedule_kind: "in", schedule_in_seconds: 120 });
+    expect(result).toBeUndefined();
+  });
+
+  it("rejects schedule_kind=in without a positive schedule_in_seconds (names the param)", async () => {
+    const validate = getCronValidator()!;
+    const missing = await validate({ action: "add", payload_kind: "text", payload_text: "stretch", schedule_kind: "in" });
+    expect(missing).toContain("schedule_in_seconds");
+    const nonPositive = await validate({ action: "add", payload_kind: "text", payload_text: "stretch", schedule_kind: "in", schedule_in_seconds: 0 });
+    expect(nonPositive).toContain("schedule_in_seconds");
+  });
 });
 
 describe("tool-metadata-registry -- message validator", () => {
