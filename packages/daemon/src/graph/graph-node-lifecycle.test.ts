@@ -808,3 +808,124 @@ describe("handleSubAgentCompleted: per-node budget", () => {
     expect(nodeUpdated![1]).toMatchObject({ tokensUsed: 999_999, cost: 9.9 });
   });
 });
+
+// ---------------------------------------------------------------------------
+// COST-02 (Task 1): per-node CUMULATIVE corrected-$ ledger gs.nodeCost
+//
+// HEAD has only a graph-WIDE gs.cumulativeCost + a TRANSIENT per-node cost
+// delta on the graph:node_updated event — NO per-node cumulative ledger. This
+// drives a REAL multi-node graph (a parent + 2 children, each completing with
+// a corrected cost) through handleSubAgentCompleted and asserts the per-node
+// ledger gs.nodeCost accumulates the corrected-$ delta keyed by nodeId — the
+// exact discipline gs.nodeTokenSpend already follows (BUDGET-03 above). The
+// CORRECTED cost is event.cost (the same value feeding gs.cumulativeCost).
+// ---------------------------------------------------------------------------
+
+describe("COST-02: per-node cumulative corrected-$ ledger (gs.nodeCost)", () => {
+  function makeCompletionDeps(): Parameters<typeof handleSubAgentCompleted>[1] {
+    return {
+      subAgentRunner: {
+        spawn: vi.fn().mockReturnValue("run-x"),
+        killRun: vi.fn(),
+        getRunStatus: vi.fn().mockReturnValue({ status: "completed", result: { response: "ok" }, sessionKey: "sk" }),
+      },
+      eventBus: { emit: vi.fn(), on: vi.fn(), off: vi.fn() } as any,
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+      sendToChannel: vi.fn().mockResolvedValue(true),
+      touchParentSession: vi.fn(),
+    } as unknown as Parameters<typeof handleSubAgentCompleted>[1];
+  }
+
+  function makeCompletionConfig(): Parameters<typeof handleSubAgentCompleted>[2] {
+    return { maxResultLength: 12000, subAgentTokenBudget: null } as unknown as Parameters<typeof handleSubAgentCompleted>[2];
+  }
+
+  /** A REAL multi-node graph: parent (root) + 2 children depending on it, each
+   *  mapped to its own runId, with a non-terminal stubbed state machine so the
+   *  completion path runs the budget-accumulation block (no abort). */
+  function makeMultiNodeGs(): GraphRunState {
+    const stateMachine = {
+      isTerminal: vi.fn().mockReturnValue(false),
+      markNodeCompleted: vi.fn(() => ({ ok: true, value: [] })),
+      markNodeFailed: vi.fn(() => ({ ok: true, value: { skipped: [], newlyReady: [], retrying: [] } })),
+      getNodeState: vi.fn(() => ({ status: "completed", startedAt: 1000 })),
+      snapshot: vi.fn(() => ({ nodes: new Map(), graphStatus: "running", executionOrder: [], isTerminal: false })),
+      getReadyNodes: vi.fn(() => []),
+    } as unknown as GraphRunState["stateMachine"];
+
+    return makeGraphRunState({
+      graph: {
+        graph: {
+          label: "cost-rollup",
+          nodes: [
+            { nodeId: "parent", task: "t", dependsOn: [] },
+            { nodeId: "childA", task: "t", dependsOn: ["parent"] },
+            { nodeId: "childB", task: "t", dependsOn: ["parent"] },
+          ],
+          edges: [],
+        },
+      } as any,
+      stateMachine,
+      runIdToNode: new Map([
+        ["run-parent", "parent"],
+        ["run-childA", "childA"],
+        ["run-childB", "childB"],
+      ]),
+      sharedDir: "",
+    });
+  }
+
+  const noop: Parameters<typeof handleSubAgentCompleted>[5] = {
+    spawnReadyNodes: vi.fn(),
+    handleGraphCompletion: vi.fn(),
+    handleBudgetExceeded: vi.fn(),
+  };
+
+  it("accumulates each node's corrected-$ delta into gs.nodeCost keyed by nodeId", () => {
+    const gs = makeMultiNodeGs();
+    const deps = makeCompletionDeps();
+
+    // childA $0.10, childB $0.05, parent $0.02 — corrected dollars (event.cost).
+    handleSubAgentCompleted(makeState(), deps, makeCompletionConfig(), gs,
+      { runId: "run-childA", success: true, tokensUsed: 100, cost: 0.10 }, noop);
+    handleSubAgentCompleted(makeState(), deps, makeCompletionConfig(), gs,
+      { runId: "run-childB", success: true, tokensUsed: 50, cost: 0.05 }, noop);
+    handleSubAgentCompleted(makeState(), deps, makeCompletionConfig(), gs,
+      { runId: "run-parent", success: true, tokensUsed: 20, cost: 0.02 }, noop);
+
+    // RED on pre-patch: gs.nodeCost does not exist (only the graph-wide sum +
+    // the transient per-node delta on the event).
+    expect(gs.nodeCost.get("childA")).toBeCloseTo(0.10, 10);
+    expect(gs.nodeCost.get("childB")).toBeCloseTo(0.05, 10);
+    expect(gs.nodeCost.get("parent")).toBeCloseTo(0.02, 10);
+    // The graph-wide total is unchanged (additive ledger, no double count).
+    expect(gs.cumulativeCost).toBeCloseTo(0.17, 10);
+  });
+
+  it("accumulates (does not overwrite) across re-emits for the same nodeId — composes like nodeTokenSpend", () => {
+    const gs = makeMultiNodeGs();
+    const deps = makeCompletionDeps();
+    // Re-map run ids so a second completion lands on the same node.
+    gs.runIdToNode.set("run-childA-retry", "childA");
+
+    handleSubAgentCompleted(makeState(), deps, makeCompletionConfig(), gs,
+      { runId: "run-childA", success: true, tokensUsed: 100, cost: 0.10 }, noop);
+    handleSubAgentCompleted(makeState(), deps, makeCompletionConfig(), gs,
+      { runId: "run-childA-retry", success: true, tokensUsed: 30, cost: 0.03 }, noop);
+
+    expect(gs.nodeCost.get("childA")).toBeCloseTo(0.13, 10);
+  });
+
+  it("leaves gs.nodeCost empty when no node reported a cost (no dead writes)", () => {
+    const gs = makeMultiNodeGs();
+    const deps = makeCompletionDeps();
+
+    // Completions with NO cost field (undefined) must not seed a 0-entry.
+    handleSubAgentCompleted(makeState(), deps, makeCompletionConfig(), gs,
+      { runId: "run-childA", success: true, tokensUsed: 100 }, noop);
+    handleSubAgentCompleted(makeState(), deps, makeCompletionConfig(), gs,
+      { runId: "run-parent", success: true, tokensUsed: 20 }, noop);
+
+    expect(gs.nodeCost.size).toBe(0);
+  });
+});
