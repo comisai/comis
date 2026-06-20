@@ -24,7 +24,7 @@ import Database from "better-sqlite3";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as nodePath from "node:path";
-import { initSchema, createObservabilityStore } from "@comis/memory";
+import { initSchema, createObservabilityStore, queryCacheBreakRateByReason } from "@comis/memory";
 import type { DiagnosticEvent } from "./diagnostic-collector.js";
 
 // ---------------------------------------------------------------------------
@@ -94,6 +94,95 @@ describe("tokenUsageEventToRow", () => {
     };
 
     expect(tokenUsageEventToRow(payload).sessionKey).toBe("sk-test");
+  });
+
+  // PERSIST-02/03 (Phase 176 Plan 04): the row-builder fills the 4 previously-
+  // dropped cost-correctness fields + pricing_state onto the row object.
+  it("PERSIST-02/03: threads warmupTurn/cacheEligible/costCorrection.delta/pendingCacheInvestmentUsd + pricingState onto the row", () => {
+    const payload: EventMap["observability:token_usage"] = {
+      timestamp: 1000,
+      traceId: "trace-1",
+      agentId: "agent-1",
+      channelId: "chan-1",
+      executionId: "exec-1",
+      provider: "anthropic",
+      model: "claude-3-5-sonnet-20241022",
+      tokens: { prompt: 100, completion: 50, total: 150 },
+      cost: { input: 0.01, output: 0.005, cacheRead: 0.001, cacheWrite: 0.002, total: 0.015 },
+      latencyMs: 200,
+      cacheReadTokens: 10,
+      cacheWriteTokens: 5,
+      sessionKey: "tenant:user:agent",
+      savedVsUncached: -0.02,
+      cacheEligible: true,
+      warmupTurn: true,
+      pendingCacheInvestmentUsd: 0.02,
+      costCorrection: { delta: 0.01, sdkRaw: 0.1, corrected: 0.11 },
+    };
+
+    const row = tokenUsageEventToRow(payload);
+    expect(row.warmupTurn).toBe(true);
+    expect(row.cacheEligible).toBe(true);
+    // costCorrection on the row is the scalar DELTA (not the nested object).
+    expect(row.costCorrection).toBe(0.01);
+    expect(row.pendingCacheInvestmentUsd).toBe(0.02);
+    // pricing_state (PERSIST-03): a catalog-priced anthropic model → "priced".
+    expect(row.pricingState).toBe("priced");
+  });
+
+  it("PERSIST-03: an unknown native model resolves pricingState 'unknown'; a gateway resolves 'free'", () => {
+    const base = {
+      timestamp: 1,
+      traceId: "",
+      agentId: "",
+      channelId: "",
+      executionId: "",
+      tokens: { prompt: 0, completion: 0, total: 0 },
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      latencyMs: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      sessionKey: "sk",
+      savedVsUncached: 0,
+      cacheEligible: false,
+    };
+    const unknown = tokenUsageEventToRow({
+      ...base,
+      provider: "anthropic",
+      model: "totally-fake-model-xyz",
+    } as EventMap["observability:token_usage"]);
+    expect(unknown.pricingState).toBe("unknown");
+
+    const free = tokenUsageEventToRow({
+      ...base,
+      provider: "ollama",
+      model: "llama3",
+    } as EventMap["observability:token_usage"]);
+    expect(free.pricingState).toBe("free");
+  });
+
+  it("PERSIST-02: omits costCorrection.delta when the event carries no costCorrection (absence is the no-correction signal)", () => {
+    const payload = {
+      timestamp: 1,
+      traceId: "",
+      agentId: "",
+      channelId: "",
+      executionId: "",
+      provider: "anthropic",
+      model: "claude-3-5-sonnet-20241022",
+      tokens: { prompt: 0, completion: 0, total: 0 },
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      latencyMs: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      sessionKey: "sk",
+      savedVsUncached: 0,
+      cacheEligible: false,
+      warmupTurn: false,
+      pendingCacheInvestmentUsd: 0,
+    } as EventMap["observability:token_usage"];
+    const row = tokenUsageEventToRow(payload);
+    expect(row.costCorrection).toBeUndefined();
   });
 });
 
@@ -1603,5 +1692,168 @@ describe("setupObsPersistence — audit sink (real store + tmp JSONL)", () => {
     expect(errCall).toBeDefined();
     expect((errCall![0] as { errorKind: string }).errorKind).toBe("resource");
     expect((errCall![0] as { hint: string }).hint).toContain("security-audit.jsonl");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PERSIST-01/02/03 (Phase 176 Plan 04): the cache_break subscriber + the
+// tokenUsageEventToRow round-trip (real store, NOT a mock — proves the row-builder
+// here meets Plan 01's insertTokenUsageStmt write-path).
+// ---------------------------------------------------------------------------
+
+describe("setupObsPersistence — cache break + token-usage persistence (real store)", () => {
+  let db: Database.Database;
+  let store: ReturnType<typeof createObservabilityStore>;
+
+  function realDeps(extra: Record<string, unknown> = {}) {
+    const listeners = new Map<string, Array<(p: unknown) => void>>();
+    const eventBus = {
+      on: vi.fn((e: string, h: (p: unknown) => void) => {
+        const arr = listeners.get(e) ?? []; arr.push(h); listeners.set(e, arr);
+      }),
+      off: vi.fn(), once: vi.fn(),
+      emit: (e: string, p: unknown) => { for (const h of listeners.get(e) ?? []) h(p); },
+    };
+    const deps = {
+      eventBus: eventBus as never,
+      obsStore: store,
+      db: { transaction: <T,>(fn: () => T) => fn },
+      channelActivityTracker: { getAll: () => [] } as never,
+      startupTimestamp: Date.now(),
+      snapshotIntervalMs: 300_000,
+      ...extra,
+    };
+    return { deps, eventBus };
+  }
+
+  function makeCacheBreak(
+    overrides: Partial<EventMap["observability:cache_break"]> = {},
+  ): EventMap["observability:cache_break"] {
+    return {
+      provider: "anthropic",
+      reason: "tools_changed",
+      tokenDrop: 1000,
+      tokenDropRelative: 0.5,
+      previousCacheRead: 2000,
+      currentCacheRead: 1000,
+      callCount: 3,
+      changes: {
+        systemChanged: false, toolsChanged: true, metadataChanged: false,
+        modelChanged: false, retentionChanged: false,
+        addedTools: ["a"], removedTools: [], changedSchemaTools: [],
+        headersChanged: false, extraBodyChanged: false,
+      },
+      toolsChanged: ["a"],
+      ttlCategory: undefined,
+      agentId: "agent-1",
+      sessionKey: "sk-1",
+      timestamp: 1000,
+      toolsAdded: ["a"], toolsRemoved: [], toolsSchemaChanged: [],
+      systemCharDelta: 10,
+      model: "claude-3-5-sonnet-20241022",
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    initSchema(db, 1536);
+    store = createObservabilityStore(db);
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it("Test 1 (PERSIST-01): emitting observability:cache_break persists a queryable cache_break row", () => {
+    const { deps, eventBus } = realDeps();
+    const result = setupObsPersistence(deps as never);
+    eventBus.emit("observability:cache_break", makeCacheBreak({ reason: "tools_changed" }));
+    eventBus.emit("observability:cache_break", makeCacheBreak({ reason: "tools_changed" }));
+    eventBus.emit("observability:cache_break", makeCacheBreak({ reason: "system_changed" }));
+    result.drainAll();
+
+    const rows = queryCacheBreakRateByReason(db, {});
+    const byReason = new Map(rows.map((r) => [r.reason, r.count]));
+    expect(byReason.get("tools_changed")).toBe(2);
+    expect(byReason.get("system_changed")).toBe(1);
+  });
+
+  it("Test 2 (PERSIST-02): the 4 dropped token columns PERSIST end-to-end (real insert→read-back)", () => {
+    const { deps, eventBus } = realDeps();
+    const result = setupObsPersistence(deps as never);
+    eventBus.emit("observability:token_usage", {
+      timestamp: 1000, traceId: "t", agentId: "a1", channelId: "c1", executionId: "e1",
+      provider: "anthropic", model: "claude-3-5-sonnet-20241022",
+      tokens: { prompt: 100, completion: 50, total: 150 },
+      cost: { input: 0.01, output: 0.005, cacheRead: 0.001, cacheWrite: 0.002, total: 0.015 },
+      latencyMs: 200, cacheReadTokens: 0, cacheWriteTokens: 100, sessionKey: "sk",
+      savedVsUncached: -0.02, cacheEligible: true, warmupTurn: true,
+      pendingCacheInvestmentUsd: 0.02, costCorrection: { delta: 0.01, sdkRaw: 0.1, corrected: 0.11 },
+    });
+    result.drainAll();
+
+    const raw = db.prepare(`SELECT warmup_turn, cache_eligible, cost_correction, pending_cache_investment_usd FROM obs_token_usage`).get() as {
+      warmup_turn: number; cache_eligible: number; cost_correction: number; pending_cache_investment_usd: number;
+    };
+    expect(raw.warmup_turn).toBe(1);
+    expect(raw.cache_eligible).toBe(1);
+    expect(raw.cost_correction).toBe(0.01);
+    expect(raw.pending_cache_investment_usd).toBe(0.02);
+  });
+
+  it("Test 3 (PERSIST-03): pricing_state persists resolvePricingState(provider, model)", () => {
+    const { deps, eventBus } = realDeps();
+    const result = setupObsPersistence(deps as never);
+    eventBus.emit("observability:token_usage", {
+      timestamp: 1000, traceId: "t", agentId: "a1", channelId: "c1", executionId: "e1",
+      provider: "anthropic", model: "claude-3-5-sonnet-20241022",
+      tokens: { prompt: 1, completion: 1, total: 2 },
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      latencyMs: 1, cacheReadTokens: 0, cacheWriteTokens: 0, sessionKey: "sk",
+      savedVsUncached: 0, cacheEligible: true, warmupTurn: false, pendingCacheInvestmentUsd: 0,
+    });
+    // A gateway provider → "free".
+    eventBus.emit("observability:token_usage", {
+      timestamp: 2000, traceId: "t", agentId: "a1", channelId: "c1", executionId: "e2",
+      provider: "ollama", model: "llama3",
+      tokens: { prompt: 1, completion: 1, total: 2 },
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      latencyMs: 1, cacheReadTokens: 0, cacheWriteTokens: 0, sessionKey: "sk2",
+      savedVsUncached: 0, cacheEligible: false, warmupTurn: false, pendingCacheInvestmentUsd: 0,
+    });
+    result.drainAll();
+
+    const rows = db.prepare(`SELECT provider, pricing_state FROM obs_token_usage ORDER BY timestamp`).all() as Array<{ provider: string; pricing_state: string }>;
+    const byProvider = new Map(rows.map((r) => [r.provider, r.pricing_state]));
+    expect(byProvider.get("anthropic")).toBe("priced");
+    expect(byProvider.get("ollama")).toBe("free");
+  });
+
+  it("Test 4 (A3): cache-break REUSES the diagnosticBuffer — emitting it does not add an audit row", () => {
+    const { deps, eventBus } = realDeps();
+    const result = setupObsPersistence(deps as never);
+    eventBus.emit("observability:cache_break", makeCacheBreak());
+    result.drainAll();
+
+    // The cache-break row is a DiagnosticRow (category:'cache_break'), NOT an audit row.
+    expect(queryCacheBreakRateByReason(db, {})).toHaveLength(1);
+    expect(store.queryAuditEvents({ limit: 100 })).toHaveLength(0);
+  });
+
+  it("subscribes to observability:cache_break", () => {
+    const { deps, eventBus } = realDeps();
+    const result = setupObsPersistence(deps as never);
+    expect(eventBus.on).toHaveBeenCalledWith("observability:cache_break", expect.any(Function));
+    result.drainAll();
+  });
+
+  it("PERSIST-01: the cacheBreaks config flag gates the subscriber (opt-out)", () => {
+    const { deps, eventBus } = realDeps({ persistence: { cacheBreaks: false } });
+    const result = setupObsPersistence(deps as never);
+    eventBus.emit("observability:cache_break", makeCacheBreak());
+    result.drainAll();
+    // Gated off → no cache_break row persisted.
+    expect(queryCacheBreakRateByReason(db, {})).toHaveLength(0);
   });
 });
