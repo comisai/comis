@@ -1,7 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { BudgetConfig } from "@comis/core";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { createBudgetGuard, BudgetError } from "./budget-guard.js";
+import { createBudgetGuard, BudgetError, checkSpendCeiling } from "./budget-guard.js";
+import { createFakeClock } from "../../../../test/support/fake-clock.js";
+import {
+  createSpendAccumulator,
+  SpendError,
+  type SpendScope,
+  type SpendCeilings,
+} from "./spend-accumulator.js";
 
 describe("BudgetGuard", () => {
   beforeEach(() => {
@@ -468,5 +475,170 @@ describe("BudgetGuard", () => {
       expect(error.cap).toBe(50000);
       expect(error.estimated).toBe(10000);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// checkSpendCeiling — the 3-state pricing gate + atomic accumulator read
+// (Phase 177-03 Task 1). The enforcement READ lives in the enforcer module
+// (budget-guard.ts), NOT the pure recorder (cost-tracker.ts).
+//
+// Four branches:
+//   - "free"   → never trips a ceiling (local-first deployments are safe)
+//   - "unknown" + burned tokens → surfaces spend_unpriceable (fail LOUD)
+//   - "priced" → enforces the ceiling via accumulator.checkAndReserve
+//   - a transient pricing-resolve THROW → snapshot fallback, no false abort
+// ---------------------------------------------------------------------------
+describe("checkSpendCeiling", () => {
+  const SCOPE: SpendScope = { tenantId: "t", agentId: "a" };
+
+  function makeAccumulator(overrides: Partial<SpendCeilings> = {}) {
+    const clock = createFakeClock(1_000_000);
+    const ceilings: SpendCeilings = {
+      perAgentUsd: overrides.perAgentUsd ?? null,
+      perTenantUsd: overrides.perTenantUsd ?? null,
+      daemonGlobalUsd: overrides.daemonGlobalUsd ?? null,
+      warnAtFraction: overrides.warnAtFraction ?? 0.8,
+    };
+    return createSpendAccumulator({ clock, ceilings });
+  }
+
+  const warnCfg = { onUnknownPricing: "warn" as const, pricingFallback: "snapshot" as const };
+  const abortCfg = { onUnknownPricing: "abort" as const, pricingFallback: "snapshot" as const };
+
+  it("free pricing state NEVER trips a ceiling (no false-DoS of local-first)", () => {
+    // The accumulator is ALREADY at/over its ceiling, but a free model must
+    // still pass with a zero-cost outcome — the ceiling is skipped entirely.
+    const acc = makeAccumulator({ perAgentUsd: 1 });
+    acc.recordSpend(SCOPE, 100); // way over the $1 ceiling
+    const resolveFree = () => "free" as const;
+
+    const res = checkSpendCeiling(acc, SCOPE, "ollama", "qwen3", 0.5, warnCfg, true, resolveFree);
+
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.value.kind).toBe("free");
+  });
+
+  it("unknown pricing + burned tokens surfaces spend_unpriceable under action 'warn' (fail loud, no abort)", () => {
+    const acc = makeAccumulator({ perAgentUsd: 100 });
+    const resolveUnknown = () => "unknown" as const;
+
+    const res = checkSpendCeiling(acc, SCOPE, "anthropic", "qwen-via-anthropic", 0.5, warnCfg, true, resolveUnknown);
+
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.value.kind).toBe("unpriceable");
+      if (res.value.kind === "unpriceable") {
+        expect(res.value.provider).toBe("anthropic");
+        expect(res.value.model).toBe("qwen-via-anthropic");
+      }
+    }
+  });
+
+  it("unknown pricing + burned tokens still surfaces unpriceable under action 'abort' (the bridge decides the abort)", () => {
+    const acc = makeAccumulator({ perAgentUsd: 100 });
+    const resolveUnknown = () => "unknown" as const;
+
+    // The gate is Result-returning and the abort is gated at the bridge layer;
+    // the gate always SURFACES the unpriceable signal so the event fires.
+    const res = checkSpendCeiling(acc, SCOPE, "anthropic", "qwen-x", 0.5, abortCfg, true, resolveUnknown);
+
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.value.kind).toBe("unpriceable");
+  });
+
+  it("unknown pricing but NO tokens burned does not surface unpriceable (proceeds to reserve)", () => {
+    const acc = makeAccumulator({ perAgentUsd: 100 });
+    const resolveUnknown = () => "unknown" as const;
+
+    // burnedTokens=false → the unpriceable branch does not fire; it reserves.
+    const res = checkSpendCeiling(acc, SCOPE, "anthropic", "qwen-y", 0.5, warnCfg, false, resolveUnknown);
+
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.value.kind).toBe("ok");
+  });
+
+  it("priced model under a ceiling reserves (kind 'ok')", () => {
+    const acc = makeAccumulator({ perAgentUsd: 100 });
+    const resolvePriced = () => "priced" as const;
+
+    const res = checkSpendCeiling(acc, SCOPE, "anthropic", "claude-opus", 0.5, warnCfg, true, resolvePriced);
+
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.value.kind).toBe("ok");
+      if (res.value.kind === "ok") {
+        expect(res.value.reservation.reservedUsd).toBe(0.5);
+        expect(res.value.warn).toBe(false);
+      }
+    }
+  });
+
+  it("priced model at/over a ceiling returns kind 'exceeded' carrying the SpendError scope", () => {
+    const acc = makeAccumulator({ perAgentUsd: 1 });
+    acc.recordSpend(SCOPE, 0.9); // 0.9 / 1.0 spent
+    const resolvePriced = () => "priced" as const;
+
+    // 0.9 + 0.5 = 1.4 > 1.0 → breach.
+    const res = checkSpendCeiling(acc, SCOPE, "anthropic", "claude-opus", 0.5, warnCfg, true, resolvePriced);
+
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.value.kind).toBe("exceeded");
+      if (res.value.kind === "exceeded") {
+        expect(res.value.error).toBeInstanceOf(SpendError);
+        expect(res.value.error.scope).toBe("agent");
+      }
+    }
+  });
+
+  it("surfaces the warn signal when the granted reserve crosses warnAtFraction", () => {
+    const acc = makeAccumulator({ perAgentUsd: 10, warnAtFraction: 0.8 });
+    acc.recordSpend(SCOPE, 7.6); // 7.6 / 10
+    const resolvePriced = () => "priced" as const;
+
+    // 7.6 + 0.5 = 8.1 → 0.81 >= 0.8 → warn true (still ok, not exceeded).
+    const res = checkSpendCeiling(acc, SCOPE, "anthropic", "claude-opus", 0.5, warnCfg, true, resolvePriced);
+
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.value.kind).toBe("ok");
+      if (res.value.kind === "ok") expect(res.value.warn).toBe(true);
+    }
+  });
+
+  it("snapshot fallback on a transient resolve THROW: non-aborting priced reserve, NEVER fail-open, NEVER abort the transient", () => {
+    // A defensive guard: if resolving the pricing state throws, fall back to
+    // the snapshot path and PROCEED with a reservation (fail-SAFE) — it must
+    // NOT treat the transient as "no limit" (fail-open) and must NOT abort on
+    // the transient itself. With a ceiling that has headroom, the reserve is ok.
+    const acc = makeAccumulator({ perAgentUsd: 100 });
+    const resolveThrows = () => {
+      throw new Error("transient pricing-resolve failure");
+    };
+
+    const res = checkSpendCeiling(acc, SCOPE, "anthropic", "claude-opus", 0.5, warnCfg, true, resolveThrows);
+
+    // Fail-safe: it does NOT abort on the transient error; it reserves via snapshot.
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.value.kind).toBe("ok");
+      if (res.value.kind === "ok") expect(res.value.reservation.reservedUsd).toBe(0.5);
+    }
+  });
+
+  it("snapshot fallback still ENFORCES the ceiling (fail-safe ≠ fail-open): an over-ceiling reserve on a throw still breaches", () => {
+    const acc = makeAccumulator({ perAgentUsd: 1 });
+    acc.recordSpend(SCOPE, 0.9);
+    const resolveThrows = () => {
+      throw new Error("transient");
+    };
+
+    // The snapshot fallback treats it as priced and STILL checks the ceiling:
+    // 0.9 + 0.5 = 1.4 > 1.0 → exceeded (it is NOT fail-open).
+    const res = checkSpendCeiling(acc, SCOPE, "anthropic", "claude-opus", 0.5, warnCfg, true, resolveThrows);
+
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.value.kind).toBe("exceeded");
   });
 });
