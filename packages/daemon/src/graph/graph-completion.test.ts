@@ -94,6 +94,7 @@ function createMinimalGraphRunState(
     syntheticRunResults: new Map(),
     nodeCacheData: new Map(),
     nodeTokenSpend: new Map(),
+    nodeCost: new Map(),
   };
 }
 
@@ -475,6 +476,7 @@ describe("SPEND-04: handleBudgetExceeded interoperates with graph maxCost via an
       syntheticRunResults: new Map(),
       nodeCacheData: new Map(),
       nodeTokenSpend: new Map(),
+      nodeCost: new Map(),
     };
   }
 
