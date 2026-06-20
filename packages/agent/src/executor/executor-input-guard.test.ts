@@ -285,12 +285,18 @@ describe("validateInput — input guard, jailbreak scoring, rate-limit cooldown"
       clock: createFakeClock(1_700_000_000_000),
     });
 
-    expect(events.find((e) => e.name === "audit:event")?.payload).toMatchObject({
+    // AUDIT-03 / E4: the bogus classification:"security" was reshaped to the
+    // closed kind union (kind:"injection_rate_exceeded"); no classification.
+    const auditPayload = events.find((e) => e.name === "audit:event")?.payload as
+      | Record<string, unknown>
+      | undefined;
+    expect(auditPayload).toMatchObject({
       actionType: "injection_rate_exceeded",
-      classification: "security",
+      kind: "injection_rate_exceeded",
       outcome: "failure",
       tenantId: "tenant-a",
     });
+    expect(auditPayload?.["classification"]).toBeUndefined();
     expect(events.find((e) => e.name === "security:injection_rate_exceeded")?.payload).toMatchObject({
       action: "reinforce",
       count: 5,

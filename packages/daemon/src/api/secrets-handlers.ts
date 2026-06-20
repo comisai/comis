@@ -199,7 +199,7 @@ export function createSecretsHandlers(
           agentId: "system",
           tenantId: deps.container.config.tenantId ?? "default",
           actionType: "secrets.get",
-          classification: "neutral",
+          kind: "secret_access",
           outcome: "failure",
           metadata: { name, error: "decryption_failed" },
         });
@@ -223,7 +223,7 @@ export function createSecretsHandlers(
         agentId: "system",
         tenantId: deps.container.config.tenantId ?? "default",
         actionType: "secrets.get",
-        classification: "neutral",
+        kind: "secret_access",
         outcome: "success",
         metadata: { name, exists: decryptResult.value !== undefined },
       });

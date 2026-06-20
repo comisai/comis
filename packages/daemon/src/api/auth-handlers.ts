@@ -399,7 +399,7 @@ export function createAuthHandlers(
         agentId: "system",
         tenantId: deps.container.config.tenantId ?? "default",
         actionType: "auth.set",
-        classification: "write",
+        kind: "auth_mutation",
         outcome: "success",
         metadata: {
           provider: params.provider,

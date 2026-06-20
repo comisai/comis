@@ -46,12 +46,15 @@ export interface SkillAuditOptions {
 export function emitSkillAudit(eventBus: TypedEventBus, opts: SkillAuditOptions): void {
   const classification = classifyAction(opts.action);
 
-  // Emit the generic audit:event
+  // Emit the generic audit:event. Skill-audit records are the generic
+  // `audit` family (AUDIT-03 / E4) and keep a meaningful access-class
+  // classification (read|mutate|destructive from classifyAction).
   const auditEvent = createAuditEvent({
     agentId: opts.agentId,
     tenantId: opts.tenantId,
     userId: opts.userId,
     actionType: opts.action,
+    kind: "audit",
     classification,
     outcome: opts.outcome,
     metadata: {
@@ -66,6 +69,7 @@ export function emitSkillAudit(eventBus: TypedEventBus, opts: SkillAuditOptions)
     agentId: auditEvent.agentId,
     tenantId: auditEvent.tenantId,
     actionType: auditEvent.actionType,
+    kind: auditEvent.kind,
     classification: auditEvent.classification,
     outcome: auditEvent.outcome,
     metadata: auditEvent.metadata,

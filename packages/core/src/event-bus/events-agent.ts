@@ -9,6 +9,7 @@
 import type { ErrorKind } from "../logging/log-fields.js";
 import type { ScriptClass } from "../text/script-classes.js";
 import type { GenerationPass } from "../text/generation-quality.js";
+import type { AuditKind } from "../security/audit.js";
 
 export interface AgentEvents {
   /** Skill loaded from disk and validated */
@@ -225,7 +226,21 @@ export interface AgentEvents {
     agentId: string;
     tenantId: string;
     actionType: string;
-    classification: string;
+    /**
+     * Event family (AUDIT-03 / E4). The closed {@link AuditKind} union rides
+     * the wire so Plan 03's sink can persist it directly (deriving `kind`
+     * from `actionType` only as a defense-in-depth fallback when absent).
+     * Optional for backward-tolerance of un-migrated emits; all 6 in-repo
+     * sites set it.
+     */
+    kind?: AuditKind;
+    /**
+     * Risk class — loosely typed at the event level. The schema
+     * (`AuditEventSchema`) is the closed `read|mutate|destructive` source of
+     * truth; the bogus `"security"`/`"write"`/`"neutral"` strings are no
+     * longer sent (they moved to `kind`).
+     */
+    classification?: string;
     outcome: "success" | "failure" | "denied";
     metadata?: Record<string, unknown>;
   };
