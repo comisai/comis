@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, beforeEach } from "vitest";
-import { createModelCatalog, resolveModelPricing, ZERO_COST, type CatalogEntry, type ModelCatalog } from "./model-catalog.js";
+import {
+  createModelCatalog,
+  resolveModelPricing,
+  resolvePricingState,
+  ZERO_COST,
+  type CatalogEntry,
+  type ModelCatalog,
+} from "./model-catalog.js";
 
 describe("ModelCatalog", () => {
   let catalog: ModelCatalog;
@@ -217,6 +224,34 @@ describe("ModelCatalog", () => {
     it("ZERO_COST includes cacheWrite1h = 0 for unknown models", () => {
       const rates = resolveModelPricing("unknown", "nonexistent");
       expect(rates.cacheWrite1h).toBe(0);
+    });
+  });
+
+  // PERSIST-03 (observability-excellence E1) — the three-state honest-pricing
+  // signal. A NEW function alongside resolveModelPricing (whose 5 production
+  // callers + return type must stay untouched — Landmine L3). The discriminator
+  // is provider-family membership (model-family.ts NATIVE_PROVIDER_FAMILY), NOT a
+  // bare catalog-presence boolean: a native provider with no catalog entry is the
+  // dangerous ffe11736 fail-open (returns "unknown", never "free").
+  describe("resolvePricingState (PERSIST-03)", () => {
+    it("returns 'priced' for a native provider model with a catalog entry", () => {
+      // claude-sonnet-4-5 is a known anthropic model with non-zero cost.
+      expect(resolvePricingState("anthropic", "claude-sonnet-4-5-20250929")).toBe("priced");
+    });
+
+    it("returns 'free' for a gateway/local provider absent from NATIVE_PROVIDER_FAMILY (ollama)", () => {
+      // ollama is a local runtime — $0 is correct, never "unknown".
+      expect(resolvePricingState("ollama", "qwen3:8b")).toBe("free");
+    });
+
+    it("returns 'unknown' for a NATIVE provider with no catalog entry (the ffe11736 chimera case)", () => {
+      // anthropic IS in NATIVE_PROVIDER_FAMILY but this model id has no catalog
+      // entry → the dangerous silent-$0 fail-open must surface as "unknown".
+      expect(resolvePricingState("anthropic", "some-model-not-in-catalog")).toBe("unknown");
+    });
+
+    it("returns 'free' for another gateway family (openrouter)", () => {
+      expect(resolvePricingState("openrouter", "anything")).toBe("free");
     });
   });
 });
