@@ -111,7 +111,12 @@ const TARGET_GRAPH: Record<WorkspacePackage, ReadonlySet<string>> = {
   // so the graph is now one-arrow:
   //   @comis/core ← @comis/observability ← @comis/infra
   infra: new Set(["shared", "core", "observability"]),
-  memory: new Set(["shared", "core"]),
+  // @comis/observability edge (176-03 AUDIT-01): the security-audit JSONL writer
+  // (audit-mutations.ts) reuses the config-audit append/rotate/confine helpers
+  // (appendRegularFile / rotateConfigAuditLogIfNeeded / ensureConfigAuditParentDir)
+  // + sanitizeForPersistence — DON'T hand-roll 0600/rotation/symlink-safety.
+  // One-arrow (observability never imports memory): no cycle.
+  memory: new Set(["shared", "core", "observability"]),
   scheduler: new Set(["shared", "core"]),
   // skills: no infra edge. Logger type imports from @comis/core; isDocker
   // lives at packages/core/src/runtime/is-docker.ts.

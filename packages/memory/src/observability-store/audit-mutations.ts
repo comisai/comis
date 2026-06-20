@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: appendAuditJsonl surfaces a JSONL-write failure as a throw so the daemon audit subscriber (obs-audit-sink.ts persistAuditRow) can try/catch it, log ERROR with hint+errorKind, and continue — the SQLite half still drains and the event is never silently dropped (T-176-11). The throw fires only on a filesystem failure (permissions/space/symlink-rejection), never on user data; the writer's signature is void (single-shot per the config-audit append analog), so Result.err would force every caller into an unwrap the subscriber does not need.
 /**
  * Security-audit sink helpers (AUDIT-01) — the only genuinely-new machinery in
  * Phase 176. Composes TWO existing analogs rather than inventing storage:
@@ -27,16 +28,43 @@
  */
 
 import type Database from "better-sqlite3";
+import { z } from "zod";
 import {
   appendRegularFile,
   rotateConfigAuditLogIfNeeded,
   ensureConfigAuditParentDir,
 } from "@comis/observability";
+import { createRowMapper } from "../row-mapper.js";
 import type {
   ObservabilityStore,
   AuditEventRow,
   AuditQueryParams,
 } from "./observability-store-types.js";
+
+/**
+ * Schema for the `obs_audit_events` security-audit table (AUDIT-01) — the SSOT
+ * for the snake_case raw row, co-located with its sole `createRowMapper`
+ * consumer (the SessionSummaryRollupDbRowSchema precedent — declared beside its
+ * mapper, NOT in the row-schemas.ts SSOT file, which is at the 800-line cap).
+ * Parsed via `createRowMapper` (never `as Row[]`) so a malformed row degrades
+ * silently (empty result) like every other observability query. `id`/`kind` are
+ * NOT NULL; `tenant_id` is NOT NULL (the `''` system-scope sentinel for
+ * tenant-less events); everything else is nullable.
+ */
+export const AuditEventDbRowSchema = z.strictObject({
+  id: z.string(),
+  tenant_id: z.string(),
+  agent_id: z.string().nullable(),
+  ts: z.number(),
+  kind: z.string(),
+  classification: z.string().nullable(),
+  action: z.string().nullable(),
+  actor: z.string().nullable(),
+  outcome: z.string().nullable(),
+  severity: z.string().nullable(),
+  trace_id: z.string().nullable(),
+  refs: z.string().nullable(),
+});
 
 // AuditQueryParams is declared in observability-store-types.ts (beside the
 // ObservabilityStore interface that consumes it) to avoid a types↔impl `.d.ts`
@@ -51,21 +79,16 @@ export const MAX_AUDIT_QUERY_LIMIT = 1000;
 /** Shape of the audit slice of ObservabilityStore implemented here. */
 export type AuditMutations = Pick<ObservabilityStore, "insertAuditEvent" | "queryAuditEvents">;
 
-/** Raw snake_case row read back from `obs_audit_events`. */
-interface AuditEventDbRow {
-  id: string;
-  tenant_id: string;
-  agent_id: string | null;
-  ts: number;
-  kind: string;
-  classification: string | null;
-  action: string | null;
-  actor: string | null;
-  outcome: string | null;
-  severity: string | null;
-  trace_id: string | null;
-  refs: string | null;
-}
+/** Raw snake_case row read back from `obs_audit_events` (inferred from the Zod SSOT). */
+type AuditEventDbRow = ReturnType<typeof AuditEventDbRowSchema.parse>;
+
+/**
+ * Typed row mapper for `obs_audit_events` (prepared once). Replaces the
+ * `db.prepare(...).all(...) as Row[]` cast (the memory-package untyped-sqlite
+ * gate) — a malformed row degrades silently to an empty result, like every
+ * other observability query.
+ */
+const auditEventMapper = createRowMapper(AuditEventDbRowSchema);
 
 function auditEventFromRow(r: AuditEventDbRow): AuditEventRow {
   return {
@@ -156,8 +179,10 @@ export function bindAuditMutations(db: Database.Database): AuditMutations {
     const sql = `SELECT * FROM obs_audit_events ${where} ORDER BY ts DESC LIMIT ?`;
     values.push(limit);
 
-    const raw = db.prepare(sql).all(...values) as AuditEventDbRow[];
-    return raw.map(auditEventFromRow);
+    const parsed = auditEventMapper.parseRows(db.prepare(sql).all(...values));
+    // Degrade-on-validation-error: observability query → empty result.
+    const rows = parsed.ok ? parsed.value : [];
+    return rows.map(auditEventFromRow);
   }
 
   return { insertAuditEvent, queryAuditEvents };

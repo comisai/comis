@@ -296,15 +296,16 @@ export type {
   SystemPromptReportRow,
 } from "./observability-store/index.js";
 
-// AUDIT-01: the security-audit sink helpers (the 0600 rotated JSONL writer +
-// the bounded query-param shape) the daemon's obs-persistence-wiring consumes.
+// AUDIT-01: the security-audit sink helpers the daemon's obs-persistence-wiring
+// consumes (the 0600 rotated JSONL writer + the default log basename). The
+// DEFAULT/MAX query-limit constants stay internal to the observability-store
+// barrel (impl detail — not re-surfaced here). `AuditQueryParams` is
+// ahead-of-consumer for Plan 05's obs.audit.query (policy-documented).
 export {
   appendAuditJsonl,
   SECURITY_AUDIT_LOG_BASENAME,
-  DEFAULT_AUDIT_QUERY_LIMIT,
-  MAX_AUDIT_QUERY_LIMIT,
 } from "./observability-store/index.js";
-export type { AuditQueryParams, AppendAuditJsonlParams } from "./observability-store/index.js";
+export type { AuditQueryParams } from "./observability-store/index.js";
 
 // Fleet window-rollup reducer (A2, v2.15 Phase 159). reduceFleetWindow is the
 // PURE cross-session reduce over the A1 SessionSummaryRollup[] (synthetic

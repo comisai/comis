@@ -228,7 +228,7 @@ export function wireAuditSink(deps: WireAuditSinkDeps): void {
         logger?.error(
           {
             err,
-            errorKind: "resource",
+            errorKind: "resource" as const,
             hint: "security-audit.jsonl append failed; the SQLite audit row still persisted. Check ~/.comis/logs permissions/space.",
             kind: row.kind,
           },

@@ -2709,6 +2709,14 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // system_prompt_reports table row schema.
       "SystemPromptReportDbRowSchema",
       "SystemPromptReportDbRowFromSchema",
+      // Audit-query filter shape (176-03 AUDIT-01) — the obs_query {action:"audit"}
+      // filter surface. AHEAD-OF-CONSUMER: Plan 05 (the obs.audit.query RPC + the
+      // obs_query audit action) is its cross-package consumer; until then it is
+      // consumed only intra-package (queryAuditEvents) + the audit-mutations test.
+      // Shrinks out when Plan 05's daemon handler name-imports it.
+      // (AuditEventDbRowSchema is NOT here — it is co-located in audit-mutations.ts
+      // and not surfaced on the barrel.)
+      "AuditQueryParams",
       // cache-stats SQL row schemas (4 × 2 = 8 entries).
       "CacheStatsWindowRawDbRowSchema",
       "CacheStatsWindowRawDbRowFromSchema",
