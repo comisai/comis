@@ -1669,6 +1669,15 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                     },
                   }
                 : {};
+            // COST-01: tag this turn with the DISTINCT tools that fired (from the
+            // already-tracked m.toolCallHistory at :557 — NOT a new accumulator).
+            // Content-free: tool NAMES/ids only, never args/output. The per-tool $
+            // split a consumer renders is best-effort/labeled (N3) — an even split
+            // across these distinct tools that conserves cost.total (locked A5);
+            // exact per-tool accounting is out of scope. Absent ⇒ the emit is
+            // byte-identical (the spread vanishes), honoring no-backward-compat.
+            const toolTag =
+              m.toolCallHistory.length > 0 ? Array.from(new Set(m.toolCallHistory)) : undefined;
             deps.eventBus.emit("observability:token_usage", {
               timestamp: systemNowMs(),
               traceId: tryGetContext()?.traceId ?? deps.executionId,
@@ -1703,6 +1712,9 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               warmupTurn,
               pendingCacheInvestmentUsd,
               ...costCorrectionField,
+              // COST-01: the distinct tool tag (best-effort, labeled). Spread so
+              // a no-tool turn keeps the payload byte-identical (no-backward-compat).
+              ...(toolTag && { toolTag }),
               // B3 (D8): SDK per-turn stop signal. RELIABLE — m.lastStopReason is
               // captured at :1231 in this same turn_end case, BEFORE this emit.
               ...(m.lastStopReason !== undefined && { stopReason: m.lastStopReason }),

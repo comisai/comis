@@ -169,6 +169,54 @@ describe("tokenUsageEventToRow", () => {
     expect(free.pricingState).toBe("free");
   });
 
+  // COST-01 (Phase 179): the row-builder threads the distinct toolTag from the
+  // event onto the row so the write-path persists it to the tool_tag column.
+  // Without this thread the column is always NULL in production (a silent stub).
+  it("COST-01: threads payload.toolTag onto the row (distinct tool names)", () => {
+    const payload = {
+      timestamp: 1000,
+      traceId: "trace-1",
+      agentId: "agent-1",
+      channelId: "chan-1",
+      executionId: "exec-1",
+      provider: "anthropic",
+      model: "claude-3-5-sonnet-20241022",
+      tokens: { prompt: 100, completion: 50, total: 150 },
+      cost: { input: 0.01, output: 0.005, cacheRead: 0.001, cacheWrite: 0.002, total: 0.015 },
+      latencyMs: 200,
+      cacheReadTokens: 10,
+      cacheWriteTokens: 5,
+      sessionKey: "tenant:user:agent",
+      savedVsUncached: 0,
+      cacheEligible: true,
+      toolTag: ["bash", "read"],
+    } as EventMap["observability:token_usage"];
+
+    expect(tokenUsageEventToRow(payload).toolTag).toEqual(["bash", "read"]);
+  });
+
+  it("COST-01: leaves toolTag undefined on the row when the event carries none (no-tool turn)", () => {
+    const payload = {
+      timestamp: 1,
+      traceId: "",
+      agentId: "",
+      channelId: "",
+      executionId: "",
+      provider: "anthropic",
+      model: "claude-3-5-sonnet-20241022",
+      tokens: { prompt: 0, completion: 0, total: 0 },
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      latencyMs: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      sessionKey: "sk",
+      savedVsUncached: 0,
+      cacheEligible: false,
+    } as EventMap["observability:token_usage"];
+
+    expect(tokenUsageEventToRow(payload).toolTag).toBeUndefined();
+  });
+
   it("PERSIST-02: omits costCorrection.delta when the event carries no costCorrection (absence is the no-correction signal)", () => {
     const payload = {
       timestamp: 1,

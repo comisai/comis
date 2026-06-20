@@ -130,6 +130,10 @@ export function tokenUsageEventToRow(
     pendingCacheInvestmentUsd: payload.pendingCacheInvestmentUsd,
     // PERSIST-03: the three-state honest-pricing signal (the ffe11736 chimera → "unknown").
     pricingState: resolvePricingState(payload.provider, payload.model),
+    // COST-01 (Phase 179): the distinct tool tag (best-effort, labeled per N3).
+    // Already deduped at the emit (Array.from(new Set(m.toolCallHistory))); the
+    // write-path JSON-stringifies it onto the tool_tag column (NULL when absent).
+    toolTag: payload.toolTag,
   };
 }
 

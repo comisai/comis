@@ -315,6 +315,15 @@ export interface AgentEvents {
      *  (set at :1005/:1018/:1625/:1672/:2113); treat as init-default "stop" until Phase 152
      *  flight-recorder surfaces effectiveFinishReason. D8. */
     finishReason?: string;
+    /**
+     * COST-01: the DISTINCT tool names that fired during this turn (content-free
+     * ids only — never args/output). OMITTED when no tool fired (absence = the
+     * byte-identical no-tool payload, not an empty array). Persisted on the
+     * `tool_tag` column. The per-tool token/$ attribution a consumer derives from
+     * this is best-effort/labeled (N3): an even split across these tools that
+     * conserves the turn total — exact per-tool accounting is out of scope.
+     */
+    toolTag?: string[];
   };
 
   /** Cache break detected: prompt cache invalidation with attribution.
