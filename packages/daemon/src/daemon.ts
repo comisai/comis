@@ -117,8 +117,7 @@ import {
 import { createGatewayServer } from "@comis/gateway";
 import {
   setupLogging,
-  setupObservability,
-  rehydrateSpendFromStore,
+  setupObservability, rehydrateSpendFromStore,
   setupHealth,
   setupMemory,
   setupAgents,
@@ -1453,23 +1452,14 @@ async function bootFoundation(
     // threaded into setupShutdown. The activity-stream logger + homeDir
     // are read here at the sanctioned composition root (no env reads in the
     // substrate; injected logger).
-    activityStream, disposeActivityStream,
-    // Phase 177: the single daemon-wide spend accumulator (the dollars
-    // kill-switch enforcement state). CONSTRUCTED inside setupObservability with
-    // the live recordSpend subscriber; REHYDRATED below at the boot root once
-    // obsStore exists; threaded into the per-agent bridge guards (same reference).
-    spendAccumulator,
+    activityStream, disposeActivityStream, spendAccumulator, // spendAccumulator: Phase 177 dollars kill-switch — constructed + live-incremented in setupObservability, REHYDRATED below at the boot root, threaded into the per-agent bridges (same reference).
   } = setupObservability({
     eventBus: container.eventBus,
     _createTokenTracker,
     logger: logLevelManager.getLogger("observability"),
     activityLogger: logLevelManager.getLogger("activity-stream"),
     homeDir: mergedEnv["HOME"],
-    dataDir,
-    // Phase 177: thread the boot ClockPort + config so the daemon-wide spend
-    // accumulator is constructed here (ceilings from config.observability.spend).
-    clock,
-    config: container.config,
+    dataDir, clock, config: container.config, // Phase 177 (clock+config): construct the spend accumulator here (ceilings from config.observability.spend).
     // runtime reachability: resolve the DEFAULT agent's activity.theme →
     // themeForName bundle and forward it so the process-wide ActivityStream's
     // subagent marker follows the configured theme (the four themes are now
@@ -1554,17 +1544,8 @@ async function bootFoundation(
     : undefined;
   const obsStore = obsBundle?.obsStore; // trajectory recorder is per-session (pi-executor.ts).
   const obsPersistence = obsBundle?.obsPersistence;
-
-  // Phase 177: REHYDRATE the daemon-wide spend accumulator from the persisted
-  // rolling dollars — at the boot composition root, AFTER obsStore exists (it
-  // owns getRollingSpendUsd, unreachable inside setupObservability). NO-OPS when
-  // obsStore is undefined (persistence disabled → no durable source → the
-  // accumulator starts at $0 and re-accrues live, a documented honest
-  // degradation, NOT a bug). 24h rolling window — matches the auto-prune horizon.
-  if (spendAccumulator) {
-    const SPEND_REHYDRATE_WINDOW_MS = 24 * 60 * 60 * 1000;
-    rehydrateSpendFromStore(spendAccumulator, obsStore, SPEND_REHYDRATE_WINDOW_MS);
-  }
+  // Phase 177: REHYDRATE the spend accumulator at the boot root, AFTER obsStore exists (the rolling-spend read lives there); NO-OPS when obsStore is undefined (persistence off → start at $0). 24h window.
+  if (spendAccumulator) rehydrateSpendFromStore(spendAccumulator, obsStore, 24 * 60 * 60 * 1000);
 
   // OUTCOME-07: prune the append-only outcome_events ledger at EVERY boot,
   // UNCONDITIONALLY — deliberately OUTSIDE the obsConfig.persistence.enabled IIFE
@@ -1688,8 +1669,7 @@ async function bootFoundation(
     schedulerLogger, skillsLogger, memoryLogger, daemonVersion,
     tokenTracker, sharedCostTracker,
     diagnosticCollector, billingEstimator, channelActivityTracker, deliveryTracer,
-    activityStream, disposeActivityStream,
-    spendAccumulator, // Phase 177: daemon-wide spend accumulator → bootAgents → setupAgents → createPiExecutor → the bridge reference
+    activityStream, disposeActivityStream, spendAccumulator, // spendAccumulator: Phase 177 dollars kill-switch → bootAgents → setupAgents → createPiExecutor → bridge.
     contextPipelineCollector,
     processMonitor,
     disposeEmbedding, cachedPort, memoryAdapter, db, sessionStore, memoryApi,
@@ -1755,8 +1735,7 @@ async function bootAgents(
     lcdStore, // Phase 128 LCD store; threaded into setupAgents -> createPiExecutor (contextStore) -> setupContextEngine -> the `dag` branch (context-engine.ts). Opt-in (version: "dag"); default pipeline. The agent receives the core ContextStorePort TYPE only (agent↛memory cut)
     provenanceStore, // Phase 173 DIST-03 read side; threaded into setupAgents -> createPiExecutor -> prompt-assembly -> createMemoryRecall's post-fusion provenance down-weighting pass (was BUILT but never injected in Phase 172). The agent receives the core LcdProvenanceReadStore TYPE only (agent↛memory cut)
     summarizerSpendBreaker, // R1 (132-05); daemon-owned per-tenant breaker; threaded into setupAgents -> createPiExecutor -> setupContextEngine so getSummarizerDeps gates the leaf seam per tenant (truncation-only degrade on open-breaker/over-cap)
-    spendAccumulator, // Phase 177; the single daemon-wide dollars kill-switch accumulator; threaded into setupAgents -> createPiExecutor -> the per-turn bridge (same reference)
-    temporalStore, // threaded into setupAgents -> createPiExecutor -> createMemoryRecall (the recall temporal-spread read path); dormant until rag.lanes.temporal.enabled
+    spendAccumulator, temporalStore, // spendAccumulator = Phase 177 dollars kill-switch (threaded setupAgents -> createPiExecutor -> bridge); temporalStore -> createMemoryRecall (recall temporal-spread read; dormant until rag.lanes.temporal.enabled)
     causalStore, // threaded into setupAgents -> createPiExecutor -> createMemoryRecall (the 5th causal read lane, dormant until rag.lanes.causal.enabled) AND the cron review -> runMemoryReview -> linkCausal (the write path) — one segregated port, both halves
     tripleStore, // threaded into setupAgents -> createPiExecutor -> createMemoryRecall (the 6th graph-spread read lane, dormant until rag.lanes.graphSpread.enabled); the agent receives the port TYPE only (the agent↛memory cut)
     embeddingStore, usefulnessStore, userRepresentationStore, relationshipStore, tunedAlphaStore, // the MMR re-rank's scoped embedding read + recall usefulness read + the LLM-free <user_profile> standing-block read + the LLM-free <channel_relationships> standing-block read (dormant until the offline builder writes rows + the social-modeling sign-off) + the buildScoringAlphas tuned-vector read (dormant until rag.onlineTuning.enabled + the bandit cron) -> setupAgents -> createPiExecutor -> prompt-assembly; the agent receives the port TYPEs only (the agent↛memory cut)

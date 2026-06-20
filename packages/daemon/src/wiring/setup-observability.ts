@@ -170,8 +170,13 @@ export function setupObservability(deps: {
   // absent the accumulator is not constructed (legacy/test call shapes stay
   // byte-identical).
   let spendAccumulator: SpendAccumulator | undefined;
-  if (deps.clock && deps.config) {
-    const spendCfg = deps.config.observability.spend;
+  // Defensive at the composition root: only construct when clock + the spend
+  // config block are BOTH present. The real Zod-parsed config always defaults
+  // `observability.spend`; the optional-chain guards a partial/hand-built config
+  // (e.g. a boot stub) so a missing block degrades to "no accumulator" rather
+  // than crashing boot.
+  const spendCfg = deps.config?.observability?.spend;
+  if (deps.clock && spendCfg) {
     spendAccumulator = createSpendAccumulator({
       clock: deps.clock,
       ceilings: {
