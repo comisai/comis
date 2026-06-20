@@ -32,8 +32,9 @@
 
 import { systemSetTimeout, systemClearTimeout } from "@comis/core";
 import type { ClockPort, ComisLogger } from "@comis/core";
-import { completeSimple, getModel } from "@earendil-works/pi-ai";
+import { completeSimple } from "@earendil-works/pi-ai";
 import { z } from "zod";
+import { resolveJudgeModel, type CustomCompletionsModelSpec } from "./judge-model-resolver.js";
 import { parseLenientJson } from "./llm-json.js";
 
 /** Hard abort ceiling per LLM call (mirrors the userrep/reasoning seam LLM timeout). */
@@ -55,6 +56,14 @@ export interface UsefulnessJudgeSeamDeps {
   logger: ComisLogger;
   /** Scope tag for the failure logs. */
   agentId: string;
+  /**
+   * Custom OpenAI-compatible model spec (resolved, normalized `…/v1` baseUrl) for
+   * building the judge Model when the pi-ai catalog has no entry for
+   * `provider/modelId` — a custom YAML provider (ollama/lm-studio/…). Undefined
+   * for built-in providers. Without it, usefulness judging SKIPPED on every
+   * keyless/local turn (the same bug as the outcome judge, live 2026-06-20).
+   */
+  customModel?: CustomCompletionsModelSpec;
 }
 
 /** The judge's input for one turn (ids + the answer text — never memory bodies cross the seam boundary upward). */
@@ -169,34 +178,22 @@ function parseVerdict(raw: string, candidateIds: string[]): UsefulnessJudgeVerdi
 export function createUsefulnessJudgeSeam(
   deps: UsefulnessJudgeSeamDeps,
 ): (input: UsefulnessJudgeInput) => Promise<UsefulnessJudgeVerdict> {
-  const { provider, modelId, apiKey, maxOutputTokens, clock, logger, agentId } = deps;
+  const { provider, modelId, apiKey, maxOutputTokens, clock, logger, agentId, customModel } = deps;
 
   /** Issue one bounded, non-fatal cheap-model call; return raw text or undefined. */
   async function callModel(systemPrompt: string, userText: string): Promise<string | undefined> {
-    let model;
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- provider/modelId are dynamic strings
-      model = getModel(provider as any, modelId as any);
-    } catch (modelErr) {
-      logger.warn(
-        {
-          agentId,
-          err: modelErr,
-          errorKind: "dependency" as const,
-          step: "usefulness-judge" as const,
-          hint: `could not resolve model ${provider}/${modelId} — skipping this usefulness judge`,
-        },
-        "Usefulness judge model resolution failed (non-fatal)",
-      );
-      return undefined;
-    }
+    // Catalog first; else construct from the custom-provider spec (ollama/lm-studio/…)
+    // so usefulness judging runs on keyless/local deployments instead of skipping.
+    const model = resolveJudgeModel(provider, modelId, customModel);
     if (!model) {
       logger.warn(
         {
           agentId,
           errorKind: "dependency" as const,
           step: "usefulness-judge" as const,
-          hint: `model not found ${provider}/${modelId} — skipping this usefulness judge`,
+          hint: customModel
+            ? `could not build usefulness model ${provider}/${modelId} from the custom baseUrl — skipping this usefulness judge`
+            : `model ${provider}/${modelId} is not in the pi-ai catalog and no custom provider baseUrl was supplied — set providers.entries.${provider}.baseUrl or use a built-in provider for the cron/usefulness tier`,
         },
         "Usefulness judge model not found (non-fatal)",
       );

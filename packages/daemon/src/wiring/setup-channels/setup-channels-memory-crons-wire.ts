@@ -30,6 +30,7 @@
  */
 
 import { resolveCronJobCredential, cronCredentialSkipHint } from "./setup-channels-cron-credential.js";
+import { buildCustomJudgeModelSpec } from "../setup-learning-judge.js";
 import {
   resolveOperationModel,
   resolveProviderFamily,
@@ -122,6 +123,13 @@ export async function handleWireMemoryCronSentinel(
     // Build the OFFLINE seam (prompt + lenient/allowlist parser stay agent-internal) and
     // run ONE verdict over the candidate ids. answer="" in this scaffold (no turn transcript
     // threaded yet); the seam short-circuits an empty candidate set with no cost.
+    // Custom YAML providers (ollama/lm-studio/…) aren't in pi-ai's catalog → the
+    // seam would skip; build a spec so usefulness judging runs locally too.
+    const usefulnessCustomModel = buildCustomJudgeModelSpec(
+      container.config.providers?.entries?.[resolved.provider],
+      resolved.provider,
+      resolved.modelId,
+    );
     const judge = createUsefulnessJudgeSeam({
       provider: resolved.provider,
       modelId: resolved.modelId,
@@ -130,6 +138,7 @@ export async function handleWireMemoryCronSentinel(
       clock,
       logger: judgeLogger,
       agentId,
+      customModel: usefulnessCustomModel,
     });
     const verdict = await judge({ candidateIds, answer: "" });
 
