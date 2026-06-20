@@ -46,11 +46,11 @@ describe("observability-domain contracts", () => {
   // Aggregator sanity
   // -------------------------------------------------------------------------
 
-  it("OBSERVABILITY_CONTRACTS has exactly 26 entries", () => {
-    expect(OBSERVABILITY_CONTRACTS.length).toBe(26);
+  it("OBSERVABILITY_CONTRACTS has exactly 27 entries", () => {
+    expect(OBSERVABILITY_CONTRACTS.length).toBe(27);
   });
 
-  it("all 26 contracts are admin-scoped", () => {
+  it("all 27 contracts are admin-scoped", () => {
     for (const c of OBSERVABILITY_CONTRACTS) {
       expect(c.scopes, `${c.method} scopes`).toEqual(["admin"]);
     }
@@ -61,6 +61,8 @@ describe("observability-domain contracts", () => {
     expect(methods).toEqual([
       "agent.cacheStats",
       "memory.embeddingCache",
+      // Durable security-decision audit read surface (AUDIT-05 / Phase 176).
+      "obs.audit.query",
       "obs.billing.byAgent",
       "obs.billing.byProvider",
       "obs.billing.bySession",
@@ -850,8 +852,8 @@ describe("ObsTrace contracts", () => {
   });
 
   // Test 13
-  it("OBSERVABILITY_CONTRACTS has exactly 26 entries", () => {
-    expect(OBSERVABILITY_CONTRACTS.length).toBe(26);
+  it("OBSERVABILITY_CONTRACTS has exactly 27 entries", () => {
+    expect(OBSERVABILITY_CONTRACTS.length).toBe(27);
   });
 
   // Test 14
