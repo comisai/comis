@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * PROM-01 — the Prometheus pull-surface guards: the `comis_prometheus_series`
- * self-cardinality gauge + the `cardinalityCap` WARN-with-hint (the
- * label-explosion DoS guard, T-178-07).
+ * self-cardinality gauge + the `cardinalityCap` ENFORCEMENT (the label-explosion
+ * DoS guard, T-178-07).
  *
  * The OTel `PrometheusExporter` itself (the loopback `/metrics` listener) is
  * constructed in `otel-exporter.ts` as one of the `MeterProvider` readers. This
@@ -11,6 +11,13 @@
  * instruments produce, an `observableGauge` reports that count as
  * `comis_prometheus_series` on every scrape, and a breach of `cardinalityCap`
  * emits a single WARN with a `hint` (re-armed when the count drops back below).
+ *
+ * The cap ACTUALLY BOUNDS the estimate (MD-02): once the distinct-key set
+ * reaches `cardinalityCap`, NEW distinct keys are no longer admitted — the excess
+ * collapses into a single `"_overflow"` bucket — so the tracker's own memory and
+ * the reported series count stay bounded at `cardinalityCap + 1` regardless of
+ * how many distinct labels arrive. (A WARN alone leaves the unbounded Set growing
+ * — the very DoS the cap exists to prevent.)
  *
  * The series-key estimate is content-free by construction — it is built from the
  * SAME low-cardinality labels the instruments use (provider/model/reason/scope/…),
@@ -46,9 +53,23 @@ export function wireSeriesCardinality(deps: WireSeriesCardinalityDeps): void {
   // Bounded by the label cardinality, NEVER by ids — this is the guard, not a leak.
   const seriesKeys = new Set<string>();
   let breachWarned = false;
+  // The sentinel bucket every key past the cap collapses into (MD-02). Counts as
+  // ONE series, so the set size is hard-bounded at cardinalityCap + 1.
+  const OVERFLOW_KEY = "_overflow";
 
   const track = (instrument: string, labels: readonly string[]): void => {
-    seriesKeys.add(`${instrument}{${labels.join("|")}}`);
+    const key = `${instrument}{${labels.join("|")}}`;
+    // Already tracked (a re-seen series) — a no-op add either way.
+    if (seriesKeys.has(key)) return;
+    // MD-02: ENFORCE the cap. Once the distinct-key set is full, do NOT admit a
+    // new key — route it to the single "_overflow" bucket so the set (and thus
+    // the tracker's memory + the reported count) cannot grow without bound. A
+    // WARN alone would leave the Set growing, which is the DoS the cap prevents.
+    if (seriesKeys.size >= cardinalityCap) {
+      seriesKeys.add(OVERFLOW_KEY);
+      return;
+    }
+    seriesKeys.add(key);
   };
 
   eventBus.on("observability:token_usage", (p) => {

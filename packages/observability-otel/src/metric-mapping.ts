@@ -14,7 +14,12 @@
  *      `traceId` is a UUID and rides as a span ATTRIBUTE / exemplar value
  *      (Pitfall 4) — NEVER a metric label. Every attribute bag is additionally
  *      routed through {@link redactAttributes} (E3 defense-in-depth) before it
- *      reaches an instrument.
+ *      reaches an instrument. Label VALUES are bounded too, not just KEYS: an
+ *      open-ended `reason` is mapped to the closed cache-break set (else `"other"`,
+ *      MD-02), and `provider`/`model` are the CONFIG-RESOLVED provider/model ids
+ *      (the value the resolver settled on for the turn — a closed-ish set of
+ *      configured aliases, NOT a raw request string), so a fat-fingered or
+ *      injected model ref cannot fan the series out per the chimera incident.
  *   2. **No new emit (N1).** The extension only SUBSCRIBES the existing
  *      `observability:*` / `security:*` signals 176/177 already emit.
  *
@@ -34,6 +39,51 @@ import type { SpendSnapshotReader } from "./spend-snapshot.js";
 
 /** The closed spend scopes the gauges observe (matches `SpendScopeKind`). */
 type SpendScopeName = "agent" | "tenant" | "global";
+
+/**
+ * The closed set of cache-break reasons (MD-02). A RUNTIME mirror of the
+ * `CacheBreakReason` union in `@comis/agent`
+ * (executor/cache-detection/cache-state-types.ts) — declared LOCALLY (not
+ * imported) so the extension keeps its narrow dependency surface
+ * (`@comis/core` + `@opentelemetry/*` only; it never value-imports `@comis/agent`).
+ *
+ * The `observability:cache_break` bus payload types `reason` as a bare `string`
+ * (wider than the union — the closed label union guarantees the KEY `reason`,
+ * NOT its VALUE). An unknown reason reaching the `reason` LABEL verbatim is an
+ * unbounded-cardinality series (T-178-07). {@link boundedReason} maps any value
+ * outside this set to `"other"` before it becomes a label.
+ *
+ * MUST stay in lockstep with the union; if a new reason is added there, add it
+ * here (else it is silently bucketed to "other" on the metric surface).
+ */
+const KNOWN_CACHE_BREAK_REASONS: ReadonlySet<string> = new Set<string>([
+  "model_changed",
+  "system_changed",
+  "tools_changed",
+  "retention_changed",
+  "cache_metadata_changed",
+  "headers_changed",
+  "extra_body_changed",
+  "effort_changed",
+  "cache_control_changed",
+  "lookback_window_exceeded",
+  "ttl_expiry",
+  "ttl_expiry_long",
+  "ttl_expiry_short",
+  "likely_server_eviction",
+  "server_eviction",
+]);
+
+/**
+ * Bound a cache-break `reason` to the closed set before it becomes a metric
+ * label (MD-02). A known reason passes through verbatim; ANY other value (a new
+ * emit, a bug, a hostile high-cardinality string) is bucketed to `"other"`, so a
+ * single unexpected reason can never explode the `comis_cache_break_total`
+ * series count.
+ */
+function boundedReason(reason: string): string {
+  return KNOWN_CACHE_BREAK_REASONS.has(reason) ? reason : "other";
+}
 
 /** The per-scope ceilings the headroom gauge subtracts from (from config). */
 export interface SpendCeilingsView {
@@ -282,7 +332,10 @@ export function wireMetricMapping(deps: WireMetricMappingDeps): void {
   // ── observability:cache_break → cache-break by reason + scope ──
   eventBus.on("observability:cache_break", (payload) => {
     addCounter(instruments, "comis.cache.break", 1, {
-      reason: payload.reason,
+      // MD-02: the payload types `reason` as a bare string (wider than the closed
+      // CacheBreakReason union). Bound it to the known set — an unknown/new reason
+      // is bucketed to "other" so it cannot explode the series cardinality.
+      reason: boundedReason(payload.reason),
       // The cache-break event is per-turn; scope is the agent dimension.
       scope: "agent",
     });

@@ -206,4 +206,45 @@ describe("wireSeriesCardinality (the distinct-series taps + the cap WARN)", () =
     expect(warns).toHaveLength(0);
     await fx.shutdown();
   });
+
+  it("MD-02: past the cardinalityCap the distinct-series estimate is BOUNDED — overflow drops to a single bucket (not just a WARN)", async () => {
+    const warns: string[] = [];
+    const fx = makeMetricFixture();
+    const eventBus = new TypedEventBus();
+    const cardinalityCap = 5;
+    wireSeriesCardinality({
+      meter: fx.provider.getMeter("comis"),
+      eventBus,
+      cardinalityCap,
+      logger: { warn: (_o: unknown, msg: string) => warns.push(msg) } as never,
+    });
+
+    // Drive FAR more distinct content-free series than the cap (50 distinct
+    // models). Pre-fix the Set grows unbounded (it WARNs but keeps every key →
+    // the series count is 50+, an unbounded memory + scrape DoS). Post-fix the
+    // tracker stops admitting NEW distinct keys past the cap and routes the
+    // excess to one "_overflow" bucket, so the reported count is BOUNDED.
+    for (let i = 0; i < 50; i++) {
+      eventBus.emit("observability:token_usage", {
+        timestamp: 1, traceId: "11111111-1111-1111-1111-111111111111", agentId: "a1", channelId: "c1",
+        executionId: "e1", provider: "anthropic", model: `model-${i}`,
+        tokens: { prompt: 1, completion: 1, total: 2 },
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.01 },
+        latencyMs: 10, cacheReadTokens: 0, cacheWriteTokens: 0, sessionKey: "t:c:s",
+        savedVsUncached: 0, cacheEligible: false, warmupTurn: false, pendingCacheInvestmentUsd: 0,
+      } as never);
+    }
+
+    const metrics = await fx.collect();
+    const series = metrics.find((m) => m.descriptor.name === "comis.prometheus_series");
+    expect(series, "comis.prometheus_series must be observed").toBeTruthy();
+    const value = series!.dataPoints[0]!.value as number;
+
+    // The cap BOUNDS the series count: cap distinct keys + 1 "_overflow" bucket.
+    // The 50 distinct model series collapse — the tracker never holds 50 keys.
+    expect(value, "series count must be bounded by the cap, not grow with distinct inputs").toBeLessThanOrEqual(cardinalityCap + 1);
+    // And the breach still WARNs (the operator signal is preserved).
+    expect(warns.some((m) => /cardinalit/i.test(m)), "a cap breach must still WARN").toBe(true);
+    await fx.shutdown();
+  });
 });

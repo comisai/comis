@@ -195,6 +195,66 @@ describe("wireMetricMapping (OTEL-02 — bus → content-free instruments)", () 
     assertNoHighCardinalityLabel(cb!.attributes);
   });
 
+  it("MD-02: an UNKNOWN cache-break reason maps to 'other' (a new/unexpected reason cannot explode cardinality)", () => {
+    const meter = makeFakeMeter();
+    const eventBus = new TypedEventBus();
+    wireMetricMapping({ meter: meter as never, eventBus });
+
+    // The bus payload types `reason` as a bare `string` (wider than the closed
+    // CacheBreakReason union). A reason OUTSIDE the known 15 — a future emit, a
+    // bug, or a hostile high-cardinality value — must NOT reach the label
+    // verbatim (that is an unbounded series). It is bucketed to "other".
+    eventBus.emit("observability:cache_break", {
+      provider: "anthropic",
+      reason: "some_brand_new_reason_not_in_the_closed_set",
+      tokenDrop: 1000,
+      tokenDropRelative: 0.5,
+      previousCacheRead: 2000,
+      currentCacheRead: 1000,
+      callCount: 3,
+      changes: {
+        systemChanged: false, toolsChanged: true, metadataChanged: false, modelChanged: false,
+        retentionChanged: false, addedTools: [], removedTools: [], changedSchemaTools: [],
+        headersChanged: false, extraBodyChanged: false,
+      },
+      toolsChanged: [],
+      ttlCategory: undefined,
+      agentId: "a1",
+      sessionKey: "tenant1:c1:s1",
+      timestamp: 1000,
+    } as never);
+
+    const cb = meter.ops.find((o) => o.instrument === "comis.cache.break");
+    expect(cb, "comis.cache.break must fire even for an unknown reason").toBeTruthy();
+    // The unknown reason is bucketed — NEVER the raw value (the cardinality guard).
+    expect(cb!.attributes["reason"]).toBe("other");
+    expect(cb!.attributes["reason"]).not.toBe("some_brand_new_reason_not_in_the_closed_set");
+    assertNoHighCardinalityLabel(cb!.attributes);
+  });
+
+  it("MD-02: a KNOWN cache-break reason (one of the closed 15) passes through verbatim", () => {
+    const meter = makeFakeMeter();
+    const eventBus = new TypedEventBus();
+    wireMetricMapping({ meter: meter as never, eventBus });
+
+    for (const reason of ["model_changed", "ttl_expiry", "server_eviction"]) {
+      eventBus.emit("observability:cache_break", {
+        provider: "anthropic", reason, tokenDrop: 100, tokenDropRelative: 0.1,
+        previousCacheRead: 200, currentCacheRead: 100, callCount: 2,
+        changes: { systemChanged: false, toolsChanged: false, metadataChanged: false, modelChanged: true, retentionChanged: false, addedTools: [], removedTools: [], changedSchemaTools: [], headersChanged: false, extraBodyChanged: false },
+        toolsChanged: [], ttlCategory: undefined, agentId: "a1", sessionKey: "t:c:s", timestamp: 1,
+      } as never);
+    }
+
+    const breaks = meter.ops.filter((o) => o.instrument === "comis.cache.break");
+    const reasons = breaks.map((b) => b.attributes["reason"]);
+    expect(reasons).toContain("model_changed");
+    expect(reasons).toContain("ttl_expiry");
+    expect(reasons).toContain("server_eviction");
+    // None bucketed to "other" — all three are in the closed set.
+    expect(reasons).not.toContain("other");
+  });
+
   it("spend_warning/exceeded/unpriceable → the matching content-free counters fire", () => {
     const meter = makeFakeMeter();
     const eventBus = new TypedEventBus();
