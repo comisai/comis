@@ -90,7 +90,10 @@ function tzOffsetMs(utcMs: number, timeZone: string): number {
     second: "2-digit",
   });
   const p: Record<string, number> = {};
-  for (const part of dtf.formatToParts(new Date(utcMs))) {
+  // `formatToParts` accepts an epoch-ms number directly — passing `utcMs`
+  // keeps this a pure, deterministic conversion (no `new Date()` clock read,
+  // which the globals architecture invariant forbids in production source).
+  for (const part of dtf.formatToParts(utcMs)) {
     if (part.type !== "literal") p[part.type] = Number(part.value);
   }
   const asUtc = Date.UTC(p.year!, p.month! - 1, p.day!, p.hour!, p.minute!, p.second!);

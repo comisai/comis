@@ -44,12 +44,7 @@ export interface CronEventListenerDeps {
   logger: ComisLogger;
   /** Composition-root clock — threaded to runMemoryReview for relative-date resolution. */
   clock: ClockPort;
-  /**
-   * Per-agent OAuth access-token resolver (auto-refreshing), wrapping the
-   * daemon's OAuthTokenManager map. Lets the background memory/learning jobs run
-   * on an OAuth main provider (openai-codex) instead of skipping for "no API
-   * key" (LEARN-01). Undefined ⇒ static-key/keyless resolution only.
-   */
+  /** Per-agent auto-refreshing OAuth token resolver (wraps OAuthTokenManager); lets background memory/learning jobs run on an OAuth main provider instead of skipping "no API key" (LEARN-01). Undefined ⇒ static-key/keyless only. */
   resolveAccessToken?: (agentId: string, provider: string) => Promise<string | undefined>;
   adaptersByType: Map<string, ChannelPort>;
   deliveryService: DeliveryService;
@@ -78,13 +73,9 @@ export interface CronEventListenerDeps {
    *  the sentinel cannot run, but the cron is off-by-default so a default-config agent never
    *  reaches it. */
   consolidationStore?: MemoryConsolidationStore;
-  /** Triple store — the deductive current-truth write path.
-   *  Threaded into runMemoryReasoning by the opt-in `__MEMORY_REASONING__` sentinel
-   *  below. Built in setup-memory on the SAME db handle the memory adapter owns;
-   *  injected as the port TYPE (agent↛memory cut). Threaded the full daemon → registry
-   *  → credentials chain — a missing thread would make the deductive
-   *  write a silent no-op. Absent => the reasoning sentinel cannot run, but the cron is
-   *  off-by-default so a default-config agent never reaches it. */
+  /** Triple store — deductive current-truth write path, threaded into runMemoryReasoning via
+   *  the opt-in `__MEMORY_REASONING__` sentinel below (port TYPE, agent↛memory cut; same db
+   *  handle as the memory adapter). Absent ⇒ sentinel can't run; cron is off-by-default. */
   tripleStore?: TripleStorePort;
   /** Per-user representation store — the offline-builder
    *  upsert write path. Threaded into runUserRepresentationBuild by the opt-in
