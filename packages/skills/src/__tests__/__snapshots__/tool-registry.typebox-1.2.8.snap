@@ -1134,9 +1134,13 @@
             {
               "const": "fleet_health",
               "type": "string"
+            },
+            {
+              "const": "audit",
+              "type": "string"
             }
           ],
-          "description": "Observability query category. Valid values: diagnostics (platform diagnostic data), billing (cost data by provider/agent/session), delivery (message delivery traces), channels (channel activity and staleness), explain (assembled IncidentReport / root-cause post-mortem for a session), trace (search trace rows), session_report (session rollup — reuses the IncidentReport), fleet_health (cross-session fleet-health triage: degradation rate, recurring WARNs, model/config health over a window)"
+          "description": "Observability query category. Valid values: diagnostics (platform diagnostic data), billing (cost data by provider/agent/session), delivery (message delivery traces), channels (channel activity and staleness), explain (assembled IncidentReport / root-cause post-mortem for a session), trace (search trace rows), session_report (session rollup — reuses the IncidentReport), fleet_health (cross-session fleet-health triage: degradation rate, recurring WARNs, model/config health over a window), audit (the durable security-decision audit log: secret access, injection detection, command blocks — filter by kind/classification/agent/tenant/outcome/since/until)"
         },
         "agent_id": {
           "description": "Agent identifier (for billing.byAgent)",
@@ -1150,13 +1154,25 @@
           "description": "Channel identifier (for channels.get, delivery.recent)",
           "type": "string"
         },
+        "classification": {
+          "description": "Audit risk class filter: read | mutate | destructive — for audit",
+          "type": "string"
+        },
         "depth": {
           "description": "Report depth for explain/session_report: summary | full",
+          "type": "string"
+        },
+        "kind": {
+          "description": "Audit event family filter (e.g. secret_access, injection_detected) — for audit",
           "type": "string"
         },
         "limit": {
           "description": "Maximum number of results to return",
           "type": "integer"
+        },
+        "outcome": {
+          "description": "Audit outcome filter: success | failure | denied — for audit",
+          "type": "string"
         },
         "session_key": {
           "description": "Session key (for billing.bySession)",
@@ -1174,6 +1190,10 @@
           "description": "Sub-action within the category. billing: byProvider | byAgent | bySession | total. delivery: recent | stats. channels: all | stale | get.",
           "type": "string"
         },
+        "tenant": {
+          "description": "Audit tenant scope (\"\" matches system-scoped tenant-less events) — for audit",
+          "type": "string"
+        },
         "threshold_ms": {
           "description": "Staleness threshold in ms (for channels.stale, default 300000)",
           "type": "integer"
@@ -1181,6 +1201,10 @@
         "trace_id": {
           "description": "Trace ID (for explain, trace, session_report)",
           "type": "string"
+        },
+        "until_ms": {
+          "description": "Audit upper time bound (inclusive epoch ms) — for audit",
+          "type": "integer"
         }
       },
       "required": [
@@ -3151,7 +3175,7 @@
           "type": "string"
         },
         "schedule_at": {
-          "description": "ISO 8601 datetime string (for schedule_kind=at)",
+          "description": "ISO 8601 datetime string for schedule_kind=at (a naive wall-clock like 2026-06-20T09:00:00 is interpreted in `timezone`, or UTC if none). Do NOT use this for relative reminders ('in N minutes') — use schedule_kind=in + schedule_in_seconds, which avoids timezone-conversion mistakes.",
           "type": "string"
         },
         "schedule_every_ms": {
@@ -3161,6 +3185,10 @@
         "schedule_expr": {
           "description": "Cron expression (for schedule_kind=cron)",
           "type": "string"
+        },
+        "schedule_in_seconds": {
+          "description": "Seconds from NOW for schedule_kind=in (e.g. 'in 2 minutes' → 120, 'in an hour' → 3600). Deterministic + timezone-free — the correct, reliable way to schedule any relative one-shot reminder.",
+          "type": "integer"
         },
         "schedule_kind": {
           "anyOf": [
@@ -3175,9 +3203,13 @@
             {
               "const": "at",
               "type": "string"
+            },
+            {
+              "const": "in",
+              "type": "string"
             }
           ],
-          "description": "Schedule type. Valid values: cron (recurring cron expression), every (repeat at fixed interval), at (one-shot at specific datetime)"
+          "description": "Schedule type. Valid values: cron (recurring cron expression), every (repeat at fixed interval), at (one-shot at a specific datetime), in (one-shot a RELATIVE number of seconds from now). For a RELATIVE reminder like 'in 2 minutes' / 'in an hour', STRONGLY PREFER kind=in with schedule_in_seconds — it needs NO timezone and NO datetime math. Use 'at' only for an absolute clock time ('at 9am tomorrow')."
         },
         "session_strategy": {
           "anyOf": [
@@ -3201,7 +3233,7 @@
           "type": "string"
         },
         "timezone": {
-          "description": "IANA timezone (e.g. America/New_York)",
+          "description": "IANA timezone (e.g. America/Los_Angeles). REQUIRED for any time-of-day schedule (schedule_kind=cron or at) so it fires at the USER'S local wall-clock time, not the server's. Set it to the user's known timezone (from memory/USER.md); without it a naive time like 09:00 is interpreted in the server timezone (UTC). E.g. a Pacific user's 'remind me at 9am' must pass timezone=America/Los_Angeles.",
           "type": "string"
         }
       },

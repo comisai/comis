@@ -10,6 +10,14 @@ Here's everything Comis keeps on disk — and why.
 
 `~/.comis/` is the single directory where Comis stores all runtime state: your config, secrets, conversation memory, logs, and the pm2 supervisor file. It is created automatically the first time you run `comis init` or start the daemon.
 
+<Note>
+The opt-in [Prometheus & Grafana](/operations/prometheus-grafana) surface adds **no
+file** to `~/.comis/` — it opens a loopback network listener (`/metrics` on
+`127.0.0.1:9464`), not a data-dir path. The Grafana/Prometheus artifacts
+(dashboards, rules, docker-compose) live in the Comis source repository, not the
+data directory.
+</Note>
+
 ## Directory layout
 
 ```
@@ -29,7 +37,8 @@ Here's everything Comis keeps on disk — and why.
 ├── broker.sock              # Unix socket for credential broker (when active)
 ├── ecosystem.config.js      # pm2 process definition (created by pm2 setup)
 ├── logs/
-│   └── daemon.N.log         # structured JSON log (pino-roll; live file = newest N)
+│   ├── daemon.N.log         # structured JSON log (pino-roll; live file = newest N)
+│   └── security-audit.jsonl # durable security-decision audit trail (0600, rotated; one scrubbed JSON line per event)
 ├── traces/                  # per-session JSONL execution traces
 ├── workspace/               # default agent workspace (files, git, skills, projects/)
 ├── workspace-<agentId>/     # named-agent workspaces (one per extra agent)
@@ -221,6 +230,15 @@ The daemon's own **structured JSON** log, written via pino-roll. The **live file
 <Tip>
 Under pm2, Comis skips the stdout transport to avoid duplicating entries. The canonical structured log lives under `~/.comis/logs/` — the newest `daemon.N.log` is the active file.
 </Tip>
+
+---
+
+### `logs/security-audit.jsonl`
+
+The **durable security-decision audit trail** — one scrubbed JSON line per audit event (secret access, injection detection, command blocks, canary leaks, sandbox-downgrade refusals, and classified `audit:event` actions). Created with `0600` permissions and rotated under `observability.logRotation` (size + keep-count). Content-free by construction: ids, the closed-enum fields, and a scrubbed `refs` blob — **never a secret value**. It is the greppable companion to the durable `obs_audit_events` SQLite table that `comis security audit-log` / `obs.audit.query` read; both survive a daemon restart. See [Audit Logging](/security/audit).
+
+**Written by:** the daemon, on each audit event (when `observability.audit.persist` is on, the default).
+**Safe to delete?** Yes, but you lose the on-disk audit history (the structured `daemon.N.log` `.audit()` lines and any log-aggregation copy remain). The SQLite rows are unaffected.
 
 ---
 

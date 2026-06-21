@@ -29,6 +29,7 @@ import {
   systemNowDate,
 } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
+import { createHash } from "node:crypto";
 import { resolveProviderCredential } from "../shared/credential-resolver.js";
 
 // Single source of truth: ConfigApiDeps (shared with env-handlers). The handler
@@ -43,6 +44,30 @@ export type { ConfigHandlerDeps };
  * the in-handler logic, not the contract parse.
  */
 export const IS_DEV = systemGetEnv("NODE_ENV") !== "production";
+
+/**
+ * Content-free change-indicator for the config.patch audit:event metadata
+ * (AUDIT-04 / H1).
+ *
+ * The raw config `value` MUST NOT land in the durable security-audit: a
+ * no-prefix secret value (a 32-hex key, a DB password, an internal hostname) is
+ * invisible to the credential-keyed-field drop AND to the prefixed/keyworded
+ * pattern redactor, so it would persist UNREDACTED in the obs_audit_events row +
+ * security-audit.jsonl (the H1 review leak). The value already lives in the 0600
+ * config YAML + git + the config-audit log — the audit only needs a
+ * change-indicator, never the value. Emit a non-reversible `valueSha256` (first
+ * 12 hex of the SHA-256 of the JSON-stringified value) + `valueLength`.
+ */
+export function valueChangeIndicator(
+  value: unknown,
+): { valueSha256: string; valueLength: number } {
+  // JSON.stringify(undefined) === undefined; treat absent/undefined as empty.
+  const str = value === undefined ? "" : JSON.stringify(value) ?? "";
+  return {
+    valueSha256: createHash("sha256").update(str).digest("hex").slice(0, 12),
+    valueLength: str.length,
+  };
+}
 
 /**
  * True when the patch key writes a provider/model field.

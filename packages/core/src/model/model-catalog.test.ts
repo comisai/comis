@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, beforeEach } from "vitest";
-import { createModelCatalog, resolveModelPricing, ZERO_COST, type CatalogEntry, type ModelCatalog } from "./model-catalog.js";
+import {
+  createModelCatalog,
+  resolveModelPricing,
+  resolvePricingState,
+  ZERO_COST,
+  type CatalogEntry,
+  type ModelCatalog,
+} from "./model-catalog.js";
 
 describe("ModelCatalog", () => {
   let catalog: ModelCatalog;
@@ -217,6 +224,71 @@ describe("ModelCatalog", () => {
     it("ZERO_COST includes cacheWrite1h = 0 for unknown models", () => {
       const rates = resolveModelPricing("unknown", "nonexistent");
       expect(rates.cacheWrite1h).toBe(0);
+    });
+  });
+
+  // PERSIST-03 (observability-excellence E1) — the three-state honest-pricing
+  // signal. A NEW function alongside resolveModelPricing (whose 5 production
+  // callers + return type must stay untouched — Landmine L3). The discriminator
+  // is provider-family membership (model-family.ts NATIVE_PROVIDER_FAMILY), NOT a
+  // bare catalog-presence boolean: a native provider with no catalog entry is the
+  // dangerous ffe11736 fail-open (returns "unknown", never "free").
+  describe("resolvePricingState (PERSIST-03)", () => {
+    it("returns 'priced' for a native provider model with a catalog entry", () => {
+      // claude-sonnet-4-5 is a known anthropic model with non-zero cost.
+      expect(resolvePricingState("anthropic", "claude-sonnet-4-5-20250929")).toBe("priced");
+    });
+
+    it("returns 'free' for a gateway/local provider absent from NATIVE_PROVIDER_FAMILY (ollama)", () => {
+      // ollama is a local runtime — $0 is correct, never "unknown".
+      expect(resolvePricingState("ollama", "qwen3:8b")).toBe("free");
+    });
+
+    it("returns 'unknown' for a NATIVE provider with no catalog entry (the ffe11736 chimera case)", () => {
+      // anthropic IS in NATIVE_PROVIDER_FAMILY but this model id has no catalog
+      // entry → the dangerous silent-$0 fail-open must surface as "unknown".
+      expect(resolvePricingState("anthropic", "some-model-not-in-catalog")).toBe("unknown");
+    });
+
+    it("returns 'free' for another gateway family (openrouter)", () => {
+      expect(resolvePricingState("openrouter", "anything")).toBe("free");
+    });
+
+    // LOW-2 (177-obs-loop): the documented-but-untested branch — a catalog entry
+    // that IS PRESENT but carries ALL-ZERO rates (e.g. a scanned custom model) is
+    // treated as NOT-priced and FALLS THROUGH to the provider-family discriminator
+    // (model-catalog.ts:267-278). The result then depends ONLY on whether the
+    // provider is native: native → unknown (the ffe11736 silent-$0 danger), gateway
+    // → free ($0 is honest for a local runtime). Both directions are now pinned.
+    const zeroRateEntry = (provider: string, modelId: string): CatalogEntry => ({
+      provider,
+      modelId,
+      displayName: `${provider}/${modelId}`,
+      contextWindow: 8192,
+      maxTokens: 4096,
+      input: ["text"],
+      reasoning: false,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      validated: true,
+      validatedAt: 1,
+    });
+
+    it("LOW-2: a PRESENT all-zero-rate catalog entry on a NATIVE provider falls through to 'unknown'", () => {
+      const c = createModelCatalog();
+      c.mergeScanned([zeroRateEntry("anthropic", "custom-uncosted-model")]);
+      // The entry exists, but all rates are 0 → not "priced"; anthropic is native
+      // → the silent-$0 fail-open surfaces as "unknown", NOT a phantom "free".
+      expect(c.get("anthropic", "custom-uncosted-model")).toBeDefined();
+      expect(resolvePricingState("anthropic", "custom-uncosted-model", c)).toBe("unknown");
+    });
+
+    it("LOW-2: a PRESENT all-zero-rate catalog entry on a GATEWAY provider falls through to 'free'", () => {
+      const c = createModelCatalog();
+      c.mergeScanned([zeroRateEntry("ollama", "qwen3:custom")]);
+      // The entry exists with all-zero rates; ollama is a local runtime (absent
+      // from NATIVE_PROVIDER_FAMILY) → $0 is honest → "free", never "unknown".
+      expect(c.get("ollama", "qwen3:custom")).toBeDefined();
+      expect(resolvePricingState("ollama", "qwen3:custom", c)).toBe("free");
     });
   });
 });

@@ -613,16 +613,13 @@ export function handleSubAgentCompleted(
   }
 
   // 5d. Per-node spend + node-first breach (BUDGET-02/03; D5 — BEFORE the step-6
-  // state transition so a breaching SUCCESSFUL run ends `failed`, not `completed`,
-  // and BEFORE the cumulative check at 6.6). Records nodeTokenSpend always (read on graph:completed, IN-01).
-  const budgetBreach = applyNodeBudgetBreach(
-    deps, config, gs, nodeId, event.tokensUsed ?? 0, run?.sessionKey,
-  );
+  // state transition so a breaching SUCCESSFUL run ends `failed` not `completed`,
+  // and BEFORE the cumulative 6.6 check). Records nodeTokenSpend always (IN-01).
+  const budgetBreach = applyNodeBudgetBreach(deps, config, gs, nodeId, event.tokensUsed ?? 0, run?.sessionKey);
 
   // 6. Synchronous state machine update
   if (budgetBreach.breached) {
-    // The node was already failed terminally by applyNodeBudgetBreach. Reuse the
-    // shared cascade handling (skip-emit + spawn newly-ready) for its FailureResult.
+    // Node already failed terminally by applyNodeBudgetBreach; reuse the shared cascade (skip-emit + spawn newly-ready).
     if (budgetBreach.failResult) {
       emitSkipsAndSpawnReady(deps, gs, budgetBreach.failResult, callbacks.spawnReadyNodes);
     }
@@ -699,9 +696,12 @@ export function handleSubAgentCompleted(
     }
   }
 
-  // 6.5. Budget accumulation
+  // 6.5. Budget accumulation (graph-wide) + COST-02 per-node corrected-$ ledger:
+  // event.cost is the corrected $ feeding cumulativeCost; sum it per nodeId too
+  // (present-only = no dead write; accumulate = re-emits compose, like nodeTokenSpend).
   gs.cumulativeTokens += event.tokensUsed ?? 0;
   gs.cumulativeCost += event.cost ?? 0;
+  if (event.cost !== undefined) gs.nodeCost.set(nodeId, (gs.nodeCost.get(nodeId) ?? 0) + event.cost);
 
   // 6.6. Budget check (BEFORE terminal check)
   const budget = gs.graph.graph.budget;

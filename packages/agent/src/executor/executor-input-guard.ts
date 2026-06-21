@@ -186,7 +186,7 @@ export function validateInput(params: {
             agentId: agentId ?? "unknown",
             tenantId: sessionKey.tenantId,
             actionType: "injection_rate_exceeded",
-            classification: "security",
+            kind: "injection_rate_exceeded",
             outcome: "failure" as const,
             metadata: {
               userId: sessionKey.userId,

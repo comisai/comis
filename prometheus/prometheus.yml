@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Sample Prometheus configuration for scraping a Comis daemon's opt-in `/metrics`
+# pull surface (PROM-01/02/03; design §6 WS7).
+#
+# Comis exposes `/metrics` ONLY when `observability.prometheus.enabled: true`
+# (loopback-bound `127.0.0.1:9464` by default — see docs/operations/prometheus-grafana.mdx).
+# This file is mounted into the Prometheus container by
+# `docker/observability/docker-compose.yml`. The target `host.docker.internal:9464`
+# reaches an enabled daemon running on the docker HOST (the operator runs the
+# daemon separately — the compose stack does NOT launch the daemon).
+#
+# The live `docker compose up` stand-up is operator/Linux-deferred (it needs a
+# live daemon emitting `/metrics`); the in-repo test asserts this YAML's
+# structural validity only.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 30s
+
+rule_files:
+  - rules/*.yml
+
+scrape_configs:
+  - job_name: comis
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - host.docker.internal:9464
+        labels:
+          deployment: local

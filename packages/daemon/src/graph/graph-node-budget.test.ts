@@ -29,6 +29,7 @@ function makeGs(opts: {
       markNodeFailed: opts.markNodeFailed ?? vi.fn(() => ({ ok: true, value: { skipped: [], newlyReady: [], retrying: [] } })),
     },
     nodeTokenSpend: new Map<string, number>(),
+    nodeCost: new Map<string, number>(),
     skippedNodesEmitted: new Set<string>(),
   } as unknown as GraphRunState;
 }

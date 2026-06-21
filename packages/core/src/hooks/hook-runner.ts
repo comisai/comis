@@ -116,7 +116,7 @@ export function createHookRunner(
         agentId: "hook-runner",
         tenantId: "system",
         actionType: "hook_modification",
-        classification: "security",
+        kind: "hook_blocked",
         outcome: "success",
         metadata: {
           hookName,

@@ -28,6 +28,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import { safePath, systemNowDate, systemNowMs } from "@comis/core";
 import type { ClockPort, FleetHealthReport, IncidentReport } from "@comis/core";
+import type { CostBucketFilter, QuarterHourBucket } from "@comis/memory";
 import {
   createObservabilityStore,
   openSqliteDatabase,
@@ -119,6 +120,46 @@ export async function assembleFleetHealthReportOffline(
       { obsStore: store, dataDir, clock: systemClock },
       sinceHours,
     );
+  } finally {
+    close();
+  }
+}
+
+/** Options for the offline cost-export read (COST-03). */
+export interface CostExportOptions extends CostBucketFilter {
+  /** Lower time bound (inclusive), epoch ms. Absent → all time. */
+  sinceMs?: number;
+  /** Bucket width: hourly (the default) or quarter-hour (15-min). */
+  granularity: "hourly" | "quarter-hour";
+}
+
+/**
+ * COST-03: read the corrected-cost buckets (with the E1 pricing-coverage column)
+ * from the LOCAL ~/.comis observability store, WITHOUT contacting the daemon —
+ * the telemetry lives on disk, so an export must not require a live gateway. This
+ * is the `comis cost export` data source (there is no admin aggregate RPC for the
+ * quarter-hour buckets yet; a dedicated export RPC is 179-04's, not invented here).
+ *
+ * The filter (agent/provider/model) + `sinceMs` are passed straight to the store's
+ * `aggregateHourlyCost`/`aggregateQuarterHourly`, which bind them as parameters.
+ * A missing/unreadable store soft-fails to `[]` (honest degradation — an empty
+ * export, never a crash or a fabricated zero-cost bucket).
+ */
+export async function readCostExportOffline(
+  dataDir: string,
+  options: CostExportOptions,
+): Promise<QuarterHourBucket[]> {
+  const { store, close } = openObsStoreIfPresent(dataDir);
+  try {
+    if (store === undefined) return [];
+    const filter: CostBucketFilter = {
+      agent: options.agent,
+      provider: options.provider,
+      model: options.model,
+    };
+    return options.granularity === "quarter-hour"
+      ? store.aggregateQuarterHourly(options.sinceMs, filter)
+      : store.aggregateHourlyCost(options.sinceMs, filter);
   } finally {
     close();
   }

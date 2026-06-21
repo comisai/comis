@@ -949,6 +949,21 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // Same rationale + precedent as IncidentReportSchema above; remove if an
       // in-repo value consumer lands.
       "FleetHealthReportSchema",
+      // ── Audit schema reshape (AUDIT-03 / E4, Phase 176 Plan 02) ──
+      // AUDIT_KINDS (the closed kind value-list) + kindIsSecuritySignal (the
+      // exhaustiveness-guarded severity helper) + AuditKind (the inferred union
+      // type) are the reshaped audit contract surface. AuditKind has an
+      // INTRA-core consumer — events-agent.ts annotates the audit:event
+      // payload's `kind?: AuditKind` via the relative ../security/audit.js
+      // import, which the cross-package walker skips as a self-import
+      // (buildRecallTrace precedent). The cross-package value consumers land in
+      // Plan 03 (the daemon audit sink reads payload.kind, derives via
+      // kindIsSecuritySignal/AUDIT_KINDS). Surfaced here AHEAD of that consumer
+      // (the orchestration-authoring schema-first precedent). Shrink each entry
+      // as Plan 03's sink name-imports it.
+      "AUDIT_KINDS",
+      "kindIsSecuritySignal",
+      "AuditKind",
       "NodeStatusSchema",
       "GraphStatusSchema",
       "GraphNodeSchema",
@@ -2694,6 +2709,14 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // system_prompt_reports table row schema.
       "SystemPromptReportDbRowSchema",
       "SystemPromptReportDbRowFromSchema",
+      // Audit-query filter shape (176-03 AUDIT-01) — the obs_query {action:"audit"}
+      // filter surface. AHEAD-OF-CONSUMER: Plan 05 (the obs.audit.query RPC + the
+      // obs_query audit action) is its cross-package consumer; until then it is
+      // consumed only intra-package (queryAuditEvents) + the audit-mutations test.
+      // Shrinks out when Plan 05's daemon handler name-imports it.
+      // (AuditEventDbRowSchema is NOT here — it is co-located in audit-mutations.ts
+      // and not surfaced on the barrel.)
+      "AuditQueryParams",
       // cache-stats SQL row schemas (4 × 2 = 8 entries).
       "CacheStatsWindowRawDbRowSchema",
       "CacheStatsWindowRawDbRowFromSchema",
@@ -2745,6 +2768,18 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // non-test value consumer of each lands.
       "reduceFleetWindow",
       "FleetWindowRollup",
+      // Cache-break rate-by-reason analytics query (PERSIST-01, Phase 176 Plan 04).
+      // queryCacheBreakRateByReason is the GROUP BY json_extract(details,'$.reason')
+      // over obs_diagnostics category:'cache_break'; CacheBreakReasonRate is its
+      // output row type. Barrel-exported from packages/memory/src/index.ts so a fleet/
+      // explain surface (a later plan — this plan only PERSISTS the rows + ships the
+      // queryable shape) can import it; the only current consumer is the daemon
+      // wiring TEST (the walker excludes *.test.ts), so both surface as orphans now.
+      // Same rationale + precedent as reduceFleetWindow/FleetWindowRollup above.
+      // (cacheBreakEventToRow is NOT listed — the daemon's cache_break subscriber is
+      // its real production consumer.) Remove when the fleet/explain consumer lands.
+      "queryCacheBreakRateByReason",
+      "CacheBreakReasonRate",
       // Video job store (v2.24 Phase 189, JOB-01). SHRUNK at Plan 02 (the async
       // poller wave): `createVideoJobStore` (constructed in main-helpers
       // buildVideoGenBundle), `VideoJobStore` + `VideoJobRecord` (the poller +

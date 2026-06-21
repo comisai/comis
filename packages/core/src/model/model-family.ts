@@ -71,6 +71,23 @@ const NATIVE_PROVIDER_FAMILY: Readonly<Record<string, ModelFamily>> = {
 };
 
 /**
+ * True when `provider` (a normalized provider id) is a NATIVE single-family
+ * provider — i.e. the provider IS one model family (anthropic/openai/google/…),
+ * so an unpriced model under it is a genuine pricing gap rather than a legitimate
+ * gateway $0. Providers ABSENT from {@link NATIVE_PROVIDER_FAMILY} are
+ * gateways/aggregators/local runtimes (ollama, openrouter, llama.cpp, vllm,
+ * lm-studio, …) where $0 is correct.
+ *
+ * Exported so consumers (e.g. `resolvePricingState` in model-catalog.ts) reuse
+ * the single provider→family source instead of re-declaring the map.
+ *
+ * @param provider - the normalized provider id (case-insensitive).
+ */
+export function isNativeProvider(provider: string): boolean {
+  return NATIVE_PROVIDER_FAMILY[provider.toLowerCase()] !== undefined;
+}
+
+/**
  * Classify a model id into a coarse {@link ModelFamily}. Returns `"unknown"` when
  * no pattern matches (the safe default — an unknown family never flags a chimera).
  */

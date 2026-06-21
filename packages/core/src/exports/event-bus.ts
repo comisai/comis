@@ -7,6 +7,12 @@ export type {
   EventMap,
   MessagingEvents,
   AgentEvents,
+  // ModelEvents (model:*/provider:* lifecycle) is extracted from AgentEvents for
+  // the file-size cap but is NOT re-exported here — like OrchestrationEvents /
+  // TrajectoryEvents, it stays internal and reaches consumers via EventMap.
   ChannelEvents,
   InfraEvents,
+  // SpendScopeKind — the closed wire enum (agent|tenant|global) for the spend
+  // kill-switch events. Consumed by the @comis/agent spend-accumulator (177-02).
+  SpendScopeKind,
 } from "../event-bus/index.js";

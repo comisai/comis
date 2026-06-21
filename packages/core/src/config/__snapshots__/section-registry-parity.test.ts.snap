@@ -13558,16 +13558,58 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
           }
         }
       },
+      "audit": {
+        "persist": true,
+        "sink": "both"
+      },
+      "costGranularity": {
+        "perTool": true,
+        "subagentRollup": true
+      },
+      "export": {
+        "csv": true,
+        "quarterHourBuckets": true
+      },
       "logRotation": {
         "compressAged": true,
         "maxAgeDays": 30,
         "maxFiles": 5,
         "maxSizeBytes": 52428800
       },
+      "otel": {
+        "captureContent": false,
+        "enabled": false,
+        "endpoint": "",
+        "genaiSemconv": false,
+        "logs": true,
+        "metrics": true,
+        "protocol": "http/protobuf",
+        "traces": true
+      },
       "persistence": {
+        "cacheBreaks": true,
         "enabled": true,
         "retentionDays": 30,
         "snapshotIntervalMs": 300000
+      },
+      "prometheus": {
+        "auth": "trusted-operator",
+        "cardinalityCap": 10000,
+        "enabled": false,
+        "exemplars": true,
+        "host": "127.0.0.1",
+        "path": "/metrics",
+        "port": 9464
+      },
+      "spend": {
+        "action": "warn",
+        "daemonGlobalUsd": null,
+        "onUnknownPricing": "warn",
+        "perAgentUsd": null,
+        "perTenantUsd": null,
+        "perTurnMax": 0.5,
+        "pricingFallback": "snapshot",
+        "warnAtFraction": 0.8
       },
       "trajectory": {}
     },
@@ -13680,6 +13722,69 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
   },
   {
     "default": {
+      "persist": true,
+      "sink": "both"
+    },
+    "immutable": false,
+    "path": "observability.audit",
+    "type": "object"
+  },
+  {
+    "default": true,
+    "immutable": false,
+    "path": "observability.audit.persist",
+    "type": "boolean"
+  },
+  {
+    "default": "both",
+    "immutable": false,
+    "path": "observability.audit.sink",
+    "type": "string"
+  },
+  {
+    "default": {
+      "perTool": true,
+      "subagentRollup": true
+    },
+    "immutable": false,
+    "path": "observability.costGranularity",
+    "type": "object"
+  },
+  {
+    "default": true,
+    "immutable": false,
+    "path": "observability.costGranularity.perTool",
+    "type": "boolean"
+  },
+  {
+    "default": true,
+    "immutable": false,
+    "path": "observability.costGranularity.subagentRollup",
+    "type": "boolean"
+  },
+  {
+    "default": {
+      "csv": true,
+      "quarterHourBuckets": true
+    },
+    "immutable": false,
+    "path": "observability.export",
+    "type": "object"
+  },
+  {
+    "default": true,
+    "immutable": false,
+    "path": "observability.export.csv",
+    "type": "boolean"
+  },
+  {
+    "default": true,
+    "immutable": false,
+    "path": "observability.export.quarterHourBuckets",
+    "type": "boolean"
+  },
+  {
+    "default": {
       "compressAged": true,
       "maxAgeDays": 30,
       "maxFiles": 5,
@@ -13715,6 +13820,70 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
   },
   {
     "default": {
+      "captureContent": false,
+      "enabled": false,
+      "endpoint": "",
+      "genaiSemconv": false,
+      "logs": true,
+      "metrics": true,
+      "protocol": "http/protobuf",
+      "traces": true
+    },
+    "immutable": false,
+    "path": "observability.otel",
+    "type": "object"
+  },
+  {
+    "default": false,
+    "immutable": false,
+    "path": "observability.otel.captureContent",
+    "type": "boolean"
+  },
+  {
+    "default": false,
+    "immutable": false,
+    "path": "observability.otel.enabled",
+    "type": "boolean"
+  },
+  {
+    "default": "",
+    "immutable": false,
+    "path": "observability.otel.endpoint",
+    "type": "string"
+  },
+  {
+    "default": false,
+    "immutable": false,
+    "path": "observability.otel.genaiSemconv",
+    "type": "boolean"
+  },
+  {
+    "default": true,
+    "immutable": false,
+    "path": "observability.otel.logs",
+    "type": "boolean"
+  },
+  {
+    "default": true,
+    "immutable": false,
+    "path": "observability.otel.metrics",
+    "type": "boolean"
+  },
+  {
+    "default": "http/protobuf",
+    "immutable": false,
+    "path": "observability.otel.protocol",
+    "type": "string"
+  },
+  {
+    "default": true,
+    "immutable": false,
+    "path": "observability.otel.traces",
+    "type": "boolean"
+  },
+  {
+    "default": {
+      "cacheBreaks": true,
       "enabled": true,
       "retentionDays": 30,
       "snapshotIntervalMs": 300000
@@ -13722,6 +13891,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "immutable": false,
     "path": "observability.persistence",
     "type": "object"
+  },
+  {
+    "default": true,
+    "immutable": false,
+    "path": "observability.persistence.cacheBreaks",
+    "type": "boolean"
   },
   {
     "default": true,
@@ -13740,6 +13915,125 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "immutable": false,
     "path": "observability.persistence.snapshotIntervalMs",
     "type": "integer"
+  },
+  {
+    "default": {
+      "auth": "trusted-operator",
+      "cardinalityCap": 10000,
+      "enabled": false,
+      "exemplars": true,
+      "host": "127.0.0.1",
+      "path": "/metrics",
+      "port": 9464
+    },
+    "immutable": false,
+    "path": "observability.prometheus",
+    "type": "object"
+  },
+  {
+    "default": "trusted-operator",
+    "immutable": false,
+    "path": "observability.prometheus.auth",
+    "type": "string"
+  },
+  {
+    "default": 10000,
+    "immutable": false,
+    "path": "observability.prometheus.cardinalityCap",
+    "type": "integer"
+  },
+  {
+    "default": false,
+    "immutable": false,
+    "path": "observability.prometheus.enabled",
+    "type": "boolean"
+  },
+  {
+    "default": true,
+    "immutable": false,
+    "path": "observability.prometheus.exemplars",
+    "type": "boolean"
+  },
+  {
+    "default": "127.0.0.1",
+    "immutable": false,
+    "path": "observability.prometheus.host",
+    "type": "string"
+  },
+  {
+    "default": "/metrics",
+    "immutable": false,
+    "path": "observability.prometheus.path",
+    "type": "string"
+  },
+  {
+    "default": 9464,
+    "immutable": false,
+    "path": "observability.prometheus.port",
+    "type": "integer"
+  },
+  {
+    "default": {
+      "action": "warn",
+      "daemonGlobalUsd": null,
+      "onUnknownPricing": "warn",
+      "perAgentUsd": null,
+      "perTenantUsd": null,
+      "perTurnMax": 0.5,
+      "pricingFallback": "snapshot",
+      "warnAtFraction": 0.8
+    },
+    "immutable": false,
+    "path": "observability.spend",
+    "type": "object"
+  },
+  {
+    "default": "warn",
+    "immutable": false,
+    "path": "observability.spend.action",
+    "type": "string"
+  },
+  {
+    "default": null,
+    "immutable": false,
+    "path": "observability.spend.daemonGlobalUsd",
+    "type": "number"
+  },
+  {
+    "default": "warn",
+    "immutable": false,
+    "path": "observability.spend.onUnknownPricing",
+    "type": "string"
+  },
+  {
+    "default": null,
+    "immutable": false,
+    "path": "observability.spend.perAgentUsd",
+    "type": "number"
+  },
+  {
+    "default": null,
+    "immutable": false,
+    "path": "observability.spend.perTenantUsd",
+    "type": "number"
+  },
+  {
+    "default": 0.5,
+    "immutable": false,
+    "path": "observability.spend.perTurnMax",
+    "type": "number"
+  },
+  {
+    "default": "snapshot",
+    "immutable": false,
+    "path": "observability.spend.pricingFallback",
+    "type": "string"
+  },
+  {
+    "default": 0.8,
+    "immutable": false,
+    "path": "observability.spend.warnAtFraction",
+    "type": "number"
   },
   {
     "default": {},
@@ -37786,16 +38080,58 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             }
           }
         },
+        "audit": {
+          "persist": true,
+          "sink": "both"
+        },
+        "costGranularity": {
+          "perTool": true,
+          "subagentRollup": true
+        },
+        "export": {
+          "csv": true,
+          "quarterHourBuckets": true
+        },
         "logRotation": {
           "compressAged": true,
           "maxAgeDays": 30,
           "maxFiles": 5,
           "maxSizeBytes": 52428800
         },
+        "otel": {
+          "captureContent": false,
+          "enabled": false,
+          "endpoint": "",
+          "genaiSemconv": false,
+          "logs": true,
+          "metrics": true,
+          "protocol": "http/protobuf",
+          "traces": true
+        },
         "persistence": {
+          "cacheBreaks": true,
           "enabled": true,
           "retentionDays": 30,
           "snapshotIntervalMs": 300000
+        },
+        "prometheus": {
+          "auth": "trusted-operator",
+          "cardinalityCap": 10000,
+          "enabled": false,
+          "exemplars": true,
+          "host": "127.0.0.1",
+          "path": "/metrics",
+          "port": 9464
+        },
+        "spend": {
+          "action": "warn",
+          "daemonGlobalUsd": null,
+          "onUnknownPricing": "warn",
+          "perAgentUsd": null,
+          "perTenantUsd": null,
+          "perTurnMax": 0.5,
+          "pricingFallback": "snapshot",
+          "warnAtFraction": 0.8
         },
         "trajectory": {}
       },
@@ -37927,6 +38263,77 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           ],
           "type": "object"
         },
+        "audit": {
+          "additionalProperties": false,
+          "default": {
+            "persist": true,
+            "sink": "both"
+          },
+          "properties": {
+            "persist": {
+              "default": true,
+              "type": "boolean"
+            },
+            "sink": {
+              "default": "both",
+              "enum": [
+                "sqlite",
+                "jsonl",
+                "both"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "persist",
+            "sink"
+          ],
+          "type": "object"
+        },
+        "costGranularity": {
+          "additionalProperties": false,
+          "default": {
+            "perTool": true,
+            "subagentRollup": true
+          },
+          "properties": {
+            "perTool": {
+              "default": true,
+              "type": "boolean"
+            },
+            "subagentRollup": {
+              "default": true,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "perTool",
+            "subagentRollup"
+          ],
+          "type": "object"
+        },
+        "export": {
+          "additionalProperties": false,
+          "default": {
+            "csv": true,
+            "quarterHourBuckets": true
+          },
+          "properties": {
+            "csv": {
+              "default": true,
+              "type": "boolean"
+            },
+            "quarterHourBuckets": {
+              "default": true,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "csv",
+            "quarterHourBuckets"
+          ],
+          "type": "object"
+        },
         "logRotation": {
           "additionalProperties": false,
           "default": {
@@ -37967,14 +38374,81 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           ],
           "type": "object"
         },
+        "otel": {
+          "additionalProperties": false,
+          "default": {
+            "captureContent": false,
+            "enabled": false,
+            "endpoint": "",
+            "genaiSemconv": false,
+            "logs": true,
+            "metrics": true,
+            "protocol": "http/protobuf",
+            "traces": true
+          },
+          "properties": {
+            "captureContent": {
+              "default": false,
+              "type": "boolean"
+            },
+            "enabled": {
+              "default": false,
+              "type": "boolean"
+            },
+            "endpoint": {
+              "default": "",
+              "type": "string"
+            },
+            "genaiSemconv": {
+              "default": false,
+              "type": "boolean"
+            },
+            "logs": {
+              "default": true,
+              "type": "boolean"
+            },
+            "metrics": {
+              "default": true,
+              "type": "boolean"
+            },
+            "protocol": {
+              "default": "http/protobuf",
+              "enum": [
+                "http/protobuf",
+                "grpc"
+              ],
+              "type": "string"
+            },
+            "traces": {
+              "default": true,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "enabled",
+            "endpoint",
+            "protocol",
+            "traces",
+            "metrics",
+            "logs",
+            "genaiSemconv",
+            "captureContent"
+          ],
+          "type": "object"
+        },
         "persistence": {
           "additionalProperties": false,
           "default": {
+            "cacheBreaks": true,
             "enabled": true,
             "retentionDays": 30,
             "snapshotIntervalMs": 300000
           },
           "properties": {
+            "cacheBreaks": {
+              "default": true,
+              "type": "boolean"
+            },
             "enabled": {
               "default": true,
               "type": "boolean"
@@ -37995,7 +38469,161 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "required": [
             "enabled",
             "retentionDays",
-            "snapshotIntervalMs"
+            "snapshotIntervalMs",
+            "cacheBreaks"
+          ],
+          "type": "object"
+        },
+        "prometheus": {
+          "additionalProperties": false,
+          "default": {
+            "auth": "trusted-operator",
+            "cardinalityCap": 10000,
+            "enabled": false,
+            "exemplars": true,
+            "host": "127.0.0.1",
+            "path": "/metrics",
+            "port": 9464
+          },
+          "properties": {
+            "auth": {
+              "const": "trusted-operator",
+              "default": "trusted-operator",
+              "type": "string"
+            },
+            "cardinalityCap": {
+              "default": 10000,
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "enabled": {
+              "default": false,
+              "type": "boolean"
+            },
+            "exemplars": {
+              "default": true,
+              "type": "boolean"
+            },
+            "host": {
+              "default": "127.0.0.1",
+              "type": "string"
+            },
+            "path": {
+              "default": "/metrics",
+              "type": "string"
+            },
+            "port": {
+              "default": 9464,
+              "maximum": 65535,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "enabled",
+            "host",
+            "port",
+            "path",
+            "auth",
+            "exemplars",
+            "cardinalityCap"
+          ],
+          "type": "object"
+        },
+        "spend": {
+          "additionalProperties": false,
+          "default": {
+            "action": "warn",
+            "daemonGlobalUsd": null,
+            "onUnknownPricing": "warn",
+            "perAgentUsd": null,
+            "perTenantUsd": null,
+            "perTurnMax": 0.5,
+            "pricingFallback": "snapshot",
+            "warnAtFraction": 0.8
+          },
+          "properties": {
+            "action": {
+              "default": "warn",
+              "enum": [
+                "warn",
+                "abort"
+              ],
+              "type": "string"
+            },
+            "daemonGlobalUsd": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "onUnknownPricing": {
+              "default": "warn",
+              "enum": [
+                "warn",
+                "abort"
+              ],
+              "type": "string"
+            },
+            "perAgentUsd": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "perTenantUsd": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "perTurnMax": {
+              "default": 0.5,
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            "pricingFallback": {
+              "default": "snapshot",
+              "enum": [
+                "snapshot"
+              ],
+              "type": "string"
+            },
+            "warnAtFraction": {
+              "default": 0.8,
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            }
+          },
+          "required": [
+            "perAgentUsd",
+            "perTenantUsd",
+            "daemonGlobalUsd",
+            "perTurnMax",
+            "action",
+            "warnAtFraction",
+            "pricingFallback",
+            "onUnknownPricing"
           ],
           "type": "object"
         },
@@ -38014,7 +38642,13 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
         "persistence",
         "trajectory",
         "logRotation",
-        "alertBudget"
+        "alertBudget",
+        "audit",
+        "spend",
+        "otel",
+        "prometheus",
+        "costGranularity",
+        "export"
       ],
       "type": "object"
     },

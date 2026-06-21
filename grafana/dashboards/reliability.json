@@ -1,0 +1,79 @@
+{
+  "__comis_note": "Comis dashboards-as-code (PROM-03; design §6 WS7). Every panel expr references an emitted METRIC_CATALOG metric (CI drift guard: test/architecture/grafana-dashboard-metrics.test.ts). E7 drill-down keys on the comis.trace_id span attribute (PROMETHEUS_EXEMPLARS_SUPPORTED===false) — see docs/operations/prometheus-grafana.mdx. Process/runtime liveness (event-loop lag, RSS) is out of scope this milestone (no comis_process_* set — N1).",
+  "uid": "comis-reliability",
+  "title": "Comis — Reliability",
+  "tags": ["comis", "reliability", "latency"],
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": {
+    "list": [
+      { "name": "datasource", "type": "datasource", "query": "prometheus", "label": "Data source", "current": {} },
+      { "name": "tenant", "type": "query", "datasource": "${datasource}", "query": "label_values(comis_cost_usd_total, tenant)", "includeAll": true, "multi": true, "label": "Tenant" },
+      { "name": "agent", "type": "query", "datasource": "${datasource}", "query": "label_values(comis_run_duration_seconds_count, agent)", "includeAll": true, "multi": true, "label": "Agent" },
+      { "name": "provider", "type": "query", "datasource": "${datasource}", "query": "label_values(comis_cost_usd_total, provider)", "includeAll": true, "multi": true, "label": "Provider" },
+      { "name": "model", "type": "query", "datasource": "${datasource}", "query": "label_values(comis_cost_usd_total, model)", "includeAll": true, "multi": true, "label": "Model" }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Run duration p50 / p95 / p99 by operation",
+      "type": "timeseries",
+      "gridPos": { "h": 9, "w": 16, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "s", "links": [ { "title": "Explain the slow session", "url": "/observe/explain?ref=${__data.fields.comis_trace_id}", "targetBlank": true } ] }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "datasource": "${datasource}", "expr": "histogram_quantile(0.5, sum by (le, operation) (rate(comis_run_duration_seconds_bucket{agent=~\"$agent\"}[5m])))", "legendFormat": "p50 {{operation}}" },
+        { "refId": "B", "datasource": "${datasource}", "expr": "histogram_quantile(0.95, sum by (le, operation) (rate(comis_run_duration_seconds_bucket{agent=~\"$agent\"}[5m])))", "legendFormat": "p95 {{operation}}" },
+        { "refId": "C", "datasource": "${datasource}", "expr": "histogram_quantile(0.99, sum by (le, operation) (rate(comis_run_duration_seconds_bucket{agent=~\"$agent\"}[5m])))", "legendFormat": "p99 {{operation}}" }
+      ],
+      "links": [ { "title": "comis explain (drill-down)", "url": "/observe/explain?ref=${__data.fields.comis_trace_id}", "targetBlank": true } ]
+    },
+    {
+      "id": 2,
+      "title": "Mean run duration (sum/count)",
+      "type": "stat",
+      "gridPos": { "h": 9, "w": 8, "x": 16, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "datasource": "${datasource}", "expr": "sum(rate(comis_run_duration_seconds_sum{agent=~\"$agent\"}[5m])) / clamp_min(sum(rate(comis_run_duration_seconds_count{agent=~\"$agent\"}[5m])), 1)", "legendFormat": "mean" }
+      ],
+      "links": [ { "title": "comis explain (drill-down)", "url": "/observe/explain?ref=${__data.fields.comis_trace_id}", "targetBlank": true } ]
+    },
+    {
+      "id": 3,
+      "title": "Large-result offloads",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 9 },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "datasource": "${datasource}", "expr": "sum by (tool) (rate(comis_offloads_total{agent=~\"$agent\"}[5m]))", "legendFormat": "{{tool}}" }
+      ],
+      "links": [ { "title": "comis explain (drill-down)", "url": "/observe/explain?ref=${__data.fields.comis_trace_id}", "targetBlank": true } ]
+    },
+    {
+      "id": 4,
+      "title": "Circuit-breaker trips by tool",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 9 },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "datasource": "${datasource}", "expr": "sum by (tool) (rate(comis_breaker_trips_total{agent=~\"$agent\"}[5m]))", "legendFormat": "{{tool}}" }
+      ],
+      "links": [ { "title": "comis explain (drill-down)", "url": "/observe/explain?ref=${__data.fields.comis_trace_id}", "targetBlank": true } ]
+    },
+    {
+      "id": 5,
+      "title": "Recall zero-hit rate (recall quality)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 17 },
+      "fieldConfig": { "defaults": { "unit": "percentunit" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "datasource": "${datasource}", "expr": "sum by (lane) (rate(comis_recall_zero_hits_total{agent=~\"$agent\"}[15m])) / clamp_min(sum by (lane) (rate(comis_recall_total{agent=~\"$agent\"}[15m])), 1)", "legendFormat": "{{lane}}" }
+      ],
+      "links": [ { "title": "comis explain (drill-down)", "url": "/observe/explain?ref=${__data.fields.comis_trace_id}", "targetBlank": true } ]
+    }
+  ]
+}

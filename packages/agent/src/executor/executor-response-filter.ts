@@ -120,7 +120,7 @@ export function scanWithOutputGuard(params: {
       agentId,
       tenantId,
       actionType: "output_guard",
-      classification: "security",
+      kind: "injection_detected",
       outcome: guardResult.value.blocked ? "denied" : "success",
       metadata,
     });

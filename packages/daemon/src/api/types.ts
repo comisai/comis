@@ -696,8 +696,10 @@ export interface MediaApiDeps {
 }
 
 /**
- * Dependencies for obs-handlers
- * (obs.usage/billing/diagnostics/budget).
+ * Dependencies for obs-handlers (obs.usage/billing/diagnostics/budget/spend).
+ * @optional-field-count: 13 — a composition-root deps bag; each optional field is a
+ * distinct obs source present iff that subsystem is wired (absent ⇒ that RPC honest-
+ * degrades). +1 per new obs source (spendSnapshot added in 179 — WEBUI-02 live spend).
  */
 export interface ObservabilityApiDeps {
   // Observability bridge deps
@@ -706,39 +708,36 @@ export interface ObservabilityApiDeps {
   channelActivityTracker: ChannelActivityTracker;
   deliveryTracer: DeliveryTracer;
   budgetGuards?: Map<string, { getSnapshot(): { perExecution: number; perHour: number; perDay: number } }>;
+  /** WEBUI-02 (179-04): reader for the LIVE daemon-wide spend the kill-switch enforces (locked
+   *  A1 — `getSnapshot()`, NOT the lagging SQL) + the ceilings, so `obs.spend.snapshot` computes
+   *  headroom = ceiling − spend (the `budgetGuards` precedent). Absent ⇒ off → `enabled:false`. @optional-field */
+  spendSnapshot?: () => {
+    perAgent: ReadonlyMap<string, number>; perTenant: ReadonlyMap<string, number>; global: number;
+    ceilings: { perAgentUsd: number | null; perTenantUsd: number | null; daemonGlobalUsd: number | null };
+  };
   // Observability persistence deps
   obsStore?: import("@comis/memory").ObservabilityStore;
   startupTimestamp?: number;
   sharedCostTracker?: { reset(): number };
   // Context pipeline collector deps
   contextPipelineCollector?: import("../observability/context-pipeline-collector.js").ContextPipelineCollector;
-  /** obs-handlers emits `observability:reset` on obs.reset. Same
-   *  shape as MemoryApiDeps.eventBus / WorkspaceApiDeps.eventBus so the
-   *  ApiDispatchDeps multi-extends remains well-formed. */
+  /** obs-handlers emits `observability:reset` on obs.reset. (Shapes below mirror the
+   *  matching MemoryApiDeps/WorkspaceApiDeps/AgentsApiDeps slices so the ApiDispatchDeps
+   *  multi-extends stays well-formed.) */
   eventBus?: AppContainer["eventBus"];
-  /** obs-handlers reads deps.agents?.[id]?.budgets for budget
-   *  snapshot RPCs. Same shape as AgentsApiDeps.agents / OrchestratorApiDeps.agents
-   *  / WorkspaceApiDeps.agents so the ApiDispatchDeps multi-extends remains
-   *  well-formed. obs-handlers tolerates the broader PerAgentConfig record
-   *  structurally (only `.budgets?` is read). */
+  /** obs-handlers reads deps.agents?.[id]?.budgets for budget snapshot RPCs (tolerates
+   *  the broader PerAgentConfig structurally — only `.budgets?` is read). */
   agents: Record<string, PerAgentConfig>;
-  /** obs-handlers exposes embedding cache stats via the
-   *  memory.embeddingCache RPC. Same shape as MemoryApiDeps.embeddingCacheStats
-   *  so the ApiDispatchDeps multi-extends remains well-formed. */
+  /** obs-handlers exposes embedding cache stats via the memory.embeddingCache RPC. */
   embeddingCacheStats?: () => import("@comis/memory").EmbeddingCacheStats;
-  /** obs-handlers exposes embedding circuit breaker state.
-   *  Same shape as MemoryApiDeps.embeddingCircuitBreakerState so the
-   *  ApiDispatchDeps multi-extends remains well-formed. */
+  /** obs-handlers exposes embedding circuit breaker state. */
   embeddingCircuitBreakerState?: () => import("@comis/agent").CircuitState;
   /** obs-handlers reads deps.tokenTracker for cache stats RPC.
    *  Only used by obs-handlers; no cross-slice collision. */
   tokenTracker?: import("../observability/token-tracker.js").TokenTracker;
-  /**
-   * Directory containing session-index.YYYY-MM-DD.jsonl files.
-   * Used by obs.trace.* handlers. Defaults to $HOME/.comis at handler-construction
-   * time when omitted. Optional preserves backward compatibility with existing
-   * handler tests that pass {} for deps.
-   */
+  /** Directory containing session-index.YYYY-MM-DD.jsonl files (obs.trace.* handlers).
+   *  Defaults to $HOME/.comis at handler-construction time when omitted; optional so
+   *  existing handler tests can pass {} for deps. */
   dataDir?: string;
   /**
    * Injected ClockPort for obs.fleet.health's `sinceHours` -> `sinceMs`

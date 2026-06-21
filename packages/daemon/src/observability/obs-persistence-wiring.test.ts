@@ -17,7 +17,22 @@ import {
   nodeBudgetExceededEventToRow,
   setupObsPersistence,
 } from "./obs-persistence-wiring.js";
+import {
+  auditEventToRow,
+  wireAuditSink,
+  AUDIT_JSONL_DEFAULT_MAX_SIZE_BYTES,
+  AUDIT_JSONL_DEFAULT_MAX_FILES,
+} from "./obs-audit-sink.js";
+import type { AuditRowSink } from "./obs-audit-sink.js";
+import type { AuditEventRow } from "@comis/memory";
+import type { ComisLogger } from "@comis/infra";
 import type { EventMap } from "@comis/core";
+import { runWithContext } from "@comis/core";
+import Database from "better-sqlite3";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as nodePath from "node:path";
+import { initSchema, createObservabilityStore, queryCacheBreakRateByReason } from "@comis/memory";
 import type { DiagnosticEvent } from "./diagnostic-collector.js";
 
 // ---------------------------------------------------------------------------
@@ -87,6 +102,143 @@ describe("tokenUsageEventToRow", () => {
     };
 
     expect(tokenUsageEventToRow(payload).sessionKey).toBe("sk-test");
+  });
+
+  // PERSIST-02/03 (Phase 176 Plan 04): the row-builder fills the 4 previously-
+  // dropped cost-correctness fields + pricing_state onto the row object.
+  it("PERSIST-02/03: threads warmupTurn/cacheEligible/costCorrection.delta/pendingCacheInvestmentUsd + pricingState onto the row", () => {
+    const payload: EventMap["observability:token_usage"] = {
+      timestamp: 1000,
+      traceId: "trace-1",
+      agentId: "agent-1",
+      channelId: "chan-1",
+      executionId: "exec-1",
+      provider: "anthropic",
+      model: "claude-3-5-sonnet-20241022",
+      tokens: { prompt: 100, completion: 50, total: 150 },
+      cost: { input: 0.01, output: 0.005, cacheRead: 0.001, cacheWrite: 0.002, total: 0.015 },
+      latencyMs: 200,
+      cacheReadTokens: 10,
+      cacheWriteTokens: 5,
+      sessionKey: "tenant:user:agent",
+      savedVsUncached: -0.02,
+      cacheEligible: true,
+      warmupTurn: true,
+      pendingCacheInvestmentUsd: 0.02,
+      costCorrection: { delta: 0.01, sdkRaw: 0.1, corrected: 0.11 },
+    };
+
+    const row = tokenUsageEventToRow(payload);
+    expect(row.warmupTurn).toBe(true);
+    expect(row.cacheEligible).toBe(true);
+    // costCorrection on the row is the scalar DELTA (not the nested object).
+    expect(row.costCorrection).toBe(0.01);
+    expect(row.pendingCacheInvestmentUsd).toBe(0.02);
+    // pricing_state (PERSIST-03): a catalog-priced anthropic model → "priced".
+    expect(row.pricingState).toBe("priced");
+  });
+
+  it("PERSIST-03: an unknown native model resolves pricingState 'unknown'; a gateway resolves 'free'", () => {
+    const base = {
+      timestamp: 1,
+      traceId: "",
+      agentId: "",
+      channelId: "",
+      executionId: "",
+      tokens: { prompt: 0, completion: 0, total: 0 },
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      latencyMs: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      sessionKey: "sk",
+      savedVsUncached: 0,
+      cacheEligible: false,
+    };
+    const unknown = tokenUsageEventToRow({
+      ...base,
+      provider: "anthropic",
+      model: "totally-fake-model-xyz",
+    } as EventMap["observability:token_usage"]);
+    expect(unknown.pricingState).toBe("unknown");
+
+    const free = tokenUsageEventToRow({
+      ...base,
+      provider: "ollama",
+      model: "llama3",
+    } as EventMap["observability:token_usage"]);
+    expect(free.pricingState).toBe("free");
+  });
+
+  // COST-01 (Phase 179): the row-builder threads the distinct toolTag from the
+  // event onto the row so the write-path persists it to the tool_tag column.
+  // Without this thread the column is always NULL in production (a silent stub).
+  it("COST-01: threads payload.toolTag onto the row (distinct tool names)", () => {
+    const payload = {
+      timestamp: 1000,
+      traceId: "trace-1",
+      agentId: "agent-1",
+      channelId: "chan-1",
+      executionId: "exec-1",
+      provider: "anthropic",
+      model: "claude-3-5-sonnet-20241022",
+      tokens: { prompt: 100, completion: 50, total: 150 },
+      cost: { input: 0.01, output: 0.005, cacheRead: 0.001, cacheWrite: 0.002, total: 0.015 },
+      latencyMs: 200,
+      cacheReadTokens: 10,
+      cacheWriteTokens: 5,
+      sessionKey: "tenant:user:agent",
+      savedVsUncached: 0,
+      cacheEligible: true,
+      toolTag: ["bash", "read"],
+    } as EventMap["observability:token_usage"];
+
+    expect(tokenUsageEventToRow(payload).toolTag).toEqual(["bash", "read"]);
+  });
+
+  it("COST-01: leaves toolTag undefined on the row when the event carries none (no-tool turn)", () => {
+    const payload = {
+      timestamp: 1,
+      traceId: "",
+      agentId: "",
+      channelId: "",
+      executionId: "",
+      provider: "anthropic",
+      model: "claude-3-5-sonnet-20241022",
+      tokens: { prompt: 0, completion: 0, total: 0 },
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      latencyMs: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      sessionKey: "sk",
+      savedVsUncached: 0,
+      cacheEligible: false,
+    } as EventMap["observability:token_usage"];
+
+    expect(tokenUsageEventToRow(payload).toolTag).toBeUndefined();
+  });
+
+  it("PERSIST-02: omits costCorrection.delta when the event carries no costCorrection (absence is the no-correction signal)", () => {
+    const payload = {
+      timestamp: 1,
+      traceId: "",
+      agentId: "",
+      channelId: "",
+      executionId: "",
+      provider: "anthropic",
+      model: "claude-3-5-sonnet-20241022",
+      tokens: { prompt: 0, completion: 0, total: 0 },
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      latencyMs: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      sessionKey: "sk",
+      savedVsUncached: 0,
+      cacheEligible: false,
+      warmupTurn: false,
+      pendingCacheInvestmentUsd: 0,
+    } as EventMap["observability:token_usage"];
+    const row = tokenUsageEventToRow(payload);
+    expect(row.costCorrection).toBeUndefined();
   });
 });
 
@@ -870,6 +1022,10 @@ describe("setupObsPersistence", () => {
       insertDelivery: vi.fn(),
       insertDiagnostic: vi.fn(),
       insertChannelSnapshot: vi.fn(),
+      // AUDIT-01: the audit subscribers (incl. the sandbox_downgrade_refused
+      // mirror) call insertAuditEvent; queryAuditEvents on the read side.
+      insertAuditEvent: vi.fn(),
+      queryAuditEvents: vi.fn(() => []),
       queryDelivery: vi.fn(),
       queryDiagnostics: vi.fn(),
       latestChannelSnapshots: vi.fn(),
@@ -1198,7 +1354,7 @@ describe("setupObsPersistence", () => {
     result.drainAll();
   });
 
-  it("drainAll() flushes all 4 buffers", () => {
+  it("drainAll() flushes all 5 buffers (incl. the audit buffer)", () => {
     const eventBus = createMockEventBus();
     const obsStore = createMockObsStore();
     const db = createMockDb();
@@ -1315,5 +1471,664 @@ describe("setupObsPersistence", () => {
     // Cleanup
     clearInterval(result.snapshotTimer);
     result.drainAll();
+  });
+});
+
+// ===========================================================================
+// AUDIT-01/02/04 — the audit sink (auditEventToRow + the 7 subscribers + the
+// metadata scrub + the .audit() log). Uses a REAL in-memory store + a REAL
+// tmp-dir JSONL so the content-free + round-trip invariants are asserted
+// against actual persistence, not mocks.
+// ===========================================================================
+
+describe("auditEventToRow (the content-free audit row-builder)", () => {
+  it("scrubs the audit:event metadata free-map into refs (AUDIT-04) and never carries a planted value", () => {
+    const row = auditEventToRow(
+      {
+        timestamp: 1000,
+        agentId: "a1",
+        tenantId: "t1",
+        actionType: "file.delete",
+        kind: "audit",
+        classification: "destructive",
+        outcome: "success",
+        metadata: { apiKey: "sk-PLANTED-SECRET", count: 3 },
+      },
+      "t1",
+      "a1",
+      undefined,
+    );
+    expect(row.kind).toBe("audit");
+    expect(row.classification).toBe("destructive");
+    expect(row.outcome).toBe("success");
+    expect(row.actor).toBeDefined();
+    // The planted value must NOT survive into refs.
+    expect(row.refs ?? "").not.toContain("sk-PLANTED-SECRET");
+  });
+
+  it("derives kind from actionType when payload.kind is absent (defense-in-depth fallback)", () => {
+    const row = auditEventToRow(
+      {
+        timestamp: 1000,
+        agentId: "a1",
+        tenantId: "t1",
+        actionType: "secrets.get",
+        outcome: "denied",
+      } as EventMap["audit:event"],
+      "t1",
+      "a1",
+      undefined,
+    );
+    // A stray un-migrated emit still classifies (not "audit"/empty).
+    expect(row.kind).toBeTruthy();
+    expect(row.kind).not.toBe("");
+    expect(row.kind).toBe("secret_access");
+  });
+
+  it.each([
+    ["secrets.get", "secret_access"],
+    // AUDIT-04 / M1: secret MUTATIONS derive to the secret_access security
+    // signal (previously fell through to the generic `audit` family / info).
+    ["secrets.set", "secret_access"],
+    ["secrets.delete", "secret_access"],
+    ["secrets.rotate", "secret_access"],
+    ["auth.set", "auth_mutation"],
+    ["output_guard", "injection_detected"],
+    ["injection_rate_exceeded", "injection_rate_exceeded"],
+    ["hook_modification", "hook_blocked"],
+    ["totally.unknown.action", "audit"], // the generic-family fallback
+  ])("derives kind '%s' → '%s' (fallback map, all arms)", (actionType, expectedKind) => {
+    const row = auditEventToRow(
+      { timestamp: 1, agentId: "a", tenantId: "t", actionType, outcome: "success" } as EventMap["audit:event"],
+      "t",
+      "a",
+      undefined,
+    );
+    expect(row.kind).toBe(expectedKind);
+  });
+
+  it("AUDIT-04 / M1: a secrets.delete persists as a security-signal kind (severity warning), not generic info", () => {
+    // The emit sites now set kind explicitly; verify the row carries the
+    // security-signal kind + the "warning" severity (not "audit"/"info"), so a
+    // kind/severity-filtered audit query surfaces the secret mutation.
+    const row = auditEventToRow(
+      {
+        timestamp: 1000,
+        agentId: "system",
+        tenantId: "t1",
+        actionType: "secrets.delete",
+        kind: "secret_access",
+        classification: "destructive",
+        outcome: "success",
+        metadata: { name: "OPENAI_API_KEY", existed: true },
+      },
+      "t1",
+      "system",
+      undefined,
+    );
+    expect(row.kind).toBe("secret_access");
+    expect(row.severity).toBe("warning"); // security signal, NOT "info"
+    expect(row.kind).not.toBe("audit");
+  });
+});
+
+describe("AUDIT-01 / L1 — the security-audit.jsonl rotation fallback matches the schema default", () => {
+  it("the sink fallback (used when logRotation is omitted) equals LogRotationConfigSchema's 50 MB / 5 default — no drift", () => {
+    // SOURCE OF TRUTH: LogRotationConfigSchema in
+    // packages/core/src/config/schema-observability.ts
+    //   maxSizeBytes default = 50 * 1024 * 1024 (52_428_800)
+    //   maxFiles    default = 5
+    // The sink previously fell back to 10 MB / 5 — a silent disagreement with
+    // the 50 MB schema default (the L1 review finding). Pin them aligned; if the
+    // schema default changes, update these constants (and this test) together.
+    expect(AUDIT_JSONL_DEFAULT_MAX_SIZE_BYTES).toBe(50 * 1024 * 1024);
+    expect(AUDIT_JSONL_DEFAULT_MAX_SIZE_BYTES).toBe(52_428_800);
+    expect(AUDIT_JSONL_DEFAULT_MAX_FILES).toBe(5);
+    // Specifically NOT the old 10 MB drift value.
+    expect(AUDIT_JSONL_DEFAULT_MAX_SIZE_BYTES).not.toBe(10 * 1024 * 1024);
+  });
+});
+
+describe("setupObsPersistence — audit sink (real store + tmp JSONL)", () => {
+  let db: Database.Database;
+  let store: ReturnType<typeof createObservabilityStore>;
+  let dataDir: string;
+  let auditLogPath: string;
+
+  function realDeps(extra: Record<string, unknown> = {}) {
+    const auditLines: Array<Record<string, unknown>> = [];
+    const logger = {
+      info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
+      trace: vi.fn(), fatal: vi.fn(),
+      audit: vi.fn((rec: Record<string, unknown>) => { auditLines.push(rec); }),
+      child: vi.fn(() => logger),
+    };
+    const eventBus = (() => {
+      const listeners = new Map<string, Array<(p: unknown) => void>>();
+      return {
+        on: vi.fn((e: string, h: (p: unknown) => void) => {
+          const arr = listeners.get(e) ?? []; arr.push(h); listeners.set(e, arr);
+        }),
+        off: vi.fn(), once: vi.fn(),
+        emit: (e: string, p: unknown) => { for (const h of listeners.get(e) ?? []) h(p); },
+      };
+    })();
+    const deps = {
+      eventBus: eventBus as never,
+      obsStore: store,
+      db: { transaction: <T,>(fn: () => T) => fn },
+      channelActivityTracker: { getAll: () => [] } as never,
+      startupTimestamp: Date.now(),
+      snapshotIntervalMs: 300_000,
+      logger: logger as never,
+      dataDir,
+      logRotation: { maxSizeBytes: 10_000_000, maxFiles: 5 },
+      ...extra,
+    };
+    return { deps, eventBus, logger, auditLines };
+  }
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    initSchema(db, 1536);
+    store = createObservabilityStore(db);
+    dataDir = fs.mkdtempSync(nodePath.join(os.tmpdir(), "obs-audit-"));
+    auditLogPath = nodePath.join(dataDir, "logs", "security-audit.jsonl");
+  });
+
+  afterEach(() => {
+    db.close();
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it("Test 1: emitting audit:event persists a queryable obs_audit_events row", () => {
+    const { deps, eventBus } = realDeps();
+    const result = setupObsPersistence(deps as never);
+    eventBus.emit("audit:event", {
+      timestamp: 1000, agentId: "a1", tenantId: "t1", actionType: "file.delete",
+      kind: "audit", classification: "destructive", outcome: "success",
+      metadata: { count: 1 },
+    });
+    result.drainAll();
+
+    const rows = store.queryAuditEvents({ kind: "audit" });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.outcome).toBe("success");
+    expect(rows[0]!.actor).toBeTruthy();
+  });
+
+  it("Test 2: secret:accessed → row with secretName + outcome, NO value field", () => {
+    const { deps, eventBus } = realDeps();
+    const result = setupObsPersistence(deps as never);
+    eventBus.emit("secret:accessed", {
+      secretName: "OPENAI_API_KEY", agentId: "a1", outcome: "denied", timestamp: 1000,
+    });
+    result.drainAll();
+
+    const rows = store.queryAuditEvents({ kind: "secret_access" });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.outcome).toBe("denied");
+    const serialized = JSON.stringify(rows[0]);
+    expect(serialized).toContain("OPENAI_API_KEY");
+    expect(serialized).not.toMatch(/"value"/);
+  });
+
+  it("Test 3: each AUDIT-02 security/critic/command event produces a row", () => {
+    const { deps, eventBus } = realDeps();
+    const result = setupObsPersistence(deps as never);
+    eventBus.emit("security:injection_detected", { timestamp: 1, source: "user_input", patterns: ["p"], riskLevel: "high", agentId: "a1", sessionKey: "s" });
+    eventBus.emit("security:injection_rate_exceeded", { timestamp: 1, sessionKey: "s", count: 5, threshold: 3, action: "terminate" });
+    eventBus.emit("security:memory_tainted", { timestamp: 1, agentId: "a1", originalTrustLevel: "trusted", adjustedTrustLevel: "untrusted", patterns: ["p"], blocked: true });
+    eventBus.emit("critic.isolation.canary_leak", { timestamp: 1, agentId: "a1", canaryPrefix: "abc123" });
+    eventBus.emit("critic.isolation.implied_tool_call", { timestamp: 1, agentId: "a1", pattern: "call write_file" });
+    eventBus.emit("command:blocked", { agentId: "a1", commandPrefix: "rm -rf /", reason: "denylist", blocker: "denylist", timestamp: 1 });
+    result.drainAll();
+
+    const all = store.queryAuditEvents({ limit: 100 });
+    const kinds = all.map((r) => r.kind).sort();
+    expect(kinds).toContain("injection_detected");
+    expect(kinds).toContain("injection_rate_exceeded");
+    expect(kinds).toContain("canary_leak");
+    expect(kinds).toContain("implied_tool_call");
+    expect(kinds).toContain("command_blocked");
+    // memory_tainted maps to a security kind too.
+    expect(all.length).toBeGreaterThanOrEqual(6);
+  });
+
+  it("Test 4 (AUDIT-04): a planted metadata value lands in NEITHER the row NOR the JSONL", () => {
+    const { deps, eventBus } = realDeps();
+    const result = setupObsPersistence(deps as never);
+    eventBus.emit("audit:event", {
+      timestamp: 1000, agentId: "a1", tenantId: "t1", actionType: "file.delete",
+      kind: "audit", outcome: "success",
+      metadata: { apiKey: "sk-PLANTED-SECRET" },
+    });
+    result.drainAll();
+
+    const rows = store.queryAuditEvents({ kind: "audit" });
+    expect(rows).toHaveLength(1);
+    expect(JSON.stringify(rows[0])).not.toContain("sk-PLANTED-SECRET");
+    // And the JSONL line.
+    const jsonl = fs.readFileSync(auditLogPath, "utf8");
+    expect(jsonl).not.toContain("sk-PLANTED-SECRET");
+    expect(jsonl.length).toBeGreaterThan(0);
+  });
+
+  it("Test 4b (AUDIT-04 / H1): a no-prefix secret under the BENIGN `value` key never persists", () => {
+    // The config.patch leak shape — a 32-hex value the credential-keyed drop +
+    // pattern redactor both miss. The sink digests `value` by construction.
+    const { deps, eventBus } = realDeps();
+    const result = setupObsPersistence(deps as never);
+    const HEX32 = "deadbeefcafef00d0123456789abcdef";
+    eventBus.emit("audit:event", {
+      timestamp: 1000, agentId: "a1", tenantId: "t1", actionType: "config.patch",
+      kind: "audit", classification: "destructive", outcome: "success",
+      metadata: { section: "database", key: "url", value: HEX32, durationMs: 4 },
+    });
+    result.drainAll();
+
+    const rows = store.queryAuditEvents({ kind: "audit" });
+    expect(rows).toHaveLength(1);
+    expect(JSON.stringify(rows[0]), "the raw value must not reach the row").not.toContain(HEX32);
+    const refs = JSON.parse(rows[0]!.refs!) as Record<string, unknown>;
+    expect(refs.section).toBe("database"); // benign structural field survives
+    expect(refs.value, "the raw value must be dropped").toBeUndefined();
+    const jsonl = fs.readFileSync(auditLogPath, "utf8");
+    expect(jsonl, "the raw value must not reach security-audit.jsonl").not.toContain(HEX32);
+  });
+
+  it("Test 4c (AUDIT-04 / H2): command:blocked drops the commandPrefix body from the durable row/JSONL", () => {
+    const { deps, eventBus } = realDeps();
+    const result = setupObsPersistence(deps as never);
+    const SECRET_CMD = "mysql -uroot -pSup3rS3cretPlainPass --host internal-db.prod.corp app";
+    eventBus.emit("command:blocked", {
+      agentId: "a1", commandPrefix: SECRET_CMD, reason: "denylist", blocker: "denylist", timestamp: 1000,
+    });
+    result.drainAll();
+
+    const rows = store.queryAuditEvents({ kind: "command_blocked" });
+    expect(rows).toHaveLength(1);
+    const rowJson = JSON.stringify(rows[0]);
+    for (const leak of [SECRET_CMD, "Sup3rS3cretPlainPass", "internal-db.prod.corp"]) {
+      expect(rowJson, `'${leak}' must not reach the row`).not.toContain(leak);
+    }
+    const refs = JSON.parse(rows[0]!.refs!) as Record<string, unknown>;
+    expect(refs.blocker).toBe("denylist");
+    expect(refs.commandPrefix, "the command body must be dropped").toBeUndefined();
+    expect(refs.commandSha256, "a content-free correlation digest survives").toBeTruthy();
+    const jsonl = fs.readFileSync(auditLogPath, "utf8");
+    for (const leak of [SECRET_CMD, "Sup3rS3cretPlainPass", "internal-db.prod.corp"]) {
+      expect(jsonl, `'${leak}' must not reach security-audit.jsonl`).not.toContain(leak);
+    }
+  });
+
+  it("Test 5: the subscriber logs a scrubbed record via .audit() (level 35)", () => {
+    const { deps, eventBus, auditLines } = realDeps();
+    const result = setupObsPersistence(deps as never);
+    eventBus.emit("audit:event", {
+      timestamp: 1000, agentId: "a1", tenantId: "t1", actionType: "file.delete",
+      kind: "audit", outcome: "success", metadata: { apiKey: "sk-PLANTED-SECRET" },
+    });
+    result.drainAll();
+
+    expect(auditLines.length).toBeGreaterThanOrEqual(1);
+    const logged = JSON.stringify(auditLines);
+    expect(logged).toContain("audit");
+    expect(logged).not.toContain("sk-PLANTED-SECRET");
+  });
+
+  it("Test 6 (decision #2): a tenant-less event persists tenant_id='' when no trace context; uses the trace tenant when present", () => {
+    // No trace context → system-scoped, never dropped.
+    {
+      const { deps, eventBus } = realDeps();
+      const result = setupObsPersistence(deps as never);
+      eventBus.emit("command:blocked", { agentId: "a1", commandPrefix: "rm -rf /", reason: "x", blocker: "denylist", timestamp: 1 });
+      result.drainAll();
+      const rows = store.queryAuditEvents({ kind: "command_blocked" });
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.tenantId).toBe("");
+    }
+    // With a trace context carrying a tenant → the row uses it.
+    {
+      const { deps, eventBus } = realDeps();
+      const result = setupObsPersistence(deps as never);
+      runWithContext(
+        { tenantId: "tenant-from-trace", traceId: "00000000-0000-4000-8000-000000000000", startedAt: 1, trustLevel: "admin" },
+        () => {
+          eventBus.emit("secret:accessed", { secretName: "K", agentId: "a1", outcome: "success", timestamp: 1 });
+        },
+      );
+      result.drainAll();
+      const rows = store.queryAuditEvents({ kind: "secret_access" });
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.tenantId).toBe("tenant-from-trace");
+    }
+  });
+
+  it("subscribes to all 7 audit-source event families", () => {
+    const { deps, eventBus } = realDeps();
+    const result = setupObsPersistence(deps as never);
+    for (const e of [
+      "audit:event", "secret:accessed",
+      "security:injection_detected", "security:injection_rate_exceeded", "security:memory_tainted",
+      "critic.isolation.canary_leak", "critic.isolation.implied_tool_call",
+      "command:blocked",
+    ]) {
+      expect(eventBus.on).toHaveBeenCalledWith(e, expect.any(Function));
+    }
+    result.drainAll();
+  });
+
+  it("T-176-11: a JSONL append failure logs ERROR with hint+errorKind and NEVER drops the SQLite row", () => {
+    // Make the <dataDir>/logs path UNWRITABLE by planting a FILE where the
+    // logs DIR must be — ensureConfigAuditParentDir/appendRegularFile then fail,
+    // exercising the try/catch branch.
+    fs.writeFileSync(nodePath.join(dataDir, "logs"), "not-a-dir");
+    const { deps, eventBus, logger } = realDeps();
+    const result = setupObsPersistence(deps as never);
+    eventBus.emit("audit:event", {
+      timestamp: 1000, agentId: "a1", tenantId: "t1", actionType: "file.delete",
+      kind: "audit", outcome: "success", metadata: { count: 1 },
+    });
+    result.drainAll();
+
+    // The SQLite row STILL persisted (the sink failure isolates to the JSONL).
+    expect(store.queryAuditEvents({ kind: "audit" })).toHaveLength(1);
+    // An ERROR was logged with the actionable hint + errorKind (never thrown past).
+    expect(logger.error).toHaveBeenCalled();
+    const errCall = logger.error.mock.calls.find(
+      (c: unknown[]) => (c[1] as string) === "audit-jsonl-append-failed",
+    );
+    expect(errCall).toBeDefined();
+    expect((errCall![0] as { errorKind: string }).errorKind).toBe("resource");
+    expect((errCall![0] as { hint: string }).hint).toContain("security-audit.jsonl");
+  });
+});
+
+// ===========================================================================
+// AUDIT-03 regression — `.audit()` is a CUSTOM Pino level (35) registered ONLY
+// by the @comis/infra logger factory. A logger built WITHOUT that factory (a
+// test capture logger, a minimal Pino logger) lacks `.audit`. Phase 176-02/03
+// activated the dormant level-35 line at obs-audit-sink.ts:318 as
+// `logger?.audit(...)` — the `?.` guards a NULL logger but NOT a non-null
+// logger missing the `audit` method, so the subscriber threw
+// `TypeError: logger?.audit is not a function` for EVERY audit:event,
+// breaking test/integration/secret-rpc-residency.test.ts. The supplementary
+// level-35 line must degrade to a no-op (the DURABLE row + JSONL fire BEFORE
+// it), never crash the audit subscriber.
+// ===========================================================================
+
+describe("wireAuditSink — a logger missing the custom .audit() level (AUDIT-03 regression)", () => {
+  let db: Database.Database;
+  let store: ReturnType<typeof createObservabilityStore>;
+  let dataDir: string;
+  let auditLogPath: string;
+
+  // A real SQLite-backed audit buffer surface (push → insert) so the durable
+  // row is asserted against actual persistence, not a mock.
+  function makeRealAuditBuffer(): AuditRowSink {
+    return {
+      push(row: AuditEventRow): void {
+        store.insertAuditEvent(row);
+      },
+    };
+  }
+
+  // A minimal eventBus mirroring the realDeps() shape above.
+  function makeBus() {
+    const listeners = new Map<string, Array<(p: unknown) => void>>();
+    return {
+      bus: {
+        on: (e: string, h: (p: unknown) => void) => {
+          const arr = listeners.get(e) ?? []; arr.push(h); listeners.set(e, arr);
+        },
+        off: () => {}, once: () => {},
+      } as never,
+      emit: (e: string, p: unknown) => { for (const h of listeners.get(e) ?? []) h(p); },
+    };
+  }
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    initSchema(db, 1536);
+    store = createObservabilityStore(db);
+    dataDir = fs.mkdtempSync(nodePath.join(os.tmpdir(), "obs-audit-partial-"));
+    auditLogPath = nodePath.join(dataDir, "logs", "security-audit.jsonl");
+  });
+
+  afterEach(() => {
+    db.close();
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it("does NOT throw and STILL writes the durable row + JSONL when the logger lacks .audit()", () => {
+    // A PARTIAL logger: implements info/debug/warn/error/trace/fatal/child but
+    // NOT the custom `audit` level (the shape of any non-infra-factory logger).
+    // Cast to ComisLogger — this is exactly the type the call site trusts.
+    const partialLogger = {
+      info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
+      trace: vi.fn(), fatal: vi.fn(),
+      child: vi.fn(function (this: unknown) { return partialLogger; }),
+      // NO `audit` method — this is the regression trigger.
+    } as unknown as ComisLogger;
+
+    const { bus, emit } = makeBus();
+    wireAuditSink({
+      eventBus: bus,
+      auditBuffer: makeRealAuditBuffer(),
+      logger: partialLogger,
+      dataDir,
+      logRotation: { maxSizeBytes: 10_000_000, maxFiles: 5 },
+    });
+
+    // Pre-fix: this throws `TypeError: logger?.audit is not a function`.
+    expect(() =>
+      emit("audit:event", {
+        timestamp: 1000, agentId: "a1", tenantId: "t1", actionType: "file.delete",
+        kind: "audit", outcome: "success", metadata: { count: 1 },
+      }),
+    ).not.toThrow();
+
+    // The DURABLE audit trail is intact: the SQLite row landed...
+    const rows = store.queryAuditEvents({ kind: "audit" });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.outcome).toBe("success");
+    // ...and the 0600 security-audit.jsonl line was written too.
+    const jsonl = fs.readFileSync(auditLogPath, "utf8");
+    expect(jsonl.length).toBeGreaterThan(0);
+    expect(jsonl).toContain("file.delete");
+  });
+
+  it("STILL invokes .audit() on a full logger that implements the custom level (healthy path unchanged)", () => {
+    const auditLines: Array<Record<string, unknown>> = [];
+    const fullLogger = {
+      info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
+      trace: vi.fn(), fatal: vi.fn(),
+      audit: vi.fn((rec: Record<string, unknown>) => { auditLines.push(rec); }),
+      child: vi.fn(function (this: unknown) { return fullLogger; }),
+    } as unknown as ComisLogger;
+
+    const { bus, emit } = makeBus();
+    wireAuditSink({
+      eventBus: bus,
+      auditBuffer: makeRealAuditBuffer(),
+      logger: fullLogger,
+      dataDir,
+      logRotation: { maxSizeBytes: 10_000_000, maxFiles: 5 },
+    });
+
+    emit("audit:event", {
+      timestamp: 1000, agentId: "a1", tenantId: "t1", actionType: "file.delete",
+      kind: "audit", outcome: "success", metadata: { count: 1 },
+    });
+
+    // The supplementary level-35 line still fires for a logger that has it
+    // (production uses the infra factory → byte-identical behavior).
+    expect((fullLogger.audit as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(1);
+    expect(auditLines).toHaveLength(1);
+    expect(auditLines[0]!.kind).toBe("audit");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PERSIST-01/02/03 (Phase 176 Plan 04): the cache_break subscriber + the
+// tokenUsageEventToRow round-trip (real store, NOT a mock — proves the row-builder
+// here meets Plan 01's insertTokenUsageStmt write-path).
+// ---------------------------------------------------------------------------
+
+describe("setupObsPersistence — cache break + token-usage persistence (real store)", () => {
+  let db: Database.Database;
+  let store: ReturnType<typeof createObservabilityStore>;
+
+  function realDeps(extra: Record<string, unknown> = {}) {
+    const listeners = new Map<string, Array<(p: unknown) => void>>();
+    const eventBus = {
+      on: vi.fn((e: string, h: (p: unknown) => void) => {
+        const arr = listeners.get(e) ?? []; arr.push(h); listeners.set(e, arr);
+      }),
+      off: vi.fn(), once: vi.fn(),
+      emit: (e: string, p: unknown) => { for (const h of listeners.get(e) ?? []) h(p); },
+    };
+    const deps = {
+      eventBus: eventBus as never,
+      obsStore: store,
+      db: { transaction: <T,>(fn: () => T) => fn },
+      channelActivityTracker: { getAll: () => [] } as never,
+      startupTimestamp: Date.now(),
+      snapshotIntervalMs: 300_000,
+      ...extra,
+    };
+    return { deps, eventBus };
+  }
+
+  function makeCacheBreak(
+    overrides: Partial<EventMap["observability:cache_break"]> = {},
+  ): EventMap["observability:cache_break"] {
+    return {
+      provider: "anthropic",
+      reason: "tools_changed",
+      tokenDrop: 1000,
+      tokenDropRelative: 0.5,
+      previousCacheRead: 2000,
+      currentCacheRead: 1000,
+      callCount: 3,
+      changes: {
+        systemChanged: false, toolsChanged: true, metadataChanged: false,
+        modelChanged: false, retentionChanged: false,
+        addedTools: ["a"], removedTools: [], changedSchemaTools: [],
+        headersChanged: false, extraBodyChanged: false,
+      },
+      toolsChanged: ["a"],
+      ttlCategory: undefined,
+      agentId: "agent-1",
+      sessionKey: "sk-1",
+      timestamp: 1000,
+      toolsAdded: ["a"], toolsRemoved: [], toolsSchemaChanged: [],
+      systemCharDelta: 10,
+      model: "claude-3-5-sonnet-20241022",
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    initSchema(db, 1536);
+    store = createObservabilityStore(db);
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it("Test 1 (PERSIST-01): emitting observability:cache_break persists a queryable cache_break row", () => {
+    const { deps, eventBus } = realDeps();
+    const result = setupObsPersistence(deps as never);
+    eventBus.emit("observability:cache_break", makeCacheBreak({ reason: "tools_changed" }));
+    eventBus.emit("observability:cache_break", makeCacheBreak({ reason: "tools_changed" }));
+    eventBus.emit("observability:cache_break", makeCacheBreak({ reason: "system_changed" }));
+    result.drainAll();
+
+    const rows = queryCacheBreakRateByReason(db, {});
+    const byReason = new Map(rows.map((r) => [r.reason, r.count]));
+    expect(byReason.get("tools_changed")).toBe(2);
+    expect(byReason.get("system_changed")).toBe(1);
+  });
+
+  it("Test 2 (PERSIST-02): the 4 dropped token columns PERSIST end-to-end (real insert→read-back)", () => {
+    const { deps, eventBus } = realDeps();
+    const result = setupObsPersistence(deps as never);
+    eventBus.emit("observability:token_usage", {
+      timestamp: 1000, traceId: "t", agentId: "a1", channelId: "c1", executionId: "e1",
+      provider: "anthropic", model: "claude-3-5-sonnet-20241022",
+      tokens: { prompt: 100, completion: 50, total: 150 },
+      cost: { input: 0.01, output: 0.005, cacheRead: 0.001, cacheWrite: 0.002, total: 0.015 },
+      latencyMs: 200, cacheReadTokens: 0, cacheWriteTokens: 100, sessionKey: "sk",
+      savedVsUncached: -0.02, cacheEligible: true, warmupTurn: true,
+      pendingCacheInvestmentUsd: 0.02, costCorrection: { delta: 0.01, sdkRaw: 0.1, corrected: 0.11 },
+    });
+    result.drainAll();
+
+    const raw = db.prepare(`SELECT warmup_turn, cache_eligible, cost_correction, pending_cache_investment_usd FROM obs_token_usage`).get() as {
+      warmup_turn: number; cache_eligible: number; cost_correction: number; pending_cache_investment_usd: number;
+    };
+    expect(raw.warmup_turn).toBe(1);
+    expect(raw.cache_eligible).toBe(1);
+    expect(raw.cost_correction).toBe(0.01);
+    expect(raw.pending_cache_investment_usd).toBe(0.02);
+  });
+
+  it("Test 3 (PERSIST-03): pricing_state persists resolvePricingState(provider, model)", () => {
+    const { deps, eventBus } = realDeps();
+    const result = setupObsPersistence(deps as never);
+    eventBus.emit("observability:token_usage", {
+      timestamp: 1000, traceId: "t", agentId: "a1", channelId: "c1", executionId: "e1",
+      provider: "anthropic", model: "claude-3-5-sonnet-20241022",
+      tokens: { prompt: 1, completion: 1, total: 2 },
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      latencyMs: 1, cacheReadTokens: 0, cacheWriteTokens: 0, sessionKey: "sk",
+      savedVsUncached: 0, cacheEligible: true, warmupTurn: false, pendingCacheInvestmentUsd: 0,
+    });
+    // A gateway provider → "free".
+    eventBus.emit("observability:token_usage", {
+      timestamp: 2000, traceId: "t", agentId: "a1", channelId: "c1", executionId: "e2",
+      provider: "ollama", model: "llama3",
+      tokens: { prompt: 1, completion: 1, total: 2 },
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      latencyMs: 1, cacheReadTokens: 0, cacheWriteTokens: 0, sessionKey: "sk2",
+      savedVsUncached: 0, cacheEligible: false, warmupTurn: false, pendingCacheInvestmentUsd: 0,
+    });
+    result.drainAll();
+
+    const rows = db.prepare(`SELECT provider, pricing_state FROM obs_token_usage ORDER BY timestamp`).all() as Array<{ provider: string; pricing_state: string }>;
+    const byProvider = new Map(rows.map((r) => [r.provider, r.pricing_state]));
+    expect(byProvider.get("anthropic")).toBe("priced");
+    expect(byProvider.get("ollama")).toBe("free");
+  });
+
+  it("Test 4 (A3): cache-break REUSES the diagnosticBuffer — emitting it does not add an audit row", () => {
+    const { deps, eventBus } = realDeps();
+    const result = setupObsPersistence(deps as never);
+    eventBus.emit("observability:cache_break", makeCacheBreak());
+    result.drainAll();
+
+    // The cache-break row is a DiagnosticRow (category:'cache_break'), NOT an audit row.
+    expect(queryCacheBreakRateByReason(db, {})).toHaveLength(1);
+    expect(store.queryAuditEvents({ limit: 100 })).toHaveLength(0);
+  });
+
+  it("subscribes to observability:cache_break", () => {
+    const { deps, eventBus } = realDeps();
+    const result = setupObsPersistence(deps as never);
+    expect(eventBus.on).toHaveBeenCalledWith("observability:cache_break", expect.any(Function));
+    result.drainAll();
+  });
+
+  it("PERSIST-01: the cacheBreaks config flag gates the subscriber (opt-out)", () => {
+    const { deps, eventBus } = realDeps({ persistence: { cacheBreaks: false } });
+    const result = setupObsPersistence(deps as never);
+    eventBus.emit("observability:cache_break", makeCacheBreak());
+    result.drainAll();
+    // Gated off → no cache_break row persisted.
+    expect(queryCacheBreakRateByReason(db, {})).toHaveLength(0);
   });
 });

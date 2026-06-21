@@ -53,10 +53,11 @@ describe("registerSecurityCommand", () => {
     expect(severityOpt).toBeDefined();
   });
 
-  it("has both audit and fix subcommands under security", () => {
+  it("has the audit, audit-log, and fix subcommands under security", () => {
     const securityCmd = program.commands.find((c) => c.name() === "security");
     const subcommands = securityCmd!.commands.map((c) => c.name()).sort();
-    expect(subcommands).toEqual(["audit", "fix"]);
+    // audit-log (AUDIT-05, Phase 176) is the durable security-decision audit query.
+    expect(subcommands).toEqual(["audit", "audit-log", "fix"]);
   });
 
   it("shows help text for security command", () => {

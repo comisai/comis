@@ -919,6 +919,57 @@ This is the cross-session **sibling** of [`obs.explain`](#obs-explain): `obs.exp
 The `comis fleet` CLI command (see the [CLI reference](/reference/cli)) and the `obs_query` agent `fleet_health` action surface this same report. It is the cross-session sibling of `comis explain` -- NOT to be confused with `comis health`, the LOCAL daemon doctor (which runs no RPC).
 </Note>
 
+### `obs.audit.query`
+
+Query the **durable** security-decision audit -- the `obs_audit_events` SQLite table the daemon persists (secret access, injection detection, injection-rate breach, canary leaks, implied-tool-call isolation, command blocks, sandbox-downgrade refusals, and classified `audit:event` actions). Admin-scoped, deterministic, and **content-free**: each row carries ids, the closed-enum fields (`kind` / `classification` / `outcome` / `severity`), and a scrubbed `refs` blob -- **never a secret value** (the rows are scrubbed at write). Every filter is optional; an absent filter widens the scan. `limit` defaults to `200` and is clamped to `1000` (bounded reports).
+
+The same query is surfaced by the `comis security audit-log` CLI and the `obs_query` agent tool's `audit` action -- all three are the read surface onto the audit sink. This is the durability payoff: unlike the live `audit:event` SSE feed, these events survive a daemon restart.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` |
+| **Parameters** | `{ kind?, classification?, agentId?, tenant?, outcome?, since?: number, until?: number, limit?: number }` -- `tenant: ""` matches the system-scoped (tenant-less) events; `since`/`until` are inclusive epoch-ms bounds. |
+| **Returns** | `{ rows: AuditEventRow[] }`, ORDER BY ts DESC. Each `AuditEventRow` = `{ id, tenantId, agentId, ts, kind, classification, action, actor, outcome, severity, traceId, refs }` (content-free; `refs` is a scrubbed JSON blob). |
+
+<CodeGroup>
+```json Request
+{
+  "jsonrpc": "2.0",
+  "method": "obs.audit.query",
+  "params": { "kind": "secret_access", "agentId": "customer-support", "limit": 20 },
+  "id": 1
+}
+```
+```json Response
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "rows": [
+      {
+        "id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "tenantId": "default",
+        "agentId": "customer-support",
+        "ts": 1717000000000,
+        "kind": "secret_access",
+        "classification": "read",
+        "action": "secrets.get",
+        "actor": null,
+        "outcome": "success",
+        "severity": "info",
+        "traceId": "trace-7e8f9a0b1c2d",
+        "refs": "{\"secretName\":\"OPENAI_API_KEY\"}"
+      }
+    ]
+  },
+  "id": 1
+}
+```
+</CodeGroup>
+
+<Note>
+The `comis security audit-log` CLI command (see the [CLI reference](/reference/cli)) and the `obs_query` agent `audit` action surface this same query. The durable sink + the greppable `~/.comis/logs/security-audit.jsonl` are documented in [Audit Logging](/security/audit).
+</Note>
+
 ### `obs.reset`
 
 | Property | Value |

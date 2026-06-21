@@ -10,10 +10,22 @@
  */
 
 import type { TypedEventBus, EventMap } from "@comis/core";
-import { systemNowMs, systemSetInterval, systemClearInterval } from "@comis/core";
-import type { ObservabilityStore, TokenUsageRow, DeliveryRow, DiagnosticRow, ChannelSnapshotRow } from "@comis/memory";
+import { systemNowMs, systemSetInterval, systemClearInterval, resolvePricingState } from "@comis/core";
+import type { ObservabilityStore, TokenUsageRow, DeliveryRow, DiagnosticRow, ChannelSnapshotRow, AuditEventRow } from "@comis/memory";
+import { cacheBreakEventToRow } from "@comis/memory";
 import type { ComisLogger } from "@comis/infra";
 import type { DiagnosticEvent } from "./diagnostic-collector.js";
+// AUDIT-01/02/04 — the durable security-audit sink (row-builders + subscribers),
+// extracted to keep this file under the 800-line cap (the Plan-01/02 precedent).
+import { wireAuditSink } from "./obs-audit-sink.js";
+// ORCH-OBS row-builders extracted to a sibling module for the 800-line cap (the Plan
+// 01/03 precedent); imported here for the subscriber registrations + re-exported below
+// so the public API stays byte-identical.
+import {
+  sandboxDowngradeRefusedEventToRow,
+  deliveryDeadletteredEventToRow,
+  nodeBudgetExceededEventToRow,
+} from "./obs-orchestration-rows.js";
 import type { ChannelActivityTracker } from "./channel-activity-tracker.js";
 
 // ===========================================================================
@@ -77,9 +89,15 @@ export function createObsWriteBuffer<T>(
 
 /**
  * Map an `observability:token_usage` event payload to a flat TokenUsageRow
- * suitable for SQLite insertion.
- * Flattens nested `tokens.{prompt,completion,total}` and `cost.{input,output,total}`
- * to top-level fields. Maps `payload.sessionKey` and cache cost fields.
+ * suitable for SQLite insertion. Flattens nested `tokens.*` and `cost.*` to
+ * top-level fields; maps `sessionKey` and the cache cost fields.
+ *
+ * PERSIST-02/03 (Phase 176 Plan 04): ALSO fills the four cost-correctness fields the
+ * event carries but that were previously DROPPED here (warmupTurn / cacheEligible /
+ * costCorrection.delta / pendingCacheInvestmentUsd) + `pricingState` (PERSIST-03, via
+ * `resolvePricingState`). Plan 01 owns the write-PATH (`insertTokenUsageStmt` +
+ * the boolean↔INTEGER coercion); this plan owns the row-BUILDER — a real
+ * insert→read-back round-trip proves the two halves meet.
  */
 export function tokenUsageEventToRow(
   payload: EventMap["observability:token_usage"],
@@ -104,6 +122,18 @@ export function tokenUsageEventToRow(
     costCacheWrite: payload.cost.cacheWrite,
     cacheSaved: payload.savedVsUncached,
     latencyMs: payload.latencyMs,
+    // PERSIST-02: the four previously-dropped cost-correctness fields. costCorrection
+    // on the row is the scalar DELTA; its absence = "no correction needed".
+    warmupTurn: payload.warmupTurn,
+    cacheEligible: payload.cacheEligible,
+    costCorrection: payload.costCorrection?.delta,
+    pendingCacheInvestmentUsd: payload.pendingCacheInvestmentUsd,
+    // PERSIST-03: the three-state honest-pricing signal (the ffe11736 chimera → "unknown").
+    pricingState: resolvePricingState(payload.provider, payload.model),
+    // COST-01 (Phase 179): the distinct tool tag (best-effort, labeled per N3).
+    // Already deduped at the emit (Array.from(new Set(m.toolCallHistory))); the
+    // write-path JSON-stringifies it onto the tool_tag column (NULL when absent).
+    toolTag: payload.toolTag,
   };
 }
 
@@ -437,94 +467,16 @@ export function pipelineAuthoredEventToRow(
   };
 }
 
-/**
- * ORCH-OBS (orchestration-observability): map a `security:sandbox_downgrade_refused`
- * event to a `health_signal` diagnostic row. The GENQ-01 clone — a new
- * `signal:"sandbox_downgrade_refused"` label rides the EXISTING `health_signal`
- * category (NO migration). A fail-closed sub-agent spawn refusal had NO fleet
- * surface; an operator could not learn (cross-session) that an agent attempted to
- * spawn a LESS-confined child. Attributed to the SPAWNER (`parentAgentId`). `details`
- * carries the closed `violatedDimensions` LABELS ONLY (exec/filesystem/network/uid)
- * — NEVER the postures' fail-closed values or any path/host/uid-number that would
- * leak the operator's sandbox topology (§2.7 / SANDBOX-02). Spawn chokepoint → no
- * sessionKey. severity:"warning" (a refusal is fail-closed working, but a
- * misconfiguration or escalation attempt an operator must see).
- */
-export function sandboxDowngradeRefusedEventToRow(
-  payload: EventMap["security:sandbox_downgrade_refused"],
-): DiagnosticRow {
-  return {
-    timestamp: payload.timestamp,
-    category: "health_signal",
-    severity: "warning",
-    agentId: payload.parentAgentId,
-    sessionKey: undefined,
-    message: "security:sandbox_downgrade_refused",
-    details: JSON.stringify({
-      signal: "sandbox_downgrade_refused",
-      dimensions: payload.violatedDimensions,
-    }),
-    traceId: undefined,
-  };
-}
-
-/**
- * ORCH-OBS: map a `subagent:delivery_deadlettered` event to a `health_signal`
- * diagnostic row. The GENQ-01 clone — `signal:"delivery_deadlettered"` on the
- * EXISTING category. A dead-lettered (permanently dropped) sub-agent completion is
- * a SILENT degradation: the graph reports "completed" while a node's result never
- * reached the parent, with no fleet signal today. `details` carries the closed
- * `channelType` (which channel is dropping) + the `transient` tag (retries-exhausted
- * vs immediate-permanent) ONLY — NEVER the runId, the announcement body, or the
- * error string (§2.7 / DELIVERY-02). severity:"warning" (a dropped delivery).
- */
-export function deliveryDeadletteredEventToRow(
-  payload: EventMap["subagent:delivery_deadlettered"],
-): DiagnosticRow {
-  return {
-    timestamp: payload.timestamp,
-    category: "health_signal",
-    severity: "warning",
-    agentId: undefined,
-    sessionKey: undefined,
-    message: "subagent:delivery_deadlettered",
-    details: JSON.stringify({
-      signal: "delivery_deadlettered",
-      channelType: payload.channelType,
-      transient: payload.transient,
-    }),
-    traceId: undefined,
-  };
-}
-
-/**
- * ORCH-OBS: map a `subagent:budget_exceeded` event to a `health_signal` diagnostic
- * row. The GENQ-01 clone — `signal:"node_budget_exceeded"` on the EXISTING category.
- * A per-node token-budget breach (P0-A) had NO fleet surface; an operator could not
- * learn (cross-session) how often nodes are being cut off by which budget knob.
- * `details` carries the closed `capSource` enum ONLY (node / operator-default /
- * inherit-share — WHICH knob bound the node) — NEVER the per-node token NUMBERS
- * (those are per-incident: the node error string + the WARN line + `comis explain`),
- * no task, no output (§2.7 / BUDGET-03). Attributed to the node's child agent.
- * severity:"warning" (the node failed).
- */
-export function nodeBudgetExceededEventToRow(
-  payload: EventMap["subagent:budget_exceeded"],
-): DiagnosticRow {
-  return {
-    timestamp: payload.timestamp,
-    category: "health_signal",
-    severity: "warning",
-    agentId: payload.agentId,
-    sessionKey: undefined,
-    message: "subagent:budget_exceeded",
-    details: JSON.stringify({
-      signal: "node_budget_exceeded",
-      capSource: payload.capSource,
-    }),
-    traceId: undefined,
-  };
-}
+// ORCH-OBS (orchestration-observability): the three previously-dark sub-agent-lifecycle
+// row-builders (sandbox-downgrade refusal / dead-lettered delivery / per-node budget
+// breach → content-free health_signal rows) are imported from obs-orchestration-rows.ts
+// (extracted for the 800-line cap, the Plan 01/03 precedent) and RE-EXPORTED here so the
+// public API + the test imports stay byte-identical.
+export {
+  sandboxDowngradeRefusedEventToRow,
+  deliveryDeadletteredEventToRow,
+  nodeBudgetExceededEventToRow,
+};
 
 // ---------------------------------------------------------------------------
 // Factory types
@@ -540,11 +492,35 @@ export interface ObsPersistenceDeps {
   startupTimestamp: number;
   snapshotIntervalMs: number;
   logger?: ComisLogger;
+  /**
+   * Data directory (`~/.comis`) — the security-audit.jsonl lives at
+   * `<dataDir>/logs/security-audit.jsonl` (AUDIT-01). Optional: when absent the
+   * audit JSONL sink is skipped (the SQLite + `.audit()` sinks still fire);
+   * production always passes it.
+   */
+  dataDir?: string;
+  /**
+   * The shared `observability.logRotation` policy — the security-audit.jsonl is
+   * the 6th stream under it (no per-sink rotation knob). Optional with a sane
+   * fallback so existing callers/tests need not pass it.
+   */
+  logRotation?: { maxSizeBytes: number; maxFiles: number };
+  /**
+   * The `observability.audit` policy (persist on/off + sink selection). Optional;
+   * defaults to `{persist:true, sink:"both"}`.
+   */
+  auditConfig?: { persist: boolean; sink: "sqlite" | "jsonl" | "both" };
+  /**
+   * The `observability.persistence` policy — only `cacheBreaks` is read here
+   * (PERSIST-01): when `false`, the cache_break subscriber is NOT wired (opt-out).
+   * Optional; absent or `cacheBreaks !== false` → the subscriber is wired (default on).
+   */
+  persistence?: { cacheBreaks: boolean };
 }
 
 /** Result from setupObsPersistence(). */
 export interface ObsPersistenceResult {
-  /** Synchronous drain of all 4 write buffers. */
+  /** Synchronous drain of all 5 write buffers (incl. the audit buffer). */
   drainAll(): void;
   /** Periodic channel snapshot timer handle (for shutdown cleanup). */
   snapshotTimer: ReturnType<typeof setInterval>;
@@ -557,8 +533,11 @@ export interface ObsPersistenceResult {
 /**
  * Wire dual-write persistence: subscribe to event bus events and push
  * observability data to SQLite via batched write buffers.
- * Creates 4 write buffers (tokenUsage, delivery, diagnostic, channelSnapshot)
- * and subscribes NEW listeners alongside existing in-memory collectors.
+ * Creates 5 write buffers (tokenUsage, delivery, diagnostic, channelSnapshot,
+ * audit) and subscribes NEW listeners alongside existing in-memory collectors.
+ * The audit buffer (AUDIT-01) feeds the dedicated obs_audit_events table; each
+ * audit-source event ALSO writes a scrubbed 0600 security-audit.jsonl line and
+ * a `.audit()` (level 35) log line.
  * @param deps - Persistence wiring dependencies
  * @returns drainAll() for shutdown and snapshotTimer for cleanup
  */
@@ -571,9 +550,13 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
     startupTimestamp,
     snapshotIntervalMs,
     logger,
+    dataDir,
+    logRotation,
+    auditConfig,
+    persistence,
   } = deps;
 
-  // a. Create 4 write buffers with transactional flush functions
+  // a. Create 5 write buffers with transactional flush functions
   const tokenUsageBuffer = createObsWriteBuffer<TokenUsageRow>({
     flushFn: (items) => {
       db.transaction(() => {
@@ -609,6 +592,20 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
       db.transaction(() => {
         for (const item of items) {
           obsStore.insertChannelSnapshot(item);
+        }
+      })();
+    },
+  });
+
+  // AUDIT-01: a DEDICATED audit buffer (§14 — distinct obs_audit_events table +
+  // actor/outcome/severity columns + retention), cloned from the tokenUsage
+  // factory. Its own flushFn → insertAuditEvent (the SQLite half). The JSONL
+  // half + the .audit() log fire synchronously per event in wireAuditSink.
+  const auditBuffer = createObsWriteBuffer<AuditEventRow>({
+    flushFn: (items) => {
+      db.transaction(() => {
+        for (const item of items) {
+          obsStore.insertAuditEvent(item);
         }
       })();
     },
@@ -691,6 +688,36 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
     diagnosticBuffer.push(nodeBudgetExceededEventToRow(payload));
   });
 
+  // PERSIST-01 (Phase 176 Plan 04): a detected prompt-cache break → an obs_diagnostics
+  // category:'cache_break' row, REUSING the EXISTING diagnosticBuffer (A3 — a
+  // DiagnosticRow via insertDiagnostic; NO new buffer/table). The row carries the
+  // 15-reason discriminator + a COMPUTED est-$ + a changed-dims DIGEST (tool-name
+  // arrays + system text dropped in the row-builder — I3); "rate by reason" is then a
+  // clean GROUP BY (queryCacheBreakRateByReason). Gated on `persistence.cacheBreaks`
+  // (default on). The cache.break TRAJECTORY record rides the trajectory bridge.
+  if (persistence?.cacheBreaks !== false) {
+    eventBus.on("observability:cache_break", (payload) => {
+      diagnosticBuffer.push(cacheBreakEventToRow(payload));
+    });
+  }
+
+  // AUDIT-01/02/04: the durable security-audit sink — every audit-source event
+  // (audit:event + secret:accessed + the 4 security:* + the 2 critic.isolation.*
+  // + command:blocked, and the sandbox_downgrade_refused MIRROR) → an
+  // obs_audit_events row (the buffer) + a scrubbed 0600 security-audit.jsonl line
+  // + a `.audit()` log line. The metadata free-map is scrubbed in the
+  // row-builder (AUDIT-04); tenant-less events resolve from the trace context
+  // else tenant_id='' (decision #2). The existing sandbox_downgrade_refused
+  // obs_diagnostics row above is KEPT (I1′ additive — the event lands in BOTH).
+  wireAuditSink({
+    eventBus,
+    auditBuffer,
+    ...(logger !== undefined ? { logger } : {}),
+    ...(dataDir !== undefined ? { dataDir } : {}),
+    ...(logRotation !== undefined ? { logRotation } : {}),
+    ...(auditConfig !== undefined ? { auditConfig } : {}),
+  });
+
   // c. Periodic channel snapshot timer
   const snapshotTimer = systemSetInterval(() => {
     const channels = channelActivityTracker.getAll();
@@ -709,7 +736,7 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
   snapshotTimer.unref();
 
   if (logger) {
-    logger.info({ buffers: 4, snapshotIntervalMs }, "Observability persistence wiring initialized");
+    logger.info({ buffers: 5, snapshotIntervalMs }, "Observability persistence wiring initialized");
   }
 
   // d. Return drainAll and snapshotTimer for shutdown
@@ -718,6 +745,7 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
     deliveryBuffer.drain();
     diagnosticBuffer.drain();
     channelSnapshotBuffer.drain();
+    auditBuffer.drain();
   }
 
   return { drainAll, snapshotTimer };

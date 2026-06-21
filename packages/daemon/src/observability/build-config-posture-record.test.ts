@@ -2,7 +2,7 @@
 import { describe, it, expect, vi } from "vitest";
 import type { DiagnosticRow, ObservabilityStore } from "@comis/memory";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
-import { buildConfigPostureRecord } from "./build-config-posture-record.js";
+import { buildConfigPostureRecord, countPricingGaps } from "./build-config-posture-record.js";
 
 // ---------------------------------------------------------------------------
 // buildConfigPostureRecord (I3 — boot-time config_posture snapshot row)
@@ -63,6 +63,7 @@ describe("buildConfigPostureRecord", () => {
       canaryFallbackActive: true,
       servedBelowConfiguredCount: 0,
       chimericModelCount: 0, // RESOLVE-01: always present (0 default), count-only
+      pricingGapCount: 0, // SPEND-05: always present (0 default), count-only
     });
     // SECURITY: the stranded entry is a {label, count} — no value-bearing key.
     const strandedJson = JSON.stringify(details["stranded"]);
@@ -95,6 +96,7 @@ describe("buildConfigPostureRecord", () => {
       canaryFallbackActive: false,
       servedBelowConfiguredCount: 0,
       chimericModelCount: 0,
+      pricingGapCount: 0,
     });
   });
 
@@ -247,5 +249,115 @@ describe("buildConfigPostureRecord", () => {
     expect(row.severity).toBe("info");
     const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
     expect(details["servedBelowConfiguredCount"]).toBe(0);
+  });
+
+  // -------------------------------------------------------------------------
+  // SPEND-05 (Phase 177): pricingGapCount — configured agents burning tokens on
+  // remote-unknown-priced models (resolvePricingState == "unknown"). A COUNT,
+  // never agent ids / model names (the no-free-text contract). The count alone
+  // must flip severity to "warning" (the served-below/chimeric hasIssue precedent).
+  // -------------------------------------------------------------------------
+
+  it("SPEND-05-1: flips severity to warning when ONLY pricingGapCount is non-zero, and carries the count in details", () => {
+    const { obsStore, insertDiagnostic } = createSpiedObsStore();
+    const clock = createFakeClock(9000);
+
+    buildConfigPostureRecord(
+      obsStore,
+      {
+        tlsOff: false,
+        allowInsecureHttp: false,
+        strandedFindings: [],
+        canaryFallbackActive: false,
+        servedBelowConfiguredCount: 0,
+        pricingGapCount: 2,
+      },
+      clock,
+    );
+
+    const row = insertDiagnostic.mock.calls[0]?.[0] as DiagnosticRow;
+    expect(row.severity).toBe("warning");
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(details["pricingGapCount"]).toBe(2);
+  });
+
+  it("SPEND-05-2: keeps severity info when pricingGapCount is 0 and all else is healthy, and details carries the 0", () => {
+    const { obsStore, insertDiagnostic } = createSpiedObsStore();
+    const clock = createFakeClock(10_000);
+
+    buildConfigPostureRecord(
+      obsStore,
+      {
+        tlsOff: false,
+        allowInsecureHttp: false,
+        strandedFindings: [],
+        canaryFallbackActive: false,
+        servedBelowConfiguredCount: 0,
+        pricingGapCount: 0,
+      },
+      clock,
+    );
+
+    const row = insertDiagnostic.mock.calls[0]?.[0] as DiagnosticRow;
+    expect(row.severity).toBe("info");
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(details["pricingGapCount"]).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SPEND-05 (Phase 177): countPricingGaps — the boot producer counting configured
+// agents whose provider+model resolves to the "unknown" pricing state (a NATIVE
+// provider with no catalog entry — the ffe11736 fail-open). A "free" local/gateway
+// agent (honest $0) is NOT counted; a "priced" agent is NOT counted. Co-located
+// with countChimericModels (keeps daemon.ts under its 3000-line cap). Uses the
+// shipped 3-state `resolvePricingState`, never a catalog-presence boolean.
+//
+// RED: countPricingGaps does not exist yet.
+// ---------------------------------------------------------------------------
+
+describe("countPricingGaps — boot count of remote-unknown-priced agents (resolvePricingState == 'unknown')", () => {
+  it("counts a NATIVE provider + an off-catalog model (the unknown / ffe11736 case)", () => {
+    // anthropic is a native single-family provider; a non-claude model id has no
+    // catalog rate → resolvePricingState returns "unknown".
+    const agents = {
+      a: { provider: "anthropic", model: "qwen3-32b" },
+    };
+    expect(countPricingGaps(agents)).toBe(1);
+  });
+
+  it("does NOT count a 'free' local/gateway provider (honest $0 is correct, not a gap)", () => {
+    // ollama is NOT in NATIVE_PROVIDER_FAMILY → "free", never "unknown".
+    const agents = {
+      a: { provider: "ollama", model: "qwen3:32b" },
+    };
+    expect(countPricingGaps(agents)).toBe(0);
+  });
+
+  it("does NOT count a 'priced' agent (a real catalog rate)", () => {
+    // anthropic + a real claude model has a catalog rate → "priced".
+    const agents = {
+      a: { provider: "anthropic", model: "claude-sonnet-4-5" },
+    };
+    expect(countPricingGaps(agents)).toBe(0);
+  });
+
+  it("counts only the unknown-priced agents in a mixed fleet (no false-flag of free/priced)", () => {
+    const agents = {
+      free: { provider: "ollama", model: "qwen3:32b" }, // free
+      priced: { provider: "anthropic", model: "claude-sonnet-4-5" }, // priced
+      gap1: { provider: "anthropic", model: "qwen3-32b" }, // unknown
+      gap2: { provider: "openai", model: "some-uncatalogued-model-xyz" }, // unknown (native, off-catalog)
+    };
+    expect(countPricingGaps(agents)).toBe(2);
+  });
+
+  it("ignores an agent missing provider or model (cannot resolve a state → not a gap)", () => {
+    const agents = {
+      noModel: { provider: "anthropic" },
+      noProvider: { model: "qwen3-32b" },
+      empty: {},
+    };
+    expect(countPricingGaps(agents)).toBe(0);
   });
 });

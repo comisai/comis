@@ -124,6 +124,7 @@ function createMinimalGraphRunState(overrides?: Partial<GraphRunState>): GraphRu
     syntheticRunResults: new Map(),
     nodeCacheData: new Map(),
     nodeTokenSpend: new Map(),
+    nodeCost: new Map(),
     graphToolNames: ["tool-a", "tool-b"],
     ...overrides,
   };

@@ -214,6 +214,39 @@ describe("obs-explain-heuristics", () => {
     expect(r!.suggestedNextSteps.some((s) => /maxTokens|output|truncat/i.test(s))).toBe(true);
   });
 
+  it("WR-4 (177-obs-loop): endReason=spend_exceeded (no tool-failure signal) → spend_exceeded root cause naming observability.spend.*", () => {
+    // The security-review WR-4 finding: a spend-killed session root-caused to
+    // NOTHING (the deterministic verdict had no spend_exceeded case) — so the
+    // platform could not diagnose its own dollars kill-switch firing in ONE
+    // `comis explain` call (violating the milestone thesis + the troubleshooting
+    // feedback loop). END_REASON_MAP now resolves finishReason:"spend_exceeded"
+    // (WR-2) → the assembler threads endReason:"spend_exceeded" onto the signals →
+    // this NAMED terminal-band verdict fires (same additive mold as QT2/QT3).
+    const r = rootCause(makeSignals({ endReason: "spend_exceeded" }));
+    expect(r).not.toBeNull();
+    expect(r!.code).toBe("spend_exceeded");
+    expect(r!.detail).toMatch(/spend (ceiling|cap)/i);
+    // The hint NAMES the exact knob family the operator turns (the §2.7 doctrine:
+    // a verdict must name WHICH KNOB, not just WHAT happened).
+    expect(r!.suggestedNextSteps.length).toBeGreaterThan(0);
+    expect(r!.suggestedNextSteps.some((s) => /observability\.spend\./.test(s))).toBe(true);
+  });
+
+  it("WR-4: a tool-failure cause OUT-RANKS the spend_exceeded endReason cause (terminal band is lowest priority)", () => {
+    // A spend-killed session that ALSO had a misclassified-tool failure must still
+    // report the upstream tool cause — the spend_exceeded verdict is terminal-band,
+    // out-ranked by every tool-failure cause (the QT2/QT3 placement contract).
+    const r = rootCause(
+      makeSignals({
+        endReason: "spend_exceeded",
+        hasMisclassificationSignal: true,
+        misclassifiedTool: "web_fetch",
+        misclassifiedToken: "403",
+      }),
+    );
+    expect(r!.code).toBe("content_heuristic_misclassification");
+  });
+
   it("a tool-failure cause OUT-RANKS the endReason cause (the new heuristics are lowest priority)", () => {
     // A misclassified-tool session that ALSO ended context_exhausted must still
     // report the upstream tool cause — the endReason heuristic is the fallback.

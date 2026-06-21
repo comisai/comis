@@ -48,6 +48,11 @@ const HARD_FAILURE_END_REASONS: ReadonlySet<string> = new Set([
   "circuit_open",
   "budget_exceeded",
   "budget_exhausted",
+  // WR-2 (177-obs-loop): the dollars kill-switch abort is a hard failure (never
+  // "ok") — so `comis explain` marks severity:"failed" and `comis fleet`
+  // degradedByCause buckets the spend-killed session on the named "spend_exceeded"
+  // cause instead of leaving it in the generic "error" bucket.
+  "spend_exceeded",
 ]);
 
 /**
@@ -383,6 +388,18 @@ export function assembleIncidentReport(
     ...(signals.contextBudget !== undefined ? { contextBudget: signals.contextBudget } : {}),
     // RECALL-01: the memory-recall outcome (absent when the trajectory has no recall records).
     ...(signals.recall !== undefined ? { recall: signals.recall } : {}),
+    // PERSIST-01 (176-05): the per-reason cache breaks (absent when the session
+    // had none). Bounded to CACHE_BREAKS_CAP highest-count-first; the bound pass
+    // (obs-explain-bound.ts) records a truncations[] breadcrumb when it sheds the
+    // tail (GBIII I2). Content-free (counts + closed reason label + a number).
+    ...(signals.cacheBreaks !== undefined && signals.cacheBreaks.length > 0
+      ? { cacheBreaks: signals.cacheBreaks }
+      : {}),
+    // SPEND (WEBUI-04, 179-04): the spend kill-switch breach (scope + the two dollar
+    // numbers) reconstructed from the terminal spend.exceeded record. Absent when the
+    // session was not spend-killed (additive; schemaVersion 1). The verdict stays
+    // amount-free (177); this section carries the numbers the Incident view renders.
+    ...(signals.spend !== undefined ? { spend: signals.spend } : {}),
     // OBS-03/OBS-04 (186): the image-generation turn reconstructed from the
     // trajectory's image.* records (absent when the session generated no image).
     // The cost rides here so `comis explain` shows it (Route a — NOT cost.costUsd,

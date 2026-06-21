@@ -14,6 +14,7 @@
 
 import { getProviders, getModels } from "@earendil-works/pi-ai";
 import type { ModelCompatConfig } from "../domain/model-compat.js";
+import { isNativeProvider } from "./model-family.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -232,4 +233,47 @@ export function resolveModelPricing(
     cacheWrite: entry.cost.cacheWrite / 1_000_000,
     cacheWrite1h,
   };
+}
+
+/**
+ * The honest three-state pricing signal (PERSIST-03 / observability-excellence
+ * E1). Derives whether a provider/model's cost is `priced` (a real catalog rate),
+ * `free` (a gateway/local runtime where $0 is correct), or `unknown` (a native
+ * provider with NO catalog entry — the dangerous `ffe11736` fail-open where
+ * {@link resolveModelPricing} silently returns {@link ZERO_COST}, masking a phantom
+ * cost as if it were free).
+ *
+ * This is a NEW function, deliberately SEPARATE from {@link resolveModelPricing}
+ * (whose return type {@link PerTokenCostRates} + 5 production callers stay
+ * untouched). P0 only PERSISTS this signal as `pricing_state`; the P1 spend
+ * kill-switch (Phase 177) consumes it.
+ *
+ * The discriminator is provider-family membership ({@link isNativeProvider} over
+ * model-family.ts's `NATIVE_PROVIDER_FAMILY`), NOT a bare catalog-presence boolean:
+ * a local/gateway provider (ollama/openrouter/llama.cpp/vllm/lm-studio) absent from
+ * that map legitimately serves uncosted models, so its $0 is `free`, never
+ * `unknown`.
+ *
+ * @param provider - the provider id (e.g. "anthropic", "ollama").
+ * @param modelId  - the model id at the provider.
+ * @returns the closed pricing-state union.
+ */
+export function resolvePricingState(
+  provider: string,
+  modelId: string,
+  catalog?: ModelCatalog,
+): "priced" | "free" | "unknown" {
+  // 1. A real catalog rate (non-ZERO_COST) → priced. Check the cost-bearing rates
+  //    (a catalog entry with all-zero cost — e.g. a scanned custom model — is
+  //    treated as not-priced and falls through to the family discriminator).
+  const rates = resolveModelPricing(provider, modelId, catalog);
+  if (rates.input > 0 || rates.cacheRead > 0 || rates.output > 0) return "priced";
+
+  // 2. A gateway/local/aggregator provider (absent from NATIVE_PROVIDER_FAMILY) →
+  //    free. $0 is correct for these runtimes.
+  if (!isNativeProvider(provider)) return "free";
+
+  // 3. A NATIVE single-family provider with no catalog entry → unknown (the
+  //    ffe11736 chimera: a phantom $0 that must NOT be reported as free).
+  return "unknown";
 }

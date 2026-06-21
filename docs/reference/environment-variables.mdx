@@ -281,6 +281,63 @@ Standard Node.js environment variable. Affects behavior of some dependencies and
 export NODE_ENV=production
 ```
 
+## OpenTelemetry Variables
+
+These are the **standard** OpenTelemetry SDK environment variables, honored by the
+opt-in `@comis/observability-otel` extension (the SDK reads them; Comis does not
+store them). They apply **only** when `observability.otel.enabled` or
+`observability.prometheus.enabled` is set in `config.yaml`. The `config.yaml`
+values take precedence for the keys Comis controls. None carry secrets or content.
+See [Prometheus & Grafana](/operations/prometheus-grafana) for the full surface.
+
+### `OTEL_EXPORTER_OTLP_ENDPOINT`
+
+| Property | Value |
+|----------|-------|
+| **Used by** | Daemon (OTel extension, when `otel.enabled`) |
+| **Format** | URL (e.g. `http://localhost:4318`) |
+| **Default** | (unset — the OTel SDK's own default) |
+
+The OTLP collector endpoint for traces/metrics/logs push. Used only when the
+`observability.otel.endpoint` config key is empty; the config value takes
+precedence when set.
+
+```bash
+export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4318"
+```
+
+### `OTEL_SEMCONV_STABILITY_OPT_IN`
+
+| Property | Value |
+|----------|-------|
+| **Used by** | Daemon (OTel extension, when `otel.enabled`) |
+| **Format** | Comma-separated tokens; `gen_ai_latest_experimental` to opt in |
+| **Default** | (unset — pre-1.36 GenAI convention shape) |
+
+Opts into the latest (pre-stable `Development`) GenAI semantic convention. Set it
+to `gen_ai_latest_experimental` alongside `observability.otel.genaiSemconv: true`.
+The convention will churn until it stabilizes. Content never leaks regardless — the
+exporter re-redacts independently and the message-content attributes are omitted
+unless `otel.captureContent` is separately enabled.
+
+```bash
+export OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_latest_experimental
+```
+
+### `OTEL_SERVICE_NAME`
+
+| Property | Value |
+|----------|-------|
+| **Used by** | Daemon (OTel extension, when `otel.enabled`) |
+| **Format** | Service identifier string |
+| **Default** | `comis` |
+
+Overrides the `service.name` resource attribute on every emitted signal.
+
+```bash
+export OTEL_SERVICE_NAME=comis
+```
+
 ## Development and Regression Variables
 
 These variables gate an **optional** developer regression suite. They are **never

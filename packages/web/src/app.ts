@@ -39,6 +39,9 @@ const VIEW_LOADERS: Record<string, () => Promise<unknown>> = {
   "ic-billing-view": () => import("./views/billing-view.js"),
   "ic-delivery-view": () => import("./views/delivery-view.js"),
   "ic-diagnostics-view": () => import("./views/diagnostics-view.js"),
+  "ic-cache-health-view": () => import("./views/cache-health.js"),
+  "ic-spend-governance-view": () => import("./views/spend-governance.js"),
+  "ic-incident-view": () => import("./views/incident-view.js"),
   "ic-subagents-view": () => import("./views/subagents.js"),
   "ic-security-view": () => import("./views/security.js"),
   "ic-config-editor": () => import("./views/config-editor.js"),
@@ -489,6 +492,9 @@ export class IcApp extends LitElement implements AppHost {
       case "ic-billing-view":
       case "ic-delivery-view":
       case "ic-diagnostics-view":
+      case "ic-cache-health-view":
+      case "ic-spend-governance-view":
+      case "ic-incident-view":
       case "ic-observe-dashboard":
       case "ic-context-engine-view":
       case "ic-memory-inspector":
@@ -591,6 +597,16 @@ export class IcApp extends LitElement implements AppHost {
         return html`<ic-delivery-view .rpcClient=${this._rpcClient}></ic-delivery-view>`;
       case "ic-diagnostics-view":
         return html`<ic-diagnostics-view .rpcClient=${this._rpcClient} .eventDispatcher=${this._eventDispatcher}></ic-diagnostics-view>`;
+      case "ic-cache-health-view":
+        return html`<ic-cache-health-view .rpcClient=${this._rpcClient} .eventDispatcher=${this._eventDispatcher}></ic-cache-health-view>`;
+      case "ic-spend-governance-view":
+        return html`<ic-spend-governance-view .rpcClient=${this._rpcClient} .eventDispatcher=${this._eventDispatcher}></ic-spend-governance-view>`;
+      case "ic-incident-view":
+        // MD-01: the drill ref (a sessionKey | traceId) rides the query string
+        // (#/observe/incident?ref=<ref>). Pass it as the single `ref` — the view
+        // classifies the shape (UUID → traceId, else sessionKey) so a traceId-shaped
+        // ref resolves. Previously forced into `.sessionKey`, so a traceId never did.
+        return html`<ic-incident-view .rpcClient=${this._rpcClient} .eventDispatcher=${this._eventDispatcher} .ref=${this._routeQuery["ref"] ?? ""}></ic-incident-view>`;
       case "ic-pipeline-list":
         return html`<ic-pipeline-list .rpcClient=${this._rpcClient}></ic-pipeline-list>`;
       case "ic-pipeline-builder":

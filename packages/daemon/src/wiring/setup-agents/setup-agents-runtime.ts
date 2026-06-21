@@ -427,7 +427,7 @@ export async function setupSingleAgent(
     executionPlanHolder,
     lastKnownModel: deps.lastKnownModel,
     budgetGuard,
-    costTracker,
+    costTracker, spendAccumulator: deps.spendAccumulator, spendConfig: container.config.observability.spend, // Phase 177 kill-switch: daemon-wide accumulator REF (Pitfall 4 — same instance every bridge) + config; absent ⇒ no-op.
     stepCounter,
     eventBus: container.eventBus,
     logger: perAgentLogger,

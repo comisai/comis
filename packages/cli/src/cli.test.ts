@@ -91,10 +91,12 @@ describe("CLI entry point", () => {
       "cache",
       // MCP server management surface.
       "mcp",
+      // Cost-attribution exports/reports (179-03 `comis cost export`).
+      "cost",
     ] as const;
 
-    it("registers exactly 25 commands", () => {
-      expect(program.commands).toHaveLength(25);
+    it("registers exactly 26 commands", () => {
+      expect(program.commands).toHaveLength(26);
     });
 
     it.each(expectedCommands)("registers the '%s' command", (name) => {

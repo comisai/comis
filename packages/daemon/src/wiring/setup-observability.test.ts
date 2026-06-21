@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { themeForName } from "@comis/core";
-import type { ActivityEvent, TurnActivityContext } from "@comis/core";
+import type { ActivityEvent, TurnActivityContext, SpendConfig } from "@comis/core";
+import { createFakeClock } from "../../../../test/support/fake-clock.js";
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks
@@ -12,13 +13,42 @@ const mockCreateCostTracker = vi.hoisted(() => vi.fn(() => ({
   getAll: vi.fn(() => []),
 })));
 
+// A spy spend accumulator: createSpendAccumulator returns this so the tests can
+// assert recordSpend/rehydrate are invoked with the derived scope.
+const mockSpendAccumulator = vi.hoisted(() => ({
+  rehydrate: vi.fn(),
+  recordSpend: vi.fn(),
+  checkAndReserve: vi.fn(),
+  reconcile: vi.fn(),
+}));
+const mockCreateSpendAccumulator = vi.hoisted(() => vi.fn(() => mockSpendAccumulator));
+
 const mockCreateDiagnosticCollector = vi.hoisted(() => vi.fn(() => ({ dispose: vi.fn() })));
 const mockCreateBillingEstimator = vi.hoisted(() => vi.fn(() => ({ estimate: vi.fn() })));
 const mockCreateChannelActivityTracker = vi.hoisted(() => vi.fn(() => ({ dispose: vi.fn() })));
 const mockCreateDeliveryTracer = vi.hoisted(() => vi.fn(() => ({ dispose: vi.fn() })));
 
+// The opt-in extension's registration entry-point — mocked so the seam test
+// asserts it is reached ONLY when enabled, without a real OTel SDK. A controllable
+// `_shouldThrow` flag exercises the honest-degradation (throwing-import) path.
+const mockOtelHandle = vi.hoisted(() => ({ shutdown: vi.fn(async () => undefined) }));
+const mockRegisterOtelExporter = vi.hoisted(() => vi.fn(() => mockOtelHandle));
+const otelMockState = vi.hoisted(() => ({ shouldThrow: false }));
+
 vi.mock("@comis/agent", () => ({
   createCostTracker: mockCreateCostTracker,
+  createSpendAccumulator: mockCreateSpendAccumulator,
+}));
+
+// The seam does `await import("@comis/observability-otel")`. Mock that module so
+// the test controls whether registerOtelExporter resolves or throws. When
+// `otelMockState.shouldThrow` is set, accessing the export throws (simulating an
+// unavailable/broken extension) — the seam must WARN, not crash.
+vi.mock("@comis/observability-otel", () => ({
+  get registerOtelExporter() {
+    if (otelMockState.shouldThrow) throw new Error("simulated: extension unavailable");
+    return mockRegisterOtelExporter;
+  },
 }));
 
 vi.mock("../observability/diagnostic-collector.js", () => ({
@@ -102,7 +132,7 @@ describe("setupObservability", () => {
     const eventBus = createMockEventBus();
     const setupObservability = await getSetupObservability();
 
-    setupObservability({
+    await setupObservability({
       eventBus: eventBus as any,
       _createTokenTracker: mockCreateTokenTracker,
     });
@@ -118,7 +148,7 @@ describe("setupObservability", () => {
     const eventBus = createMockEventBus();
     const setupObservability = await getSetupObservability();
 
-    const result = setupObservability({
+    const result = await setupObservability({
       eventBus: eventBus as any,
       _createTokenTracker: mockCreateTokenTracker,
     });
@@ -140,7 +170,7 @@ describe("setupObservability", () => {
     const eventBus = createMockEventBus();
     const setupObservability = await getSetupObservability();
 
-    const result = setupObservability({
+    const result = await setupObservability({
       eventBus: eventBus as any,
       _createTokenTracker: mockCreateTokenTracker,
     });
@@ -181,7 +211,7 @@ describe("setupObservability", () => {
     const eventBus = createMockEventBus();
     const setupObservability = await getSetupObservability();
 
-    const result = setupObservability({
+    const result = await setupObservability({
       eventBus: eventBus as any,
       _createTokenTracker: mockCreateTokenTracker,
     });
@@ -207,7 +237,7 @@ describe("setupObservability", () => {
     const eventBus = createMockEventBus();
     const setupObservability = await getSetupObservability();
 
-    setupObservability({
+    await setupObservability({
       eventBus: eventBus as any,
       _createTokenTracker: mockCreateTokenTracker,
     });
@@ -236,7 +266,7 @@ describe("setupObservability", () => {
     const setupObservability = await getSetupObservability();
     const mockLogger = { info: vi.fn() };
 
-    setupObservability({
+    await setupObservability({
       eventBus: eventBus as any,
       _createTokenTracker: mockCreateTokenTracker,
       logger: mockLogger,
@@ -256,7 +286,7 @@ describe("setupObservability", () => {
     const setupObservability = await getSetupObservability();
     const mockLogger = { info: vi.fn() };
 
-    setupObservability({
+    await setupObservability({
       eventBus: eventBus as any,
       _createTokenTracker: mockCreateTokenTracker,
       logger: mockLogger,
@@ -314,7 +344,7 @@ describe("setupObservability", () => {
     const eventBus = createMockEventBus();
     const setupObservability = await getSetupObservability();
 
-    const result = setupObservability({
+    const result = await setupObservability({
       eventBus: eventBus as any,
       _createTokenTracker: mockCreateTokenTracker,
     });
@@ -336,7 +366,7 @@ describe("setupObservability", () => {
     const eventBus = createMockEventBus();
     const setupObservability = await getSetupObservability();
 
-    const result = setupObservability({
+    const result = await setupObservability({
       eventBus: eventBus as any,
       _createTokenTracker: mockCreateTokenTracker,
       theme: themeForName("ascii"),
@@ -366,5 +396,305 @@ describe("setupObservability", () => {
     expect(received).toHaveLength(1);
     expect(received[0].defaultLabel).toBe("[SUB] agent-1 subagent");
     expect(received[0].defaultLabel).not.toContain("🤖");
+  });
+
+  // -------------------------------------------------------------------------
+  // 11. Spend kill-switch (Phase 177-03): CONSTRUCT the daemon-wide accumulator
+  //     + the live recordSpend subscriber inside setupObservability. REHYDRATE
+  //     lives at the boot root (daemon.ts) — covered by rehydrateSpendFromStore.
+  // -------------------------------------------------------------------------
+
+  const spendConfig: SpendConfig = {
+    perAgentUsd: null,
+    perTenantUsd: null,
+    daemonGlobalUsd: 10,
+    perTurnMax: 0.5,
+    action: "warn",
+    warnAtFraction: 0.8,
+    pricingFallback: "snapshot",
+    onUnknownPricing: "warn",
+  };
+
+  function makeConfigWithSpend(): any {
+    return { observability: { spend: spendConfig } };
+  }
+
+  it("constructs exactly ONE daemon-wide spend accumulator when clock + config are provided", async () => {
+    const eventBus = createMockEventBus();
+    const setupObservability = await getSetupObservability();
+
+    const result = await setupObservability({
+      eventBus: eventBus as any,
+      _createTokenTracker: mockCreateTokenTracker,
+      clock: createFakeClock(1_000_000) as any,
+      config: makeConfigWithSpend(),
+    } as any);
+
+    expect(mockCreateSpendAccumulator).toHaveBeenCalledTimes(1);
+    // The ceilings flow from observability.spend.
+    expect(mockCreateSpendAccumulator).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ceilings: expect.objectContaining({ daemonGlobalUsd: 10, warnAtFraction: 0.8 }),
+      }),
+    );
+    // Threaded out on the wiring object (so the per-agent guards hold a reference).
+    expect((result as any).spendAccumulator).toBe(mockSpendAccumulator);
+  });
+
+  it("increments the accumulator live from observability:token_usage, deriving tenant via parseFormattedSessionKey (NOT agentId)", async () => {
+    const eventBus = createMockEventBus();
+    const setupObservability = await getSetupObservability();
+
+    await setupObservability({
+      eventBus: eventBus as any,
+      _createTokenTracker: mockCreateTokenTracker,
+      clock: createFakeClock(1_000_000) as any,
+      config: makeConfigWithSpend(),
+    } as any);
+
+    // A formatted sessionKey "tenantX:user1:channel1" → tenantId "tenantX".
+    eventBus.emit("observability:token_usage", {
+      agentId: "agent-1",
+      channelId: "channel1",
+      executionId: "exec-1",
+      sessionKey: "tenantX:user1:channel1",
+      tokens: { prompt: 100, completion: 50, total: 150 },
+      cost: { input: 0.001, output: 0.002, cacheRead: 0, cacheWrite: 0, total: 0.05 },
+      provider: "anthropic",
+      model: "claude",
+    });
+
+    expect(mockSpendAccumulator.recordSpend).toHaveBeenCalledWith(
+      { tenantId: "tenantX", agentId: "agent-1" }, // L1: tenant from the parser, NOT agentId
+      0.05,
+    );
+  });
+
+  it("does NOT construct an accumulator when clock/config are absent (existing call shape unaffected)", async () => {
+    const eventBus = createMockEventBus();
+    const setupObservability = await getSetupObservability();
+
+    const result = await setupObservability({
+      eventBus: eventBus as any,
+      _createTokenTracker: mockCreateTokenTracker,
+    });
+
+    expect(mockCreateSpendAccumulator).not.toHaveBeenCalled();
+    expect((result as any).spendAccumulator).toBeUndefined();
+  });
+
+  // -------------------------------------------------------------------------
+  // 12. The config-gated await-import seam (178-02 Task 3): load the opt-in
+  //     @comis/observability-otel extension ONLY when otel/prometheus enabled;
+  //     default-off touches nothing; a throwing import WARNs, never crashes.
+  // -------------------------------------------------------------------------
+
+  function configWith(observability: Record<string, unknown>): any {
+    return { observability: { spend: spendConfig, ...observability } };
+  }
+
+  it("loads the otel extension + resolves an otelHandle when observability.otel.enabled:true", async () => {
+    otelMockState.shouldThrow = false;
+    const eventBus = createMockEventBus();
+    const setupObservability = await getSetupObservability();
+
+    const result = await setupObservability({
+      eventBus: eventBus as any,
+      _createTokenTracker: mockCreateTokenTracker,
+      clock: createFakeClock(1_000_000) as any,
+      config: configWith({ otel: { enabled: true }, prometheus: { enabled: false } }),
+    } as any);
+
+    expect(mockRegisterOtelExporter).toHaveBeenCalledTimes(1);
+    // The spend accumulator reference is threaded into the exporter (gauge source).
+    expect(mockRegisterOtelExporter).toHaveBeenCalledWith(
+      expect.objectContaining({ eventBus, spendAccumulator: mockSpendAccumulator }),
+    );
+    expect((result as any).otelHandle).toBe(mockOtelHandle);
+  });
+
+  it("loads the extension when ONLY prometheus.enabled:true (independent of otel.enabled)", async () => {
+    otelMockState.shouldThrow = false;
+    const eventBus = createMockEventBus();
+    const setupObservability = await getSetupObservability();
+
+    const result = await setupObservability({
+      eventBus: eventBus as any,
+      _createTokenTracker: mockCreateTokenTracker,
+      clock: createFakeClock(1_000_000) as any,
+      config: configWith({ otel: { enabled: false }, prometheus: { enabled: true } }),
+    } as any);
+
+    expect(mockRegisterOtelExporter).toHaveBeenCalledTimes(1);
+    expect((result as any).otelHandle).toBe(mockOtelHandle);
+  });
+
+  it("default-off (both flags false): NEVER attempts the import, otelHandle is undefined", async () => {
+    otelMockState.shouldThrow = false;
+    const eventBus = createMockEventBus();
+    const setupObservability = await getSetupObservability();
+
+    const result = await setupObservability({
+      eventBus: eventBus as any,
+      _createTokenTracker: mockCreateTokenTracker,
+      clock: createFakeClock(1_000_000) as any,
+      config: configWith({ otel: { enabled: false }, prometheus: { enabled: false } }),
+    } as any);
+
+    expect(mockRegisterOtelExporter).not.toHaveBeenCalled();
+    expect((result as any).otelHandle).toBeUndefined();
+  });
+
+  it("honest degradation: an enabled-but-throwing extension WARNs with a hint and still RESOLVES (never crashes boot)", async () => {
+    otelMockState.shouldThrow = true; // simulate the extension import throwing
+    const eventBus = createMockEventBus();
+    const mockLogger = { info: vi.fn(), warn: vi.fn() };
+    const setupObservability = await getSetupObservability();
+
+    // Must RESOLVE (not reject) even though the seam import throws.
+    const result = await setupObservability({
+      eventBus: eventBus as any,
+      _createTokenTracker: mockCreateTokenTracker,
+      logger: mockLogger as any,
+      clock: createFakeClock(1_000_000) as any,
+      config: configWith({ otel: { enabled: true }, prometheus: { enabled: false } }),
+    } as any);
+
+    expect((result as any).otelHandle).toBeUndefined();
+    // A WARN with a hint was logged (the self-DoS guard, T-178-06).
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ hint: expect.any(String) }),
+      expect.any(String),
+    );
+    otelMockState.shouldThrow = false;
+  });
+
+  // -------------------------------------------------------------------------
+  // 13. MD-01: a non-loopback prometheus.host bind is a deliberate-but-risky
+  //     posture — emit a startup WARN-with-hint naming the exposure (the
+  //     /metrics surface serves operational shape unauthenticated). Do NOT
+  //     reject 0.0.0.0 (a valid choice behind a reverse proxy) — just warn.
+  // -------------------------------------------------------------------------
+
+  it("MD-01: WARNs with a hint when prometheus.enabled + a NON-loopback host (0.0.0.0) — names the unauthenticated exposure", async () => {
+    otelMockState.shouldThrow = false;
+    const eventBus = createMockEventBus();
+    const mockLogger = { info: vi.fn(), warn: vi.fn() };
+    const setupObservability = await getSetupObservability();
+
+    await setupObservability({
+      eventBus: eventBus as any,
+      _createTokenTracker: mockCreateTokenTracker,
+      logger: mockLogger as any,
+      clock: createFakeClock(1_000_000) as any,
+      config: configWith({
+        otel: { enabled: false },
+        prometheus: { enabled: true, host: "0.0.0.0" },
+      }),
+    } as any);
+
+    // A WARN with a hint fired, and the hint names the exposure + the knob.
+    const nonLoopbackWarn = mockLogger.warn.mock.calls.find(
+      ([obj]) =>
+        obj &&
+        typeof obj === "object" &&
+        typeof (obj as any).hint === "string" &&
+        /metrics|loopback|reverse.proxy|unauthenticated/i.test((obj as any).hint),
+    );
+    expect(nonLoopbackWarn, "a non-loopback bind must WARN with an exposure hint").toBeTruthy();
+    // The hint names the actual host (the "name the knob" discipline).
+    expect(JSON.stringify(nonLoopbackWarn![0])).toContain("0.0.0.0");
+    // The extension still loads (the bind is a valid deliberate choice, not rejected).
+    expect(mockRegisterOtelExporter).toHaveBeenCalledTimes(1);
+  });
+
+  it("MD-01: does NOT WARN for a loopback host (127.0.0.1 / ::1 / localhost) — the safe default is silent", async () => {
+    otelMockState.shouldThrow = false;
+    const setupObservability = await getSetupObservability();
+
+    for (const host of ["127.0.0.1", "::1", "localhost"]) {
+      vi.clearAllMocks();
+      const eventBus = createMockEventBus();
+      const mockLogger = { info: vi.fn(), warn: vi.fn() };
+      await setupObservability({
+        eventBus: eventBus as any,
+        _createTokenTracker: mockCreateTokenTracker,
+        logger: mockLogger as any,
+        clock: createFakeClock(1_000_000) as any,
+        config: configWith({ otel: { enabled: false }, prometheus: { enabled: true, host } }),
+      } as any);
+
+      const exposureWarn = mockLogger.warn.mock.calls.find(
+        ([obj]) =>
+          obj &&
+          typeof obj === "object" &&
+          typeof (obj as any).hint === "string" &&
+          /loopback|reverse.proxy|unauthenticated/i.test((obj as any).hint),
+      );
+      expect(exposureWarn, `loopback host '${host}' must NOT trigger the exposure WARN`).toBeUndefined();
+    }
+  });
+
+  it("MD-01: does NOT WARN about the bind when prometheus is DISABLED (even with a non-loopback host configured)", async () => {
+    otelMockState.shouldThrow = false;
+    const eventBus = createMockEventBus();
+    const mockLogger = { info: vi.fn(), warn: vi.fn() };
+    const setupObservability = await getSetupObservability();
+
+    await setupObservability({
+      eventBus: eventBus as any,
+      _createTokenTracker: mockCreateTokenTracker,
+      logger: mockLogger as any,
+      clock: createFakeClock(1_000_000) as any,
+      // prometheus off → the host is inert; no exposure exists to warn about.
+      config: configWith({ otel: { enabled: false }, prometheus: { enabled: false, host: "0.0.0.0" } }),
+    } as any);
+
+    const exposureWarn = mockLogger.warn.mock.calls.find(
+      ([obj]) => obj && typeof obj === "object" && /metrics|loopback/i.test(String((obj as any).hint ?? "")),
+    );
+    expect(exposureWarn, "a disabled prometheus surface must not warn about its host").toBeUndefined();
+  });
+
+  // -------------------------------------------------------------------------
+  // 14. LOW-1: the clock is forwarded to the extension ONLY when present —
+  //     never `clock: undefined` cast to ClockPort (the legacy/test call shape
+  //     passes no clock). The extension never calls clock, but an unsound
+  //     `undefined as ClockPort` is still a latent contract lie.
+  // -------------------------------------------------------------------------
+
+  it("LOW-1: forwards clock to the extension ONLY when present — no `clock: undefined` when clock is absent", async () => {
+    otelMockState.shouldThrow = false;
+    const eventBus = createMockEventBus();
+    const setupObservability = await getSetupObservability();
+
+    // Enable prometheus so the seam runs, but pass NO clock (the legacy shape).
+    await setupObservability({
+      eventBus: eventBus as any,
+      _createTokenTracker: mockCreateTokenTracker,
+      config: configWith({ otel: { enabled: false }, prometheus: { enabled: true } }),
+    } as any);
+
+    expect(mockRegisterOtelExporter).toHaveBeenCalledTimes(1);
+    const deps = mockRegisterOtelExporter.mock.calls[0]![0] as Record<string, unknown>;
+    // The `clock` key must be ABSENT (conditionally spread) — never present-with-undefined.
+    expect("clock" in deps, "clock must not be forwarded as `undefined` (the unsound cast)").toBe(false);
+  });
+
+  it("LOW-1: forwards the real clock when one IS provided", async () => {
+    otelMockState.shouldThrow = false;
+    const eventBus = createMockEventBus();
+    const clock = createFakeClock(1_000_000) as any;
+    const setupObservability = await getSetupObservability();
+
+    await setupObservability({
+      eventBus: eventBus as any,
+      _createTokenTracker: mockCreateTokenTracker,
+      clock,
+      config: configWith({ otel: { enabled: false }, prometheus: { enabled: true } }),
+    } as any);
+
+    const deps = mockRegisterOtelExporter.mock.calls[0]![0] as Record<string, unknown>;
+    expect(deps["clock"]).toBe(clock);
   });
 });

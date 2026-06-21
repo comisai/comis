@@ -34,45 +34,21 @@
  *  11.  main()
  *  12.  Direct-run guard block
  *
- * The 4-handle chain (Foundation → Agents → Channels → Gateway handles)
- * was collapsed into a single BootContext. Each boot* helper now takes
- * `boot: BootContext` and mutates it via Object.assign; main() constructs
- * `boot` via createEmptyBootContext() and chains the 5 helpers in order.
+ * The 4-handle chain (Foundation → Agents → Channels → Gateway) was collapsed
+ * into a single BootContext: each boot* helper takes `boot: BootContext` and
+ * mutates it via Object.assign; main() constructs it via createEmptyBootContext()
+ * and chains the 5 helpers in order. The 6 true forward-ref slots (channelPluginsRef,
+ * bgNotifyRef, cronWakeCallbackRef, gatewaySendRef, shutdownRef, channelAdaptersRef)
+ * persist on BootContext; the 3 former bootChannels local-scope deferred refs are gone
+ * (setupTools is hoisted before setupChannels; the other two are local `let` slots
+ * captured by message-arrival lambdas).
  *
- * The 3 eliminable local-scope deferred-ref slots inside bootChannels
- * (session-tracker, tool-assembler, inbound-message-id-resolver) are
- * GONE — setupTools is hoisted before setupChannels (so
- * assembleToolsForAgent is a direct value, not a deferred ref) and the
- * remaining two are local `let` slots whose value is captured by lambdas
- * that read at message-arrival time. The 6 true forward-ref slots
- * (channelPluginsRef, bgNotifyRef, cronWakeCallbackRef, gatewaySendRef,
- * shutdownRef, channelAdaptersRef) persist on BootContext.
- *
- * The 23 helpers that were extracted into the stages/* layer by an earlier
- * decomposition pass are now back here in two forms:
- *
- *   - **Top-level functions** (11 of 23): helpers called from inside a
- *     single boot* function but whose body is large enough to deserve a
- *     named scope. Each lives in the helper section above the boot*
- *     blocks, grouped by which stage consumes them (foundation / agents /
- *     channels / gateway / shutdown). Examples: `buildMergedEnv`,
- *     `buildChannelManagerDeps`, `createHotAdd`, `emitStartupBanner`.
- *     (`restoreApprovalState` was extracted to `wiring/main-helpers.ts`.)
- *
- *   - **Inlined at call site** (11 of 23): helpers that were trivially
- *     wrapped one-call-site builders. Their bodies were copied verbatim
- *     into the boot* body where they were called from, and the wrapper
- *     declaration was deleted. Examples: `seedBundledSkillCreator`
- *     (inlined as an IIFE inside bootFoundation), `setupMcpManager`
- *     (the body of setupMcp is called directly), `buildAuditBundle`,
- *     `createCapabilityPortResolver`, `buildImageGenBundle`,
- *     `buildImageHandlerDeps` / `buildTokenStoreMutators` /
- *     `buildContextEngineConfig` (folded into `buildRpcDispatchDeps`),
- *     `readDbSizeMetrics` / `computeAndKillStuckSubAgents` (folded into
- *     `wireHealthLogging`), `buildStartupBannerManifest` (folded into
- *     `emitStartupBanner`), `buildSyntheticRestartMessage` (folded into
- *     `replayContinuationsIfAny`), `buildGraphPreWarm` (folded into
- *     `buildGraphCoordinatorDeps`).
+ * The 23 helpers from an earlier stages/* decomposition are back here in two forms:
+ * 11 as top-level functions (called once but large enough to name — e.g. buildMergedEnv,
+ * buildChannelManagerDeps, createHotAdd, emitStartupBanner; restoreApprovalState went to
+ * wiring/main-helpers.ts) and 11 inlined verbatim at their single call site (e.g.
+ * setupMcpManager, buildAuditBundle, the buildImageHandlerDeps/buildTokenStoreMutators/
+ * buildContextEngineConfig fold into buildRpcDispatchDeps, etc.).
  *
  * @module
  */
@@ -117,7 +93,7 @@ import {
 import { createGatewayServer } from "@comis/gateway";
 import {
   setupLogging,
-  setupObservability,
+  setupObservability, rehydrateSpendFromStore,
   setupHealth,
   setupMemory,
   setupAgents,
@@ -195,7 +171,7 @@ import { createEmptyBootContext } from "./daemon-types.js";
 export type { DaemonInstance, DaemonOverrides } from "./daemon-types.js";
 import { setupObsPersistence } from "./observability/obs-persistence-wiring.js";
 import { recordModelHealth } from "./observability/record-model-health.js";
-import { buildConfigPostureRecord, countChimericModels } from "./observability/build-config-posture-record.js";
+import { buildConfigPostureRecord, countChimericModels, countPricingGaps } from "./observability/build-config-posture-record.js";
 import { setupDeliveryQueueLogging } from "./observability/delivery-queue-logger.js";
 import { createContextPipelineCollector } from "./observability/context-pipeline-collector.js";
 import { createLogLevelManager, expandTilde } from "./observability/log-infra.js";
@@ -944,6 +920,20 @@ function buildRpcDispatchDeps(deps: {
     hotAdd: g.hotAdd, hotRemove: g.hotRemove,
     diagnosticCollector: c.diagnosticCollector, billingEstimator: c.billingEstimator,
     channelActivityTracker: c.channelActivityTracker, deliveryTracer: c.deliveryTracer, budgetGuards: c.budgetGuards,
+    // WEBUI-02 (179-04): thread the LIVE spend snapshot the kill-switch enforces
+    // (locked A1 — getSnapshot(), NOT the lagging SQL) + the configured ceilings, so
+    // obs.spend.snapshot computes headroom = ceiling − spend. Absent ⇒ spend off
+    // (the handler degrades to an honest enabled:false, never a misleading $0).
+    spendSnapshot: c.spendAccumulator
+      ? () => ({
+          ...c.spendAccumulator!.getSnapshot(),
+          ceilings: {
+            perAgentUsd: c.container.config.observability.spend.perAgentUsd,
+            perTenantUsd: c.container.config.observability.spend.perTenantUsd,
+            daemonGlobalUsd: c.container.config.observability.spend.daemonGlobalUsd,
+          },
+        })
+      : undefined,
     modelCatalog: c.modelCatalog, channelConfig: c.channelConfig,
     tokenRegistry: g.tokenRegistry,
     addToTokenStore, removeFromTokenStore,
@@ -1452,14 +1442,14 @@ async function bootFoundation(
     // threaded into setupShutdown. The activity-stream logger + homeDir
     // are read here at the sanctioned composition root (no env reads in the
     // substrate; injected logger).
-    activityStream, disposeActivityStream,
-  } = setupObservability({
+    activityStream, disposeActivityStream, spendAccumulator, otelHandle, // spendAccumulator: Phase 177 kill-switch (live-incremented, REHYDRATED below, threaded to bridges); otelHandle: Phase 178 OTLP/Prometheus exporter handle → setupShutdown.
+  } = await setupObservability({
     eventBus: container.eventBus,
     _createTokenTracker,
     logger: logLevelManager.getLogger("observability"),
     activityLogger: logLevelManager.getLogger("activity-stream"),
     homeDir: mergedEnv["HOME"],
-    dataDir,
+    dataDir, clock, config: container.config, version: daemonVersion, // Phase 177 (clock+config): construct the spend accumulator here (ceilings from config.observability.spend). Phase 178/CR-01: daemonVersion → comis_build_info{version}.
     // runtime reachability: resolve the DEFAULT agent's activity.theme →
     // themeForName bundle and forward it so the process-wide ActivityStream's
     // subagent marker follows the configured theme (the four themes are now
@@ -1528,12 +1518,24 @@ async function bootFoundation(
           startupTimestamp: startupStartMs,
           snapshotIntervalMs: obsConfig.persistence.snapshotIntervalMs,
           logger: daemonLogger,
+          // AUDIT-01: the security-audit.jsonl lives under <dataDir>/logs and
+          // rides the shared observability.logRotation policy (the 6th stream).
+          dataDir: container.config.dataDir || dataDir,
+          logRotation: {
+            maxSizeBytes: obsConfig.logRotation.maxSizeBytes,
+            maxFiles: obsConfig.logRotation.maxFiles,
+          },
+          auditConfig: { persist: obsConfig.audit.persist, sink: obsConfig.audit.sink },
+          // PERSIST-01: the cache_break subscriber is opt-out-able via this flag (default on).
+          persistence: { cacheBreaks: obsConfig.persistence.cacheBreaks },
         });
         return { obsStore: store, obsPersistence: persistence };
       })()
     : undefined;
   const obsStore = obsBundle?.obsStore; // trajectory recorder is per-session (pi-executor.ts).
   const obsPersistence = obsBundle?.obsPersistence;
+  // Phase 177: REHYDRATE the spend accumulator at the boot root, AFTER obsStore exists (the rolling-spend read lives there); NO-OPS when obsStore is undefined (persistence off → start at $0). 24h window.
+  if (spendAccumulator) rehydrateSpendFromStore(spendAccumulator, obsStore, 24 * 60 * 60 * 1000);
 
   // OUTCOME-07: prune the append-only outcome_events ledger at EVERY boot,
   // UNCONDITIONALLY — deliberately OUTSIDE the obsConfig.persistence.enabled IIFE
@@ -1657,7 +1659,7 @@ async function bootFoundation(
     schedulerLogger, skillsLogger, memoryLogger, daemonVersion,
     tokenTracker, sharedCostTracker,
     diagnosticCollector, billingEstimator, channelActivityTracker, deliveryTracer,
-    activityStream, disposeActivityStream,
+    activityStream, disposeActivityStream, spendAccumulator, otelHandle, // spendAccumulator: Phase 177 kill-switch → bridge; otelHandle: Phase 178 OTLP/Prometheus exporter → setupShutdown.
     contextPipelineCollector,
     processMonitor,
     disposeEmbedding, cachedPort, memoryAdapter, db, sessionStore, memoryApi,
@@ -1723,7 +1725,7 @@ async function bootAgents(
     lcdStore, // Phase 128 LCD store; threaded into setupAgents -> createPiExecutor (contextStore) -> setupContextEngine -> the `dag` branch (context-engine.ts). Opt-in (version: "dag"); default pipeline. The agent receives the core ContextStorePort TYPE only (agent↛memory cut)
     provenanceStore, // Phase 173 DIST-03 read side; threaded into setupAgents -> createPiExecutor -> prompt-assembly -> createMemoryRecall's post-fusion provenance down-weighting pass (was BUILT but never injected in Phase 172). The agent receives the core LcdProvenanceReadStore TYPE only (agent↛memory cut)
     summarizerSpendBreaker, // R1 (132-05); daemon-owned per-tenant breaker; threaded into setupAgents -> createPiExecutor -> setupContextEngine so getSummarizerDeps gates the leaf seam per tenant (truncation-only degrade on open-breaker/over-cap)
-    temporalStore, // threaded into setupAgents -> createPiExecutor -> createMemoryRecall (the recall temporal-spread read path); dormant until rag.lanes.temporal.enabled
+    spendAccumulator, temporalStore, // spendAccumulator = Phase 177 dollars kill-switch (threaded setupAgents -> createPiExecutor -> bridge); temporalStore -> createMemoryRecall (recall temporal-spread read; dormant until rag.lanes.temporal.enabled)
     causalStore, // threaded into setupAgents -> createPiExecutor -> createMemoryRecall (the 5th causal read lane, dormant until rag.lanes.causal.enabled) AND the cron review -> runMemoryReview -> linkCausal (the write path) — one segregated port, both halves
     tripleStore, // threaded into setupAgents -> createPiExecutor -> createMemoryRecall (the 6th graph-spread read lane, dormant until rag.lanes.graphSpread.enabled); the agent receives the port TYPE only (the agent↛memory cut)
     embeddingStore, usefulnessStore, userRepresentationStore, relationshipStore, tunedAlphaStore, // the MMR re-rank's scoped embedding read + recall usefulness read + the LLM-free <user_profile> standing-block read + the LLM-free <channel_relationships> standing-block read (dormant until the offline builder writes rows + the social-modeling sign-off) + the buildScoringAlphas tuned-vector read (dormant until rag.onlineTuning.enabled + the bandit cron) -> setupAgents -> createPiExecutor -> prompt-assembly; the agent receives the port TYPEs only (the agent↛memory cut)
@@ -1871,7 +1873,7 @@ async function bootAgents(
     // from the SAME object SEP publishes into (Pitfall 1).
     executionPlanPorts, oauthManagers, // oauthManagers (184): DEFAULT agent's → buildImageGenBundle (CDX-01)
   } = await setupAgents({
-    container, memoryAdapter, sessionStore, agentLogger, rerankerPort, rerankerModelPresent, entityStore, lcdStore, provenanceStore, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, pinnedStore: memoryAdapter, userRepresentationStore, relationshipStore, tunedAlphaStore, learnedSkillStore, learnedSkillSurfaceRegistry, summarizerSpendBreaker, outboundMediaEnabled: true,
+    container, memoryAdapter, sessionStore, agentLogger, rerankerPort, rerankerModelPresent, entityStore, lcdStore, provenanceStore, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, pinnedStore: memoryAdapter, userRepresentationStore, relationshipStore, tunedAlphaStore, learnedSkillStore, learnedSkillSurfaceRegistry, summarizerSpendBreaker, spendAccumulator, outboundMediaEnabled: true,
     autonomousMediaEnabled: !container.config.integrations.media.transcription.autoTranscribe
       || !container.config.integrations.media.vision.enabled
       || !container.config.integrations.media.documentExtraction.enabled,
@@ -2697,7 +2699,7 @@ async function bootShutdown(
     diagnosticCollector, billingEstimator, channelActivityTracker, deliveryTracer,
     contextPipelineCollector, backgroundIndexingPromise, db,
     disposeEmbedding, disposeReranker, cachedPort, maintenanceTick, obsPersistence,
-    disposeActivityStream,
+    disposeActivityStream, otelHandle,
     injectionRateLimiter, destroyReactionWiring, geminiCacheManager, backgroundTaskManager,
     secretStore,
     executors: _execs, cronSchedulers, resetSchedulers, browserServices,
@@ -2754,7 +2756,7 @@ async function bootShutdown(
     continuationTracker,
     lifecycleReactors,  // destroy lifecycle reactors on shutdown
     obsPersistence,  // drain write buffers before db.close
-    disposeActivityStream,  // drain + unsubscribe ActivityStream from EventBus
+    disposeActivityStream, otelShutdown: otelHandle ? () => otelHandle.shutdown() : undefined, // drain ActivityStream; Phase 178 flush+close OTLP/Prometheus exporter (stops /metrics listener)
     geminiCacheManager,  // Dispose all Gemini caches on shutdown
     trajectoryRegistry,  // Drain session-scoped trajectory recorders
     // 9 new teardown fields (8 production subscribers + setup-tools
@@ -2850,7 +2852,7 @@ async function bootShutdown(
   const canaryFallbackActive = !boot.env.get("CANARY_SECRET");
   // KNOB-03: derived from the SAME boot comparisons the KNOB-01 WARN used (no second comparison).
   const servedBelowConfiguredCount = [...(boot.servedWindowComparisons?.values() ?? [])].filter((c) => c.belowConfigured).length;
-  buildConfigPostureRecord(boot.obsStore, { tlsOff, allowInsecureHttp, strandedFindings: posture.findings, canaryFallbackActive, servedBelowConfiguredCount, chimericModelCount: countChimericModels(container.config.agents) }, boot.clock);
+  buildConfigPostureRecord(boot.obsStore, { tlsOff, allowInsecureHttp, strandedFindings: posture.findings, canaryFallbackActive, servedBelowConfiguredCount, chimericModelCount: countChimericModels(container.config.agents), pricingGapCount: countPricingGaps(container.config.agents) }, boot.clock);
 
   // Snapshot current config as last-known-good after successful startup.
   // Honor diagnostics.configAudit.enabled.

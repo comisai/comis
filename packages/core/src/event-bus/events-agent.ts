@@ -1,14 +1,27 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * AgentEvents: Skill, tool, model, audit, and observability (token/latency) events.
+ * AgentEvents: Skill, tool, audit, security, memory, and observability
+ * (token/latency/spend) events.
  *
- * Find events by prefix: skill:*, tool:*, model:*, audit:*, observability:*.
- * Graph orchestration (graph:* / subagent:*) lives in OrchestrationEvents
- * (events-orchestration.ts).
+ * Find events by prefix: skill:*, tool:*, audit:*, observability:*, security:*,
+ * memory:*. Model-failover (model:*) + provider-health (provider:*) live in
+ * ModelEvents (events-model.ts). Graph orchestration (graph:* / subagent:*)
+ * lives in OrchestrationEvents (events-orchestration.ts).
  */
 import type { ErrorKind } from "../logging/log-fields.js";
 import type { ScriptClass } from "../text/script-classes.js";
 import type { GenerationPass } from "../text/generation-quality.js";
+import type { AuditKind } from "../security/audit.js";
+
+/**
+ * SPEND-05 (Phase 177-01): the closed scope enum that rides the
+ * `observability:spend_*` wire (mirrors how {@link AuditKind} rides
+ * `audit:event`). The daemon-wide spend accumulator (`@comis/agent`
+ * `budget/spend-accumulator.ts`) and the abort wiring import it so the scope of a
+ * warn/exceed is a closed-union LABEL, never a free string. Per-(tenant,agent),
+ * per-tenant, and daemon-global are the three ceilings.
+ */
+export type SpendScopeKind = "agent" | "tenant" | "global";
 
 export interface AgentEvents {
   /** Skill loaded from disk and validated */
@@ -225,7 +238,10 @@ export interface AgentEvents {
     agentId: string;
     tenantId: string;
     actionType: string;
-    classification: string;
+    /** Event family (AUDIT-03 / E4) — the closed {@link AuditKind} union rides the wire to Plan 03's sink (which derives kind from actionType only as a fallback). Optional for un-migrated emits; all 6 in-repo sites set it. */
+    kind?: AuditKind;
+    /** Risk class — loosely typed here; AuditEventSchema's closed read|mutate|destructive is the source of truth. The bogus "security"/"write"/"neutral" strings moved to `kind` and are no longer sent. */
+    classification?: string;
     outcome: "success" | "failure" | "denied";
     metadata?: Record<string, unknown>;
   };
@@ -299,6 +315,15 @@ export interface AgentEvents {
      *  (set at :1005/:1018/:1625/:1672/:2113); treat as init-default "stop" until Phase 152
      *  flight-recorder surfaces effectiveFinishReason. D8. */
     finishReason?: string;
+    /**
+     * COST-01: the DISTINCT tool names that fired during this turn (content-free
+     * ids only — never args/output). OMITTED when no tool fired (absence = the
+     * byte-identical no-tool payload, not an empty array). Persisted on the
+     * `tool_tag` column. The per-tool token/$ attribution a consumer derives from
+     * this is best-effort/labeled (N3): an even split across these tools that
+     * conserves the turn total — exact per-tool accounting is out of scope.
+     */
+    toolTag?: string[];
   };
 
   /** Cache break detected: prompt cache invalidation with attribution.
@@ -342,63 +367,49 @@ export interface AgentEvents {
     effortValue?: string;
   };
 
-  /** Model failover: attempt to switch from one model to another.
-   *  Turn-scoping ids (agentId/sessionKey/traceId) are optional — emit sites
-   *  populate them so activity can attribute the event to a turn (§16.9). */
-  "model:fallback_attempt": {
-    fromProvider: string;
-    fromModel: string;
-    toProvider: string;
-    toModel: string;
-    error: string;
-    attemptNumber: number;
+  /** SPEND-05 (Phase 177-01): spend approaching a ceiling (fired at
+   *  `warnAtFraction`, default 0.8, BEFORE the kill-switch trips). Content-free
+   *  (§2.7): dollar amounts as NUMBERS, scope as the closed {@link SpendScopeKind}
+   *  enum, ids only — NEVER a message/prompt/query body. */
+  "observability:spend_warning": {
     timestamp: number;
-    agentId?: string;
-    sessionKey?: string;
-    traceId?: string;
+    agentId: string;
+    sessionKey: string;
+    scope: SpendScopeKind;
+    spentUsd: number;
+    capUsd: number;
+    fraction: number;
   };
 
-  /** Model failover: all candidates exhausted */
-  "model:fallback_exhausted": {
+  /** SPEND-05 (Phase 177-01): a spend ceiling was exceeded — the dollars
+   *  kill-switch tripped for this scope. Content-free (§2.7): `estUsd` is the
+   *  reservation that breached; amounts are NUMBERS, scope is a closed enum, ids
+   *  only — NEVER a message/prompt/query body. */
+  "observability:spend_exceeded": {
+    timestamp: number;
+    agentId: string;
+    sessionKey: string;
+    scope: SpendScopeKind;
+    spentUsd: number;
+    capUsd: number;
+    estUsd: number;
+  };
+
+  /** SPEND-05 (Phase 177-01): a remote model burned tokens with UNKNOWN pricing
+   *  (fail-loud, not fail-open — the ffe11736 danger). Content-free (§2.7):
+   *  provider/model are config ids/enums (a model id is a config value, NOT user
+   *  content) + turn ids — NEVER a message/prompt/query body. */
+  "observability:spend_unpriceable": {
+    timestamp: number;
+    agentId: string;
+    sessionKey: string;
     provider: string;
     model: string;
-    totalAttempts: number;
-    timestamp: number;
-    agentId?: string;
-    sessionKey?: string;
-    traceId?: string;
   };
 
-  /** Last-known-working model fallback: attempt to use a recently successful model */
-  "model:lkw_fallback_attempt": {
-    fromProvider: string;
-    fromModel: string;
-    toProvider: string;
-    toModel: string;
-    timestamp: number;
-    agentId?: string;
-    sessionKey?: string;
-    traceId?: string;
-  };
-
-  /** Auth profile entered cooldown after failure */
-  "model:auth_cooldown": {
-    keyName: string;
-    provider: string;
-    cooldownMs: number;
-    failureCount: number;
-    timestamp: number;
-    agentId?: string;
-    sessionKey?: string;
-    traceId?: string;
-  };
-
-  /** Model catalog loaded from pi-ai static registry */
-  "model:catalog_loaded": {
-    providerCount: number;
-    modelCount: number;
-    timestamp: number;
-  };
+  // Model-failover (model:*) + provider-health (provider:*) events moved to
+  // events-model.ts (`ModelEvents`) for the file-size cap; composed into
+  // `EventMap` (events.ts) there, byte-identical shapes.
 
   /** Prompt injection attempt detected in user input or external content */
   "security:injection_detected": {
@@ -500,12 +511,6 @@ export interface AgentEvents {
       uid?: "dedicated" | "daemon";
     };
   };
-
-  /** Provider declared degraded based on cross-agent failure aggregation */
-  "provider:degraded": { provider: string; failingAgents: number; timestamp: number };
-
-  /** Provider recovered after successful call during degraded state */
-  "provider:recovered": { provider: string; timestamp: number };
 
   /** SEP extracted a plan from the LLM's first response */
   "sep:plan_extracted": {

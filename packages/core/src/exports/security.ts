@@ -9,8 +9,8 @@ export { createSecretManager, createSecretManagerWithMutableHandle, envSubset } 
 export type { SecretManager, MutableSecretManager } from "../security/index.js";
 export { classifyAction, requiresConfirmation } from "../security/index.js";
 export type { ActionClassification } from "../security/index.js";
-export { AuditEventSchema, createAuditEvent } from "../security/index.js";
-export type { AuditEvent, CreateAuditEventParams } from "../security/index.js";
+export { AuditEventSchema, createAuditEvent, AUDIT_KINDS, kindIsSecuritySignal } from "../security/index.js";
+export type { AuditEvent, AuditKind, CreateAuditEventParams } from "../security/index.js";
 export { sanitizeLogString, redactErrorMessage } from "../security/index.js";
 // Bounded redaction primitive (security/redact-value.ts) — surfaced on the
 // @comis/core barrel for the template engine and emit sites.

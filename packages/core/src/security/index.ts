@@ -32,8 +32,8 @@ export { classifyAction, requiresConfirmation, registerAction, lockRegistry, isR
 export type { ActionClassification } from "./action-classifier.js";
 
 // Audit events
-export { AuditEventSchema, createAuditEvent } from "./audit.js";
-export type { AuditEvent, CreateAuditEventParams } from "./audit.js";
+export { AuditEventSchema, createAuditEvent, AUDIT_KINDS, kindIsSecuritySignal } from "./audit.js";
+export type { AuditEvent, AuditKind, CreateAuditEventParams } from "./audit.js";
 
 // Log sanitizer
 export { sanitizeLogString, redactErrorMessage } from "./log-sanitizer.js";

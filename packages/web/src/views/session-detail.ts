@@ -590,6 +590,17 @@ export class IcSessionDetail extends LitElement {
     this._confirmAction = "";
   }
 
+  /**
+   * Drill to the native Incident view (the E7 twin): the deterministic
+   * `obs.explain` IncidentReport keyed on this session's `sessionKey` (a valid
+   * obs.explain ref). Navigates via the hash router — no RPC on this view
+   * (the `obs.explain` call lives on `ic-incident-view`).
+   */
+  private _explainIncident(): void {
+    if (!this.sessionKey) return;
+    window.location.hash = `#/observe/incident?ref=${encodeURIComponent(this.sessionKey)}`;
+  }
+
   private async _handleExport(): Promise<void> {
     if (!this.apiClient) return;
 
@@ -1003,6 +1014,9 @@ export class IcSessionDetail extends LitElement {
         </button>
         <button class="btn btn-ghost" @click=${this._handleExport}>
           Export JSONL
+        </button>
+        <button class="btn btn-ghost" @click=${this._explainIncident}>
+          Explain Incident
         </button>
         <button
           class="btn btn-danger"

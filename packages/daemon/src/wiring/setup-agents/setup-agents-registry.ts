@@ -191,7 +191,7 @@ export async function setupAgents(deps: {
   /** R1 (132-05): the daemon-owned per-tenant summarizer spend+breaker; threaded
    *  into each per-agent createPiExecutor -> setupContextEngine (the getSummarizerDeps
    *  leaf-seam gate). ONE daemon instance, partitions by tenantId. */
-  summarizerSpendBreaker?: import("@comis/agent").SummarizerSpendBreaker;
+  summarizerSpendBreaker?: import("@comis/agent").SummarizerSpendBreaker; spendAccumulator?: import("@comis/agent").SpendAccumulator; // spendAccumulator = Phase 177 kill-switch: the ONE daemon-wide accumulator (setupObservability), threaded per-agent so every bridge holds the SAME reference.
   /** Temporal-spread store. Threaded into each per-agent createPiExecutor like entityStore (the recall temporal-spread read path). Built in setup-memory on the shared db. */
   temporalStore?: import("@comis/core").MemoryTemporalStore;
   /** Causal store. Threaded into each per-agent createPiExecutor like entityStore (the recall 5th causal lane read path). Built in setup-memory on the shared db. */
@@ -457,7 +457,7 @@ export async function setupAgents(deps: {
     rerankerModelPresent: deps.rerankerModelPresent,
     entityStore: deps.entityStore,
     lcdStore: deps.lcdStore,
-    summarizerSpendBreaker: deps.summarizerSpendBreaker,
+    summarizerSpendBreaker: deps.summarizerSpendBreaker, spendAccumulator: deps.spendAccumulator,
     temporalStore: deps.temporalStore,
     causalStore: deps.causalStore,
     tripleStore: deps.tripleStore,

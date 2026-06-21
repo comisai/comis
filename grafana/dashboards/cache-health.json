@@ -1,0 +1,67 @@
+{
+  "__comis_note": "Comis dashboards-as-code (PROM-03; design §6 WS7). Every panel expr references an emitted METRIC_CATALOG metric (CI drift guard: test/architecture/grafana-dashboard-metrics.test.ts). E7 drill-down keys on the comis.trace_id span attribute (PROMETHEUS_EXEMPLARS_SUPPORTED===false) — see docs/operations/prometheus-grafana.mdx.",
+  "uid": "comis-cache-health",
+  "title": "Comis — Cache Health",
+  "tags": ["comis", "cache"],
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": {
+    "list": [
+      { "name": "datasource", "type": "datasource", "query": "prometheus", "label": "Data source", "current": {} },
+      { "name": "tenant", "type": "query", "datasource": "${datasource}", "query": "label_values(comis_cache_saved_usd_total, tenant)", "includeAll": true, "multi": true, "label": "Tenant" },
+      { "name": "agent", "type": "query", "datasource": "${datasource}", "query": "label_values(comis_cache_saved_usd_total, agent)", "includeAll": true, "multi": true, "label": "Agent" },
+      { "name": "provider", "type": "query", "datasource": "${datasource}", "query": "label_values(comis_cache_saved_usd_total, provider)", "includeAll": true, "multi": true, "label": "Provider" },
+      { "name": "model", "type": "query", "datasource": "${datasource}", "query": "label_values(comis_cache_saved_usd_total, model)", "includeAll": true, "multi": true, "label": "Model" }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Cache-break rate by reason (the standout signal)",
+      "type": "timeseries",
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "ops", "links": [ { "title": "Explain the breaking session", "url": "/observe/explain?ref=${__data.fields.comis_trace_id}", "targetBlank": true } ] }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "datasource": "${datasource}", "expr": "sum by (reason) (rate(comis_cache_break_total[5m]))", "legendFormat": "{{reason}}" }
+      ],
+      "links": [ { "title": "comis explain (drill-down)", "url": "/observe/explain?ref=${__data.fields.comis_trace_id}", "targetBlank": true } ]
+    },
+    {
+      "id": 3,
+      "title": "Cache savings rate ($/h)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 9 },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "datasource": "${datasource}", "expr": "sum by (provider, model) (rate(comis_cache_saved_usd_total{agent=~\"$agent\", provider=~\"$provider\", model=~\"$model\"}[1h]) * 3600)", "legendFormat": "{{provider}}/{{model}}" }
+      ],
+      "links": [ { "title": "comis explain (drill-down)", "url": "/observe/explain?ref=${__data.fields.comis_trace_id}", "targetBlank": true } ]
+    },
+    {
+      "id": 4,
+      "title": "Cache-read ratio p50/p95 (fraction of tokens served from cache)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 9 },
+      "fieldConfig": { "defaults": { "unit": "percentunit" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "datasource": "${datasource}", "expr": "histogram_quantile(0.5, sum by (le) (rate(comis_cache_read_ratio_bucket{provider=~\"$provider\", model=~\"$model\"}[5m])))", "legendFormat": "p50" },
+        { "refId": "B", "datasource": "${datasource}", "expr": "histogram_quantile(0.95, sum by (le) (rate(comis_cache_read_ratio_bucket{provider=~\"$provider\", model=~\"$model\"}[5m])))", "legendFormat": "p95" }
+      ],
+      "links": [ { "title": "comis explain (drill-down)", "url": "/observe/explain?ref=${__data.fields.comis_trace_id}", "targetBlank": true } ]
+    },
+    {
+      "id": 5,
+      "title": "Mean cache-read ratio (sum/count)",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 17 },
+      "fieldConfig": { "defaults": { "unit": "percentunit" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "datasource": "${datasource}", "expr": "sum(rate(comis_cache_read_ratio_sum[1h])) / clamp_min(sum(rate(comis_cache_read_ratio_count[1h])), 1)", "legendFormat": "mean read ratio" }
+      ],
+      "links": [ { "title": "comis explain (drill-down)", "url": "/observe/explain?ref=${__data.fields.comis_trace_id}", "targetBlank": true } ]
+    }
+  ]
+}

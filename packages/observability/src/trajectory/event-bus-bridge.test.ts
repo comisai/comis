@@ -973,6 +973,34 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       formatViolation: false,
       timestamp: 1000,
     },
+    "observability:cache_break": {
+      provider: "anthropic",
+      reason: "tools_changed",
+      tokenDrop: 1000,
+      tokenDropRelative: 0.5,
+      previousCacheRead: 2000,
+      currentCacheRead: 1000,
+      callCount: 3,
+      changes: {
+        systemChanged: false,
+        toolsChanged: true,
+        metadataChanged: false,
+        modelChanged: false,
+        retentionChanged: false,
+        addedTools: ["tool-a"],
+        removedTools: [],
+        changedSchemaTools: [],
+        headersChanged: false,
+        extraBodyChanged: false,
+      },
+      toolsChanged: ["tool-a"],
+      ttlCategory: undefined,
+      toolsAdded: ["tool-a"],
+      toolsRemoved: [],
+      toolsSchemaChanged: [],
+      systemCharDelta: 10,
+      model: "claude-3-5-sonnet-20241022",
+    },
     "learning:outcome_observed": {
       agentId: "default",
       trajectoryId: "trace-lo-1",
@@ -1606,6 +1634,27 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       tokenBudget: 5000,
       tokensUsed: 17770,
       capSource: "node",
+      timestamp: 0,
+    },
+    // WR-4 (177-obs-loop): spend kill-switch — content-free (scope enum + $ numbers
+    // + provider/model config ids); the envelope correlation keys are stripped.
+    "observability:spend_warning": {
+      scope: "tenant",
+      spentUsd: 8.4,
+      capUsd: 10,
+      fraction: 0.8,
+      timestamp: 0,
+    },
+    "observability:spend_exceeded": {
+      scope: "global",
+      spentUsd: 99.5,
+      capUsd: 100,
+      estUsd: 0.75,
+      timestamp: 0,
+    },
+    "observability:spend_unpriceable": {
+      provider: "anthropic",
+      model: "claude-opus-4",
       timestamp: 0,
     },
   };
@@ -3568,7 +3617,18 @@ describe("health:budget_exceeded entry (bridge entry count guard)", () => {
     //   capSource labels + ids/numbers ONLY, NEVER a path/host/uid value, an announcement
     //   body, or a task — §2.7. The budget_exceeded entry retires the "unmapped precedent"
     //   note above. These ALSO feed the fleet lens via obs-persistence-wiring).
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(104);
+    // + observability:cache_break (PERSIST-01, Phase 176 Plan 04 — APPEND-ONLY beside the
+    //   memory.recalled/generation_quality block; a detected prompt-cache break bridged to
+    //   the per-session timeline. Content-free: the closed reason + tokenDrop counts + a
+    //   changed-dims DIGEST ONLY, NEVER the tool-name arrays or system text — §2.7 / I3.
+    //   MOVED OUT of EVENTS_NOT_TRAJECTORY_MAPPED, so the disjoint invariant holds).
+    // + observability:spend_warning/exceeded/unpriceable (WR-4, 177-obs-loop —
+    //   APPEND-ONLY; the spend kill-switch signals MOVED OUT of
+    //   EVENTS_NOT_TRAJECTORY_MAPPED and bridged so a spend-killed session is
+    //   diagnosable via `comis explain` (the security-review WR-4 blind spot).
+    //   Content-free: the closed SpendScopeKind enum + dollar amounts as NUMBERS +
+    //   provider/model config ids ONLY, NEVER a message/prompt/query body — §2.7 / H1).
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(108);
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {
@@ -3916,5 +3976,80 @@ describe("REVISE-/GENERAL- learning:user_model_revised / memory_generalized (cou
         /body|content|entrytype|sourceid/i,
       );
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PERSIST-01 (Phase 176 Plan 04): observability:cache_break → cache.break
+// (content-free — counts/digest ONLY, never the tool-name arrays or system text)
+// ---------------------------------------------------------------------------
+
+describe("attachTrajectoryToEventBus -- cache break (PERSIST-01, content-free)", () => {
+  it("TRAJECTORY_BRIDGE_MAPPING maps observability:cache_break to cache.break", () => {
+    expect(
+      (TRAJECTORY_BRIDGE_MAPPING as Record<string, string>)["observability:cache_break"],
+    ).toBe("cache.break");
+  });
+
+  it("cache.break is a known TrajectoryEventType (enumerated in types.ts)", () => {
+    expect(TRAJECTORY_EVENT_TYPES as readonly string[]).toContain("cache.break");
+  });
+
+  it("cache_break_maps_to_cache.break forwarding reason + counts/digest ONLY", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("observability:cache_break", {
+      provider: "anthropic",
+      reason: "tools_changed",
+      tokenDrop: 1000,
+      tokenDropRelative: 0.5,
+      previousCacheRead: 2000,
+      currentCacheRead: 1000,
+      callCount: 3,
+      changes: {
+        systemChanged: false,
+        toolsChanged: true,
+        metadataChanged: false,
+        modelChanged: false,
+        retentionChanged: false,
+        addedTools: ["secret-tool-name", "internal_admin_api"],
+        removedTools: ["dropped_tool"],
+        changedSchemaTools: ["schema_changed_tool"],
+        headersChanged: false,
+        extraBodyChanged: false,
+      },
+      toolsChanged: ["secret-tool-name", "internal_admin_api", "dropped_tool"],
+      ttlCategory: undefined,
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      timestamp: 1000,
+      toolsAdded: ["secret-tool-name", "internal_admin_api"],
+      toolsRemoved: ["dropped_tool"],
+      toolsSchemaChanged: ["schema_changed_tool"],
+      systemCharDelta: 42,
+      model: "claude-3-5-sonnet-20241022",
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("cache.break");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    // Content-free fields: reason + counts + a changed-dims digest.
+    expect(data.reason).toBe("tools_changed");
+    expect(data.tokenDrop).toBe(1000);
+    expect(data.tokenDropRelative).toBe(0.5);
+    expect(data).toHaveProperty("changedDimsDigest");
+
+    // I3 / H1: NO tool-name arrays, NO system text crosses into the trajectory.
+    const serialized = JSON.stringify(data);
+    expect(serialized).not.toContain("secret-tool-name");
+    expect(serialized).not.toContain("internal_admin_api");
+    expect(serialized).not.toContain("dropped_tool");
+    expect(serialized).not.toContain("schema_changed_tool");
+    expect(serialized).not.toMatch(/toolsAdded|toolsRemoved|toolsSchemaChanged|toolsChanged/);
+    // Envelope-only correlation keys must NOT appear in data.
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
   });
 });

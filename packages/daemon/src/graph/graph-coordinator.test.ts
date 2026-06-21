@@ -3293,6 +3293,7 @@ describe("createGraphCoordinator", () => {
         syntheticRunResults: new Map(),
         nodeCacheData: new Map(),
         nodeTokenSpend: new Map(),
+        nodeCost: new Map(),
         ...overrides,
       };
 

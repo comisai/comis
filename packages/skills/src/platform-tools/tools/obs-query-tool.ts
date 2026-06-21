@@ -3,8 +3,8 @@
 /**
  * Observability query tool: multi-action tool for platform diagnostics and metrics.
  *
- * Supports 8 action categories: diagnostics, billing, delivery, channels,
- * explain, trace, session_report, fleet_health.
+ * Supports 9 action categories: diagnostics, billing, delivery, channels,
+ * explain, trace, session_report, fleet_health, audit.
  * Read-only observability tool -- no approval gate needed.
  * All actions enforce admin trust level via createTrustGuard.
  * Delegates to obs.* RPC handlers via rpcCall (explain and session_report both
@@ -42,8 +42,9 @@ const ObsQueryToolParams = Type.Object({
       Type.Literal("trace"),
       Type.Literal("session_report"),
       Type.Literal("fleet_health"),
+      Type.Literal("audit"),
     ],
-    { description: "Observability query category. Valid values: diagnostics (platform diagnostic data), billing (cost data by provider/agent/session), delivery (message delivery traces), channels (channel activity and staleness), explain (assembled IncidentReport / root-cause post-mortem for a session), trace (search trace rows), session_report (session rollup — reuses the IncidentReport), fleet_health (cross-session fleet-health triage: degradation rate, recurring WARNs, model/config health over a window)" },
+    { description: "Observability query category. Valid values: diagnostics (platform diagnostic data), billing (cost data by provider/agent/session), delivery (message delivery traces), channels (channel activity and staleness), explain (assembled IncidentReport / root-cause post-mortem for a session), trace (search trace rows), session_report (session rollup — reuses the IncidentReport), fleet_health (cross-session fleet-health triage: degradation rate, recurring WARNs, model/config health over a window), audit (the durable security-decision audit log: secret access, injection detection, command blocks — filter by kind/classification/agent/tenant/outcome/since/until)" },
   ),
   sub_action: Type.Optional(
     Type.String({
@@ -84,6 +85,23 @@ const ObsQueryToolParams = Type.Object({
   since_hours: Type.Optional(
     Type.Integer({ description: "Window in hours for fleet_health (default 24)" }),
   ),
+  // AUDIT-05 (the 9th action): the audit-log filter surface. All optional; an
+  // absent filter widens the scan. since_ms/agent_id/limit are shared above.
+  kind: Type.Optional(
+    Type.String({ description: "Audit event family filter (e.g. secret_access, injection_detected) — for audit" }),
+  ),
+  classification: Type.Optional(
+    Type.String({ description: "Audit risk class filter: read | mutate | destructive — for audit" }),
+  ),
+  tenant: Type.Optional(
+    Type.String({ description: 'Audit tenant scope ("" matches system-scoped tenant-less events) — for audit' }),
+  ),
+  outcome: Type.Optional(
+    Type.String({ description: "Audit outcome filter: success | failure | denied — for audit" }),
+  ),
+  until_ms: Type.Optional(
+    Type.Integer({ description: "Audit upper time bound (inclusive epoch ms) — for audit" }),
+  ),
 });
 
 type ObsQueryToolParamsType = Static<typeof ObsQueryToolParams>;
@@ -93,7 +111,7 @@ type ObsQueryToolParamsType = Static<typeof ObsQueryToolParams>;
 // ---------------------------------------------------------------------------
 
 /**
- * Create an observability query tool with 8 action categories.
+ * Create an observability query tool with 9 action categories.
  *
  * Actions:
  * - **diagnostics** -- Query platform diagnostic data with optional category/limit filters
@@ -104,11 +122,12 @@ type ObsQueryToolParamsType = Static<typeof ObsQueryToolParams>;
  * - **trace** -- Search trace rows via obs.trace.search
  * - **session_report** -- Session rollup; reuses obs.explain (the IncidentReport IS the rollup)
  * - **fleet_health** -- Cross-session fleet-health triage via obs.fleet.health (admin)
+ * - **audit** -- Query the durable security-decision audit log via obs.audit.query (admin; content-free rows)
  *
  * @param rpcCall - RPC call function for delegating to the daemon backend
  * @returns AgentTool implementing the observability query interface
  */
-const VALID_ACTIONS = ["diagnostics", "billing", "delivery", "channels", "explain", "trace", "session_report", "fleet_health"] as const;
+const VALID_ACTIONS = ["diagnostics", "billing", "delivery", "channels", "explain", "trace", "session_report", "fleet_health", "audit"] as const;
 const VALID_BILLING_SUB_ACTIONS = ["byProvider", "byAgent", "bySession", "total"] as const;
 const VALID_DELIVERY_SUB_ACTIONS = ["recent", "stats"] as const;
 const VALID_CHANNELS_SUB_ACTIONS = ["all", "stale", "get"] as const;
@@ -260,6 +279,33 @@ export function createObsQueryTool(rpcCall: RpcCall): AgentTool<typeof ObsQueryT
           const ctx = tryGetContext();
           const result = await rpcCall("obs.fleet.health", {
             sinceHours,
+            _trustLevel: ctx?.trustLevel ?? "guest",
+          });
+          return jsonResult(result);
+        }
+
+        if (action === "audit") {
+          // AUDIT-05 (the 9th action): the durable security-decision audit log.
+          // Reuses the existing admin trustGuard — NO new auth surface. Delegates
+          // to the admin-gated obs.audit.query RPC; the rows are content-free.
+          const kind = readStringParam(p, "kind", false);
+          const classification = readStringParam(p, "classification", false);
+          const agentId = readStringParam(p, "agent_id", false);
+          const tenant = readStringParam(p, "tenant", false);
+          const outcome = readStringParam(p, "outcome", false);
+          const since = readNumberParam(p, "since_ms", false);
+          const until = readNumberParam(p, "until_ms", false);
+          const limit = readNumberParam(p, "limit", false);
+          const ctx = tryGetContext();
+          const result = await rpcCall("obs.audit.query", {
+            kind,
+            classification,
+            agentId,
+            tenant,
+            outcome,
+            since,
+            until,
+            limit,
             _trustLevel: ctx?.trustLevel ?? "guest",
           });
           return jsonResult(result);

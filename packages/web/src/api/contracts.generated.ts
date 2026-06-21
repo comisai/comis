@@ -6949,6 +6949,67 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "rpc"
     ]
   },
+  "obs.audit.query": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "classification": {
+          "type": "string",
+          "minLength": 1
+        },
+        "agentId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tenant": {
+          "type": "string"
+        },
+        "outcome": {
+          "type": "string",
+          "minLength": 1
+        },
+        "since": {
+          "type": "number"
+        },
+        "until": {
+          "type": "number"
+        },
+        "limit": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "rows": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          }
+        }
+      },
+      "required": [
+        "rows"
+      ],
+      "additionalProperties": false
+    },
+    "scopes": [
+      "admin"
+    ]
+  },
   "obs.billing.byAgent": {
     "request": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -6989,6 +7050,16 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
             "type": "string"
           },
           "additionalProperties": {}
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          }
         }
       },
       "required": [
@@ -7139,6 +7210,48 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         },
         "additionalProperties": {}
       }
+    },
+    "scopes": [
+      "admin"
+    ]
+  },
+  "obs.cacheBreaks.byReason": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "since": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "until": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "rows": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          }
+        }
+      },
+      "required": [
+        "rows"
+      ],
+      "additionalProperties": false
     },
     "scopes": [
       "admin"
@@ -8093,6 +8206,71 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
           ],
           "additionalProperties": false
         },
+        "cacheBreaks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "reason": {
+                "type": "string"
+              },
+              "count": {
+                "type": "number"
+              },
+              "estCostUsd": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "reason",
+              "count",
+              "estCostUsd"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "audit": {
+          "type": "object",
+          "properties": {
+            "total": {
+              "type": "number"
+            },
+            "byKind": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "type": "number"
+              }
+            }
+          },
+          "required": [
+            "total",
+            "byKind"
+          ],
+          "additionalProperties": false
+        },
+        "spend": {
+          "type": "object",
+          "properties": {
+            "scope": {
+              "type": "string"
+            },
+            "totalUsd": {
+              "type": "number"
+            },
+            "capUsd": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "scope",
+            "totalUsd",
+            "capUsd"
+          ],
+          "additionalProperties": false
+        },
         "summary": {
           "type": "string"
         },
@@ -8748,6 +8926,34 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         "reset",
         "table",
         "rowsDeleted"
+      ],
+      "additionalProperties": false
+    },
+    "scopes": [
+      "admin"
+    ]
+  },
+  "obs.spend.snapshot": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "snapshot": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "snapshot"
       ],
       "additionalProperties": false
     },

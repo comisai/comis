@@ -77,6 +77,10 @@ export const TRAJECTORY_EVENT_TYPES = [
   "memory.reranked",
   // GENQ-01: a memory-generation pass's output diverged from its source (content-free).
   "memory.generation_quality",
+  // PERSIST-01 (Phase 176 Plan 04): a detected prompt-cache break on the per-session
+  // timeline — the closed reason + tokenDrop counts + a changed-dims DIGEST ONLY,
+  // NEVER the tool-name arrays or system text (content-free, H1/I3).
+  "cache.break",
   // OUTCOME-08 (v2.26 Verified Learning WS1): a finished trajectory's resolved net
   // task-outcome (daemon-side emit, learningOutcome.enabled-gated). Counts/ids/closed-enums
   // ONLY — no bodies/alpha (SEC-01). Bridged so `comis explain` can reconstruct it (OBS-02).
@@ -308,6 +312,17 @@ export const TRAJECTORY_EVENT_TYPES = [
   "media.tts.requested",
   "media.tts.completed",
   "media.tts.failed",
+
+  // WR-4 (177-obs-loop): the spend kill-switch lifecycle on the explain timeline.
+  // Previously the 3 observability:spend_* events were allowlisted as fleet-only
+  // rollups (NOT on the trajectory) — so a spend-killed session's WARNING / ABORT /
+  // UNPRICEABLE signals never reached `comis explain` or the deterministic verdict,
+  // the security-review WR-4 blind spot. Now bridged. Content-free: the closed
+  // SpendScopeKind enum + dollar amounts as NUMBERS + provider/model config ids
+  // ONLY — never a message/prompt/query body (§2.7 / H1; the milestone invariant).
+  "spend.warning",
+  "spend.exceeded",
+  "spend.unpriceable",
 ] as const;
 
 /** Closed union of trajectory event type strings. */

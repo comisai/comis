@@ -53,56 +53,28 @@
 import { fingerprint } from "@comis/core";
 import type { IncidentReport } from "@comis/core";
 import { limitPayloadValue } from "@comis/observability";
+import {
+  SUMMARY_MAX_FAILURES,
+  SUMMARY_MAX_BREAKER,
+  SUMMARY_MAX_OFFLOADS,
+  SUMMARY_MAX_ERROR_PREVIEW_CHARS,
+  SUMMARY_MAX_BYTES,
+  FULL_MAX_FAILURES,
+  FULL_MAX_BREAKER,
+  FULL_MAX_OFFLOADS,
+  MAX_INLINE_STRING,
+  SUMMARY_MAX_CACHE_BREAKS,
+  FULL_MAX_CACHE_BREAKS,
+  MAX_SHED_ITERATIONS,
+  SHED_SUMMARY_CHARS,
+} from "./obs-explain-bound-caps.js";
 
 // ---------------------------------------------------------------------------
-// X2 report-level caps (distinct from limitPayloadValue's PAYLOAD_BOUNDS).
+// X2 report-level caps (distinct from limitPayloadValue's PAYLOAD_BOUNDS) live
+// in the sibling obs-explain-bound-caps.ts (file-size-cap-driven extraction,
+// 176-05). REPORT_ARRAY_FIELDS stays here (it is consumed only by this module).
 // ---------------------------------------------------------------------------
 
-/** summary depth: keep at most this many failures (newest-first; drop oldest). */
-const SUMMARY_MAX_FAILURES = 20;
-/**
- * summary depth: keep at most this many breaker-timeline entries (newest-first).
- * A flapping circuit breaker (open/reset/open/reset…) pushes one event per
- * transition with NO upstream dedup in the EVENT shape, so this array is
- * reachable at scale (up to MAX_RECORDS). Capped at the same scale as failures
- * so a worst-case summary report stays comfortably under SUMMARY_MAX_BYTES.
- */
-const SUMMARY_MAX_BREAKER = 20;
-/**
- * summary depth: keep at most this many large-result offloads (newest-first).
- * A session that offloads many large bodies pushes one entry per offload (the
- * log shape does NOT dedup), so this array is also reachable at scale.
- */
-const SUMMARY_MAX_OFFLOADS = 20;
-/** Per-failure `errorPreview` hard cap (both depths — digest-only is depth-independent). */
-const SUMMARY_MAX_ERROR_PREVIEW_CHARS = 200;
-/**
- * The summary hard gate: 6 KB. At the ~4 bytes/token rule of thumb this is the
- * ~1,500-token proxy. There is no `estimateTokens` util, so the serialized byte
- * length of the report is the conservative budget.
- */
-const SUMMARY_MAX_BYTES = 6 * 1024;
-/** full depth relaxes the array cap (still digest-only, still per-string-capped). */
-const FULL_MAX_FAILURES = 200;
-/**
- * full depth relaxes the breaker-timeline cap (lossless-by-design at full, no
- * byte gate). Still bounded — a pathological multi-thousand-element timeline is
- * trimmed even at full so the report never becomes truly unbounded.
- */
-const FULL_MAX_BREAKER = 200;
-/** full depth relaxes the offload cap (analogue of FULL_MAX_FAILURES). */
-const FULL_MAX_OFFLOADS = 200;
-/**
- * Any string field longer than this is collapsed to a `fingerprint` digest by
- * the defensive sweep — guarantees no 50 KB tool body survives regardless of
- * upstream. Kept comfortably above the 200-char preview cap so a normal
- * already-capped preview is never re-digested.
- */
-const MAX_INLINE_STRING = 256;
-/** Bound on the progressive-shed loop — never spin forever. */
-const MAX_SHED_ITERATIONS = 8;
-/** Short form the shed loop collapses the summary prose to (chars, + ellipsis). */
-const SHED_SUMMARY_CHARS = 80;
 /**
  * The report-level array slots whose length is governed by SUMMARY_MAX_FAILURES
  * / FULL_MAX_FAILURES (which can exceed the backstop's 64-item cap). Exempted
@@ -327,6 +299,19 @@ export function boundIncidentReport(
     return { ...o, pointer: `[digest:${fingerprint(o.pointer)}]` };
   });
 
+  // PERSIST-01 (176-05): cap cacheBreaks? highest-count-first (arrives count-desc
+  // from the signals collapse), recording a truncations[] entry for the dropped tail.
+  let cacheBreaks = report.cacheBreaks;
+  const maxCacheBreaks = depth === "summary" ? SUMMARY_MAX_CACHE_BREAKS : FULL_MAX_CACHE_BREAKS;
+  if (cacheBreaks !== undefined && cacheBreaks.length > maxCacheBreaks) {
+    truncations.push({
+      field: "cacheBreaks",
+      reason: `capped at ${maxCacheBreaks} highest-count reasons (had ${cacheBreaks.length})`,
+      pointer: "obs.explain depth=full",
+    });
+    cacheBreaks = cacheBreaks.slice(0, maxCacheBreaks);
+  }
+
   let bounded: IncidentReport = {
     ...report,
     channel,
@@ -338,6 +323,7 @@ export function boundIncidentReport(
     failures,
     breakerTimeline,
     offloads,
+    ...(cacheBreaks !== undefined ? { cacheBreaks } : {}),
     truncations,
   };
 
