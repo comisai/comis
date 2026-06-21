@@ -290,6 +290,7 @@ export type {
   SessionAggregation,
   HourlyBucket,
   QuarterHourBucket,
+  CostBucketFilter,
   DeliveryStats,
   ObsTableName,
   ResetResult,

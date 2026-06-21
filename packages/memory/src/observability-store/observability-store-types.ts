@@ -67,30 +67,10 @@ export const RollingSpendDbRowSchema = z.strictObject({
 export const rollingSpendMapper = createRowMapper(RollingSpendDbRowSchema);
 export const sessionAggMapper = createRowMapper(SessionAggDbRowSchema);
 export const hourlyBucketMapper = createRowMapper(HourlyBucketDbRowSchema);
-/**
- * COST-03 (Phase 179): the quarter-hour bucket row — the `HourlyBucketDbRow`
- * columns PLUS the E1 pricing-coverage pair (`missing_pricing_count` =
- * COUNT(pricing_state IS 'unknown' OR NULL); `priced_count`/`free_count` from
- * which the bound method derives the dominant `pricingState`). Defined HERE
- * (store-local, the `RollingSpendDbRowSchema` precedent) rather than
- * row-schemas.ts: it is consumed ONLY by `quarterHourBucketMapper` in the
- * sibling `observability-aggregates.ts`, and the `row-schemas.ts` barrel is
- * `export *`'d, so a public schema there would be a dead export. The coverage
- * counts are content-free (counts only — never an agent id / model name / body).
- */
-export const QuarterHourBucketDbRowSchema = z.strictObject({
-  bucket: z.number(),
-  total_cost: z.number(),
-  total_tokens: z.number(),
-  call_count: z.number(),
-  total_cache_saved: z.number(),
-  total_cost_correction: z.number(),
-  priced_count: z.number(),
-  free_count: z.number(),
-  missing_pricing_count: z.number(),
-});
-/** The quarter-hour bucket mapper (COST-03, the 900000-ms aggregate). */
-export const quarterHourBucketMapper = createRowMapper(QuarterHourBucketDbRowSchema);
+// COST-03 (Phase 179): the quarter-hour/hourly-cost bucket row schema + mapper
+// live in the sibling `observability-aggregates.ts` (their ONLY consumer) to keep
+// THIS file under the 500-line per-subdirectory cap — the Plan-01 row-shapes
+// extraction precedent (shrink, no allowlist entry).
 /**
  * Schema for the per-session GROUP-BY result of `aggregateSessionsInWindow`
  * (A1, Phase 159) over `obs_diagnostics` `category='session_summary'`. The
@@ -320,6 +300,18 @@ export interface QuarterHourBucket {
 }
 
 /**
+ * The export's SPA-equivalent filter for the cost-bucket aggregates (COST-03).
+ * Every field is optional; an absent field widens the scan. All become BOUND
+ * parameters in a parameterized WHERE (never interpolated SQL) — so the export
+ * honors agent/provider/model isolation safely.
+ */
+export interface CostBucketFilter {
+  agent?: string;
+  provider?: string;
+  model?: string;
+}
+
+/**
  * Per-session health rollup (A1 `aggregateSessionsInWindow`) over the latest
  * (`MAX(id)`) `session_summary` row per `session_key`; fields parsed from its
  * `details` JSON. `source` is the provenance enum the A2 reducer filters on.
@@ -420,9 +412,17 @@ export interface ObservabilityStore extends CacheStatsQueriesSlice {
    * instead of 3600000, each bucket carrying the E1 pricing-coverage pair
    * (`pricingState`/`missingPricingCount`). The four quarter-hour buckets inside
    * an hour SUM (cost/tokens/calls/cacheSaved) to the matching `aggregateHourly`
-   * bucket (the conservation invariant). Reuses the same `sinceMs` lower-bound.
+   * bucket (the conservation invariant). `sinceMs` is the lower time bound; the
+   * optional `filter` isolates one agent/provider/model (bound params).
    */
-  aggregateQuarterHourly(sinceMs?: number): QuarterHourBucket[];
+  aggregateQuarterHourly(sinceMs?: number, filter?: CostBucketFilter): QuarterHourBucket[];
+  /**
+   * COST-03: the 3600000-ms (60-min) variant of {@link aggregateQuarterHourly} —
+   * IDENTICAL columns + pricing-coverage, just a 60-min bucket. The `comis cost
+   * export` default granularity (so the export's CSV header is stable whether the
+   * operator picks hourly or quarter-hour). Same `sinceMs` + optional `filter`.
+   */
+  aggregateHourlyCost(sinceMs?: number, filter?: CostBucketFilter): QuarterHourBucket[];
   /**
    * Per-agent rolling SUM(cost_total) over the last `windowMs` (the window bound
    * is derived from the current time INSIDE the method — the prune() precedent).

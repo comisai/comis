@@ -38,6 +38,7 @@ export type {
   SessionAggregation,
   HourlyBucket,
   QuarterHourBucket,
+  CostBucketFilter,
   SessionSummaryRollup,
   DeliveryStats,
   ObsTableName,
