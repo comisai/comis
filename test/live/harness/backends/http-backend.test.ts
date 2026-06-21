@@ -239,3 +239,78 @@ describe("http-backend hardening: malformed input does not crash (V5)", () => {
     expect(captured).toBe("chat_id=42&text=hello+world");
   });
 });
+
+// ---------------------------------------------------------------------------
+// MEDIA-01/02 (Phase 207) — the BINARY response path.
+//
+// The 204 `send()` ALWAYS JSON-stringifies + sets `content-type:
+// application/json`. Raw file bytes cannot survive that path: `JSON.stringify(a
+// Buffer)` yields `{"type":"Buffer","data":[...]}`, not the bytes. The file
+// route (`GET /file/bot<token>/<file_path>`) must serve the stored RAW bytes
+// with a real media content-type. So a `RouteResult` whose `body` is a `Buffer`
+// is written verbatim (with the route-supplied `contentType`), while a non-
+// Buffer body keeps the existing JSON path byte-for-byte. (This is test-infra
+// under `test/live/` — ZERO product change.)
+// ---------------------------------------------------------------------------
+
+describe("http-backend binary response path (MEDIA-01/02 — a Buffer body serves raw bytes)", () => {
+  it("serves a Buffer route body as RAW bytes (NOT JSON-wrapped) with the route-supplied content-type", async () => {
+    const be = createHttpBackend();
+    active = be;
+    // The exact bytes the file route would serve (a 1×1 PNG header prefix — not
+    // valid JSON; if it were JSON-wrapped the round-trip would NOT be byte-exact).
+    const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xff, 0x7f]);
+    be.registerFileRoute(() => ({ status: 200, body: bytes, contentType: "image/png" }));
+    const { apiRoot } = await be.start();
+
+    const res = await fetch(`${apiRoot}/file/bot1:t/photos/file_1.jpg`, { method: "GET" });
+    expect(res.status).toBe(200);
+    // The content-type is the route-supplied media type, NOT application/json.
+    expect(res.headers.get("content-type")).toBe("image/png");
+
+    // The body round-trips byte-for-byte — no `{"type":"Buffer",...}` wrapper.
+    const received = Buffer.from(await res.arrayBuffer());
+    expect(received.equals(bytes)).toBe(true);
+    expect(received.length).toBe(bytes.length);
+    // Defensive: it must NOT be the JSON-wrapped form.
+    expect(received.toString("utf8")).not.toContain("\"type\":\"Buffer\"");
+  });
+
+  it("defaults a Buffer body with no content-type to application/octet-stream", async () => {
+    const be = createHttpBackend();
+    active = be;
+    const bytes = Buffer.from("raw-octets-no-ct", "utf8");
+    be.registerFileRoute(() => ({ status: 200, body: bytes }));
+    const { apiRoot } = await be.start();
+
+    const res = await fetch(`${apiRoot}/file/bot1:t/documents/file_2.bin`, { method: "GET" });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("application/octet-stream");
+    const received = Buffer.from(await res.arrayBuffer());
+    expect(received.equals(bytes)).toBe(true);
+  });
+
+  it("keeps a NON-Buffer (JSON) body on the existing application/json path byte-for-byte", async () => {
+    const be = createHttpBackend();
+    active = be;
+    // A control + native + file route, all JSON — none must be affected by the
+    // binary branch (the existing JSON behavior is unchanged).
+    be.registerFileRoute(() => ({ status: 404, body: { ok: false, error_code: 404, description: "file not found" } }));
+    be.registerNativeRoute(() => ({ status: 200, body: { ok: true, result: { id: 1 } } }));
+    const { apiRoot } = await be.start();
+
+    const fileRes = await fetch(`${apiRoot}/file/bot1:t/missing.bin`, { method: "GET" });
+    expect(fileRes.status).toBe(404);
+    expect(fileRes.headers.get("content-type")).toBe("application/json");
+    const fileJson = (await fileRes.json()) as { ok: boolean; error_code: number; description: string };
+    expect(fileJson.ok).toBe(false);
+    expect(fileJson.error_code).toBe(404);
+    expect(fileJson.description).toBe("file not found");
+
+    const nativeRes = await fetch(`${apiRoot}/bot1:t/getMe`, { method: "POST", body: "{}" });
+    expect(nativeRes.headers.get("content-type")).toBe("application/json");
+    const nativeJson = (await nativeRes.json()) as { ok: boolean; result: { id: number } };
+    expect(nativeJson.ok).toBe(true);
+    expect(nativeJson.result.id).toBe(1);
+  });
+});

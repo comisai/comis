@@ -536,27 +536,99 @@ describe("TgEmulator — Tier-1 Bot API on the http-backend base (EMU-01..05)", 
   });
 
   // -------------------------------------------------------------------------
-  // EMU-05 — getFile method + file route SHAPE (no 404 at boot)
+  // MEDIA-01/02 (Phase 207) — the REAL file_id store backs getFile + the route
+  // serves the stored RAW bytes. This REPLACES the 204 EMU-05 stub (hardcoded
+  // file_size:1024 + a route that 200s a JSON note). getFile is now keyed by
+  // file_id (the request body); the route is keyed by file_path (the URL
+  // segment) — Pitfall 3 (TWO indexes, same bytes). A `../`-laden / unknown
+  // path is a Map MISS → 404, NEVER a disk read (T-207-04, V12 File Resources).
   // -------------------------------------------------------------------------
-  describe("getFile + file route shape (EMU-05 — no byte serving in 204)", () => {
-    it("getFile returns the file-descriptor envelope", async () => {
-      const env = await callMethod(apiRoot, "getFile", { file_id: "AgADfile123" });
+  describe("file_id store: getFile (real metadata) + GET /file route (raw bytes) — MEDIA-01/02", () => {
+    it("storeFile → getFile returns the REAL file_size (=bytes.length) + the stored file_path (NOT the 1024 stub)", async () => {
+      const bytes = Buffer.from("hello-document-bytes-of-known-length", "utf8");
+      const handle = emu.storeFile("document", bytes, { fileName: "report.pdf", mimeType: "application/pdf" });
+      expect(typeof handle.fileId).toBe("string");
+      expect(typeof handle.fileUniqueId).toBe("string");
+      expect(typeof handle.filePath).toBe("string");
+
+      const env = await callMethod(apiRoot, "getFile", { file_id: handle.fileId });
       expect(env.ok).toBe(true);
       const file = env.result as Record<string, unknown>;
-      expect(file).toHaveProperty("file_id");
-      expect(file).toHaveProperty("file_unique_id");
-      expect(file).toHaveProperty("file_size");
-      expect(typeof file["file_path"]).toBe("string");
+      expect(file["file_id"]).toBe(handle.fileId);
+      expect(file["file_unique_id"]).toBe(handle.fileUniqueId);
+      // The REAL byte length — not the hardcoded 1024.
+      expect(file["file_size"]).toBe(bytes.length);
+      expect(file["file_size"]).not.toBe(1024);
+      // The stored path (the route lookup key).
+      expect(file["file_path"]).toBe(handle.filePath);
     });
 
-    it("GET /file/bot<token>/<path> returns HTTP 200 (route shape exists, NOT 404)", async () => {
-      // First obtain a file_path from getFile.
-      const env = await callMethod(apiRoot, "getFile", { file_id: "AgADfile123" });
-      const file = env.result as Record<string, unknown>;
-      const filePath = file["file_path"] as string;
+    it("GET /file/bot<token>/<file_path> serves the EXACT stored bytes (binary, byte-for-byte)", async () => {
+      const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x10, 0x99]);
+      const handle = emu.storeFile("photo", bytes);
+
+      // Resolve the file_path via getFile (exactly what the resolver does).
+      const env = await callMethod(apiRoot, "getFile", { file_id: handle.fileId });
+      const filePath = (env.result as Record<string, unknown>)["file_path"] as string;
 
       const res = await fetch(`${apiRoot}/file/bot${TOKEN}/${filePath}`);
       expect(res.status).toBe(200);
+      // A real (non-JSON) media content-type.
+      expect(res.headers.get("content-type")).not.toBe("application/json");
+      const received = Buffer.from(await res.arrayBuffer());
+      expect(received.equals(bytes)).toBe(true);
+      expect(received.length).toBe(bytes.length);
+    });
+
+    it("each kind mints its own file_path extension (photo→.jpg, voice→.ogg, document→.bin, video→.mp4, video_note→.mp4)", () => {
+      const expectations: Array<[Parameters<typeof emu.storeFile>[0], RegExp]> = [
+        ["photo", /^photos\/.+\.jpg$/],
+        ["voice", /^voice\/.+\.ogg$/],
+        ["document", /^documents\/.+\.bin$/],
+        ["video", /^videos\/.+\.mp4$/],
+        ["video_note", /^video_notes\/.+\.mp4$/],
+      ];
+      for (const [kind, re] of expectations) {
+        const h = emu.storeFile(kind, Buffer.from("x"));
+        expect(h.filePath).toMatch(re);
+      }
+    });
+
+    it("getFile on an UNKNOWN file_id returns a Telegram-shaped not-found envelope (ok:false, error_code:400)", async () => {
+      const env = await callMethod(apiRoot, "getFile", { file_id: "file_never_stored" });
+      expect(env.ok).toBe(false);
+      expect(env.error_code).toBe(400);
+    });
+
+    it("GET /file on an UNKNOWN path → 404 (a Map miss, never a disk read)", async () => {
+      const res = await fetch(`${apiRoot}/file/bot${TOKEN}/documents/does_not_exist.bin`);
+      expect(res.status).toBe(404);
+    });
+
+    it("SECURITY (T-207-04): a `..`-laden traversal path is a Map MISS → 404, NOT a filesystem read", async () => {
+      // A crafted file_path attempting to escape the store. The route resolves
+      // ONLY against the in-memory filesByPath Map — there is no fs access — so
+      // this is a plain miss. (URL-encoded so the path segment reaches the route
+      // verbatim rather than being collapsed by fetch/URL normalization.)
+      const traversal = encodeURIComponent("../../../../etc/passwd");
+      const res = await fetch(`${apiRoot}/file/bot${TOKEN}/${traversal}`);
+      expect(res.status).toBe(404);
+      // The body is the JSON not-found envelope — definitively not file contents.
+      const json = (await res.json()) as { ok: boolean; error_code?: number };
+      expect(json.ok).toBe(false);
+    });
+
+    it("storeFile keeps BOTH indexes consistent: the file_path getFile reports resolves to the same bytes on the route", async () => {
+      const bytes = Buffer.from("two-index-consistency-bytes", "utf8");
+      const handle = emu.storeFile("voice", bytes, { mimeType: "audio/ogg" });
+      // filesById path (getFile by file_id).
+      const env = await callMethod(apiRoot, "getFile", { file_id: handle.fileId });
+      const reportedPath = (env.result as Record<string, unknown>)["file_path"] as string;
+      expect(reportedPath).toBe(handle.filePath);
+      // filesByPath path (the route by file_path) — the SAME bytes.
+      const res = await fetch(`${apiRoot}/file/bot${TOKEN}/${reportedPath}`);
+      const received = Buffer.from(await res.arrayBuffer());
+      expect(received.equals(bytes)).toBe(true);
     });
   });
 
