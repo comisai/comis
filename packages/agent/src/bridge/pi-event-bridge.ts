@@ -62,16 +62,50 @@ import { extractMcpServerName } from "@comis/shared";
 import { classifyMcpErrorType, sanitizeToolArgs, extractErrorText } from "./bridge-event-handlers.js";
 
 /**
+ * Bracketed `[error_code]` prefixes that mean the tool's OWN IO failed (disk,
+ * parse) — the tool, not the model, is at fault → `internal`. Every other
+ * structured `[code]` is the model's input/policy rejection → `validation`.
+ */
+const TOOL_ERROR_INTERNAL_CODES: ReadonlySet<string> = new Set([
+  "read_error",
+  "write_error",
+  "grep_error",
+  "dir_create_failed",
+  "pdf_error",
+]);
+
+/**
+ * First snake_case bracketed code ANYWHERE in errorText. The errorText we log is
+ * the JSON-stringified tool RESULT, so the code sits inside `.content[].text`,
+ * NOT at offset 0 — search anywhere (mirrors {@link toolFailureHint}). The
+ * `≥ one underscore` requirement avoids matching `[i]` / `[error]` / array
+ * indices.
+ */
+const BRACKETED_TOOL_ERROR_CODE = /\[([a-z]+(?:_[a-z]+)+)\]/;
+
+/**
  * Classify a tool failure's errorKind when the SDK reported `isError: true`
  * from the start (i.e., `toolSuccess === false` BEFORE the exitCode branch
- * flips it). Previously this branch left `toolErrorKind` undefined and the
- * `tool:executed` event payload lacked `errorKind` for the most common
- * failure path. Heuristic:
- *  - errorText starting with `[invalid_value]` / `[validation]` → validation
- *  - otherwise → dependency (external tool / MCP server returned an error)
+ * flips it), so the `tool:executed` event carries an actionable errorKind for
+ * trajectory + alerting + the channel activity label.
+ *
+ * A structured bracketed `[code]` means the call REACHED the tool and the tool
+ * rejected it — that is `validation` (the model's input/policy) or, for the IO
+ * codes above, `internal` (the tool's own failure). It is NEVER a `dependency`:
+ * "dependency" is reserved for a genuinely external/MCP/transport failure, which
+ * is exactly the no-structured-code fallback.
+ *
+ * Pre-fix this returned "dependency" for everything except an `^`-anchored
+ * `[invalid_value]` — and since errorText is JSON-wrapped, that anchor never
+ * matched. A built-in `edit` returning `[text_not_found]` therefore surfaced to
+ * a chat channel as "❌ dependency" (live-UAT Telegram onboarding, 2026-06-21).
  */
-function classifyToolError(_toolName: string, errorText: string | undefined): ErrorKind {
-  if (errorText && /^\[(invalid_value|validation)\]/.test(errorText)) return "validation";
+export function classifyToolError(_toolName: string, errorText: string | undefined): ErrorKind {
+  const code = errorText ? BRACKETED_TOOL_ERROR_CODE.exec(errorText)?.[1] : undefined;
+  if (code !== undefined) {
+    return TOOL_ERROR_INTERNAL_CODES.has(code) ? "internal" : "validation";
+  }
+  // No structured code → a genuinely external (MCP / transport / unknown) failure.
   return "dependency";
 }
 import * as os from "node:os";
