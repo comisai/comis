@@ -228,10 +228,10 @@ describe("ACCEPT-01 scenario 1 Stage-B — the VL A->B loop shape + scoring scaf
       const verdict = resolved.ok
         ? resolved.value
         : { outcome: "unknown" as const, confidence: 0, sources: [] as string[] };
-      // RED-first (Pitfall 2, the 205-06/206-03 pattern): assert the WRONG
-      // deterministic verdict ('failure') so the failing state is reproducible
-      // from the RED commit alone. The real fused outcome is 'success'. GREEN flips it.
-      expect(verdict.outcome).toBe("failure");
+      // The reaction row fuses to SUCCESS with the 'reaction' source — the chain
+      // skill synthesis runs on (pre-fix resolve(sessionKey) was always unknown,
+      // the selected:0 defect this proves is closed). (RED asserted 'failure'.)
+      expect(verdict.outcome).toBe("success");
       expect(verdict.sources).toContain("reaction");
     } finally {
       db.close();
