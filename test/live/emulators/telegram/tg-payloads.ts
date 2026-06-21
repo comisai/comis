@@ -30,7 +30,20 @@
  * @module
  */
 
-import type { ReactionTypeEmoji, Update, User } from "grammy/types";
+import type {
+  CallbackQuery,
+  Document,
+  Location,
+  Message,
+  PhotoSize,
+  ReactionTypeEmoji,
+  Update,
+  User,
+  Venue,
+  Video,
+  VideoNote,
+  Voice,
+} from "grammy/types";
 
 /**
  * Options for {@link makeUser} / {@link makeBotUser}.
@@ -120,6 +133,239 @@ export function makeMessageUpdate(opts: MakeMessageUpdateOptions): Update {
       // Telegram unix SECONDS (NOT ms) — the mapper multiplies ×1000 (§4.2).
       date: Math.floor(Date.now() / 1000),
       text: opts.text,
+    },
+  };
+}
+
+/**
+ * The closed set of inbound media kinds the harness mints — exactly the kinds
+ * `buildAttachments` extracts (`media-handler.ts:84-108`). A `kind` outside this
+ * union is a COMPILE error, so the emulator can never inject a media shape the
+ * production extractor does not read.
+ */
+export type MediaKind = "photo" | "voice" | "document" | "video" | "video_note";
+
+/**
+ * Options for {@link makeMediaUpdate}.
+ *
+ * One discriminated `kind` per call. Only the field for that `kind` is set on
+ * the emitted `message` — a `voice` update carries no `photo`/`document`/… (a
+ * Telegram message holds at most one media type; `buildAttachments` checks each
+ * independently). Every kind carries the caller-supplied `fileId`/`fileUniqueId`
+ * — the SAME `file_id` `injectMedia` stores, so the emulator's file route and
+ * the adapter's `tg-file://{file_id}` resolution agree.
+ */
+export interface MakeMediaUpdateOptions {
+  /** The Update's unique, monotonically-increasing id (see {@link nextUpdateId}). */
+  readonly updateId: number;
+  /** The message's id inside the chat (a freshly-minted inbound id; `injectMedia` mints it). */
+  readonly messageId: number;
+  /** The private-chat id this media DM belongs to. */
+  readonly chatId: number;
+  /** The (human) sender — built via {@link makeUser}. */
+  readonly from: User;
+  /** Which single media kind to populate (a closed union — an off-union kind is a compile error). */
+  readonly kind: MediaKind;
+  /** The file id `buildAttachments` reads (`msg.<kind>.file_id`) and the emulator stores. */
+  readonly fileId: string;
+  /** The Telegram file_unique_id (grammy requires it on every media object). */
+  readonly fileUniqueId: string;
+  /** Media duration in seconds (voice/video/video_note — the mapper ×1000 → ms downstream). */
+  readonly duration?: number;
+  /** MIME type (voice/document/video — `extractVoice` falls back to `audio/ogg` when absent). */
+  readonly mimeType?: string;
+  /** Pixel width (photo/video — grammy's `PhotoSize`/`Video` require it). */
+  readonly width?: number;
+  /** Pixel height (photo/video — grammy's `PhotoSize`/`Video` require it). */
+  readonly height?: number;
+  /** Diameter (video_note — grammy's `VideoNote.length` is required). */
+  readonly length?: number;
+  /** File size in bytes (photo/document — optional, echoed when supplied). */
+  readonly fileSize?: number;
+  /** Original filename (document — optional, echoed when supplied). */
+  readonly fileName?: string;
+  /** When true, set `message.has_media_spoiler` (message-mapper.ts:142 → `metadata.hasSpoiler`). Omitted otherwise (exactOptionalPropertyTypes). */
+  readonly spoiler?: boolean;
+}
+
+/**
+ * Build the grammy-typed media object for a single {@link MediaKind}, carrying
+ * exactly the fields `buildAttachments`'s per-kind `extract*` helper reads.
+ *
+ * Each branch return-annotates the grammy type (`PhotoSize[]`/`Voice`/…), so a
+ * grammy field drift is a COMPILE error here (I4). Optional fields are spread
+ * only when defined (`exactOptionalPropertyTypes` — an absent optional is NOT
+ * `: undefined`).
+ */
+function buildMediaFields(
+  opts: MakeMediaUpdateOptions,
+): Partial<Pick<Message, "photo" | "voice" | "document" | "video" | "video_note">> {
+  switch (opts.kind) {
+    case "photo": {
+      // A single-element PhotoSize[] is fine — buildAttachments takes the
+      // largest = photos[len-1] (media-handler.ts:18). width/height are required
+      // by grammy's PhotoSize; default to 1 when the caller omits them.
+      const size: PhotoSize = {
+        file_id: opts.fileId,
+        file_unique_id: opts.fileUniqueId,
+        width: opts.width ?? 1,
+        height: opts.height ?? 1,
+        ...(opts.fileSize !== undefined ? { file_size: opts.fileSize } : {}),
+      };
+      return { photo: [size] };
+    }
+    case "voice": {
+      // extractVoice (media-handler.ts:41) reads file_id + mime_type (?? audio/ogg).
+      const voice: Voice = {
+        file_id: opts.fileId,
+        file_unique_id: opts.fileUniqueId,
+        duration: opts.duration ?? 0,
+        ...(opts.mimeType !== undefined ? { mime_type: opts.mimeType } : {}),
+        ...(opts.fileSize !== undefined ? { file_size: opts.fileSize } : {}),
+      };
+      return { voice };
+    }
+    case "document": {
+      // extractDocument (media-handler.ts:28) reads file_id (+ optional mime/name/size).
+      const document: Document = {
+        file_id: opts.fileId,
+        file_unique_id: opts.fileUniqueId,
+        ...(opts.fileName !== undefined ? { file_name: opts.fileName } : {}),
+        ...(opts.mimeType !== undefined ? { mime_type: opts.mimeType } : {}),
+        ...(opts.fileSize !== undefined ? { file_size: opts.fileSize } : {}),
+      };
+      return { document };
+    }
+    case "video": {
+      // extractVideo (media-handler.ts:53) reads file_id (+ optional mime_type).
+      const video: Video = {
+        file_id: opts.fileId,
+        file_unique_id: opts.fileUniqueId,
+        width: opts.width ?? 1,
+        height: opts.height ?? 1,
+        duration: opts.duration ?? 0,
+        ...(opts.mimeType !== undefined ? { mime_type: opts.mimeType } : {}),
+      };
+      return { video };
+    }
+    case "video_note": {
+      // extractVideoNote (media-handler.ts:64) reads file_id + duration (→ ms).
+      const videoNote: VideoNote = {
+        file_id: opts.fileId,
+        file_unique_id: opts.fileUniqueId,
+        length: opts.length ?? 1,
+        duration: opts.duration ?? 0,
+      };
+      return { video_note: videoNote };
+    }
+  }
+}
+
+/**
+ * Build a well-formed grammy `message` `Update` carrying ONE inbound media kind.
+ *
+ * The return annotation IS grammy's `Update` (I4 tripwire). The inner `message`
+ * mirrors {@link makeMessageUpdate}'s literal (a `private` chat + a mandatory
+ * `from`) plus exactly the per-`kind` media field `buildAttachments` extracts —
+ * NOTHING the extractor does not read (MEDIA-03 / zero product change: the
+ * builder emits only what production consumes). `has_media_spoiler` is set only
+ * when `spoiler` is true (message-mapper.ts:142 → `metadata.hasSpoiler`); it is
+ * OMITTED otherwise (exactOptionalPropertyTypes).
+ *
+ * `date` is `Math.floor(Date.now() / 1000)` — Telegram unix SECONDS (the mapper
+ * ×1000 → ms; the 204/206 discipline).
+ */
+export function makeMediaUpdate(opts: MakeMediaUpdateOptions): Update {
+  return {
+    update_id: opts.updateId,
+    message: {
+      message_id: opts.messageId,
+      from: opts.from,
+      // PrivateChat requires first_name; in a DM the chat IS the sender.
+      chat: { id: opts.chatId, type: "private", first_name: opts.from.first_name },
+      // Telegram unix SECONDS (NOT ms) — the mapper multiplies ×1000.
+      date: Math.floor(Date.now() / 1000),
+      ...buildMediaFields(opts),
+      ...(opts.spoiler === true ? { has_media_spoiler: true } : {}),
+    },
+  };
+}
+
+/**
+ * A plain GPS point (the `location` branch of {@link MakeLocationUpdateOptions}).
+ * Mirrors the fields `message-mapper.ts:184-187` reads.
+ */
+export interface LocationInput {
+  /** Latitude (message-mapper.ts:184). */
+  readonly latitude: number;
+  /** Longitude (message-mapper.ts:185). */
+  readonly longitude: number;
+  /** Uncertainty radius in meters (message-mapper.ts:187 → `normalizeLocation` accuracy). */
+  readonly horizontalAccuracy?: number;
+}
+
+/**
+ * A named place (the `venue` branch). Mirrors `message-mapper.ts:175-181`
+ * (`venue.location.{latitude,longitude}` + `venue.{title,address}`).
+ */
+export interface VenueInput {
+  /** Venue latitude (message-mapper.ts:177). */
+  readonly latitude: number;
+  /** Venue longitude (message-mapper.ts:178). */
+  readonly longitude: number;
+  /** Venue name (message-mapper.ts:179 → `normalizeLocation` name). */
+  readonly title: string;
+  /** Venue address (message-mapper.ts:179 → `normalizeLocation` address). */
+  readonly address: string;
+}
+
+/**
+ * Options for {@link makeLocationUpdate}. Exactly one of `location` / `venue`
+ * (a discriminated either — the mapper's `if (venue) … else if (location)`
+ * precedence: a `venue` WINS, so the builder sets at most one).
+ */
+export type MakeLocationUpdateOptions = {
+  readonly updateId: number;
+  readonly messageId: number;
+  readonly chatId: number;
+  readonly from: User;
+} & ({ readonly location: LocationInput; readonly venue?: never } | { readonly venue: VenueInput; readonly location?: never });
+
+/**
+ * Build a grammy `message` `Update` carrying a `location` OR a `venue`.
+ *
+ * No file store (a `message` update). The return annotation IS grammy's `Update`
+ * (I4). For `venue`, the builder sets `message.venue` (and NOT `message.location`)
+ * — matching the mapper's `else if` precedence (venue wins, message-mapper.ts:175);
+ * for a plain point it sets `message.location`. `horizontal_accuracy` is omitted
+ * when absent (exactOptionalPropertyTypes).
+ */
+export function makeLocationUpdate(opts: MakeLocationUpdateOptions): Update {
+  const placeFields: Partial<Pick<Message, "location" | "venue">> = "venue" in opts && opts.venue !== undefined
+    ? {
+        venue: {
+          location: { latitude: opts.venue.latitude, longitude: opts.venue.longitude },
+          title: opts.venue.title,
+          address: opts.venue.address,
+        } satisfies Venue,
+      }
+    : {
+        location: {
+          latitude: opts.location.latitude,
+          longitude: opts.location.longitude,
+          ...(opts.location.horizontalAccuracy !== undefined
+            ? { horizontal_accuracy: opts.location.horizontalAccuracy }
+            : {}),
+        } satisfies Location,
+      };
+  return {
+    update_id: opts.updateId,
+    message: {
+      message_id: opts.messageId,
+      from: opts.from,
+      chat: { id: opts.chatId, type: "private", first_name: opts.from.first_name },
+      date: Math.floor(Date.now() / 1000),
+      ...placeFields,
     },
   };
 }
