@@ -1308,7 +1308,10 @@ describe("TgEmulator — webhook-POST mode + the harness-side secret-token gate 
     expect(accepted.length).toBe(1);
     // The delivered Update is the SAME grammy `message` shape the polled path
     // would have queued (identical shape — §4.2 scope guard, no new kind).
-    const msg = accepted[0]!.message as Record<string, unknown>;
+    // (Cast through `unknown` — grammy's `Message` is a structured type, not a
+    // string-index record; exactOptionalPropertyTypes/strict rejects the direct
+    // cast.)
+    const msg = accepted[0]!.message as unknown as Record<string, unknown>;
     expect(msg["text"]).toBe("hello via webhook");
     expect((msg["chat"] as Record<string, unknown>)["id"]).toBe(WEBHOOK_CHAT.chatId);
     expect((msg["from"] as Record<string, unknown>)["id"]).toBe(FROM.id);
@@ -1325,11 +1328,10 @@ describe("TgEmulator — webhook-POST mode + the harness-side secret-token gate 
     // (incl. empty) as a reject — a forged Update without the shared secret is
     // untrusted.
     const absentStatus = await emu.postWebhookMessage(WEBHOOK_CHAT, FROM, "forged update", "");
-    // RED (deliberately wrong, Pitfall 2): assert the ABSENT-token POST is
-    // ACCEPTED (200). It is NOT — the gate rejects it (401) — so this RUNS and
-    // FAILS, proving the gate actually blocks a forged Update. Flip to 401 (the
-    // GREEN) once the RED is committed.
-    expect(absentStatus).toBe(200);
+    // GREEN: the ABSENT-token POST is REJECTED (401) by the harness gate — a
+    // forged Update without the shared secret is blocked (the secret-token gate
+    // proven on the harness side; the product has no such route — AUTO-05 gap).
+    expect(absentStatus).toBe(401);
 
     // Neither forged POST was recorded as delivered; both were counted rejected.
     expect(receiver.accepted().length).toBe(0);
