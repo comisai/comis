@@ -283,6 +283,8 @@ import type { ChanliveHandle } from "../harness/chanlive-handle.js";
 import { rpcRequest } from "../../support/daemon-harness.js";
 import {
   startStandaloneRig,
+  RIG_CHANNELS,
+  type RigChannel,
   type StandaloneRig,
   type StandaloneRigOptions,
   type StandaloneRigDeps,
@@ -359,6 +361,15 @@ export class VerbFailure extends Error {
 export interface VerbContext {
   /** The resolved handle (gateway URL/token, control endpoint, db path, chat id). */
   readonly handle?: ChanliveHandle;
+  /**
+   * The resolved channel key (default "telegram", the `tg` alias). Resolved by
+   * {@link parseArgs} from `--channel`. Threaded into `up`'s
+   * {@link StandaloneRigOptions} (FIX #1: `chan --channel signal up` boots a
+   * Signal rig, not the hard-coded Telegram one) AND read by the caps gate
+   * (FIX #2: a button/edit-dependent verb honest-degrades on a channel that
+   * lacks the capability — `unsupported_on_channel`).
+   */
+  readonly channel?: string;
   /** The raw `--endpoint` flag (when set, `down` REFUSES to wipe — not our rig). */
   readonly flagEndpoint?: string;
   /** `--json` — emit a machine-readable body. */
@@ -417,6 +428,9 @@ export function contextFromParsed(
 ): VerbContext {
   return {
     ...(handle !== undefined ? { handle } : {}),
+    // Thread the parsed channel (default "telegram") so `up` spawns the RIGHT
+    // rig (FIX #1) and the caps gate (FIX #2) keys on the resolved channel.
+    channel: parsed.channel,
     ...(parsed.endpoint !== undefined ? { flagEndpoint: parsed.endpoint } : {}),
     json: parsed.json,
     ...(parsed.model !== undefined ? { model: parsed.model } : {}),
@@ -707,10 +721,30 @@ async function sendMedia(
 }
 
 /**
+ * Resolve the threaded channel (`ctx.channel`, default `"telegram"`) into a
+ * known {@link RigChannel}. The channel is the discriminator `up` boots the rig
+ * by (FIX #1) and the caps gate keys on (FIX #2). An UNKNOWN channel (one the
+ * harness has no rig/caps registration for) is an honest `bad_json` usage error
+ * — never a silent fallthrough to telegram (which would mask the typo as a
+ * Telegram rig / Telegram caps). The default (no `--channel`) is `"telegram"`,
+ * the `tg` alias, so every existing telegram caller is byte-identical.
+ */
+function resolveRigChannel(ctx: VerbContext): RigChannel {
+  const channel = ctx.channel ?? "telegram";
+  if (!Object.prototype.hasOwnProperty.call(RIG_CHANNELS, channel)) {
+    throw new VerbFailure("bad_json", {
+      detail: `unknown --channel "${channel}" (known: ${Object.keys(RIG_CHANNELS).join(", ")}).`,
+    });
+  }
+  return channel as RigChannel;
+}
+
+/**
  * Dispatch a `chan`/`tg` verb. Returns the verb's result (printed by `runMain`),
  * or THROWS a {@link VerbFailure} on any honest failure (no-reply / RPC error /
- * dead handle / bad json / deferred / refusal). NO `process.exit` here — that
- * lives in `runMain`, so this is unit-testable with injected seams.
+ * dead handle / bad json / deferred / refusal / unsupported-on-channel). NO
+ * `process.exit` here — that lives in `runMain`, so this is unit-testable with
+ * injected seams.
  */
 export async function runVerb(
   verb: string,
@@ -751,7 +785,11 @@ export async function runVerb(
     case "up": {
       const launcher = ctx.startStandaloneRigFn ?? startStandaloneRig;
       const opts: StandaloneRigOptions = {
-        channel: "telegram",
+        // FIX #1: thread the PARSED channel (default "telegram") — NOT the
+        // pre-patch hard-coded literal. `chan --channel signal up` boots a
+        // Signal rig via the RIG_CHANNELS map (209-05); the default + explicit
+        // `--channel telegram` stay byte-identical (telegram rig).
+        channel: resolveRigChannel(ctx),
         model: ctx.model ?? "keyless",
         ...(ctx.baseDir !== undefined ? { baseDir: ctx.baseDir } : {}),
         // --detached (Plan 208-08, Option A): spawn a DETACHED subprocess rig that
