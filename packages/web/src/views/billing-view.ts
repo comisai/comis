@@ -5,19 +5,31 @@ import { sharedStyles, focusStyles } from "../styles/shared.js";
 import type { RpcClient } from "../api/rpc-client.js";
 import type { EventDispatcher } from "../state/event-dispatcher.js";
 import { SseController } from "../state/sse-controller.js";
-import { systemClearInterval, systemClearTimeout, systemSetInterval, systemSetTimeout } from "@comis/core";
+import { systemClearInterval, systemClearTimeout, systemNowDate, systemSetInterval, systemSetTimeout } from "@comis/core";
 import type {
   BillingDrillLevel,
   BillingByProvider,
   BillingByAgent,
   BillingBySession,
   CostSegment,
+  ToolCostBreakdown,
+  SubagentCostBreakdown,
 } from "../api/types/index.js";
 import {
   createBillingViewController,
+  billingRowsToCsv,
+  billingRowsToJson,
   type BillingViewController,
   type BillingTotalData,
+  type BillingExportRow,
 } from "./billing-view-controller.js";
+import {
+  parseBillingQuery,
+  applyBillingFilter,
+  isBillingFilterActive,
+  describeUnknownKeys,
+} from "./billing-query.js";
+import { renderToolCosts, renderSubagentCosts, renderFilterBar, downloadBlob } from "./billing-view-render.js";
 
 // Side-effect imports (register custom elements)
 import "../components/data/ic-stat-card.js";
@@ -159,9 +171,37 @@ export class IcBillingView extends LitElement {
       .grid-row.clickable > .cell { cursor: pointer; }
       .grid-row.clickable:hover > .cell { background: var(--ic-surface-2, #1f2937); }
 
-      .provider-table, .model-table, .agent-table, .session-table {
+      .provider-table, .model-table, .agent-table, .session-table, .tool-table {
         grid-template-columns: 1fr repeat(3, auto);
       }
+
+      .subagent-table {
+        grid-template-columns: 1fr repeat(2, auto);
+      }
+
+      .caveat { font-weight: 400; font-size: var(--ic-text-xs); color: var(--ic-text-dim); }
+
+      .filter-bar {
+        display: flex;
+        gap: var(--ic-space-sm);
+        margin-bottom: var(--ic-space-sm);
+        flex-wrap: wrap;
+      }
+
+      .filter-input, .export-btn {
+        padding: 0.5rem 0.75rem;
+        background: var(--ic-surface);
+        border: 1px solid var(--ic-border);
+        border-radius: 0.375rem;
+        color: var(--ic-text);
+        font-size: var(--ic-text-sm);
+      }
+
+      .filter-input { flex: 1; min-width: 240px; font-family: var(--ic-font-mono, ui-monospace, monospace); }
+      .export-btn { cursor: pointer; font-family: inherit; white-space: nowrap; }
+      .export-btn:hover { background: var(--ic-surface-alt, #374151); }
+
+      .filter-hint { font-size: var(--ic-text-xs); color: var(--ic-warning); margin-bottom: var(--ic-space-sm); }
 
       .pct-bar {
         display: inline-block;
@@ -219,6 +259,10 @@ export class IcBillingView extends LitElement {
   @state() private _providers: BillingByProvider[] = [];
   @state() private _agentBillings: BillingByAgent[] = [];
   @state() private _sessionBillings: BillingBySession[] = [];
+  // COST-01/02 granularity (agent level) + the typed-query DSL filter state.
+  @state() private _toolCosts: ToolCostBreakdown[] = [];
+  @state() private _subagentCosts: SubagentCostBreakdown[] = [];
+  @state() private _filterQuery = "";
 
   private _refreshInterval: ReturnType<typeof setInterval> | null = null;
   private _rpcStatusUnsub: (() => void) | null = null;
@@ -343,9 +387,13 @@ export class IcBillingView extends LitElement {
         case "provider":
           this._providers = await ctrl.loadProviderLevel(this._sinceMs);
           break;
-        case "agent":
-          this._agentBillings = await ctrl.loadAgentLevel(this._sinceMs);
+        case "agent": {
+          const agentData = await ctrl.loadAgentLevel(this._sinceMs);
+          this._agentBillings = agentData.agents;
+          this._toolCosts = agentData.toolCosts;
+          this._subagentCosts = agentData.subagentCosts;
           break;
+        }
         case "session":
           this._sessionBillings = await ctrl.loadSessionLevel(this._sinceMs, this._drillContext.agentId);
           break;
@@ -563,12 +611,59 @@ export class IcBillingView extends LitElement {
       </div>
 
       <div class="section">
-        <button
-          class="breadcrumb-link"
-          @click=${() => this._drillDown("agent", {})}
-        >View agent breakdown</button>
+        <button class="breadcrumb-link" @click=${() => this._drillDown("agent", {})}>View agent breakdown</button>
       </div>
     `;
+  }
+
+  /* ---- DSL filter + export ---- */
+
+  /**
+   * The agent rows after applying the typed-query DSL. Mapped to the filterable
+   * shape (content-free ids/numbers); a body field is never an axis.
+   */
+  private get _filteredAgentBillings(): BillingByAgent[] {
+    const filter = parseBillingQuery(this._filterQuery);
+    if (!isBillingFilterActive(filter)) return this._agentBillings;
+    // Map to the DSL's filterable shape: `agent` is the row's agentId; `tokens`
+    // and `cost` are the numeric axes (content-free ids/numbers only).
+    const filterable = this._agentBillings.map((a) => ({
+      agentId: a.agentId,
+      agent: a.agentId,
+      tokens: a.totalTokens,
+      cost: a.cost,
+    }));
+    const kept = new Set(applyBillingFilter(filterable, filter).map((r) => r.agentId));
+    return this._agentBillings.filter((a) => kept.has(a.agentId));
+  }
+
+  /** Honest hint when the DSL query contains a key outside the closed set. */
+  private get _filterHint(): string {
+    return describeUnknownKeys(this._filterQuery);
+  }
+
+  private _onFilterInput(e: Event): void {
+    this._filterQuery = (e.target as HTMLInputElement).value;
+  }
+
+  /**
+   * Build the content-free export rows from the CURRENTLY-FILTERED agent rows
+   * and download them as CSV or JSON via the `<a download>` blob mechanism
+   * (the diagnostics-view.ts twin). Columns are an explicit allowlist — no
+   * body/secret can leak (T-179-14).
+   */
+  private _exportBilling(format: "csv" | "json"): void {
+    const rows: BillingExportRow[] = this._filteredAgentBillings.map((a) => ({
+      agentId: a.agentId,
+      totalTokens: a.totalTokens,
+      percentOfTotal: a.percentOfTotal,
+      cost: a.cost,
+    }));
+    if (rows.length === 0) return;
+    const isCsv = format === "csv";
+    const body = isCsv ? billingRowsToCsv(rows) : billingRowsToJson(rows);
+    const filename = `billing-${systemNowDate().toISOString().slice(0, 10)}.${format}`;
+    downloadBlob(body, filename, isCsv ? "text/csv" : "application/json");
   }
 
   private _renderAgentLevel() {
@@ -576,7 +671,19 @@ export class IcBillingView extends LitElement {
       return html`<ic-empty-state icon="users" message="No agent billing data available"></ic-empty-state>`;
     }
 
+    const rows = this._filteredAgentBillings;
+    const renderDeps = {
+      formatCost: (n: number) => this._formatCost(n),
+      formatNumber: (n: number) => this._formatNumber(n),
+    };
+
     return html`
+      ${renderFilterBar({
+        query: this._filterQuery,
+        hint: this._filterHint,
+        onInput: (e) => this._onFilterInput(e),
+        onExport: (format) => this._exportBilling(format),
+      })}
       <div class="section">
         <div class="section-title">Agent Billing</div>
         <div class="card">
@@ -587,7 +694,7 @@ export class IcBillingView extends LitElement {
               <div class="cell cell-right" role="columnheader">% of Total</div>
               <div class="cell cell-right" role="columnheader">Cost</div>
             </div>
-            ${this._agentBillings.map(
+            ${rows.map(
               (a) => html`
                 <div
                   class="grid-row clickable"
@@ -604,6 +711,8 @@ export class IcBillingView extends LitElement {
           </div>
         </div>
       </div>
+      ${renderToolCosts(this._toolCosts, renderDeps)}
+      ${renderSubagentCosts(this._subagentCosts, renderDeps)}
     `;
   }
 

@@ -92,7 +92,7 @@ describe("applyBillingFilter", () => {
     { agent: "alpha", provider: "anthropic", model: "claude-haiku", tool: "bash", tokens: 200, cost: 0.4, hasErrors: false },
   ];
 
-  it("filters by agent", () => {
+  it("filters rows by the agent axis", () => {
     const out = applyBillingFilter(ROWS, parseBillingQuery("agent:alpha"));
     expect(out).toHaveLength(2);
     expect(out.every((r) => r.agent === "alpha")).toBe(true);

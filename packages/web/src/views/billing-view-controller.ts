@@ -39,6 +39,67 @@ export interface TotalLevelData {
   providers: BillingByProvider[];
 }
 
+/** Per-agent load result carrying the optional COST-01/02 granularity rows. */
+export interface AgentLevelData {
+  agents: BillingByAgent[];
+  /** Per-tool cost (COST-01 tool_tag, best-effort, even-split). */
+  toolCosts: ToolCostBreakdown[];
+  /** Per-subagent cost (COST-02 corrected-$ subtree rollup). */
+  subagentCosts: SubagentCostBreakdown[];
+}
+
+/**
+ * The EXPLICIT, content-free CSV/JSON export column allowlist (matches 179-03's
+ * `COST_EXPORT_COLUMNS`). Each entry maps a stable header to a row accessor —
+ * the export is built by projecting ONLY these, never `Object.keys(row)`, so a
+ * body/secret field cannot leak (T-179-14).
+ */
+export interface BillingExportRow {
+  agentId: string;
+  totalTokens: number;
+  percentOfTotal: number;
+  cost: number;
+}
+
+export const BILLING_EXPORT_COLUMNS: ReadonlyArray<{
+  readonly header: string;
+  readonly get: (row: BillingExportRow) => string;
+}> = [
+  { header: "agentId", get: (r) => r.agentId },
+  { header: "totalTokens", get: (r) => String(r.totalTokens) },
+  { header: "percentOfTotal", get: (r) => String(r.percentOfTotal) },
+  { header: "cost", get: (r) => String(r.cost) },
+];
+
+/**
+ * RFC4180-style CSV serialization over the explicit {@link BILLING_EXPORT_COLUMNS}
+ * allowlist. Content-free by construction — never projects arbitrary keys. A
+ * field containing a comma/quote/CR/LF is wrapped in `"` with internal `"`
+ * doubled.
+ */
+export function billingRowsToCsv(rows: ReadonlyArray<BillingExportRow>): string {
+  const esc = (v: string): string =>
+    /[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+  const header = BILLING_EXPORT_COLUMNS.map((c) => esc(c.header)).join(",");
+  const lines = rows.map((row) =>
+    BILLING_EXPORT_COLUMNS.map((c) => esc(c.get(row))).join(","),
+  );
+  return [header, ...lines].join("\r\n");
+}
+
+/**
+ * JSON serialization over the explicit allowlist — projects ONLY the
+ * allowlisted columns into each object (content-free, never the raw row).
+ */
+export function billingRowsToJson(rows: ReadonlyArray<BillingExportRow>): string {
+  const projected = rows.map((row) => {
+    const obj: Record<string, string> = {};
+    for (const c of BILLING_EXPORT_COLUMNS) obj[c.header] = c.get(row);
+    return obj;
+  });
+  return JSON.stringify(projected, null, 2);
+}
+
 /**
  * The billing-view controller: a thin, DOM-free orchestrator over the
  * `obs.billing.*` admin RPCs. Each method returns the shaped data the view
@@ -55,7 +116,12 @@ export interface BillingViewController {
     onAsyncUpdate: (partial: { previousTotal?: BillingTotalData; providers?: BillingByProvider[] }) => void,
   ): Promise<BillingTotalData>;
   loadProviderLevel(sinceMs: number): Promise<BillingByProvider[]>;
-  loadAgentLevel(sinceMs: number): Promise<BillingByAgent[]>;
+  /**
+   * Load the agent level + the optional COST-01/02 granularity rows (per-tool
+   * tool_tag costs + per-subagent corrected-$ rollup) carried on the per-agent
+   * responses. Granularity is empty when the daemon does not surface it.
+   */
+  loadAgentLevel(sinceMs: number): Promise<AgentLevelData>;
   loadSessionLevel(sinceMs: number, agentId: string | undefined): Promise<BillingBySession[]>;
 }
 
@@ -106,6 +172,26 @@ export function narrowToolCosts(raw: unknown): ToolCostBreakdown[] {
       };
     })
     .filter((r): r is ToolCostBreakdown => r !== null);
+}
+
+/**
+ * Merge per-tool rows that repeat across agents into one row per tool (sum
+ * cost/tokens/calls). Keeps per-tool conservation (the shares still sum to the
+ * turn total) when several agents fired the same tool.
+ */
+function mergeToolCosts(rows: ToolCostBreakdown[]): ToolCostBreakdown[] {
+  const byTool = new Map<string, { tool: string; cost: number; tokens: number; calls: number }>();
+  for (const r of rows) {
+    const existing = byTool.get(r.tool);
+    if (existing) {
+      existing.cost += r.cost;
+      existing.tokens += r.tokens;
+      existing.calls += r.calls;
+    } else {
+      byTool.set(r.tool, { tool: r.tool, cost: r.cost, tokens: r.tokens, calls: r.calls });
+    }
+  }
+  return [...byTool.values()].sort((a, b) => b.cost - a.cost);
 }
 
 /**
@@ -180,7 +266,7 @@ export function createBillingViewController(rpcClient: RpcClient): BillingViewCo
       return narrowProviders(raw);
     },
 
-    async loadAgentLevel(sinceMs): Promise<BillingByAgent[]> {
+    async loadAgentLevel(sinceMs): Promise<AgentLevelData> {
       const listResult = await rpcClient.call<Record<string, unknown>>("agents.list");
       const agentData = Array.isArray(listResult)
         ? listResult
@@ -190,7 +276,7 @@ export function createBillingViewController(rpcClient: RpcClient): BillingViewCo
 
       const agentIds = agentData.map((a: AgentInfo | string) => (typeof a === "string" ? a : a.id));
 
-      if (agentIds.length === 0) return [];
+      if (agentIds.length === 0) return { agents: [], toolCosts: [], subagentCosts: [] };
 
       const results = await Promise.allSettled(
         agentIds.map((id) =>
@@ -198,7 +284,7 @@ export function createBillingViewController(rpcClient: RpcClient): BillingViewCo
         ),
       );
 
-      return results
+      const agents = results
         .map((r, i): BillingByAgent | null => {
           if (r.status !== "fulfilled") return null;
           const raw = r.value;
@@ -211,6 +297,18 @@ export function createBillingViewController(rpcClient: RpcClient): BillingViewCo
         })
         .filter((a): a is BillingByAgent => a !== null)
         .sort((a, b) => b.cost - a.cost);
+
+      // COST-01/02 granularity: aggregate the per-tool + per-subagent rows
+      // carried on the per-agent responses (content-free; empty when the
+      // daemon does not surface them — honest degradation).
+      const toolCosts = mergeToolCosts(
+        results.flatMap((r) => (r.status === "fulfilled" ? narrowToolCosts(r.value) : [])),
+      );
+      const subagentCosts = results.flatMap((r) =>
+        r.status === "fulfilled" ? narrowSubagentCosts(r.value) : [],
+      );
+
+      return { agents, toolCosts, subagentCosts };
     },
 
     async loadSessionLevel(sinceMs, agentId): Promise<BillingBySession[]> {

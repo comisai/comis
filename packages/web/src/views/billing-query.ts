@@ -125,3 +125,23 @@ export function applyBillingFilter<T extends BillingFilterableRow>(
 export function isBillingFilterActive(filter: BillingFilter): boolean {
   return Object.keys(filter).length > 0;
 }
+
+/** Every valid DSL key (the closed set), for honest unknown-key feedback. */
+const KNOWN_KEYS = new Set([...STRING_KEYS, ...NUMBER_KEYS, "has"]);
+
+/**
+ * Return an honest hint naming any key in `input` outside the closed set — so
+ * the view can surface "Unknown filter key(s) ignored: …" without throwing.
+ * Empty string when the query is empty or every key is valid.
+ */
+export function describeUnknownKeys(input: string): string {
+  const raw = typeof input === "string" ? input.trim() : "";
+  if (raw.length === 0) return "";
+  const unknown = raw
+    .split(/\s+/)
+    .map((t) => (t.includes(":") ? t.slice(0, t.indexOf(":")) : ""))
+    .filter((k) => k.length > 0 && !KNOWN_KEYS.has(k));
+  return unknown.length > 0
+    ? `Unknown filter key(s) ignored: ${[...new Set(unknown)].join(", ")}`
+    : "";
+}
