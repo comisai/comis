@@ -1343,6 +1343,183 @@ describe("DeliveryService — full pipeline behavior", () => {
   });
 
   // -------------------------------------------------------------------------
+  // WR-01 (206-05 review fix): the primary-path bind must be OBSERVABLE.
+  // -------------------------------------------------------------------------
+  //
+  // The REACT-04 bind above is SILENT — recordOutboundMessage is called but
+  // nothing on the eventBus proves the bind fired. So when a reaction map-misses
+  // again (the 206-03 class), an operator cannot distinguish "bind never fired"
+  // from "bound but the trajectory-map entry evicted" in one obs call. The
+  // delivery service is logger-free (observability rides the eventBus), so the
+  // bind emits a POSITIVE, counts-only `delivery:reply_bound` signal right after
+  // the bind, in the SAME fail-closed branch (result.ok && traceId !== null &&
+  // agentId !== null). The payload is ids/closed-scalars ONLY — never a body or a
+  // secret (§2.7 / SEC-01 redaction discipline): { messageId, channelType,
+  // channelId, traceId, agentId, timestamp }.
+
+  describe("WR-01: delivery:reply_bound observability event on the primary-path bind", () => {
+    let queue: ReturnType<typeof createMockDeliveryQueue>;
+    let eventBus: ReturnType<typeof createMockEventBus>;
+    beforeEach(() => {
+      queue = createMockDeliveryQueue();
+      eventBus = createMockEventBus();
+    });
+
+    function replyBoundEvents(): unknown[][] {
+      return (eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.filter(
+        (call: unknown[]) => call[0] === "delivery:reply_bound",
+      );
+    }
+
+    it("emits delivery:reply_bound (counts/ids only) immediately after a successful primary-path bind", async () => {
+      const adapter = createMockAdapter("telegram");
+      adapter.sendMessage.mockResolvedValue(ok("reply-msg-301"));
+      const recordOutboundMessage = vi.fn();
+      const service = createDeliveryService(
+        makeDeps({ deliveryQueue: queue, eventBus, recordOutboundMessage }),
+      );
+
+      await runWithContext(
+        {
+          traceId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+          tenantId: "default",
+          agentId: "mldag",
+          sessionKey: "default:user-1:chat-1",
+          startedAt: Date.now(),
+          trustLevel: "admin",
+        },
+        async () => {
+          await service.deliverToChannel(adapter, "chat-1", "agent reply", { origin: "agent" });
+        },
+      );
+
+      // The bind fired AND announced itself on the bus exactly once.
+      expect(recordOutboundMessage).toHaveBeenCalledTimes(1);
+      const events = replyBoundEvents();
+      expect(events.length).toBe(1);
+      const payload = events[0]![1] as Record<string, unknown>;
+      // Counts/ids/closed-scalars ONLY — correlatable with the delivery:acked
+      // event (same messageId) so the attribution is reconstructable.
+      expect(payload).toEqual({
+        messageId: "reply-msg-301",
+        channelType: "telegram",
+        channelId: "chat-1",
+        traceId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        agentId: "mldag",
+        timestamp: expect.any(Number),
+      });
+      // No body / text / secret keys leaked into the payload.
+      expect(Object.keys(payload).sort()).toEqual(
+        ["agentId", "channelId", "channelType", "messageId", "timestamp", "traceId"].sort(),
+      );
+    });
+
+    it("fail-closed: does NOT emit delivery:reply_bound when there is no request context (null traceId)", async () => {
+      const adapter = createMockAdapter("telegram");
+      adapter.sendMessage.mockResolvedValue(ok("reply-msg-302"));
+      const recordOutboundMessage = vi.fn();
+      const service = createDeliveryService(
+        makeDeps({ deliveryQueue: queue, eventBus, recordOutboundMessage }),
+      );
+
+      // No runWithContext → traceId is null → the bind fails closed, so the
+      // observability event MUST fail closed too (no false "bind fired" signal).
+      await service.deliverToChannel(adapter, "chat-1", "system reply", { origin: "system" });
+
+      expect(recordOutboundMessage).not.toHaveBeenCalled();
+      expect(replyBoundEvents()).toEqual([]);
+    });
+
+    it("fail-closed: does NOT emit delivery:reply_bound on a failed send (no minted messageId to attribute)", async () => {
+      const adapter = createMockAdapter("telegram");
+      adapter.sendMessage.mockResolvedValue(err(new Error("Bad Request: chat not found")));
+      const recordOutboundMessage = vi.fn();
+      const service = createDeliveryService(
+        makeDeps({ deliveryQueue: queue, eventBus, recordOutboundMessage }),
+      );
+
+      await runWithContext(
+        {
+          traceId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+          tenantId: "default",
+          agentId: "mldag",
+          sessionKey: "default:user-1:chat-1",
+          startedAt: Date.now(),
+          trustLevel: "admin",
+        },
+        async () => {
+          await service.deliverToChannel(adapter, "chat-1", "agent reply", { origin: "agent" });
+        },
+      );
+
+      expect(recordOutboundMessage).not.toHaveBeenCalled();
+      expect(replyBoundEvents()).toEqual([]);
+    });
+
+    it("byte-identity: does NOT emit delivery:reply_bound when learning is disabled (recordOutboundMessage undefined)", async () => {
+      // When learning-outcome is off for every agent the binding callback is
+      // undefined → there is nothing to bind and nothing to make observable, so
+      // the disabled path stays byte-identical (zero extra event work).
+      const adapter = createMockAdapter("telegram");
+      adapter.sendMessage.mockResolvedValue(ok("reply-msg-303"));
+      const service = createDeliveryService(makeDeps({ deliveryQueue: queue, eventBus }));
+
+      await runWithContext(
+        {
+          traceId: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+          tenantId: "default",
+          agentId: "mldag",
+          sessionKey: "default:user-1:chat-1",
+          startedAt: Date.now(),
+          trustLevel: "admin",
+        },
+        async () => {
+          await service.deliverToChannel(adapter, "chat-1", "agent reply", { origin: "agent" });
+        },
+      );
+
+      expect(replyBoundEvents()).toEqual([]);
+    });
+
+    it("multi-chunk: emits one delivery:reply_bound per bound chunk (parity with recordOutboundMessage)", async () => {
+      let n = 0;
+      const adapter = createMockAdapter("discord");
+      adapter.sendMessage.mockImplementation(async (): Promise<Result<string, Error>> => ok(`chunk-msg-${n++}`));
+      const recordOutboundMessage = vi.fn();
+      const service = createDeliveryService(
+        makeDeps({ deliveryQueue: queue, eventBus, recordOutboundMessage, maxCharsOverride: 150 }),
+      );
+
+      const text = makeLongMarkdown(500);
+      await runWithContext(
+        {
+          traceId: "12121212-1212-4121-8121-121212121212",
+          tenantId: "default",
+          agentId: "mldag",
+          sessionKey: "default:user-1:chat-1",
+          startedAt: Date.now(),
+          trustLevel: "admin",
+        },
+        async () => {
+          await service.deliverToChannel(adapter, "chat-1", text, { origin: "agent" });
+        },
+      );
+
+      const events = replyBoundEvents();
+      // One observability event per bind, and the bind count is the delivered-chunk count.
+      expect(events.length).toBe(recordOutboundMessage.mock.calls.length);
+      expect(events.length).toBeGreaterThan(1);
+      for (const ev of events) {
+        const payload = ev[1] as Record<string, unknown>;
+        expect(payload.channelType).toBe("discord");
+        expect(payload.agentId).toBe("mldag");
+        expect(payload.traceId).toBe("12121212-1212-4121-8121-121212121212");
+        expect(payload.messageId).toMatch(/^chunk-msg-\d+$/);
+      }
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // Abort signal
   // -------------------------------------------------------------------------
 
