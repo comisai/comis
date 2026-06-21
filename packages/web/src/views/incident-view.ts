@@ -16,6 +16,14 @@ import "../components/feedback/ic-empty-state.js";
 type LoadState = "loading" | "loaded" | "error";
 
 /**
+ * MD-01: a canonical UUID (8-4-4-4-12 hex). The context `traceId` is a `z.guid()`
+ * (`context.ts`), so a UUID-shaped ref is a traceId; a sessionKey is colon-segmented
+ * and never a bare UUID. Used by {@link IcIncidentView._ref} to route the single
+ * route `ref` to the right obs.explain shape.
+ */
+const IS_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
  * The deterministic `obs.explain` IncidentReport wire shape (the fields this
  * view renders). A loose, presence-conditional projection — every optional
  * section is rendered ONLY when present (mirroring the schema's additive
@@ -233,6 +241,14 @@ export class IcIncidentView extends LitElement {
   /** The drill ref (one of sessionKey | traceId resolves the incident). */
   @property() sessionKey = "";
   @property() traceId = "";
+  /**
+   * MD-01: the single `ref` the route (`#/observe/incident?ref=<ref>`) passes —
+   * a sessionKey OR a traceId. The route can't know which, so the view classifies
+   * it (see {@link _ref}): a UUID-shaped ref is a traceId (the context `traceId` is
+   * a `z.guid()`), everything else a colon-segmented sessionKey. Before this, the
+   * route forced every ref into the sessionKey slot, so a traceId ref never resolved.
+   */
+  @property() ref = "";
 
   /* ---- Internal state ---- */
 
@@ -247,7 +263,10 @@ export class IcIncidentView extends LitElement {
 
   override willUpdate(changed: Map<string, unknown>): void {
     // rpcClient is null in connectedCallback — load here once it (or the ref) is set.
-    if ((changed.has("rpcClient") || changed.has("sessionKey") || changed.has("traceId")) && this.rpcClient) {
+    if (
+      (changed.has("rpcClient") || changed.has("sessionKey") || changed.has("traceId") || changed.has("ref")) &&
+      this.rpcClient
+    ) {
       this._tryLoad();
     }
   }
@@ -259,8 +278,16 @@ export class IcIncidentView extends LitElement {
   }
 
   private get _ref(): { sessionKey?: string; traceId?: string } | null {
+    // Explicit props win (a direct caller that already knows the shape).
     if (this.sessionKey) return { sessionKey: this.sessionKey };
     if (this.traceId) return { traceId: this.traceId };
+    // MD-01: classify the route's single `ref` by shape. A UUID is a traceId (the
+    // context `traceId` is a `z.guid()`); a sessionKey is colon-segmented and never
+    // a bare UUID. obs.explain accepts EITHER — sending the right one is what lets a
+    // traceId-shaped ref resolve (the route used to force every ref into sessionKey).
+    if (this.ref) {
+      return IS_UUID.test(this.ref) ? { traceId: this.ref } : { sessionKey: this.ref };
+    }
     return null;
   }
 

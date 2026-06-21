@@ -114,12 +114,15 @@ function createIncidentMock(
 
 async function createElement(
   rpc: RpcClient | null,
-  props: { sessionKey?: string; traceId?: string } = {},
+  props: { sessionKey?: string; traceId?: string; ref?: string } = {},
 ): Promise<IcIncidentView> {
   const el = document.createElement("ic-incident-view") as IcIncidentView;
   el.rpcClient = rpc;
   if (props.sessionKey !== undefined) el.sessionKey = props.sessionKey;
   if (props.traceId !== undefined) el.traceId = props.traceId;
+  // MD-01: the single `ref` the route (#/observe/incident?ref=<ref>) passes —
+  // a sessionKey OR a traceId; the view classifies which.
+  if (props.ref !== undefined) (el as unknown as { ref: string }).ref = props.ref;
   document.body.appendChild(el);
   await vi.advanceTimersByTimeAsync(50);
   await (el as unknown as { updateComplete: Promise<unknown> }).updateComplete;
@@ -167,6 +170,41 @@ describe("IcIncidentView (first obs.explain SPA consumer)", () => {
     // Cost + timing stat cards.
     const cards = el.shadowRoot?.querySelectorAll("ic-stat-card");
     expect((cards?.length ?? 0)).toBeGreaterThan(0);
+  });
+
+  /* ---- MD-01: the route's single `ref` resolves to the RIGHT obs.explain shape ---- */
+
+  it("MD-01: a traceId-shaped (UUID) ref reaches obs.explain as { traceId }, not { sessionKey }", async () => {
+    const { rpc, call } = createIncidentMock(() => fixtureReport());
+    const traceId = "f942d38c-1111-2222-3333-444455556666";
+    await createElement(rpc, { ref: traceId });
+
+    // The UUID-shaped ref is classified as a traceId — the bug was the route
+    // forcing every ref into the sessionKey slot, so a traceId never resolved.
+    expect(call).toHaveBeenCalledWith(
+      "obs.explain",
+      expect.objectContaining({ traceId, depth: "summary" }),
+    );
+    // It must NOT have been sent as a sessionKey.
+    const sentAsSessionKey = call.mock.calls.some(
+      ([m, p]) => m === "obs.explain" && (p as Record<string, unknown>)?.sessionKey === traceId,
+    );
+    expect(sentAsSessionKey).toBe(false);
+  });
+
+  it("MD-01: a sessionKey-shaped (colon-segmented) ref reaches obs.explain as { sessionKey }", async () => {
+    const { rpc, call } = createIncidentMock(() => fixtureReport());
+    const sessionKey = "agent:default:telegram:12345";
+    await createElement(rpc, { ref: sessionKey });
+
+    expect(call).toHaveBeenCalledWith(
+      "obs.explain",
+      expect.objectContaining({ sessionKey, depth: "summary" }),
+    );
+    const sentAsTraceId = call.mock.calls.some(
+      ([m, p]) => m === "obs.explain" && (p as Record<string, unknown>)?.traceId === sessionKey,
+    );
+    expect(sentAsTraceId).toBe(false);
   });
 
   it("renders the failures table and the breaker timeline", async () => {
