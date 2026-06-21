@@ -1029,6 +1029,47 @@ describe("ObservabilityStore — aggregateQuarterHourly (COST-03, the 900000-ms 
     // A filter that matches nothing → an empty result (no crash, no full-scan leak).
     expect(store.aggregateQuarterHourly(hourStart, { agent: "nobody" })).toEqual([]);
   });
+
+  it("aggregateHourlyCost: the 60-min sibling buckets identically + honors the filter", () => {
+    const hourStart = 18 * ONE_HOUR_MS;
+    // Two rows in the same hour bucket (one priced, one unknown pricing_state).
+    store.insertTokenUsage(
+      makeTokenRow({ timestamp: hourStart + 1_000, agentId: "agent-a", costTotal: 0.10, pricingState: "priced" }),
+    );
+    store.insertTokenUsage(
+      makeTokenRow({ timestamp: hourStart + 2_000, agentId: "agent-a", costTotal: 0.40 }),
+    );
+
+    const hourly = store.aggregateHourlyCost(hourStart);
+    expect(hourly).toHaveLength(1);
+    expect(hourly[0]!.totalCost).toBeCloseTo(0.50, 10);
+    // One row has no pricing_state → it counts as missing (NOT catalog-backed).
+    expect(hourly[0]!.missingPricingCount).toBe(1);
+
+    // The bound filter isolates the agent (parameterized, never interpolated).
+    expect(store.aggregateHourlyCost(hourStart, { agent: "nobody" })).toEqual([]);
+  });
+
+  it("pricingCoverage: the daemon-wide three-state count (priced / free / unknown)", () => {
+    store.insertTokenUsage(makeTokenRow({ costTotal: 0.10, pricingState: "priced" }));
+    store.insertTokenUsage(makeTokenRow({ costTotal: 0.10, pricingState: "free" }));
+    // No pricing_state → the unknown/NULL fall-through.
+    store.insertTokenUsage(makeTokenRow({ costTotal: 0.10 }));
+
+    const coverage = store.pricingCoverage();
+    expect(coverage.priced).toBe(1);
+    expect(coverage.free).toBe(1);
+    expect(coverage.unknown).toBe(1);
+
+    // The sinceMs lower bound is honored: a FRESH (in-window) priced row is seen,
+    // while the 3 default-timestamp rows above (2023) fall outside the window.
+    const now = systemNowMs();
+    store.insertTokenUsage(makeTokenRow({ timestamp: now - 10_000, costTotal: 0.10, pricingState: "priced" }));
+    const windowed = store.pricingCoverage(now - 1_000_000);
+    expect(windowed.priced).toBe(1);
+    expect(windowed.free).toBe(0);
+    expect(windowed.unknown).toBe(0);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1141,5 +1182,39 @@ describe("ObservabilityStore — aggregateToolCostByAgent (HG-01 even-split + co
   it("returns an empty array for an agent with only NULL-tag rows (honest empty)", () => {
     store.insertTokenUsage(makeTokenRow({ agentId: "agent-a", costTotal: 0.10 }));
     expect(store.aggregateToolCostByAgent("agent-a")).toEqual([]);
+  });
+
+  it("DEGRADES on a corrupt/non-array tool_tag — the row contributes nothing, no throw, no NaN", () => {
+    // Persist one VALID multi-tool row, then directly inject rows whose tool_tag
+    // is malformed (not valid JSON / a non-array JSON literal) — bypassing
+    // insertTokenUsage's JSON.stringify to simulate a corrupted column. The
+    // parseDistinctTools degrade-on-malformed path must skip them (no throw, and
+    // they add nothing to any tool's share).
+    store.insertTokenUsage(
+      makeTokenRow({ agentId: "agent-a", costTotal: 0.20, totalTokens: 100, toolTag: ["bash"] }),
+    );
+    const insertRaw = db.prepare(`
+      INSERT INTO obs_token_usage (
+        timestamp, trace_id, agent_id, channel_id, session_key, provider, model,
+        prompt_tokens, completion_tokens, total_tokens, cache_read_tokens, cache_write_tokens,
+        cost_input, cost_output, cost_total, cost_cache_read, cost_cache_write, cache_saved,
+        latency_ms, tool_tag
+      ) VALUES (
+        1700000000000, 't-bad', 'agent-a', '', '', 'anthropic', 'claude-3-opus',
+        10, 10, 50, 0, 0, 0.001, 0.001, 0.99, 0, 0, 0, 100, ?
+      )
+    `);
+    insertRaw.run("{not valid json");   // a corrupt JSON blob → JSON.parse throws → []
+    insertRaw.run('"a-bare-string"');    // valid JSON but NOT an array → []
+    insertRaw.run("42");                  // valid JSON literal, non-array → []
+
+    // No throw, and ONLY the valid bash row's cost is attributed (the 3 corrupt
+    // rows contribute nothing — they have no distinct-tool set).
+    const rows = store.aggregateToolCostByAgent("agent-a");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.tool).toBe("bash");
+    expect(rows[0]!.cost).toBeCloseTo(0.20, 10);
+    // Conservation still holds: the corrupt rows' $ are simply not tool-attributable.
+    expect(rows.reduce((s, r) => s + r.cost, 0)).toBeCloseTo(0.20, 10);
   });
 });
