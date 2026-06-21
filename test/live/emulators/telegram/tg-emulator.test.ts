@@ -39,8 +39,14 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createTgEmulator, type TgEmulator } from "./tg-emulator.js";
+import {
+  checkWebhookSecretToken,
+  createTgEmulator,
+  TELEGRAM_WEBHOOK_SECRET_TOKEN_HEADER,
+  type TgEmulator,
+} from "./tg-emulator.js";
 import { resetUpdateIdCounter } from "./tg-payloads.js";
+import { createWebhookReceiver, type WebhookReceiver } from "./webhook-receiver.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const EMULATOR_SOURCE = resolve(HERE, "tg-emulator.ts");
@@ -1247,5 +1253,96 @@ describe("TgEmulator — group/forum chats + addressing inject (GROUP-01/02)", (
       expect(env.ok).toBe(true);
       expect((env.result as unknown[]).length).toBe(0);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AUTO-05 (Phase 208) — the webhook-POST mode + the HARNESS-SIDE secret-token
+// gate. Instead of queuing for getUpdates, postWebhookMessage POSTs the built
+// grammy Update to a configured webhook target carrying
+// X-Telegram-Bot-Api-Secret-Token; a tiny loopback receiver enforces the gate
+// (correct token → accepted, wrong/absent → rejected).
+//
+// ⚠ HONEST GAP (the AUTO-05 finding, re-verified at HEAD): Comis has NO Telegram
+// webhook INGESTION route — shouldUseRunner merely skips polling when webhookUrl
+// is set, with nothing replacing it; no product code checks this header. So this
+// gate is the HARNESS-side one; it never asserts "a webhook update reached the
+// agent" (there is no route to receive it). The product gap is documented in
+// webhook-receiver.ts + the telegram-webhook.test.ts scenario.
+// ---------------------------------------------------------------------------
+
+describe("TgEmulator — webhook-POST mode + the harness-side secret-token gate (AUTO-05)", () => {
+  const WEBHOOK_SECRET = "s3cr3t-webhook-token-aaaaaaaaaaaaaaaa";
+  const FROM = { id: 777, firstName: "Webhooker", username: "webhooker" } as const;
+  const WEBHOOK_CHAT = { chatId: 424242 } as const;
+
+  let receiver: WebhookReceiver;
+  let emu: TgEmulator;
+
+  beforeEach(async () => {
+    resetUpdateIdCounter();
+    receiver = await createWebhookReceiver(WEBHOOK_SECRET);
+    emu = createTgEmulator({ botToken: TOKEN, webhook: { url: receiver.url, secret: WEBHOOK_SECRET } });
+    await emu.start();
+  });
+
+  afterEach(async () => {
+    await emu.stop();
+    await receiver.stop();
+  });
+
+  it("the pure secret-token gate accepts the configured token and rejects wrong/absent", () => {
+    // checkWebhookSecretToken is the gate predicate the receiver wraps.
+    expect(checkWebhookSecretToken(WEBHOOK_SECRET, WEBHOOK_SECRET)).toBe(true);
+    expect(checkWebhookSecretToken(WEBHOOK_SECRET, "wrong-token")).toBe(false);
+    expect(checkWebhookSecretToken(WEBHOOK_SECRET, undefined)).toBe(false);
+    expect(checkWebhookSecretToken(WEBHOOK_SECRET, "")).toBe(false);
+    // The header name is the single shared source of truth (POST side + receiver).
+    expect(TELEGRAM_WEBHOOK_SECRET_TOKEN_HEADER).toBe("X-Telegram-Bot-Api-Secret-Token");
+  });
+
+  it("a webhook-POST with the CORRECT secret token is accepted (200) and the Update is recorded by the gate", async () => {
+    const status = await emu.postWebhookMessage(WEBHOOK_CHAT, FROM, "hello via webhook");
+    expect(status).toBe(200);
+    const accepted = receiver.accepted();
+    expect(accepted.length).toBe(1);
+    // The delivered Update is the SAME grammy `message` shape the polled path
+    // would have queued (identical shape — §4.2 scope guard, no new kind).
+    const msg = accepted[0]!.message as Record<string, unknown>;
+    expect(msg["text"]).toBe("hello via webhook");
+    expect((msg["chat"] as Record<string, unknown>)["id"]).toBe(WEBHOOK_CHAT.chatId);
+    expect((msg["from"] as Record<string, unknown>)["id"]).toBe(FROM.id);
+    expect(receiver.rejectedCount()).toBe(0);
+  });
+
+  it("a webhook-POST with a WRONG token AND one with an ABSENT token are BOTH rejected (401) by the harness gate", async () => {
+    // WRONG token → rejected.
+    const wrongStatus = await emu.postWebhookMessage(WEBHOOK_CHAT, FROM, "forged update", "the-wrong-token");
+    expect(wrongStatus).toBe(401);
+
+    // ABSENT token → rejected. The emulator sends an empty-string header (no
+    // token) when the override is ""; the gate treats a non-matching value
+    // (incl. empty) as a reject — a forged Update without the shared secret is
+    // untrusted.
+    const absentStatus = await emu.postWebhookMessage(WEBHOOK_CHAT, FROM, "forged update", "");
+    // RED (deliberately wrong, Pitfall 2): assert the ABSENT-token POST is
+    // ACCEPTED (200). It is NOT — the gate rejects it (401) — so this RUNS and
+    // FAILS, proving the gate actually blocks a forged Update. Flip to 401 (the
+    // GREEN) once the RED is committed.
+    expect(absentStatus).toBe(200);
+
+    // Neither forged POST was recorded as delivered; both were counted rejected.
+    expect(receiver.accepted().length).toBe(0);
+    expect(receiver.rejectedCount()).toBe(2);
+  });
+
+  it("postWebhookMessage throws when the emulator has no webhook config (the mode is opt-in; polling default unchanged)", async () => {
+    const pollingOnly = createTgEmulator({ botToken: TOKEN });
+    await pollingOnly.start();
+    try {
+      await expect(pollingOnly.postWebhookMessage(WEBHOOK_CHAT, FROM, "nope")).rejects.toThrow(/webhook/i);
+    } finally {
+      await pollingOnly.stop();
+    }
   });
 });

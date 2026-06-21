@@ -72,6 +72,42 @@ import {
 import { tgCaps } from "./tg-caps.js";
 
 /**
+ * The Telegram webhook secret-token header (AUTO-05, Phase 208). When a bot is
+ * registered with a `secret_token`, Telegram stamps every delivered Update with
+ * this header; the host's ingestion route is expected to reject a POST whose
+ * header is wrong/absent. The emulator's webhook-POST mode
+ * ({@link TgEmulator.postWebhookMessage}) carries it; the harness-side receiver
+ * (`webhook-receiver.ts`) enforces it. Exported so the gate's header name is a
+ * single source of truth shared by the POST side and the receiver side.
+ *
+ * ⚠ The PRODUCT does NOT check this header at HEAD — there is no Telegram
+ * webhook ingestion route (the AUTO-05 finding); the gate proven here is the
+ * HARNESS-side one. See `webhook-receiver.ts` for the full honest-gap note.
+ */
+export const TELEGRAM_WEBHOOK_SECRET_TOKEN_HEADER = "X-Telegram-Bot-Api-Secret-Token";
+
+/**
+ * The harness-side webhook secret-token gate (AUTO-05) as a pure predicate.
+ *
+ * Returns `true` IFF the presented `X-Telegram-Bot-Api-Secret-Token` header is
+ * present AND exactly equals the configured `expected` token. A `undefined`
+ * (absent header) or any mismatch returns `false` — a forged Update without the
+ * shared secret is untrusted. Pure + side-effect-free so the gate decision is
+ * trivially unit-testable in isolation (the receiver wraps it with the loopback
+ * 200/401 response).
+ *
+ * This mirrors the discipline a REAL ingestion route must enforce; the product
+ * has no such route at HEAD (the AUTO-05 finding), so this gate lives on the
+ * harness side. NOT a timing-safe compare — a test fixture, not production auth
+ * (the real grammy `webhookCallback({ secretToken })` owns the production check
+ * IF a route is ever added).
+ */
+export function checkWebhookSecretToken(expected: string, presented: string | undefined): boolean {
+  if (presented === undefined) return false;
+  return presented === expected;
+}
+
+/**
  * A `RecordedOutbound` — the full option set captured for every outbound the
  * agent pushes to the channel (design §4.4). Later phases assert on the FULL
  * set; the 204 round-trip only needs `text` + `messageId`, but recording
@@ -331,6 +367,34 @@ export interface TgEmulator extends ChannelEmulator {
     opts?: InjectOpts,
   ): number;
   /**
+   * The webhook-POST mode (AUTO-05): instead of queuing the inbound for the next
+   * `getUpdates` long-poll (the default polling path of {@link injectMessage}),
+   * POST the SAME grammy `message` `Update` (built by the SAME `tg-payloads`
+   * builders, so its shape is identical to the polled one) to the emulator's
+   * configured `webhook.url`, carrying the `X-Telegram-Bot-Api-Secret-Token:
+   * <webhook.secret>` header. Returns the HTTP status the webhook target
+   * responded with (200 if the harness-side gate accepted the configured token;
+   * 401 if the gate rejected a wrong/absent token), so a scenario can assert the
+   * secret-token gate WITHOUT a product ingestion route.
+   *
+   * ⚠ This requires the emulator to be constructed with a `webhook` option (the
+   * URL of a {@link createWebhookReceiver}-style target). Calling it without one
+   * throws — the webhook-POST mode is opt-in; the default inject path is
+   * unchanged. The PRODUCT has no webhook ingestion route at HEAD (the AUTO-05
+   * finding) — this drives the harness-side gate, never a real agent delivery.
+   *
+   * @param secretOverride when set, POST this token in the header INSTEAD of the
+   *   configured `webhook.secret` — so a scenario can drive the WRONG-token and
+   *   ABSENT-token (empty string) reject cases against the same receiver.
+   * @returns the webhook target's HTTP status code.
+   */
+  postWebhookMessage(
+    chat: ChatRef,
+    from: { id: number; firstName: string; username?: string },
+    text: string,
+    secretOverride?: string,
+  ): Promise<number>;
+  /**
    * Queue an inbound forum-service `message` update of `kind` (COVER-02) for the
    * next `getUpdates` long-poll (builds it via {@link makeServiceMessageUpdate}).
    * The adapter's message handler FILTERS these six kinds at
@@ -448,6 +512,20 @@ export interface TgEmulator extends ChannelEmulator {
   clearFaults(): void;
 }
 
+/**
+ * The webhook-POST configuration (AUTO-05). When set, {@link TgEmulator.postWebhookMessage}
+ * POSTs the built Update to `url` carrying the `X-Telegram-Bot-Api-Secret-Token:
+ * <secret>` header (instead of queuing for `getUpdates`). The `url` is a
+ * harness-side receiver (`createWebhookReceiver`), NOT a product ingestion route
+ * — Comis has none at HEAD (the AUTO-05 finding).
+ */
+export interface WebhookConfig {
+  /** The loopback webhook target the POST mode delivers to (a `createWebhookReceiver` URL). */
+  readonly url: string;
+  /** The configured `secret_token` stamped into the `X-Telegram-Bot-Api-Secret-Token` header. */
+  readonly secret: string;
+}
+
 /** Options for {@link createTgEmulator}. */
 export interface CreateTgEmulatorOptions {
   /** The bot token grammy builds `/bot<token>/<method>` paths from (loopback stub). */
@@ -459,6 +537,13 @@ export interface CreateTgEmulatorOptions {
    * timeout (RESEARCH A1/A3).
    */
   readonly maxPollMs?: number;
+  /**
+   * Opt-in webhook-POST mode config (AUTO-05). When present,
+   * {@link TgEmulator.postWebhookMessage} POSTs Updates to `url` with the
+   * secret-token header instead of queuing for `getUpdates`. Absent (the
+   * default) → the emulator is polling-only and `postWebhookMessage` throws.
+   */
+  readonly webhook?: WebhookConfig;
 }
 
 /** A pending waiter blocked inside a long-poll, awaiting an injected update. */
@@ -712,6 +797,11 @@ function fileRouteForKind(kind: MediaKind, id: string): { filePath: string; cont
 export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
   const backend: HttpBackend = createHttpBackend();
   const maxPollMs = opts.maxPollMs ?? DEFAULT_MAX_POLL_MS;
+  // AUTO-05: the opt-in webhook-POST target (URL + secret). Absent → the
+  // emulator is polling-only and `postWebhookMessage` throws (the default inject
+  // path is unchanged). When present, `postWebhookMessage` POSTs the built
+  // Update to `webhook.url` with the `X-Telegram-Bot-Api-Secret-Token` header.
+  const webhook = opts.webhook;
 
   // Per-chat ORACLE state only (outbound log + reactions).
   const chats = new Map<number, ChatOracle>();
@@ -1380,6 +1470,56 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
       // Wake a blocked long-poll, if any, so the SAME call resolves.
       wakeWaiters();
       return messageId;
+    },
+
+    async postWebhookMessage(chat, from, text, secretOverride) {
+      // AUTO-05 — the webhook-POST mode. Requires the opt-in `webhook` config;
+      // the default (polling) emulator has none → throw (this mode is opt-in,
+      // the polling inject path is untouched).
+      if (webhook === undefined) {
+        throw new Error(
+          "postWebhookMessage requires the emulator to be constructed with a `webhook` option (AUTO-05 webhook-POST mode)",
+        );
+      }
+      const messageId = nextMessageId++;
+      const user: User = makeUser({
+        id: from.id,
+        firstName: from.firstName,
+        ...(from.username !== undefined ? { username: from.username } : {}),
+      });
+      // Build the SAME grammy `message` Update the polling path would queue
+      // (identical shape — a webhook-delivered message Update is the same shape
+      // as a polled one; §4.2 scope guard: no new update kind). The recorded
+      // group chat (if any) is stamped on, like injectMessage.
+      const group = groupChats.get(chat.chatId);
+      const update = makeMessageUpdate({
+        updateId: nextUpdateId(),
+        messageId,
+        from: user,
+        chatId: chat.chatId,
+        text,
+        ...(group !== undefined ? { chat: group.chat } : {}),
+      });
+      // POST the Update to the configured webhook target carrying the
+      // X-Telegram-Bot-Api-Secret-Token header. `secretOverride` lets a scenario
+      // drive the WRONG-token / ABSENT-token (empty string) reject cases against
+      // the same receiver; absent → the configured secret (the accept case).
+      const token = secretOverride ?? webhook.secret;
+      const res = await fetch(webhook.url, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          [TELEGRAM_WEBHOOK_SECRET_TOKEN_HEADER]: token,
+        },
+        body: JSON.stringify(update),
+      });
+      // Drain the body so the socket frees (the receiver always responds JSON).
+      await res.text().catch(() => undefined);
+      // Return the HTTP status the gate produced (200 accept / 401 reject) — the
+      // scenario asserts the secret-token gate on the harness side. NB: outbound
+      // (sendMessage) is UNCHANGED — still the emulator's Bot API; only the
+      // INBOUND delivery transport differs here.
+      return res.status;
     },
 
     createGroupChat(opts) {
