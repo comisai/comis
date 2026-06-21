@@ -52,7 +52,16 @@ export interface ChanliveHandle {
   readonly channel: string;
   /** `http://127.0.0.1:<P>` — the emulator `/control/*` base. */
   readonly controlEndpoint: string;
-  /** `http://127.0.0.1:<R>` — the rig-control (restart / reset-deep) base (Plan 04). */
+  /**
+   * `http://127.0.0.1:<R>` — the rig-control base.
+   *
+   * For the IN-PROCESS rig (Plan 205-04) this is the gateway URL — the
+   * discover-or-spawn HEALTH ANCHOR a later `tg up` probes, NOT a cross-process
+   * control surface (the in-proc controller dies with its launcher). For the
+   * DETACHED rig (Plan 208-08, Option A) this is a REAL dedicated rig-control
+   * HTTP surface (≠ the gateway URL) the cold-shell `tg restart`/`reset`/
+   * `reconfigure` POST to drive a SEPARATE-process rig.
+   */
   readonly rigControlEndpoint: string;
   /** `http://127.0.0.1:<G>` — the daemon `/rpc` + `/health`. */
   readonly gatewayUrl: string;
@@ -64,6 +73,14 @@ export interface ChanliveHandle {
   readonly dataDir: string;
   /** `<dataDir>/<memory.dbPath>` — the isolated `memory.db` the oracles read. */
   readonly memoryDbPath: string;
+  /**
+   * The OS process id of the DETACHED-subprocess rig (Plan 208-08, Option A) —
+   * `undefined` for the in-process rig (which has no separate process to signal).
+   * `tg down`/`restart`/`reset` SIGTERM / probe this pid to drive (or reap) the
+   * cold-shell rig; the cross-process acceptance test asserts the pid is gone
+   * after `tg down` (no leaked daemon — the pm2 zombie class CLAUDE.md warns of).
+   */
+  readonly pid?: number;
 }
 
 /** The default handle directory — `~/.comis-chanlive` (a NEW operator-visible artifact, first written by Phase 205). */

@@ -50,9 +50,11 @@
  */
 
 import { mkdtempSync, writeFileSync, rmSync, existsSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:net";
+import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { validateLocalServerUrl } from "@comis/core";
 import { startTestDaemon, type TestDaemonHandle } from "../../support/daemon-harness.js";
 import { createTgEmulator, type TgEmulator, type RecordedOutbound, type ChatRef } from "../emulators/telegram/tg-emulator.js";
@@ -82,7 +84,7 @@ import { createRigController, type RigController } from "./rig-control.js";
 // config writer under a bare `tsx` (where `rig.ts`'s `@comis/core` import does not
 // resolve). Re-export `buildConfigYaml` below so `rig.ts`'s public surface (and
 // `rig.test.ts`) is unchanged.
-import { FAKE_BOT_TOKEN, MEMORY_DB_FILE, buildConfigYaml } from "./rig-config.js";
+import { FAKE_BOT_TOKEN, MEMORY_DB_FILE, GATEWAY_TOKEN, buildConfigYaml } from "./rig-config.js";
 
 export { buildConfigYaml } from "./rig-config.js";
 
@@ -557,6 +559,16 @@ export interface StandaloneRigOptions {
    * tests so the operator's real handle dir is never touched.
    */
   readonly baseDir?: string;
+  /**
+   * DETACHED mode (Plan 208-08, Option A — the cold-shell stretch). When `true`,
+   * spawn a DETACHED subprocess rig (`rig-daemon.ts`) that OUTLIVES this process,
+   * recording a handle with a real `pid` + a dedicated rig-control HTTP
+   * `rigControlEndpoint` (≠ gateway) — so a SEPARATE-process `tg send`/`tg down`
+   * can drive it. DEFAULT falsy → the in-process rig (the daemon dies with this
+   * process; `rigControlEndpoint` = the gateway anchor). The in-process spine is
+   * the certified autonomy path; detached is the optional headline stretch.
+   */
+  readonly detached?: boolean;
 }
 
 /**
@@ -588,12 +600,48 @@ export interface StandaloneRig {
   cleanup?(): Promise<void>;
 }
 
+/**
+ * The result of {@link spawnDetachedRig} — a live DETACHED-subprocess rig (Plan
+ * 208-08, Option A). Unlike {@link BuiltRig} (an in-process rig), this carries a
+ * cross-process `pid` + the dedicated rig-control HTTP `rigControlEndpoint`; the
+ * daemon lives in a SEPARATE process tree (the subprocess + its daemon grandchild)
+ * that OUTLIVES the launcher. `cleanup()` SIGTERMs the subprocess (which reaps its
+ * daemon grandchild + wipes its throwaway dirs) and waits for the gateway port to
+ * free (the authoritative no-leak oracle).
+ */
+export interface DetachedRigHandle {
+  /** The detached subprocess's OS pid (the cold-shell `tg down`/`restart` signal target). */
+  readonly pid: number;
+  /** The daemon gateway base URL (`http://127.0.0.1:<G>`). */
+  readonly gatewayUrl: string;
+  /** The gateway bearer token (the ≥32-char literal). */
+  readonly gatewayToken: string;
+  /** The emulator `/control/*` base (`http://127.0.0.1:<P>`). */
+  readonly controlEndpoint: string;
+  /** The DEDICATED rig-control HTTP base (`http://127.0.0.1:<R>`, ≠ gateway) the cold-shell verbs POST. */
+  readonly rigControlEndpoint: string;
+  /** The fixed test chat id. */
+  readonly chatId: number;
+  /** The subprocess's throwaway `COMIS_DATA_DIR` (the oracles read it). */
+  readonly dataDir: string;
+  /** `<dataDir>/<memory.dbPath>` — the isolated `memory.db`. */
+  readonly memoryDbPath: string;
+  /** SIGTERM the subprocess (it reaps its daemon + wipes its dirs) + wait for the port to free. */
+  cleanup(): Promise<void>;
+}
+
 /** Injectable seams for {@link startStandaloneRig} — defaults wire the real probe + spawn. */
 export interface StandaloneRigDeps {
   /** The health probe (default {@link probeHealth}) — the discover signal. */
   readonly probeFn?: (gatewayUrl: string) => Promise<boolean>;
   /** The rig spawner (default {@link buildRig}) — booted only when no healthy rig is discovered. */
   readonly spawnFn?: typeof buildRig;
+  /**
+   * The DETACHED-subprocess spawner (default {@link spawnDetachedRig}) — used only
+   * when `opts.detached` is set. Injected by the deterministic unit test so the
+   * detached DECISION + the handle SHAPE are proven with no real subprocess.
+   */
+  readonly spawnDetachedFn?: (opts: StandaloneRigOptions) => Promise<DetachedRigHandle>;
 }
 
 /**
@@ -613,11 +661,46 @@ export async function startStandaloneRig(
 ): Promise<StandaloneRig> {
   const probeFn = deps.probeFn ?? probeHealth;
   const spawnFn = deps.spawnFn ?? buildRig;
+  const spawnDetachedFn = deps.spawnDetachedFn ?? spawnDetachedRig;
 
   // DISCOVER — reuse a healthy recorded rig (never spawn a second daemon over it).
   const existing = readHandle(opts.channel, opts.baseDir);
   if (existing && (await probeFn(existing.gatewayUrl))) {
     return { reused: true, handle: existing };
+  }
+
+  // DETACHED SPAWN (Plan 208-08, Option A) — boot a SEPARATE-process rig that
+  // OUTLIVES this launcher, record a handle with a real pid + the dedicated
+  // rig-control HTTP endpoint (≠ gateway). The detached subprocess writes its OWN
+  // handle (it knows its pid + rig-control port), so here we just project the
+  // StandaloneRig over it; `cleanup()` SIGTERMs the subprocess (which reaps its
+  // daemon + wipes its dirs + removes the handle).
+  if (opts.detached === true) {
+    const detached = await spawnDetachedFn(opts);
+    const handle: ChanliveHandle = {
+      channel: opts.channel,
+      controlEndpoint: detached.controlEndpoint,
+      rigControlEndpoint: detached.rigControlEndpoint,
+      gatewayUrl: detached.gatewayUrl,
+      gatewayToken: detached.gatewayToken,
+      chatId: detached.chatId,
+      dataDir: detached.dataDir,
+      memoryDbPath: detached.memoryDbPath,
+      pid: detached.pid,
+    };
+    // The subprocess wrote a handle on boot, but re-write it here too so an
+    // INJECTED test seam (which does not actually spawn a subprocess) still
+    // produces the recorded handle — the real subprocess write is idempotent.
+    writeHandle(handle, opts.baseDir);
+    const cleanup = async (): Promise<void> => {
+      try {
+        await detached.cleanup();
+      } finally {
+        const path = handlePath(opts.channel, opts.baseDir);
+        if (existsSync(path)) rmSync(path, { force: true });
+      }
+    };
+    return { reused: false, handle, cleanup };
   }
 
   // SPAWN — no healthy rig; boot a fresh one and record its handle. Include
@@ -683,4 +766,185 @@ export async function startStandaloneRig(
   };
 
   return { reused: false, handle, controller, cleanup };
+}
+
+// ---------------------------------------------------------------------------
+// DETACHED-subprocess rig (Plan 208-08, Option A — the cold-shell stretch).
+// ---------------------------------------------------------------------------
+
+/** The `rig-daemon.ts` entrypoint, resolved relative to THIS file. */
+const RIG_DAEMON_ENTRY = fileURLToPath(new URL("./rig-daemon.ts", import.meta.url));
+
+/** How long to wait for the detached subprocess's `/health` (the daemon grandchild boots inside it). */
+const DETACHED_HEALTH_WAIT_MS = 40_000;
+/** Poll cadence + per-probe timeout for the detached `/health` wait (ms). */
+const DETACHED_PROBE_MS = 250;
+/** Grace after SIGTERM for the subprocess to reap its daemon + free the gateway port (ms). */
+const DETACHED_REAP_GRACE_MS = 20_000;
+
+/** Pick a free loopback port via a transient `listen(0)` (shares the rig's {@link pickFreePort}). */
+async function pickFreeRigPort(): Promise<number> {
+  return pickFreePort();
+}
+
+/** A bounded GET `<url>/health` → true on 200 (the subprocess's rig-control health). */
+async function probeRigControlHealth(rigControlEndpoint: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${rigControlEndpoint}/health`, {
+      signal: AbortSignal.timeout(DETACHED_PROBE_MS * 4),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/** Is `pid` alive? `kill(pid, 0)` throws when not (POSIX liveness). */
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Signal the process GROUP led by `pid` (negative pid — reaps the rig-daemon AND
+ * its daemon grandchild in the same detached group), falling back to the single
+ * `pid` if the group signal is unsupported / the group is already gone. Swallows
+ * ESRCH (already-reaped) — an honest no-op, never a throw.
+ */
+function signalGroupOrPid(pid: number, signal: NodeJS.Signals): void {
+  try {
+    process.kill(-pid, signal); // negative pid → the whole process group
+    return;
+  } catch {
+    // group gone / unsupported — try the single pid below.
+  }
+  try {
+    process.kill(pid, signal);
+  } catch {
+    // already gone — honest no-op.
+  }
+}
+
+/** Can we bind `port` on loopback? true = FREE (the no-leak oracle). */
+function isGatewayPortFree(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const srv = createServer();
+    srv.once("error", () => resolve(false));
+    srv.listen(port, "127.0.0.1", () => {
+      srv.close(() => resolve(true));
+    });
+  });
+}
+
+/**
+ * Spawn the DETACHED subprocess rig (`rig-daemon.ts` under `tsx`, `{ detached:
+ * true, stdio: "ignore" }` + `child.unref()`) and wait for its rig-control
+ * `/health` (the daemon grandchild boots inside it). Returns a
+ * {@link DetachedRigHandle} whose `cleanup()` SIGTERMs the subprocess (which reaps
+ * its daemon grandchild + wipes its throwaway dirs + removes the handle) and waits
+ * for the gateway port to free — the authoritative no-leak oracle.
+ *
+ * The launcher PRE-ALLOCATES the gateway + rig-control ports so the handle URLs are
+ * known up-front (the subprocess binds them); the subprocess writes its OWN handle
+ * (it knows its pid). On a boot-health failure, SIGTERM the subprocess + throw (no
+ * half-alive rig).
+ */
+export async function spawnDetachedRig(opts: StandaloneRigOptions): Promise<DetachedRigHandle> {
+  const baseDir = opts.baseDir ?? join(homedir(), ".comis-chanlive");
+  const gatewayPort = await pickFreeRigPort();
+  const rigControlPort = await pickFreeRigPort();
+  const rigControlEndpoint = `http://127.0.0.1:${rigControlPort}`;
+  const gatewayUrl = `http://127.0.0.1:${gatewayPort}`;
+
+  // Spawn `node --import tsx rig-daemon.ts` (NOT the `tsx` shim binary). WHY: the
+  // `tsx` shim DOUBLE-FORKS (`child.pid` = the shim, ≠ the inner node process that
+  // runs the rig) — a PID-identity hazard where a SIGTERM to `child.pid` orphans
+  // the inner rig + its daemon grandchild. `node --import tsx` SINGLE-forks, so
+  // `child.pid` IS the rig-daemon process (its `process.pid` matches the handle).
+  // `detached: true` ALSO makes `child.pid` the leader of a NEW process group, so
+  // a group-kill `kill(-child.pid)` reaps the rig-daemon AND its daemon grandchild
+  // (which inherits the group) in one shot — belt-and-braces orphan reaping.
+  const child = spawn(process.execPath, ["--import", "tsx", RIG_DAEMON_ENTRY], {
+    detached: true,
+    stdio: "ignore",
+    env: {
+      ...process.env,
+      COMIS_RIG_CHANNEL: opts.channel,
+      COMIS_RIG_MODEL: opts.model,
+      COMIS_RIG_BASE_DIR: baseDir,
+      COMIS_RIG_GATEWAY_PORT: String(gatewayPort),
+      COMIS_RIG_CONTROL_PORT: String(rigControlPort),
+      COMIS_RIG_PARENT_PID: String(process.pid),
+    },
+  });
+  child.unref();
+  const pid = child.pid;
+  if (pid === undefined) {
+    throw new Error("spawnDetachedRig: failed to spawn the detached subprocess (no pid)");
+  }
+
+  // Wait for the subprocess's rig-control /health (its daemon grandchild is up).
+  const deadline = Date.now() + DETACHED_HEALTH_WAIT_MS;
+  let healthy = false;
+  while (Date.now() < deadline) {
+    if (!isPidAlive(pid)) break; // the subprocess died during boot — stop waiting.
+    if (await probeRigControlHealth(rigControlEndpoint)) {
+      healthy = true;
+      break;
+    }
+    await new Promise((r) => setTimeout(r, DETACHED_PROBE_MS));
+  }
+
+  // The subprocess wrote its own handle on a healthy boot; read it back for the
+  // exact endpoints (controlEndpoint/dataDir/memoryDbPath it minted). Fall back to
+  // the pre-allocated values if the read races the write.
+  const recorded = readHandle(opts.channel, baseDir);
+
+  const reapSubprocess = async (): Promise<void> => {
+    // SIGTERM the whole process GROUP (negative pid) so the rig-daemon AND its
+    // daemon grandchild (which shares the group) both receive it — no orphan.
+    signalGroupOrPid(pid, "SIGTERM");
+    // The "no leak" condition is BOTH: the rig-daemon process is GONE (the group
+    // leader dead ⇒ the whole group reaped) AND the gateway port is FREE (a
+    // SO_REUSEADDR bind can succeed while a socket lingers, so the port alone is
+    // not sufficient — the process-dead check is the primary oracle). Poll both;
+    // escalate to a group SIGKILL if graceful shutdown overruns the grace window.
+    const reaped = async (): Promise<boolean> => !isPidAlive(pid) && (await isGatewayPortFree(gatewayPort));
+    const reapDeadline = Date.now() + DETACHED_REAP_GRACE_MS;
+    while (Date.now() < reapDeadline) {
+      if (await reaped()) return;
+      await new Promise((r) => setTimeout(r, DETACHED_PROBE_MS));
+    }
+    signalGroupOrPid(pid, "SIGKILL");
+    const killDeadline = Date.now() + DETACHED_REAP_GRACE_MS;
+    while (Date.now() < killDeadline) {
+      if (await reaped()) return;
+      await new Promise((r) => setTimeout(r, DETACHED_PROBE_MS));
+    }
+  };
+
+  if (!healthy) {
+    // No half-alive rig — reap the subprocess and fail honestly.
+    await reapSubprocess();
+    throw new Error(
+      `spawnDetachedRig: the detached subprocess never reported healthy within ${DETACHED_HEALTH_WAIT_MS}ms ` +
+        `(pid ${pid}, rig-control ${rigControlEndpoint}, gateway ${gatewayUrl})`,
+    );
+  }
+
+  return {
+    pid,
+    gatewayUrl,
+    gatewayToken: recorded?.gatewayToken ?? GATEWAY_TOKEN,
+    controlEndpoint: recorded?.controlEndpoint ?? "",
+    rigControlEndpoint,
+    chatId: recorded?.chatId ?? DEFAULT_CHAT_ID,
+    dataDir: recorded?.dataDir ?? "",
+    memoryDbPath: recorded?.memoryDbPath ?? "",
+    cleanup: reapSubprocess,
+  };
 }
