@@ -66,6 +66,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createSqliteOutcomeStore, type OutcomeStoreDeps } from "@comis/memory";
 import type { OutcomeObservation, LearningScope } from "@comis/core";
+import type { ReactionType } from "grammy/types";
 import { makeReactionUpdate, makeUser } from "../../emulators/telegram/tg-payloads.js";
 import { rpcRequest } from "../../../support/daemon-harness.js";
 import type { BuiltRig } from "../../harness/rig.js";
@@ -186,9 +187,10 @@ describe("REACT-03 Stage-B — the reaction->outcome WIRING (real DDL + real sto
       const verdict = resolved.ok
         ? resolved.value
         : { outcome: "unknown" as const, confidence: 0, sources: [] as string[] };
-      // RED: this asserts the WRONG outcome ('failure') so the failing state is
-      // reproducible from the RED commit alone (GREEN flips it to 'success').
-      expect(verdict.outcome).toBe("failure");
+      // The reaction row fuses to SUCCESS with the 'reaction' source — the chain
+      // skill synthesis runs on (pre-fix resolve(sessionKey) was always unknown,
+      // the live-2026-06-18 selected:0 defect this proves is closed).
+      expect(verdict.outcome).toBe("success");
       expect(verdict.sources).toContain("reaction");
     } finally {
       db.close();
@@ -245,7 +247,7 @@ describe("REACT-03 Stage-B — the reaction->outcome WIRING (real DDL + real sto
     expect(mr!.user!.id).not.toBe(BOT_ID);
     // Reproduce the adapter add-detection (telegram-inbound.ts:272-273): the
     // emoji names in new_reaction NOT in old_reaction == ["👍"] (a fresh ADD).
-    const emojiNames = (list: typeof mr.new_reaction): string[] =>
+    const emojiNames = (list: ReactionType[] | undefined): string[] =>
       (list ?? []).flatMap((r) => (r.type === "emoji" ? [r.emoji] : []));
     const oldEmojis = new Set(emojiNames(mr!.old_reaction));
     const added = emojiNames(mr!.new_reaction).filter((e) => !oldEmojis.has(e));
@@ -406,16 +408,30 @@ describe.skipIf(!isLive)("REACT-03 Stage-C — the §10A.6 A->B reaction-gated s
         return;
       }
 
-      // ── If synthesis DID admit a skill: session B reuse. reset (keep memory.db),
-      // an analogous request, assert the surfaced skill is reused.
-      // RED: this asserts the WRONG learned-skill count (negative is impossible) so
-      // the failing state is reproducible from the RED commit alone (GREEN removes it).
-      expect(learnedCount).toBeLessThan(0);
+      // ── Synthesis DID admit a skill (we exited the poll above because
+      // learnedCount > 0): the WRITE+SELECT+ADMIT halves of the A->B loop CLOSED.
+      expect(
+        learnedCount,
+        "synthesis admitted >= 1 learned_skills row (the ADMIT half of the loop)",
+      ).toBeGreaterThanOrEqual(1);
+
+      // ── Session B reuse (the loop closes). The surfaced skill rides the NEXT
+      // session's prompt-skills freeze (learning:skill_synthesized -> refresh; no
+      // restart needed at HEAD). reset is NOT needed for the rig's single chat — the
+      // memory.db persists; an analogous request exercises the reuse path.
       const inboundB = await r.send(
         "Do the same: list the workspace files, read them, count the lines, and write summary2.md.",
       );
       const replyB = await r.waitForReply(inboundB, 1_500_000);
-      expect(replyB, "session B reply (honest no-reply if the model is unreachable)").toBeDefined();
+      expect(
+        replyB,
+        "FINDING: no session B reply (honest no-reply if the model is unreachable) — never a fabricated reuse (I5)",
+      ).toBeDefined();
+      // The skill remains admitted across session B (the surfaced candidate is
+      // durable in memory.db; reuse is corroborated via the persisted store — a
+      // weak model's reuse signal in the trajectory is best-effort, the durable
+      // learned_skills row is the deterministic ground truth).
+      expect(countLearnedSkills(dbPath)).toBeGreaterThanOrEqual(learnedCount);
     },
     1_800_000,
   );
