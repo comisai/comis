@@ -324,10 +324,10 @@ describe("AUTO-01 Stage-B — `tg rpc <known method>` round-trips auth'd by the 
 // ---------------------------------------------------------------------------
 
 describe("AUTO-01 — `tg rpc` with NO resolved handle is an honest dead_handle (CLI-04), never a silent spawn", () => {
-  it("rpc with an undefined handle throws VerbFailure(dead_handle) BEFORE any transport (it needs the gateway token)", async () => {
-    const err = await runVerb("rpc", ["obs.fleet.health"], { handle: undefined }).catch(
-      (e: unknown) => e,
-    );
+  it("rpc with no resolved handle throws VerbFailure(dead_handle) BEFORE any transport (it needs the gateway token)", async () => {
+    // An empty ctx (handle omitted) is the unresolved-handle case under
+    // exactOptionalPropertyTypes — runVerb's `ctx.handle === undefined` guard fires.
+    const err = await runVerb("rpc", ["obs.fleet.health"], {}).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(VerbFailure);
     expect((err as VerbFailure).kind).toBe("dead_handle");
     // The honest hint points at `tg up` — never a silent spawn / fabricated success.

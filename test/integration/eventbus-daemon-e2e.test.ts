@@ -185,24 +185,20 @@ describe("EventBus Daemon E2E", () => {
     eventBus.on("session:created", handler);
 
     try {
-      // Make an HTTP RPC call to the daemon (config.get is fast and doesn't need LLM)
-      const response = await fetch(`${handle.gatewayUrl}/rpc`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${handle.authToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 1,
-          method: "config.get",
-          params: {},
-        }),
-      });
-
-      // Verify HTTP response succeeded (2xx)
-      // JSON-RPC may return 200 even on method errors -- just verify we got a response
-      expect(response.status).toBeLessThan(500);
+      // Make a real RPC call to the daemon (config.get is fast and needs no LLM).
+      // 205-07: route over the gateway's WS dispatch via rpcRequest — the SAME
+      // transport the production CLI uses. The prior inline `POST /rpc` here hit
+      // the gateway's 404 (no HTTP /rpc route) and "passed" only because a 404 is
+      // `< 500` — it never exercised actual RPC traffic. rpcRequest returns the
+      // unwrapped result; config.get yields the daemon config (a truthy object),
+      // genuinely proving the bus survives a real dispatch round-trip.
+      const config = await rpcRequest(
+        handle.gatewayUrl,
+        "config.get",
+        {},
+        handle.authToken,
+      );
+      expect(config).toBeTruthy();
 
       // Now emit a test event after RPC completes -- bus should still be functional
       eventBus.emit("session:created", {

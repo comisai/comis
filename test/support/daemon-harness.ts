@@ -17,7 +17,8 @@ import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { cleanupDatabase } from "./db-cleanup.js";
 import { seedModelCache } from "./model-cache.js";
-import { ASYNC_SETTLE_MS } from "./timeouts.js";
+import { ASYNC_SETTLE_MS, RPC_FAST_MS } from "./timeouts.js";
+import { openAuthenticatedWebSocket, sendJsonRpc } from "./ws-helpers.js";
 import { createFakeTimers, type FakeTimers, type FakeTimerEntry } from "./fake-timers.js";
 import type { DaemonInstance } from "@comis/daemon";
 import type { ChannelActivityRenderer } from "@comis/core";
@@ -465,14 +466,33 @@ export function makeAuthHeaders(token: string): Record<string, string> {
 }
 
 /**
- * Send a JSON-RPC 2.0 request to the gateway.
+ * Send a JSON-RPC 2.0 request to the gateway over WEBSOCKET (`/ws?token=`).
+ *
+ * AUTO-01 transport (205-07): the gateway serves the generic `handlers[method]`
+ * dispatch ONLY over WebSocket — `POST /rpc` returns a plain HTTP 404 at HEAD
+ * (the gateway mounts the dispatch via `createWsHandler` on `/ws`; its only HTTP
+ * routes are `/health`, the static SPA, and a curated `/api/*` REST set). The
+ * 205-06 keystone discovered the prior `POST /rpc` form was latent-broken live —
+ * it hit the 404, NOT the dispatch — and no prior test caught it (the live
+ * callers are `COMIS_LIVE`-gated; `eventbus-daemon-e2e` asserts only an inline
+ * `status < 500`; `chan.test.ts` injects a fake `rpc`). This helper now mirrors
+ * the production `comis` CLI (`packages/cli/src/client/rpc-client.ts` is a WS
+ * JSON-RPC client) by opening an authenticated WS, sending one request, and
+ * unwrapping the response — so the harness drives the SAME transport the product
+ * does. The CLI's `tg rpc` (test/live/bin/chan.ts) wraps this, so it too reaches
+ * ANY gateway method over WS.
+ *
+ * The return/throw CONTRACT is unchanged from the old `/rpc` form (every caller —
+ * `tg rpc`'s `invokeRpc`, the billing/health scenarios — depends on it): resolve
+ * the unwrapped `result`, or throw `RPC error <code>: <message>` when the
+ * response carries an `error` envelope.
  *
  * @param gatewayUrl - Base URL of the gateway (e.g., "http://127.0.0.1:4766")
  * @param method - JSON-RPC method name
  * @param params - Method parameters
  * @param token - Bearer token for authentication
  * @returns The result field from the JSON-RPC response
- * @throws If the response contains an error field
+ * @throws If the response contains an error field, or the WS cannot connect
  */
 export async function rpcRequest(
   gatewayUrl: string,
@@ -480,27 +500,29 @@ export async function rpcRequest(
   params: Record<string, unknown>,
   token: string,
 ): Promise<unknown> {
-  const response = await fetch(`${gatewayUrl}/rpc`, {
-    method: "POST",
-    headers: makeAuthHeaders(token),
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method,
-      params,
-    }),
+  // `RPC_FAST_MS` (30s): the harness's generic RPC drives no-LLM dispatch methods
+  // (obs.*, config.get, health/billing snapshots), not agent.execute — the fast
+  // timeout keeps a hung gateway from stalling the suite, while comfortably
+  // covering a cold dispatch on a freshly-booted rig.
+  const ws = await openAuthenticatedWebSocket(gatewayUrl, token, {
+    timeoutMs: RPC_FAST_MS,
   });
+  try {
+    const envelope = (await sendJsonRpc(ws, method, params, 1, {
+      timeoutMs: RPC_FAST_MS,
+    })) as {
+      result?: unknown;
+      error?: { code: number; message: string; data?: unknown };
+    };
 
-  const json = (await response.json()) as {
-    result?: unknown;
-    error?: { code: number; message: string; data?: unknown };
-  };
+    if (envelope.error) {
+      throw new Error(`RPC error ${envelope.error.code}: ${envelope.error.message}`);
+    }
 
-  if (json.error) {
-    throw new Error(`RPC error ${json.error.code}: ${json.error.message}`);
+    return envelope.result;
+  } finally {
+    ws.close();
   }
-
-  return json.result;
 }
 
 // ---------------------------------------------------------------------------
