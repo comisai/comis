@@ -122,6 +122,7 @@ Requirements: Node.js **22.19+** for npm/source installs. Production deployments
 | **Multilingual** | First-class non-Latin support (Hebrew, Arabic, Russian, CJK, and more): per-script token math so dense scripts are sized honestly instead of silently truncated, morphology-tolerant FTS search that works with embeddings off, summaries and memories kept in the conversation's own language (never translated), and per-script fleet health checks. RTL rendering is native to each chat platform; **Latin/English behavior is unchanged**. |
 | **Security** | AES-256-GCM encrypted secrets, credential broker for API-key CLIs, sandboxed exec tools, URL validation, content scanning, memory-write validation, output guards, signed approvals, and `comis security audit`. |
 | **Operations** | Web dashboard, JSON-RPC, WebSocket, OpenAI-compatible API, ACP server/bridge primitives, cron, heartbeat monitoring, trace export, health checks, config history, and rollback. |
+| **Observability** | A native, zero-dependency **Observe** dashboard with deterministic root-cause incident reports (`comis explain`) and cross-session fleet health. Durable, scrubbed security audit, a per-agent/tenant/global dollar **spend kill-switch**, cache-break and per-tool/sub-agent **cost attribution over corrected dollars**, and **opt-in** content-free OTLP/Prometheus/Grafana export — core stays dependency-free. |
 
 ---
 
