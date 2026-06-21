@@ -28,9 +28,12 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { describe, it, expect } from "vitest";
-import type { Message, MessageReactionUpdated, Update } from "grammy/types";
+import type { CallbackQuery, Message, MessageReactionUpdated, Update } from "grammy/types";
 import {
+  makeBotMessage,
   makeBotUser,
+  makeCallbackUpdate,
+  makeEditUpdate,
   makeLocationUpdate,
   makeMediaUpdate,
   makeMessageUpdate,
@@ -588,11 +591,165 @@ describe("makeLocationUpdate runtime shape (mirrors message-mapper.ts location/v
 });
 
 // ---------------------------------------------------------------------------
-// Scope guard — `message` + `message_reaction` are IN-SCOPE; callbacks/edits
-// stay deferred to Phase 207 (§4.2, lifted for reactions by REACT-01)
+// makeCallbackUpdate — the callback_query Update the adapter handler consumes
+// (INTERACT-01, Phase 207). telegram-inbound.ts:165 reads
+// ctx.callbackQuery.{message?.chat.id, data}, ctx.from.id,
+// ctx.callbackQuery.message.message_id — the synthetic isButtonCallback message.
 // ---------------------------------------------------------------------------
 
-describe("tg-payloads.ts scope guard (message + message_reaction in scope; callbacks deferred to 207)", () => {
+describe("makeBotMessage runtime shape (the bot reply a callback taps)", () => {
+  it("builds a grammy Message authored BY the bot (is_bot:true) carrying message_id + chat.id", () => {
+    const botUser = makeBotUser({ id: 999, firstName: "comisbot", username: "comisbot" });
+    const msg = makeBotMessage({ messageId: 77, chatId: 42, botUser, text: "pick one" });
+    expect(msg.message_id).toBe(77);
+    expect(msg.chat.id).toBe(42);
+    expect(msg.chat.type).toBe("private");
+    expect(msg.from?.is_bot).toBe(true);
+    expect(msg.from?.id).toBe(999);
+    expect(msg.text).toBe("pick one");
+    expect(Number.isInteger(msg.date)).toBe(true);
+  });
+
+  it("omits text when not supplied (exactOptionalPropertyTypes)", () => {
+    const botUser = makeBotUser({ id: 999, firstName: "comisbot" });
+    const msg = makeBotMessage({ messageId: 1, chatId: 1, botUser });
+    expect("text" in (msg as object)).toBe(false);
+  });
+});
+
+describe("makeCallbackUpdate runtime shape (mirrors telegram-inbound.ts:165)", () => {
+  it("builds a callback_query Update with { id, from, message, chat_instance, data }", () => {
+    const botUser = makeBotUser({ id: 999, firstName: "comisbot" });
+    const botMessage = makeBotMessage({ messageId: 50, chatId: 42, botUser, text: "menu" });
+    const tapper = makeUser({ id: 200, firstName: "alice", username: "alice" });
+    const update = makeCallbackUpdate({
+      updateId: 1,
+      id: "cbq_abc123",
+      from: tapper,
+      botMessage,
+      chatInstance: "chat-inst-1",
+      data: "approve",
+    });
+    expect(update.update_id).toBe(1);
+    const cbq = update.callback_query;
+    expect(cbq?.id).toBe("cbq_abc123");
+    // The handler reads ctx.from.id (the tapper, NOT the bot).
+    expect(cbq?.from.id).toBe(200);
+    expect(cbq?.from.is_bot).toBe(false);
+    // ctx.callbackQuery.data — the button payload, a scalar string (IN-04 safe).
+    expect(cbq?.data).toBe("approve");
+    // ctx.callbackQuery.message?.chat.id + .message_id (the existing bot reply).
+    expect(cbq?.message?.chat.id).toBe(42);
+    expect(cbq?.message?.message_id).toBe(50);
+    // grammy's CallbackQuery REQUIRES chat_instance.
+    expect(cbq?.chat_instance).toBe("chat-inst-1");
+    // No other update kind is populated.
+    expect(update.message).toBeUndefined();
+    expect(update.edited_message).toBeUndefined();
+  });
+
+  it("the message a callback taps is the BOT's (is_bot:true) — never the tapper", () => {
+    const botUser = makeBotUser({ id: 999, firstName: "comisbot" });
+    const botMessage = makeBotMessage({ messageId: 5, chatId: 7, botUser });
+    const tapper = makeUser({ id: 3, firstName: "human" });
+    const cbq = makeCallbackUpdate({
+      updateId: 2,
+      id: "q",
+      from: tapper,
+      botMessage,
+      chatInstance: "ci",
+      data: "x",
+    }).callback_query!;
+    expect(cbq.message?.from?.is_bot).toBe(true);
+    expect(cbq.from.is_bot).toBe(false);
+  });
+
+  it("the builder return is assignable to grammy `Update`/`CallbackQuery` (I4 drift tripwire)", () => {
+    const botUser = makeBotUser({ id: 999, firstName: "b" });
+    const botMessage = makeBotMessage({ messageId: 30, chatId: 300, botUser });
+    const u: Update = makeCallbackUpdate({
+      updateId: 3,
+      id: "qid",
+      from: makeUser({ id: 5, firstName: "d" }),
+      botMessage,
+      chatInstance: "ci",
+      data: "typed",
+    });
+    const cbq: CallbackQuery = u.callback_query!;
+    expect(cbq.data).toBe("typed");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// makeEditUpdate — the edited_message Update the adapter routes through
+// handleInboundMessage (INTERACT-02, telegram-inbound.ts:117). Same inner shape
+// as makeMessageUpdate's `message`, under `edited_message`, plus edit_date.
+// ---------------------------------------------------------------------------
+
+describe("makeEditUpdate runtime shape (mirrors telegram-inbound.ts:117)", () => {
+  it("builds an edited_message Update with { message_id, from, chat, date, edit_date, text }", () => {
+    const from = makeUser({ id: 200, firstName: "alice", username: "alice" });
+    const update = makeEditUpdate({
+      updateId: 1,
+      messageId: 100,
+      chatId: 555,
+      from,
+      newText: "edited text",
+    });
+    expect(update.update_id).toBe(1);
+    const edited = update.edited_message;
+    expect(edited?.message_id).toBe(100);
+    expect(edited?.chat.id).toBe(555);
+    expect(edited?.chat.type).toBe("private");
+    expect(edited?.text).toBe("edited text");
+    expect(edited?.from?.id).toBe(200);
+    expect(edited?.from?.is_bot).toBe(false);
+    // edited_message carries edit_date (what distinguishes it from a fresh message).
+    expect(Number.isInteger(edited?.edit_date)).toBe(true);
+    // Only the edited_message kind is populated.
+    expect(update.message).toBeUndefined();
+    expect(update.callback_query).toBeUndefined();
+  });
+
+  it("date AND edit_date are unix SECONDS (≈ now/1000, <1e12), not milliseconds", () => {
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const from = makeUser({ id: 1, firstName: "c" });
+    const edited = makeEditUpdate({
+      updateId: 1,
+      messageId: 1,
+      chatId: 1,
+      from,
+      newText: "x",
+    }).edited_message!;
+    expect(Number.isInteger(edited.date)).toBe(true);
+    expect(Math.abs(edited.date - nowSeconds)).toBeLessThanOrEqual(5);
+    expect(edited.date).toBeLessThan(1e12);
+    expect(edited.edit_date).toBeDefined();
+    expect(Math.abs(edited.edit_date! - nowSeconds)).toBeLessThanOrEqual(5);
+    expect(edited.edit_date!).toBeLessThan(1e12);
+  });
+
+  it("the builder return is assignable to grammy `Update`/`Message` (I4 drift tripwire)", () => {
+    const u: Update = makeEditUpdate({
+      updateId: 3,
+      messageId: 30,
+      chatId: 300,
+      from: makeUser({ id: 5, firstName: "d" }),
+      newText: "typed",
+    });
+    const m: Message = u.edited_message!;
+    expect(m.text).toBe("typed");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Scope guard — `message` + `message_reaction` + `callback_query` +
+// `edited_message` are IN-SCOPE (the last two LIFTED by INTERACT-01/02,
+// Phase 207); the §4.2 Out-of-Scope kinds (channel_post / inline_query /
+// poll_answer / my_chat_member / chat_join_request) stay forbidden.
+// ---------------------------------------------------------------------------
+
+describe("tg-payloads.ts scope guard (message/reaction/callback/edit in scope; §4.2 out-of-scope kinds forbidden)", () => {
   it("makeReactionUpdate populates only `message_reaction` — no callback/edit/inline kind", () => {
     const user = makeUser({ id: 1, firstName: "c" });
     const update = makeReactionUpdate({
@@ -612,23 +769,50 @@ describe("tg-payloads.ts scope guard (message + message_reaction in scope; callb
     expect(u["inline_query"]).toBeUndefined();
   });
 
-  it("imports grammy's OWN types (I4) and emits no STILL-deferred update kind", () => {
+  it("makeCallbackUpdate populates only `callback_query`; makeEditUpdate only `edited_message` — no out-of-scope kind", () => {
+    const botUser = makeBotUser({ id: 999, firstName: "b" });
+    const botMessage = makeBotMessage({ messageId: 1, chatId: 1, botUser });
+    const cb = makeCallbackUpdate({
+      updateId: 1,
+      id: "q",
+      from: makeUser({ id: 2, firstName: "u" }),
+      botMessage,
+      chatInstance: "ci",
+      data: "x",
+    });
+    expect(Object.keys(cb).sort()).toEqual(["callback_query", "update_id"]);
+    const cbu = cb as unknown as Record<string, unknown>;
+    expect(cbu["message"]).toBeUndefined();
+    expect(cbu["edited_message"]).toBeUndefined();
+    expect(cbu["channel_post"]).toBeUndefined();
+
+    const ed = makeEditUpdate({ updateId: 2, messageId: 1, chatId: 1, from: makeUser({ id: 3, firstName: "e" }), newText: "x" });
+    expect(Object.keys(ed).sort()).toEqual(["edited_message", "update_id"]);
+    const edu = ed as unknown as Record<string, unknown>;
+    expect(edu["message"]).toBeUndefined();
+    expect(edu["callback_query"]).toBeUndefined();
+  });
+
+  it("imports grammy's OWN types (I4); callback_query/edited_message are now IN scope; §4.2 out-of-scope kinds stay forbidden", () => {
     const src = readFileSync(PAYLOADS_SOURCE, "utf8");
     // I4: the builders import grammy's exported Update/Message types.
     expect(src).toMatch(/import type \{[^}]*Update[^}]*\} from ["']grammy\/types["']/);
     // date = unix seconds (design §4.2).
     expect(src).toMatch(/Math\.floor\(Date\.now\(\)\s*\/\s*1000\)/);
-    // Strip comment lines so a doc-comment naming a deferred kind is not a false hit.
+    // Strip comment lines so a doc-comment naming a kind is not a false hit.
     const code = src
       .split("\n")
       .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
       .join("\n");
-    // REACT-01 lifted `message_reaction` into scope — assert it IS now a code
-    // literal (the builder writes it), proving the guard was lifted on purpose.
+    // REACT-01 lifted `message_reaction` into scope; INTERACT-01/02 (Phase 207)
+    // now lift `callback_query` + `edited_message` — assert all three ARE code
+    // literals (the builders write them), proving the §4.2 guard was lifted on
+    // purpose for exactly these kinds.
     expect(code).toMatch(/message_reaction/);
-    // Callbacks/edits + the other unhandled kinds stay blocklisted (207 boundary).
-    expect(code).not.toMatch(/callback_query/);
-    expect(code).not.toMatch(/edited_message/);
+    expect(code).toMatch(/callback_query/);
+    expect(code).toMatch(/edited_message/);
+    // The §4.2 Out-of-Scope kinds stay blocklisted (the harness must not mint an
+    // update kind the adapter does not handle — T-207-03).
     expect(code).not.toMatch(/channel_post/);
     expect(code).not.toMatch(/inline_query/);
     expect(code).not.toMatch(/poll_answer/);
