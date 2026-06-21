@@ -597,10 +597,39 @@ export async function runVerb(
     }
 
     case "react": {
-      // The record-outbound base only — the inbound-reaction loop is Phase 206.
+      // REACT-02 — drive an inbound reaction at the ATTRIBUTED bot reply. The
+      // `botReplyId` arg is the agent-authored reply's minted id from `tg send`'s
+      // reply-wait return (the `{ inboundId, botReplyId, reply }` above), which is
+      // the exact id `recordOutboundMessage` keyed the ReactionTrajectoryMap on
+      // (setup-delivery.ts). We react to the ARG, NOT a re-read `tg last` — a
+      // re-read could pick a non-attributed message in a multi-message reply, so
+      // the 👍 must carry the id the caller passes (the attribution keystone, #5).
       const handle = ctx.handle as ChanliveHandle;
-      const outbounds = await readOutbound(ctx, handle, 0, 0);
-      return { reactionsScope: "record-outbound-only (inbound reactions: Phase 206)", count: outbounds.length };
+      const botReplyId = Number(args[0]);
+      const emoji = args[1];
+      if (!Number.isFinite(botReplyId) || emoji === undefined) {
+        throw new VerbFailure("bad_json", {
+          detail: "tg react <botReplyId> <emoji> — both required (a numeric id + an emoji).",
+        });
+      }
+      const doFetch = ctx.controlFetch ?? fetch;
+      // POST the reaction on the attributed reply. `fromUserId: 111` is the rig's
+      // fixed reactor id (Plan 03 grants 111 trust ≥ known so the happy path
+      // persists; an external reactor under-gates at the production write-floor).
+      const res = await doFetch(
+        `${handle.controlEndpoint}/control/chats/${handle.chatId}/reactions`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ fromUserId: 111, botMessageId: botReplyId, emoji }),
+        },
+      );
+      // WR-03 honest-exit: a control !ok is NOT a success — reason-code it as a
+      // dead_handle non-zero exit (no false exit-0 on a failed react, I5).
+      if (!res.ok) {
+        throw new VerbFailure("dead_handle", { reason: "control_post_error", status: res.status });
+      }
+      return { reacted: { botReplyId, emoji } };
     }
 
     case "last": {
