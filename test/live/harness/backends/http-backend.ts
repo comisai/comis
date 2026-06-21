@@ -108,6 +108,19 @@ export type PathMatcher = string | ((path: string) => boolean);
 export type PathRouteHandler = (ctx: RouteContext) => RouteResult | Promise<RouteResult>;
 
 /**
+ * A streaming (SSE) route handler (Phase 209, CHAN2-02 FIX #2). Unlike the
+ * JSON/Buffer `RouteResult` handlers, it receives the RAW `IncomingMessage` +
+ * `ServerResponse` so it can set `content-type: text/event-stream`, write SSE
+ * frames over time (`event: …\ndata: …\n\n`), and register `res.on("close", …)`
+ * for cleanup — the dispatcher does NOT route the response through `send()`, so
+ * the connection stays OPEN. Signal's `GET /api/v1/events` inbound stream is the
+ * driver. The base tracks the live response so `stop()` can drain it (the
+ * handler should NOT call `res.end()` itself for a long-lived stream). The
+ * handler runs synchronously on connect (it captures `res` for later writes).
+ */
+export type StreamRouteHandler = (req: IncomingMessage, res: ServerResponse) => void;
+
+/**
  * A `/control/*` route handler. Receives the request context (the full
  * `/control/...` path is on `ctx.path`). Plan 04 registers the control routes
  * here.
@@ -150,6 +163,16 @@ export interface HttpBackend {
    * Telegram `BOT_PATH` default; registration order among them is preserved.
    */
   registerPathRoute(matcher: PathMatcher, handler: PathRouteHandler): void;
+  /**
+   * Register a kept-open SSE (`text/event-stream`) route under an arbitrary
+   * `matcher`. Phase 209 (CHAN2-02 FIX #2) — Signal's `GET /api/v1/events`
+   * inbound stream. The handler receives the raw `(req, res)` to write frames
+   * over time; the dispatcher does NOT call `send()` for it (the connection
+   * stays open). The base tracks the live response and drains it on `stop()`.
+   * Stream routes are checked alongside path routes, BEFORE the Telegram
+   * `BOT_PATH` default.
+   */
+  registerStreamRoute(matcher: PathMatcher, handler: StreamRouteHandler): void;
   /** Register the `/control/*` dispatch. Plan 04. */
   registerControlRoute(handler: ControlRouteHandler): void;
   /** Register the `GET /file/bot<token>/<path>` dispatch. Plan 03. */
@@ -175,6 +198,14 @@ export function createHttpBackend(): HttpBackend {
   // baking its path shape into the base. Empty by default → the base behaves
   // exactly as the 204 Telegram-only base until a channel registers one.
   const pathRoutes: Array<{ matcher: PathMatcher; handler: PathRouteHandler }> = [];
+  // Generalized SSE stream routes (Phase 209, CHAN2-02 FIX #2). Each entry is a
+  // channel-supplied { matcher, handler }; a matching request is handed the raw
+  // (req, res) and the connection is kept open. `openStreams` tracks every live
+  // SSE response so `stop()` can end them (mirrors mock-signal-server.ts:212-219)
+  // — without this drain a kept-open connection keeps the server from closing
+  // and `stop()` hangs (T-209-03).
+  const streamRoutes: Array<{ matcher: PathMatcher; handler: StreamRouteHandler }> = [];
+  const openStreams = new Set<ServerResponse>();
 
   function pathMatches(matcher: PathMatcher, path: string): boolean {
     return typeof matcher === "string" ? path.startsWith(matcher) : matcher(path);
@@ -258,11 +289,27 @@ export function createHttpBackend(): HttpBackend {
       return;
     }
 
-    // (c) Generalized native-wire path routes (Phase 209, CHAN2-02 FIX #1) —
+    // (c) Generalized SSE stream routes (Phase 209, CHAN2-02 FIX #2) — checked
+    // BEFORE the Telegram BOT_PATH default. A matching request is handed the raw
+    // (req, res); the connection is kept OPEN (NOT routed through send()), the
+    // live response is tracked for stop()-drain, and it is auto-untracked when
+    // the socket closes. This is the Signal GET /api/v1/events inbound stream.
+    for (const route of streamRoutes) {
+      if (pathMatches(route.matcher, path)) {
+        openStreams.add(res);
+        res.on("close", () => {
+          openStreams.delete(res);
+        });
+        route.handler(req, res);
+        return;
+      }
+    }
+
+    // (d) Generalized native-wire path routes (Phase 209, CHAN2-02 FIX #1) —
     // checked BEFORE the Telegram BOT_PATH default so a second channel's
-    // arbitrary surface (Signal's /api/v1/{check,rpc,events}) dispatches. The
-    // matcher is matched against the path WITHOUT the query string; the handler
-    // receives the same base context (raw body + query) as the native route.
+    // arbitrary surface (Signal's /api/v1/{check,rpc}) dispatches. The matcher is
+    // matched against the path WITHOUT the query string; the handler receives the
+    // same base context (raw body + query) as the native route.
     for (const route of pathRoutes) {
       if (pathMatches(route.matcher, path)) {
         const result = await route.handler(baseCtx);
@@ -271,7 +318,7 @@ export function createHttpBackend(): HttpBackend {
       }
     }
 
-    // (d) /bot<token>/<method> — the channel's native Bot-API method table.
+    // (e) /bot<token>/<method> — the channel's native Bot-API method table.
     const botMatch = url.match(BOT_PATH);
     if (botMatch) {
       if (!nativeHandler) {
@@ -314,6 +361,21 @@ export function createHttpBackend(): HttpBackend {
       if (!server) return;
       const local = server;
       server = undefined;
+      // Drain any kept-open SSE responses BEFORE closing the server (Phase 209,
+      // CHAN2-02 FIX #2 / T-209-03). `server.close()` waits for in-flight
+      // connections to end; a long-lived `text/event-stream` would never end on
+      // its own → `stop()` would hang. End each tracked stream so the server
+      // closes cleanly (mirrors mock-signal-server.ts:212-219). `closeAllConnections`
+      // is a belt-and-suspenders sweep for any non-stream keep-alive socket.
+      for (const streamRes of openStreams) {
+        try {
+          streamRes.end();
+        } catch {
+          // Already ended/destroyed — nothing to do.
+        }
+      }
+      openStreams.clear();
+      local.closeAllConnections?.();
       await new Promise<void>((resolve, reject) => {
         local.close((err) => {
           if (err) reject(err);
@@ -326,6 +388,9 @@ export function createHttpBackend(): HttpBackend {
     },
     registerPathRoute(matcher, h) {
       pathRoutes.push({ matcher, handler: h });
+    },
+    registerStreamRoute(matcher, h) {
+      streamRoutes.push({ matcher, handler: h });
     },
     registerControlRoute(h) {
       controlHandler = h;
