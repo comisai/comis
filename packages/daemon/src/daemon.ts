@@ -34,45 +34,21 @@
  *  11.  main()
  *  12.  Direct-run guard block
  *
- * The 4-handle chain (Foundation → Agents → Channels → Gateway handles)
- * was collapsed into a single BootContext. Each boot* helper now takes
- * `boot: BootContext` and mutates it via Object.assign; main() constructs
- * `boot` via createEmptyBootContext() and chains the 5 helpers in order.
+ * The 4-handle chain (Foundation → Agents → Channels → Gateway) was collapsed
+ * into a single BootContext: each boot* helper takes `boot: BootContext` and
+ * mutates it via Object.assign; main() constructs it via createEmptyBootContext()
+ * and chains the 5 helpers in order. The 6 true forward-ref slots (channelPluginsRef,
+ * bgNotifyRef, cronWakeCallbackRef, gatewaySendRef, shutdownRef, channelAdaptersRef)
+ * persist on BootContext; the 3 former bootChannels local-scope deferred refs are gone
+ * (setupTools is hoisted before setupChannels; the other two are local `let` slots
+ * captured by message-arrival lambdas).
  *
- * The 3 eliminable local-scope deferred-ref slots inside bootChannels
- * (session-tracker, tool-assembler, inbound-message-id-resolver) are
- * GONE — setupTools is hoisted before setupChannels (so
- * assembleToolsForAgent is a direct value, not a deferred ref) and the
- * remaining two are local `let` slots whose value is captured by lambdas
- * that read at message-arrival time. The 6 true forward-ref slots
- * (channelPluginsRef, bgNotifyRef, cronWakeCallbackRef, gatewaySendRef,
- * shutdownRef, channelAdaptersRef) persist on BootContext.
- *
- * The 23 helpers that were extracted into the stages/* layer by an earlier
- * decomposition pass are now back here in two forms:
- *
- *   - **Top-level functions** (11 of 23): helpers called from inside a
- *     single boot* function but whose body is large enough to deserve a
- *     named scope. Each lives in the helper section above the boot*
- *     blocks, grouped by which stage consumes them (foundation / agents /
- *     channels / gateway / shutdown). Examples: `buildMergedEnv`,
- *     `buildChannelManagerDeps`, `createHotAdd`, `emitStartupBanner`.
- *     (`restoreApprovalState` was extracted to `wiring/main-helpers.ts`.)
- *
- *   - **Inlined at call site** (11 of 23): helpers that were trivially
- *     wrapped one-call-site builders. Their bodies were copied verbatim
- *     into the boot* body where they were called from, and the wrapper
- *     declaration was deleted. Examples: `seedBundledSkillCreator`
- *     (inlined as an IIFE inside bootFoundation), `setupMcpManager`
- *     (the body of setupMcp is called directly), `buildAuditBundle`,
- *     `createCapabilityPortResolver`, `buildImageGenBundle`,
- *     `buildImageHandlerDeps` / `buildTokenStoreMutators` /
- *     `buildContextEngineConfig` (folded into `buildRpcDispatchDeps`),
- *     `readDbSizeMetrics` / `computeAndKillStuckSubAgents` (folded into
- *     `wireHealthLogging`), `buildStartupBannerManifest` (folded into
- *     `emitStartupBanner`), `buildSyntheticRestartMessage` (folded into
- *     `replayContinuationsIfAny`), `buildGraphPreWarm` (folded into
- *     `buildGraphCoordinatorDeps`).
+ * The 23 helpers from an earlier stages/* decomposition are back here in two forms:
+ * 11 as top-level functions (called once but large enough to name — e.g. buildMergedEnv,
+ * buildChannelManagerDeps, createHotAdd, emitStartupBanner; restoreApprovalState went to
+ * wiring/main-helpers.ts) and 11 inlined verbatim at their single call site (e.g.
+ * setupMcpManager, buildAuditBundle, the buildImageHandlerDeps/buildTokenStoreMutators/
+ * buildContextEngineConfig fold into buildRpcDispatchDeps, etc.).
  *
  * @module
  */
