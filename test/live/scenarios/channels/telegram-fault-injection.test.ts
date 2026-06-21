@@ -216,8 +216,7 @@ describe("FAULT-01 Stage-B — the four adapter fallbacks fire for real under fa
     // The fallback recorded a sendDocument with the EXACT caption (voice-sender.ts).
     const docs = emu.outbound(TEST_CHAT).filter((o) => o.method === "sendDocument");
     expect(docs.length).toBe(1);
-    // RED-FIRST (deliberately wrong — flip to the real caption for GREEN):
-    expect(docs[0]!.caption).toBe("WRONG CAPTION");
+    expect(docs[0]!.caption).toBe("Voice message (sent as file)");
   });
 
   it("(d) reaction safe-emoji chain: a 400 REACTION_INVALID → a TELEGRAM_SAFE_EMOJI lands instead of erroring", async () => {
@@ -275,9 +274,8 @@ describe("FAULT-02 Stage-B — classifyTelegramError classification + 429 auto-r
     // ⚠ THE NUANCE: the classifier's OWN default (unmatched) is {kind:"internal"},
     // NOT ok:true. A 403 must NOT mis-route to internal (it is permission above);
     // an unmatched code falls through to internal carrying the cause for diagnosis.
-    // RED-FIRST (deliberately wrong — the real default is "internal"; flip for GREEN):
     expect(classifyTelegramError({ error_code: 418, description: "I'm a teapot" })).toMatchObject({
-      kind: "rate_limited",
+      kind: "internal",
     });
   });
 
