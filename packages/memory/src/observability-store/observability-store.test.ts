@@ -1030,3 +1030,116 @@ describe("ObservabilityStore — aggregateQuarterHourly (COST-03, the 900000-ms 
     expect(store.aggregateQuarterHourly(hourStart, { agent: "nobody" })).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// HG-01 (Phase 179 wiring) — aggregateToolCostByAgent(agentId, sinceMs): the
+// REAL per-tool even-split that turns the persisted `tool_tag` distinct-tool set
+// into a per-tool cost share. COST-01 only ever persisted the distinct tool-NAME
+// set + asserted the even-split in a bridge-level comment/test; no query ever
+// projected it, so the billing per-tool table was permanently empty in prod.
+//
+// The even-split (the comment's promise, now a real contract): for a row whose
+// tool_tag lists N distinct tools, EACH tool is attributed cost_total/N (+
+// total_tokens/N, 1/N call share), summed per tool across the agent's rows.
+//
+// THE CONSERVATION INVARIANT (the load-bearing assertion): Σ per-tool cost ===
+// Σ row cost_total. The split redistributes a turn's cost across its tools; it
+// never creates or destroys dollars. Content-free: tool names + numbers only.
+//
+// These FAIL on pre-wiring code because aggregateToolCostByAgent does not exist.
+// ---------------------------------------------------------------------------
+describe("ObservabilityStore — aggregateToolCostByAgent (HG-01 even-split + conservation)", () => {
+  let db: Database.Database;
+  let store: ObservabilityStore;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    initSchema(db, 1536);
+    store = createObservabilityStore(db);
+  });
+
+  it("even-splits a multi-tool turn's cost/tokens/calls across its distinct tools", () => {
+    // One turn for agent-a fired bash + read; cost 0.30, tokens 200.
+    store.insertTokenUsage(
+      makeTokenRow({ agentId: "agent-a", costTotal: 0.30, totalTokens: 200, toolTag: ["bash", "read"] }),
+    );
+
+    const rows = store.aggregateToolCostByAgent("agent-a");
+    const byTool = new Map(rows.map((r) => [r.tool, r]));
+
+    // Even split: each of the 2 tools gets half the turn's cost/tokens + a 0.5 call share.
+    expect(byTool.get("bash")!.cost).toBeCloseTo(0.15, 10);
+    expect(byTool.get("read")!.cost).toBeCloseTo(0.15, 10);
+    expect(byTool.get("bash")!.tokens).toBeCloseTo(100, 10);
+    expect(byTool.get("read")!.tokens).toBeCloseTo(100, 10);
+    expect(byTool.get("bash")!.calls).toBeCloseTo(0.5, 10);
+    expect(byTool.get("read")!.calls).toBeCloseTo(0.5, 10);
+  });
+
+  it("CONSERVATION: Σ per-tool cost === Σ row cost_total across many rows", () => {
+    // Three rows for agent-a with varying tool counts; one single-tool, one
+    // 3-tool, one repeated tool (distinct collapses to 1) — plus a NULL-tag row
+    // that contributes to cost_total but is NOT attributable to any tool.
+    store.insertTokenUsage(
+      makeTokenRow({ agentId: "agent-a", costTotal: 0.30, totalTokens: 300, toolTag: ["bash", "read", "edit"] }),
+    );
+    store.insertTokenUsage(
+      makeTokenRow({ agentId: "agent-a", costTotal: 0.10, totalTokens: 100, toolTag: ["bash"] }),
+    );
+    store.insertTokenUsage(
+      makeTokenRow({ agentId: "agent-a", costTotal: 0.05, totalTokens: 50, toolTag: ["read", "read"] }),
+    );
+    // A no-tool turn — its cost is real spend but attributable to no tool.
+    store.insertTokenUsage(
+      makeTokenRow({ agentId: "agent-a", costTotal: 0.07, totalTokens: 70 }),
+    );
+
+    const rows = store.aggregateToolCostByAgent("agent-a");
+
+    // Conservation: the per-tool shares sum to the cost of the ATTRIBUTABLE rows
+    // (the rows that carry a non-null tool_tag — 0.30 + 0.10 + 0.05 = 0.45). The
+    // no-tool 0.07 turn is correctly excluded (it has no tool to attribute to).
+    const sumToolCost = rows.reduce((s, r) => s + r.cost, 0);
+    expect(sumToolCost).toBeCloseTo(0.45, 10);
+
+    // Same conservation for tokens (300 + 100 + 50 = 450).
+    const sumToolTokens = rows.reduce((s, r) => s + r.tokens, 0);
+    expect(sumToolTokens).toBeCloseTo(450, 10);
+
+    // And for the call share: each attributable row contributes exactly 1.0 of
+    // call mass split across its tools — 3 attributable rows ⇒ 3.0 total.
+    const sumCalls = rows.reduce((s, r) => s + r.calls, 0);
+    expect(sumCalls).toBeCloseTo(3.0, 10);
+  });
+
+  it("scopes to the requested agent only (no cross-agent leak)", () => {
+    store.insertTokenUsage(makeTokenRow({ agentId: "agent-a", costTotal: 0.20, toolTag: ["bash"] }));
+    store.insertTokenUsage(makeTokenRow({ agentId: "agent-b", costTotal: 0.99, toolTag: ["bash"] }));
+
+    const aRows = store.aggregateToolCostByAgent("agent-a");
+    expect(aRows).toHaveLength(1);
+    expect(aRows[0]!.tool).toBe("bash");
+    expect(aRows[0]!.cost).toBeCloseTo(0.20, 10);
+  });
+
+  it("honors the sinceMs lower bound", () => {
+    const now = systemNowMs();
+    store.insertTokenUsage(
+      makeTokenRow({ agentId: "agent-a", timestamp: now - 10_000, costTotal: 0.10, toolTag: ["bash"] }),
+    );
+    store.insertTokenUsage(
+      makeTokenRow({ agentId: "agent-a", timestamp: now - 10_000_000, costTotal: 0.90, toolTag: ["read"] }),
+    );
+
+    // Only the recent row is in-window.
+    const recent = store.aggregateToolCostByAgent("agent-a", now - 1_000_000);
+    expect(recent).toHaveLength(1);
+    expect(recent[0]!.tool).toBe("bash");
+    expect(recent[0]!.cost).toBeCloseTo(0.10, 10);
+  });
+
+  it("returns an empty array for an agent with only NULL-tag rows (honest empty)", () => {
+    store.insertTokenUsage(makeTokenRow({ agentId: "agent-a", costTotal: 0.10 }));
+    expect(store.aggregateToolCostByAgent("agent-a")).toEqual([]);
+  });
+});

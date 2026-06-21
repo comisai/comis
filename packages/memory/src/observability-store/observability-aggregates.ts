@@ -37,12 +37,13 @@ import {
   type CostBucketFilter,
   type ObservabilityStore,
   type QuarterHourBucket,
+  type ToolCostAggregation,
 } from "./observability-store-types.js";
 
 /** The read-side slice this module contributes to the ObservabilityStore handle. */
 export type ObservabilityAggregates = Pick<
   ObservabilityStore,
-  "aggregateQuarterHourly" | "aggregateHourlyCost" | "pricingCoverage"
+  "aggregateQuarterHourly" | "aggregateHourlyCost" | "aggregateToolCostByAgent" | "pricingCoverage"
 >;
 
 /** The pricing-coverage row schema (WEBUI-02) — the three E1 pricing-state tallies. */
@@ -53,6 +54,42 @@ const pricingCoverageMapper = createRowMapper(
     unknown: z.number(),
   }),
 );
+
+/**
+ * HG-01 per-tool even-split row schema — the three attributable columns + the
+ * raw `tool_tag` JSON blob (parsed + validated in JS by {@link parseDistinctTools}
+ * rather than in SQL: better-sqlite3 has no JSON-array iteration, and the
+ * distinct-set is already content-free names). `tool_tag` is `nullable` so the
+ * NULL-tag rows the WHERE clause filters out never reach the mapper.
+ */
+const toolCostRowMapper = createRowMapper(
+  z.strictObject({
+    cost_total: z.number(),
+    total_tokens: z.number(),
+    tool_tag: z.string().nullable(),
+  }),
+);
+
+/**
+ * Parse the persisted `tool_tag` JSON blob into a DISTINCT, non-empty
+ * tool-name array. Degrade-on-malformed (a corrupt/non-array/empty blob → no
+ * tools → the row contributes nothing, never a throw or a NaN) — the
+ * aggregateSessionsInWindow JSON.parse discipline. Re-applies `new Set` so a
+ * row that somehow stored a non-distinct array still splits across distinct
+ * names only (the even-split's denominator is the distinct count).
+ */
+function parseDistinctTools(raw: string | null): string[] {
+  if (raw === null) return [];
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(value)) return [];
+  const names = value.filter((v): v is string => typeof v === "string" && v.length > 0);
+  return [...new Set(names)];
+}
 
 /**
  * The bucket row schema (COST-03) — the `HourlyBucketDbRow` columns PLUS the E1
@@ -161,6 +198,55 @@ export function bindAggregates(db: Database.Database): ObservabilityAggregates {
     }));
   }
 
+  // HG-01: the per-tool even-split for ONE agent. Pull the agent's rows that
+  // carry a non-null tool_tag (a NULL-tag turn has no tool to attribute to), then
+  // even-split each row's cost/tokens/calls across its DISTINCT tools in JS (the
+  // JSON-array split has no clean SQL form in better-sqlite3). The split conserves:
+  // Σ per-tool cost === Σ attributable-row cost_total (the COST-01 comment's promise,
+  // now a real contract — pinned by the conservation test). Content-free (tool names
+  // + numbers only). The WHERE is parameterized (agent_id + the optional sinceMs) —
+  // never interpolated (the untyped-sqlite + SQL-injection gate).
+  const toolCostByAgentAllStmt = db.prepare(`
+    SELECT cost_total, total_tokens, tool_tag
+    FROM obs_token_usage WHERE agent_id = ? AND tool_tag IS NOT NULL
+  `);
+  const toolCostByAgentSinceStmt = db.prepare(`
+    SELECT cost_total, total_tokens, tool_tag
+    FROM obs_token_usage WHERE agent_id = ? AND tool_tag IS NOT NULL AND timestamp >= ?
+  `);
+
+  function aggregateToolCostByAgent(agentId: string, sinceMs?: number): ToolCostAggregation[] {
+    const raw = sinceMs != null
+      ? toolCostByAgentSinceStmt.all(agentId, sinceMs)
+      : toolCostByAgentAllStmt.all(agentId);
+    const parsed = toolCostRowMapper.parseRows(raw);
+    // Degrade-on-validation-error: observability aggregate -> empty (no NaN).
+    const rows = parsed.ok ? parsed.value : [];
+
+    // Accumulate the even-split per distinct tool.
+    const byTool = new Map<string, ToolCostAggregation>();
+    for (const r of rows) {
+      const tools = parseDistinctTools(r.tool_tag);
+      const n = tools.length;
+      if (n === 0) continue; // a malformed/empty tag attributes to no tool.
+      const costShare = r.cost_total / n;
+      const tokenShare = r.total_tokens / n;
+      const callShare = 1 / n; // this row's single turn split across its tools.
+      for (const tool of tools) {
+        const existing = byTool.get(tool);
+        if (existing) {
+          existing.cost += costShare;
+          existing.tokens += tokenShare;
+          existing.calls += callShare;
+        } else {
+          byTool.set(tool, { tool, cost: costShare, tokens: tokenShare, calls: callShare });
+        }
+      }
+    }
+    // Sort by cost desc (the byProvider/billing convention — biggest spender first).
+    return [...byTool.values()].sort((a, b) => b.cost - a.cost);
+  }
+
   // WEBUI-02 (179-04): the daemon-wide three-state pricing-coverage count. Reuses
   // the SAME E1 CASE expressions as the cost buckets above (priced / free / the
   // unknown-or-NULL fall-through) so the snapshot's coverage and the export's
@@ -186,6 +272,7 @@ export function bindAggregates(db: Database.Database): ObservabilityAggregates {
       runBucketed(900_000, sinceMs, filter),
     aggregateHourlyCost: (sinceMs?: number, filter?: CostBucketFilter) =>
       runBucketed(3_600_000, sinceMs, filter),
+    aggregateToolCostByAgent,
     pricingCoverage,
   };
 }
