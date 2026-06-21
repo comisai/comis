@@ -41,7 +41,9 @@
 
 import { describe, it, expect } from "vitest";
 import { parse as parseYaml } from "yaml";
+import { Bot } from "grammy";
 import { AppConfigSchema, validateUrl, validateLocalServerUrl } from "@comis/core";
+import { createTelegramResolver } from "@comis/channels";
 import {
   buildConfigYaml,
   buildLoopbackMediaOverride,
@@ -218,5 +220,101 @@ describe("MEDIA-02 loopback override — the loopback fetcher addresses BOTH SSR
     const fetcher = buildLoopbackSsrfFetcher({ emulatorHost: "127.0.0.1:54321", maxBytes: 1_000_000 });
     const result = await fetcher.fetch("http://example.com/file/whatever.bin");
     expect(result.ok).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// MEDIA-02 byte-proof (Plan 207-05, Task 2) — DETERMINISTIC, OFFLINE, no real
+// model. Strategy A3 (option b — the RESEARCH-blessed resolver-level proof): the
+// daemon's keyless capability short-circuit (`media-handler-audio.ts:44 if
+// (!deps.transcriber)`) means a plain keyless run NEVER downloads bytes — so the
+// SSRF-guarded download is unreachable end-to-end without a model. We force it by
+// driving the REAL `createTelegramResolver` (@comis/channels) DIRECTLY with the
+// override's loopback `ssrfFetcher`, against a `tg-file://{file_id}` the emulator
+// stored, and assert the resolver returns the EXACT bytes. The resolver's `resolve`
+// IS the resolve+download leg the daemon would invoke (resolveMediaAttachment →
+// compositeResolver.resolve); calling it directly is the stub-forced equivalent of
+// wiring a stub transcriber, with no real STT adapter needed. A real grammy `Bot`
+// pointed at the emulator `apiRoot` exercises the REAL `getFile` route too, so the
+// full store → getFile → file-route → SSRF-guarded download chain is proven.
+//
+// PLUS the no-widening assertion: production `validateUrl(loopbackUrl)` STILL `!ok`
+// (the SEC-01 load-bearing proof the override did NOT widen production posture).
+// ---------------------------------------------------------------------------
+
+/** A no-op logger satisfying the resolver's `{ debug, warn }` contract. */
+const NOOP_RESOLVER_LOGGER = {
+  debug(_obj: Record<string, unknown>, _msg: string): void {},
+  warn(_obj: Record<string, unknown>, _msg: string): void {},
+};
+
+describe("MEDIA-02 byte-proof — a loopback SSRF-guarded download SUCCEEDS through the override (deterministic, no model)", () => {
+  it("the REAL telegram resolver, driven with the loopback ssrfFetcher, returns the EXACT bytes the emulator stored", async () => {
+    const emulator = createTgEmulator({ botToken: OVERRIDE_TOKEN });
+    const { apiRoot } = await emulator.start();
+    try {
+      const emulatorHost = new URL(apiRoot).host;
+      const bytes = Buffer.from("media-02-deterministic-voice-payload-🎙️", "utf-8");
+      const handle = emulator.storeFile("voice", bytes, { mimeType: "audio/ogg" });
+
+      // A real grammy Bot pointed at the emulator — resolver.resolve() calls
+      // bot.api.getFile() which hits the REAL emulator getFile route (the store
+      // descriptor with the real file_path + file_size), then downloads.
+      const bot = new Bot(OVERRIDE_TOKEN, { client: { apiRoot } });
+      const ssrfFetcher = buildLoopbackSsrfFetcher({ emulatorHost, maxBytes: 50 * 1024 * 1024 });
+      const resolver = createTelegramResolver({
+        bot,
+        botToken: OVERRIDE_TOKEN,
+        maxBytes: 50 * 1024 * 1024,
+        ssrfFetcher,
+        logger: NOOP_RESOLVER_LOGGER,
+      });
+
+      // The stub-forced resolve+download leg (A3): resolve a tg-file://{file_id}.
+      const resolved = await resolver.resolve({ type: "audio", url: `tg-file://${handle.fileId}` });
+
+      expect(
+        resolved.ok,
+        resolved.ok ? "" : `resolve failed (loopback download blocked or getFile 404): ${String(resolved.ok === false && resolved.error.message)}`,
+      ).toBe(true);
+      if (resolved.ok) {
+        // No "Blocked: resolved IP 127.0.0.1 is in loopback range" (block #2 would
+        // fire on production validateUrl) and no api.telegram.org 404 (block #1) —
+        // the loopback download SUCCEEDED and served the exact stored bytes.
+        expect(Buffer.from(resolved.value.buffer).equals(bytes)).toBe(true);
+        expect(resolved.value.sizeBytes).toBe(bytes.length);
+      }
+    } finally {
+      await emulator.stop();
+    }
+  });
+});
+
+describe("MEDIA-02 / SEC-01 no-widening — production SSRF posture is provably UNTOUCHED by the override", () => {
+  it("production validateUrl STILL blocks loopback, while validateLocalServerUrl([host]) allows it (the test-scoped allowance)", async () => {
+    const emulator = createTgEmulator({ botToken: OVERRIDE_TOKEN });
+    const { apiRoot } = await emulator.start();
+    try {
+      const emulatorHost = new URL(apiRoot).host;
+      const loopbackUrl = `${apiRoot}/file/bot${OVERRIDE_TOKEN}/voice/anything.ogg`;
+
+      // Production guard — UNCHANGED: loopback is in BLOCKED_RANGES → still denied.
+      const prod = await validateUrl(loopbackUrl);
+      expect(prod.ok, "production validateUrl must STILL block loopback (no-widening)").toBe(false);
+
+      // The override's primitive — ALLOWS loopback (the scoped allowance).
+      const scoped = await validateLocalServerUrl(loopbackUrl, [emulatorHost.split(":")[0] ?? emulatorHost]);
+      expect(scoped.ok, "validateLocalServerUrl must ALLOW the loopback emulator URL").toBe(true);
+    } finally {
+      await emulator.stop();
+    }
+  });
+
+  it("the SSRF allowance is the override only — production validateUrl blocks loopback regardless of any allowlist arg it does not accept", async () => {
+    // A direct, daemon-free reaffirmation: validateUrl takes ONE arg and blocks
+    // loopback unconditionally; there is no allowlist knob that widens it. The
+    // allowance lives EXCLUSIVELY in the override's validateLocalServerUrl path.
+    const blocked = await validateUrl("http://127.0.0.1:65530/file/x.bin");
+    expect(blocked.ok).toBe(false);
   });
 });
