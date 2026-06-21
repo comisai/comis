@@ -1037,4 +1037,69 @@ describe("TgEmulator — group/forum chats + addressing inject (GROUP-01/02)", (
       expect(src).toMatch(/createForumTopic/);
     });
   });
+
+  // -------------------------------------------------------------------------
+  // FAULT-01 — the fail()/clearFaults() fault-injection seam (Plan 02). The
+  // emulator can make any Bot-API method return a Telegram error envelope
+  // `{ ok:false, error_code, description, parameters? }` on demand so the REAL
+  // adapter hits the error and runs its fallback. `once:true` lets the SECOND
+  // call (the adapter's retry) succeed; `matchChat` scopes the fault to one chat.
+  // -------------------------------------------------------------------------
+  describe("fail()/clearFaults() — the Bot-API fault-injection seam", () => {
+    it("a once:true fault makes the FIRST call return the error envelope and the SECOND succeed (the retry-consumed once)", async () => {
+      emu.fail("sendMessage", { error_code: 400, description: "synthetic parse failure" }, { once: true });
+
+      // FIRST call — the injected error envelope (ok:false, error_code 400).
+      const first = await callMethod(apiRoot, "sendMessage", { chat_id: CHAT_ID, text: "x" });
+      expect(first.ok).toBe(false);
+      expect(first.error_code).toBe(400);
+
+      // SECOND call — the once-fault is consumed, so the normal ok:true echo lands
+      // (this is what makes a fallback's recorded RETRY outbound assertable).
+      const second = await callMethod(apiRoot, "sendMessage", { chat_id: CHAT_ID, text: "x" });
+      expect(second.ok).toBe(true);
+    });
+
+    it("a method with NO fault set returns its normal ok:true envelope (back-compat — existing scenarios unaffected)", async () => {
+      // No fail() call — the method behaves exactly as before.
+      const env = await callMethod(apiRoot, "sendMessage", { chat_id: CHAT_ID, text: "unfaulted" });
+      expect(env.ok).toBe(true);
+    });
+
+    it("a persistent fault (no once) keeps failing until clearFaults()", async () => {
+      emu.fail("setMessageReaction", { error_code: 400, description: "REACTION_INVALID" });
+      const a = await callMethod(apiRoot, "setMessageReaction", { chat_id: CHAT_ID, message_id: 1, reaction: [] });
+      expect(a.ok).toBe(false);
+      const b = await callMethod(apiRoot, "setMessageReaction", { chat_id: CHAT_ID, message_id: 1, reaction: [] });
+      expect(b.ok).toBe(false);
+      // clearFaults() removes the map → the method succeeds again.
+      emu.clearFaults();
+      const c = await callMethod(apiRoot, "setMessageReaction", { chat_id: CHAT_ID, message_id: 1, reaction: [] });
+      expect(c.ok).toBe(true);
+    });
+
+    it("matchChat scopes the fault to one chat — a different chat is unaffected", async () => {
+      emu.fail("sendMessage", { error_code: 403, description: "forbidden here" }, { matchChat: CHAT_ID });
+      // The matched chat fails.
+      const matched = await callMethod(apiRoot, "sendMessage", { chat_id: CHAT_ID, text: "to matched" });
+      expect(matched.ok).toBe(false);
+      expect(matched.error_code).toBe(403);
+      // A different chat is NOT faulted.
+      const other = await callMethod(apiRoot, "sendMessage", { chat_id: 999_999, text: "to other" });
+      expect(other.ok).toBe(true);
+      emu.clearFaults();
+    });
+
+    it("the error envelope carries the parameters (so a 429 retry_after reaches the adapter's auto-retry)", async () => {
+      emu.fail("sendMessage", { error_code: 429, description: "Too Many Requests", parameters: { retry_after: 1 } }, { once: true });
+      const env = (await fetch(botUrl(apiRoot, "sendMessage"), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ chat_id: CHAT_ID, text: "x" }),
+      }).then((r) => r.json())) as { ok: boolean; error_code?: number; parameters?: { retry_after?: number } };
+      expect(env.ok).toBe(false);
+      expect(env.error_code).toBe(429);
+      expect(env.parameters?.retry_after).toBe(1);
+    });
+  });
 });

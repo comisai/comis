@@ -1060,4 +1060,75 @@ describe("control-api — generic /control/* surface + in-proc client + reply-wa
       expect(src).toMatch(/waitMs/);
     });
   });
+
+  // -------------------------------------------------------------------------
+  // POST /control/faults + DELETE /control/faults — the out-of-process fault
+  // path (Plan 02). The in-process scenario calls emu.fail() directly; the
+  // HTTP routes (+ the in-proc client.setFault/clearFaults for symmetry) drive
+  // the SAME emulator fail()/clearFaults() the scenario uses.
+  // -------------------------------------------------------------------------
+  describe("POST/DELETE /control/faults (the fault-injection routes)", () => {
+    /** DELETE a `/control/*` route and return status + parsed body. */
+    async function deleteControl(path: string): Promise<{ status: number; json: unknown }> {
+      const res = await fetch(`${apiRoot}${path}`, { method: "DELETE" });
+      return { status: res.status, json: await res.json() };
+    }
+
+    it("POST /control/faults sets a fault the Bot-API method then returns (the error envelope)", async () => {
+      const { status, json } = await postControl(apiRoot, "/control/faults", {
+        method: "sendMessage",
+        error: { error_code: 400, description: "can't parse entities" },
+        opts: { once: true },
+      });
+      expect(status).toBe(200);
+      expect((json as { ok?: boolean }).ok).toBe(true);
+
+      // The faulted sendMessage now returns the error envelope...
+      const first = await callBotMethod(apiRoot, "sendMessage", { chat_id: CHAT_ID, text: "x" });
+      expect(first.ok).toBe(false);
+      // ...and the once-fault is consumed → the next call succeeds.
+      const second = await callBotMethod(apiRoot, "sendMessage", { chat_id: CHAT_ID, text: "x" });
+      expect(second.ok).toBe(true);
+    });
+
+    it("DELETE /control/faults clears all faults (the faulted method succeeds again)", async () => {
+      await postControl(apiRoot, "/control/faults", {
+        method: "sendMessage",
+        error: { error_code: 403, description: "forbidden" },
+      });
+      const faulted = await callBotMethod(apiRoot, "sendMessage", { chat_id: CHAT_ID, text: "x" });
+      expect(faulted.ok).toBe(false);
+
+      const { status, json } = await deleteControl("/control/faults");
+      expect(status).toBe(200);
+      expect((json as { ok?: boolean }).ok).toBe(true);
+
+      const cleared = await callBotMethod(apiRoot, "sendMessage", { chat_id: CHAT_ID, text: "x" });
+      expect(cleared.ok).toBe(true);
+    });
+
+    it("POST /control/faults with a missing method/error → 400 (defensive, never a crash)", async () => {
+      const { status } = await postControl(apiRoot, "/control/faults", { method: "sendMessage" });
+      expect(status).toBe(400);
+    });
+
+    it("the in-proc client.setFault/clearFaults mirror the HTTP routes (in-proc == HTTP parity)", async () => {
+      client.setFault("sendMessage", { error_code: 400, description: "synthetic" }, { once: true });
+      const first = await callBotMethod(apiRoot, "sendMessage", { chat_id: CHAT_ID, text: "x" });
+      expect(first.ok).toBe(false);
+      const second = await callBotMethod(apiRoot, "sendMessage", { chat_id: CHAT_ID, text: "x" });
+      expect(second.ok).toBe(true);
+
+      // A persistent fault cleared via the in-proc client.
+      client.setFault("sendMessage", { error_code: 403, description: "forbidden" });
+      expect((await callBotMethod(apiRoot, "sendMessage", { chat_id: CHAT_ID, text: "x" })).ok).toBe(false);
+      client.clearFaults();
+      expect((await callBotMethod(apiRoot, "sendMessage", { chat_id: CHAT_ID, text: "x" })).ok).toBe(true);
+    });
+
+    it("the control-api source registers the /control/faults routes", () => {
+      const src = readFileSync(CONTROL_API_SOURCE, "utf8");
+      expect(src).toMatch(/\/control\/faults/);
+    });
+  });
 });
