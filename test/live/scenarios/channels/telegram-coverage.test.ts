@@ -162,9 +162,14 @@ describe("COVER-01 Stage-B — Tier-3 platformAction round-trips against a seede
     const value = result.value as { admins: Array<{ userId: number; firstName: string; isBot: boolean; status: string }> };
     // The adapter maps getChatAdministrators -> { admins: [{userId, firstName, isBot, status}] }.
     const ids = value.admins.map((a) => a.userId).sort((a, b) => a - b);
-    // RED-first: the deliberately-WRONG assertion (an empty set) — flips to the
-    // seeded [111, 222] at GREEN.
-    expect(ids).toEqual([]);
+    // The seeded admins round-trip: the createGroupChat admins[] seed (OWNER, MOD)
+    // is exactly what getChatAdministrators reports — the COVER-01 keystone.
+    expect(ids).toEqual([OWNER.id, MOD.id]);
+    // Each entry carries the fields the production platformAction maps.
+    const owner = value.admins.find((a) => a.userId === OWNER.id);
+    expect(owner?.firstName).toBe(OWNER.firstName);
+    expect(owner?.isBot).toBe(false);
+    expect(typeof owner?.status).toBe("string");
   });
 
   it("platformAction('pin') records the pin (a Tier-3 mutation round-trip)", async () => {
@@ -212,10 +217,11 @@ describe("COVER-01 Stage-B — Tier-3 platformAction round-trips against a seede
     // the LOG + the ledger entry, not a transport failure.
     expect(result.ok).toBe(true);
     const calls = emu.unimplementedCalls();
-    // RED-first: the deliberately-WRONG assertion (no honest log recorded) — flips
-    // to `banChatMember` surfaced at GREEN.
-    expect(calls.length).toBe(before);
-    expect(calls).not.toContain("banChatMember");
+    // The honest unimplemented-log fired: banChatMember is surfaced via the
+    // ledger (the scenario can DETECT the gap — not a silent okEnvelope that
+    // would falsely report coverage, T-208-10).
+    expect(calls.length).toBe(before + 1);
+    expect(calls).toContain("banChatMember");
   });
 });
 
@@ -256,9 +262,11 @@ describe("COVER-02 Stage-B — slash-commands are recognized as session-control 
     await waitUntil(() => captured.some((m) => m.text === `/reset@${BOT_USERNAME}`));
     const cmd = captured.find((m) => m.text === `/reset@${BOT_USERNAME}`);
     expect(cmd, "the /reset command was dispatched").toBeDefined();
-    // RED-first: the deliberately-WRONG assertion (the command NOT recognized) —
-    // flips to isBotCommand:true at GREEN.
-    expect(cmd!.metadata["isBotCommand"]).toBe(false);
+    // The /reset bot_command targeting THIS bot is RECOGNIZED as a session-control
+    // command (isBotCommand set) — the command pipeline keys on this, not on the
+    // raw text. detectBotAddressing also surfaces it as a mention (message-mapper.ts:99-101).
+    expect(cmd!.metadata["isBotCommand"]).toBe(true);
+    expect(cmd!.metadata["isBotMentioned"]).toBe(true);
   });
 
   it("a bare /new in a DM flips metadata.isBotCommand (a DM slash command — no @bot suffix needed)", async () => {
@@ -334,12 +342,14 @@ describe("COVER-02 Stage-B — a forum service message is NOT dispatched to the 
         m.metadata["forum_topic_created"] !== undefined ||
         (m.text === undefined && (m.metadata["telegramChatType"] === "supergroup")),
     );
-    // RED-first: the deliberately-WRONG assertion (the service message DID arrive)
-    // — flips to `false` (filtered, NOT dispatched) at GREEN.
-    expect(serviceArrived).toBe(true);
-    // The capture count did NOT grow by a dispatched service message (only the
-    // real message was ever dispatched). At GREEN this proves the filter held.
-    expect(captured.length).toBe(beforeCount + 1);
+    // The adapter FILTERED the forum service message at telegram-inbound.ts:50 —
+    // it was NOT dispatched to the agent (a non-message that could be mis-treated
+    // as a prompt cannot be smuggled in, T-208-09). A dispatch here would be a
+    // product defect (Defect-Watch: close it test-first in packages/*/src).
+    expect(serviceArrived).toBe(false);
+    // The capture count did NOT grow — the service message was filtered, so only
+    // the real message was ever dispatched. This proves the filter held.
+    expect(captured.length).toBe(beforeCount);
   });
 });
 
