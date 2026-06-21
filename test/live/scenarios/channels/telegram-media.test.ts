@@ -52,7 +52,7 @@
  * @module
  */
 
-import { describe, it, expect, afterEach, afterAll, beforeAll } from "vitest";
+import { describe, it, expect, afterAll, beforeAll } from "vitest";
 import Database from "better-sqlite3";
 import { execFileSync } from "node:child_process";
 import { buildAttachments, mapGrammyToNormalized } from "@comis/channels";
@@ -262,20 +262,66 @@ describe.skipIf(!isLive)("MEDIA-02 Stage-C — the SSRF-guarded byte download + 
     memoryDbPath = undefined;
   });
 
-  /** Count lcd_messages rows whose any part references a tg-file:// attachment (the inbound-routed oracle). */
+  /**
+   * Count DISTINCT inbound (`role='user'`) lcd_messages rows that ACTUALLY carry
+   * a MEDIA ATTACHMENT — the inbound-media-routed oracle (WR-01). Honest about
+   * what `lcd_messages` CAN assert, and materially stronger than "some user row
+   * exists" (the prior query only filtered `role='user'`, so a regression that
+   * dropped the attachment and routed the inbound as a plain text turn would have
+   * stayed green — the I5 "the assertion must confirm the real pipeline ran" gap).
+   *
+   * ── Why the filter is `hasAttachments`, NOT `tg-file://` (a live-verified call) ──
+   *
+   * The review's suggested `tg-file://` filter does NOT match on the real Stage-C
+   * path: with an STT provider PRESENT (local whisper here), the daemon RESOLVES
+   * the `tg-file://` pointer at ingest (CompositeResolver routing, scheme=tg-file,
+   * attachmentType=audio — confirmed in the daemon log) and CONSUMES it inline; it
+   * is NOT persisted as text into `lcd_message_parts`. (The "[Attached: … | url:
+   * tg-file://…]" hint text only appears when a preprocessing pipeline is DISABLED
+   * — the autonomous-media path — which is not this host's posture.) A live db dump
+   * confirmed `lcd_message_parts.metadata LIKE '%tg-file%'` == 0 even though the
+   * voice message routed end-to-end and the agent replied about it.
+   *
+   * What DOES survive into the store is the structural attachment flag: prompt
+   * assembly stamps `flags.hasAttachments = true` on the inbound metadata iff
+   * `msg.attachments.length > 0` (agent/.../prompt-assembly.ts buildMessageFlags),
+   * and that metadata is injected into the inbound user turn as a "## Current
+   * Message Context" JSON block persisted in `lcd_message_parts.metadata` (the
+   * verbatim text block — core/.../parts-codec.ts). So an attachment-bearing turn
+   * is queryable by JOINing the parts and LIKE-matching `hasAttachments` — and a
+   * plain TEXT turn carries NO such flag, so it does NOT match (the property WR-01
+   * wants). Live-verified: 1 attachment-bearing user row per injected voice turn
+   * (`%hasAttachments%` == 1), 0 for a non-attachment turn.
+   *
+   * This proves the MEDIA ROUTING (the attachment reached the agent's prompt
+   * assembly) — NOT a transcript (Pitfall 2 / CF-3): on this keyless+whisper host
+   * the STT attempt fails on the synthetic bytes and the handler short-circuits to
+   * an honest "couldn't transcribe" reply, exactly as the no-false-success contract
+   * requires. The Stage-B legs above separately prove the `tg-file://` pointer
+   * itself via the REAL buildAttachments + the byte-serving file route.
+   */
   function countInboundMediaRows(dbPath: string): number {
     const db = new Database(dbPath, { readonly: true });
     try {
       const present = db
-        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='lcd_messages'")
-        .get();
-      if (present === undefined) return 0;
-      // The inbound message text/parts carry the tg-file:// pointer (or the
-      // transcript, on a capability-bearing model). Count any user row referencing it.
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('lcd_messages','lcd_message_parts') GROUP BY 1",
+        )
+        .all();
+      // Both tables must exist for the JOIN-based attachment filter (a partial/old
+      // db without lcd_message_parts cannot carry the flag → honest 0).
+      if (present.length < 2) return 0;
+      // DISTINCT message id: a media turn could emit multiple parts; we count the
+      // inbound USER ROW whose injected message-context carries hasAttachments, not
+      // parts. Static SQL, no interpolation. Mirrors lcd-fts.ts searchViaLike's
+      // metadata LIKE surface.
       return (
         db
           .prepare(
-            "SELECT count(*) AS c FROM lcd_messages WHERE role = 'user'",
+            `SELECT count(DISTINCT m.id) AS c
+               FROM lcd_messages m
+               JOIN lcd_message_parts p ON p.message_id = m.id
+              WHERE m.role = 'user' AND p.metadata LIKE '%hasAttachments%'`,
           )
           .get() as { c: number }
       ).c;
@@ -317,14 +363,15 @@ describe.skipIf(!isLive)("MEDIA-02 Stage-C — the SSRF-guarded byte download + 
       ).toBeDefined();
       if (reply === undefined) return;
 
-      // The inbound media row reached the LCD store (the agent saw the attachment).
-      // This proves the routing — NOT a transcript (Pitfall 2). Whether the bytes
+      // The inbound row that CARRIES the tg-file:// media pointer reached the LCD
+      // store (the agent saw the ATTACHMENT, not merely some text turn). This
+      // proves the media ROUTING — NOT a transcript (Pitfall 2). Whether the bytes
       // were transcribed/seen/extracted is gated behind a capability provider; on a
       // plain keyless model the handler short-circuits to a hint (an HONEST result).
       const inboundRows = countInboundMediaRows(dbPath);
       expect(
         inboundRows,
-        "FINDING: no inbound user row in lcd_messages after the voice inject — the media message did not reach the agent (check the apiRoot seam / buildAttachments). NOT a faked green (I5).",
+        "FINDING: no inbound ATTACHMENT-BEARING user row in lcd_messages after the voice inject — the media message did not reach the agent's prompt assembly (a plain-text user row carries NO hasAttachments flag and would NOT match this; check the apiRoot seam / buildAttachments / the inbound metadata injection). NOT a faked green (I5).",
       ).toBeGreaterThanOrEqual(1);
     },
     1_800_000,
