@@ -611,13 +611,20 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
     resetChat(chat) {
       chats.delete(chat.chatId);
       // Also drop this chat's pending updates from the bot-global queue.
-      // GOTCHA B (REACT-01): this filter keys on `u.message`. A
-      // `message_reaction` update (from injectReaction) has NO `.message`, so it
-      // is KEPT by the `: true` branch regardless of chat. For the REACT-01
-      // scenarios this is fine — they react then assert BEFORE any reset. If a
-      // future reset-after-reaction test is needed, extend the predicate to also
-      // match `u.message_reaction?.chat.id !== chat.chatId`.
-      pending = pending.filter((u) => (u.message ? u.message.chat.id !== chat.chatId : true));
+      // WR-02 (206-05 review fix): the filter must clear BOTH update kinds for
+      // the reset chat — a plain `message` update AND a `message_reaction` update
+      // (from injectReaction, which has NO `.message`). The prior predicate keyed
+      // only on `u.message`, so a queued reaction survived a reset regardless of
+      // chat and could bleed into a later test that reuses resetChat (207/208/209
+      // — the reaction scenarios). An update of neither kind (a future
+      // callback/edited-message) is bot-global and is KEPT by the `: true` tail.
+      pending = pending.filter((u) =>
+        u.message
+          ? u.message.chat.id !== chat.chatId
+          : u.message_reaction
+            ? u.message_reaction.chat.id !== chat.chatId
+            : true,
+      );
     },
   };
 
