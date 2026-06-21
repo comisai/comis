@@ -103,15 +103,16 @@ describe("IcSpendGovernanceView", () => {
     expect(priv(el)._loadState).toBe("loaded");
 
     // Headroom gauges (per agent/tenant/global) render as stat-cards.
-    const cards = el.shadowRoot?.querySelectorAll("ic-stat-card");
-    expect((cards?.length ?? 0)).toBeGreaterThan(0);
+    const cards = Array.from(el.shadowRoot?.querySelectorAll("ic-stat-card") ?? []);
+    expect(cards.length).toBeGreaterThan(0);
 
-    // The global headroom is surfaced (ceiling 10 − spent 3 = 7).
-    const text = el.shadowRoot?.textContent ?? "";
-    expect(text).toContain("Global");
-
-    // Pricing-coverage (priced/free/unknown) is shown.
-    expect(text.toLowerCase()).toContain("pricing");
+    // The stat-card labels (rendered into each card's own shadow root) carry the
+    // global headroom gauge + the pricing-coverage stat.
+    const labels = cards.map(
+      (c) => (c.getAttribute("label") ?? (c as unknown as { label: string }).label ?? "").toLowerCase(),
+    );
+    expect(labels.some((l) => l.includes("global headroom"))).toBe(true);
+    expect(labels.some((l) => l.includes("pricing coverage"))).toBe(true);
   });
 
   it("renders the LIVE per-scope figures from the snapshot (agrees with the kill-switch)", async () => {
