@@ -65,6 +65,7 @@
 
 import { describe, it, expect, afterEach, afterAll, beforeAll } from "vitest";
 import Database from "better-sqlite3";
+import * as sqliteVec from "sqlite-vec";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -112,19 +113,40 @@ function freshDbPath(): string {
 }
 
 /**
+ * Open a READONLY connection with the sqlite-vec extension loaded — mirrors the
+ * `assert/db-oracle.ts` `openReadonlyWithVec` (PRIVATE there). The isolated
+ * daemon's memory.db creates `vec0` virtual tables (vec_memories); a plain
+ * readonly connection that has NOT loaded sqlite-vec throws "no such module:
+ * vec0" on any access. Loading the extension is connection-level (NOT a write),
+ * so the readonly guarantee holds; a host that lacks the extension simply
+ * degrades the vec-table reads (they are not a residency surface anyway).
+ */
+function openReadonlyWithVec(dbPath: string): Database.Database {
+  const db = new Database(dbPath, { readonly: true });
+  try {
+    sqliteVec.load(db);
+  } catch {
+    // Reader lacks sqlite-vec — vec0-vtable reads degrade to the skip path below.
+  }
+  return db;
+}
+
+/**
  * The `tg db` residency sweep (the SECRET-RESIDENCY oracle over the isolated
- * memory.db). Opens the db READONLY, walks EVERY user table, and scans EVERY
- * TEXT/BLOB cell for credential-shaped patterns via the product-shared
- * scanForSecrets (the SECRET_PATTERN) — Don't-Hand-Roll a new scanner. Returns
- * the list of REDACTED matches (empty == zero residency). A non-empty return is a
- * HARD-oracle trip the caller HALTS on (§10A.5).
+ * memory.db). Opens the db READONLY (with sqlite-vec loaded), walks EVERY user
+ * table, and scans EVERY string cell for credential-shaped patterns via the
+ * product-shared scanForSecrets (the SECRET_PATTERN) — Don't-Hand-Roll a new
+ * scanner. Returns the list of REDACTED matches (empty == zero residency). A
+ * non-empty return is a HARD-oracle trip the caller HALTS on (§10A.5).
  *
  * Reads the schema from sqlite_master (the db-oracle pattern) so it sweeps
  * whatever tables the daemon actually created — no hardcoded table list that
- * could miss a new residency surface.
+ * could miss a new residency surface. A vec0 vtable (vec_memories) that throws
+ * "no such module: vec0" (the optional extension absent) is SKIPPED, not crashed
+ * (the db-oracle precedent) — a vec table holds float embeddings, not secrets.
  */
 function sweepDbForSecrets(dbPath: string): string[] {
-  const db = new Database(dbPath, { readonly: true });
+  const db = openReadonlyWithVec(dbPath);
   try {
     const tables = (
       db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as { name: string }[]
@@ -133,17 +155,26 @@ function sweepDbForSecrets(dbPath: string): string[] {
       .filter((n) => !n.startsWith("sqlite_"));
     const found: string[] = [];
     for (const table of tables) {
-      // Enumerate the table's columns; scan TEXT/BLOB-typed cells (the residency surface).
-      const cols = (
-        db.prepare(`PRAGMA table_info("${table}")`).all() as Array<{ name: string; type: string }>
-      ).filter((c) => /char|clob|text|blob|^$|json/i.test(c.type) || c.type === "");
+      // Enumerate the table's columns; scan TEXT/BLOB-typed cells (the residency
+      // surface). A vec0 vtable PRAGMA can throw "no such module: vec0" when the
+      // optional extension is absent — skip it (not a residency surface).
+      let cols: Array<{ name: string; type: string }>;
+      try {
+        cols = (
+          db.prepare(`PRAGMA table_info("${table}")`).all() as Array<{ name: string; type: string }>
+        ).filter((c) => /char|clob|text|blob|json/i.test(c.type) || c.type === "");
+      } catch (e) {
+        if (e instanceof Error && /no such module/i.test(e.message)) continue;
+        throw e;
+      }
       if (cols.length === 0) continue;
       let rows: Array<Record<string, unknown>>;
       try {
         rows = db.prepare(`SELECT * FROM "${table}"`).all() as Array<Record<string, unknown>>;
-      } catch {
-        // A vec0 vtable or similar non-readable table — skip (not a residency surface here).
-        continue;
+      } catch (e) {
+        // A vec0 vtable or similar non-readable table — skip (not a residency surface).
+        if (e instanceof Error && /no such module/i.test(e.message)) continue;
+        throw e;
       }
       for (const row of rows) {
         for (const col of cols) {
