@@ -497,6 +497,18 @@ describe("chan/tg CLI — runVerb: lifecycle (CLI-01)", () => {
     expect(JSON.stringify((err as VerbFailure).body)).toMatch(/refus|endpoint/i);
   });
 
+  it("down with an explicit --endpoint refuses (reason: refused) even when NO local handle resolved (WR-04)", async () => {
+    // The --endpoint refusal is independent of whether a handle file exists; it
+    // must fire BEFORE the generic dead-handle guard so the reason code is the
+    // precise "refused", not a generic "dead_handle".
+    const err = await runVerb("down", [], {
+      handle: undefined,
+      flagEndpoint: "http://127.0.0.1:9999",
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(VerbFailure);
+    expect((err as VerbFailure).body["reason"]).toBe("refused");
+  });
+
   it("up calls the injected discover-or-spawn launcher and reports reused/spawned", async () => {
     const startStandaloneRigFn = vi.fn().mockResolvedValue({
       reused: true,

@@ -461,6 +461,20 @@ export async function runVerb(
     throw VerbFailure.notImplemented(verb, deferredPhase);
   }
 
+  // WR-04: `down --endpoint <url>` REFUSES — we only tear down a rig we own,
+  // never one addressed by an explicit endpoint. This refusal is INDEPENDENT of
+  // whether a local handle file resolved, so it must precede the generic
+  // dead-handle guard below; otherwise a `down --endpoint` with no handle file
+  // reports a generic `dead_handle` instead of the precise `refused` the guard
+  // exists to name (and "never destroy what you didn't spawn" must still hold).
+  if (verb === "down" && ctx.flagEndpoint !== undefined) {
+    throw new VerbFailure("dead_handle", {
+      reason: "refused",
+      endpoint: ctx.flagEndpoint,
+      hint: "refusing to tear down a rig addressed by --endpoint (never destroy what you didn't spawn).",
+    });
+  }
+
   // `up` is the ONLY verb that may run without a resolved handle (it discovers-
   // or-spawns one). Every other handle-requiring verb fails honestly as a dead
   // handle when none resolved — NEVER a silent spawn (T-205-08).
@@ -487,14 +501,11 @@ export async function runVerb(
     }
 
     case "down": {
-      // Never destroy what you didn't spawn: an explicit --endpoint REFUSES.
-      if (ctx.flagEndpoint !== undefined) {
-        throw new VerbFailure("dead_handle", {
-          reason: "refused",
-          endpoint: ctx.flagEndpoint,
-          hint: "refusing to tear down a rig addressed by --endpoint (never destroy what you didn't spawn).",
-        });
-      }
+      // The `down --endpoint` REFUSAL is handled by the early guard above (WR-04)
+      // — it fires before the dead-handle guard so the reason is precisely
+      // `refused` regardless of handle resolution. Reaching here means no
+      // --endpoint was given.
+      //
       // In-process scope (W1): the standalone CLI cannot tear down a separate-
       // process rig from a cold shell. Report honestly rather than fake it.
       return {
