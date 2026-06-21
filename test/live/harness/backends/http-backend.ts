@@ -88,6 +88,26 @@ export type NativeRouteHandler = (
 ) => RouteResult | Promise<RouteResult>;
 
 /**
+ * A path predicate a channel supplies to `registerPathRoute` to claim an
+ * ARBITRARY native-wire surface (Phase 209, CHAN2-02 FIX #1). Either a string
+ * PREFIX (`path.startsWith(prefix)`) or a PREDICATE over the request path
+ * (no query string). Lets a second HTTP-class channel (Signal serves
+ * `/api/v1/{check,rpc,events}`) register its own surface WITHOUT the base
+ * hard-coding any channel's path shape beyond the preserved Telegram
+ * `BOT_PATH` default. The base owns surface discrimination; the channel owns
+ * its internal sub-routing.
+ */
+export type PathMatcher = string | ((path: string) => boolean);
+
+/**
+ * A generalized path-route handler. Receives the base request context (the full
+ * request path is on `ctx.path`). Registered with an arbitrary `PathMatcher`
+ * (Phase 209, CHAN2-02 FIX #1) so a channel's non-Telegram wire surface
+ * (e.g. Signal's `/api/v1/rpc`) dispatches on the same loopback base.
+ */
+export type PathRouteHandler = (ctx: RouteContext) => RouteResult | Promise<RouteResult>;
+
+/**
  * A `/control/*` route handler. Receives the request context (the full
  * `/control/...` path is on `ctx.path`). Plan 04 registers the control routes
  * here.
@@ -122,6 +142,14 @@ export interface HttpBackend {
   stop(): Promise<void>;
   /** Register the native Bot-API method dispatch (`/bot<token>/<method>`). Plan 03. */
   registerNativeRoute(handler: NativeRouteHandler): void;
+  /**
+   * Register a generalized native-wire route under an ARBITRARY path
+   * (`matcher` = a string prefix or a path predicate). Phase 209 (CHAN2-02
+   * FIX #1) — a second HTTP-class channel (Signal) registers its
+   * `/api/v1/{check,rpc,…}` surface here. Path routes are checked BEFORE the
+   * Telegram `BOT_PATH` default; registration order among them is preserved.
+   */
+  registerPathRoute(matcher: PathMatcher, handler: PathRouteHandler): void;
   /** Register the `/control/*` dispatch. Plan 04. */
   registerControlRoute(handler: ControlRouteHandler): void;
   /** Register the `GET /file/bot<token>/<path>` dispatch. Plan 03. */
@@ -140,6 +168,17 @@ export function createHttpBackend(): HttpBackend {
   let nativeHandler: NativeRouteHandler | undefined;
   let controlHandler: ControlRouteHandler | undefined;
   let fileHandler: FileRouteHandler | undefined;
+  // Generalized native-wire path routes (Phase 209, CHAN2-02 FIX #1). Each
+  // entry is a channel-supplied { matcher, handler }; the dispatcher checks
+  // these (in registration order) BEFORE the Telegram BOT_PATH default, so a
+  // second channel's arbitrary surface (Signal's /api/v1/*) dispatches without
+  // baking its path shape into the base. Empty by default → the base behaves
+  // exactly as the 204 Telegram-only base until a channel registers one.
+  const pathRoutes: Array<{ matcher: PathMatcher; handler: PathRouteHandler }> = [];
+
+  function pathMatches(matcher: PathMatcher, path: string): boolean {
+    return typeof matcher === "string" ? path.startsWith(matcher) : matcher(path);
+  }
 
   // Bot API path shape — grammy builds `${apiRoot}/bot${token}/${method}`
   // (mock-telegram-server.ts:90). The token segment is `bot[^/]+`.
@@ -219,7 +258,20 @@ export function createHttpBackend(): HttpBackend {
       return;
     }
 
-    // (c) /bot<token>/<method> — the channel's native Bot-API method table.
+    // (c) Generalized native-wire path routes (Phase 209, CHAN2-02 FIX #1) —
+    // checked BEFORE the Telegram BOT_PATH default so a second channel's
+    // arbitrary surface (Signal's /api/v1/{check,rpc,events}) dispatches. The
+    // matcher is matched against the path WITHOUT the query string; the handler
+    // receives the same base context (raw body + query) as the native route.
+    for (const route of pathRoutes) {
+      if (pathMatches(route.matcher, path)) {
+        const result = await route.handler(baseCtx);
+        send(res, result.status, result.body, result.contentType);
+        return;
+      }
+    }
+
+    // (d) /bot<token>/<method> — the channel's native Bot-API method table.
     const botMatch = url.match(BOT_PATH);
     if (botMatch) {
       if (!nativeHandler) {
@@ -271,6 +323,9 @@ export function createHttpBackend(): HttpBackend {
     },
     registerNativeRoute(h) {
       nativeHandler = h;
+    },
+    registerPathRoute(matcher, h) {
+      pathRoutes.push({ matcher, handler: h });
     },
     registerControlRoute(h) {
       controlHandler = h;
