@@ -110,9 +110,10 @@ describe("MEDIA-01/03 Stage-B — the media update reaches the agent as a tg-fil
       const attachments = buildAttachments(msg as Message);
       expect(attachments.length, "exactly one attachment for a single-kind media message").toBe(1);
       const att = attachments[0]!;
-      // RED: the url is tg-file://<fileId>, NOT a (nonexistent) transcript string —
-      // assert the WRONG prefix so the RED fails reproducibly, GREEN flips it.
-      expect(att.url).toBe(`tg-WRONG://${fileId}`);
+      // The url is tg-file://<fileId> — a DEFERRED-download pointer the agent
+      // sees, NOT a transcript (the keyless handler short-circuits to a hint
+      // before any download; there is nothing to transcribe at this layer).
+      expect(att.url).toBe(`tg-file://${fileId}`);
       expect(att.type).toBe(attachmentType);
       // The attachment is a DEFERRED-download pointer (a hint), NEVER a transcript.
       expect(att.url.startsWith("tg-file://")).toBe(true);
@@ -163,9 +164,9 @@ describe("MEDIA-02 Stage-B — the file route serves the stored bytes via a DIRE
 
     const byteRes = await fetch(`${apiRoot}/file/bot${FAKE_BOT_TOKEN}/${fileBody.result.file_path}`);
     const received = Buffer.from(await byteRes.arrayBuffer());
-    // RED: assert the bytes do NOT match (deliberately wrong) so the RED fails;
-    // GREEN flips to `.equals(bytes)` true.
-    expect(received.equals(bytes)).toBe(false);
+    // The route serves the EXACT injected bytes (byte-for-byte) — the
+    // deterministic byte-serving proof (no daemon, no SSRF guard on this leg).
+    expect(received.equals(bytes)).toBe(true);
   });
 });
 
@@ -182,8 +183,8 @@ describe("MEDIA-03 Stage-B — spoiler / location / venue map to metadata via th
       spoiler: true,
     });
     const normalized = mapGrammyToNormalized(update.message as Message, CHAT_ID);
-    // RED: assert the WRONG value so the RED fails reproducibly; GREEN flips to true.
-    expect(normalized.metadata.hasSpoiler).toBe(false);
+    // has_media_spoiler → metadata.hasSpoiler (message-mapper.ts:142).
+    expect(normalized.metadata.hasSpoiler).toBe(true);
   });
 
   it("a location message → metadata.location carries the lat/lng", () => {
@@ -302,7 +303,8 @@ describe.skipIf(!isLive)("MEDIA-02 Stage-C — the SSRF-guarded byte download + 
         fromUserId: FROM.id,
         kind: "voice",
         fileBase64: voiceBytes.toString("base64"),
-        meta: { mimeType: "audio/ogg", durationMs: 2000 },
+        mimeType: "audio/ogg",
+        durationMs: 2000,
       });
 
       // waitForReply is the SYNC POINT — the agent authored a reply, so the media
