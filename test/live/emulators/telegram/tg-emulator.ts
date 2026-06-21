@@ -61,8 +61,10 @@ import {
   makeMediaUpdate,
   makeMessageUpdate,
   makeReactionUpdate,
+  makeServiceMessageUpdate,
   makeUser,
   nextUpdateId,
+  type ForumServiceKind,
   type LocationInput,
   type MediaKind,
   type VenueInput,
@@ -329,6 +331,29 @@ export interface TgEmulator extends ChannelEmulator {
     opts?: InjectOpts,
   ): number;
   /**
+   * Queue an inbound forum-service `message` update of `kind` (COVER-02) for the
+   * next `getUpdates` long-poll (builds it via {@link makeServiceMessageUpdate}).
+   * The adapter's message handler FILTERS these six kinds at
+   * `telegram-inbound.ts:50-58` — so the negative scenario proves the service
+   * message is NEVER dispatched to the agent. `chat` should be a (forum)
+   * supergroup created via {@link createGroupChat}; the builder rides a
+   * supergroup chat regardless (forum service messages occur in supergroups).
+   * Mints a `message_id` (the service message IS a message), like
+   * {@link injectMessage}.
+   * @returns the minted `message_id`.
+   */
+  injectServiceMessage(chat: ChatRef, kind: ForumServiceKind): number;
+  /**
+   * The Bot-API method names a UC called that are NOT implemented on demand —
+   * each routed through the honest unimplemented-log fallback (COVER-01, HARD
+   * constraint 3). A Tier-3 method the harness has not wired logs
+   * `[tg-emulator] unimplemented Bot-API method: <name>` AND is appended here, so
+   * a scenario can DETECT it instead of a silent no-op falsely reporting coverage
+   * (the no-false-success principle — T-208-10). Names appear in call order, with
+   * duplicates (one entry per call).
+   */
+  unimplementedCalls(): readonly string[];
+  /**
    * Queue an inbound reaction-ADD on an EXISTING bot reply (`botMessageId`) for
    * the next `getUpdates` long-poll (builds a grammy-typed `message_reaction`
    * `Update` via `tg-payloads`). Unlike {@link injectMessage} it mints NO
@@ -547,6 +572,36 @@ function readNum(
 const okEnvelope = (result: unknown): RouteResult => ({ status: 200, body: { ok: true, result } });
 
 /**
+ * The COMPLETE Tier-3 group-admin Bot-API method set (design Appendix-A). The
+ * emulator implements the ones the COVER-01 UC drives on demand (see the
+ * `dispatch` switch); EVERY other name in this set, when a UC calls it, routes
+ * through the honest unimplemented-log fallback (`[tg-emulator] unimplemented
+ * Bot-API method: <name>` + an `unimplementedCalls()` record) — NEVER a silent
+ * `okEnvelope({})` (HARD constraint 3, T-208-10). A method NOT in this set (e.g.
+ * an unrelated boot call like `deleteWebhook`) stays the benign generic default
+ * so it does not pollute the coverage ledger or break boot.
+ */
+const TIER3_METHODS: ReadonlySet<string> = new Set([
+  "pinChatMessage",
+  "unpinChatMessage",
+  "sendPoll",
+  "sendSticker",
+  "getChat",
+  "getChatMemberCount",
+  "getChatAdministrators",
+  "setChatTitle",
+  "setChatDescription",
+  "banChatMember",
+  "unbanChatMember",
+  "promoteChatMember",
+  "createForumTopic",
+  "editForumTopic",
+  "closeForumTopic",
+  "reopenForumTopic",
+  "sendChatAction",
+]);
+
+/**
  * The emulator's stable bot identity (matches the `getMe` envelope below). Used
  * to author the `reply_to_message` a `replyTo` opt points at, so the mapper's
  * `detectBotAddressing` flips `replyToBot` (it compares `reply_to_message.from.id`
@@ -698,6 +753,13 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
   // adapter runs its fallback. An empty map (the default) leaves every method
   // unchanged — existing scenarios are unaffected.
   const faults = new Map<string, { error: TgFault; once?: boolean; matchChat?: number }>();
+  // COVER-01 (HARD constraint 3): the ordered list of Tier-3 Bot-API methods a
+  // UC drove that are NOT implemented on demand. Each such call routes through
+  // `logUnimplemented` (an honest `[tg-emulator] unimplemented Bot-API method:
+  // <name>` log) and is appended here so a scenario can DETECT it — a silent
+  // no-op would FALSELY report coverage (the no-false-success principle,
+  // T-208-10). Surfaced via `unimplementedCalls()`.
+  const unimplemented: string[] = [];
   // De-risk (RESEARCH A1/A2): optionally log the FIRST getUpdates request once
   // to confirm the offset transport + the runner's timeout by observation. Off
   // by default — only prints when `COMIS_EMULATOR_DEBUG` is set (see
@@ -975,11 +1037,57 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
         // multipart; `parseBody` extracted the scalar caption/chat_id fields.
         return sendMediaMethod(method, body);
 
-      default:
-        // Unknown method — accept-and-record so an unrelated adapter call does
-        // not fail the boot (mirrors the mock's generic fallback).
+      // COVER-01 — the Tier-3 group-admin methods implemented ON DEMAND (the set
+      // the COVER UC drives). `getChatAdministrators` reports the createGroupChat
+      // admins[] seed; `pinChatMessage`/`sendChatAction` record the round-trip;
+      // `getChat`/`getChatMemberCount` are the read round-trips. Every OTHER
+      // Tier-3 method (TIER3_METHODS) falls to `default` → the honest log.
+      case "getChatAdministrators":
+        return getChatAdministrators(body);
+
+      case "pinChatMessage":
+        return pinChatMessage(body);
+
+      case "sendChatAction":
+        return sendChatAction(body);
+
+      case "getChat":
+        return getChatInfo(body);
+
+      case "getChatMemberCount":
+        return getChatMemberCount(body);
+
+      default: {
+        // HARD constraint 3 (T-208-10): a Tier-3 method NOT implemented on demand
+        // must LOG honestly + be surfaced via unimplementedCalls() — NEVER a
+        // silent okEnvelope. An unrelated boot call (not in TIER3_METHODS) stays
+        // the benign accept-and-record so it does not fail boot or pollute the
+        // coverage ledger.
+        if (TIER3_METHODS.has(method)) return logUnimplemented(method, body);
         return okEnvelope({});
+      }
     }
+  }
+
+  /**
+   * The honest unimplemented-Tier-3 fallback (HARD constraint 3). Logs
+   * `[tg-emulator] unimplemented Bot-API method: <name>` and appends the method
+   * to `unimplemented` (surfaced via {@link TgEmulator.unimplementedCalls}) so a
+   * scenario can DETECT the gap — a silent no-op would falsely report coverage.
+   * Still records the call on the chat oracle (when a `chat_id` is present) so
+   * the call is provable, then returns a benign `okEnvelope({})` so grammy does
+   * not throw and the adapter's `platformAction` still resolves `ok` (the honest
+   * signal is the LOG + the ledger entry, not a transport failure).
+   * `console.warn` is fine in `test/` (outside the packages source rules).
+   */
+  function logUnimplemented(method: string, body: Record<string, unknown>): RouteResult {
+    unimplemented.push(method);
+    console.warn(`[tg-emulator] unimplemented Bot-API method: ${method}`);
+    const chatId = Number(body["chat_id"] ?? NaN);
+    if (!Number.isNaN(chatId)) {
+      record(chatId, { method, messageId: 0, raw: body });
+    }
+    return okEnvelope({});
   }
 
   function sendMessage(body: Record<string, unknown>): RouteResult {
@@ -1113,6 +1221,92 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
     });
   }
 
+  function getChatAdministrators(body: Record<string, unknown>): RouteResult {
+    // COVER-01 keystone — report the createGroupChat admins[] seed for this
+    // chat_id. grammy's getChatAdministrators returns an array of
+    // ChatMemberOwner|ChatMemberAdministrator; the production platformAction
+    // reads a.user.{id,first_name,is_bot} + a.status. The FIRST seeded admin is
+    // the owner (status "creator"); the rest are administrators. A chat with no
+    // group record (or no seed) returns [] — no phantom admins.
+    const chatId = Number(body["chat_id"] ?? NaN);
+    const group = Number.isNaN(chatId) ? undefined : groupChats.get(chatId);
+    const admins = group?.admins ?? [];
+    const result = admins.map((m, idx) => {
+      const user: User = makeUser({
+        id: m.id,
+        firstName: m.firstName,
+        ...(m.username !== undefined ? { username: m.username } : {}),
+      });
+      // The first seeded admin is the creator; the rest are administrators. Only
+      // the fields the platformAction reads must be exact; the privilege flags
+      // are realistic defaults (grammy's client does not deep-validate `result`).
+      return idx === 0
+        ? { status: "creator" as const, user, is_anonymous: false }
+        : {
+            status: "administrator" as const,
+            user,
+            can_be_edited: false,
+            is_anonymous: false,
+            can_manage_chat: true,
+            can_delete_messages: true,
+            can_manage_video_chats: true,
+            can_restrict_members: true,
+            can_promote_members: false,
+            can_change_info: true,
+            can_invite_users: true,
+            can_post_stories: false,
+            can_edit_stories: false,
+            can_delete_stories: false,
+          };
+    });
+    return okEnvelope(result);
+  }
+
+  function pinChatMessage(body: Record<string, unknown>): RouteResult {
+    // COVER-01 — a Tier-3 mutation round-trip. RECORD the pin on the chat oracle
+    // (provable) + return `true` (grammy expects a boolean result; the adapter's
+    // `pin` action maps it to `{ pinned: true }`).
+    const chatId = Number(body["chat_id"] ?? 0) || 0;
+    const messageId = Number(body["message_id"] ?? 0) || 0;
+    record(chatId, { method: "pinChatMessage", messageId, raw: body });
+    return okEnvelope(true);
+  }
+
+  function sendChatAction(body: Record<string, unknown>): RouteResult {
+    // COVER-01 — the typing side of the General-Topic id=1 asymmetry. RECORD the
+    // action + its message_thread_id VERBATIM (including id=1, which sendMessage
+    // omits) so the asymmetry's typing half is assertable on the oracle.
+    const chatId = Number(body["chat_id"] ?? 0) || 0;
+    const messageId = 0;
+    const ro: RecordedOutbound = { method: "sendChatAction", messageId, raw: body };
+    if (body["message_thread_id"] !== undefined) ro.messageThreadId = Number(body["message_thread_id"]);
+    record(chatId, ro);
+    return okEnvelope(true);
+  }
+
+  function getChatInfo(body: Record<string, unknown>): RouteResult {
+    // COVER-01 — a Tier-3 read round-trip. Echo the recorded group chat shape (a
+    // ChatFullInfo-shaped descriptor: id + type [+ title/is_forum]); the
+    // production `chat_info` action returns the chat verbatim. An unseeded chat
+    // returns a minimal private descriptor (no group record).
+    const chatId = Number(body["chat_id"] ?? 0) || 0;
+    const group = groupChats.get(chatId);
+    if (group !== undefined) {
+      return okEnvelope({ ...group.chat });
+    }
+    return okEnvelope({ id: chatId, type: "private" });
+  }
+
+  function getChatMemberCount(body: Record<string, unknown>): RouteResult {
+    // COVER-01 — a Tier-3 read round-trip. Return the recorded member count + the
+    // bot (the seeded members plus the bot identity), like Telegram counts the
+    // bot itself. grammy expects a number; the adapter maps it to `{ count }`.
+    const chatId = Number(body["chat_id"] ?? 0) || 0;
+    const group = groupChats.get(chatId);
+    const count = group === undefined ? 0 : group.members.length + (group.bot !== undefined ? 1 : 0);
+    return okEnvelope(count);
+  }
+
   // MEDIA-02 file route — serve the stored RAW bytes by `file_path`. A hit
   // returns a Buffer body (the http-backend binary path writes it verbatim with
   // the per-kind content-type, overridable by `meta.mimeType`); a miss — an
@@ -1209,6 +1403,32 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
       // implicit General topic (id=1).
       const threadId = nextThreadId++;
       return { chatId: chat.chatId, threadId, name };
+    },
+
+    injectServiceMessage(chat, kind) {
+      // COVER-02 — queue a forum-service `message` update the adapter FILTERS
+      // (telegram-inbound.ts:50-58). Mints a message_id (the service message IS a
+      // message), like injectMessage; the negative scenario asserts it never
+      // reaches the captured onMessage.
+      const messageId = nextMessageId++;
+      const update = makeServiceMessageUpdate(kind, {
+        updateId: nextUpdateId(),
+        messageId,
+        chatId: chat.chatId,
+      });
+      // Ensure the oracle exists for this chat (mirrors injectMessage).
+      chatOracle(chat.chatId);
+      pending.push(update);
+      // Keep the bot-global queue strictly ascending by update_id (monotonic).
+      pending.sort((a, b) => a.update_id - b.update_id);
+      // Wake a blocked long-poll, if any, so the SAME call resolves.
+      wakeWaiters();
+      return messageId;
+    },
+
+    unimplementedCalls() {
+      // A defensive copy — the caller cannot mutate the internal ledger.
+      return [...unimplemented];
     },
 
     injectReaction(chat, from, botMessageId, emoji) {

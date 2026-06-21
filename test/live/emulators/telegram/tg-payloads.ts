@@ -38,6 +38,12 @@ import type {
   CallbackQuery,
   Chat,
   Document,
+  ForumTopicClosed,
+  ForumTopicCreated,
+  ForumTopicEdited,
+  ForumTopicReopened,
+  GeneralForumTopicHidden,
+  GeneralForumTopicUnhidden,
   Location,
   Message,
   MessageEntity,
@@ -211,6 +217,129 @@ export function makeMessageUpdate(opts: MakeMessageUpdateOptions): Update {
       date: Math.floor(Date.now() / 1000),
       text: opts.text,
       ...addressing,
+    },
+  };
+}
+
+/**
+ * The closed set of forum-service message kinds the harness mints (COVER-02,
+ * Phase 208) — EXACTLY the six the adapter FILTERS at `telegram-inbound.ts:50-58`
+ * (`forum_topic_created` / `forum_topic_edited` / `forum_topic_closed` /
+ * `forum_topic_reopened` / `general_forum_topic_hidden` /
+ * `general_forum_topic_unhidden`). A `kind` outside this union is a COMPILE
+ * error, so the harness can never mint a service kind the adapter does not
+ * recognize — the §4.2 scope guard applied to service messages: these ARE
+ * handled (filtered), so minting them is permitted; the negative test proves
+ * the adapter does NOT dispatch them to the agent.
+ */
+export type ForumServiceKind =
+  | "forum_topic_created"
+  | "forum_topic_edited"
+  | "forum_topic_closed"
+  | "forum_topic_reopened"
+  | "general_forum_topic_hidden"
+  | "general_forum_topic_unhidden";
+
+/**
+ * Options for {@link makeServiceMessageUpdate} (COVER-02). A forum-service
+ * message rides a SUPERGROUP chat (forum topics live in supergroups) and carries
+ * NO `text` — it is a non-message lifecycle event, not agent input.
+ */
+export interface MakeServiceMessageUpdateOptions {
+  /** The supergroup chat id the service message belongs to (a NEGATIVE id). */
+  readonly chatId: number;
+  /** The message's id inside the chat. */
+  readonly messageId: number;
+  /** The Update's unique id; defaults to {@link nextUpdateId} when omitted (the emulator owns the counter). */
+  readonly updateId?: number;
+  /** The actor who performed the topic action (the service message's `from`); defaults to a synthetic user. */
+  readonly from?: User;
+}
+
+/**
+ * Build the grammy-typed forum-service field for a single {@link ForumServiceKind}.
+ *
+ * Each branch return-annotates the grammy field type (`ForumTopicCreated`/… —
+ * the I4 drift tripwire: a grammy shape change fails to compile here). The
+ * `created` kind requires `name` + `icon_color`; `edited` is all-optional; the
+ * other four are empty objects (the closed switch — an off-union kind is a
+ * compile error).
+ */
+function buildForumServiceField(
+  kind: ForumServiceKind,
+): Partial<
+  Pick<
+    Message,
+    | "forum_topic_created"
+    | "forum_topic_edited"
+    | "forum_topic_closed"
+    | "forum_topic_reopened"
+    | "general_forum_topic_hidden"
+    | "general_forum_topic_unhidden"
+  >
+> {
+  switch (kind) {
+    case "forum_topic_created": {
+      const created: ForumTopicCreated = { name: "Topic", icon_color: 0x6fb9f0 };
+      return { forum_topic_created: created };
+    }
+    case "forum_topic_edited": {
+      const edited: ForumTopicEdited = { name: "Renamed Topic" };
+      return { forum_topic_edited: edited };
+    }
+    case "forum_topic_closed": {
+      const closed: ForumTopicClosed = {};
+      return { forum_topic_closed: closed };
+    }
+    case "forum_topic_reopened": {
+      const reopened: ForumTopicReopened = {};
+      return { forum_topic_reopened: reopened };
+    }
+    case "general_forum_topic_hidden": {
+      const hidden: GeneralForumTopicHidden = {};
+      return { general_forum_topic_hidden: hidden };
+    }
+    case "general_forum_topic_unhidden": {
+      const unhidden: GeneralForumTopicUnhidden = {};
+      return { general_forum_topic_unhidden: unhidden };
+    }
+  }
+}
+
+/**
+ * Build a well-formed grammy `message` `Update` carrying ONE forum-service field
+ * (COVER-02 — the negative test). The adapter's message handler receives a
+ * `message` update and FILTERS it at `telegram-inbound.ts:50-58` (a DEBUG
+ * "Skipped forum topic service message", then `return`) — so the scenario proves
+ * it is NEVER dispatched to the agent.
+ *
+ * The return annotation IS grammy's `Update` (I4 tripwire). The inner `message`
+ * rides a SUPERGROUP chat (forum service messages occur in supergroups) and
+ * carries NO `text` — a service message is a lifecycle event, not a prompt. Only
+ * the single named forum-service field is set (the §4.2 scope guard: these kinds
+ * ARE handled — by filtering — so minting them is permitted; channel-post /
+ * inline-query / poll-answer stay forbidden). `date` is unix SECONDS.
+ */
+export function makeServiceMessageUpdate(
+  kind: ForumServiceKind,
+  opts: MakeServiceMessageUpdateOptions,
+): Update {
+  // grammy's `Update.message` is `Message & NonChannel` — `from` is REQUIRED. A
+  // real forum-service message carries the actor who triggered it; default to a
+  // synthetic user when the caller doesn't supply one.
+  const from: User = opts.from ?? makeUser({ id: 999, firstName: "ServiceActor" });
+  return {
+    update_id: opts.updateId ?? nextUpdateId(),
+    message: {
+      message_id: opts.messageId,
+      from,
+      // A supergroup chat (forums are supergroups). grammy's SupergroupChat
+      // requires `title`; the `: Update` annotation surfaces any drift (I4).
+      chat: { id: opts.chatId, type: "supergroup", title: `supergroup ${opts.chatId}`, is_forum: true },
+      // Telegram unix SECONDS (NOT ms) — the mapper multiplies ×1000.
+      date: Math.floor(Date.now() / 1000),
+      // Exactly one forum-service field — and NO text (it is a service message).
+      ...buildForumServiceField(kind),
     },
   };
 }
