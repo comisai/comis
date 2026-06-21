@@ -151,8 +151,9 @@ describe("INTERACT-01 Stage-B — the callback tap round-trip (recorded ack + is
     // callback_query_id, so the emulator keys it under chat 0).
     await waitUntil(() => emu!.outbound({ chatId: 0 }).some((o) => o.method === "answerCallbackQuery"));
     const acks = emu.outbound({ chatId: 0 }).filter((o) => o.method === "answerCallbackQuery");
-    // RED: assert ZERO acks (deliberately wrong) so the RED fails reproducibly.
-    expect(acks.length, "the unconditional answerCallbackQuery ack is recorded (the channel oracle proves it fired)").toBe(0);
+    // The adapter answers EVERY callback first + unconditionally — the channel
+    // oracle records exactly one ack for the single tap.
+    expect(acks.length, "the unconditional answerCallbackQuery ack is recorded (the channel oracle proves it fired)").toBeGreaterThanOrEqual(1);
 
     // (b) The synthetic message reaches the handler carrying isButtonCallback:true,
     // the button data, and the tapped reply's messageId (the attribution keystone).
@@ -203,8 +204,10 @@ describe("INTERACT-02 Stage-B — the edited_message round-trip (the edit handle
     emu.injectEdit(TEST_CHAT, originalId, "edited text", FROM);
     await waitUntil(() => captured.some((m) => m.text === "edited text"));
     const edited = captured.find((m) => m.text === "edited text");
-    // RED: assert the edit did NOT re-ingest (deliberately wrong) so the RED fails.
-    expect(edited, "the edited message re-ingested through the edit handler (the new text reached the handler)").toBeUndefined();
+    // The edited_message handler routes the edit through the SAME
+    // handleInboundMessage — the new text reaches the handler (re-ingest).
+    expect(edited, "the edited message re-ingested through the edit handler (the new text reached the handler)").toBeDefined();
+    expect(edited!.text).toBe("edited text");
   });
 });
 
@@ -247,8 +250,11 @@ describe("IN-04 Stage-B — the inline-keyboard contract: reply_markup rides the
     // structured object (NOT a `&`-mangled string), and the callback_data with a
     // literal `&` survived verbatim (the IN-04 contract: CF-1, no parser change).
     const markup = recorded!.replyMarkup as { inline_keyboard?: Array<Array<{ callback_data?: string }>> } | undefined;
-    // RED: assert reply_markup was NOT decoded (deliberately wrong) so the RED fails.
-    expect(markup, "reply_markup decoded via the JSON parseBody branch").toBeUndefined();
+    // The emulator decoded reply_markup via the JSON parseBody branch — a
+    // STRUCTURED object (NOT a `&`-mangled string), and the callback_data with a
+    // literal `&` survived verbatim (CF-1: grammy's JSON transport, no parser change).
+    expect(markup, "reply_markup decoded via the JSON parseBody branch").toBeDefined();
+    expect(markup!.inline_keyboard?.[0]?.[0]?.callback_data).toBe("page=2&sort=asc");
   });
 });
 
@@ -289,9 +295,9 @@ describe("SEC-02 Stage-B — the never-published guard re-verifies + the phase d
       }
     };
     walk(liveRoot);
-    // RED: assert the CLI DOES register a chan subcommand (deliberately wrong) so
-    // the RED fails reproducibly; GREEN flips the load-bearing assertion below.
-    expect(offendingPkgJson, `SEC-02: no package.json may live under test/live/** — found: ${offendingPkgJson.join(", ")}`).not.toEqual([]);
+    // The harness is a test consumer, never a workspace member — no package.json
+    // may live under test/live/** (which would make a fake channel server publishable).
+    expect(offendingPkgJson, `SEC-02: no package.json may live under test/live/** — found: ${offendingPkgJson.join(", ")}`).toEqual([]);
   });
 
   it("git status --porcelain shows NO packages source change (the milestone premise)", () => {
