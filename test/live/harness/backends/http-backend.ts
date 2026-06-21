@@ -56,10 +56,25 @@ export interface RouteContext {
   readonly body: string;
 }
 
-/** A route handler returns the HTTP status + a JSON-serializable body. */
+/**
+ * A route handler returns the HTTP status + a body.
+ *
+ * The body is normally a JSON-serializable value (the default path:
+ * `application/json` + `JSON.stringify`). For the FILE route (MEDIA-01/02,
+ * Phase 207) a body that is a `Buffer` is written RAW — the stored file bytes
+ * are served verbatim with `contentType` (defaulting to
+ * `application/octet-stream`), NOT JSON-wrapped (`JSON.stringify(Buffer)` would
+ * emit `{"type":"Buffer",...}`). A non-Buffer body is unaffected.
+ */
 export interface RouteResult {
   readonly status: number;
   readonly body: unknown;
+  /**
+   * The `content-type` to send when `body` is a `Buffer` (the binary file
+   * route). Ignored for a non-Buffer (JSON) body. Defaults to
+   * `application/octet-stream` when a Buffer body omits it.
+   */
+  readonly contentType?: string;
 }
 
 /**
@@ -146,9 +161,19 @@ export function createHttpBackend(): HttpBackend {
     });
   }
 
-  // JSON responder (mock-telegram-server.ts:81-85) — copied as-is.
-  function send(res: ServerResponse, status: number, body: unknown): void {
+  // Responder. The JSON path is the mock-telegram-server.ts:81-85 behavior,
+  // UNCHANGED. The binary path (MEDIA-01/02, Phase 207) serves a `Buffer` body
+  // RAW with the supplied `contentType` (default `application/octet-stream`),
+  // so the file route can return stored bytes byte-for-byte — `JSON.stringify`
+  // on a Buffer would corrupt it into `{"type":"Buffer",...}`. A non-Buffer
+  // body keeps the `application/json` + `JSON.stringify` path exactly.
+  function send(res: ServerResponse, status: number, body: unknown, contentType?: string): void {
     res.statusCode = status;
+    if (Buffer.isBuffer(body)) {
+      res.setHeader("content-type", contentType ?? "application/octet-stream");
+      res.end(body);
+      return;
+    }
     res.setHeader("content-type", "application/json");
     res.end(JSON.stringify(body));
   }
@@ -187,7 +212,10 @@ export function createHttpBackend(): HttpBackend {
       }
       const fileCtx: FileRouteContext = { ...baseCtx, filePath: fileMatch[1] ?? "" };
       const result = await fileHandler(fileCtx);
-      send(res, result.status, result.body);
+      // The file route is the one surface that may return RAW bytes — pass its
+      // contentType so a Buffer body is served verbatim (MEDIA-01/02). A JSON
+      // (404 not-found) body ignores contentType and keeps application/json.
+      send(res, result.status, result.body, result.contentType);
       return;
     }
 

@@ -30,9 +30,11 @@
  *                     `RecordedOutbound` to the chat oracle (EMU-03).
  *   - getUpdates    — the TRUE long-poll (EMU-02 — see `serveGetUpdates`).
  *   - setMessageReaction — set (non-empty) / clear (empty), recorded (EMU-04).
- *   - getFile       — file descriptor + a `GET /file/bot<token>/<path>` route
- *                     SHAPE (HTTP 200, no real bytes — byte serving is Phase
- *                     207) (EMU-05).
+ *   - getFile       — file descriptor from the REAL file_id store (file_size =
+ *                     bytes.length, file_path = the stored key) + a
+ *                     `GET /file/bot<token>/<file_path>` route that serves the
+ *                     stored RAW bytes; a miss / `../`-laden path → 404, never a
+ *                     disk read (MEDIA-01/02, Phase 207 — was the EMU-05 stub).
  *
  * TEST-HARNESS — lives under `test/`, never `packages`; ZERO production code
  * change. `test/` is outside every `packages` source-tree ESLint/architecture
@@ -41,6 +43,7 @@
  * @module
  */
 
+import { randomBytes, randomUUID } from "node:crypto";
 import type { ReactionTypeEmoji, Update, User } from "grammy/types";
 import {
   createHttpBackend,
@@ -48,7 +51,13 @@ import {
   type RouteResult,
 } from "../../harness/backends/http-backend.js";
 import type { ChannelCaps, ChannelEmulator } from "../../harness/channel-emulator.js";
-import { makeMessageUpdate, makeReactionUpdate, makeUser, nextUpdateId } from "./tg-payloads.js";
+import {
+  makeMessageUpdate,
+  makeReactionUpdate,
+  makeUser,
+  nextUpdateId,
+  type MediaKind,
+} from "./tg-payloads.js";
 import { tgCaps } from "./tg-caps.js";
 
 /**
@@ -84,6 +93,63 @@ export interface RecordedOutbound {
   reactions?: string[];
   /** The full parsed request body (the source of truth for any later assertion). */
   raw: unknown;
+}
+
+/**
+ * Optional per-file metadata carried alongside the stored bytes (MEDIA-01).
+ * Mirrors the subset of grammy media fields the builders echo + the resolver
+ * may read; all optional (the test author supplies what a scenario needs).
+ */
+export interface MediaMeta {
+  /** Original filename (document). */
+  readonly fileName?: string;
+  /** MIME type (voice/document/video) — also seeds the file-route content-type when present. */
+  readonly mimeType?: string;
+  /** Media duration in seconds (voice/video/video_note). */
+  readonly duration?: number;
+  /** Pixel width (photo/video). */
+  readonly width?: number;
+  /** Pixel height (photo/video). */
+  readonly height?: number;
+  /** Diameter (video_note). */
+  readonly length?: number;
+  /** When true, the media `message` carries `has_media_spoiler` (message-mapper.ts:142). */
+  readonly spoiler?: boolean;
+}
+
+/**
+ * A file held in the bot-global store (MEDIA-01, Pattern 1). `getFile` is keyed
+ * by `fileId` (the request body); the file route is keyed by `filePath` (the
+ * URL segment) — Pitfall 3: BOTH indexes point at the SAME `StoredFile`, so the
+ * size getFile reports and the bytes the route serves can never diverge.
+ */
+export interface StoredFile {
+  /** The Telegram file_id `buildAttachments` reads + getFile echoes. */
+  readonly fileId: string;
+  /** The Telegram file_unique_id. */
+  readonly fileUniqueId: string;
+  /** The per-kind file_path (the `/file/bot<token>/<file_path>` URL segment + the route lookup key). */
+  readonly filePath: string;
+  /** The raw bytes the route serves verbatim; `getFile` reports `bytes.length` as `file_size`. */
+  readonly bytes: Buffer;
+  /** The kind that minted the file_path/content-type (photo/voice/document/video/video_note). */
+  readonly kind: MediaKind;
+  /** Optional per-file metadata. */
+  readonly meta?: MediaMeta;
+}
+
+/**
+ * The handle {@link TgEmulator.storeFile} returns — the minted ids + path the
+ * caller (a Task-1 test, or {@link TgEmulator.injectMedia}) threads into a media
+ * `Update` (the `file_id` the agent later resolves via `getFile`).
+ */
+export interface StoredFileHandle {
+  /** The minted file_id (the getFile lookup key). */
+  readonly fileId: string;
+  /** The minted file_unique_id. */
+  readonly fileUniqueId: string;
+  /** The minted file_path (the route lookup key). */
+  readonly filePath: string;
 }
 
 /**
@@ -141,6 +207,16 @@ export interface TgEmulator extends ChannelEmulator {
   reactionsOn(chat: ChatRef, messageId: number): readonly string[];
   /** Clear a chat's recorded state: its oracle (outbounds + reactions) and its pending updates in the bot-global queue. */
   resetChat(chat: ChatRef): void;
+  /**
+   * Store `bytes` in the bot-global file store under a freshly-minted
+   * `file_id`/`file_unique_id`/`file_path` (MEDIA-01). Indexes the file under
+   * BOTH `filesById` (the getFile key) and `filesByPath` (the route key). The
+   * returned handle carries the ids/path so the caller can thread the `file_id`
+   * into a media `Update` (a Task-1 test seeds the store directly; Task-2's
+   * {@link injectMedia} calls this before building the media update).
+   * @returns the minted `{ fileId, fileUniqueId, filePath }`.
+   */
+  storeFile(kind: MediaKind, bytes: Buffer, meta?: MediaMeta): StoredFileHandle;
 }
 
 /** Options for {@link createTgEmulator}. */
@@ -228,6 +304,28 @@ function readNum(
 const okEnvelope = (result: unknown): RouteResult => ({ status: 200, body: { ok: true, result } });
 
 /**
+ * The per-kind `file_path` segment + default content-type (MEDIA-01). The path
+ * is what Telegram's `getFile` returns and the route is keyed on; the
+ * content-type is what the binary file route serves (overridable by an explicit
+ * `meta.mimeType`). One directory + extension per {@link MediaKind} (a closed
+ * switch — an off-union kind is a compile error).
+ */
+function fileRouteForKind(kind: MediaKind, id: string): { filePath: string; contentType: string } {
+  switch (kind) {
+    case "photo":
+      return { filePath: `photos/${id}.jpg`, contentType: "image/jpeg" };
+    case "voice":
+      return { filePath: `voice/${id}.ogg`, contentType: "audio/ogg" };
+    case "document":
+      return { filePath: `documents/${id}.bin`, contentType: "application/octet-stream" };
+    case "video":
+      return { filePath: `videos/${id}.mp4`, contentType: "video/mp4" };
+    case "video_note":
+      return { filePath: `video_notes/${id}.mp4`, contentType: "video/mp4" };
+  }
+}
+
+/**
  * Create the Telegram emulator. COMPOSES the loopback http-backend base and
  * registers its Bot-API method table — it never spins up its own loopback
  * listener (that lives in the http-backend base; SEC-02 success-criterion #5).
@@ -238,6 +336,13 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
 
   // Per-chat ORACLE state only (outbound log + reactions).
   const chats = new Map<number, ChatOracle>();
+  // BOT-GLOBAL file store (MEDIA-01, Pattern 1). `getFile` is keyed by file_id
+  // (the request body); the file route is keyed by file_path (the URL segment)
+  // — Pitfall 3: keep BOTH lookups so the size getFile reports and the bytes the
+  // route serves can never diverge. A `../`-laden / unknown path is a Map miss
+  // → 404 (the route NEVER touches the filesystem; T-207-04 / V12).
+  const filesById = new Map<string, StoredFile>();
+  const filesByPath = new Map<string, StoredFile>();
   // BOT-GLOBAL long-poll state. grammy's runner polls `getUpdates` once per bot
   // with a SINGLE offset (not chat-scoped), so the pending queue + blocked
   // waiters are bot-global. `update_id` is globally monotonic, so the single
@@ -266,6 +371,33 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
   /** Append an outbound record to a chat's oracle. */
   function record(chatId: number, ro: RecordedOutbound): void {
     chatOracle(chatId).outbound.push(ro);
+  }
+
+  /**
+   * Store `bytes` under a freshly-minted file_id/file_unique_id/file_path
+   * (MEDIA-01). The ids are minted the same way the production adapter mints its
+   * ids (`randomUUID`/`randomBytes`, telegram-inbound.ts), so the store's ids are
+   * shaped like real Telegram ids. The file is indexed under BOTH `filesById`
+   * (the getFile key) and `filesByPath` (the route key) so the two lookups can
+   * never disagree (Pitfall 3). Internal closure — exposed on the interface as
+   * {@link TgEmulator.storeFile}; Task-2's `injectMedia` calls it before building
+   * the media `Update`.
+   */
+  function storeFile(kind: MediaKind, bytes: Buffer, meta?: MediaMeta): StoredFileHandle {
+    const fileId = `file_${randomUUID()}`;
+    const fileUniqueId = `uniq_${randomBytes(8).toString("hex")}`;
+    const { filePath } = fileRouteForKind(kind, fileUniqueId);
+    const stored: StoredFile = {
+      fileId,
+      fileUniqueId,
+      filePath,
+      bytes,
+      kind,
+      ...(meta !== undefined ? { meta } : {}),
+    };
+    filesById.set(fileId, stored);
+    filesByPath.set(filePath, stored);
+    return { fileId, fileUniqueId, filePath };
   }
 
   // -------------------------------------------------------------------------
@@ -505,21 +637,36 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
   }
 
   function getFile(body: Record<string, unknown>): RouteResult {
-    // EMU-05 — descriptor only; byte serving is Phase 207.
-    const fileId = typeof body["file_id"] === "string" ? body["file_id"] : "file_unknown";
+    // MEDIA-01 — descriptor from the REAL store (file_size = bytes.length,
+    // file_path = the stored route key). A file_id the store has never seen is a
+    // Telegram-shaped not-found (the resolver tolerates `!file.file_path`).
+    const fileId = typeof body["file_id"] === "string" ? body["file_id"] : "";
+    const rec = filesById.get(fileId);
+    if (rec === undefined) {
+      return { status: 200, body: { ok: false, error_code: 400, description: "file not found" } };
+    }
     return okEnvelope({
-      file_id: fileId,
-      file_unique_id: `uniq_${fileId}`,
-      file_size: 1024,
-      file_path: `documents/${fileId}.bin`,
+      file_id: rec.fileId,
+      file_unique_id: rec.fileUniqueId,
+      file_size: rec.bytes.length,
+      file_path: rec.filePath,
     });
   }
 
-  // EMU-05 file route SHAPE — a 200 placeholder (no real bytes in 204).
-  backend.registerFileRoute(() => ({
-    status: 200,
-    body: { ok: true, note: "file-route-shape-only (byte serving is Phase 207)" },
-  }));
+  // MEDIA-02 file route — serve the stored RAW bytes by `file_path`. A hit
+  // returns a Buffer body (the http-backend binary path writes it verbatim with
+  // the per-kind content-type, overridable by `meta.mimeType`); a miss — an
+  // unknown OR a `../`-laden path — is a Map lookup that returns nothing → a 404
+  // envelope. The route NEVER touches the filesystem (T-207-04 / V12): the
+  // crafted path can only ever be a key the store does not hold.
+  backend.registerFileRoute((ctx) => {
+    const rec = filesByPath.get(ctx.filePath);
+    if (rec === undefined) {
+      return { status: 404, body: { ok: false, error_code: 404, description: "file not found" } };
+    }
+    const contentType = rec.meta?.mimeType ?? fileRouteForKind(rec.kind, rec.fileUniqueId).contentType;
+    return { status: 200, body: rec.bytes, contentType };
+  });
 
   backend.registerNativeRoute((method, routeCtx) =>
     dispatch(method, { body: routeCtx.body, query: routeCtx.query }),
@@ -625,6 +772,10 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
             ? u.message_reaction.chat.id !== chat.chatId
             : true,
       );
+    },
+
+    storeFile(kind, bytes, meta) {
+      return storeFile(kind, bytes, meta);
     },
   };
 
