@@ -622,7 +622,20 @@ export async function runVerb(
         throw new VerbFailure("bad_json", { detail: "tg mirror <sessionKey> — a session key is required." });
       }
       const reader = ctx.readMirror ?? readMirrorText;
-      const text = reader(handle.memoryDbPath, sessionKey);
+      // WR-02: a missing/locked memory.db makes the readonly reader throw a raw
+      // sqlite/fs error. That is an oracle-read I/O condition, NOT an RPC
+      // failure — reason-code it as a dead_handle so a driving agent branching
+      // on the error never confuses it with a gateway/rpc fault.
+      let text: string | undefined;
+      try {
+        text = reader(handle.memoryDbPath, sessionKey);
+      } catch (e: unknown) {
+        throw new VerbFailure("dead_handle", {
+          reason: "mirror_unavailable",
+          dbPath: handle.memoryDbPath,
+          message: String(e),
+        });
+      }
       return { sessionKey, text: text ?? null };
     }
 
@@ -634,7 +647,19 @@ export async function runVerb(
       }
       // Lazy import: wait.ts pulls @comis/observability (see the top-of-file note).
       const { resolveTrajectoryFile } = await import("../harness/wait.js");
-      const trajFile = resolveTrajectoryFile(sessionFile);
+      // WR-02: resolveTrajectoryFile soft-fails an absent pointer, but a path/fs
+      // error is still possible — classify it honestly as a dead_handle read
+      // condition rather than letting it bubble to the generic rpc_error branch.
+      let trajFile: string;
+      try {
+        trajFile = resolveTrajectoryFile(sessionFile);
+      } catch (e: unknown) {
+        throw new VerbFailure("dead_handle", {
+          reason: "trajectory_unavailable",
+          sessionFile,
+          message: String(e),
+        });
+      }
       return { dataDir: handle.dataDir, trajectoryFile: trajFile };
     }
 
@@ -644,11 +669,26 @@ export async function runVerb(
       if (sql === undefined || sql.length === 0) {
         throw new VerbFailure("bad_json", { detail: 'tg db "<sql>" — a SQL query is required.' });
       }
-      // READONLY query against the isolated memory.db.
-      const db = openReadonlyDb(handle.memoryDbPath);
+      // WR-02: a missing/locked memory.db makes `new Database(...)` throw
+      // "unable to open database file" — an oracle I/O condition, not an RPC
+      // fault. Map the OPEN failure to dead_handle (the rig isn't live for
+      // reads) and a MALFORMED SQL to bad_json (a usage error) — never the
+      // generic rpc_error the raw throw would surface.
+      let db: Database.Database;
+      try {
+        db = openReadonlyDb(handle.memoryDbPath);
+      } catch (e: unknown) {
+        throw new VerbFailure("dead_handle", {
+          reason: "db_unavailable",
+          dbPath: handle.memoryDbPath,
+          message: String(e),
+        });
+      }
       try {
         const rows = db.prepare(sql).all();
         return { rows };
+      } catch (e: unknown) {
+        throw new VerbFailure("bad_json", { detail: `SQL error: ${String(e)}`, sql });
       } finally {
         db.close();
       }

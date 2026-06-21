@@ -18,6 +18,10 @@
 import { describe, it, expect, vi } from "vitest";
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import Database from "better-sqlite3";
 import {
   parseArgs,
   contextFromParsed,
@@ -438,6 +442,47 @@ describe("chan/tg CLI — runVerb: drive verbs over /control/* (CLI-02)", () => 
     } finally {
       await stub.close();
     }
+  });
+});
+
+describe("chan/tg CLI — runVerb: oracle-read reason codes (WR-02: not rpc_error)", () => {
+  it("db against a MISSING memory.db is a dead_handle (db_unavailable), NOT rpc_error", async () => {
+    // A freshly-spawned rig before its first write: the db path does not exist.
+    // better-sqlite3 throws "unable to open database file" — that is an I/O
+    // condition, not an RPC failure. It must reason-code as dead_handle.
+    const ctx: VerbContext = { handle: fakeHandle({ memoryDbPath: "/tmp/sv-no-such-dir/memory.db" }) };
+    const err = await runVerb("db", ["SELECT 1"], ctx).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(VerbFailure);
+    expect((err as VerbFailure).kind).toBe("dead_handle");
+    expect((err as VerbFailure).body["reason"]).toBe("db_unavailable");
+  });
+
+  it("db with MALFORMED SQL against a real db is a bad_json, NOT rpc_error", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "sv-chan-db-"));
+    const dbPath = join(dir, "memory.db");
+    const seed = new Database(dbPath);
+    seed.exec("CREATE TABLE t (id INTEGER)");
+    seed.close();
+    try {
+      const ctx: VerbContext = { handle: fakeHandle({ memoryDbPath: dbPath }) };
+      const err = await runVerb("db", ["SELECT bogus syntax FROM"], ctx).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(VerbFailure);
+      expect((err as VerbFailure).kind).toBe("bad_json");
+      expect(JSON.stringify((err as VerbFailure).body)).toMatch(/SQL/i);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("mirror surfaces a reader sqlite/fs throw as dead_handle (mirror_unavailable), NOT rpc_error", async () => {
+    const readMirror = vi.fn(() => {
+      throw new Error("unable to open database file");
+    });
+    const ctx: VerbContext = { handle: fakeHandle(), readMirror };
+    const err = await runVerb("mirror", ["default:user1:telegram:1717"], ctx).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(VerbFailure);
+    expect((err as VerbFailure).kind).toBe("dead_handle");
+    expect((err as VerbFailure).body["reason"]).toBe("mirror_unavailable");
   });
 });
 
