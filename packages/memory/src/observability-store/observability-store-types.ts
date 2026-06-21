@@ -25,6 +25,7 @@ import { z } from "zod";
 import { createRowMapper } from "../row-mapper.js";
 import type { CacheStatsQueriesSlice } from "./cache-stats-types.js";
 import type { CacheBreakQueriesSlice } from "./cache-break-types.js";
+import type { PricingCoverageSlice } from "./pricing-coverage-types.js";
 
 export type {
   CacheStatsWindowRow,
@@ -401,7 +402,7 @@ export interface DiagnosticQueryParams {
 
 /** The ObservabilityStore interface. */
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type
-export interface ObservabilityStore extends CacheStatsQueriesSlice, CacheBreakQueriesSlice {
+export interface ObservabilityStore extends CacheStatsQueriesSlice, CacheBreakQueriesSlice, PricingCoverageSlice {
   // Token usage
   insertTokenUsage(entry: TokenUsageRow): void;
   aggregateByProvider(sinceMs?: number): ProviderAggregation[];
@@ -409,12 +410,11 @@ export interface ObservabilityStore extends CacheStatsQueriesSlice, CacheBreakQu
   aggregateBySession(sessionKey: string, sinceMs?: number): SessionAggregation;
   aggregateHourly(sinceMs?: number): HourlyBucket[];
   /**
-   * COST-03: the same hourly aggregate keyed on a 900000-ms (15-min) bucket
-   * instead of 3600000, each bucket carrying the E1 pricing-coverage pair
-   * (`pricingState`/`missingPricingCount`). The four quarter-hour buckets inside
-   * an hour SUM (cost/tokens/calls/cacheSaved) to the matching `aggregateHourly`
-   * bucket (the conservation invariant). `sinceMs` is the lower time bound; the
-   * optional `filter` isolates one agent/provider/model (bound params).
+   * COST-03: the hourly aggregate keyed on a 900000-ms (15-min) bucket instead of
+   * 3600000, each bucket carrying the E1 pricing-coverage pair
+   * (`pricingState`/`missingPricingCount`). The four quarter-hour buckets inside an
+   * hour SUM (cost/tokens/calls/cacheSaved) to the matching `aggregateHourly` bucket
+   * (conservation). `sinceMs` = lower bound; `filter` isolates one agent/provider/model.
    */
   aggregateQuarterHourly(sinceMs?: number, filter?: CostBucketFilter): QuarterHourBucket[];
   /**

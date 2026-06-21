@@ -8241,6 +8241,26 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
           ],
           "additionalProperties": false
         },
+        "spend": {
+          "type": "object",
+          "properties": {
+            "scope": {
+              "type": "string"
+            },
+            "totalUsd": {
+              "type": "number"
+            },
+            "capUsd": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "scope",
+            "totalUsd",
+            "capUsd"
+          ],
+          "additionalProperties": false
+        },
         "summary": {
           "type": "string"
         },
@@ -8896,6 +8916,34 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         "reset",
         "table",
         "rowsDeleted"
+      ],
+      "additionalProperties": false
+    },
+    "scopes": [
+      "admin"
+    ]
+  },
+  "obs.spend.snapshot": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "snapshot": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "snapshot"
       ],
       "additionalProperties": false
     },

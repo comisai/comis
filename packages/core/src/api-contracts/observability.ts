@@ -432,6 +432,19 @@ export const ObsCacheBreaksByReasonContract = defineContract({
   scopes: ["admin"] as const,
 });
 
+/** `obs.spend.snapshot` — the LIVE per-agent/tenant/global spend the kill-switch
+ *  sees (WEBUI-02, 179-04; locked A1 — the live accumulator, NOT the lagging SQL).
+ *  Admin-only. The snapshot carries the per-scope spend + the configured ceilings →
+ *  headroom + a three-state pricing-coverage count. Content-free (dollar counts +
+ *  scope enums + pricing-state counts). The Spend & Governance view consumes it.
+ *  Empty request, so the contract-handler-parity gate trivially passes. */
+export const ObsSpendSnapshotContract = defineContract({
+  method: "obs.spend.snapshot",
+  request: z.object({}),
+  response: z.object({ snapshot: ObsRecord }),
+  scopes: ["admin"] as const,
+});
+
 // ---------------------------------------------------------------------------
 // memory.embeddingCache
 // ---------------------------------------------------------------------------
@@ -708,6 +721,7 @@ export const OBSERVABILITY_CONTRACTS = [
   ObsGetCacheStatsContract,
   ObsResetContract,
   ObsResetTableContract,
+  ObsSpendSnapshotContract,
   ObsSystemPromptReportLatestContract,
   ObsSystemPromptReportListContract,
   ObsTraceExportContract,

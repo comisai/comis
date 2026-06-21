@@ -405,6 +405,24 @@ export const IncidentReportSchema = z.object({
       byKind: z.record(z.string(), z.number()),
     })
     .optional(),
+  /** SPEND (observability-excellence, WEBUI-04 / 179-04 — locked A2): the spend
+   *  kill-switch breach reconstructed from the session's terminal `spend.exceeded`
+   *  trajectory record (177-obs-loop WR-4). Content-free: the breached `scope` enum
+   *  + the two dollar NUMBERS (`totalUsd` = the breaching scope's spent total;
+   *  `capUsd` = its ceiling) — NO message/query/body. The verdict stays amount-free
+   *  (177 decision); this section carries the numbers the Incident view renders.
+   *  Optional + additive (present only when the session was spend-killed — undefined,
+   *  never {}, when none; schemaVersion stays 1). The `cacheBreaks?`/`audit?` mold. */
+  spend: z
+    .object({
+      /** The breached spend scope (`agent` | `tenant` | `global`). */
+      scope: z.string(),
+      /** The breaching scope's total spent in USD (the record's `spentUsd`). */
+      totalUsd: z.number(),
+      /** The breaching scope's configured ceiling in USD. */
+      capUsd: z.number(),
+    })
+    .optional(),
   summary: z.string(),
   likelyRootCause: z
     .object({
@@ -502,17 +520,18 @@ export interface IncidentFailure {
  * misclassification signal + offending tool/token). Derived from the heuristic
  * predicates in 153-PATTERNS.md ("678 / 503 heuristic derivation").
  */
-// @optional-field-count: 16 — this is the obs.explain signal accumulator, the
-// single shared contract every Glass-Box heuristic (Phase 153/175/177/180/186/187/192/198)
+// @optional-field-count: 17 — this is the obs.explain signal accumulator, the
+// single shared contract every Glass-Box heuristic (Phase 153/175/177/179/180/186/187/192/198)
 // reads. Each optional field is a presence-conditional signal aggregated from a
 // distinct trajectory record class (contextBudget / promptTimeout /
-// toolSchemaUnsupported / recall / image / vision / videoGenerated / voice /
-// learning / channel / agentId / …) — absent when that record class did not
-// occur. Clustering them would couple unrelated heuristics; the read sites
-// already key on each independently. Grows by one per Glass-Box signal class
-// (image added in 186 — OBS-03/OBS-04; vision added in 187 — VIS-04;
+// toolSchemaUnsupported / recall / cacheBreaks / spend / image / vision /
+// videoGenerated / voice / learning / channel / agentId / …) — absent when that
+// record class did not occur. Clustering them would couple unrelated heuristics;
+// the read sites already key on each independently. Grows by one per Glass-Box
+// signal class (image added in 186 — OBS-03/OBS-04; vision added in 187 — VIS-04;
 // videoGenerated added in 192 — OBS-03/OBS-04 video; learning added in 198 —
-// OBS-02, the Verified-Learning outcome-signal shadow).
+// OBS-02, the Verified-Learning outcome-signal shadow; spend added in 179 —
+// WEBUI-04, the spend-kill breach numbers for the Incident view).
 export interface IncidentSignals {
   sessionKey: string;
   /** W8: agentId from the trajectory record envelopes (first seen). Fallback for
@@ -625,6 +644,14 @@ export interface IncidentSignals {
    * trajectory (omitted from the report — the `recall?` presence-conditional mold).
    */
   cacheBreaks?: Array<{ reason: string; count: number; estCostUsd: number }>;
+  /**
+   * SPEND (WEBUI-04 / 179-04): the spend kill-switch breach folded from the
+   * session's terminal `spend.exceeded` trajectory record (last wins). `totalUsd`
+   * is the breaching scope's spent total (the record's `spentUsd`); `capUsd` is its
+   * ceiling. Content-free (a scope enum + two numbers). Absent ⇒ the session was
+   * not spend-killed (omitted from the report — the `cacheBreaks?` presence mold).
+   */
+  spend?: { scope: string; totalUsd: number; capUsd: number };
   /**
    * OBS-03/OBS-04 (Phase 186): the image-generation turn reconstructed from the
    * session's `image.*` trajectory records (the terminal image.generated /

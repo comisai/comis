@@ -42,8 +42,17 @@ import {
 /** The read-side slice this module contributes to the ObservabilityStore handle. */
 export type ObservabilityAggregates = Pick<
   ObservabilityStore,
-  "aggregateQuarterHourly" | "aggregateHourlyCost"
+  "aggregateQuarterHourly" | "aggregateHourlyCost" | "pricingCoverage"
 >;
+
+/** The pricing-coverage row schema (WEBUI-02) — the three E1 pricing-state tallies. */
+const pricingCoverageMapper = createRowMapper(
+  z.strictObject({
+    priced: z.number(),
+    free: z.number(),
+    unknown: z.number(),
+  }),
+);
 
 /**
  * The bucket row schema (COST-03) — the `HourlyBucketDbRow` columns PLUS the E1
@@ -152,10 +161,31 @@ export function bindAggregates(db: Database.Database): ObservabilityAggregates {
     }));
   }
 
+  // WEBUI-02 (179-04): the daemon-wide three-state pricing-coverage count. Reuses
+  // the SAME E1 CASE expressions as the cost buckets above (priced / free / the
+  // unknown-or-NULL fall-through) so the snapshot's coverage and the export's
+  // per-bucket coverage cannot drift. Content-free (three integer counts).
+  function pricingCoverage(sinceMs?: number): { priced: number; free: number; unknown: number } {
+    const where = sinceMs != null ? "WHERE timestamp >= ?" : "";
+    const values: unknown[] = sinceMs != null ? [sinceMs] : [];
+    const sql = `
+      SELECT
+        COALESCE(SUM(CASE WHEN pricing_state = 'priced' THEN 1 ELSE 0 END), 0) as priced,
+        COALESCE(SUM(CASE WHEN pricing_state = 'free' THEN 1 ELSE 0 END), 0) as free,
+        COALESCE(SUM(CASE WHEN pricing_state IS NULL OR pricing_state NOT IN ('priced','free') THEN 1 ELSE 0 END), 0) as unknown
+      FROM obs_token_usage ${where}
+    `;
+    const parsed = pricingCoverageMapper.parseRows(db.prepare(sql).all(...values));
+    // Degrade-on-validation-error: a broken DB yields zeroes, never a NaN.
+    const row = parsed.ok ? parsed.value[0] : undefined;
+    return row ?? { priced: 0, free: 0, unknown: 0 };
+  }
+
   return {
     aggregateQuarterHourly: (sinceMs?: number, filter?: CostBucketFilter) =>
       runBucketed(900_000, sinceMs, filter),
     aggregateHourlyCost: (sinceMs?: number, filter?: CostBucketFilter) =>
       runBucketed(3_600_000, sinceMs, filter),
+    pricingCoverage,
   };
 }

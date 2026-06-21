@@ -49,6 +49,10 @@ export { bindObsAuditHandlers } from "./obs-audit.js";
 // createObsHandlers below (admin-RPC-only read surface, no MCP closure).
 export { bindObsCacheBreaksHandlers } from "./obs-cache-breaks.js";
 
+// The obs.spend.snapshot binder (WEBUI-02, 179-04). Reads the LIVE spend snapshot
+// threaded into the obs deps (locked A1); admin-RPC-only read surface.
+export { bindObsSpendHandlers } from "./obs-spend.js";
+
 import type { RpcHandler } from "../types.js";
 import type { ObsHandlerDeps } from "./obs-helpers.js";
 import { bindObsMetricsHandlers } from "./obs-metrics.js";
@@ -61,6 +65,7 @@ import { bindObsExplainHandlers } from "./obs-explain.js";
 import { bindFleetHealthHandlers } from "./fleet-health.js";
 import { bindObsAuditHandlers } from "./obs-audit.js";
 import { bindObsCacheBreaksHandlers } from "./obs-cache-breaks.js";
+import { bindObsSpendHandlers } from "./obs-spend.js";
 
 /**
  * Create a record of observability RPC handlers bound to the given deps.
@@ -81,5 +86,6 @@ export function createObsHandlers(deps: ObsHandlerDeps): Record<string, RpcHandl
     ...bindFleetHealthHandlers(deps),
     ...bindObsAuditHandlers(deps),
     ...bindObsCacheBreaksHandlers(deps),
+    ...bindObsSpendHandlers(deps),
   };
 }

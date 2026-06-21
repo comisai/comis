@@ -42,6 +42,7 @@ import {
   accumulateLearningRecord, accumulateSkillInvokedRecord, accumulateSkillSynthesizedRecord,
   accumulateSkillValidatedRecord, accumulateToolSchemaRecord, buildLearningSignal,
   accumulateUserModelRevisedRecord, accumulateMemoryGeneralizedRecord, emptyLearningFold,
+  accumulateSpendExceeded,
 } from "./obs-explain-signal-folds.js";
 import type { Acc } from "./obs-explain-signals-acc.js";
 
@@ -293,6 +294,8 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
       });
       return;
     }
+    // SPEND (WEBUI-04, 179-04): the spend kill-switch breach (LAST wins) — delegated to a fold helper (learning-fold mold) for the subdir cap.
+    case "spend.exceeded": accumulateSpendExceeded(acc, data); return;
     // OBS-02: fold learning-family records → the learning block — outcome (198) / skills (201) / revision+generalization (203); ids/counts only (SEC-01).
     case "learning.outcome_observed": accumulateLearningRecord(acc.learning, data); return;
     case "skill.prompt_invoked": accumulateSkillInvokedRecord(acc.learning, data); return;
@@ -481,6 +484,8 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
             .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason)),
         }
       : {}),
+    // SPEND (WEBUI-04, 179-04): the terminal spend-kill breach (undefined when not spend-killed — never {}); the verdict stays amount-free, this carries the numbers.
+    ...(acc.spend !== undefined ? { spend: acc.spend } : {}),
     ...(learning !== undefined ? { learning } : {}),
     ...(acc.agentId !== undefined ? { agentId: acc.agentId } : {}),
     ...(acc.channel !== undefined ? { channel: acc.channel } : {}),

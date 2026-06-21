@@ -395,6 +395,11 @@ export function assembleIncidentReport(
     ...(signals.cacheBreaks !== undefined && signals.cacheBreaks.length > 0
       ? { cacheBreaks: signals.cacheBreaks }
       : {}),
+    // SPEND (WEBUI-04, 179-04): the spend kill-switch breach (scope + the two dollar
+    // numbers) reconstructed from the terminal spend.exceeded record. Absent when the
+    // session was not spend-killed (additive; schemaVersion 1). The verdict stays
+    // amount-free (177); this section carries the numbers the Incident view renders.
+    ...(signals.spend !== undefined ? { spend: signals.spend } : {}),
     // OBS-03/OBS-04 (186): the image-generation turn reconstructed from the
     // trajectory's image.* records (absent when the session generated no image).
     // The cost rides here so `comis explain` shows it (Route a — NOT cost.costUsd,

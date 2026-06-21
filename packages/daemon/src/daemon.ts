@@ -944,6 +944,20 @@ function buildRpcDispatchDeps(deps: {
     hotAdd: g.hotAdd, hotRemove: g.hotRemove,
     diagnosticCollector: c.diagnosticCollector, billingEstimator: c.billingEstimator,
     channelActivityTracker: c.channelActivityTracker, deliveryTracer: c.deliveryTracer, budgetGuards: c.budgetGuards,
+    // WEBUI-02 (179-04): thread the LIVE spend snapshot the kill-switch enforces
+    // (locked A1 — getSnapshot(), NOT the lagging SQL) + the configured ceilings, so
+    // obs.spend.snapshot computes headroom = ceiling − spend. Absent ⇒ spend off
+    // (the handler degrades to an honest enabled:false, never a misleading $0).
+    spendSnapshot: c.spendAccumulator
+      ? () => ({
+          ...c.spendAccumulator!.getSnapshot(),
+          ceilings: {
+            perAgentUsd: c.container.config.observability.spend.perAgentUsd,
+            perTenantUsd: c.container.config.observability.spend.perTenantUsd,
+            daemonGlobalUsd: c.container.config.observability.spend.daemonGlobalUsd,
+          },
+        })
+      : undefined,
     modelCatalog: c.modelCatalog, channelConfig: c.channelConfig,
     tokenRegistry: g.tokenRegistry,
     addToTokenStore, removeFromTokenStore,
