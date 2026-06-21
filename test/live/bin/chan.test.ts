@@ -411,13 +411,28 @@ describe("chan/tg CLI — runVerb: trigger fires the real time-based RPCs over W
     );
   });
 
-  it("`tg trigger heartbeat` fires heartbeat.trigger (immediate, no wall-clock wait)", async () => {
+  it("`tg trigger heartbeat --agent A` fires heartbeat.trigger { agentId } through the full parse→dispatch path", async () => {
     const rpc = vi.fn().mockResolvedValue({ agentId: "default", triggered: true });
-    await runVerb("trigger", ["heartbeat", "--agent", "default"], { handle: fakeHandle(), rpc });
+    // --agent is a FLAG (resolved by parseArgs into ctx.agent), not a positional —
+    // drive the real CLI path so the flag reaches the verb (the CR-01 masking lesson).
+    const parsed = parseArgs(["trigger", "heartbeat", "--agent", "default"]);
+    const ctx = contextFromParsed(parsed, fakeHandle());
+    await runVerb(parsed.verb as string, parsed.args, { ...ctx, rpc });
     expect(rpc).toHaveBeenCalledWith(
       "http://127.0.0.1:1",
       "heartbeat.trigger",
       { agentId: "default" },
+      expect.any(String),
+    );
+  });
+
+  it("`tg trigger heartbeat` with no --agent fires heartbeat.trigger {} (the handler reads _agentId server-side)", async () => {
+    const rpc = vi.fn().mockResolvedValue({ agentId: "default", triggered: true });
+    await runVerb("trigger", ["heartbeat"], { handle: fakeHandle(), rpc });
+    expect(rpc).toHaveBeenCalledWith(
+      "http://127.0.0.1:1",
+      "heartbeat.trigger",
+      {},
       expect.any(String),
     );
   });

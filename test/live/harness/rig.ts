@@ -808,8 +808,15 @@ export async function startStandaloneRig(
   };
   writeHandle(handle, opts.baseDir);
 
-  // Wrap the lifecycle controller (restart / reset-deep). onDaemonHandle keeps the
-  // rig's cleanup() pointed at the post-restart daemon (never a stale one).
+  // Wrap the lifecycle controller (restart / reset-deep / reconfigure).
+  // onDaemonHandle keeps the rig's cleanup() pointed at the post-restart daemon
+  // (never a stale one). configYamlFor wires AUTO-04's Track-K model sweep: it
+  // closes over buildConfigYaml + the rig's apiRoot (controlEndpoint) + gatewayPort
+  // so reconfigure can rewrite a new `agents.default.model` (the only --set key the
+  // sweep needs) while keeping the exact telegram schema keys + the ≥32-char literal
+  // gateway token stable. An override-less call re-derives the rig's original model
+  // (the writer is the SINGLE override→YAML mapping; rig-control never imports
+  // buildConfigYaml — that would be a circular value import).
   const controller = createRigController({
     emulator: built.emulator,
     daemonHandle: built.daemonHandle,
@@ -820,6 +827,12 @@ export async function startStandaloneRig(
     chat: built.chat,
     memoryDbPath: built.memoryDbPath,
     onDaemonHandle: built.rebindDaemonHandle,
+    configYamlFor: (overrides) =>
+      buildConfigYaml(
+        built.controlEndpoint,
+        built.gatewayPort,
+        overrides["agents.default.model"] ?? opts.model,
+      ),
   });
 
   const cleanup = async (): Promise<void> => {

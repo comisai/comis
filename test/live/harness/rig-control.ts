@@ -35,7 +35,7 @@
  * @module
  */
 
-import { rmSync } from "node:fs";
+import { rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { startTestDaemon, type TestDaemonHandle } from "../../support/daemon-harness.js";
@@ -70,6 +70,19 @@ export interface RigControlState {
    * pre-restart one (wired to `BuiltRig.rebindDaemonHandle`).
    */
   readonly onDaemonHandle?: (next: TestDaemonHandle) => void;
+  /**
+   * AUTO-04 — the override→YAML mapping `reconfigure(overrides)` writes to
+   * `configPath` before re-booting (the Track-K model sweep). The standalone
+   * launcher (`rig.ts`) supplies one closing over `buildConfigYaml` + the rig's
+   * `apiRoot` + `gatewayPort` + the literal gateway token, so it can rewrite a new
+   * `agents.default.model` while keeping the exact telegram schema keys + the
+   * ≥32-char literal token stable. This is an INJECTED seam (not a value import of
+   * `rig.ts`) precisely because `rig.ts` already imports {@link createRigController}
+   * — a back-edge here would be a circular value import. When ABSENT,
+   * `reconfigure` throws (it cannot rewrite without a writer — an honest refusal,
+   * never a silent no-op that boots the OLD config).
+   */
+  readonly configYamlFor?: (overrides: Record<string, string>) => string;
 }
 
 /**
@@ -100,6 +113,17 @@ export interface RigController {
    * (T-205-10). Every `rmSync` path is composed under the recorded `dataDir`.
    */
   resetDeep(): Promise<void>;
+  /**
+   * AUTO-04 — the Track-K model sweep. Rewrite the throwaway YAML at `configPath`
+   * with the `--set` `overrides` (e.g. a new `agents.default.model`) via the
+   * injected {@link RigControlState.configYamlFor} writer, THEN {@link restart}
+   * (the cleanup-before-reboot ordering, Pitfall 1). Mutates ONLY the isolated
+   * `configPath` and re-pins the SAME `dataDir` — never a real `~/.comis`
+   * (T-208-18). REFUSES (throws) when no `configYamlFor` writer is wired (it
+   * cannot rewrite the config — an honest refusal, never a silent re-boot on the
+   * OLD model).
+   */
+  reconfigure(overrides: Record<string, string>): Promise<void>;
 }
 
 /** The boot function shape — `startTestDaemon`, injectable for the ordering unit. */
@@ -162,6 +186,32 @@ export function createRigController(state: RigControlState, bootFn: BootFn = sta
       // 4. Re-boot into the now-clean isolated dir (the Pitfall-1 ordering — but
       //    cleanup() already ran above, so restart() must NOT cleanup() twice).
       await rebootCleanIsolatedDir();
+    },
+
+    async reconfigure(overrides: Record<string, string>): Promise<void> {
+      // AUTO-04 (the Track-K model sweep) — rewrite the throwaway YAML at the
+      // isolated configPath with the --set overrides, THEN restart. REFUSE
+      // (throw) when no writer is wired: reconfigure CANNOT rewrite the config
+      // without the override→YAML mapping, and silently re-booting the OLD config
+      // would be a false success (the model would NOT change). The writer is an
+      // INJECTED seam (RigControlState.configYamlFor) so rig-control never
+      // value-imports rig.ts (there is a rig.ts→rig-control.ts edge — a back-edge
+      // would be a circular value import).
+      if (state.configYamlFor === undefined) {
+        throw new Error(
+          "rig-control: reconfigure requires a configYamlFor writer on the state " +
+            "(the standalone launcher wires one closing over buildConfigYaml + apiRoot " +
+            "+ gatewayPort); none was provided — cannot rewrite the config.",
+        );
+      }
+      // Mutate ONLY the isolated configPath (T-208-18) — the SAME dataDir is
+      // re-pinned by restart() below. The writer keeps the exact telegram schema
+      // keys + the ≥32-char literal gateway token; the overrides carry the sweep
+      // (e.g. a new agents.default.model).
+      writeFileSync(state.configPath, state.configYamlFor(overrides), "utf-8");
+      // Re-boot on the rewritten config (cleanup-before-reboot, the Pitfall-1
+      // ordering, same gateway port → a stable handle URL across the sweep).
+      await controller.restart();
     },
   };
 

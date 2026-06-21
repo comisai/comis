@@ -7,8 +7,9 @@
  * channel surface: a THIN client over the three surfaces the handle records —
  * the emulator `/control/*` (drive verbs: send / react / last / history), the
  * gateway `/rpc` (the `tg rpc` AUTO-01 verbatim passthrough + the curated
- * explain / fleet), and the rig lifecycle (up / down / status / restart /
- * reset --deep).
+ * explain / fleet + the `tg trigger` cron/heartbeat/wake fire-now over WS), and
+ * the rig lifecycle (up / down / status / restart / reset --deep / reconfigure —
+ * the AUTO-04 Track-K model sweep).
  *
  * The LOAD-BEARING property is the NO-FALSE-SUCCESS honest-exit contract
  * (CLI-04, the prime directive): every verb is `--json`-able and exits NON-ZERO
@@ -62,6 +63,16 @@ export interface ParsedArgs {
   readonly timeout?: number;
   /** `--deep` — the `tg reset --deep` clean-slate boolean sub-flag. */
   readonly deep?: boolean;
+  /** `--agent <id>` — the target agent for `tg trigger` (TARGET-01 multi-agent). */
+  readonly agent?: string;
+  /** `--restart` — the `tg reconfigure --restart` re-boot sub-flag (AUTO-04). */
+  readonly restart?: boolean;
+  /**
+   * `--set k=v` (REPEATABLE) — the `tg reconfigure` config overrides (AUTO-04, the
+   * Track-K model sweep). Each `--set agents.default.model=qwen3.6:14b` adds one
+   * `key→value` pair. A malformed `--set` (no `=`) is dropped (never a crash).
+   */
+  readonly set?: Record<string, string>;
 }
 
 /** Strip a single pair of surrounding single/double quotes (runner.ts:96-98 shape). */
@@ -81,10 +92,10 @@ function stripQuotes(s: string): string {
  * boolean flags" — or the verb that reads them (e.g. `tg wait --event …`) gets
  * neither the flag nor its value (CR-01 / WR-01: the masked flag-strip).
  */
-const STRING_FLAGS = new Set(["--channel", "--endpoint", "--model", "--event", "--tool"]);
+const STRING_FLAGS = new Set(["--channel", "--endpoint", "--model", "--event", "--tool", "--agent"]);
 
 /** The boolean sub-flags (presence-only; consume no value). */
-const BOOLEAN_FLAGS = new Set(["--json", "--deep"]);
+const BOOLEAN_FLAGS = new Set(["--json", "--deep", "--restart"]);
 
 /**
  * Parse the `chan`/`tg` CLI argv into a {@link ParsedArgs}. PURE — no side
@@ -100,11 +111,14 @@ export function parseArgs(argv: string[]): ParsedArgs {
   let channel = "telegram";
   let json = false;
   let deep = false;
+  let restart = false;
   let endpoint: string | undefined;
   let model: string | undefined;
   let event: string | undefined;
   let tool: string | undefined;
+  let agent: string | undefined;
   let timeout: number | undefined;
+  const set: Record<string, string> = {};
   const positionals: string[] = [];
 
   for (let i = 0; i < argv.length; i++) {
@@ -113,6 +127,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     if (BOOLEAN_FLAGS.has(tok)) {
       if (tok === "--json") json = true;
       else if (tok === "--deep") deep = true;
+      else if (tok === "--restart") restart = true;
       continue;
     }
     if (tok === "--timeout") {
@@ -121,6 +136,17 @@ export function parseArgs(argv: string[]): ParsedArgs {
       if (value === undefined) continue;
       const ms = Number(value);
       if (Number.isFinite(ms)) timeout = ms; // a non-numeric --timeout is dropped, never NaN
+      continue;
+    }
+    if (tok === "--set") {
+      // `--set k=v` (REPEATABLE — AUTO-04 reconfigure overrides). Split on the
+      // FIRST `=` (a value may itself contain `=`); a malformed pair (no `=`) is
+      // dropped, never a crash. The reconfigure verb reads the merged map.
+      const value = argv[i + 1];
+      i++; // consume the value token
+      if (value === undefined) continue;
+      const eq = value.indexOf("=");
+      if (eq > 0) set[value.slice(0, eq)] = value.slice(eq + 1);
       continue;
     }
     if (STRING_FLAGS.has(tok)) {
@@ -132,6 +158,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
       else if (tok === "--model") model = value;
       else if (tok === "--event") event = value;
       else if (tok === "--tool") tool = value;
+      else if (tok === "--agent") agent = value;
       continue;
     }
     if (tok.startsWith("--")) {
@@ -151,8 +178,11 @@ export function parseArgs(argv: string[]): ParsedArgs {
     ...(model !== undefined ? { model } : {}),
     ...(event !== undefined ? { event } : {}),
     ...(tool !== undefined ? { tool } : {}),
+    ...(agent !== undefined ? { agent } : {}),
     ...(timeout !== undefined ? { timeout } : {}),
     ...(deep ? { deep } : {}),
+    ...(restart ? { restart } : {}),
+    ...(Object.keys(set).length > 0 ? { set } : {}),
   };
 }
 
@@ -352,6 +382,12 @@ export interface VerbContext {
   readonly timeoutMs?: number;
   /** The `--deep` clean-slate sub-flag — `reset --deep`. Resolved by {@link parseArgs}. */
   readonly deep?: boolean;
+  /** The `--agent <id>` target — `trigger` (TARGET-01). Resolved by {@link parseArgs}. */
+  readonly agent?: string;
+  /** The `--restart` sub-flag — `reconfigure` (AUTO-04). Resolved by {@link parseArgs}. */
+  readonly restart?: boolean;
+  /** The `--set k=v` overrides — `reconfigure` (AUTO-04). Resolved by {@link parseArgs}. */
+  readonly set?: Record<string, string>;
 }
 
 /**
@@ -375,6 +411,9 @@ export function contextFromParsed(
     ...(parsed.tool !== undefined ? { tool: parsed.tool } : {}),
     ...(parsed.timeout !== undefined ? { timeoutMs: parsed.timeout } : {}),
     ...(parsed.deep === true ? { deep: true } : {}),
+    ...(parsed.agent !== undefined ? { agent: parsed.agent } : {}),
+    ...(parsed.restart === true ? { restart: true } : {}),
+    ...(parsed.set !== undefined ? { set: parsed.set } : {}),
   };
 }
 
@@ -396,6 +435,8 @@ const REQUIRES_HANDLE = new Set([
   "last",
   "history",
   "rpc",
+  // AUTO-04 — `tg trigger` reaches the gateway RPCs over WS (needs the handle token).
+  "trigger",
   "explain",
   "fleet",
   "mirror",
@@ -406,6 +447,8 @@ const REQUIRES_HANDLE = new Set([
   "status",
   "restart",
   "reset",
+  // AUTO-04 — `tg reconfigure` is a lifecycle verb (in-process-only across processes).
+  "reconfigure",
 ]);
 
 /**
@@ -637,6 +680,30 @@ export async function runVerb(
       };
     }
 
+    case "reconfigure": {
+      // AUTO-04 (the Track-K model sweep) — rewrite the throwaway config with the
+      // `--set` overrides + restart. Like restart/reset this is a LIFECYCLE verb on
+      // the IN-PROCESS controller (205-04 W1): a cold-shell `tg reconfigure` against
+      // a separate-process rig cannot re-pin COMIS_DATA_DIR + re-boot it, so report
+      // honestly rather than fake a rewrite. The in-proc scenario (208-05 Stage-C)
+      // drives `controller.reconfigure(overrides)` directly. We ECHO the parsed
+      // overrides + the --restart intent so a driving agent sees exactly what would
+      // have been applied (never a silent or fabricated success).
+      const overrides = ctx.set ?? {};
+      if (Object.keys(overrides).length === 0) {
+        throw new VerbFailure("bad_json", {
+          detail: "tg reconfigure --set k=v [--set …] [--restart] — at least one --set override is required.",
+        });
+      }
+      return {
+        status: "lifecycle_in_process_only",
+        verb: "reconfigure",
+        overrides,
+        restart: ctx.restart === true,
+        hint: "a cross-process `tg reconfigure` (rewrite the throwaway config + restart — the model sweep) needs the detached-subprocess rig (Phase 208); the in-process controller.reconfigure(overrides) is driven by the 208-05 scenario.",
+      };
+    }
+
     case "send": {
       const handle = ctx.handle as ChanliveHandle;
       const text = args[0] ?? "";
@@ -821,6 +888,48 @@ export async function runVerb(
       return invokeRpc(ctx, handle, method, parsed.value);
     }
 
+    case "trigger": {
+      // AUTO-04 — fire a time-based event NOW (no real-time wait) via the gateway
+      // RPCs the daemon registers, over the SAME WS `invokeRpc` seam `tg rpc` uses:
+      //   • cron <id> [--agent A] → cron.run { jobName, agentId? }  (force-mode; an
+      //     id is required — force resolves a job BY NAME, "Job not found" otherwise)
+      //   • heartbeat [--agent A] → heartbeat.trigger { agentId }   (admin-scoped)
+      //   • wake                  → scheduler.wake {}               (debounced tick)
+      // A missing/unknown sub-target (or a cron with no id) is an honest bad_json
+      // (non-zero, reason-coded — never an exit-0 no-op); an RPC error surfaces as
+      // rpc_error via invokeRpc (the gateway answered, the trigger failed honestly).
+      const handle = ctx.handle as ChanliveHandle;
+      const target = args[0];
+      const agentId = ctx.agent;
+      switch (target) {
+        case "cron": {
+          const jobName = args[1];
+          if (jobName === undefined || jobName.length === 0) {
+            throw new VerbFailure("bad_json", {
+              detail: "tg trigger cron <id> [--agent A] — the cron job id/name is required (force mode resolves by name).",
+            });
+          }
+          return invokeRpc(ctx, handle, "cron.run", {
+            jobName,
+            ...(agentId !== undefined ? { agentId } : {}),
+          });
+        }
+        case "heartbeat":
+          return invokeRpc(ctx, handle, "heartbeat.trigger", {
+            ...(agentId !== undefined ? { agentId } : {}),
+          });
+        case "wake":
+          return invokeRpc(ctx, handle, "scheduler.wake", {});
+        default:
+          throw new VerbFailure("bad_json", {
+            detail:
+              target === undefined
+                ? "tg trigger <cron <id>|heartbeat|wake> — a sub-target is required."
+                : `tg trigger: unknown sub-target "${target}" (one of: cron <id>, heartbeat, wake).`,
+          });
+      }
+    }
+
     case "explain": {
       const handle = ctx.handle as ChanliveHandle;
       const ref = args[0];
@@ -952,7 +1061,7 @@ export async function runVerb(
     default:
       throw new VerbFailure("bad_json", {
         detail: `unknown verb "${verb}"`,
-        hint: "run a known verb: up/down/status/restart/reset/send/react/tap/edit/send-photo/send-voice/last/history/rpc/explain/fleet/mirror/traj/db/wait.",
+        hint: "run a known verb: up/down/status/restart/reset/reconfigure/send/react/tap/edit/send-photo/send-voice/last/history/rpc/trigger/explain/fleet/mirror/traj/db/wait.",
       });
   }
 }
