@@ -259,10 +259,20 @@ export function adaptSignalToControlEmulator(
   };
   return {
     injectMessage(_chat, from, text) {
-      // The numeric control-chat maps to the single fixed Signal chat string; the
-      // Signal sender identifier rides on `from.firstName` (the control API mints
-      // `user_<id>` when absent — for Signal the rig passes the recipient).
-      return emulator.injectMessage(SIGNAL_RIG_CHAT, from.firstName, text);
+      // The numeric control-chat maps to the single fixed Signal chat string. The
+      // SENDER IDENTITY must resolve to SIGNAL_RIG_CHAT too: the real Signal mapper
+      // resolves a DM's channelId = senderId = (sourceUuid ?? sourceNumber ??
+      // source) (message-mapper.ts:31,34), the agent REPLIES to that channelId, and
+      // resolveChatKey records the outbound under the reply recipient. So we pin
+      // `sourceUuid` to SIGNAL_RIG_CHAT (the highest-priority sender field) so the
+      // reply lands under the SAME key `outbound(SIGNAL_RIG_CHAT)`/`waitForReply`
+      // poll — else the reply lands under the all-zero placeholder uuid sourceUuid
+      // would otherwise default to, and waitForReply times out (the round-trip
+      // keystone — 209-07). `from.firstName` rides as the display name.
+      return emulator.injectMessage(SIGNAL_RIG_CHAT, from.firstName, text, {
+        sourceUuid: SIGNAL_RIG_CHAT,
+        sourceName: from.firstName,
+      });
     },
     injectReaction(_chat, from, botMessageId, emoji) {
       // A Signal reaction targets the bot reply's `timestamp` (botMessageId).
