@@ -52,6 +52,7 @@
  * @module
  */
 
+import type { ServerResponse } from "node:http";
 import {
   createHttpBackend,
   type HttpBackend,
@@ -59,7 +60,8 @@ import {
 } from "../../harness/backends/http-backend.js";
 import type { ChannelCaps, ChannelEmulator } from "../../harness/channel-emulator.js";
 import type { RecordedOutbound } from "../../harness/recorded-outbound.js";
-import { nextSignalTimestamp } from "./signal-payloads.js";
+import type { SignalEnvelope } from "@comis/channels";
+import { makeMessageEnvelope, makeReactionEnvelope, nextSignalTimestamp } from "./signal-payloads.js";
 import { signalCaps } from "./signal-caps.js";
 
 /**
@@ -74,6 +76,19 @@ import { signalCaps } from "./signal-caps.js";
 export interface CreateSignalEmulatorOptions {
   /** The signal-cli account reported by `listAccounts`. Defaults to `+15555550100`. */
   readonly account?: string;
+}
+
+/**
+ * Addressing options for {@link SignalEmulator.injectMessage}. Every field is
+ * OPTIONAL — an absent/empty `InjectMessageOpts` is the plain DM/group text
+ * inject. Threads through to the `signal-payloads.ts` builder (the I4 typed
+ * envelope source).
+ */
+export interface InjectMessageOpts {
+  /** The sender's Signal UUID (`envelope.sourceUuid`). Defaults to the all-zero placeholder. */
+  readonly sourceUuid?: string;
+  /** A display name (`envelope.sourceName` → `metadata.signalSenderName`). Defaults to `from`. */
+  readonly sourceName?: string;
 }
 
 /**
@@ -95,6 +110,38 @@ export interface SignalEmulator extends ChannelEmulator {
    * `backend.start()`/`stop()` directly.
    */
   readonly backend: HttpBackend;
+  /**
+   * Inject an inbound text message from `from` in `chat` by EMITTING a
+   * `SignalEnvelope` on the open `/api/v1/events` SSE stream (the structural
+   * twin of `tgEmulator.injectMessage` queuing an `Update` for `getUpdates` —
+   * the Signal adapter pulls inbound autonomously from the stream). When NO SSE
+   * client is connected the envelope is QUEUED and drained on the next connect
+   * (the queue-or-emit discipline — an inject before any connect is not lost).
+   *
+   * `chat` is the channel: a `group:<id>` sets `dataMessage.groupInfo.groupId`
+   * (the group inbound path); any other value is a DM (the channel id is the
+   * sender). `from` is the sender's Signal identifier (for a DM, typically the
+   * same as `chat`).
+   *
+   * @returns the Signal-shaped message id (the emitted envelope's `timestamp`),
+   *   minted from the SAME monotonic source as the outbound oracle.
+   */
+  injectMessage(
+    chat: string,
+    from: string,
+    text: string,
+    opts?: InjectMessageOpts,
+  ): number;
+  /**
+   * Inject an inbound REACTION from `from` in `chat` targeting an existing
+   * message (`targetSentTimestamp`), by emitting a `SignalEnvelope` carrying
+   * `dataMessage.reaction { emoji, targetSentTimestamp }` on the SSE stream (the
+   * WS1-relevant react FLOW Signal supports — NOT a button callback). Queue-or-
+   * emit like {@link injectMessage}.
+   *
+   * @returns the emitted reaction envelope's own `timestamp`.
+   */
+  injectReaction(chat: string, from: string, targetSentTimestamp: number, emoji: string): number;
   /**
    * The full recorded outbound log for a chat, in send order (the channel
    * oracle). `chat` is the Signal chat string (the bare recipient for a DM, or
@@ -180,6 +227,16 @@ export function createSignalEmulator(opts: CreateSignalEmulatorOptions = {}): Si
   // Per-chat ORACLE state (the outbound log), keyed on the Signal chat string.
   const chats = new Map<string, ChatOracle>();
 
+  // SSE inbound state (the Signal analog of Telegram's getUpdates queue). The
+  // adapter pulls inbound from a kept-open `GET /api/v1/events` stream; an inject
+  // EMITS a SignalEnvelope on every connected client, or QUEUES it when none is
+  // connected so an inject before any connect is not lost (the queue-or-emit
+  // discipline, mock-signal-server.ts:261-270). The base tracks each live
+  // response in its own `openStreams` set and drains it on stop(), so a kept-open
+  // stream cannot hang stop() (Plan 01, T-209-09).
+  const sseClients = new Set<ServerResponse>();
+  const queuedEnvelopes: SignalEnvelope[] = [];
+
   function chatOracle(chat: string): ChatOracle {
     let st = chats.get(chat);
     if (st === undefined) {
@@ -192,6 +249,25 @@ export function createSignalEmulator(opts: CreateSignalEmulatorOptions = {}): Si
   /** Append an outbound record to a chat's oracle. */
   function record(chat: string, ro: RecordedOutbound): void {
     chatOracle(chat).outbound.push(ro);
+  }
+
+  /**
+   * EMIT a `SignalEnvelope` on every connected SSE client as an `event: receive`
+   * frame (the exact wire shape the adapter's `createSignalEventStream` parses —
+   * signal-client.ts:316-321 reads `event`/`data`; the adapter JSON.parses the
+   * `data` into a `SignalEnvelope`). When NO client is connected the envelope is
+   * QUEUED and drained on the next connect (mock-signal-server.ts:261-270).
+   */
+  function emit(envelope: SignalEnvelope): void {
+    if (sseClients.size > 0) {
+      const json = JSON.stringify(envelope);
+      for (const res of sseClients) {
+        res.write(`event: receive\n`);
+        res.write(`data: ${json}\n\n`);
+      }
+    } else {
+      queuedEnvelopes.push(envelope);
+    }
   }
 
   /** Parse the `/api/v1/rpc` body defensively (a malformed body → empty request). */
@@ -273,6 +349,35 @@ export function createSignalEmulator(opts: CreateSignalEmulatorOptions = {}): Si
     }
   });
 
+  // GET /api/v1/events — the SSE inbound stream (mock-signal-server.ts:106-128).
+  // Registered via the base's `registerStreamRoute` (Plan 01, CHAN2-02 FIX #2):
+  // the base hands the raw (req, res), keeps the connection OPEN (does NOT route
+  // it through send()), tracks the live response for stop()-drain, and fires the
+  // on-close cleanup. The emulator sets the text/event-stream content-type +
+  // writes the initial flush, registers the client, drains any queued envelopes,
+  // and un-registers on close.
+  backend.registerStreamRoute(
+    (path) => path === "/api/v1/events",
+    (req, res) => {
+      res.statusCode = 200;
+      res.setHeader("content-type", "text/event-stream");
+      res.setHeader("cache-control", "no-cache");
+      res.setHeader("connection", "keep-alive");
+      res.write("\n"); // initial flush — does NOT end the response (the stream stays open).
+      sseClients.add(res);
+      // Drain any pre-queued envelopes (an inject before this connect).
+      for (const env of queuedEnvelopes) {
+        res.write(`event: receive\n`);
+        res.write(`data: ${JSON.stringify(env)}\n\n`);
+      }
+      queuedEnvelopes.length = 0;
+      // Untrack on disconnect (the base also untracks its own openStreams entry).
+      req.on("close", () => {
+        sseClients.delete(res);
+      });
+    },
+  );
+
   const emulator: SignalEmulator = {
     caps: signalCaps satisfies ChannelCaps,
     // The shared base — the rig (Plan 06) writes channels.signal.baseUrl =
@@ -283,10 +388,46 @@ export function createSignalEmulator(opts: CreateSignalEmulatorOptions = {}): Si
       return backend.start();
     },
 
-    stop() {
-      // The base drains any open SSE stream on stop() (Plan 01 stop-drain), so
-      // stop() cannot hang on a kept-open /api/v1/events connection (T-209-09).
-      return backend.stop();
+    async stop() {
+      // The base drains every tracked open SSE response on stop() (Plan 01
+      // stop-drain via openStreams), so stop() cannot hang on a kept-open
+      // /api/v1/events connection (T-209-09). Clear the local registry too so a
+      // post-stop inject is a no-op (queued, never written to a dead socket).
+      sseClients.clear();
+      queuedEnvelopes.length = 0;
+      await backend.stop();
+    },
+
+    injectMessage(chat, from, text, opts) {
+      // Build the I4-typed envelope (signal-payloads.ts — return-annotated
+      // against the adapter's OWN SignalEnvelope) and EMIT it on the open SSE
+      // stream (else queue). `chat` is the channel (a group:<id> sets groupInfo;
+      // a DM's channel id IS the sender). Mints the Signal message id from the
+      // SAME monotonic source as the outbound oracle.
+      const envelope = makeMessageEnvelope({
+        from,
+        content: text,
+        channel: chat,
+        ...(opts?.sourceUuid !== undefined ? { sourceUuid: opts.sourceUuid } : {}),
+        ...(opts?.sourceName !== undefined ? { sourceName: opts.sourceName } : {}),
+      });
+      emit(envelope);
+      // The envelope timestamp is the Signal message id (always set by the builder).
+      return envelope.timestamp as number;
+    },
+
+    injectReaction(chat, from, targetSentTimestamp, emoji) {
+      // The react FLOW (the WS1-relevant verb Signal supports): a SignalEnvelope
+      // carrying dataMessage.reaction { emoji, targetSentTimestamp }, emitted the
+      // same way (queue-or-emit). NOT a button callback.
+      const envelope = makeReactionEnvelope({
+        from,
+        emoji,
+        targetSentTimestamp,
+        channel: chat,
+      });
+      emit(envelope);
+      return envelope.timestamp as number;
     },
 
     outbound(chat) {

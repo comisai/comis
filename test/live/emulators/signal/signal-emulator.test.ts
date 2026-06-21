@@ -292,7 +292,16 @@ async function readSseFrame(
   return frame;
 }
 
-/** Open the SSE inbound stream and return a reader + the running decode buffer. */
+/**
+ * Open the SSE inbound stream and return a reader + the running decode buffer.
+ *
+ * The first chunk (the handler's initial `"\n"` flush) is read so the connection
+ * is fully established before the caller injects — but it is BUFFERED into
+ * `pending.buf` (the leading flush stripped), NOT discarded. This matters for the
+ * queue-drain case: a pre-queued envelope is written immediately after the flush,
+ * so its frame can ride in the SAME chunk as the flush; discarding that chunk
+ * would lose the frame and hang the read.
+ */
 async function openEvents(
   apiRoot: string,
   controller: AbortController,
@@ -307,8 +316,12 @@ async function openEvents(
   const reader = res.body!.getReader();
   const decoder = new TextDecoder();
   const pending = { buf: "" };
-  // Drain the initial flush so the connection is fully established before an inject.
-  await reader.read();
+  // Read the first chunk (the initial flush) so the connection is established,
+  // and KEEP it in the buffer (minus the leading flush newline) — a queued frame
+  // drained on connect can be in this same chunk.
+  const { value } = await reader.read();
+  if (value) pending.buf += decoder.decode(value, { stream: true });
+  pending.buf = pending.buf.replace(/^\n+/, "");
   return { reader, decoder, pending };
 }
 
@@ -345,7 +358,12 @@ describe("SignalEmulator — SSE inbound /api/v1/events + injectMessage (CHAN2-0
     expect(normalized?.text).toBe("hi");
     expect(normalized?.channelType).toBe("signal");
     expect(normalized?.chatType).toBe("dm");
-    expect(normalized?.channelId).toBe(CHAT);
+    // For a DM the mapper resolves channelId = senderId = sourceUuid ??
+    // sourceNumber ?? source — the uuid WINS (message-mapper.ts:31,34; the
+    // established 209-03 contract). The builder's default sourceUuid is the
+    // all-zero placeholder, so the DM channelId is that uuid, not the recipient.
+    expect(normalized?.senderId).toBe(envelope.sourceUuid);
+    expect(normalized?.channelId).toBe(envelope.sourceUuid);
 
     await reader.cancel();
     controller.abort();
