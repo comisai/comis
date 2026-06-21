@@ -424,6 +424,12 @@ export class IcBillingView extends LitElement {
     this._loadData();
   }
 
+  /** 179-08: drill a session row to the native Incident view (the E7 twin) —
+   *  obs.explain keyed on this session's sessionKey (a valid obs.explain ref). */
+  private _explainSession(sessionKey: string): void {
+    window.location.hash = `#/observe/incident?ref=${encodeURIComponent(sessionKey)}`;
+  }
+
   private _onTimeRangeChange(e: CustomEvent<{ sinceMs: number; label: string }>): void {
     this._sinceMs = e.detail.sinceMs;
     this._selectedRange = e.detail.label;
@@ -737,7 +743,7 @@ export class IcBillingView extends LitElement {
             ${sorted.map(
               (s) => html`
                 <div class="grid-row" role="row">
-                  <div class="cell cell-mono" role="cell">${s.sessionKey}</div>
+                  <div class="cell cell-mono" role="cell"><button class="breadcrumb-link" title="Explain incident" @click=${() => this._explainSession(s.sessionKey)}>${s.sessionKey}</button></div>
                   <div class="cell cell-mono cell-right" role="cell">${this._formatNumber(s.totalTokens)}</div>
                   <div class="cell cell-mono cell-right" role="cell">${this._formatCost(s.totalCost)}</div>
                   <div class="cell cell-mono cell-right" role="cell">${this._formatNumber(s.callCount)}</div>

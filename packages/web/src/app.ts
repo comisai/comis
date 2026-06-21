@@ -41,6 +41,7 @@ const VIEW_LOADERS: Record<string, () => Promise<unknown>> = {
   "ic-diagnostics-view": () => import("./views/diagnostics-view.js"),
   "ic-cache-health-view": () => import("./views/cache-health.js"),
   "ic-spend-governance-view": () => import("./views/spend-governance.js"),
+  "ic-incident-view": () => import("./views/incident-view.js"),
   "ic-subagents-view": () => import("./views/subagents.js"),
   "ic-security-view": () => import("./views/security.js"),
   "ic-config-editor": () => import("./views/config-editor.js"),
@@ -493,6 +494,7 @@ export class IcApp extends LitElement implements AppHost {
       case "ic-diagnostics-view":
       case "ic-cache-health-view":
       case "ic-spend-governance-view":
+      case "ic-incident-view":
       case "ic-observe-dashboard":
       case "ic-context-engine-view":
       case "ic-memory-inspector":
@@ -599,6 +601,10 @@ export class IcApp extends LitElement implements AppHost {
         return html`<ic-cache-health-view .rpcClient=${this._rpcClient} .eventDispatcher=${this._eventDispatcher}></ic-cache-health-view>`;
       case "ic-spend-governance-view":
         return html`<ic-spend-governance-view .rpcClient=${this._rpcClient} .eventDispatcher=${this._eventDispatcher}></ic-spend-governance-view>`;
+      case "ic-incident-view":
+        // The drill ref (a sessionKey | traceId) rides the query string
+        // (#/observe/incident?ref=<ref>); obs.explain accepts either shape.
+        return html`<ic-incident-view .rpcClient=${this._rpcClient} .eventDispatcher=${this._eventDispatcher} .sessionKey=${this._routeQuery["ref"] ?? ""}></ic-incident-view>`;
       case "ic-pipeline-list":
         return html`<ic-pipeline-list .rpcClient=${this._rpcClient}></ic-pipeline-list>`;
       case "ic-pipeline-builder":

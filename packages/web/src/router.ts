@@ -78,6 +78,7 @@ const ROUTE_TABLE: ReadonlyArray<{ pattern: string; view: string }> = [
   { pattern: "observe/diagnostics", view: "ic-diagnostics-view" },
   { pattern: "observe/cache", view: "ic-cache-health-view" },
   { pattern: "observe/spend", view: "ic-spend-governance-view" },
+  { pattern: "observe/incident", view: "ic-incident-view" },
   { pattern: "context", view: "ic-context-dag-browser" },
   { pattern: "subagents", view: "ic-subagents-view" },
   { pattern: "media", view: "ic-media-test-view" },

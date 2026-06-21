@@ -53,12 +53,15 @@ const TAB_DEFS: TabDef[] = [
   // over-cap; see _onTabChange's navigate dispatch).
   { id: "cache", label: "Cache" },
   { id: "spend", label: "Spend" },
+  // 179-08: nav-only Incident tab -> the obs.explain drill-down view (E7 native).
+  { id: "incident", label: "Incident" },
 ];
 
-/** 179-07: nav-only observe tabs -> the route path of their standalone view. */
+/** 179-07/08: nav-only observe tabs -> the route path of their standalone view. */
 const NAV_ONLY_TAB_ROUTES: Record<string, string> = {
   cache: "observe/cache",
   spend: "observe/spend",
+  incident: "observe/incident",
 };
 
 /** Agent health entry from agents.list + agents.get RPCs. */
