@@ -41,6 +41,7 @@
  * @module
  */
 
+import type { ReactionTypeEmoji } from "grammy/types";
 import type {
   ControlRouteContext,
   HttpBackend,
@@ -62,6 +63,19 @@ export interface ControlEmulator {
     from: { id: number; firstName: string; username?: string },
     text: string,
   ): number;
+  /**
+   * Queue an inbound reaction-ADD on an EXISTING bot reply (`botMessageId`).
+   * Mints NO message id (the reacted-to message already exists) — returns
+   * `void`. Kept the minimal channel-agnostic shape so Phase-209 channel #2
+   * implements the same surface (REACT-02). The `emoji` is the closed grammy
+   * union at this typed seam; the HTTP boundary casts a request string into it.
+   */
+  injectReaction(
+    chat: { readonly chatId: number },
+    from: { id: number; firstName: string; username?: string },
+    botMessageId: number,
+    emoji: ReactionTypeEmoji["emoji"],
+  ): void;
   /** All recorded outbounds for a chat, in send order (the channel oracle). */
   outbound(chat: { readonly chatId: number }): readonly RecordedOutbound[];
 }
@@ -78,6 +92,22 @@ export interface InjectMessageParams {
   readonly fromFirstName?: string;
   /** Optional sender @username. */
   readonly fromUsername?: string;
+}
+
+/** Parameters for the inject-reaction handler / `ControlClient.injectReaction`. */
+export interface InjectReactionParams {
+  /** The chat the reacted-to bot reply lives in (a FIXED test chat id). */
+  readonly chatId: number;
+  /** The (human) reactor's user id. */
+  readonly fromUserId: number;
+  /**
+   * The EXISTING bot reply's message id to react ON — the attribution keystone:
+   * the id `recordOutboundMessage` keyed the trajectory map on (the `tg send`
+   * reply-wait return), NOT the most-recent outbound.
+   */
+  readonly botMessageId: number;
+  /** The reaction emoji (a string at this param; cast to the closed union at the boundary). */
+  readonly emoji: string;
 }
 
 /** Parameters for the reply-wait handler / `ControlClient.waitForOutbound`. */
@@ -108,6 +138,13 @@ export interface ControlClient {
    * @returns the minted message id.
    */
   injectMessage(params: InjectMessageParams): Promise<number>;
+  /**
+   * Inject an inbound reaction-ADD on an existing bot reply (the in-process
+   * equivalent of `POST /control/chats/:id/reactions`). Calls the SAME
+   * `handleInjectReaction` the HTTP route does (in-process == HTTP parity);
+   * mints no id, resolves `void`.
+   */
+  injectReaction(params: InjectReactionParams): Promise<void>;
   /**
    * Block for new outbounds after `afterMessageId` (the in-process equivalent of
    * `GET /control/chats/:id/outbound`). Returns `[]` on timeout — an honest
@@ -181,6 +218,8 @@ function clampWaitMs(raw: number | undefined): number {
 const CHAT_MESSAGES_PATH = /^\/control\/chats\/(-?\d+)\/messages\/?$/;
 /** The `/control/chats/:id/outbound` path → the captured chat id. */
 const CHAT_OUTBOUND_PATH = /^\/control\/chats\/(-?\d+)\/outbound\/?$/;
+/** The `/control/chats/:id/reactions` path → the captured chat id (REACT-02). */
+const CHAT_REACTIONS_PATH = /^\/control\/chats\/(-?\d+)\/reactions\/?$/;
 
 /**
  * Register the generic `/control/*` API on the shared http-backend `backend` and
@@ -209,6 +248,27 @@ export function registerControlApi(backend: HttpBackend, emulator: ControlEmulat
       params.text,
     );
     return { messageId };
+  }
+
+  /**
+   * POST /control/chats/:id/reactions — queue an inbound reaction-ADD on an
+   * EXISTING bot reply. The ONE handler both the HTTP route and the in-proc
+   * client invoke (structural parity, mirroring handleInject). The `emoji` is a
+   * string at this trust boundary; it is cast to the closed grammy union exactly
+   * once here (the §4.6 row: `{ fromUserId, botMessageId, emoji } → { ok }`).
+   */
+  function handleInjectReaction(
+    chatId: number,
+    params: { fromUserId: number; botMessageId: number; emoji: string },
+  ): { ok: true } {
+    emulator.injectReaction(
+      { chatId },
+      { id: params.fromUserId, firstName: `user_${params.fromUserId}` },
+      params.botMessageId,
+      // The single narrowing at the HTTP trust boundary (string → closed union).
+      params.emoji as ReactionTypeEmoji["emoji"],
+    );
+    return { ok: true };
   }
 
   /**
@@ -261,6 +321,27 @@ export function registerControlApi(backend: HttpBackend, emulator: ControlEmulat
       return { status: 200, body: handleInject(chatId, params) };
     }
 
+    // POST /control/chats/:id/reactions (the inject-reaction route — REACT-02)
+    const reactMatch = ctx.path.match(CHAT_REACTIONS_PATH);
+    if (reactMatch && ctx.httpMethod === "POST") {
+      const chatId = Number(reactMatch[1]);
+      const body = parseControlBody(ctx.body);
+      const fromUserId = toNum(body["fromUserId"]);
+      const botMessageId = toNum(body["botMessageId"]);
+      const emoji = toStr(body["emoji"]);
+      if (fromUserId === undefined || botMessageId === undefined || emoji === undefined) {
+        // Bad input → 400 (defensive; never crash — T-204-12 parity).
+        return {
+          status: 400,
+          body: {
+            ok: false,
+            error: "fromUserId (number), botMessageId (number) and emoji (string) are required",
+          },
+        };
+      }
+      return { status: 200, body: handleInjectReaction(chatId, { fromUserId, botMessageId, emoji }) };
+    }
+
     // GET /control/chats/:id/outbound?afterMessageId&waitMs (the reply-wait)
     const outboundMatch = ctx.path.match(CHAT_OUTBOUND_PATH);
     if (outboundMatch && ctx.httpMethod === "GET") {
@@ -287,6 +368,15 @@ export function registerControlApi(backend: HttpBackend, emulator: ControlEmulat
   const client: ControlClient = {
     injectMessage(params) {
       return Promise.resolve(handleInject(params.chatId, params).messageId);
+    },
+    injectReaction(params) {
+      // The SAME handler the HTTP route calls (in-process == HTTP parity).
+      handleInjectReaction(params.chatId, {
+        fromUserId: params.fromUserId,
+        botMessageId: params.botMessageId,
+        emoji: params.emoji,
+      });
+      return Promise.resolve();
     },
     waitForOutbound(params) {
       return handleOutbound(params.chatId, params.afterMessageId, params.waitMs);
