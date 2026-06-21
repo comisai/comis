@@ -217,8 +217,21 @@ function pickFreePort(): Promise<number> {
  *   sentinel; omitting the key avoids a "Missing env var" FATAL at boot).
  * - `gateway.tokens[0].secret` is the ≥32-char LITERAL (Pitfall 4).
  * - `dataDir: ""` resolves to `COMIS_DATA_DIR` (set per-rig below).
+ *
+ * LEARNING (REACT-03 / Plan 206-03, GOTCHA C+D): the Verified-Learning loop is
+ * byte-identical-OFF by default (setup-learning-reactions.ts:651-656,720). The
+ * `agents.default` block ENABLES it (learningOutcome/learningSkills/
+ * learningTuning) and grants the reactor trust ≥ `known`
+ * (`elevatedReply.defaultTrustLevel`), and the `memory` block enables
+ * `costFeatures` — so a 👍 on an agent reply persists an `outcome_events` row
+ * (the `0.6 × trustWeight("known") 0.4 = 0.24 ≥ 0.05` write floor) and drives
+ * synthesis. This is RIG-config ONLY — it does NOT flip a product default; the
+ * scenario's git-porcelain guard re-asserts zero product source change.
+ *
+ * EXPORTED so the Task-1 config-shape test (`rig.test.ts`) can assert the gotchas
+ * on the produced YAML (test-infra-only — the sole `rig.ts` signature change).
  */
-function buildConfigYaml(apiRoot: string, gatewayPort: number, model: string): string {
+export function buildConfigYaml(apiRoot: string, gatewayPort: number, model: string): string {
   // The keyless leg uses ollama; an explicit non-keyless model string is passed
   // through as the provider model id (operator/live.env path).
   const providerModelId = model === "keyless" ? "qwen3.6:35b" : model;
@@ -277,6 +290,26 @@ agents:
       resetTimeoutMs: 1000
     rag:
       enabled: false
+    # REACT-03 GOTCHA C — learning is byte-identical-OFF until BOTH
+    # memory.costFeatures.enabled (below) AND these per-agent toggles are on
+    # (setup-learning-reactions.ts:651-656,720). Without learningOutcome the
+    # reaction observe is gated off (and recordOutboundMessage is undefined → no
+    # ReactionTrajectoryMap binding); without learningSkills synthesis never runs.
+    learningOutcome:
+      enabled: true
+    learningSkills:
+      enabled: true
+    learningTuning:
+      enabled: true
+    # REACT-03 GOTCHA D — the reactor trust floor (the #1 REACT-03 trap). The DM
+    # reactor (fromUserId 111) defaults to "external"
+    # (elevatedReply.defaultTrustLevel ?? "external"), and
+    # 0.6 (REACTION_BASE_CONFIDENCE) x 0.05 (trustWeight external) = 0.03 <
+    # 0.05 (REACTION_MIN_CONFIDENCE_TO_WRITE) -> the thumbs-up SILENTLY persists
+    # no row. "known" -> 0.6 x 0.4 = 0.24 >= 0.05 (single-user DM; the group
+    # spoof guard is Phase 208). Rig config ONLY — never a product-default flip.
+    elevatedReply:
+      defaultTrustLevel: "known"
 
 gateway:
   enabled: true
@@ -296,6 +329,12 @@ gateway:
 
 memory:
   dbPath: "${MEMORY_DB_FILE}"
+  # REACT-03 GOTCHA C — someLearningOn requires costFeatures (the master
+  # cost-feature switch, default ON but explicit here for the config-shape test);
+  # without it learningOutcomeEnabled is false for every agent ->
+  # recordOutboundMessage undefined -> no reaction map binding at all.
+  costFeatures:
+    enabled: true
 
 security:
   agentToAgent:
