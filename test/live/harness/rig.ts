@@ -49,13 +49,21 @@
  * @module
  */
 
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:net";
 import { startTestDaemon, type TestDaemonHandle } from "../../support/daemon-harness.js";
 import { createTgEmulator, type TgEmulator, type RecordedOutbound, type ChatRef } from "../emulators/telegram/tg-emulator.js";
 import { registerControlApi, type ControlClient } from "./control-api.js";
+import {
+  writeHandle,
+  readHandle,
+  handlePath,
+  probeHealth,
+  type ChanliveHandle,
+} from "./chanlive-handle.js";
+import { createRigController, type RigController } from "./rig-control.js";
 
 /**
  * The ≥32-char LITERAL gateway token the temp config carries.
@@ -151,6 +159,8 @@ export interface RigHandle {
  * unchanged.
  */
 export interface BuiltRig extends RigHandle {
+  /** The emulator's loopback base (`http://127.0.0.1:P`) — the `/control/*` endpoint the handle records. */
+  readonly controlEndpoint: string;
   /** The throwaway `COMIS_DATA_DIR` this rig pinned (the dir `resetDeep()` wipes UNDER, never `~/.comis`). */
   readonly dataDir: string;
   /** The throwaway config dir (removed at cleanup). */
@@ -405,6 +415,7 @@ export async function buildRig(opts: StartRigOptions): Promise<BuiltRig> {
     chat,
     gatewayUrl,
     authToken,
+    controlEndpoint: apiRoot,
     dataDir,
     configDir,
     configPath,
@@ -451,4 +462,132 @@ export async function startRig(opts: StartRigOptions): Promise<RigHandle> {
     waitForReply: built.waitForReply.bind(built),
     cleanup: built.cleanup.bind(built),
   };
+}
+
+/** Options for {@link startStandaloneRig}. */
+export interface StandaloneRigOptions {
+  /** The channel to emulate. Phase 204/205 ship Telegram. */
+  readonly channel: "telegram";
+  /** The model the booted daemon's agent runs (`"keyless"` → keyless ollama; else the provider/model id). */
+  readonly model: "keyless" | string;
+  /** Reserved for a future group/forum rig (Phase 206+). */
+  readonly group?: boolean;
+  /**
+   * The handle-file base dir (default `~/.comis-chanlive`). Injected by the unit
+   * tests so the operator's real handle dir is never touched.
+   */
+  readonly baseDir?: string;
+}
+
+/**
+ * The result of {@link startStandaloneRig} — the discover-or-spawn outcome.
+ *
+ * - `reused: true` → a HEALTHY recorded rig was discovered; `handle` is its
+ *   recorded handle, and there is NO `controller`/`cleanup` (we do NOT own a rig
+ *   we merely reused — tearing it down is the owner's job, T-205-12).
+ * - `reused: false` → a fresh rig was SPAWNED; `controller` drives its lifecycle
+ *   (restart / reset-deep) and `cleanup()` tears the rig down AND removes the
+ *   handle file.
+ *
+ * W1 HONESTY (cross-process scope): `controller` is an IN-PROCESS owner — it dies
+ * with the launching process. The recorded `handle.rigControlEndpoint` is set to
+ * the gateway URL as the discover-or-spawn ANCHOR (the health signal a later
+ * `tg up` probes), NOT a cross-process rig-control HTTP surface. A true cold-shell
+ * `tg restart` (a SEPARATE process driving the rig) needs a DETACHED subprocess
+ * rig, which is NOT built here (deferred to Phase 208). This handle never claims
+ * otherwise: it only advertises the gateway anchor it can honestly serve.
+ */
+export interface StandaloneRig {
+  /** Was a healthy recorded rig REUSED (true), or a fresh one SPAWNED (false)? */
+  readonly reused: boolean;
+  /** The recorded (reused) or freshly-written (spawned) handle. */
+  readonly handle: ChanliveHandle;
+  /** The in-process lifecycle controller — ONLY on a spawn (we own the rig we spawned). */
+  readonly controller?: RigController;
+  /** Tear the SPAWNED rig down AND remove the handle file — ONLY on a spawn. */
+  cleanup?(): Promise<void>;
+}
+
+/** Injectable seams for {@link startStandaloneRig} — defaults wire the real probe + spawn. */
+export interface StandaloneRigDeps {
+  /** The health probe (default {@link probeHealth}) — the discover signal. */
+  readonly probeFn?: (gatewayUrl: string) => Promise<boolean>;
+  /** The rig spawner (default {@link buildRig}) — booted only when no healthy rig is discovered. */
+  readonly spawnFn?: typeof buildRig;
+}
+
+/**
+ * The CLI-01 discover-or-spawn launcher (`tg up`): reuse a HEALTHY recorded rig,
+ * else spawn a fresh one and write its `0600` handle file.
+ *
+ * Discover: `readHandle(channel)` → if present AND `probeFn(gatewayUrl)` is true,
+ * return `{ reused: true, handle }` WITHOUT spawning (never a second daemon over a
+ * healthy one — T-205-12). Spawn: `buildRig(opts)` → assemble the
+ * {@link ChanliveHandle} from its internals → `writeHandle` (`0600`) → wrap a
+ * {@link createRigController} → return `{ reused: false, handle, controller,
+ * cleanup }` where `cleanup` tears the rig down AND removes the handle file.
+ */
+export async function startStandaloneRig(
+  opts: StandaloneRigOptions,
+  deps: StandaloneRigDeps = {},
+): Promise<StandaloneRig> {
+  const probeFn = deps.probeFn ?? probeHealth;
+  const spawnFn = deps.spawnFn ?? buildRig;
+
+  // DISCOVER — reuse a healthy recorded rig (never spawn a second daemon over it).
+  const existing = readHandle(opts.channel, opts.baseDir);
+  if (existing && (await probeFn(existing.gatewayUrl))) {
+    return { reused: true, handle: existing };
+  }
+
+  // SPAWN — no healthy rig; boot a fresh one and record its handle. Include
+  // `group` only when set (exactOptionalPropertyTypes: an absent optional ≠ undefined).
+  const built = await spawnFn({
+    channel: opts.channel,
+    model: opts.model,
+    ...(opts.group !== undefined ? { group: opts.group } : {}),
+  });
+
+  // Assemble the handle from the spawned rig's internals. W1: rigControlEndpoint =
+  // the gateway URL (the discover-or-spawn anchor — what a later `tg up` probes),
+  // NOT a cross-process rig-control HTTP surface (the in-proc controller can't be
+  // driven cross-process; a detached-subprocess rig is Phase 208).
+  const handle: ChanliveHandle = {
+    channel: opts.channel,
+    controlEndpoint: built.controlEndpoint,
+    rigControlEndpoint: built.gatewayUrl,
+    gatewayUrl: built.gatewayUrl,
+    gatewayToken: built.authToken,
+    chatId: built.chat.chatId,
+    dataDir: built.dataDir,
+    memoryDbPath: built.memoryDbPath,
+  };
+  writeHandle(handle, opts.baseDir);
+
+  // Wrap the lifecycle controller (restart / reset-deep). onDaemonHandle keeps the
+  // rig's cleanup() pointed at the post-restart daemon (never a stale one).
+  const controller = createRigController({
+    emulator: built.emulator,
+    daemonHandle: built.daemonHandle,
+    dataDir: built.dataDir,
+    configPath: built.configPath,
+    gatewayPort: built.gatewayPort,
+    gatewayUrl: built.gatewayUrl,
+    chat: built.chat,
+    memoryDbPath: built.memoryDbPath,
+    onDaemonHandle: built.rebindDaemonHandle,
+  });
+
+  const cleanup = async (): Promise<void> => {
+    // Tear the rig down (daemon → emulator → temp dirs) AND remove the handle file
+    // so a later discover does not resolve a dead handle.
+    try {
+      await built.cleanup();
+    } finally {
+      const path = handlePath(opts.channel, opts.baseDir);
+      if (existsSync(path)) rmSync(path, { force: true });
+    }
+  };
+
+  return { reused: false, handle, controller, cleanup };
 }

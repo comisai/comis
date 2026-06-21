@@ -146,10 +146,11 @@ function makeFakeBuiltRig(baseDir: string): BuiltRig & { cleanup: ReturnType<typ
   const cleanup = vi.fn(async () => undefined);
   return {
     emulator: { resetChat: vi.fn() } as never,
-    controlClient: { apiRoot: "http://127.0.0.1:9" } as never,
+    controlClient: { apiRoot: "http://127.0.0.1:8" } as never,
     chat: { chatId: 424242 },
     gatewayUrl: "http://127.0.0.1:9",
     authToken: "test-secret-key-for-integration-tests",
+    controlEndpoint: "http://127.0.0.1:8",
     dataDir,
     configDir: join(baseDir, "cfg"),
     configPath: join(baseDir, "cfg", "config.rig.yaml"),

@@ -35,6 +35,9 @@
  * @module
  */
 
+import { rmSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { startTestDaemon, type TestDaemonHandle } from "../../support/daemon-harness.js";
 import type { TgEmulator, ChatRef } from "../emulators/telegram/tg-emulator.js";
 
@@ -87,6 +90,16 @@ export interface RigController {
    * env. The emulator + handle are preserved.
    */
   restart(): Promise<void>;
+  /**
+   * One-call deterministic CLEAN SLATE, scoped to the isolated `dataDir`: stop the
+   * daemon (`cleanup()`) → delete `memory.db` (+ `-wal`/`-shm`) + wipe `logs/` and
+   * `workspace/sessions/` UNDER `dataDir` → `emulator.resetChat(chat)` → `restart()`.
+   *
+   * SECURITY: REFUSES (throws) when `dataDir` is empty or equals the operator's
+   * real `~/.comis` — a misconfigured controller must never wipe real state
+   * (T-205-10). Every `rmSync` path is composed under the recorded `dataDir`.
+   */
+  resetDeep(): Promise<void>;
 }
 
 /** The boot function shape — `startTestDaemon`, injectable for the ordering unit. */
@@ -116,27 +129,62 @@ export function createRigController(state: RigControlState, bootFn: BootFn = sta
       // COMIS_CONFIG_PATHS and sets activeHandle = null. ONLY after that can a
       // second startTestDaemon boot without throwing "Test daemon already running".
       await state.daemonHandle.cleanup();
+      // Re-boot into the same isolated dir (re-pin COMIS_DATA_DIR — Pitfall 2 —
+      // boot, restore env, rebind). The daemon is already down from cleanup().
+      await rebootCleanIsolatedDir();
+    },
 
-      // Pitfall 2 — re-pin the SAME throwaway isolated dir for the re-boot.
-      // startTestDaemon only fills COMIS_DATA_DIR when unset and restores it after
-      // boot, so we set it here and clear it again below (don't leak to siblings).
-      const hadDataDirEnv = process.env["COMIS_DATA_DIR"] !== undefined;
-      const priorDataDir = process.env["COMIS_DATA_DIR"];
-      process.env["COMIS_DATA_DIR"] = state.dataDir;
-      try {
-        state.daemonHandle = await bootFn({
-          configPath: state.configPath,
-          gatewayPort: state.gatewayPort,
-        });
-      } finally {
-        // Restore COMIS_DATA_DIR to its prior state (the daemon read it once at boot).
-        if (hadDataDirEnv) process.env["COMIS_DATA_DIR"] = priorDataDir;
-        else delete process.env["COMIS_DATA_DIR"];
+    async resetDeep(): Promise<void> {
+      // SECURITY (T-205-10) — refuse a non-isolated dataDir BEFORE touching the
+      // filesystem or the daemon. An empty dir or the operator's real ~/.comis
+      // would have its memory.db / logs / sessions wiped — never allowed.
+      if (state.dataDir === "" || state.dataDir === join(homedir(), ".comis")) {
+        throw new Error(
+          `rig-control: refusing reset --deep on a non-isolated dataDir "${state.dataDir}" ` +
+            "(empty or the operator's ~/.comis)",
+        );
       }
 
-      // Keep the owning rig's cleanup() pointed at the CURRENT daemon.
-      state.onDaemonHandle?.(state.daemonHandle);
+      // 1. Stop the daemon first (releases the SQLite/WAL handles + the lock).
+      await state.daemonHandle.cleanup();
+
+      // 2. Wipe the isolated state — memory.db (+ wal/shm) and the logs/ +
+      //    workspace/sessions/ trees, ALL composed under the recorded dataDir.
+      for (const f of [state.memoryDbPath, `${state.memoryDbPath}-wal`, `${state.memoryDbPath}-shm`]) {
+        rmSync(f, { force: true });
+      }
+      rmSync(join(state.dataDir, "logs"), { recursive: true, force: true });
+      rmSync(join(state.dataDir, "workspace", "sessions"), { recursive: true, force: true });
+
+      // 3. Reset the channel-side oracle (the emulator's recorded chat state).
+      state.emulator.resetChat(state.chat);
+
+      // 4. Re-boot into the now-clean isolated dir (the Pitfall-1 ordering — but
+      //    cleanup() already ran above, so restart() must NOT cleanup() twice).
+      await rebootCleanIsolatedDir();
     },
   };
+
+  /**
+   * Re-boot the daemon into the (already-cleaned) isolated dir — the second half
+   * of `restart()` WITHOUT a fresh `cleanup()` (resetDeep already stopped the
+   * daemon). Re-pins `COMIS_DATA_DIR` (Pitfall 2), boots, restores env, rebinds.
+   */
+  async function rebootCleanIsolatedDir(): Promise<void> {
+    const hadDataDirEnv = process.env["COMIS_DATA_DIR"] !== undefined;
+    const priorDataDir = process.env["COMIS_DATA_DIR"];
+    process.env["COMIS_DATA_DIR"] = state.dataDir;
+    try {
+      state.daemonHandle = await bootFn({
+        configPath: state.configPath,
+        gatewayPort: state.gatewayPort,
+      });
+    } finally {
+      if (hadDataDirEnv) process.env["COMIS_DATA_DIR"] = priorDataDir;
+      else delete process.env["COMIS_DATA_DIR"];
+    }
+    state.onDaemonHandle?.(state.daemonHandle);
+  }
+
   return controller;
 }
