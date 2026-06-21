@@ -100,3 +100,39 @@ describe("IncidentReportSchema audit? + cacheBreaks? sections (176-05)", () => {
     expect(() => IncidentReportSchema.parse(report)).toThrow();
   });
 });
+
+describe("IncidentReportSchema spend? section (WEBUI-04, 179-04 — locked A2)", () => {
+  it("parses a report WITHOUT spend (additive — present only on a spend-killed session)", () => {
+    const parsed = IncidentReportSchema.parse(baseReport());
+    expect(parsed.schemaVersion).toBe(1);
+    expect(parsed.spend).toBeUndefined();
+  });
+
+  it("accepts a spend section ({scope, totalUsd, capUsd}); schemaVersion stays 1", () => {
+    const report = {
+      ...baseReport(),
+      spend: { scope: "agent", totalUsd: 1.25, capUsd: 1.0 },
+    };
+    const parsed = IncidentReportSchema.parse(report);
+    expect(parsed.schemaVersion).toBe(1);
+    expect(parsed.spend).toEqual({ scope: "agent", totalUsd: 1.25, capUsd: 1.0 });
+  });
+
+  it("strips a planted value-shaped field from the spend section (content-free)", () => {
+    const report = {
+      ...baseReport(),
+      spend: { scope: "tenant", totalUsd: 2, capUsd: 1, value: "sk-leaked", body: "private" },
+    };
+    const parsed = IncidentReportSchema.parse(report);
+    const spend = parsed.spend as Record<string, unknown> | undefined;
+    expect(spend).toBeDefined();
+    expect("value" in (spend ?? {})).toBe(false);
+    expect("body" in (spend ?? {})).toBe(false);
+    expect(Object.keys(spend ?? {}).sort()).toEqual(["capUsd", "scope", "totalUsd"]);
+  });
+
+  it("rejects a spend section missing capUsd (the shape is enforced)", () => {
+    const report = { ...baseReport(), spend: { scope: "global", totalUsd: 5 } };
+    expect(() => IncidentReportSchema.parse(report)).toThrow();
+  });
+});
