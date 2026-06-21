@@ -7,7 +7,7 @@
  * 120+ methods). This scenario proves a known no-LLM method round-trips auth'd
  * by the handle token, plus the two honest-error contracts (CLI-04 / V5).
  *
- * ── TRANSPORT DISCOVERY (this scenario is the FIRST live /rpc round-trip) ──
+ * ── TRANSPORT (this scenario was the FIRST live /rpc round-trip) ──
  *
  * The generic JSON-RPC dispatch is served ONLY over WEBSOCKET (`/ws?token=…`),
  * NOT over `POST /rpc`. Probed against a booted rig at HEAD: `POST /rpc`,
@@ -18,22 +18,29 @@
  * mounts the dispatch via `createWsHandler`, ws-handler.js does "JSON-RPC message
  * dispatch (single and batch)"). Over WS the SAME methods round-trip cleanly:
  * `obs.fleet.health` -> a bounded FleetHealthReport result; an unknown method ->
- * a proper `{"error":{"code":-32601,"message":"Method not found"}}`.
+ * a proper `{"error":{"code":-32601,"message":"Method not found"}}`. This is
+ * exactly how the production `comis` CLI talks to the gateway
+ * (`packages/cli/src/client/rpc-client.ts` is a WS JSON-RPC client; the
+ * `cli-uses-typed-rpc` architecture invariant).
  *
- * CONSEQUENCE (a discovered harness/CLI defect, documented in the 205-06
- * SUMMARY): `rpcRequest` (test/support/daemon-harness.ts) POSTs `/rpc` and the
- * CLI's `tg rpc` (test/live/bin/chan.ts) wraps it — so `tg rpc` over the live
- * gateway hits the 404, NOT the dispatch. No prior test caught this: the one
- * integration caller (eventbus-daemon-e2e) asserts only `status < 500` (a 404
- * passes), and chan.test.ts injects a fake `rpc`. The fix is to route `tg rpc` /
- * `rpcRequest` over WS (`ws-helpers.ts` `openAuthenticatedWebSocket` +
- * `sendJsonRpc`) — a TEST-TREE change, out of THIS plan's 3-file scope, flagged
- * for a follow-up. THIS scenario asserts AUTO-01 over the transport the gateway
- * ACTUALLY serves (WS) so the keystone is proven honestly, never faked over a
- * 404. (`channels.health` is also NOT a registered dispatch method at HEAD — it
- * appears only as a property access, not a quoted key; the confirmed no-LLM
- * methods are `obs.fleet.health` / `obs.explain`, registered via the
- * computed-key form `[ObsFleetHealthContract.method]`.)
+ * RESOLVED (205-07 — the AUTO-01 transport fix): `rpcRequest`
+ * (test/support/daemon-harness.ts) NOW routes over WS via `ws-helpers.ts`
+ * (`openAuthenticatedWebSocket` + `sendJsonRpc`), and the CLI's `tg rpc`
+ * (test/live/bin/chan.ts) wraps it — so `tg rpc <method>` reaches ANY gateway
+ * dispatch method over the transport the gateway actually serves, mirroring
+ * `rpc-client.ts`. The 205-06 keystone discovered the defect (no prior test
+ * caught it: the one integration caller, eventbus-daemon-e2e, asserts only an
+ * inline `status < 500` — a 404 passes; chan.test.ts injects a fake `rpc`; the
+ * three live `rpcRequest` callers are COMIS_LIVE-gated, so the broken `/rpc` leg
+ * never ran in CI). THIS scenario now asserts AUTO-01 over WS via the REAL
+ * `rpcRequest`/`tg rpc` (not just `sendJsonRpc` directly) so the keystone is
+ * proven over the production transport, end to end. The `POST /rpc` 404 is still
+ * PINNED below as documentation of WHY WS is the transport — but `rpcRequest`
+ * itself now round-trips, never throws on the 404. (`channels.health` is also
+ * NOT a registered dispatch method at HEAD — it appears only as a property
+ * access, not a quoted key; the confirmed no-LLM methods are `obs.fleet.health`
+ * / `obs.explain`, registered via the computed-key form
+ * `[ObsFleetHealthContract.method]`, and the core `config.get`.)
  *
  * Stage-B (CI, deterministic): boots the daemon (no model needed for the obs RPC
  * methods — only the agent-authored reply needs a model, which this does not
@@ -214,27 +221,116 @@ describe("AUTO-01 Stage-B — `tg rpc <known method>` round-trips auth'd by the 
     }
   });
 
-  it("the HTTP `POST /rpc` path the CLI currently wraps is genuinely 404 at HEAD (the documented harness/CLI transport defect)", async () => {
+  it("the shared `rpcRequest` helper now ROUND-TRIPS over WS (the 205-07 AUTO-01 transport fix — no longer the /rpc 404)", async () => {
     const r = rig;
     expect(r, "rig booted").toBeDefined();
     if (r === undefined) return;
 
-    // PINS the discovery so a future fix is detectable: `rpcRequest` POSTs /rpc,
-    // which 404s (no HTTP /rpc route exists) -> the body is `{"error":"Not Found"}`
-    // so rpcRequest throws `RPC error undefined: undefined`. The CLI's `tg rpc`
-    // inherits this until it is routed over WS (the follow-up flagged in the
-    // SUMMARY). This assertion documents the CURRENT (broken) state honestly; the
-    // working AUTO-01 transport is the WS round-trip asserted above.
+    // The shared helper is the seam BOTH the CLI (`tg rpc`) and the COMIS_LIVE
+    // billing/health callers use. Post-205-07 it connects to `/ws?token=` and
+    // dispatches the SAME way the production `comis` CLI does — so a known no-LLM
+    // method returns its UNWRAPPED result (the `json.result`, not the envelope),
+    // never the old `RPC error undefined: undefined` thrown off the 404 body.
+    const report = (await rpcRequest(
+      r.gatewayUrl,
+      "obs.fleet.health",
+      { since: 1 },
+      r.authToken,
+    )) as { schemaVersion?: number };
+    expect(report).toBeTypeOf("object");
+    expect(report).not.toBeNull();
+    expect(report.schemaVersion).toBe(1);
+
+    // And an unknown method still surfaces the honest JSON-RPC error as a THROW
+    // (`RPC error -32601: …`) — the contract `invokeRpc` maps to rpc_error.
+    await expect(
+      rpcRequest(r.gatewayUrl, "definitely.not.a.method", {}, r.authToken),
+    ).rejects.toThrow(/RPC error -32601/);
+  });
+
+  it("`tg rpc <known method>` reaches the gateway over WS via the REAL (default) rpc seam, authed by the handle token", async () => {
+    const r = rig;
+    expect(r, "rig booted").toBeDefined();
+    if (r === undefined) return;
+
+    // The CLI path with NO injected `rpc` fake — runVerb falls through to the
+    // default `rpcRequest`, which now routes over WS. This is the genuine
+    // `tg rpc obs.fleet.health` an agent/operator runs against a live rig: it must
+    // return a real bounded FleetHealthReport, never a 404 throw. The handle the
+    // CLI reads carries the admin-scoped gateway token (the `ws`/`admin` scope).
+    const handle: ChanliveHandle = {
+      channel: "telegram",
+      controlEndpoint: r.gatewayUrl, // unused on the rpc path
+      rigControlEndpoint: r.gatewayUrl,
+      gatewayUrl: r.gatewayUrl,
+      gatewayToken: r.authToken,
+      chatId: 424242,
+      dataDir: "/tmp/none",
+      memoryDbPath: "/tmp/none/memory.db",
+    };
+    const result = (await runVerb("rpc", ["obs.fleet.health", '{"since":1}'], {
+      handle,
+    } satisfies VerbContext)) as { schemaVersion?: number };
+    expect(result).toBeTypeOf("object");
+    expect(result.schemaVersion).toBe(1);
+  });
+
+  it("`tg rpc <unknown method>` over the REAL seam exits honestly as rpc_error carrying the -32601 code (no false success)", async () => {
+    const r = rig;
+    expect(r, "rig booted").toBeDefined();
+    if (r === undefined) return;
+
+    const handle: ChanliveHandle = {
+      channel: "telegram",
+      controlEndpoint: r.gatewayUrl,
+      rigControlEndpoint: r.gatewayUrl,
+      gatewayUrl: r.gatewayUrl,
+      gatewayToken: r.authToken,
+      chatId: 424242,
+      dataDir: "/tmp/none",
+      memoryDbPath: "/tmp/none/memory.db",
+    };
+    // The default seam connects over WS, the gateway answers -32601, invokeRpc
+    // maps the `RPC error -32601` throw to a reason-coded VerbFailure(rpc_error).
+    const err = await runVerb("rpc", ["definitely.not.a.method"], { handle }).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(VerbFailure);
+    expect((err as VerbFailure).kind).toBe("rpc_error");
+    expect((err as VerbFailure).body["code"]).toBe(-32601);
+  });
+
+  it("`POST /rpc` is STILL 404 at HEAD — pinned as documentation of WHY the transport is WS (the dispatch is ws-only)", async () => {
+    const r = rig;
+    expect(r, "rig booted").toBeDefined();
+    if (r === undefined) return;
+
+    // This pin is RETAINED as the transport-discovery record: the generic
+    // dispatch has no HTTP `/rpc` route (it is mounted via createWsHandler on
+    // `/ws` only), which is WHY `rpcRequest`/`tg rpc` must — and now do — speak
+    // WS. The fix is detectable BOTH ways: this 404 still holds, AND the
+    // `rpcRequest` round-trip above proves the helper no longer touches it.
     const raw = await fetch(`${r.gatewayUrl}/rpc`, {
       method: "POST",
       headers: { Authorization: `Bearer ${r.authToken}`, "Content-Type": "application/json" },
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "obs.fleet.health", params: { since: 1 } }),
     });
     expect(raw.status).toBe(404);
+  });
+});
 
-    // And the harness `rpcRequest` therefore throws (it sees the 404 `error` body).
-    await expect(
-      rpcRequest(r.gatewayUrl, "obs.fleet.health", { since: 1 }, r.authToken),
-    ).rejects.toThrow(/RPC error/);
+// ---------------------------------------------------------------------------
+// A dead handle is an honest non-zero exit (CLI-04) — no daemon, no network.
+// ---------------------------------------------------------------------------
+
+describe("AUTO-01 — `tg rpc` with NO resolved handle is an honest dead_handle (CLI-04), never a silent spawn", () => {
+  it("rpc with an undefined handle throws VerbFailure(dead_handle) BEFORE any transport (it needs the gateway token)", async () => {
+    const err = await runVerb("rpc", ["obs.fleet.health"], { handle: undefined }).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(VerbFailure);
+    expect((err as VerbFailure).kind).toBe("dead_handle");
+    // The honest hint points at `tg up` — never a silent spawn / fabricated success.
+    expect(JSON.stringify((err as VerbFailure).body)).toMatch(/tg up/);
   });
 });
