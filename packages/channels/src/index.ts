@@ -306,6 +306,18 @@ export type { GroupHistoryBuffer } from "./shared/group-history-buffer.js";
 // execution-pipeline.test.ts for cross-set equivalence assertion)
 export { TELEGRAM_THREAD_META_KEYS } from "./telegram/thread-context.js";
 
+// Telegram thread-context builders — the General-Topic id=1 asymmetry. SEND
+// OMITS message_thread_id when the topic is the General topic (id=1, forum)
+// while TYPING INCLUDES it; a non-forum group ignores reply-chain thread ids.
+// Surfaced on the public barrel so this info-disclosure-relevant routing (never
+// leak the General topic id onto a reply) is assertable from the public API.
+export {
+  buildSendThreadParams,
+  buildTypingThreadParams,
+  resolveTelegramThreadContext,
+} from "./telegram/thread-context.js";
+export type { TelegramThreadScope, TelegramThreadContext } from "./telegram/thread-context.js";
+
 // Activity rendering strategies (§7.2). The daemon composition root
 // (setup-channels-runtime.ts) selects a per-channel ChannelActivityRenderer via
 // `selectStrategy(caps, channelType)` from @comis/core, then constructs the

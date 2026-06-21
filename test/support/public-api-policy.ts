@@ -726,6 +726,20 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // orchestrator and these entries are removed.
       "PacerConfig",
       "TELEGRAM_THREAD_META_KEYS",
+      // Telegram thread-context builders (the General-Topic id=1 asymmetry).
+      // Surfaced on the public barrel for the v2.28 channel-emulation harness's
+      // GROUP-03 HARD assertion (it drives the REAL SEND-omits / TYPING-includes
+      // routing through the dist-aliased @comis/channels, not a re-implementation).
+      // The only consumers are test/live/** scenarios + the channels index.test.ts
+      // barrel check — both of which the public-export-consumers AST walker
+      // excludes (it scans packages/*/src/** and skips *.test.ts). Mirrors the
+      // TELEGRAM_THREAD_META_KEYS precedent directly above. Shrink if a
+      // cross-package production consumer lands.
+      "buildSendThreadParams",
+      "buildTypingThreadParams",
+      "resolveTelegramThreadContext",
+      "TelegramThreadScope",
+      "TelegramThreadContext",
       // Discord channel narrowing surface. Consumed to retarget the 18
       // `as any` casts in `discord-actions.ts` + the 5 thread-iteration
       // sites. The 4 entries are removed once discord-actions.ts is
