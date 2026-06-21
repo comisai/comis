@@ -52,19 +52,21 @@ const MOCK_AGENTS = { agents: ["default", "researcher"] };
 /** A planted body/secret marker — must never reach the DOM or the export. */
 const BODY_MARKER = "SECRET_MESSAGE_BODY_DO_NOT_LEAK";
 
+// The REAL obs.billing.byAgent wire shape (179-wiring): the handler projects
+// `tools[]` (CR-01 per-tool even-split, the HG-01 producer) — content-free names
+// + numbers. It does NOT carry `subagents[]`: COST-02's gs.nodeCost is per-graph
+// -run (in-memory, surfaced on graph:completed / the Incident view), NOT persisted
+// to obs_token_usage, so the per-agent billing aggregate has no honest per-subagent
+// source. This mock therefore mirrors the handler exactly — `tools[]` present, NO
+// fabricated `subagents[]` (the fabrication is what hid 179's CR-01 gap).
 const MOCK_AGENT_BILLING = {
   tokensToday: 80_000,
   costToday: 28.5,
   percentOfTotal: 67.1,
-  // COST-01 per-tool (tool_tag, best-effort even-split) — sums to the turn.
+  // CR-01 per-tool (tool_tag, best-effort even-split) — sums to the turn.
   tools: [
     { tool: "bash", cost: 18.0, tokens: 50_000, calls: 30 },
     { tool: "read", cost: 10.5, tokens: 30_000, calls: 20 },
-  ],
-  // COST-02 per-subagent corrected-$ subtree rollup.
-  subagents: [
-    { nodeId: "planner", cost: 12.0, subtreeCost: 28.5 },
-    { nodeId: "worker", cost: 16.5, subtreeCost: 16.5 },
   ],
   // A body field the view must ignore (content-free).
   message: BODY_MARKER,
@@ -348,7 +350,7 @@ describe("IcBillingView", () => {
     expect(text).toContain("read");
   });
 
-  it("renders per-subagent corrected-$ cost at the agent level", async () => {
+  it("per-subagent section degrades HONESTLY (per-graph-run → Incident view), not a fabricated empty (179-wiring CR-01)", async () => {
     el = document.createElement("ic-billing-view") as IcBillingView;
     el.rpcClient = createBillingMockRpcClient();
     document.body.appendChild(el);
@@ -359,9 +361,13 @@ describe("IcBillingView", () => {
 
     const shadow = el.shadowRoot!;
     const text = shadow.textContent ?? "";
+    // The per-subagent section is present + names the honest reason: COST-02's
+    // nodeCost is per-graph-run (not in the per-agent billing aggregate), so it
+    // points the operator at the Incident view rather than showing a silent empty
+    // or a fabricated row. (The handler emits no subagents[] — see the mock note.)
     expect(text).toMatch(/per-subagent|subagent/i);
-    expect(text).toContain("planner");
-    expect(text).toContain("worker");
+    expect(text.toLowerCase()).toContain("incident");
+    expect(text.toLowerCase()).toMatch(/per-graph|graph run|graph execution/);
   });
 
   it("export builds a CSV blob with only the allowlisted columns", async () => {

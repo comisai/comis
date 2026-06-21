@@ -198,6 +198,14 @@ function mergeToolCosts(rows: ToolCostBreakdown[]): ToolCostBreakdown[] {
  * Narrow an optional per-subagent cost rollup (COST-02 corrected-$ `nodeCost`
  * subtree rollup) off a billing response. Content-free: node ids + corrected
  * dollars only.
+ *
+ * 179-wiring CR-01 (path b): `obs.billing.byAgent` does NOT currently carry
+ * `subagents[]` — COST-02's `gs.nodeCost` is per-graph-run (surfaced on
+ * `graph:completed` / the Incident view), NOT persisted to `obs_token_usage`, so the
+ * per-agent billing aggregate has no honest per-subagent source. This narrower
+ * therefore returns `[]` today (driving the view's honest "see the Incident view"
+ * degradation, never a fabricated row); it stays wired to defend a future per-agent
+ * persisted-linkage source (path a) without a wire-shape change.
  */
 export function narrowSubagentCosts(raw: unknown): SubagentCostBreakdown[] {
   const wrapped = raw as Record<string, unknown> | undefined;

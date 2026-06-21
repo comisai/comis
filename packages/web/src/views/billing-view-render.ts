@@ -73,13 +73,33 @@ export function renderToolCosts(
 
 /**
  * Per-subagent cost section (COST-02 corrected-$ subtree rollup). Exact within
- * the graph (no best-effort caveat). Empty list renders nothing.
+ * the graph (no best-effort caveat).
+ *
+ * 179-wiring CR-01 — HONEST degradation when empty: per-subagent cost is COST-02's
+ * `gs.nodeCost`, which is PER-GRAPH-RUN (in-memory, surfaced on `graph:completed` /
+ * the Incident view), NOT persisted to `obs_token_usage` — so the per-agent billing
+ * aggregate has no honest per-subagent source. Rather than render `nothing` (a
+ * silent empty that reads as "no subagents ran") or a fabricated row, the empty case
+ * renders an ACCURATE note naming where the data lives (the Incident view), so the
+ * operator is not misled. Content-free (a static string, no data).
  */
 export function renderSubagentCosts(
   subagentCosts: ReadonlyArray<SubagentCostBreakdown>,
   deps: BillingRenderDeps,
 ): TemplateResult | typeof nothing {
-  if (subagentCosts.length === 0) return nothing;
+  if (subagentCosts.length === 0) {
+    return html`
+      <div class="section">
+        <div class="section-title">Per-subagent cost</div>
+        <div class="card">
+          <div class="caveat">
+            Per-subagent cost is per-graph-run — it is not in the per-agent billing
+            aggregate. See the Incident view for a graph run's per-node / subtree cost.
+          </div>
+        </div>
+      </div>
+    `;
+  }
   return html`
     <div class="section">
       <div class="section-title">Per-subagent cost</div>
