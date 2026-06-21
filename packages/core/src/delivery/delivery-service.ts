@@ -503,6 +503,30 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
                 timestamp: systemNowMs(),
               });
             }
+
+            // --- REACT-04 (206-04): bind the minted reply id → trajectory on the
+            // DIRECT ack path (the primary inbound-reply path sends HERE, not via
+            // the drain). Mirrors the drain's binding (setup-delivery.ts:287) so a
+            // reaction on this outbound reply resolves its trajectory. Fail-closed:
+            // a null traceId OR a null agentId (a pre-executor / non-agent send) is
+            // a SKIP — mis-attributing a reaction to the tenantId would corrupt
+            // cross-agent isolation (T-198-16). The callback is undefined when
+            // learning-outcome is disabled for all agents → zero extra work
+            // (byte-identity). ReactionTrajectoryMap.record is idempotent by
+            // messageId, so a reply that ALSO traverses the drain (transient-nack →
+            // retry) cannot double-bind. Diagnosability (§2.7): the bind shares the
+            // SAME messageId as the delivery:acked event just emitted (so the
+            // attribution is reconstructable from the event trail), and the
+            // downstream observeReactionNonFatal INFO line is the proof it resolved
+            // — no raw daemon.log join needed.
+            if (deps.recordOutboundMessage !== undefined && traceId !== null && agentId !== null) {
+              deps.recordOutboundMessage(result.value, {
+                traceId,
+                tenantId,
+                agentId,
+                sessionId: traceId, // session identity falls back to the trajectory id (scope-consistent with the drain)
+              });
+            }
           } else {
             chunkResult.error = result.error;
 

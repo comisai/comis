@@ -485,7 +485,7 @@ function buildChannelManagerDeps(deps: {
     workspaceDirs, defaultWorkspaceDir, memoryAdapter, memoryApi, entityStore, causalStore, consolidationStore, tripleStore, userRepresentationStore, relationshipStore, tunedAlphaStore, memoryLifecycleStore, usefulnessStore, outcomeStore, learnedSkillStore, embeddingQueue,
     activeRunRegistry, sessionResolver, rpcCall,
     continuationTracker, approvalGate, interactiveCallbackWiring,
-    piSessionAdapters, costTrackers, deliveryQueue, executionTrackers,
+    piSessionAdapters, costTrackers, deliveryQueue, recordOutboundMessage, executionTrackers,
     onSuspiciousContent, dataDir, clock, timers, activityBreaker, activityStream, activityRendererFactoryOverride,
     executionPlanPorts, oauthManagers,
   } = agents;
@@ -597,6 +597,10 @@ function buildChannelManagerDeps(deps: {
     },
     approvalGate: container.config.approvals?.enabled ? approvalGate : undefined,
     piSessionAdapters, costTrackers, deliveryQueue,
+    // REACT-04 (206-04): the outbound → trajectory binding (same callback the
+    // delivery-queue drain receives) so the DIRECT ack path in createDeliveryService
+    // binds the primary inbound-reply id → trajectory (the 206-03 live-finding fix).
+    recordOutboundMessage,
     destroyConversation: channelConversationReset.destroyConversationCompletely,
     lcdStore: agents.lcdStore, contextBrowse: agents.contextBrowse, // review session source (DAG transcripts)
     cronExecutionTrackers: executionTrackers,
