@@ -4,9 +4,9 @@ description: "Monitor your agents' activity, costs, and message delivery from a 
 icon: "chart-line"
 ---
 
-The Observe section in the sidebar contains **six sub-views**, each accessible as its own page: Overview, Context Engine, Context DAG, Billing, Delivery, and Diagnostics. These give you a bird's-eye view of everything happening in your Comis installation -- how active your agents are, how much they cost, whether messages are being delivered successfully, and how the context engine is performing.
+The Observe section in the sidebar gives you a bird's-eye view of everything happening in your Comis installation -- how active your agents are, how much they cost, whether messages are being delivered successfully, how prompt caching is performing, whether spend is within its ceilings, and -- when something goes wrong -- the deterministic root cause. Each sub-view is its own page: Overview, Context Engine, Context DAG, Billing, Delivery, Diagnostics, **Cache Health**, **Spend & Governance**, and the **Incident** drill-down. (Security-decision history lives in its own [Security & Audit](/security/audit) view.)
 
-**Who it's for:** anyone watching costs, debugging delivery failures, or measuring cache effectiveness.
+**Who it's for:** anyone watching costs, debugging delivery failures, measuring cache effectiveness, enforcing spend ceilings, or root-causing a degraded session.
 
 ## Where the metrics come from
 
@@ -18,6 +18,9 @@ All Observe data is sourced from Comis's own in-process collectors and persisted
 | Billing | `obs.billing.byProvider`, `obs.billing.byAgent`, `obs.billing.bySession`, `obs.billing.total`, `obs.billing.usage24h` |
 | Delivery | `obs.delivery.recent`, `obs.delivery.stats`, delivery-tracer detail RPC |
 | Diagnostics | `obs.diagnostics` |
+| Cache Health | `obs.cacheBreaks.byReason`, `obs.cacheStats.window` |
+| Spend & Governance | `obs.spend.snapshot` |
+| Incident | `obs.explain` |
 | Context Engine | `contextEngine.getLastMetrics`, `contextEngine.getLayerConfig` |
 | Context DAG | `context.dag.list`, `context.dag.tree`, `context.dag.search`, `context.dag.node` |
 
@@ -122,6 +125,47 @@ The Diagnostics view is an event log showing system-level activity. Each row has
 - **Level** -- a severity badge (error, warning, or informational)
 
 Events are sorted with the most recent at the top.
+
+### Cache Health
+
+Route: `/observe/cache` (standalone sub-view)
+
+The Cache Health view answers "did prompt caching break this period, why, and what did it cost?" It reads `obs.cacheBreaks.byReason` and `obs.cacheStats.window`:
+
+- **Stat cards** -- total cache breaks, **$ lost** (the summed directly-lost cache-read saving across all reasons), and the hit/write ratio.
+- **Break-rate-by-reason table** -- one row per [cache-break reason](/operations/observability) (e.g. `tools_changed`, `system_prompt_changed`, `ttl_expired`) with its count and estimated dollars lost. The dollar figure is `0` for an unknown-priced model (honest, never fabricated).
+
+When the daemon surfaces no cache-break data, the view shows a "cache health not configured" empty state rather than a blank.
+
+### Spend & Governance
+
+Route: `/observe/spend` (standalone sub-view)
+
+The Spend & Governance view is the native mirror of the Grafana Cost dashboard -- no Grafana required. It reads the **live** spend the kill-switch enforces (`obs.spend.snapshot`, the in-memory accumulator -- not a lagging SQL re-sum):
+
+- **Headroom gauges** -- per-agent / per-tenant / global spend versus its ceiling, with the remaining headroom. A `null` ceiling renders a "spend governance not configured" state (honest -- the kill-switch ships off with null ceilings).
+- **Pricing coverage** -- the three-state split (priced / free / unknown) so you can see how trustworthy the dollars are before acting on them.
+
+See [Spend Governance (the cost kill-switch)](/operations/observability#16-spend-governance-cost-kill-switch) for the enforcement policy these gauges visualize.
+
+### Incident (the root-cause drill-down)
+
+Route: `/observe/incident?ref=<sessionKey|traceId>` (standalone sub-view)
+
+The Incident view is the in-product twin of [`comis explain`](/reference/cli#comis-explain): it surfaces the deterministic, no-LLM [`obs.explain`](/reference/json-rpc#obs-explain) `IncidentReport` for a single session -- anomaly to root cause without leaving the product, and without Grafana. The same session always renders the same verdict.
+
+It is reachable from **every per-session row** -- click a session in the Billing **By-Session** table, or the **Explain Incident** button in a [session's detail page](/web-dashboard/sessions-view) -- which navigates here keyed on that session's `sessionKey`. The view renders:
+
+- **Header** -- the outcome severity (ok / degraded / failed) and the deterministic `likelyRootCause` code.
+- **Stat cards** -- cost, tokens, duration, turns, cache-read ratio.
+- **Failures table** and the **circuit-breaker timeline** (the normalized, newest-first failures + when each breaker opened/reset).
+- **Optional, presence-conditional sections** -- rendered only when the session produced them: **Spend** (the kill-switch breach: scope + spent + ceiling), **Cache breaks** (per-reason count + $ lost), **Recall** (memory-recall outcome counts), and **Audit** (per-kind security-event counts). The report is content-free -- counts, ids, dollars, and closed enums only, never a message body, query, or secret.
+
+With no `ref` selected, the view shows a "select an incident to explain" empty state.
+
+<Info>
+**Grafana relationship -- link, never embed.** When the opt-in [Prometheus & Grafana](/operations/prometheus-grafana) surface is enabled (`observability.prometheus.enabled: true`), the Incident view shows an **"Open in Grafana"** link to the matching dashboard (opening in a new tab). When Prometheus is disabled, no link is shown. The native dashboard **never embeds** Grafana (no `<iframe>`) -- it stays a zero-dependency SPA. One signal set, two lenses.
+</Info>
 
 ## Understanding Your Costs
 
