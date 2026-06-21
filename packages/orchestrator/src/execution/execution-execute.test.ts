@@ -87,14 +87,27 @@ function makeBlockStreamCfg() {
 }
 
 /**
- * Build a mock executor that captures the traceId visible inside its execute()
- * call (via tryGetContext()).
+ * Build a mock executor that captures the traceId AND the agentId visible inside
+ * its execute() call (via tryGetContext()). The agentId capture is the REACT-04
+ * (206-04) regression hook: the delivery stage (deliverToChannel) reads
+ * ctx.agentId off the SAME request ALS the executor runs under to bind the
+ * outbound reply → trajectory (the reaction-attribution keystone). If the
+ * executor's runWithContext does not thread agentId, ctx.agentId is undefined at
+ * delivery → both the direct-ack and the drain bindings fail-closed → a reaction
+ * on the reply map-misses (the 206-03 Stage-C live finding, root-caused to the
+ * missing agentId on the ALS).
  */
-function makeCapturingExecutor(): { executor: AgentExecutor; getCapturedTraceId: () => string | undefined } {
+function makeCapturingExecutor(): {
+  executor: AgentExecutor;
+  getCapturedTraceId: () => string | undefined;
+  getCapturedAgentId: () => string | undefined;
+} {
   let capturedTraceId: string | undefined;
+  let capturedAgentId: string | undefined;
   const executor: AgentExecutor = {
     execute: vi.fn(async () => {
       capturedTraceId = tryGetContext()?.traceId;
+      capturedAgentId = tryGetContext()?.agentId;
       return {
         response: "ok",
         sessionKey: { tenantId: "default", userId: "user-1", channelId: "echo-channel-1" },
@@ -106,7 +119,11 @@ function makeCapturingExecutor(): { executor: AgentExecutor; getCapturedTraceId:
       };
     }),
   };
-  return { executor, getCapturedTraceId: () => capturedTraceId };
+  return {
+    executor,
+    getCapturedTraceId: () => capturedTraceId,
+    getCapturedAgentId: () => capturedAgentId,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -202,5 +219,62 @@ describe("executeLlm — traceId propagation", () => {
     expect(id2).toBeDefined();
     // Each call gets its own UUID (two independent fallback mints)
     expect(id1).not.toBe(id2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// REACT-04 (206-04): agentId on the request ALS (the reaction-attribution fix)
+// ---------------------------------------------------------------------------
+//
+// The 206-03 Stage-C live run produced NO outcome_events source='reaction' row
+// even on the primary reply path. Ground-truth root cause (the rig memory.db's
+// delivery_queue row had optionsJson "{}" — no agentId): the executor's
+// runWithContext (execution-execute.ts) threads traceId/tenantId/userId/
+// sessionKey/trustLevel/channelType but NOT agentId, even though agentId is a
+// parameter. So deliverToChannel reads ctx.agentId === undefined → the reply's
+// agentId is never persisted into the queue optionsJson AND the direct-ack
+// REACT-04 bind fail-closes (agentId !== null is false) → a reaction map-misses.
+// The fix threads agentId onto the executor's request context so it is on the
+// SAME ALS the delivery stage reads. RED on pre-patch: ctx.agentId is undefined.
+
+describe("executeLlm — agentId propagation (REACT-04 reaction-attribution fix)", () => {
+  it("threads the resolved agentId onto the request ALS so the delivery stage can bind the reply → trajectory", async () => {
+    const { executor, getCapturedAgentId } = makeCapturingExecutor();
+    const deps = makeDeps();
+
+    // The ingress scope established by the channel adapter does NOT carry agentId
+    // (it is not known at channel ingress — context.ts:38). The EXECUTOR is the
+    // component that resolves the agent and must stamp it onto the ALS so the
+    // delivery stage (which runs inside this same context) reads the REAL agent.
+    await runWithContext(
+      {
+        traceId: "550e8400-e29b-41d4-a716-446655440010",
+        startedAt: systemNowMs(),
+        channelType: "echo",
+      },
+      () =>
+        executeLlm(
+          deps,
+          makeAdapter(),
+          makeMessage(),
+          makeSessionKey(),
+          "mldag", // the resolved agentId for this turn (a NON-default agent)
+          executor,
+          "user",
+          makeBlockStreamCfg(),
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+        ),
+    );
+
+    // The executor (and every component nested in its context, incl. the delivery
+    // stage) must see the resolved agentId on the ALS — NOT undefined. This is the
+    // load-bearing precondition for the REACT-04 outbound → trajectory binding.
+    expect(
+      getCapturedAgentId(),
+      "executor's request context must carry the resolved agentId (else the reply→trajectory binding fail-closes and reactions never attribute)",
+    ).toBe("mldag");
   });
 });
