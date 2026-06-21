@@ -173,14 +173,15 @@ describe("IcIncidentView (first obs.explain SPA consumer)", () => {
     const { rpc } = createIncidentMock(() => fixtureReport());
     const el = await createElement(rpc, { sessionKey: "agent:default:telegram:12345" });
 
-    // The failures table (ic-data-table) carries the one normalized failure.
+    // The failures table + the breaker timeline are ic-data-tables; their row
+    // content lives in each table's OWN shadow root (the cache-health twin).
     const tables = Array.from(el.shadowRoot?.querySelectorAll("ic-data-table") ?? []);
     expect(tables.length).toBeGreaterThan(0);
-    const text = el.shadowRoot?.textContent ?? "";
-    expect(text).toContain("web_search");
-    expect(text).toContain("rate_limited");
+    const tableText = tables.map((t) => t.shadowRoot?.textContent ?? "").join(" ");
+    expect(tableText).toContain("web_search");
+    expect(tableText).toContain("rate_limited");
     // The breaker timeline names the opened breaker.
-    expect(text.toLowerCase()).toContain("opened");
+    expect(tableText.toLowerCase()).toContain("opened");
   });
 
   it("renders the optional spend? section {scope, totalUsd, capUsd} when present", async () => {
@@ -199,11 +200,15 @@ describe("IcIncidentView (first obs.explain SPA consumer)", () => {
     const { rpc } = createIncidentMock(() => fixtureReport());
     const el = await createElement(rpc, { sessionKey: "agent:default:telegram:12345" });
 
-    const text = (el.shadowRoot?.textContent ?? "").toLowerCase();
-    expect(text).toContain("recall");
-    expect(text).toContain("cache"); // cacheBreaks
-    expect(text).toContain("tools_changed");
-    expect(text).toContain("audit");
+    // Section titles live in the host shadow root; the cacheBreaks rows live in
+    // the nested ic-data-table's own shadow root.
+    const hostText = (el.shadowRoot?.textContent ?? "").toLowerCase();
+    expect(hostText).toContain("recall");
+    expect(hostText).toContain("cache"); // the "Cache breaks" section title
+    expect(hostText).toContain("audit");
+    const tables = Array.from(el.shadowRoot?.querySelectorAll("ic-data-table") ?? []);
+    const tableText = tables.map((t) => t.shadowRoot?.textContent ?? "").join(" ");
+    expect(tableText).toContain("tools_changed");
   });
 
   it("OMITS the optional sections when absent (presence-conditional)", async () => {
@@ -211,11 +216,16 @@ describe("IcIncidentView (first obs.explain SPA consumer)", () => {
     const el = await createElement(rpc, { sessionKey: "agent:default:telegram:12345" });
 
     expect(priv(el)._loadState).toBe("loaded");
-    // The spend section's hallmark values must be absent.
-    const text = el.shadowRoot?.textContent ?? "";
-    expect(text).not.toContain("tools_changed"); // cacheBreaks omitted
-    // The core report still renders.
-    expect(text).toContain("spend_exceeded");
+    const hostText = (el.shadowRoot?.textContent ?? "").toLowerCase();
+    // The optional section titles are absent.
+    expect(hostText).not.toContain("cache breaks");
+    expect(hostText).not.toContain("kill-switch breach");
+    // And no nested table surfaces the omitted cacheBreaks rows.
+    const tables = Array.from(el.shadowRoot?.querySelectorAll("ic-data-table") ?? []);
+    const tableText = tables.map((t) => t.shadowRoot?.textContent ?? "").join(" ");
+    expect(tableText).not.toContain("tools_changed");
+    // The core report still renders (the header carries the verdict code).
+    expect(el.shadowRoot?.textContent ?? "").toContain("spend_exceeded");
   });
 
   it("honest-degradation: NO sessionKey/traceId renders an ic-empty-state 'select an incident', NOT a blank", async () => {
